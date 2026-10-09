@@ -2,12 +2,8 @@
 // realpath containment, dot-directory exclusion, and lazy-fetch boundaries.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  ErrorCode,
-  type DirTreeEntry,
-  type DirTreeResponse,
-  type SessionLauncherConfig,
-} from "@ccmsg/protocol";
+import { ErrorCode, type DirTreeEntry, type DirTreeResponse } from "@ccmsg/protocol";
+import type { SessionLauncherConfig } from "./config.ts";
 import type { FsAccessResult } from "./fs-access.ts";
 import { containedInRoots } from "./launcher-paths.ts";
 

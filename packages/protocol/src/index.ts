@@ -25,7 +25,6 @@ export * from "./session-status.ts";
 export * from "./response.ts";
 export * from "./stream-event.ts";
 export * from "./frame.ts";
-import type { LauncherParam } from "./response-sessions.ts";
 import type { LlmRequestInfo } from "./stream-event.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
@@ -69,61 +68,6 @@ export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
  * and the one value checked against `root_dirs`. A config that omits it from a
  * template's `params` gets it prepended at parse time. */
 export const LAUNCHER_CWD_PARAM = "CWD";
-
-/** One named launch recipe in the parsed normal form of `session_launcher`.
- * Every field is fully resolved at parse time (an inherited `shell` and the
- * implicit CWD parameter are normalized here), so nothing downstream has to
- * re-apply fallbacks.
- *
- * `command` is a shell program, not an argv: its vocabulary is the shell
- * variables this template declares in `params`, which the launcher shell
- * defines from the request before running this text. The daemon never
- * substitutes anything into it. */
-export interface SessionLauncherTemplate {
-  /** Non-empty, unique within one launcher config. Shown verbatim in the
-   * webui's template picker and named by SessionLaunchRequest.template. */
-  name: string;
-  command: string;
-  /** Declared parameters in config order; always contains LAUNCHER_CWD_PARAM. */
-  params: LauncherParam[];
-  shell: "bash" | "zsh";
-}
-
-/** Parsed normal form of `<configDir>/config.json`'s `session_launcher` key
- * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
- * built-in choice so launch never falls through to an implicit `sh -c`.
- *
- * `templates` is always non-empty — a config that yields no usable template
- * disables the launcher entirely. `templates[0]` is the launcher's default
- * recipe. */
-export interface SessionLauncherConfig {
-  root_dirs: string[];
-  templates: SessionLauncherTemplate[];
-  timeout_seconds: number;
-  dir_tree_depth: number;
-  /** DR-0018 §3.1: wildcard patterns naming environment
-   * variables to REMOVE from the daemon's own environment before a launched
-   * child inherits it. The daemon itself is typically started from inside a
-   * Claude session's shell, so its process.env carries that origin session's
-   * variables (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ANTHROPIC_*
-   * …) which would silently reconfigure every launched session. `*` matches
-   * any substring of a key name (no separator semantics); everything else is
-   * literal, case-sensitive. Absent/empty = no cleaning.
-   * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
-   * shell turns into the template variables) are layered on AFTER
-   * cleaning, so they can never be removed by a pattern. */
-  clean_env?: string[];
-  /** DR-0018 §3.1: wildcard patterns naming
-   * environment variables to KEEP even when a `clean_env` pattern matches
-   * them — keep_env takes precedence over clean_env. Same pattern grammar as
-   * clean_env (`*` = any substring, otherwise literal, case-sensitive,
-   * anchored whole-key match). Motivation: a broad clean pattern like
-   * `CLAUDE*` also removes CLAUDE_CONFIG_DIR, which the launched session
-   * needs for config-plane isolation; the allowlist carves such exceptions
-   * out of the broad removal. A key matching only keep_env (and no
-   * clean_env pattern) is a no-op — it would have survived anyway. */
-  keep_env?: string[];
-}
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.

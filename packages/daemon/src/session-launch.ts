@@ -4,10 +4,11 @@
 import {
   ErrorCode,
   LAUNCHER_CWD_PARAM,
+  parseWith,
   type SessionLaunchRequest,
-  type SessionLauncherConfig,
   type SessionLaunchResponse,
 } from "@ccmsg/protocol";
+import type { SessionLauncherConfig } from "./config.ts";
 import { containedInRoots } from "./launcher-paths.ts";
 
 export type SessionLaunchValidation =
@@ -164,40 +165,32 @@ export function validateSessionLaunch(
   // for MODEL or EFFORT, but daemon enums would couple every new launcher
   // choice to a daemon release, and a template is free to declare parameters
   // the daemon has never heard of. Values may be empty (a prompt-less launch is
-  // a valid `claude` invocation). What IS checked is that every value belongs
-  // to a parameter this template declares — a value nothing will read means
-  // the client and the config disagree about what the form is.
-  // The request's values by name, as a Map: a name is found only if the
-  // request sent it, never as a member every object inherits (`constructor`).
-  const given = new Map(Object.entries(req.params));
-  const declared = new Map(template.params.map((p) => [p.name, p.default]));
-  for (const name of given.keys()) {
-    if (name === LAUNCHER_CWD_PARAM) {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: `session_launch ${LAUNCHER_CWD_PARAM} belongs in the request's cwd field, not params`,
-      };
-    }
-    if (!declared.has(name)) {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: `session_launch params has an undeclared parameter for template ${template.name}: ${name}`,
-      };
-    }
+  // a valid `claude` invocation). The values are read with the schema the
+  // template's declaration built (DR-0038 §6): a declared parameter the request
+  // left out takes its configured default, and a name the template does not
+  // declare (CWD among them, which travels as `cwd`) fails the read — a value
+  // nothing will read means the client and the config disagree about what the
+  // form is.
+  const params = parseWith(template.readParams, req.params, { firstIssue: true });
+  if (!params.ok) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `session_launch params for template ${template.name}: ${params.failure.summary}`,
+    };
   }
   const command = req.command ?? template.command;
 
-  // One carrier per declared parameter, in declaration order: the request's
-  // value when it sent one, the configured default otherwise. CWD is the
-  // containment-checked realpath rather than anything the request said about
-  // it, so the command and the spawn always see the same directory.
-  const env: Record<string, string> = {};
-  for (const { name, default: fallback } of template.params) {
-    const value = name === LAUNCHER_CWD_PARAM ? cwd.data.realPath : (given.get(name) ?? fallback);
-    env[launchVarCarrier(name)] = value;
-  }
+  // One carrier per declared parameter. CWD is the containment-checked
+  // realpath rather than anything the request said about it, so the command
+  // and the spawn always see the same directory.
+  const env = Object.fromEntries<string>([
+    [launchVarCarrier(LAUNCHER_CWD_PARAM), cwd.data.realPath],
+    ...Object.entries(params.value).map(([name, value]): [string, string] => [
+      launchVarCarrier(name),
+      value,
+    ]),
+  ]);
   return {
     ok: true,
     cwd: cwd.data.realPath,

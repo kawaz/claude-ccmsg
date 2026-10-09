@@ -138,13 +138,16 @@ export const SessionLaunchRequestSchema = v.object({
    * because it is the one launch value the daemon itself acts on: it is
    * `realpath`-checked against `root_dirs` and passed to spawn(). */
   cwd: v.string(),
-  /** Values for the chosen template's declared parameters, by name. A declared
-   * parameter the request omits falls back to its configured default; a name
-   * the template does not declare is rejected as invalid_args rather than
+  /** Values for the chosen template's declared parameters, by name. Read here
+   * only as names with text values: which names may appear is the chosen
+   * template's declaration, and the daemon reads them again with the schema it
+   * built from that declaration. A declared parameter the request omits takes
+   * its configured default; a name the template does not declare, CWD among
+   * them (it belongs in `cwd`), is refused as invalid_args rather than
    * silently dropped (a client sending a value nothing will read is a client
-   * bug worth surfacing). CWD belongs in `cwd`, not here. Values are opaque
-   * strings — they travel as environment carriers, never interpolated into
-   * shell text, so no value can inject shell syntax. */
+   * bug worth surfacing). Values are opaque strings — they travel as
+   * environment carriers, never interpolated into shell text, so no value can
+   * inject shell syntax. */
   params: v.record(v.string(), v.string()),
   /** Optional user-supplied command template override (DR-0018 §3.2).
    * When absent, the daemon uses the administrator-configured

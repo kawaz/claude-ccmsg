@@ -5,7 +5,32 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { DEFAULT_DIR_TREE_DEPTH, DEFAULT_LAUNCH_TIMEOUT_SECONDS } from "@ccmsg/protocol";
-import { CONFIG_TYPES_BASENAME, loadConfig, writeConfigTypesFile } from "../src/config.ts";
+import {
+  CONFIG_TYPES_BASENAME,
+  loadConfig,
+  type ResolvedCcmsgConfig,
+  type SessionLauncherTemplate,
+  writeConfigTypesFile,
+} from "../src/config.ts";
+
+/** A template as its config declares it: the schema of its launch values,
+ * built from `params`, left out. */
+function declared({ name, command, params, shell }: SessionLauncherTemplate) {
+  return { name, command, params, shell };
+}
+
+/** A config with its templates as declared. */
+function declaredConfig({ session_launcher, ...rest }: ResolvedCcmsgConfig) {
+  return session_launcher === undefined
+    ? rest
+    : {
+        ...rest,
+        session_launcher: {
+          ...session_launcher,
+          templates: session_launcher.templates.map(declared),
+        },
+      };
+}
 
 describe("loadConfig", () => {
   let dir: string;
@@ -83,7 +108,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(await loadConfig(files, log)).toEqual({
+    expect(declaredConfig(await loadConfig(files, log))).toEqual({
       session_launcher: {
         root_dirs: [path.resolve(root)],
         templates: [
@@ -157,6 +182,26 @@ describe("loadConfig", () => {
     expect(warnings).toHaveLength(3);
   });
 
+  // A launch request's values are read by a schema built from the declared
+  // names, and an object schema does not read the names a prototype answers
+  // to, so they cannot be declared.
+  test("a parameter named like a prototype member is skipped", async () => {
+    fs.writeFileSync(
+      file,
+      `{"session_launcher":{"root_dirs":[${JSON.stringify(dir)}],"templates":[{"name":"t","command":"run","params":{"__proto__":"","constructor":"","prototype":"","PROMPT":""}}]}}`,
+    );
+
+    expect((await loadConfig(files, log)).session_launcher?.templates[0]?.params).toEqual([
+      { name: "CWD", default: "" },
+      { name: "PROMPT", default: "" },
+    ]);
+    expect(warnings).toEqual([
+      expect.stringContaining("__proto__ is a reserved name"),
+      expect.stringContaining("constructor is a reserved name"),
+      expect.stringContaining("prototype is a reserved name"),
+    ]);
+  });
+
   // `params` is the only source of truth for the form's inputs, so a template
   // that omits it (or its command) is unusable and must not silently launch a
   // recipe nobody declared — it is skipped with a warning, exactly like any
@@ -176,7 +221,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates).toEqual([
+    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
       {
         name: "ok",
         command: 'run "$PROMPT"',
@@ -268,7 +313,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates).toEqual([
+    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
       {
         name: "plain",
         command: "run $PROMPT",
@@ -311,7 +356,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates).toEqual([
+    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
       { name: "good", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
     ]);
     expect(warnings).toHaveLength(4);

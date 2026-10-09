@@ -27,9 +27,91 @@ import {
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
   LAUNCHER_CWD_PARAM,
   type LauncherParam,
-  type SessionLauncherConfig,
-  type SessionLauncherTemplate,
 } from "@ccmsg/protocol";
+import * as v from "valibot";
+
+/** The schema a launch request's `params` are read with, for one template:
+ * one text field per declared parameter but CWD (which travels as the
+ * request's `cwd`), each optional with its declared default. A name the
+ * template does not declare fails the read. */
+export type LaunchParamsSchema = v.StrictObjectSchema<
+  Record<string, v.OptionalSchema<v.StringSchema<undefined>, string>>,
+  undefined
+>;
+
+/** One named launch recipe in the parsed normal form of `session_launcher`.
+ * Every field is fully resolved at parse time (an inherited `shell` and the
+ * implicit CWD parameter are normalized here), so nothing downstream has to
+ * re-apply fallbacks. Built by `launcherTemplate`, which derives `readParams`
+ * from `params`.
+ *
+ * `command` is a shell program, not an argv: its vocabulary is the shell
+ * variables this template declares in `params`, which the launcher shell
+ * defines from the request before running this text. The daemon never
+ * substitutes anything into it. */
+export interface SessionLauncherTemplate {
+  /** Non-empty, unique within one launcher config. Shown verbatim in the
+   * webui's template picker and named by SessionLaunchRequest.template. */
+  readonly name: string;
+  readonly command: string;
+  /** Declared parameters in config order; always contains LAUNCHER_CWD_PARAM. */
+  readonly params: LauncherParam[];
+  readonly shell: "bash" | "zsh";
+  /** `params` as the schema a launch request's values are read with. */
+  readonly readParams: LaunchParamsSchema;
+}
+
+/** A template of these fields, with the schema of its launch values built
+ * from its declaration once, here. */
+export function launcherTemplate(
+  fields: Omit<SessionLauncherTemplate, "readParams">,
+): SessionLauncherTemplate {
+  const entries = Object.fromEntries(
+    fields.params
+      .filter((param) => param.name !== LAUNCHER_CWD_PARAM)
+      .map((param): [string, v.OptionalSchema<v.StringSchema<undefined>, string>] => [
+        param.name,
+        v.optional(v.string(), param.default),
+      ]),
+  );
+  return { ...fields, readParams: v.strictObject(entries) };
+}
+
+/** Parsed normal form of `<configDir>/config.json`'s `session_launcher` key
+ * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
+ * built-in choice so launch never falls through to an implicit `sh -c`.
+ *
+ * `templates` is always non-empty — a config that yields no usable template
+ * disables the launcher entirely. `templates[0]` is the launcher's default
+ * recipe. */
+export interface SessionLauncherConfig {
+  root_dirs: string[];
+  templates: SessionLauncherTemplate[];
+  timeout_seconds: number;
+  dir_tree_depth: number;
+  /** DR-0018 §3.1: wildcard patterns naming environment
+   * variables to REMOVE from the daemon's own environment before a launched
+   * child inherits it. The daemon itself is typically started from inside a
+   * Claude session's shell, so its process.env carries that origin session's
+   * variables (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ANTHROPIC_*
+   * …) which would silently reconfigure every launched session. `*` matches
+   * any substring of a key name (no separator semantics); everything else is
+   * literal, case-sensitive. Absent/empty = no cleaning.
+   * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
+   * shell turns into the template variables) are layered on AFTER
+   * cleaning, so they can never be removed by a pattern. */
+  clean_env?: string[];
+  /** DR-0018 §3.1: wildcard patterns naming
+   * environment variables to KEEP even when a `clean_env` pattern matches
+   * them — keep_env takes precedence over clean_env. Same pattern grammar as
+   * clean_env (`*` = any substring, otherwise literal, case-sensitive,
+   * anchored whole-key match). Motivation: a broad clean pattern like
+   * `CLAUDE*` also removes CLAUDE_CONFIG_DIR, which the launched session
+   * needs for config-plane isolation; the allowlist carves such exceptions
+   * out of the broad removal. A key matching only keep_env (and no
+   * clean_env pattern) is a no-op — it would have survived anyway. */
+  keep_env?: string[];
+}
 
 export interface ResolvedCcmsgConfig {
   session_launcher?: SessionLauncherConfig;
@@ -310,6 +392,16 @@ function parseShell(
  * error at launch instead of a config error at startup. */
 const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** Shell identifiers a parameter may not be named: the names an object's
+ * prototype answers to. A launch request's values are read by a schema built
+ * from the declared names (`launcherTemplate`), and an object schema does not
+ * read these keys. */
+const RESERVED_PARAM_NAMES: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
 /** Parse one template's `params` declaration: an object mapping parameter name
  * to its default value, whose key order is the order the form renders. Broken
  * entries degrade individually (bad name or non-string default → warn + skip)
@@ -336,6 +428,14 @@ function parseLauncherParams(
         log,
         file,
         `session_launcher.templates[${templateName}].params: ${JSON.stringify(name)} is not a shell identifier; entry ignored`,
+      );
+      continue;
+    }
+    if (RESERVED_PARAM_NAMES.has(name)) {
+      warn(
+        log,
+        file,
+        `session_launcher.templates[${templateName}].params: ${name} is a reserved name; entry ignored`,
       );
       continue;
     }
@@ -406,12 +506,14 @@ function parseLauncherTemplates(
       continue;
     }
     names.add(name);
-    templates.push({
-      name,
-      command: entry.command,
-      params: withCwdParam(parseLauncherParams(entry.params, name, file, log)),
-      shell: parseShell(entry.shell, inherited.shell, `templates[${name}].shell`, file, log),
-    });
+    templates.push(
+      launcherTemplate({
+        name,
+        command: entry.command,
+        params: withCwdParam(parseLauncherParams(entry.params, name, file, log)),
+        shell: parseShell(entry.shell, inherited.shell, `templates[${name}].shell`, file, log),
+      }),
+    );
   }
   return templates;
 }

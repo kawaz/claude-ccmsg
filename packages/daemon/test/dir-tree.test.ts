@@ -4,14 +4,20 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { DirTreeEntry, SessionLauncherConfig } from "@ccmsg/protocol";
+import type { DirTreeEntry } from "@ccmsg/protocol";
+import { launcherTemplate, type SessionLauncherConfig } from "../src/config.ts";
 import { dirTree, matchesAllTokens, tokenizeFilter } from "../src/dir-tree.ts";
 
 function config(root: string, depth = 2): SessionLauncherConfig {
   return {
     root_dirs: [root],
     templates: [
-      { name: "default", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
+      launcherTemplate({
+        name: "default",
+        command: "run",
+        params: [{ name: "CWD", default: "" }],
+        shell: "bash",
+      }),
     ],
     timeout_seconds: 10,
     dir_tree_depth: depth,

@@ -4,11 +4,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import {
-  type LauncherParam,
-  type SessionLaunchRequest,
-  type SessionLauncherConfig,
-} from "@ccmsg/protocol";
+import type { LauncherParam, SessionLaunchRequest } from "@ccmsg/protocol";
+import { launcherTemplate, type SessionLauncherConfig } from "../src/config.ts";
 import {
   buildLaunchEnv,
   executeSessionLaunch,
@@ -31,7 +28,14 @@ function program(command: string): string {
 function config(root: string, shell: "bash" | "zsh" = "bash"): SessionLauncherConfig {
   return {
     root_dirs: [root],
-    templates: [{ name: "default", command: 'launch "$PROMPT"', params: LAUNCH_PARAMS, shell }],
+    templates: [
+      launcherTemplate({
+        name: "default",
+        command: 'launch "$PROMPT"',
+        params: LAUNCH_PARAMS,
+        shell,
+      }),
+    ],
     timeout_seconds: 10,
     dir_tree_depth: 2,
   };
@@ -174,7 +178,7 @@ describe("session launch validation", () => {
     const cfg: SessionLauncherConfig = {
       ...config(root),
       templates: [
-        {
+        launcherTemplate({
           name: "default",
           command: "run",
           params: [
@@ -182,7 +186,7 @@ describe("session launch validation", () => {
             { name: "MODEL", default: "fable" },
           ],
           shell: "bash",
-        },
+        }),
       ],
     };
     expect(validateSessionLaunch(cfg, { ...request(cwd), params: {} })).toMatchObject({
@@ -198,12 +202,19 @@ describe("session launch validation", () => {
     const cfg: SessionLauncherConfig = {
       ...config(root),
       templates: [
-        { name: "default", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
+        launcherTemplate({
+          name: "default",
+          command: "run",
+          params: [{ name: "CWD", default: "" }],
+          shell: "bash",
+        }),
       ],
     };
-    expect(
-      validateSessionLaunch(cfg, { ...request(cwd), params: { BRANCH: "main" } }),
-    ).toMatchObject({ ok: false, code: "invalid_args" });
+    expect(validateSessionLaunch(cfg, { ...request(cwd), params: { BRANCH: "main" } })).toEqual({
+      ok: false,
+      code: "invalid_args",
+      msg: 'session_launch params for template default: BRANCH: Invalid key: Expected never but received "BRANCH"',
+    });
   });
 
   // CWD is the containment-checked spawn directory, so its value comes from
@@ -212,7 +223,11 @@ describe("session launch validation", () => {
   test("CWD sent as a parameter is invalid_args", () => {
     expect(
       validateSessionLaunch(config(root), { ...request(cwd), params: { CWD: "/elsewhere" } }),
-    ).toMatchObject({ ok: false, code: "invalid_args" });
+    ).toMatchObject({
+      ok: false,
+      code: "invalid_args",
+      msg: expect.stringContaining('CWD: Invalid key: Expected never but received "CWD"'),
+    });
   });
 
   // DR-0018 §3.2 addendum 2026-07-17: user role may override the command
@@ -261,13 +276,18 @@ describe("session launch validation", () => {
     const cfg: SessionLauncherConfig = {
       ...config(root),
       templates: [
-        { name: "default", command: "run-default", params: LAUNCH_PARAMS, shell: "bash" },
-        {
+        launcherTemplate({
+          name: "default",
+          command: "run-default",
+          params: LAUNCH_PARAMS,
+          shell: "bash",
+        }),
+        launcherTemplate({
           name: "fork",
           command: 'run --resume "$SESSION_ID"',
           params: LAUNCH_PARAMS,
           shell: "zsh",
-        },
+        }),
       ],
     };
 
@@ -787,13 +807,13 @@ describe("clean_env end-to-end launch", () => {
       const cfg: SessionLauncherConfig = {
         root_dirs: [root],
         templates: [
-          {
+          launcherTemplate({
             name: "default",
             command:
               'printf "clean=%s keep=%s" "${CCMSG_TEST_CLEAN_ME:-absent}" "$CCMSG_TEST_KEEP_ME"',
             params: LAUNCH_PARAMS,
             shell: "bash",
-          },
+          }),
         ],
         timeout_seconds: 10,
         dir_tree_depth: 2,
@@ -818,13 +838,13 @@ describe("clean_env end-to-end launch", () => {
       const cfg: SessionLauncherConfig = {
         root_dirs: [root],
         templates: [
-          {
+          launcherTemplate({
             name: "default",
             command:
               'printf "cfg=%s sess=%s" "${CCMSG_TEST_KE_CONFIG:-absent}" "${CCMSG_TEST_KE_SESSION:-absent}"',
             params: LAUNCH_PARAMS,
             shell: "bash",
-          },
+          }),
         ],
         timeout_seconds: 10,
         dir_tree_depth: 2,
