@@ -165,6 +165,9 @@ export async function connect(sock: string): Promise<TestClient> {
       data(_s, chunk) {
         client.onData(chunk);
       },
+      drain() {
+        client.onDrain();
+      },
       close() {
         client.onClose();
       },
@@ -190,8 +193,17 @@ export class TestClient {
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
   private pendingReplies = new Map<string, (line: string | null) => void>();
 
+  /** Bytes the socket did not take yet: Bun's `write` takes what fits and
+   * keeps nothing, so a large request is finished on `drain`. */
+  private unsent: Uint8Array = new Uint8Array(0);
+
   attach(socket: Socket): void {
     this.socket = socket;
+  }
+  onDrain(): void {
+    if (this.unsent.length === 0) return;
+    const taken = this.socket.write(this.unsent);
+    this.unsent = taken < 0 ? new Uint8Array(0) : this.unsent.subarray(taken);
   }
   onData(chunk: Uint8Array): void {
     this.buf += this.decoder.decode(chunk, { stream: true });
@@ -242,10 +254,16 @@ export class TestClient {
     return new Promise((res) => this.waiters.push(res));
   }
   writeRaw(s: string): void {
-    this.socket.write(s);
+    const bytes = new TextEncoder().encode(s);
+    if (this.unsent.length > 0) {
+      this.unsent = Buffer.concat([this.unsent, bytes]);
+      return;
+    }
+    const taken = this.socket.write(bytes);
+    this.unsent = taken < 0 ? new Uint8Array(0) : bytes.subarray(taken);
   }
   write(obj: unknown): void {
-    this.socket.write(`${JSON.stringify(obj)}\n`);
+    this.writeRaw(`${JSON.stringify(obj)}\n`);
   }
   /** Send an op and return its reply, pairing the way the real clients do: by
    * the `request_id` this stamps on the way out. Everything else on the socket

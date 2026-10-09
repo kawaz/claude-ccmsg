@@ -5,7 +5,13 @@
 // is sent.
 import { afterEach, describe, expect, test } from "bun:test";
 import * as path from "node:path";
-import { PeerInjector, renderEnvelope, type InjectMessage } from "../src/peer-inject.ts";
+import * as fs from "node:fs";
+import {
+  PeerInjector,
+  renderEnvelope,
+  writeSocket,
+  type InjectMessage,
+} from "../src/peer-inject.ts";
 import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
 import {
   PEER_TOKEN,
@@ -25,7 +31,9 @@ afterEach(() => {
   for (const f of cleanups.splice(0)) f();
 });
 
-function fakeHarness(opts: { peerProtocol?: number; sid?: string } = {}): FakeHarness {
+function fakeHarness(
+  opts: { peerProtocol?: number; sid?: string; stall?: boolean } = {},
+): FakeHarness {
   const h = spawnHarness(opts.sid ?? SID, opts);
   cleanups.push(() => h.dispose());
   return h;
@@ -78,6 +86,20 @@ describe("PeerInjector", () => {
     gone.stop();
     expect(await injector.send(gone.configDir, SID, MESSAGE)).toBe("unavailable");
     expect(await injector.send("/nonexistent-pi-config", SID, MESSAGE)).toBe("unavailable");
+  });
+
+  // A socket that stopped reading takes part of a large message: it may hold
+  // all of it in the end, so the message is neither delivered nor not.
+  test("a write that started and did not finish in time is unconfirmed", async () => {
+    const h = fakeHarness({ stall: true });
+    await h.listening;
+    const injector = new PeerInjector({ writeMs: 300 });
+    cleanups.push(() => injector.close());
+    const big = { ...MESSAGE, text: "x".repeat(4 * 1024 * 1024) };
+    expect(await injector.send(h.configDir, SID, big)).toBe("unconfirmed");
+    expect(await injector.deliver(h.configDir, SID, { mid: "r7m4", content: big.text })).toEqual({
+      outcome: "unconfirmed",
+    });
   });
 
   test("archived message carries no reply line", () => {
@@ -221,4 +243,21 @@ describe("daemon delivery through the peer socket", () => {
     },
     T,
   );
+});
+
+describe("writeSocket", () => {
+  test("written, not_written, and uncertain by how far the payload got", async () => {
+    const h = fakeHarness();
+    expect(await writeSocket(h.socketPath, "{}\n", 1_000)).toBe("written");
+
+    const dir = fs.mkdtempSync("/tmp/pi-w-");
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    expect(await writeSocket(path.join(dir, "none.sock"), "{}\n", 1_000)).toBe("not_written");
+
+    const stalled = fakeHarness({ stall: true });
+    await stalled.listening;
+    expect(await writeSocket(stalled.socketPath, "x".repeat(4 * 1024 * 1024), 300)).toBe(
+      "uncertain",
+    );
+  });
 });

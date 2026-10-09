@@ -533,7 +533,9 @@ function directSentEntry(
       op: send.verb,
       ...(send.replyTo !== undefined ? { reply_to: send.replyTo } : {}),
       status: outcome.status,
-      ...(outcome.status === "failed" ? { error: outcome.detail } : {}),
+      ...(outcome.status === "failed" || outcome.status === "unconfirmed"
+        ? { error: outcome.detail }
+        : {}),
       tool_use_id: use.id,
       command,
       transcript_line: use.index + 1,

@@ -58,7 +58,7 @@ function deps(extra: Partial<SidecarDeps> = {}): SidecarDeps {
     newId: () => "id1",
     listDir: async () => [],
     isAlive: () => true,
-    write: async () => "delivered",
+    write: async () => "written",
     now: Date.now,
     ...extra,
   };
@@ -106,7 +106,7 @@ describe("callSidecar", () => {
           ok: true,
           result: { v: [1], ops: ["describe", "prompt.send"] },
         });
-        return "delivered";
+        return "written";
       },
     });
     const call = await callSidecar(`/sidecars/${SID}.100.sock`, SID, "describe", {}, 1_000, d);
@@ -118,22 +118,38 @@ describe("callSidecar", () => {
     ]);
     expect(call).toEqual({
       id: "id1",
-      written: true,
+      write: "written",
       reply: { id: "id1", ok: true, result: { v: [1], ops: ["describe", "prompt.send"] } },
     });
   });
 
   test("a line nobody took is not written, and its id takes no reply", async () => {
-    const d = deps({ write: async () => "unavailable" });
+    const d = deps({ write: async () => "not_written" });
     expect(await callSidecar("/s", SID, "describe", {}, 1_000, d)).toEqual({
       id: "id1",
-      written: false,
+      write: "not_written",
     });
     expect(d.replies.take(SID, { id: "id1", ok: true, result: 1 })).toBe(false);
   });
 
   test("no reply within the time is a written call without a reply", async () => {
     const call = await callSidecar("/s", SID, "describe", {}, 20, deps());
-    expect(call).toEqual({ id: "id1", written: true, reply: undefined });
+    expect(call).toEqual({ id: "id1", write: "written", reply: undefined });
+  });
+
+  // The line may have reached the module after all: its reply is still
+  // waited for, and settles the call.
+  test("a write that may have gone in still takes the module's reply", async () => {
+    const d: SidecarDeps = deps({
+      write: async (_socket, line) => {
+        d.replies.take(SID, { id: JSON.parse(line).id, ok: true, result: 1 });
+        return "uncertain";
+      },
+    });
+    expect(await callSidecar("/s", SID, "describe", {}, 1_000, d)).toEqual({
+      id: "id1",
+      write: "uncertain",
+      reply: { id: "id1", ok: true, result: 1 },
+    });
   });
 });

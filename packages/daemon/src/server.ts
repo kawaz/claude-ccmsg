@@ -2691,12 +2691,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'sidecar_reply' requires session role");
         return;
       }
+      // A refused reply is logged: the module's own debug log is the only
+      // other place it would show, and a late or misaddressed reply is what
+      // explains a session_input that came back unconfirmed.
       const reply = parseSidecarReply(req.reply);
       if ("invalid" in reply) {
+        daemon.log.warn(`sidecar_reply from ${conn.identity.sid} refused: ${reply.invalid}`);
         sendErr(conn, ErrorCode.invalid_args, `sidecar_reply: ${reply.invalid}`);
         return;
       }
       if (!daemon.sidecarReplies.take(conn.identity.sid, reply)) {
+        daemon.log.warn(
+          `sidecar_reply ${reply.id} from ${conn.identity.sid} refused: no request is waiting under that id for this session (answered already, past its wait, or sent elsewhere)`,
+        );
         sendErr(
           conn,
           ErrorCode.not_found,

@@ -16,7 +16,7 @@ import {
   type SidecarRequest,
   sidecarSocketPid,
 } from "@ccmsg/protocol";
-import { writeSocket } from "./peer-inject.ts";
+import { type WriteOutcome, writeSocket } from "./peer-inject.ts";
 
 /** Connect and flush one line to one sidecar. */
 export const SIDECAR_WRITE_MS = 2_000;
@@ -88,11 +88,7 @@ export interface SidecarDeps {
    * output fails), so a socket of a gone run is skipped instead of taking a
    * request nobody will answer. */
   isAlive(pid: number): boolean;
-  write(
-    socketPath: string,
-    line: string,
-    ms: number,
-  ): Promise<"delivered" | "unavailable" | "refused">;
+  write(socketPath: string, line: string, ms: number): Promise<WriteOutcome>;
   now(): number;
 }
 
@@ -112,11 +108,14 @@ export async function liveSidecars(sid: string, deps: SidecarDeps): Promise<stri
   return sockets;
 }
 
-/** What became of one request: not written (nobody took the line), or written
- * and answered with `reply` — undefined when no reply came in time. */
+/** What became of one request. `not_written`: the sidecar has none of the
+ * line, so the module never saw it. Otherwise the line went in (`written`) or
+ * may have (`uncertain`), and `reply` is the module's answer — undefined when
+ * none came in time. A reply settles an `uncertain` write: the module read the
+ * line. */
 export type SidecarCall =
-  | { id: string; written: false }
-  | { id: string; written: true; reply: SidecarReply | undefined };
+  | { id: string; write: "not_written" }
+  | { id: string; write: "written" | "uncertain"; reply: SidecarReply | undefined };
 
 /** Ask the module behind `socket` (a run of `sid`) to run `op`, and wait for
  * its reply. `ms` bounds the write and the wait together. */
@@ -137,11 +136,11 @@ export async function callSidecar(
     `${JSON.stringify(request)}\n`,
     Math.min(SIDECAR_WRITE_MS, ms),
   );
-  if (written !== "delivered") {
+  if (written === "not_written") {
     deps.replies.close(id);
-    return { id, written: false };
+    return { id, write: written };
   }
-  return { id, written: true, reply: await deps.replies.wait(id, until - deps.now()) };
+  return { id, write: written, reply: await deps.replies.wait(id, until - deps.now()) };
 }
 
 function isAlive(pid: number): boolean {

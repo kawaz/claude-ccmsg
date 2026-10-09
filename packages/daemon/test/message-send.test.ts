@@ -28,8 +28,8 @@ afterEach(async () => {
   for (const f of cleanups.splice(0).reverse()) await f();
 });
 
-function harness(sid: string): FakeHarness {
-  const h = spawnHarness(sid);
+function harness(sid: string, opts: { stall?: boolean } = {}): FakeHarness {
+  const h = spawnHarness(sid, opts);
   cleanups.push(() => h.dispose());
   return h;
 }
@@ -130,6 +130,27 @@ describe("message_send", () => {
       gone.stop();
       await sessionWithConfig(ctx, "eeeeeeee-2222-4333-8444-555555555555", gone.configDir);
       expect((await send("eeeeeeee-2222-4333-8444-555555555555")).reason).toBe("unreachable");
+    },
+    T,
+  );
+
+  // The recipient's socket stopped reading: the write goes in part-way and
+  // runs out of time. It may yet arrive whole, so it is not called not
+  // delivered — a resend could deliver it twice.
+  test(
+    "a write that started and did not finish in time is unconfirmed, with the mid it carries",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(B, { stall: true });
+      await hb.listening;
+      const a = await sessionWithConfig(ctx, A);
+      await sessionWithConfig(ctx, B, hb.configDir);
+      const res = await a.request<Record<string, unknown>>({
+        op: "message_send",
+        to: B,
+        text: "x".repeat(4 * 1024 * 1024),
+      });
+      expect(res).toEqual({ ok: true, outcome: "unconfirmed", mid: expect.stringMatching(MID_RE) });
     },
     T,
   );

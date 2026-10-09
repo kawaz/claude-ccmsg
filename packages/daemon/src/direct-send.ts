@@ -58,7 +58,8 @@ export function messageSendArgsError(args: MessageSendArgs, from: string): strin
 
 export type MessageSendOutcome =
   | { outcome: "delivered"; mid: string }
-  | { outcome: "not_delivered"; reason: MessageSendReason };
+  | { outcome: "not_delivered"; reason: MessageSendReason }
+  | { outcome: "unconfirmed"; mid: string };
 
 export interface DirectSendDeps {
   /** The registered session by this sid, or undefined when there is none. */
@@ -101,5 +102,7 @@ export async function sendDirect(
       return { outcome: "not_delivered", reason: "refused" };
     case "unavailable":
       return { outcome: "not_delivered", reason: result.cause };
+    case "unconfirmed":
+      return { outcome: "unconfirmed", mid };
   }
 }

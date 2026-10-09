@@ -4,6 +4,7 @@
 // sent. A session that says hello with this `config_dir` receives room
 // messages on `nextUser()`.
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,12 +46,20 @@ export interface FakeHarness {
   nextContent(): Promise<string>;
   /** Answer each `user` frame with this status on its `from` socket. */
   refuseWith?: string;
+  /** Settles once the socket takes connections. */
+  listening: Promise<void>;
   stop(): void;
   /** Unbind the socket and remove the temp dirs. */
   dispose(): void;
 }
 
-export function fakeHarness(sid: string, opts: { peerProtocol?: number } = {}): FakeHarness {
+/** `stall`: the socket accepts connections and never reads them, as a
+ * harness that has stopped reading does — a write bigger than the socket's
+ * buffer goes in part-way and then waits. Nothing is recorded. */
+export function fakeHarness(
+  sid: string,
+  opts: { peerProtocol?: number; stall?: boolean } = {},
+): FakeHarness {
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
   const sockDir = fs.mkdtempSync("/tmp/pi-");
   const socketPath = path.join(sockDir, "s.sock");
@@ -76,18 +85,36 @@ export function fakeHarness(sid: string, opts: { peerProtocol?: number } = {}): 
     users.length > 0
       ? Promise.resolve(users.shift()!)
       : new Promise((resolve) => waiters.push(resolve));
+  let stopServer = (): void => {};
   const harness: FakeHarness = {
     configDir,
     socketPath,
     frames: [],
     nextUser,
     nextContent: async () => (await nextUser()).message.content as string,
-    stop: () => server.stop(true),
+    listening: Promise.resolve(),
+    stop: () => stopServer(),
     dispose: () => {
-      server.stop(true);
+      stopServer();
       fs.rmSync(configDir, { recursive: true, force: true });
       fs.rmSync(sockDir, { recursive: true, force: true });
     },
+  };
+  if (opts.stall === true) {
+    const held = new Set<net.Socket>();
+    const stalled = net.createServer({ pauseOnConnect: true }, (c) => {
+      held.add(c);
+      c.on("close", () => held.delete(c));
+    });
+    harness.listening = new Promise((resolve) => stalled.listen(socketPath, resolve));
+    stopServer = (): void => {
+      for (const c of held) c.destroy();
+      stalled.close();
+    };
+    return harness;
+  }
+  stopServer = (): void => {
+    server.stop(true);
   };
   const server = Bun.listen({
     unix: socketPath,

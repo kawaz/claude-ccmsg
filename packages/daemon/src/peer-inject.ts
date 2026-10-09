@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import { chmod, readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
 
-export type InjectOutcome = "delivered" | "unavailable" | "refused";
+export type InjectOutcome = "delivered" | "unavailable" | "refused" | "unconfirmed";
 
 /** What one delivery came to, with why for a message that did not arrive.
  *
@@ -23,11 +23,17 @@ export type InjectOutcome = "delivered" | "unavailable" | "refused";
  * - `no_status_socket`: this side could not open the socket the recipient
  *   reports a refusal to, so nothing was written — a write whose refusal could
  *   not be heard would be called delivered without knowing it was
- * - `unreachable`: the socket did not take both frames in time */
+ * - `unreachable`: the socket took nothing — no connection, or not one byte
+ *   of the frames in time — so nothing arrived
+ *
+ * `unconfirmed` is a write that started and did not finish in time: part of
+ * the frames, perhaps all, went in, so whether the session got the message
+ * cannot be told, and sending it again may deliver it twice. */
 export type InjectResult =
   | { outcome: "delivered" }
   | { outcome: "unavailable"; cause: "no_peer_socket" | "no_status_socket" | "unreachable" }
-  | { outcome: "refused" };
+  | { outcome: "refused" }
+  | { outcome: "unconfirmed" };
 
 /** One `user` frame's payload: `mid` names it to the harness (and to the
  * refusal it may answer), `content` is the envelope the model reads. */
@@ -237,7 +243,8 @@ export class PeerInjector {
       injectFrames(sid, token, frame, `uds:${inbox.path}`),
       this.#writeMs,
     );
-    if (written !== "delivered") return { outcome: "unavailable", cause: "unreachable" };
+    if (written === "not_written") return { outcome: "unavailable", cause: "unreachable" };
+    if (written === "uncertain") return { outcome: "unconfirmed" };
     const status = await watching;
     return status !== undefined && REFUSING.has(status)
       ? { outcome: "refused" }
@@ -325,25 +332,46 @@ export class PeerInjector {
   }
 }
 
+/** What one write came to.
+ *
+ * - `written`: every byte went in
+ * - `not_written`: none did — no connection, or not one byte before the time
+ *   ran out or the socket failed — so the reader has nothing of it
+ * - `uncertain`: some went in and the rest did not in time: the reader may
+ *   have a part, or all of it if the rest was on its way, so whether it got
+ *   the payload cannot be told
+ *
+ * Callers that would try somewhere else on a failure do so only on
+ * `not_written`: retrying an `uncertain` write may deliver it twice. */
+export type WriteOutcome = "written" | "not_written" | "uncertain";
+
 /** Connect and flush. The connection carries nothing back, so the budget covers
  * connect and flush only. Shared with the sidecar writes of session_input,
- * whose sockets answer nothing either. */
+ * whose sockets answer nothing either.
+ *
+ * A payload that went in whole is `written` even when the last byte went in
+ * after the budget: what the reader got is then known, which is what the
+ * outcome reports. */
 export async function writeSocket(
   socketPath: string,
   payload: string,
   ms: number,
-): Promise<InjectOutcome> {
+): Promise<WriteOutcome> {
   const started = Date.now();
-  const settled = Promise.withResolvers<InjectOutcome>();
+  const settled = Promise.withResolvers<WriteOutcome>();
   const bytes = Buffer.from(payload, "utf8");
   let written = 0;
   let flushed = false;
+  /** How a write that stopped short ends: by what reached the socket. */
+  const stopped = (): WriteOutcome => (written === 0 ? "not_written" : "uncertain");
 
   const push = (socket: { write(data: Uint8Array): number }): void => {
-    written += socket.write(bytes.subarray(written));
+    // -1 is a socket already closing, whose close / error settles the write.
+    const taken = socket.write(bytes.subarray(written));
+    if (taken > 0) written += taken;
     if (written >= bytes.length && !flushed) {
       flushed = true;
-      settled.resolve(Date.now() - started >= ms ? "unavailable" : "delivered");
+      settled.resolve("written");
     }
   };
 
@@ -357,16 +385,16 @@ export async function writeSocket(
           if (!flushed) push(conn);
         },
         data: () => {},
-        close: () => settled.resolve(flushed ? "delivered" : "unavailable"),
-        error: () => settled.resolve("unavailable"),
+        close: () => settled.resolve(flushed ? "written" : stopped()),
+        error: () => settled.resolve(flushed ? "written" : stopped()),
       },
     });
   } catch {
-    return "unavailable";
+    return "not_written";
   }
 
   const deadline = setTimeout(
-    () => settled.resolve("unavailable"),
+    () => settled.resolve(stopped()),
     Math.max(0, ms - (Date.now() - started)),
   );
   try {

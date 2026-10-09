@@ -68,12 +68,17 @@ export function readPromptSendReply(
   return { outcome: "unconfirmed" };
 }
 
-/** Reasons that say the run cannot take a person's input at all, so asking
- * another run of the session cannot put the text in twice. Any other answer —
+/** Reasons that say the run cannot take a person's input at all (or, for
+ * `session_changed`, is no longer that session and left the text out), so
+ * asking another run of the session cannot put the text in twice. Any other answer —
  * or none — may mean the text is in, or that this run is the one with the
  * composer and simply could not now; trying the next run then risks a second
  * copy, which is what one-at-a-time exists to prevent (DR-0035 §3). */
-const TRY_NEXT: ReadonlySet<SessionInputModuleReason> = new Set(["no_composer", "no_terminal"]);
+const TRY_NEXT: ReadonlySet<SessionInputModuleReason> = new Set([
+  "no_composer",
+  "no_terminal",
+  "session_changed",
+]);
 
 /** What became of one try, for the daemon log. */
 export interface SessionInputTry {
@@ -81,6 +86,7 @@ export interface SessionInputTry {
   socket: string;
   result:
     | "unwritten"
+    | "write_uncertain"
     | "accepted"
     | "unconfirmed"
     | `not_delivered:${SessionInputModuleReason}`
@@ -100,12 +106,19 @@ export async function sessionInput(
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
     const call = await callSidecar(socket, sid, "prompt.send", { text }, remaining, deps);
     const { id } = call;
-    if (!call.written) {
+    // Only a line the sidecar has none of may go to the next run. One that
+    // went in part-way (`uncertain`) and got no reply may still have reached
+    // the module, and the next run would put the text in a second time.
+    if (call.write === "not_written") {
       tries.push({ id, socket, result: "unwritten" });
       continue;
     }
     if (call.reply === undefined) {
-      tries.push({ id, socket, result: "unconfirmed" });
+      tries.push({
+        id,
+        socket,
+        result: call.write === "uncertain" ? "write_uncertain" : "unconfirmed",
+      });
       return { outcome: "unconfirmed", tries };
     }
     const read = readPromptSendReply(call.reply);

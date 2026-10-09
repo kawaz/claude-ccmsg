@@ -10,7 +10,13 @@ import {
   type SidecarReply,
   sidecarSocketName,
 } from "@ccmsg/protocol";
-import { readPromptSendReply, sessionInput, type SessionInputDeps } from "../src/session-input.ts";
+import * as net from "node:net";
+import {
+  productionInputDeps,
+  readPromptSendReply,
+  sessionInput,
+  type SessionInputDeps,
+} from "../src/session-input.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
 import {
   connect,
@@ -40,6 +46,9 @@ describe("readPromptSendReply", () => {
     expect(readPromptSendReply(ok({ outcome: "unconfirmed" }))).toEqual({
       outcome: "unconfirmed",
     });
+    expect(
+      readPromptSendReply(ok({ outcome: "not_delivered", reason: "session_changed" })),
+    ).toEqual({ outcome: "not_delivered", reason: "session_changed" });
   });
 
   // The op never ran, so nothing reached the composer.
@@ -60,9 +69,15 @@ describe("readPromptSendReply", () => {
   });
 });
 
-/** What one run does with the line written to it: not take it, stay silent,
- * reply with a result of the op, or reply that the op could not run. */
-type RunBehaviour = "unwritten" | "silent" | { result: unknown } | { error: SidecarErrorCode };
+/** What one run does with the line written to it: not take it, take part of
+ * it and stay silent, stay silent, reply with a result of the op, or reply
+ * that the op could not run. */
+type RunBehaviour =
+  | "unwritten"
+  | "uncertain"
+  | "silent"
+  | { result: unknown }
+  | { error: SidecarErrorCode };
 
 function replyFor(id: string, behaviour: { result: unknown } | { error: SidecarErrorCode }) {
   return "result" in behaviour
@@ -88,11 +103,12 @@ function scripted(
     write: async (socket, line) => {
       const pid = /\.(\d+)\.sock$/.exec(socket)![1]!;
       const behaviour = runs[pid]!;
-      if (behaviour === "unwritten") return "unavailable";
+      if (behaviour === "unwritten") return "not_written";
       const parsed = JSON.parse(line) as Record<string, unknown>;
       written.push({ socket: path.basename(socket), line: parsed });
+      if (behaviour === "uncertain") return "uncertain";
       if (behaviour !== "silent") replies.take(SID, replyFor(parsed.id as string, behaviour));
-      return "delivered";
+      return "written";
     },
     now: Date.now,
     deadlineMs: 5_000,
@@ -113,6 +129,15 @@ describe("sessionInput asks one run at a time", () => {
       outcome: "not_delivered",
       reason: "no_module",
     });
+  });
+
+  test("a run whose session changed its id passes the text to the next", async () => {
+    const { deps, written } = scripted({
+      "100": notDelivered("session_changed"),
+      "200": ACCEPTED,
+    });
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(written.length).toBe(2);
   });
 
   test("a run that cannot take input passes the text to the next, under a new id", async () => {
@@ -176,6 +201,7 @@ describe("sessionInput asks one run at a time", () => {
 
   for (const [name, behaviour] of [
     ["silence", "silent"],
+    ["a write that stopped part-way, with no reply", "uncertain"],
     ["the module's own unconfirmed", { result: { outcome: "unconfirmed" } }],
     ["an op that failed part-way", { error: "internal" }],
   ] as const) {
@@ -213,13 +239,52 @@ describe("sessionInput asks one run at a time", () => {
             ok: true,
             result: { outcome: "not_delivered", reason: "no_terminal" },
           });
-          return "delivered";
+          return "written";
         },
       },
     );
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
     expect(written.length).toBe(1);
   });
+});
+
+// Over real sockets: the first run's sidecar has stopped reading, so a large
+// line goes in part-way and the write runs out of time. The module may still
+// get the whole line, so the second run must not be sent it as well.
+test("a write that stopped part-way is unconfirmed and goes to no other run", async () => {
+  const dir = fs.mkdtempSync("/tmp/ccmsg-si-w-");
+  const held = new Set<net.Socket>();
+  const stalled = net.createServer({ pauseOnConnect: true }, (c) => {
+    held.add(c);
+  });
+  await new Promise<void>((resolve) =>
+    stalled.listen(path.join(dir, sidecarSocketName(SID, 100)), resolve),
+  );
+  let reached = 0;
+  const reading = Bun.listen({
+    unix: path.join(dir, sidecarSocketName(SID, 200)),
+    socket: {
+      data: (_s, chunk) => {
+        reached += chunk.length;
+      },
+    },
+  });
+  try {
+    const deps: SessionInputDeps = {
+      ...productionInputDeps(dir, new SidecarReplies()),
+      isAlive: () => true,
+      deadlineMs: 400,
+    };
+    const res = await sessionInput(SID, "x".repeat(4 * 1024 * 1024), deps);
+    expect(res.outcome).toBe("unconfirmed");
+    expect(res.tries.map((t) => t.result)).toEqual(["write_uncertain"]);
+    expect(reached).toBe(0);
+  } finally {
+    for (const c of held) c.destroy();
+    stalled.close();
+    reading.stop(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /** A daemon whose state dir is short enough for the sidecar sockets to live
@@ -414,6 +479,10 @@ describe("session_input over the wire", () => {
       expect(malformed.error.code).toBe("invalid_args");
       const noReply = await session.request({ op: "sidecar_reply" });
       expect(noReply.error.code).toBe("invalid_args");
+      // A refused reply leaves a line in daemon.log, with its id when it has one.
+      const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
+      expect(log).toContain(`sidecar_reply never-sent from ${SID} refused: no request is waiting`);
+      expect(log).toContain(`sidecar_reply from ${SID} refused: a failed reply carries error`);
       user.close();
       session.close();
     } finally {
