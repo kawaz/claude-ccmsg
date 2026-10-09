@@ -42,7 +42,7 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 - **hook は throw させない**: `session.send` hook が throw すると、harness は本来の宛先の解決に戻り、`ccmsg:...` を宛先として探して「No agent named ... is reachable」を返す。失敗はすべて捕まえて `{ isDelivered: false, reason }` で返す。`.catch` で `next` に流す形はこの hook には使わない
 - **待ちには期限を明示する**: hook の中で 3 秒・10 秒の await は成功し、その間 turn の進行表示が続く。`$.process.run` の既定の期限は 30 秒で、超えると上の throw になる。daemon への送信には `timeoutMs` を明示し、全体を十数秒に収め、超えたら「届いたか確かめられなかった」の `reason` で返す
 - **config home をまたぐ往復は閉じる**: X の hook が横取りして Y の socket に `from="ccmsg:<X の sid>"` で注入すると、Y には peer として届き (`origin.kind: "peer"`、「Another Claude session sent a message」の枠)、Y の model が `from` をそのまま `to` に書いた SendMessage を Y の hook が横取りして X に戻る
-- **1 つの宛先が複数のセッションに解決された時 (`ccmsg:path:<dir>`、同じ sid の複数の run) の一部失敗は `isDelivered: true`**: SendMessage の `to` は文字列 1 つで、hook が返せる結果も 1 つ。`false` にすると、既に届いた相手がいても model には `Not sent` と見え、送り直して二重に届く。届かなかった相手の内訳を送り手に伝える手段は実装時に決める
+- **1 つの宛先が複数のセッションに解決された時 (`ccmsg:path:<dir>`、同じ sid の複数の run) の一部失敗は `isDelivered: true`**: SendMessage の `to` は文字列 1 つで、hook が返せる結果も 1 つ。`false` にすると、既に届いた相手がいても model には `Not sent` と見え、送り直して二重に届く。1 つでも届けば成功とし、届かなかった相手の内訳は送り手に伝えない (kawaz 2026-10-09)。全部に届かなかった時だけ `isDelivered: false` と理由を返す
 - **`ccmsg:path:<dir>` は realpath で正規化して完全一致**: harness の state file と `claude agents --json` の cwd は、起動のパスに symlink (`/tmp` → `/private/tmp`、workspace の symlink) や末尾 `/` があっても realpath に揃っていた。宛先の path も realpath にしてから完全一致で比べる。サブディレクトリは含めない (同じ作業ディレクトリのセッションへの broadcast という意図に合わせる)
 
 ### 5. 対象外
