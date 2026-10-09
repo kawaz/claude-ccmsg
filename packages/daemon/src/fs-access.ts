@@ -74,12 +74,12 @@ export interface SessionLookup extends SessionStatusLookup {
  *     doesn't slip past the ancestor check.
  */
 export async function validateRepoRoot(
-  cwd: unknown,
-  repoRootCandidate: unknown,
+  cwd: string,
+  repoRootCandidate: string | undefined,
 ): Promise<string | undefined> {
-  if (typeof repoRootCandidate !== "string" || repoRootCandidate === "") return undefined;
+  if (repoRootCandidate === undefined || repoRootCandidate === "") return undefined;
   if (!path.isAbsolute(repoRootCandidate)) return undefined;
-  if (typeof cwd !== "string" || cwd === "" || !path.isAbsolute(cwd)) return undefined;
+  if (cwd === "" || !path.isAbsolute(cwd)) return undefined;
 
   let realRoot: string;
   let realCwd: string;
@@ -365,10 +365,6 @@ export async function fsList(
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
-  if (reqPath !== undefined && typeof reqPath !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_list path must be a string" };
-  }
-
   const resolved = await resolveContained(root, reqPath ?? "");
   if (!resolved.ok) return resolved;
 
@@ -465,7 +461,7 @@ export async function fsRead(
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
-  if (typeof reqPath !== "string" || reqPath === "") {
+  if (reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_read requires path" };
   }
 
@@ -497,7 +493,7 @@ export async function fsReadExternal(
   sid: string,
   reqPath: string,
 ): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
-  if (typeof reqPath !== "string" || reqPath === "" || !path.isAbsolute(reqPath)) {
+  if (reqPath === "" || !path.isAbsolute(reqPath)) {
     return {
       ok: false,
       code: ErrorCode.invalid_args,
@@ -538,9 +534,9 @@ export async function fsReadExternal(
  *  - other realpath errors (EACCES, ENOTDIR mid-chain) → path_forbidden */
 async function resolveWorkspaceContained(
   allowlist: readonly string[],
-  reqPath: unknown,
+  reqPath: string,
 ): Promise<ContainedOk | ContainedErr> {
-  if (typeof reqPath !== "string" || reqPath === "") {
+  if (reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "workspace path must be a string" };
   }
   if (!path.isAbsolute(reqPath)) {
@@ -733,14 +729,14 @@ export async function fsResolveForServe(
   if (kind === "contained") {
     const rootResult = await resolveRoot(sessions, sid);
     if (!rootResult.ok) return rootResult;
-    if (typeof reqPath !== "string" || reqPath === "") {
+    if (reqPath === "") {
       return { ok: false, code: ErrorCode.invalid_args, msg: "fs_serve requires path" };
     }
     const resolved = await resolveContained(rootResult.root, reqPath);
     if (!resolved.ok) return resolved;
     realPath = resolved.realPath;
   } else if (kind === "external") {
-    if (typeof reqPath !== "string" || reqPath === "" || !path.isAbsolute(reqPath)) {
+    if (reqPath === "" || !path.isAbsolute(reqPath)) {
       return {
         ok: false,
         code: ErrorCode.invalid_args,
@@ -800,11 +796,8 @@ export async function fsStatBatch(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
-  paths: unknown,
+  paths: readonly string[],
 ): Promise<FsAccessResult<Omit<FsStatBatchResponse, "ok">>> {
-  if (!Array.isArray(paths)) {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_stat_batch requires paths array" };
-  }
   if (paths.length > FS_STAT_BATCH_MAX_PATHS) {
     return {
       ok: false,
@@ -822,7 +815,7 @@ export async function fsStatBatch(
 
   const results: (FsStatEntry | null)[] = await Promise.all(
     paths.map(async (raw): Promise<FsStatEntry | null> => {
-      if (typeof raw !== "string" || raw === "" || !path.isAbsolute(raw)) return null;
+      if (raw === "" || !path.isAbsolute(raw)) return null;
       const normalized = path.normalize(raw);
 
       // 1) contained: absolute path lies inside the session's containment root
@@ -908,11 +901,8 @@ export async function fsWrite(
     };
   }
 
-  if (typeof reqPath !== "string" || reqPath === "") {
+  if (reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write requires path" };
-  }
-  if (typeof content !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write content must be a string" };
   }
 
   // Permit a missing leaf only after the nearest existing ancestor has passed
@@ -1023,13 +1013,10 @@ export async function fsEdit(
   expectedMtime: string,
   expectedSize: number,
 ): Promise<FsAccessResult<Omit<FsEditResponse, "ok">>> {
-  if (typeof content !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit content must be a string" };
-  }
-  if (typeof expectedMtime !== "string" || expectedMtime === "") {
+  if (expectedMtime === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit requires expected_mtime" };
   }
-  if (typeof expectedSize !== "number" || !Number.isFinite(expectedSize) || expectedSize < 0) {
+  if (!Number.isFinite(expectedSize) || expectedSize < 0) {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit requires expected_size (>=0)" };
   }
   // Reject content that would have been unrepresentable in the viewer's read
@@ -1154,11 +1141,8 @@ export async function fsCreate(
   kind: "contained" | "workspace",
   content: string,
 ): Promise<FsAccessResult<Omit<FsCreateResponse, "ok">>> {
-  if (typeof reqPath !== "string" || reqPath === "") {
+  if (reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_create requires path" };
-  }
-  if (typeof content !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_create content must be a string" };
   }
   const contentBytes = Buffer.byteLength(content, "utf-8");
   if (contentBytes > FS_READ_MAX_BYTES) {
@@ -1182,7 +1166,7 @@ export async function fsCreate(
   } else {
     const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
-    if (typeof reqPath !== "string" || !path.isAbsolute(reqPath)) {
+    if (!path.isAbsolute(reqPath)) {
       return {
         ok: false,
         code: ErrorCode.invalid_args,

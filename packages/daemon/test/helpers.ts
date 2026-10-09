@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Socket } from "bun";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, readDaemonFrame, REQUEST_OPS, type RequestOp } from "@ccmsg/protocol";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -180,6 +180,43 @@ export async function connect(sock: string): Promise<TestClient> {
   return client;
 }
 
+/** Why a line the daemon wrote is not what the wire's schemas say it is, or
+ * undefined when it is. Every line a TestClient receives is read here, so a
+ * reply or push the daemon sends outside its schema fails the test that got
+ * it: a client reading it with the schema would not see it as sent.
+ *
+ * `op` is the op of the request a reply answers, when the client knows it.
+ * Read with that op's schema, the reply has to come back whole — a field the
+ * schema does not name would be left out by a client reading it. */
+function frameProblem(line: string, op: RequestOp | undefined): string | undefined {
+  const frame = readDaemonFrame(line);
+  if (frame.kind === "invalid") return frame.failure.summary;
+  const raw: unknown = JSON.parse(line);
+  if (frame.kind === "event") {
+    return Bun.deepEquals(frame.event, raw) ? undefined : "fields outside its schema";
+  }
+  if (op === undefined) {
+    // A reply this client did not ask for under an op: only an error can be one.
+    const read = frame.reply("ping");
+    return read.ok && !read.value.ok
+      ? undefined
+      : "a reply to no request this client named, and not an error";
+  }
+  const read = frame.reply(op);
+  if (!read.ok) return `as the answer to ${op}: ${read.failure.summary}`;
+  const whole =
+    frame.requestId === undefined ? read.value : { ...read.value, request_id: frame.requestId };
+  return Bun.deepEquals(whole, raw)
+    ? undefined
+    : `as the answer to ${op}: fields outside its schema`;
+}
+
+function requestOpOf(obj: unknown): RequestOp | undefined {
+  if (typeof obj !== "object" || obj === null || !("op" in obj)) return undefined;
+  const op = obj.op;
+  return REQUEST_OPS.find((known) => known === op);
+}
+
 export class TestClient {
   private socket!: Socket;
   private decoder = new TextDecoder();
@@ -192,6 +229,20 @@ export class TestClient {
   private nextRequestId = 0;
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
   private pendingReplies = new Map<string, (line: string | null) => void>();
+  /** The op of every request this client wrote with an id, by that id. */
+  private opsById = new Map<string, RequestOp>();
+  /** Lines the daemon wrote that its schemas do not read, with why. */
+  private invalidFrames: string[] = [];
+
+  /** Fail when any line this client has received so far is not a frame of
+   * the wire's schemas. Called wherever the client hands something to a test. */
+  private assertFrames(): void {
+    if (this.invalidFrames.length > 0) {
+      throw new Error(
+        `the daemon wrote lines outside the wire's schemas:\n${this.invalidFrames.join("\n")}`,
+      );
+    }
+  }
 
   /** Lines the socket did not take yet, oldest first: Bun's `write` takes
    * what fits and keeps nothing, so a large request is finished on `drain`. */
@@ -221,31 +272,19 @@ export class TestClient {
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx);
       this.buf = this.buf.slice(idx + 1);
+      const frame = readDaemonFrame(line);
+      const rid = frame.kind === "reply" ? frame.requestId : undefined;
+      const problem = frameProblem(line, rid === undefined ? undefined : this.opsById.get(rid));
+      if (problem !== undefined) this.invalidFrames.push(`${problem}: ${line.slice(0, 400)}`);
       // A reply someone is waiting for goes straight to them; anything else
       // (stream events, replies nobody claimed) joins the readable stream.
-      const claimant = this.replyWaiter(line);
-      if (claimant) claimant(line);
-      else this.lines.push(line);
+      const claimant = rid === undefined ? undefined : this.pendingReplies.get(rid);
+      if (rid !== undefined && claimant) {
+        this.pendingReplies.delete(rid);
+        claimant(line);
+      } else this.lines.push(line);
     }
     this.drain();
-  }
-  /** The `request` call waiting for this frame, if it is a correlated reply. */
-  private replyWaiter(line: string): ((line: string) => void) | undefined {
-    if (this.pendingReplies.size === 0) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      return undefined;
-    }
-    if (typeof parsed !== "object" || parsed === null || !Object.hasOwn(parsed, "ok")) {
-      return undefined;
-    }
-    const rid = (parsed as { request_id?: unknown }).request_id;
-    if (typeof rid !== "string") return undefined;
-    const settle = this.pendingReplies.get(rid);
-    if (settle) this.pendingReplies.delete(rid);
-    return settle;
   }
   private drain(): void {
     while (this.waiters.length > 0 && this.lines.length > 0) {
@@ -268,6 +307,11 @@ export class TestClient {
     this.onDrain();
   }
   write(obj: unknown): void {
+    const op = requestOpOf(obj);
+    if (op !== undefined && typeof obj === "object" && obj !== null && "request_id" in obj) {
+      const rid = obj.request_id;
+      if (typeof rid === "string") this.opsById.set(rid, op);
+    }
     this.writeRaw(`${JSON.stringify(obj)}\n`);
   }
   /** Send an op and return its reply, pairing the way the real clients do: by
@@ -289,9 +333,24 @@ export class TestClient {
       this.write({ ...body, request_id: rid });
     });
     const line = await reply;
+    this.assertFrames();
     if (line === null) throw new Error("connection closed before response");
     const { request_id: _rid, ...payload } = JSON.parse(line);
     return payload as T;
+  }
+  /** Send an op the daemon cannot read as a request, with a request_id like
+   * any other, and return its refusal: the next reply that names no request,
+   * since a line the request schema does not read names none. */
+  async requestRefused(obj: Record<string, unknown>): Promise<any> {
+    this.write({ request_id: `t${++this.nextRequestId}`, ...obj });
+    for (;;) {
+      const line = await this.readLine();
+      this.assertFrames();
+      if (line === null) throw new Error("connection closed before response");
+      const frame = readDaemonFrame(line);
+      if (frame.kind === "reply" && frame.requestId === undefined) return JSON.parse(line);
+      this.eventBacklog.push(line);
+    }
   }
   /** Send a request exactly as given — no request_id stamped — and return the
    * next reply frame. For the malformed-request cases, whose reply carries no
@@ -300,6 +359,7 @@ export class TestClient {
     this.write(obj);
     for (;;) {
       const line = await this.readLine();
+      this.assertFrames();
       if (line === null) throw new Error("connection closed before response");
       const parsed = JSON.parse(line);
       if (parsed !== null && typeof parsed === "object" && !Object.hasOwn(parsed, "ok")) {
@@ -310,9 +370,11 @@ export class TestClient {
     }
   }
   async readEvent<T = any>(): Promise<T | null> {
+    this.assertFrames();
     const buffered = this.eventBacklog.shift();
     if (buffered !== undefined) return JSON.parse(buffered) as T;
     const line = await this.readLine();
+    this.assertFrames();
     return line === null ? null : (JSON.parse(line) as T);
   }
   /** Events already delivered to this socket, without waiting for more — for
@@ -320,6 +382,7 @@ export class TestClient {
    * after something else has ordered the stream past the moment in question
    * (e.g. a request round-trip). */
   async pendingEvents<T = any>(): Promise<T[]> {
+    this.assertFrames();
     const events: T[] = [];
     for (;;) {
       const buffered = this.eventBacklog.shift();
@@ -365,5 +428,6 @@ export class TestClient {
     } catch {
       // already closing
     }
+    this.assertFrames();
   }
 }

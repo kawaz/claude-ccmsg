@@ -13,6 +13,7 @@ import {
   LLM_STATS_DAYS_MIN,
   VERSION,
   PROTOCOL_VERSION,
+  isOtherGenerationHello,
   isSessionIdShape,
   readRequest,
   resolvePaths,
@@ -28,11 +29,10 @@ import {
   type NotifyFrom,
   type Paths,
   type PeerInfo,
-  type HelloClaims,
   type HelloRequest,
-  type Request,
+  type OtherGenerationHelloRequest,
   type RequestOp,
-  type RequestRead,
+  type ServedRequest,
   type RoomKind,
   type SayEvent,
   type SayReadEvent,
@@ -725,17 +725,16 @@ function logToken(value: string | undefined): string | undefined {
   return /^[A-Za-z0-9._/-]+$/.test(trimmed) ? trimmed : undefined;
 }
 
-/** A hello made of what a hello of any generation claims (HelloClaims), so
- * the transport reads it as it reads a hello it serves (the WebSocket pins it
- * to the user role, dropping its sid). A hello that names no role is taken
- * at its sid alone. */
-function claimedHello(claims: HelloClaims): HelloRequest {
+/** A hello made of what a hello of another generation says about its client
+ * (OtherGenerationHelloRequest), so the transport reads it as it reads a hello
+ * it serves (the WebSocket pins it to the user role, dropping its sid). A
+ * hello that names no role is taken at its sid alone. */
+function claimedHello(claims: OtherGenerationHelloRequest): HelloRequest {
   return {
     op: "hello",
     role: claims.role ?? "session",
     ...(claims.sid !== undefined ? { sid: claims.sid } : {}),
     ...(claims.client_version !== undefined ? { client_version: claims.client_version } : {}),
-    ...(claims.protocol !== undefined ? { protocol: claims.protocol } : {}),
   };
 }
 
@@ -753,7 +752,7 @@ function refuseGeneration(
   generation: number,
 ): void {
   if (hello.role === "session" && hello.sid) {
-    markStaleClient(daemon, hello.sid, readClientBuild(hello));
+    markStaleClient(daemon, hello.sid, { ...readClientBuild(hello), protocol: generation });
     maybeBroadcastPeers(daemon);
   }
   sendErr(
@@ -1291,9 +1290,7 @@ function injectMessage(
  * - with sinceSeq: positional delta anchored on `seq`, which spans EVERY
  *   event type (DR-0016) — takes priority over sinceMid when both are
  *   supplied. A `since_seq` value that is not a finite non-negative number
- *   reaches here as no sinceSeq (the request schema reads it as `null`,
- *   DR-0016 §2.5): the safe side is full backlog replay (duplicate delivery),
- *   never an out-of-range array/loop hazard.
+ *   never reaches here: the request schema refuses it.
  * - else with sinceMid: positional delta — everything after the msg with that mid
  *   (BBS replay, msg-only cursor, old-client compat).
  * - without either: present member state + title/link events + the last N=50 msgs
@@ -1631,50 +1628,28 @@ async function handleOneRequest(
   // dispatch instead (see the end of this function).
   if (!daemon.connections.has(conn)) return;
   // The line is read once, by the request schema (DR-0038): from here on it
-  // is a typed request, or a typed reason it is not one.
+  // is a typed request, or a failure. A failure names no request it could be
+  // answered under, so its reply carries no id.
   const read = readRequest(line);
-  if (!read.ok && read.reason === "not_json") {
-    sendErr(conn, ErrorCode.bad_request, "invalid JSON");
+  if (!read.ok) {
+    // The refusal goes to a client that may only log it somewhere nobody
+    // looks (a session's hooks module, a browser console), so it is logged
+    // here too, under the connection it came on.
+    const why = clipRefusal(read.failure.summary);
+    const id = conn.identity;
+    const from = id === null ? "a connection without hello" : id.role === "user" ? "user" : id.sid;
+    daemon.log.warn(`request from ${from} refused: ${why}`);
+    sendErr(conn, ErrorCode.bad_request, why);
     return;
   }
-  if (!read.ok && read.reason === "no_op") {
-    sendErr(conn, ErrorCode.bad_request, "missing op");
-    return;
-  }
-  // Everything from here on is answered with a correlated reply, so the id has
-  // to be known first. A request without one cannot be answered in a way its
-  // sender could pair up: report it as bad_request (uncorrelated, like the two
-  // failures above) rather than dispatching into a reply nobody claims.
-  // No compatibility path for the pre-correlation clients that omit it — that
-  // is a deliberate break (DR-0029 追補 / DR-0002 §4 設計意図); a subscribe from
-  // before this envelope is resolved by restarting it, not by serving it here.
-  if (!read.ok && read.reason === "no_request_id") {
-    // The refusal stands, but a client this old is otherwise invisible: it
-    // never registers, so nothing in the session list ever mentions it. File
-    // it against the sid its hello claimed, which is the only thing here that
-    // ties the failing process back to a session kawaz can act on.
-    const hello = read.hello === undefined ? undefined : readHello(claimedHello(read.hello));
-    if (hello?.sid) {
-      markStaleClient(daemon, hello.sid, readClientBuild(hello));
-      maybeBroadcastPeers(daemon);
-    }
-    sendErr(conn, ErrorCode.bad_request, `op '${read.op}' requires a non-empty string request_id`);
-    return;
-  }
-  const requestId = read.ok ? read.request.request_id : read.requestId;
-  await activeRequest.run({ conn, requestId }, async () => {
-    if (!read.ok && read.reason === "other_generation") {
-      refuseGeneration(daemon, conn, readHello(claimedHello(read.hello)), read.generation);
-      return;
-    }
-    if (!read.ok) {
-      refuseRequest(daemon, conn, read);
+  const request = read.value;
+  await activeRequest.run({ conn, requestId: request.request_id }, async () => {
+    if (isOtherGenerationHello(request)) {
+      refuseGeneration(daemon, conn, readHello(claimedHello(request)), request.protocol);
       return;
     }
     const req =
-      read.request.op === "hello"
-        ? { ...readHello(read.request), request_id: read.request.request_id }
-        : read.request;
+      request.op === "hello" ? { ...readHello(request), request_id: request.request_id } : request;
     if (IDENTITY_OPS.has(req.op) && conn.identity === null) {
       sendErr(conn, ErrorCode.hello_required, `op '${req.op}' requires hello first`);
       return;
@@ -1702,34 +1677,6 @@ async function handleOneRequest(
   }
 }
 
-/** Answer a request that names its id but cannot be dispatched: an op this
- * daemon does not have, or one whose fields are not what it takes. A
- * connection that has not said hello is told that first for an op that needs
- * it, exactly as a well-formed request of that op would be.
- *
- * Fields that are not what the op takes are a client's bug, and the reply
- * goes to a client that may only log it somewhere nobody looks (a session's
- * hooks module, a browser console), so the refusal is logged here too. */
-function refuseRequest(
-  daemon: Daemon,
-  conn: Conn,
-  read: Extract<RequestRead, { reason: "unknown_op" | "invalid_args" }>,
-): void {
-  if (read.reason === "unknown_op") {
-    sendErr(conn, ErrorCode.unknown_op, `unknown op: ${read.op}`);
-    return;
-  }
-  if (IDENTITY_OPS.has(read.op) && conn.identity === null) {
-    sendErr(conn, ErrorCode.hello_required, `op '${read.op}' requires hello first`);
-    return;
-  }
-  const id = conn.identity;
-  const from = id === null ? "a connection without hello" : id.role === "user" ? "user" : id.sid;
-  const why = clipRefusal(read.failure.summary);
-  daemon.log.warn(`${read.op} from ${from} refused: ${why}`);
-  sendErr(conn, ErrorCode.invalid_args, `op '${read.op}': ${why}`);
-}
-
 /** The longest account of a refused request's fields that goes into a reply
  * or the log. A failure quotes the value it refused, and that value is the
  * sender's: as large as the sender likes. */
@@ -1741,7 +1688,7 @@ function clipRefusal(summary: string): string {
     : `${summary.slice(0, REFUSAL_MAX_CHARS)}… (${summary.length - REFUSAL_MAX_CHARS} more characters)`;
 }
 
-async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
+async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise<void> {
   switch (req.op) {
     case "hello": {
       // A hello of another generation never reaches here: it is answered
@@ -2429,12 +2376,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         if (!subscriberSeesRoom(conn, room)) continue;
         const sinceMid = req.since?.[room.id];
         const sinceSeq = req.since_seq?.[room.id];
-        // Presence, not validity, decides opt-in: a room the caller named in
-        // since/since_seq at all (even with a malformed value, which the
-        // request schema reads as null) means "I have a cursor concept for
-        // this room" — a null cursor still resolves to the full join snapshot
-        // below (DR-0016 §2.5's "duplicates over silent loss"), it just doesn't
-        // fall all the way to the new no-cursor-named default.
+        // A room the caller named in since/since_seq means "I have a cursor
+        // for this room"; any other room falls to the no-cursor default.
         const hasCursor = sinceMid !== undefined || sinceSeq !== undefined;
         if (!hasCursor && req.backlog !== true) {
           // Recent-replay: for this room the subscriber gets no history via
@@ -2455,14 +2398,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           cursors.push({ room: room.id, last_mid: room.lastMid });
           continue;
         }
-        sendBacklog(
-          conn,
-          room,
-          sinceMid ?? undefined,
-          undefined,
-          sinceSeq ?? undefined,
-          streamsMsgs(conn),
-        );
+        sendBacklog(conn, room, sinceMid, undefined, sinceSeq, streamsMsgs(conn));
       }
       if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       if (conn.identity?.role === "user") {

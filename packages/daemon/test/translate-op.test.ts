@@ -105,7 +105,10 @@ describe("translate op", () => {
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
-      error: { code: "bad_request", msg: "op 'translate' requires a non-empty string request_id" },
+      error: {
+        code: "bad_request",
+        msg: 'request_id: Invalid key: Expected "request_id" but received undefined',
+      },
     });
   });
 
@@ -132,7 +135,7 @@ describe("translate op", () => {
     });
   });
 
-  test("non-string batches are rejected as invalid arguments", async () => {
+  test("a batch that is not of strings is not read as a request", async () => {
     let calls = 0;
     const translator: TranslateService = {
       async translate() {
@@ -154,11 +157,7 @@ describe("translate op", () => {
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
-      error: {
-        code: "invalid_args",
-        msg: "op 'translate': texts.1: Invalid type: Expected string but received 42",
-      },
-      request_id: "q1",
+      error: { code: "bad_request", msg: "texts.1: Invalid type: Expected string but received 42" },
     });
   });
 

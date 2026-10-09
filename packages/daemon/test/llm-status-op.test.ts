@@ -150,7 +150,7 @@ describe("llm_status op", () => {
         { op: "llm_status", request_id: "r4", refresh },
         1,
       );
-      expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+      expect(reply?.error.code).toBe(ErrorCode.bad_request);
     }
     expect(received.length).toBe(asked);
   });

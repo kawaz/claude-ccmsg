@@ -121,11 +121,11 @@ async function restartWithRoom(ctx: DaemonCtx, id?: string, events?: object[]): 
 
 describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
   // 何を保証するか (DR-0035 §2): create_room は kind "1on1" を受け付けず、
-  // invalid_args で拒否して room を作らない。人がセッションへ書く経路は
+  // 依頼として読めない行として bad_request で拒否して room を作らない。人がセッションへ書く経路は
   // session_input に移ったので、user role からも session role からも、初期
   // --msg の有無にかかわらず同じく拒否される。
   test(
-    "create_room kind 1on1 is refused with invalid_args and opens no room",
+    "create_room kind 1on1 is refused and opens no room",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -139,15 +139,13 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           [a, { members: [SID_A], msg: "session initial" }],
         ];
         for (const [c, extra] of attempts) {
-          const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
-            op: "create_room",
-            kind: "1on1",
-            ...extra,
-          });
-          expect(res.ok).toBe(false);
-          expect(res.error).toEqual({
-            code: "invalid_args",
-            msg: "op 'create_room': kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
+          const res = await c.requestRefused({ op: "create_room", kind: "1on1", ...extra });
+          expect(res).toEqual({
+            ok: false,
+            error: {
+              code: "bad_request",
+              msg: "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
+            },
           });
         }
         const after = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
@@ -161,23 +159,21 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
     T,
   );
 
-  // 何を保証するか: 知らない kind は黙って normal room にせず invalid_args で
+  // 何を保証するか: 知らない kind は黙って normal room にせず bad_request で
   // 拒否する (typo で意図と違う room が立たない)。
   test(
-    "create_room with an unknown kind is refused with invalid_args",
+    "create_room with an unknown kind is refused",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const res = await u.request<{ ok: false; error: { code: string; msg: string } }>({
-          op: "create_room",
-          members: [SID_A],
-          kind: "group",
-        });
-        expect(res.ok).toBe(false);
-        expect(res.error).toEqual({
-          code: "invalid_args",
-          msg: 'op \'create_room\': kind: Invalid type: Expected ("normal" | "broadcast") but received "group"',
+        const res = await u.requestRefused({ op: "create_room", members: [SID_A], kind: "group" });
+        expect(res).toEqual({
+          ok: false,
+          error: {
+            code: "bad_request",
+            msg: 'kind: Invalid type: Expected ("normal" | "broadcast") but received "group"',
+          },
         });
       } finally {
         await stopTestDaemon(ctx);

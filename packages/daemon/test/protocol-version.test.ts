@@ -122,9 +122,10 @@ describe("protocol version handshake", () => {
     T,
   );
 
-  // The generation is read before the rest of the hello: a client of another
-  // generation may shape its hello differently, and what it needs to hear is
-  // which generation to run, not which field it got wrong.
+  // A hello of another generation is read for what its refusal needs (the
+  // generation, the role, the sid, the build), not for the rest: a client of
+  // another generation may shape its other fields differently, and what it
+  // needs to hear is which generation to run, not which field it got wrong.
   test(
     "a hello of another generation is told so even when its other fields have another shape",
     async () => {
@@ -132,7 +133,7 @@ describe("protocol version handshake", () => {
         const old = await connect(ctx.sock);
         const err = await old.request<{ ok: boolean; error: { code: string; msg: string } }>({
           op: "hello",
-          role: "observer",
+          role: "session",
           sid: SID_S2,
           cwd: ["/tmp"],
           client_version: "0.1.0",
@@ -149,8 +150,11 @@ describe("protocol version handshake", () => {
     T,
   );
 
+  // A line the request schema does not read is refused and read no further,
+  // so a hello without its request_id flags nothing: there is no hello to take
+  // a sid from.
   test(
-    "a hello with no request_id is still refused, and its sid is flagged",
+    "a hello with no request_id is refused, and flags nothing",
     async () => {
       await withDaemon(async (ctx) => {
         const live = await connect(ctx.sock);
@@ -179,13 +183,7 @@ describe("protocol version handshake", () => {
         expect(err.ok).toBe(false);
         expect(err.error.code).toBe("bad_request");
 
-        const stale = (await peersOf(ctx)).find((p) => p.sid === SID_S3)?.stale_client;
-        expect(stale).toBeDefined();
-        // Nothing to report but the fact of the attempt — that client is too
-        // old to name either its build or its generation. The absent protocol
-        // is itself the signal: refused before it could be read as a hello.
-        expect(stale?.version).toBeUndefined();
-        expect(stale?.protocol).toBeUndefined();
+        expect((await peersOf(ctx)).find((p) => p.sid === SID_S3)?.stale_client).toBeUndefined();
         old.close();
         live.close();
       });
@@ -254,8 +252,13 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const old = await connect(ctx.sock);
-        await old.requestRaw({ op: "hello", role: "session", sid: SID_S5, cwd: "/tmp" });
-        expect((await peersOf(ctx)).find((p) => p.sid === SID_S5)).toBeUndefined();
+        await old.request({
+          op: "hello",
+          role: "session",
+          sid: SID_S5,
+          cwd: "/tmp",
+          protocol: PROTOCOL_VERSION + 1,
+        });
 
         const fresh = await connect(ctx.sock);
         await fresh.request({
@@ -304,7 +307,13 @@ describe("protocol version handshake", () => {
         await watcher.request({ op: "subscribe" });
 
         const old = await connect(ctx.sock);
-        await old.requestRaw({ op: "hello", role: "session", sid: SID_S6, cwd: "/tmp" });
+        await old.request({
+          op: "hello",
+          role: "session",
+          sid: SID_S6,
+          cwd: "/tmp",
+          protocol: PROTOCOL_VERSION + 1,
+        });
 
         const { ev } = await watcher.readEventUntil<{ ev: "peers"; peers: PeerInfo[] }>(
           (e) => e.ev === "peers" && e.peers.some((p: PeerInfo) => p.stale_client),

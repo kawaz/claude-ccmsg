@@ -134,25 +134,15 @@ export const KickRequestSchema = v.object({
 });
 export type KickRequest = v.InferOutput<typeof KickRequestSchema>;
 
-/** One room's cursor in `since` / `since_seq`: a position, or `null` for a
- * value that is not one. A room named with a value that is not a position
- * still says "I have a cursor for this room", and is replayed in full rather
- * than refused or skipped — duplicates over silent loss (DR-0016 §2.5). */
-const SinceCursorSchema = v.fallback(v.nullable(v.number()), null);
-
-/** A `since_seq` cursor: a seq is a finite, non-negative position, and
- * anything else reads as `null` (DR-0016 §2.5). */
-const SinceSeqCursorSchema = v.fallback(
-  v.nullable(v.pipe(v.number(), v.finite(), v.minValue(0))),
-  null,
-);
+/** A `since_seq` cursor: a seq is a finite, non-negative position. */
+const SinceSeqCursorSchema = v.pipe(v.number(), v.finite(), v.minValue(0));
 
 export const SubscribeRequestSchema = v.object({
   op: v.literal("subscribe"),
   /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). Retained
    * for old-client compat; a room present in `since_seq` uses that cursor
    * instead (DR-0016 §2.3). */
-  since: v.optional(v.record(v.string(), SinceCursorSchema)),
+  since: v.optional(v.record(v.string(), v.number())),
   /** per-room last-seen seq for delta replay, spanning ALL event types
    * (DR-0016 §2.3) — supersedes `since` (mid, msg-only) for any room key it
    * covers. Do NOT derive this from a stored `since` value: seq >= mid always

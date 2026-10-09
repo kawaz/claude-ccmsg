@@ -1,0 +1,350 @@
+// A session's folded status (DR-0020 Phase 1), as schemas (DR-0038): what the
+// daemon reads off a session's transcript and the files beside it, answered
+// to `session_status` / `session_status_subscribe` and pushed as
+// `ev:"session_status"`.
+import * as v from "valibot";
+
+/** DR-0020 Phase 1: folded current status of a session's transcript. */
+export const SessionTodoSchema = v.object({
+  id: v.string(),
+  subject: v.string(),
+  /** "pending" | "in_progress" | "completed" — open set (upstream may add values). */
+  status: v.string(),
+  owner: v.optional(v.string()),
+  /** DR-0020: task ID list this task is blocked by, folded
+   * from TaskUpdate's `addBlockedBy` input (or task_reminder attachment when
+   * present). Sorted numerically-first (id は文字列だが実データは "1", "2" 形式
+   * が主なので数値順に見せた方が読み手が直感的)。Empty array is omitted
+   * (undefined) — the UI treats no field / empty the same way. */
+  blocked_by: v.optional(v.array(v.string())),
+  /** Same shape as `blocked_by` but for tasks this task blocks (TaskUpdate の
+   * `addBlocks`)。UI では現状表示していないが、fold は対称に保つ。 */
+  blocks: v.optional(v.array(v.string())),
+});
+export type SessionTodo = v.InferOutput<typeof SessionTodoSchema>;
+
+/** DR-0025 Phase 1: one row of a workflow's phase progress (name + done/total
+ * count). Present only when the workflow's state json (written on completion)
+ * carries a `workflowProgress` array — a still-running workflow has no such
+ * file, so `phases` is intentionally undefined for it (running-workflow
+ * agents alone are folded from the run directory's journal.jsonl). */
+export const WorkflowPhaseStatusSchema = v.object({
+  title: v.string(),
+  done: v.number(),
+  total: v.number(),
+});
+export type WorkflowPhaseStatus = v.InferOutput<typeof WorkflowPhaseStatusSchema>;
+
+/** DR-0025 Phase 1: one agent belonging to a workflow. `agent_id` is the
+ * `a<...>` slug that `transcript_read`'s `agent_id`/`run_id` resolver accepts
+ * (see `AgentTranscriptRequest` doc). Every rich field is optional because
+ * the underlying `workflowProgress` entries carry different shapes for
+ * `state === "done"`/`"error"`/`"progress"` (some omit `tokens`, `agent_type`,
+ * `duration_ms`, etc.) and journal-only running rows expose almost nothing
+ * beyond agentId + running flag. */
+export const WorkflowAgentStatusSchema = v.object({
+  agent_id: v.string(),
+  label: v.optional(v.string()),
+  model: v.optional(v.string()),
+  agent_type: v.optional(v.string()),
+  /** "done" | "error" | "progress" | "running" — open set: `done`/`error`/
+   * `progress` come from the state json's workflow_agent entries, `running`
+   * is synthesized when a journal `started` row has no matching `result`. */
+  state: v.string(),
+  tokens: v.optional(v.number()),
+  tool_calls: v.optional(v.number()),
+  phase_index: v.optional(v.number()),
+  phase_title: v.optional(v.string()),
+  last_tool: v.optional(v.string()),
+  result_preview: v.optional(v.string()),
+  error: v.optional(v.string()),
+  /** epoch ms as recorded in the state json (numbers, not ISO strings). */
+  started_at: v.optional(v.number()),
+  duration_ms: v.optional(v.number()),
+});
+export type WorkflowAgentStatus = v.InferOutput<typeof WorkflowAgentStatusSchema>;
+
+export const SessionWorkflowStatusSchema = v.object({
+  /** task-notification correlation id (Workflow result taskId). */
+  task_id: v.string(),
+  name: v.string(),
+  summary: v.optional(v.string()),
+  /** "running" | terminal task-notification values — open set. */
+  status: v.string(),
+  started_at: v.string(),
+  ended_at: v.optional(v.string()),
+  /** DR-0025 Phase 1: the workflow's runId (`wf_XXXXXXXX-XXX`) folded from
+   * the transcript's Workflow toolUseResult. Feeds the `run_id` argument of
+   * `transcript_read` for agents that belong to this run. */
+  run_id: v.optional(v.string()),
+  /** DR-0025 Phase 1: undefined while the workflow is running (no state json
+   * yet); present once the completion-time state json exists. */
+  phases: v.optional(v.array(WorkflowPhaseStatusSchema)),
+  /** DR-0025 Phase 1: workflow agents (from state json when available; from
+   * journal.jsonl fallback while still running). Undefined = fold could not
+   * find anything readable in the run directory. */
+  agents: v.optional(v.array(WorkflowAgentStatusSchema)),
+});
+export type SessionWorkflowStatus = v.InferOutput<typeof SessionWorkflowStatusSchema>;
+
+export const SessionBackgroundStatusSchema = v.object({
+  /** Monitor/Bash taskId or Agent agentId. */
+  task_id: v.string(),
+  kind: v.picklist(["monitor", "bash", "agent"]),
+  description: v.string(),
+  /** "running" | terminal task-notification values — open set. */
+  status: v.string(),
+  started_at: v.string(),
+  ended_at: v.optional(v.string()),
+  /** For kind=="agent", the spawn's `subagent_type` (`general-purpose`,
+   * `Explore`, custom agent name...). Absent when the input row omitted it,
+   * or when kind is not "agent". Not present for monitor/bash entries. */
+  agent_type: v.optional(v.string()),
+});
+export type SessionBackgroundStatus = v.InferOutput<typeof SessionBackgroundStatusSchema>;
+
+/** Main-context observation from the latest non-sidechain, non-synthetic
+ * assistant row. Environment overrides are not recorded in transcripts, so
+ * the daemon transports raw values and leaves limit estimation to clients. */
+export const SessionContextUsageSchema = v.object({
+  /** input_tokens + cache_read_input_tokens + cache_creation_input_tokens. */
+  tokens: v.number(),
+  /** Raw message.model value; launch-only suffixes such as [1m] are absent. */
+  model: v.string(),
+  /** Top-level `effort` of the transcript assistant row. Rows from older CC
+   * versions (observed absent at ≤2.1.211) do not carry it, so it stays
+   * optional. Latest observed value, taken from the same row as `model`. */
+  effort: v.optional(v.string()),
+  /** Timestamp of the assistant row carrying this observation. */
+  timestamp: v.string(),
+});
+export type SessionContextUsage = v.InferOutput<typeof SessionContextUsageSchema>;
+
+/** Last transcript-observed activity for one agent-teams teammate. The TUI's
+ * internal liveness state is unavailable, so `state` is an open-set estimate. */
+export const SessionTeammateSchema = v.object({
+  name: v.string(),
+  /** Whether a successful Agent result with status:"teammate_spawned" was observed. */
+  spawned: v.boolean(),
+  agent_type: v.optional(v.string()),
+  color: v.optional(v.string()),
+  spawned_at: v.optional(v.string()),
+  last_sent_at: v.optional(v.string()),
+  last_received_at: v.optional(v.string()),
+  /** "spawned" | "active" | "idle" | "stopped" — open set, based on the latest observed event. */
+  state: v.string(),
+  /** Model from `subagents/agent-*.meta.json` (fixed at spawn, raw value
+   * including any `[1m]` suffix). Absent when no meta.json was found. */
+  model: v.optional(v.string()),
+});
+export type SessionTeammate = v.InferOutput<typeof SessionTeammateSchema>;
+
+/** The fields of one agent tree node beside its children. */
+const AgentTreeNodeFieldsSchema = v.object({
+  /** stable id from the meta.json filename (`agent-<agentId>.meta.json`).
+   * Used as the react key and as the `agentId` argument to
+   * `agentTimelineHref`. */
+  agent_id: v.string(),
+  /** teammate name (agent-teams `name` from meta.json) — present only for
+   * teammate nodes. When set, the TL link uses the teammate ref instead of
+   * the agentId ref (they resolve the same transcript but the teammate
+   * locator is the observable identity for agent-teams). */
+  teammate_name: v.optional(v.string()),
+  /** meta.json `agentType` — CC-side agent role (`Explore`, `general-purpose`,
+   * a custom agent name, or the teammate role slug). Absent only when the
+   * meta.json is malformed. */
+  agent_type: v.optional(v.string()),
+  /** meta.json `description` — the spawn call's description, verbatim. */
+  description: v.optional(v.string()),
+  /** teammate-only fields (mirror SessionTeammate). */
+  color: v.optional(v.string()),
+  model: v.optional(v.string()),
+  team_name: v.optional(v.string()),
+  /** meta.json `spawnDepth` (0-based; root's direct child = 0). */
+  spawn_depth: v.number(),
+  /** ノードの由来:
+   *   - "teammate"        — agent-teams の長期在住メンバー (`taskKind ===
+   *     "in_process_teammate"`)。
+   *   - "subagent"        — 単発 Agent tool 起動 (sync/async 問わず)。
+   *     plugin/skill 由来の `agentType`(`:` を含む) もこちらに含める。
+   *   - "workflow_member" — `subagents/workflows/<runId>/agent-*.meta.json`
+   *     配下のワークフロー構成員。ルート集約側では workflow run 単位に
+   *     `AgentTreeGroups.workflows[]` としてネストされる。 */
+  kind: v.picklist(["teammate", "subagent", "workflow_member"]),
+  /** workflow_member 限定。所属 run の id (`wf_XXXXXXXX-XXX`)。 */
+  workflow_id: v.optional(v.string()),
+  /** Estimated liveness state, open-set: "active" | "idle" | "spawned" |
+   * "stopped" | "completed" | "unknown". Depth-0 nodes reuse the fold's
+   * background/teammate state (transcript-observed); deeper nodes fall back
+   * to a transcript-mtime heuristic — see readAgentTree's Design rationale
+   * for the limitation. */
+  state: v.string(),
+  /** transcript file mtime (ms since epoch), used both by the UI to show
+   * relative age and by depth≥1's live heuristic. */
+  last_activity_ms: v.optional(v.number()),
+});
+
+/** Recursive agent tree rooted at the session, one node per
+ * `subagents/agent-<agentId>.meta.json`. Direct children of the root session
+ * appear at the top level of `SessionStatusSnapshot.agent_tree`; deeper
+ * subagents nest under `children`. Depth is capped at 5 (root's direct
+ * children = depth 0), matching CC's own spawnDepth ceiling; nodes with
+ * `spawn_depth > 5` are dropped. Nodes whose `meta.toolUseId` cannot be
+ * located in any candidate parent transcript (orphan — parent already
+ * rotated / never observed) are surfaced at the top level so they remain
+ * navigable rather than silently disappearing.
+ *
+ * Design rationale: a type cannot be inferred from a schema that refers to
+ * itself (TypeScript reports the circularity), so the recursive part — and
+ * only it — is written as an interface that the schema is annotated with.
+ * Every other field is the inferred type of AgentTreeNodeFieldsSchema. */
+export interface AgentTreeNode extends v.InferOutput<typeof AgentTreeNodeFieldsSchema> {
+  /** child nodes, already depth-capped and dedup-guarded by transcript path. */
+  children: AgentTreeNode[];
+}
+export const AgentTreeNodeSchema: v.GenericSchema<AgentTreeNode> = v.object({
+  ...AgentTreeNodeFieldsSchema.entries,
+  children: v.array(v.lazy(() => AgentTreeNodeSchema)),
+});
+
+/** workflow run 内の 1 フェーズ (title + 完了/総数 + 構成 member)。 */
+export const AgentTreeWorkflowPhaseSchema = v.object({
+  /** 1-based (readWorkflowDrilldown の canonical index を踏襲)。 */
+  index: v.number(),
+  title: v.string(),
+  done: v.number(),
+  total: v.number(),
+  /** 当該フェーズに割当てられた member (順序は drilldown 出現順)。 */
+  members: v.array(AgentTreeNodeSchema),
+});
+export type AgentTreeWorkflowPhase = v.InferOutput<typeof AgentTreeWorkflowPhaseSchema>;
+
+/** 1 workflow run 分の subgroup。フェーズ情報の出典は
+ * `readWorkflowDrilldown` (state.json → journal.jsonl の 2 段フォールバック、
+ * DR-0025 Phase 1)。既存 `SessionWorkflowStatus.phases` / `.agents` と同一
+ * ソースを再利用する = TUI / SessionStatusView の phase 表示と数値が揃う。 */
+export const AgentTreeWorkflowGroupSchema = v.object({
+  /** `wf_XXXXXXXX-XXX` (RUN_ID_RE)。 */
+  workflow_id: v.string(),
+  /** run 全体の done/total (all agents 集計)。UI ヘッダの
+   *「Workflow wf_xxx  4/6」表示に使う。 */
+  done: v.number(),
+  total: v.number(),
+  /** 宣言済みフェーズ (state.json 由来)。run 中で state.json が未 landing の
+   * 場合は空配列 (このとき agents は `unassigned` に流れる、フェーズ未知)。 */
+  phases: v.array(AgentTreeWorkflowPhaseSchema),
+  /** phase_index を持たない member (state.json 未 landing の run 中、または
+   * drilldown が phase を割当てられなかった変則) の fallback bucket。
+   * 通常は空。空でない場合 UI は「(phase 未確定)」ヘッダで並べる。 */
+  unassigned: v.array(AgentTreeNodeSchema),
+  /** run 内 member で最も新しい `last_activity_ms`。run 単位のソート用。 */
+  last_activity_ms: v.optional(v.number()),
+});
+export type AgentTreeWorkflowGroup = v.InferOutput<typeof AgentTreeWorkflowGroupSchema>;
+
+/** エージェントツリーのルート集約。種別ごとに 3 グループに分ける
+ * [kawaz]。同一種別のノードは (親子関係が
+ * 通常はフラットなので) 各配列に並列で並ぶ。空カテゴリ (= 0 件) は空配列を
+ * 返す — UI 側でヘッダごと非表示にする。 */
+export const AgentTreeGroupsSchema = v.object({
+  /** agent-teams の在住メンバー。root 直下 = depth 0。 */
+  teammates: v.array(AgentTreeNodeSchema),
+  /** 単発 Agent 起動 (plugin/skill 由来含む)。親子関係がある場合は
+   * `children` にネストする。 */
+  agents: v.array(AgentTreeNodeSchema),
+  /** ワークフロー run 単位。1 run = 1 subgroup。 */
+  workflows: v.array(AgentTreeWorkflowGroupSchema),
+});
+export type AgentTreeGroups = v.InferOutput<typeof AgentTreeGroupsSchema>;
+
+/** Which kind of transcript record named a DR-0024 external file. The webui
+ * groups the "プロジェクト外" section by it; authorization ignores it (every
+ * origin grants the same exact-path read). `tool` covers the file tools
+ * (Read/Write/Edit/MultiEdit/NotebookEdit) and the `! <cmd>` persisted-output
+ * sidecar; `attachment` covers file-shaped attachment rows. A path named by
+ * both is reported as `tool`, whichever came first. */
+export const ExternalFileOriginSchema = v.picklist(["tool", "attachment"]);
+export type ExternalFileOrigin = v.InferOutput<typeof ExternalFileOriginSchema>;
+
+export const ExternalFileSchema = v.object({
+  path: v.string(),
+  origin: ExternalFileOriginSchema,
+});
+export type ExternalFile = v.InferOutput<typeof ExternalFileSchema>;
+
+/** A harness-synthesized API-error row observed as the last thing the main
+ * context did (`{"type":"assistant","isApiErrorMessage":true,...}` with
+ * `message.model === "<synthetic>"`). Claude Code writes these in the agent's
+ * own voice — "Prompt is too long", "API Error: 500 ...", "You're out of extra
+ * usage · resets 7pm", "Please run /login" — but they are the CLI reporting a
+ * stopped turn, not the agent speaking, and the session sits idle until the
+ * user intervenes.
+ *
+ * Only the *latest* turn counts: a later real assistant row clears this, so a
+ * session that hit a transient connection error and recovered is not flagged.
+ * Sidechain (subagent) error rows never set it — a failed subagent does not
+ * stop the main context. */
+export const SessionApiErrorSchema = v.object({
+  /** Verbatim error text of the row, so a client can show *why* the session
+   * stopped. Concatenation of the row's text blocks; may be multi-line. */
+  text: v.string(),
+  /** ISO timestamp of the error row. */
+  timestamp: v.string(),
+});
+export type SessionApiError = v.InferOutput<typeof SessionApiErrorSchema>;
+
+/** One entry of the session-error list: which session is stopped, and on what. */
+export const SessionErrorEntrySchema = v.object({
+  ...SessionApiErrorSchema.entries,
+  sid: v.string(),
+});
+export type SessionErrorEntry = v.InferOutput<typeof SessionErrorEntrySchema>;
+
+/** DR-0026 workspace folder descriptor: one entry from the `folders[]` array
+ * of a `*.code-workspace` file discovered under the session cwd, resolved to
+ * a realpath. `path` is the allowlist key fs_list_workspace / fs_read_workspace
+ * check against; `name` is display-only. */
+export const WorkspaceFolderSchema = v.object({
+  /** display name — `folders[].name` from the workspace file, or the folder's
+   * basename when `name` is absent. Never empty. */
+  name: v.string(),
+  /** absolute realpath of the folder — allowlist prefix for fs_list_workspace
+   * / fs_read_workspace. Never a trailing separator (except at filesystem
+   * root itself). */
+  path: v.string(),
+});
+export type WorkspaceFolder = v.InferOutput<typeof WorkspaceFolderSchema>;
+
+export const SessionStatusSnapshotSchema = v.object({
+  todos: v.array(SessionTodoSchema),
+  workflows: v.array(SessionWorkflowStatusSchema),
+  background: v.array(SessionBackgroundStatusSchema),
+  context: v.optional(SessionContextUsageSchema),
+  /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
+  teammates: v.optional(v.array(SessionTeammateSchema)),
+  /** セッションが起点となるエージェントツリーの種別別集約。
+   * `subagents/` が無い、または全カテゴリ空のセッションでは省略される。
+   * カテゴリ内のノードは `AgentTreeNode` (深さ上限つきの再帰木) が並ぶ。
+   * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
+   * そのまま返す。 */
+  agent_tree: v.optional(AgentTreeGroupsSchema),
+  /** DR-0024: absolute paths outside the session's containment root that the
+   * transcript names. Existing targets are realpaths; missing/deleted targets
+   * retain a normalized lexical path. This is exactly the allowlist accepted by
+   * fs_read_external — one list, so an allowlist consumer cannot honour one
+   * origin and forget another. */
+  external_files: v.optional(v.array(ExternalFileSchema)),
+  /** DR-0026: VS Code `.code-workspace` folders discovered directly under the
+   * session's cwd. Each `path` is a realpath-resolved absolute directory —
+   * the same absolute prefix accepted by fs_list_workspace / fs_read_workspace
+   * as an allowlist for directory-scoped reads outside the containment root.
+   * `name` mirrors the workspace file entry (falls back to basename when
+   * `folders[].name` is absent). Deduplicated by realpath — the same folder
+   * referenced twice (or via two different workspace files) appears once. */
+  workspace_folders: v.optional(v.array(WorkspaceFolderSchema)),
+  /** Present iff the session's latest main-context turn ended with a harness
+   * API-error row — the session is stopped waiting for the user, not working.
+   * Absent for a healthy session (see SessionApiError for the exact rule). */
+  api_error: v.optional(SessionApiErrorSchema),
+});
+export type SessionStatusSnapshot = v.InferOutput<typeof SessionStatusSnapshotSchema>;

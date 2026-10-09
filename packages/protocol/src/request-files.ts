@@ -166,11 +166,6 @@ export const FsEditRequestSchema = v.object({
 });
 export type FsEditRequest = v.InferOutput<typeof FsEditRequestSchema>;
 
-/** One `fs_stat_batch` path: the path, or `null` for an entry that is not a
- * string. Such an entry is answered with `null` in its slot like any other
- * path the daemon will not serve, rather than refusing the whole batch. */
-const StatPathSchema = v.fallback(v.nullable(v.string()), null);
-
 /**
  * Batch file-existence probe for the message-body path linkifier.
  * Client extracts inline-code tokens shaped like
@@ -195,11 +190,11 @@ const StatPathSchema = v.fallback(v.nullable(v.string()), null);
 export const FsStatBatchRequestSchema = v.object({
   op: v.literal("fs_stat_batch"),
   sid: v.string(),
-  /** Absolute paths (client-side pre-resolved from cwd / repo_root). Any
-   * non-string / empty / relative entry is answered with `null` in the
-   * corresponding response slot rather than rejecting the whole batch —
-   * one client-side rendering bug shouldn't blank every link on the screen. */
-  paths: v.array(StatPathSchema),
+  /** Absolute paths (client-side pre-resolved from cwd / repo_root). An
+   * empty or relative path is answered with `null` in the corresponding
+   * response slot, like any other path the daemon will not serve; an entry
+   * that is not a string is not a path, and refuses the request. */
+  paths: v.array(v.string()),
 });
 export type FsStatBatchRequest = v.InferOutput<typeof FsStatBatchRequestSchema>;
 

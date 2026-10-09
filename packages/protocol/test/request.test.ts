@@ -1,13 +1,15 @@
 // The wire's requests as their schemas say them (DR-0038): every op takes the
 // form its clients send and refuses one whose fields are not of their types,
-// and a line that is not a request says the first thing it is not.
+// and a line is read once, by the one request schema.
 import { describe, expect, test } from "bun:test";
+import type { Parsed } from "../src/parse.ts";
 import {
+  isOtherGenerationHello,
   readRequest,
   REQUEST_OPS,
+  type Request,
   type RequestInput,
   type RequestOp,
-  type RequestRead,
 } from "../src/request.ts";
 import { PROTOCOL_VERSION } from "../src/version.ts";
 
@@ -33,7 +35,12 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       protocol: PROTOCOL_VERSION,
       client_version: "1",
     },
-    bad: [{ op: "hello" }, { op: "hello", role: "admin" }, { op: "hello", role: "user", ua: 1 }],
+    bad: [
+      { op: "hello" },
+      { op: "hello", role: "admin" },
+      { op: "hello", role: "user", ua: 1 },
+      { op: "hello", role: "user", protocol: "1" },
+    ],
   },
   post: {
     ok: { op: "post", room: "r1", msg: "hi", to: ["a1", "u1"] },
@@ -113,6 +120,9 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [
       { op: "subscribe", since_seq: 5 },
       { op: "subscribe", backlog: "yes" },
+      { op: "subscribe", since: { r1: "x" } },
+      { op: "subscribe", since: { r1: null } },
+      { op: "subscribe", since_seq: { r1: -5 } },
     ],
   },
   read: {
@@ -236,6 +246,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [
       { op: "fs_stat_batch", sid: SID, paths: "/a" },
       { op: "fs_stat_batch", sid: SID },
+      { op: "fs_stat_batch", sid: SID, paths: ["/a", null] },
     ],
   },
   fs_find: {
@@ -355,8 +366,14 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   },
 };
 
-const read = (body: object, requestId = "q1"): RequestRead =>
+const read = (body: object, requestId = "q1"): Parsed<Request> =>
   readRequest(line({ ...body, request_id: requestId }));
+
+/** The summary of a line that is not a request. */
+function refusal(read: Parsed<Request>): string {
+  if (read.ok) throw new Error(`expected a failure, read ${JSON.stringify(read.value)}`);
+  return read.failure.summary;
+}
 
 describe("readRequest: every op", () => {
   test("the samples cover every op the request schema reads", () => {
@@ -367,174 +384,126 @@ describe("readRequest: every op", () => {
     const samples: { readonly ok: RequestInput; readonly bad: readonly object[] } = SAMPLES[op];
 
     test(`${op}: the form its clients send reads as itself, with its request id`, () => {
-      expect(read(samples.ok)).toEqual({ ok: true, request: { ...samples.ok, request_id: "q1" } });
+      expect(read(samples.ok)).toEqual({ ok: true, value: { ...samples.ok, request_id: "q1" } });
     });
 
     for (const bad of samples.bad) {
-      test(`${op}: refuses ${JSON.stringify(bad)} as invalid_args, under its request id`, () => {
-        expect(read(bad)).toMatchObject({ ok: false, reason: "invalid_args", requestId: "q1", op });
+      test(`${op}: refuses ${JSON.stringify(bad)}`, () => {
+        expect(read(bad).ok).toBe(false);
       });
     }
   }
 });
 
-describe("readRequest: a line that is not a request says the first thing it is not", () => {
+describe("readRequest: a line that is not a request is a failure", () => {
   test("not JSON", () => {
-    expect(readRequest("{op:")).toMatchObject({ ok: false, reason: "not_json" });
+    expect(refusal(readRequest("{op:"))).toStartWith("Invalid JSON");
   });
 
-  test("no op: not an object, or op not a string", () => {
-    expect(readRequest("[1]")).toMatchObject({ ok: false, reason: "no_op" });
-    expect(readRequest(line({ op: 1, request_id: "q1" }))).toMatchObject({
-      ok: false,
-      reason: "no_op",
+  for (const value of [[1], { op: 1, request_id: "q1" }, { op: "teleport", request_id: "q1" }]) {
+    test(`no op of this daemon: ${JSON.stringify(value)}`, () => {
+      expect(read(value).ok).toBe(false);
     });
+  }
+
+  test("a request id that is missing or empty", () => {
+    expect(readRequest(line({ op: "ping" })).ok).toBe(false);
+    expect(read({ op: "ping" }, "").ok).toBe(false);
+    expect(readRequest(line({ op: "hello", role: "session", sid: SID })).ok).toBe(false);
   });
 
-  test("no request id: missing or empty, before the op is looked up", () => {
-    expect(readRequest(line({ op: "nope" }))).toMatchObject({
-      ok: false,
-      reason: "no_request_id",
-      op: "nope",
-      hello: undefined,
-    });
-    expect(readRequest(line({ op: "ping", request_id: "" }))).toMatchObject({
-      ok: false,
-      reason: "no_request_id",
-      op: "ping",
-    });
-  });
-
-  // An old client's hello names the session it runs for, which is how the
-  // daemon tells kawaz which session's client is too old.
-  test("a hello with no request id is read as a hello", () => {
-    expect(
-      readRequest(line({ op: "hello", role: "session", sid: SID, client_version: "0.1" })),
-    ).toMatchObject({
-      ok: false,
-      reason: "no_request_id",
-      op: "hello",
-      hello: { role: "session", sid: SID, client_version: "0.1" },
-    });
-  });
-
-  test("an op the daemon does not have, under its request id", () => {
-    expect(read({ op: "teleport" })).toMatchObject({
-      ok: false,
-      reason: "unknown_op",
-      requestId: "q1",
-      op: "teleport",
-    });
-  });
-
-  test("the fields an op refuses are named in the failure", () => {
-    const refused = read({ op: "translate", texts: ["ok", 42] });
-    expect(refused.ok).toBe(false);
-    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
-    expect(refused.failure.summary).toBe("texts.1: Invalid type: Expected string but received 42");
-  });
-});
-
-describe("readRequest: the forms beside each op's type", () => {
-  // Unknown fields are left out, not refused: a client of another build is
-  // told what it is by hello's protocol check, not by a field error.
-  test("a field the op does not define is left out", () => {
-    expect(read({ op: "ping", trace: true })).toEqual({
-      ok: true,
-      request: { op: "ping", request_id: "q1" },
-    });
-  });
-
-  test("create_room says where a 1on1 room comes from", () => {
-    const refused = read({ op: "create_room", members: [SID], kind: "1on1" });
-    expect(refused.ok).toBe(false);
-    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
-    expect(refused.failure.summary).toBe(
-      "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
+  test("the field an op refuses is named in the failure", () => {
+    expect(refusal(read({ op: "translate", texts: ["ok", 42] }))).toBe(
+      "texts.1: Invalid type: Expected string but received 42",
     );
-  });
-
-  // DR-0016 §2.5: a room named with a cursor that is not a position is still
-  // named (its history is replayed in full), not refused.
-  test("a since / since_seq cursor that is not a position reads as null", () => {
-    expect(
-      read({
-        op: "subscribe",
-        since: { r1: "x", r2: 2 },
-        since_seq: { r1: -5, r2: "nope", r4: 0 },
-      }),
-    ).toEqual({
-      ok: true,
-      request: {
-        op: "subscribe",
-        since: { r1: null, r2: 2 },
-        since_seq: { r1: null, r2: null, r4: 0 },
-        request_id: "q1",
-      },
-    });
-    // JSON text can spell a number past the finite range; it is not a seq.
-    expect(readRequest('{"op":"subscribe","request_id":"q1","since_seq":{"r3":1e999}}')).toEqual({
-      ok: true,
-      request: { op: "subscribe", since_seq: { r3: null }, request_id: "q1" },
-    });
-  });
-
-  // A path that is not a string is answered with null in its slot, not by
-  // refusing the batch.
-  test("an fs_stat_batch entry that is not a string reads as null", () => {
-    expect(read({ op: "fs_stat_batch", sid: SID, paths: ["/a", 3, null, {}] })).toEqual({
-      ok: true,
-      request: { op: "fs_stat_batch", sid: SID, paths: ["/a", null, null, null], request_id: "q1" },
-    });
-  });
-});
-
-describe("readRequest: what a sender's value cannot do", () => {
-  // An object schema leaves out these keys; they are shell identifiers a
-  // launcher template may declare, so params keeps them as its own entries.
-  test("session_launch keeps params named __proto__ / constructor / prototype", () => {
-    const read = readRequest(
-      '{"op":"session_launch","request_id":"q","cwd":"/w","params":{"__proto__":"a","constructor":"b","prototype":"c"}}',
-    );
-    if (!read.ok || read.request.op !== "session_launch")
-      throw new Error("expected a session_launch");
-    const params = read.request.params;
-    expect(Object.entries(params)).toEqual([
-      ["__proto__", "a"],
-      ["constructor", "b"],
-      ["prototype", "c"],
-    ]);
-    expect(Object.hasOwn(params, "__proto__")).toBe(true);
-  });
-
-  test("session_launch refuses a parameter value that is not a string", () => {
-    expect(
-      readRequest('{"op":"session_launch","request_id":"q","cwd":"/w","params":{"constructor":7}}'),
-    ).toMatchObject({ ok: false, reason: "invalid_args" });
   });
 
   // However many parts of a value are wrong, the failure names one: its size
   // does not grow with the value's.
   test("a value with many wrong parts fails with one issue", () => {
     const refused = read({ op: "translate", texts: Array.from({ length: 10_000 }, (_, i) => i) });
-    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
+    if (refused.ok) throw new Error("expected a failure");
     expect(refused.failure.issues).toHaveLength(1);
     expect(refused.failure.summary).toBe("texts.0: Invalid type: Expected string but received 0");
   });
+});
 
-  // The generation is read before the rest of a hello, whose shape is its
-  // generation's: a client of another one is told which to run.
-  test("a hello of another generation is told so before its fields are read", () => {
-    expect(read({ op: "hello", role: "observer", protocol: 999, cwd: ["/w"] })).toEqual({
-      ok: false,
-      reason: "other_generation",
-      requestId: "q1",
-      hello: { protocol: 999 },
-      generation: 999,
+describe("readRequest: the forms beside each op's type", () => {
+  // Unknown fields are left out, not refused: a client of another build is
+  // told what it is by hello's generation, not by a field error.
+  test("a field the op does not define is left out", () => {
+    expect(read({ op: "ping", trace: true })).toEqual({
+      ok: true,
+      value: { op: "ping", request_id: "q1" },
     });
-    expect(read({ op: "hello", role: "session", sid: SID, protocol: 999 })).toMatchObject({
-      reason: "other_generation",
-      hello: { role: "session", sid: SID, protocol: 999 },
+  });
+
+  test("create_room says where a 1on1 room comes from", () => {
+    expect(refusal(read({ op: "create_room", members: [SID], kind: "1on1" }))).toBe(
+      "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
+    );
+  });
+
+  // JSON text can spell a number past the finite range; it is not a seq.
+  test("a since_seq cursor past the finite range is refused", () => {
+    expect(readRequest('{"op":"subscribe","request_id":"q1","since_seq":{"r3":1e999}}').ok).toBe(
+      false,
+    );
+  });
+
+  test("session_launch reads params as names with text values", () => {
+    expect(read({ op: "session_launch", cwd: "/w", params: { MODEL: "m", EMPTY: "" } })).toEqual({
+      ok: true,
+      value: {
+        op: "session_launch",
+        cwd: "/w",
+        params: { MODEL: "m", EMPTY: "" },
+        request_id: "q1",
+      },
     });
+    expect(refusal(read({ op: "session_launch", cwd: "/w", params: { MODEL: 7 } }))).toContain(
+      "params.MODEL",
+    );
+  });
+});
+
+describe("readRequest: hello by generation", () => {
+  test("a hello of this generation, announced or not, is served", () => {
+    const hellos: readonly Extract<RequestInput, { op: "hello" }>[] = [
+      { op: "hello", role: "user", protocol: PROTOCOL_VERSION },
+      { op: "hello", role: "user" },
+    ];
+    for (const hello of hellos) {
+      const got = read(hello);
+      if (!got.ok) throw new Error(got.failure.summary);
+      expect(got.value).toEqual({ ...hello, request_id: "q1" });
+      expect(isOtherGenerationHello(got.value)).toBe(false);
+    }
+  });
+
+  // The rest of a hello of another generation is that generation's shape and
+  // is not read: a client of another generation is told which to run.
+  test("a hello of another generation reads as one, whatever else it holds", () => {
+    const got = read({ op: "hello", role: "session", sid: SID, protocol: 999, cwd: ["/w"] });
+    if (!got.ok) throw new Error(got.failure.summary);
+    expect(got.value).toEqual({
+      op: "hello",
+      role: "session",
+      sid: SID,
+      protocol: 999,
+      request_id: "q1",
+    });
+    expect(isOtherGenerationHello(got.value)).toBe(true);
+  });
+
+  test("what a hello of another generation says about its client is of its type", () => {
+    expect(refusal(read({ op: "hello", protocol: 999, sid: 1 }))).toStartWith("sid: ");
+    expect(refusal(read({ op: "hello", protocol: "2" }))).toStartWith("protocol: ");
+  });
+
+  test("a hello of this generation is read whole: a field of another type is refused", () => {
+    expect(
+      refusal(read({ op: "hello", role: "observer", protocol: PROTOCOL_VERSION })),
+    ).toStartWith("role: ");
   });
 });

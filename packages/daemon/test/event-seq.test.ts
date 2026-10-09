@@ -244,17 +244,14 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
   );
 
   test(
-    "since_seq input validation: negative / non-number fall back to the next cursor; huge value replays nothing",
+    "since_seq input validation: a cursor that is not a seq is refused; huge value replays nothing",
     async () => {
       const ctx = await startTestDaemon();
       try {
-        // since_seq arrives from JSON.parse with no schema validation, so
-        // hostile/broken values are reachable. DR-0016 §2.5: invalid (not a
-        // finite non-negative number) = "no since_seq for this room" → here
-        // (no `since` either) that means the join-snapshot path, i.e. the
-        // full room state is replayed — duplicates over silent loss. A huge
-        // but VALID value means "seen everything" → zero replay, and must not
-        // hang or error the scan.
+        // A cursor that is not a finite non-negative number is not a position
+        // in the room, and the subscribe that carries it is refused (DR-0038
+        // §6). A huge but VALID value means "seen everything" → zero replay,
+        // and must not hang or error the scan.
         const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
@@ -263,19 +260,15 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         });
         const room = created.room;
 
-        // negative → invalid → join snapshot (m1 present)
-        const subNeg = await user(ctx);
-        await subNeg.request({ op: "subscribe", since_seq: { [room]: -5 } });
-        const negReplay = await drainBacklog(subNeg);
-        expect(negReplay.some((ev) => ev.r === room && ev.msg === "m1")).toBe(true);
-        subNeg.close();
-
-        // non-number (string) → invalid → join snapshot
-        const subStr = await user(ctx);
-        await subStr.request({ op: "subscribe", since_seq: { [room]: "nope" } });
-        const strReplay = await drainBacklog(subStr);
-        expect(strReplay.some((ev) => ev.r === room && ev.msg === "m1")).toBe(true);
-        subStr.close();
+        for (const cursor of [-5, "nope"]) {
+          const sub = await user(ctx);
+          const refused = await sub.requestRefused({
+            op: "subscribe",
+            since_seq: { [room]: cursor },
+          });
+          expect(refused.error.code).toBe("bad_request");
+          sub.close();
+        }
 
         // huge but valid → caught up → nothing from this room.
         const subBig = await user(ctx);

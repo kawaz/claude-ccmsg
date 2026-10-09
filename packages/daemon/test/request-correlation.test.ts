@@ -55,9 +55,12 @@ describe("request correlation", () => {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
       const res = await c.requestRaw({ op: "ping" });
-      expect(res).toMatchObject({
+      expect(res).toEqual({
         ok: false,
-        error: { code: "bad_request", msg: "op 'ping' requires a non-empty string request_id" },
+        error: {
+          code: "bad_request",
+          msg: 'request_id: Invalid key: Expected "request_id" but received undefined',
+        },
       });
       // An empty string is no more usable as a key than an absent one.
       expect(await c.requestRaw({ op: "ping", request_id: "" })).toMatchObject({

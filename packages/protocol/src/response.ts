@@ -1,0 +1,178 @@
+// The wire's replies (daemon -> client), by the op each answers (DR-0038).
+//
+// The daemon answers every request with one reply carrying back its
+// `request_id`: either the op's own success shape (`ok: true`, a schema in a
+// response-*.ts file beside this one, by topic) or an ErrorResponse
+// (`ok: false`). This file joins them by op, so a client that knows which op
+// it asked reads the reply with that op's schema (frame.ts).
+import * as v from "valibot";
+import type { RequestOp } from "./request.ts";
+import {
+  FsCreateResponseSchema,
+  FsDeleteResponseSchema,
+  FsEditResponseSchema,
+  FsFindResponseSchema,
+  FsListResponseSchema,
+  FsReadResponseSchema,
+  FsStatBatchResponseSchema,
+  FsWriteResponseSchema,
+  SandboxGrantResponseSchema,
+  SandboxRevokeResponseSchema,
+} from "./response-files.ts";
+import {
+  LlmStatsResponseSchema,
+  LlmStatusResponseSchema,
+  LlmUsageResponseSchema,
+  PingResponseSchema,
+  ShutdownResponseSchema,
+  TranslateResponseSchema,
+} from "./response-host.ts";
+import {
+  ArchiveRoomResponseSchema,
+  CreateRoomResponseSchema,
+  InviteResponseSchema,
+  KickResponseSchema,
+  LeaveResponseSchema,
+  NextRoomResponseSchema,
+  PostResponseSchema,
+  ReadResponseSchema,
+  ReplyResponseSchema,
+  RoomHistoryResponseSchema,
+  RoomsResponseSchema,
+  SayReadResponseSchema,
+  SayResponseSchema,
+  SetTitleResponseSchema,
+  SubscribeAckSchema,
+} from "./response-rooms.ts";
+import {
+  AgentsResponseSchema,
+  DirTreeResponseSchema,
+  ForkOriginResponseSchema,
+  HelloResponseSchema,
+  MessageSendResponseSchema,
+  NotifyResponseSchema,
+  PeersResponseSchema,
+  SessionDumpFileResponseSchema,
+  SessionEnvResponseSchema,
+  SessionErrorsResponseSchema,
+  SessionInputResponseSchema,
+  SessionKillResponseSchema,
+  SessionLaunchResponseSchema,
+  SessionLauncherConfigResponseSchema,
+  SessionRenameResponseSchema,
+  SessionSearchResponseSchema,
+  SessionStatusResponseSchema,
+  SessionStatusSubscribeResponseSchema,
+  SessionStatusUnsubscribeResponseSchema,
+  SidecarReplyResponseSchema,
+} from "./response-sessions.ts";
+import {
+  ClientTraceResponseSchema,
+  TranscriptReadResponseSchema,
+  TranscriptSubscribeResponseSchema,
+  TranscriptUnsubscribeResponseSchema,
+} from "./response-transcripts.ts";
+
+export * from "./response-rooms.ts";
+export * from "./response-sessions.ts";
+export * from "./response-files.ts";
+export * from "./response-transcripts.ts";
+export * from "./response-host.ts";
+
+/** Why a request was not served: a code from ErrorCode (or `internal` for an
+ * op that threw), and a line saying what to do about it. */
+export const ErrorBodySchema = v.object({
+  code: v.string(),
+  msg: v.string(),
+});
+export type ErrorBody = v.InferOutput<typeof ErrorBodySchema>;
+
+/** The reply to a request the daemon did not serve, whatever its op. */
+export const ErrorResponseSchema = v.object({
+  ok: v.literal(false),
+  error: ErrorBodySchema,
+});
+export type ErrorResponse = v.InferOutput<typeof ErrorResponseSchema>;
+
+/** Each op's success reply. An op that answers with the same shape as
+ * another names the same schema (fs_read_external, fs_read_workspace and
+ * fs_read; fs_list_workspace and fs_list; session_status_subscribe and
+ * session_status). */
+export const RESPONSE_SCHEMAS = {
+  hello: HelloResponseSchema,
+  post: PostResponseSchema,
+  reply: ReplyResponseSchema,
+  message_send: MessageSendResponseSchema,
+  create_room: CreateRoomResponseSchema,
+  next_room: NextRoomResponseSchema,
+  say: SayResponseSchema,
+  say_read: SayReadResponseSchema,
+  set_title: SetTitleResponseSchema,
+  archive_room: ArchiveRoomResponseSchema,
+  kick: KickResponseSchema,
+  subscribe: SubscribeAckSchema,
+  read: ReadResponseSchema,
+  room_history: RoomHistoryResponseSchema,
+  rooms: RoomsResponseSchema,
+  peers: PeersResponseSchema,
+  notify: NotifyResponseSchema,
+  dir_tree: DirTreeResponseSchema,
+  session_launch: SessionLaunchResponseSchema,
+  session_kill: SessionKillResponseSchema,
+  session_rename: SessionRenameResponseSchema,
+  session_input: SessionInputResponseSchema,
+  sidecar_reply: SidecarReplyResponseSchema,
+  session_env: SessionEnvResponseSchema,
+  session_launcher_config: SessionLauncherConfigResponseSchema,
+  llm_usage: LlmUsageResponseSchema,
+  llm_stats: LlmStatsResponseSchema,
+  llm_status: LlmStatusResponseSchema,
+  fs_list: FsListResponseSchema,
+  fs_read: FsReadResponseSchema,
+  fs_read_external: FsReadResponseSchema,
+  fs_list_workspace: FsListResponseSchema,
+  fs_read_workspace: FsReadResponseSchema,
+  fs_write: FsWriteResponseSchema,
+  fs_create: FsCreateResponseSchema,
+  fs_delete: FsDeleteResponseSchema,
+  fs_edit: FsEditResponseSchema,
+  fs_stat_batch: FsStatBatchResponseSchema,
+  fs_find: FsFindResponseSchema,
+  sandbox_grant: SandboxGrantResponseSchema,
+  sandbox_revoke: SandboxRevokeResponseSchema,
+  transcript_read: TranscriptReadResponseSchema,
+  session_search: SessionSearchResponseSchema,
+  fork_origin: ForkOriginResponseSchema,
+  session_dump_file: SessionDumpFileResponseSchema,
+  agents: AgentsResponseSchema,
+  transcript_subscribe: TranscriptSubscribeResponseSchema,
+  transcript_unsubscribe: TranscriptUnsubscribeResponseSchema,
+  client_trace: ClientTraceResponseSchema,
+  session_status: SessionStatusResponseSchema,
+  session_status_subscribe: SessionStatusSubscribeResponseSchema,
+  session_status_unsubscribe: SessionStatusUnsubscribeResponseSchema,
+  session_errors: SessionErrorsResponseSchema,
+  ping: PingResponseSchema,
+  translate: TranslateResponseSchema,
+  shutdown: ShutdownResponseSchema,
+  leave: LeaveResponseSchema,
+  invite: InviteResponseSchema,
+} as const satisfies { readonly [Op in RequestOp]: v.GenericSchema };
+
+/** The success reply to a request of `Op`, without the correlation envelope. */
+export type ResponseOf<Op extends RequestOp> = v.InferOutput<(typeof RESPONSE_SCHEMAS)[Op]>;
+
+/** Either reply a request of `Op` can get. */
+export type ReplyOf<Op extends RequestOp> = ResponseOf<Op> | ErrorResponse;
+
+/** Every reply shape, before the correlation envelope. */
+export type ResponseBody = ResponseOf<RequestOp> | ErrorResponse;
+
+/** A reply on the wire: one of the bodies above, carrying back the
+ * `request_id` of the request it answers.
+ *
+ * Optional in the type, required in the daemon's behaviour: the id is missing
+ * only where no request could be identified (see RequestEnvelope) or where the
+ * peer is a daemon predating the correlation envelope, and both are cases a
+ * client handles as "cannot settle anyone", not as a normal reply. */
+export type Response = ResponseBody & { request_id?: string };

@@ -121,7 +121,7 @@ describe("llm_stats op", () => {
   // whoever debugs it to the wrong machine.
   test("refuses an out-of-range window without reaching the gateway", async () => {
     const before = received.length;
-    for (const days of [0, 36_525, 1.5, "30"]) {
+    for (const days of [0, 36_525, 1.5]) {
       const [reply] = await requestFrames(
         daemonWith(URL_OK),
         USER,
@@ -131,6 +131,14 @@ describe("llm_stats op", () => {
       expect(reply?.ok).toBe(false);
       expect(reply?.error.code).toBe(ErrorCode.invalid_args);
     }
+    // A window that is not a number is not read as a request at all.
+    const [reply] = await requestFrames(
+      daemonWith(URL_OK),
+      USER,
+      { op: "llm_stats", request_id: "q4", days: "30" },
+      1,
+    );
+    expect(reply?.error.code).toBe(ErrorCode.bad_request);
     expect(received.length).toBe(before);
   });
 

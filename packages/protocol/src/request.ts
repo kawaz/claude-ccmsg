@@ -18,9 +18,13 @@
 // the generation it speaks. The fields the daemon reads are all typed, so a
 // field it does not read can do nothing.
 import * as v from "valibot";
-import { JsonTextSchema, type ParseFailure, parseWith } from "./parse.ts";
-import { HelloRequestSchema } from "./request-sessions.ts";
-import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
+import { jsonText, type Parsed, parseWith } from "./parse.ts";
+import {
+  AnyGenerationHelloRequestSchema,
+  HelloRequestSchema,
+  type OtherGenerationHelloRequest,
+} from "./request-sessions.ts";
+import { PROTOCOL_VERSION } from "./version.ts";
 import {
   ArchiveRoomRequestSchema,
   CreateRoomRequestSchema,
@@ -102,8 +106,8 @@ export * from "./request-host.ts";
  *
  * Uniqueness only has to hold among one connection's in-flight requests; a
  * monotonic counter per socket is enough, and ids may be reused once settled.
- * Reject-before-dispatch failures that cannot name a request (unparseable
- * JSON, missing `op`, missing `request_id`) are the one class of reply that
+ * A line the request schema does not read (not JSON, no op of this daemon, no
+ * `request_id`, a field of another type) is the one class of reply that
  * carries no id — a client can only log those, never settle a caller with
  * them.
  *
@@ -116,11 +120,8 @@ export const RequestEnvelopeSchema = v.object({
 });
 export type RequestEnvelope = v.InferOutput<typeof RequestEnvelopeSchema>;
 
-/** Every request shape, before the correlation envelope, told apart by `op`.
- * Use `Request` (the wire form) unless you specifically mean "the body a
- * caller composes". */
-export const RequestBodySchema = v.variant("op", [
-  HelloRequestSchema,
+/** Every op's request but hello's, which comes in a shape per generation. */
+const OP_REQUEST_SCHEMAS = [
   PostRequestSchema,
   ReplyRequestSchema,
   MessageSendRequestSchema,
@@ -178,6 +179,14 @@ export const RequestBodySchema = v.variant("op", [
   ShutdownRequestSchema,
   LeaveRequestSchema,
   InviteRequestSchema,
+] as const;
+
+/** Every request shape, before the correlation envelope, told apart by `op`
+ * (and a hello by its generation). Use `Request` (the wire form) unless you
+ * specifically mean "the body a caller composes". */
+export const RequestBodySchema = v.variant("op", [
+  AnyGenerationHelloRequestSchema,
+  ...OP_REQUEST_SCHEMAS,
 ]);
 export type RequestBody = v.InferOutput<typeof RequestBodySchema>;
 
@@ -189,131 +198,42 @@ export type Request = RequestBody & RequestEnvelope;
 export type RequestOp = RequestBody["op"];
 
 /** Every op, in the order the request schema lists them. */
-export const REQUEST_OPS: readonly RequestOp[] = RequestBodySchema.options.map(
-  (option) => option.entries.op.literal,
-);
+export const REQUEST_OPS: readonly RequestOp[] = [
+  HelloRequestSchema.entries.op.literal,
+  ...OP_REQUEST_SCHEMAS.map((option) => option.entries.op.literal),
+];
 
 /** A request as a caller composes it: the body without the correlation
  * envelope, which the client's transport stamps on the way out. Distributive
- * so each member of the union keeps its own discriminated `op`. */
+ * so each member of the union keeps its own discriminated `op`. A caller
+ * speaks this generation, so a hello of another is not one it composes. */
 export type RequestBodyOf<T> = T extends unknown ? Omit<T, "request_id"> : never;
-export type RequestInput = RequestBodyOf<Request>;
+export type RequestInput = RequestBodyOf<ServedRequest>;
+
+/** A request the daemon serves: any but a hello of another generation. */
+export type ServedRequest = Exclude<Request, OtherGenerationHelloRequest>;
 
 // --- reading a request line -------------------------------------------------
 
-/** What a hello claims about the client behind it, read so that a hello of
- * any generation yields it: each claim is its value when it has the type this
- * generation gives it, and absent otherwise. It is what the daemon needs to
- * answer a hello it will not serve — which generation the client speaks, and
- * which session's client that is — before it knows the rest of the hello has
- * this generation's shape. */
-export const HelloClaimsSchema = v.object({
-  role: v.fallback(v.optional(v.picklist(["session", "user"])), undefined),
-  sid: v.fallback(v.optional(v.string()), undefined),
-  client_version: v.fallback(v.optional(v.string()), undefined),
-  protocol: v.fallback(v.optional(v.number()), undefined),
-});
-export type HelloClaims = v.InferOutput<typeof HelloClaimsSchema>;
+/** One request line: a request of this generation, or a hello of another,
+ * with its correlation id. */
+const RequestLineSchema = jsonText(v.intersect([RequestBodySchema, RequestEnvelopeSchema]));
 
-/** The generation a hello speaks: what it announced, or — for a client from
- * before the field existed — the generation that field was introduced in. */
-export function helloGeneration(hello: HelloClaims): number {
-  return hello.protocol ?? UNANNOUNCED_PROTOCOL_VERSION;
+/** Read one request line, once, with the request schema. A line that is not
+ * a request is a failure, and nothing more is read from it. A sender's value
+ * can hold any number of wrong parts, so the read stops at the first. */
+export function readRequest(line: string): Parsed<Request> {
+  return parseWith(RequestLineSchema, line, { firstIssue: true });
 }
 
-/** One request line as the daemon reads it: the request, or why it cannot be
- * handled. A failure that names a request id can be answered as that
- * request's reply; one that names none can only be answered uncorrelated.
- *
- * - `not_json`: the line is not JSON
- * - `no_op`: the value names no op (not an object, or `op` is not a string)
- * - `no_request_id`: the request carries no id to answer under; `hello` is
- *   what it claims as a hello, when it is one, so the daemon can tell which
- *   session's client is too old to send one
- * - `unknown_op`: the op is none this daemon has
- * - `other_generation`: a hello of a generation this daemon does not speak
- *   (DR-0002 §4); the rest of it is not read, since its shape is that
- *   generation's
- * - `invalid_args`: the op's fields are not what it takes. The failure names
- *   the first field that is not, however many are */
-export type RequestRead =
-  | { readonly ok: true; readonly request: Request }
-  | { readonly ok: false; readonly reason: "not_json"; readonly failure: ParseFailure }
-  | { readonly ok: false; readonly reason: "no_op"; readonly failure: ParseFailure }
-  | {
-      readonly ok: false;
-      readonly reason: "no_request_id";
-      readonly op: string;
-      readonly hello: HelloClaims | undefined;
-      readonly failure: ParseFailure;
-    }
-  | {
-      readonly ok: false;
-      readonly reason: "unknown_op";
-      readonly requestId: string;
-      readonly op: string;
-      readonly failure: ParseFailure;
-    }
-  | {
-      readonly ok: false;
-      readonly reason: "other_generation";
-      readonly requestId: string;
-      readonly hello: HelloClaims;
-      readonly generation: number;
-    }
-  | {
-      readonly ok: false;
-      readonly reason: "invalid_args";
-      readonly requestId: string;
-      readonly op: RequestOp;
-      readonly failure: ParseFailure;
-    };
-
-const OpLineSchema = v.object({ op: v.string() });
-const KnownOpLineSchema = v.object({ op: v.picklist(REQUEST_OPS) });
-
-/** Read one request line. A line that is not a request says the first thing
- * it is not — JSON, then an op, then a request id, then an op this daemon
- * has, then (for a hello) a generation it speaks, then that op's fields —
- * which is also the order in which a reply can say more: from the request id
- * on, it is answered as that request's reply. The JSON is decoded once, and
- * the decoded value read against each schema in turn. A sender's value can
- * hold any number of wrong parts, so each read stops at the first. */
-export function readRequest(line: string): RequestRead {
-  const firstIssue = { firstIssue: true } as const;
-  const json = parseWith(JsonTextSchema, line, firstIssue);
-  if (!json.ok) return { ok: false, reason: "not_json", failure: json.failure };
-  const decoded = json.value;
-  const named = parseWith(OpLineSchema, decoded, firstIssue);
-  if (!named.ok) return { ok: false, reason: "no_op", failure: named.failure };
-  const { op } = named.value;
-  const claims = op === "hello" ? parseWith(HelloClaimsSchema, decoded, firstIssue) : undefined;
-  const hello = claims?.ok ? claims.value : undefined;
-  const envelope = parseWith(RequestEnvelopeSchema, decoded, firstIssue);
-  if (!envelope.ok) {
-    return { ok: false, reason: "no_request_id", op, hello, failure: envelope.failure };
-  }
-  const requestId = envelope.value.request_id;
-  const known = parseWith(KnownOpLineSchema, decoded, firstIssue);
-  if (!known.ok) return { ok: false, reason: "unknown_op", requestId, op, failure: known.failure };
-  if (hello !== undefined && helloGeneration(hello) !== PROTOCOL_VERSION) {
-    return {
-      ok: false,
-      reason: "other_generation",
-      requestId,
-      hello,
-      generation: helloGeneration(hello),
-    };
-  }
-  const body = parseWith(RequestBodySchema, decoded, firstIssue);
-  if (!body.ok) {
-    return {
-      ok: false,
-      reason: "invalid_args",
-      requestId,
-      op: known.value.op,
-      failure: body.failure,
-    };
-  }
-  return { ok: true, request: { ...body.value, request_id: requestId } };
+/** Whether a request is a hello of a generation this daemon does not speak
+ * (DR-0002 §4): one to refuse with the generation it speaks, not to serve. */
+export function isOtherGenerationHello(
+  request: Request,
+): request is Exclude<Request, ServedRequest> {
+  return (
+    request.op === "hello" &&
+    request.protocol !== undefined &&
+    request.protocol !== PROTOCOL_VERSION
+  );
 }

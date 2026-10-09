@@ -1,0 +1,522 @@
+// The wire's replies to session requests (daemon -> client), as schemas
+// (DR-0038): hello, the peers and messages between sessions, and what the
+// person does to a session from the webui. response.ts joins them with the
+// other topics' replies, by the op each answers.
+//
+// Fields the client does not know are left out rather than refused
+// (`v.object`): see response-rooms.ts.
+import * as v from "valibot";
+import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
+import { SessionInputModuleReasonSchema } from "./sidecar.ts";
+
+export const HelloResponseSchema = v.object({
+  ok: v.literal(true),
+  version: v.string(),
+  /** The wire generation this daemon speaks (`PROTOCOL_VERSION`). A client
+   * whose own generation differs never gets here — its hello is rejected —
+   * so this is for display, not for the client to branch on. */
+  protocol: v.number(),
+  /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
+   * hello に対してのみ、`<configDir>/config.json` の `terminal_gateway_url`
+   * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)
+   * をエコーバックする。未設定 / スキーム不正 / role="session" の場合は
+   * 省略。webui はこれを iframe embed の base URL として使い、未設定なら
+   * Terminal タブ自体を出さない (= 設定していないユーザには存在しない機能
+   * に倒す)。 */
+  terminal_gateway_url: v.optional(v.string()),
+  /** True when the daemon has a usable `llm_usage_url` configured, echoed to
+   * user-role hellos only (same posture as terminal_gateway_url). The URL
+   * itself is deliberately NOT sent: the daemon is the one that fetches it
+   * (the gateway serves no CORS headers), so the browser needs to know only
+   * whether the `llm_usage` op is worth offering. Absent means unconfigured,
+   * and the webui then hides the usage screen entirely rather than showing a
+   * menu entry that can only ever error. */
+  llm_usage_available: v.optional(v.boolean()),
+  /** True when the daemon has a usable `llm_stats_url` configured. Same
+   * posture and same reasons as llm_usage_available, and reported separately
+   * because the two endpoints are configured independently — one can be set
+   * up without the other, and the webui shows only the section it can fill. */
+  llm_stats_available: v.optional(v.boolean()),
+  /** True when the daemon has a usable `llm_status_url` configured. Same
+   * posture and same independence as the two flags above: a gateway can serve
+   * quota without serving upstream status (an older build does exactly that),
+   * and the webui then shows the quota screen with no service strip rather
+   * than a strip that can only ever error. */
+  llm_status_available: v.optional(v.boolean()),
+  /** True when the daemon has a usable `sandbox_origin_template` configured
+   * (DR-0030 §7.1), user-role hellos only. Same posture as the two flags
+   * above: the template itself stays server-side (the client only ever
+   * receives whole URLs from `sandbox_grant`), and an unconfigured daemon —
+   * one with no canddy sandbox domain in front of it — makes the webui hide
+   * the "HTML として開く" / "生ダウンロード" buttons entirely rather than
+   * offer a button that can only fail. */
+  sandbox_available: v.optional(v.boolean()),
+  /** True when the daemon has a `session_launcher` configured, user-role
+   * hellos only. Same posture as the flags above, for the webui's fork
+   * affordances: a fork is a launcher template run with the fork point filled
+   * in, so with no launcher configured the button could only ever lead to a
+   * launch form that answers launcher_not_configured. */
+  fork_available: v.optional(v.boolean()),
+});
+export type HelloResponse = v.InferOutput<typeof HelloResponseSchema>;
+
+/** A ccmsg client for one sid whose hello the daemon refused. Overwritten,
+ * never accumulated — the offending client reconnects every few seconds, so
+ * the useful reading is "still happening as of `last_seen`", not how many
+ * times it tried.
+ *
+ * There are exactly two ways to get here, and `protocol` tells them apart:
+ * present, the client announced a generation this daemon does not speak;
+ * absent, it was refused before it could be read as a hello at all, for
+ * sending no `request_id` (generation 1's envelope). A client merely too old
+ * to announce a generation is *not* here — that is
+ * `UNANNOUNCED_PROTOCOL_VERSION`, and it is served like any other client of
+ * that generation. */
+export const StaleClientInfoSchema = v.object({
+  /** ISO time of that client's most recent attempt. */
+  last_seen: v.string(),
+  /** ccmsg build it reported, when it reported one. */
+  version: v.optional(v.string()),
+  /** Generation it announced. Absent means it never got that far: refused for
+   * the missing correlation envelope. */
+  protocol: v.optional(v.number()),
+});
+export type StaleClientInfo = v.InferOutput<typeof StaleClientInfoSchema>;
+
+export const PeerInfoSchema = v.object({
+  sid: v.string(),
+  repo: v.string(),
+  ws: v.string(),
+  cwd: v.string(),
+  /** present iff the session announced a transcript the daemon accepted —
+   * the webui uses this to decide whether a Timeline view is available */
+  transcript_path: v.optional(v.string()),
+  /** present iff the session announced a repo container the daemon accepted —
+   * fs browsing is rooted here (all workspaces/worktrees visible) instead of
+   * cwd, and the webui highlights the session's own workspace within it */
+  repo_root: v.optional(v.string()),
+  /** current branch / bookmark of the session's checkout, "" / absent if unknown */
+  branch: v.optional(v.string()),
+  /** ISO time this session first registered with the running daemon (stable
+   * across reconnects while the daemon lives; resets on daemon restart) */
+  connected_at: v.optional(v.string()),
+  /** ISO time of this session's most recent request on any of its connections */
+  last_activity_at: v.optional(v.string()),
+  /** ISO time the *user* last put something into this session's timeline: a
+   * prompt they typed, or a ccmsg room message they sent as the User admin
+   * (`from: "u1"`) that the session's subscribe delivered. Distinct from
+   * `last_activity_at`, which every request the session makes on its own
+   * re-stamps — this one only moves when kawaz says something, which is what
+   * the sidebar's default ordering wants (daemon: session-user-input.ts).
+   *
+   * Absent while the daemon has found none: no user-role subscriber has been
+   * connected long enough to fold the transcript, the session announced no
+   * readable transcript, nobody has typed into it yet, or it predates the
+   * `origin`/`promptSource` fields the fold reads. Clients sort a peer without
+   * it after every peer that has one rather than treating it as epoch. */
+  last_user_input_at: v.optional(v.string()),
+  /** present (always `true`) iff the *asking* session can reach this peer with
+   * Claude Code's own SendMessage tool — i.e. both run under the same
+   * CLAUDE_CONFIG_DIR, the boundary native cross-session messaging does not
+   * cross (docs/findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md).
+   * A flagged peer is reachable inline, with no `ccmsg read` round trip.
+   *
+   * Computed per request against the asker, so it never appears for the
+   * asker's own row, for a user-role (webui) asker — which has no config dir
+   * to compare against — or on the `ev:"peers"` push. Absent whenever either
+   * side's config dir is unknown: an unflagged peer merely costs a `ccmsg
+   * post`, a wrongly flagged one costs a message that never arrives. */
+  send_message: v.optional(v.literal(true)),
+  /** ccmsg build of the client that last hello'd for this sid, when it
+   * announced one (`HelloRequest.client_version`). */
+  client_version: v.optional(v.string()),
+  /** Wire generation that client announced (`HelloRequest.protocol`). Absent
+   * for a client that predates the field, which means
+   * `UNANNOUNCED_PROTOCOL_VERSION` rather than "unknown" — it is left absent
+   * instead of filled in so a display can say "版数不明" for such a client
+   * without inventing a generation it never mentioned. */
+  protocol: v.optional(v.number()),
+  /** Set while the daemon has seen a client for this sid whose hello it
+   * refused. The session itself is fine — some *other* ccmsg process of the
+   * same session (typically a long-lived `ccmsg subscribe` started before an
+   * upgrade) is the stale one, and it is invisible otherwise: it retries
+   * forever, its hello is refused every time, and nothing in the UI moves.
+   * Cleared by any hello from that sid the daemon accepts. */
+  stale_client: v.optional(StaleClientInfoSchema),
+});
+export type PeerInfo = v.InferOutput<typeof PeerInfoSchema>;
+
+export const PeersResponseSchema = v.object({
+  ok: v.literal(true),
+  peers: v.array(PeerInfoSchema),
+});
+export type PeersResponse = v.InferOutput<typeof PeersResponseSchema>;
+
+export const NotifyResponseSchema = v.object({
+  ok: v.literal(true),
+  delivered: v.number(),
+});
+export type NotifyResponse = v.InferOutput<typeof NotifyResponseSchema>;
+
+/** Why a direct message did not arrive (DR-0036 §3). The message is not kept
+ * anywhere in any of these cases.
+ *
+ * - `session_not_found`: the daemon knows no session by that id (it ended, or
+ *   the id is wrong)
+ * - `no_config_dir`: the daemon does not know which CLAUDE_CONFIG_DIR the
+ *   session runs under, so it cannot look for its socket
+ * - `no_peer_socket`: the session has no peer messaging socket this daemon can
+ *   write to (no state file for it in that config dir — it ended or runs under
+ *   another one — a harness speaking another peer protocol, or no token)
+ * - `no_status_socket`: the daemon could not open the socket the recipient
+ *   would report a refusal to, so it wrote nothing rather than call an
+ *   unconfirmable write delivered (a problem on the sending machine's side)
+ * - `unreachable`: the socket took nothing (no connection, or not one byte in
+ *   time), so nothing arrived
+ * - `refused`: the recipient's harness answered that it did not take it */
+export const MessageSendReasonSchema = v.picklist([
+  "session_not_found",
+  "no_config_dir",
+  "no_peer_socket",
+  "no_status_socket",
+  "unreachable",
+  "refused",
+]);
+export type MessageSendReason = v.InferOutput<typeof MessageSendReasonSchema>;
+
+/** Payload of a completed message_send (DR-0036 §1). `mid` is the id the
+ * delivered envelope carries, what a reply to it names as `reply_to`.
+ *
+ * `unconfirmed`: the write into the recipient's socket started and did not
+ * finish in time, so whether the message arrived cannot be told. Sending it
+ * again may deliver it twice; `mid` is the id it carries if it did arrive. */
+export const MessageSendResponseSchema = v.variant("outcome", [
+  v.object({ ok: v.literal(true), outcome: v.literal("delivered"), mid: v.string() }),
+  v.object({
+    ok: v.literal(true),
+    outcome: v.literal("not_delivered"),
+    reason: MessageSendReasonSchema,
+  }),
+  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed"), mid: v.string() }),
+]);
+export type MessageSendResponse = v.InferOutput<typeof MessageSendResponseSchema>;
+
+/** The fields of one cwd-picker entry beside its children. */
+const DirTreeEntryFieldsSchema = v.object({
+  path: v.string(),
+  is_dir: v.literal(true),
+});
+
+/** One directory-only cwd-picker entry. `children` absent means the depth
+ * boundary was reached and the UI may lazily fetch this path.
+ *
+ * Design rationale: a type cannot be inferred from a schema that refers to
+ * itself (TypeScript reports the circularity), so the recursive part — and
+ * only it — is written as an interface that the schema is annotated with.
+ * Every other field is the inferred type of DirTreeEntryFieldsSchema. */
+export interface DirTreeEntry extends v.InferOutput<typeof DirTreeEntryFieldsSchema> {
+  children?: DirTreeEntry[];
+}
+export const DirTreeEntrySchema: v.GenericSchema<DirTreeEntry> = v.object({
+  ...DirTreeEntryFieldsSchema.entries,
+  children: v.optional(v.array(v.lazy(() => DirTreeEntrySchema))),
+});
+
+export const DirTreeResponseSchema = v.object({
+  ok: v.literal(true),
+  entries: v.array(DirTreeEntrySchema),
+});
+export type DirTreeResponse = v.InferOutput<typeof DirTreeResponseSchema>;
+
+/** One launch parameter a template declares: the shell variable name its
+ * command may read, and the value the form opens with. The declaration is the
+ * only source of truth for which variables exist — the launcher shell defines
+ * exactly the declared ones (nothing else), and the webui renders one input per
+ * declaration, in declaration order. */
+export const LauncherParamSchema = v.object({
+  /** A shell identifier (`[A-Za-z_][A-Za-z0-9_]*`), unique within one template.
+   * Reaches the command as `$NAME`. Names the webui knows get a dedicated
+   * widget (CWD a directory picker, MODEL/EFFORT a dropdown, PROMPT a
+   * textarea); any other name gets a plain text input. */
+  name: v.string(),
+  /** The form's initial value, and what its "default" button restores. Empty
+   * string is the normal "user fills this in" case. */
+  default: v.string(),
+});
+export type LauncherParam = v.InferOutput<typeof LauncherParamSchema>;
+
+/** One template as seen by a client: the parsed template minus `shell`, which
+ * is a daemon-side execution detail the form has no use for. */
+export const SessionLauncherConfigTemplateSchema = v.object({
+  name: v.string(),
+  command: v.string(),
+  params: v.array(LauncherParamSchema),
+});
+export type SessionLauncherConfigTemplate = v.InferOutput<
+  typeof SessionLauncherConfigTemplateSchema
+>;
+
+/** session_launcher_config reply — see its request doc comment.
+ * `templates` is the configured recipe list in config order, each carrying its
+ * shell command template verbatim (no variable substitution — `$CWD` and every
+ * other declared parameter stay literal) plus the parameter declaration that
+ * tells the form which inputs to render, in which order, with which initial
+ * values; the webui surfaces the chosen template's command as an editable
+ * textarea per DR-0018 §3.2, and sends the edited value
+ * back via SessionLaunchRequest.command override. Same
+ * one-shot read as root_dirs — a re-fetch is only useful across a daemon
+ * config reload + restart. */
+export const SessionLauncherConfigResponseSchema = v.object({
+  ok: v.literal(true),
+  root_dirs: v.array(v.string()),
+  templates: v.array(SessionLauncherConfigTemplateSchema),
+});
+export type SessionLauncherConfigResponse = v.InferOutput<
+  typeof SessionLauncherConfigResponseSchema
+>;
+
+/** Payload of a completed session launch, delivered inside
+ * the session_launch reply. Signal termination uses null exit_code. */
+export const SessionLaunchResponseSchema = v.object({
+  ok: v.literal(true),
+  stdout: v.string(),
+  stderr: v.string(),
+  exit_code: v.nullable(v.number()),
+  timed_out: v.boolean(),
+});
+export type SessionLaunchResponse = v.InferOutput<typeof SessionLaunchResponseSchema>;
+
+/** Payload of a completed session_kill (DR-0028), delivered inside
+ * the session_kill reply. `terminated: true` = the process was observed gone
+ * within the ~3s grace. `terminated: false` is NOT a failure: both SIGTERM
+ * sends succeeded but the process was still alive when the grace expired —
+ * the UI presents this as "signal sent, termination unconfirmed" and a human
+ * decides whether to kill harder (the daemon never SIGKILLs). */
+export const SessionKillResponseSchema = v.object({
+  ok: v.literal(true),
+  terminated: v.boolean(),
+});
+export type SessionKillResponse = v.InferOutput<typeof SessionKillResponseSchema>;
+
+/** Payload of a completed session_rename, delivered inside
+ * the session_rename reply. `ok` here means "the `/rename <title>` keystrokes
+ * reached the terminal", not "the session is now called that" — see
+ * SessionRenameRequest for why the daemon cannot know the latter. `title` is
+ * the normalized (trimmed) string actually typed, so a UI can report what it
+ * sent rather than what the user's draft happened to contain, and
+ * `hyoui_session_id` names the terminal it went to. */
+export const SessionRenameResponseSchema = v.object({
+  ok: v.literal(true),
+  hyoui_session_id: v.string(),
+  title: v.string(),
+});
+export type SessionRenameResponse = v.InferOutput<typeof SessionRenameResponseSchema>;
+
+/** Why a session_input did not reach the session (DR-0035 §5). Nothing is
+ * sent by another route in any of these cases.
+ *
+ * The module's own reasons are SessionInputModuleReason (sidecar.ts). The
+ * daemon adds `no_module`: no run of the session has a hooks module that took
+ * the request (the plugin not loaded or of a ccmsg that does not know
+ * `prompt.send`, a session without a composer, the session gone).
+ *
+ * With several runs, `no_composer` / `no_terminal` / `session_changed` are
+ * the last run's answer after every run gave one of the three. */
+export const SessionInputReasonSchema = v.picklist([
+  ...SessionInputModuleReasonSchema.options,
+  "no_module",
+]);
+export type SessionInputReason = v.InferOutput<typeof SessionInputReasonSchema>;
+
+/** Payload of a completed session_input (DR-0035 §5).
+ *
+ * - `accepted`: the session took the text as a person's prompt
+ * - `not_delivered`: it did not, for `reason`; the text went nowhere else
+ * - `unconfirmed`: a sidecar took the request but no answer came within the
+ *   daemon's wait. The text may or may not be in the session — it shows in the
+ *   session's timeline if it is — so a caller keeps it rather than sending it
+ *   again blindly */
+export const SessionInputResponseSchema = v.variant("outcome", [
+  v.object({ ok: v.literal(true), outcome: v.literal("accepted") }),
+  v.object({
+    ok: v.literal(true),
+    outcome: v.literal("not_delivered"),
+    reason: SessionInputReasonSchema,
+  }),
+  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
+]);
+export type SessionInputResponse = v.InferOutput<typeof SessionInputResponseSchema>;
+
+/** Payload of a sidecar_reply the daemon was waiting for. */
+export const SidecarReplyResponseSchema = v.object({
+  ok: v.literal(true),
+});
+export type SidecarReplyResponse = v.InferOutput<typeof SidecarReplyResponseSchema>;
+
+/** Payload of a completed session_env.
+ * `env` is the session process's environment as name→value pairs.
+ *
+ * On macOS the source is `ps eww`, whose output is space-separated with no
+ * quoting, so a value containing a space cannot be told apart from the next
+ * variable by tokenizing alone. The daemon reconstructs values by treating a
+ * token as a new variable only when it matches `NAME=`; a value that itself
+ * contains a `NAME=`-shaped token is the one case that mis-splits. Linux
+ * reads `/proc/<pid>/environ` (NUL-separated), which has no such ambiguity.
+ * Values are returned verbatim and are NOT redacted — the caller decides how
+ * to present secrets. */
+export const SessionEnvResponseSchema = v.object({
+  ok: v.literal(true),
+  /** The pid the environment was read from, after the same ps verification
+   * session_kill applies. Surfaced so the UI can show what it actually read. */
+  pid: v.number(),
+  env: v.record(v.string(), v.string()),
+});
+export type SessionEnvResponse = v.InferOutput<typeof SessionEnvResponseSchema>;
+
+export const SessionSearchMatchSchema = v.object({
+  role: v.picklist(["user", "agent"]),
+  text: v.string(),
+  timestamp: v.optional(v.string()),
+});
+export type SessionSearchMatch = v.InferOutput<typeof SessionSearchMatchSchema>;
+
+export const SessionSearchHitSchema = v.object({
+  sid: v.string(),
+  config_dir: v.string(),
+  /** absolute path selected only from detected config dirs' projects trees */
+  file: v.string(),
+  cwd: v.nullable(v.string()),
+  /** `owner/repo` when cwd matches the known repos path convention */
+  repo: v.nullable(v.string()),
+  /** repo-relative workspace/worktree path when present */
+  ws: v.nullable(v.string()),
+  created_at: v.string(),
+  updated_at: v.string(),
+  size: v.number(),
+  matches: v.array(SessionSearchMatchSchema),
+  /** The session's own title (`/rename`, transcript `custom-title` records),
+   * when one appears within the same early portion of the file that already
+   * establishes `cwd`/`created_at` — a session never renamed, or renamed only
+   * after that point, has `null` here rather than a guessed fallback. */
+  title: v.nullable(v.string()),
+  /** What the session was last running as, read from the newest main-context
+   * assistant record at the end of the file: raw transcript spellings
+   * (`message.model`, e.g. "claude-fable-5[1m]", and the row-level `effort`,
+   * e.g. "medium"), left for the client to map onto its own vocabulary. A
+   * resume relaunches this session, so these are what its next run should
+   * default to. Both are optional and independently absent: a transcript whose
+   * tail carries no such record answers neither, and one written by a CC
+   * version that predates row-level `effort` answers only `model`. */
+  model: v.optional(v.string()),
+  effort: v.optional(v.string()),
+});
+export type SessionSearchHit = v.InferOutput<typeof SessionSearchHitSchema>;
+
+export const SessionSearchResponseSchema = v.object({
+  ok: v.literal(true),
+  hits: v.array(SessionSearchHitSchema),
+  truncated: v.boolean(),
+});
+export type SessionSearchResponse = v.InferOutput<typeof SessionSearchResponseSchema>;
+
+/** Where a fork's copied history ends, when the session is a fork whose
+ * ancestor transcript still exists. */
+export const ForkOriginSchema = v.object({
+  /** The ancestor the copied records came from. */
+  sid: v.string(),
+  /** uuid of the last copied record: the seam sits immediately after it. */
+  boundary_uuid: v.string(),
+  /** How many records were copied — how far into the file the seam is, for a
+   * client that wants to say so without holding the whole window. */
+  copied: v.number(),
+});
+export type ForkOrigin = v.InferOutput<typeof ForkOriginSchema>;
+
+/** `origin` is null both when the session is not a fork and when it is one
+ * whose ancestor file is gone: neither case has a seam a viewer could place,
+ * and the difference is not observable from what remains on disk. */
+export const ForkOriginResponseSchema = v.object({
+  ok: v.literal(true),
+  origin: v.nullable(ForkOriginSchema),
+});
+export type ForkOriginResponse = v.InferOutput<typeof ForkOriginResponseSchema>;
+
+/** Where a `session_dump_file` dump landed. `entries` and `bytes` let a client
+ * say how much was written without reading the file back. */
+export const SessionDumpFileResponseSchema = v.object({
+  ok: v.literal(true),
+  /** Absolute path of the written JSONL file, on the daemon host. */
+  path: v.string(),
+  entries: v.number(),
+  bytes: v.number(),
+});
+export type SessionDumpFileResponse = v.InferOutput<typeof SessionDumpFileResponseSchema>;
+
+/** One row of `claude agents --json` output, annotated with which
+ * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
+ * (camelCase preserved via passthrough) — `kind`/`status`/`state` stay plain
+ * strings so newer CLI values don't break older daemons. */
+export const AgentInfoSchema = v.object({
+  pid: v.number(),
+  cwd: v.string(),
+  /** "interactive" | "background" (upstream values, open set) */
+  kind: v.string(),
+  /** epoch ms */
+  startedAt: v.number(),
+  sessionId: v.string(),
+  name: v.optional(v.string()),
+  /** e.g. "waiting" / "running"; upstream-controlled open set */
+  status: v.optional(v.string()),
+  /** Human-readable detail for the current status, e.g. "dialog open". */
+  waitingFor: v.optional(v.string()),
+  /** background sessions only, e.g. "done" */
+  state: v.optional(v.string()),
+  /** background sessions only: short id */
+  id: v.optional(v.string()),
+  /** the CLAUDE_CONFIG_DIR this row was polled from (auto-detected ~/.claude* dirs) */
+  config_dir: v.string(),
+  /** Value of the `HYOUI_SESSION_ID` environment variable on the underlying
+   *  process (looked up per-poll via `ps eww` on the pid, cached per pid).
+   *  Absent when the process doesn't set the var or when the env couldn't
+   *  be read (permission denied on other users' processes, pid gone). The
+   *  daemon deliberately reads this from the *current* process — resuming
+   *  the same claude sessionId in a new process yields a new pid and thus
+   *  the current env, not a stale start-time snapshot. */
+  hyoui_session_id: v.optional(v.string()),
+});
+export type AgentInfo = v.InferOutput<typeof AgentInfoSchema>;
+
+export const AgentsResponseSchema = v.object({
+  ok: v.literal(true),
+  agents: v.array(AgentInfoSchema),
+  /** ISO time of the poll that produced `agents`; null when no poll has run yet */
+  polled_at: v.nullable(v.string()),
+});
+export type AgentsResponse = v.InferOutput<typeof AgentsResponseSchema>;
+
+export const SessionStatusResponseSchema = v.object({
+  ...SessionStatusSnapshotSchema.entries,
+  ok: v.literal(true),
+  sid: v.string(),
+});
+export type SessionStatusResponse = v.InferOutput<typeof SessionStatusResponseSchema>;
+
+export const SessionStatusSubscribeResponseSchema = SessionStatusResponseSchema;
+export type SessionStatusSubscribeResponse = SessionStatusResponse;
+
+export const SessionStatusUnsubscribeResponseSchema = v.object({
+  ok: v.literal(true),
+  sid: v.string(),
+});
+export type SessionStatusUnsubscribeResponse = v.InferOutput<
+  typeof SessionStatusUnsubscribeResponseSchema
+>;
+
+export const SessionErrorsResponseSchema = v.object({
+  ok: v.literal(true),
+  /** Only sessions currently stopped on an error appear; a recovered session
+   * drops out of the list rather than appearing with an empty error. Sorted
+   * by sid for a stable compare on the daemon's change check. */
+  errors: v.array(SessionErrorEntrySchema),
+});
+export type SessionErrorsResponse = v.InferOutput<typeof SessionErrorsResponseSchema>;

@@ -570,14 +570,14 @@ describe("fs_find (workspace, DR-0026)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestRefused({
           op: "fs_find",
           sid: A,
           kind: "external",
           query: "readme",
         });
         expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("invalid_args");
+        expect(res.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -821,7 +821,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestRefused({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -829,7 +829,7 @@ describe("fs_find .gitignore filtering", () => {
           respect_gitignore: "yes",
         });
         expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("invalid_args");
+        expect(res.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
       }

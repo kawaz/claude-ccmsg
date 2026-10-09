@@ -8,6 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import { SidecarReplySchema } from "./sidecar.ts";
+import { PROTOCOL_VERSION } from "./version.ts";
 
 /** A Claude Code session id as a request names one. Its shape (a lowercase
  * UUID) is the daemon's to check where it matters; the request only has to
@@ -37,12 +38,13 @@ export const HelloRequestSchema = v.object({
    * daemon never gates on it — but it is what turns "this session's client is
    * stale" into an actionable line: it names the version to upgrade from. */
   client_version: v.optional(v.string()),
-  /** The wire generation this client speaks (`PROTOCOL_VERSION`). A hello
-   * announcing a generation the daemon does not speak is rejected with
-   * `bad_request`. Omitting the field means generation
-   * `UNANNOUNCED_PROTOCOL_VERSION`, which is a statement about the client, not
-   * an exemption: it is checked like any announced value. */
-  protocol: v.optional(v.number()),
+  /** The wire generation this client speaks: this one. A hello of another
+   * generation is OtherGenerationHelloRequest. Omitting the field means
+   * generation `UNANNOUNCED_PROTOCOL_VERSION`, which is this generation, so
+   * such a hello is read here; when `PROTOCOL_VERSION` moves past it, the
+   * field becomes required here and its absence moves to the other
+   * generation. */
+  protocol: v.optional(v.literal(PROTOCOL_VERSION)),
   /** How the browser arrived at the page this hello comes from
    * (`PerformanceNavigationTiming.type`: navigate / reload / back_forward /
    * prerender). Diagnostic only, and sent by the webui on the first hello of a
@@ -57,6 +59,25 @@ export const HelloRequestSchema = v.object({
   ua: v.optional(v.string()),
 });
 export type HelloRequest = v.InferOutput<typeof HelloRequestSchema>;
+
+/** A hello of a generation this daemon does not speak (DR-0002 §4). Only what
+ * the refusal needs is read: the generation, and which session's client it is
+ * (filed as `PeerInfo.stale_client`). The rest of it is that generation's
+ * shape, and is not read. */
+export const OtherGenerationHelloRequestSchema = v.object({
+  op: v.literal("hello"),
+  protocol: v.pipe(v.number(), v.notValue(PROTOCOL_VERSION)),
+  role: v.optional(v.picklist(["session", "user"])),
+  sid: v.optional(v.string()),
+  client_version: v.optional(v.string()),
+});
+export type OtherGenerationHelloRequest = v.InferOutput<typeof OtherGenerationHelloRequestSchema>;
+
+/** A hello of any generation, told apart by the generation it announces. */
+export const AnyGenerationHelloRequestSchema = v.variant("protocol", [
+  HelloRequestSchema,
+  OtherGenerationHelloRequestSchema,
+]);
 
 export const PeersRequestSchema = v.object({
   op: v.literal("peers"),
@@ -103,22 +124,6 @@ export const DirTreeRequestSchema = v.object({
 });
 export type DirTreeRequest = v.InferOutput<typeof DirTreeRequestSchema>;
 
-/** `session_launch` params: every name the request sent, with its value.
- * `__proto__`, `constructor` and `prototype` are shell identifiers a template
- * may declare, and an object schema leaves those keys out, so the params are
- * read as their own entries and kept as such. The object they are kept in
- * still has a prototype: look a name up with `Object.hasOwn` or through a
- * Map, never with a plain index that would find an inherited member. */
-const LaunchParamsSchema = v.pipe(
-  v.custom<Readonly<Record<string, unknown>>>(
-    (input) => typeof input === "object" && input !== null && !Array.isArray(input),
-    "Expected an object of parameter values",
-  ),
-  v.transform((params) => Object.entries(params)),
-  v.array(v.tuple([v.string(), v.string()])),
-  v.transform((entries) => Object.fromEntries(entries)),
-);
-
 /** Session launch request (DR-0018 §3.2, user role only). The daemon validates
  * the opaque values, builds env/argv, and executes the configured command.
  *
@@ -140,7 +145,7 @@ export const SessionLaunchRequestSchema = v.object({
    * bug worth surfacing). CWD belongs in `cwd`, not here. Values are opaque
    * strings — they travel as environment carriers, never interpolated into
    * shell text, so no value can inject shell syntax. */
-  params: LaunchParamsSchema,
+  params: v.record(v.string(), v.string()),
   /** Optional user-supplied command template override (DR-0018 §3.2).
    * When absent, the daemon uses the administrator-configured
    * `session_launcher.command` verbatim. When present, it must be a non-empty
@@ -275,7 +280,7 @@ export const SessionInputRequestSchema = v.object({
   op: v.literal("session_input"),
   session_id: SessionIdSchema,
   /** The prompt, verbatim. Several lines become one prompt. Must hold
-   * something other than whitespace (invalid_args otherwise). */
+   * something other than whitespace. */
   text: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "Expected text with something other than whitespace"),

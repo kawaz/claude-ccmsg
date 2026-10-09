@@ -568,19 +568,20 @@ describe("fs_list / fs_read", () => {
   );
 
   test(
-    "invalid_args: fs_list with a non-string path is rejected (symmetry with fs_read's own guard)",
+    "bad_request: fs_list with a non-string path is not read as a request",
     async () => {
       const ctx = await startTestDaemon();
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
-          op: "fs_list",
-          sid: A,
-          path: 123 as unknown as string,
+        const res = await c.requestRefused({ op: "fs_list", sid: A, path: 123 });
+        expect(res).toEqual({
+          ok: false,
+          error: {
+            code: "bad_request",
+            msg: "path: Invalid type: Expected string but received 123",
+          },
         });
-        expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("invalid_args");
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });
@@ -816,21 +817,23 @@ describe("fs_read_external (DR-0024)", () => {
   );
 
   test(
-    "invalid_args: relative, empty, and non-string paths are rejected",
+    "relative and empty paths are invalid_args, a non-string path bad_request",
     async () => {
       // fs_read_external's wire shape is absolute-only; malformed shapes fail
       // before transcript scanning or filesystem existence checks.
       const ctx = await startTestDaemon();
       try {
         const user = await userAt(ctx);
-        for (const candidate of ["relative.txt", "", 42]) {
+        for (const candidate of ["relative.txt", ""]) {
           const res = await user.request<{ ok: false; error: { code: string } }>({
             op: "fs_read_external",
             sid: A,
-            path: candidate as string,
+            path: candidate,
           });
           expect(res.error.code).toBe("invalid_args");
         }
+        const res = await user.requestRefused({ op: "fs_read_external", sid: A, path: 42 });
+        expect(res.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -2840,7 +2843,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
   );
 
   test(
-    "malformed path entries (non-string / empty / relative) become null; batch still returns results for the rest",
+    "malformed path entries (empty / relative) become null; batch still returns results for the rest",
     async () => {
       // One bad token in the middle of an otherwise-valid list must not
       // abort the whole batch — the response is a parallel array with null
@@ -2867,13 +2870,12 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         }>({
           op: "fs_stat_batch",
           sid: A,
-          paths: [okAbs, "", "relative.md", 42 as unknown as string, okAbs],
+          paths: [okAbs, "", "relative.md", okAbs],
         });
         expect(res.results[0]).toEqual({ kind: "contained", path: "ok.md" });
         expect(res.results[1]).toBeNull();
         expect(res.results[2]).toBeNull();
-        expect(res.results[3]).toBeNull();
-        expect(res.results[4]).toEqual({ kind: "contained", path: "ok.md" });
+        expect(res.results[3]).toEqual({ kind: "contained", path: "ok.md" });
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -3001,11 +3003,11 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
   );
 
   test(
-    "invalid_args: non-array or oversized paths list",
+    "a paths list that is not of strings is not a request, an oversized one invalid_args",
     async () => {
-      // Whole-request contract violations still fail the batch — the caller
-      // is doing something structurally wrong, not just supplying one bad
-      // token, so a single error keeps the failure loud.
+      // Whole-request contract violations fail the batch — the caller is
+      // doing something structurally wrong, so a single error keeps the
+      // failure loud.
       const ctx = await startTestDaemon();
       const cwd = fs.realpathSync(mkfixture());
       try {
@@ -3020,12 +3022,10 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
           cwd,
         });
         const user = await userAt(ctx);
-        const res1 = await user.request<{ ok: false; error: { code: string } }>({
-          op: "fs_stat_batch",
-          sid: A,
-          paths: "not-an-array" as unknown as string[],
-        });
-        expect(res1.error.code).toBe("invalid_args");
+        for (const paths of ["not-an-array", ["/abs/a", 42]]) {
+          const res1 = await user.requestRefused({ op: "fs_stat_batch", sid: A, paths });
+          expect(res1.error.code).toBe("bad_request");
+        }
         const oversized = Array.from({ length: 257 }, (_, i) => `/abs/${i}`);
         const res2 = await user.request<{ ok: false; error: { code: string } }>({
           op: "fs_stat_batch",
