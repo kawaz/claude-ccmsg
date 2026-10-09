@@ -68,13 +68,6 @@ describe("readPromptSendReply", () => {
     ).toEqual({ outcome: "not_delivered", reason: "session_changed" });
   });
 
-  // The op never ran, so nothing reached the composer.
-  for (const code of ["unknown_op", "unsupported_version", "invalid_args"] as const) {
-    test(`${code} is an op that could not run`, () => {
-      expect(readPromptSendReply(failed(code))).toEqual({ outcome: "cannot_run", code });
-    });
-  }
-
   // What the composer holds is unknown after these. Which results are not of
   // prompt.send's shape is the schema's (sessionInput below, and the
   // protocol's own tests).
@@ -219,21 +212,8 @@ describe("sessionInput asks one run at a time", () => {
     expect(written.map((w) => w.socket)).toEqual([`${SID}.200.sock`]);
   });
 
-  // A module of another ccmsg did not run the op: the composer was not
-  // touched, so the next run is asked.
-  test("a run whose module cannot run prompt.send is passed over", async () => {
-    const { deps, written } = scripted({ "100": { error: "unknown_op" }, "200": ACCEPTED });
-    const res = await sessionInput(SID, "hi", deps);
-    expect(res).toMatchObject({ outcome: "accepted" });
-    expect(res.tries.map((t) => t.result)).toEqual(["cannot_run:unknown_op", "accepted"]);
-    expect(written.length).toBe(2);
-  });
-
-  test("no run able to run prompt.send: not_delivered no_module", async () => {
-    const { deps } = scripted({
-      "100": { error: "unknown_op" },
-      "200": { error: "unsupported_version" },
-    });
+  test("no run that takes the line: not_delivered no_module", async () => {
+    const { deps } = scripted({ "100": "unwritten", "200": "unwritten" });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
@@ -467,34 +447,6 @@ describe("session_input over the wire", () => {
         }),
       );
       expect(await reply).toEqual({ ok: true, outcome: "not_delivered", reason: "dialog" });
-      user.close();
-      module.close();
-    } finally {
-      sidecar.close();
-      await stopTestDaemon(ctx);
-    }
-  });
-
-  // The only run's module is of a ccmsg without prompt.send: answered at once
-  // rather than at the deadline.
-  test("unknown_op from the only run is not_delivered no_module", async () => {
-    const ctx = await startShortDaemon();
-    const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
-    try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
-      const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
-      const line = await nextRequest(sidecar);
-      const module = await connect(ctx.sock);
-      await module.hello({ role: "session", sid: SID });
-      await module.request(
-        sidecarReply({
-          id: line.id,
-          ok: false,
-          error: { code: "unknown_op", message: "no op prompt.send" },
-        }),
-      );
-      expect(await reply).toEqual({ ok: true, outcome: "not_delivered", reason: "no_module" });
       user.close();
       module.close();
     } finally {

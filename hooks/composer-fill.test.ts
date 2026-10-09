@@ -629,39 +629,6 @@ async function replyTo(fake: Fake, line: string): Promise<SidecarReply> {
 }
 
 describe("requests the module answers without running prompt.send", () => {
-  test("an op it does not have is unknown_op, at once", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    const reply = await replyTo(fake, '{"v":1,"op":"prompt.peek","id":"q1","args":{}}');
-    expect(reply).toMatchObject({ id: "q1", ok: false, error: { code: "unknown_op" } });
-    expect(fake.fills).toEqual([]);
-  });
-
-  test("a request of another version is unsupported_version, whatever its op", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    const reply = await replyTo(fake, '{"v":2,"op":"prompt.send","id":"q2","args":{"text":"x"}}');
-    expect(reply).toMatchObject({ id: "q2", ok: false, error: { code: "unsupported_version" } });
-    expect(fake.fills).toEqual([]);
-  });
-
-  for (const [name, args] of [
-    ["no args", undefined],
-    ["no text", {}],
-    ["a blank text", { text: " \n" }],
-  ] as const) {
-    test(`prompt.send with ${name} is invalid_args`, async () => {
-      const fake = fakeEngine();
-      registerOn(fake);
-      const reply = await replyTo(
-        fake,
-        JSON.stringify({ v: 1, op: "prompt.send", id: "q3", args }),
-      );
-      expect(reply).toMatchObject({ id: "q3", ok: false, error: { code: "invalid_args" } });
-      expect(fake.fills).toEqual([]);
-    });
-  }
-
   test("a prompt.send that throws is internal", async () => {
     const fake = fakeEngine();
     fake.$.prompt = {
@@ -675,41 +642,32 @@ describe("requests the module answers without running prompt.send", () => {
     expect(reply).toMatchObject({ id: "q4", ok: false, error: { code: "internal" } });
   });
 
-  test("a line naming no id cannot be answered and is only logged", async () => {
+  // A line that is not a request of this version, of an op the module runs,
+  // with that op's args, is read no further: nothing runs, nothing is sent
+  // back, and the line is logged.
+  test("a line that is not a request this module runs is logged and not answered", async () => {
+    const lines = [
+      '{"v":1,"op":"describe","args":{}}',
+      "not json",
+      '{"v":1,"op":"prompt.peek","id":"q1","args":{}}',
+      '{"v":2,"op":"prompt.send","id":"q2","args":{"text":"x"}}',
+      '{"v":{"toString":null},"op":"describe","id":"q5","args":{}}',
+      '{"v":1,"op":"prompt.send","id":"q3"}',
+      '{"v":1,"op":"prompt.send","id":"q3","args":{"text":" \\n"}}',
+      '{"v":1,"op":"describe","id":"d0","args":{"x":1}}',
+      '{"v":1,"op":"describe","id":"d0","args":[]}',
+    ];
     const fake = fakeEngine();
     registerOn(fake);
     await fire(fake, "session.start", START, async () => ({}));
     await settle();
-    spawned(fake, 0).stream.push('{"v":1,"op":"describe","args":{}}\nnot json\n');
+    spawned(fake, 0).stream.push(`${lines.join("\n")}\n`);
     await settle();
     expect(fake.runs).toEqual([]);
-    expect(fake.logs.filter((l) => l.includes("names no request id")).length).toBe(2);
-  });
-
-  for (const [name, args] of [
-    ["no args", undefined],
-    ["args with a key", { x: 1 }],
-    ["an array", []],
-  ] as const) {
-    test(`describe with ${name} is invalid_args`, async () => {
-      const fake = fakeEngine();
-      registerOn(fake);
-      const reply = await replyTo(fake, JSON.stringify({ v: 1, op: "describe", id: "d0", args }));
-      expect(reply).toMatchObject({ id: "d0", ok: false, error: { code: "invalid_args" } });
-      expect(fake.runs.filter((argv) => argv.at(-1) === "version")).toEqual([]);
-    });
-  }
-
-  // A version whose own toString is not a function must not keep the reply
-  // from being made.
-  test("a version that String() cannot print is still answered", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    const reply = await replyTo(
-      fake,
-      '{"v":{"toString":null},"op":"describe","id":"q5","args":{}}',
+    expect(fake.fills).toEqual([]);
+    expect(fake.logs.filter((l) => l.includes("not a request this module runs")).length).toBe(
+      lines.length,
     );
-    expect(reply).toMatchObject({ id: "q5", ok: false, error: { code: "unsupported_version" } });
   });
 
   test("a reply that cannot be sent is logged, and answering does not throw", async () => {
@@ -724,7 +682,7 @@ describe("requests the module answers without running prompt.send", () => {
     };
     const state = registerOn(fake);
     expect(
-      await answer(fake.$, state, fake.sid.value, 0, '{"v":1,"op":"nope","id":"q6","args":{}}'),
+      await answer(fake.$, state, fake.sid.value, 0, '{"v":1,"op":"describe","id":"q6","args":{}}'),
     ).toBeUndefined();
     expect(
       fake.logs.some((l) => l.includes("reply q6 failed: ") && l.includes("spawn failed")),

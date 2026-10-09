@@ -20,7 +20,7 @@ describe("SidecarReplies", () => {
     const replies = new SidecarReplies();
     replies.open("i1", SID);
     const waited = replies.wait("i1", 5_000);
-    const first = { id: "i1", ok: false, error: { code: "unknown_op", message: "x" } } as const;
+    const first = { id: "i1", ok: false, error: { code: "internal", message: "x" } } as const;
     expect(replies.take(SID, first)).toBe(true);
     expect(replies.take(SID, { id: "i1", ok: true, result: {} })).toBe(true);
     expect(await waited).toEqual(first);
@@ -152,7 +152,7 @@ describe("callSidecar", () => {
   });
 
   test("a failed reply is read whatever the op", async () => {
-    const error = { code: "unknown_op", message: "no op describe" } as const;
+    const error = { code: "internal", message: "describe failed" } as const;
     const d: SidecarDeps = deps({
       write: async (_socket, line) => {
         d.replies.take(SID, { id: requestIn(line).id, ok: false, error });

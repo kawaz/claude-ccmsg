@@ -691,8 +691,8 @@ function failureOf(issues) {
     summary: read.map((i) => i.path === "" ? i.message : `${i.path}: ${i.message}`).join("; ")
   };
 }
-function parseWith(schema, input) {
-  const read = safeParse(schema, input);
+function parseWith(schema, input, options = {}) {
+  const read = safeParse(schema, input, options.firstIssue === true ? { abortEarly: true, abortPipeEarly: true } : undefined);
   return read.success ? { ok: true, value: read.output } : { ok: false, failure: failureOf(read.issues) };
 }
 var JsonTextSchema = pipe(string(), parseJson());
@@ -745,12 +745,7 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args)
 ]);
-var SidecarErrorCodeSchema = picklist([
-  "unknown_op",
-  "unsupported_version",
-  "invalid_args",
-  "internal"
-]);
+var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
   code: SidecarErrorCodeSchema,
   message: string()
@@ -768,28 +763,9 @@ function sidecarReplySchema(result) {
 }
 var SidecarReplySchema = sidecarReplySchema(unknown());
 var SidecarReplyTextSchema = jsonText(SidecarReplySchema);
-var NamedLineSchema = object({ id: SidecarRequestIdSchema });
-var VersionedLineSchema = object({ v: literal(SIDECAR_REQUEST_VERSION) });
-var KnownOpLineSchema = object({ op: picklist(SIDECAR_OP_NAMES) });
+var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
-  const json = parseWith(JsonTextSchema, line);
-  if (!json.ok)
-    return { ok: false, id: undefined, failure: json.failure };
-  const decoded = json.value;
-  const read = parseWith(SidecarRequestSchema, decoded);
-  if (read.ok)
-    return { ok: true, request: read.value };
-  const named = parseWith(NamedLineSchema, decoded);
-  if (!named.ok)
-    return { ok: false, id: undefined, failure: named.failure };
-  const { id } = named.value;
-  const version = parseWith(VersionedLineSchema, decoded);
-  if (!version.ok)
-    return { ok: false, id, code: "unsupported_version", failure: version.failure };
-  const op = parseWith(KnownOpLineSchema, decoded);
-  if (!op.ok)
-    return { ok: false, id, code: "unknown_op", failure: op.failure };
-  return { ok: false, id, code: "invalid_args", failure: read.failure };
+  return parseWith(SidecarRequestLineSchema, line);
 }
 
 var SessionStartInputSchema = looseObject({
@@ -829,17 +805,6 @@ var RESPAWN_MAX_MS = 30000;
 var STABLE_MS = 1e4;
 function failed(id, code, message) {
   return { id, ok: false, error: { code, message } };
-}
-function refusal(read) {
-  const { summary } = read.failure;
-  switch (read.code) {
-    case "unsupported_version":
-      return failed(read.id, read.code, `this module reads request version ${SIDECAR_REQUEST_VERSION} (${summary})`);
-    case "unknown_op":
-      return failed(read.id, read.code, `this module has ops ${SIDECAR_OP_NAMES.join(", ")} (${summary})`);
-    case "invalid_args":
-      return failed(read.id, read.code, `args are not what the op takes (${summary})`);
-  }
 }
 function hyouiEnterArgv(hyouiSessionId) {
   return ["hyoui", "input", hyouiSessionId, "key:Enter"];
@@ -1000,17 +965,15 @@ async function replyTo($, state, sid, generation, request) {
   }
 }
 function answer($, state, sid, generation, line) {
-  const send = (id, reply) => reply.then((r) => sendReply($, sid, r)).catch((e) => {
-    $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
-  });
   const read = readSidecarRequest(line);
-  if (read.ok)
-    return send(read.request.id, replyTo($, state, sid, generation, read.request));
-  if (read.id === undefined) {
-    $.ui.log(`ccmsg sidecar: dropped a line that names no request id (${read.failure.summary}): ${line.slice(0, 200)}`, { to: "debug" });
+  if (!read.ok) {
+    $.ui.log(`ccmsg sidecar: dropped a line that is not a request this module runs (${read.failure.summary}): ${line.slice(0, 200)}`, { to: "debug" });
     return Promise.resolve();
   }
-  return send(read.id, Promise.resolve(refusal(read)));
+  const { id } = read.value;
+  return replyTo($, state, sid, generation, read.value).then((r) => sendReply($, sid, r)).catch((e) => {
+    $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
+  });
 }
 async function runSidecar($, state, sid) {
   const child = $.process.spawn({

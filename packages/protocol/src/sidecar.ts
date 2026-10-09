@@ -10,10 +10,10 @@
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
 import * as v from "valibot";
-import { JsonTextSchema, jsonText, type ParseFailure, parseWith } from "./parse.ts";
+import { jsonText, type Parsed, parseWith } from "./parse.ts";
 
-/** The version of the request line. A module answers a line of another
- * version with `unsupported_version` rather than guessing at it. */
+/** The version of the request line. A module reads a line of this version
+ * only. */
 export const SIDECAR_REQUEST_VERSION = 1;
 
 /** What a request and its reply are matched by: unique per request. */
@@ -148,19 +148,10 @@ export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { o
 
 // --- replies ---------------------------------------------------------------
 
-/** Why a module could not run an op at all, as opposed to an op that ran and
- * reports how it went inside its `result`.
- *
- * - `unknown_op`: the module has no such op (another ccmsg version)
- * - `unsupported_version`: the line's `v` is not one the module reads
- * - `invalid_args`: the op's `args` are not what it takes
- * - `internal`: the op started and failed; what it changed is unknown */
-export const SidecarErrorCodeSchema = v.picklist([
-  "unknown_op",
-  "unsupported_version",
-  "invalid_args",
-  "internal",
-]);
+/** Why a module could not finish an op, as opposed to an op that ran and
+ * reports how it went inside its `result`: `internal`, the op started and
+ * failed, and what it changed is unknown. */
+export const SidecarErrorCodeSchema = v.picklist(["internal"]);
 export type SidecarErrorCode = v.InferOutput<typeof SidecarErrorCodeSchema>;
 
 export const SidecarErrorSchema = v.object({
@@ -221,39 +212,13 @@ export type SidecarReplyOf<Op extends SidecarOp> =
 
 // --- reading a request line -------------------------------------------------
 
-/** One request line as the module reads it: the request, or why it cannot
- * be run. A line whose `id` cannot be read cannot be answered either. */
-export type SidecarRequestRead =
-  | { readonly ok: true; readonly request: SidecarRequest }
-  | {
-      readonly ok: false;
-      readonly id: string;
-      readonly code: Exclude<SidecarErrorCode, "internal">;
-      readonly failure: ParseFailure;
-    }
-  | { readonly ok: false; readonly id: undefined; readonly failure: ParseFailure };
+const SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 
-const NamedLineSchema = v.object({ id: SidecarRequestIdSchema });
-const VersionedLineSchema = v.object({ v: v.literal(SIDECAR_REQUEST_VERSION) });
-const KnownOpLineSchema = v.object({ op: v.picklist(SIDECAR_OP_NAMES) });
-
-/** Read one request line. A line that is not a request of this version and
- * of a known op with its args says which of those it is not — its id, then
- * its version, then its op, then its args — so the answer names the first
- * thing a sender of another version would change. The JSON is decoded once,
- * and the decoded value read against each schema in turn. */
-export function readSidecarRequest(line: string): SidecarRequestRead {
-  const json = parseWith(JsonTextSchema, line);
-  if (!json.ok) return { ok: false, id: undefined, failure: json.failure };
-  const decoded = json.value;
-  const read = parseWith(SidecarRequestSchema, decoded);
-  if (read.ok) return { ok: true, request: read.value };
-  const named = parseWith(NamedLineSchema, decoded);
-  if (!named.ok) return { ok: false, id: undefined, failure: named.failure };
-  const { id } = named.value;
-  const version = parseWith(VersionedLineSchema, decoded);
-  if (!version.ok) return { ok: false, id, code: "unsupported_version", failure: version.failure };
-  const op = parseWith(KnownOpLineSchema, decoded);
-  if (!op.ok) return { ok: false, id, code: "unknown_op", failure: op.failure };
-  return { ok: false, id, code: "invalid_args", failure: read.failure };
+/** Read one request line, once: a request of this version, of an op the
+ * module runs, with that op's args. A line that is not one is a failure, and
+ * nothing more is read from it: the module answers it with nothing, and the
+ * daemon, getting no reply, takes the request as unconfirmed at its
+ * deadline. */
+export function readSidecarRequest(line: string): Parsed<SidecarRequest> {
+  return parseWith(SidecarRequestLineSchema, line);
 }

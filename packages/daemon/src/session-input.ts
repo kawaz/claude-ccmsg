@@ -11,7 +11,6 @@ import type {
   PromptSendResult,
   SessionInputModuleReason,
   SessionInputReason,
-  SidecarErrorCode,
   SidecarReplyOf,
 } from "@ccmsg/protocol";
 import {
@@ -46,20 +45,15 @@ export interface SessionInputDeps extends SidecarDeps {
   pidsOf(sid: string): readonly number[];
 }
 
-/** A `prompt.send` reply as the person's outcome, or `cannot_run` when the
- * module did not run the op at all (another ccmsg version on either side):
- * nothing reached the composer then, so another run may be asked. An op that
- * failed part-way (`internal`) or a result not of prompt.send's shape says
- * nothing about the composer, and is unconfirmed. */
+/** A `prompt.send` reply as the person's outcome. An op that failed
+ * part-way (`internal`) or a result not of prompt.send's shape says nothing
+ * about the composer, and is unconfirmed. */
 export function readPromptSendReply(
   reply: Parsed<SidecarReplyOf<"prompt.send">>,
-): PromptSendResult | { outcome: "cannot_run"; code: SidecarErrorCode } {
+): PromptSendResult {
   if (!reply.ok) return { outcome: "unconfirmed" };
   const answer = reply.value;
-  if (answer.ok) return answer.result;
-  return answer.error.code === "internal"
-    ? { outcome: "unconfirmed" }
-    : { outcome: "cannot_run", code: answer.error.code };
+  return answer.ok ? answer.result : { outcome: "unconfirmed" };
 }
 
 /** Reasons that say the run cannot take a person's input at all (or, for
@@ -83,8 +77,7 @@ export interface SessionInputTry {
     | "write_uncertain"
     | "accepted"
     | "unconfirmed"
-    | `not_delivered:${SessionInputModuleReason}`
-    | `cannot_run:${SidecarErrorCode}`;
+    | `not_delivered:${SessionInputModuleReason}`;
 }
 
 export async function sessionInput(
@@ -116,10 +109,6 @@ export async function sessionInput(
       return { outcome: "unconfirmed", tries };
     }
     const read = readPromptSendReply(call.reply);
-    if (read.outcome === "cannot_run") {
-      tries.push({ id, socket, result: `cannot_run:${read.code}` });
-      continue;
-    }
     if (read.outcome !== "not_delivered") {
       tries.push({ id, socket, result: read.outcome });
       return { outcome: read.outcome, tries };

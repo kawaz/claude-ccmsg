@@ -5,8 +5,9 @@
 // and copies each line the daemon writes there to its standard output. A line
 // is a request naming an op (`{ v, op, id, args }`); every request with an id
 // gets one reply (`{ id, ok, result }` or `{ id, ok: false, error }`), which
-// goes back to the daemon through `ccmsg sidecar reply`. An op this module does
-// not have is answered `unknown_op` at once, so the daemon is not left waiting.
+// goes back to the daemon through `ccmsg sidecar reply`. A line that is not a
+// request this module runs is logged and not answered: the daemon, getting no
+// reply, takes the request as unconfirmed at its deadline.
 //
 // `prompt.send` puts a person's text in: the module keeps the person's
 // half-typed draft, fills the composer with the text, and presses Enter on its
@@ -24,8 +25,8 @@
 // protocol's sidecar schemas it reads requests by, into the one file
 // composer-fill.bundle.js, and `just check-hooks-bundle` (in `just ci` and
 // GitHub CI) fails while that file is not this source's bundle. Every line
-// from the sidecar is read by the protocol's schema (`readSidecarRequest`)
-// into a typed request or a typed refusal, and every engine input a hook uses
+// from the sidecar is read once by the protocol's schema (`readSidecarRequest`)
+// into a typed request or a failure, and every engine input a hook uses
 // by a schema of the fields it reads. The module loader and `claude plugin
 // validate` read the bundle statically: each call is spelled out as
 // `$.noun.method(...)` with literal arguments where the engine requires them,
@@ -43,7 +44,6 @@ import {
   type SidecarErrorCode,
   type SidecarReplyOf,
   type SidecarRequest,
-  type SidecarRequestRead,
 } from "@ccmsg/protocol/sidecar";
 
 /** A piece of a spawned child's output. */
@@ -203,28 +203,6 @@ export interface QueuedSend {
 
 function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
-}
-
-/** The answer to a line that names its request but is not one this module
- * runs: the code says which part does not fit, the message what was read. */
-function refusal(read: Extract<SidecarRequestRead, { id: string }>): FailedSidecarReply {
-  const { summary } = read.failure;
-  switch (read.code) {
-    case "unsupported_version":
-      return failed(
-        read.id,
-        read.code,
-        `this module reads request version ${SIDECAR_REQUEST_VERSION} (${summary})`,
-      );
-    case "unknown_op":
-      return failed(
-        read.id,
-        read.code,
-        `this module has ops ${SIDECAR_OP_NAMES.join(", ")} (${summary})`,
-      );
-    case "invalid_args":
-      return failed(read.id, read.code, `args are not what the op takes (${summary})`);
-  }
 }
 
 /** `hyoui input` for one Enter on this session's terminal. The session id
@@ -471,9 +449,8 @@ async function replyTo(
 }
 
 /** Run one request line that arrived under `sid` in `generation`, and reply.
- * A line that is not a request this module runs is answered with why, at
- * once, so the daemon is not left waiting. Never rejects: a line that cannot
- * be answered is logged. */
+ * A line that is not a request this module runs is logged and not answered.
+ * Never rejects: a reply that cannot be sent is logged. */
 export function answer(
   $: Engine,
   state: ModuleState,
@@ -481,24 +458,22 @@ export function answer(
   generation: number,
   line: string,
 ): Promise<void> {
-  // sendReply catches its own failures; this catches anything else, so the
-  // promise never rejects for the caller that drops it.
-  const send = (id: string, reply: Promise<Reply>): Promise<void> =>
-    reply
-      .then((r) => sendReply($, sid, r))
-      .catch((e: unknown) => {
-        $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
-      });
   const read = readSidecarRequest(line);
-  if (read.ok) return send(read.request.id, replyTo($, state, sid, generation, read.request));
-  if (read.id === undefined) {
+  if (!read.ok) {
     $.ui.log(
-      `ccmsg sidecar: dropped a line that names no request id (${read.failure.summary}): ${line.slice(0, 200)}`,
+      `ccmsg sidecar: dropped a line that is not a request this module runs (${read.failure.summary}): ${line.slice(0, 200)}`,
       { to: "debug" },
     );
     return Promise.resolve();
   }
-  return send(read.id, Promise.resolve(refusal(read)));
+  const { id } = read.value;
+  // sendReply catches its own failures; this catches anything else, so the
+  // promise never rejects for the caller that drops it.
+  return replyTo($, state, sid, generation, read.value)
+    .then((r) => sendReply($, sid, r))
+    .catch((e: unknown) => {
+      $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
+    });
 }
 
 /** Run one sidecar for `sid` until it ends, then start the next one unless it

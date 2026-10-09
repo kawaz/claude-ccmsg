@@ -329,7 +329,7 @@ describe("ccmsg sidecar reply", () => {
     [
       "an error code nobody defined",
       '{"id":"x","ok":false,"error":{"code":"bogus","message":""}}',
-      'error.code: Invalid type: Expected ("unknown_op"',
+      'error.code: Invalid type: Expected "internal"',
     ],
   ] as const) {
     test(`${name} is refused before reaching the daemon`, async () => {

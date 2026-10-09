@@ -1,7 +1,7 @@
 // The sidecar's request and reply lines (DR-0035 §3) as their schemas say
-// them (DR-0038): what the module runs, what it refuses with which code, and
-// what a reply in transit must carry.
-import { describe, expect, spyOn, test } from "bun:test";
+// them (DR-0038): what the module runs, what it does not, and what a reply in
+// transit must carry.
+import { describe, expect, test } from "bun:test";
 import { parseWith } from "../src/parse.ts";
 import {
   DescribeResultSchema,
@@ -20,86 +20,40 @@ describe("readSidecarRequest", () => {
       readSidecarRequest(line({ v: 1, op: "prompt.send", id: "1", args: { text: " a\n" } })),
     ).toEqual({
       ok: true,
-      request: { v: 1, op: "prompt.send", id: "1", args: { text: " a\n" } },
+      value: { v: 1, op: "prompt.send", id: "1", args: { text: " a\n" } },
     });
   });
 
   test("a describe takes args {}", () => {
     expect(readSidecarRequest(line({ v: 1, op: "describe", id: "d", args: {} }))).toEqual({
       ok: true,
-      request: { v: 1, op: "describe", id: "d", args: {} },
+      value: { v: 1, op: "describe", id: "d", args: {} },
     });
   });
 
-  // Fields the line does not define are left out, not refused: a newer
-  // daemon's addition to the envelope does not stop an older module.
-  test("fields beside v, op, id and args, or beside text, are left out", () => {
-    expect(
-      readSidecarRequest(
-        line({ v: 1, op: "prompt.send", id: "1", args: { text: "a", at: 2 }, trace: "t" }),
-      ),
-    ).toEqual({ ok: true, request: { v: 1, op: "prompt.send", id: "1", args: { text: "a" } } });
-  });
-
-  // Without an id there is nothing to name in a reply.
-  for (const [name, text] of [
-    ["not JSON", "not json"],
-    ["an array", "[1]"],
-    ["no id", line({ v: 1, op: "describe", args: {} })],
-    ["an empty id", line({ v: 1, op: "describe", id: "", args: {} })],
-    ["an id that is not a string", line({ v: 1, op: "describe", id: 1, args: {} })],
-  ] as const) {
-    test(`${name} cannot be answered`, () => {
-      const read = readSidecarRequest(text);
-      expect(read.ok).toBe(false);
-      expect(read).toHaveProperty("id", undefined);
+  // Not a request of this version, of an op the module runs, with that op's
+  // args: a failure, whichever part does not fit.
+  for (const text of [
+    "not json",
+    "[1]",
+    line({ v: 1, op: "describe", args: {} }),
+    line({ v: 1, op: "describe", id: "", args: {} }),
+    line({ v: 1, op: "describe", id: 1, args: {} }),
+    line({ v: 2, op: "prompt.send", id: "q", args: { text: "x" } }),
+    line({ op: "describe", id: "q", args: {} }),
+    line({ v: 1, op: "prompt.peek", id: "q", args: {} }),
+    line({ v: 1, op: "prompt.send", id: "q" }),
+    line({ v: 1, op: "prompt.send", id: "q", args: { text: " \n\t" } }),
+    line({ v: 1, op: "prompt.send", id: "q", args: { text: 1 } }),
+    line({ v: 1, op: "describe", id: "q", args: { x: 1 } }),
+    line({ v: 1, op: "describe", id: "q", args: [] }),
+  ]) {
+    test(`${text} is a failure`, () => {
+      expect(readSidecarRequest(text).ok).toBe(false);
     });
   }
 
-  // The first thing that does not fit decides the code: version, then op,
-  // then args.
-  for (const [code, value] of [
-    ["unsupported_version", { v: 2, op: "prompt.send", id: "q", args: { text: "x" } }],
-    ["unsupported_version", { op: "describe", id: "q", args: {} }],
-    ["unsupported_version", { v: { toString: null }, op: "nope", id: "q", args: {} }],
-    ["unknown_op", { v: 1, op: "prompt.peek", id: "q", args: {} }],
-    ["unknown_op", { v: 1, id: "q", args: {} }],
-    ["invalid_args", { v: 1, op: "prompt.send", id: "q" }],
-    ["invalid_args", { v: 1, op: "prompt.send", id: "q", args: {} }],
-    ["invalid_args", { v: 1, op: "prompt.send", id: "q", args: { text: " \n\t" } }],
-    ["invalid_args", { v: 1, op: "prompt.send", id: "q", args: { text: 1 } }],
-    ["invalid_args", { v: 1, op: "describe", id: "q" }],
-    ["invalid_args", { v: 1, op: "describe", id: "q", args: { x: 1 } }],
-    ["invalid_args", { v: 1, op: "describe", id: "q", args: [] }],
-  ] as const) {
-    test(`${line(value)} is ${code}`, () => {
-      const read = readSidecarRequest(line(value));
-      expect(read).toMatchObject({ ok: false, id: "q", code });
-    });
-  }
-
-  // Read against id, version, op and args in turn, the line's JSON is still
-  // decoded once.
-  test("a line is decoded once, however far its refusal is read", () => {
-    const parse = spyOn(JSON, "parse");
-    try {
-      for (const value of [
-        { v: 1, op: "prompt.send", id: "q", args: { text: "x" } },
-        { v: 1, op: "prompt.send", id: "q", args: {} },
-        { v: 1, op: "nope", id: "q", args: {} },
-        { v: 2, op: "describe", id: "q", args: {} },
-        { op: "describe", args: {} },
-      ]) {
-        parse.mockClear();
-        readSidecarRequest(line(value));
-        expect(parse).toHaveBeenCalledTimes(1);
-      }
-    } finally {
-      parse.mockRestore();
-    }
-  });
-
-  test("a refusal says what was read", () => {
+  test("a failure says what was read", () => {
     expect(readSidecarRequest(line({ v: 2, op: "describe", id: "q", args: {} }))).toMatchObject({
       failure: { summary: "v: Invalid type: Expected 1 but received 2" },
     });
@@ -120,19 +74,6 @@ describe("SidecarReplySchema (a reply in transit)", () => {
     expect(parseWith(SidecarReplySchema, { id: "a", ok: true, result: null })).toEqual({
       ok: true,
       value: { id: "a", ok: true, result: null },
-    });
-  });
-
-  test("a failed reply keeps code and message, and nothing else", () => {
-    expect(
-      parseWith(SidecarReplySchema, {
-        id: "a",
-        ok: false,
-        error: { code: "unknown_op", message: "no op x", extra: 1 },
-      }),
-    ).toEqual({
-      ok: true,
-      value: { id: "a", ok: false, error: { code: "unknown_op", message: "no op x" } },
     });
   });
 
