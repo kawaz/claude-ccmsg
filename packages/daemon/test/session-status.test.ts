@@ -21,6 +21,9 @@ import {
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+
 const T = 20_000;
 const START = "2026-07-14T16:27:55.672Z";
 const END = "2026-07-14T16:28:55.672Z";
@@ -2216,7 +2219,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2245,7 +2248,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2276,7 +2279,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           file,
           `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "plain" }] } })}\n`,
         );
-        const peer = await sessionHello(ctx, "B");
+        const peer = await sessionHello(ctx, SID_B);
         const room = await peer.request<{ room: string }>({ op: "create_room", members: [] });
         await peer.request({ op: "post", room: room.room, msg: "marker" });
         const { seen } = await user.readEventUntil(
@@ -2300,7 +2303,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const root = fixtureDir();
       const outside = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(root, `${sid}.jsonl`);
         const external = path.join(outside, "tail.md");
         fs.writeFileSync(file, "");
@@ -2337,7 +2340,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const rootA = fixtureDir();
       const rootB = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(rootA, `${sid}.jsonl`);
         const touched = path.join(rootA, "inside-a.md");
         fs.writeFileSync(touched, "a");
@@ -2381,7 +2384,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2441,7 +2444,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2495,7 +2498,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2535,7 +2538,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(
           file,
@@ -2576,7 +2579,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         const session = await sessionHello(ctx, sid, file);
@@ -2666,7 +2669,7 @@ describe("session_status event loop yielding (DR-0029)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         writeLargeTranscript(file);
         await sessionHello(ctx, sid, file);
@@ -2693,7 +2696,7 @@ describe("session_status event loop yielding (DR-0029)", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         writeLargeTranscript(file);
         await sessionHello(ctx, sid, file);

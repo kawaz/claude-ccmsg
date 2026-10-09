@@ -381,7 +381,11 @@ describe("session_search wire authorization", () => {
       const ctx = await startTestDaemon();
       try {
         const client = await connect(ctx.sock);
-        await client.hello({ role: "session", sid: "A", cwd: "/tmp" });
+        await client.hello({
+          role: "session",
+          sid: "aaaaaaaa-0000-4000-8000-000000000001",
+          cwd: "/tmp",
+        });
         const response = await client.request<{ ok: false; error: { code: string } }>({
           op: "session_search",
         });

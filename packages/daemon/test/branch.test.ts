@@ -14,6 +14,7 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
 /** Connect + hello as a session, optionally announcing a branch. Raw request
  *  (bypassing TestClient.hello's narrower typed signature), same pattern as
@@ -48,9 +49,9 @@ describe("hello branch field", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A", { branch: "feat/branch-label" });
+        const c = await sessionHello(ctx, A, { branch: "feat/branch-label" });
         const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === "A")!;
+        const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBe("feat/branch-label");
       } finally {
         await stopTestDaemon(ctx);
@@ -64,9 +65,9 @@ describe("hello branch field", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
+        const c = await sessionHello(ctx, A);
         const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === "A")!;
+        const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -80,9 +81,9 @@ describe("hello branch field", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A", { branch: "" });
+        const c = await sessionHello(ctx, A, { branch: "" });
         const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === "A")!;
+        const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -99,7 +100,7 @@ describe("hello branch field", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const sid = "A";
+        const sid = A;
         await sessionHello(ctx, sid, { branch: "main" });
         await sessionHello(ctx, sid, { cwd: "/tmp/other" });
 
@@ -120,7 +121,7 @@ describe("hello branch field", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const sid = "A";
+        const sid = A;
         await sessionHello(ctx, sid, { branch: "main" });
         await sessionHello(ctx, sid, { branch: "feature/x" });
 

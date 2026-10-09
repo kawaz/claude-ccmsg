@@ -22,6 +22,15 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
+const SID_SAY_1 = "5a900000-0000-4000-8000-000000000001";
+const SID_SAY_2 = "5a900000-0000-4000-8000-000000000002";
+const SID_SAY_3 = "5a900000-0000-4000-8000-000000000003";
+const SID_SAY_4 = "5a900000-0000-4000-8000-000000000004";
+const SID_SAY_5 = "5a900000-0000-4000-8000-000000000005";
+const SID_SAY_6 = "5a900000-0000-4000-8000-000000000006";
+const SID_SAY_7 = "5a900000-0000-4000-8000-000000000007";
+const SID_SAY_8 = "5a900000-0000-4000-8000-000000000008";
+
 const T = 15000;
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
@@ -50,7 +59,7 @@ describe("say op", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await session(ctx, "sid-say-1");
+        const s = await session(ctx, SID_SAY_1);
         const first = await s.request<any>({ op: "say", text: "hello" });
         expect(first.ok).toBe(true);
         expect(first.created).toBe(true);
@@ -68,8 +77,8 @@ describe("say op", () => {
         expect(mine[0].id).toBe(first.room);
         // 既存の 1on1 room と同じ `<repo> 1on1 <sid8>` 形で、sidebar の見え方を
         // 揃える。
-        expect(mine[0].title).toBe("repo-sid-say-1 1on1 sid-say-");
-        expect(mine[0].members.map((m: any) => m.sid)).toEqual(["sid-say-1"]);
+        expect(mine[0].title).toBe("repo-5a900000-0000-4000-8000-000000000001 1on1 5a900000");
+        expect(mine[0].members.map((m: any) => m.sid)).toEqual([SID_SAY_1]);
         expect(mine[0].say_unread_seqs).toEqual([first.seq, second.seq]);
         u.close();
         s.close();
@@ -111,7 +120,7 @@ describe("say op", () => {
             {
               type: "member",
               id: "a1",
-              sid: "sid-say-2",
+              sid: SID_SAY_2,
               repo: "",
               ws: "",
               cwd: "",
@@ -124,7 +133,7 @@ describe("say op", () => {
         ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
         await waitConnectable(ctx.sock);
 
-        const s = await session(ctx, "sid-say-2");
+        const s = await session(ctx, SID_SAY_2);
         const u = await user(ctx);
         const said = await s.request<any>({ op: "say", text: "yo" });
         expect(said.created).toBe(false);
@@ -149,7 +158,7 @@ describe("say op", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const speaker = await session(ctx, "sid-say-3");
+        const speaker = await session(ctx, SID_SAY_3);
         await speaker.request({ op: "subscribe" });
         const u = await user(ctx);
         await u.request({ op: "subscribe" });
@@ -159,7 +168,7 @@ describe("say op", () => {
         expect(ev).toMatchObject({
           type: "say",
           r: said.room,
-          sid: "sid-say-3",
+          sid: SID_SAY_3,
           text: "listen up",
           seq: said.seq,
         });
@@ -185,7 +194,7 @@ describe("say op", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const speaker = await session(ctx, "sid-say-4");
+        const speaker = await session(ctx, SID_SAY_4);
         const said = await speaker.request<any>({ op: "say", text: "before subscribing" });
 
         // 話者は room の member なので room_history を引ける。それでも say は無い。
@@ -221,7 +230,7 @@ describe("say_read op", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await session(ctx, "sid-say-5");
+        const s = await session(ctx, SID_SAY_5);
         const a = await s.request<any>({ op: "say", text: "one" });
         const b = await s.request<any>({ op: "say", text: "two" });
         const u = await user(ctx);
@@ -255,7 +264,7 @@ describe("say_read op", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await session(ctx, "sid-say-6");
+        const s = await session(ctx, SID_SAY_6);
         const said = await s.request<any>({ op: "say", text: "hi" });
         const u = await user(ctx);
         const res = await u.request<any>({ op: "say_read", room: said.room, seq: 9999 });
@@ -282,7 +291,7 @@ describe("say role gates", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await session(ctx, "sid-say-7");
+        const s = await session(ctx, SID_SAY_7);
         const said = await s.request<any>({ op: "say", text: "hi" });
         const u = await user(ctx);
 
@@ -313,7 +322,7 @@ describe("say persistence", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await session(ctx, "sid-say-8");
+        const s = await session(ctx, SID_SAY_8);
         const a = await s.request<any>({ op: "say", text: "kept" });
         const b = await s.request<any>({ op: "say", text: "acked" });
         const u = await user(ctx);

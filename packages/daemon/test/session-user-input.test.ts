@@ -14,6 +14,8 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const T1 = "2026-08-31T10:00:00.000Z";
 const T2 = "2026-08-31T10:05:00.000Z";
 const T3 = "2026-08-31T10:09:00.000Z";
@@ -363,19 +365,19 @@ describe("last_user_input_at on peers", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         // 最後の行はアシスタント発話 = ユーザ入力より後。ソートキーは
         // 「最後のユーザ入力」であって「最後の行」ではない。
         fs.writeFileSync(
           file,
           typedPromptLine("やって", T1) + assistantLine(T2) + assistantLine(T3),
         );
-        await sessionHello(ctx, "A", file);
+        await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
         const res = await user.request<PeersOk>({ op: "peers" });
-        expect(inputAt(res.peers, "A")).toBe(T1);
+        expect(inputAt(res.peers, A)).toBe(T1);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -390,19 +392,19 @@ describe("last_user_input_at on peers", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, typedPromptLine("やって", T1));
-        await sessionHello(ctx, "A", file);
+        await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, "A")).toBe(T1);
+        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
 
         // tail 駆動 (ポーリングではない): 届いた瞬間に ev:"peers" が飛ぶ。
         fs.appendFileSync(file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
         const pushed = await user.readEventUntil<PeersEvent>(
-          (event) => event.ev === "peers" && inputAt(event.peers, "A") === T2,
+          (event) => event.ev === "peers" && inputAt(event.peers, A) === T2,
         );
-        expect(inputAt(pushed.ev.peers, "A")).toBe(T2);
+        expect(inputAt(pushed.ev.peers, A)).toBe(T2);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -419,19 +421,19 @@ describe("last_user_input_at on peers", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, typedPromptLine("やって", T1));
-        await sessionHello(ctx, "A", file);
+        await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, "A")).toBe(T1);
+        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
 
         fs.appendFileSync(
           file,
           assistantLine(T2) + teammateRelayLine(T2) + ccmsgDeliveryLine("a3", "できました", T3),
         );
         // 変化が無いことの確認なので、push を待つのではなく往復 1 回で確定させる。
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, "A")).toBe(T1);
+        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -446,18 +448,18 @@ describe("last_user_input_at on peers", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const withPrompt = path.join(dir, "A.jsonl");
-        const empty = path.join(dir, "B.jsonl");
+        const withPrompt = path.join(dir, `${A}.jsonl`);
+        const empty = path.join(dir, `${B}.jsonl`);
         fs.writeFileSync(withPrompt, typedPromptLine("やって", T1));
         fs.writeFileSync(empty, assistantLine(T2));
-        await sessionHello(ctx, "A", withPrompt);
-        await sessionHello(ctx, "B", empty);
+        await sessionHello(ctx, A, withPrompt);
+        await sessionHello(ctx, B, empty);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
         const res = await user.request<PeersOk>({ op: "peers" });
-        expect(inputAt(res.peers, "A")).toBe(T1);
-        expect(inputAt(res.peers, "B")).toBeUndefined();
+        expect(inputAt(res.peers, A)).toBe(T1);
+        expect(inputAt(res.peers, B)).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

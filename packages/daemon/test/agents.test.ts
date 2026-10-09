@@ -22,6 +22,10 @@ const T = 15000;
 // via event-driven waits (readEventUntil), never a blind sleep for the "did
 // something happen" assertions.
 const POLL_MS = 150;
+// Session ids that say hello must be session-id shaped (lowercase UUID).
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_S = "55555555-0000-4000-8000-000000000005";
+const SID_HELLO = "4e110000-0000-4000-8000-000000000001";
 
 /** Build a fake $HOME containing config-dir candidates, a mock `claude` binary
  *  on its own PATH-prepend dir, and a call-log file the mock appends one line
@@ -251,7 +255,7 @@ describe("agents polling: permission (user role only)", () => {
         writeMockClaude(binDir, callLog, {});
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
-          const s = await sessionConn(ctx, "A");
+          const s = await sessionConn(ctx, SID_A);
           const res = await s.request<ErrLite>({ op: "agents" });
           expect(res.ok).toBe(false);
           expect(res.error.code).toBe("bad_request");
@@ -280,7 +284,7 @@ describe("agents polling: lifecycle", () => {
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
           // A session-role conn only asks for peers; nothing here starts a poll.
-          const s = await sessionConn(ctx, "S");
+          const s = await sessionConn(ctx, SID_S);
           for (;;) {
             const res = await s.request<{ peers: { sid: string }[] }>({ op: "peers" });
             if (res.peers.some((p) => p.sid === "sA")) break;
@@ -364,7 +368,7 @@ describe("agents polling: lifecycle", () => {
           // event snuck in among the events collected while waiting for it —
           // proves the unchanged poll result was suppressed, not just unlucky
           // timing.
-          const s = await sessionConn(ctx, "S");
+          const s = await sessionConn(ctx, SID_S);
           const created = await s.request<{ room: string }>({ op: "create_room", members: [] });
           await s.request({ op: "post", room: created.room, msg: "marker" });
           const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
@@ -640,11 +644,11 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
       await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
         const u = await watcher(ctx);
         const s = await connect(ctx.sock);
-        await s.hello({ role: "session", sid: "sA", repo: "hello-repo", ws: "hello-ws", cwd });
-        await u.readEventUntil(hasPeer("sA"));
-        setRows(dirA, [row("sA", os.tmpdir()), row("sMarker", cwd)]);
+        await s.hello({ role: "session", sid: SID_A, repo: "hello-repo", ws: "hello-ws", cwd });
+        await u.readEventUntil(hasPeer(SID_A));
+        setRows(dirA, [row(SID_A, os.tmpdir()), row("sMarker", cwd)]);
         const { ev } = await u.readEventUntil<PeersEv>(hasPeer("sMarker"));
-        expect(ev.peers.find((p) => p.sid === "sA")).toMatchObject({
+        expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
           repo: "hello-repo",
           ws: "hello-ws",
           cwd,
@@ -660,12 +664,12 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
       await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
         const u = await watcher(ctx);
         const s = await connect(ctx.sock);
-        await s.hello({ role: "session", sid: "sHello", repo: "r", ws: "w", cwd });
+        await s.hello({ role: "session", sid: SID_HELLO, repo: "r", ws: "w", cwd });
         setRows(dirA, [row("sA", cwd)]);
         await u.readEventUntil(hasPeer("sA"));
         setRows(dirA, []);
         const { ev } = await u.readEventUntil<PeersEv>(lacksPeer("sA"));
-        expect(ev.peers.map((p) => p.sid)).toEqual(["sHello"]);
+        expect(ev.peers.map((p) => p.sid)).toEqual([SID_HELLO]);
       });
     },
     T,

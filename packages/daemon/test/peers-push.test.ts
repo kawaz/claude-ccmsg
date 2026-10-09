@@ -15,6 +15,11 @@ import {
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const SID_S = "5e000000-0000-4000-8000-000000000005";
+const SID_M = "3a000000-0000-4000-8000-00000000000d";
+
 const T = 15000;
 
 async function sessionHello(
@@ -77,9 +82,9 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const helloP = sessionHello(ctx, "A");
+        const helloP = sessionHello(ctx, SID_A);
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        expect(ev.peers.some((p) => p.sid === "A")).toBe(true);
+        expect(ev.peers.some((p) => p.sid === SID_A)).toBe(true);
         (await helloP).close();
       } finally {
         await stopTestDaemon(ctx);
@@ -93,8 +98,8 @@ describe("ev:peers push", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await sessionHello(ctx, "A");
-        const m = await sessionHello(ctx, "M"); // marker poster, connected before u subscribes
+        const a = await sessionHello(ctx, SID_A);
+        const m = await sessionHello(ctx, SID_M); // marker poster, connected before u subscribes
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         a.close();
@@ -102,7 +107,7 @@ describe("ev:peers push", () => {
         const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
         const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
+        expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         m.close();
       } finally {
         await stopTestDaemon(ctx);
@@ -116,16 +121,16 @@ describe("ev:peers push", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await sessionHello(ctx, "S");
+        const s = await sessionHello(ctx, SID_S);
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         await s.request({ op: "subscribe" });
         // A new sid's hello pushes ev:peers. The user subscriber receiving it
         // is the ordering anchor (the daemon writes every subscriber's copy in
         // one synchronous loop); a round trip on S then orders its stream past it.
-        const b = await sessionHello(ctx, "B");
+        const b = await sessionHello(ctx, SID_B);
         await u.readEventUntil<PeersEv>(
-          (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === "B"),
+          (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === SID_B),
         );
         await s.request({ op: "rooms" });
         const seen = await s.pendingEvents();
@@ -146,9 +151,9 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const m = await sessionHello(ctx, "M"); // marker poster, connected up front
+        const m = await sessionHello(ctx, SID_M); // marker poster, connected up front
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // drain M's own registration push
-        const a = await sessionHello(ctx, "A", { repo: "r", ws: "w", cwd: "/tmp" });
+        const a = await sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp" });
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // drain A's registration push
 
         // identical re-hello on the same conn — must not push again.
@@ -156,7 +161,7 @@ describe("ev:peers push", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: SID_A,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -180,20 +185,20 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const a = await sessionHello(ctx, "A", { repo: "r1", ws: "w", cwd: "/tmp" });
+        const a = await sessionHello(ctx, SID_A, { repo: "r1", ws: "w", cwd: "/tmp" });
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // first push (new sid)
 
         await a.request({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: SID_A,
           repo: "r2",
           ws: "w",
           cwd: "/tmp",
         });
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        const me = ev.peers.find((p) => p.sid === "A");
+        const me = ev.peers.find((p) => p.sid === SID_A);
         expect(me?.repo).toBe("r2");
         a.close();
       } finally {
@@ -208,11 +213,11 @@ describe("ev:peers push", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a1 = await sessionHello(ctx, "A");
+        const a1 = await sessionHello(ctx, SID_A);
         // second conn re-hellos the same sid, identical metadata (latest-hello-wins
         // path, entry reused) — this itself is a no-op push per the test above.
-        const a2 = await sessionHello(ctx, "A");
-        const m = await sessionHello(ctx, "M"); // marker poster, connected before u subscribes
+        const a2 = await sessionHello(ctx, SID_A);
+        const m = await sessionHello(ctx, SID_M); // marker poster, connected before u subscribes
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
 
@@ -236,7 +241,7 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const a = await sessionHello(ctx, "A");
+        const a = await sessionHello(ctx, SID_A);
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // A's registration push
 
         // same conn, re-hello as a different sid
@@ -244,19 +249,19 @@ describe("ev:peers push", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "B",
+          sid: SID_B,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
         });
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        expect(ev.peers.some((p) => p.sid === "A")).toBe(true);
-        expect(ev.peers.some((p) => p.sid === "B")).toBe(true);
+        expect(ev.peers.some((p) => p.sid === SID_A)).toBe(true);
+        expect(ev.peers.some((p) => p.sid === SID_B)).toBe(true);
 
         // op:"peers" one-shot poll agrees
         const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
-        expect(res.peers.some((p) => p.sid === "B")).toBe(true);
+        expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
+        expect(res.peers.some((p) => p.sid === SID_B)).toBe(true);
         a.close();
       } finally {
         await stopTestDaemon(ctx);
@@ -272,13 +277,13 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const a = await sessionHello(ctx, "A");
+        const a = await sessionHello(ctx, SID_A);
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // A's registration push
 
         // same conn, re-hello as user role instead of session
         await a.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
         const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
+        expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         a.close();
       } finally {
         await stopTestDaemon(ctx);
@@ -309,12 +314,12 @@ describe("ev:peers push", () => {
       try {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
-        const a = sessionHello(ctx, "A", { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
+        const a = sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        const pushed = ev.peers.find((p) => p.sid === "A")!;
+        const pushed = ev.peers.find((p) => p.sid === SID_A)!;
 
         const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        const polled = res.peers.find((p) => p.sid === "A")!;
+        const polled = res.peers.find((p) => p.sid === SID_A)!;
         const { last_activity_at: _pushedLastActivity, ...pushedRest } = pushed;
         const { last_activity_at: _polledLastActivity, ...polledRest } = polled;
         expect(pushedRest).toEqual(polledRest);

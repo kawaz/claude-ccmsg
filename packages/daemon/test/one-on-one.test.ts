@@ -30,6 +30,10 @@ import {
 } from "./helpers.ts";
 import { fakeHarness, parseEnvelope, replyWith, sessionWithConfig } from "./peer-harness.ts";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const SID_C = "cccccccc-0000-4000-8000-000000000003";
+
 const T = 15000;
 
 const disposers: (() => void)[] = [];
@@ -126,13 +130,13 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const before = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
         const attempts: [TestClient, Record<string, unknown>][] = [
-          [u, { members: ["A"] }],
-          [u, { members: ["A"], msg: "u1 opens the priv thread" }],
-          [a, { members: ["A"] }],
-          [a, { members: ["A"], msg: "session initial" }],
+          [u, { members: [SID_A] }],
+          [u, { members: [SID_A], msg: "u1 opens the priv thread" }],
+          [a, { members: [SID_A] }],
+          [a, { members: [SID_A], msg: "session initial" }],
         ];
         for (const [c, extra] of attempts) {
           const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
@@ -167,7 +171,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         const u = await user(ctx);
         const res = await u.request<{ ok: false; error: { code: string; msg: string } }>({
           op: "create_room",
-          members: ["A"],
+          members: [SID_A],
           kind: "group",
         });
         expect(res.ok).toBe(false);
@@ -192,7 +196,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const room = await oneOnOneOf(a);
         for (const c of [u, a]) {
           const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
@@ -222,12 +226,12 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       try {
         await restartWithRoom(ctx, "r1", [
           { type: "kind", kind: "1on1", ts: TS },
-          memberRow("a1", "A"),
+          memberRow("a1", SID_A),
           { type: "msg", mid: 1, from: "u1", ts: TS, msg: "old question" },
           { type: "msg", mid: 2, from: "a1", ts: TS, msg: "old answer" },
         ]);
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const attempts: [TestClient, number][] = [
           [a, 1],
           [u, 2],
@@ -258,10 +262,10 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const created = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A"],
+          members: [SID_A],
         });
 
         const res = await a.request<{ ok: true; mid: number }>({
@@ -286,7 +290,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const res = await a.request<{ ok: true; room: string; mid?: number }>({
           op: "create_room",
           members: [],
@@ -312,7 +316,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const parent = await oneOnOneOf(a);
         const attempts: [TestClient, Record<string, unknown>][] = [
           [u, {}],
@@ -351,7 +355,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       try {
         let roomId: string;
         {
-          const a = await session(ctx, "A");
+          const a = await session(ctx, SID_A);
           roomId = await oneOnOneOf(a);
           const raw = fs.readFileSync(`${ctx.roomsDir}/${roomId}.jsonl`, "utf8");
           expect(raw).toContain('"type":"kind"');
@@ -394,11 +398,11 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const b = await receiver(ctx, "B");
+        const a = await session(ctx, SID_A);
+        const b = await receiver(ctx, SID_B);
         const res = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B"],
+          members: [SID_A, SID_B],
         });
         const room = res.room;
 
@@ -423,12 +427,12 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const b = await receiver(ctx, "B");
-        const c = await receiver(ctx, "C");
+        const a = await session(ctx, SID_A);
+        const b = await receiver(ctx, SID_B);
+        const c = await receiver(ctx, SID_C);
         const res = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B", "C"],
+          members: [SID_A, SID_B, SID_C],
         });
         const room = res.room;
 
@@ -458,7 +462,7 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await receiver(ctx, "A");
+        const a = await receiver(ctx, SID_A);
         const res = await u.request<{ room: string }>({
           op: "create_room",
           members: [],
@@ -490,9 +494,9 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await receiver(ctx, "A");
-        const b = await receiver(ctx, "B");
-        await session(ctx, "C");
+        const a = await receiver(ctx, SID_A);
+        const b = await receiver(ctx, SID_B);
+        await session(ctx, SID_C);
         const res = await u.request<{ room: string }>({
           op: "create_room",
           members: [],
@@ -525,11 +529,11 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const b = await receiver(ctx, "B");
+        const a = await session(ctx, SID_A);
+        const b = await receiver(ctx, SID_B);
         const res = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B"],
+          members: [SID_A, SID_B],
         });
         const room = res.room;
 
@@ -558,11 +562,11 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const b = await receiver(ctx, "B");
+        const a = await session(ctx, SID_A);
+        const b = await receiver(ctx, SID_B);
         const res = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B"],
+          members: [SID_A, SID_B],
         });
         const room = res.room;
 

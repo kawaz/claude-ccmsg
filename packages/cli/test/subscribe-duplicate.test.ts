@@ -108,7 +108,14 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
     const created = JSON.parse(
       (
         await runCli(
-          ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
+          [
+            "--sid",
+            "c0000000-0000-4000-8000-000000000000",
+            "create-room",
+            "--members",
+            "50000001-0000-4000-8000-000000000000,5b000000-0000-4000-8000-000000000000",
+            "--exclude-self",
+          ],
           env,
         )
       ).out,
@@ -116,7 +123,7 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
     expect(created.ok).toBe(true);
     const room = created.room;
 
-    const first = spawnSubscribe(env, "SUB");
+    const first = spawnSubscribe(env, "5b000000-0000-4000-8000-000000000000");
     let second: ReturnType<typeof spawnSubscribe> | null = null;
     try {
       // 先発が hello + subscribe を済ませたことを peers で観測する
@@ -125,11 +132,11 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
         const peers = JSON.parse((await runCli(["peers"], env)).out) as {
           peers: { sid: string }[];
         };
-        if (peers.peers.some((p) => p.sid === "SUB")) break;
+        if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
         await sleep(25);
       }
 
-      second = spawnSubscribe(env, "SUB");
+      second = spawnSubscribe(env, "5b000000-0000-4000-8000-000000000000");
       const secondReader = (second.stdout as ReadableStream<Uint8Array>).getReader();
       const secondAccum = { buf: "", lines: [] as string[] };
 
@@ -144,7 +151,9 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
       expect(firstOut).not.toContain("subscribe_superseded");
 
       // 収束後の配信 (S1 の leave) は後発が受け取る。
-      const left = JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out) as {
+      const left = JSON.parse(
+        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
+      ) as {
         ok: boolean;
       };
       expect(left.ok).toBe(true);

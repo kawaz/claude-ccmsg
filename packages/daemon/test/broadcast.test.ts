@@ -18,6 +18,10 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const SID_C = "cccccccc-0000-4000-8000-000000000003";
+
 const T = 15000;
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
@@ -53,7 +57,7 @@ describe("DR-0013 broadcast room", () => {
       const ctx = await startTestDaemon();
       try {
         // A pre-registers so it's an active peer at broadcast create time
-        await session(ctx, "A");
+        await session(ctx, SID_A);
         const creator = await user(ctx);
         const res = await creator.request<{
           ok: true;
@@ -78,7 +82,7 @@ describe("DR-0013 broadcast room", () => {
         expect(room.kind).toBe("broadcast");
         // Only the active peer A (auto-populated) is a member — X/Y from the
         // explicit list are dropped along with the warning.
-        expect(room.members.map((m) => m.sid)).toEqual(["A"]);
+        expect(room.members.map((m) => m.sid)).toEqual([SID_A]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -95,9 +99,9 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await session(ctx, "A");
-        await session(ctx, "B");
-        await session(ctx, "C");
+        await session(ctx, SID_A);
+        await session(ctx, SID_B);
+        await session(ctx, SID_C);
         const creator = await user(ctx);
         const res = await creator.request<{ ok: true; room: string }>({
           op: "create_room",
@@ -108,7 +112,7 @@ describe("DR-0013 broadcast room", () => {
           rooms: { id: string; members: { id: string; sid: string }[] }[];
         }>({ op: "rooms" });
         const room = rooms.rooms.find((r) => r.id === res.room)!;
-        expect(room.members.map((m) => m.sid)).toEqual(["A", "B", "C"]);
+        expect(room.members.map((m) => m.sid)).toEqual([SID_A, SID_B, SID_C]);
         expect(room.members.map((m) => m.id)).toEqual(["a1", "a2", "a3"]);
       } finally {
         await stopTestDaemon(ctx);
@@ -130,8 +134,8 @@ describe("DR-0013 broadcast room", () => {
       const ctx = await startTestDaemon();
       try {
         // A is an early peer + subscribes so we can drain its stream later
-        const aPost = await session(ctx, "A");
-        const aSub = await session(ctx, "A");
+        const aPost = await session(ctx, SID_A);
+        const aSub = await session(ctx, SID_A);
         await aSub.request({ op: "subscribe" });
         // u1 creates a broadcast; A is initial member (a1)
         const creator = await user(ctx);
@@ -142,14 +146,14 @@ describe("DR-0013 broadcast room", () => {
         });
         const room = res.room;
         // B hellos AFTER the broadcast was created → auto-join
-        await session(ctx, "B");
+        await session(ctx, SID_B);
         // The broadcast now has a1=A and a2=B (sids sorted deterministically
         // via auto-populate; nextAgentMemberId picks the next free `a`).
         const rooms = await creator.request<{
           rooms: { id: string; members: { id: string; sid: string }[] }[];
         }>({ op: "rooms" });
         const roomMembers = rooms.rooms.find((r) => r.id === room)!.members;
-        expect(roomMembers.some((m) => m.sid === "B")).toBe(true);
+        expect(roomMembers.some((m) => m.sid === SID_B)).toBe(true);
         // A sends a post so we have a positive marker to read towards. Include
         // u1 in `to` since A is an agent — see the constraint test below.
         await aPost.request({ op: "post", room, msg: "hi", to: ["u1"] });
@@ -199,7 +203,7 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, SID_A);
         const creator = await user(ctx);
         const res = await creator.request<{ room: string }>({
           op: "create_room",
@@ -251,8 +255,8 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await session(ctx, "A");
-        await session(ctx, "B");
+        await session(ctx, SID_A);
+        await session(ctx, SID_B);
         const creator = await user(ctx);
         const res = await creator.request<{ room: string }>({
           op: "create_room",
@@ -302,7 +306,7 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         // A (a session) opens a broadcast with an initial msg — the u1-in-to
         // rule would apply to a plain `post` from A, but §2.10 excludes it
         // from the create_room's own initial msg. `to` omitted deliberately.
@@ -331,7 +335,7 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, SID_A);
         const creator = await user(ctx);
         const parent = await creator.request<{ room: string }>({
           op: "create_room",
@@ -374,7 +378,7 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await session(ctx, "A");
+        await session(ctx, SID_A);
         const creator = await user(ctx);
         const res = await creator.request<{ room: string }>({
           op: "create_room",
@@ -418,8 +422,8 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
-        await session(ctx, "B");
+        const a = await session(ctx, SID_A);
+        await session(ctx, SID_B);
         const creator = await user(ctx);
         const res = await creator.request<{ room: string }>({
           op: "create_room",
@@ -440,7 +444,7 @@ describe("DR-0013 broadcast room", () => {
           rooms: { id: string; members: { sid: string }[] }[];
         }>({ op: "rooms" });
         const members = rooms.rooms.find((r) => r.id === room)!.members;
-        expect(members.map((m) => m.sid).sort()).toEqual(["A", "B"]);
+        expect(members.map((m) => m.sid).sort()).toEqual([SID_A, SID_B]);
 
         // Nothing streamed in the meantime that mentions the broadcast leave.
         // Send a fresh archive toggle as the "next synchronous stream marker"
@@ -468,7 +472,7 @@ describe("DR-0013 broadcast room", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await session(ctx, "A");
+        await session(ctx, SID_A);
         {
           const creator = await user(ctx);
           const res = await creator.request<{ room: string }>({
@@ -515,7 +519,7 @@ describe("DR-0013 broadcast room", () => {
         // And the u1-in-to constraint still applies — proves computeDerived
         // set room.kind = "broadcast", not just that the KindEvent is in the
         // jsonl.
-        const aAfter = await session(ctx, "A");
+        const aAfter = await session(ctx, SID_A);
         const rej = await aAfter.request<{ ok: false; error: { code: string } }>({
           op: "post",
           room: bcast!.id,
@@ -542,7 +546,7 @@ describe("DR-0013 broadcast room", () => {
       const ctx = await startTestDaemon();
       try {
         // First run: A hellos, broadcast room is created and auto-populates A.
-        await session(ctx, "A");
+        await session(ctx, SID_A);
         {
           const creator = await user(ctx);
           const res = await creator.request<{ room: string }>({
@@ -555,7 +559,7 @@ describe("DR-0013 broadcast room", () => {
           const before = fs
             .readFileSync(file, "utf8")
             .split("\n")
-            .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+            .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
           expect(before.length).toBe(1);
 
           // Bounce the daemon on the same paths.
@@ -575,7 +579,7 @@ describe("DR-0013 broadcast room", () => {
           // joinAllBroadcasts and appended a NEW MemberEvent every restart
           // cycle).
           for (let i = 0; i < 3; i++) {
-            await session(ctx, "A");
+            await session(ctx, SID_A);
             await Bun.sleep(50);
             const c2 = await connect(ctx.sock);
             await c2.request({ op: "shutdown" });
@@ -588,12 +592,12 @@ describe("DR-0013 broadcast room", () => {
             await waitConnectable(ctx.sock);
           }
           // Final re-hello and read
-          await session(ctx, "A");
+          await session(ctx, SID_A);
           await Bun.sleep(50);
           const after = fs
             .readFileSync(file, "utf8")
             .split("\n")
-            .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+            .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
           expect(after.length).toBe(1);
         }
       } finally {
@@ -613,7 +617,7 @@ describe("DR-0013 broadcast room", () => {
       const ctx = await startTestDaemon();
       try {
         // Session A joins, broadcast is created (A auto-populates as a1).
-        const a1 = await session(ctx, "A");
+        const a1 = await session(ctx, SID_A);
         const creator = await user(ctx);
         const res = await creator.request<{ room: string }>({
           op: "create_room",
@@ -624,7 +628,7 @@ describe("DR-0013 broadcast room", () => {
         const initial = fs
           .readFileSync(file, "utf8")
           .split("\n")
-          .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+          .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
         expect(initial.length).toBe(1);
 
         // Drive several disconnect + rehello cycles — the live shape of
@@ -633,7 +637,7 @@ describe("DR-0013 broadcast room", () => {
         for (let i = 0; i < 4; i++) {
           // let the daemon observe the previous close
           await Bun.sleep(30);
-          const c = await session(ctx, "A");
+          const c = await session(ctx, SID_A);
           await Bun.sleep(10);
           c.close();
         }
@@ -642,7 +646,7 @@ describe("DR-0013 broadcast room", () => {
         const after = fs
           .readFileSync(file, "utf8")
           .split("\n")
-          .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+          .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
         const leaves = fs
           .readFileSync(file, "utf8")
           .split("\n")

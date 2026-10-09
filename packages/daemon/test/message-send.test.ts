@@ -2,6 +2,10 @@
 // messaging socket without a room, and is told whether it arrived. A fake
 // harness (peer-harness.ts) stands in for the recipient.
 import { afterEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { PeerInjector } from "../src/peer-inject.ts";
 import { parseDirectDeliveries } from "@ccmsg/protocol";
 import { createMidIssuer } from "../src/direct-send.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
@@ -170,6 +174,76 @@ describe("message_send", () => {
       expect(await code(a, { op: "message_send", to: B, text: "hi", reply_to: "r7m3" })).toBe(
         "invalid_args",
       );
+    },
+    T,
+  );
+
+  test(
+    "nothing is written when the refusal socket cannot be opened: not delivered, no_status_socket",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(B);
+      const a = await sessionWithConfig(ctx, A);
+      await sessionWithConfig(ctx, B, hb.configDir);
+      // The refusal socket is bound beside the recipient's own; a directory
+      // that takes no new entry leaves the recipient's socket reachable but
+      // gives the sender nowhere to hear a refusal on.
+      const socketDir = path.dirname(hb.socketPath);
+      fs.chmodSync(socketDir, 0o500);
+      cleanups.push(() => fs.chmodSync(socketDir, 0o700));
+      expect(
+        await a.request<Record<string, unknown>>({ op: "message_send", to: B, text: "hi" }),
+      ).toEqual({
+        ok: true,
+        outcome: "not_delivered",
+        reason: "no_status_socket",
+      });
+      // A room message is not written either; its outcome is unavailable.
+      const injector = new PeerInjector();
+      cleanups.push(() => injector.close());
+      expect(
+        await injector.send(hb.configDir, B, {
+          mid: "r1m1",
+          from: "user",
+          fromLabel: "user",
+          text: "x",
+        }),
+      ).toBe("unavailable");
+      expect(hb.frames).toEqual([]);
+    },
+    T,
+  );
+
+  test(
+    "a session hello whose sid is not a session id is refused",
+    async () => {
+      const ctx = await daemon();
+      for (const sid of ["x; printf PWNED >&2; #", "A", `${A} `, A.toUpperCase(), `ccmsg:${A}`]) {
+        const c = await connect(ctx.sock);
+        cleanups.push(() => c.close());
+        const res = await c.request<{ ok: boolean; error?: { code: string } }>({
+          op: "hello",
+          protocol: PROTOCOL_VERSION,
+          role: "session",
+          sid,
+          repo: "r",
+          ws: "w",
+          cwd: "/tmp",
+        });
+        expect({ sid, code: res.error?.code }).toEqual({ sid, code: "invalid_args" });
+        const after = await c.request<{ error?: { code: string } }>({
+          op: "message_send",
+          to: B,
+          text: "hi",
+        });
+        expect(after.error?.code).toBe("hello_required");
+      }
+      const peers = await (
+        await sessionWithConfig(ctx, A)
+      ).request<{ peers: { sid: string }[] }>({
+        op: "peers",
+      });
+      expect(peers.peers.map((p) => p.sid)).toEqual([A]);
     },
     T,
   );

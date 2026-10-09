@@ -439,7 +439,7 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     const ctx = await startTestDaemon();
     try {
       const c = await connect(ctx.sock);
-      await c.hello({ role: "session", sid: "sid-agent" });
+      await c.hello({ role: "session", sid: "a9e47000-0000-4000-8000-000000000001" });
       const res = await c.request({
         op: "session_kill",
         request_id: "k1",

@@ -10,6 +10,13 @@ import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./help
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
+const ASKER = "a5000000-0000-4000-8000-000000000001";
+const SAME = "5a000000-0000-4000-8000-000000000002";
+const OTHER = "07000000-0000-4000-8000-000000000003";
+const UNKNOWN = "00000000-0000-4000-8000-000000000004";
+const PEER = "9e000000-0000-4000-8000-000000000005";
+const A = "aaaaaaaa-0000-4000-8000-000000000006";
+const B = "bbbbbbbb-0000-4000-8000-000000000007";
 
 describe("normalizeConfigDir", () => {
   test("末尾スラッシュ・冗長な区切りを畳んで比較可能な綴りにする", () => {
@@ -96,17 +103,17 @@ describe("peers の send_message フラグ", () => {
       const ctx = await startTestDaemon();
       try {
         const home = os.homedir();
-        const askerConn = await sessionHello(ctx, "ASKER", path.join(home, ".claude-personal"));
-        await sessionHello(ctx, "SAME", path.join(home, ".claude-personal/"));
-        await sessionHello(ctx, "OTHER", path.join(home, ".claude-work"));
-        await sessionHello(ctx, "UNKNOWN");
+        const askerConn = await sessionHello(ctx, ASKER, path.join(home, ".claude-personal"));
+        await sessionHello(ctx, SAME, path.join(home, ".claude-personal/"));
+        await sessionHello(ctx, OTHER, path.join(home, ".claude-work"));
+        await sessionHello(ctx, UNKNOWN);
 
         const peers = await peersOf(askerConn);
-        expect(peers.get("SAME")?.send_message).toBe(true);
-        expect(peers.get("OTHER")?.send_message).toBeUndefined();
-        expect(peers.get("UNKNOWN")?.send_message).toBeUndefined();
+        expect(peers.get(SAME)?.send_message).toBe(true);
+        expect(peers.get(OTHER)?.send_message).toBeUndefined();
+        expect(peers.get(UNKNOWN)?.send_message).toBeUndefined();
         // 自分宛の SendMessage は用途が無いので自分の行には付けない
-        expect(peers.get("ASKER")?.send_message).toBeUndefined();
+        expect(peers.get(ASKER)?.send_message).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -120,10 +127,10 @@ describe("peers の send_message フラグ", () => {
       const ctx = await startTestDaemon();
       try {
         const cfg = path.join(os.homedir(), ".claude-personal");
-        const askerConn = await sessionHello(ctx, "ASKER");
-        await sessionHello(ctx, "PEER", cfg);
+        const askerConn = await sessionHello(ctx, ASKER);
+        await sessionHello(ctx, PEER, cfg);
         const peers = await peersOf(askerConn);
-        expect(peers.get("PEER")?.send_message).toBeUndefined();
+        expect(peers.get(PEER)?.send_message).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -137,13 +144,13 @@ describe("peers の send_message フラグ", () => {
       const ctx = await startTestDaemon();
       try {
         const cfg = path.join(os.homedir(), ".claude-personal");
-        await sessionHello(ctx, "A", cfg);
-        await sessionHello(ctx, "B", cfg);
+        await sessionHello(ctx, A, cfg);
+        await sessionHello(ctx, B, cfg);
         const admin = await connect(ctx.sock);
         await admin.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
         const peers = await peersOf(admin);
-        expect(peers.get("A")?.send_message).toBeUndefined();
-        expect(peers.get("B")?.send_message).toBeUndefined();
+        expect(peers.get(A)?.send_message).toBeUndefined();
+        expect(peers.get(B)?.send_message).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -157,21 +164,21 @@ describe("peers の send_message フラグ", () => {
       const ctx = await startTestDaemon();
       try {
         const cfg = path.join(os.homedir(), ".claude-personal");
-        const askerConn = await sessionHello(ctx, "ASKER", cfg);
-        const peerConn = await sessionHello(ctx, "PEER", cfg);
-        expect((await peersOf(askerConn)).get("PEER")?.send_message).toBe(true);
+        const askerConn = await sessionHello(ctx, ASKER, cfg);
+        const peerConn = await sessionHello(ctx, PEER, cfg);
+        expect((await peersOf(askerConn)).get(PEER)?.send_message).toBe(true);
         // 同じ sid の別 conn が config_dir 無しで hello (旧 CLI / env を失った
         // subprocess) しても、確立済みの面は保たれる
         await peerConn.request({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "PEER",
+          sid: PEER,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
         });
-        expect((await peersOf(askerConn)).get("PEER")?.send_message).toBe(true);
+        expect((await peersOf(askerConn)).get(PEER)?.send_message).toBe(true);
       } finally {
         await stopTestDaemon(ctx);
       }

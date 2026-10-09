@@ -76,7 +76,11 @@ describe("session launcher wire ops", () => {
       const ctx = await startConfiguredDaemon(root);
       try {
         const client = await connect(ctx.sock);
-        await client.hello({ role: "session", sid: "A", cwd: root });
+        await client.hello({
+          role: "session",
+          sid: "aaaaaaaa-0000-4000-8000-000000000001",
+          cwd: root,
+        });
 
         for (const req of [
           { op: "dir_tree", roots: [root] },

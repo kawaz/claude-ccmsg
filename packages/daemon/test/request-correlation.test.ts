@@ -11,6 +11,7 @@ import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./help
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 30000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
 /** A transcript big enough that its cold `session_status` scan takes long
  * enough to observe — the op the measurements in
@@ -73,14 +74,14 @@ describe("request correlation", () => {
       await withDaemon(async (ctx) => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
         try {
-          const file = path.join(dir, "A.jsonl");
+          const file = path.join(dir, `${A}.jsonl`);
           writeLargeTranscript(file);
           const session = await connect(ctx.sock);
           await session.request({
             op: "hello",
             protocol: PROTOCOL_VERSION,
             role: "session",
-            sid: "A",
+            sid: A,
             repo: "r",
             ws: "w",
             cwd: "/tmp",
@@ -92,13 +93,13 @@ describe("request correlation", () => {
           // The cold scan first, the cheap op immediately behind it on the same
           // socket. Under the removed FIFO the ping could only be answered
           // after the scan finished.
-          c.write({ op: "session_status", sid: "A", request_id: "slow" });
+          c.write({ op: "session_status", sid: A, request_id: "slow" });
           c.write({ op: "ping", request_id: "fast" });
 
           const first = (await c.readEvent()) as Record<string, unknown>;
           const second = (await c.readEvent()) as Record<string, unknown>;
           expect(first).toMatchObject({ ok: true, pong: true, request_id: "fast" });
-          expect(second).toMatchObject({ ok: true, sid: "A", request_id: "slow" });
+          expect(second).toMatchObject({ ok: true, sid: A, request_id: "slow" });
 
           session.close();
           c.close();
@@ -116,14 +117,14 @@ describe("request correlation", () => {
       await withDaemon(async (ctx) => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
         try {
-          const file = path.join(dir, "A.jsonl");
+          const file = path.join(dir, `${A}.jsonl`);
           writeLargeTranscript(file);
           const session = await connect(ctx.sock);
           await session.request({
             op: "hello",
             protocol: PROTOCOL_VERSION,
             role: "session",
-            sid: "A",
+            sid: A,
             repo: "r",
             ws: "w",
             cwd: "/tmp",
@@ -134,10 +135,10 @@ describe("request correlation", () => {
           await c.hello({ role: "user" });
           // Both in flight at once, the slow one sent first: each Promise gets
           // its own answer, not whichever reply happens to arrive first.
-          const slow = c.request<{ ok: true; sid: string }>({ op: "session_status", sid: "A" });
+          const slow = c.request<{ ok: true; sid: string }>({ op: "session_status", sid: A });
           const fast = c.request<{ ok: true; pong: true }>({ op: "ping" });
           expect(await fast).toMatchObject({ ok: true, pong: true });
-          expect(await slow).toMatchObject({ ok: true, sid: "A" });
+          expect(await slow).toMatchObject({ ok: true, sid: A });
 
           session.close();
           c.close();

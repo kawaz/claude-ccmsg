@@ -22,7 +22,7 @@ import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20000;
 const TOKEN = "test-webhook-token";
-const SID = "KA1";
+const SID = "ca000000-0000-4000-8000-000000000001";
 const MARKER = "[llm-gateway cache keepalive nonce=n1]";
 
 interface Ctx extends DaemonCtx {

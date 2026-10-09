@@ -15,6 +15,10 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
+const C = "cccccccc-0000-4000-8000-000000000003";
+const X = "eeeeeeee-0000-4000-8000-00000000000e";
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
@@ -38,11 +42,11 @@ describe("DR-0017 reply op", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const b = await session(ctx, "B");
+        const a = await session(ctx, A);
+        const b = await session(ctx, B);
         const created = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B", "C"],
+          members: [A, B, C],
         });
         const room = created.room;
 
@@ -89,10 +93,10 @@ describe("DR-0017 reply op", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A", "B"],
+          members: [A, B],
         });
         const posted = await a.request<{ mid: number }>({
           op: "post",
@@ -123,10 +127,10 @@ describe("DR-0017 reply op", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A"],
+          members: [A],
         });
         const res = await a.request<{ ok: false; error: { code: string } }>({
           op: "reply",
@@ -155,7 +159,7 @@ describe("DR-0017 reply op", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await u.request<{ room: string }>({
           op: "create_room",
           members: [],
@@ -189,11 +193,11 @@ describe("DR-0017 reply op", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const a = await session(ctx, "A");
-        const outsider = await session(ctx, "X");
+        const a = await session(ctx, A);
+        const outsider = await session(ctx, X);
         const created = await u.request<{ room: string }>({
           op: "create_room",
-          members: ["A"],
+          members: [A],
         });
         const posted = await a.request<{ mid: number }>({
           op: "post",

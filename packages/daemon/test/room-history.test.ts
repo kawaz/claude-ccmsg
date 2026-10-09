@@ -15,6 +15,8 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 // The recent-replay window (subscribe-recent-replay.test.ts) would add
 // `replay: true` msgs to the bare-subscribe path and blur "did subscribe send
@@ -49,9 +51,8 @@ describe("room_history", () => {
     async () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
-        const a = await session(ctx, "A");
-        const room = (await a.request<{ room: string }>({ op: "create_room", members: ["B"] }))
-          .room;
+        const a = await session(ctx, A);
+        const room = (await a.request<{ room: string }>({ op: "create_room", members: [B] })).room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
 
@@ -68,7 +69,7 @@ describe("room_history", () => {
         const seen = await fetchHistory(u, room);
         expect(seen.filter((e) => e.type === "msg").map((e) => e.mid)).toEqual([1, 2]);
         // member state comes with it, so the room paints without a second op
-        expect(seen.some((e) => e.type === "member" && e.sid === "A")).toBe(true);
+        expect(seen.some((e) => e.type === "member" && e.sid === A)).toBe(true);
         // the reply is last, and it names the room it completed
         expect(seen.at(-1)).toMatchObject({ ok: true, room });
       } finally {
@@ -83,9 +84,8 @@ describe("room_history", () => {
     async () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
-        const a = await session(ctx, "A");
-        const room = (await a.request<{ room: string }>({ op: "create_room", members: ["B"] }))
-          .room;
+        const a = await session(ctx, A);
+        const room = (await a.request<{ room: string }>({ op: "create_room", members: [B] })).room;
         // more than DEFAULT_JOIN_BACKLOG=50: the cap exists to bound an agent's
         // context, and an explicitly opened room is not that.
         for (let i = 1; i <= 55; i++) await a.request({ op: "post", room, msg: `m${i}` });
@@ -114,15 +114,15 @@ describe("room_history", () => {
     async () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
-        const a = await session(ctx, "A");
-        const shared = (await a.request<{ room: string }>({ op: "create_room", members: ["B"] }))
+        const a = await session(ctx, A);
+        const shared = (await a.request<{ room: string }>({ op: "create_room", members: [B] }))
           .room;
         await a.request({ op: "post", room: shared, msg: "hello B" });
         const other = (await a.request<{ room: string }>({ op: "create_room", members: ["C"] }))
           .room;
         await a.request({ op: "post", room: other, msg: "not for B" });
 
-        const b = await session(ctx, "B");
+        const b = await session(ctx, B);
         await b.request({ op: "subscribe" });
         await b.readEvent(); // room_cursors (shared only)
 

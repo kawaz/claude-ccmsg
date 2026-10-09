@@ -14,6 +14,14 @@ import {
 } from "@ccmsg/protocol";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
 
+const SID_S1 = "51000000-0000-4000-8000-000000000001";
+const SID_S2 = "52000000-0000-4000-8000-000000000002";
+const SID_S3 = "53000000-0000-4000-8000-000000000003";
+const SID_S4 = "54000000-0000-4000-8000-000000000004";
+const SID_S4B = "54b00000-0000-4000-8000-000000000004";
+const SID_S5 = "55000000-0000-4000-8000-000000000005";
+const SID_S6 = "56000000-0000-4000-8000-000000000006";
+
 const T = 15000;
 
 async function peersOf(ctx: DaemonCtx): Promise<PeerInfo[]> {
@@ -47,7 +55,7 @@ describe("protocol version handshake", () => {
         const hello = await c.request<{ ok: boolean; version: string; protocol: number }>({
           op: "hello",
           role: "session",
-          sid: "S1",
+          sid: SID_S1,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -57,7 +65,7 @@ describe("protocol version handshake", () => {
         expect(hello.ok).toBe(true);
         expect(hello.protocol).toBe(PROTOCOL_VERSION);
 
-        const peer = (await peersOf(ctx)).find((p) => p.sid === "S1");
+        const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S1);
         expect(peer).toBeDefined();
         expect(peer?.client_version).toBe("9.9.9");
         expect(peer?.protocol).toBe(PROTOCOL_VERSION);
@@ -78,7 +86,7 @@ describe("protocol version handshake", () => {
         await live.request({
           op: "hello",
           role: "session",
-          sid: "S2",
+          sid: SID_S2,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -90,7 +98,7 @@ describe("protocol version handshake", () => {
         const err = await old.request<{ ok: boolean; error: { code: string; msg: string } }>({
           op: "hello",
           role: "session",
-          sid: "S2",
+          sid: SID_S2,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -100,7 +108,7 @@ describe("protocol version handshake", () => {
         expect(err.ok).toBe(false);
         expect(err.error.code).toBe("bad_request");
 
-        const peer = (await peersOf(ctx)).find((p) => p.sid === "S2");
+        const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S2);
         expect(peer?.stale_client?.version).toBe("0.1.0");
         expect(peer?.stale_client?.protocol).toBe(PROTOCOL_VERSION + 1);
         expect(peer?.stale_client?.last_seen).toBeString();
@@ -122,7 +130,7 @@ describe("protocol version handshake", () => {
         await live.request({
           op: "hello",
           role: "session",
-          sid: "S3",
+          sid: SID_S3,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -136,7 +144,7 @@ describe("protocol version handshake", () => {
         const err = await old.requestRaw<{ ok: boolean; error: { code: string; msg: string } }>({
           op: "hello",
           role: "session",
-          sid: "S3",
+          sid: SID_S3,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -144,7 +152,7 @@ describe("protocol version handshake", () => {
         expect(err.ok).toBe(false);
         expect(err.error.code).toBe("bad_request");
 
-        const stale = (await peersOf(ctx)).find((p) => p.sid === "S3")?.stale_client;
+        const stale = (await peersOf(ctx)).find((p) => p.sid === SID_S3)?.stale_client;
         expect(stale).toBeDefined();
         // Nothing to report but the fact of the attempt — that client is too
         // old to name either its build or its generation. The absent protocol
@@ -169,14 +177,14 @@ describe("protocol version handshake", () => {
         const hello = await c.request<{ ok: boolean }>({
           op: "hello",
           role: "session",
-          sid: "S4",
+          sid: SID_S4,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
         });
         expect(hello.ok).toBe(true);
 
-        const peer = (await peersOf(ctx)).find((p) => p.sid === "S4");
+        const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S4);
         expect(peer).toBeDefined();
         // Left absent rather than filled in with the assumed generation: the
         // client never mentioned one, and the display says "版数不明".
@@ -199,7 +207,7 @@ describe("protocol version handshake", () => {
         const err = await c.request<{ ok: boolean; error: { code: string; msg: string } }>({
           op: "hello",
           role: "session",
-          sid: "S4b",
+          sid: SID_S4B,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -219,21 +227,21 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const old = await connect(ctx.sock);
-        await old.requestRaw({ op: "hello", role: "session", sid: "S5", cwd: "/tmp" });
-        expect((await peersOf(ctx)).find((p) => p.sid === "S5")).toBeUndefined();
+        await old.requestRaw({ op: "hello", role: "session", sid: SID_S5, cwd: "/tmp" });
+        expect((await peersOf(ctx)).find((p) => p.sid === SID_S5)).toBeUndefined();
 
         const fresh = await connect(ctx.sock);
         await fresh.request({
           op: "hello",
           role: "session",
-          sid: "S5",
+          sid: SID_S5,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
           client_version: VERSION,
           protocol: PROTOCOL_VERSION,
         });
-        const peer = (await peersOf(ctx)).find((p) => p.sid === "S5");
+        const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S5);
         expect(peer).toBeDefined();
         expect(peer?.stale_client).toBeUndefined();
         old.close();
@@ -251,7 +259,7 @@ describe("protocol version handshake", () => {
         await live.request({
           op: "hello",
           role: "session",
-          sid: "S6",
+          sid: SID_S6,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -269,12 +277,12 @@ describe("protocol version handshake", () => {
         await watcher.request({ op: "subscribe" });
 
         const old = await connect(ctx.sock);
-        await old.requestRaw({ op: "hello", role: "session", sid: "S6", cwd: "/tmp" });
+        await old.requestRaw({ op: "hello", role: "session", sid: SID_S6, cwd: "/tmp" });
 
         const { ev } = await watcher.readEventUntil<{ ev: "peers"; peers: PeerInfo[] }>(
           (e) => e.ev === "peers" && e.peers.some((p: PeerInfo) => p.stale_client),
         );
-        expect(ev.peers.find((p) => p.sid === "S6")?.stale_client).toBeDefined();
+        expect(ev.peers.find((p) => p.sid === SID_S6)?.stale_client).toBeDefined();
         old.close();
         watcher.close();
         live.close();

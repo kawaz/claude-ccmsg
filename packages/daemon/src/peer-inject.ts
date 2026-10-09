@@ -20,10 +20,13 @@ export type InjectOutcome = "delivered" | "unavailable" | "refused";
  *
  * - `no_peer_socket`: nothing to write to — no state file for the session in
  *   that config dir, a harness speaking another peer protocol, or no token
+ * - `no_status_socket`: this side could not open the socket the recipient
+ *   reports a refusal to, so nothing was written — a write whose refusal could
+ *   not be heard would be called delivered without knowing it was
  * - `unreachable`: the socket did not take both frames in time */
 export type InjectResult =
   | { outcome: "delivered" }
-  | { outcome: "unavailable"; cause: "no_peer_socket" | "unreachable" }
+  | { outcome: "unavailable"; cause: "no_peer_socket" | "no_status_socket" | "unreachable" }
   | { outcome: "refused" };
 
 /** One `user` frame's payload: `mid` names it to the harness (and to the
@@ -227,11 +230,11 @@ export class PeerInjector {
     const token = await this.#token(sessionsDir, target.pid);
     if (token === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
     const inbox = await this.#inbox(target.socketPath);
-    const watching = inbox?.status(frame.mid, this.#statusMs);
-    const from = inbox === undefined ? undefined : `uds:${inbox.path}`;
+    if (inbox === undefined) return { outcome: "unavailable", cause: "no_status_socket" };
+    const watching = inbox.status(frame.mid, this.#statusMs);
     const written = await writeSocket(
       target.socketPath,
-      injectFrames(sid, token, frame, from),
+      injectFrames(sid, token, frame, `uds:${inbox.path}`),
       this.#writeMs,
     );
     if (written !== "delivered") return { outcome: "unavailable", cause: "unreachable" };

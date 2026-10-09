@@ -13,6 +13,8 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const START = "2026-07-14T16:27:55.672Z";
 const END = "2026-07-14T16:28:55.672Z";
 
@@ -96,17 +98,17 @@ describe("session_errors daemon op / push", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const stuck = path.join(dir, "A.jsonl");
-        const healthy = path.join(dir, "B.jsonl");
+        const stuck = path.join(dir, `${A}.jsonl`);
+        const healthy = path.join(dir, `${B}.jsonl`);
         fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("Prompt is too long"));
         fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
-        await sessionHello(ctx, "A", stuck);
-        await sessionHello(ctx, "B", healthy);
+        await sessionHello(ctx, A, stuck);
+        await sessionHello(ctx, B, healthy);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
         const res = await user.request<ErrorsOk>({ op: "session_errors" });
-        expect(res.errors).toEqual([{ sid: "A", text: "Prompt is too long", timestamp: START }]);
+        expect(res.errors).toEqual([{ sid: A, text: "Prompt is too long", timestamp: START }]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -122,9 +124,9 @@ describe("session_errors daemon op / push", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, assistantLine("hello"));
-        await sessionHello(ctx, "A", file);
+        await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
         expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toEqual([]);
@@ -138,7 +140,7 @@ describe("session_errors daemon op / push", () => {
         );
         expect(raised.ev.errors).toEqual([
           {
-            sid: "A",
+            sid: A,
             text: "You're out of extra usage · resets 7pm (Asia/Tokyo)",
             timestamp: START,
           },
@@ -163,12 +165,12 @@ describe("session_errors daemon op / push", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(
           file,
           assistantLine("spawning") + apiErrorLine("Prompt is too long", { isSidechain: true }),
         );
-        await sessionHello(ctx, "A", file);
+        await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
         expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toEqual([]);
@@ -186,9 +188,9 @@ describe("session_errors daemon op / push", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, assistantLine("hello"));
-        const session = await sessionHello(ctx, "A", file);
+        const session = await sessionHello(ctx, A, file);
         const res = await session.request<ErrorLite>({ op: "session_errors" });
         expect(res.error.code).toBe("bad_request");
       } finally {
@@ -206,9 +208,9 @@ describe("session_errors daemon op / push", () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
-        const file = path.join(dir, "A.jsonl");
+        const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, apiErrorLine("Prompt is too long"));
-        const session = await sessionHello(ctx, "A", file);
+        const session = await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
         expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toHaveLength(1);

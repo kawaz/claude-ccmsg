@@ -18,6 +18,9 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
+// Ids that say hello as a session must be session-id shaped (lowercase UUID).
+const SID_MARK = "3a4c0000-0000-4000-8000-000000000001";
+const SID_S9 = "59000000-0000-4000-8000-000000000009";
 const TOKEN = "test-webhook-token";
 
 interface Ctx extends DaemonCtx {
@@ -126,7 +129,7 @@ async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, 
     op: "hello",
     role: "session",
     protocol: PROTOCOL_VERSION,
-    sid: "MARK",
+    sid: SID_MARK,
     repo: "r",
     ws: "w",
     cwd: "/tmp",
@@ -328,7 +331,7 @@ describe("webhook → ev:llm_requests", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "S9",
+          sid: SID_S9,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -336,7 +339,7 @@ describe("webhook → ev:llm_requests", () => {
         await s.request({ op: "subscribe" });
         await postEvents(ctx, {
           ts: Date.now(),
-          session_id: "S9",
+          session_id: SID_S9,
           prefix: "484eda9c",
         });
         // The user connection receiving the push is the ordering anchor: the

@@ -20,6 +20,7 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
 function mkfixture(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fsfind-"));
@@ -100,11 +101,11 @@ describe("fs_find (contained)", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "compo tsx",
         });
@@ -128,11 +129,11 @@ describe("fs_find (contained)", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "components",
         });
@@ -161,11 +162,11 @@ describe("fs_find (contained)", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme",
         });
@@ -184,11 +185,11 @@ describe("fs_find (contained)", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "   ",
         });
@@ -212,11 +213,11 @@ describe("fs_find (contained)", () => {
         fs.writeFileSync(path.join(many, `match-${i}.txt`), "");
       }
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "match-",
         });
@@ -236,11 +237,11 @@ describe("fs_find (contained)", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           root: "docs",
           query: "readme",
@@ -262,10 +263,10 @@ describe("fs_find authorization", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        const session = await sessionAt(ctx, "A", cwd);
+        const session = await sessionAt(ctx, A, cwd);
         const res = await session.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme",
         });
@@ -306,11 +307,11 @@ describe("fs_find authorization", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           root: cwd,
           query: "readme",
@@ -334,11 +335,11 @@ describe("fs_find authorization", () => {
       buildTree(cwd);
       fs.writeFileSync(path.join(parent, "OUTSIDE-README.md"), "");
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           root: "..",
           query: "readme",
@@ -367,11 +368,11 @@ describe("fs_find authorization", () => {
       fs.writeFileSync(path.join(outside, "secret-README.md"), "");
       fs.symlinkSync(outside, path.join(cwd, "escape"));
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme",
         });
@@ -394,11 +395,11 @@ describe("fs_find authorization", () => {
       fs.writeFileSync(path.join(loop, "target-README.md"), "");
       fs.symlinkSync(loop, path.join(loop, "self"));
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme",
         });
@@ -425,14 +426,14 @@ describe("fs_find (workspace, DR-0026)", () => {
       try {
         await sessionWithWorkspace(
           ctx,
-          "A",
+          A,
           cwd,
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "workspace",
           root: sibling,
           query: "readme",
@@ -462,14 +463,14 @@ describe("fs_find (workspace, DR-0026)", () => {
       try {
         await sessionWithWorkspace(
           ctx,
-          "A",
+          A,
           cwd,
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "workspace",
           root: other,
           query: "readme",
@@ -495,14 +496,14 @@ describe("fs_find (workspace, DR-0026)", () => {
       try {
         await sessionWithWorkspace(
           ctx,
-          "A",
+          A,
           cwd,
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "workspace",
           query: "readme",
         });
@@ -531,14 +532,14 @@ describe("fs_find (workspace, DR-0026)", () => {
         // case worth pinning (an allowlist of zero folders grants nothing).
         // Without a transcript the status lookup fails first and the test
         // would pass for the wrong reason.
-        const transcript = path.join(cwd, "A.jsonl");
+        const transcript = path.join(cwd, `${A}.jsonl`);
         fs.writeFileSync(transcript, "");
         const session = await connect(ctx.sock);
         await session.request({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: A,
           repo: "r",
           ws: "w",
           cwd,
@@ -547,7 +548,7 @@ describe("fs_find (workspace, DR-0026)", () => {
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "workspace",
           root: other,
           query: "readme",
@@ -567,11 +568,11 @@ describe("fs_find (workspace, DR-0026)", () => {
       const ctx = await startTestDaemon();
       const cwd = fs.realpathSync(mkfixture());
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "external",
           query: "readme",
         });
@@ -596,11 +597,11 @@ describe("fs_find query grammar at the op level", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme -docs",
         });
@@ -619,11 +620,11 @@ describe("fs_find query grammar at the op level", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "-docs",
         });
@@ -644,11 +645,11 @@ describe("fs_find query grammar at the op level", () => {
       fs.writeFileSync(path.join(cwd, "file-search.ts"), "");
       fs.writeFileSync(path.join(cwd, "filesearch.ts"), "");
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "file +-search",
         });
@@ -681,11 +682,11 @@ describe("fs_find .gitignore filtering", () => {
       fs.mkdirSync(path.join(cwd, ".git"));
       fs.writeFileSync(path.join(cwd, ".git", "package.json"), "");
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "package.json",
         });
@@ -704,11 +705,11 @@ describe("fs_find .gitignore filtering", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildIgnoredTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "package.json",
           respect_gitignore: false,
@@ -739,11 +740,11 @@ describe("fs_find .gitignore filtering", () => {
       fs.writeFileSync(path.join(pkg, "package.json"), "");
       fs.writeFileSync(path.join(pkg, "node_modules", "package.json"), "");
       try {
-        await sessionAt(ctx, "A", repo);
+        await sessionAt(ctx, A, repo);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           root: "pkg",
           query: "package.json",
@@ -768,11 +769,11 @@ describe("fs_find .gitignore filtering", () => {
       fs.mkdirSync(cwd);
       fs.writeFileSync(path.join(cwd, "secret.txt"), "");
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "secret",
         });
@@ -795,11 +796,11 @@ describe("fs_find .gitignore filtering", () => {
       fs.writeFileSync(path.join(cwd, "drop.log"), "");
       fs.writeFileSync(path.join(cwd, "keep", "kept.log"), "");
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindOk>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: ".log",
         });
@@ -818,11 +819,11 @@ describe("fs_find .gitignore filtering", () => {
       const cwd = fs.realpathSync(mkfixture());
       buildTree(cwd);
       try {
-        await sessionAt(ctx, "A", cwd);
+        await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
         const res = await user.request<FindErr>({
           op: "fs_find",
-          sid: "A",
+          sid: A,
           kind: "contained",
           query: "readme",
           respect_gitignore: "yes",

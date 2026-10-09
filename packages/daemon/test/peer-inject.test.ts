@@ -18,6 +18,7 @@ import {
 
 const T = 15000;
 const SID = "11111111-2222-4333-8444-555555555555";
+const SENDER = "5e7de700-0000-4000-8000-000000000001";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -94,11 +95,11 @@ describe("daemon delivery through the peer socket", () => {
       const ctx = await startTestDaemon();
       try {
         const h = fakeHarness();
-        const a = await sessionWithConfig(ctx, "SENDER");
+        const a = await sessionWithConfig(ctx, SENDER);
         const b = await sessionWithConfig(ctx, SID, h.configDir);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["SENDER", SID],
+          members: [SENDER, SID],
         });
         const room = created.room;
         await b.request({ op: "subscribe" });
@@ -106,7 +107,7 @@ describe("daemon delivery through the peer socket", () => {
         const first = await a.request<{ mid: number }>({ op: "post", room, msg: "via socket" });
         const { attrs, body } = parseEnvelope(await h.nextContent());
         expect(attrs["ccmsg-mid"]).toBe(`${room}m${first.mid}`);
-        expect(attrs["ccmsg-from"]).toBe("SENDER");
+        expect(attrs["ccmsg-from"]).toBe(SENDER);
         expect(attrs["from-name"]).toBe("a1");
         expect(body).toBe(`via socket\n\n${replyWith(`${room}m${first.mid}`)}`);
 
@@ -127,12 +128,12 @@ describe("daemon delivery through the peer socket", () => {
     async () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
-        const a = await sessionWithConfig(ctx, "SENDER");
+        const a = await sessionWithConfig(ctx, SENDER);
         await sessionWithConfig(ctx, SID);
         const room = (
           await a.request<{ room: string }>({
             op: "create_room",
-            members: ["SENDER", SID],
+            members: [SENDER, SID],
             msg: "opening",
           })
         ).room;
@@ -178,13 +179,13 @@ describe("daemon delivery through the peer socket", () => {
       const ctx = await startTestDaemon();
       try {
         const h = fakeHarness();
-        const a = await sessionWithConfig(ctx, "SENDER");
+        const a = await sessionWithConfig(ctx, SENDER);
         const b = await sessionWithConfig(ctx, SID, h.configDir);
         await b.request({ op: "subscribe" });
         const room = (
           await a.request<{ room: string }>({
             op: "create_room",
-            members: ["SENDER", SID],
+            members: [SENDER, SID],
             msg: "opening",
           })
         ).room;

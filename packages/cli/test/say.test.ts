@@ -132,7 +132,7 @@ describe("ccmsg say", () => {
         // sid はあるが daemon が居ない場合も同じ: 記録は諦め、発声は行う。
         const res2 = await runCli(["say", "daemon down"], {
           ...f.env,
-          CCMSG_SID: "sid-cli-say",
+          CCMSG_SID: "5a000000-0000-4000-8000-000000000000",
         });
         expect(res2.code).toBe(0);
         expect(sayInvocations(f)[1]).toEqual(["daemon down"]);
@@ -156,7 +156,7 @@ describe("ccmsg say", () => {
         await runCli(["daemon", "start"], f.env);
         const res = await runCli(["say", "-v", "Alex", "hello there"], {
           ...f.env,
-          CCMSG_SID: "sid-cli-say",
+          CCMSG_SID: "5a000000-0000-4000-8000-000000000000",
           CCMSG_REPO: "some-repo",
         });
         expect(res.code).toBe(0);
@@ -171,10 +171,12 @@ describe("ccmsg say", () => {
           .filter((l) => l !== "")
           .map((l) => JSON.parse(l));
         expect(events.find((e) => e.type === "kind")).toMatchObject({ kind: "1on1" });
-        expect(events.find((e) => e.type === "member")).toMatchObject({ sid: "sid-cli-say" });
+        expect(events.find((e) => e.type === "member")).toMatchObject({
+          sid: "5a000000-0000-4000-8000-000000000000",
+        });
         expect(events.find((e) => e.type === "say")).toMatchObject({
           type: "say",
-          sid: "sid-cli-say",
+          sid: "5a000000-0000-4000-8000-000000000000",
           // argv そのまま (say に渡した形が読み手にも見える)
           text: "-v Alex hello there",
         });

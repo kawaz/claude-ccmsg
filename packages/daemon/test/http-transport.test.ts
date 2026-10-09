@@ -11,6 +11,7 @@ import { tryAcquireLock } from "../src/flock.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
+const S = "50000000-0000-4000-8000-000000000001";
 
 /** Minimal WS counterpart of helpers.ts's TestClient: same request/readEvent shape,
  *  backed by a browser-standard WebSocket instead of a UDS Bun.connect socket. */
@@ -188,7 +189,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
         // room creation is a session-side op (webui MVP has no room-creation UI, DR-0004 §6);
         // set one up over UDS first, the way an AI session normally would.
         const owner = await connect(ctx.sock);
-        await owner.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
+        await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
         const created = await owner.request<{ ok: true; room: string }>({
           op: "create_room",
           members: [],
@@ -239,7 +240,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const ctx = await startHttpDaemon();
       try {
         const owner = await connect(ctx.sock);
-        await owner.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
+        await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
         const created = await owner.request<{ ok: true; room: string }>({
           op: "create_room",
           members: [],
@@ -280,9 +281,9 @@ describe("HTTP/WS transport (DR-0004)", () => {
     "cross-transport delivery: a UDS session and a WS user share live delivery in the same room",
     async () => {
       const ctx = await startHttpDaemon();
-      const harness = fakeHarness("S");
+      const harness = fakeHarness(S);
       try {
-        const udsSession = await sessionWithConfig(ctx, "S", harness.configDir);
+        const udsSession = await sessionWithConfig(ctx, S, harness.configDir);
         const created = await udsSession.request<{ ok: true; room: string }>({
           op: "create_room",
           members: [],

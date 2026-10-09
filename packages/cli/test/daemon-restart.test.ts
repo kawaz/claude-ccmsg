@@ -166,7 +166,7 @@ describe("ccmsg daemon restart", () => {
         env: {
           ...process.env,
           ...env,
-          CCMSG_SID: "SUB",
+          CCMSG_SID: "5b000000-0000-4000-8000-000000000000",
           CLAUDE_CODE_SESSION_ID: "",
           CLAUDE_SESSION_ID: "",
         },
@@ -182,7 +182,7 @@ describe("ccmsg daemon restart", () => {
           const peers = JSON.parse((await runCli(["peers"], env)).out) as {
             peers: { sid: string }[];
           };
-          if (peers.peers.some((p) => p.sid === "SUB")) break;
+          if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
           await sleep(25);
         }
 
@@ -192,7 +192,14 @@ describe("ccmsg daemon restart", () => {
         const created = JSON.parse(
           (
             await runCli(
-              ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
+              [
+                "--sid",
+                "c0000000-0000-4000-8000-000000000000",
+                "create-room",
+                "--members",
+                "50000001-0000-4000-8000-000000000000,5b000000-0000-4000-8000-000000000000",
+                "--exclude-self",
+              ],
               env,
             )
           ).out,
@@ -215,7 +222,9 @@ describe("ccmsg daemon restart", () => {
 
         // 跨ぎ後の room イベント (S1 の leave) が subscribe に届く = 自動再接続が
         // 成立している。
-        const left = JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out) as {
+        const left = JSON.parse(
+          (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
+        ) as {
           ok: boolean;
         };
         expect(left.ok).toBe(true);

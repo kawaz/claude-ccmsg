@@ -103,7 +103,9 @@ describe("ccmsg CLI end-to-end", () => {
       expect(s0.running).toBe(false);
 
       // first real command auto-spawns the daemon (ensure-daemon). Identity = session S1.
-      const created = JSON.parse((await runCli(["--sid", "S1", "create-room"], env)).out) as {
+      const created = JSON.parse(
+        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "create-room"], env)).out,
+      ) as {
         ok: boolean;
         room: string;
       };
@@ -118,11 +120,19 @@ describe("ccmsg CLI end-to-end", () => {
         rooms: { id: string; members: { id: string; sid: string }[] }[];
       };
       expect(rooms.rooms.length).toBe(1);
-      expect(rooms.rooms[0]!.members[0]).toMatchObject({ id: "a1", sid: "S1" });
+      expect(rooms.rooms[0]!.members[0]).toMatchObject({
+        id: "a1",
+        sid: "50000001-0000-4000-8000-000000000000",
+      });
 
       // post + read round trip
       const posted = JSON.parse(
-        (await runCli(["--sid", "S1", "post", room, "hello"], env)).out,
+        (
+          await runCli(
+            ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "hello"],
+            env,
+          )
+        ).out,
       ) as { mid: number };
       expect(posted.mid).toBe(1);
       const read = JSON.parse((await runCli(["read", `${room}m1`], env)).out) as {
@@ -134,7 +144,12 @@ describe("ccmsg CLI end-to-end", () => {
       };
       expect(readLegacy.msgs[0]!.msg).toBe("hello");
       const posted2 = JSON.parse(
-        (await runCli(["--sid", "S1", "post", room, "world"], env)).out,
+        (
+          await runCli(
+            ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "world"],
+            env,
+          )
+        ).out,
       ) as { mid: number };
       const readMany = JSON.parse(
         (await runCli(["read", `${room}m${posted.mid},m${posted2.mid}`], env)).out,
@@ -399,7 +414,18 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+            ],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       // `--all`: 一度きりの create-room で繋いだ S1/S2 はもう切断済みで、
@@ -408,7 +434,10 @@ describe("ccmsg CLI end-to-end", () => {
         rooms: { members: { id: string; sid: string }[] }[];
       };
       // 順序は S1 (呼び出し元、a1) → S2 (a2)
-      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual([
+        "50000001-0000-4000-8000-000000000000",
+        "50000002-0000-4000-8000-000000000000",
+      ]);
       expect(rooms.rooms[0]!.members.map((m) => m.id)).toEqual(["a1", "a2"]);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -423,14 +452,27 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2", "--exclude-self"], env))
-          .out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+              "--exclude-self",
+            ],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { id: string; sid: string }[] }[];
       };
-      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S2"]);
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual([
+        "50000002-0000-4000-8000-000000000000",
+      ]);
       expect(rooms.rooms[0]!.members[0]!.id).toBe("a1");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -444,7 +486,16 @@ describe("ccmsg CLI end-to-end", () => {
   test("create-room --members に u1 が含まれると reject される", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = await runCli(["--sid", "S1", "create-room", "--members", "S2,u1"], env);
+      const res = await runCli(
+        [
+          "--sid",
+          "50000001-0000-4000-8000-000000000000",
+          "create-room",
+          "--members",
+          "50000002-0000-4000-8000-000000000000,u1",
+        ],
+        env,
+      );
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("u1 is always implicitly a member");
     } finally {
@@ -470,7 +521,7 @@ describe("ccmsg CLI end-to-end", () => {
       };
       const cases: [string, string[]][] = [
         ["post", ["post", "r1", "hi"]],
-        ["create-room", ["create-room", "--members", "S2"]],
+        ["create-room", ["create-room", "--members", "50000002-0000-4000-8000-000000000000"]],
         ["next-room", ["next-room", "r1"]],
         ["leave", ["leave", "r1"]],
         ["notify", ["notify", "--self", "--text", "hi"]],
@@ -503,19 +554,25 @@ describe("ccmsg CLI end-to-end", () => {
     try {
       // CLAUDE_CODE_SESSION_ID だけで post が成功 (write op が identity ありと
       // 判定される)。
-      const createdRes = await runCli(["create-room", "--members", "PEER"], {
-        ...env,
-        CLAUDE_CODE_SESSION_ID: "S1",
-        CCMSG_SID: "",
-        CLAUDE_SESSION_ID: "",
-      });
+      const createdRes = await runCli(
+        ["create-room", "--members", "9ee00000-0000-4000-8000-000000000000"],
+        {
+          ...env,
+          CLAUDE_CODE_SESSION_ID: "50000001-0000-4000-8000-000000000000",
+          CCMSG_SID: "",
+          CLAUDE_SESSION_ID: "",
+        },
+      );
       const created = JSON.parse(createdRes.out) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       // 呼び出し元 sid = S1 が member に入っている
       const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
-      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "PEER"]);
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual([
+        "50000001-0000-4000-8000-000000000000",
+        "9ee00000-0000-4000-8000-000000000000",
+      ]);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -527,12 +584,15 @@ describe("ccmsg CLI end-to-end", () => {
   test("旧 CLAUDE_SESSION_ID env は sid として拾わない (write op は error)", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = await runCli(["create-room", "--members", "PEER"], {
-        ...env,
-        CCMSG_SID: "",
-        CLAUDE_CODE_SESSION_ID: "",
-        CLAUDE_SESSION_ID: "SHOULD_BE_IGNORED",
-      });
+      const res = await runCli(
+        ["create-room", "--members", "9ee00000-0000-4000-8000-000000000000"],
+        {
+          ...env,
+          CCMSG_SID: "",
+          CLAUDE_CODE_SESSION_ID: "",
+          CLAUDE_SESSION_ID: "SHOULD_BE_IGNORED",
+        },
+      );
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("requires a session identity");
     } finally {
@@ -579,7 +639,18 @@ describe("ccmsg CLI end-to-end", () => {
     try {
       // S1 creates a room with S2 as a peer member
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+            ],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       const room = created.room;
@@ -588,10 +659,15 @@ describe("ccmsg CLI end-to-end", () => {
       const before = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
-      expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
+      expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual([
+        "50000001-0000-4000-8000-000000000000",
+        "50000002-0000-4000-8000-000000000000",
+      ]);
 
       // S2 leaves: the room's present-member list must drop S2 but keep S1
-      const left = JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out) as {
+      const left = JSON.parse(
+        (await runCli(["--sid", "50000002-0000-4000-8000-000000000000", "leave", room], env)).out,
+      ) as {
         ok: boolean;
         room: string;
       };
@@ -601,7 +677,9 @@ describe("ccmsg CLI end-to-end", () => {
       const after = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
-      expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1"]);
+      expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual([
+        "50000001-0000-4000-8000-000000000000",
+      ]);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -617,7 +695,7 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     const transcriptFile = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-tr-")),
-      "S1.jsonl",
+      "50000001-0000-4000-8000-000000000000.jsonl",
     );
     fs.writeFileSync(transcriptFile, "");
     try {
@@ -625,12 +703,12 @@ describe("ccmsg CLI end-to-end", () => {
         (
           await runCli(["peers"], {
             ...env,
-            CCMSG_SID: "S1",
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
             CCMSG_TRANSCRIPT_PATH: transcriptFile,
           })
         ).out,
       ) as { peers: { sid: string; transcript_path?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.transcript_path).toBe(transcriptFile);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -645,9 +723,15 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     try {
       const peers = JSON.parse(
-        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_TRANSCRIPT_PATH: "" })).out,
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
+            CCMSG_TRANSCRIPT_PATH: "",
+          })
+        ).out,
       ) as { peers: { sid: string; transcript_path?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.transcript_path).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -662,13 +746,13 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     const transcriptFile = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-sf-")),
-      "S1.jsonl",
+      "50000001-0000-4000-8000-000000000000.jsonl",
     );
     fs.writeFileSync(transcriptFile, "");
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
         transcript_path: transcriptFile,
         // 所在 (cwd/repo/ws/repo_root/branch) は 1 組で動くので、hook が書く形に
@@ -681,10 +765,13 @@ describe("ccmsg CLI end-to-end", () => {
       }),
     );
     try {
-      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" }))
+          .out,
+      ) as {
         peers: { sid: string; transcript_path?: string; repo?: string; ws?: string }[];
       };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.transcript_path).toBe(transcriptFile);
       expect(me.repo).toBe("claude-ccmsg");
       expect(me.ws).toBe("main");
@@ -701,7 +788,7 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
         cwd: os.tmpdir(),
         repo: "from-file",
@@ -714,13 +801,13 @@ describe("ccmsg CLI end-to-end", () => {
         (
           await runCli(["peers"], {
             ...env,
-            CCMSG_SID: "S1",
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
             CCMSG_REPO: "from-env",
             CCMSG_WS: "from-env-ws",
           })
         ).out,
       ) as { peers: { sid: string; repo?: string; ws?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.repo).toBe("from-env");
       expect(me.ws).toBe("from-env-ws");
     } finally {
@@ -736,7 +823,7 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
         cwd: os.tmpdir(),
         branch: "feat/branch-label",
@@ -744,10 +831,13 @@ describe("ccmsg CLI end-to-end", () => {
       }),
     );
     try {
-      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" }))
+          .out,
+      ) as {
         peers: { sid: string; branch?: string }[];
       };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.branch).toBe("feat/branch-label");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -762,7 +852,7 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
         cwd: os.tmpdir(),
         branch: "from-file",
@@ -771,9 +861,15 @@ describe("ccmsg CLI end-to-end", () => {
     );
     try {
       const peers = JSON.parse(
-        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_BRANCH: "from-env" })).out,
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
+            CCMSG_BRANCH: "from-env",
+          })
+        ).out,
       ) as { peers: { sid: string; branch?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.branch).toBe("from-env");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -786,9 +882,15 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     try {
       const peers = JSON.parse(
-        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_BRANCH: "" })).out,
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
+            CCMSG_BRANCH: "",
+          })
+        ).out,
       ) as { peers: { sid: string; branch?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.branch).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -809,20 +911,20 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({ cwd, repo_root: repoRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
     );
     try {
       const proc = Bun.spawn([process.execPath, CLI, "peers"], {
         cwd,
-        env: { ...process.env, ...env, CCMSG_SID: "S1" },
+        env: { ...process.env, ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const out = await new Response(proc.stdout).text();
       await proc.exited;
       const peers = JSON.parse(out) as { peers: { sid: string; repo_root?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.repo_root).toBe(fs.realpathSync(repoRoot));
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -842,20 +944,25 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({ cwd, repo_root: fileRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
     );
     try {
       const proc = Bun.spawn([process.execPath, CLI, "peers"], {
         cwd,
-        env: { ...process.env, ...env, CCMSG_SID: "S1", CCMSG_REPO_ROOT: envRoot },
+        env: {
+          ...process.env,
+          ...env,
+          CCMSG_SID: "50000001-0000-4000-8000-000000000000",
+          CCMSG_REPO_ROOT: envRoot,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
       const out = await new Response(proc.stdout).text();
       await proc.exited;
       const peers = JSON.parse(out) as { peers: { sid: string; repo_root?: string }[] };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.repo_root).toBe(fs.realpathSync(envRoot));
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -873,14 +980,17 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({ repo_root: unrelated, updated_at: "2026-07-11T00:00:00.000Z" }),
     );
     try {
-      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" }))
+          .out,
+      ) as {
         peers: { sid: string; repo_root?: string }[];
       };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.repo_root).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -895,18 +1005,25 @@ describe("ccmsg CLI end-to-end", () => {
     const { env, cleanup } = makeEnv();
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
-    fs.writeFileSync(path.join(sessionsDir, "S1.json"), "{not valid json");
+    fs.writeFileSync(
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
+      "{not valid json",
+    );
     // VCS 配下でない cwd で走らせる: repo/ws が空であることが「CLI が未申告」の
     // 証拠であり続けるため (daemon は cwd を名乗る hello に対してだけ repo/ws を
     // 導出するので、導出値が紛れ込む余地を残さない)。
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-novcs-"));
     try {
-      const res = await runCli(["peers"], { ...env, CCMSG_SID: "S1" }, outside);
+      const res = await runCli(
+        ["peers"],
+        { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" },
+        outside,
+      );
       expect(res.code).toBe(0);
       const peers = JSON.parse(res.out) as {
         peers: { sid: string; repo?: string; ws?: string; transcript_path?: string }[];
       };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.repo).toBe("");
       expect(me.ws).toBe("");
       expect(me.transcript_path).toBeUndefined();
@@ -925,17 +1042,20 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(sessionsDir, "S1.json"),
+      path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
-        transcript_path: "/nonexistent/path/S1.jsonl",
+        transcript_path: "/nonexistent/path/50000001-0000-4000-8000-000000000000.jsonl",
         updated_at: "2026-07-11T00:00:00.000Z",
       }),
     );
     try {
-      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" }))
+          .out,
+      ) as {
         peers: { sid: string; transcript_path?: string }[];
       };
-      const me = peers.peers.find((p) => p.sid === "S1")!;
+      const me = peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000")!;
       expect(me.transcript_path).toBeUndefined();
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
@@ -953,7 +1073,12 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--kind", "broadcast"], env)).out,
+        (
+          await runCli(
+            ["--sid", "50000001-0000-4000-8000-000000000000", "create-room", "--kind", "broadcast"],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       // `--all`: broadcast room の member は接続中 session から自動populate
@@ -977,7 +1102,15 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const res = await runCli(
-        ["--sid", "S1", "create-room", "--kind", "broadcast", "--members", "S2,S3"],
+        [
+          "--sid",
+          "50000001-0000-4000-8000-000000000000",
+          "create-room",
+          "--kind",
+          "broadcast",
+          "--members",
+          "50000002-0000-4000-8000-000000000000,50000003-0000-4000-8000-000000000000",
+        ],
         env,
       );
       expect(res.code).toBe(0); // 非致命的 warning、exit は 0
@@ -999,7 +1132,7 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const res = await runCli(
-        ["--sid", "S1", "create-room", "--kind", "boadcast"], // typo
+        ["--sid", "50000001-0000-4000-8000-000000000000", "create-room", "--kind", "boadcast"], // typo
         env,
       );
       expect(res.code).not.toBe(0);
@@ -1020,7 +1153,15 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const res = await runCli(
-        ["--sid", "S1", "create-room", "--kind", "1on1", "--members", "S2"],
+        [
+          "--sid",
+          "50000001-0000-4000-8000-000000000000",
+          "create-room",
+          "--kind",
+          "1on1",
+          "--members",
+          "50000002-0000-4000-8000-000000000000",
+        ],
         env,
       );
       expect(res.code).not.toBe(0);
@@ -1091,15 +1232,41 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+            ],
+            env,
+          )
+        ).out,
       ) as { room: string };
       const posted = JSON.parse(
-        (await runCli(["--sid", "S1", "post", created.room, "question"], env)).out,
+        (
+          await runCli(
+            ["--sid", "50000001-0000-4000-8000-000000000000", "post", created.room, "question"],
+            env,
+          )
+        ).out,
       ) as { mid: number };
 
       const replied = JSON.parse(
-        (await runCli(["--sid", "S2", "reply", `${created.room}m${posted.mid}`, "answer"], env))
-          .out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000002-0000-4000-8000-000000000000",
+              "reply",
+              `${created.room}m${posted.mid}`,
+              "answer",
+            ],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; mid: number; to: string[] };
       expect(replied.ok).toBe(true);
       // to = 元 from (S1 = a1)。返信者 S2 (a2) は含まれず、u1 は implicit 配信のため to に載らない
@@ -1122,7 +1289,10 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   test("reply の rNmN パース失敗は usage error で exit 非零", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = await runCli(["--sid", "S1", "reply", "r7-m10", "text"], env);
+      const res = await runCli(
+        ["--sid", "50000001-0000-4000-8000-000000000000", "reply", "r7-m10", "text"],
+        env,
+      );
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("r<N>m<M>");
     } finally {
@@ -1138,11 +1308,24 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     try {
       // member set を変えて 2 room 作る (同一 set は create-room の dedup で
       // 同じ room が返るため、S2 入りで区別する)。
-      const r1 = JSON.parse((await runCli(["--sid", "S1", "create-room"], env)).out) as {
+      const r1 = JSON.parse(
+        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "create-room"], env)).out,
+      ) as {
         room: string;
       };
       const r2 = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+            ],
+            env,
+          )
+        ).out,
       ) as {
         room: string;
       };
@@ -1180,7 +1363,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       // S1 を繋いだままにして、r1 / r2 の両方が「接続中メンバー有り」に
       // なるようにする。そうしないと無人フィルタ (別テスト) も同時に効いて
       // しまい、ここで見たい archive フィルタ単体の効果が分からなくなる。
-      const releaseS1 = await holdSession(sock, "S1");
+      const releaseS1 = await holdSession(sock, "50000001-0000-4000-8000-000000000000");
       try {
         // デフォルト: active の r2 だけ + archived_omitted=1
         const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
@@ -1224,15 +1407,31 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       // では 1 つにならない。daemon を再起動すると、どのセッションも daemon に
       // とって未知になり、再び hello した S1 の room だけが live になる。
       const attended = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+            ],
+            env,
+          )
+        ).out,
       ) as { room: string };
       const deserted = JSON.parse(
-        (await runCli(["--sid", "S3", "create-room", "--members", "S4"], env)).out,
+        (
+          await runCli(
+            ["--sid", "50000003-0000-4000-8000-000000000000", "create-room", "--members", "S4"],
+            env,
+          )
+        ).out,
       ) as { room: string };
       await runCli(["daemon", "stop"], env);
       await runCli(["rooms", "--all"], env);
 
-      const releaseS1 = await holdSession(sock, "S1");
+      const releaseS1 = await holdSession(sock, "50000001-0000-4000-8000-000000000000");
       try {
         const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
           rooms: { id: string; live_members?: number }[];
@@ -1274,8 +1473,19 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2", "positional-title"], env))
-          .out,
+        (
+          await runCli(
+            [
+              "--sid",
+              "50000001-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000002-0000-4000-8000-000000000000",
+              "positional-title",
+            ],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
@@ -1300,10 +1510,10 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           await runCli(
             [
               "--sid",
-              "S1",
+              "50000001-0000-4000-8000-000000000000",
               "create-room",
               "--members",
-              "S2",
+              "50000002-0000-4000-8000-000000000000",
               "positional-title",
               "--title",
               "explicit-title",
@@ -1359,9 +1569,9 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-      const p1 = spawnPeer("PA", alphaOne);
-      const p2 = spawnPeer("PB", alphaTwo);
-      const p3 = spawnPeer("PC", betaThree);
+      const p1 = spawnPeer("9a000000-0000-4000-8000-000000000000", alphaOne);
+      const p2 = spawnPeer("9b000000-0000-4000-8000-000000000000", alphaTwo);
+      const p3 = spawnPeer("9c000000-0000-4000-8000-000000000000", betaThree);
       try {
         // subscribe が daemon に hello するまでの猶予: peers を polling で待つ。
         const waitPeers = async (): Promise<{ peers: { sid: string; cwd?: string }[] }> => {
@@ -1377,19 +1587,26 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           throw new Error("timed out waiting for 3 peers");
         };
         const all = await waitPeers();
-        expect(all.peers.map((p) => p.sid).sort()).toEqual(["PA", "PB", "PC"]);
+        expect(all.peers.map((p) => p.sid).sort()).toEqual([
+          "9a000000-0000-4000-8000-000000000000",
+          "9b000000-0000-4000-8000-000000000000",
+          "9c000000-0000-4000-8000-000000000000",
+        ]);
 
         // "/alpha/" 部分一致 → PA + PB のみ (peerBase 名衝突を避けるため /alpha/)
         const alpha = JSON.parse((await runCli(["peers", "/alpha/"], readEnv)).out) as {
           peers: { sid: string; cwd?: string }[];
         };
-        expect(alpha.peers.map((p) => p.sid).sort()).toEqual(["PA", "PB"]);
+        expect(alpha.peers.map((p) => p.sid).sort()).toEqual([
+          "9a000000-0000-4000-8000-000000000000",
+          "9b000000-0000-4000-8000-000000000000",
+        ]);
 
         // "/beta/" 部分一致 → PC のみ
         const beta = JSON.parse((await runCli(["peers", "/beta/"], readEnv)).out) as {
           peers: { sid: string; cwd?: string }[];
         };
-        expect(beta.peers.map((p) => p.sid)).toEqual(["PC"]);
+        expect(beta.peers.map((p) => p.sid)).toEqual(["9c000000-0000-4000-8000-000000000000"]);
 
         // マッチしない substring → 0 件
         const none = JSON.parse((await runCli(["peers", "no-such-cwd"], readEnv)).out) as {
@@ -1460,7 +1677,7 @@ describe("ccmsg CLI stop <session-id> (DR-0028 session_kill wiring)", () => {
     try {
       const res = await runCli(["stop", "no-such-session-id"], {
         ...env,
-        CLAUDE_CODE_SESSION_ID: "caller-sid",
+        CLAUDE_CODE_SESSION_ID: "ca000000-0000-4000-8000-000000000000",
       });
       const parsed = JSON.parse(res.err) as { ok: boolean; error?: { code?: string } };
       expect(parsed.ok).toBe(false);
@@ -1499,7 +1716,7 @@ describe("hello が名乗る所在", () => {
     // 同じ形を直接置く (hooks/session-start.ts の SessionFileData)。
     fs.mkdirSync(path.join(env.CCMSG_STATE_DIR, "sessions"), { recursive: true });
     fs.writeFileSync(
-      path.join(env.CCMSG_STATE_DIR, "sessions", "LOC-FILE.json"),
+      path.join(env.CCMSG_STATE_DIR, "sessions", "10cf0000-0000-4000-8000-000000000000.json"),
       JSON.stringify({ cwd: stationed, updated_at: new Date().toISOString() }),
     );
     // 問い合わせ側は identity なし (自分が peer 一覧に紛れないように)。
@@ -1518,10 +1735,13 @@ describe("hello が名乗る所在", () => {
         stderr: "pipe",
       });
     const procs = [
-      spawnPeer("LOC-FILE", {}),
-      spawnPeer("LOC-ENV", { CLAUDE_PROJECT_DIR: project }),
-      spawnPeer("LOC-OVERRIDE", { CLAUDE_PROJECT_DIR: project, CCMSG_CWD: override }),
-      spawnPeer("LOC-NONE", {}),
+      spawnPeer("10cf0000-0000-4000-8000-000000000000", {}),
+      spawnPeer("10ce0000-0000-4000-8000-000000000000", { CLAUDE_PROJECT_DIR: project }),
+      spawnPeer("10c00000-0000-4000-8000-000000000000", {
+        CLAUDE_PROJECT_DIR: project,
+        CCMSG_CWD: override,
+      }),
+      spawnPeer("10cd0000-0000-4000-8000-000000000000", {}),
     ];
     try {
       const waitPeers = async (): Promise<PeerLite[]> => {
@@ -1534,12 +1754,12 @@ describe("hello が名乗る所在", () => {
       };
       const peers = await waitPeers();
       const cwdOf = (sid: string): string | undefined => peers.find((p) => p.sid === sid)?.cwd;
-      expect(cwdOf("LOC-FILE")).toBe(stationed);
-      expect(cwdOf("LOC-ENV")).toBe(project);
+      expect(cwdOf("10cf0000-0000-4000-8000-000000000000")).toBe(stationed);
+      expect(cwdOf("10ce0000-0000-4000-8000-000000000000")).toBe(project);
       // CCMSG_CWD は CLAUDE_PROJECT_DIR より強い明示指定。
-      expect(cwdOf("LOC-OVERRIDE")).toBe(override);
+      expect(cwdOf("10c00000-0000-4000-8000-000000000000")).toBe(override);
       // 出所が 1 つも無ければ何も名乗らない (drifted を名乗ってしまわない)。
-      expect(cwdOf("LOC-NONE") ?? "").toBe("");
+      expect(cwdOf("10cd0000-0000-4000-8000-000000000000") ?? "").toBe("");
     } finally {
       for (const p of procs) p.kill();
       await runCli(["daemon", "stop"], readEnv).catch(() => {});

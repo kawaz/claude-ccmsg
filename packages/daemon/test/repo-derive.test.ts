@@ -136,6 +136,8 @@ describe("deriveRepoWs", () => {
   });
 });
 
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+
 interface PeerLite {
   sid: string;
   repo?: string;
@@ -159,9 +161,9 @@ describe("hello の repo/ws フォールバック", () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const ctx = await startTestDaemon();
     try {
-      const c = await sessionHello(ctx, "A", { cwd: root });
+      const c = await sessionHello(ctx, A, { cwd: root });
       const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === "A")!;
+      const me = peers.peers.find((p) => p.sid === A)!;
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
     } finally {
       await stopTestDaemon(ctx);
@@ -172,9 +174,9 @@ describe("hello の repo/ws フォールバック", () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const ctx = await startTestDaemon();
     try {
-      const c = await sessionHello(ctx, "A", { cwd: root, repo: "declared/repo", ws: "declared" });
+      const c = await sessionHello(ctx, A, { cwd: root, repo: "declared/repo", ws: "declared" });
       const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === "A")!;
+      const me = peers.peers.find((p) => p.sid === A)!;
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
     } finally {
       await stopTestDaemon(ctx);
@@ -186,9 +188,9 @@ describe("hello の repo/ws フォールバック", () => {
     fs.mkdirSync(plain);
     const ctx = await startTestDaemon();
     try {
-      const c = await sessionHello(ctx, "A", { cwd: plain });
+      const c = await sessionHello(ctx, A, { cwd: plain });
       const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === "A")!;
+      const me = peers.peers.find((p) => p.sid === A)!;
       expect(me.repo ?? "").toBe("");
       expect(me.ws ?? "").toBe("");
     } finally {

@@ -12,6 +12,10 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const SID_Z = "eeeeeeee-0000-4000-8000-00000000000f";
+
 const T = 15000;
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
@@ -31,11 +35,11 @@ describe("subscribe: duplicate session subscribe", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
-        const oldSub = await session(ctx, "B");
+        const a = await session(ctx, SID_A);
+        const oldSub = await session(ctx, SID_B);
         await oldSub.request({ op: "subscribe" });
 
-        const newSub = await session(ctx, "B");
+        const newSub = await session(ctx, SID_B);
         await newSub.request({ op: "subscribe" });
 
         // 古い方は終了通知を受け取る。sid はどのセッションが重複したかを示す。
@@ -43,11 +47,11 @@ describe("subscribe: duplicate session subscribe", () => {
           (ev) => ev?.ev === "subscribe_superseded",
         );
         expect(superseded.ev.ev).toBe("subscribe_superseded");
-        expect(superseded.ev.sid).toBe("B");
+        expect(superseded.ev.sid).toBe(SID_B);
 
         // 配信は新しい方だけに届く (= 二重通知が消えている)。session の
         // subscribe stream に流れる room イベント (新 room の member snapshot) で見る。
-        const created = await a.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
         const delivered = await newSub.readEventUntil<{ type?: string; r?: string }>(
           (ev) => ev?.type === "member" && ev?.r === created.room,
         );
@@ -78,11 +82,11 @@ describe("subscribe: duplicate session subscribe", () => {
         await u2.request({ op: "subscribe" });
 
         // A session subscribing must not disturb the user subscribers either.
-        const s = await session(ctx, "A");
+        const s = await session(ctx, SID_A);
         await s.request({ op: "subscribe" });
 
-        const a = await session(ctx, "Z");
-        const created = await a.request<{ room: string }>({ op: "create_room", members: ["A"] });
+        const a = await session(ctx, SID_Z);
+        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_A] });
         await a.request({ op: "post", room: created.room, msg: "hi" });
 
         for (const u of [u1, u2]) {

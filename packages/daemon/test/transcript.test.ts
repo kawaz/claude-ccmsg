@@ -15,6 +15,9 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+
 const T = 15000;
 
 function mkfixtureDir(): string {
@@ -85,7 +88,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -105,7 +108,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const c = await sessionHello(ctx, sid, { transcript_path: `${sid}.jsonl` });
         const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
@@ -123,7 +126,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, "other.jsonl"); // basename mismatch: not "A.jsonl"
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -144,7 +147,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.json`); // wrong extension
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -169,7 +172,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: SID_A,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -196,7 +199,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -226,7 +229,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file1 = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file1, "");
         await sessionHello(ctx, sid, { transcript_path: file1 });
@@ -276,7 +279,7 @@ describe("transcript_read errors", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
+        const c = await sessionHello(ctx, SID_A);
         const res = await c.request<ErrLite>({ op: "transcript_read", sid: "no-such-sid" });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("session_not_found");
@@ -292,8 +295,8 @@ describe("transcript_read errors", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A"); // no transcript_path
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid: "A" });
+        const c = await sessionHello(ctx, SID_A); // no transcript_path
+        const res = await c.request<ErrLite>({ op: "transcript_read", sid: SID_A });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("not_found");
       } finally {
@@ -309,7 +312,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -331,7 +334,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -352,7 +355,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -385,7 +388,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         const content = fixedWidthContent(10); // 30 bytes
         fs.writeFileSync(file, content);
@@ -419,7 +422,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, fixedWidthContent(10)); // 30 bytes
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -464,7 +467,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, fixedWidthContent(10));
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -488,7 +491,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, fixedWidthContent(10)); // size 30
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -519,7 +522,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
@@ -543,7 +546,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         // 40,000 lines * 11 bytes ("0123456789\n") = 440,000 bytes (> 300 KiB,
         // and > TRANSCRIPT_READ_MAX_BYTES which is 256 KiB).
@@ -582,7 +585,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         // Each line is 7 Japanese characters (3 bytes each in UTF-8) + "\n":
         // 22 bytes/line. 5 lines = 110 bytes total.
@@ -622,7 +625,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         // giant line body must exceed TRANSCRIPT_READ_MAX_BYTES: the bug this
         // guards against only shows up once a page boundary lands exactly at
@@ -687,7 +690,7 @@ describe("transcript_read pagination", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         // Must comfortably exceed TRANSCRIPT_READ_MAX_BYTES + transcript.ts's
         // internal 4 MiB backward-scan budget — the scan must give up rather
@@ -730,11 +733,11 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
-        const subRes = await c.request<ErrLite>({ op: "transcript_subscribe", sid: "A" });
+        const c = await sessionHello(ctx, SID_A);
+        const subRes = await c.request<ErrLite>({ op: "transcript_subscribe", sid: SID_A });
         expect(subRes.ok).toBe(false);
         expect(subRes.error.code).toBe("bad_request");
-        const unsubRes = await c.request<ErrLite>({ op: "transcript_unsubscribe", sid: "A" });
+        const unsubRes = await c.request<ErrLite>({ op: "transcript_unsubscribe", sid: SID_A });
         expect(unsubRes.ok).toBe(false);
         expect(unsubRes.error.code).toBe("bad_request");
       } finally {
@@ -765,9 +768,9 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await sessionHello(ctx, "A"); // no transcript_path
+        await sessionHello(ctx, SID_A); // no transcript_path
         const u = await userHello(ctx);
-        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: "A" });
+        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: SID_A });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("not_found");
       } finally {
@@ -783,7 +786,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "L0\n"); // 3 bytes already on disk before subscribing
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -814,7 +817,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -848,7 +851,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -894,7 +897,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -938,7 +941,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const dir1 = mkfixtureDir();
       const dir2 = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file1 = path.join(dir1, `${sid}.jsonl`);
         const file2 = path.join(dir2, `${sid}.jsonl`);
         fs.writeFileSync(file1, "old\n");
@@ -974,7 +977,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         await sessionHello(ctx, sid, { transcript_path: file });
@@ -1000,7 +1003,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // Drive a distinguishable event through the SAME connection's stream (a
         // msg from a fresh session in a fresh room) and confirm no "transcript"
         // event snuck in among the events collected while waiting for it.
-        const s2 = await sessionHello(ctx, "B");
+        const s2 = await sessionHello(ctx, SID_B);
         const created = await s2.request<{ room: string }>({ op: "create_room", members: [] });
         await s2.request({ op: "post", room: created.room, msg: "marker" });
         const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
@@ -1019,7 +1022,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
-        const sid = "A";
+        const sid = SID_A;
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         await sessionHello(ctx, sid, { transcript_path: file });

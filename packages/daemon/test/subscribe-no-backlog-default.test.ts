@@ -18,6 +18,10 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
+const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const SID_C = "cccccccc-0000-4000-8000-000000000003";
+
 const T = 15000;
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
@@ -45,10 +49,10 @@ describe("subscribe: no-backlog bare default", () => {
     async () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, SID_A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [SID_B],
         });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
@@ -85,19 +89,21 @@ describe("subscribe: no-backlog bare default", () => {
     async () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
-        const a = await session(ctx, "A");
-        await session(ctx, "C"); // just needs to be a resolvable peer for create_room
+        const a = await session(ctx, SID_A);
+        await session(ctx, SID_C); // just needs to be a resolvable peer for create_room
         // distinct member sets (B-only vs B+C) so create_room's dedup fold
         // (same author + same member set within the window) doesn't collapse
         // these into a single room.
-        const r1 = (await a.request<{ room: string }>({ op: "create_room", members: ["B"] })).room;
-        await a.request({ op: "post", room: r1, msg: "r1m1" });
-        const r2 = (await a.request<{ room: string }>({ op: "create_room", members: ["B", "C"] }))
+        const r1 = (await a.request<{ room: string }>({ op: "create_room", members: [SID_B] }))
           .room;
+        await a.request({ op: "post", room: r1, msg: "r1m1" });
+        const r2 = (
+          await a.request<{ room: string }>({ op: "create_room", members: [SID_B, SID_C] })
+        ).room;
         await a.request({ op: "post", room: r2, msg: "r2m1" });
         await a.request({ op: "post", room: r2, msg: "r2m2" });
 
-        const bSub = await session(ctx, "B");
+        const bSub = await session(ctx, SID_B);
         await bSub.request({ op: "subscribe" });
         const first = await bSub.readEvent<{
           ev?: string;
@@ -119,8 +125,8 @@ describe("subscribe: no-backlog bare default", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
-        const created = await a.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const a = await session(ctx, SID_A);
+        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
@@ -146,8 +152,8 @@ describe("subscribe: no-backlog bare default", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
-        const created = await a.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const a = await session(ctx, SID_A);
+        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });

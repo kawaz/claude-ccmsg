@@ -115,7 +115,14 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       const created = JSON.parse(
         (
           await runCli(
-            ["--sid", "CREATOR", "create-room", "--members", "S1,S2,SUB", "--exclude-self"],
+            [
+              "--sid",
+              "c0000000-0000-4000-8000-000000000000",
+              "create-room",
+              "--members",
+              "50000001-0000-4000-8000-000000000000,50000002-0000-4000-8000-000000000000,5b000000-0000-4000-8000-000000000000",
+              "--exclude-self",
+            ],
             env,
           )
         ).out,
@@ -129,7 +136,7 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         env: {
           ...process.env,
           ...env,
-          CCMSG_SID: "SUB",
+          CCMSG_SID: "5b000000-0000-4000-8000-000000000000",
           CLAUDE_CODE_SESSION_ID: "",
           CLAUDE_SESSION_ID: "",
         },
@@ -158,22 +165,34 @@ describe("ccmsg subscribe daemon restart transparency", () => {
           const peers = JSON.parse((await runCli(["peers"], env)).out) as {
             peers: { sid: string }[];
           };
-          if (peers.peers.some((p) => p.sid === "SUB")) break;
+          if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
           await sleep(25);
         }
         const peers = JSON.parse((await runCli(["peers"], env)).out) as {
           peers: { sid: string }[];
         };
-        expect(peers.peers.some((p) => p.sid === "SUB")).toBe(true);
+        expect(peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")).toBe(
+          true,
+        );
 
         // 跨ぎ前: S1 が post してから leave。leave は stdout に現れ、post は現れない
         // (同じ stream 上で post の後に書かれる leave が見えた時点で、post が流れて
         // いればその行は既に accum に入っている)。
         const posted = JSON.parse(
-          (await runCli(["--sid", "S1", "post", room, "hello-before"], env)).out,
+          (
+            await runCli(
+              ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "hello-before"],
+              env,
+            )
+          ).out,
         ) as { ok: boolean };
         expect(posted.ok).toBe(true);
-        expect(JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out).ok).toBe(true);
+        expect(
+          JSON.parse(
+            (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env))
+              .out,
+          ).ok,
+        ).toBe(true);
         const leave1 = parsed(await waitForLine(reader, accum, isLeave));
 
         // 跨ぎ: daemon を stop → 別コマンドで re-spawn する (ensureDaemon 経路)。
@@ -199,7 +218,12 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         expect(roomsAfter.rooms.map((r) => r.id)).toContain(room);
 
         // 跨ぎ後: S2 が leave。subscribe が自動再接続で受信することを確認。
-        expect(JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out).ok).toBe(true);
+        expect(
+          JSON.parse(
+            (await runCli(["--sid", "50000002-0000-4000-8000-000000000000", "leave", room], env))
+              .out,
+          ).ok,
+        ).toBe(true);
         const leave2 = parsed(
           await waitForLine(reader, accum, (l) => isLeave(l) && parsed(l).id !== leave1.id),
         );

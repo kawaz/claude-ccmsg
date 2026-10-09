@@ -19,6 +19,7 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
 async function sessionHello(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
@@ -59,9 +60,9 @@ describe("peers timestamps", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        await sessionHello(ctx, "A");
+        await sessionHello(ctx, A);
         const admin = await adminConn(ctx);
-        const me = await getPeer(admin, "A");
+        const me = await getPeer(admin, A);
         expect(me.connected_at).toBeDefined();
         expect(() => new Date(me.connected_at as string).toISOString()).not.toThrow();
         // hello 自体も post-dispatch 更新の対象なので、最初の照会時点で
@@ -79,12 +80,12 @@ describe("peers timestamps", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
+        const c = await sessionHello(ctx, A);
         const admin = await adminConn(ctx);
-        const first = await getPeer(admin, "A");
+        const first = await getPeer(admin, A);
         await new Promise((res) => setTimeout(res, 10));
         await c.request({ op: "ping" });
-        const second = await getPeer(admin, "A");
+        const second = await getPeer(admin, A);
         expect(Date.parse(second.last_activity_at as string)).toBeGreaterThan(
           Date.parse(first.last_activity_at as string),
         );
@@ -101,9 +102,9 @@ describe("peers timestamps", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
+        const c = await sessionHello(ctx, A);
         const admin = await adminConn(ctx);
-        const first = await getPeer(admin, "A");
+        const first = await getPeer(admin, A);
         await new Promise((res) => setTimeout(res, 10));
         // 2 回目の hello (repo/ws/cwd の再宣言、latest-hello-wins パス) は
         // registerSession の既存 entry パスを通る — connectedAt を持つ entry
@@ -112,12 +113,12 @@ describe("peers timestamps", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: A,
           repo: "r2",
           ws: "w",
           cwd: "/tmp",
         });
-        const second = await getPeer(admin, "A");
+        const second = await getPeer(admin, A);
         expect(second.connected_at).toBe(first.connected_at);
       } finally {
         await stopTestDaemon(ctx);
@@ -131,14 +132,14 @@ describe("peers timestamps", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c1 = await sessionHello(ctx, "A");
+        const c1 = await sessionHello(ctx, A);
         const admin = await adminConn(ctx);
-        const first = await getPeer(admin, "A");
+        const first = await getPeer(admin, A);
         c1.close();
         await new Promise((res) => setTimeout(res, 50));
         await new Promise((res) => setTimeout(res, 10));
-        const c2 = await sessionHello(ctx, "A");
-        const second = await getPeer(admin, "A");
+        const c2 = await sessionHello(ctx, A);
+        const second = await getPeer(admin, A);
         expect(second.connected_at).toBe(first.connected_at);
         c2.close();
       } finally {
@@ -153,15 +154,15 @@ describe("peers timestamps", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const c = await sessionHello(ctx, "A");
+        const c = await sessionHello(ctx, A);
         const admin = await adminConn(ctx);
         await c.request({ op: "subscribe" });
-        const afterSubscribe = await getPeer(admin, "A");
+        const afterSubscribe = await getPeer(admin, A);
         // admin から room に post して A 宛の push イベントを飛ばす — A 自身は
         // リクエストを送っていないので last_activity_at は動かないはず
-        await admin.request({ op: "create_room", members: ["A"], msg: "hi" });
+        await admin.request({ op: "create_room", members: [A], msg: "hi" });
         await new Promise((res) => setTimeout(res, 30));
-        const afterPush = await getPeer(admin, "A");
+        const afterPush = await getPeer(admin, A);
         expect(afterPush.last_activity_at).toBe(afterSubscribe.last_activity_at);
       } finally {
         await stopTestDaemon(ctx);

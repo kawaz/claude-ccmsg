@@ -15,6 +15,8 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 interface PeerLite {
   sid: string;
@@ -71,7 +73,7 @@ describe("session location", () => {
       await setup();
       try {
         // SessionStart 由来の所在を持つ hello (subscribe 相当)。
-        const registered = await hello(ctx, "A", {
+        const registered = await hello(ctx, A, {
           cwd: stationed,
           repo: "kawaz/repo",
           ws: "main",
@@ -79,9 +81,9 @@ describe("session location", () => {
           branch: "main",
         });
         // 別ディレクトリで走った post 相当: 所在の出所を持たないので何も名乗らない。
-        const drifted = await hello(ctx, "A", {});
+        const drifted = await hello(ctx, A, {});
         try {
-          const peer = await peerOf(drifted, "A");
+          const peer = await peerOf(drifted, A);
           expect(peer?.cwd).toBe(stationed);
           expect(peer?.repo).toBe("kawaz/repo");
           expect(peer?.ws).toBe("main");
@@ -92,7 +94,7 @@ describe("session location", () => {
           // 実際の観測点)。
           const room = (await drifted.request({
             op: "create_room",
-            members: ["A"],
+            members: [A],
             title: "t",
           })) as { room?: string };
           const jsonl = fs.readFileSync(path.join(ctx.roomsDir, `${room.room}.jsonl`), "utf8");
@@ -100,7 +102,7 @@ describe("session location", () => {
             .split("\n")
             .filter((l) => l !== "")
             .map((l) => JSON.parse(l) as { type?: string; sid?: string; cwd?: string })
-            .find((ev) => ev.type === "member" && ev.sid === "A");
+            .find((ev) => ev.type === "member" && ev.sid === A);
           expect(member?.cwd).toBe(stationed);
         } finally {
           registered.close();
@@ -118,7 +120,7 @@ describe("session location", () => {
     async () => {
       await setup();
       try {
-        const first = await hello(ctx, "B", {
+        const first = await hello(ctx, B, {
           cwd: stationed,
           repo: "kawaz/repo",
           ws: "main",
@@ -127,9 +129,9 @@ describe("session location", () => {
         });
         // workspace 層の無い checkout へ移ったセッション: repo_root / branch を
         // 名乗らない hello はそれらを捨てる (古い containment root を持ち続けない)。
-        const moved = await hello(ctx, "B", { cwd: repoRoot, repo: "kawaz/other", ws: "" });
+        const moved = await hello(ctx, B, { cwd: repoRoot, repo: "kawaz/other", ws: "" });
         try {
-          const peer = await peerOf(moved, "B");
+          const peer = await peerOf(moved, B);
           expect(peer?.cwd).toBe(repoRoot);
           expect(peer?.repo).toBe("kawaz/other");
           expect(peer?.repo_root).toBeUndefined();

@@ -10,6 +10,8 @@ import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./help
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const ERR_TS = "2026-08-12T03:00:00.000Z";
 
 function apiErrorLine(text: string, timestamp = ERR_TS): string {
@@ -128,8 +130,8 @@ describe("network online wake", () => {
     "回線復帰で API エラー停止中のセッションだけが 1 回起こされる",
     async () => {
       const f = await startFixture();
-      const stuck = path.join(f.dir, "A.jsonl");
-      const healthy = path.join(f.dir, "B.jsonl");
+      const stuck = path.join(f.dir, `${A}.jsonl`);
+      const healthy = path.join(f.dir, `${B}.jsonl`);
       fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("API Error: 503"));
       fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
       const a = await connect(f.ctx.sock);
@@ -139,7 +141,7 @@ describe("network online wake", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "A",
+          sid: A,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -149,7 +151,7 @@ describe("network online wake", () => {
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
-          sid: "B",
+          sid: B,
           repo: "r",
           ws: "w",
           cwd: "/tmp",
@@ -161,7 +163,7 @@ describe("network online wake", () => {
         // The wake reads the api-error fold, which is built asynchronously from
         // the transcript. Recovering before it lands would be a race the
         // feature loses silently, so wait until the daemon reports the stall.
-        await f.waitStall("A", ERR_TS);
+        await f.waitStall(A, ERR_TS);
         await f.setLink("online");
 
         const woken = await a.readEventUntil<{ ev: string; text: string; error_ts: string }>(
@@ -178,7 +180,7 @@ describe("network online wake", () => {
         await f.setLink("online");
         const NEW_TS = "2026-08-12T04:00:00.000Z";
         fs.appendFileSync(stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
-        await f.waitStall("A", NEW_TS);
+        await f.waitStall(A, NEW_TS);
         await f.setLink("offline");
         await f.setLink("online");
         const second = await a.readEventUntil<{ ev: string; error_ts: string }>(

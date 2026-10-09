@@ -17,6 +17,11 @@ import { fakeHarness, parseEnvelope, sessionWithConfig } from "./peer-harness.ts
 
 const T = 15000;
 
+// Session ids must be UUID-shaped (the daemon rejects anything else at hello).
+const A = "aaaaaaaa-0000-4000-8000-000000000000";
+const B = "bbbbbbbb-0000-4000-8000-000000000000";
+const C = "cccccccc-0000-4000-8000-000000000000";
+
 const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const f of disposers.splice(0)) f();
@@ -59,7 +64,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ ok: true; room: string }>({
           op: "create_room",
           members: [],
@@ -88,7 +93,7 @@ describe("wire protocol integration", () => {
       async () => {
         const ctx = await startTestDaemon();
         try {
-          const aPost = await session(ctx, "A");
+          const aPost = await session(ctx, A);
           const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
           const room = created.room;
 
@@ -122,12 +127,12 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await receiver(ctx, "A");
-        const b = await receiver(ctx, "B");
-        const c = await receiver(ctx, "C");
+        const a = await receiver(ctx, A);
+        const b = await receiver(ctx, B);
+        const c = await receiver(ctx, C);
         const created = await a.conn.request<{ room: string }>({
           op: "create_room",
-          members: ["B", "C"],
+          members: [B, C],
         });
         const room = created.room;
 
@@ -176,12 +181,12 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        const b = await receiver(ctx, "B");
-        const c = await receiver(ctx, "C");
+        const aPost = await session(ctx, A);
+        const b = await receiver(ctx, B);
+        const c = await receiver(ctx, C);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B", "C"],
+          members: [B, C],
         });
         const room = created.room;
 
@@ -200,25 +205,25 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B", "C"],
+          members: [B, C],
         });
         const room = created.room;
-        await session(ctx, "C");
+        await session(ctx, C);
 
         await aPost.request({ op: "post", room, msg: "m1", to: ["a2"] }); // mid 1, excludes C
         await aPost.request({ op: "post", room, msg: "m2" }); // mid 2, everyone
 
-        const cConn = await session(ctx, "C");
+        const cConn = await session(ctx, C);
         const cMids = (await fetchHistory(cConn, room))
           .filter((e) => e.type === "msg")
           .map((e) => e.mid);
         expect(cMids).toEqual([2]); // mid 1 filtered out of C's history
 
-        const bConn = await session(ctx, "B");
+        const bConn = await session(ctx, B);
         const bMids = (await fetchHistory(bConn, room))
           .filter((e) => e.type === "msg")
           .map((e) => e.mid);
@@ -241,16 +246,16 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B", "C"],
+          members: [B, C],
         });
         const room = created.room;
-        await session(ctx, "B");
-        await session(ctx, "C");
+        await session(ctx, B);
+        await session(ctx, C);
 
-        const cSub = await session(ctx, "C");
+        const cSub = await session(ctx, C);
         await cSub.request({ op: "subscribe" });
 
         // even though C is never a `to` target below, a title change is a non-msg
@@ -270,11 +275,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
-        await session(ctx, "B");
+        const a = await session(ctx, A);
+        await session(ctx, B);
         const first = await a.request<{ room: string; reused: boolean; mid?: number }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "first",
         });
         expect(first.reused).toBe(false);
@@ -283,7 +288,7 @@ describe("wire protocol integration", () => {
         // same member set, well within the default 60s window -> reuse, not a new room
         const second = await a.request<{ room: string; reused: boolean; mid?: number }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "second",
         });
         expect(second.reused).toBe(true);
@@ -313,15 +318,15 @@ describe("wire protocol integration", () => {
       // proving the window boundary rather than waiting real seconds.
       const ctx = await startTestDaemon({ CCMSG_DEDUP_WINDOW_MS: "0" });
       try {
-        const a = await session(ctx, "A");
-        await session(ctx, "B");
+        const a = await session(ctx, A);
+        await session(ctx, B);
         const first = await a.request<{ room: string; reused: boolean }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const second = await a.request<{ room: string; reused: boolean }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         expect(second.reused).toBe(false);
         expect(second.room).not.toBe(first.room);
@@ -337,16 +342,16 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const oldRoom = created.room;
 
-        const aSub = await session(ctx, "A");
-        const bSub = await session(ctx, "B");
+        const aSub = await session(ctx, A);
+        const bSub = await session(ctx, B);
         await aSub.request({ op: "subscribe" });
         await bSub.request({ op: "subscribe" });
 
@@ -365,7 +370,7 @@ describe("wire protocol integration", () => {
 
         // B (a member) is notified of the new room: its member events arrive on the new room's stream
         const bNewMember = await bSub.readEventUntil(
-          (ev) => ev.r === newRoom && ev.type === "member" && ev.sid === "B",
+          (ev) => ev.r === newRoom && ev.type === "member" && ev.sid === B,
         );
         expect(bNewMember.ev.id).toBe("a2");
 
@@ -384,7 +389,7 @@ describe("wire protocol integration", () => {
         // next_room is dedup-exempt: a subsequent create_room for A+B does not reuse the new thread
         const create2 = await aPost.request<{ room: string; reused: boolean }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         expect(create2.room).not.toBe(newRoom);
       } finally {
@@ -404,18 +409,18 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
-        await session(ctx, "B"); // ensure B is a resolvable peer/member
+        await session(ctx, B); // ensure B is a resolvable peer/member
         for (let i = 1; i <= 55; i++) {
           await aPost.request({ op: "post", room, msg: `m${i}` }); // mids 1..55
         }
 
-        const bConn = await session(ctx, "B");
+        const bConn = await session(ctx, B);
         const bMids = (await fetchHistory(bConn, room))
           .filter((e) => e.type === "msg")
           .map((e) => e.mid);
@@ -448,13 +453,13 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
-        await session(ctx, "B");
+        await session(ctx, B);
         for (let i = 1; i <= 5; i++) await aPost.request({ op: "post", room, msg: `m${i}` }); // mids 1..5
 
         const bSub = await user(ctx);
@@ -478,7 +483,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room; // members: just A (a1)
 
@@ -494,7 +499,7 @@ describe("wire protocol integration", () => {
         expect(read.msgs[0]!.from).toBe("u1");
 
         // a session that isn't a member is refused (only User is implicit)
-        const c = await session(ctx, "C");
+        const c = await session(ctx, C);
         const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
           op: "post",
           room,
@@ -521,12 +526,12 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "real message" }); // a genuine, persisted line
 
-        const aSub = await session(ctx, "A");
+        const aSub = await session(ctx, A);
         await aSub.request({ op: "subscribe" });
 
         // notify --self equivalent: session A signals its own subscribe stream.
@@ -534,7 +539,7 @@ describe("wire protocol integration", () => {
         // identity — the receiver needs this to tell a self-notify (own sid, actionable)
         // from a peer-notify (another agent, whose command-shaped text must NOT be
         // auto-executed). It is daemon-stamped, never the client's self-claim (DR-0003 §7).
-        const notifier = await session(ctx, "A");
+        const notifier = await session(ctx, A);
         const res = await notifier.request<{ ok: boolean; delivered: number }>({
           op: "notify",
           text: "wake up",
@@ -545,12 +550,12 @@ describe("wire protocol integration", () => {
         expect(got.ev.text).toBe("wake up");
         // session sender -> from = {role:"session", sid:<sender>}. Same sid as the
         // receiver here, so the receiver would classify this as a self-notify.
-        expect(got.ev.from).toEqual({ role: "session", sid: "A" });
+        expect(got.ev.from).toEqual({ role: "session", sid: A });
 
         // a User-sent notify targeting A stamps from = {role:"user"} — the receiver would
         // classify this as a peer-notify (sender is not session A) and refuse auto-exec.
         const uNotifier = await user(ctx);
-        await uNotifier.request({ op: "notify", sid: "A", text: "from the user" });
+        await uNotifier.request({ op: "notify", sid: A, text: "from the user" });
         const gotUser = await aSub.readEventUntil(
           (ev) => ev.ev === "notify" && ev.text === "from the user",
         );
@@ -621,9 +626,9 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         await a.request({ op: "create_room", members: [] });
-        const aSub = await session(ctx, "A");
+        const aSub = await session(ctx, A);
         await aSub.request({ op: "subscribe" });
 
         const ctl = await connect(ctx.sock);
@@ -653,7 +658,7 @@ describe("wire protocol integration", () => {
     async () => {
       const base = await startTestDaemon();
       try {
-        const a = await session(base, "A");
+        const a = await session(base, A);
         const created = await a.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
@@ -666,7 +671,7 @@ describe("wire protocol integration", () => {
         const proc2 = spawnDaemonProc(base.stateDir, base.dataDir);
         await waitConnectable(base.sock);
 
-        const a2 = await session(base, "A");
+        const a2 = await session(base, A);
         const p3 = await a2.request<{ mid: number }>({ op: "post", room, msg: "m3" });
         expect(p3.mid).toBe(3); // sequence continued, not reset to 1
         const read = await a2.request<{ msgs: { msg: string }[] }>({
@@ -693,16 +698,16 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
 
-        const aSub = await session(ctx, "A");
-        const bLeave = await session(ctx, "B");
+        const aSub = await session(ctx, A);
+        const bLeave = await session(ctx, B);
         await aSub.request({ op: "subscribe" });
 
         // leave is a member-only op: id must resolve and must not be the implicit User (u1)
@@ -721,7 +726,7 @@ describe("wire protocol integration", () => {
           op: "rooms",
         });
         const listed = rooms.rooms.find((r) => r.id === room)!;
-        expect(listed.members.map((m) => m.sid)).toEqual(["A"]);
+        expect(listed.members.map((m) => m.sid)).toEqual([A]);
 
         // live delivery still works for the remaining room after a leave: use the User
         // (u1, implicit member of every room, DR-0003 §3) as a third-party observer
@@ -743,11 +748,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        const bPost = await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        const bPost = await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
 
@@ -755,12 +760,12 @@ describe("wire protocol integration", () => {
         const ok1 = await bPost.request<{ ok: boolean }>({ op: "post", room, msg: "before leave" });
         expect(ok1.ok).toBe(true);
 
-        const bLeave = await session(ctx, "B");
+        const bLeave = await session(ctx, B);
         const left = await bLeave.request<{ ok: boolean }>({ op: "leave", room });
         expect(left.ok).toBe(true);
 
         // the same B session (a fresh connection, same sid) is no longer a member: post is refused
-        const bAfter = await session(ctx, "B");
+        const bAfter = await session(ctx, B);
         const denied = await bAfter.request<{ ok: boolean; error?: { code: string } }>({
           op: "post",
           room,
@@ -780,7 +785,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
         const room = created.room;
 
@@ -793,7 +798,7 @@ describe("wire protocol integration", () => {
         expect(missing.error!.code).toBe("room_not_found");
 
         // a session that never joined this room -> not_a_member
-        const c = await session(ctx, "C");
+        const c = await session(ctx, C);
         const notMember = await c.request<{ ok: boolean; error?: { code: string } }>({
           op: "leave",
           room,
@@ -822,13 +827,13 @@ describe("wire protocol integration", () => {
     async () => {
       const base = await startTestDaemon();
       try {
-        const aPost = await session(base, "A");
+        const aPost = await session(base, A);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
-        const bLeave = await session(base, "B");
+        const bLeave = await session(base, B);
         const left = await bLeave.request<{ ok: boolean }>({ op: "leave", room });
         expect(left.ok).toBe(true);
         aPost.close();
@@ -844,16 +849,16 @@ describe("wire protocol integration", () => {
         const proc2 = spawnDaemonProc(base.stateDir, base.dataDir);
         await waitConnectable(base.sock);
 
-        const a2 = await session(base, "A");
+        const a2 = await session(base, A);
         const rooms = await a2.request<{ rooms: { id: string; members: { sid: string }[] }[] }>({
           op: "rooms",
         });
         const listed = rooms.rooms.find((r) => r.id === room)!;
         // B stays left: replaying member+leave from the log yields only A as present
-        expect(listed.members.map((m) => m.sid)).toEqual(["A"]);
+        expect(listed.members.map((m) => m.sid)).toEqual([A]);
 
         // and B (same sid, fresh connection) still can't post post-restart
-        const b2 = await session(base, "B");
+        const b2 = await session(base, B);
         const denied = await b2.request<{ ok: boolean; error?: { code: string } }>({
           op: "post",
           room,
@@ -877,15 +882,15 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
 
-        const bSub = await session(ctx, "B");
+        const bSub = await session(ctx, B);
         await bSub.request({ op: "subscribe" });
 
         const renamed = await aPost.request<{ ok: boolean; room: string; title: string }>({
@@ -924,7 +929,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -948,11 +953,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
         const room = created.room;
 
-        const c = await session(ctx, "C");
+        const c = await session(ctx, C);
         const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
           op: "set_title",
           room,
@@ -978,7 +983,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -1009,7 +1014,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const denied = await a.request<{ ok: boolean; error?: { code: string } }>({
           op: "set_title",
           room: "r-nope",
@@ -1029,7 +1034,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -1059,7 +1064,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -1099,15 +1104,15 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room;
 
-        const bSub = await session(ctx, "B");
+        const bSub = await session(ctx, B);
         await bSub.request({ op: "subscribe" });
 
         // set archived: true
@@ -1177,7 +1182,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -1201,11 +1206,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
         const room = created.room;
 
-        const c = await session(ctx, "C");
+        const c = await session(ctx, C);
         const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
           op: "archive_room",
           room,
@@ -1230,15 +1235,15 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        const bPost = await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        const bPost = await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room; // A=a1, B=a2
 
-        const aSub = await session(ctx, "A");
+        const aSub = await session(ctx, A);
         await aSub.request({ op: "subscribe" });
 
         const u = await user(ctx);
@@ -1286,11 +1291,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room; // A=a1, B=a2
 
@@ -1324,7 +1329,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A=a1 only
         const room = created.room;
 
@@ -1366,11 +1371,11 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
-        const bPost = await session(ctx, "B");
+        const aPost = await session(ctx, A);
+        const bPost = await session(ctx, B);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room = created.room; // A=a1, B=a2
 
@@ -1383,7 +1388,7 @@ describe("wire protocol integration", () => {
         const reinvited = await aPost.request<{ ok: boolean; id: string; already: boolean }>({
           op: "invite",
           room,
-          sid: "B",
+          sid: B,
         });
         expect(reinvited.ok).toBe(true);
         expect(reinvited.already).toBe(false);
@@ -1423,15 +1428,15 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A only (a1)
         const room = created.room;
 
         // B must be a currently connected session (invite reads the live registry,
         // same as create_room's `members`) but is NOT yet a member of the room.
-        await session(ctx, "B");
+        await session(ctx, B);
 
-        const aSub = await session(ctx, "A");
+        const aSub = await session(ctx, A);
         await aSub.request({ op: "subscribe" });
 
         const invited = await aPost.request<{
@@ -1439,7 +1444,7 @@ describe("wire protocol integration", () => {
           room: string;
           id: string;
           already: boolean;
-        }>({ op: "invite", room, sid: "B" });
+        }>({ op: "invite", room, sid: B });
         expect(invited.ok).toBe(true);
         expect(invited.room).toBe(room);
         expect(invited.already).toBe(false);
@@ -1452,10 +1457,10 @@ describe("wire protocol integration", () => {
         const got = await aSub.readEventUntil(
           (ev) => ev.type === "member" && ev.r === room && ev.id === "a2",
         );
-        expect(got.ev.sid).toBe("B");
+        expect(got.ev.sid).toBe(B);
 
         // B is now a resolvable member and can post
-        const bPost = await session(ctx, "B");
+        const bPost = await session(ctx, B);
         const posted = await bPost.request<{ ok: boolean; mid: number }>({
           op: "post",
           room,
@@ -1474,7 +1479,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A only (a1)
         const room = created.room;
         await aPost.request({ op: "set_title", room, title: "pre-invite title" });
@@ -1483,20 +1488,20 @@ describe("wire protocol integration", () => {
         // B connects and subscribes BEFORE being invited — while not yet a member, its
         // initial subscribe snapshot must skip this room entirely (subscriberSeesRoom is
         // false), so anything it later sees for `room` has to come from the invite path.
-        const bSub = await session(ctx, "B");
+        const bSub = await session(ctx, B);
         await bSub.request({ op: "subscribe" });
 
-        await aPost.request({ op: "invite", room, sid: "B" });
+        await aPost.request({ op: "invite", room, sid: B });
 
         // the snapshot arrives as an ordered burst (member A, title, member B) — wait
         // for the LAST one (B's own member row) and inspect everything seen along the
         // way, rather than chaining separate readEventUntil calls (which would each
         // discard earlier events and deadlock on the second wait).
-        const { seen } = await bSub.readEventUntil((ev) => ev.type === "member" && ev.sid === "B");
+        const { seen } = await bSub.readEventUntil((ev) => ev.type === "member" && ev.sid === B);
 
         // A's member row and the room title predate B's membership, so a plain
         // live-broadcast of the invite's own MemberEvent could never carry them.
-        expect(seen.some((ev) => ev.type === "member" && ev.sid === "A")).toBe(true);
+        expect(seen.some((ev) => ev.type === "member" && ev.sid === A)).toBe(true);
         const title = seen.find((ev) => ev.type === "title");
         expect(title?.title).toBe("pre-invite title");
 
@@ -1523,16 +1528,16 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
-        await session(ctx, "B");
+        await session(ctx, B);
 
         const u = await user(ctx);
         const invited = await u.request<{ ok: boolean; id: string; already: boolean }>({
           op: "invite",
           room,
-          sid: "B",
+          sid: B,
         });
         expect(invited.ok).toBe(true);
         expect(invited.already).toBe(false);
@@ -1549,16 +1554,16 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
         const room = created.room;
-        await session(ctx, "B");
+        await session(ctx, B);
 
-        const c = await session(ctx, "C"); // C is connected but not a member of `room`
+        const c = await session(ctx, C); // C is connected but not a member of `room`
         const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
           op: "invite",
           room,
-          sid: "B",
+          sid: B,
         });
         expect(denied.ok).toBe(false);
         expect(denied.error!.code).toBe("not_a_member");
@@ -1574,7 +1579,7 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
         const room = created.room;
 
@@ -1597,18 +1602,18 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created = await aPost.request<{ room: string }>({
           op: "create_room",
-          members: ["B"], // B is already a member (a2) from room creation
+          members: [B], // B is already a member (a2) from room creation
         });
         const room = created.room;
-        await session(ctx, "B");
+        await session(ctx, B);
 
         const invited = await aPost.request<{ ok: boolean; id: string; already: boolean }>({
           op: "invite",
           room,
-          sid: "B",
+          sid: B,
         });
         expect(invited.ok).toBe(true);
         expect(invited.already).toBe(true);
@@ -1632,26 +1637,26 @@ describe("wire protocol integration", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const aPost = await session(ctx, "A");
+        const aPost = await session(ctx, A);
         const created1 = await aPost.request<{ room: string; reused: boolean }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
         });
         const room1 = created1.room;
         expect(created1.reused).toBe(false);
-        await session(ctx, "B");
-        await session(ctx, "C");
+        await session(ctx, B);
+        await session(ctx, C);
 
         // C joins room1 via invite — NOT part of room1's original dedupKey ("A,B").
-        await aPost.request({ op: "invite", room: room1, sid: "C" });
+        await aPost.request({ op: "invite", room: room1, sid: C });
 
         // within the dedup window, A calls create_room with the exact same sid set
-        // ["A","B"] again. Pre-fix, dedupKey/dedupEligible are untouched by invite, so
+        // [A,B] again. Pre-fix, dedupKey/dedupEligible are untouched by invite, so
         // this would fold into room1 — dropping the initial msg into a room C can see,
         // even though C was never part of this create_room call.
         const created2 = await aPost.request<{ room: string; reused: boolean }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "fresh start",
         });
         expect(created2.reused).toBe(false);
@@ -1678,7 +1683,7 @@ describe("error handling & boundaries", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({ op: "create_room", members: [] });
 
         // empty room: valid, just zero messages

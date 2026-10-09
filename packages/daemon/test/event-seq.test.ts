@@ -24,6 +24,8 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
+const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
@@ -55,11 +57,11 @@ describe("DR-0016 seq: assignment and delivery", () => {
         // msg, title, archive. The seq must number them 1..N in file order —
         // one shared sequence across types, NOT a per-type counter (that's
         // exactly what mid was, and why non-msg events had no cursor).
-        const a = await session(ctx, "A");
-        const b = await session(ctx, "B");
+        const a = await session(ctx, A);
+        const b = await session(ctx, B);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "hello",
         });
         const room = created.room;
@@ -115,10 +117,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // cursor the archive was replayed on EVERY reconnect (it sits after
         // the last msg). With since_seq pointing at (or past) the archive's
         // seq, the replay must be empty.
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "m1",
         });
         const room = created.room;
@@ -128,7 +130,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // opts into the join snapshot (issue 2026-07-17-subscribe-no-backlog-default's
         // new default sends only a `room_cursors` summary without it).
         const sub1 = await connect(ctx.sock);
-        await sub1.hello({ role: "session", sid: "B" });
+        await sub1.hello({ role: "session", sid: B });
         await sub1.request({ op: "subscribe", backlog: true });
         const { ev: archiveEv } = await sub1.readEventUntil(
           (ev) => ev.type === "archive" && ev.r === room,
@@ -140,7 +142,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // Reconnect with since_seq = the tail's seq (client saw everything).
         // Expected replay for this room: nothing at all.
         const sub2 = await connect(ctx.sock);
-        await sub2.hello({ role: "session", sid: "B" });
+        await sub2.hello({ role: "session", sid: B });
         await sub2.request({ op: "subscribe", since_seq: { [room]: tailSeq } });
         const replayed = await drainBacklog(sub2);
         expect(replayed.filter((ev) => ev.r === room)).toEqual([]);
@@ -164,10 +166,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // dropping it would be the inverse bug (DR-0016 §3 rejected option C:
         // "skip non-msg on reconnect" loses events). Once seen and the cursor
         // advanced to the archive's seq, a further reconnect replays nothing.
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "m1",
         });
         const room = created.room;
@@ -217,10 +219,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // known duplicate-tail quirk. The mid branch must be untouched: this
         // is the compatibility half of DR-0016 §4 (old client × new daemon =
         // no regression).
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "m1",
         });
         const room = created.room;
@@ -253,10 +255,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // full room state is replayed — duplicates over silent loss. A huge
         // but VALID value means "seen everything" → zero replay, and must not
         // hang or error the scan.
-        const a = await session(ctx, "A");
+        const a = await session(ctx, A);
         const created = await a.request<{ room: string }>({
           op: "create_room",
-          members: ["B"],
+          members: [B],
           msg: "m1",
         });
         const room = created.room;

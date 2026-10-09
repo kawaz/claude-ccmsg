@@ -15,6 +15,7 @@ import {
   PROTOCOL_VERSION,
   SESSION_INPUT_MODULE_REASONS,
   UNANNOUNCED_PROTOCOL_VERSION,
+  isSessionIdShape,
   resolvePaths,
   type AgentInfo,
   type ArchiveEvent,
@@ -696,6 +697,8 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
  * moving. Pushing `ev:"peers"` is the caller's job: both callers refuse the
  * hello, so neither reaches the registerSession that normally pushes. */
 function markStaleClient(daemon: Daemon, sid: string, client: ClientBuild): void {
+  // An id that is not a session id's shape names no session to warn about.
+  if (!isSessionIdShape(sid)) return;
   daemon.staleClients.set(sid, {
     last_seen: nowIso(),
     ...(client.version ? { version: client.version } : {}),
@@ -1684,8 +1687,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
             (ua ? ` ua=${ua}` : ""),
         );
       } else {
-        if (!req.sid) {
-          sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");
+        // A session is named by its Claude Code session id (a UUID). The sid
+        // ends up in places other programs read as words — the `--to <sid>`
+        // of a direct envelope's reply line, which the recipient runs as a
+        // shell command — so nothing else is taken as one.
+        if (!req.sid || !isSessionIdShape(req.sid)) {
+          sendErr(
+            conn,
+            ErrorCode.invalid_args,
+            "session hello requires sid: a Claude Code session id (lowercase UUID)",
+          );
           return;
         }
         // Announced-and-validated path, else the session's own
