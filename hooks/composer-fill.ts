@@ -19,14 +19,43 @@
 // session changes its id (/clear, /resume) the module moves on a generation:
 // a request that arrived under the old id is not put into the new session.
 //
-// This file is read by Claude Code's module loader, which allows no imports
-// that run, and `claude plugin validate` reads every `$` call off the source:
-// each call is spelled out as `$.noun.method(...)` with literal arguments
-// where the engine requires them.
+// Claude Code's module loader allows no imports that run, so this file is not
+// what hooks.json names: `just build-hooks` bundles it, with valibot and the
+// protocol's sidecar schemas it reads requests by, into the one file
+// composer-fill.bundle.js, and `just check-hooks-bundle` (part of `just ci`)
+// fails while that file is not this source's bundle. Every line from the
+// sidecar is read by the protocol's schema (`readSidecarRequest`) into a typed
+// request or a typed refusal. `claude plugin validate` reads every `$` call
+// off the bundle: each call is spelled out as `$.noun.method(...)` with
+// literal arguments where the engine requires them.
+import { errorText } from "@ccmsg/protocol/parse";
+import {
+  type DescribeResult,
+  type FailedSidecarReply,
+  type PromptSendResult,
+  readSidecarRequest,
+  SIDECAR_OP_NAMES,
+  SIDECAR_REQUEST_VERSION,
+  type SidecarErrorCode,
+  type SidecarReplyOf,
+  type SidecarRequest,
+  type SidecarRequestRead,
+} from "@ccmsg/protocol/sidecar";
 
-/** The part of the engine interface this module uses. Declared here rather
- * than imported from `claude-code`, whose types exist only where the engine
- * lays them beside a loaded mod. */
+/** A piece of a spawned child's output. */
+export interface SpawnChunk {
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+/** How a spawned child ended; undefined when the module ended the stream
+ * itself (`return(undefined)`). */
+export type SpawnEnd = { code: number | null; signal: string | null } | undefined;
+
+/** The part of the engine interface this module uses, as the engine's
+ * `claude-code.d.ts` states it. Declared here rather than imported from
+ * `claude-code`, whose types exist only where the engine lays them beside a
+ * loaded mod. */
 export interface Engine {
   plugin: { root: string };
   session: { id(): Promise<string>; surfaces(): Promise<readonly string[]> };
@@ -42,37 +71,38 @@ export interface Engine {
       argv: readonly string[],
       init?: { env?: Record<string, string>; stdin?: string; timeoutMs?: number },
     ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
-    spawn(request: {
-      argv: readonly string[];
-    }): AsyncGenerator<{ stream: "stdout" | "stderr"; text: string }, unknown>;
+    spawn(request: { argv: readonly string[] }): AsyncGenerator<SpawnChunk, SpawnEnd>;
   };
   env: { get(name: string): Promise<string | undefined> };
   clock: {
     now(): Promise<number>;
     after(ms: number, fn: () => void): { cancel(): void };
   };
-  ui: { log(text: string, options?: { to?: "debug" }): unknown };
+  ui: { log(text: string, options?: { to?: "debug" }): void };
 }
 
-type Next<E, R> = (e: E) => Promise<R>;
-type Hook<E> = ($: Engine, e: E, next: Next<E, unknown>) => Promise<unknown>;
+/** The events this module hooks, with the fields of each it reads, as the
+ * engine's `claude-code.d.ts` states them. */
+export interface Events {
+  "session.start": { isInteractive: boolean; surface: string | null };
+  "session.end": { reason: string };
+  "classic.SessionStart": { session_id: string };
+  "classic.UserPromptSubmit": { prompt: string };
+  "prompt.submit": { text: string; origin: { kind: string } };
+}
+
+/** A hook passes on what `next` resolves to without reading it, whatever the
+ * event's result is: the hook is generic in it. */
+export type Hook<E> = <R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promise<R>;
 /** What `on(...)` returns: one `.catch`, whose answer stands for the hook's
  * when the hook throws or overruns its budget. */
-interface Registration<E> {
+export interface Registration<E> {
   catch(handler: Hook<E>): void;
 }
-type SessionStartEvent = { isInteractive?: unknown; surface?: unknown };
-type PromptSubmitEvent = { text?: unknown; origin?: { kind?: unknown } };
-export interface On {
-  (event: "session.start", hook: Hook<SessionStartEvent>): Registration<SessionStartEvent>;
-  (event: "session.end", hook: Hook<{ reason?: unknown }>): Registration<{ reason?: unknown }>;
-  (event: "classic.SessionStart", hook: Hook<unknown>): Registration<unknown>;
-  (
-    event: "classic.UserPromptSubmit",
-    hook: Hook<{ prompt?: unknown }>,
-  ): Registration<{ prompt?: unknown }>;
-  (event: "prompt.submit", hook: Hook<PromptSubmitEvent>): Registration<PromptSubmitEvent>;
-}
+export type On = <K extends keyof Events>(
+  event: K,
+  hook: Hook<Events[K]>,
+) => Registration<Events[K]>;
 
 /** `hyoui input` budget. One prompt.send costs at most
  * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPLY_TIMEOUT_MS (9 s), which fits the
@@ -94,25 +124,8 @@ export const RESPAWN_MIN_MS = 500;
 export const RESPAWN_MAX_MS = 30_000;
 export const STABLE_MS = 10_000;
 
-/** The request line version this module reads. */
-export const REQUEST_VERSION = 1;
-/** The ops this module runs, as describe tells them. */
-export const OPS = ["describe", "prompt.send"] as const;
-
-/** A request line as far as the module reads it before choosing the op: its
- * id, which a reply needs, and the rest unchecked. */
-export interface RawRequest {
-  id: string;
-  v: unknown;
-  op: unknown;
-  args: unknown;
-}
-
-export type ErrorCode = "unknown_op" | "unsupported_version" | "invalid_args" | "internal";
-
-export type Reply =
-  | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: { code: ErrorCode; message: string } };
+/** The reply to one request this module runs. */
+export type Reply = SidecarReplyOf<"describe"> | SidecarReplyOf<"prompt.send">;
 
 /** A prompt.send, as the module queues it: under which session id and which
  * generation of it the line arrived. */
@@ -123,31 +136,30 @@ export interface QueuedSend {
   generation: number;
 }
 
-/** One line of the sidecar's output as a request, or undefined for a line
- * that names no request id (broken, or not a request) and so cannot be
- * answered. */
-export function parseRequest(line: string): RawRequest | undefined {
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const { id, v, op, args } = value as Record<string, unknown>;
-  if (typeof id !== "string" || id === "") return undefined;
-  return { id, v, op, args };
-}
-
-function failed(id: string, code: ErrorCode, message: string): Reply {
+function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
 }
 
-/** The text a prompt.send's args carry, or undefined when they carry none. */
-export function promptSendText(args: unknown): string | undefined {
-  if (typeof args !== "object" || args === null) return undefined;
-  const { text } = args as Record<string, unknown>;
-  return typeof text === "string" && text.trim() !== "" ? text : undefined;
+/** The answer to a line that names its request but is not one this module
+ * runs: the code says which part does not fit, the message what was read. */
+function refusal(read: Extract<SidecarRequestRead, { id: string }>): FailedSidecarReply {
+  const { summary } = read.failure;
+  switch (read.code) {
+    case "unsupported_version":
+      return failed(
+        read.id,
+        read.code,
+        `this module reads request version ${SIDECAR_REQUEST_VERSION} (${summary})`,
+      );
+    case "unknown_op":
+      return failed(
+        read.id,
+        read.code,
+        `this module has ops ${SIDECAR_OP_NAMES.join(", ")} (${summary})`,
+      );
+    case "invalid_args":
+      return failed(read.id, read.code, `args are not what the op takes (${summary})`);
+  }
 }
 
 /** `hyoui input` for one Enter on this session's terminal. The session id
@@ -162,7 +174,7 @@ export function hyouiEnterArgv(hyouiSessionId: string): string[] {
  * 2.1.293 with a trailing newline, spaces, a tab and an ideographic space,
  * the set `trimEnd` removes); leading whitespace, blank lines inside and tabs
  * inside reach it as filled. That one change is allowed for, nothing else. */
-export function samePrompt(submitted: unknown, filled: string): boolean {
+export function samePrompt(submitted: string, filled: string): boolean {
   return submitted === filled || submitted === filled.trimEnd();
 }
 
@@ -176,41 +188,8 @@ export function lineSplitter(onLine: (line: string) => void): (piece: string) =>
   };
 }
 
-/** What a prompt.send that ran says. `session_changed` is a request the
- * module kept out because the session changed its id (/clear, /resume) before
- * Enter. `unconfirmed` is the module not knowing whether the text went in:
- * Enter went out but no UserPromptSubmit came and the composer no longer holds
- * the text, or the id changed after Enter, or after the fill with the composer
- * no longer holding the text. */
-export type PromptSendResult =
-  | { outcome: "accepted" }
-  | {
-      outcome: "not_delivered";
-      reason:
-        | "dialog"
-        | "no_composer"
-        | "refused"
-        | "no_terminal"
-        | "not_submitted"
-        | "enter_failed"
-        | "session_changed";
-    }
-  | { outcome: "unconfirmed" };
-
 const UNCONFIRMED: PromptSendResult = { outcome: "unconfirmed" };
 const SESSION_CHANGED: PromptSendResult = { outcome: "not_delivered", reason: "session_changed" };
-
-/** A field of a request as text for a message. A request is the output of
- * `JSON.parse`, which `JSON.stringify` always takes back; the one value it
- * answers with `undefined` is a field the request does not have. */
-export function fieldText(value: unknown): string {
-  return JSON.stringify(value) ?? "(none)";
-}
-
-/** A caught value as text for a log line or an `internal` answer. */
-export function errorText(e: unknown): string {
-  return e instanceof Error ? `${e.name}: ${e.message}` : `a thrown ${typeof e}`;
-}
 
 /** The module's state for one load. */
 export interface ModuleState {
@@ -226,7 +205,7 @@ export interface ModuleState {
   interactive?: boolean;
   /** prompt.sends run one at a time: two at once would trade drafts. */
   queue: Promise<void>;
-  sidecar?: { sid: string; child: AsyncGenerator<unknown, unknown> };
+  sidecar?: { sid: string; child: AsyncGenerator<SpawnChunk, SpawnEnd> };
   delay: number;
   /** Sidecar starts run one at a time, so session.start and
    * classic.SessionStart arriving together cannot each start one. */
@@ -359,7 +338,11 @@ async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
   }
 }
 
-async function promptSend($: Engine, state: ModuleState, request: QueuedSend): Promise<Reply> {
+async function promptSend(
+  $: Engine,
+  state: ModuleState,
+  request: QueuedSend,
+): Promise<SidecarReplyOf<"prompt.send">> {
   // Nothing has touched the composer yet: the text is known not to be in.
   if (request.generation !== state.generation || request.sid !== state.sid) {
     $.ui.log(`ccmsg: prompt.send ${request.id} not filled: the session changed its id`, {
@@ -375,8 +358,8 @@ async function promptSend($: Engine, state: ModuleState, request: QueuedSend): P
  * launcher from handing over to a newer ccmsg on PATH, which would print its
  * own version rather than this plugin's. (`$.process.run`'s `env` is laid
  * over the session's environment, not in place of it.) */
-async function describe($: Engine): Promise<{ v: number[]; ops: string[]; version?: string }> {
-  const described = { v: [REQUEST_VERSION], ops: [...OPS] };
+async function describe($: Engine): Promise<DescribeResult> {
+  const described: DescribeResult = { v: [SIDECAR_REQUEST_VERSION], ops: [...SIDECAR_OP_NAMES] };
   try {
     const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "version"], {
       env: { CCMSG_NO_SELF_EXEC: "1" },
@@ -390,62 +373,32 @@ async function describe($: Engine): Promise<{ v: number[]; ops: string[]; versio
   return described;
 }
 
-/** Whether `args` is `{}`, all describe takes. */
-function isEmptyArgs(args: unknown): boolean {
-  return (
-    typeof args === "object" &&
-    args !== null &&
-    !Array.isArray(args) &&
-    Object.keys(args).length === 0
-  );
-}
-
-/** The reply to one request: the op's, or `ok:false` when it could not run.
- * Anything thrown on the way is `internal`, so every request is answered. */
+/** The reply to one request: the op's, or `internal` when anything is thrown
+ * on the way, so every request is answered. */
 async function replyTo(
   $: Engine,
   state: ModuleState,
   sid: string,
   generation: number,
-  request: RawRequest,
+  request: SidecarRequest,
 ): Promise<Reply> {
   const { id } = request;
   try {
-    if (request.v !== REQUEST_VERSION) {
-      return failed(
-        id,
-        "unsupported_version",
-        `request version ${fieldText(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
-      );
-    }
-    if (request.op === "describe") {
-      if (!isEmptyArgs(request.args)) return failed(id, "invalid_args", "describe takes args {}");
-      return { id, ok: true, result: await describe($) };
-    }
-    if (request.op === "prompt.send") {
-      const text = promptSendText(request.args);
-      if (text === undefined) {
-        return failed(
-          id,
-          "invalid_args",
-          "prompt.send takes args { text } with text other than whitespace",
+    switch (request.op) {
+      case "describe":
+        return { id, ok: true, result: await describe($) };
+      case "prompt.send": {
+        const queued: QueuedSend = { id, text: request.args.text, sid, generation };
+        // One at a time: two at once would trade drafts. A failed one does not
+        // hold up the next.
+        const result = state.queue.then(() => promptSend($, state, queued));
+        state.queue = result.then(
+          () => undefined,
+          () => undefined,
         );
+        return await result;
       }
-      const queued: QueuedSend = { id, text, sid, generation };
-      // One at a time: two at once would trade drafts. A failed one does not
-      // hold up the next.
-      const result = state.queue.then(() => promptSend($, state, queued));
-      state.queue = result.then(
-        () => undefined,
-        () => undefined,
-      );
-      return await result;
     }
-    return failed(
-      id,
-      "unknown_op",
-      `no op ${fieldText(request.op)}; this module has ${OPS.join(", ")}`,
-    );
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
     return failed(id, "internal", errorText(e));
@@ -453,7 +406,9 @@ async function replyTo(
 }
 
 /** Run one request line that arrived under `sid` in `generation`, and reply.
- * Never rejects: a request that cannot be answered is logged. */
+ * A line that is not a request this module runs is answered with why, at
+ * once, so the daemon is not left waiting. Never rejects: a line that cannot
+ * be answered is logged. */
 export function answer(
   $: Engine,
   state: ModuleState,
@@ -461,20 +416,24 @@ export function answer(
   generation: number,
   line: string,
 ): Promise<void> {
-  const request = parseRequest(line);
-  if (request === undefined) {
-    $.ui.log(`ccmsg sidecar: dropped a line that names no request id: ${line.slice(0, 200)}`, {
-      to: "debug",
-    });
-    return Promise.resolve();
-  }
   // sendReply catches its own failures; this catches anything else, so the
   // promise never rejects for the caller that drops it.
-  return replyTo($, state, sid, generation, request)
-    .then((reply) => sendReply($, sid, reply))
-    .catch((e: unknown) => {
-      $.ui.log(`ccmsg: request ${request.id} not answered: ${errorText(e)}`, { to: "debug" });
-    });
+  const send = (id: string, reply: Promise<Reply>): Promise<void> =>
+    reply
+      .then((r) => sendReply($, sid, r))
+      .catch((e: unknown) => {
+        $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
+      });
+  const read = readSidecarRequest(line);
+  if (read.ok) return send(read.request.id, replyTo($, state, sid, generation, read.request));
+  if (read.id === undefined) {
+    $.ui.log(
+      `ccmsg sidecar: dropped a line that names no request id (${read.failure.summary}): ${line.slice(0, 200)}`,
+      { to: "debug" },
+    );
+    return Promise.resolve();
+  }
+  return send(read.id, Promise.resolve(refusal(read)));
 }
 
 /** Run one sidecar for `sid` until it ends, then start the next one unless it
@@ -497,7 +456,7 @@ async function runSidecar($: Engine, state: ModuleState, sid: string): Promise<v
       else $.ui.log(`ccmsg sidecar: ${piece.text.trimEnd()}`, { to: "debug" });
     }
   } catch (e) {
-    $.ui.log(`ccmsg sidecar: ${String(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg sidecar: ${errorText(e)}`, { to: "debug" });
   }
   if (state.sidecar !== mine) return;
   state.sidecar = undefined;
@@ -514,7 +473,7 @@ function startSidecar($: Engine, state: ModuleState): void {
   state.starting = state.starting
     .then(() => replaceSidecar($, state))
     .catch((e: unknown) => {
-      $.ui.log(`ccmsg sidecar: start failed: ${String(e)}`, { to: "debug" });
+      $.ui.log(`ccmsg sidecar: start failed: ${errorText(e)}`, { to: "debug" });
     });
 }
 
@@ -579,7 +538,7 @@ export function register(on: On): ModuleState {
     const restoring = state.restoring;
     if (
       restoring !== undefined &&
-      e.origin?.kind === "composer" &&
+      e.origin.kind === "composer" &&
       samePrompt(e.text, restoring.text)
     ) {
       state.restoring = undefined;
@@ -589,7 +548,7 @@ export function register(on: On): ModuleState {
         try {
           await putBackDraft($, restoring.text, restoring.draft);
         } catch (error) {
-          $.ui.log(`ccmsg: draft put-back failed: ${String(error)}`, { to: "debug" });
+          $.ui.log(`ccmsg: draft put-back failed: ${errorText(error)}`, { to: "debug" });
         }
       }
     }

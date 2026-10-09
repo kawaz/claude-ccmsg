@@ -1,44 +1,40 @@
 // The hooks module of DR-0035 against a stand-in engine: what it does to the
 // composer, what it runs, and what it replies, for each request and each way a
-// prompt.send can go.
+// prompt.send can go. What a request line must be to run, and which code
+// refuses it, is the protocol's (packages/protocol/test/sidecar.test.ts); here
+// it is how the module answers.
 import { describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
-import type {
-  DescribeResult,
-  PromptSendResult as WirePromptSendResult,
-  SidecarReply,
-} from "@ccmsg/protocol";
+import { parseJsonWith } from "@ccmsg/protocol/parse";
+import {
+  type DescribeResult,
+  SIDECAR_OP_NAMES,
+  type SidecarReply,
+  SidecarReplySchema,
+} from "@ccmsg/protocol/sidecar";
 import {
   ACCEPT_WAIT_MS,
   type Engine,
+  type Events,
+  type Hook,
   answer,
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,
   type ModuleState,
   type On,
-  OPS,
-  type PromptSendResult,
   type QueuedSend,
-  parseRequest,
-  promptSendText,
   register,
-  type Reply,
   replyArgv,
   RESPAWN_MIN_MS,
   samePrompt,
-  errorText,
-  fieldText,
+  type SpawnChunk,
+  type SpawnEnd,
 } from "./composer-fill.ts";
 
-/** The module states the wire's shapes itself (it may import nothing that
- * runs); these fail to compile when the two drift apart. */
-type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
-const sameResult: Same<PromptSendResult, WirePromptSendResult> = true;
-const sameReply: Same<Reply, SidecarReply> = true;
-void [sameResult, sameReply];
-
-type Hook = (...args: any[]) => Promise<unknown>;
+const START: Events["session.start"] = { isInteractive: true, surface: "terminal" };
+const CLASSIC_START: Events["classic.SessionStart"] = {
+  session_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+};
 
 interface Timer {
   ms: number;
@@ -48,11 +44,11 @@ interface Timer {
 
 /** A spawn stream the test feeds and ends. */
 function controlledStream() {
-  const queue: { stream: "stdout" | "stderr"; text: string }[] = [];
+  const queue: SpawnChunk[] = [];
   let wake: (() => void) | undefined;
   let ended = false;
   const returned = { value: false };
-  const gen = (async function* () {
+  const gen = (async function* (): AsyncGenerator<SpawnChunk, SpawnEnd> {
     for (;;) {
       const next = queue.shift();
       if (next !== undefined) {
@@ -84,6 +80,9 @@ function controlledStream() {
   };
 }
 
+/** The hooks the module registered, by event. */
+type HookTable = { [K in keyof Events]?: Hook<Events[K]> };
+
 interface Fake {
   $: Engine;
   composer: { text: string };
@@ -94,7 +93,7 @@ interface Fake {
   envs: (Record<string, string> | undefined)[];
   spawns: { argv: readonly string[]; stream: ReturnType<typeof controlledStream> }[];
   timers: Timer[];
-  hooks: Map<string, Hook>;
+  hooks: HookTable;
   sid: { value: string };
   fills: string[];
   logs: string[];
@@ -114,45 +113,44 @@ function fakeEngine(
     version?: string | Error;
   } = {},
 ): Fake {
-  const fake = {
-    composer: { text: options.draft ?? "" },
-    runs: [] as string[][],
-    stdins: [] as (string | undefined)[],
-    envs: [] as (Record<string, string> | undefined)[],
-    spawns: [] as Fake["spawns"],
-    timers: [] as Timer[],
-    hooks: new Map<string, Hook>(),
-    sid: { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
-    fills: [] as string[],
-    logs: [] as string[],
-    catches: new Set<string>(),
-  } as Fake;
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
   // the default env carries it so every Enter below shows it is not passed on.
-  const env = options.env ?? { HYOUI_SESSION_ID: "term-1", HYOUI_NAMESPACE: "ns-1" };
+  const env: Record<string, string | undefined> = options.env ?? {
+    HYOUI_SESSION_ID: "term-1",
+    HYOUI_NAMESPACE: "ns-1",
+  };
   let now = 0;
-  fake.$ = {
+  const composer = { text: options.draft ?? "" };
+  const runs: string[][] = [];
+  const stdins: (string | undefined)[] = [];
+  const envs: (Record<string, string> | undefined)[] = [];
+  const spawns: Fake["spawns"] = [];
+  const timers: Timer[] = [];
+  const sid = { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" };
+  const fills: string[] = [];
+  const logs: string[] = [];
+  const $: Engine = {
     plugin: { root: "/plugin" },
     session: {
-      id: async () => fake.sid.value,
+      id: async () => sid.value,
       surfaces: async () => options.surfaces ?? ["terminal"],
     },
     prompt: {
-      read: async () => ({ text: fake.composer.text, cursor: fake.composer.text.length }),
+      read: async () => ({ text: composer.text, cursor: composer.text.length }),
       fill: async ({ text }) => {
         if (options.refusal) {
-          return { isFilled: false, refusal: options.refusal, text: fake.composer.text };
+          return { isFilled: false, refusal: options.refusal, text: composer.text };
         }
-        fake.fills.push(text);
-        fake.composer.text = text;
+        fills.push(text);
+        composer.text = text;
         return { isFilled: true, text };
       },
     },
     process: {
       run: async (argv, init) => {
-        fake.runs.push([...argv]);
-        fake.stdins.push(init?.stdin);
-        fake.envs.push(init?.env);
+        runs.push([...argv]);
+        stdins.push(init?.stdin);
+        envs.push(init?.env);
         if (argv[0] === "hyoui") {
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
@@ -166,7 +164,7 @@ function fakeEngine(
       },
       spawn: ({ argv }) => {
         const stream = controlledStream();
-        fake.spawns.push({ argv, stream });
+        spawns.push({ argv, stream });
         return stream.gen;
       },
     },
@@ -175,7 +173,7 @@ function fakeEngine(
       now: async () => (now += 1),
       after: (ms, fn) => {
         const timer = { ms, fn, cancelled: false };
-        fake.timers.push(timer);
+        timers.push(timer);
         return {
           cancel: () => {
             timer.cancelled = true;
@@ -183,9 +181,61 @@ function fakeEngine(
         };
       },
     },
-    ui: { log: (text) => fake.logs.push(text) },
+    ui: {
+      log: (text) => {
+        logs.push(text);
+      },
+    },
+  };
+  const fake: Fake = {
+    $,
+    composer,
+    runs,
+    stdins,
+    envs,
+    spawns,
+    timers,
+    hooks: {},
+    sid,
+    fills,
+    logs,
+    catches: new Set<string>(),
   };
   return fake;
+}
+
+/** Run the module's hook on `event` as the engine would. */
+function fire<K extends keyof Events, R>(
+  fake: Fake,
+  event: K,
+  e: Events[K],
+  next: (e: Events[K]) => Promise<R>,
+): Promise<R> {
+  const hook: Hook<Events[K]> | undefined = fake.hooks[event];
+  if (hook === undefined) throw new Error(`no hook on ${event}`);
+  return hook(fake.$, e, next);
+}
+
+/** The `index`th sidecar the module spawned. */
+function spawned(fake: Fake, index: number): Fake["spawns"][number] {
+  const spawn = fake.spawns[index];
+  if (spawn === undefined) throw new Error(`no spawn #${index}`);
+  return spawn;
+}
+
+function lastTimer(fake: Fake): Timer {
+  const timer = fake.timers.at(-1);
+  if (timer === undefined) throw new Error("no timer");
+  return timer;
+}
+
+/** What the `index`th run got on standard input, read as a reply. */
+function stdinReply(fake: Fake, index: number): SidecarReply {
+  const stdin = fake.stdins[index];
+  if (stdin === undefined) throw new Error(`run #${index} got no standard input`);
+  const read = parseJsonWith(SidecarReplySchema, stdin);
+  if (!read.ok) throw new Error(`run #${index} got no reply: ${read.failure.summary}`);
+  return read.value;
 }
 
 /** What the harness does on Enter with text in the composer: prompt.submit
@@ -193,23 +243,33 @@ function fakeEngine(
  * classic.UserPromptSubmit. */
 async function submitComposer(fake: Fake): Promise<number> {
   const text = fake.composer.text;
-  await fake.hooks.get("prompt.submit")!(
-    fake.$,
-    { text, origin: { kind: "composer" } },
-    async () => {
-      fake.composer.text = "";
-      return {};
-    },
-  );
-  await fake.hooks.get("classic.UserPromptSubmit")!(fake.$, { prompt: text }, async () => ({}));
+  await fire(fake, "prompt.submit", { text, origin: { kind: "composer" } }, async () => {
+    fake.composer.text = "";
+    return {};
+  });
+  await fire(fake, "classic.UserPromptSubmit", { prompt: text }, async () => ({}));
   return 0;
 }
 
-function registerOn(fake: Fake) {
-  const on = ((event: string, hook: Hook) => {
-    fake.hooks.set(event, hook);
-    return { catch: () => fake.catches.add(event) };
-  }) as unknown as On;
+/** Keep `hook` under `event`. The table is typed by the one event here, so
+ * the hook stored is the one its key says. */
+function keep<K extends keyof Events>(
+  hooks: { [P in K]?: Hook<Events[P]> },
+  event: K,
+  hook: Hook<Events[K]>,
+): void {
+  hooks[event] = hook;
+}
+
+function registerOn(fake: Fake): ModuleState {
+  const on: On = (event, hook) => {
+    keep(fake.hooks, event, hook);
+    return {
+      catch: () => {
+        fake.catches.add(event);
+      },
+    };
+  };
   return register(on);
 }
 
@@ -333,8 +393,9 @@ describe("handlePromptSend", () => {
     const fake = fakeEngine();
     const state = registerOn(fake);
     state.restoring = { text: "mine", draft: "draft" };
-    await fake.hooks.get("prompt.submit")!(
-      fake.$,
+    await fire(
+      fake,
+      "prompt.submit",
       { text: "someone else's", origin: { kind: "composer" } },
       async () => ({}),
     );
@@ -347,19 +408,19 @@ describe("the sidecar the module keeps", () => {
   test("session.start spawns it; a prompt.send line becomes a fill and a reply", async () => {
     const fake = fakeEngine({ onEnter: submitComposer });
     registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
     expect(fake.spawns.map((s) => s.argv)).toEqual([
       ["/plugin/bin/ccmsg", "sidecar", "--sid", fake.sid.value],
     ]);
-    fake.spawns[0]!.stream.push('{"v":1,"op":"prompt.send","id":"r9",');
-    fake.spawns[0]!.stream.push('"args":{"text":"hello"}}\n');
+    spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9",');
+    spawned(fake, 0).stream.push('"args":{"text":"hello"}}\n');
     for (let i = 0; i < 10 && fake.runs.length < 2; i++) await settle();
     expect(fake.runs).toEqual([
       ["hyoui", "input", "term-1", "key:Enter"],
       ["/plugin/bin/ccmsg", "sidecar", "reply", "--sid", fake.sid.value],
     ]);
-    expect(JSON.parse(fake.stdins[1]!)).toEqual({
+    expect(stdinReply(fake, 1)).toEqual({
       id: "r9",
       ok: true,
       result: { outcome: "accepted" },
@@ -370,8 +431,8 @@ describe("the sidecar the module keeps", () => {
     const fake = fakeEngine();
     registerOn(fake);
     await Promise.all([
-      fake.hooks.get("session.start")!(fake.$, {}, async () => ({})),
-      fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({})),
+      fire(fake, "session.start", START, async () => ({})),
+      fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({})),
     ]);
     await settle();
     expect(fake.spawns.length).toBe(1);
@@ -380,31 +441,31 @@ describe("the sidecar the module keeps", () => {
   test("a sidecar that ends is started again after a delay", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
-    fake.spawns[0]!.stream.end();
+    spawned(fake, 0).stream.end();
     await settle();
     expect(fake.spawns.length).toBe(1);
-    const respawn = fake.timers.at(-1)!;
+    const respawn = lastTimer(fake);
     expect(respawn.ms).toBe(RESPAWN_MIN_MS);
     respawn.fn();
     await settle();
     expect(fake.spawns.length).toBe(2);
     // Dying young again doubles the wait.
-    fake.spawns[1]!.stream.end();
+    spawned(fake, 1).stream.end();
     await settle();
-    expect(fake.timers.at(-1)!.ms).toBe(RESPAWN_MIN_MS * 2);
+    expect(lastTimer(fake).ms).toBe(RESPAWN_MIN_MS * 2);
   });
 
   test("a new session id (/clear) replaces the sidecar", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
     fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    await fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({}));
+    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
     await settle();
-    expect(fake.spawns[0]!.stream.returned.value).toBe(true);
+    expect(spawned(fake, 0).stream.returned.value).toBe(true);
     expect(fake.spawns.map((s) => s.argv.at(-1))).toEqual([
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -422,8 +483,8 @@ describe("sessions without a composer get no sidecar", () => {
     test(`session.start with ${name}`, async () => {
       const fake = fakeEngine();
       registerOn(fake);
-      await fake.hooks.get("session.start")!(fake.$, e, async () => ({}));
-      await fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({}));
+      await fire(fake, "session.start", e, async () => ({}));
+      await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
       await settle();
       expect(fake.spawns).toEqual([]);
     });
@@ -434,7 +495,7 @@ describe("sessions without a composer get no sidecar", () => {
   test("classic.SessionStart first, in a session that draws nowhere", async () => {
     const fake = fakeEngine({ surfaces: [] });
     registerOn(fake);
-    await fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({}));
+    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
     await settle();
     expect(fake.spawns).toEqual([]);
   });
@@ -442,8 +503,9 @@ describe("sessions without a composer get no sidecar", () => {
   test("an interactive session.start does start one", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    await fake.hooks.get("session.start")!(
-      fake.$,
+    await fire(
+      fake,
+      "session.start",
       { isInteractive: true, surface: "terminal" },
       async () => ({}),
     );
@@ -458,12 +520,12 @@ describe("a session that changes its id (/clear)", () => {
   test("session.end(clear) moves on a generation", async () => {
     const fake = fakeEngine();
     const state = registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
     const before = state.generation;
-    await fake.hooks.get("session.end")!(fake.$, { reason: "other" }, async () => ({}));
+    await fire(fake, "session.end", { reason: "other" }, async () => ({}));
     expect(state.generation).toBe(before);
-    await fake.hooks.get("session.end")!(fake.$, { reason: "clear" }, async () => ({}));
+    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
     expect(state.generation).toBe(before + 1);
   });
 
@@ -532,15 +594,15 @@ describe("a session that changes its id (/clear)", () => {
   test("a prompt.send queued under the old id is not filled: session_changed", async () => {
     const fake = fakeEngine({ onEnter: submitComposer });
     registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
     const oldSid = fake.sid.value;
-    fake.spawns[0]!.stream.push('{"v":1,"op":"prompt.send","id":"old","args":{"text":"late"}}\n');
-    await fake.hooks.get("session.end")!(fake.$, { reason: "clear" }, async () => ({}));
+    spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"old","args":{"text":"late"}}\n');
+    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
     for (let i = 0; i < 10 && fake.runs.length < 1; i++) await settle();
     expect(fake.fills).toEqual([]);
     expect(fake.runs).toEqual([["/plugin/bin/ccmsg", "sidecar", "reply", "--sid", oldSid]]);
-    expect(JSON.parse(fake.stdins[0]!)).toEqual({
+    expect(stdinReply(fake, 0)).toEqual({
       id: "old",
       ok: true,
       result: { outcome: "not_delivered", reason: "session_changed" },
@@ -550,15 +612,15 @@ describe("a session that changes its id (/clear)", () => {
 
 /** Start a sidecar, write `line` to the module, and return the reply it ran
  * `ccmsg sidecar reply` with. */
-async function replyTo(fake: Fake, line: string): Promise<Reply> {
-  await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+async function replyTo(fake: Fake, line: string): Promise<SidecarReply> {
+  await fire(fake, "session.start", START, async () => ({}));
   await settle();
-  fake.spawns[0]!.stream.push(`${line}\n`);
+  spawned(fake, 0).stream.push(`${line}\n`);
   const isReply = (argv: string[]) => argv[2] === "reply";
   for (let i = 0; i < 20 && !fake.runs.some(isReply); i++) await settle();
   const at = fake.runs.findIndex(isReply);
   expect(at).toBeGreaterThanOrEqual(0);
-  return JSON.parse(fake.stdins[at]!) as Reply;
+  return stdinReply(fake, at);
 }
 
 describe("requests the module answers without running prompt.send", () => {
@@ -611,9 +673,9 @@ describe("requests the module answers without running prompt.send", () => {
   test("a line naming no id cannot be answered and is only logged", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await fire(fake, "session.start", START, async () => ({}));
     await settle();
-    fake.spawns[0]!.stream.push('{"v":1,"op":"describe","args":{}}\nnot json\n');
+    spawned(fake, 0).stream.push('{"v":1,"op":"describe","args":{}}\nnot json\n');
     await settle();
     expect(fake.runs).toEqual([]);
     expect(fake.logs.filter((l) => l.includes("names no request id")).length).toBe(2);
@@ -680,7 +742,7 @@ describe("requests the module answers without running prompt.send", () => {
     const fake = fakeEngine({ version: new Error("ENOENT") });
     registerOn(fake);
     const reply = await replyTo(fake, '{"v":1,"op":"describe","id":"d2","args":{}}');
-    expect(reply).toEqual({ id: "d2", ok: true, result: { v: [1], ops: [...OPS] } });
+    expect(reply).toEqual({ id: "d2", ok: true, result: { v: [1], ops: [...SIDECAR_OP_NAMES] } });
   });
 });
 
@@ -692,15 +754,11 @@ describe("putting the draft back", () => {
       draft: "old draft",
       onEnter: async (f) => {
         const text = f.composer.text;
-        await f.hooks.get("prompt.submit")!(
-          f.$,
-          { text, origin: { kind: "composer" } },
-          async () => {
-            f.composer.text = "typed meanwhile";
-            return {};
-          },
-        );
-        await f.hooks.get("classic.UserPromptSubmit")!(f.$, { prompt: text }, async () => ({}));
+        await fire(f, "prompt.submit", { text, origin: { kind: "composer" } }, async () => {
+          f.composer.text = "typed meanwhile";
+          return {};
+        });
+        await fire(f, "classic.UserPromptSubmit", { prompt: text }, async () => ({}));
         return 0;
       },
     });
@@ -715,49 +773,11 @@ describe("putting the draft back", () => {
   test("every hook carries a .catch that passes the event on", () => {
     const fake = fakeEngine();
     registerOn(fake);
-    expect([...fake.catches].toSorted()).toEqual([...fake.hooks.keys()].toSorted());
+    expect([...fake.catches].toSorted()).toEqual(Object.keys(fake.hooks).toSorted());
   });
 });
 
 describe("pure helpers", () => {
-  test("parseRequest takes any object with an id, leaving the rest to the op", () => {
-    expect(parseRequest('{"v":1,"op":"prompt.send","id":"1","args":{"text":"a"}}')).toEqual({
-      id: "1",
-      v: 1,
-      op: "prompt.send",
-      args: { text: "a" },
-    });
-    expect(parseRequest('{"id":"1"}')).toEqual({
-      id: "1",
-      v: undefined,
-      op: undefined,
-      args: undefined,
-    });
-    expect(parseRequest('{"v":1,"op":"describe","id":""}')).toBeUndefined();
-    expect(parseRequest('[{"id":"1"}]')).toBeUndefined();
-    expect(parseRequest("not json")).toBeUndefined();
-  });
-
-  test("fieldText writes a request field back as JSON, and an absent one as (none)", () => {
-    expect(fieldText("nope")).toBe('"nope"');
-    expect(fieldText(2)).toBe("2");
-    expect(fieldText({ toString: null })).toBe('{"toString":null}');
-    expect(fieldText(undefined)).toBe("(none)");
-  });
-
-  test("errorText names an Error and does not stringify anything else", () => {
-    expect(errorText(new TypeError("bad"))).toBe("TypeError: bad");
-    expect(errorText({ toString: null })).toBe("a thrown object");
-    expect(errorText("x")).toBe("a thrown string");
-  });
-
-  test("promptSendText takes a text other than whitespace, as given", () => {
-    expect(promptSendText({ text: " a\n" })).toBe(" a\n");
-    expect(promptSendText({ text: "  " })).toBeUndefined();
-    expect(promptSendText({ text: 1 })).toBeUndefined();
-    expect(promptSendText(null)).toBeUndefined();
-  });
-
   test("hyouiEnterArgv names the terminal by its session id alone", () => {
     expect(hyouiEnterArgv("t")).toEqual(["hyoui", "input", "t", "key:Enter"]);
   });
@@ -771,12 +791,11 @@ describe("pure helpers", () => {
   test("samePrompt allows only trailing whitespace dropped by the harness", () => {
     expect(samePrompt("a b\n", "a b\n")).toBe(true);
     expect(samePrompt("a b", "a b\n")).toBe(true);
-    expect(samePrompt("a b", "a b \t\u3000")).toBe(true);
+    expect(samePrompt("a b", "a b \t　")).toBe(true);
     expect(samePrompt("a b\n", "a b")).toBe(false);
     expect(samePrompt("a b", "  a b")).toBe(false);
     expect(samePrompt("a\nb", "a\n\nb")).toBe(false);
     expect(samePrompt("a  b", "a b")).toBe(false);
-    expect(samePrompt(undefined, "a")).toBe(false);
   });
 
   test("lineSplitter joins pieces and drops blank lines", () => {
@@ -785,11 +804,5 @@ describe("pure helpers", () => {
     feed("a\nb");
     feed("c\n\n");
     expect(lines).toEqual(["a", "bc"]);
-  });
-
-  // The module loader runs no imports, so the file has to stand alone.
-  test("the module imports nothing at run time", () => {
-    const source = fs.readFileSync(new URL("./composer-fill.ts", import.meta.url), "utf8");
-    expect(source.match(/^import (?!type )/m)).toBeNull();
   });
 });

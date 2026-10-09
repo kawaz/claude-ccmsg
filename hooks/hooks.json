@@ -13,5 +13,5 @@
       }
     ]
   },
-  "modules": ["./composer-fill.ts"]
+  "modules": ["./composer-fill.bundle.js"]
 }

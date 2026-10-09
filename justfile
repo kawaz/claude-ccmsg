@@ -49,8 +49,8 @@ bump-version bump="patch": ensure-clean
     new_version=$(bump-semver {{ bump }} {{ version-files }} --write --no-hint)
     bump-semver vcs commit --allow-nonexistent-path -m "Release v${new_version}" {{ version-files }}
 
-# CI 単一エントリ (lint→typecheck→test→validate を依存重複排除で1回ずつ保証)
-ci: lint typecheck test validate
+# CI 単一エントリ (lint→typecheck→test→validate→hooks module の bundle 確認を依存重複排除で1回ずつ保証)
+ci: lint typecheck test validate check-hooks-bundle
 
 # ---------- dev recipes (push/ci の依存、利用者が直接叩くこともある) ----------
 
@@ -82,6 +82,14 @@ test: lint typecheck
 # Claude Plugin の構造検証
 validate: lint
     claude plugin validate .
+
+# hooks module (hooks/composer-fill.ts) を Claude Code が読む 1 ファイルに bundle する (DR-0038 §4)
+build-hooks:
+    bun hooks/bundle.ts
+
+# 配る bundle (hooks/composer-fill.bundle.js) が今の source の bundle か確かめる
+check-hooks-bundle:
+    bun hooks/bundle.ts --check
 
 # 現在の version を表示 (3 ファイルの一致確認も兼ねる)
 version:
