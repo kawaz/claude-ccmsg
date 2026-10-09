@@ -309,11 +309,78 @@ function shellWords(input: string): string[] | null {
   return words;
 }
 
-const VALUE_OPTIONS = new Set(["--to", "--sid", "--about"]);
+/** The options `ccmsg post` / `ccmsg reply` take: those carrying a value,
+ * and flags. */
+export const SEND_VALUE_OPTIONS: readonly string[] = ["--to", "--sid", "--as-session"];
+export const SEND_FLAG_OPTIONS: readonly string[] = ["--help", "-h"];
+
+/** The words after `post` / `reply`, split the way the CLI reads them. */
+export interface SendWords {
+  /** The words before the body: the target of `post`, the mid of `reply`. */
+  leading: string[];
+  /** Options by name as written (`--to`); a flag's value is true. */
+  options: Map<string, string | true>;
+  /** The body's words, as given. The body is these joined by one space. */
+  body: string[];
+}
+
+/** Split the words after `post` / `reply` into the `leadingCount` words
+ * before the body, the options, and the body. The CLI sends what this reads
+ * and the timeline and the dump show what this reads, so the two cannot
+ * differ.
+ *
+ * Before the body, a word starting with `--` is an option (`--name=value`,
+ * a known value option and the word after it, or a flag). From the body's
+ * position on, a word is an option only when it is exactly a known option
+ * name (SEND_VALUE_OPTIONS with a word after it, or SEND_FLAG_OPTIONS);
+ * anything else — `--foo`, `--foo bar` as one word, a lone `-` — is body, as
+ * written. The first `--` makes every later word literal (leading words,
+ * then body) and is itself dropped, so a body that starts with a known option
+ * name is sent as `-- --to …`. */
+export function splitSendWords(words: readonly string[], leadingCount: number): SendWords {
+  const leading: string[] = [];
+  const options = new Map<string, string | true>();
+  const body: string[] = [];
+  let literal = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    const word = (): void => {
+      if (leading.length < leadingCount) leading.push(w);
+      else body.push(w);
+    };
+    if (literal) {
+      word();
+      continue;
+    }
+    if (w === "--") {
+      literal = true;
+      continue;
+    }
+    if (SEND_VALUE_OPTIONS.includes(w) && i + 1 < words.length) {
+      options.set(w, words[++i]!);
+      continue;
+    }
+    if (SEND_FLAG_OPTIONS.includes(w)) {
+      options.set(w, true);
+      continue;
+    }
+    if (leading.length < leadingCount && w.startsWith("--")) {
+      const eq = w.indexOf("=");
+      if (eq > 2) options.set(w.slice(0, eq), w.slice(eq + 1));
+      else options.set(w, true);
+      continue;
+    }
+    word();
+  }
+  return { leading, options, body };
+}
+
+const NOTIFY_VALUE_OPTIONS = new Set(["--sid", "--about"]);
 
 /** Reads the ccmsg send call out of a Bash `command`, or null when there is
  * none (a `--help` call sends nothing). When the arguments use shell syntax this does not model, `text` is the
- * raw argument string after the verb rather than a guess. */
+ * raw argument string after the verb rather than a guess. `post` / `reply`
+ * are read by splitSendWords, as the CLI reads them. */
 export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null {
   const m = [...command.matchAll(SEND_COMMAND_RE)].find((candidate) => {
     const word = shellWords(candidate[1]!);
@@ -324,40 +391,37 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
   const rest = command.slice(m.index + m[0].length);
   const words = shellWords(rest);
   if (words === null) return { verb, text: rest.trim() };
+  if (verb === "post" || verb === "reply") {
+    const split = splitSendWords(words, 1);
+    if (split.options.has("--help") || split.options.has("-h")) return null;
+    const first = split.leading[0];
+    const text = split.body.join(" ");
+    if (verb === "post") {
+      return { verb, ...(first !== undefined ? { to: directAddressSid(first) } : {}), text };
+    }
+    const address = split.options.get("--to");
+    const to = typeof address === "string" ? directAddressSid(address) : undefined;
+    return {
+      verb,
+      ...(first !== undefined ? { replyTo: first } : {}),
+      ...(to !== undefined ? { to } : {}),
+      text,
+    };
+  }
   if (words.includes("--help") || words.includes("-h")) return null;
   const options = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const w = words[i]!;
     const eq = w.indexOf("=");
-    if (w.startsWith("--") && eq > 0 && VALUE_OPTIONS.has(w.slice(0, eq))) {
+    if (w.startsWith("--") && eq > 0 && NOTIFY_VALUE_OPTIONS.has(w.slice(0, eq))) {
       options.set(w.slice(0, eq), w.slice(eq + 1));
-    } else if (VALUE_OPTIONS.has(w) && i + 1 < words.length) {
+    } else if (NOTIFY_VALUE_OPTIONS.has(w) && i + 1 < words.length) {
       options.set(w, words[++i]!);
     } else positional.push(w);
   }
-  switch (verb) {
-    case "post":
-      return {
-        verb,
-        ...(positional[0] !== undefined ? { to: directAddressSid(positional[0]) } : {}),
-        text: positional.slice(1).join(" "),
-      };
-    case "reply": {
-      const address = options.get("--to");
-      const to = address === undefined ? undefined : directAddressSid(address);
-      return {
-        verb,
-        ...(positional[0] !== undefined ? { replyTo: positional[0] } : {}),
-        ...(to !== undefined ? { to } : {}),
-        text: positional.slice(1).join(" "),
-      };
-    }
-    case "notify": {
-      const about = options.get("--about");
-      return { verb, ...(about !== undefined ? { about } : {}), text: positional.join(" ") };
-    }
-  }
+  const about = options.get("--about");
+  return { verb, ...(about !== undefined ? { about } : {}), text: positional.join(" ") };
 }
 
 /** What the paired tool_result says about a send.

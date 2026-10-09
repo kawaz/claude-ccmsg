@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyCcmsgSendResult,
   DIRECT_SEND_UNCONFIRMED_EXIT,
+  splitSendWords,
   directAddressSid,
   shellQuote,
   isDirectMid,
@@ -255,6 +256,53 @@ describe("parseCcmsgSendCommand", () => {
     expect(parseCcmsgSendCommand("ccmsg daemon status")).toBeNull();
     expect(parseCcmsgSendCommand("grep -n 'ccmsg reply\\|ccmsg post' f.jsonl")).toBeNull();
     expect(parseCcmsgSendCommand("echo use ccmsg post")).toBeNull();
+  });
+});
+
+describe("splitSendWords", () => {
+  const split = (words: string[]) => {
+    const r = splitSendWords(words, 1);
+    return { leading: r.leading, options: Object.fromEntries(r.options), body: r.body.join(" ") };
+  };
+
+  test("from the body's position, only an exact known option name is an option", () => {
+    expect(split(["S", "hello", "--foo", "world"])).toEqual({
+      leading: ["S"],
+      options: {},
+      body: "hello --foo world",
+    });
+    expect(split(["S", "--foo bar"])).toEqual({ leading: ["S"], options: {}, body: "--foo bar" });
+    expect(split(["M", "--to", "A", "T6", "受領", "--to-be"])).toEqual({
+      leading: ["M"],
+      options: { "--to": "A" },
+      body: "T6 受領 --to-be",
+    });
+    // A known name with nothing after it carries no value: it is body.
+    expect(split(["S", "see", "--to"])).toEqual({ leading: ["S"], options: {}, body: "see --to" });
+    expect(split(["S", "x", "--help"]).options).toEqual({ "--help": true });
+  });
+
+  test("-- makes the rest literal and is not part of the body", () => {
+    expect(split(["S", "--", "--foo"])).toEqual({ leading: ["S"], options: {}, body: "--foo" });
+    expect(split(["S", "--", "--to", "x"])).toEqual({
+      leading: ["S"],
+      options: {},
+      body: "--to x",
+    });
+    expect(split(["M", "--to", "A", "--", "--to"])).toEqual({
+      leading: ["M"],
+      options: { "--to": "A" },
+      body: "--to",
+    });
+    expect(split(["S", "a", "--", "b", "--"]).body).toBe("a b --");
+  });
+
+  test("before the body, a word starting with -- is an option", () => {
+    expect(split(["--sid=X", "--weird", "S", "hi"])).toEqual({
+      leading: ["S"],
+      options: { "--sid": "X", "--weird": true },
+      body: "hi",
+    });
   });
 });
 

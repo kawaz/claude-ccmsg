@@ -102,6 +102,15 @@ export function sidecarSocketPid(name: string, sid: string): number | undefined 
   return Number.isSafeInteger(pid) ? pid : undefined;
 }
 
+/** The session id and harness pid a socket name in the sidecar directory
+ * carries, or undefined when it is not a socket name. */
+export function parseSidecarSocketName(name: string): { sid: string; pid: number } | undefined {
+  const sid = name.slice(0, Math.max(0, name.indexOf(".")));
+  if (!isSessionIdShape(sid)) return undefined;
+  const pid = sidecarSocketPid(name, sid);
+  return pid === undefined ? undefined : { sid, pid };
+}
+
 /** `<stateDir>/sidecars`, or the short per-uid directory under `/tmp` when the
  * widest socket name would not fit in `sun_path` there. The daemon and every
  * sidecar derive it from the same state dir, so neither registers anything

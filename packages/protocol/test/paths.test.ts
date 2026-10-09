@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  parseSidecarSocketName,
   resolvePaths,
   resolveSidecarDir,
   sidecarSocketName,
@@ -77,5 +78,16 @@ describe("sidecar sockets (DR-0035 §3)", () => {
     expect(() => sidecarSocketName("../etc", 1)).toThrow(RangeError);
     expect(() => sidecarSocketName(sid, 0)).toThrow(RangeError);
     expect(() => sidecarSocketName(sid, 1.5)).toThrow(RangeError);
+  });
+});
+
+describe("parseSidecarSocketName", () => {
+  test("reads the id and pid of a socket name, and nothing else", () => {
+    const sid = "11111111-2222-4333-8444-555555555555";
+    expect(parseSidecarSocketName(`${sid}.42.sock`)).toEqual({ sid, pid: 42 });
+    expect(parseSidecarSocketName(`${sid}.0.sock`)).toBeUndefined();
+    expect(parseSidecarSocketName(`${sid}.42.sock.tmp`)).toBeUndefined();
+    expect(parseSidecarSocketName("x.42.sock")).toBeUndefined();
+    expect(parseSidecarSocketName("noname")).toBeUndefined();
   });
 });
