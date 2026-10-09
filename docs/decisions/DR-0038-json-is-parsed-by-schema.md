@@ -51,6 +51,14 @@ kawaz 2026-10-09: 「あらゆる箇所でまずスキーマとそこから型�
 - `unknown` が現れてよいのは `catch` の束縛と、スキーマに通す直前の 1 か所 (境界) だけ
 - これらは lint で機械的に検査する (oxlint の `typescript/no-explicit-any`、型の主張を禁じる規則、非 null の主張を禁じる規則。使える規則と設定は実装時に確かめる)。既存のコードの違反は、置き換えの段ごとに減らし、最後に lint を error にする
 
+### 6. パースした値は不変のデータとして扱う
+
+kawaz 2026-10-09: 「immutable なデータオブジェクトであるべきでは?」 (外から来た値をふつうの object に入れて `params[name]` で引き、宣言の無い名前で prototype から継承した `constructor` を拾った不具合への指摘)。
+
+- スキーマの出力の型は不変にする (`Readonly` / `ReadonlyArray`、valibot の `v.readonly()`)。受け取った側は値を書き換えない
+- 名前で引く辞書は、スキーマを通した直後に `ReadonlyMap` にして `get` で引く。ふつうの object を `[]` で辞書として引かない (宣言の無い名前で継承したメンバーが返る)
+- 辞書のキーになる名前を設定で宣言させる時は、`__proto__` / `constructor` / `prototype` を名前の規則で禁じる (valibot の object / record はこれらのキーを出力から落とすので、宣言できなければ落ちても何も変わらない)。キーを落とさないための特別なスキーマは作らない
+
 ## Alternatives Considered
 
 - 案 A: 手書きのパース関数 (`(raw: unknown) => Result<T>`) に統一する
