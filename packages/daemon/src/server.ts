@@ -15,8 +15,7 @@ import {
   PROTOCOL_VERSION,
   UNANNOUNCED_PROTOCOL_VERSION,
   isSessionIdShape,
-  parseWith,
-  SidecarReplySchema,
+  readRequest,
   resolvePaths,
   type AgentInfo,
   type ArchiveEvent,
@@ -30,7 +29,10 @@ import {
   type NotifyFrom,
   type Paths,
   type PeerInfo,
+  type HelloRequest,
   type Request,
+  type RequestOp,
+  type RequestRead,
   type RoomKind,
   type SayEvent,
   type SayReadEvent,
@@ -718,26 +720,22 @@ function protocolOf(client: ClientBuild): number {
   return client.protocol ?? UNANNOUNCED_PROTOCOL_VERSION;
 }
 
-/** What a hello line claims about its own build, read defensively: this also
- * runs on requests rejected before they were ever typed as a `HelloRequest`,
- * so a field of the wrong type is treated as absent rather than trusted. */
 /** A hello's diagnostic string as it may appear in the log, or undefined when
  * it says nothing usable. These fields arrive verbatim from a browser, so they
  * are held to the shape the webui sends (a short word or two joined by `/`)
  * rather than trusted: anything else would let a caller write its own lines
  * into daemon.log. */
-function logToken(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
+function logToken(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
   const trimmed = value.slice(0, 40);
   return /^[A-Za-z0-9._/-]+$/.test(trimmed) ? trimmed : undefined;
 }
 
-function readClientBuild(req: { client_version?: unknown; protocol?: unknown }): ClientBuild {
+/** What a hello claims about its own build. An empty version names none. */
+function readClientBuild(hello: HelloRequest): ClientBuild {
   return {
-    ...(typeof req.client_version === "string" && req.client_version !== ""
-      ? { version: req.client_version }
-      : {}),
-    ...(typeof req.protocol === "number" ? { protocol: req.protocol } : {}),
+    ...(hello.client_version ? { version: hello.client_version } : {}),
+    ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
   };
 }
 
@@ -878,7 +876,7 @@ export function createStatusRefresher(daemon: Daemon): LlmStatusRefresher | null
  * session id is dropped by the parser but is just as good a signal that the
  * upstream is failing. */
 function reportsUpstreamOverload(item: unknown): boolean {
-  return typeof item === "object" && item !== null && (item as { status?: unknown }).status === 529;
+  return typeof item === "object" && item !== null && "status" in item && item.status === 529;
 }
 
 /** Push one `ev:"notify"` down every subscribe stream held by `sid`, returning
@@ -1143,7 +1141,7 @@ function msgVisibleTo(sub: Conn, room: Room, ev: MsgEvent): boolean {
 function normalizeTo(to: string | string[] | undefined): string[] | undefined {
   if (to === undefined) return undefined;
   const arr = Array.isArray(to) ? to : [to];
-  const ids = arr.filter((s): s is string => typeof s === "string" && s.length > 0);
+  const ids = arr.filter((s) => s.length > 0);
   return ids.length > 0 ? ids : undefined;
 }
 
@@ -1257,23 +1255,13 @@ function injectMessage(
 }
 
 /**
- * `since_seq` value validity (DR-0016 §2.5): must be a finite non-negative
- * number. A room's `since_seq` entry reaches here straight from
- * `JSON.parse(line) as Request` with no schema validation upstream, so a
- * malformed/malicious value (string, negative, NaN, Infinity) is a real
- * possibility, not just a type-checker formality. An invalid value is treated
- * as "no cursor for this room" — safe side is full backlog replay (duplicate
- * delivery), never an out-of-range array/loop hazard.
- */
-function isValidSeqCursor(v: number | undefined): v is number {
-  return typeof v === "number" && Number.isFinite(v) && v >= 0;
-}
-
-/**
  * Initial/backlog delivery of a room to one subscriber.
- * - with sinceSeq (valid per isValidSeqCursor): positional delta anchored on
- *   `seq`, which spans EVERY event type (DR-0016) — takes priority over
- *   sinceMid when both are supplied.
+ * - with sinceSeq: positional delta anchored on `seq`, which spans EVERY
+ *   event type (DR-0016) — takes priority over sinceMid when both are
+ *   supplied. A `since_seq` value that is not a finite non-negative number
+ *   reaches here as no sinceSeq (the request schema reads it as `null`,
+ *   DR-0016 §2.5): the safe side is full backlog replay (duplicate delivery),
+ *   never an out-of-range array/loop hazard.
  * - else with sinceMid: positional delta — everything after the msg with that mid
  *   (BBS replay, msg-only cursor, old-client compat).
  * - without either: present member state + title/link events + the last N=50 msgs
@@ -1295,7 +1283,7 @@ function sendBacklog(
   sinceSeq?: number,
   includeMsgs = true,
 ): void {
-  if (isValidSeqCursor(sinceSeq)) {
+  if (sinceSeq !== undefined) {
     // Anchoring on "last event with seq <= sinceSeq" is correct at both ends:
     // a caught-up client (sinceSeq >= room.lastSeq) gets nothing, a client
     // whose cursor predates the room's start gets everything. Every event in
@@ -1303,12 +1291,11 @@ function sendBacklog(
     // appendEvent stamps new ones — DR-0016 §2.1/§2.2), so this is a plain
     // positional scan, not a search over possibly-undefined values.
     let start = 0;
-    for (let i = 0; i < room.events.length; i++) {
-      const ev = room.events[i]!;
+    for (const [i, ev] of room.events.entries()) {
       if (ev.seq !== undefined && ev.seq <= sinceSeq) start = i + 1;
     }
-    for (let i = start; i < room.events.length; i++) {
-      const ev = room.events[i]!;
+    for (const [i, ev] of room.events.entries()) {
+      if (i < start) continue;
       // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
       if (isSuppressedForSubscriber(conn, room, ev)) continue;
       if (ev.type === "msg") {
@@ -1324,12 +1311,11 @@ function sendBacklog(
     // (sinceMid >= lastMid) gets nothing, a client missing the start (sinceMid <
     // firstMid) gets everything. Non-msg events after that anchor are included.
     let start = 0;
-    for (let i = 0; i < room.events.length; i++) {
-      const ev = room.events[i]!;
+    for (const [i, ev] of room.events.entries()) {
       if (ev.type === "msg" && ev.mid <= sinceMid) start = i + 1;
     }
-    for (let i = start; i < room.events.length; i++) {
-      const ev = room.events[i]!;
+    for (const [i, ev] of room.events.entries()) {
+      if (i < start) continue;
       // DR-0013 §2.3: broadcast room の member/leave は since replay でも配信しない。
       // live deliver と since replay の両輪でスキップして、遅れて再接続した member
       // の subscribe stream にも noise を復元させない。
@@ -1445,8 +1431,7 @@ function findOneOnOneRoomForSid(daemon: Daemon, sid: string): Room | null {
   for (const room of daemon.rooms.values()) {
     if (room.kind !== "1on1") continue;
     const present = presentMembers(room).filter((m) => m.id !== ADMIN_ID);
-    if (present.length !== 1) continue;
-    if (present[0]!.sid === sid) return room;
+    if (present.length === 1 && present[0]?.sid === sid) return room;
   }
   return null;
 }
@@ -1522,7 +1507,7 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 // is defense in depth: it keeps every op that touches session state on one
 // uniform "must identify first" rule rather than special-casing these as the
 // sole unauthenticated readers of another session's filesystem/transcript.
-const IDENTITY_OPS = new Set([
+const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "post",
   "message_send",
   "say",
@@ -1578,18 +1563,33 @@ const CLIENT_TRACE_MAX_POINTS = 8;
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
-/** Start handling one request. Requests of the same connection run
+/** How a transport reads a hello: the hello as the client sent it, or what
+ * the transport makes of it (the WebSocket pins every hello to the user role,
+ * http.ts). */
+export type HelloReading = (hello: HelloRequest) => HelloRequest;
+
+/** Start handling one request line. Requests of the same connection run
  * concurrently: a reply carries the `request_id` of the request it answers
  * (see RequestEnvelope), so a client settles it by id and an op that awaits IO
  * does not hold back the cheap ops queued behind it. Each request swallows
  * its own failure so one rejected op cannot take down the connection. */
-export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
-  void handleOneRequest(daemon, conn, line).catch((e: unknown) => {
+export function handleRequest(
+  daemon: Daemon,
+  conn: Conn,
+  line: string,
+  readHello: HelloReading = (hello) => hello,
+): void {
+  void handleOneRequest(daemon, conn, line, readHello).catch((e: unknown) => {
     daemon.log.error(`request handling failed: ${String(e)}`);
   });
 }
 
-async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promise<void> {
+async function handleOneRequest(
+  daemon: Daemon,
+  conn: Conn,
+  line: string,
+  readHello: HelloReading,
+): Promise<void> {
   // Bytes that arrived before the disconnect but are read after it. Their
   // replies would be discarded (send() no-ops), but their registry writes
   // would not: hello would resurrect a session entry for a socket nobody
@@ -1598,37 +1598,47 @@ async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promi
   // request already running when the disconnect lands is cleaned up after
   // dispatch instead (see the end of this function).
   if (!daemon.connections.has(conn)) return;
-  let req: Request;
-  try {
-    req = JSON.parse(line) as Request;
-  } catch {
+  // The line is read once, by the request schema (DR-0038): from here on it
+  // is a typed request, or a typed reason it is not one.
+  const read = readRequest(line);
+  if (!read.ok && read.reason === "not_json") {
     sendErr(conn, ErrorCode.bad_request, "invalid JSON");
     return;
   }
-  if (typeof req !== "object" || req === null || typeof (req as { op?: unknown }).op !== "string") {
+  if (!read.ok && read.reason === "no_op") {
     sendErr(conn, ErrorCode.bad_request, "missing op");
     return;
   }
   // Everything from here on is answered with a correlated reply, so the id has
   // to be known first. A request without one cannot be answered in a way its
   // sender could pair up: report it as bad_request (uncorrelated, like the two
-  // parse failures above) rather than dispatching into a reply nobody claims.
+  // failures above) rather than dispatching into a reply nobody claims.
   // No compatibility path for the pre-correlation clients that omit it — that
   // is a deliberate break (DR-0029 追補 / DR-0002 §4 設計意図); a subscribe from
   // before this envelope is resolved by restarting it, not by serving it here.
-  if (typeof req.request_id !== "string" || req.request_id === "") {
+  if (!read.ok && read.reason === "no_request_id") {
     // The refusal stands, but a client this old is otherwise invisible: it
     // never registers, so nothing in the session list ever mentions it. File
     // it against the sid its hello claimed, which is the only thing here that
     // ties the failing process back to a session kawaz can act on.
-    if (req.op === "hello" && typeof req.sid === "string" && req.sid !== "") {
-      markStaleClient(daemon, req.sid, readClientBuild(req));
+    const hello = read.hello === undefined ? undefined : readHello(read.hello);
+    if (hello?.sid) {
+      markStaleClient(daemon, hello.sid, readClientBuild(hello));
       maybeBroadcastPeers(daemon);
     }
-    sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires a non-empty string request_id`);
+    sendErr(conn, ErrorCode.bad_request, `op '${read.op}' requires a non-empty string request_id`);
     return;
   }
-  await activeRequest.run({ conn, requestId: req.request_id }, async () => {
+  const requestId = read.ok ? read.request.request_id : read.requestId;
+  await activeRequest.run({ conn, requestId }, async () => {
+    if (!read.ok) {
+      refuseRequest(daemon, conn, read);
+      return;
+    }
+    const req =
+      read.request.op === "hello"
+        ? { ...readHello(read.request), request_id: read.request.request_id }
+        : read.request;
     if (IDENTITY_OPS.has(req.op) && conn.identity === null) {
       sendErr(conn, ErrorCode.hello_required, `op '${req.op}' requires hello first`);
       return;
@@ -1654,6 +1664,33 @@ async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promi
     const entry = daemon.sessions.get(id.sid);
     if (entry) entry.lastActivityAt = nowIso();
   }
+}
+
+/** Answer a request that names its id but cannot be dispatched: an op this
+ * daemon does not have, or one whose fields are not what it takes. A
+ * connection that has not said hello is told that first for an op that needs
+ * it, exactly as a well-formed request of that op would be.
+ *
+ * Fields that are not what the op takes are a client's bug, and the reply
+ * goes to a client that may only log it somewhere nobody looks (a session's
+ * hooks module, a browser console), so the refusal is logged here too. */
+function refuseRequest(
+  daemon: Daemon,
+  conn: Conn,
+  read: Extract<RequestRead, { reason: "unknown_op" | "invalid_args" }>,
+): void {
+  if (read.reason === "unknown_op") {
+    sendErr(conn, ErrorCode.unknown_op, `unknown op: ${read.op}`);
+    return;
+  }
+  if (IDENTITY_OPS.has(read.op) && conn.identity === null) {
+    sendErr(conn, ErrorCode.hello_required, `op '${read.op}' requires hello first`);
+    return;
+  }
+  const id = conn.identity;
+  const from = id === null ? "a connection without hello" : id.role === "user" ? "user" : id.sid;
+  daemon.log.warn(`${read.op} from ${from} refused: ${read.failure.summary}`);
+  sendErr(conn, ErrorCode.invalid_args, `op '${read.op}': ${read.failure.summary}`);
 }
 
 async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
@@ -1974,25 +2011,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "create_room": {
-      const explicitMembers = Array.isArray(req.members) ? req.members : [];
-      // The wire value is unchecked JSON, so it is read as unknown. A 1on1 room
-      // is not opened through create_room (DR-0035 §2): the person reaches a
-      // session through session_input, and the say op opens the room it
-      // records into on its own.
-      const kindRaw: unknown = req.kind;
-      if (kindRaw === "1on1") {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          "create_room cannot open a 1on1 room; omit kind for a normal room",
-        );
-        return;
-      }
-      if (kindRaw !== undefined && kindRaw !== "normal" && kindRaw !== "broadcast") {
-        sendErr(conn, ErrorCode.invalid_args, 'create_room kind must be "normal" or "broadcast"');
-        return;
-      }
-      const kind: RoomKind = kindRaw === "broadcast" ? "broadcast" : "normal";
+      const explicitMembers = req.members;
+      // A 1on1 room is not opened through create_room (DR-0035 §2): the
+      // person reaches a session through session_input, and the say op opens
+      // the room it records into on its own. The request schema refuses that
+      // kind, so `kind` is one create_room opens.
+      const kind: RoomKind = req.kind ?? "normal";
 
       if (kind === "broadcast") {
         // DR-0013 §2.2 broadcast rooms auto-populate from the live session
@@ -2020,10 +2044,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // Sorting by sid keeps the a1/a2/... assignment deterministic across
         // daemon restarts / test runs so a downstream that reads member.id
         // sees a stable order.
-        const activeSids = [...daemon.sessions.values()].map((s) => s.meta.sid).sort();
+        const activeMetas = [...daemon.sessions.values()]
+          .map((s) => s.meta)
+          .sort((a, b) => (a.sid < b.sid ? -1 : a.sid > b.sid ? 1 : 0));
         let seq = 1;
-        for (const sid of activeSids) {
-          const meta = daemon.sessions.get(sid)!.meta;
+        for (const meta of activeMetas) {
+          const sid = meta.sid;
           appendEvent(room, {
             type: "member",
             id: `a${seq++}`,
@@ -2063,15 +2089,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
 
       const ordered: string[] = [];
-      const id = conn.identity!;
+      const id = conn.identity;
+      if (id === null) {
+        sendErr(conn, ErrorCode.hello_required, "op 'create_room' requires hello first");
+        return;
+      }
       // Auto-prepend caller sid unless include_self=false (CLI --exclude-self,
       // for an observer session that watches a room without participating).
       // User-role callers (webui backend) never auto-include either way — u1 is
       // implicit in every room already (DR-0006 §2).
       const includeSelf = req.include_self !== false;
       if (id.role === "session" && includeSelf) ordered.push(id.sid);
-      for (const sid of explicitMembers)
-        if (typeof sid === "string" && !ordered.includes(sid)) ordered.push(sid);
+      for (const sid of explicitMembers) if (!ordered.includes(sid)) ordered.push(sid);
       if (ordered.length === 0) {
         sendErr(conn, ErrorCode.invalid_args, "create_room needs at least one member");
         return;
@@ -2197,10 +2226,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'say' requires session role");
         return;
       }
-      if (typeof req.text !== "string") {
-        sendErr(conn, ErrorCode.invalid_args, "say requires a text string");
-        return;
-      }
       const sid = conn.identity.sid;
       let room = findOneOnOneRoomForSid(daemon, sid);
       const created = room === null;
@@ -2227,7 +2252,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       } else {
         deliver(daemon, room, ev, authorOf(conn));
       }
-      send(conn, { ok: true, room: room.id, seq: ev.seq!, created });
+      // appendEvent stamped the event with the room's new last seq.
+      send(conn, { ok: true, room: room.id, seq: room.lastSeq, created });
       return;
     }
 
@@ -2276,7 +2302,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      const title = typeof req.title === "string" ? req.title.trim() : "";
+      const title = req.title.trim();
       if (title === "") {
         sendErr(conn, ErrorCode.invalid_args, "set_title requires a non-empty title");
         return;
@@ -2308,10 +2334,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      if (typeof req.archived !== "boolean") {
-        sendErr(conn, ErrorCode.invalid_args, "archive_room requires a boolean archived");
-        return;
-      }
       const archived = req.archived;
       if (room.archived === archived) {
         // toggle already at the requested value: skip the redundant append/broadcast
@@ -2340,7 +2362,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
         return;
       }
-      const targetId = typeof req.id === "string" ? req.id : "";
+      const targetId = req.id;
       // ADMIN_ID (u1) has no member row (implicit member, DR-0006) so it's never in
       // presentIds — self-kick is naturally invalid_args, no separate guard needed.
       const presentIds = new Set(presentMembers(room).map((m) => m.id));
@@ -2377,11 +2399,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const sinceMid = req.since?.[room.id];
         const sinceSeq = req.since_seq?.[room.id];
         // Presence, not validity, decides opt-in: a room the caller named in
-        // since/since_seq at all (even with a malformed value) means "I have a
-        // cursor concept for this room" — sendBacklog's own isValidSeqCursor
-        // check below still resolves a bad value to the full join snapshot
-        // (DR-0016 §2.5's "duplicates over silent loss"), it just doesn't fall
-        // all the way to the new no-cursor-named default.
+        // since/since_seq at all (even with a malformed value, which the
+        // request schema reads as null) means "I have a cursor concept for
+        // this room" — a null cursor still resolves to the full join snapshot
+        // below (DR-0016 §2.5's "duplicates over silent loss"), it just doesn't
+        // fall all the way to the new no-cursor-named default.
         const hasCursor = sinceMid !== undefined || sinceSeq !== undefined;
         if (!hasCursor && req.backlog !== true) {
           // Recent-replay: for this room the subscriber gets no history via
@@ -2402,7 +2424,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           cursors.push({ room: room.id, last_mid: room.lastMid });
           continue;
         }
-        sendBacklog(conn, room, sinceMid, undefined, sinceSeq, streamsMsgs(conn));
+        sendBacklog(
+          conn,
+          room,
+          sinceMid ?? undefined,
+          undefined,
+          sinceSeq ?? undefined,
+          streamsMsgs(conn),
+        );
       }
       if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       if (conn.identity?.role === "user") {
@@ -2492,7 +2521,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "notify": {
-      const id = conn.identity!;
+      const id = conn.identity;
+      if (id === null) {
+        sendErr(conn, ErrorCode.hello_required, "op 'notify' requires hello first");
+        return;
+      }
       const targetSid = req.sid ?? (id.role === "session" ? id.sid : undefined);
       const targetUser = req.sid === undefined && id.role === "user";
       let delivered = 0;
@@ -2564,14 +2597,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const launcher = daemon.config.session_launcher;
+      if (!launcher) {
+        sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
+        return;
+      }
       const validation = validateSessionLaunch(launcher, req);
       if (!validation.ok) {
         sendErr(conn, validation.code, validation.msg);
         return;
       }
-      // The validation success branch proves launcher exists: an absent config
-      // returns launcher_not_configured before process execution is reachable.
-      send(conn, await executeSessionLaunch(validation, launcher!.timeout_seconds));
+      send(conn, await executeSessionLaunch(validation, launcher.timeout_seconds));
       return;
     }
 
@@ -2580,10 +2615,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // kill each other. Same gate wording/pattern as session_launch.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_kill' requires user role");
-        return;
-      }
-      if (typeof req.session_id !== "string" || req.session_id === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_kill requires a non-empty session_id");
         return;
       }
       // Slow: the fresh `claude agents` run plus up to 3s of kill grace
@@ -2613,10 +2644,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // and a session-role agent must not be able to drive its peers' TUIs.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_rename' requires user role");
-        return;
-      }
-      if (typeof req.session_id !== "string" || req.session_id === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_rename requires a non-empty session_id");
         return;
       }
       // Title validation happens before the delivery attempt so a malformed
@@ -2664,14 +2691,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_input' requires user role");
         return;
       }
-      if (typeof req.session_id !== "string" || req.session_id === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_input requires a non-empty session_id");
-        return;
-      }
-      if (typeof req.text !== "string" || req.text.trim() === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_input requires a non-empty text");
-        return;
-      }
       // Slow reply: it waits for the session's hooks module to reply, up to
       // SESSION_INPUT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
@@ -2701,15 +2720,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // A refused reply is logged: the module's own debug log is the only
       // other place it would show, and a late or misaddressed reply is what
       // explains a session_input that came back unconfirmed.
-      // The request line itself is not read by a schema here, so its `reply`
-      // is read as what it claims to be.
-      const read = parseWith(SidecarReplySchema, req.reply);
-      if (!read.ok) {
-        daemon.log.warn(`sidecar_reply from ${conn.identity.sid} refused: ${read.failure.summary}`);
-        sendErr(conn, ErrorCode.invalid_args, `sidecar_reply: ${read.failure.summary}`);
-        return;
-      }
-      const reply = read.value;
+      const reply = req.reply;
       if (!daemon.sidecarReplies.take(conn.identity.sid, reply)) {
         daemon.log.warn(
           `sidecar_reply ${reply.id} from ${conn.identity.sid} refused: no request is waiting under that id for this session (answered already, past its wait, or sent elsewhere)`,
@@ -2731,10 +2742,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // environment (which routinely holds that session's credentials).
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_env' requires user role");
-        return;
-      }
-      if (typeof req.session_id !== "string" || req.session_id === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_env requires a non-empty session_id");
         return;
       }
       // Slow for session_kill's reason: the fresh `claude agents` resolution.
@@ -3224,10 +3231,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'translate' requires user role");
         return;
       }
-      if (!Array.isArray(req.texts) || req.texts.some((text) => typeof text !== "string")) {
-        sendErr(conn, ErrorCode.invalid_args, "translate requires a string[] texts");
-        return;
-      }
       // Translation.framework and helper process I/O are async; a thrown
       // helper failure is mapped to translate_helper_failed here rather than
       // falling through to the dispatch-wide `internal`.
@@ -3288,17 +3291,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'client_trace' requires user role");
         return;
       }
-      const points = Array.isArray(req.points) ? req.points.slice(0, CLIENT_TRACE_MAX_POINTS) : [];
+      const points = req.points.slice(0, CLIENT_TRACE_MAX_POINTS);
       // Every point of a batch is queued in this turn, so they share one flush;
       // awaiting the last of them is awaiting the whole batch reaching disk,
       // which is what makes `written` an honest count rather than an intent.
       let written: Promise<void> | null = null;
       for (const point of points) {
         written = daemon.trace.write({
-          ts: typeof point.ts === "string" ? point.ts : undefined,
-          comp: "webui",
-          edge: point.edge === "out" ? "out" : "in",
-          kind: String(point.kind),
+          ts: point.ts,
+          comp: point.comp,
+          edge: point.edge,
+          kind: point.kind,
           sid: req.sid,
           start: req.start,
           end: req.end,
@@ -3384,11 +3387,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      const targetSid = typeof req.sid === "string" ? req.sid : "";
-      if (targetSid === "") {
-        sendErr(conn, ErrorCode.invalid_args, "invite requires sid");
-        return;
-      }
+      const targetSid = req.sid;
       // the invite target must be a currently connected session — same live registry
       // create_room's `members` reads from, not an arbitrary historical sid.
       const targetEntry = daemon.sessions.get(targetSid);
@@ -3444,7 +3443,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     default: {
-      sendErr(conn, ErrorCode.unknown_op, `unknown op: ${(req as { op: string }).op}`);
+      // Every op the request schema reads has a case above; an unknown op is
+      // answered before dispatch (refuseRequest).
+      const unhandled: never = req;
+      void unhandled;
       return;
     }
   }
@@ -3454,14 +3456,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
 function buildDedupIndex(rooms: Map<string, Room>): Map<string, string> {
   const index = new Map<string, string>();
+  const createdAt = new Map<string, number>();
   for (const room of rooms.values()) {
     if (!room.dedupEligible || room.dedupKey === "") continue;
-    const cur = index.get(room.dedupKey);
-    if (!cur) {
+    const cur = createdAt.get(room.dedupKey);
+    if (cur === undefined || room.createdAt > cur) {
       index.set(room.dedupKey, room.id);
-    } else {
-      const curRoom = rooms.get(cur)!;
-      if (room.createdAt > curRoom.createdAt) index.set(room.dedupKey, room.id);
+      createdAt.set(room.dedupKey, room.createdAt);
     }
   }
   return index;
@@ -3696,8 +3697,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   function flushPending(socket: Bun.Socket<UdsConnState>): void {
     const state = socket.data;
-    while (state.pending.length > 0) {
-      const chunk = state.pending[0]!;
+    for (let chunk = state.pending[0]; chunk !== undefined; chunk = state.pending[0]) {
       let n: number;
       try {
         n = socket.write(chunk);

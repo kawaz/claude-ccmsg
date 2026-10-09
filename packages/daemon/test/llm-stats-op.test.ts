@@ -43,7 +43,7 @@ function daemonWith(llmStatsUrl?: string): Daemon {
     config: llmStatsUrl ? { llm_stats_url: llmStatsUrl } : {},
     sessions: new Map(),
     connections: new Set<Conn>(),
-    log: { error() {} },
+    log: { error() {}, warn() {} },
   } as unknown as Daemon;
 }
 

@@ -7,7 +7,7 @@ function daemonWith(translator: TranslateService): Daemon {
     translator,
     sessions: new Map(),
     connections: new Set<Conn>(),
-    log: { error() {} },
+    log: { error() {}, warn() {} },
   } as unknown as Daemon;
   return daemon;
 }
@@ -154,7 +154,10 @@ describe("translate op", () => {
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
-      error: { code: "invalid_args", msg: "translate requires a string[] texts" },
+      error: {
+        code: "invalid_args",
+        msg: "op 'translate': texts.1: Invalid type: Expected string but received 42",
+      },
       request_id: "q1",
     });
   });

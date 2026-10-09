@@ -7,6 +7,7 @@ import { handleFsServe } from "./fs-serve.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
 import { handleSandboxRequest, sandboxGidFromHost } from "./sandbox.ts";
+import type { HelloRequest } from "@ccmsg/protocol";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
 import { handleWebhookRequest } from "./webhook.ts";
 
@@ -41,8 +42,7 @@ interface WsData {
  *  event resumes from there. */
 function flushWsPending(ws: { data: WsData; send(line: string): number }): void {
   const state = ws.data;
-  while (state.pending.length > 0) {
-    const line = state.pending[0]!;
+  for (let line = state.pending[0]; line !== undefined; line = state.pending[0]) {
     let status: number;
     try {
       status = ws.send(line);
@@ -74,48 +74,27 @@ function parseBindSpec(spec: string): { hostname: string; port: number } {
  * claims — silently, not with a bad_request — because the trust boundary here is
  * "reachable == user", not "well-formed session claim == session". Rejecting a session
  * claim would suggest sessions are a legitimate thing to ask for over this transport;
- * they aren't (AI sessions only ever connect over UDS).
+ * they aren't (AI sessions only ever connect over UDS). The hello is pinned once it is
+ * read (server.ts handleRequest): a hello whose fields are not of their types is
+ * refused like any other malformed request, before there is a claim to repin.
  */
-function pinHelloToUser(line: string): string {
-  let req: unknown;
-  try {
-    req = JSON.parse(line);
-  } catch {
-    return line; // malformed JSON: let handleRequest's own parse report bad_request
-  }
-  if (req !== null && typeof req === "object" && (req as { op?: unknown }).op === "hello") {
-    // Everything the client claimed about its *identity* is dropped; its
-    // correlation id is not — the reply still has to reach the caller that is
-    // waiting for it — and neither is what it claimed about its own build,
-    // which is not an identity claim at all: the generation check has to see
-    // it or a browser holding a stale bundle would be served silently. The two
-    // diagnostic fields pass for the same reason: they say which device this
-    // connection is and how the page it runs in was loaded, claims that grant
-    // nothing and that only the daemon log reads.
-    const {
-      request_id: requestId,
-      client_version: clientVersion,
-      protocol,
-      nav_type: navType,
-      ua,
-    } = req as {
-      request_id?: unknown;
-      client_version?: unknown;
-      protocol?: unknown;
-      nav_type?: unknown;
-      ua?: unknown;
-    };
-    return JSON.stringify({
-      op: "hello",
-      role: "user",
-      ...(requestId !== undefined ? { request_id: requestId } : {}),
-      ...(clientVersion !== undefined ? { client_version: clientVersion } : {}),
-      ...(protocol !== undefined ? { protocol } : {}),
-      ...(navType !== undefined ? { nav_type: navType } : {}),
-      ...(ua !== undefined ? { ua } : {}),
-    });
-  }
-  return line;
+function pinHelloToUser(hello: HelloRequest): HelloRequest {
+  // Everything the client claimed about its *identity* is dropped; what it
+  // claimed about its own build is not, since that is not an identity claim
+  // at all: the generation check has to see it or a browser holding a stale
+  // bundle would be served silently. The two diagnostic fields pass for the
+  // same reason: they say which device this connection is and how the page it
+  // runs in was loaded, claims that grant nothing and that only the daemon
+  // log reads. The correlation id is not part of the hello and stays as sent,
+  // so the reply still reaches the caller that is waiting for it.
+  return {
+    op: "hello",
+    role: "user",
+    ...(hello.client_version !== undefined ? { client_version: hello.client_version } : {}),
+    ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
+    ...(hello.nav_type !== undefined ? { nav_type: hello.nav_type } : {}),
+    ...(hello.ua !== undefined ? { ua: hello.ua } : {}),
+  };
 }
 
 /**
@@ -358,7 +337,7 @@ export function startHttpListener(
         for (const rawLine of text.split("\n")) {
           const trimmed = rawLine.trim();
           if (trimmed === "") continue;
-          handleRequest(daemon, conn, pinHelloToUser(trimmed));
+          handleRequest(daemon, conn, trimmed, pinHelloToUser);
         }
       },
       drain(ws) {

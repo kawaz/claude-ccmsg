@@ -8,6 +8,7 @@ import {
   isSessionIdShape,
   renderDirectDelivery,
   type MessageSendReason,
+  type MessageSendRequest,
 } from "@ccmsg/protocol";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
 
@@ -31,26 +32,15 @@ export function createMidIssuer(
   return () => `${instanceId}/${++counter}`;
 }
 
-export interface MessageSendArgs {
-  to: unknown;
-  text: unknown;
-  reply_to?: unknown;
-}
+export type MessageSendArgs = Pick<MessageSendRequest, "to" | "text" | "reply_to">;
 
 /** Why the request itself cannot be carried out, or undefined when it can.
  * `from` is the sending session's sid. */
 export function messageSendArgsError(args: MessageSendArgs, from: string): string | undefined {
-  if (typeof args.to !== "string" || !isSessionIdShape(args.to)) {
-    return "message_send requires to: a session id";
-  }
+  if (!isSessionIdShape(args.to)) return "message_send requires to: a session id";
   if (args.to === from) return "message_send cannot send to the sending session itself";
-  if (typeof args.text !== "string" || args.text === "") {
-    return "message_send requires a non-empty text";
-  }
-  if (
-    args.reply_to !== undefined &&
-    (typeof args.reply_to !== "string" || !isDirectMid(args.reply_to))
-  ) {
+  if (args.text === "") return "message_send requires a non-empty text";
+  if (args.reply_to !== undefined && !isDirectMid(args.reply_to)) {
     return "message_send reply_to must be a direct message mid (<instance id>/<n>)";
   }
   return undefined;

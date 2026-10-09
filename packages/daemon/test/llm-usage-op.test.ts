@@ -61,7 +61,7 @@ function daemonWith(llmUsageUrl?: string): Daemon {
     config: llmUsageUrl ? { llm_usage_url: llmUsageUrl } : {},
     sessions: new Map(),
     connections: new Set<Conn>(),
-    log: { error() {} },
+    log: { error() {}, warn() {} },
   } as unknown as Daemon;
 }
 

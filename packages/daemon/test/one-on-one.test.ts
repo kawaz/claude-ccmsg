@@ -147,7 +147,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           expect(res.ok).toBe(false);
           expect(res.error).toEqual({
             code: "invalid_args",
-            msg: "create_room cannot open a 1on1 room; omit kind for a normal room",
+            msg: "op 'create_room': kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
           });
         }
         const after = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
@@ -177,7 +177,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         expect(res.ok).toBe(false);
         expect(res.error).toEqual({
           code: "invalid_args",
-          msg: 'create_room kind must be "normal" or "broadcast"',
+          msg: 'op \'create_room\': kind: Invalid type: Expected ("normal" | "broadcast") but received "group"',
         });
       } finally {
         await stopTestDaemon(ctx);

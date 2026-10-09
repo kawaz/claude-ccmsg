@@ -554,7 +554,7 @@ describe("session_input over the wire", () => {
       // A refused reply leaves a line in daemon.log, with its id when it has one.
       const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
       expect(log).toContain(`sidecar_reply never-sent from ${SID} refused: no request is waiting`);
-      expect(log).toContain(`sidecar_reply from ${SID} refused: error: Invalid key`);
+      expect(log).toContain(`sidecar_reply from ${SID} refused: reply.error: Invalid key`);
       user.close();
       session.close();
     } finally {

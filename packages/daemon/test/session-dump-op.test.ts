@@ -54,7 +54,7 @@ function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: s
     config: {},
     sessions,
     connections: new Set<Conn>(),
-    log: { error() {} },
+    log: { error() {}, warn() {} },
   } as unknown as Daemon;
   return { daemon, dataDir };
 }

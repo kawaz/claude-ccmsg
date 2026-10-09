@@ -60,7 +60,7 @@ function daemonWith(llmStatusUrl?: string): Daemon {
     subscribers: new Set<Conn>(),
     llmRequests: new LlmRequestCache(),
     llmStatusRefresher: null,
-    log: { error() {}, info() {} },
+    log: { error() {}, info() {}, warn() {} },
   } as unknown as Daemon;
 }
 
@@ -136,10 +136,23 @@ describe("llm_status op", () => {
     const daemon = daemonWith(STATUS_URL);
     await requestFrames(daemon, USER, { op: "llm_status", request_id: "r1", refresh: true }, 1);
     expect(received.at(-1)).toBe("true");
+    await requestFrames(daemon, USER, { op: "llm_status", request_id: "r2", refresh: false }, 1);
+    expect(received.at(-1)).toBeNull();
+    await requestFrames(daemon, USER, { op: "llm_status", request_id: "r3" }, 1);
+    expect(received.at(-1)).toBeNull();
+    // A refresh that is not a boolean is refused before the gateway is asked
+    // anything, so it can never stand for "refresh".
+    const asked = received.length;
     for (const refresh of ["true", 1, null]) {
-      await requestFrames(daemon, USER, { op: "llm_status", request_id: "r2", refresh }, 1);
-      expect(received.at(-1)).toBeNull();
+      const [reply] = await requestFrames(
+        daemon,
+        USER,
+        { op: "llm_status", request_id: "r4", refresh },
+        1,
+      );
+      expect(reply?.error.code).toBe(ErrorCode.invalid_args);
     }
+    expect(received.length).toBe(asked);
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
