@@ -51,6 +51,7 @@ import {
   type Segment,
   type TimelineEntry,
 } from "../src/client/transcript-model.ts";
+import { renderDirectDelivery } from "@ccmsg/protocol";
 
 // Terse ParsedLine builders for groupTimelineLines/foldGroupLabel tests below
 // — these tests care about kind/role/segment shape, not the full jsonl
@@ -5353,6 +5354,66 @@ describe("standalone ccmsg in the transcript", () => {
     expect(extractCcmsgMessages(lines[4]!)[0]).toMatchObject({
       msg: "done",
       direct: { verb: "notify", status: "pending" },
+    });
+  });
+
+  // The direct message this plugin's daemon writes (DR-0036 §1), and the
+  // launcher-path `post <sid>` / `reply <mid> --to` calls with what that CLI
+  // prints.
+  test("this plugin's direct envelope is a peer bubble without its launcher reply line", () => {
+    const directMid = "0123456789abcdef0123456789abcdef/2";
+    const envelope = renderDirectDelivery(
+      {
+        mid: directMid,
+        from: SID,
+        replyTo: "0123456789abcdef0123456789abcdef/1",
+        text: "結果です",
+      },
+      "/plugin/bin/ccmsg",
+    );
+    const [line] = parse([deliveredRow(envelope)]);
+    const [message] = extractCcmsgMessages(line!);
+    expect(message).toEqual({
+      from: SID,
+      room: "",
+      msg: "結果です",
+      ts: "2026-09-26T07:46:39.054Z",
+      direct: {
+        direction: "in",
+        id: directMid,
+        replyTo: "0123456789abcdef0123456789abcdef/1",
+      },
+    });
+    expect(classifyBoundaryLine(line!)).toBeNull();
+    expect(ccmsgDedupKey(message!)).toBe(`direct-in|${directMid}`);
+  });
+
+  test("this plugin's post <ccmsg:sid> and reply --to: sent, or failed with why", () => {
+    const directMid = "0123456789abcdef0123456789abcdef/2";
+    const lines = parse([
+      bashUse("d1", `/plugin/bin/ccmsg post ccmsg:${SID} 'hello'`),
+      bashResult("d1", `{"delivered":true,"mid":"${directMid}"}\n`),
+      bashUse("d2", `/plugin/bin/ccmsg reply ${directMid} --to ${SID} 'answer'`),
+      bashResult(
+        "d2",
+        "Exit code 1\nccmsg: 届かなかった (refused)。メッセージは daemon に残らない。宛先のセッションが受け取りを拒否した。",
+        true,
+      ),
+    ]);
+    expect(extractCcmsgMessages(lines[0]!)[0]).toMatchObject({
+      to: [SID],
+      msg: "hello",
+      direct: { verb: "post", status: "sent" },
+    });
+    expect(extractCcmsgMessages(lines[2]!)[0]).toMatchObject({
+      to: [SID],
+      msg: "answer",
+      direct: {
+        verb: "reply",
+        replyTo: directMid,
+        status: "failed",
+        error: expect.stringContaining("届かなかった (refused)"),
+      },
     });
   });
 
