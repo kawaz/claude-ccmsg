@@ -15,14 +15,14 @@ ccmsg web UI を支える中央デーモン。
 
 ```
 claude plugin marketplace add kawaz/claude-ccmsg
-claude plugin install ccmsg-v1@claude-ccmsg
+claude plugin install ccmsg-v1@ccmsg-v1
 ```
 
 アップデート:
 
 ```
-claude plugin marketplace update claude-ccmsg
-claude plugin update ccmsg-v1@claude-ccmsg
+claude plugin marketplace update ccmsg-v1
+claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
 plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では
