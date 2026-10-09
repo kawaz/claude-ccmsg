@@ -11,6 +11,7 @@ import type {
 import {
   ACCEPT_WAIT_MS,
   type Engine,
+  answer,
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,
@@ -26,6 +27,7 @@ import {
   replyArgv,
   RESPAWN_MIN_MS,
   samePrompt,
+  shown,
 } from "./composer-fill.ts";
 
 /** The module states the wire's shapes itself (it may import nothing that
@@ -87,6 +89,8 @@ interface Fake {
   runs: string[][];
   /** What each run got on standard input, by the index of the run. */
   stdins: (string | undefined)[];
+  /** The env each run was given, by the index of the run. */
+  envs: (Record<string, string> | undefined)[];
   spawns: { argv: readonly string[]; stream: ReturnType<typeof controlledStream> }[];
   timers: Timer[];
   hooks: Map<string, Hook>;
@@ -113,6 +117,7 @@ function fakeEngine(
     composer: { text: options.draft ?? "" },
     runs: [] as string[][],
     stdins: [] as (string | undefined)[],
+    envs: [] as (Record<string, string> | undefined)[],
     spawns: [] as Fake["spawns"],
     timers: [] as Timer[],
     hooks: new Map<string, Hook>(),
@@ -146,6 +151,7 @@ function fakeEngine(
       run: async (argv, init) => {
         fake.runs.push([...argv]);
         fake.stdins.push(init?.stdin);
+        fake.envs.push(init?.env);
         if (argv[0] === "hyoui") {
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
@@ -444,7 +450,7 @@ describe("a session that changes its id (/clear)", () => {
   });
 
   // The id changed between the fill and Enter: no Enter, the draft goes
-  // back, and the module cannot say more than unconfirmed.
+  // back: the text is known not to be in.
   test("a changed id before Enter keeps the text out", async () => {
     const fake = fakeEngine({ draft: "keep", onEnter: submitComposer });
     const state = registerOn(fake);
@@ -457,7 +463,10 @@ describe("a session that changes its id (/clear)", () => {
       fake.sid.value = NEW_SID;
       return filled;
     };
-    expect(await handlePromptSend(fake.$, state, request)).toEqual({ outcome: "unconfirmed" });
+    expect(await handlePromptSend(fake.$, state, request)).toEqual({
+      outcome: "not_delivered",
+      reason: "session_changed",
+    });
     expect(fake.runs).toEqual([]);
     expect(fake.composer.text).toBe("keep");
   });
@@ -477,7 +486,7 @@ describe("a session that changes its id (/clear)", () => {
     });
   });
 
-  test("a prompt.send queued under the old id is not filled, and is unconfirmed", async () => {
+  test("a prompt.send queued under the old id is not filled: session_changed", async () => {
     const fake = fakeEngine({ onEnter: submitComposer });
     registerOn(fake);
     await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
@@ -491,7 +500,7 @@ describe("a session that changes its id (/clear)", () => {
     expect(JSON.parse(fake.stdins[0]!)).toEqual({
       id: "old",
       ok: true,
-      result: { outcome: "unconfirmed" },
+      result: { outcome: "not_delivered", reason: "session_changed" },
     });
   });
 });
@@ -567,6 +576,51 @@ describe("requests the module answers without running prompt.send", () => {
     expect(fake.logs.filter((l) => l.includes("names no request id")).length).toBe(2);
   });
 
+  for (const [name, args] of [
+    ["no args", undefined],
+    ["args with a key", { x: 1 }],
+    ["an array", []],
+  ] as const) {
+    test(`describe with ${name} is invalid_args`, async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      const reply = await replyTo(fake, JSON.stringify({ v: 1, op: "describe", id: "d0", args }));
+      expect(reply).toMatchObject({ id: "d0", ok: false, error: { code: "invalid_args" } });
+      expect(fake.runs.filter((argv) => argv.at(-1) === "version")).toEqual([]);
+    });
+  }
+
+  // A version whose own toString is not a function must not keep the reply
+  // from being made.
+  test("a version that String() cannot print is still answered", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const reply = await replyTo(
+      fake,
+      '{"v":{"toString":null},"op":"describe","id":"q5","args":{}}',
+    );
+    expect(reply).toMatchObject({ id: "q5", ok: false, error: { code: "unsupported_version" } });
+  });
+
+  test("a reply that cannot be sent is logged, and answering does not throw", async () => {
+    const fake = fakeEngine();
+    const process = fake.$.process;
+    fake.$.process = {
+      ...process,
+      run: async (argv, init) => {
+        if (argv[2] === "reply") throw new Error("spawn failed");
+        return process.run(argv, init);
+      },
+    };
+    const state = registerOn(fake);
+    expect(
+      await answer(fake.$, state, fake.sid.value, 0, '{"v":1,"op":"nope","id":"q6","args":{}}'),
+    ).toBeUndefined();
+    expect(
+      fake.logs.some((l) => l.includes("reply q6 failed: ") && l.includes("spawn failed")),
+    ).toBe(true);
+  });
+
   test("describe lists the ops and the ccmsg version beside the module", async () => {
     const fake = fakeEngine({ version: "1.2.3" });
     registerOn(fake);
@@ -574,6 +628,9 @@ describe("requests the module answers without running prompt.send", () => {
     const result: DescribeResult = { v: [1], ops: ["describe", "prompt.send"], version: "1.2.3" };
     expect(reply).toEqual({ id: "d1", ok: true, result });
     expect(fake.runs[0]).toEqual(["/plugin/bin/ccmsg", "version"]);
+    // The launcher must not hand over to a newer ccmsg on PATH, whose version
+    // would not be this module's.
+    expect(fake.envs[0]).toEqual({ CCMSG_NO_SELF_EXEC: "1" });
   });
 
   test("describe without a version when ccmsg cannot say", async () => {
@@ -636,6 +693,17 @@ describe("pure helpers", () => {
     expect(parseRequest('{"v":1,"op":"describe","id":""}')).toBeUndefined();
     expect(parseRequest('[{"id":"1"}]')).toBeUndefined();
     expect(parseRequest("not json")).toBeUndefined();
+  });
+
+  test("shown prints any value without throwing", () => {
+    expect(shown("a")).toBe("a");
+    expect(shown(2)).toBe("2");
+    expect(shown({ toString: null })).toBe('{"toString":null}');
+    expect(shown(undefined)).toBe("undefined");
+    expect(shown(new TypeError("bad"))).toBe("TypeError: bad");
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(shown(cyclic)).toBe("[object Object]");
   });
 
   test("promptSendText takes a text other than whitespace, as given", () => {

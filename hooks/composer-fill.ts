@@ -40,7 +40,7 @@ export interface Engine {
   process: {
     run(
       argv: readonly string[],
-      init?: { stdin?: string; timeoutMs?: number },
+      init?: { env?: Record<string, string>; stdin?: string; timeoutMs?: number },
     ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
     spawn(request: {
       argv: readonly string[];
@@ -176,10 +176,12 @@ export function lineSplitter(onLine: (line: string) => void): (piece: string) =>
   };
 }
 
-/** What a prompt.send that ran says. `unconfirmed` is the module not
- * knowing whether the text went in: Enter went out but no UserPromptSubmit
- * came and the composer no longer holds the text, or the session changed its
- * id (/clear, /resume) under the request. */
+/** What a prompt.send that ran says. `session_changed` is a request the
+ * module kept out because the session changed its id (/clear, /resume) before
+ * Enter. `unconfirmed` is the module not knowing whether the text went in:
+ * Enter went out but no UserPromptSubmit came and the composer no longer holds
+ * the text, or the id changed after Enter, or after the fill with the composer
+ * no longer holding the text. */
 export type PromptSendResult =
   | { outcome: "accepted" }
   | {
@@ -190,11 +192,27 @@ export type PromptSendResult =
         | "refused"
         | "no_terminal"
         | "not_submitted"
-        | "enter_failed";
+        | "enter_failed"
+        | "session_changed";
     }
   | { outcome: "unconfirmed" };
 
 const UNCONFIRMED: PromptSendResult = { outcome: "unconfirmed" };
+const SESSION_CHANGED: PromptSendResult = { outcome: "not_delivered", reason: "session_changed" };
+
+/** `value` as text for a message, whatever it is: a request is parsed JSON,
+ * but a thrown value or an object whose `toString` is not a function would
+ * make `String` itself throw. */
+export function shown(value: unknown): string {
+  try {
+    if (typeof value === "string") return value;
+    // An Error's fields are not its own enumerable ones: JSON would say {}.
+    if (value instanceof Error) return `${value.name}: ${value.message}`;
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
 
 /** The module's state for one load. */
 export interface ModuleState {
@@ -263,10 +281,10 @@ export async function handlePromptSend(
   if (!filled.isFilled) return { outcome: "not_delivered", reason: filled.refusal ?? "refused" };
 
   // The last moment the request can still be kept out of a session it was
-  // not meant for.
+  // not meant for. With the text still in the composer and put back, no Enter
+  // went out for it: it is known not to be in.
   if (!(await stillCurrent($, state, request))) {
-    await putBackUnsent($, request.text, draft);
-    return UNCONFIRMED;
+    return (await putBackUnsent($, request.text, draft)) ? SESSION_CHANGED : UNCONFIRMED;
   }
   const accepted = Promise.withResolvers<boolean>();
   state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
@@ -333,42 +351,105 @@ async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
       });
     }
   } catch (e) {
-    $.ui.log(`ccmsg: reply ${reply.id} failed: ${String(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg: reply ${reply.id} failed: ${shown(e)}`, { to: "debug" });
   }
 }
 
 async function promptSend($: Engine, state: ModuleState, request: QueuedSend): Promise<Reply> {
+  // Nothing has touched the composer yet: the text is known not to be in.
   if (request.generation !== state.generation || request.sid !== state.sid) {
     $.ui.log(`ccmsg: prompt.send ${request.id} not filled: the session changed its id`, {
       to: "debug",
     });
-    return { id: request.id, ok: true, result: UNCONFIRMED };
+    return { id: request.id, ok: true, result: SESSION_CHANGED };
   }
-  try {
-    return { id: request.id, ok: true, result: await handlePromptSend($, state, request) };
-  } catch (e) {
-    $.ui.log(`ccmsg: prompt.send ${request.id} failed: ${String(e)}`, { to: "debug" });
-    return failed(request.id, "internal", String(e));
-  }
+  return { id: request.id, ok: true, result: await handlePromptSend($, state, request) };
 }
 
 /** describe's result. The version is the one `ccmsg` beside this module
- * prints; left out when it cannot be had. */
+ * prints; left out when it cannot be had. `CCMSG_NO_SELF_EXEC` keeps that
+ * launcher from handing over to a newer ccmsg on PATH, which would print its
+ * own version rather than this plugin's. (`$.process.run`'s `env` is laid
+ * over the session's environment, not in place of it.) */
 async function describe($: Engine): Promise<{ v: number[]; ops: string[]; version?: string }> {
   const described = { v: [REQUEST_VERSION], ops: [...OPS] };
   try {
     const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "version"], {
+      env: { CCMSG_NO_SELF_EXEC: "1" },
       timeoutMs: REPLY_TIMEOUT_MS,
     });
     const version = run.stdout.trim();
     if (run.exitCode === 0 && version !== "") return { ...described, version };
   } catch (e) {
-    $.ui.log(`ccmsg: describe could not read the version: ${String(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg: describe could not read the version: ${shown(e)}`, { to: "debug" });
   }
   return described;
 }
 
-/** Run one request line that arrived under `sid` in `generation`, and reply. */
+/** Whether `args` is `{}`, all describe takes. */
+function isEmptyArgs(args: unknown): boolean {
+  return (
+    typeof args === "object" &&
+    args !== null &&
+    !Array.isArray(args) &&
+    Object.keys(args).length === 0
+  );
+}
+
+/** The reply to one request: the op's, or `ok:false` when it could not run.
+ * Anything thrown on the way is `internal`, so every request is answered. */
+async function replyTo(
+  $: Engine,
+  state: ModuleState,
+  sid: string,
+  generation: number,
+  request: RawRequest,
+): Promise<Reply> {
+  const { id } = request;
+  try {
+    if (request.v !== REQUEST_VERSION) {
+      return failed(
+        id,
+        "unsupported_version",
+        `request version ${shown(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
+      );
+    }
+    if (request.op === "describe") {
+      if (!isEmptyArgs(request.args)) return failed(id, "invalid_args", "describe takes args {}");
+      return { id, ok: true, result: await describe($) };
+    }
+    if (request.op === "prompt.send") {
+      const text = promptSendText(request.args);
+      if (text === undefined) {
+        return failed(
+          id,
+          "invalid_args",
+          "prompt.send takes args { text } with text other than whitespace",
+        );
+      }
+      const queued: QueuedSend = { id, text, sid, generation };
+      // One at a time: two at once would trade drafts. A failed one does not
+      // hold up the next.
+      const result = state.queue.then(() => promptSend($, state, queued));
+      state.queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return await result;
+    }
+    return failed(
+      id,
+      "unknown_op",
+      `no op ${shown(request.op)}; this module has ${OPS.join(", ")}`,
+    );
+  } catch (e) {
+    $.ui.log(`ccmsg: request ${id} failed: ${shown(e)}`, { to: "debug" });
+    return failed(id, "internal", shown(e));
+  }
+}
+
+/** Run one request line that arrived under `sid` in `generation`, and reply.
+ * Never rejects: a request that cannot be answered is logged. */
 export function answer(
   $: Engine,
   state: ModuleState,
@@ -383,38 +464,13 @@ export function answer(
     });
     return Promise.resolve();
   }
-  const { id } = request;
-  const reply = async (): Promise<Reply> => {
-    if (request.v !== REQUEST_VERSION) {
-      return failed(
-        id,
-        "unsupported_version",
-        `request version ${String(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
-      );
-    }
-    if (request.op === "describe") return { id, ok: true, result: await describe($) };
-    if (request.op === "prompt.send") {
-      const text = promptSendText(request.args);
-      if (text === undefined) {
-        return failed(
-          id,
-          "invalid_args",
-          "prompt.send takes args { text } with text other than whitespace",
-        );
-      }
-      const queued: QueuedSend = { id, text, sid, generation };
-      // One at a time: two at once would trade drafts.
-      const result = state.queue.then(() => promptSend($, state, queued));
-      state.queue = result.then(() => undefined);
-      return result;
-    }
-    return failed(
-      id,
-      "unknown_op",
-      `no op ${JSON.stringify(request.op)}; this module has ${OPS.join(", ")}`,
-    );
-  };
-  return reply().then((r) => sendReply($, sid, r));
+  // sendReply catches its own failures; this catches anything else, so the
+  // promise never rejects for the caller that drops it.
+  return replyTo($, state, sid, generation, request)
+    .then((reply) => sendReply($, sid, reply))
+    .catch((e: unknown) => {
+      $.ui.log(`ccmsg: request ${request.id} not answered: ${shown(e)}`, { to: "debug" });
+    });
 }
 
 /** Run one sidecar for `sid` until it ends, then start the next one unless it
