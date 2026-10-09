@@ -13,6 +13,7 @@ import {
   isSessionIdShape,
   migrateLegacyConfigFiles,
   parseSidecarReply,
+  splitSendWords,
   resolvePaths,
   sessionProjectDir,
   type ErrorResponse,
@@ -66,14 +67,18 @@ const WRITE_OPS = new Set(["post", "reply", "create-room", "next-room", "leave",
 interface Parsed {
   positionals: string[];
   opts: Record<string, string | boolean>;
+  /** Where in the parsed words the first positional (the command) is. */
+  commandAt?: number;
 }
 
 function parseArgs(args: string[]): Parsed {
   const positionals: string[] = [];
   const opts: Record<string, string | boolean> = {};
+  let commandAt: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--") {
+      if (i + 1 < args.length) commandAt ??= i + 1;
       positionals.push(...args.slice(i + 1));
       break;
     }
@@ -98,17 +103,33 @@ function parseArgs(args: string[]): Parsed {
     } else if (a === "-h") {
       opts.help = true;
     } else {
+      commandAt ??= i;
       positionals.push(a);
     }
   }
-  return { positionals, opts };
+  return { positionals, opts, ...(commandAt !== undefined ? { commandAt } : {}) };
 }
 
-/** The message body of `post` / `reply`: the positional arguments from
- * `from` on, joined by one space, or undefined when there are none. */
-function bodyOf(args: readonly string[], from: number): string | undefined {
-  const words = args.slice(from);
-  return words.length === 0 ? undefined : words.join(" ");
+/** `post` / `reply` read again: the words after the command by
+ * splitSendWords, which the timeline and the dump read them with too, so a
+ * body holding `--foo` or written without quotes is sent as they show it.
+ * The words before the command are read as for any command. The body, when
+ * there is one, is the last positional, its words joined by one space. */
+function parseSendArgs(argv: string[], commandAt: number): Parsed {
+  const before = parseArgs(argv.slice(0, commandAt));
+  const split = splitSendWords(argv.slice(commandAt + 1), 1);
+  const opts = { ...before.opts };
+  for (const [name, value] of split.options) {
+    opts[name === "-h" ? "help" : name.replace(/^--/, "")] = value;
+  }
+  return {
+    positionals: [
+      argv[commandAt]!,
+      ...split.leading,
+      ...(split.body.length > 0 ? [split.body.join(" ")] : []),
+    ],
+    opts,
+  };
 }
 
 function str(opts: Record<string, string | boolean>, key: string): string | undefined {
@@ -897,8 +918,13 @@ Commands:
   post <sid> <text>            Send a message straight to one session, no room.
                                <sid> is a session id as "peers" lists it, or
                                ccmsg:<sid>. Prints {"delivered":true,"mid":...};
-                               a message that did not arrive exits non-zero with
-                               why, and is neither kept nor retried
+                               a message that did not arrive exits 1 with why,
+                               and is neither kept nor retried; one whose arrival
+                               could not be told exits 3 (resending may deliver
+                               it twice). The words after <sid> are the text,
+                               quoted or not; only an exact --to / --sid /
+                               --as-session / --help there is an option, and
+                               everything after -- is text
   post <room> <msg>            Post a message to a room (--to to filter delivery)
   reply <mid> --to <sid> <text>
                                Answer a direct message: run the reply line of
@@ -1090,7 +1116,12 @@ async function main(): Promise<void> {
   }
   // Parse the whole argv so options may appear before or after the command (kawaz
   // CLI convention: option position is not fixed). The first positional is the command.
-  const { positionals, opts } = parseArgs(argv);
+  const parsed = parseArgs(argv);
+  const { positionals, opts } =
+    (parsed.positionals[0] === "post" || parsed.positionals[0] === "reply") &&
+    parsed.commandAt !== undefined
+      ? parseSendArgs(argv, parsed.commandAt)
+      : parsed;
   if (opts["help-full"] === true) {
     printFullHelp();
     return;
@@ -1136,10 +1167,9 @@ async function main(): Promise<void> {
     case "post": {
       const usage = "ccmsg post <sid> <text>  |  ccmsg post <room> <msg> [--to <ids>]";
       const target = requireArg(args[0], "sid|room", usage);
-      // The body is every word after the target, joined by one space: a body
-      // written without quotes arrives whole, as the timeline shows it
-      // (parseCcmsgSendCommand reads it the same way).
-      const body = bodyOf(args, 1);
+      // The body: every word after the target, joined by one space
+      // (parseSendArgs), as the timeline shows it.
+      const body = args[1];
       if (!ROOM_ID_RE.test(target)) {
         const to = directRecipient(target);
         const text = requireArg(body, "text", usage);
@@ -1162,7 +1192,7 @@ async function main(): Promise<void> {
       const usage =
         "ccmsg reply <mid> --to <sid> <text>  |  ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
       const ref = requireArg(args[0], "mid", usage);
-      const msg = requireArg(bodyOf(args, 1), "msg", usage);
+      const msg = requireArg(args[1], "msg", usage);
       if (isDirectMid(ref)) {
         const address = str(opts, "to");
         if (address === undefined) {

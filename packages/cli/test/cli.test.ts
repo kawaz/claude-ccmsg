@@ -219,6 +219,32 @@ describe("ccmsg CLI end-to-end", () => {
   // 何を保証するか (default help のレール): 引数なしと通常の --help は
   // 指定された 6 コマンド + --help-full だけを byte-for-byte 表示する。隠した
   // コマンド・オプション・環境変数が混ざれば完全一致で検出する。
+  // A room post and reply read their body as direct sends do: unquoted
+  // words joined, --words kept, -- dropped (splitSendWords).
+  test("room post and reply bodies keep --words and drop --", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const S1 = "50000001-0000-4000-8000-000000000000";
+      const S2 = "50000002-0000-4000-8000-000000000000";
+      const { room } = JSON.parse(
+        (await runCli(["--sid", S1, "create-room", "--members", S2], env)).out,
+      ) as { room: string };
+      const posted = JSON.parse(
+        (await runCli(["--sid", S1, "post", room, "a", "--foo", "b"], env)).out,
+      ) as { mid: number };
+      const replied = JSON.parse(
+        (await runCli(["--sid", S2, "reply", `${room}m${posted.mid}`, "--", "--to", "x"], env)).out,
+      ) as { mid: number };
+      const read = JSON.parse(
+        (await runCli(["read", `${room}m${posted.mid},m${replied.mid}`], env)).out,
+      ) as { msgs: { msg: string }[] };
+      expect(read.msgs.map((m) => m.msg)).toEqual(["a --foo b", "--to x"]);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  });
+
   test("default help shows only the minimal command rail", async () => {
     const { env, cleanup } = makeEnv();
     try {

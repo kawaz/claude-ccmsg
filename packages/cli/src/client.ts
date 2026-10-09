@@ -27,10 +27,12 @@ export class Client {
   private nextRequestId = 0;
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
   private pendingReplies = new Map<string, (line: string | null) => void>();
-  /** Bytes written but not yet taken by the socket. Bun's `write` takes what
-   * the socket has room for and keeps nothing, so a request bigger than that
-   * (a long message body) is finished on `drain`, in order. */
-  private unsent: Uint8Array = new Uint8Array(0);
+  /** Lines written but not yet taken by the socket, oldest first; the head
+   * may be a line's remainder. Bun's `write` takes what the socket has room
+   * for and keeps nothing, so a request bigger than that (a long message
+   * body) is finished on `drain`, in order. One entry per line, so adding a
+   * line never copies the ones before it. */
+  private unsent: Uint8Array[] = [];
   /** `close` was asked for while bytes were still unsent: end once they go. */
   private closing = false;
 
@@ -118,24 +120,34 @@ export class Client {
   }
 
   write(obj: unknown): void {
-    const bytes = new TextEncoder().encode(`${JSON.stringify(obj)}\n`);
-    // Behind bytes still waiting, so lines never interleave.
-    this.unsent = this.unsent.length === 0 ? bytes : Buffer.concat([this.unsent, bytes]);
+    // Behind lines still waiting, so lines never interleave.
+    this.unsent.push(new TextEncoder().encode(`${JSON.stringify(obj)}\n`));
     this.flush();
   }
 
-  /** Hand the socket as much of the unsent bytes as it takes now; the rest
-   * waits for the next `drain`. */
+  /** Hand the socket as much of the unsent lines as it takes now; the rest
+   * waits for the next `drain`. A socket that takes nothing more because it
+   * is closed (`write` answers -1) settles everyone waiting at once: no close
+   * event may follow to do it. */
   private flush(): void {
-    if (this.unsent.length > 0) {
+    while (this.unsent.length > 0) {
+      const head = this.unsent[0]!;
       let taken: number;
       try {
-        taken = this.socket.write(this.unsent);
+        taken = this.socket.write(head);
       } catch {
         taken = -1;
       }
-      // -1: the socket is closed or closing; onClose settles whoever waits.
-      this.unsent = taken < 0 ? new Uint8Array(0) : this.unsent.subarray(taken);
+      if (taken < 0) {
+        this.unsent = [];
+        this.onClose();
+        return;
+      }
+      if (taken < head.length) {
+        this.unsent[0] = head.subarray(taken);
+        break;
+      }
+      this.unsent.shift();
     }
     if (this.closing && this.unsent.length === 0) this.end();
   }
@@ -149,6 +161,8 @@ export class Client {
     const body = obj as Record<string, unknown>;
     // A caller may supply the id itself; everyone else gets one from the counter.
     const rid = typeof body.request_id === "string" ? body.request_id : `r${++this.nextRequestId}`;
+    // A closed connection gets no close event again to settle the wait.
+    if (this.ended) throw new Error("connection closed before response");
     const line = await new Promise<string | null>((resolve) => {
       this.pendingReplies.set(rid, resolve);
       this.write({ ...body, request_id: rid });

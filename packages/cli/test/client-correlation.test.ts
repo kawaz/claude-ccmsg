@@ -76,6 +76,82 @@ test("a reply with no request_id is accepted, so a pre-correlation daemon can st
   client.close();
 });
 
+/** A UDS peer that closes each connection as soon as it opens. */
+function closingPeer(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-client-close-"));
+  const sock = path.join(dir, "daemon.sock");
+  const server = Bun.listen<undefined>({
+    unix: sock,
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data() {},
+      close() {},
+      error() {},
+    },
+  });
+  cleanup.push(() => {
+    server.stop(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  return sock;
+}
+
+// No close event comes again to settle a wait registered after the close.
+test("a request on a connection already closed fails at once", async () => {
+  const client = await Client.connect(closingPeer());
+  expect(await client.readLine()).toBeNull();
+  const late = client.request({ op: "ping" });
+  const outcome = await Promise.race([
+    late.then(
+      () => "answered",
+      (e: Error) => e.message,
+    ),
+    Bun.sleep(1_000).then(() => "still waiting"),
+  ]);
+  expect(outcome).toBe("connection closed before response");
+});
+
+// Requests larger than the socket takes at once go out whole and in order:
+// the peer answers a line only once all of it has arrived.
+test("large requests arrive whole, in the order written", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-client-big-"));
+  const sock = path.join(dir, "daemon.sock");
+  const decoder = new TextDecoder();
+  let buf = "";
+  const server = Bun.listen<undefined>({
+    unix: sock,
+    socket: {
+      data(socket, chunk) {
+        buf += decoder.decode(chunk, { stream: true });
+        let at: number;
+        while ((at = buf.indexOf("\n")) >= 0) {
+          const req = JSON.parse(buf.slice(0, at));
+          buf = buf.slice(at + 1);
+          socket.write(
+            `${JSON.stringify({ ok: true, size: req.text.length, request_id: req.request_id })}\n`,
+          );
+        }
+      },
+      open() {},
+      close() {},
+      error() {},
+    },
+  });
+  cleanup.push(() => {
+    server.stop(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const client = await Client.connect(sock);
+  const sizes = [1_000_000, 300_000, 10];
+  const answers = await Promise.all(
+    sizes.map((size) => client.request<{ size: number }>({ op: "x", text: "y".repeat(size) })),
+  );
+  expect(answers.map((a) => a.size)).toEqual(sizes);
+  client.close();
+});
+
 test("every hello announces this build and the generation it speaks", () => {
   // Both roles: a stale `ccmsg subscribe` is a session-role client, but a
   // browser holding an old bundle is a user-role one, and neither should be

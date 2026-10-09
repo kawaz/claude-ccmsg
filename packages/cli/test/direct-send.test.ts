@@ -432,6 +432,51 @@ describe("message bodies", () => {
     T,
   );
 
+  // A body holding words that look like options is sent as written, and the
+  // timeline and the dump (parseCcmsgSendCommand) read the same command the
+  // same way.
+  test(
+    "bodies with --words and -- are sent as the timeline and the dump read them",
+    async () => {
+      const { env, sock } = makeEnv();
+      expect((await runCli(["daemon", "start"], env)).code).toBe(0);
+      const ha = harness(A);
+      const hb = harness(B);
+      await hold(sock, A, ha.configDir);
+      await hold(sock, B, hb.configDir);
+      const asA = { ...env, CLAUDE_CONFIG_DIR: ha.configDir };
+      const asB = { ...env, CLAUDE_CONFIG_DIR: hb.configDir };
+      const bodyOf = (content: string) => {
+        const body = parseEnvelope(content).body;
+        return body.slice(0, body.lastIndexOf("\n\nReply with: "));
+      };
+      let mid = "";
+      for (const [words, text] of [
+        [["hello", "--foo", "world"], "hello --foo world"],
+        [["--foo bar"], "--foo bar"],
+        [["--", "--foo"], "--foo"],
+        [["--", "--to", "x"], "--to x"],
+        [["result", "--to-be", "decided", "--to"], "result --to-be decided --to"],
+      ] as [string[], string][]) {
+        const posted = await runCli(["--sid", A, "post", B, ...words], asA);
+        expect({ words, code: posted.code, err: posted.err }).toEqual({ words, code: 0, err: "" });
+        const content = await hb.nextContent();
+        expect(bodyOf(content)).toBe(text);
+        mid = parseEnvelope(content).attrs["ccmsg-mid"]!;
+        const command = `ccmsg post ${[B, ...words].map(shellQuote).join(" ")}`;
+        expect(parseCcmsgSendCommand(command)).toEqual({ verb: "post", to: B, text });
+      }
+      const words = ["--to", A, "--", "--to"];
+      const replied = await runCli(["--sid", B, "reply", mid, ...words], asB);
+      expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
+      expect(bodyOf(await ha.nextContent())).toBe("--to");
+      expect(
+        parseCcmsgSendCommand(`ccmsg reply ${[mid, ...words].map(shellQuote).join(" ")}`),
+      ).toEqual({ verb: "reply", replyTo: mid, to: A, text: "--to" });
+    },
+    T,
+  );
+
   // The recipient's socket stopped reading: the daemon's write goes in
   // part-way and runs out of time. The CLI says it cannot tell, with its own
   // exit status, and the timeline and dump read that as unconfirmed.
