@@ -5388,12 +5388,12 @@ describe("standalone ccmsg in the transcript", () => {
     expect(ccmsgDedupKey(message!)).toBe(`direct-in|${directMid}`);
   });
 
-  test("this plugin's post <ccmsg:sid> and reply --to: sent, or failed with why", () => {
+  test("this plugin's post <ccmsg:sid> and reply --to (quoted launcher): sent, or failed with why", () => {
     const directMid = "0123456789abcdef0123456789abcdef/2";
     const lines = parse([
       bashUse("d1", `/plugin/bin/ccmsg post ccmsg:${SID} 'hello'`),
       bashResult("d1", `{"delivered":true,"mid":"${directMid}"}\n`),
-      bashUse("d2", `/plugin/bin/ccmsg reply ${directMid} --to ${SID} 'answer'`),
+      bashUse("d2", `'/my plugins/bin/ccmsg' reply ${directMid} --to ${SID} 'answer'`),
       bashResult(
         "d2",
         "Exit code 1\nccmsg: 届かなかった (refused)。メッセージは daemon に残らない。宛先のセッションが受け取りを拒否した。",
