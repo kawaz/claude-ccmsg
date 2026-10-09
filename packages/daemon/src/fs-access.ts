@@ -266,8 +266,7 @@ async function resolveContained(
     try {
       real = await fs.promises.realpath(cursor);
     } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      if (err.code !== "ENOENT") {
+      if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
         // permission denied / not-a-directory-in-path / etc — fail closed
         // rather than let filesystem errors leak structure information.
         return {
@@ -568,8 +567,7 @@ async function resolveWorkspaceContained(
     try {
       real = await fs.promises.realpath(cursor);
     } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      if (err.code !== "ENOENT") {
+      if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
         return {
           ok: false,
           code: ErrorCode.path_forbidden,
@@ -933,8 +931,7 @@ export async function fsWrite(
     await fs.promises.lstat(resolved.realPath);
     return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
   } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code !== "ENOENT") {
+    if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
       return {
         ok: false,
         code: ErrorCode.path_forbidden,
@@ -971,8 +968,7 @@ export async function fsWrite(
   try {
     await fs.promises.writeFile(rechecked.realPath, content, { encoding: "utf-8", flag: "wx" });
   } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code === "EEXIST") {
+    if (e instanceof Error && "code" in e && e.code === "EEXIST") {
       return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
     }
     return {
@@ -1197,8 +1193,7 @@ export async function fsCreate(
         ancestorReal = await fs.promises.realpath(cursor);
         break;
       } catch (e) {
-        const err = e as NodeJS.ErrnoException;
-        if (err.code !== "ENOENT") {
+        if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
           return {
             ok: false,
             code: ErrorCode.path_forbidden,
@@ -1255,8 +1250,7 @@ export async function fsCreate(
   try {
     await fs.promises.writeFile(realPath, content, { encoding: "utf-8", flag: "wx" });
   } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code === "EEXIST") {
+    if (e instanceof Error && "code" in e && e.code === "EEXIST") {
       return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${reqPath}` };
     }
     return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot write path: ${reqPath}` };
