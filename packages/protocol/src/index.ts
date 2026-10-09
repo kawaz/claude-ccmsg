@@ -1044,12 +1044,16 @@ export interface MessageSendRequest {
  * - `no_peer_socket`: the session has no peer messaging socket this daemon can
  *   write to (no state file for it in that config dir — it ended or runs under
  *   another one — a harness speaking another peer protocol, or no token)
+ * - `no_status_socket`: the daemon could not open the socket the recipient
+ *   would report a refusal to, so it wrote nothing rather than call an
+ *   unconfirmable write delivered (a problem on the sending machine's side)
  * - `unreachable`: the socket is there but could not be written in time
  * - `refused`: the recipient's harness answered that it did not take it */
 export type MessageSendReason =
   | "session_not_found"
   | "no_config_dir"
   | "no_peer_socket"
+  | "no_status_socket"
   | "unreachable"
   | "refused";
 

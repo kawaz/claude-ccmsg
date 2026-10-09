@@ -42,7 +42,9 @@ export const DIRECT_DELIVERY_USER_SENDER = "user";
 
 const TAG = "cross-session-message";
 const CLOSING = `\n</${TAG}>`;
-const OPENING_RE = new RegExp(`<${TAG}((?:\\s+[a-z-]+="[^"]*")*)\\s*>\\n`, "g");
+/** The first opening tag of the element, with or without attributes that
+ * make it a ccmsg envelope. */
+const OPENING_RE = new RegExp(`<${TAG}((?:\\s+[a-z-]+="[^"]*")*)\\s*>\\n`);
 const ATTRIBUTE_RE = /([a-z-]+)="([^"]*)"/g;
 
 function unescapeAttribute(value: string): string {
@@ -82,11 +84,26 @@ export function isDirectMid(mid: string): boolean {
   return DIRECT_MID_RE.test(mid);
 }
 
-/** The instruction line a direct envelope ends with. `launcher` is the command
- * the recipient runs; a message from a person names no `--to`. */
+/** Characters a POSIX shell takes literally in an unquoted word. */
+const SHELL_PLAIN_RE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/** `word` as one POSIX shell word: unchanged when every character is literal
+ * to the shell, otherwise in single quotes (a `'` inside closes the quote,
+ * adds an escaped one and reopens). */
+export function shellQuote(word: string): string {
+  if (SHELL_PLAIN_RE.test(word)) return word;
+  return `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/** The instruction line a direct envelope ends with: a command the recipient
+ * runs in a shell, so every word in it that comes from outside this module —
+ * the launcher path, the mid and the sender's sid — is quoted as one shell
+ * word. For the values this protocol issues (a plain path, `<hex>/<n>`, a
+ * UUID) quoting changes nothing and the line is the v2 contract's. A message
+ * from a person names no `--to`. */
 export function directDeliveryReplyLine(mid: string, from: string, launcher = "ccmsg"): string {
-  const to = from === DIRECT_DELIVERY_USER_SENDER ? "" : ` --to ${from}`;
-  return `Reply with: ${launcher} reply ${mid}${to} <text>`;
+  const to = from === DIRECT_DELIVERY_USER_SENDER ? "" : ` --to ${shellQuote(from)}`;
+  return `Reply with: ${shellQuote(launcher)} reply ${shellQuote(mid)}${to} <text>`;
 }
 
 /** One direct message as `renderDirectDelivery` words it. `from` is the
@@ -116,13 +133,20 @@ export function renderDirectDelivery(m: DirectDeliveryMessage, launcher: string)
 }
 
 /** True for the reply line of a direct envelope for `mid` from `from`, naming
- * either the bare `ccmsg` or a launcher by absolute path. */
+ * either the bare `ccmsg` or a launcher by absolute path (quoted or not). */
 function isDirectReplyLine(line: string, mid: string, from: string): boolean {
-  const bare = directDeliveryReplyLine(mid, from);
-  if (line === bare) return true;
   const prefix = "Reply with: ";
-  const command = bare.slice(prefix.length);
-  return line.startsWith(`${prefix}/`) && line.endsWith(`/${command}`);
+  const bare = directDeliveryReplyLine(mid, from);
+  const tail = bare.slice(`${prefix}ccmsg`.length);
+  if (!line.startsWith(prefix) || !line.endsWith(tail)) return false;
+  const launcher = shellWords(line.slice(prefix.length, line.length - tail.length));
+  return launcher?.length === 1 && isLauncherWord(launcher[0]!, true);
+}
+
+/** `ccmsg`, or a path ending in `/ccmsg` (absolute only, when `absolute`). */
+function isLauncherWord(word: string, absolute = false): boolean {
+  if (word === "ccmsg") return true;
+  return word.endsWith("/ccmsg") && (!absolute || word.startsWith("/"));
 }
 
 /** The reply instruction a room message delivered into a session ends with:
@@ -172,38 +196,41 @@ export function queuedCommandPrompt(row: Record<string, unknown>): string | null
   return attachment.prompt;
 }
 
-/** Every envelope in `text`, in order. An envelope's body runs to the last
- * closing tag before the next envelope opens, so a body quoting the closing
- * tag survives. A `<cross-session-message>` lacking the ccmsg identity
- * attributes (a plain Claude Code peer message) is not one of these and is
- * skipped. */
+/** The envelope `text` carries — one transcript row's content, or one queued
+ * command's prompt — as a list of none or one.
+ *
+ * The envelope opens at the first `<cross-session-message …>` in the text and
+ * its body runs to the last closing tag. The body is the sender's, carried
+ * unescaped, so a tag inside it is part of it: an opening tag there is not a
+ * second envelope (a sender cannot pose as another by writing one), and a
+ * closing tag there does not end it. A first `<cross-session-message>` lacking
+ * the ccmsg identity attributes is a plain Claude Code peer message, and the
+ * text carries none of these. */
 export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
   if (!mayContainDirectDelivery(text)) return [];
-  const openings = [...text.matchAll(OPENING_RE)];
-  const out: DirectDeliveryEnvelope[] = [];
-  openings.forEach((opening, i) => {
-    const bodyStart = opening.index! + opening[0].length;
-    const limit = i + 1 < openings.length ? openings[i + 1]!.index! : text.length;
-    const end = text.lastIndexOf(CLOSING, limit - CLOSING.length);
-    if (end < bodyStart - 1) return;
-    const attributes = new Map<string, string>();
-    for (const [, key, value] of (opening[1] ?? "").matchAll(ATTRIBUTE_RE)) {
-      attributes.set(key!, unescapeAttribute(value!));
-    }
-    const mid = attributes.get("ccmsg-mid");
-    const from = attributes.get("ccmsg-from");
-    if (mid === undefined || from === undefined) return;
-    const body = stripReplyLine(end >= bodyStart ? text.slice(bodyStart, end) : "", mid, from);
-    const replyTo = attributes.get("ccmsg-reply-to");
-    out.push({
+  const opening = OPENING_RE.exec(text);
+  if (!opening) return [];
+  const bodyStart = opening.index + opening[0].length;
+  const end = text.lastIndexOf(CLOSING);
+  if (end < bodyStart - 1) return [];
+  const attributes = new Map<string, string>();
+  for (const [, key, value] of (opening[1] ?? "").matchAll(ATTRIBUTE_RE)) {
+    attributes.set(key!, unescapeAttribute(value!));
+  }
+  const mid = attributes.get("ccmsg-mid");
+  const from = attributes.get("ccmsg-from");
+  if (mid === undefined || from === undefined) return [];
+  const body = stripReplyLine(end >= bodyStart ? text.slice(bodyStart, end) : "", mid, from);
+  const replyTo = attributes.get("ccmsg-reply-to");
+  return [
+    {
       mid,
       from,
       fromLabel: attributes.get("from-name") ?? from,
       ...(replyTo !== undefined ? { replyTo } : {}),
       text: body,
-    });
-  });
-  return out;
+    },
+  ];
 }
 
 /** A `ccmsg post|reply|notify` call as written in a Bash command.
@@ -221,9 +248,11 @@ export interface CcmsgSendCommand {
   text: string;
 }
 
-/** `ccmsg` (bare or path-qualified) at the start of the command or after a
- * shell separator, then the verb. */
-const SEND_COMMAND_RE = /(?:^|[;&|\n])\s*(?:[^\s;&|'"]*\/)?ccmsg\s+(post|reply|notify)(?=\s|$)/;
+/** A command word at the start of the command or after a shell separator —
+ * bare, or quoted as `shellQuote` writes a path with spaces — then a verb.
+ * Whether the word is `ccmsg` is checked on its unquoted form. */
+const SEND_COMMAND_RE =
+  /(?:^|[;&|\n])\s*((?:'[^']*'|"(?:[^"\\$`]|\\.)*"|\\.|[^\s;&|'"\\<>$`])+)\s+(post|reply|notify)(?=\s|$)/g;
 
 /** Splits shell words with single quotes, double quotes (backslash escapes
  * inside) and backslash escapes outside quotes. Stops at an unquoted shell
@@ -283,9 +312,12 @@ const VALUE_OPTIONS = new Set(["--to", "--sid", "--about"]);
  * none (a `--help` call sends nothing). When the arguments use shell syntax this does not model, `text` is the
  * raw argument string after the verb rather than a guess. */
 export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null {
-  const m = SEND_COMMAND_RE.exec(command);
+  const m = [...command.matchAll(SEND_COMMAND_RE)].find((candidate) => {
+    const word = shellWords(candidate[1]!);
+    return word?.length === 1 && isLauncherWord(word[0]!);
+  });
   if (!m) return null;
-  const verb = m[1] as CcmsgSendCommand["verb"];
+  const verb = m[2] as CcmsgSendCommand["verb"];
   const rest = command.slice(m.index + m[0].length);
   const words = shellWords(rest);
   if (words === null) return { verb, text: rest.trim() };
