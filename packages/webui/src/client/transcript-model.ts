@@ -1887,7 +1887,8 @@ export type CcmsgDirect =
       id: string;
       verb: "post" | "reply" | "notify";
       replyTo?: string;
-      status: "sent" | "failed" | "pending";
+      status: "sent" | "failed" | "unconfirmed" | "pending";
+      /** The result text of a `failed` or `unconfirmed` send. */
       error?: string;
       command: string;
     };
@@ -2184,7 +2185,9 @@ function extractDirectSends(line: TurnLine): CcmsgMessage[] {
         verb: send.verb,
         ...(send.replyTo !== undefined ? { replyTo: send.replyTo } : {}),
         status: outcome === null ? "pending" : outcome.status,
-        ...(outcome?.status === "failed" ? { error: outcome.detail } : {}),
+        ...(outcome?.status === "failed" || outcome?.status === "unconfirmed"
+          ? { error: outcome.detail }
+          : {}),
         command: segment.command,
       },
     });

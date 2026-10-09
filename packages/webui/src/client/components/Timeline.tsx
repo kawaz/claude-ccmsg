@@ -2773,6 +2773,9 @@ function CcmsgBubble({
         {direct?.direction === "out" && direct.status === "failed" ? (
           <p class="tl-say-error">送信失敗: {direct.error}</p>
         ) : null}
+        {direct?.direction === "out" && direct.status === "unconfirmed" ? (
+          <p class="tl-say-error">届いたか未確認: {direct.error}</p>
+        ) : null}
       </div>
       <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span>
     </div>

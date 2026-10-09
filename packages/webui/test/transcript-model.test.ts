@@ -5357,6 +5357,25 @@ describe("standalone ccmsg in the transcript", () => {
     });
   });
 
+  // A send whose arrival could not be told is neither sent nor failed, and an
+  // unquoted body of several words is the whole body, as the CLI sends it.
+  test("a direct send that exited unconfirmed, with an unquoted body", () => {
+    const unconfirmed =
+      "Exit code 3\nccmsg: 届いたか確かめられなかった (unconfirmed)。送り直すと二重に届くかもしれない";
+    const lines = parse([
+      bashUse(
+        "u1",
+        `/plugin/bin/ccmsg reply 0123456789abcdef0123456789abcdef/2 --to ${SID} T6 受領`,
+      ),
+      bashResult("u1", unconfirmed, true),
+    ]);
+    expect(extractCcmsgMessages(lines[0]!)[0]).toMatchObject({
+      to: [SID],
+      msg: "T6 受領",
+      direct: { verb: "reply", status: "unconfirmed", error: unconfirmed },
+    });
+  });
+
   // The direct message this plugin's daemon writes (DR-0036 §1), and the
   // launcher-path `post <sid>` / `reply <mid> --to` calls with what that CLI
   // prints.
