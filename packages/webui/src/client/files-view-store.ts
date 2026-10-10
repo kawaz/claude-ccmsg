@@ -18,6 +18,8 @@
 //  - key は `ccmsg.filesView.<sid>`、値は { path, viewMode, updatedAt }
 //  - mount-time sweep で (a) peers に居ない sid、(b) 10 日超非アクティブ
 //    (peers.last_activity_at、無ければ record 自身の updatedAt) を削除
+import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
 import type { AppState } from "./store.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 import { isMarkdownPath } from "./utils.ts";
@@ -29,18 +31,20 @@ export const FILES_VIEW_PREFIX = "ccmsg.filesView.";
 export const FILES_VIEW_STALE_DAYS = 10;
 export const FILES_VIEW_STALE_MS = FILES_VIEW_STALE_DAYS * 24 * 60 * 60 * 1000;
 
-export interface FilesViewState {
+const FilesViewStateSchema = v.object({
   /** repo-relative path selected in the FileTree (fileHref の path 部)。 */
-  path: string;
+  path: v.string(),
   /** そのセッションで **最後に確定した markdown モード**。非 markdown ファイル
    * では画面上のトグルが出ないので現行の値がそのまま持ち越される (= 途中で
    * .ts を挟んでも記憶が失われない)。isMarkdownPath === false の path を復元
    * する時は viewer 側は常に "code" 扱いだが、record はここに保持している
    * markdown モードを維持する。 */
-  viewMode: "code" | "preview";
+  viewMode: v.picklist(["code", "preview"]),
   /** ISO-8601 stamp of the last update; sweep の fallback 基準。 */
-  updatedAt: string;
-}
+  updatedAt: v.string(),
+});
+export type FilesViewState = Output<typeof FilesViewStateSchema>;
+const FilesViewStateTextSchema = jsonText(FilesViewStateSchema);
 
 /** Restore する viewMode を決める純関数 — FileViewer の path 遷移 effect と
  * 同一ロジックを test で固定するために切り出す。「該当 path が markdown なら
@@ -86,26 +90,13 @@ export function filesViewKey(sid: string): string {
   return `${FILES_VIEW_PREFIX}${sid}`;
 }
 
+/** The stored Files view of a session, or null when there is none or what is
+ * stored does not read as one. */
 export function loadFilesView(sid: string): FilesViewState | null {
   const raw = readStorage(filesViewKey(sid));
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (
-    parsed &&
-    typeof parsed === "object" &&
-    typeof (parsed as FilesViewState).path === "string" &&
-    ((parsed as FilesViewState).viewMode === "code" ||
-      (parsed as FilesViewState).viewMode === "preview") &&
-    typeof (parsed as FilesViewState).updatedAt === "string"
-  ) {
-    return parsed as FilesViewState;
-  }
-  return null;
+  if (raw === null) return null;
+  const read = parseWith(FilesViewStateTextSchema, raw);
+  return read.ok ? read.value : null;
 }
 
 export function saveFilesView(sid: string, state: Omit<FilesViewState, "updatedAt">): void {

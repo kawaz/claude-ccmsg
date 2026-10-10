@@ -1,3 +1,5 @@
+import { jsonText, type Output, parseWith, TranscriptRowUuidLineSchema } from "@ccmsg/protocol";
+import * as v from "valibot";
 import type { Store } from "./useStore.ts";
 import type { AppState, MissingTarget } from "./store.ts";
 import type { createWsClient } from "./ws.ts";
@@ -16,10 +18,18 @@ const timelinePositions = new Map<string, string>();
 const RECENT_STALE_MS = 10 * 24 * 60 * 60 * 1000;
 export const BEFORE_NAVIGATION_EVENT = "ccmsg:before-navigation";
 
-export interface RecentRecord {
-  url: string;
-  updatedAt: string;
-}
+/** The view of a session last open in it (`localStorage` at
+ * `ccmsg.recent.<sid>`), and when. */
+const RecentRecordSchema = v.object({
+  url: v.string(),
+  updatedAt: v.string(),
+});
+export type RecentRecord = Output<typeof RecentRecordSchema>;
+const RecentRecordTextSchema = jsonText(RecentRecordSchema);
+
+/** The `info` a navigation this module re-issued carries: `sidebar:
+ * "composed"` once the open panel has been carried over. */
+const NavigationInfoSchema = v.looseObject({ sidebar: v.optional(v.string()) });
 
 export type WsClient = ReturnType<typeof createWsClient>;
 
@@ -33,14 +43,12 @@ export function urlWithRememberedTimelinePosition(url: string, sid: string): str
   return position ? timelineHref(sid, position) : url;
 }
 
+/** Whether a row of `lines` (transcript lines) has `uuid`. A line that does
+ * not read as a row is none of them. */
 export function transcriptContainsUuid(lines: readonly string[], uuid: string): boolean {
   return lines.some((line) => {
-    try {
-      const value = JSON.parse(line) as { uuid?: unknown };
-      return value.uuid === uuid;
-    } catch {
-      return false;
-    }
+    const read = parseWith(TranscriptRowUuidLineSchema, line);
+    return read.ok && read.value.uuid === uuid;
   });
 }
 
@@ -48,22 +56,26 @@ function recentKey(sid: string): string {
   return `${RECENT_PREFIX}${sid}`;
 }
 
+/** The session's recent view, or null when none is stored, the stored value
+ * does not read as one, or it is stale or names another place. */
 function readRecent(sid: string): RecentRecord | null {
   const raw = readStorage(recentKey(sid));
-  if (!raw) return null;
+  if (raw === null) return null;
+  const read = parseWith(RecentRecordTextSchema, raw);
+  if (!read.ok) return null;
+  const record = read.value;
+  if (Date.now() - Date.parse(record.updatedAt) > RECENT_STALE_MS) return null;
+  let url: URL;
   try {
-    const record = JSON.parse(raw) as Partial<RecentRecord>;
-    if (typeof record.url !== "string" || typeof record.updatedAt !== "string") return null;
-    if (Date.now() - Date.parse(record.updatedAt) > RECENT_STALE_MS) return null;
-    const url = new URL(record.url, location.origin);
-    const locator = parseUrl(url.pathname, url.search);
-    if ((locator.view !== "session" && locator.view !== "timeline") || locator.sid !== sid) {
-      return null;
-    }
-    return { url: `${url.pathname}${url.search}`, updatedAt: record.updatedAt };
+    url = new URL(record.url, location.origin);
   } catch {
     return null;
   }
+  const locator = parseUrl(url.pathname, url.search);
+  if ((locator.view !== "session" && locator.view !== "timeline") || locator.sid !== sid) {
+    return null;
+  }
+  return { url: `${url.pathname}${url.search}`, updatedAt: record.updatedAt };
 }
 
 /** An agent TL is a drill-down into one subagent's transcript, not a place the
@@ -274,8 +286,7 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     else replaceNavigation(target);
   };
 
-  window.navigation.addEventListener("navigate", (rawEvent) => {
-    const event = rawEvent as NavigateEvent;
+  window.navigation.addEventListener("navigate", (event) => {
     if (!event.canIntercept || event.downloadRequest !== null || event.hashChange) return;
     // A reload (location.reload(), the header reload button, Cmd+R) also fires
     // `navigate` with canIntercept=true. Intercepting it would turn "restart
@@ -289,7 +300,8 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     // close a Session Search the user is reading results from. Re-issued as
     // the same navigation with `sb.*` carried over (now marked composed, so
     // this branch runs once).
-    const composed = (event.info as { sidebar?: string } | undefined)?.sidebar === "composed";
+    const info = parseWith(NavigationInfoSchema, event.info);
+    const composed = info.ok && info.value.sidebar === "composed";
     if (!composed && event.navigationType !== "traverse") {
       const current = parseSidebarUrl(location.search);
       if (current.panel !== null && parseSidebarUrl(targetUrl.search).panel === null) {

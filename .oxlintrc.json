@@ -79,7 +79,12 @@
         "packages/daemon/test/drive-request.ts",
         "packages/protocol/src/ccmsg-direct-transcript.ts",
         "packages/webui/src/client/transcript-model.ts",
-        "packages/webui/src/client/components/Timeline.tsx"
+        "packages/webui/src/client/components/Timeline.tsx",
+        "packages/webui/src/client/timeline-auto-open.ts",
+        "packages/webui/src/client/utils.ts",
+        "packages/webui/src/client/navigation.ts",
+        "packages/webui/src/client/files-view-store.ts",
+        "packages/webui/src/client/components/session-input-store.ts"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

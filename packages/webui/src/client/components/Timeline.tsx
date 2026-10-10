@@ -3278,7 +3278,7 @@ export function Timeline({
   const [autoOpenSettings, setAutoOpenSettings] = useState(() =>
     parseTimelineAutoOpenSettings(
       readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
-      defaultTimelineAutoOpen(agentActive),
+      agentActive,
     ),
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
@@ -3330,7 +3330,7 @@ export function Timeline({
     setAutoOpenSettings(
       parseTimelineAutoOpenSettings(
         readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
-        defaultTimelineAutoOpen(agentActive),
+        agentActive,
       ),
     );
     setAutoOpenRevision((revision) => revision + 1);

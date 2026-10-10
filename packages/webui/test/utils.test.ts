@@ -1558,11 +1558,10 @@ describe("parseFavorites", () => {
     expect(parseFavorites('"docs/inbox"')).toEqual([]);
   });
 
-  test("non-string array elements are dropped individually, not fatal to the whole array", () => {
-    expect(parseFavorites('["docs/inbox",42,null,"docs/QUESTIONS.md"]')).toEqual([
-      "docs/inbox",
-      "docs/QUESTIONS.md",
-    ]);
+  // A list with an element that is not a path does not read as favorites: it
+  // is ignored as a whole rather than read in part (DR-0038 §6).
+  test("a list with a non-string element is ignored as a whole", () => {
+    expect(parseFavorites('["docs/inbox",42,null,"docs/QUESTIONS.md"]')).toEqual([]);
   });
 });
 
@@ -2107,13 +2106,14 @@ describe("parsePinnedSessions", () => {
     expect(parsePinnedSessions(JSON.stringify([hit]))).toEqual([hit]);
   });
 
-  // One malformed entry (missing required fields — a prior schema version, a
-  // hand edit, or storage corruption) is dropped individually rather than
-  // invalidating every other legitimately-pinned session in the array.
-  test("drops individually malformed entries without discarding the rest", () => {
+  // A list with a malformed entry (missing required fields — a prior schema
+  // version, a hand edit, or storage corruption) does not read as pins: it is
+  // ignored as a whole rather than read in part (DR-0038 §6).
+  test("a list with a malformed entry is ignored as a whole", () => {
     const good = searchHit({});
     const garbage = [good, { sid: "only-a-sid" }, "not even an object", 42, null];
-    expect(parsePinnedSessions(JSON.stringify(garbage))).toEqual([good]);
+    expect(parsePinnedSessions(JSON.stringify(garbage))).toEqual([]);
+    expect(parsePinnedSessions(JSON.stringify([good]))).toEqual([good]);
   });
 });
 

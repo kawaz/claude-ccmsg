@@ -87,33 +87,34 @@ describe("timelineAutoOpenStorageKey", () => {
 describe("parseTimelineAutoOpenSettings", () => {
   const fallback = defaultTimelineAutoOpen(false);
 
-  // 保存値なし (初回訪問) は fallback (= defaultTimelineAutoOpen の結果) を使う。
-  test("missing key falls back to the given default", () => {
-    expect(parseTimelineAutoOpenSettings(null, fallback)).toEqual(fallback);
+  // 保存値なし (初回訪問) はその Timeline の既定 (= defaultTimelineAutoOpen の結果)。
+  test("missing key is the Timeline's default", () => {
+    expect(parseTimelineAutoOpenSettings(null, false)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings(null, true)).toEqual(defaultTimelineAutoOpen(true));
   });
 
   // 保存済みの妥当な JSON はそのまま復元される。
   test("valid stored JSON is restored as-is", () => {
     const stored = { thinking: false, ccmsg: true, agent: true, items: false };
-    expect(parseTimelineAutoOpenSettings(JSON.stringify(stored), fallback)).toEqual(stored);
+    expect(parseTimelineAutoOpenSettings(JSON.stringify(stored), false)).toEqual(stored);
   });
 
-  // 壊れた JSON / 型不一致 / 欠損フィールドはすべて fallback に安全側 degrade する
-  // (parseFavorites と同じ posture — 1 箇所の壊れが全体をクラッシュさせない)。
-  test("corrupt or malformed stored values fall back to the given default", () => {
-    expect(parseTimelineAutoOpenSettings("not json", fallback)).toEqual(fallback);
-    expect(parseTimelineAutoOpenSettings("42", fallback)).toEqual(fallback);
-    expect(parseTimelineAutoOpenSettings("null", fallback)).toEqual(fallback);
-    expect(parseTimelineAutoOpenSettings("[]", fallback)).toEqual(fallback);
+  // 壊れた JSON / 型不一致 / 欠損フィールドは保存値を丸ごと無視して既定に戻る
+  // (一部だけ採らない)。
+  test("corrupt or malformed stored values are ignored for the Timeline's default", () => {
+    expect(parseTimelineAutoOpenSettings("not json", false)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("42", false)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("null", false)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("[]", false)).toEqual(fallback);
     expect(
-      parseTimelineAutoOpenSettings(JSON.stringify({ thinking: true, ccmsg: true }), fallback),
+      parseTimelineAutoOpenSettings(JSON.stringify({ thinking: true, ccmsg: true }), false),
     ).toEqual(fallback);
     expect(
       parseTimelineAutoOpenSettings(
         JSON.stringify({ thinking: "yes", ccmsg: true, agent: true, items: true }),
-        fallback,
+        true,
       ),
-    ).toEqual(fallback);
+    ).toEqual(defaultTimelineAutoOpen(true));
   });
 });
 

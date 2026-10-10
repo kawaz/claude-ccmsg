@@ -256,7 +256,9 @@ describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
   // 何を保証するか (壊れた record への degrade): attachments の shape が
   // 崩れていたら text だけの復元に落とす — 壊れた添付メタで送信経路を
   // 詰まらせない。
-  test("loadDraft drops malformed attachments but keeps the text", () => {
+  // 添付の形が崩れた下書きは下書きとして読めない: 一部 (本文) だけを採らず、
+  // 丸ごと無いものとして扱う (DR-0038 §6)。
+  test("loadDraft ignores a draft whose attachments do not read, as a whole", () => {
     localStorage.setItem(
       "ccmsg.1on1.sid-bad",
       JSON.stringify({
@@ -265,9 +267,7 @@ describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
         updatedAt: new Date().toISOString(),
       }),
     );
-    const got = loadDraft("sid-bad");
-    expect(got?.text).toBe("hello [FILE1]");
-    expect(got?.attachments).toBeUndefined();
+    expect(loadDraft("sid-bad")).toBeNull();
   });
 });
 
@@ -508,7 +508,9 @@ describe("send records (DR-0035 §5)", () => {
   });
 
   // 何を保証するか: 壊れた記録は読み飛ばす (送信経路を詰まらせない)。
-  test("loadSends skips malformed records", () => {
+  // 形の崩れた記録を含む記録の列は読めない: 一部だけを採らず、丸ごと無いもの
+  // として扱う (DR-0038 §6)。
+  test("loadSends ignores records with a malformed one, as a whole", () => {
     localStorage.setItem(
       `${SENDS_STORAGE_PREFIX}sid-bad`,
       JSON.stringify([
@@ -518,7 +520,7 @@ describe("send records (DR-0035 §5)", () => {
         "junk",
       ]),
     );
-    expect(loadSends("sid-bad").map((r) => r.id)).toEqual(["ok"]);
+    expect(loadSends("sid-bad")).toEqual([]);
   });
 
   // 何を保証するか: 送信の記録も下書きと同じ規則で sweep される (セッションが

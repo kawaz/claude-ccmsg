@@ -12,6 +12,8 @@ import type {
   SessionSearchRequest,
   StaleClientInfo,
 } from "@ccmsg/protocol";
+import { jsonText, parseWith, SessionSearchHitSchema } from "@ccmsg/protocol";
+import * as v from "valibot";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
@@ -159,7 +161,7 @@ export function sayUnreadBySid(rooms: Map<string, RoomState>): Map<string, numbe
     if (room.sayUnread.size === 0) continue;
     const present = [...room.membersById.values()].filter((m) => !m.left && m.id !== ADMIN_ID);
     if (present.length !== 1) continue;
-    const sid = present[0]!.sid;
+    const sid = present[0].sid;
     out.set(sid, (out.get(sid) ?? 0) + room.sayUnread.size);
   }
   return out;
@@ -879,7 +881,7 @@ const SESSION_SECTION_LABELS: Record<string, string> = {
  * rather than either falling back to a generic label or leaving it in raw
  * lowercase — matches the capitalization style of every known label above. */
 function capitalizeStatus(status: string): string {
-  return status.length > 0 ? status[0]!.toUpperCase() + status.slice(1) : status;
+  return status.length > 0 ? status.charAt(0).toUpperCase() + status.slice(1) : status;
 }
 
 /** Statuses that share another status's section. Busy and idle are both
@@ -938,11 +940,10 @@ export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
     if (bucket) bucket.push(row);
     else buckets.set(key, [row]);
   }
-  return orderedSectionKeys([...buckets.keys()]).map((key) => ({
-    key,
-    label: sectionLabel(key),
-    rows: buckets.get(key)!, // non-null: key came from buckets.keys() just above
-  }));
+  const order = orderedSectionKeys([...buckets.keys()]);
+  return [...buckets]
+    .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
+    .map(([key, rows]) => ({ key, label: sectionLabel(key), rows }));
 }
 
 // --- FileTree favorites (U-fav) --- //
@@ -961,25 +962,18 @@ export function favoritesStorageKey(root: string): string {
   return `ccmsg.favorites.${root}`;
 }
 
-/** Parses a raw `localStorage.getItem` result into a favorites path list,
- * tolerating anything a prior schema version / manual edit / storage
- * corruption could have left behind: absent key, non-JSON, JSON that isn't
- * an array, or an array with non-string elements all resolve to the empty
- * list rather than throwing — same "never let garbage persisted data crash
- * the render" posture as `clampPaneRatio`'s NaN fallback above. Non-string
- * elements are dropped individually (not treated as fatal for the whole
- * array) so one bad entry can't erase every other legitimately-favorited
- * path. */
+/** The stored favorites of a directory: its paths, none when nothing is
+ * stored. */
+const FavoritesSchema = v.optional(v.array(v.string()), () => []);
+const FavoritesTextSchema = jsonText(FavoritesSchema);
+
+/** Reads a raw `localStorage.getItem(favoritesStorageKey(...))` result into
+ * a favorites path list. A value that does not read as a list of paths (one a
+ * prior version / a manual edit / storage corruption left behind) is ignored
+ * as a whole — the empty list — rather than read in part. */
 export function parseFavorites(raw: string | null): string[] {
-  if (raw === null) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter((p): p is string => typeof p === "string");
+  const read = raw === null ? null : parseWith(FavoritesTextSchema, raw);
+  return [...(read?.ok ? read.value : v.getDefault(FavoritesSchema))];
 }
 
 /** Toggles one path in a favorites list — project-relative paths and DR-0024
@@ -1332,36 +1326,19 @@ export function matchRoleBadge(role: SessionSearchMatch["role"]): string {
 
 export const PINNED_SESSIONS_STORAGE_KEY = "ccmsg.pinnedSessions";
 
-function isSessionSearchHit(value: unknown): value is SessionSearchHit {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
-  return (
-    typeof v.sid === "string" &&
-    typeof v.config_dir === "string" &&
-    typeof v.file === "string" &&
-    typeof v.created_at === "string" &&
-    typeof v.updated_at === "string" &&
-    typeof v.size === "number"
-  );
-}
+/** The stored pins: the hits as they were when pinned, none when nothing is
+ * stored. */
+const PinnedSessionsSchema = v.optional(v.array(SessionSearchHitSchema), () => []);
+const PinnedSessionsTextSchema = jsonText(PinnedSessionsSchema);
 
-/** Parses a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
- * into a pinned-hit list (the store keys it by cwd, pinsFromHits), same tolerant-of-garbage posture as
- * `parseFavorites`: absent key, non-JSON, non-array JSON, or an array with
- * malformed entries all resolve to (at worst a partial) valid list rather
- * than throwing. A malformed individual entry is dropped, not treated as
- * fatal for the whole array — one bad row (schema drift, manual edit)
- * shouldn't erase every other legitimately-pinned session. */
+/** Reads a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
+ * into a pinned-hit list (the store keys it by cwd, pinsFromHits). A value
+ * that does not read as a list of hits (schema drift, a manual edit) is
+ * ignored as a whole — no pins — rather than read in part, same as
+ * `parseFavorites`. */
 export function parsePinnedSessions(raw: string | null): SessionSearchHit[] {
-  if (raw === null) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed.filter(isSessionSearchHit);
+  const read = raw === null ? null : parseWith(PinnedSessionsTextSchema, raw);
+  return [...(read?.ok ? read.value : v.getDefault(PinnedSessionsSchema))];
 }
 
 /** textarea の視覚行数 = 改行 + 1 (空文字でも 1 行、末尾改行はその後ろの

@@ -20,6 +20,8 @@ import {
   type SessionInputOutcome,
 } from "./session-input.ts";
 import type { ErrorResponse, SessionInputResponse } from "@ccmsg/protocol";
+import { jsonText, parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
 
 /** Design rationale: キーの文字列は、ブラウザに既に保存されている未送信の下書きと
  * 同じものを使う。変えるとそれらが読めなくなり、人が書いた文を失わせる
@@ -69,22 +71,48 @@ function doneAttachments(attachments: readonly ComposerAttachment[] | undefined)
   return (attachments ?? []).filter((a) => a.status === "done");
 }
 
-function validAttachments(att: unknown): ComposerAttachment[] | undefined {
-  if (
-    Array.isArray(att) &&
-    att.every(
-      (a) =>
-        a &&
-        typeof a === "object" &&
-        typeof a.n === "number" &&
-        a.status === "done" &&
-        typeof a.path === "string",
-    )
-  ) {
-    return att as ComposerAttachment[];
-  }
-  return undefined;
-}
+/** An attachment as a draft or a send record keeps it: uploaded (`done`), so
+ * it has its number and the path it was uploaded to. */
+const StoredAttachmentSchema = v.looseObject({
+  n: v.number(),
+  name: v.string(),
+  status: v.literal("done"),
+  progress: v.number(),
+  uuid: v.optional(v.string()),
+  ext: v.optional(v.string()),
+  size: v.optional(v.number()),
+  mime: v.optional(v.string()),
+  path: v.string(),
+  errorMsg: v.optional(v.string()),
+});
+
+/** A draft as `saveDraft` stores it. */
+const StoredDraftTextSchema = jsonText(
+  v.object({
+    text: v.string(),
+    attachments: v.optional(v.array(StoredAttachmentSchema)),
+    updatedAt: v.string(),
+  }),
+);
+
+/** The send records of a session as `saveSends` stores them, none when
+ * nothing is stored. A record's `sentAt` is a time. */
+const SendRecordsSchema = v.optional(
+  v.array(
+    v.object({
+      id: v.string(),
+      text: v.string(),
+      attachments: v.optional(v.array(StoredAttachmentSchema)),
+      sentAt: v.pipe(
+        v.string(),
+        v.check((at) => Number.isFinite(Date.parse(at)), "sentAt is not a time"),
+      ),
+      state: v.picklist(["sending", "unconfirmed"]),
+    }),
+  ),
+  () => [],
+);
+const SendRecordsTextSchema = jsonText(SendRecordsSchema);
 
 /** 2 つの中身が同じ文か。本文の完全一致と、upload 済み添付の番号と path の
  * 一致で見る (upload 中・error の添付は送られないので比べない)。 */
@@ -95,32 +123,20 @@ export function sameContent(a: InputContent | null, b: InputContent | null): boo
   const right = doneAttachments(b.attachments);
   return (
     left.length === right.length &&
-    left.every((x, i) => x.n === right[i]!.n && x.path === right[i]!.path)
+    left.every((x, i) => x.n === right[i].n && x.path === right[i].path)
   );
 }
 
+/** The stored draft of a session, or null when there is none or what is
+ * stored does not read as one (it is ignored as a whole, never read in
+ * part). */
 export function loadDraft(sid: string): StoredDraft | null {
   const raw = readStorage(draftKey(sid));
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    typeof (parsed as StoredDraft).text !== "string" ||
-    typeof (parsed as StoredDraft).updatedAt !== "string"
-  ) {
-    return null;
-  }
-  // 添付の shape が崩れていたら黙って落とす (text だけの復元に degrade) —
-  // 壊れたメタで送信経路を詰まらせない。
-  const { text, updatedAt, attachments } = parsed as StoredDraft;
-  const att = validAttachments(attachments);
-  return { text, updatedAt, ...(att ? { attachments: att } : {}) };
+  if (raw === null) return null;
+  const read = parseWith(StoredDraftTextSchema, raw);
+  if (!read.ok) return null;
+  const { text, updatedAt, attachments } = read.value;
+  return { text, updatedAt, ...(attachments ? { attachments: [...attachments] } : {}) };
 }
 
 /** 下書きを保存する。空の本文は保存せず消す。保存済みと同じ中身なら書かない:
@@ -141,39 +157,20 @@ export function clearDraft(sid: string): void {
   removeStorage(draftKey(sid));
 }
 
+/** The stored send records of a session: none when nothing is stored, or
+ * when what is stored does not read as records (it is ignored as a whole,
+ * never read in part). */
 export function loadSends(sid: string): SendRecord[] {
   const raw = readStorage(sendsKey(sid));
-  if (!raw) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
-  const records: SendRecord[] = [];
-  for (const r of parsed) {
-    if (
-      !r ||
-      typeof r !== "object" ||
-      typeof r.id !== "string" ||
-      typeof r.text !== "string" ||
-      typeof r.sentAt !== "string" ||
-      !Number.isFinite(Date.parse(r.sentAt)) ||
-      (r.state !== "sending" && r.state !== "unconfirmed")
-    ) {
-      continue;
-    }
-    const att = validAttachments(r.attachments);
-    records.push({
-      id: r.id,
-      text: r.text,
-      sentAt: r.sentAt,
-      state: r.state,
-      ...(att ? { attachments: att } : {}),
-    });
-  }
-  return records;
+  const read = raw === null ? null : parseWith(SendRecordsTextSchema, raw);
+  const records = read?.ok ? read.value : v.getDefault(SendRecordsSchema);
+  return records.map(({ id, text, sentAt, state, attachments }) => ({
+    id,
+    text,
+    sentAt,
+    state,
+    ...(attachments ? { attachments: [...attachments] } : {}),
+  }));
 }
 
 function saveSends(sid: string, records: readonly SendRecord[]): void {

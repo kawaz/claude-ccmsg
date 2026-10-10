@@ -1,3 +1,5 @@
+import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
 import {
   agentCommunicationCount,
   ccmsgMessageCount,
@@ -9,12 +11,13 @@ import {
 
 export type TimelineOpenCategory = "U" | "R" | "C" | "T" | "A";
 
-export interface TimelineAutoOpenSettings {
-  thinking: boolean;
-  ccmsg: boolean;
-  agent: boolean;
-  items: boolean;
-}
+const TimelineAutoOpenSettingsSchema = v.object({
+  thinking: v.boolean(),
+  ccmsg: v.boolean(),
+  agent: v.boolean(),
+  items: v.boolean(),
+});
+export type TimelineAutoOpenSettings = Output<typeof TimelineAutoOpenSettingsSchema>;
 
 /** TL (親) は自セッション主体の会話 + 他セッション ccmsg も主要文脈なので
  * C=true。thinking も自セッションの思考過程として T=true。agent 通信は自身の
@@ -45,34 +48,29 @@ export function timelineAutoOpenStorageKey(sid: string, agentKey: string | undef
   return agentKey ? `ccmsg.tl.autoOpen.${sid}/${agentKey}` : `ccmsg.tl.autoOpen.${sid}`;
 }
 
-/** Parses a raw `localStorage.getItem(timelineAutoOpenStorageKey(...))`
- * result, tolerating anything a prior schema version / manual edit / storage
- * corruption could have left behind: absent key, non-JSON, non-object JSON,
- * or an object missing/mistyping any of the four boolean fields all fall
- * back to `fallback` (the timeline's default settings) rather than throwing
- * or partially applying a corrupt value — same posture as `parseFavorites`
- * in utils.ts. */
+/** The stored settings of a Timeline (`localStorage` at
+ * `timelineAutoOpenStorageKey`), that Timeline's defaults when nothing is
+ * stored. */
+function storedSettings(defaults: TimelineAutoOpenSettings) {
+  const schema = v.optional(TimelineAutoOpenSettingsSchema, defaults);
+  return { schema, text: jsonText(schema) };
+}
+
+const MAIN_SETTINGS = storedSettings(defaultTimelineAutoOpen(false));
+const AGENT_SETTINGS = storedSettings(defaultTimelineAutoOpen(true));
+
+/** Reads a raw `localStorage.getItem(timelineAutoOpenStorageKey(...))`
+ * result. Nothing stored, or a value that does not read as the four toggles
+ * (one a prior version / a manual edit / storage corruption left behind), is
+ * the Timeline's defaults: the stored value is ignored, never partially
+ * applied. */
 export function parseTimelineAutoOpenSettings(
   raw: string | null,
-  fallback: TimelineAutoOpenSettings,
+  agentTimeline: boolean,
 ): TimelineAutoOpenSettings {
-  if (raw === null) return fallback;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-  if (typeof parsed !== "object" || parsed === null) return fallback;
-  const candidate = parsed as Record<string, unknown>;
-  const keys: (keyof TimelineAutoOpenSettings)[] = ["thinking", "ccmsg", "agent", "items"];
-  if (!keys.every((key) => typeof candidate[key] === "boolean")) return fallback;
-  return {
-    thinking: candidate.thinking as boolean,
-    ccmsg: candidate.ccmsg as boolean,
-    agent: candidate.agent as boolean,
-    items: candidate.items as boolean,
-  };
+  const stored = agentTimeline ? AGENT_SETTINGS : MAIN_SETTINGS;
+  const read = raw === null ? null : parseWith(stored.text, raw);
+  return read?.ok ? read.value : v.getDefault(stored.schema);
 }
 
 export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | null {
