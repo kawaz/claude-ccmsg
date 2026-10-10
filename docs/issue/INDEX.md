@@ -4,13 +4,13 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-10-10 | perf | open | [webui-bundle-size-shiki-grammars](./2026-10-10-webui-bundle-size-shiki-grammars.md) | webui の JS bundle は minify 後 1.48 MB (br 251 KB)。内訳の上位は @shikijs/langs の 15 言語文法 715 KB (48%)…… |
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [json-value-schema-deep-recursion-throws](./2026-10-10-json-value-schema-deep-recursion-throws.md) | JsonValueSchema の再帰が 20,000 階層で RangeError を parseWith の外へ throw し、DR-0038 §1・§3 に反する。優先度低 |
 | 2026-10-10 | bug | open | [verify-isolated-daemon-receives-live-sessions](./2026-10-10-verify-isolated-daemon-receives-live-sessions.md) | verify の隔離 daemon に実行中の実セッションが繋がる。socket パス解決が state dir 外にある可能性、原因特定と隔離の完成 |
 | 2026-10-10 | bug | open | [transcript-schema-parse-cost-on-image-heavy-sessions](./2026-10-10-transcript-schema-parse-cost-on-image-heavy-sessions.md) | transcript の行を valibot のスキーマで読む (DR-0038 §3、段 A・B) ようにした結果、13MB の transcript で JSON.parse 13ms に対し…… |
 | 2026-10-10 | design | open | [truncated-ccmsg-message-partial-parse-vs-dr0038](./2026-10-10-truncated-ccmsg-message-partial-parse-vs-dr0038.md) | tryParseTruncatedCcmsgMessage の部分読み直しは DR-0038 §6 とぶつかる。救わず落とすか切り詰めを無くすか決める |
 | 2026-10-10 | bug | open | [just-test-one-timeout-unidentified](./2026-10-10-just-test-one-timeout-unidentified.md) | just test で 1 件が 5 秒 timeout した (1 回のみ、test 名未特定)。2026-10-10 02:xx、段 A (transcript スキーマ) の worker が…… |
+| 2026-10-10 | bug | open | [webui-bundle-size-shiki-grammars](./2026-10-10-webui-bundle-size-shiki-grammars.md) | webui の JS bundle は minify 後 1.48 MB (br 251 KB)。内訳の上位は @shikijs/langs の 15 言語文法 715 KB (48%)…… |
 | 2026-10-09 | bug | open | [test-daemon-leak-subscribe-duplicate](./2026-10-09-test-daemon-leak-subscribe-duplicate.md) | テストが起こした daemon (subscribe-duplicate の ccmsg-dup-* ほか) がテスト終了後も残り続ける |
 | 2026-10-09 | task | open | [sidecar-socket-relative-bind](./2026-10-09-sidecar-socket-relative-bind.md) | サイドカー socket を cwd 相対パスで bind / connect し、sun_path 長超過時の退避先 (別置き場) をなくせるか調査 |
 | 2026-10-08 | bug | open | [plugin-name-reserved-by-validate](./2026-10-08-plugin-name-reserved-by-validate.md) | claude plugin validate が plugin 名 claude-ccmsg を reserved として error にする。名前変更要否と移行の調査 |
