@@ -183,9 +183,10 @@ export const MultiEditToolUseSchema = toolUse("MultiEdit", {
 export const NotebookEditToolUseSchema = toolUse("NotebookEdit", {
   notebook_path: v.string(),
 });
+/** A command run with no `description` is described by nothing (`""`). */
 export const BashToolUseSchema = toolUse("Bash", {
   command: v.string(),
-  description: v.optional(v.string()),
+  description: v.optional(v.string(), ""),
   run_in_background: v.optional(v.boolean()),
 });
 export const AgentToolUseSchema = toolUse("Agent", {
@@ -197,11 +198,13 @@ export const AgentToolUseSchema = toolUse("Agent", {
   run_in_background: v.optional(v.boolean()),
 });
 /** `message` is text, or a structured message (an object) such as a request
- * to shut down. */
+ * to shut down. `type` names the kind of message when the call says it
+ * (`message`, `broadcast`, `shutdown_request`, ...). */
 export const SendMessageToolUseSchema = toolUse("SendMessage", {
   to: v.string(),
   message: v.union([v.string(), JsonObjectSchema]),
   summary: v.optional(v.string()),
+  type: v.optional(v.string()),
 });
 export const TaskCreateToolUseSchema = toolUse("TaskCreate", {
   subject: v.string(),
@@ -222,10 +225,11 @@ export const MonitorToolUseSchema = toolUse("Monitor", {
   command: v.string(),
   description: v.string(),
 });
+/** A schedule recurs unless the call says `recurring: false`. */
 export const CronCreateToolUseSchema = toolUse("CronCreate", {
   cron: v.string(),
   prompt: v.string(),
-  recurring: v.optional(v.boolean()),
+  recurring: v.optional(v.boolean(), true),
 });
 export const CronDeleteToolUseSchema = toolUse("CronDelete", {
   id: v.string(),

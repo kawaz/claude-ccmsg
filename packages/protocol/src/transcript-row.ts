@@ -87,11 +87,12 @@ export const UserMessageSchema = v.looseObject({
 });
 export type UserMessage = Output<typeof UserMessageSchema>;
 
-/** The tokens one API request used. */
+/** The tokens one API request used. A request that neither read nor wrote
+ * the prompt cache may leave those counts out: none were used. */
 export const UsageSchema = v.looseObject({
   input_tokens: v.number(),
-  cache_read_input_tokens: v.optional(v.number()),
-  cache_creation_input_tokens: v.optional(v.number()),
+  cache_read_input_tokens: v.optional(v.number(), 0),
+  cache_creation_input_tokens: v.optional(v.number(), 0),
 });
 export type Usage = Output<typeof UsageSchema>;
 
