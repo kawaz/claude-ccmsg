@@ -24,10 +24,15 @@
 //   2. sent: a Bash tool_use whose command is `ccmsg post|reply|notify …`,
 //      paired with its tool_result (`{}` / `{"delivered":true}` on success,
 //      exit DIRECT_SEND_UNCONFIRMED_EXIT when arrival could not be told).
-//   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`.
+//   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`,
+//      its input read where the call is known to be one.
 //
-// String work over the transcript rows' schemas, with no other imports, so the
-// browser bundle and the daemon share it as is.
+// String work over the transcript rows' schemas, importing nothing but valibot
+// and the schema files beside it, so the browser bundle and the daemon share it
+// as is.
+import * as v from "valibot";
+import { type JsonObject, JsonValueSchema } from "./json-value.ts";
+import { JsonTextSchema, parseWith } from "./parse.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
 import { isKnownContentBlock } from "./transcript-content.ts";
 import { isKnownTranscriptRow, type TranscriptRow } from "./transcript-row.ts";
@@ -146,7 +151,7 @@ function isDirectReplyLine(line: string, mid: string, from: string): boolean {
   const tail = bare.slice(`${prefix}ccmsg`.length);
   if (!line.startsWith(prefix) || !line.endsWith(tail)) return false;
   const launcher = shellWords(line.slice(prefix.length, line.length - tail.length));
-  return launcher?.length === 1 && isLauncherWord(launcher[0]!, true);
+  return launcher?.length === 1 && isLauncherWord(launcher[0], true);
 }
 
 /** `ccmsg`, or a path ending in `/ccmsg` (absolute only, when `absolute`). */
@@ -223,7 +228,7 @@ export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
   if (end < bodyStart - 1) return [];
   const attributes = new Map<string, string>();
   for (const [, key, value] of (opening[1] ?? "").matchAll(ATTRIBUTE_RE)) {
-    attributes.set(key!, unescapeAttribute(value!));
+    attributes.set(key, unescapeAttribute(value));
   }
   const mid = attributes.get("ccmsg-mid");
   const from = attributes.get("ccmsg-from");
@@ -249,12 +254,15 @@ export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
  *   absent when the answer goes to a person
  * - notify: `about` is the `--about` session, absent for the caller itself */
 export interface CcmsgSendCommand {
-  verb: "post" | "reply" | "notify";
+  verb: (typeof SEND_VERBS)[number];
   to?: string;
   replyTo?: string;
   about?: string;
   text: string;
 }
+
+/** The verbs of a send, as SEND_COMMAND_RE matches them. */
+const SEND_VERBS = ["post", "reply", "notify"] as const;
 
 /** A command word at the start of the command or after a shell separator —
  * bare, or quoted as `shellQuote` writes a path with spaces — then a verb.
@@ -272,7 +280,7 @@ function shellWords(input: string): string[] | null {
   let cur = "";
   let inWord = false;
   for (let i = 0; i < input.length; i++) {
-    const c = input[i]!;
+    const c = input[i];
     if (c === "'") {
       const end = input.indexOf("'", i + 1);
       if (end < 0) return null;
@@ -282,9 +290,9 @@ function shellWords(input: string): string[] | null {
     } else if (c === '"') {
       let j = i + 1;
       for (; j < input.length && input[j] !== '"'; j++) {
-        const d = input[j]!;
+        const d = input[j];
         if (d === "$" || d === "`") return null;
-        if (d === "\\" && j + 1 < input.length && '"\\$`'.includes(input[j + 1]!)) {
+        if (d === "\\" && j + 1 < input.length && '"\\$`'.includes(input[j + 1])) {
           cur += input[++j];
         } else cur += d;
       }
@@ -348,7 +356,7 @@ export function splitSendWords(words: readonly string[], leadingCount: number): 
   const body: string[] = [];
   let literal = false;
   for (let i = 0; i < words.length; i++) {
-    const w = words[i]!;
+    const w = words[i];
     const word = (): void => {
       if (leading.length < leadingCount) leading.push(w);
       else body.push(w);
@@ -362,7 +370,7 @@ export function splitSendWords(words: readonly string[], leadingCount: number): 
       continue;
     }
     if (SEND_VALUE_OPTIONS.includes(w) && i + 1 < words.length) {
-      options.set(w, words[++i]!);
+      options.set(w, words[++i]);
       continue;
     }
     if (SEND_FLAG_OPTIONS.includes(w)) {
@@ -388,11 +396,12 @@ const NOTIFY_VALUE_OPTIONS = new Set(["--sid", "--about"]);
  * are read by splitSendWords, as the CLI reads them. */
 export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null {
   const m = [...command.matchAll(SEND_COMMAND_RE)].find((candidate) => {
-    const word = shellWords(candidate[1]!);
-    return word?.length === 1 && isLauncherWord(word[0]!);
+    const word = shellWords(candidate[1]);
+    return word?.length === 1 && isLauncherWord(word[0]);
   });
   if (!m) return null;
-  const verb = m[2] as CcmsgSendCommand["verb"];
+  const verb = SEND_VERBS.find((name) => name === m[2]);
+  if (verb === undefined) return null;
   const rest = command.slice(m.index + m[0].length);
   const words = shellWords(rest);
   if (words === null) return { verb, text: rest.trim() };
@@ -417,12 +426,12 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
   const options = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < words.length; i++) {
-    const w = words[i]!;
+    const w = words[i];
     const eq = w.indexOf("=");
     if (w.startsWith("--") && eq > 0 && NOTIFY_VALUE_OPTIONS.has(w.slice(0, eq))) {
       options.set(w.slice(0, eq), w.slice(eq + 1));
     } else if (NOTIFY_VALUE_OPTIONS.has(w) && i + 1 < words.length) {
-      options.set(w, words[++i]!);
+      options.set(w, words[++i]);
     } else positional.push(w);
   }
   const about = options.get("--about");
@@ -455,28 +464,36 @@ export const DIRECT_SEND_UNCONFIRMED_EXIT = 3;
 /** How a Bash tool_result of a non-zero exit begins, with the status. */
 const UNCONFIRMED_RESULT_RE = new RegExp(`^Exit code ${DIRECT_SEND_UNCONFIRMED_EXIT}\\n`);
 
+/** The room CLI's answer to a send: an object carrying `ok`. */
+const RoomCliAnswerSchema = v.looseObject({ ok: JsonValueSchema });
+
+/** A direct send's answer when the message arrived: `{}`, or an object
+ * carrying `delivered`. */
+const DirectSendAnswerSchema = v.union([
+  v.strictObject({}),
+  v.looseObject({ delivered: JsonValueSchema }),
+]);
+
 export function classifyCcmsgSendResult(text: string, isError: boolean): CcmsgSendOutcome {
   const trimmed = text.trim();
   if (isError && UNCONFIRMED_RESULT_RE.test(trimmed) && trimmed.includes("(unconfirmed)")) {
     return { status: "unconfirmed", detail: trimmed };
   }
-  let value: unknown;
-  try {
-    value = JSON.parse(trimmed);
-  } catch {
-    return { status: "failed", detail: trimmed };
-  }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const o = value as Record<string, unknown>;
-    if ("ok" in o) return { status: "other-ccmsg" };
-    if (!isError && (Object.keys(o).length === 0 || "delivered" in o)) return { status: "sent" };
-  }
+  const json = parseWith(JsonTextSchema, trimmed);
+  if (!json.ok) return { status: "failed", detail: trimmed };
+  if (parseWith(RoomCliAnswerSchema, json.value).ok) return { status: "other-ccmsg" };
+  if (!isError && parseWith(DirectSendAnswerSchema, json.value).ok) return { status: "sent" };
   return { status: "failed", detail: trimmed };
 }
 
-/** The text of a PushNotification tool call, or null for any other tool. */
-export function pushNotificationText(name: string, input: unknown): string | null {
-  if (name !== "PushNotification" || !input || typeof input !== "object") return null;
-  const message = (input as Record<string, unknown>).message;
-  return typeof message === "string" ? message : null;
+/** The input of a PushNotification call, read for its text. */
+const PushNotificationInputSchema = v.looseObject({ message: v.string() });
+
+/** The text of a PushNotification tool call (`name` and the input as the
+ * model wrote it), or null for any other tool, or a call whose input carries
+ * no text. */
+export function pushNotificationText(name: string, input: JsonObject): string | null {
+  if (name !== "PushNotification") return null;
+  const read = parseWith(PushNotificationInputSchema, input);
+  return read.ok ? read.value.message : null;
 }

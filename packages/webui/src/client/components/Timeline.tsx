@@ -265,7 +265,8 @@ function ItemRawToggle({
       data-timeline-uuid={uuid}
       onClick={(event) => {
         if (!uuid || !onSelectPosition) return;
-        const target = event.target as Element;
+        const { target } = event;
+        if (!(target instanceof Element)) return;
         if (target.closest("a, button, input, textarea, select, summary")) return;
         onSelectPosition(uuid);
       }}
@@ -336,7 +337,7 @@ function FoldGuide() {
       title="この折り畳みを閉じる"
       aria-label="この折り畳みを閉じる"
       onClick={(e) => {
-        const details = (e.currentTarget as HTMLElement).closest("details");
+        const details = e.currentTarget.closest("details");
         if (!details) return;
         details.open = false;
         details.scrollIntoView({ block: "nearest" });
@@ -597,7 +598,7 @@ function FileToolFold({
     <details
       class="tl-fold tl-file-tool-fold"
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       <FoldSummary ts={ts} label={label} open={open} />
       <div class="tl-guided">
@@ -654,7 +655,7 @@ function BashUseFold({
       id={bashAnchor("command", segment.toolUseId)}
       class="tl-fold tl-file-tool-fold"
       open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <FoldSummary
         ts={ts}
@@ -844,7 +845,7 @@ function BashResultFold({
       id={bashAnchor("result", segment.toolUseId)}
       class="tl-fold tl-file-tool-fold"
       open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <FoldSummary ts={ts} label={`Bash result${segment.isError ? " (error)" : ""}`} open={open} />
       <div class="tl-guided">
@@ -948,7 +949,7 @@ function AgentSendFold({
     <details
       class="tl-fold tl-agent-fold"
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       <FoldSummary
         ts={ts}
@@ -994,7 +995,7 @@ function AgentSpawnFold({
     <details
       class="tl-fold tl-agent-fold"
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       <FoldSummary
         ts={ts}
@@ -1245,7 +1246,7 @@ function HiddenThinkingSegment({
     <details
       class="tl-fold tl-thinking"
       open={detailsOpen}
-      onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
     >
       <FoldSummary
         ts={ts}
@@ -1374,7 +1375,7 @@ function ThinkingSegment({
       ref={detailsRef}
       class="tl-fold tl-thinking"
       open={detailsOpen}
-      onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
     >
       <FoldSummary ts={ts} label="thinking" open={detailsOpen} decoration={{ kind: "thinking" }} />
       <div class="tl-guided">
@@ -1844,7 +1845,7 @@ function SystemMessageFold({
     <details
       class={peer ? "tl-line tl-fold tl-agent-fold" : "tl-line tl-fold"}
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       <FoldSummary ts={line.ts} label={label} open={open} decoration={decoration} />
       {peer ? (
@@ -1962,11 +1963,14 @@ function LineView({
   searchCtx: TLSearchCtx | undefined;
 }) {
   if (line.kind === "broken") {
+    // 読めなかった行 (JSON でない、または既知の種類で形が違う行) であることと
+    // その理由を閉じたまま示し、行そのものは開いて生の文字列で見る。
     return (
       <ItemRawToggle offset={offset}>
-        <div class="tl-line tl-broken">
+        <details class="tl-line tl-fold tl-broken">
+          <FoldSummary ts={null} label="読めなかった行" trailing={line.error} />
           <pre class="tl-broken-raw">{line.raw || "(空行)"}</pre>
-        </div>
+        </details>
       </ItemRawToggle>
     );
   }
@@ -2005,11 +2009,11 @@ function LineView({
   // 揃え、閉時は thinking/agent と同トーンの 1 行 summary が出る。u1 発を含む
   // 行は classifyBoundaryLine が boundary に格上げして Timeline トップで
   // 処理するのでここには来ない (groupTimelineLines の isBoundaryLine 経由)。
-  const peerCcmsgMessages = line.kind === "turn" ? extractCcmsgMessages(line) : [];
+  const peerCcmsgMessages = extractCcmsgMessages(line);
   if (peerCcmsgMessages.length > 0) {
     return (
       <PeerCcmsgLineView
-        line={line as TurnLine}
+        line={line}
         offset={offset}
         messages={peerCcmsgMessages}
         searchCtx={searchCtx}
@@ -2050,7 +2054,7 @@ function LineView({
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold">
           <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
-          <pre class="tl-fold-body">{segmentSearchText(line.segments[0]!)}</pre>
+          <pre class="tl-fold-body">{segmentSearchText(line.segments[0])}</pre>
         </details>
       </ItemRawToggle>
     );
@@ -2149,7 +2153,7 @@ function FoldGroup({
   );
   // 単独の plain item は fold を作らず直接見せる (kawaz r38 mid=44)。
   if (!foldGroupNeedsOuterFold(entries)) {
-    const { offset, line } = entries[0]!;
+    const { offset, line } = entries[0];
     return (
       <div class="tl-guided-content">
         <MemoLineView
@@ -2166,7 +2170,7 @@ function FoldGroup({
     <details
       class="tl-line tl-fold-group"
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
       {/* summary の「N thinking」部だけ thinking と同じ装飾 (kawaz r17
        * mid=47): 展開せずとも thinking の在処 (紫破線トーン) が判る。文言は
@@ -2567,7 +2571,7 @@ function useCcmsgBody(room: string, mid: number | undefined): CcmsgReadBody | "f
           setCcmsgBody(key, "failed");
           return null;
         }
-        const m = resp.msgs[0]!;
+        const m = resp.msgs[0];
         const body: CcmsgReadBody = {
           from: m.from,
           ...(m.to ? { to: m.to } : {}),
@@ -2792,7 +2796,7 @@ function CcmsgBubble({
     <details
       class={`tl-fold tl-ccmsg-fold${selected ? " tl-bubble-user-nav-selected" : ""}`}
       open={foldOpen}
-      onToggle={(e) => setFoldOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => setFoldOpen(e.currentTarget.open)}
       ref={(el) => {
         if (navKey !== undefined) registerUserTurnRef(navKey, el);
       }}
@@ -2866,7 +2870,7 @@ function DirectSessionLabel({ sid, peers }: { sid: string; peers: readonly PeerI
   return (
     <>
       <Avatar seed={sid} size={16} />
-      {repo ? (peer!.ws ? `${repo}/${peer!.ws}` : repo) : sid.slice(0, 8)}
+      {repo ? (peer?.ws ? `${repo}/${peer.ws}` : repo) : sid.slice(0, 8)}
     </>
   );
 }
@@ -3037,7 +3041,7 @@ function DumpFileAction({ sid, position }: { sid: string; position: string }) {
           <input
             type="checkbox"
             checked={noThinking}
-            onChange={(e) => setNoThinking((e.target as HTMLInputElement).checked)}
+            onChange={(e) => setNoThinking(e.currentTarget.checked)}
           />
           thinking を除く
         </label>
@@ -3045,7 +3049,7 @@ function DumpFileAction({ sid, position }: { sid: string; position: string }) {
           <input
             type="checkbox"
             checked={noAgent}
-            onChange={(e) => setNoAgent((e.target as HTMLInputElement).checked)}
+            onChange={(e) => setNoAgent(e.currentTarget.checked)}
           />
           agent 機構を除く
         </label>
@@ -3134,17 +3138,14 @@ function ForkAction({
   // もう片方をオプション扱いにせず、2 つのボタンとして並べる (kawaz r115 m9)。
   // ボタン名がそのまま境界の説明になっていて、どちらを押すと何が残るかを
   // 読む前に分かる。
+  const { resumeAtBefore } = state;
   return (
     <div class="tl-float-fork">
       <button type="button" class="tl-float-action" onClick={() => onFork(state.resumeAt)}>
         この項目まで残して fork
       </button>
-      {state.resumeAtBefore === undefined ? null : (
-        <button
-          type="button"
-          class="tl-float-action"
-          onClick={() => onFork(state.resumeAtBefore as string)}
-        >
+      {resumeAtBefore === undefined ? null : (
+        <button type="button" class="tl-float-action" onClick={() => onFork(resumeAtBefore)}>
           この項目から消して fork
         </button>
       )}
@@ -4109,7 +4110,8 @@ export function Timeline({
     // rendered child instead; the ancestor-<details> walk above still works
     // from the wrapper since `contents` only removes the box, not the DOM
     // position.
-    const target = (el.firstElementChild as HTMLElement | null) ?? el;
+    const first = el.firstElementChild;
+    const target = first instanceof HTMLElement ? first : el;
     // Multi-shot scroll (same settled pattern as scrollToBottomSettled
     // below): opening the ancestor folds just above triggers Preact
     // re-renders that keep shifting layout after this synchronous call —
@@ -4742,7 +4744,7 @@ export function Timeline({
                                 if (group.kind === "fold") {
                                   return (
                                     <MemoFoldGroup
-                                      key={group.entries[0]!.offset}
+                                      key={group.entries[0].offset}
                                       entries={group.entries}
                                       translationAvailability={translationAvailability}
                                       searchCtx={searchCtx}
@@ -4758,7 +4760,7 @@ export function Timeline({
                                 if (line.kind !== "turn") return null;
                                 // boundaries[i] は上の useMemo で groups と同じ index で
                                 // 計算済み (render のたびの再分類を避けるため)。
-                                const boundary = boundaries[i]!;
+                                const boundary = boundaries[i];
                                 if (boundary === null) return null;
                                 switch (boundary.kind) {
                                   case "user-prompt":
@@ -4915,8 +4917,8 @@ export function Timeline({
                               // first group that is newer than them.
                               .flatMap((node, i) => [
                                 ...sayNodes(i),
-                                ...(i === forkDividerIndex
-                                  ? [<ForkDivider key="fork-divider" origin={forkOrigin!} />, node]
+                                ...(i === forkDividerIndex && forkOrigin
+                                  ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
                                   : [node]),
                               ])}
                             {/* 読み込み済み window より新しい say (= 喋った turn の行が

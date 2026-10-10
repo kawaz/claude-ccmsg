@@ -37,6 +37,7 @@ kawaz 2026-10-09: 「全てちゃんと型ガードすれば良いだけ、な�
 - 1 つのパッケージだけが読む形 (設定ファイル、webui の localStorage 等) は、そのパッケージに置く
 - Claude Code の transcript は外部仕様で形が変わっていくので、スキーマは使う field だけを定義し、知らない field は通す (strict にしない)。行が読めない時はその行だけ失敗として扱い、全体は止めない
   - 行・ブロック・attachment・道具は種類 (`type` / `name`) の variant で読む。Claude Code が増やす種類は、判別値を「既知の名前以外の string」に絞った Other として受け、失敗にしない (既知の種類で形が壊れた値は失敗にし、Other に吸わせない)。Other の残りの field は JsonValue で持つ
+  - 読めなかった行 (JSON でない、既知の種類で形が壊れた) を表示する所 (webui の Timeline) は、読めなかった行であることと理由を示し、行そのものは生の文字列のまま折りたたんで見せる。空の turn などに読み替えない
   - 必須にする field は、その種類の行が実機で必ず持つものだけにする (queue-operation に uuid は無く、metadata 系の行に timestamp は無い)
   - 行の一部だけを見る走査 (uuid・cwd・timestamp 等) は、行と同じ field のスキーマから組んだ投影で読む。投影は読む field 以外の不正で落ちない
   - 中身が別の所で決まる値 (`toolUseResult` は呼んだ道具で、tool_use の input は道具ごとに) は、行では JsonValue として持ち、道具と突き合わせる所で道具ごとのスキーマに通す。モデルが書いた input の不正でその行全体を失敗にしないため

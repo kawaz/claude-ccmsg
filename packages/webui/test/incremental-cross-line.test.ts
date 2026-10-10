@@ -23,6 +23,12 @@ import {
   utf8ByteLength,
   type TimelineGroup,
 } from "../src/client/transcript-model.ts";
+import {
+  assistantContentRow,
+  queueOperationRow,
+  userContentRow,
+  line as jsonl,
+} from "../../protocol/test/transcript-rows.ts";
 
 const START = 1000;
 
@@ -79,53 +85,30 @@ function ts(): string {
   return `2026-08-12T00:00:${String(clock).padStart(2, "0")}.000Z`;
 }
 function userPrompt(text: string): string {
-  return JSON.stringify({
-    type: "user",
-    message: { role: "user", content: text },
-    timestamp: ts(),
-  });
+  return jsonl(userContentRow(text, { timestamp: ts() }));
 }
 function assistantText(text: string): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: { role: "assistant", content: [{ type: "text", text }] },
-    timestamp: ts(),
-  });
+  return jsonl(assistantContentRow([{ type: "text", text }], { timestamp: ts() }));
 }
 function thinking(text: string): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: { role: "assistant", content: [{ type: "thinking", thinking: text }] },
-    timestamp: ts(),
-  });
+  return jsonl(assistantContentRow([{ type: "thinking", thinking: text }], { timestamp: ts() }));
 }
 function toolUse(id: string, name = "Bash"): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: {
-      role: "assistant",
-      content: [{ type: "tool_use", id, name, input: { command: `echo ${id}` } }],
-    },
-    timestamp: ts(),
-  });
+  return jsonl(
+    assistantContentRow([{ type: "tool_use", id, name, input: { command: `echo ${id}` } }], {
+      timestamp: ts(),
+    }),
+  );
 }
 function toolResult(id: string, text = "ok"): string {
-  return JSON.stringify({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: id, content: text, is_error: false }],
-    },
-    timestamp: ts(),
-  });
+  return jsonl(
+    userContentRow([{ type: "tool_result", tool_use_id: id, content: text, is_error: false }], {
+      timestamp: ts(),
+    }),
+  );
 }
 function enqueue(content: string): string {
-  return JSON.stringify({
-    type: "queue-operation",
-    operation: "enqueue",
-    content,
-    timestamp: ts(),
-  });
+  return jsonl(queueOperationRow({ operation: "enqueue", content, timestamp: ts() }));
 }
 
 /** Offsets of every group, the coarse "did the grouping come out the same"

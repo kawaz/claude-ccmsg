@@ -9,9 +9,15 @@ import {
   toggleTimelineAutoOpen,
 } from "../src/client/timeline-auto-open.ts";
 import { parseTranscriptLine, type TimelineEntry } from "../src/client/transcript-model.ts";
+import type { JsonObject } from "@ccmsg/protocol";
+import {
+  assistantContentRow,
+  userContentRow,
+  line as jsonl,
+} from "../../protocol/test/transcript-rows.ts";
 
-function parsedEntry(offset: number, raw: Record<string, unknown>): TimelineEntry {
-  return { offset, line: parseTranscriptLine(JSON.stringify(raw)) };
+function parsedEntry(offset: number, row: JsonObject): TimelineEntry {
+  return { offset, line: parseTranscriptLine(jsonl(row)) };
 }
 
 describe("defaultTimelineAutoOpen", () => {
@@ -145,14 +151,9 @@ describe("segmentAutoOpenCategory", () => {
 describe("autoOpenCategoriesForLine", () => {
   // U/R は fold されない境界だが、UI のカテゴリ定義を pure 判定として固定する。
   test("human prompt is U and assistant text response is R", () => {
-    const user = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
-    );
+    const user = parseTranscriptLine(jsonl(userContentRow("hello")));
     const response = parseTranscriptLine(
-      JSON.stringify({
-        type: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
-      }),
+      jsonl(assistantContentRow([{ type: "text", text: "done" }])),
     );
     expect(autoOpenCategoriesForLine(user)).toEqual(new Set(["U"]));
     expect(autoOpenCategoriesForLine(response)).toEqual(new Set(["R"]));
@@ -162,19 +163,14 @@ describe("autoOpenCategoriesForLine", () => {
   // agentCommunicationCount と同じく A には含めず通常 items のままにする。
   test("non-idle peer relay is A while idle notification is uncategorized", () => {
     const peer = parseTranscriptLine(
-      JSON.stringify({
-        type: "user",
-        message: { content: '<agent-message from="worker">done</agent-message>' },
-      }),
+      jsonl(userContentRow('<agent-message from="worker">done</agent-message>')),
     );
     const idle = parseTranscriptLine(
-      JSON.stringify({
-        type: "user",
-        message: {
-          content:
-            '<teammate-message teammate_id="worker">{"type":"idle_notification","from":"worker","idleReason":"available"}</teammate-message>',
-        },
-      }),
+      jsonl(
+        userContentRow(
+          '<teammate-message teammate_id="worker">{"type":"idle_notification","from":"worker","idleReason":"available"}</teammate-message>',
+        ),
+      ),
     );
     expect(autoOpenCategoriesForLine(peer)).toEqual(new Set(["A"]));
     expect(autoOpenCategoriesForLine(idle)).toEqual(new Set());
@@ -182,16 +178,18 @@ describe("autoOpenCategoriesForLine", () => {
 });
 
 describe("foldGroupShouldAutoOpen", () => {
-  const thinking = parsedEntry(1, {
-    type: "assistant",
-    message: { content: [{ type: "thinking", thinking: "inspect" }] },
-  });
-  const agent = parsedEntry(2, {
-    type: "assistant",
-    message: {
-      content: [{ type: "tool_use", name: "SendMessage", input: { to: "worker", message: "go" } }],
-    },
-  });
+  const thinking = parsedEntry(1, assistantContentRow([{ type: "thinking", thinking: "inspect" }]));
+  const agent = parsedEntry(
+    2,
+    assistantContentRow([
+      {
+        type: "tool_use",
+        id: "toolu_0001",
+        name: "SendMessage",
+        input: { to: "worker", message: "go" },
+      },
+    ]),
+  );
 
   // N items は T/A を包む FoldGroup を開くためのゲートにすぎず、T/A が
   // 一致しなければ fold は開かない。

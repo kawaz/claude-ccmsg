@@ -1,30 +1,54 @@
 import {
+  type AssistantRow,
+  type Attachment,
   classifyCcmsgSendResult,
+  type ContentBlock,
   DIRECT_DELIVERY_USER_SENDER,
+  type ImageBlock,
+  isKnownAttachment,
+  isKnownContentBlock,
+  isKnownReadResult,
+  isKnownToolResultContentBlock,
+  isKnownToolUse,
+  isKnownTranscriptRow,
+  type JsonObject,
+  JsonTextSchema,
+  jsonText,
+  type JsonValue,
+  JsonValueSchema,
+  type KnownTranscriptRow,
   mayContainDirectDelivery,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
+  type ParseFailure,
   parseWith,
   pushNotificationText,
   queuedCommandPrompt,
+  ReadToolResultSchema,
+  type ToolResultBlock,
+  type ToolResultContentBlock,
+  type ToolUseBlock,
+  ToolUseFilePathSchema,
+  ToolUseSchema,
+  TranscriptRowHeadSchema,
   TranscriptRowSchema,
+  type UserRow,
 } from "@ccmsg/protocol";
+import * as v from "valibot";
 // Pure jsonl-line -> renderable-event transform for the Timeline view
 // (DR-0009). Kept out of Timeline.tsx so the fold logic is unit-testable
 // without preact/DOM, mirroring store.ts's reducer/effect split (DR-0005 §1).
 //
-// Design rationale: Claude Code's transcript jsonl schema is explicitly NOT
-// guaranteed stable across versions (DR-0009 "jsonl フォーマットの安定性").
-// Rather than hardcode a whitelist of "known" non-turn top-level `type`s
-// (`file-history-snapshot` / `queue-operation` / `system` / ... observed in a
-// real transcript during implementation) that would need updating every time
-// Claude Code adds one, every line whose top-level `type` isn't
-// "user"/"assistant" folds through ONE generic one-line-summary path
-// (`summarizeMeta`) that reads only duck-typed, optional fields (`subtype`,
-// `operation`) already seen across the current type zoo. A genuinely new/
-// unseen type degrades to the same one-line + raw-JSON-expand rendering with
-// no special-case needed — "safe fallback for unknown types" and "compact
-// display for the other known types" are the same code path, not two.
+// Each line is read once, as protocol's transcript row (DR-0038 §3). Claude
+// Code's transcript is not stable across versions (DR-0009 "jsonl フォーマット
+// の安定性"), so a row of a kind not read here (`file-history-snapshot`,
+// `mode`, a kind added later, ...) reads as protocol's "other" row and folds
+// through the same one-line-summary path as the known non-turn rows
+// (`system`, `queue-operation`, `custom-title`), with the raw JSON behind it:
+// "safe fallback for unknown types" and "compact display for the other known
+// types" are one code path. A line that does not read at all — not JSON, or a
+// row of a known kind whose shape is wrong — is a BrokenLine that says so,
+// never a guess at what it meant.
 
 /**
  * What a file tool (Read/Write/Edit) actually got back, in the three shapes
@@ -56,7 +80,9 @@ export type FileToolResult =
 /** One block inside a user/assistant turn's `message.content`, normalized
  * across the shapes Claude Code emits (string content, array of typed
  * blocks). `unknown-segment` is the forward-compat catch-all for a content
- * block whose `type` (or shape) this module has never seen. */
+ * block of a kind this module has no rendering for, shown as its JSON. A tool
+ * result carries the row's `toolUseResult` unread (`resolveToolResults` reads
+ * it by the tool that was called). */
 export type Segment =
   | { kind: "text"; role: "user" | "assistant"; text: string }
   | { kind: "thinking"; text: string }
@@ -67,7 +93,7 @@ export type Segment =
   // 翻訳も検索もできないため、text を持つ `thinking` とは別 variant にして
   // 各 switch に扱いを明示させる。
   | { kind: "thinking-hidden"; reason: "omitted" | "redacted" }
-  | { kind: "tool-use"; name: string; input: unknown }
+  | { kind: "tool-use"; name: string; input: JsonObject }
   | {
       kind: "file-read";
       toolUseId: string;
@@ -78,7 +104,12 @@ export type Segment =
     }
   | { kind: "file-write"; path: string; content: string }
   | { kind: "file-edit"; path: string; oldString: string; newString: string }
-  | { kind: "file-tool-result"; toolUseId: string; result: FileToolResult }
+  | {
+      kind: "file-tool-result";
+      toolUseId: string;
+      result: FileToolResult;
+      toolUseResult?: JsonValue;
+    }
   | {
       kind: "bash-use";
       toolUseId: string;
@@ -115,8 +146,14 @@ export type Segment =
   | { kind: "slash-command-prefix"; command: string }
   | { kind: "bash-command"; command: string; output: BashCommandOutput | null }
   | ({ kind: "bash-command-output"; hasCommand: boolean } & BashCommandOutput)
-  | { kind: "tool-result"; toolUseId: string; isError: boolean; text: string }
-  | { kind: "unknown-segment"; type: string; raw: unknown };
+  | {
+      kind: "tool-result";
+      toolUseId: string;
+      isError: boolean;
+      text: string;
+      toolUseResult?: JsonValue;
+    }
+  | { kind: "unknown-segment"; type: string; raw: JsonValue };
 
 /** Output of one TUI `! <cmd>` run. Claude Code caps what it writes into the
  * transcript: past roughly 50KB the `<bash-stdout>` body is replaced by a
@@ -164,8 +201,8 @@ export interface TurnLine {
   /** For a turn synthesized from a `queue-operation` enqueue row: that row's
    * raw `content` string. Present only on that synthetic shape, and used by
    * `parseTranscriptLines` to pair the queued copy with the `type:"user"`
-   * row that later delivered it (see `parseTranscriptObject`'s
-   * queue-operation branch). */
+   * row that later delivered it (see `parseKnownRow`'s queue-operation
+   * branch). */
   queuedContent?: string;
 }
 
@@ -189,159 +226,135 @@ export interface MetaLine {
   attachment?: AttachmentDetail;
 }
 
-/** JSON.parse failure, or a parsed value that isn't a JSON object at all
- * (array, string, number, null) — the line is shown verbatim, never thrown. */
+/** A line that does not read as a transcript row: not JSON, or a row of a
+ * known kind whose shape is wrong. Shown as unreadable, with why and the line
+ * as written — never thrown, never guessed at. */
 export interface BrokenLine {
   kind: "broken";
   raw: string;
+  /** Why the line does not read (the first thing wrong with it). */
   error: string;
 }
 
 export type ParsedLine = TurnLine | MetaLine | BrokenLine;
 
-/** Duck-typed text extraction used both for a top-level message body and for
- * a `tool_result` block's own (independently-shaped) `content` field — both
- * are "string | array of blocks" in the wild, so one helper covers both call
- * sites. Any block this doesn't recognize as `{type:"text", text}` falls back
- * to its raw JSON rather than being dropped. */
-function contentToText(content: unknown): string {
+/** A tool result's content as text: the text blocks as they are, an image as
+ * a short placeholder naming its media type, and a block of a kind not known
+ * here as its JSON. */
+function toolResultText(content: ToolResultBlock["content"]): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((item) => {
-        if (
-          item &&
-          typeof item === "object" &&
-          (item as Record<string, unknown>).type === "text" &&
-          typeof (item as Record<string, unknown>).text === "string"
-        ) {
-          return (item as Record<string, unknown>).text as string;
-        }
-        return JSON.stringify(item);
-      })
-      .join("\n");
-  }
-  if (content === undefined) return "";
-  return JSON.stringify(content);
+  return content.map(toolResultContentText).join("\n");
 }
 
-function stringField(obj: Record<string, unknown>, ...names: string[]): string {
-  for (const name of names) {
-    if (typeof obj[name] === "string") return obj[name];
+function toolResultContentText(block: ToolResultContentBlock): string {
+  if (!isKnownToolResultContentBlock(block)) return JSON.stringify(block);
+  switch (block.type) {
+    case "text":
+      return block.text;
+    case "image":
+      return `[image ${block.source.media_type}]`;
   }
-  return "";
 }
 
-function parseSpecialTool(name: string, toolUseId: string, input: unknown): Segment | null {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
-  const obj = input as Record<string, unknown>;
-  const path = stringField(obj, "file_path", "path");
-  if (name === "Bash") {
-    return {
-      kind: "bash-use",
-      toolUseId,
-      command: stringField(obj, "command"),
-      description: stringField(obj, "description"),
-      background: obj.run_in_background === true,
-      result: null,
-      hasResult: false,
-    };
+/** The segment of one tool call. A call whose input reads as its tool's gets
+ * that tool's card; a call of a tool with no card, or whose input does not
+ * read as its tool's (the model wrote it), shows its input as written. A Read
+ * whose input is wrong apart from the path (an `offset` written as a list)
+ * keeps its card, without the range. */
+function toolUseSegment(block: ToolUseBlock): Segment {
+  const read = parseWith(ToolUseSchema, block);
+  if (!read.ok) {
+    const file = parseWith(ToolUseFilePathSchema, block);
+    return file.ok && file.value.name === "Read"
+      ? fileReadSegment(block.id, file.value.input.file_path, null, null)
+      : genericToolUseSegment(block);
   }
-  if (name === "Read" && path) {
-    return {
-      kind: "file-read",
-      toolUseId,
-      path,
-      offset: typeof obj.offset === "number" ? obj.offset : null,
-      limit: typeof obj.limit === "number" ? obj.limit : null,
-      result: null,
-    };
+  const call = read.value;
+  if (!isKnownToolUse(call)) return genericToolUseSegment(block);
+  switch (call.name) {
+    case "Bash":
+      return {
+        kind: "bash-use",
+        toolUseId: call.id,
+        command: call.input.command,
+        description: call.input.description,
+        background: call.input.run_in_background === true,
+        result: null,
+        hasResult: false,
+      };
+    case "Read":
+      return fileReadSegment(
+        call.id,
+        call.input.file_path,
+        call.input.offset ?? null,
+        call.input.limit ?? null,
+      );
+    case "Write":
+      return { kind: "file-write", path: call.input.file_path, content: call.input.content };
+    case "Edit":
+      return {
+        kind: "file-edit",
+        path: call.input.file_path,
+        oldString: call.input.old_string,
+        newString: call.input.new_string,
+      };
+    case "SendMessage": {
+      const { message } = call.input;
+      return {
+        kind: "agent-send",
+        to: call.input.to,
+        summary: call.input.summary ?? null,
+        message: typeof message === "string" ? message : JSON.stringify(message, null, 2),
+        messageType: call.input.type ?? "message",
+      };
+    }
+    case "Agent":
+      // Agent tool の identity は explicit な `name` を最優先。
+      // 無ければ `subagent_type` (worker preset 名) にフォールバックする。
+      // `description` は「起動理由」であって identity ではないため、
+      // 名前欄には流し込まない (kawaz r44 mid=5: 🤖→ の後ろには
+      // spawn 先の名前を出すのが自然、description は従属表示)。
+      return {
+        kind: "agent-spawn",
+        name: call.input.name ?? call.input.subagent_type ?? "agent",
+        agentType: call.input.subagent_type ?? "",
+        model: call.input.model ?? "",
+        description: call.input.description,
+        prompt: call.input.prompt,
+        background: call.input.run_in_background === true,
+      };
+    default:
+      return genericToolUseSegment(block);
   }
-  if (name === "Write" && path) {
-    return { kind: "file-write", path, content: stringField(obj, "content") };
-  }
-  if (name === "Edit" && path) {
-    return {
-      kind: "file-edit",
-      path,
-      oldString: stringField(obj, "old_string"),
-      newString: stringField(obj, "new_string"),
-    };
-  }
-  if (name === "SendMessage") {
-    return {
-      kind: "agent-send",
-      to: stringField(obj, "to", "recipient") || "?",
-      summary: stringField(obj, "summary") || null,
-      message: stringField(obj, "message", "content", "prompt"),
-      messageType: stringField(obj, "type") || "message",
-    };
-  }
-  if (name === "Agent") {
-    // Agent tool の identity は explicit な `name` を最優先。
-    // 無ければ `subagent_type` (worker preset 名) にフォールバックする。
-    // `description` は「起動理由」であって identity ではないため、
-    // 名前欄には流し込まない (kawaz r44 mid=5: 🤖→ の後ろには
-    // spawn 先の名前を出すのが自然、description は従属表示)。
-    const explicitName = stringField(obj, "name");
-    const agentType = stringField(obj, "subagent_type");
-    const model = stringField(obj, "model");
-    return {
-      kind: "agent-spawn",
-      name: explicitName || agentType || "agent",
-      agentType,
-      model,
-      description: stringField(obj, "description"),
-      prompt: stringField(obj, "prompt"),
-      background: obj.run_in_background === true,
-    };
-  }
-  return null;
 }
 
-/**
- * Image payload of a tool_result, or `null` when it carries none.
- *
- * Read from `toolUseResult.file` when present (that side also carries the
- * dimensions), and otherwise from the tool_result block's own
- * `{type:"image", source:{type:"base64", data, media_type}}` content — the
- * same bytes in the shape the Anthropic API uses. Taking either means a
- * transcript row that has only the block (no `toolUseResult` sidecar, e.g. a
- * row written by a different harness version) still renders as an image
- * rather than falling through to the raw-JSON tool_result fold.
- */
-function imageResult(
-  file: Record<string, unknown> | null,
-  blockContent: unknown,
+function fileReadSegment(
+  toolUseId: string,
+  path: string,
+  offset: number | null,
+  limit: number | null,
+): Segment {
+  return { kind: "file-read", toolUseId, path, offset, limit, result: null };
+}
+
+function genericToolUseSegment(block: ToolUseBlock): Segment {
+  return { kind: "tool-use", name: block.name, input: block.input };
+}
+
+/** The image a tool result's content carries, or `null` when it carries none:
+ * the block's own `{type:"image", source}`, in the shape the Anthropic API
+ * uses. It names no size (`toolUseResult` does, for a Read: see
+ * `readToolResult`). */
+function blockImage(
+  content: ToolResultBlock["content"],
 ): Extract<FileToolResult, { kind: "image" }> | null {
-  if (typeof file?.base64 === "string" && typeof file.type === "string") {
-    const dims =
-      file.dimensions && typeof file.dimensions === "object"
-        ? (file.dimensions as Record<string, unknown>)
-        : null;
-    const size = (name: string) => (typeof dims?.[name] === "number" ? dims[name] : null);
+  if (typeof content === "string") return null;
+  for (const block of content) {
+    if (!isKnownToolResultContentBlock(block) || block.type !== "image") continue;
     return {
       kind: "image",
-      mediaType: file.type,
-      base64: file.base64,
-      width: size("displayWidth"),
-      height: size("displayHeight"),
-    };
-  }
-  if (!Array.isArray(blockContent)) return null;
-  for (const item of blockContent) {
-    if (!item || typeof item !== "object") continue;
-    const block = item as Record<string, unknown>;
-    if (block.type !== "image") continue;
-    const source =
-      block.source && typeof block.source === "object"
-        ? (block.source as Record<string, unknown>)
-        : null;
-    if (typeof source?.data !== "string" || typeof source.media_type !== "string") continue;
-    return {
-      kind: "image",
-      mediaType: source.media_type,
-      base64: source.data,
+      mediaType: block.source.media_type,
+      base64: block.source.data,
       width: null,
       height: null,
     };
@@ -349,97 +362,84 @@ function imageResult(
   return null;
 }
 
-function parseSegments(
-  content: unknown,
+/** One tool result. Its `toolUseResult` is the called tool's, so it rides
+ * along unread until `resolveToolResults` knows the tool. An image in the
+ * block itself is read here: a transcript row that has only the block (no
+ * `toolUseResult`, e.g. a row written by a different harness version) still
+ * renders as an image. */
+function toolResultSegment(block: ToolResultBlock, toolUseResult: JsonValue | undefined): Segment {
+  const carried = toolUseResult !== undefined ? { toolUseResult } : {};
+  const image = blockImage(block.content);
+  if (image !== null) {
+    return { kind: "file-tool-result", toolUseId: block.tool_use_id, result: image, ...carried };
+  }
+  return {
+    kind: "tool-result",
+    toolUseId: block.tool_use_id,
+    isError: block.is_error === true,
+    text: toolResultText(block.content),
+    ...carried,
+  };
+}
+
+/** An image block of a user's message, as the JSON it was written as: a
+ * pasted image has no card yet and shows as its block. */
+function imageBlockJson(block: ImageBlock): JsonValue {
+  return {
+    type: block.type,
+    source: {
+      type: block.source.type,
+      media_type: block.source.media_type,
+      data: block.source.data,
+    },
+  };
+}
+
+function blockSegment(
+  block: ContentBlock,
   role: "user" | "assistant",
-  toolUseResult?: unknown,
+  toolUseResult: JsonValue | undefined,
+): Segment {
+  if (!isKnownContentBlock(block)) return { kind: "unknown-segment", type: block.type, raw: block };
+  switch (block.type) {
+    case "text":
+      return { kind: "text", role, text: block.text };
+    case "thinking":
+      return block.thinking.trim()
+        ? { kind: "thinking", text: block.thinking }
+        : { kind: "thinking-hidden", reason: "omitted" };
+    case "redacted_thinking":
+      return { kind: "thinking-hidden", reason: "redacted" };
+    case "image":
+      return { kind: "unknown-segment", type: block.type, raw: imageBlockJson(block) };
+    case "tool_use":
+      return toolUseSegment(block);
+    case "tool_result":
+      return toolResultSegment(block, toolUseResult);
+  }
+}
+
+function parseSegments(
+  content: string | readonly ContentBlock[],
+  role: "user" | "assistant",
+  toolUseResult: JsonValue | undefined,
 ): Segment[] {
   if (typeof content === "string") {
     return content ? [{ kind: "text", role, text: content }] : [];
   }
-  if (!Array.isArray(content)) {
-    return content === undefined
-      ? []
-      : [{ kind: "unknown-segment", type: typeof content, raw: content }];
-  }
-  return content.map((block): Segment => {
-    if (!block || typeof block !== "object") {
-      return { kind: "unknown-segment", type: typeof block, raw: block };
-    }
-    const b = block as Record<string, unknown>;
-    switch (b.type) {
-      case "text":
-        return { kind: "text", role, text: typeof b.text === "string" ? b.text : "" };
-      case "thinking": {
-        const text = typeof b.thinking === "string" ? b.thinking : "";
-        return text.trim()
-          ? { kind: "thinking", text }
-          : { kind: "thinking-hidden", reason: "omitted" };
-      }
-      case "redacted_thinking":
-        return { kind: "thinking-hidden", reason: "redacted" };
-      case "tool_use": {
-        const name = typeof b.name === "string" ? b.name : "?";
-        const toolUseId = typeof b.id === "string" ? b.id : "";
-        return (
-          parseSpecialTool(name, toolUseId, b.input) ?? { kind: "tool-use", name, input: b.input }
-        );
-      }
-      case "tool_result": {
-        const toolUseId = typeof b.tool_use_id === "string" ? b.tool_use_id : "";
-        const result =
-          toolUseResult && typeof toolUseResult === "object" && !Array.isArray(toolUseResult)
-            ? (toolUseResult as Record<string, unknown>)
-            : null;
-        const file =
-          result?.file && typeof result.file === "object" && !Array.isArray(result.file)
-            ? (result.file as Record<string, unknown>)
-            : null;
-        if (typeof file?.content === "string") {
-          return {
-            kind: "file-tool-result",
-            toolUseId,
-            result: { kind: "text", content: file.content },
-          };
-        }
-        const image = imageResult(file, b.content);
-        if (image !== null) {
-          return { kind: "file-tool-result", toolUseId, result: image };
-        }
-        return {
-          kind: "tool-result",
-          toolUseId,
-          isError: Boolean(b.is_error),
-          text: contentToText(b.content),
-        };
-      }
-      default:
-        return {
-          kind: "unknown-segment",
-          type: typeof b.type === "string" ? b.type : "?",
-          raw: block,
-        };
-    }
-  });
-}
-
-function summarizeMeta(obj: Record<string, unknown>): string {
-  const parts = [typeof obj.type === "string" ? obj.type : "?"];
-  if (typeof obj.subtype === "string") parts.push(obj.subtype);
-  if (typeof obj.operation === "string") parts.push(obj.operation);
-  return parts.join(": ");
+  return content.map((block) => blockSegment(block, role, toolUseResult));
 }
 
 /**
  * What the Timeline shows for a `type:"attachment"` row: shared chrome (the
  * attachment's own `type`, always rendered the same way) plus the per-type
- * extras a spec in `ATTACHMENT_SPECS` could extract. A type with no spec —
- * including one Claude Code adds after this was written — still gets `type`
- * and the raw-JSON expand, matching the module's forward-compat rule for
- * unseen shapes.
+ * extras its kind carries. A kind with nothing extracted — including one
+ * Claude Code adds after this was written — still gets `type` and the
+ * raw-JSON expand, matching the module's forward-compat rule for unseen
+ * shapes.
  */
 export interface AttachmentDetail {
-  /** `attachment.type` verbatim, `"?"` when the row carries none. */
+  /** `attachment.type` verbatim, `"?"` when it is empty. */
   type: string;
   /** Short label shown to the right of the closed fold's own label — the one
    * field that identifies *which* attachment of this type this row is (hook
@@ -470,44 +470,36 @@ export interface AttachmentFile {
   startLine: number;
 }
 
-/** Per-type extraction for one attachment payload. `cwd` is the row's own
- * working directory, used to show in-project paths relative. */
-type AttachmentSpec = (
-  attachment: Record<string, unknown>,
-  cwd: string | null,
-) => { trailing?: string | null; fields?: SystemMessageField[]; file?: AttachmentFile };
-
-/** Path field names seen across attachment types, in priority order. */
-const ATTACHMENT_PATH_FIELDS = ["filename", "file_path", "filePath", "path", "displayPath"];
+/** The path an attachment of a kind not known here names, by the field names
+ * seen across attachment kinds, in priority order. */
+const OtherAttachmentPathSchema = v.looseObject({
+  filename: v.optional(v.string()),
+  file_path: v.optional(v.string()),
+  filePath: v.optional(v.string()),
+  path: v.optional(v.string()),
+  displayPath: v.optional(v.string()),
+});
 
 /** `path` shortened to a cwd-relative form when it sits under `cwd`. */
-function displayPath(path: string, cwd: string | null): string {
-  if (!cwd) return path;
+function displayPath(path: string, cwd: string): string {
+  if (cwd === "") return path;
   const prefix = cwd.endsWith("/") ? cwd : `${cwd}/`;
   return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
-function field(name: string, value: unknown): SystemMessageField | null {
-  if (typeof value === "string") return value === "" ? null : { name, value };
-  if (typeof value === "number" || typeof value === "boolean") {
-    return { name, value: String(value) };
-  }
-  return null;
+/** `path` as a trailing label, or `null` for an empty one. */
+function pathTrailing(path: string | undefined, cwd: string): string | null {
+  return path === undefined || path === "" ? null : displayPath(path, cwd);
 }
 
-/** hook_success / hook_additional_context: named by the hook that produced
- * them, and worth unfolding into the command's own outcome. */
-const hookSpec: AttachmentSpec = (a) => ({
-  trailing: typeof a.hookName === "string" ? a.hookName : null,
-  fields: [
-    field("event", a.hookEvent),
-    field("command", a.command),
-    field("exitCode", a.exitCode),
-    field("durationMs", a.durationMs),
-    field("stdout", a.stdout),
-    field("stderr", a.stderr),
-  ].filter((f): f is SystemMessageField => f !== null),
-});
+function field(name: string, value: string | number): SystemMessageField | null {
+  if (typeof value === "string") return value === "" ? null : { name, value };
+  return { name, value: String(value) };
+}
+
+function presentFields(fields: (SystemMessageField | null)[]): SystemMessageField[] {
+  return fields.filter((f): f is SystemMessageField => f !== null);
+}
 
 /**
  * Splits a `"12\tconst x = 1"`-numbered listing into its text and the line
@@ -532,101 +524,127 @@ export function parseNumberedSnippet(
     }
     const match = /^(\d+)\t([\s\S]*)$/.exec(line);
     if (!match) return null;
-    const n = Number(match[1]);
+    const [, number = "", text = ""] = match;
+    const n = Number(number);
     if (index === 0) startLine = n;
     else if (n !== startLine + index) return null;
-    texts.push(match[2]);
+    texts.push(text);
   }
   if (startLine < 1) return null;
   return { content: texts.join("\n"), startLine };
 }
 
-/** edited_text_file: the user's editor saved a file and the harness showed the
- * model a numbered snippet around the edit. */
-const editedTextFileSpec: AttachmentSpec = (a) => {
-  const path = typeof a.filename === "string" ? a.filename : "";
-  const snippet = typeof a.snippet === "string" ? a.snippet : "";
-  if (path === "" || snippet === "") return {};
-  const parsed = parseNumberedSnippet(snippet);
-  return {
-    file: parsed
-      ? { path, content: parsed.content, startLine: parsed.startLine }
-      : { path, content: snippet, startLine: 1 },
-  };
-};
-
-/** file: an @-mentioned file, carrying the same `file.content` shape a Read
- * tool_result does. An image payload has no text body and keeps the raw-JSON
- * rendering. */
-const fileSpec: AttachmentSpec = (a) => {
-  const path = typeof a.filename === "string" ? a.filename : "";
-  const content = isRecordValue(a.content) ? a.content : null;
-  const file = content && isRecordValue(content.file) ? content.file : null;
-  if (path === "" || !file || typeof file.content !== "string") return {};
-  const startLine = typeof file.startLine === "number" && file.startLine >= 1 ? file.startLine : 1;
-  return { file: { path, content: file.content, startLine } };
-};
-
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-const ATTACHMENT_SPECS: Record<string, AttachmentSpec> = {
-  hook_success: hookSpec,
-  hook_additional_context: hookSpec,
-  edited_text_file: editedTextFileSpec,
-  file: fileSpec,
-};
-
 /**
  * Classifies one `type:"attachment"` row's payload into its `AttachmentDetail`.
- * Pure. A type with no entry in `ATTACHMENT_SPECS` still gets its name plus a
- * path trailing when the payload carries a recognizable path field, so new
- * file-shaped attachment types read sensibly without a spec.
+ * Pure. A kind not known here still gets its name plus a path trailing when
+ * the payload carries a recognizable path field, so new file-shaped attachment
+ * kinds read sensibly without a case of their own.
+ *
+ * - hook_success / hook_additional_context: named by the hook that produced
+ *   them, and worth unfolding into the command's own outcome
+ * - edited_text_file: the user's editor saved a file and the harness showed
+ *   the model a numbered snippet around the edit
+ * - file: an @-mentioned file, carrying the same `file.content` shape a Read
+ *   result does. An image payload has no text body and keeps the raw-JSON
+ *   rendering
  */
-export function attachmentDetail(attachment: unknown, cwd: string | null): AttachmentDetail {
-  if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
-    return { type: "?", trailing: null, fields: [] };
+export function attachmentDetail(attachment: Attachment, cwd: string): AttachmentDetail {
+  const type = attachment.type === "" ? "?" : attachment.type;
+  if (!isKnownAttachment(attachment)) {
+    const paths = parseWith(OtherAttachmentPathSchema, attachment);
+    const trailing = paths.ok
+      ? [
+          paths.value.filename,
+          paths.value.file_path,
+          paths.value.filePath,
+          paths.value.path,
+          paths.value.displayPath,
+        ]
+          .map((path) => pathTrailing(path, cwd))
+          .find((label) => label !== null)
+      : undefined;
+    return { type, trailing: trailing ?? null, fields: [] };
   }
-  const a = attachment as Record<string, unknown>;
-  const type = typeof a.type === "string" && a.type !== "" ? a.type : "?";
-  const spec = ATTACHMENT_SPECS[type];
-  const extracted = spec ? spec(a, cwd) : {};
-  let trailing = extracted.trailing ?? null;
-  if (trailing === null) {
-    for (const name of ATTACHMENT_PATH_FIELDS) {
-      const value = a[name];
-      if (typeof value === "string" && value !== "") {
-        trailing = displayPath(value, cwd);
-        break;
-      }
+  switch (attachment.type) {
+    case "hook_success":
+      return {
+        type,
+        trailing: attachment.hookName,
+        fields: presentFields([
+          field("event", attachment.hookEvent),
+          field("command", attachment.command),
+          field("exitCode", attachment.exitCode),
+          field("durationMs", attachment.durationMs),
+          field("stdout", attachment.stdout),
+          field("stderr", attachment.stderr),
+        ]),
+      };
+    case "hook_additional_context":
+      return {
+        type,
+        trailing: attachment.hookName,
+        fields: presentFields([field("event", attachment.hookEvent)]),
+      };
+    case "edited_text_file": {
+      const trailing = pathTrailing(attachment.filename, cwd);
+      const path = attachment.filename;
+      const snippet = attachment.snippet;
+      if (path === "" || snippet === "") return { type, trailing, fields: [] };
+      const parsed = parseNumberedSnippet(snippet);
+      return {
+        type,
+        trailing,
+        fields: [],
+        file: parsed
+          ? { path, content: parsed.content, startLine: parsed.startLine }
+          : { path, content: snippet, startLine: 1 },
+      };
     }
+    case "file": {
+      const trailing = pathTrailing(attachment.filename, cwd);
+      const path = attachment.filename;
+      const { content, startLine } = attachment.content.file;
+      if (path === "" || content === undefined) return { type, trailing, fields: [] };
+      return {
+        type,
+        trailing,
+        fields: [],
+        file: { path, content, startLine },
+      };
+    }
+    case "queued_command":
+    case "task_reminder":
+      return { type, trailing: null, fields: [] };
   }
-  return {
-    type,
-    trailing,
-    fields: extracted.fields ?? [],
-    ...(extracted.file ? { file: extracted.file } : {}),
-  };
 }
 
 /** Joins tool_use segments with matching tool_result segments by id. Result
  * lines remain in the array so transcript byte offsets stay aligned; foreground
  * Read/Bash results are omitted by groupTimelineLines after their content has
  * been attached to the command card. Background Bash results stay visible and
- * link back to their command card. */
+ * link back to their command card.
+ *
+ * A result's `toolUseResult` is read here, where the call it answers is known,
+ * by that tool's result schema: the result of a Read becomes the file it read
+ * (text, or an image with its size). A result whose call is outside the loaded
+ * window stays as it was parsed. */
 export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
-  const fileResults = new Map<string, FileToolResult>();
-  const genericResults = new Map<string, { text: string; isError: boolean }>();
-  const bashUses = new Map<string, { background: boolean }>();
   const fileReads = new Set<string>();
   for (const line of lines) {
     if (line.kind !== "turn") continue;
     for (const segment of line.segments) {
+      if (segment.kind === "file-read") fileReads.add(segment.toolUseId);
+    }
+  }
+  const read = fileReads.size === 0 ? lines : lines.map((line) => withReadResults(line, fileReads));
+  const fileResults = new Map<string, FileToolResult>();
+  const genericResults = new Map<string, { text: string; isError: boolean }>();
+  const bashUses = new Map<string, { background: boolean }>();
+  for (const line of read) {
+    if (line.kind !== "turn") continue;
+    for (const segment of line.segments) {
       if (segment.kind === "file-tool-result") {
         fileResults.set(segment.toolUseId, segment.result);
-      } else if (segment.kind === "file-read") {
-        fileReads.add(segment.toolUseId);
       } else if (segment.kind === "tool-result") {
         genericResults.set(segment.toolUseId, { text: segment.text, isError: segment.isError });
       } else if (segment.kind === "bash-use") {
@@ -634,7 +652,7 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
       }
     }
   }
-  const withToolResults = lines.map((line): ParsedLine => {
+  const withToolResults = read.map((line): ParsedLine => {
     if (line.kind !== "turn") return line;
     let changed = false;
     const segments = line.segments.map((segment): Segment => {
@@ -687,6 +705,49 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
   return resolveBashCommands(withToolResults);
 }
 
+/** `line` with the results of the Read calls in `fileReads` read as the file
+ * each read, where its `toolUseResult` says. */
+function withReadResults(line: ParsedLine, fileReads: ReadonlySet<string>): ParsedLine {
+  if (line.kind !== "turn") return line;
+  let changed = false;
+  const segments = line.segments.map((segment): Segment => {
+    if (segment.kind !== "tool-result" && segment.kind !== "file-tool-result") return segment;
+    if (segment.toolUseResult === undefined || !fileReads.has(segment.toolUseId)) return segment;
+    const result = readToolResult(segment.toolUseResult);
+    if (result === null) return segment;
+    changed = true;
+    return {
+      kind: "file-tool-result",
+      toolUseId: segment.toolUseId,
+      result,
+      toolUseResult: segment.toolUseResult,
+    };
+  });
+  return changed ? { ...line, segments } : line;
+}
+
+/** The file a Read's `toolUseResult` says it read: its text, or an image
+ * sized to what the model was shown. `null` for anything else (the error text
+ * of a failed Read, an unchanged file, a PDF), which keeps the result's own
+ * rendering. */
+function readToolResult(toolUseResult: JsonValue): FileToolResult | null {
+  const read = parseWith(ReadToolResultSchema, toolUseResult);
+  if (!read.ok || typeof read.value === "string" || !isKnownReadResult(read.value)) return null;
+  const result = read.value;
+  switch (result.type) {
+    case "text":
+      return { kind: "text", content: result.file.content };
+    case "image":
+      return {
+        kind: "image",
+        mediaType: result.file.type,
+        base64: result.file.base64,
+        width: result.file.dimensions?.displayWidth ?? null,
+        height: result.file.dimensions?.displayHeight ?? null,
+      };
+  }
+}
+
 /** Text of a line classified as one of the two `! <cmd>` shapes, or `null`
  * for any other line. The classification (`classifyUserMessage`) is what
  * identifies these, so a normal user message that merely starts with the
@@ -719,6 +780,7 @@ function bashLineText(line: ParsedLine | undefined, kind: UserMessageKind): stri
 function resolveBashCommands(lines: ParsedLine[]): ParsedLine[] {
   const consumed = new Set<number>();
   const merged = lines.map((line, i): ParsedLine => {
+    if (line.kind !== "turn") return line;
     const rawCommand = bashLineText(line, "bash-command-invocation");
     if (rawCommand === null) return line;
     const command = parseBashInputText(rawCommand);
@@ -726,15 +788,16 @@ function resolveBashCommands(lines: ParsedLine[]): ParsedLine[] {
     const nextRaw = bashLineText(lines[i + 1], "bash-command-stdout");
     const output = nextRaw === null ? null : parseBashOutputText(nextRaw);
     if (output !== null) consumed.add(i + 1);
-    return { ...(line as TurnLine), segments: [{ kind: "bash-command", command, output }] };
+    return { ...line, segments: [{ kind: "bash-command", command, output }] };
   });
   return merged.map((line, i): ParsedLine => {
+    if (line.kind !== "turn") return line;
     const raw = bashLineText(line, "bash-command-stdout");
     if (raw === null) return line;
     const output = parseBashOutputText(raw);
     if (output === null) return line;
     return {
-      ...(line as TurnLine),
+      ...line,
       segments: [{ kind: "bash-command-output", hasCommand: consumed.has(i), ...output }],
     };
   });
@@ -843,10 +906,10 @@ export function rawTranscriptRowsFrom(
   byteLengths: readonly number[],
 ): RawTranscriptRow[] {
   return lines.map((text, i) => ({
-    offset: offsets[i]!,
+    offset: offsets[i],
     index: i + 1,
     text,
-    bytes: byteLengths[i]!,
+    bytes: byteLengths[i],
   }));
 }
 
@@ -885,21 +948,20 @@ export function itemRawSourceOffsets(
     if (line.kind !== "turn") return;
     for (const segment of line.segments) {
       if (segment.kind === "file-read" || segment.kind === "bash-use") {
-        ownerOffsetByToolUseId.set(segment.toolUseId, offsets[i]!);
+        ownerOffsetByToolUseId.set(segment.toolUseId, offsets[i]);
       }
     }
   });
   const sources = new Map<number, number[]>();
   lines.forEach((line, i) => {
-    const offset = offsets[i]!;
-    if (!isConsumedToolResult(line)) {
+    const offset = offsets[i];
+    if (line.kind !== "turn" || !isConsumedToolResult(line)) {
       // 自分の行を先頭に置く (file 順は下の push で保たれる — consumed な
       // tool_result は必ず対応する tool_use より後ろの行)。
       sources.set(offset, [...(sources.get(offset) ?? []), offset]);
       return;
     }
-    const turn = line as TurnLine;
-    const ownerOffset = turn.segments
+    const ownerOffset = line.segments
       .map((segment) => {
         if (segment.kind === "file-tool-result" || segment.kind === "bash-result") {
           return ownerOffsetByToolUseId.get(segment.toolUseId);
@@ -1375,7 +1437,7 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
   };
   lines.forEach((line, i) => {
     if (isConsumedToolResult(line)) return;
-    const offset = offsets[i]!;
+    const offset = offsets[i];
     if (isBoundaryLine(line)) {
       flushPending();
       groups.push({ kind: "entry", offset, line });
@@ -1440,7 +1502,7 @@ const CACHE_KEEPALIVE_REPLY =
 export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "assistant") return false;
   if (line.segments.length !== 1) return false;
-  const segment = line.segments[0]!;
+  const segment = line.segments[0];
   if (segment.kind !== "text") return false;
   // One line only: the model may wrap the token in backticks or similar, so
   // the token is matched by character-class boundaries rather than ^…$, but
@@ -1453,8 +1515,8 @@ export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
  * 他の fold item と同じ「▶ 時刻 ラベル」の 1 行に揃えるためのラベルで、
  * トークン本体は開いてから見る。
  *
- * 形は `summarizeMeta` の `<type>: <何の行か>` に倣う (`system: turn_duration`
- * / `queue-operation: enqueue` と同じ組み立て) — prefix は jsonl 行の
+ * 形は meta 行の summary の `<type>: <何の行か>` に倣う (`system: turn_duration`
+ * / `queue-operation: enqueue` と同じ組み立て、`parseKnownRow`) — prefix は jsonl 行の
  * top-level `type`、つまりこの行では `assistant`。 */
 export const CACHE_KEEPALIVE_FOLD_LABEL = "assistant: llm-gateway keep-alive";
 
@@ -1590,13 +1652,10 @@ export type UserMessageKind =
   | "unknown-meta"
   | "unknown-array";
 
-/** True if `content` contains at least one `{type:"tool_result"}` block —
- * shared by classifyUserMessage's array branch. */
-function hasToolResultBlock(content: unknown[]): boolean {
-  return content.some(
-    (b) =>
-      b !== null && typeof b === "object" && (b as Record<string, unknown>).type === "tool_result",
-  );
+/** True for a `{type:"tool_result"}` block — shared by classifyUserMessage's
+ * array branch. */
+function isToolResultBlock(block: ContentBlock): boolean {
+  return isKnownContentBlock(block) && block.type === "tool_result";
 }
 
 /** True for a `{type:"text"}` or `{type:"image"}` content block — the two
@@ -1605,42 +1664,10 @@ function hasToolResultBlock(content: unknown[]): boolean {
  * alongside an optional `text` block). Shared by classifyUserMessage's array
  * branch to recognize a real-utterance array shape without hardcoding the
  * two-block-exactly case. */
-function isTextOrImageBlock(b: unknown): boolean {
-  if (b === null || typeof b !== "object") return false;
-  const t = (b as Record<string, unknown>).type;
-  return t === "text" || t === "image";
+function isTextOrImageBlock(block: ContentBlock): boolean {
+  return isKnownContentBlock(block) && (block.type === "text" || block.type === "image");
 }
 
-/**
- * Classifies one raw jsonl `type:"user"` entry (the full top-level parsed
- * object, so both `isMeta` and `message.content` are visible) into a
- * `UserMessageKind`. Judged in this order, matching the research's
- * discriminating axes:
- *
- * 1. `promptSource === "system"` — authoritative system-origin metadata;
- *    known `origin.kind` values preserve task-notification/peer-message, and
- *    unknown kinds safely degrade to unknown-meta
- * 2. array `content` — tool_result echo, `[Request interrupted...]`
- *    marker, Skill-tool invocation preamble (isMeta + specific prefix), or a
- *    real human utterance with an image/file paste (array of only text/image
- *    blocks, no tool_result — Claude Code emits this shape for a pasted
- *    image, with or without a caption)
- * 3. string `content` with a peer-relay prefix — peer-message, regardless of
- *    whether Claude Code also sets `isMeta:true`
- * 4. `isMeta === true` — remaining Claude Code CLI/harness UI injection
- *    (slash command caveat/invocation/stdout, malformed-tool-call retry hint)
- * 5. `isMeta` not true, string `content` with another literal system-
- *    injection prefix — task-notification (Monitor/Workflow/subagent),
- *    delivered as an ordinary prompt (`promptId`-bearing)
- * 6. anything else — a real human utterance
- *
- * Known false-negative (documented in the research, not fixed here): a real
- * user who types text starting with one of the exact literal prefixes below
- * (`<task-notification>`, `Another Claude session sent a message:`) is
- * misclassified as the system kind — `isMeta` doesn't distinguish this case
- * from the wire. Accepted per the research's own limits section; not
- * observed in any sampled real transcript.
- */
 /** `<command-name>` と、中身が空でない `<command-args>` を持つ user 行から、
  * コマンド名と引数本文を取り出す (どちらか欠けていれば null = 引数なしの裸
  * コマンド、または slash command ですらない行)。
@@ -1664,9 +1691,8 @@ export function parseSlashCommandPrompt(text: string): { command: string; args: 
 /** 引数付き slash command 行の表示形: コマンド名のチップ + ユーザが書いた
  * 本文。本文を通常の user text segment にすることで、検索 / 折返し / 吹き出し
  * 描画が普通のユーザ発話とまったく同じ経路に乗る。 */
-function slashCommandPromptSegments(content: unknown): Segment[] | null {
-  if (typeof content !== "string") return null;
-  const parsed = parseSlashCommandPrompt(content);
+function slashCommandPromptSegments(text: string): Segment[] | null {
+  const parsed = parseSlashCommandPrompt(text);
   if (parsed === null) return null;
   return [
     { kind: "slash-command-prefix", command: parsed.command },
@@ -1674,10 +1700,31 @@ function slashCommandPromptSegments(content: unknown): Segment[] | null {
   ];
 }
 
-export function classifyUserMessage(entry: Record<string, unknown>): UserMessageKind {
-  const message = entry.message as Record<string, unknown> | undefined;
-  const content = message?.content;
-  const isMeta = entry.isMeta === true;
+/**
+ * Classifies one `type:"user"` row (the whole row, so both `isMeta` and
+ * `message.content` are visible) into a `UserMessageKind`. Judged in this
+ * order, matching the research's discriminating axes:
+ *
+ * 1. `promptSource === "system"` — authoritative system-origin metadata;
+ *    known `origin.kind` values preserve task-notification/peer-message, and
+ *    unknown kinds safely degrade to unknown-meta
+ * 2. array `content` — tool_result echo, `[Request interrupted...]`
+ *    marker, Skill-tool invocation preamble (isMeta + specific prefix), or a
+ *    real human utterance with an image/file paste (array of only text/image
+ *    blocks, no tool_result — Claude Code emits this shape for a pasted
+ *    image, with or without a caption)
+ * 3. string `content`: `classifyUserText`
+ *
+ * Known false-negative (documented in the research, not fixed here): a real
+ * user who types text starting with one of the exact literal prefixes below
+ * (`<task-notification>`, `Another Claude session sent a message:`) is
+ * misclassified as the system kind — `isMeta` doesn't distinguish this case
+ * from the wire. Accepted per the research's own limits section; not
+ * observed in any sampled real transcript.
+ */
+export function classifyUserMessage(row: UserRow): UserMessageKind {
+  const content = row.message.content;
+  const isMeta = row.isMeta === true;
 
   // Agent (subagent) transcript の先頭 user 行 = Agent tool の spawn prompt
   // (親セッションから渡された指示書)。wire signal は `isSidechain: true` と
@@ -1688,17 +1735,12 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   // string 直接値 + プレフィックスマッチではなく wire フィールドで判定して、
   // 「plain text spawn」「<teammate-message> wrapper 付き spawn」の両ケースを
   // 同一 kind に落とす (peer-message 経路は「会話中に届いた relay」用として
-  // 温存)。どちらかの property が欠落しているケース (= 手組みテストフィクスチャ)
-  // は spawn と判定せず、以下の既存分類に委ねる。
-  if (entry.isSidechain === true && entry.parentUuid === null) return "spawn-prompt";
+  // 温存)。
+  if (row.isSidechain && row.parentUuid === null) return "spawn-prompt";
 
-  if (entry.promptSource === "system") {
-    const origin =
-      entry.origin !== null && typeof entry.origin === "object" && !Array.isArray(entry.origin)
-        ? (entry.origin as Record<string, unknown>)
-        : null;
-    if (origin?.kind === "task-notification") return "task-notification";
-    if (origin?.kind === "peer") return "peer-message";
+  if (row.promptSource === "system") {
+    if (row.origin?.kind === "task-notification") return "task-notification";
+    if (row.origin?.kind === "peer") return "peer-message";
     // A cross-session notice is injected by this session's own harness (the
     // subscription is ours), so it carries no `origin` naming a peer — the
     // bracket label is the only wire signal it has.
@@ -1708,17 +1750,12 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return "unknown-meta";
   }
 
-  if (Array.isArray(content)) {
-    if (hasToolResultBlock(content)) return "tool-result";
+  if (typeof content !== "string") {
+    if (content.some(isToolResultBlock)) return "tool-result";
     if (content.length === 1) {
-      const block = content[0];
-      if (
-        block !== null &&
-        typeof block === "object" &&
-        (block as Record<string, unknown>).type === "text"
-      ) {
-        const text = (block as Record<string, unknown>).text;
-        const t = typeof text === "string" ? text : "";
+      const [block] = content;
+      if (isKnownContentBlock(block) && block.type === "text") {
+        const t = block.text;
         if (t.startsWith("[Request interrupted by user")) return "user-interrupt-marker";
         if (isMeta && t.startsWith("Base directory for this skill:"))
           return "skill-invocation-preamble";
@@ -1739,8 +1776,23 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return "unknown-array";
   }
 
-  const text = typeof content === "string" ? content : "";
+  return classifyUserText(content, isMeta);
+}
 
+/**
+ * Classifies the text of a user turn — a `type:"user"` row's string content,
+ * or the prompt a `queue-operation` row queued — into a `UserMessageKind`:
+ *
+ * 1. a peer-relay prefix — peer-message, regardless of whether Claude Code
+ *    also sets `isMeta:true`
+ * 2. `isMeta` — remaining Claude Code CLI/harness UI injection (slash command
+ *    caveat/invocation/stdout, malformed-tool-call retry hint)
+ * 3. not `isMeta`, another literal system-injection prefix —
+ *    task-notification (Monitor/Workflow/subagent), delivered as an ordinary
+ *    prompt (`promptId`-bearing)
+ * 4. anything else — a real human utterance
+ */
+function classifyUserText(text: string, isMeta: boolean): UserMessageKind {
   // A peer relay may carry isMeta:true while retaining the fixed peer banner.
   // The decisive peer wrapper must run before the generic isMeta catch.
   if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
@@ -1760,9 +1812,9 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return "bash-command-stdout";
   }
 
-  // 引数付き slash command はユーザ発話 (上の doc comment 参照)。isMeta の
-  // 有無に依らないので、slash-command-invocation を拾う 2 経路 (isMeta 分岐と
-  // その下の bare prefix 判定) の両方より前に置く。
+  // 引数付き slash command はユーザ発話 (classifyUserMessage の doc comment
+  // 参照)。isMeta の有無に依らないので、slash-command-invocation を拾う 2 経路
+  // (isMeta 分岐とその下の bare prefix 判定) の両方より前に置く。
   if (parseSlashCommandPrompt(text) !== null) return "slash-command-prompt";
 
   if (isMeta) {
@@ -1824,9 +1876,8 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
 export type AssistantMessageKind = "assistant-response" | "api-error";
 
 /**
- * Classifies one raw jsonl `type:"assistant"` entry (the full top-level
- * parsed object, so the top-level `isApiErrorMessage` flag is visible, not
- * just `message`).
+ * Classifies one `type:"assistant"` row (the whole row, so the top-level
+ * `isApiErrorMessage` flag is visible, not just `message`).
  *
  * The wire signal is top-level `isApiErrorMessage === true`, which Claude
  * Code sets on exactly these synthesized lines (they also carry
@@ -1841,8 +1892,8 @@ export type AssistantMessageKind = "assistant-response" | "api-error";
  * /login", ...) and changes freely between versions, so any prefix catalog
  * here would rot silently. One flag, no text matching.
  */
-export function classifyAssistantMessage(entry: Record<string, unknown>): AssistantMessageKind {
-  return entry.isApiErrorMessage === true ? "api-error" : "assistant-response";
+export function classifyAssistantMessage(row: AssistantRow): AssistantMessageKind {
+  return row.isApiErrorMessage === true ? "api-error" : "assistant-response";
 }
 
 /** One ccmsg room message recovered from inside a `teammate-message`/
@@ -1933,40 +1984,33 @@ const TEAMMATE_MESSAGE_RE = /<teammate-message[^>]*>([\s\S]*?)<\/teammate-messag
  * not a single JSON value like `teammate-message`'s. */
 const EVENT_TAG_RE = /<event>([\s\S]*?)<\/event>/g;
 
-/** Duck-types `obj` as a ccmsg `MsgEvent` delivered over `subscribe` (wire
- * shape: `{type:"msg", mid, from, to?, ts, msg|msg_via, r}` — `r` is the room
- * id DeliveredEvent flattening adds. `msg_via` is accepted only with a numeric
- * mid, producing a placeholder that the existing daemon read path hydrates.
- * False for any other event shape
- * this line might carry (`idle_notification`, `ev:"notify"`, member/leave/
- * title/... — anything whose `type`/`ev` isn't exactly `"msg"`), which is the
- * whole point: only a real room message becomes a chat bubble, everything
- * else stays inside the fold. */
-function isCcmsgMsgEventLike(obj: unknown): obj is {
-  type: "msg";
-  mid?: number;
-  from: string;
-  to?: string[];
-  r: string;
-  msg?: string;
-  msg_via?: string;
-  ts: string;
-} {
-  if (!obj || typeof obj !== "object") return false;
-  const o = obj as Record<string, unknown>;
-  return (
-    o.type === "msg" &&
-    typeof o.from === "string" &&
-    typeof o.r === "string" &&
-    (typeof o.msg === "string" || (typeof o.msg_via === "string" && typeof o.mid === "number")) &&
-    typeof o.ts === "string" &&
-    (o.to === undefined || (Array.isArray(o.to) && o.to.every((t) => typeof t === "string"))) &&
-    // `mid` is now surfaced (DR-0027 §2 lazy-read key), still not required for
+/** A ccmsg `MsgEvent` delivered over `subscribe` (wire shape: `{type:"msg",
+ * mid, from, to?, ts, msg|msg_via, r}` — `r` is the room id DeliveredEvent
+ * flattening adds. `msg_via` is accepted only with a mid, producing a
+ * placeholder that the existing daemon read path hydrates). Any other event
+ * shape this line might carry (`idle_notification`, `ev:"notify"`,
+ * member/leave/title/... — anything whose `type` isn't exactly `"msg"`) does
+ * not read, which is the whole point: only a real room message becomes a chat
+ * bubble, everything else stays inside the fold. */
+const CcmsgMsgEventSchema = v.pipe(
+  v.looseObject({
+    type: v.literal("msg"),
+    // `mid` is surfaced (DR-0027 §2 lazy-read key), still not required for
     // shape validity — pre-DR-0027 fixtures without mid must keep flowing
     // through (they degrade to no read-fallback, see CcmsgMessage.mid doc).
-    (o.mid === undefined || typeof o.mid === "number")
-  );
-}
+    mid: v.optional(v.number()),
+    from: v.string(),
+    to: v.optional(v.array(v.string())),
+    r: v.string(),
+    msg: v.optional(v.string()),
+    msg_via: v.optional(v.string()),
+    ts: v.string(),
+  }),
+  v.check(
+    (event) => event.msg !== undefined || (event.msg_via !== undefined && event.mid !== undefined),
+    "a msg event carries its body, or msg_via with a mid",
+  ),
+);
 
 /** Reverses the entity escaping Claude Code's harness applies to text it
  * embeds in a tag body — a `<task-notification><event>` block (kawaz r26
@@ -1997,20 +2041,18 @@ function unescapeHarnessEntities(text: string): string {
  * fallback", and non-msg events like `idle_notification` must NOT become a
  * bubble). */
 function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMessage | null {
-  let obj: unknown;
-  try {
-    obj = JSON.parse(fragment.trim());
-  } catch {
-    return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
-  }
-  if (!isCcmsgMsgEventLike(obj)) return null;
+  const json = parseWith(JsonTextSchema, fragment.trim());
+  if (!json.ok) return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
+  const read = parseWith(CcmsgMsgEventSchema, json.value);
+  if (!read.ok) return null;
+  const event = read.value;
   return {
-    from: obj.from,
-    to: obj.to,
-    room: obj.r,
-    msg: obj.msg !== undefined ? unescapeHarnessEntities(obj.msg) : "",
-    ts: obj.ts,
-    ...(obj.mid !== undefined ? { mid: obj.mid } : {}),
+    from: event.from,
+    ...(event.to !== undefined ? { to: [...event.to] } : {}),
+    room: event.r,
+    msg: event.msg !== undefined ? unescapeHarnessEntities(event.msg) : "",
+    ts: event.ts,
+    ...(event.mid !== undefined ? { mid: event.mid } : {}),
   };
 }
 
@@ -2032,6 +2074,9 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
  * の 1 通知は room event のバッチで、実観測の形は kind/title/member 行が
  * 同居する)。それも無い単独 msg 通知では `?` を room 表示に使い、復元できた
  * 本文を bubble として保持する。 */
+/** A JSON string literal, as the text it says. */
+const JsonStringTextSchema = jsonText(v.string());
+
 function tryParseTruncatedCcmsgMessage(
   fragment: string,
   fallbackRoom?: string,
@@ -2054,14 +2099,11 @@ function tryParseTruncatedCcmsgMessage(
   const mid = midMatch !== undefined ? Number(midMatch) : undefined;
   const msgMatch = fragment.match(/"msg":"((?:[^"\\]|\\.)*)/)?.[1];
   if (!from || !ts || msgMatch === undefined) return null;
-  let msg: string;
-  try {
-    // 抜き出した半端な JSON string 断片を JSON.parse でデコード (escape 解決)。
-    // 断片が escape の途中で切れていたら最後の \ を落として再試行。
-    msg = JSON.parse(`"${msgMatch.replace(/\\$/, "")}"`) as string;
-  } catch {
-    return null;
-  }
+  // 抜き出した半端な JSON string 断片を JSON の文字列としてデコード (escape
+  // 解決)。断片が escape の途中で切れていたら最後の \ を落としてから読む。
+  const decoded = parseWith(JsonStringTextSchema, `"${msgMatch.replace(/\\$/, "")}"`);
+  if (!decoded.ok) return null;
+  const msg = decoded.value;
   return {
     from,
     room,
@@ -2070,6 +2112,9 @@ function tryParseTruncatedCcmsgMessage(
     ...(mid !== undefined ? { mid } : {}),
   };
 }
+
+/** One event of a `<event>` block, read for its room alone. */
+const CcmsgEventRoomLineSchema = jsonText(v.looseObject({ r: v.string() }));
 
 /**
  * Recovers every ccmsg room message (`type:"msg"` events) embedded in a
@@ -2137,22 +2182,19 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
     }
   }
   for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
-    const parsed = tryParseCcmsgMessage(m[1]!);
+    const parsed = tryParseCcmsgMessage(m[1]);
     if (parsed) results.push(parsed);
   }
   for (const m of text.matchAll(EVENT_TAG_RE)) {
     // truncated 行の room 補完用: 同じ <event> ブロック内で parse できた
     // event の r (subscribe の 1 通知は同一 room のバッチが普通)。
     let blockRoom: string | undefined;
-    for (const eventLine of m[1]!.split("\n")) {
+    for (const eventLine of m[1].split("\n")) {
       const trimmed = eventLine.trim();
       if (!trimmed) continue;
-      try {
-        const o = JSON.parse(trimmed) as { r?: unknown };
-        if (typeof o.r === "string") blockRoom = o.r;
-      } catch {
-        // truncated 等の壊れ行 — blockRoom はそのまま
-      }
+      // truncated 等の壊れ行・room の無い行では blockRoom はそのまま。
+      const event = parseWith(CcmsgEventRoomLineSchema, trimmed);
+      if (event.ok) blockRoom = event.value.r;
       const parsed = tryParseCcmsgMessage(trimmed, blockRoom);
       if (parsed) results.push(parsed);
     }
@@ -2285,7 +2327,7 @@ const XML_CHILD_TAG_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
 function extractXmlFields(text: string): SystemMessageField[] {
   const fields: SystemMessageField[] = [];
   for (const m of text.matchAll(XML_CHILD_TAG_RE)) {
-    fields.push({ name: m[1]!, value: m[2]!.trim() });
+    fields.push({ name: m[1], value: m[2].trim() });
   }
   return fields;
 }
@@ -2303,7 +2345,7 @@ function extractXmlFields(text: string): SystemMessageField[] {
 function unwrapOuterTag(text: string, tagName: string): string | null {
   const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`);
   const m = text.match(re);
-  return m ? m[1]! : null;
+  return m ? m[1] : null;
 }
 
 /** Matches one `<teammate-message>`, `<agent-message>` or
@@ -2346,7 +2388,7 @@ const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 function parseXmlAttrs(attrString: string): SystemMessageField[] {
   const fields: SystemMessageField[] = [];
   for (const m of attrString.matchAll(XML_ATTR_RE)) {
-    fields.push({ name: m[1]!, value: m[2]! });
+    fields.push({ name: m[1], value: m[2] });
   }
   return fields;
 }
@@ -2386,10 +2428,10 @@ const PERSISTED_PATH_RE = /saved to:\s*(\S+)/;
 function parsePersistedOutput(stdout: string): BashCommandOutput["persisted"] | null {
   const match = stdout.match(PERSISTED_OUTPUT_RE);
   if (!match) return null;
-  const note = match[1]!.trim();
+  const note = match[1].trim();
   const path = note.match(PERSISTED_PATH_RE)?.[1] ?? "";
   if (path === "") return null;
-  return { note, path, preview: match[2]! };
+  return { note, path, preview: match[2] };
 }
 
 /** Restores a `<bash-stdout>`/`<bash-stderr>` body to the bytes the command
@@ -2445,70 +2487,96 @@ const SPAWN_PROMPT_FROM = "親";
 
 function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
   const relays = [...rawText.matchAll(PEER_MESSAGE_ATTRS_RE)].map((match) =>
-    parsePeerRelay(match[1]!, match[2]!, match[3]!),
+    parsePeerRelay(match[1], match[2], match[3]),
   );
   if (relays.length === 0) return null;
   return { display: "peer", relays };
 }
 
+/** A relay's body when it is JSON. */
+const RelayBodyTextSchema = jsonText(JsonValueSchema);
+
+/** The notices a relay's JSON body can be, by `type`. */
+const RelayNoticeSchema = v.variant("type", [
+  v.looseObject({
+    type: v.literal("idle_notification"),
+    idleReason: v.optional(v.string(), "idle"),
+    // `failureReason` (the API error that ended the peer's turn) only rides
+    // along on a failed idle notification, and it is the one part of an
+    // idle body worth reading — keep it in the text the compact idle row
+    // reveals when opened.
+    failureReason: v.optional(v.string()),
+  }),
+  v.looseObject({
+    type: v.literal("task_assignment"),
+    subject: v.optional(v.string(), "タスク割り当て"),
+    description: v.optional(v.string()),
+  }),
+  v.looseObject({
+    type: v.picklist(["shutdown_request", "shutdown_approved", "teammate_terminated"]),
+    reason: v.optional(v.string()),
+    message: v.optional(v.string()),
+  }),
+]);
+
 function parsePeerRelay(tagName: string, attrString: string, rawTagBody: string): PeerRelay {
   const channel = peerChannelOfTag(tagName);
-  const attrs = Object.fromEntries(parseXmlAttrs(attrString).map((f) => [f.name, f.value]));
+  const attrs = new Map(parseXmlAttrs(attrString).map((f) => [f.name, f.value]));
   // `<cross-session-message>` names the sender twice: `from` is the peer's
   // unix socket path (`uds:/tmp/cc-socks/<pid>.sock`, a pid that dies with the
   // session) and `from-name` is the session name every other part of the UI
   // addresses it by. Prefer the name so bubbles group and read by identity
   // rather than by a number that is meaningless a minute later; the socket
   // path stays as the last-resort fallback when a relay arrives unnamed.
-  const from = attrs["from-name"] || attrs.from || attrs.teammate_id || "agent";
-  const summary = attrs.summary || null;
+  const from = attrs.get("from-name") || attrs.get("from") || attrs.get("teammate_id") || "agent";
+  const summary = attrs.get("summary") || null;
   const rawBody = rawTagBody.trim();
-  let category: PeerMessageCategory = "message";
-  let body = rawBody;
-  try {
-    const value = JSON.parse(rawBody) as unknown;
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const obj = value as Record<string, unknown>;
-      const type = typeof obj.type === "string" ? obj.type : "";
-      if (type === "idle_notification") {
-        category = "idle";
-        const reason = typeof obj.idleReason === "string" ? obj.idleReason : "idle";
-        // `failureReason` (the API error that ended the peer's turn) only rides
-        // along on a failed idle notification, and it is the one part of an
-        // idle body worth reading — keep it in the text the compact idle row
-        // reveals when opened.
-        const failure = typeof obj.failureReason === "string" ? obj.failureReason : "";
-        body = failure ? `待機通知 · ${reason} · ${failure}` : `待機通知 · ${reason}`;
-      } else if (type === "task_assignment") {
-        category = "task-assignment";
-        const subject = typeof obj.subject === "string" ? obj.subject : "タスク割り当て";
-        const description = typeof obj.description === "string" ? obj.description : "";
-        body = description ? `${subject}\n${description}` : subject;
-      } else if (
-        type === "shutdown_request" ||
-        type === "shutdown_approved" ||
-        type === "teammate_terminated"
-      ) {
-        category = "lifecycle";
-        body = [
-          type,
-          typeof obj.reason === "string" ? obj.reason : "",
-          typeof obj.message === "string" ? obj.message : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      } else {
-        category = "unknown";
-        body = JSON.stringify(value, null, 2);
-      }
-    } else {
-      category = "unknown";
-      body = JSON.stringify(value, null, 2);
-    }
-  } catch {
-    // Plain relayed reports and instructions are already readable as-is.
+  const json = parseWith(RelayBodyTextSchema, rawBody);
+  // Plain relayed reports and instructions are already readable as-is.
+  if (!json.ok) return { from, summary, category: "message", body: rawBody, channel };
+  const notice = parseWith(RelayNoticeSchema, json.value);
+  if (!notice.ok) {
+    return {
+      from,
+      summary,
+      category: "unknown",
+      body: JSON.stringify(json.value, null, 2),
+      channel,
+    };
   }
-  return { from, summary, category, body, channel };
+  const value = notice.value;
+  switch (value.type) {
+    case "idle_notification": {
+      const { idleReason, failureReason } = value;
+      return {
+        from,
+        summary,
+        category: "idle",
+        body: failureReason
+          ? `待機通知 · ${idleReason} · ${failureReason}`
+          : `待機通知 · ${idleReason}`,
+        channel,
+      };
+    }
+    case "task_assignment":
+      return {
+        from,
+        summary,
+        category: "task-assignment",
+        body: value.description ? `${value.subject}\n${value.description}` : value.subject,
+        channel,
+      };
+    default:
+      return {
+        from,
+        summary,
+        category: "lifecycle",
+        body: [value.type, value.reason, value.message]
+          .filter((part): part is string => part !== undefined && part !== "")
+          .join(" · "),
+        channel,
+      };
+  }
 }
 
 /**
@@ -2626,117 +2694,148 @@ export function parseSystemMessageFields(
 }
 
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into
- * a renderable event. Never throws — a malformed line becomes `BrokenLine`,
- * an unrecognized-but-valid shape becomes `MetaLine`/`unknown-segment`. */
+ * a renderable event. Never throws — a line that does not read as a row
+ * becomes `BrokenLine`, a row of a kind not read here becomes `MetaLine`, a
+ * block of a kind not read here an `unknown-segment`. */
 export function parseTranscriptLine(raw: string): ParsedLine {
-  let obj: unknown;
-  try {
-    obj = JSON.parse(raw);
-  } catch (e) {
-    return { kind: "broken", raw, error: e instanceof Error ? e.message : "parse error" };
-  }
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-    return { kind: "broken", raw, error: "not a JSON object" };
-  }
-  return parseTranscriptObject(obj as Record<string, unknown>, raw);
-}
-
-/** `parseTranscriptLine`'s body once the line is known to be a JSON object,
- * split out so `parseTranscriptLines` can run its cross-line pass over the
- * parsed objects without a second `JSON.parse` per line. */
-function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedLine {
-  const ts = typeof o.timestamp === "string" ? o.timestamp : null;
-  const uuid = typeof o.uuid === "string" && o.uuid !== "" ? o.uuid : undefined;
-  const parentUuid =
-    typeof o.parentUuid === "string" && o.parentUuid !== "" ? o.parentUuid : undefined;
-  if (o.type === "user" || o.type === "assistant") {
-    const role = o.type;
-    const message = o.message as Record<string, unknown> | undefined;
-    const parsedSegments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
-    const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
-    const segments =
-      userMessageKind === "slash-command-prompt"
-        ? (slashCommandPromptSegments(message?.content) ?? parsedSegments)
-        : parsedSegments;
-    const assistantMessageKind = role === "assistant" ? classifyAssistantMessage(o) : undefined;
-    return {
-      kind: "turn",
-      ts,
-      ...(uuid ? { uuid } : {}),
-      ...(parentUuid ? { parentUuid } : {}),
-      role,
-      segments,
-      userMessageKind,
-      assistantMessageKind,
-    };
-  }
-  // queue-operation enqueue は「作業中に届いたメッセージが queue に積まれた
-  // 記録」で、`content` field が queue に積まれた prompt 文字列。この行は
-  // promptSource / origin / isMeta といった meta field を一切持たないため、
-  // 単独では「人間が queue に積んだ本物の発話」と「ハーネスがシステム由来で
-  // 積んだ通知」を wire 上で区別できない。区別できるのは queue から取り出され
-  // て実際に配送された `type:"user"` 行の方 (そちらは promptSource:"system" +
-  // origin.kind を持つ) なので、両者が揃っている transcript では配送側を正と
-  // して queue 側を落とす — `parseTranscriptLines` の cross-line パスが行う。
-  // ここでは単独行としての最善 (= 本文 prefix カタログの再利用) を返しつつ、
-  // その判断材料を `queuedContent` に残す。
-  // A standalone-ccmsg message that arrived mid-turn is delivered by this
-  // attachment row rather than a `type:"user"` one, so it becomes the
-  // delivered user turn itself — which also lets `pairQueuedTurns` drop the
-  // queue-operation copy against it. `rendered` repeats the envelope inside a
-  // system-reminder and is not read.
-  const attachmentRow = o.type === "attachment" ? parseWith(TranscriptRowSchema, o) : undefined;
-  const queuedPrompt = attachmentRow?.ok ? queuedCommandPrompt(attachmentRow.value) : null;
-  if (queuedPrompt !== null && mayContainDirectDelivery(queuedPrompt)) {
-    return {
-      kind: "turn",
-      ts,
-      ...(uuid ? { uuid } : {}),
-      ...(parentUuid ? { parentUuid } : {}),
-      role: "user",
-      segments: [{ kind: "text", role: "user", text: queuedPrompt }],
-      userMessageKind: classifyUserMessage({
-        type: "user",
-        isMeta: true,
-        promptSource: "system",
-        origin: { kind: "peer" },
-        message: { role: "user", content: queuedPrompt },
-      }),
-    };
-  }
-  if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
-    const content = o.content;
-    const userMessageKind = classifyUserMessage({
-      type: "user",
-      message: { role: "user", content },
-    });
-    return {
-      kind: "turn",
-      ts,
-      ...(uuid ? { uuid } : {}),
-      ...(parentUuid ? { parentUuid } : {}),
-      role: "user",
-      segments: slashCommandPromptSegments(content) ?? [
-        { kind: "text", role: "user", text: content },
-      ],
-      userMessageKind,
-      queuedContent: content,
-    };
-  }
+  const json = parseWith(JsonTextSchema, raw);
+  if (!json.ok) return brokenLine(raw, json.failure);
+  const read = parseWith(TranscriptRowSchema, json.value, { firstIssue: true });
+  if (!read.ok) return brokenLine(raw, read.failure);
+  const row = read.value;
+  if (isKnownTranscriptRow(row)) return parseKnownRow(row, raw);
+  // A row of a kind not read here keeps its head, read from the same value:
+  // the rows that carry a timestamp (`pr-link`, `file-history-delta`, ...)
+  // still sit at their time.
+  const head = parseWith(TranscriptRowHeadSchema, json.value, { firstIssue: true });
+  if (!head.ok) return brokenLine(raw, head.failure);
   return {
     kind: "meta",
-    ts,
-    ...(uuid ? { uuid } : {}),
-    ...(parentUuid ? { parentUuid } : {}),
-    type: typeof o.type === "string" ? o.type : "?",
-    summary: summarizeMeta(o),
+    ts: head.value.timestamp ?? null,
+    ...linkOf(head.value.uuid, head.value.parentUuid ?? null),
+    type: row.type,
+    summary: row.type,
     raw,
-    ...(o.type === "attachment"
-      ? {
-          attachment: attachmentDetail(o.attachment, typeof o.cwd === "string" ? o.cwd : null),
-        }
-      : {}),
   };
+}
+
+function brokenLine(raw: string, failure: ParseFailure): BrokenLine {
+  return { kind: "broken", raw, error: failure.summary };
+}
+
+/** The `uuid` / `parentUuid` fields of a line, for a row that carries them. */
+function linkOf(
+  uuid: string | undefined,
+  parentUuid: string | null,
+): Pick<TurnLine, "uuid" | "parentUuid"> {
+  return {
+    ...(uuid !== undefined ? { uuid } : {}),
+    ...(parentUuid !== null ? { parentUuid } : {}),
+  };
+}
+
+function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
+  switch (row.type) {
+    case "user": {
+      const userMessageKind = classifyUserMessage(row);
+      const content = row.message.content;
+      const parsedSegments = parseSegments(content, "user", row.toolUseResult);
+      const segments =
+        userMessageKind === "slash-command-prompt" && typeof content === "string"
+          ? (slashCommandPromptSegments(content) ?? parsedSegments)
+          : parsedSegments;
+      return {
+        kind: "turn",
+        ts: row.timestamp,
+        ...linkOf(row.uuid, row.parentUuid),
+        role: "user",
+        segments,
+        userMessageKind,
+      };
+    }
+    case "assistant":
+      return {
+        kind: "turn",
+        ts: row.timestamp,
+        ...linkOf(row.uuid, row.parentUuid),
+        role: "assistant",
+        segments: parseSegments(row.message.content, "assistant", undefined),
+        assistantMessageKind: classifyAssistantMessage(row),
+      };
+    case "attachment": {
+      // A standalone-ccmsg message that arrived mid-turn is delivered by this
+      // attachment row rather than a `type:"user"` one, so it becomes the
+      // delivered user turn itself — which also lets `pairQueuedTurns` drop
+      // the queue-operation copy against it. `queuedCommandPrompt` takes only
+      // a peer's queued command, and a peer's delivery is what a `type:"user"`
+      // row says with `promptSource:"system"` + `origin.kind:"peer"`: a
+      // peer-message. `rendered` repeats the envelope inside a
+      // system-reminder and is not read.
+      const queuedPrompt = queuedCommandPrompt(row);
+      if (queuedPrompt !== null && mayContainDirectDelivery(queuedPrompt)) {
+        return {
+          kind: "turn",
+          ts: row.timestamp,
+          ...linkOf(row.uuid, row.parentUuid),
+          role: "user",
+          segments: [{ kind: "text", role: "user", text: queuedPrompt }],
+          userMessageKind: "peer-message",
+        };
+      }
+      return {
+        kind: "meta",
+        ts: row.timestamp,
+        ...linkOf(row.uuid, row.parentUuid),
+        type: row.type,
+        summary: row.type,
+        raw,
+        attachment: attachmentDetail(row.attachment, row.cwd),
+      };
+    }
+    case "queue-operation": {
+      // queue-operation enqueue は「作業中に届いたメッセージが queue に積まれた
+      // 記録」で、`content` field が queue に積まれた prompt 文字列。この行は
+      // promptSource / origin / isMeta といった meta field を一切持たないため、
+      // 単独では「人間が queue に積んだ本物の発話」と「ハーネスがシステム由来で
+      // 積んだ通知」を wire 上で区別できない。区別できるのは queue から取り出され
+      // て実際に配送された `type:"user"` 行の方 (そちらは promptSource:"system" +
+      // origin.kind を持つ) なので、両者が揃っている transcript では配送側を正と
+      // して queue 側を落とす — `parseTranscriptLines` の cross-line パスが行う。
+      // ここでは単独行としての最善 (= 本文 prefix カタログの再利用) を返しつつ、
+      // その判断材料を `queuedContent` に残す。
+      const content = row.content;
+      if (row.operation !== "enqueue" || content === undefined) {
+        return {
+          kind: "meta",
+          ts: row.timestamp,
+          type: row.type,
+          summary: `${row.type}: ${row.operation}`,
+          raw,
+        };
+      }
+      return {
+        kind: "turn",
+        ts: row.timestamp,
+        role: "user",
+        segments: slashCommandPromptSegments(content) ?? [
+          { kind: "text", role: "user", text: content },
+        ],
+        userMessageKind: classifyUserText(content, false),
+        queuedContent: content,
+      };
+    }
+    case "system":
+      return {
+        kind: "meta",
+        ts: row.timestamp,
+        ...linkOf(row.uuid, row.parentUuid),
+        type: row.type,
+        summary: `${row.type}: ${row.subtype}`,
+        raw,
+      };
+    case "custom-title":
+      return { kind: "meta", ts: null, type: row.type, summary: row.type, raw };
+  }
 }
 
 /** The shape a queued copy and its delivered row are compared as. Identity for
@@ -2760,8 +2859,8 @@ function queuePairingKey(text: string): string {
   if (relays.length === 0) return text;
   return relays
     .map((match) => {
-      const relay = parsePeerRelay(match[1]!, match[2]!, match[3]!);
-      return [match[1]!, relay.from, relay.summary ?? "", relay.body].join("\u0000");
+      const relay = parsePeerRelay(match[1], match[2], match[3]);
+      return [match[1], relay.from, relay.summary ?? "", relay.body].join("\u0000");
     })
     .join("\u0000\u0000");
 }
@@ -2841,7 +2940,7 @@ export function pairQueuedTurns(
       ...(line.parentUuid ? { parentUuid: line.parentUuid } : {}),
       type: "queue-operation",
       summary: "queue-operation: enqueue",
-      raw: raws[index]!,
+      raw: raws[index],
     };
   });
 }

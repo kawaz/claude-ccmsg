@@ -76,7 +76,10 @@
         "packages/daemon/test/log.test.ts",
         "packages/daemon/test/sidecar-call.test.ts",
         "packages/daemon/test/helpers.ts",
-        "packages/daemon/test/drive-request.ts"
+        "packages/daemon/test/drive-request.ts",
+        "packages/protocol/src/ccmsg-direct-transcript.ts",
+        "packages/webui/src/client/transcript-model.ts",
+        "packages/webui/src/client/components/Timeline.tsx"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

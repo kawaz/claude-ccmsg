@@ -18,6 +18,11 @@ import {
   type TimelineGroup,
 } from "../src/client/transcript-model.ts";
 import { foldGroupKey, foldPathsByOffset } from "../src/client/fold-tree.ts";
+import {
+  assistantContentRow,
+  userContentRow,
+  line as jsonl,
+} from "../../protocol/test/transcript-rows.ts";
 
 const START = 0;
 
@@ -27,45 +32,28 @@ function ts(): string {
   return `2026-08-12T00:00:${String(clock).padStart(2, "0")}.000Z`;
 }
 function userPrompt(text: string): string {
-  return JSON.stringify({
-    type: "user",
-    message: { role: "user", content: text },
-    timestamp: ts(),
-  });
+  return jsonl(userContentRow(text, { timestamp: ts() }));
 }
 function assistantText(text: string): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: { role: "assistant", content: [{ type: "text", text }] },
-    timestamp: ts(),
-  });
+  return jsonl(assistantContentRow([{ type: "text", text }], { timestamp: ts() }));
 }
 function thinking(text: string): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: { role: "assistant", content: [{ type: "thinking", thinking: text }] },
-    timestamp: ts(),
-  });
+  return jsonl(assistantContentRow([{ type: "thinking", thinking: text }], { timestamp: ts() }));
 }
 function toolUse(id: string): string {
-  return JSON.stringify({
-    type: "assistant",
-    message: {
-      role: "assistant",
-      content: [{ type: "tool_use", id, name: "Bash", input: { command: `echo ${id}` } }],
-    },
-    timestamp: ts(),
-  });
+  return jsonl(
+    assistantContentRow(
+      [{ type: "tool_use", id, name: "Bash", input: { command: `echo ${id}` } }],
+      { timestamp: ts() },
+    ),
+  );
 }
 function toolResult(id: string): string {
-  return JSON.stringify({
-    type: "user",
-    message: {
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: id, content: "ok", is_error: false }],
-    },
-    timestamp: ts(),
-  });
+  return jsonl(
+    userContentRow([{ type: "tool_result", tool_use_id: id, content: "ok", is_error: false }], {
+      timestamp: ts(),
+    }),
+  );
 }
 
 function build(raws: readonly string[]): {
