@@ -52,6 +52,7 @@ import {
   type TimelineEntry,
 } from "../src/client/transcript-model.ts";
 import { renderDirectDelivery } from "@ccmsg/protocol";
+import { attachmentRow, line } from "../../protocol/test/transcript-rows.ts";
 
 // Terse ParsedLine builders for groupTimelineLines/foldGroupLabel tests below
 // — these tests care about kind/role/segment shape, not the full jsonl
@@ -5476,22 +5477,25 @@ const QUEUED_PROMPT =
   '<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r349m12" ccmsg-from="user">\n両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？\n\nReply in your normal assistant response.\n</cross-session-message>';
 const QUEUED_BODY =
   "両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？";
-const queuedAttachmentRow = JSON.stringify({
-  type: "attachment",
-  timestamp: "2026-09-28T06:44:03.962Z",
-  attachment: {
-    type: "queued_command",
-    prompt: QUEUED_PROMPT,
-    commandMode: "prompt",
-    origin: { kind: "peer" },
-    isMeta: true,
-  },
-  rendered: [
+const queuedAttachmentRow = line(
+  attachmentRow(
     {
-      content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+      type: "queued_command",
+      prompt: QUEUED_PROMPT,
+      commandMode: "prompt",
+      origin: { kind: "peer" },
+      isMeta: true,
     },
-  ],
-});
+    {
+      timestamp: "2026-09-28T06:44:03.962Z",
+      rendered: [
+        {
+          content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+        },
+      ],
+    },
+  ),
+);
 const queuedEnqueueRow = JSON.stringify({
   type: "queue-operation",
   operation: "enqueue",

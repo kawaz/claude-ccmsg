@@ -4,8 +4,10 @@ import {
   mayContainDirectDelivery,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
+  parseWith,
   pushNotificationText,
   queuedCommandPrompt,
+  TranscriptRowSchema,
 } from "@ccmsg/protocol";
 // Pure jsonl-line -> renderable-event transform for the Timeline view
 // (DR-0009). Kept out of Timeline.tsx so the fold logic is unit-testable
@@ -2683,7 +2685,8 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
   // delivered user turn itself — which also lets `pairQueuedTurns` drop the
   // queue-operation copy against it. `rendered` repeats the envelope inside a
   // system-reminder and is not read.
-  const queuedPrompt = queuedCommandPrompt(o);
+  const attachmentRow = o.type === "attachment" ? parseWith(TranscriptRowSchema, o) : undefined;
+  const queuedPrompt = attachmentRow?.ok ? queuedCommandPrompt(attachmentRow.value) : null;
   if (queuedPrompt !== null && mayContainDirectDelivery(queuedPrompt)) {
     return {
       kind: "turn",

@@ -2,8 +2,24 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { PeerInfo } from "@ccmsg/protocol";
+import {
+  parseWith,
+  TranscriptRowLineSchema,
+  type JsonObject,
+  type PeerInfo,
+  type TranscriptRow,
+} from "@ccmsg/protocol";
 import { classifyUserInputRow, isUserInputCandidate } from "../src/session-user-input.ts";
+import {
+  assistantContentRow,
+  attachmentRow,
+  imageBlock,
+  line,
+  queueOperationRow,
+  textBlock,
+  toolResultBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 import {
   connect,
   startTestDaemon,
@@ -26,16 +42,17 @@ function fixtureDir(): string {
 
 /** A prompt the human typed, shaped after a real CC 2.1.x transcript row:
  * `promptSource:"typed"` with `origin:{kind:"human"}`. */
-function typedPromptLine(text: string, timestamp: string): string {
-  return `${JSON.stringify({
-    type: "user",
-    isSidechain: false,
-    userType: "external",
+function typedPromptRow(text: string, timestamp: string, fields: JsonObject = {}): JsonObject {
+  return userContentRow(text, {
     promptSource: "typed",
     origin: { kind: "human" },
     timestamp,
-    message: { role: "user", content: text },
-  })}\n`;
+    ...fields,
+  });
+}
+
+function typedPromptLine(text: string, timestamp: string): string {
+  return `${line(typedPromptRow(text, timestamp))}\n`;
 }
 
 /** A ccmsg room message delivered through the session's `ccmsg subscribe`
@@ -54,67 +71,47 @@ function ccmsgDeliveryLine(from: string, msg: string, timestamp: string): string
     reply_via: "Reply in your normal assistant response",
     ts: timestamp,
   });
-  return `${JSON.stringify({
-    type: "user",
-    isSidechain: false,
-    userType: "external",
-    promptSource: "system",
-    origin: { kind: "task-notification" },
-    timestamp,
-    message: {
-      role: "user",
-      content: `<task-notification>\n<task-id>b2l67o1na</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ"</summary>\n<event>${event}</event>\n</task-notification>`,
-    },
-  })}\n`;
+  return `${line(
+    userContentRow(
+      `<task-notification>\n<task-id>b2l67o1na</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ"</summary>\n<event>${event}</event>\n</task-notification>`,
+      { promptSource: "system", origin: { kind: "task-notification" }, timestamp },
+    ),
+  )}\n`;
 }
 
 /** The session's own `ccmsg read` result — quotes the same event JSON, but is
  * the agent pulling history rather than the user speaking. */
 function ccmsgReadResultLine(from: string, timestamp: string): string {
   const event = JSON.stringify({ type: "msg", r: "r144", mid: 2, from, msg: "hi", ts: timestamp });
-  return `${JSON.stringify({
-    type: "user",
-    isSidechain: false,
-    timestamp,
-    message: {
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: "toolu_1", content: event }],
-    },
-  })}\n`;
+  return `${line(
+    userContentRow([toolResultBlock(event, { tool_use_id: "toolu_1" })], { timestamp }),
+  )}\n`;
 }
 
 /** A teammate relay — another Claude session talking, not the user. */
 function teammateRelayLine(timestamp: string): string {
-  return `${JSON.stringify({
-    type: "user",
-    isSidechain: false,
-    promptSource: "system",
-    origin: { kind: "peer" },
-    isMeta: true,
-    timestamp,
-    message: {
-      role: "user",
-      content:
-        'Another Claude session sent a message:\n<teammate-message teammate_id="w1">done</teammate-message>',
-    },
-  })}\n`;
+  return `${line(
+    userContentRow(
+      'Another Claude session sent a message:\n<teammate-message teammate_id="w1">done</teammate-message>',
+      { promptSource: "system", origin: { kind: "peer" }, isMeta: true, timestamp },
+    ),
+  )}\n`;
 }
 
 function assistantLine(timestamp: string): string {
-  return `${JSON.stringify({
-    type: "assistant",
-    isSidechain: false,
-    timestamp,
-    message: {
-      model: "claude-fable-5",
-      role: "assistant",
-      content: [{ type: "text", text: "ok" }],
-    },
-  })}\n`;
+  return `${line(assistantContentRow([textBlock("ok")], { timestamp }))}\n`;
 }
 
-function row(line: string): Record<string, unknown> {
-  return JSON.parse(line) as Record<string, unknown>;
+/** A transcript line read as its row, as the fold reads it. */
+function row(text: string): TranscriptRow {
+  const read = parseWith(TranscriptRowLineSchema, text);
+  if (!read.ok) throw new Error(read.failure.summary);
+  return read.value;
+}
+
+/** A row built from its fields, read as the fold reads it. */
+function rowOf(fields: JsonObject): TranscriptRow {
+  return row(line(fields));
 }
 
 async function sessionHello(ctx: DaemonCtx, sid: string, file: string): Promise<TestClient> {
@@ -148,43 +145,29 @@ describe("classifyUserInputRow", () => {
   // kawaz r244m18: 引数付き slash command (/clear に次タスクの本文を渡した形)
   // はユーザが書いたテキストなので数える。素の command (args 空/無し) は数えない。
   test("引数付き slash command はユーザ入力", () => {
-    const row = {
-      type: "user",
-      timestamp: "2026-09-01T03:02:23.224Z",
-      message: {
-        role: "user",
-        content:
-          "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>8月の勤怠表を出力してください。</command-args>",
-      },
-    };
-    expect(classifyUserInputRow(row)).toBe("2026-09-01T03:02:23.224Z");
+    const command = userContentRow(
+      "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>8月の勤怠表を出力してください。</command-args>",
+      { timestamp: "2026-09-01T03:02:23.224Z" },
+    );
+    expect(classifyUserInputRow(rowOf(command))).toBe("2026-09-01T03:02:23.224Z");
   });
 
   test("引数なし slash command は数えない", () => {
     for (const args of ["", "   "]) {
-      const row = {
-        type: "user",
-        timestamp: "2026-09-01T03:02:23.224Z",
-        message: {
-          role: "user",
-          content: `<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>${args}</command-args>`,
-        },
-      };
-      expect(classifyUserInputRow(row)).toBeUndefined();
+      const command = userContentRow(
+        `<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>${args}</command-args>`,
+        { timestamp: "2026-09-01T03:02:23.224Z" },
+      );
+      expect(classifyUserInputRow(rowOf(command))).toBeUndefined();
     }
   });
 
   test("引数に markup が入っていてもユーザ入力 (webui の表示判定と同じ規則)", () => {
-    const row = {
-      type: "user",
-      timestamp: "2026-09-01T03:02:23.224Z",
-      message: {
-        role: "user",
-        content:
-          "<command-name>/clear</command-name>\n<command-args>直して: <div>a</div> の件</command-args>",
-      },
-    };
-    expect(classifyUserInputRow(row)).toBe("2026-09-01T03:02:23.224Z");
+    const command = userContentRow(
+      "<command-name>/clear</command-name>\n<command-args>直して: <div>a</div> の件</command-args>",
+      { timestamp: "2026-09-01T03:02:23.224Z" },
+    );
+    expect(classifyUserInputRow(rowOf(command))).toBe("2026-09-01T03:02:23.224Z");
   });
 
   test("typed prompt counts, crediting the row's own timestamp", () => {
@@ -192,17 +175,16 @@ describe("classifyUserInputRow", () => {
   });
 
   test("a queued prompt counts too — origin.kind is the signal, not promptSource", () => {
-    const queued = row(typedPromptLine("あとで", T1));
-    queued.promptSource = "queued";
+    const queued = rowOf(typedPromptRow("あとで", T1, { promptSource: "queued" }));
     expect(classifyUserInputRow(queued)).toBe(T1);
   });
 
   test("a pasted-image prompt counts: content shape is never consulted", () => {
-    const pasted = row(typedPromptLine("これ見て", T1));
-    (pasted.message as Record<string, unknown>).content = [
-      { type: "text", text: "これ見て" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBOR" } },
-    ];
+    const pasted = rowOf(
+      typedPromptRow("これ見て", T1, {
+        message: { role: "user", content: [textBlock("これ見て"), imageBlock()] },
+      }),
+    );
     expect(classifyUserInputRow(pasted)).toBe(T1);
   });
 
@@ -233,8 +215,7 @@ describe("classifyUserInputRow", () => {
   // サブエージェント転写に届いた spawn prompt は「親が書いた指示書」であって
   // kawaz の発話ではない。
   test("a sidechain row does not count", () => {
-    const sub = row(typedPromptLine("調べて", T1));
-    sub.isSidechain = true;
+    const sub = rowOf(typedPromptRow("調べて", T1, { isSidechain: true }));
     expect(classifyUserInputRow(sub)).toBeUndefined();
   });
 
@@ -242,17 +223,12 @@ describe("classifyUserInputRow", () => {
   // 推測で拾うより「値なし」が正しい (= 一覧では末尾に落ちる)。
   test("a pre-origin transcript row yields nothing rather than a guess", () => {
     expect(
-      classifyUserInputRow({
-        type: "user",
-        timestamp: T1,
-        message: { role: "user", content: "やって" },
-      }),
+      classifyUserInputRow(rowOf(userContentRow("やって", { timestamp: T1 }))),
     ).toBeUndefined();
   });
 
   test("a row with no usable timestamp yields nothing", () => {
-    const undated = row(typedPromptLine("やって", T1));
-    delete undated.timestamp;
+    const undated = rowOf(typedPromptRow("やって", ""));
     expect(classifyUserInputRow(undated)).toBeUndefined();
   });
 });
@@ -265,40 +241,35 @@ function directEnvelope(from: string): string {
   return `<cross-session-message from="ccmsg" from-name="${from}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${from}">\nv2でのユーザメッセージはこんな感じで届きます。\n\nReply with: ccmsg reply ${DIRECT_MID}${to} <text>\n</cross-session-message>`;
 }
 function directDeliveryLine(from: string, timestamp: string): string {
-  return JSON.stringify({
-    type: "user",
-    isMeta: true,
-    promptSource: "system",
-    turnOrigin: "peer",
-    origin: { kind: "peer" },
-    timestamp,
-    message: {
-      role: "user",
-      content: `Another Claude session sent a message:\n${directEnvelope(from)}\n\nThis came from another Claude session — not typed by your user.`,
-    },
-  });
+  return line(
+    userContentRow(
+      `Another Claude session sent a message:\n${directEnvelope(from)}\n\nThis came from another Claude session — not typed by your user.`,
+      {
+        isMeta: true,
+        promptSource: "system",
+        turnOrigin: "peer",
+        origin: { kind: "peer" },
+        timestamp,
+      },
+    ),
+  );
 }
 
 describe("standalone ccmsg envelopes", () => {
   test("a person's envelope is user input", () => {
-    const line = directDeliveryLine("user", T2);
-    expect(isUserInputCandidate(line)).toBe(true);
-    expect(classifyUserInputRow(row(line))).toBe(T2);
+    const delivery = directDeliveryLine("user", T2);
+    expect(isUserInputCandidate(delivery)).toBe(true);
+    expect(classifyUserInputRow(row(delivery))).toBe(T2);
   });
 
   test("a session's envelope is not", () => {
-    const line = directDeliveryLine("11111111-2222-4333-8444-555555555555", T2);
-    expect(classifyUserInputRow(row(line))).toBeUndefined();
+    const delivery = directDeliveryLine("11111111-2222-4333-8444-555555555555", T2);
+    expect(classifyUserInputRow(row(delivery))).toBeUndefined();
   });
 
   test("the queue-operation copy is not counted", () => {
-    const line = JSON.stringify({
-      type: "queue-operation",
-      operation: "enqueue",
-      timestamp: T2,
-      content: directEnvelope("user"),
-    });
-    expect(classifyUserInputRow(row(line))).toBeUndefined();
+    const copy = queueOperationRow({ timestamp: T2, content: directEnvelope("user") });
+    expect(classifyUserInputRow(rowOf(copy))).toBeUndefined();
   });
 });
 
@@ -306,28 +277,28 @@ describe("standalone ccmsg envelopes", () => {
 // while the session was mid-turn, reduced to the fields read here.
 const QUEUED_PROMPT =
   '<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r349m12" ccmsg-from="user">\n両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？\n\nReply in your normal assistant response.\n</cross-session-message>';
-const queuedAttachmentRow = JSON.stringify({
-  type: "attachment",
-  timestamp: "2026-09-28T06:44:03.962Z",
-  attachment: {
-    type: "queued_command",
-    prompt: QUEUED_PROMPT,
-    commandMode: "prompt",
-    origin: { kind: "peer" },
-    isMeta: true,
-  },
-  rendered: [
+const queuedAttachmentRow = line(
+  attachmentRow(
     {
-      content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+      type: "queued_command",
+      prompt: QUEUED_PROMPT,
+      commandMode: "prompt",
+      origin: { kind: "peer" },
+      isMeta: true,
     },
-  ],
-});
-const queuedEnqueueRow = JSON.stringify({
-  type: "queue-operation",
-  operation: "enqueue",
-  timestamp: "2026-09-28T06:44:03.962Z",
-  content: QUEUED_PROMPT,
-});
+    {
+      timestamp: "2026-09-28T06:44:03.962Z",
+      rendered: [
+        {
+          content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+        },
+      ],
+    },
+  ),
+);
+const queuedEnqueueRow = line(
+  queueOperationRow({ timestamp: "2026-09-28T06:44:03.962Z", content: QUEUED_PROMPT }),
+);
 
 describe("standalone ccmsg delivered mid-turn", () => {
   test("a person's queued_command attachment is user input; its enqueue copy is not", () => {

@@ -21,9 +21,13 @@
 // prompt lands in the list as it is typed.
 import {
   DIRECT_DELIVERY_USER_SENDER,
+  isKnownTranscriptRow,
   mayContainDirectDelivery,
   parseDirectDeliveries,
+  parseWith,
   queuedCommandPrompt,
+  TranscriptRowLineSchema,
+  type TranscriptRow,
 } from "@ccmsg/protocol";
 import { scanTranscriptLines } from "./session-status.ts";
 import {
@@ -121,16 +125,17 @@ export function isUserInputCandidate(line: string): boolean {
  * question is when the message landed in *this* session's timeline, which is
  * what the reader is ordering by. The two differ by the subscribe delivery
  * latency (~200ms in practice). */
-export function classifyUserInputRow(row: Record<string, unknown>): string | undefined {
-  if (row.isSidechain === true) return undefined;
+export function classifyUserInputRow(row: TranscriptRow): string | undefined {
+  if (!isKnownTranscriptRow(row)) return undefined;
+  if (row.type !== "user" && row.type !== "attachment") return undefined;
+  if (row.isSidechain) return undefined;
   const timestamp = row.timestamp;
-  if (typeof timestamp !== "string" || timestamp === "") return undefined;
+  if (timestamp === "") return undefined;
   const queued = queuedCommandPrompt(row);
   if (queued !== null) return isFromUser(queued) ? timestamp : undefined;
   if (row.type !== "user") return undefined;
 
-  const origin = isRecord(row.origin) ? row.origin : null;
-  if (origin?.kind === "human") return timestamp;
+  if (row.origin?.kind === "human") return timestamp;
 
   // A slash command the user typed with arguments (kawaz r244m18: a /clear
   // whose <command-args> carries the next task's actual prompt). These rows
@@ -138,30 +143,17 @@ export function classifyUserInputRow(row: Record<string, unknown>): string | und
   // body is text the user wrote, so it counts. A bare command (<command-args>
   // empty or absent) stays out: it repositions the session without saying
   // anything, and the plumbing around it is not the user talking.
-  {
-    const content = isRecord(row.message) ? row.message.content : undefined;
-    if (
-      typeof content === "string" &&
-      content.includes("<command-name>") &&
-      hasNonEmptyCommandArgs(content)
-    ) {
-      return timestamp;
-    }
-  }
+  const content = row.message.content;
+  if (typeof content !== "string") return undefined;
+  if (content.includes("<command-name>") && hasNonEmptyCommandArgs(content)) return timestamp;
 
   if (row.promptSource !== "system") return undefined;
-  const content = isRecord(row.message) ? row.message.content : undefined;
-  if (typeof content !== "string") return undefined;
   if (U1_MSG_EVENT_RE.test(content) || U1_MSG_EVENT_RAW_RE.test(content)) return timestamp;
   return isFromUser(content) ? timestamp : undefined;
 }
 
 function isFromUser(text: string): boolean {
   return parseDirectDeliveries(text).some((d) => d.from === DIRECT_DELIVERY_USER_SENDER);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** The folded state itself, separable from the watch so a rescan can build a
@@ -223,14 +215,9 @@ export function userInputEntries(store: SessionUserInputStore): [string, string]
  * forked session can splice an older turn in behind a newer one, and "when did
  * the user last speak" must not travel backwards because of it. */
 function foldLine(fold: UserInputFold, line: string): boolean {
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return false;
-  }
-  if (!isRecord(row)) return false;
-  const at = classifyUserInputRow(row);
+  const read = parseWith(TranscriptRowLineSchema, line);
+  if (!read.ok) return false;
+  const at = classifyUserInputRow(read.value);
   if (at === undefined) return false;
   if (fold.lastAt !== undefined && at <= fold.lastAt) return false;
   fold.lastAt = at;

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as v from "valibot";
 import type {
   MemberEvent,
   MsgEvent,
@@ -7,17 +8,32 @@ import type {
   SessionApiError,
   SessionTodo,
   SessionWorkflowStatus,
-  StorageEvent,
 } from "@ccmsg/protocol";
 import {
   classifyCcmsgSendResult,
   DIRECT_DELIVERY_USER_SENDER,
+  isKnownContentBlock,
+  isKnownToolResultContentBlock,
+  isKnownToolUse,
+  isKnownTranscriptRow,
+  jsonText,
+  JsonTextSchema,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
+  parseWith,
   queuedCommandPrompt,
+  RowHeadEntries,
+  StorageEventSchema,
+  ToolUseSchema,
+  TranscriptRowSchema,
+  type ContentBlock,
+  type KnownToolUse,
+  type ToolResultBlock,
+  type TranscriptRow,
+  type UserRow,
 } from "@ccmsg/protocol";
 import { AGENT_ID_RE } from "./agent-transcripts.ts";
-import { createSessionStatusState, foldLine, snapshot } from "./session-status.ts";
+import { createSessionStatusState, foldRow, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
 export type SessionDumpKind =
@@ -30,6 +46,10 @@ export type SessionDumpKind =
   | "assistant"
   | "thinking";
 
+/** What an entry says about where it came from (the room and mid, the tool
+ * call, the transcript line, ...), field by field. */
+export type SessionDumpMeta = Readonly<Record<string, string | number | boolean | null>>;
+
 interface RawSessionDumpEntry {
   ts: string;
   session: string;
@@ -37,7 +57,7 @@ interface RawSessionDumpEntry {
   from: string | null;
   to: string | readonly string[] | null;
   text: string;
-  meta: Record<string, unknown>;
+  meta: SessionDumpMeta;
 }
 
 export interface SessionDumpHeader {
@@ -130,7 +150,7 @@ export interface SessionDumpEntry {
   from: string | null;
   to: string | readonly string[] | null;
   text: string;
-  meta: Record<string, unknown>;
+  meta: SessionDumpMeta;
 }
 
 export interface SessionDump {
@@ -185,8 +205,11 @@ const AGENT_ENTRY_KINDS: ReadonlySet<SessionDumpKind> = new Set<SessionDumpKind>
   "peer-message",
 ]);
 
-interface TranscriptRow {
-  row: Record<string, unknown>;
+/** A transcript row placed on the dump's clock: its time, and its position
+ * (`index`, the line number from 0) in the transcript. */
+interface DumpRow {
+  row: TranscriptRow;
+  uuid: string | undefined;
   index: number;
   ts: string;
 }
@@ -195,10 +218,10 @@ interface CanonicalMessage extends MsgEvent {
   room: string;
 }
 
-interface ToolUse {
+/** A Bash call, which may be a ccmsg send. */
+interface BashUse {
   id: string;
-  name: string;
-  input: Record<string, unknown>;
+  command: string;
   ts: string;
   index: number;
 }
@@ -258,12 +281,12 @@ function isOrdered(since: ResolvedBound, until: ResolvedBound): boolean {
  * hand a successor session memories it was meant not to have. */
 function resolveBound(
   bound: DumpBound | undefined,
-  rows: readonly TranscriptRow[],
+  rows: readonly DumpRow[],
   name: "since" | "until",
 ): ResolvedBound | undefined {
   if (bound === undefined) return undefined;
   if (bound.kind === "time") return { ms: bound.ms };
-  const row = rows.find((item) => item.row.uuid === bound.uuid);
+  const row = rows.find((item) => item.uuid === bound.uuid);
   if (!row) {
     throw new Error(
       `--${name} record uuid not found in this session's transcript: ${bound.uuid} — use a uuid this session recorded (the webui shows each record's uuid), or pass an ISO 8601 timestamp instead`,
@@ -272,61 +295,75 @@ function resolveBound(
   return { ms: Date.parse(row.ts), index: row.index };
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+/** The blocks of a user row's message: none when it is text. */
+function userBlocks(row: UserRow): readonly ContentBlock[] {
+  const content = row.message.content;
+  return typeof content === "string" ? [] : content;
 }
 
-function contentBlocks(row: Record<string, unknown>): unknown[] {
-  const message = record(row.message);
-  const content = message?.content;
-  return Array.isArray(content) ? content : [];
-}
-
-function textContent(row: Record<string, unknown>): string {
-  const message = record(row.message);
-  const content = message?.content;
+function textContent(row: UserRow): string {
+  const content = row.message.content;
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
   return content
-    .flatMap((block) => {
-      const value = record(block);
-      return value?.type === "text" && typeof value.text === "string" ? [value.text] : [];
-    })
+    .flatMap((block) => (isKnownContentBlock(block) && block.type === "text" ? [block.text] : []))
     .join("\n");
 }
 
-function toolResultText(block: Record<string, unknown>): string {
+function toolResultText(block: ToolResultBlock): string {
   const content = block.content;
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
   return content
-    .map((item) => {
-      const value = record(item);
-      return value?.type === "text" && typeof value.text === "string"
-        ? value.text
-        : JSON.stringify(item);
-    })
+    .map((item) =>
+      isKnownToolResultContentBlock(item) && item.type === "text"
+        ? item.text
+        : JSON.stringify(item),
+    )
     .join("\n");
 }
 
-function parseTranscript(file: string): TranscriptRow[] {
-  const rows: TranscriptRow[] = [];
+/** A call of the known tool `TName`, its input read by the tool. */
+type CallOf<TName extends KnownToolUse["name"]> = Extract<KnownToolUse, { readonly name: TName }>;
+
+type CronCall = CallOf<"CronCreate"> | CallOf<"CronDelete">;
+
+/** The calls of tools whose input is read here, among a message's blocks. A
+ * call whose input does not read as its tool's is left out: the model wrote
+ * it, and what it asked for cannot be told. */
+function toolCalls(content: readonly ContentBlock[]): KnownToolUse[] {
+  const calls: KnownToolUse[] = [];
+  for (const block of content) {
+    if (!isKnownContentBlock(block) || block.type !== "tool_use") continue;
+    const read = parseWith(ToolUseSchema, block);
+    if (read.ok && isKnownToolUse(read.value)) calls.push(read.value);
+  }
+  return calls;
+}
+
+/** A row's place on the dump's clock: its time, and its uuid for a
+ * `--since` / `--until` that names a record. A row with no time (the titles,
+ * the modes and the other metadata rows) has no place there and is left out. */
+const DumpRowHeadSchema = v.looseObject({
+  timestamp: RowHeadEntries.timestamp,
+  uuid: v.optional(RowHeadEntries.uuid),
+});
+
+function parseTranscript(file: string): DumpRow[] {
+  const rows: DumpRow[] = [];
   for (const [index, line] of fs.readFileSync(file, "utf8").split("\n").entries()) {
     if (line.trim() === "") continue;
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const row = record(value);
-    if (!row || typeof row.timestamp !== "string") continue;
-    rows.push({ row, index, ts: row.timestamp });
+    const json = parseWith(JsonTextSchema, line);
+    if (!json.ok) continue;
+    const head = parseWith(DumpRowHeadSchema, json.value);
+    if (!head.ok) continue;
+    const row = parseWith(TranscriptRowSchema, json.value);
+    if (!row.ok) continue;
+    rows.push({ row: row.value, uuid: head.value.uuid, index, ts: head.value.timestamp });
   }
   return rows;
 }
+
+/** One line of a room's log. */
+const StorageEventLineSchema = jsonText(StorageEventSchema);
 
 function loadCanonicalMessages(dataDir: string): Map<string, CanonicalMessage> {
   const messages = new Map<string, CanonicalMessage>();
@@ -348,29 +385,23 @@ function loadCanonicalMessages(dataDir: string): Map<string, CanonicalMessage> {
     }
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
-      let event: StorageEvent;
-      try {
-        event = JSON.parse(line) as StorageEvent;
-      } catch {
-        continue;
-      }
+      const read = parseWith(StorageEventLineSchema, line);
+      if (!read.ok) continue;
+      const event = read.value;
       if (event.type === "msg") messages.set(`${room}|${event.mid}`, { ...event, room });
     }
   }
   return messages;
 }
 
+/** The room CLI's answer to a post: the room and the mid it got. */
+const RoomPostAnswerLineSchema = jsonText(
+  v.looseObject({ ok: v.literal(true), room: v.string(), mid: v.number() }),
+);
+
 function parseResponse(text: string): { room: string; mid: number } | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(text.trim());
-  } catch {
-    return null;
-  }
-  const obj = record(value);
-  return obj?.ok === true && typeof obj.room === "string" && typeof obj.mid === "number"
-    ? { room: obj.room, mid: obj.mid }
-    : null;
+  const read = parseWith(RoomPostAnswerLineSchema, text.trim());
+  return read.ok ? { room: read.value.room, mid: read.value.mid } : null;
 }
 
 function canonicalEntry(
@@ -378,7 +409,7 @@ function canonicalEntry(
   kind: "ccmsg-received" | "ccmsg-sent",
   fallbackTs: string,
   message: CanonicalMessage,
-  meta: Record<string, unknown>,
+  meta: SessionDumpMeta,
 ): RawSessionDumpEntry {
   return {
     ts: message.ts || fallbackTs,
@@ -396,21 +427,21 @@ function canonicalEntry(
   };
 }
 
-function parseXmlAttrs(raw: string): Record<string, string> {
-  return Object.fromEntries([...raw.matchAll(XML_ATTR_RE)].map((match) => [match[1]!, match[2]!]));
+function parseXmlAttrs(raw: string): Map<string, string> {
+  const attrs = new Map<string, string>();
+  for (const [, name = "", value = ""] of raw.matchAll(XML_ATTR_RE)) attrs.set(name, value);
+  return attrs;
 }
 
+/** A room message as a peer relay or a subscribe event carries it: the room
+ * (`r`) and the mid. */
+const CcmsgFragmentLineSchema = jsonText(
+  v.looseObject({ type: v.literal("msg"), r: v.string(), mid: v.number() }),
+);
+
 function parseCcmsgFragment(fragment: string): { room: string; mid: number } | null {
-  let value: unknown;
-  try {
-    value = JSON.parse(fragment.trim());
-  } catch {
-    return null;
-  }
-  const obj = record(value);
-  return obj?.type === "msg" && typeof obj.r === "string" && typeof obj.mid === "number"
-    ? { room: obj.r, mid: obj.mid }
-    : null;
+  const read = parseWith(CcmsgFragmentLineSchema, fragment.trim());
+  return read.ok ? { room: read.value.r, mid: read.value.mid } : null;
 }
 
 function peerEntries(
@@ -423,8 +454,8 @@ function peerEntries(
 ): RawSessionDumpEntry[] {
   const out: RawSessionDumpEntry[] = [];
   const consumed = new Set<string>();
-  for (const match of text.matchAll(TEAMMATE_MESSAGE_RE)) {
-    const fragment = match[3]!.trim();
+  for (const [, wrapper = "", rawAttrs = "", body = ""] of text.matchAll(TEAMMATE_MESSAGE_RE)) {
+    const fragment = body.trim();
     const ref = parseCcmsgFragment(fragment);
     if (ref) {
       const key = `${ref.room}|${ref.mid}`;
@@ -442,23 +473,24 @@ function peerEntries(
       }
       continue;
     }
-    const attrs = parseXmlAttrs(match[2]!);
+    const attrs = parseXmlAttrs(rawAttrs);
+    const summary = attrs.get("summary");
     out.push({
       ts,
       session,
       kind: "peer-message",
-      from: attrs.from ?? attrs.teammate_id ?? "agent",
+      from: attrs.get("from") ?? attrs.get("teammate_id") ?? "agent",
       to: session,
       text: fragment,
       meta: {
-        wrapper: match[1],
-        ...(attrs.summary ? { summary: attrs.summary } : {}),
+        wrapper,
+        ...(summary ? { summary } : {}),
         transcript_line: sourceIndex + 1,
       },
     });
   }
-  for (const match of text.matchAll(EVENT_TAG_RE)) {
-    for (const line of match[1]!.split("\n")) {
+  for (const [, events = ""] of text.matchAll(EVENT_TAG_RE)) {
+    for (const line of events.split("\n")) {
       const ref = parseCcmsgFragment(line);
       if (!ref) continue;
       const key = `${ref.room}|${ref.mid}`;
@@ -507,10 +539,10 @@ function directReceivedEntries(
  * canonical room path records). */
 function directSentEntry(
   session: string,
-  use: ToolUse,
-  command: string,
-  result: Record<string, unknown>,
+  use: BashUse,
+  result: ToolResultBlock,
 ): RawSessionDumpEntry | null {
+  const command = use.command;
   const send = parseCcmsgSendCommand(command);
   if (!send) return null;
   const outcome = classifyCcmsgSendResult(toolResultText(result), result.is_error === true);
@@ -543,7 +575,7 @@ function directSentEntry(
   };
 }
 
-function isHumanPrompt(row: Record<string, unknown>, text: string): boolean {
+function isHumanPrompt(row: UserRow, text: string): boolean {
   if (row.promptSource === "system") return false;
   if (row.isMeta === true) return false;
   if (text.startsWith("<") || text.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]"))
@@ -552,14 +584,26 @@ function isHumanPrompt(row: Record<string, unknown>, text: string): boolean {
   return text !== "";
 }
 
-function normalizeSessionReference(value: unknown, session: string): unknown {
-  if (value === session) return "self";
-  if (Array.isArray(value)) return value.map((item) => normalizeSessionReference(item, session));
-  const obj = record(value);
-  if (!obj) return value;
+/** `value`, with the dumped session's own id written as "self". */
+function selfReference<T>(value: T, session: string): T | "self" {
+  return value === session ? "self" : value;
+}
+
+function normalizeEndpoint(value: SessionDumpEntry["to"], session: string): SessionDumpEntry["to"] {
+  if (value === null) return null;
+  return typeof value === "string"
+    ? selfReference(value, session)
+    : value.map((item) => selfReference(item, session));
+}
+
+function normalizeMeta(meta: SessionDumpMeta, session: string): SessionDumpMeta {
   return Object.fromEntries(
-    Object.entries(obj).map(([key, item]) => [key, normalizeSessionReference(item, session)]),
+    Object.entries(meta).map(([key, value]) => [key, selfReference(value, session)]),
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stringField(value: Record<string, unknown>, key: string): string | undefined {
@@ -570,8 +614,10 @@ function stringField(value: Record<string, unknown>, key: string): string | unde
 function loadTaskNotificationStates(transcriptFile: string): Map<string, string> {
   const states = new Map<string, string>();
   for (const { row } of parseTranscript(transcriptFile)) {
-    if (row.type !== "queue-operation" || row.operation !== "enqueue") continue;
-    const content = typeof row.content === "string" ? row.content : "";
+    if (!isKnownTranscriptRow(row) || row.type !== "queue-operation") continue;
+    if (row.operation !== "enqueue") continue;
+    const content = row.content;
+    if (content === undefined) continue;
     const summaryIndex = content.indexOf("<summary>");
     const eventIndex = content.indexOf("<event>");
     const resultIndex = content.indexOf("<result>");
@@ -588,47 +634,35 @@ function loadContextSchedules(
   transcriptFile: string,
   notificationStates: ReadonlyMap<string, string>,
 ): SessionContextSchedule[] {
-  const pending = new Map<string, { name: string; input: Record<string, unknown> }>();
+  const pending = new Map<string, CronCall>();
   const schedules = new Map<string, SessionContextSchedule>();
   for (const { row } of parseTranscript(transcriptFile)) {
+    if (!isKnownTranscriptRow(row)) continue;
     if (row.type === "assistant") {
-      for (const block of contentBlocks(row)) {
-        const value = record(block);
-        const input = record(value?.input);
-        if (
-          value?.type === "tool_use" &&
-          typeof value.id === "string" &&
-          (value.name === "CronCreate" || value.name === "CronDelete") &&
-          input
-        ) {
-          pending.set(value.id, { name: value.name, input });
-        }
+      for (const call of toolCalls(row.message.content)) {
+        if (call.name === "CronCreate" || call.name === "CronDelete") pending.set(call.id, call);
       }
       continue;
     }
     if (row.type !== "user") continue;
-    for (const block of contentBlocks(row)) {
-      const value = record(block);
-      if (value?.type !== "tool_result" || typeof value.tool_use_id !== "string") continue;
-      const use = pending.get(value.tool_use_id);
-      if (!use) continue;
-      pending.delete(value.tool_use_id);
-      if (value.is_error === true) continue;
-      if (use.name === "CronDelete") {
-        const taskId = stringField(use.input, "id");
-        if (taskId) schedules.delete(taskId);
+    for (const block of userBlocks(row)) {
+      if (!isKnownContentBlock(block) || block.type !== "tool_result") continue;
+      const call = pending.get(block.tool_use_id);
+      if (!call) continue;
+      pending.delete(block.tool_use_id);
+      if (block.is_error === true) continue;
+      if (call.name === "CronDelete") {
+        schedules.delete(call.input.id);
         continue;
       }
-      const result = toolResultText(value);
+      const result = toolResultText(block);
       const taskId = /Scheduled (?:one-shot|recurring) task ([A-Za-z0-9_-]+)/.exec(result)?.[1];
-      const cron = stringField(use.input, "cron");
-      const prompt = stringField(use.input, "prompt");
-      if (!taskId || !cron || !prompt) continue;
+      if (!taskId) continue;
       schedules.set(taskId, {
         task_id: taskId,
-        cron,
-        prompt,
-        recurring: use.input.recurring !== false,
+        cron: call.input.cron,
+        prompt: call.input.prompt,
+        recurring: call.input.recurring,
         state: "possibly-alive",
       });
     }
@@ -666,14 +700,18 @@ function loadContextAgents(
     }
     const agentId = file.name.slice("agent-".length, -".meta.json".length);
     if (!AGENT_ID_RE.test(agentId)) continue;
-    let meta: Record<string, unknown> | null = null;
+    let meta: unknown;
     try {
-      meta = record(JSON.parse(fs.readFileSync(path.join(subagentsDir, file.name), "utf8")));
+      meta = JSON.parse(fs.readFileSync(path.join(subagentsDir, file.name), "utf8"));
     } catch {
       continue;
     }
-    if (!meta) continue;
+    if (!isRecord(meta)) continue;
     const name = stringField(meta, "name");
+    const description = stringField(meta, "description");
+    const agentType = stringField(meta, "agentType");
+    const model = stringField(meta, "model");
+    const toolUseId = stringField(meta, "toolUseId");
     const teammate = meta.taskKind === "in_process_teammate";
     const agentState = teammate
       ? name
@@ -686,22 +724,16 @@ function loadContextAgents(
         kind: teammate ? "teammate" : "subagent",
         state: agentState ?? "unknown",
         ...(name ? { name } : {}),
-        ...(stringField(meta, "description")
-          ? { description: stringField(meta, "description")! }
-          : {}),
-        ...(stringField(meta, "agentType") ? { agent_type: stringField(meta, "agentType")! } : {}),
-        ...(stringField(meta, "model") ? { model: stringField(meta, "model")! } : {}),
+        ...(description ? { description } : {}),
+        ...(agentType ? { agent_type: agentType } : {}),
+        ...(model ? { model } : {}),
       },
       // A dump entry names an agent in one of three ways, and which one is
       // available depends on how it was spawned: teammates appear by `name`
       // (SendMessage `to`, peer-message `from`), nameless background subagents
       // only ever appear as the spawning `tool_use_id`, and the agent id itself
       // shows up wherever the session quotes it back. Collect all three.
-      tokens: [
-        agentId,
-        ...(name ? [name] : []),
-        ...(stringField(meta, "toolUseId") ? [stringField(meta, "toolUseId")!] : []),
-      ],
+      tokens: [agentId, ...(name ? [name] : []), ...(toolUseId ? [toolUseId] : [])],
     });
   }
   return agents.sort(compareContextAgents);
@@ -769,7 +801,10 @@ function resolveAgentSelector(
  * ids belonging to other sessions, not agents of this one. */
 function entryAgentTokens(entry: RawSessionDumpEntry): string[] {
   if (!AGENT_ENTRY_KINDS.has(entry.kind)) return [];
-  const values: unknown[] = [entry.from, ...(Array.isArray(entry.to) ? entry.to : [entry.to])];
+  const values: (SessionDumpMeta[string] | undefined)[] = [
+    entry.from,
+    ...(typeof entry.to === "string" || entry.to === null ? [entry.to] : entry.to),
+  ];
   // `meta.name` falls back to the spawn description when the Agent call passed
   // no name; that fallback is prose, not an identity, so only take it when the
   // two differ.
@@ -801,12 +836,9 @@ function loadContextRooms(dataDir: string, session: string): SessionContextRoom[
     }
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
-      let event: StorageEvent;
-      try {
-        event = JSON.parse(line) as StorageEvent;
-      } catch {
-        continue;
-      }
+      const read = parseWith(StorageEventLineSchema, line);
+      if (!read.ok) continue;
+      const event = read.value;
       if (event.type === "member") present.set(event.id, event);
       else if (event.type === "leave") present.delete(event.id);
       else if (event.type === "title") title = event.title;
@@ -834,7 +866,7 @@ interface SessionStatusBundle {
 
 async function loadStatusBundle(transcriptFile: string): Promise<SessionStatusBundle> {
   const state = createSessionStatusState();
-  for (const { row } of parseTranscript(transcriptFile)) foldLine(state, JSON.stringify(row));
+  for (const { row } of parseTranscript(transcriptFile)) foldRow(state, row);
   const sidDir = transcriptFile.endsWith(".jsonl")
     ? transcriptFile.slice(0, -".jsonl".length)
     : undefined;
@@ -924,45 +956,38 @@ export async function dumpSession(
       ? undefined
       : new Set(resolveAgentSelector(options.agent, bundle.agents).flatMap(({ tokens }) => tokens));
   const canonical = loadCanonicalMessages(options.dataDir);
-  const toolUses = new Map<string, ToolUse>();
+  const bashUses = new Map<string, BashUse>();
   const sentEntries: RawSessionDumpEntry[] = [];
   const sentRefs = new Set<string>();
 
   for (const item of rows) {
-    if (item.row.type === "assistant") {
-      for (const block of contentBlocks(item.row)) {
-        const value = record(block);
-        if (
-          value?.type === "tool_use" &&
-          typeof value.id === "string" &&
-          typeof value.name === "string" &&
-          record(value.input)
-        ) {
-          toolUses.set(value.id, {
-            id: value.id,
-            name: value.name,
-            input: record(value.input)!,
-            ts: item.ts,
-            index: item.index,
-          });
-        }
+    const row = item.row;
+    if (!isKnownTranscriptRow(row)) continue;
+    if (row.type === "assistant") {
+      for (const call of toolCalls(row.message.content)) {
+        if (call.name !== "Bash") continue;
+        bashUses.set(call.id, {
+          id: call.id,
+          command: call.input.command,
+          ts: item.ts,
+          index: item.index,
+        });
       }
     }
-    if (item.row.type !== "user") continue;
-    for (const block of contentBlocks(item.row)) {
-      const value = record(block);
-      if (value?.type !== "tool_result" || typeof value.tool_use_id !== "string") continue;
-      const use = toolUses.get(value.tool_use_id);
-      if (use?.name !== "Bash") continue;
-      const command = typeof use.input.command === "string" ? use.input.command : "";
-      const direct = directSentEntry(session, use, command, value);
+    if (row.type !== "user") continue;
+    for (const block of userBlocks(row)) {
+      if (!isKnownContentBlock(block) || block.type !== "tool_result") continue;
+      const use = bashUses.get(block.tool_use_id);
+      if (!use) continue;
+      const command = use.command;
+      const direct = directSentEntry(session, use, block);
       if (direct) {
         sentEntries.push(direct);
         continue;
       }
       const commandMatch = command.match(CCMSG_COMMAND_RE);
       if (!commandMatch) continue;
-      const response = parseResponse(toolResultText(value));
+      const response = parseResponse(toolResultText(block));
       if (!response) continue;
       const key = `${response.room}|${response.mid}`;
       const message = canonical.get(key);
@@ -989,67 +1014,65 @@ export async function dumpSession(
   }));
 
   for (const item of rows) {
-    if (item.row.type === "assistant") {
+    const row = item.row;
+    if (!isKnownTranscriptRow(row)) continue;
+    if (row.type === "assistant") {
       const texts: string[] = [];
-      for (const block of contentBlocks(item.row)) {
-        const value = record(block);
-        if (!value) continue;
-        if (value.type === "text" && typeof value.text === "string" && value.text !== "") {
-          texts.push(value.text);
+      for (const block of row.message.content) {
+        if (!isKnownContentBlock(block)) continue;
+        if (block.type === "text" && block.text !== "") {
+          texts.push(block.text);
           continue;
         }
-        if (
-          value.type === "thinking" &&
-          typeof value.thinking === "string" &&
-          value.thinking !== ""
-        ) {
+        if (block.type === "thinking" && block.thinking !== "") {
           entries.push({
             ts: item.ts,
             session,
             kind: "thinking",
             from: session,
             to: null,
-            text: value.thinking,
+            text: block.thinking,
             meta: { transcript_line: item.index + 1 },
             _index: item.index,
           });
           continue;
         }
-        if (value.type !== "tool_use" || typeof value.name !== "string") continue;
-        const input = record(value.input);
-        if (!input) continue;
-        if (value.name === "Agent") {
-          const description = typeof input.description === "string" ? input.description : "";
+        if (block.type !== "tool_use") continue;
+        const [call] = toolCalls([block]);
+        if (call === undefined) continue;
+        if (call.name === "Agent") {
+          const { name, description } = call.input;
           entries.push({
             ts: item.ts,
             session,
             kind: "agent-spawn",
             from: session,
-            to: typeof input.name === "string" ? input.name : null,
-            text: typeof input.prompt === "string" ? input.prompt : "",
+            to: name ?? null,
+            text: call.input.prompt,
             meta: {
-              tool_use_id: typeof value.id === "string" ? value.id : null,
-              name: typeof input.name === "string" ? input.name : description || null,
+              tool_use_id: call.id,
+              name: name ?? (description !== "" ? description : null),
               description,
-              subagent_type: typeof input.subagent_type === "string" ? input.subagent_type : null,
-              model: typeof input.model === "string" ? input.model : null,
-              run_in_background: input.run_in_background === true,
+              subagent_type: call.input.subagent_type ?? null,
+              model: call.input.model ?? null,
+              run_in_background: call.input.run_in_background === true,
               transcript_line: item.index + 1,
             },
             _index: item.index,
           });
-        } else if (value.name === "SendMessage") {
+        } else if (call.name === "SendMessage") {
           entries.push({
             ts: item.ts,
             session,
             kind: "agent-send",
             from: session,
-            to: typeof input.to === "string" ? input.to : null,
-            text: typeof input.message === "string" ? input.message : "",
+            to: call.input.to,
+            // A structured message (a shutdown request, ...) has no text.
+            text: typeof call.input.message === "string" ? call.input.message : "",
             meta: {
-              tool_use_id: typeof value.id === "string" ? value.id : null,
-              summary: typeof input.summary === "string" ? input.summary : null,
-              message_type: typeof input.type === "string" ? input.type : "message",
+              tool_use_id: call.id,
+              summary: call.input.summary ?? null,
+              message_type: call.input.type ?? "message",
               transcript_line: item.index + 1,
             },
             _index: item.index,
@@ -1070,30 +1093,28 @@ export async function dumpSession(
       }
       continue;
     }
-    const queuedPrompt = queuedCommandPrompt(item.row);
+    const queuedPrompt = queuedCommandPrompt(row);
     if (queuedPrompt !== null) {
       for (const entry of directReceivedEntries(session, item.ts, queuedPrompt, item.index)) {
         entries.push({ ...entry, _index: item.index });
       }
       continue;
     }
-    if (item.row.type !== "user" && item.row.type !== "queue-operation") continue;
-    const text =
-      item.row.type === "queue-operation" && typeof item.row.content === "string"
-        ? item.row.content
-        : textContent(item.row);
+    if (row.type !== "user" && row.type !== "queue-operation") continue;
+    const text = row.type === "queue-operation" ? row.content : textContent(row);
+    if (text === undefined) continue;
     for (const entry of peerEntries(session, item.ts, text, canonical, sentRefs, item.index)) {
       entries.push({ ...entry, _index: item.index });
     }
     // The queue-operation row repeats the envelope of the user (or
     // queued_command attachment) row that delivers it; the delivered row is
     // the one recorded.
-    if (item.row.type === "user") {
+    if (row.type === "user") {
       for (const entry of directReceivedEntries(session, item.ts, text, item.index)) {
         entries.push({ ...entry, _index: item.index });
       }
     }
-    if (item.row.type === "user" && isHumanPrompt(item.row, text)) {
+    if (row.type === "user" && isHumanPrompt(row, text)) {
       entries.push({
         ts: item.ts,
         session,
@@ -1183,9 +1204,9 @@ export async function dumpSession(
     entries: filtered.map(({ _index: _discard, ts, session: _session, ...entry }) => ({
       ...entry,
       t: Date.parse(ts) - base,
-      from: normalizeSessionReference(entry.from, session) as string | null,
-      to: normalizeSessionReference(entry.to, session) as string | string[] | null,
-      meta: normalizeSessionReference(entry.meta, session) as Record<string, unknown>,
+      from: entry.from === null ? null : selfReference(entry.from, session),
+      to: normalizeEndpoint(entry.to, session),
+      meta: normalizeMeta(entry.meta, session),
     })),
   };
 }

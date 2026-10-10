@@ -26,8 +26,11 @@
 //      exit DIRECT_SEND_UNCONFIRMED_EXIT when arrival could not be told).
 //   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`.
 //
-// Pure string work with no imports, so the browser bundle and the daemon share
-// it as is.
+// String work over the transcript rows' schemas, with no other imports, so the
+// browser bundle and the daemon share it as is.
+import { isKnownAttachment } from "./transcript-attachment.ts";
+import { isKnownContentBlock } from "./transcript-content.ts";
+import { isKnownTranscriptRow, type TranscriptRow } from "./transcript-row.ts";
 
 /** One message as the envelope carries it. `from` is `"user"` for a person
  * (the web UI's sender) and the sender's session id otherwise. */
@@ -187,16 +190,18 @@ export function mayContainDirectDelivery(text: string): boolean {
 /** The prompt of a transcript row that queued a peer message while the
  * session was mid-turn (`type:"attachment"`, `attachment.type:
  * "queued_command"`), or null for any other row. A present `origin` must be a
- * peer's. */
-export function queuedCommandPrompt(row: Record<string, unknown>): string | null {
-  if (row.type !== "attachment") return null;
-  const a = row.attachment;
-  if (!a || typeof a !== "object" || Array.isArray(a)) return null;
-  const attachment = a as Record<string, unknown>;
-  if (attachment.type !== "queued_command" || typeof attachment.prompt !== "string") return null;
-  const origin = attachment.origin;
-  if (origin !== undefined && (origin as { kind?: unknown } | null)?.kind !== "peer") return null;
-  return attachment.prompt;
+ * peer's. A prompt that carries an image is blocks; its text is the text
+ * blocks', one per line. */
+export function queuedCommandPrompt(row: TranscriptRow): string | null {
+  if (!isKnownTranscriptRow(row) || row.type !== "attachment") return null;
+  const attachment = row.attachment;
+  if (!isKnownAttachment(attachment) || attachment.type !== "queued_command") return null;
+  if (attachment.origin !== undefined && attachment.origin.kind !== "peer") return null;
+  const prompt = attachment.prompt;
+  if (typeof prompt === "string") return prompt;
+  return prompt
+    .flatMap((block) => (isKnownContentBlock(block) && block.type === "text" ? [block.text] : []))
+    .join("\n");
 }
 
 /** The envelope `text` carries — one transcript row's content, or one queued

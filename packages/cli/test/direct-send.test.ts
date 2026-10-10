@@ -23,6 +23,13 @@ import {
   parseEnvelope,
   type FakeHarness,
 } from "../../daemon/test/peer-harness.ts";
+import {
+  assistantContentRow,
+  line as transcriptLine,
+  toolResultBlock,
+  toolUseBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const T = 30000;
@@ -297,28 +304,16 @@ describe("the reply line is one shell command whatever its words hold", () => {
       fs.mkdirSync(projectDir, { recursive: true });
       fs.mkdirSync(path.join(dataDir, "rooms"), { recursive: true });
       const rows = [
-        {
-          type: "assistant",
+        assistantContentRow([toolUseBlock("Bash", { command: ran.command }, "t1")], {
           timestamp: "2026-10-09T10:00:00Z",
-          message: {
-            role: "assistant",
-            content: [
-              { type: "tool_use", id: "t1", name: "Bash", input: { command: ran.command } },
-            ],
-          },
-        },
-        {
-          type: "user",
+        }),
+        userContentRow([toolResultBlock(ran.out, { tool_use_id: "t1" })], {
           timestamp: "2026-10-09T10:00:01Z",
-          message: {
-            role: "user",
-            content: [{ type: "tool_result", tool_use_id: "t1", content: ran.out }],
-          },
-        },
+        }),
       ];
       fs.writeFileSync(
         path.join(projectDir, `${B}.jsonl`),
-        rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+        rows.map((row) => transcriptLine(row)).join("\n") + "\n",
       );
       const { entries } = await dumpSession(B, { dataDir, configDirs: [configDir] });
       expect(entries.filter((entry) => entry.kind === "ccmsg-sent")).toMatchObject([

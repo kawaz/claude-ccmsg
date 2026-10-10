@@ -4,11 +4,17 @@ import { yieldToEventLoop } from "./event-loop.ts";
 import * as v from "valibot";
 import {
   ADMIN_ID,
+  AssistantMessageSchema,
+  AssistantRowSchema,
   CustomTitleRowSchema,
   ErrorCode,
+  isKnownContentBlock,
+  isKnownTranscriptRow,
   jsonText,
+  MsgEventSchema,
   parseWith,
   RowHeadEntries,
+  TranscriptRowLineSchema,
   SESSION_SEARCH_MATCH_SUMMARY_MAX,
   SESSION_SEARCH_RESULT_MAX,
   parseSearchQueryPatterns,
@@ -18,6 +24,7 @@ import {
   type SessionSearchMatch,
   type SessionSearchRequest,
   type SessionSearchResponse,
+  type UserRow,
 } from "@ccmsg/protocol";
 import { detectConfigDirs } from "./agents.ts";
 import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
@@ -62,10 +69,6 @@ export interface ListCandidateParams {
 export type SessionSearchResult =
   | { ok: true; data: SessionSearchResponse }
   | { ok: false; code: ErrorCodeType; msg: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function words(value: string | undefined): string[] {
   return value?.trim().split(/\s+/).filter(Boolean) ?? [];
@@ -341,24 +344,27 @@ export async function readSessionLaunchContext(file: string): Promise<SessionLau
   }
 }
 
+/** An assistant row, read for what it ran as: whose turn it is (a
+ * subagent's, on a sidechain), its model, and its effort. */
+const LaunchContextLineSchema = jsonText(
+  v.looseObject({
+    type: AssistantRowSchema.entries.type,
+    isSidechain: AssistantRowSchema.entries.isSidechain,
+    message: v.looseObject({ model: AssistantMessageSchema.entries.model }),
+    effort: AssistantRowSchema.entries.effort,
+  }),
+);
+
 /** One transcript line's launch context, or undefined when the line is not a
  * main-context assistant record. `effort` is a row-level field (not part of
  * `message`) that CC versions before 2.1.212 never wrote, so a row can name a
  * model and no effort. */
 function launchContextFromRow(line: string): SessionLaunchContext | undefined {
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-  if (!isRecord(row) || row.type !== "assistant" || row.isSidechain === true) return undefined;
-  const message = row.message;
-  if (!isRecord(message) || typeof message.model !== "string") return undefined;
-  const model = message.model;
-  if (model === "" || model === "<synthetic>") return undefined;
-  const effort = typeof row.effort === "string" && row.effort !== "" ? row.effort : undefined;
-  return { model, ...(effort ? { effort } : {}) };
+  const read = parseWith(LaunchContextLineSchema, line);
+  if (!read.ok) return undefined;
+  const { isSidechain, message, effort } = read.value;
+  if (isSidechain || message.model === "<synthetic>") return undefined;
+  return { model: message.model, ...(effort !== undefined ? { effort } : {}) };
 }
 
 interface ScanResult {
@@ -584,18 +590,27 @@ function snippet(text: string, patterns: readonly CompiledQueryPattern[]): strin
  * words — both observed in real transcripts. `isMeta:true` rows are excluded:
  * those text blocks are harness injections (skill bodies, command caveats),
  * not something the user said. tool_result-only arrays yield no text. */
-function userText(row: Record<string, unknown>): string | undefined {
+function userText(row: UserRow): string | undefined {
   if (row.isMeta === true) return undefined;
-  const message = row.message;
-  if (!isRecord(message)) return undefined;
-  if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content)) return undefined;
-  const texts = message.content
-    .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
-    .map((block) => block.text)
-    .filter((value): value is string => typeof value === "string");
+  const content = row.message.content;
+  if (typeof content === "string") return content;
+  const texts = content.flatMap((block) =>
+    isKnownContentBlock(block) && block.type === "text" ? [block.text] : [],
+  );
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
+
+/** A ccmsg message event, as one line of a task notification's `<event>`
+ * body carries it (the subscribe stream's form of a room's msg event). Only
+ * the fields a search reads. */
+const CcmsgMsgEventLineSchema = jsonText(
+  v.looseObject({
+    type: MsgEventSchema.entries.type,
+    msg: MsgEventSchema.entries.msg,
+    from: v.optional(MsgEventSchema.entries.from),
+    ts: v.optional(MsgEventSchema.entries.ts),
+  }),
+);
 
 /** Visit searchable ccmsg deliveries inside a task-notification body. The
  * observed <event> body is a small JSONL batch (kind/title/member/msg stream
@@ -610,16 +625,12 @@ function forEachCcmsgMessage(
   const eventBody = tagBody(content, "event");
   if (!eventBody) return;
   for (const eventLine of eventBody.split("\n")) {
-    let event: unknown;
-    try {
-      event = JSON.parse(eventLine);
-    } catch {
-      continue;
-    }
-    if (!isRecord(event) || event.type !== "msg" || typeof event.msg !== "string") continue;
+    const read = parseWith(CcmsgMsgEventLineSchema, eventLine);
+    if (!read.ok) continue;
+    const event = read.value;
     const role = event.from === ADMIN_ID ? "user" : "agent";
     if (role === "user" ? !targetUser : !targetAgent) continue;
-    visit(role, event.msg, typeof event.ts === "string" ? event.ts : undefined);
+    visit(role, event.msg, event.ts);
   }
 }
 
@@ -636,38 +647,31 @@ function forEachSearchableMessage(
   targetAgent: boolean,
   visit: (role: "user" | "agent", text: string, timestamp: string | undefined) => void,
 ): void {
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (!isRecord(row)) return;
+  const read = parseWith(TranscriptRowLineSchema, line);
+  if (!read.ok) return;
+  const row = read.value;
+  if (!isKnownTranscriptRow(row)) return;
 
-  const timestamp = typeof row.timestamp === "string" ? row.timestamp : undefined;
   if (row.type === "user") {
     const text = userText(row);
     if (text === undefined) return;
     if (text.startsWith("<task-notification>")) {
       forEachCcmsgMessage(text, targetUser, targetAgent, visit);
     } else if (targetUser) {
-      visit("user", text, timestamp);
+      visit("user", text, row.timestamp);
     }
     return;
   }
   if (row.type === "assistant") {
     if (!targetAgent) return;
-    const message = row.message;
-    if (!isRecord(message) || !Array.isArray(message.content)) return;
-    const texts = message.content
-      .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
-      .map((block) => block.text)
-      .filter((value): value is string => typeof value === "string");
-    if (texts.length > 0) visit("agent", texts.join("\n"), timestamp);
+    const texts = row.message.content.flatMap((block) =>
+      isKnownContentBlock(block) && block.type === "text" ? [block.text] : [],
+    );
+    if (texts.length > 0) visit("agent", texts.join("\n"), row.timestamp);
     return;
   }
   if (row.type === "queue-operation" && row.operation === "enqueue") {
-    if (typeof row.content === "string") {
+    if (row.content !== undefined) {
       forEachCcmsgMessage(row.content, targetUser, targetAgent, visit);
     }
   }

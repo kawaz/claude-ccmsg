@@ -5,9 +5,22 @@ import * as path from "node:path";
 import {
   SESSION_SEARCH_MATCH_SUMMARY_MAX,
   SESSION_SEARCH_RESULT_MAX,
+  type JsonObject,
   type SessionSearchRequest,
 } from "@ccmsg/protocol";
 import { sessionSearch, strictMatch } from "../src/session-search.ts";
+import {
+  assistantContentRow,
+  assistantMessage,
+  customTitleRow,
+  imageBlock,
+  line,
+  metadataRow,
+  queueOperationRow,
+  textBlock,
+  toolResultBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 
 const roots: string[] = [];
 const log = { error(_msg: string): void {} };
@@ -26,37 +39,26 @@ function sid(n: number): string {
 function writeSession(
   config: string,
   id: string,
-  rows: unknown[],
+  rows: JsonObject[],
   project = "-workspace-repos-github-com-owner-project-main",
 ): string {
   const dir = path.join(config, "projects", project);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${id}.jsonl`);
-  fs.writeFileSync(file, rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  fs.writeFileSync(file, rows.map(line).join("\n") + "\n");
   return file;
 }
 
 function user(content: string, cwd = "/workspace/repos/github.com/owner/project/main") {
-  return {
-    type: "user",
-    message: { role: "user", content },
-    timestamp: "2026-07-16T01:02:03.000Z",
-    cwd,
-  };
+  return userContentRow(content, { timestamp: "2026-07-16T01:02:03.000Z", cwd });
 }
 
 function agent(content: string, cwd = "/workspace/repos/github.com/owner/project/main") {
-  return {
-    type: "assistant",
-    message: { role: "assistant", content: [{ type: "text", text: content }] },
-    timestamp: "2026-07-16T01:02:04.000Z",
-    cwd,
-  };
+  return assistantContentRow([textBlock(content)], { timestamp: "2026-07-16T01:02:04.000Z", cwd });
 }
 
 function ccmsg(from: string, msg: string, operation = "enqueue") {
-  return {
-    type: "queue-operation",
+  return queueOperationRow({
     operation,
     content: `<task-notification><event>${JSON.stringify({
       type: "msg",
@@ -66,7 +68,7 @@ function ccmsg(from: string, msg: string, operation = "enqueue") {
       msg,
     })}</event></task-notification>`,
     timestamp: "2026-07-16T01:02:06.000Z",
-  };
+  });
 }
 
 async function search(config: string, req: Partial<SessionSearchRequest>) {
@@ -362,17 +364,11 @@ describe("session_search three-stage filtering", () => {
   // typed words (observed in real transcripts), and that text must match like
   // a plain string prompt. tool_result-only arrays must stay unsearchable.
   test("user prompts with attachments match via their text blocks", () => {
-    const withImage = JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: [
-          { type: "text", text: "attachment needle words" },
-          { type: "image", source: { type: "base64", data: "x" } },
-        ],
-      },
-      timestamp: "2026-07-16T01:02:03.000Z",
-    });
+    const withImage = line(
+      userContentRow([textBlock("attachment needle words"), imageBlock()], {
+        timestamp: "2026-07-16T01:02:03.000Z",
+      }),
+    );
     expect(
       strictMatch(withImage, {
         queryWords: ["attachment", "needle"],
@@ -381,13 +377,7 @@ describe("session_search three-stage filtering", () => {
       }),
     ).toMatchObject({ role: "user" });
 
-    const toolResultOnly = JSON.stringify({
-      type: "user",
-      message: {
-        role: "user",
-        content: [{ type: "tool_result", content: "attachment needle words" }],
-      },
-    });
+    const toolResultOnly = line(userContentRow([toolResultBlock("attachment needle words")]));
     expect(
       strictMatch(toolResultOnly, {
         queryWords: ["attachment", "needle"],
@@ -401,11 +391,7 @@ describe("session_search three-stage filtering", () => {
   // caveats, "Continue from where you left off") are not reported as something
   // the user typed.
   test("isMeta user rows are excluded from user matches", () => {
-    const meta = JSON.stringify({
-      type: "user",
-      isMeta: true,
-      message: { role: "user", content: "meta needle body" },
-    });
+    const meta = line(userContentRow("meta needle body", { isMeta: true }));
     expect(
       strictMatch(meta, { queryWords: ["meta", "needle"], targetUser: true, targetAgent: true }),
     ).toBeUndefined();
@@ -448,21 +434,22 @@ describe("session_search three-stage filtering", () => {
         msg: "batch needle from agent",
       }),
     ].join("\n");
-    const line = JSON.stringify({
-      type: "queue-operation",
-      operation: "enqueue",
-      content: `<task-notification>\n<summary>Monitor event</summary>\n<event>${body}</event>\n</task-notification>`,
-      timestamp: "2026-07-16T02:00:02.000Z",
-    });
+    const enqueued = line(
+      queueOperationRow({
+        operation: "enqueue",
+        content: `<task-notification>\n<summary>Monitor event</summary>\n<event>${body}</event>\n</task-notification>`,
+        timestamp: "2026-07-16T02:00:02.000Z",
+      }),
+    );
 
-    const userHit = strictMatch(line, {
+    const userHit = strictMatch(enqueued, {
       queryWords: ["batch", "needle"],
       targetUser: true,
       targetAgent: false,
     });
     expect(userHit).toMatchObject({ role: "user", timestamp: "2026-07-16T02:00:00.000Z" });
 
-    const agentHit = strictMatch(line, {
+    const agentHit = strictMatch(enqueued, {
       queryWords: ["batch", "needle"],
       targetUser: false,
       targetAgent: true,
@@ -632,8 +619,8 @@ describe("session_search result metadata and limits", () => {
   test("created_at uses the first timestamp-bearing row", async () => {
     const config = configDir();
     writeSession(config, sid(1), [
-      { type: "last-prompt", timestamp: null },
-      { type: "custom-title", title: "x" },
+      metadataRow("last-prompt", { timestamp: null }),
+      metadataRow("custom-title", { title: "x" }),
       user("created timestamp"),
     ]);
 
@@ -685,7 +672,7 @@ describe("session_search result metadata and limits", () => {
     const config = configDir();
     writeSession(config, sid(1), [
       user("hello"),
-      { type: "custom-title", customTitle: "renamed once", sessionId: sid(1) },
+      customTitleRow({ customTitle: "renamed once", sessionId: sid(1) }),
       user("hello again"),
     ]);
     writeSession(config, sid(2), [user("no rename here")]);
@@ -702,9 +689,9 @@ describe("session_search result metadata and limits", () => {
   test("title takes the first custom-title record's value", async () => {
     const config = configDir();
     writeSession(config, sid(1), [
-      { type: "custom-title", customTitle: "first title", sessionId: sid(1) },
+      customTitleRow({ customTitle: "first title", sessionId: sid(1) }),
       user("hello"),
-      { type: "custom-title", customTitle: "first title", sessionId: sid(1) },
+      customTitleRow({ customTitle: "first title", sessionId: sid(1) }),
     ]);
 
     const result = await search(config, {});
@@ -716,19 +703,16 @@ describe("session_search result metadata and limits", () => {
 // from the forward scan that stops as soon as cwd/created_at are known: the
 // answer is a property of the session's latest turn.
 describe("session_search launch context", () => {
-  function agentRun(
-    model: string,
-    effort?: string,
-    extra: Record<string, unknown> = {},
-  ): Record<string, unknown> {
-    return {
-      type: "assistant",
-      message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] },
-      ...(effort === undefined ? {} : { effort }),
+  /** An assistant row run as `model`, at `effort` (none when not given: the
+   * CC versions before 2.1.212 wrote none). */
+  function agentRun(model: string, effort?: string, extra: JsonObject = {}): JsonObject {
+    const { effort: _effort, ...row } = assistantContentRow([textBlock("ok")], {
+      message: assistantMessage({ model, content: [textBlock("ok")] }),
       timestamp: "2026-07-16T01:02:07.000Z",
       cwd: "/workspace/repos/github.com/owner/project/main",
       ...extra,
-    };
+    });
+    return effort === undefined ? row : { ...row, effort };
   }
 
   // A session whose model was switched mid-run must resume as what it is now.

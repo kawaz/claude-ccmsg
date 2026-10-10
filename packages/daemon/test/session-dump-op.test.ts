@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
 import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
+import { line, userContentRow } from "../../protocol/test/transcript-rows.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RECORD_1 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee01";
@@ -38,14 +39,7 @@ function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: s
         { timestamp: "2026-07-20T00:00:00Z", uuid: RECORD_1, content: "hello" },
         { timestamp: "2026-07-20T00:00:01Z", uuid: RECORD_2, content: "second" },
       ]
-        .map((r) =>
-          JSON.stringify({
-            timestamp: r.timestamp,
-            uuid: r.uuid,
-            type: "user",
-            message: { role: "user", content: r.content },
-          }),
-        )
+        .map((r) => line(userContentRow(r.content, { timestamp: r.timestamp, uuid: r.uuid })))
         .join("\n") + "\n",
     );
     sessions.set(SID, { conns: new Set([{}]), meta: { transcript_path: file } });
