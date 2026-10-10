@@ -23,6 +23,7 @@ export * from "./transcript-content.ts";
 export * from "./transcript-attachment.ts";
 export * from "./transcript-row.ts";
 export * from "./transcript-tool-result.ts";
+export * from "./agent-meta.ts";
 export * from "./sidecar.ts";
 export * from "./request.ts";
 export * from "./storage-event.ts";

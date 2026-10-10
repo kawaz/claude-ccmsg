@@ -10,6 +10,7 @@ import type {
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import {
+  AgentMetaTextSchema,
   classifyCcmsgSendResult,
   DIRECT_DELIVERY_USER_SENDER,
   isKnownContentBlock,
@@ -602,15 +603,6 @@ function normalizeMeta(meta: SessionDumpMeta, session: string): SessionDumpMeta 
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringField(value: Record<string, unknown>, key: string): string | undefined {
-  const field = value[key];
-  return typeof field === "string" && field !== "" ? field : undefined;
-}
-
 function loadTaskNotificationStates(transcriptFile: string): Map<string, string> {
   const states = new Map<string, string>();
   for (const { row } of parseTranscript(transcriptFile)) {
@@ -700,21 +692,18 @@ function loadContextAgents(
     }
     const agentId = file.name.slice("agent-".length, -".meta.json".length);
     if (!AGENT_ID_RE.test(agentId)) continue;
-    let meta: unknown;
+    let text: string;
     try {
-      meta = JSON.parse(fs.readFileSync(path.join(subagentsDir, file.name), "utf8"));
+      text = fs.readFileSync(path.join(subagentsDir, file.name), "utf8");
     } catch {
       continue;
     }
-    if (!isRecord(meta)) continue;
-    const name = stringField(meta, "name");
-    const description = stringField(meta, "description");
-    const agentType = stringField(meta, "agentType");
-    const model = stringField(meta, "model");
-    const toolUseId = stringField(meta, "toolUseId");
-    const teammate = meta.taskKind === "in_process_teammate";
+    const read = parseWith(AgentMetaTextSchema, text);
+    if (!read.ok) continue;
+    const { name, description, agentType, model, toolUseId } = read.value;
+    const teammate = read.value.taskKind === "in_process_teammate";
     const agentState = teammate
-      ? name
+      ? name !== undefined
         ? teammateByName.get(name)?.state
         : undefined
       : (notificationStates.get(agentId) ?? backgroundById.get(agentId)?.status);
@@ -723,17 +712,21 @@ function loadContextAgents(
         agent_id: agentId,
         kind: teammate ? "teammate" : "subagent",
         state: agentState ?? "unknown",
-        ...(name ? { name } : {}),
-        ...(description ? { description } : {}),
-        ...(agentType ? { agent_type: agentType } : {}),
-        ...(model ? { model } : {}),
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(agentType !== undefined ? { agent_type: agentType } : {}),
+        ...(model !== undefined ? { model } : {}),
       },
       // A dump entry names an agent in one of three ways, and which one is
       // available depends on how it was spawned: teammates appear by `name`
       // (SendMessage `to`, peer-message `from`), nameless background subagents
       // only ever appear as the spawning `tool_use_id`, and the agent id itself
       // shows up wherever the session quotes it back. Collect all three.
-      tokens: [agentId, ...(name ? [name] : []), ...(toolUseId ? [toolUseId] : [])],
+      tokens: [
+        agentId,
+        ...(name !== undefined ? [name] : []),
+        ...(toolUseId !== undefined ? [toolUseId] : []),
+      ],
     });
   }
   return agents.sort(compareContextAgents);

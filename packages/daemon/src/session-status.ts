@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as v from "valibot";
 import { yieldToEventLoop } from "./event-loop.ts";
 import {
+  AgentMetaTextSchema,
   AgentToolResultSchema,
   AssistantMessageSchema,
   BashToolResultSchema,
@@ -22,6 +23,7 @@ import {
   ToolUseSchema,
   TranscriptRowLineSchema,
   WorkflowToolResultSchema,
+  type AgentMeta,
   type AgentTreeGroups,
   type AgentTreeNode,
   type AgentTreeWorkflowGroup,
@@ -175,14 +177,6 @@ export function createSessionStatusState(externalRoot?: string): SessionStatusSt
     externalRoot,
     externalFiles: new Map(),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }
 
 async function resolveExternalRoot(
@@ -1102,19 +1096,23 @@ async function readDirEntries(dir: string): Promise<fs.Dirent[] | undefined> {
   });
 }
 
-/** Parsed `agent-*.meta.json` bodies, memoized on the file's mtime. A meta is
+/** Read `agent-*.meta.json` bodies, memoized on the file's mtime. A meta is
  * written when its agent spawns and is not rewritten afterwards, so this is a
  * hit on essentially every push after the first. `mtimeMs` rides along because
  * two callers need it (teammate same-name tie-break, transcript-less agent
- * liveness) and it cannot have changed on a hit. */
-const metaJsonByPath = createMtimeCache<{ value: unknown; mtimeMs: number }>(1024);
+ * liveness) and it cannot have changed on a hit. `meta` is undefined for a file
+ * that cannot be read or does not read as an agent's record. */
+const metaJsonByPath = createMtimeCache<{ meta: AgentMeta | undefined; mtimeMs: number }>(1024);
 
-async function readJson(file: string): Promise<unknown> {
+async function readAgentMeta(file: string): Promise<AgentMeta | undefined> {
+  let text: string;
   try {
-    return JSON.parse(await fs.promises.readFile(file, "utf-8"));
+    text = await fs.promises.readFile(file, "utf-8");
   } catch {
     return undefined;
   }
+  const read = parseWith(AgentMetaTextSchema, text);
+  return read.ok ? read.value : undefined;
 }
 
 /** DR-0020 addendum 2026-07-18: teammate model lookup. Scans
@@ -1137,15 +1135,14 @@ export async function readTeammateModels(sidDir: string): Promise<Map<string, st
     if (!entry.name.startsWith("agent-") || !entry.name.endsWith(".meta.json")) continue;
     const metaPath = path.join(subagentsDir, entry.name);
     const cached = await metaJsonByPath.get(metaPath, async (stat) => ({
-      value: await readJson(metaPath),
+      meta: await readAgentMeta(metaPath),
       mtimeMs: stat.mtimeMs,
     }));
-    if (!cached) continue;
-    const { value, mtimeMs } = cached;
-    if (!isRecord(value) || value.taskKind !== "in_process_teammate") continue;
-    const name = stringValue(value.name);
-    const model = stringValue(value.model);
-    if (!name || !model) continue;
+    if (!cached?.meta) continue;
+    const { meta, mtimeMs } = cached;
+    if (meta.taskKind !== "in_process_teammate") continue;
+    const { name, model } = meta;
+    if (name === undefined || model === undefined) continue;
     const prev = mtimes.get(name);
     if (prev !== undefined && prev >= mtimeMs) continue;
     mtimes.set(name, mtimeMs);
@@ -1179,8 +1176,8 @@ interface AgentMetaFile {
   transcriptPath: string;
   /** transcript file mtime (ms) when known, else meta.json mtime. */
   mtimeMs: number;
-  /** parsed meta.json record (schema-loose; consumer picks fields). */
-  meta: Record<string, unknown>;
+  /** the meta.json record. */
+  meta: AgentMeta;
 }
 
 /** Filename → agentId. The convention is `agent-<agentId>.meta.json`; the
@@ -1429,13 +1426,11 @@ export async function readAgentTree(
   }
   const working = new Map<string, WorkingNode>();
   for (const m of metas) {
-    const toolUseId = stringValue(m.meta.toolUseId);
-    const taskKind = stringValue(m.meta.taskKind);
-    const isTeammate = taskKind === "in_process_teammate";
-    const name = stringValue(m.meta.name);
+    const { toolUseId, name } = m.meta;
+    const isTeammate = m.meta.taskKind === "in_process_teammate";
 
     let parentAgentId: string | null;
-    if (isTeammate || !toolUseId) {
+    if (isTeammate || toolUseId === undefined) {
       parentAgentId = null;
     } else {
       const found = findParent(toolUseId);
@@ -1444,7 +1439,7 @@ export async function readAgentTree(
 
     // depth-0 live comes from the fold; depth≥1 uses mtime.
     let liveState: string;
-    if (isTeammate && name) {
+    if (isTeammate && name !== undefined) {
       const teammate = state.teammates.get(name);
       liveState = teammate?.state ?? "unknown";
     } else if (parentAgentId === null) {
@@ -1611,10 +1606,10 @@ async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFi
   const metaPath = path.join(dir, fileName);
   const transcriptPath = path.join(dir, `agent-${agentId}.jsonl`);
   const cached = await metaJsonByPath.get(metaPath, async (stat) => ({
-    value: await readJson(metaPath),
+    meta: await readAgentMeta(metaPath),
     mtimeMs: stat.mtimeMs,
   }));
-  if (!cached || !isRecord(cached.value)) return undefined;
+  if (!cached?.meta) return undefined;
   // The transcript's mtime is the agent's liveness clock, so it is statted
   // every time — it moves on every line the agent writes, which is exactly
   // what a cache would have to invalidate on anyway.
@@ -1624,7 +1619,7 @@ async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFi
   } catch {
     mtimeMs = cached.mtimeMs;
   }
-  return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.value };
+  return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.meta };
 }
 
 /** r46 m8: meta.json + kind + state から `AgentTreeNode` を組む共通ヘルパ。
@@ -1636,25 +1631,19 @@ function buildAgentTreeNode(
   state: string,
   extra?: { workflow_id?: string },
 ): AgentTreeNode {
-  const name = stringValue(m.meta.name);
-  const spawnDepth = typeof m.meta.spawnDepth === "number" ? m.meta.spawnDepth : 0;
-  const agentType = stringValue(m.meta.agentType);
-  const description = stringValue(m.meta.description);
-  const color = stringValue(m.meta.color);
-  const model = stringValue(m.meta.model);
-  const teamName = stringValue(m.meta.teamName);
+  const { name, agentType, description, color, model, teamName } = m.meta;
   return {
     agent_id: m.agentId,
-    spawn_depth: spawnDepth,
+    spawn_depth: m.meta.spawnDepth,
     kind,
     state,
     children: [],
-    ...(kind === "teammate" && name ? { teammate_name: name } : {}),
-    ...(agentType ? { agent_type: agentType } : {}),
-    ...(description ? { description } : {}),
-    ...(color ? { color } : {}),
-    ...(model ? { model } : {}),
-    ...(teamName ? { team_name: teamName } : {}),
+    ...(kind === "teammate" && name !== undefined ? { teammate_name: name } : {}),
+    ...(agentType !== undefined ? { agent_type: agentType } : {}),
+    ...(description !== undefined ? { description } : {}),
+    ...(color !== undefined ? { color } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(teamName !== undefined ? { team_name: teamName } : {}),
     ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
     ...(extra?.workflow_id ? { workflow_id: extra.workflow_id } : {}),
   };
