@@ -6,9 +6,12 @@
 
 import {
   parseSearchQueryPatterns,
+  parseWith,
   type SearchQueryOptions,
   type SearchQueryPattern,
 } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { flagText } from "./storage.ts";
 
 /** Number of distinct highlight colors in the palette. */
 export const SEARCH_PALETTE_SIZE = 6;
@@ -270,14 +273,18 @@ export function loopPrevIndex(current: number, max: number): number {
  * property of any one session. */
 const CLOSED_FOLD_SCOPE_KEY = "ccmsg.inViewSearch.searchClosedFolds";
 
-/** Defaults to on for anything but an explicit "0" — that is the behaviour the
- * Timeline has always had (a match inside a collapsed fold counts, and ↑/↓
- * expands the fold on the way to it), so an existing user's "[N/M]" does not
- * silently shrink the first time they load a build that has this toggle.
- * Garbage persisted data resolves to the default and never throws, matching
- * parseFavorites / loadRespectGitignore. */
+/** Defaults to on — that is the behaviour the Timeline has always had (a
+ * match inside a collapsed fold counts, and ↑/↓ expands the fold on the way
+ * to it), so an existing user's "[N/M]" does not silently shrink the first
+ * time they load a build that has this toggle. */
+const SearchClosedFoldsSchema = v.optional(v.boolean(), true);
+const SearchClosedFoldsTextSchema = flagText(SearchClosedFoldsSchema);
+
+/** The stored toggle ("1" / "0"). Nothing stored, or a value that does not
+ * read, is the default and never throws, matching parseFavorites. */
 export function parseSearchClosedFolds(raw: string | null): boolean {
-  return raw !== "0";
+  const read = raw === null ? null : parseWith(SearchClosedFoldsTextSchema, raw);
+  return read?.ok ? read.value : v.getDefault(SearchClosedFoldsSchema);
 }
 
 export function serializeSearchClosedFolds(value: boolean): string {

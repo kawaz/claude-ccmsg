@@ -18,10 +18,9 @@ import { fileHref } from "../locator.ts";
 import { pushNavigation, replaceNavigation } from "../navigation.ts";
 import {
   canonicalViewerPath,
-  clampPaneRatio,
   fileAncestorDirectories,
   paneRatioFromPointer,
-  SESSION_PANE_DEFAULT_RATIO,
+  parsePaneRatio,
 } from "../utils.ts";
 import { FileTree, loadDir } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
@@ -33,9 +32,7 @@ import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 const PANE_RATIO_STORAGE = "ccmsg.sessionPaneRatio";
 
 function loadPaneRatio(): number {
-  const raw = readLayoutStorage(PANE_RATIO_STORAGE);
-  if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
-  return SESSION_PANE_DEFAULT_RATIO;
+  return parsePaneRatio(readLayoutStorage(PANE_RATIO_STORAGE));
 }
 
 function savePaneRatio(ratio: number): void {

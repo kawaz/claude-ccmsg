@@ -85,7 +85,16 @@
         "packages/webui/src/client/navigation.ts",
         "packages/webui/src/client/files-view-store.ts",
         "packages/webui/src/client/components/session-input-store.ts",
-        "packages/daemon/test/http-transport.test.ts"
+        "packages/daemon/test/http-transport.test.ts",
+        "packages/webui/src/client/storage.ts",
+        "packages/webui/src/client/sidebar-panes.ts",
+        "packages/webui/src/client/sidebar-url.ts",
+        "packages/webui/src/client/store.ts",
+        "packages/webui/src/client/raw-view-mode.ts",
+        "packages/webui/src/client/in-view-search.ts",
+        "packages/webui/src/client/components/TimelinePanes.tsx",
+        "packages/webui/src/client/components/FilesPanes.tsx",
+        "packages/webui/src/client/components/UsageView.tsx"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

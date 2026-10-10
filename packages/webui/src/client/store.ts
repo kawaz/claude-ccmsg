@@ -24,12 +24,13 @@ import {
   type SessionSearchHit,
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
+  parseWith,
 } from "@ccmsg/protocol";
 import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
 import {
   CLOSED_SIDEBAR,
-  isPeerSortKey,
+  parsePeerSortKey,
   sameSidebarState,
   SORT_KEY_STORAGE,
   type SidebarUrlState,
@@ -37,6 +38,7 @@ import {
 import { readSessionStorage, readStorage } from "./storage.ts";
 import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
+import * as v from "valibot";
 import {
   pinKey,
   pinsFromHits,
@@ -49,15 +51,24 @@ export const SIDEBAR_OPEN_KEY = "ccmsg.sidebarOpen";
 /** 既定は「在る」。消してある状態を覚えるのはその窓の中だけなので、
  * sessionStorage を読む (storage.ts の表)。書き戻しは App.tsx の effect が
  * 持つ — reducer は純粋なまま (DR-0005 §1)。 */
+const SidebarOpenSchema = v.optional(v.boolean(), true);
+/** App.tsx が `String(sidebarOpen)` で書く値。 */
+const SidebarOpenTextSchema = v.pipe(
+  v.picklist(["true", "false"]),
+  v.transform((text): unknown => text === "true"),
+  SidebarOpenSchema,
+);
+
 function initialSidebarOpen(): boolean {
-  return readSessionStorage(SIDEBAR_OPEN_KEY) !== "false";
+  const raw = readSessionStorage(SIDEBAR_OPEN_KEY);
+  const read = raw === null ? null : parseWith(SidebarOpenTextSchema, raw);
+  return read?.ok ? read.value : v.getDefault(SidebarOpenSchema);
 }
 
 /** 並び順は前回のまま開く (localStorage)。既定の "prompt" は「最後にユーザが
  * 入力したセッションが上」で、次にどれを見るかを探す動きに一番近い。 */
 function initialPeerSortKey(): PeerSortKey {
-  const raw = readStorage(SORT_KEY_STORAGE);
-  return isPeerSortKey(raw) ? raw : "prompt";
+  return parsePeerSortKey(readStorage(SORT_KEY_STORAGE));
 }
 import type { StatsPeriod } from "./llm-stats-view.ts";
 

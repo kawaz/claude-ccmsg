@@ -7,7 +7,9 @@
 // ないので、raw 側の verbatim 保証 (rawTranscriptRows のドクコメント) は
 // そのまま残し、pretty はいつでも raw に戻せる派生表示として扱う。
 import { useEffect, useState } from "preact/hooks";
-import { readStorage, writeStorage } from "./storage.ts";
+import { parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { flagText, readStorage, writeStorage } from "./storage.ts";
 
 /** pretty 化を試みる上限文字数。これを超える行は raw のまま表示する。
  *
@@ -66,10 +68,15 @@ export function canPrettyRawLine(text: string, limit: number = RAW_PRETTY_MAX_CH
  * 性質ではないため (in-view-search の CLOSED_FOLD_SCOPE_KEY と同じ posture)。 */
 export const RAW_PRETTY_KEY = "ccmsg.rawView.pretty";
 
-/** 明示的な "1" 以外は raw (= これまでの唯一の表示) に解決する。壊れた
- * 永続値も既定に落ちるだけで例外にしない (parseSearchClosedFolds と同じ)。 */
+/** 保存されていない時の既定は raw (= これまでの唯一の表示)。 */
+const RawViewPrettySchema = v.optional(v.boolean(), false);
+const RawViewPrettyTextSchema = flagText(RawViewPrettySchema);
+
+/** 保存値 ("1" / "0") を読む。保存されていない・読めない値は既定 (raw) に
+ * なり、例外にしない (parseSearchClosedFolds と同じ)。 */
 export function parseRawViewPretty(raw: string | null): boolean {
-  return raw === "1";
+  const read = raw === null ? null : parseWith(RawViewPrettyTextSchema, raw);
+  return read?.ok ? read.value : v.getDefault(RawViewPrettySchema);
 }
 
 export function serializeRawViewPretty(value: boolean): string {

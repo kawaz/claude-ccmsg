@@ -20,7 +20,9 @@
 // 4 つとも「レイアウト寸法」なので置き場は sessionStorage + localStorage の
 // 2 段 (storage.ts の表)。窓ごとに独立して動かせて、次に開く窓は最後に使った
 // 値で始まる。
-import { readLayoutStorage, writeLayoutStorage } from "./storage.ts";
+import { parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { numberText, readLayoutStorage, writeLayoutStorage } from "./storage.ts";
 import { clampPanePx } from "./utils.ts";
 import type { Locator } from "./locator.ts";
 
@@ -59,9 +61,27 @@ export function clampSidebarWidth(width: number, availablePx?: number): number {
   return clampPanePx(width, SIDEBAR_DEFAULT_PX, availablePx);
 }
 
+/** A px size as `writeLayoutStorage` stores it, `defaultPx` when nothing is
+ * stored. */
+function storedPx(defaultPx: number) {
+  const schema = v.optional(v.number(), defaultPx);
+  return { schema, text: numberText(schema) };
+}
+
+/** The px size stored at `key`: the default when nothing is stored or what
+ * is stored is not a number. Held to its range by the caller. */
+function loadPx(key: string, stored: ReturnType<typeof storedPx>): number {
+  const raw = readLayoutStorage(key);
+  const read = raw === null ? null : parseWith(stored.text, raw);
+  return read?.ok ? read.value : v.getDefault(stored.schema);
+}
+
+const SIDEBAR_WIDTH = storedPx(SIDEBAR_DEFAULT_PX);
+const FORM_WIDTH = storedPx(FORM_DEFAULT_PX);
+const SIDEBAR_LIST_HEIGHT = storedPx(SIDEBAR_LIST_DEFAULT_PX);
+
 export function loadSidebarWidth(): number {
-  // 未保存 (null) と空文字はどちらも Number で 0 になる = 既定幅扱いにする。
-  return clampSidebarWidth(Number(readLayoutStorage(SIDEBAR_WIDTH_KEY)) || Number.NaN);
+  return clampSidebarWidth(loadPx(SIDEBAR_WIDTH_KEY, SIDEBAR_WIDTH));
 }
 
 export function saveSidebarWidth(width: number): void {
@@ -73,7 +93,7 @@ export function clampFormWidth(width: number, availablePx?: number): number {
 }
 
 export function loadFormWidth(): number {
-  return clampFormWidth(Number(readLayoutStorage(FORM_WIDTH_KEY)) || Number.NaN);
+  return clampFormWidth(loadPx(FORM_WIDTH_KEY, FORM_WIDTH));
 }
 
 export function saveFormWidth(width: number): void {
@@ -87,7 +107,7 @@ export function clampSidebarListHeight(height: number, sidebarPx?: number): numb
 }
 
 export function loadSidebarListHeight(): number {
-  return clampSidebarListHeight(Number(readLayoutStorage(SIDEBAR_LIST_HEIGHT_KEY)) || Number.NaN);
+  return clampSidebarListHeight(loadPx(SIDEBAR_LIST_HEIGHT_KEY, SIDEBAR_LIST_HEIGHT));
 }
 
 export function saveSidebarListHeight(height: number): void {
@@ -98,11 +118,16 @@ export function defaultDrawerWidth(viewportPx: number): number {
   return Math.min(viewportPx * DRAWER_DEFAULT_RATIO, DRAWER_DEFAULT_MAX_PX);
 }
 
+/** The drawer's stored width. Its default depends on the viewport, so it is
+ * not the schema's: nothing stored, or what is stored not a number, is the
+ * default for this viewport. */
+const DrawerWidthTextSchema = numberText(v.number());
+
 export function loadDrawerWidth(viewportPx: number): number {
-  return clampPanePx(
-    Number(readLayoutStorage(DRAWER_WIDTH_KEY)) || Number.NaN,
-    defaultDrawerWidth(viewportPx),
-  );
+  const raw = readLayoutStorage(DRAWER_WIDTH_KEY);
+  const read = raw === null ? null : parseWith(DrawerWidthTextSchema, raw);
+  const fallback = defaultDrawerWidth(viewportPx);
+  return read?.ok ? clampPanePx(read.value, fallback) : fallback;
 }
 
 export function saveDrawerWidth(width: number): void {

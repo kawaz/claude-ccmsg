@@ -14,6 +14,7 @@ import {
   canonicalViewerPath,
   clampPanePx,
   clampPaneRatio,
+  parsePaneRatio,
   DEFAULT_SESSION_SEARCH_FORM,
   errorMessage,
   expandPathsForSelection,
@@ -728,6 +729,18 @@ describe("clampPanePx", () => {
   test("非有限は fallback", () => {
     expect(clampPanePx(Number.NaN, 280, 1200)).toBe(280);
     expect(clampPanePx(Number.POSITIVE_INFINITY, 280, 1200)).toBe(280);
+  });
+});
+
+// 保存された比率 (String(ratio)) を読む。保存されていない・数でない値は既定、
+// 読めた値は有効域に収める。
+describe("parsePaneRatio", () => {
+  test("a stored ratio, the default when nothing or no number is stored, held to range", () => {
+    expect(parsePaneRatio("0.4")).toBe(0.4);
+    expect(parsePaneRatio(null)).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(parsePaneRatio("garbage")).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(parsePaneRatio("")).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(parsePaneRatio("5")).toBe(1);
   });
 });
 

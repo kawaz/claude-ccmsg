@@ -21,7 +21,8 @@
 //
 // hash は使わない (Timeline のアンカーが既に使っている)。JSON 値も使わない —
 // 値は素の文字列で、複数行の PROMPT も URL エンコード (`%0A`) で足りる。
-import type { PeerSortKey } from "./utils.ts";
+import { parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
 
 /** 開けるフォームパネル。3 つは排他 (`SidebarUrlState.panel` が単一値)。 */
 export type SidebarPanelKind = "session-creator" | "session-search" | "room-creator";
@@ -150,6 +151,29 @@ export function toggleSidebarPanel(
  * いるか」は貼って共有する類の状態ではない。 */
 export const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
-export function isPeerSortKey(raw: string | null): raw is PeerSortKey {
-  return raw === "name" || raw === "idle" || raw === "connected" || raw === "prompt";
+/** Sidebar Sessions-list ordering keys, cycled by the sort-toggle button
+ * (see Sidebar.tsx): "prompt" is the default (most recent *user* input first),
+ * "name" is lexicographic on `sessionLabel`'s fields, so it doubles as an
+ * alphabetical grouping by repo/ws/branch, "idle" surfaces the most recently
+ * active session first, "connected" surfaces the most recently (re)connected
+ * session first.
+ *
+ * "prompt" vs "idle" (kawaz 2026-08-31: "TL 上で最後にユーザ入力した時間の
+ * 新しい順") — they answer different questions and both stay available.
+ * "idle" reads `last_activity_at`, which every ccmsg request a session makes
+ * re-stamps, so a session grinding through a long autonomous run keeps
+ * floating to the top; "prompt" reads `last_user_input_at`, which only moves
+ * when the user actually says something, so the list orders by the
+ * conversations the reader is in the middle of. */
+export const PeerSortKeySchema = v.picklist(["name", "idle", "connected", "prompt"]);
+export type PeerSortKey = v.InferOutput<typeof PeerSortKeySchema>;
+
+/** 既定の "prompt" は「最後にユーザが入力したセッションが上」で、次にどれを
+ * 見るかを探す動きに一番近い。 */
+const StoredPeerSortKeySchema = v.optional(PeerSortKeySchema, "prompt");
+
+/** 保存された並び順。保存されていない・読めない値は既定。 */
+export function parsePeerSortKey(raw: string | null): PeerSortKey {
+  const read = parseWith(StoredPeerSortKeySchema, raw ?? undefined);
+  return read.ok ? read.value : v.getDefault(StoredPeerSortKeySchema);
 }

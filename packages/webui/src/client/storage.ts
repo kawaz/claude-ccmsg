@@ -28,6 +28,7 @@
 //
 // **内容**は窓で分ける理由がない。書きかけの下書きが窓を移った途端に消える
 // のは事故にしか見えない。
+import * as v from "valibot";
 import type { AppState } from "./store.ts";
 
 /** `localStorage.getItem` を try/catch でラップ。private mode / quota 超過等
@@ -153,4 +154,26 @@ export function sweepStaleBySid(
       removeStorage(key);
     }
   }
+}
+
+/** A number stored as its text (`String(n)`), read with `value` (whose
+ * `v.optional` default stands for nothing stored). The text layer hands the
+ * number on as a value `value` reads, as `jsonText` hands on the decoded
+ * JSON. */
+export function numberText<T>(value: v.GenericSchema<unknown, T>): v.GenericSchema<string, T> {
+  return v.pipe(
+    v.string(),
+    v.decimal(),
+    v.transform((text): unknown => Number(text)),
+    value,
+  );
+}
+
+/** A flag stored as `"1"` / `"0"`, read with `value`. */
+export function flagText<T>(value: v.GenericSchema<unknown, T>): v.GenericSchema<string, T> {
+  return v.pipe(
+    v.picklist(["0", "1"]),
+    v.transform((text): unknown => text === "1"),
+    value,
+  );
 }

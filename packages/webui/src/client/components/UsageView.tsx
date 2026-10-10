@@ -27,7 +27,9 @@ import {
 } from "../llm-usage-view.ts";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
-import { readStorage, writeStorage } from "../storage.ts";
+import { parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { flagText, readStorage, writeStorage } from "../storage.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageStats } from "./UsageStats.tsx";
 import { ServiceStatus } from "./ServiceStatus.tsx";
@@ -51,6 +53,15 @@ interface ResetDisplay {
 }
 
 const RESET_DISPLAY_KEY = "ccmsg.usage.absoluteReset";
+/** 既定は相対表示。 */
+const AbsoluteResetSchema = v.optional(v.boolean(), false);
+const AbsoluteResetTextSchema = flagText(AbsoluteResetSchema);
+
+/** 保存値 ("1" / "0")。保存されていない・読めない値は既定。 */
+function parseAbsoluteReset(raw: string | null): boolean {
+  const read = raw === null ? null : parseWith(AbsoluteResetTextSchema, raw);
+  return read?.ok ? read.value : v.getDefault(AbsoluteResetSchema);
+}
 
 /** Glyph from the period's length, carried over from the CLI rendering kawaz
  * asked to reproduce: a short period is a clock, a long one a calendar. Length
@@ -318,7 +329,9 @@ function QuotaSection({ state }: { state: AppState }) {
   const [probing, setProbing] = useState(false);
   // Shared by every row rather than held per row: the screen is read by
   // comparing rows, and half of them in each form would defeat that.
-  const [absoluteReset, setAbsoluteReset] = useState(() => readStorage(RESET_DISPLAY_KEY) === "1");
+  const [absoluteReset, setAbsoluteReset] = useState(() =>
+    parseAbsoluteReset(readStorage(RESET_DISPLAY_KEY)),
+  );
   const reset: ResetDisplay = {
     absolute: absoluteReset,
     toggle: () =>

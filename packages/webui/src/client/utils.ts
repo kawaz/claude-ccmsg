@@ -14,6 +14,8 @@ import type {
 } from "@ccmsg/protocol";
 import { jsonText, parseWith, SessionSearchHitSchema } from "@ccmsg/protocol";
 import * as v from "valibot";
+import type { PeerSortKey } from "./sidebar-url.ts";
+import { numberText } from "./storage.ts";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
@@ -224,21 +226,7 @@ export function sessionLabel(peer: PeerInfo): string {
   return parts.length > 0 ? parts.join(" · ") : peer.sid.slice(0, 8);
 }
 
-/** Sidebar Sessions-list ordering keys, cycled by the sort-toggle button
- * (see Sidebar.tsx): "prompt" is the default (most recent *user* input first),
- * "name" is lexicographic on `sessionLabel`'s fields, so it doubles as an
- * alphabetical grouping by repo/ws/branch, "idle" surfaces the most recently
- * active session first, "connected" surfaces the most recently (re)connected
- * session first.
- *
- * "prompt" vs "idle" (kawaz 2026-08-31: "TL 上で最後にユーザ入力した時間の
- * 新しい順") — they answer different questions and both stay available.
- * "idle" reads `last_activity_at`, which every ccmsg request a session makes
- * re-stamps, so a session grinding through a long autonomous run keeps
- * floating to the top; "prompt" reads `last_user_input_at`, which only moves
- * when the user actually says something, so the list orders by the
- * conversations the reader is in the middle of. */
-export type PeerSortKey = "name" | "idle" | "connected" | "prompt";
+export type { PeerSortKey };
 
 // Cycle order matches the button-label progression kawaz asked for
 // (name -> created -> recent -> name), which happens to differ from the
@@ -408,6 +396,19 @@ export const SESSION_PANE_DEFAULT_RATIO = 0.28;
  * 比率はスプリッターも含むコンテナに対する割合なので、反対側に実際に残るのは
  * PANE_MIN_PX からスプリッターの太さ (.session-splitter は 4px) を引いた分。
  * それでもスプリッターより太いままなので、掴み直す先は視認できる。 */
+/** A pane ratio as a pane layout stores it, the default ratio when nothing
+ * is stored. */
+const PaneRatioSchema = v.optional(v.number(), SESSION_PANE_DEFAULT_RATIO);
+const PaneRatioTextSchema = numberText(PaneRatioSchema);
+
+/** A stored pane ratio (`readLayoutStorage` of a pane layout's key), held to
+ * the valid range: the default ratio when nothing is stored or what is stored
+ * is not a number. */
+export function parsePaneRatio(raw: string | null): number {
+  const read = raw === null ? null : parseWith(PaneRatioTextSchema, raw);
+  return clampPaneRatio(read?.ok ? read.value : v.getDefault(PaneRatioSchema));
+}
+
 export function clampPaneRatio(ratio: number, containerPx?: number): number {
   if (!Number.isFinite(ratio)) return SESSION_PANE_DEFAULT_RATIO;
   // 両側の下限が衝突するほど狭いコンテナでは中央で折り合う。

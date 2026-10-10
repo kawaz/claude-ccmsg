@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { AgentRef } from "../locator.ts";
 import type { TimelineState } from "../store.ts";
-import { clampPaneRatio, paneRatioFromPointer, SESSION_PANE_DEFAULT_RATIO } from "../utils.ts";
+import { paneRatioFromPointer, parsePaneRatio } from "../utils.ts";
 import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
@@ -24,9 +24,7 @@ import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 const PANE_RATIO_STORAGE = "ccmsg.timelinePaneRatio";
 
 function loadPaneRatio(): number {
-  const raw = readLayoutStorage(PANE_RATIO_STORAGE);
-  if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
-  return SESSION_PANE_DEFAULT_RATIO;
+  return parsePaneRatio(readLayoutStorage(PANE_RATIO_STORAGE));
 }
 
 function savePaneRatio(ratio: number): void {

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CLOSED_SIDEBAR,
-  isPeerSortKey,
+  parsePeerSortKey,
   parseSidebarUrl,
   sameSidebarState,
   toggleSidebarPanel,
@@ -157,10 +157,10 @@ describe("sameSidebarState", () => {
   });
 });
 
-describe("isPeerSortKey", () => {
-  test("保存された値が語彙外なら採用しない", () => {
-    expect(isPeerSortKey("name")).toBe(true);
-    expect(isPeerSortKey("bogus")).toBe(false);
-    expect(isPeerSortKey(null)).toBe(false);
+describe("parsePeerSortKey", () => {
+  test("保存された値が語彙外・未保存なら既定の prompt", () => {
+    expect(parsePeerSortKey("name")).toBe("name");
+    expect(parsePeerSortKey("bogus")).toBe("prompt");
+    expect(parsePeerSortKey(null)).toBe("prompt");
   });
 });
