@@ -13,66 +13,50 @@
 // このページで返事を待っていない限り未確認として見せる。
 import type { ComposerAttachment } from "./composer-attachments.ts";
 import type { AppState } from "../store.ts";
-import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
+import {
+  listStorageKeys,
+  readStorage,
+  removeStorage,
+  sweepStaleBySid,
+  writeStorage,
+} from "../storage.ts";
 import {
   classifySessionInputReply,
   sessionInputSendFailure,
   type SessionInputOutcome,
 } from "./session-input.ts";
 import type { ErrorResponse, SessionInputResponse } from "@ccmsg/protocol";
-import { jsonText, parseWith } from "@ccmsg/protocol";
+import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 
-/** Design rationale: キーの文字列は、ブラウザに既に保存されている未送信の下書きと
- * 同じものを使う。変えるとそれらが読めなくなり、人が書いた文を失わせる
- * (DR-0035 §5 が避けている負担そのもの)。 */
-export const DRAFT_STORAGE_PREFIX = "ccmsg.1on1.";
+/** 下書きの本文 (`{text, updatedAt}`)。 */
+export const DRAFT_STORAGE_PREFIX = "ccmsg.sessionInput.draft.";
+/** 下書きの添付 (upload 済みの添付の配列)。本文と別のキーに置くのは、添付の
+ * 形が読めなくても本文は残すため (DR-0035 §5: 人が書いた文を失わせない)。 */
+export const DRAFT_ATTACHMENTS_STORAGE_PREFIX = "ccmsg.sessionInput.draftAttachments.";
+/** 本文と添付を 1 つの値で持っていた頃の下書き。読めれば今のキーへ分けて移し、
+ * 読めなければ捨てる (`migrateLegacyDraft`、1 回限りの移行)。 */
+export const LEGACY_DRAFT_STORAGE_PREFIX = "ccmsg.1on1.";
 /** 送信の記録 (sid ごとに SendRecord の配列)。 */
 export const SENDS_STORAGE_PREFIX = "ccmsg.sessionInput.sends.";
 export const CLEANUP_STALE_DAYS = 10;
 export const CLEANUP_STALE_MS = CLEANUP_STALE_DAYS * 24 * 60 * 60 * 1000;
 
-/** 下書きや送った文の中身。添付は upload 済み (status:"done") だけを持つ。 */
+/** 入力欄の中身、または送った文の中身。入力欄では upload 中・error の添付も
+ * 持つ (保存されるのは upload 済みの添付だけ)。
+ *
+ * Design rationale: 外から読む値ではなく入力欄が組み立てる値 (upload 中の
+ * 添付を含む) なので、保存の形のスキーマからは導かない。保存して読み戻す
+ * StoredDraft / SendRecord はスキーマから導く。 */
 export interface InputContent {
-  text: string;
-  attachments?: ComposerAttachment[];
-}
-
-export interface StoredDraft extends InputContent {
-  /** upload 完了済みの添付メタ。upload は選択時に即完了しファイルは TMPDIR に
-   * 残るので、メタを draft に含めれば close→reopen やリロードの後も本文の
-   * [FILE<N>] がそのまま送信時に解決できる。uploading / error の途中状態は
-   * 保存しない (XHR は復元できない)。 */
-  attachments?: ComposerAttachment[];
-  /** ISO-8601 wall-clock stamp of the last edit; used by the cleanup sweep
-   * as a fallback when peers.last_activity_at isn't available. */
-  updatedAt: string;
-}
-
-/** 1 回の送信の記録。 */
-export interface SendRecord extends InputContent {
-  id: string;
-  /** 送った時刻 (ISO-8601)。 */
-  sentAt: string;
-  /** `sending`: 返事を待っている (はず)。`unconfirmed`: 届いたか分からないまま
-   * 待ちが終わった。 */
-  state: "sending" | "unconfirmed";
-}
-
-export function draftKey(sid: string): string {
-  return `${DRAFT_STORAGE_PREFIX}${sid}`;
-}
-
-export function sendsKey(sid: string): string {
-  return `${SENDS_STORAGE_PREFIX}${sid}`;
-}
-
-function doneAttachments(attachments: readonly ComposerAttachment[] | undefined) {
-  return (attachments ?? []).filter((a) => a.status === "done");
+  readonly text: string;
+  readonly attachments?: readonly ComposerAttachment[];
 }
 
 /** An attachment as a draft or a send record keeps it: uploaded (`done`), so
- * it has its number and the path it was uploaded to. */
+ * it has its number and the path it was uploaded to. upload は選択時に即完了
+ * しファイルは TMPDIR に残るので、メタを保存すれば close→reopen やリロードの
+ * 後も本文の [FILE<N>] がそのまま送信時に解決できる。 */
 const StoredAttachmentSchema = v.looseObject({
   n: v.number(),
   name: v.string(),
@@ -85,9 +69,27 @@ const StoredAttachmentSchema = v.looseObject({
   path: v.string(),
   errorMsg: v.optional(v.string()),
 });
+export type StoredAttachment = Output<typeof StoredAttachmentSchema>;
 
-/** A draft as `saveDraft` stores it. */
-const StoredDraftTextSchema = jsonText(
+/** The text of a draft as `saveDraft` stores it. `updatedAt` (ISO-8601, the
+ * last edit) is the cleanup sweep's fallback when peers.last_activity_at isn't
+ * available. */
+const DraftTextSchema = v.object({
+  text: v.string(),
+  updatedAt: v.string(),
+});
+const DraftTextTextSchema = jsonText(DraftTextSchema);
+
+/** The attachments of a draft as `saveDraft` stores them. */
+const DraftAttachmentsTextSchema = jsonText(v.array(StoredAttachmentSchema));
+
+/** A draft as it is read back: its text, and its attachments when they read. */
+export type StoredDraft = Output<typeof DraftTextSchema> & {
+  readonly attachments?: readonly StoredAttachment[];
+};
+
+/** A draft of before the split, text and attachments in one value. */
+const LegacyDraftTextSchema = jsonText(
   v.object({
     text: v.string(),
     attachments: v.optional(v.array(StoredAttachmentSchema)),
@@ -95,82 +97,130 @@ const StoredDraftTextSchema = jsonText(
   }),
 );
 
-/** The send records of a session as `saveSends` stores them, none when
- * nothing is stored. A record's `sentAt` is a time. */
-const SendRecordsSchema = v.optional(
-  v.array(
-    v.object({
-      id: v.string(),
-      text: v.string(),
-      attachments: v.optional(v.array(StoredAttachmentSchema)),
-      sentAt: v.pipe(
-        v.string(),
-        v.check((at) => Number.isFinite(Date.parse(at)), "sentAt is not a time"),
-      ),
-      state: v.picklist(["sending", "unconfirmed"]),
-    }),
+/** 1 回の送信の記録。`sentAt` は送った時刻 (ISO-8601)。`state` の `sending` は
+ * 返事を待っている (はず)、`unconfirmed` は届いたか分からないまま待ちが
+ * 終わった。 */
+const SendRecordSchema = v.object({
+  id: v.string(),
+  text: v.string(),
+  attachments: v.optional(v.array(StoredAttachmentSchema)),
+  sentAt: v.pipe(
+    v.string(),
+    v.check((at) => Number.isFinite(Date.parse(at)), "sentAt is not a time"),
   ),
-  () => [],
-);
+  state: v.picklist(["sending", "unconfirmed"]),
+});
+export type SendRecord = Output<typeof SendRecordSchema>;
+
+/** The send records of a session as `saveSends` stores them, none when
+ * nothing is stored. */
+const SendRecordsSchema = v.optional(v.array(SendRecordSchema), () => []);
 const SendRecordsTextSchema = jsonText(SendRecordsSchema);
+
+export function draftKey(sid: string): string {
+  return `${DRAFT_STORAGE_PREFIX}${sid}`;
+}
+
+export function draftAttachmentsKey(sid: string): string {
+  return `${DRAFT_ATTACHMENTS_STORAGE_PREFIX}${sid}`;
+}
+
+function legacyDraftKey(sid: string): string {
+  return `${LEGACY_DRAFT_STORAGE_PREFIX}${sid}`;
+}
+
+export function sendsKey(sid: string): string {
+  return `${SENDS_STORAGE_PREFIX}${sid}`;
+}
+
+/** The uploaded attachments of `attachments`, as they are stored. */
+function storedAttachments(
+  attachments: readonly ComposerAttachment[] | undefined,
+): StoredAttachment[] {
+  return (attachments ?? []).flatMap((a) =>
+    a.status === "done" && a.path !== undefined ? [{ ...a, status: "done", path: a.path }] : [],
+  );
+}
 
 /** 2 つの中身が同じ文か。本文の完全一致と、upload 済み添付の番号と path の
  * 一致で見る (upload 中・error の添付は送られないので比べない)。 */
 export function sameContent(a: InputContent | null, b: InputContent | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.text !== b.text) return false;
-  const left = doneAttachments(a.attachments);
-  const right = doneAttachments(b.attachments);
+  const left = storedAttachments(a.attachments);
+  const right = storedAttachments(b.attachments);
   return (
     left.length === right.length &&
     left.every((x, i) => x.n === right[i].n && x.path === right[i].path)
   );
 }
 
-/** The stored draft of a session, or null when there is none or what is
- * stored does not read as one (it is ignored as a whole, never read in
- * part). */
+/** Moves a draft stored before the split (`ccmsg.1on1.<sid>`) to the text
+ * and attachments keys, once: a value that reads is split and stored again,
+ * one that does not is dropped. A draft already under the new keys wins. */
+function migrateLegacyDraft(sid: string): void {
+  const raw = readStorage(legacyDraftKey(sid));
+  if (raw === null) return;
+  removeStorage(legacyDraftKey(sid));
+  if (readStorage(draftKey(sid)) !== null) return;
+  const read = parseWith(LegacyDraftTextSchema, raw);
+  if (!read.ok) return;
+  const { text, updatedAt, attachments } = read.value;
+  writeStorage(draftKey(sid), JSON.stringify({ text, updatedAt }));
+  if (attachments !== undefined && attachments.length > 0) {
+    writeStorage(draftAttachmentsKey(sid), JSON.stringify(attachments));
+  }
+}
+
+/** The stored draft of a session, or null when there is none or its text
+ * does not read. Attachments that do not read are left out and the text
+ * kept. */
 export function loadDraft(sid: string): StoredDraft | null {
+  migrateLegacyDraft(sid);
   const raw = readStorage(draftKey(sid));
   if (raw === null) return null;
-  const read = parseWith(StoredDraftTextSchema, raw);
+  const read = parseWith(DraftTextTextSchema, raw);
   if (!read.ok) return null;
-  const { text, updatedAt, attachments } = read.value;
-  return { text, updatedAt, ...(attachments ? { attachments: [...attachments] } : {}) };
+  const rawAttachments = readStorage(draftAttachmentsKey(sid));
+  const attachments =
+    rawAttachments === null ? null : parseWith(DraftAttachmentsTextSchema, rawAttachments);
+  return attachments?.ok && attachments.value.length > 0
+    ? { ...read.value, attachments: attachments.value }
+    : read.value;
 }
 
 /** 下書きを保存する。空の本文は保存せず消す。保存済みと同じ中身なら書かない:
  * 別タブへ storage event を撒き直して、タブ同士で書き合い続けるのを防ぐ。 */
-export function saveDraft(sid: string, text: string, attachments?: ComposerAttachment[]): void {
+export function saveDraft(
+  sid: string,
+  text: string,
+  attachments?: readonly ComposerAttachment[],
+): void {
   if (text === "") {
     clearDraft(sid);
     return;
   }
-  const done = doneAttachments(attachments);
-  const next: InputContent = { text, ...(done.length > 0 ? { attachments: done } : {}) };
-  if (sameContent(loadDraft(sid), next)) return;
+  const stored = storedAttachments(attachments);
+  if (sameContent(loadDraft(sid), { text, attachments: stored })) return;
   // storage unavailable (private mode / quota) 時は drop silently。
-  writeStorage(draftKey(sid), JSON.stringify({ ...next, updatedAt: new Date().toISOString() }));
+  writeStorage(draftKey(sid), JSON.stringify({ text, updatedAt: new Date().toISOString() }));
+  if (stored.length > 0) writeStorage(draftAttachmentsKey(sid), JSON.stringify(stored));
+  else removeStorage(draftAttachmentsKey(sid));
 }
 
 export function clearDraft(sid: string): void {
   removeStorage(draftKey(sid));
+  removeStorage(draftAttachmentsKey(sid));
+  removeStorage(legacyDraftKey(sid));
 }
 
 /** The stored send records of a session: none when nothing is stored, or
  * when what is stored does not read as records (it is ignored as a whole,
  * never read in part). */
-export function loadSends(sid: string): SendRecord[] {
+export function loadSends(sid: string): readonly SendRecord[] {
   const raw = readStorage(sendsKey(sid));
   const read = raw === null ? null : parseWith(SendRecordsTextSchema, raw);
-  const records = read?.ok ? read.value : v.getDefault(SendRecordsSchema);
-  return records.map(({ id, text, sentAt, state, attachments }) => ({
-    id,
-    text,
-    sentAt,
-    state,
-    ...(attachments ? { attachments: [...attachments] } : {}),
-  }));
+  return read?.ok ? read.value : v.getDefault(SendRecordsSchema);
 }
 
 function saveSends(sid: string, records: readonly SendRecord[]): void {
@@ -192,6 +242,17 @@ function saveSends(sid: string, records: readonly SendRecord[]): void {
  * check upstream — a mount that fires before peers arrives skips the sweep
  * (no reference to compare against) and re-runs on the next visit. */
 export function cleanupStaleSessionInputs(state: AppState, now: number = Date.now()): void {
+  for (const key of listStorageKeys(LEGACY_DRAFT_STORAGE_PREFIX)) {
+    migrateLegacyDraft(key.slice(LEGACY_DRAFT_STORAGE_PREFIX.length));
+  }
+  // 添付を本文より先に見る: 本文を先に消すと添付の updatedAt が引けなくなる。
+  sweepStaleBySid(
+    DRAFT_ATTACHMENTS_STORAGE_PREFIX,
+    state,
+    CLEANUP_STALE_MS,
+    (sid) => loadDraft(sid)?.updatedAt,
+    now,
+  );
   sweepStaleBySid(
     DRAFT_STORAGE_PREFIX,
     state,
@@ -268,11 +329,11 @@ export function beginSend(
   content: InputContent,
   now: number = Date.now(),
 ): SendRecord {
-  const done = doneAttachments(content.attachments);
+  const stored = storedAttachments(content.attachments);
   const record: SendRecord = {
     id: newSendId(now),
     text: content.text,
-    ...(done.length > 0 ? { attachments: done } : {}),
+    ...(stored.length > 0 ? { attachments: stored } : {}),
     sentAt: new Date(now).toISOString(),
     state: "sending",
   };

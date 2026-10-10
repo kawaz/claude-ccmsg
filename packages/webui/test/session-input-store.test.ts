@@ -12,7 +12,9 @@ import {
   cleanupStaleSessionInputs,
   clearDraft,
   discardSend,
+  DRAFT_ATTACHMENTS_STORAGE_PREFIX,
   DRAFT_STORAGE_PREFIX,
+  LEGACY_DRAFT_STORAGE_PREFIX,
   finishSend,
   isSending,
   lastFailure,
@@ -253,21 +255,65 @@ describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
     expect(loadDraft("sid-up")?.attachments).toBeUndefined();
   });
 
-  // 何を保証するか (壊れた record への degrade): attachments の shape が
-  // 崩れていたら text だけの復元に落とす — 壊れた添付メタで送信経路を
-  // 詰まらせない。
-  // 添付の形が崩れた下書きは下書きとして読めない: 一部 (本文) だけを採らず、
-  // 丸ごと無いものとして扱う (DR-0038 §6)。
-  test("loadDraft ignores a draft whose attachments do not read, as a whole", () => {
+  // 何を保証するか (DR-0035 §5): 添付は本文と別のキーにあるので、添付の形が
+  // 読めなくても人が書いた本文は残る (添付だけ無いものとして扱う)。
+  test("attachments that do not read leave the text of the draft", () => {
+    saveDraft("sid-bad", "hello [FILE1]");
     localStorage.setItem(
-      "ccmsg.1on1.sid-bad",
+      `${DRAFT_ATTACHMENTS_STORAGE_PREFIX}sid-bad`,
+      JSON.stringify([{ n: "one", status: "done" }]),
+    );
+    const got = loadDraft("sid-bad");
+    expect(got?.text).toBe("hello [FILE1]");
+    expect(got?.attachments).toBeUndefined();
+  });
+});
+
+// 本文と添付を 1 つの値 (`ccmsg.1on1.<sid>`) に持っていた頃の下書きの移行
+// (1 回限り): 読めれば今のキーへ分けて保存し直し、読めなければ捨てる。旧キーは
+// どちらでも消える。
+describe("drafts stored before the split", () => {
+  const attachment = { n: 1, name: "a.png", status: "done", progress: 100, path: "/tmp/a.png" };
+
+  test("a stored draft that reads moves to the text and attachments keys", () => {
+    localStorage.setItem(
+      `${LEGACY_DRAFT_STORAGE_PREFIX}sid-old`,
       JSON.stringify({
-        text: "hello [FILE1]",
-        attachments: [{ n: "one", status: "done" }],
-        updatedAt: new Date().toISOString(),
+        text: "old [FILE1]",
+        attachments: [attachment],
+        updatedAt: "2026-10-01T00:00:00.000Z",
       }),
     );
-    expect(loadDraft("sid-bad")).toBeNull();
+    expect(loadDraft("sid-old")).toMatchObject({
+      text: "old [FILE1]",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      attachments: [{ n: 1, path: "/tmp/a.png" }],
+    });
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-old`)).toBeNull();
+    expect(localStorage.getItem(`${DRAFT_STORAGE_PREFIX}sid-old`)).not.toBeNull();
+  });
+
+  test("a stored draft that does not read is dropped", () => {
+    localStorage.setItem(
+      `${LEGACY_DRAFT_STORAGE_PREFIX}sid-broken`,
+      JSON.stringify({
+        text: "x",
+        attachments: [{ n: "one" }],
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      }),
+    );
+    expect(loadDraft("sid-broken")).toBeNull();
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-broken`)).toBeNull();
+  });
+
+  test("the mount-time sweep moves every stored draft, opened or not", () => {
+    localStorage.setItem(
+      `${LEGACY_DRAFT_STORAGE_PREFIX}sid-here`,
+      JSON.stringify({ text: "kept", updatedAt: new Date().toISOString() }),
+    );
+    cleanupStaleSessionInputs({ ...initialState(), peers: [makePeer("sid-here")] });
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-here`)).toBeNull();
+    expect(loadDraft("sid-here")?.text).toBe("kept");
   });
 });
 
@@ -346,7 +392,7 @@ describe("send records (DR-0035 §5)", () => {
   // 出た時点で既に記録があるので、返事の前にページが消えても印は残る。
   test("writes the record before the request goes out", async () => {
     saveDraft("sid-1", "hello");
-    let recordsAtRequest: unknown[] = [];
+    let recordsAtRequest: readonly unknown[] = [];
     const done = sendSessionInput("sid-1", { text: "hello" }, "hello", async () => {
       recordsAtRequest = loadSends("sid-1");
       return { ok: true, outcome: "unconfirmed" };

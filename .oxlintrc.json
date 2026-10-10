@@ -94,7 +94,8 @@
         "packages/webui/src/client/in-view-search.ts",
         "packages/webui/src/client/components/TimelinePanes.tsx",
         "packages/webui/src/client/components/FilesPanes.tsx",
-        "packages/webui/src/client/components/UsageView.tsx"
+        "packages/webui/src/client/components/UsageView.tsx",
+        "packages/webui/src/client/components/SessionInputComposer.tsx"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

@@ -35,6 +35,7 @@ import {
   cleanupStaleSessionInputs,
   clearLastFailure,
   discardSend,
+  draftAttachmentsKey,
   draftKey,
   isSending,
   lastFailure,
@@ -59,9 +60,9 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // text を保存の effect が先に見て下書きを消してしまう。SessionView は sid
   // ごとの instance なので sid は変わらない。
   const [text, setText] = useState(() => loadDraft(sid)?.text ?? "");
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>(
-    () => loadDraft(sid)?.attachments ?? [],
-  );
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => [
+    ...(loadDraft(sid)?.attachments ?? []),
+  ]);
   const [sends, setSends] = useState(() => loadSends(sid));
   const [sending, setSending] = useState(() => isSending(sid));
   const [failure, setFailure] = useState(() => lastFailure(sid));
@@ -122,7 +123,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     const draft: InputContent = loadDraft(sid) ?? { text: "" };
     if (!sameContent(draft, contentRef.current)) {
       setText(draft.text);
-      setAttachments(draft.attachments ?? []);
+      setAttachments([...(draft.attachments ?? [])]);
     }
   }, [sid]);
 
@@ -131,7 +132,14 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
       if (changed === sid) refresh();
     });
     const onStorage = (e: StorageEvent) => {
-      if (e.key === null || e.key === draftKey(sid) || e.key === sendsKey(sid)) refresh();
+      if (
+        e.key === null ||
+        e.key === draftKey(sid) ||
+        e.key === draftAttachmentsKey(sid) ||
+        e.key === sendsKey(sid)
+      ) {
+        refresh();
+      }
     };
     window.addEventListener("storage", onStorage);
     // 初回 render から購読までの間に起きた変化を拾う。
@@ -441,7 +449,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
           placeholder="このセッションに入力... (⌘+Enter で送信)"
           value={text}
           onInput={(e) => {
-            const value = (e.currentTarget as HTMLTextAreaElement).value;
+            const value = e.currentTarget.value;
             setText(value);
             // 文を全部消したら、届かなかった理由の注記も対象を失う。未確認の
             // 送信の注記は送った文に付いているので消さない。
@@ -449,7 +457,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
           }}
           // close 前に必ず発火する blur でカーソル位置を保存
           onBlur={(e) => {
-            const el = e.currentTarget as HTMLTextAreaElement;
+            const el = e.currentTarget;
             lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
           }}
           onKeyDown={(e) => {
