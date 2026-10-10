@@ -278,3 +278,34 @@ const KNOWN_TOOL_NAME_SET: ReadonlySet<string> = new Set<string>(KNOWN_TOOL_NAME
 export function isKnownToolUse(call: ToolUse): call is KnownToolUse {
   return KNOWN_TOOL_NAME_SET.has(call.name);
 }
+
+// --- the file a call names, by tool -------------------------------------------
+
+/** A `tool_use` block of the tool `name`, read for the path its input names
+ * in `file_path` and nothing else. */
+function filePathToolUse<const TName extends string>(name: TName) {
+  return v.looseObject({
+    type: v.literal("tool_use"),
+    id: v.string(),
+    name: v.literal(name),
+    input: v.looseObject({ file_path: v.string() }),
+  });
+}
+
+/** A call of a file tool, read for the file it names alone: a projection of
+ * ToolUseSchema for a reader that wants the path and not the rest of the
+ * input, so a call whose other fields are wrong (an `offset` written as a
+ * list) still names its file. A call of any other tool fails it. */
+export const ToolUseFilePathSchema = v.variant("name", [
+  filePathToolUse("Read"),
+  filePathToolUse("Write"),
+  filePathToolUse("Edit"),
+  filePathToolUse("MultiEdit"),
+  v.looseObject({
+    type: v.literal("tool_use"),
+    id: v.string(),
+    name: v.literal("NotebookEdit"),
+    input: v.looseObject({ notebook_path: v.string() }),
+  }),
+]);
+export type ToolUseFilePath = Output<typeof ToolUseFilePathSchema>;

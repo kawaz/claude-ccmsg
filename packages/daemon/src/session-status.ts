@@ -20,6 +20,7 @@ import {
   TaskCreateToolResultSchema,
   TaskStopToolResultSchema,
   TaskUpdateToolResultSchema,
+  ToolUseFilePathSchema,
   ToolUseSchema,
   TranscriptRowLineSchema,
   WorkflowToolResultSchema,
@@ -49,6 +50,7 @@ import {
   type TaskUpdateToolResult,
   type TeammateSpawnedResult,
   type ToolUse,
+  type ToolUseBlock,
   type TranscriptRow,
   type UserRow,
 } from "@ccmsg/protocol";
@@ -223,24 +225,22 @@ function isInsideRoot(root: string, candidate: string): boolean {
  * without waiting for tool_result: the DR defines the allowlist from call input,
  * failed reads merely become not_found later, and routing these calls through
  * pendingToolUse would let their volume evict the status tools protected by its
- * MAX_PENDING_TOOL_USES bound. A call whose input does not read as its tool's
- * (a broken __unparsedToolInput, a path that is not text) grants nothing, and
- * empty or relative paths are skipped. NotebookEdit/MultiEdit had no observed
+ * MAX_PENDING_TOOL_USES bound. The call is read for its path alone
+ * (ToolUseFilePathSchema): the grant is defined by the path the call named,
+ * so a call whose other fields are wrong still grants it, while one with no
+ * path as text (a broken __unparsedToolInput) grants nothing. Empty or
+ * relative paths are skipped. NotebookEdit/MultiEdit had no observed
  * transcript examples when DR-0024 was accepted, so their notebook_path /
  * file_path handling defensively follows the tool definitions. */
-function foldExternalFile(state: SessionStatusState, call: ToolUse): boolean {
-  if (!isKnownToolUse(call)) return false;
-  switch (call.name) {
-    case "NotebookEdit":
-      return addExternalFile(state, call.input.notebook_path, "tool");
-    case "Read":
-    case "Write":
-    case "Edit":
-    case "MultiEdit":
-      return addExternalFile(state, call.input.file_path, "tool");
-    default:
-      return false;
-  }
+function foldExternalFile(state: SessionStatusState, block: ToolUseBlock): boolean {
+  const read = parseWith(ToolUseFilePathSchema, block);
+  if (!read.ok) return false;
+  const call = read.value;
+  return addExternalFile(
+    state,
+    call.name === "NotebookEdit" ? call.input.notebook_path : call.input.file_path,
+    "tool",
+  );
 }
 
 /** Spelling used for every DR-0024 external_files entry, and the spelling a
@@ -434,13 +434,13 @@ function foldAssistant(state: SessionStatusState, row: AssistantRow): boolean {
   if (foldApiError(state, row)) changed = true;
   for (const block of row.message.content) {
     if (!isKnownContentBlock(block) || block.type !== "tool_use") continue;
+    if (foldExternalFile(state, block)) changed = true;
     // The model wrote the input: one that does not read as its tool's is a
     // call that failed, and says nothing about the status.
     const read = parseWith(ToolUseSchema, block);
-    if (!read.ok) continue;
-    const call = read.value;
-    if (foldExternalFile(state, call)) changed = true;
-    if (isTrackedToolUse(call)) addPendingToolUse(state, call, row.timestamp);
+    if (read.ok && isTrackedToolUse(read.value)) {
+      addPendingToolUse(state, read.value, row.timestamp);
+    }
   }
   return changed;
 }

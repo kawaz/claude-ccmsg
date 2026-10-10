@@ -1718,6 +1718,26 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
+  test("offset が配列の Read でも file_path が名指すファイルを allowlist に加える", async () => {
+    // 許可は call が名指した path で決まる (DR-0024)。実機には offset を配列で
+    // 書いた Read があり (`offset: [820]`、Claude Code は受け付けて読んだ)、
+    // path 以外の field の不正で許可から外さない。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const file = path.join(outside, "design.md");
+      fs.writeFileSync(file, "x");
+      const result = await apply(
+        [toolUse("listed-offset", "Read", { file_path: file, offset: [820], limit: 55 })],
+        root,
+      );
+      expect(result.external_files).toEqual([{ path: fs.realpathSync(file), origin: "tool" }]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   test("壊れた input・相対/空/非 string path を黙って skip する", async () => {
     // __unparsedToolInput.raw は不正 JSON の保存形なので再 parse せず、直接 string の
     // absolute path だけを allowlist 候補にする防御境界を保証する。
