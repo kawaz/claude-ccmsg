@@ -70,6 +70,7 @@
         "packages/daemon/src/session-errors.ts",
         "packages/daemon/src/session-user-input.ts",
         "packages/daemon/src/session-dump.ts",
+        "packages/daemon/src/agent-transcripts.ts",
         "packages/cli/src/client.ts",
         "packages/webui/src/client/ws.ts",
         "packages/daemon/test/log.test.ts",

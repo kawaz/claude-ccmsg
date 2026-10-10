@@ -30,7 +30,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ErrorCode, type ErrorCode as ErrorCodeType } from "@ccmsg/protocol";
+import {
+  AgentMetaTextSchema,
+  ErrorCode,
+  parseWith,
+  type ErrorCode as ErrorCodeType,
+} from "@ccmsg/protocol";
 
 /** `wf_XXXXXXXX-XXX` — observed 165/165 workflow run directories match this
  * exact shape (2026-07-17, empirical). Uppercase hex is intentionally
@@ -199,14 +204,9 @@ async function resolveTeammate(
     } catch {
       continue;
     }
-    let value: unknown;
-    try {
-      value = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    if (typeof value !== "object" || value === null) continue;
-    const meta = value as Record<string, unknown>;
+    const read = parseWith(AgentMetaTextSchema, raw);
+    if (!read.ok) continue;
+    const meta = read.value;
     if (meta.taskKind !== "in_process_teammate") continue;
     if (meta.name !== teammate) continue;
     const jsonlName = entry.name.slice(0, -".meta.json".length) + ".jsonl";
@@ -220,9 +220,10 @@ async function resolveTeammate(
     if (!stat.isFile()) continue;
     candidates.push({ file: jsonlPath, mtimeMs: stat.mtimeMs });
   }
-  if (candidates.length === 0) {
+  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const [newest] = candidates;
+  if (newest === undefined) {
     return { ok: false, code: ErrorCode.not_found, msg: `teammate not found: ${teammate}` };
   }
-  candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return { ok: true, file: candidates[0]!.file };
+  return { ok: true, file: newest.file };
 }
