@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-10 | design | open | [truncated-ccmsg-message-partial-parse-vs-dr0038](./2026-10-10-truncated-ccmsg-message-partial-parse-vs-dr0038.md) | tryParseTruncatedCcmsgMessage の部分読み直しは DR-0038 §6 とぶつかる。救わず落とすか切り詰めを無くすか決める |
 | 2026-10-10 | bug | open | [just-test-one-timeout-unidentified](./2026-10-10-just-test-one-timeout-unidentified.md) | just test で 1 件が 5 秒 timeout した (1 回のみ、test 名未特定)。2026-10-10 02:xx、段 A (transcript スキーマ) の worker が…… |
 | 2026-10-09 | bug | open | [test-daemon-leak-subscribe-duplicate](./2026-10-09-test-daemon-leak-subscribe-duplicate.md) | テストが起こした daemon (subscribe-duplicate の ccmsg-dup-* ほか) がテスト終了後も残り続ける |
 | 2026-10-09 | task | open | [sidecar-socket-relative-bind](./2026-10-09-sidecar-socket-relative-bind.md) | サイドカー socket を cwd 相対パスで bind / connect し、sun_path 長超過時の退避先 (別置き場) をなくせるか調査 |
