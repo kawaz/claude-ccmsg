@@ -12,7 +12,13 @@
 // It tails rather than polls: the Watch already exists (fs.watch with a poll
 // fallback inside transcript.ts) and reports appends as they land, so an error
 // reaches the sidebar immediately instead of on a timer.
-import type { SessionApiError, SessionErrorEntry } from "@ccmsg/protocol";
+import {
+  isKnownTranscriptRow,
+  parseWith,
+  TranscriptRowLineSchema,
+  type SessionApiError,
+  type SessionErrorEntry,
+} from "@ccmsg/protocol";
 import { classifyApiErrorRow, scanTranscriptLines } from "./session-status.ts";
 import {
   resolveConnectedTranscript,
@@ -83,14 +89,11 @@ export function sessionErrorEntries(store: SessionErrorsStore): SessionErrorEntr
 }
 
 function foldLine(watch: ErrorFold, line: string): boolean {
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return false;
-  }
-  if (typeof row !== "object" || row === null) return false;
-  const signal = classifyApiErrorRow(row as Record<string, unknown>);
+  const read = parseWith(TranscriptRowLineSchema, line);
+  if (!read.ok) return false;
+  const row = read.value;
+  if (!isKnownTranscriptRow(row) || row.type !== "assistant") return false;
+  const signal = classifyApiErrorRow(row);
   if (!signal) return false;
   if (signal.kind === "clear") {
     if (!watch.error) return false;

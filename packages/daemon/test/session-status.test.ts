@@ -2,7 +2,19 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { JsonObject, JsonValue, SessionStatusSnapshot } from "@ccmsg/protocol";
+import {
+  assistantContentRow,
+  assistantMessage,
+  assistantRow,
+  attachmentRow,
+  line,
+  queueOperationRow,
+  textBlock,
+  toolResultBlock,
+  toolUseBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 import {
   createSessionStatusState,
   foldLine,
@@ -28,35 +40,26 @@ const T = 20_000;
 const START = "2026-07-14T16:27:55.672Z";
 const END = "2026-07-14T16:28:55.672Z";
 
-function toolUse(
-  id: string,
-  name: string,
-  input: Record<string, unknown>,
-  timestamp = START,
-): string {
-  return JSON.stringify({
-    type: "assistant",
-    timestamp,
-    message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] },
-  });
+function toolUse(id: string, name: string, input: JsonObject, timestamp = START): string {
+  return line(assistantContentRow([toolUseBlock(name, input, id)], { timestamp }));
 }
 
 function toolResult(
   id: string,
-  result: unknown,
+  result: JsonValue,
   timestamp = END,
-  extra: Record<string, unknown> = {},
+  extra: JsonObject = {},
 ): string {
-  return JSON.stringify({
-    type: "user",
-    timestamp,
-    message: {
-      content: [{ type: "tool_result", tool_use_id: id, content: "observed result", ...extra }],
-    },
-    toolUseResult: result,
-  });
+  return line(
+    userContentRow([toolResultBlock("observed result", { tool_use_id: id, ...extra })], {
+      timestamp,
+      toolUseResult: result,
+    }),
+  );
 }
 
+/** An assistant row with the usage of one request, and no `effort` unless
+ * given (the CC versions before 2.1.212 wrote none). */
 function assistantUsage(
   tokens: {
     input: number;
@@ -67,41 +70,36 @@ function assistantUsage(
     model?: string;
     timestamp?: string;
     isSidechain?: boolean;
-    usage?: unknown;
+    usage?: JsonValue;
     effort?: string;
   } = {},
 ): string {
-  return JSON.stringify({
-    type: "assistant",
+  const { effort: _effort, ...row } = assistantRow({
     isSidechain: opts.isSidechain ?? false,
     timestamp: opts.timestamp ?? START,
-    // effort は top-level (message 配下ではない) — CC 2.1.212+ の実 transcript 形。
-    ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
-    message: {
+    message: assistantMessage({
       model: opts.model ?? "claude-fable-5",
       usage: opts.usage ?? {
         input_tokens: tokens.input,
         cache_read_input_tokens: tokens.cacheRead,
         cache_creation_input_tokens: tokens.cacheCreation,
       },
-      content: [{ type: "text", text: "observed assistant output" }],
-    },
+      content: [textBlock("observed assistant output")],
+    }),
   });
+  // effort は top-level (message 配下ではない) — CC 2.1.212+ の実 transcript 形。
+  return line(opts.effort !== undefined ? { ...row, effort: opts.effort } : row);
 }
 
 function teammateRelay(content: string, timestamp = END): string {
-  return JSON.stringify({
-    type: "user",
-    isSidechain: false,
-    timestamp,
-    message: {
-      role: "user",
-      content:
-        "Another Claude session sent a message:\n" +
+  return line(
+    userContentRow(
+      "Another Claude session sent a message:\n" +
         content +
         "\n\nThis came from another Claude session — reply through SendMessage.",
-    },
-  });
+      { timestamp },
+    ),
+  );
 }
 
 function taskNotification(
@@ -110,30 +108,28 @@ function taskNotification(
   opts: { operation?: string; bodyTag?: "event" | "result"; body?: string } = {},
 ): string {
   const body = opts.bodyTag ? `<${opts.bodyTag}>${opts.body ?? ""}</${opts.bodyTag}>` : "";
-  return JSON.stringify({
-    type: "queue-operation",
-    operation: opts.operation ?? "enqueue",
-    timestamp: END,
-    content:
-      `<task-notification>\n<task-id>${taskId}</task-id>\n` +
-      (status === undefined ? "" : `<status>${status}</status>\n`) +
-      `${body}\n</task-notification>`,
-  });
+  return line(
+    queueOperationRow({
+      operation: opts.operation ?? "enqueue",
+      timestamp: END,
+      content:
+        `<task-notification>\n<task-id>${taskId}</task-id>\n` +
+        (status === undefined ? "" : `<status>${status}</status>\n`) +
+        `${body}\n</task-notification>`,
+    }),
+  );
 }
 
 /** Shape copied verbatim from an observed row (Claude Code 2.1.x): the harness
  * wraps the shared task store in an `attachment` row whose `content` items carry
  * camelCase `blockedBy` and an `itemCount` mirror of the array length. */
-function taskReminder(content: unknown[]): string {
-  return JSON.stringify({
-    parentUuid: "p1",
-    isSidechain: false,
-    attachment: { type: "task_reminder", content, itemCount: content.length },
-    type: "attachment",
-    uuid: "a1",
-    timestamp: END,
-    userType: "external",
-  });
+function taskReminder(content: JsonValue[]): string {
+  return line(
+    attachmentRow(
+      { type: "task_reminder", content, itemCount: content.length },
+      { timestamp: END },
+    ),
+  );
 }
 
 async function apply(lines: string[], externalRoot?: string): Promise<SessionStatusSnapshot> {
@@ -154,12 +150,12 @@ function todoCreate(id = "1", subject = "First task"): string[] {
 function todoUpdate(
   toolId: string,
   taskId: string,
-  input: Record<string, unknown>,
-  result: Record<string, unknown> = {
+  input: JsonObject,
+  result: JsonObject = {
     success: true,
     taskId,
     updatedFields: ["status"],
-    statusChange: { from: "pending", to: input.status },
+    statusChange: { from: "pending", to: input.status ?? null },
   },
 ): string[] {
   return [toolUse(toolId, "TaskUpdate", { taskId, ...input }), toolResult(toolId, result)];
@@ -248,18 +244,14 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     const state = createSessionStatusState();
     const accepted = assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 1 });
     expect(foldLine(state, accepted)).toBe(true);
-    for (const line of [
-      JSON.stringify({
-        type: "assistant",
-        timestamp: END,
-        message: { model: "claude-fable-5", content: [] },
-      }),
+    for (const row of [
+      line(assistantRow({ timestamp: END, message: { model: "claude-fable-5", content: [] } })),
       assistantUsage(
         { input: 0, cacheRead: 0, cacheCreation: 0 },
         { timestamp: END, usage: "not-record" },
       ),
     ]) {
-      expect(foldLine(state, line)).toBe(false);
+      expect(foldLine(state, row)).toBe(false);
     }
     expect((await snapshot(state)).context?.tokens).toBe(3);
   });
@@ -360,9 +352,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect((await snapshot(state)).context?.model).toBe("claude-opus-4-7");
   });
 
-  test('effort:"" は absent へ正規化し、同一行の再出現で push を再発火しない', async () => {
-    // 空文字 effort を生のまま比較すると「保存形 = absent vs 比較値 = ""」が
-    // 毎行不一致になり push が無限再発火する。"" は absent と同義に潰す。
+  test('effort:"" は書かれたまま保存し、同一行の再出現で push を再発火しない', async () => {
+    // 行の値を別の値 (absent) に読み替えない (DR-0038 §6)。保存形と比較値が
+    // 同じ値なので、同一行が再び現れても変化なしとして push を出さない。
     const state = createSessionStatusState();
     expect(
       foldLine(
@@ -370,7 +362,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "" }),
       ),
     ).toBe(true);
-    expect("effort" in ((await snapshot(state)).context ?? {})).toBe(false);
+    expect((await snapshot(state)).context?.effort).toBe("");
     expect(
       foldLine(
         state,
@@ -583,8 +575,18 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     // {task_type:"in_process_teammate", task_id:"<内部id>"}。停止後に idle/active の
     // 推定が残り続けると「最後に観測した活動」表示として誤導するため stopped を立てる。
     const result = await apply([
-      toolUse("spawn", "Agent", { name: "worker", subagent_type: "x", prompt: "p" }),
-      toolResult("spawn", { status: "teammate_spawned", name: "worker", agent_type: "x" }),
+      toolUse("spawn", "Agent", {
+        name: "worker",
+        subagent_type: "x",
+        description: "d",
+        prompt: "p",
+      }),
+      toolResult("spawn", {
+        status: "teammate_spawned",
+        name: "worker",
+        agent_type: "x",
+        color: "cyan",
+      }),
       toolUse("stop", "TaskStop", { task_id: "worker" }),
       toolResult("stop", {
         message: "Successfully stopped task: t123 (p...)",
@@ -611,14 +613,12 @@ describe("session status fold (DR-0020 Phase 1)", () => {
   test("ccmsg peer 用 agent-message tag は teams relay として扱わない", async () => {
     // <agent-message> は別プロトコルなので teammate-message と誤突合しないスコープ境界を固定する。
     const result = await apply([
-      JSON.stringify({
-        type: "user",
-        timestamp: END,
-        message: {
-          content:
-            'Another Claude session sent a message:\n<agent-message from="peer">x</agent-message>',
-        },
-      }),
+      line(
+        userContentRow(
+          'Another Claude session sent a message:\n<agent-message from="peer">x</agent-message>',
+          { timestamp: END },
+        ),
+      ),
     ]);
     expect(result.teammates).toEqual([]);
   });
@@ -846,16 +846,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
 
   test("task_reminder の壊れた content / item は無視する", async () => {
     const state = createSessionStatusState();
-    expect(
-      foldLine(state, JSON.stringify({ type: "attachment", attachment: { type: "other" } })),
-    ).toBe(false);
-    expect(
-      foldLine(
-        state,
-        JSON.stringify({ type: "attachment", attachment: { type: "task_reminder" } }),
-      ),
-    ).toBe(false);
-    expect(foldLine(state, taskReminder(["x", { subject: "id なし" }] as unknown[]))).toBe(false);
+    expect(foldLine(state, line(attachmentRow({ type: "other" })))).toBe(false);
+    expect(foldLine(state, line(attachmentRow({ type: "task_reminder" })))).toBe(false);
+    expect(foldLine(state, taskReminder(["x", { subject: "id なし" }]))).toBe(false);
     expect((await snapshot(state)).todos).toEqual([]);
   });
 
@@ -951,6 +944,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         taskId: "w-good",
         workflowName: "phase-flow",
         runId: "wf_abcdef01-234",
+        summary: "phases",
       }),
     ]);
     expect(good.workflows[0]?.run_id).toBe("wf_abcdef01-234");
@@ -969,6 +963,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
           taskId: "w-bad",
           workflowName: "phase-flow",
           runId: badRunId,
+          summary: "phases",
         }),
       ]);
       expect(bad.workflows[0]?.run_id).toBeUndefined();
@@ -994,15 +989,16 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       // Monitor event 通知は <status> 無しで <summary> が先頭側に来るので、summary 内の
       // 偽 <status> タグを本物と誤認してはならない (harness の実タグ順は task-id →
       // tool-use-id → output-file → status → summary、実 transcript 観測)。
-      JSON.stringify({
-        type: "queue-operation",
-        operation: "enqueue",
-        timestamp: END,
-        content:
-          "<task-notification>\n<task-id>b1</task-id>\n" +
-          '<summary>Monitor event: "desc with <status>failed</status>"</summary>\n' +
-          "<event>line</event>\n</task-notification>",
-      }),
+      line(
+        queueOperationRow({
+          operation: "enqueue",
+          timestamp: END,
+          content:
+            "<task-notification>\n<task-id>b1</task-id>\n" +
+            '<summary>Monitor event: "desc with <status>failed</status>"</summary>\n' +
+            "<event>line</event>\n</task-notification>",
+        }),
+      ),
     ];
     expect((await apply(base)).background[0]?.status).toBe("running");
   });
@@ -1099,7 +1095,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     // 1 行の破損や content 非配列が全 transcript scan を停止させない。
     const result = await apply([
       "{broken-json",
-      JSON.stringify({ type: "assistant", timestamp: START, message: { content: "not-array" } }),
+      line(assistantRow({ message: assistantMessage({ content: "not-array" }) })),
       ...todoCreate(),
       ...todoUpdate("tu", "1", { status: "completed" }),
     ]);
@@ -1233,10 +1229,20 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
       });
       const state = createSessionStatusState();
       for (const line of [
-        toolUse("s1", "Agent", { name: "worker", subagent_type: "x", prompt: "p" }),
-        toolResult("s1", { status: "teammate_spawned", name: "worker" }),
-        toolUse("s2", "Agent", { name: "ghost", subagent_type: "x", prompt: "p" }),
-        toolResult("s2", { status: "teammate_spawned", name: "ghost" }),
+        toolUse("s1", "Agent", {
+          name: "worker",
+          subagent_type: "x",
+          description: "d",
+          prompt: "p",
+        }),
+        toolResult("s1", { status: "teammate_spawned", name: "worker", color: "cyan" }),
+        toolUse("s2", "Agent", {
+          name: "ghost",
+          subagent_type: "x",
+          description: "d",
+          prompt: "p",
+        }),
+        toolResult("s2", { status: "teammate_spawned", name: "ghost", color: "green" }),
       ]) {
         foldLine(state, line);
       }
@@ -1267,14 +1273,11 @@ describe("agent tree from meta.json (r44 m7)", () => {
     );
   }
   function agentUse(id: string): string {
-    return JSON.stringify({
-      type: "assistant",
-      timestamp: START,
-      message: {
-        role: "assistant",
-        content: [{ type: "tool_use", id, name: "Agent", input: { prompt: "x" } }],
-      },
-    });
+    return line(
+      assistantContentRow([toolUseBlock("Agent", { description: "d", prompt: "x" }, id)], {
+        timestamp: START,
+      }),
+    );
   }
 
   test("depth 0 teammate + depth 0/1/2 subagent の親子関係を toolUseId で解決する", async () => {
@@ -1973,16 +1976,15 @@ describe("session_status / attachment 由来の external file (kawaz r99 m35)", 
     try {
       const file = path.join(outside, "hook.md");
       fs.writeFileSync(file, "x");
-      const unknownType = JSON.stringify({
-        type: "attachment",
-        timestamp: START,
-        attachment: { type: "some_future_type", filename: file, file_path: file },
-      });
-      const noPath = JSON.stringify({
-        type: "attachment",
-        timestamp: START,
-        attachment: { type: "edited_text_file", snippet: "1\tx" },
-      });
+      const unknownType = line(
+        attachmentRow(
+          { type: "some_future_type", filename: file, file_path: file },
+          { timestamp: START },
+        ),
+      );
+      const noPath = line(
+        attachmentRow({ type: "edited_text_file", snippet: "1\tx" }, { timestamp: START }),
+      );
       const result = await apply([unknownType, noPath], root);
       expect(result.external_files).toEqual([]);
     } finally {
@@ -2002,38 +2004,37 @@ describe("session_status / attachment 由来の external file (kawaz r99 m35)", 
 /** `type:"attachment"` row for a file the user's editor saved — numbered
  * snippet, as observed in real transcripts. */
 function editedTextFileRow(filename: string): string {
-  return JSON.stringify({
-    type: "attachment",
-    timestamp: START,
-    attachment: { type: "edited_text_file", filename, snippet: "1\tfirst\n2\tsecond" },
-  });
+  return line(
+    attachmentRow(
+      { type: "edited_text_file", filename, snippet: "1\tfirst\n2\tsecond" },
+      { timestamp: START },
+    ),
+  );
 }
 
 /** `type:"attachment"` row for an @-mentioned file, carrying the same
  * `file.content` shape a Read tool_result does. */
 function mentionedFileRow(filename: string): string {
-  return JSON.stringify({
-    type: "attachment",
-    timestamp: START,
-    attachment: {
-      type: "file",
-      filename,
-      content: {
-        type: "text",
-        file: { filePath: filename, content: "body\n", numLines: 1, startLine: 1, totalLines: 1 },
+  return line(
+    attachmentRow(
+      {
+        type: "file",
+        filename,
+        displayPath: path.basename(filename),
+        content: {
+          type: "text",
+          file: { filePath: filename, content: "body\n", numLines: 1, startLine: 1, totalLines: 1 },
+        },
       },
-    },
-  });
+      { timestamp: START },
+    ),
+  );
 }
 
 /** A `type: "user"` row whose `message.content` is the plain string Claude Code
  * writes for a `! <cmd>` result (not the tool_result block array). */
 function userTextRow(content: string): string {
-  return JSON.stringify({
-    type: "user",
-    timestamp: END,
-    message: { role: "user", content },
-  });
+  return line(userContentRow(content, { timestamp: END }));
 }
 
 function persistedOutputRow(sidecar: string): string {
@@ -2057,25 +2058,25 @@ function apiErrorRow(
   text: string,
   opts: { timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean } = {},
 ): string {
-  return JSON.stringify({
-    type: "assistant",
-    isSidechain: opts.isSidechain ?? false,
-    timestamp: opts.timestamp ?? START,
-    message: {
-      model: "<synthetic>",
-      role: "assistant",
-      stop_reason: "stop_sequence",
-      content: [{ type: "text", text }],
-      usage: {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-      },
-    },
-    error: "invalid_request",
-    isApiErrorMessage: opts.isApiErrorMessage ?? true,
-  });
+  return line(
+    assistantRow({
+      isSidechain: opts.isSidechain ?? false,
+      timestamp: opts.timestamp ?? START,
+      message: assistantMessage({
+        model: "<synthetic>",
+        stop_reason: "stop_sequence",
+        content: [textBlock(text)],
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      }),
+      error: "invalid_request",
+      isApiErrorMessage: opts.isApiErrorMessage ?? true,
+    }),
+  );
 }
 
 describe("api_error fold (最終 turn が harness の API エラーで終わっているか)", () => {
@@ -2185,14 +2186,13 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
   });
 
   test("テキストブロックが無いエラー行は無視する (表示すべき理由が無い)", async () => {
-    const line = JSON.stringify({
-      type: "assistant",
-      isSidechain: false,
-      timestamp: START,
-      message: { model: "<synthetic>", content: [] },
-      isApiErrorMessage: true,
-    });
-    expect((await apply([line])).api_error).toBe(undefined);
+    const row = line(
+      assistantRow({
+        isApiErrorMessage: true,
+        message: assistantMessage({ model: "<synthetic>", content: [] }),
+      }),
+    );
+    expect((await apply([row])).api_error).toBe(undefined);
   });
 });
 

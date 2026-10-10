@@ -6,6 +6,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import {
+  assistantContentRow,
+  line,
+  textBlock,
+  toolResultBlock,
+  toolUseBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -311,41 +319,21 @@ describe("ccmsg CLI end-to-end", () => {
       fs.writeFileSync(
         path.join(projectDir, `${sid}.jsonl`),
         [
-          JSON.stringify({
-            timestamp: "2026-07-20T00:00:00Z",
-            type: "user",
-            message: { role: "user", content: "hello" },
-          }),
-          JSON.stringify({
+          userContentRow("hello", { timestamp: "2026-07-20T00:00:00Z" }),
+          assistantContentRow([textBlock("line 1\nline 2")], {
             timestamp: "2026-07-20T00:00:01Z",
-            type: "assistant",
-            message: { role: "assistant", content: [{ type: "text", text: "line 1\nline 2" }] },
           }),
-          JSON.stringify({
-            timestamp: "2026-07-20T00:00:02Z",
-            type: "assistant",
-            message: {
-              role: "assistant",
-              content: [
-                {
-                  type: "tool_use",
-                  id: "todo-create-use",
-                  name: "TaskCreate",
-                  input: { subject: "ship dump options" },
-                },
-              ],
-            },
-          }),
-          JSON.stringify({
+          assistantContentRow(
+            [toolUseBlock("TaskCreate", { subject: "ship dump options" }, "todo-create-use")],
+            { timestamp: "2026-07-20T00:00:02Z" },
+          ),
+          userContentRow([toolResultBlock("ok", { tool_use_id: "todo-create-use" })], {
             timestamp: "2026-07-20T00:00:03Z",
-            type: "user",
-            message: {
-              role: "user",
-              content: [{ type: "tool_result", tool_use_id: "todo-create-use", content: "ok" }],
-            },
             toolUseResult: { task: { id: "1", subject: "ship dump options" } },
           }),
-        ].join("\n") + "\n",
+        ]
+          .map(line)
+          .join("\n") + "\n",
       );
 
       const jsonl = await runCli(["dump", sid], env);

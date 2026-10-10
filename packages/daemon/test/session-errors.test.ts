@@ -10,6 +10,12 @@ import {
   type TestClient,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import {
+  assistantMessage,
+  assistantRow,
+  line,
+  textBlock,
+} from "../../protocol/test/transcript-rows.ts";
 
 const T = 20_000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -26,33 +32,32 @@ function apiErrorLine(
   text: string,
   opts: { timestamp?: string; isSidechain?: boolean } = {},
 ): string {
-  return `${JSON.stringify({
-    type: "assistant",
-    isSidechain: opts.isSidechain ?? false,
-    timestamp: opts.timestamp ?? START,
-    message: {
-      model: "<synthetic>",
-      role: "assistant",
-      content: [{ type: "text", text }],
-      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
-    },
-    isApiErrorMessage: true,
-  })}\n`;
+  return `${line(
+    assistantRow({
+      isSidechain: opts.isSidechain ?? false,
+      timestamp: opts.timestamp ?? START,
+      message: assistantMessage({
+        model: "<synthetic>",
+        content: [textBlock(text)],
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+      }),
+      isApiErrorMessage: true,
+    }),
+  )}\n`;
 }
 
 /** A real (model-generated) assistant turn — the thing that clears an error. */
 function assistantLine(text: string): string {
-  return `${JSON.stringify({
-    type: "assistant",
-    isSidechain: false,
-    timestamp: END,
-    message: {
-      model: "claude-fable-5",
-      role: "assistant",
-      content: [{ type: "text", text }],
-      usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 },
-    },
-  })}\n`;
+  return `${line(
+    assistantRow({
+      timestamp: END,
+      message: assistantMessage({
+        model: "claude-fable-5",
+        content: [textBlock(text)],
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 },
+      }),
+    }),
+  )}\n`;
 }
 
 async function sessionHello(ctx: DaemonCtx, sid: string, file: string): Promise<TestClient> {

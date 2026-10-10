@@ -11,6 +11,13 @@ import {
   resolveVirtualTranscript,
 } from "../src/virtual-sessions.ts";
 import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import {
+  assistantContentRow,
+  line,
+  toolResultBlock,
+  toolUseBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 
 const T = 15000;
 const roots: string[] = [];
@@ -288,27 +295,21 @@ describe("hello-time transcript adoption", () => {
       const cwd = path.join(fixtureRoot(), "project");
       fs.mkdirSync(cwd);
       const file = transcript(config, sid(), cwd, [
-        {
-          type: "assistant",
-          timestamp: "2026-07-16T00:00:01.000Z",
-          message: {
-            role: "assistant",
-            content: [
-              {
-                type: "tool_use",
-                id: "tc1",
-                name: "TaskCreate",
-                input: { subject: "First task", description: "desc", activeForm: "Working" },
-              },
-            ],
-          },
-        },
-        {
-          type: "user",
+        assistantContentRow(
+          [
+            toolUseBlock(
+              "TaskCreate",
+              { subject: "First task", description: "desc", activeForm: "Working" },
+              "tc1",
+            ),
+          ],
+          { timestamp: "2026-07-16T00:00:01.000Z", cwd },
+        ),
+        userContentRow([toolResultBlock("ok", { tool_use_id: "tc1" })], {
           timestamp: "2026-07-16T00:00:02.000Z",
-          message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "ok" }] },
+          cwd,
           toolUseResult: { task: { id: "1", subject: "First task" } },
-        },
+        }),
       ]);
 
       const ctx = await startTestDaemon({ HOME: home });
@@ -323,34 +324,22 @@ describe("hello-time transcript adoption", () => {
         fs.appendFileSync(
           file,
           [
-            {
-              type: "assistant",
-              timestamp: "2026-07-16T00:00:03.000Z",
-              message: {
-                role: "assistant",
-                content: [
-                  {
-                    type: "tool_use",
-                    id: "tu1",
-                    name: "TaskUpdate",
-                    input: { taskId: "1", status: "completed" },
-                  },
-                ],
-              },
-            },
-            {
-              type: "user",
+            assistantContentRow(
+              [toolUseBlock("TaskUpdate", { taskId: "1", status: "completed" }, "tu1")],
+              { timestamp: "2026-07-16T00:00:03.000Z", cwd },
+            ),
+            userContentRow([toolResultBlock("ok", { tool_use_id: "tu1" })], {
               timestamp: "2026-07-16T00:00:04.000Z",
-              message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] },
+              cwd,
               toolUseResult: {
                 success: true,
                 taskId: "1",
                 updatedFields: ["status"],
                 statusChange: { from: "pending", to: "completed" },
               },
-            },
+            }),
           ]
-            .map((row) => `${JSON.stringify(row)}\n`)
+            .map((row) => `${line(row)}\n`)
             .join(""),
         );
         const { ev } = await user.readEventUntil("session_status");

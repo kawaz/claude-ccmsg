@@ -1,13 +1,39 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as v from "valibot";
 import { yieldToEventLoop } from "./event-loop.ts";
 import {
+  AgentToolResultSchema,
+  AssistantMessageSchema,
+  BashToolResultSchema,
   ErrorCode,
+  isKnownAttachment,
+  isKnownContentBlock,
+  isKnownToolUse,
+  isKnownTranscriptRow,
+  isTeammateSpawnedResult,
+  jsonText,
+  MonitorToolResultSchema,
+  parseWith,
+  SendMessageToolResultSchema,
+  TaskCreateToolResultSchema,
+  TaskStopToolResultSchema,
+  TaskUpdateToolResultSchema,
+  ToolUseSchema,
+  TranscriptRowLineSchema,
+  WorkflowToolResultSchema,
   type AgentTreeGroups,
   type AgentTreeNode,
   type AgentTreeWorkflowGroup,
   type AgentTreeWorkflowPhase,
+  type AssistantMessage,
+  type AssistantRow,
+  type AttachmentRow,
   type ExternalFileOrigin,
+  type JsonValue,
+  type KnownToolUse,
+  type QueueOperationRow,
+  type SendMessageToolResult,
   type SessionApiError,
   type SessionBackgroundStatus,
   type SessionContextUsage,
@@ -15,6 +41,14 @@ import {
   type SessionTeammate,
   type SessionTodo,
   type SessionWorkflowStatus,
+  type SubagentResult,
+  type TaskReminderItem,
+  type TaskStopToolResult,
+  type TaskUpdateToolResult,
+  type TeammateSpawnedResult,
+  type ToolUse,
+  type TranscriptRow,
+  type UserRow,
 } from "@ccmsg/protocol";
 import {
   resolveTranscript,
@@ -86,11 +120,14 @@ export function isSessionStatusCandidate(line: string): boolean {
   return PREFILTER.some((part) => line.includes(part));
 }
 
+/** A tool call whose result changes the status, waiting for that result. */
 interface PendingToolUse {
-  name: string;
-  input: Record<string, unknown>;
+  call: ToolUse;
   timestamp: string;
 }
+
+/** A call of the known tool `TName`, its input read by the tool. */
+type CallOf<TName extends KnownToolUse["name"]> = Extract<KnownToolUse, { readonly name: TName }>;
 
 /** session_status needs the transcript fields plus the containment root metadata
  * used by DR-0024 external-file classification. Kept structural so server.ts's
@@ -148,10 +185,6 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function tokenValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
-}
-
 async function resolveExternalRoot(
   sessions: SessionStatusLookup,
   sid: string,
@@ -196,25 +229,24 @@ function isInsideRoot(root: string, candidate: string): boolean {
  * without waiting for tool_result: the DR defines the allowlist from call input,
  * failed reads merely become not_found later, and routing these calls through
  * pendingToolUse would let their volume evict the status tools protected by its
- * MAX_PENDING_TOOL_USES bound. Write's observed extra model-generated keys are
- * intentionally ignored; only a string path field matters. Broken
- * __unparsedToolInput shapes, empty/non-string/relative paths are skipped.
- * NotebookEdit/MultiEdit had no observed transcript examples when DR-0024 was
- * accepted, so their notebook_path/file_path handling defensively follows the
- * tool definitions. */
-function foldExternalFile(
-  state: SessionStatusState,
-  name: string,
-  input: Record<string, unknown>,
-): boolean {
-  const rawPath =
-    name === "NotebookEdit"
-      ? input.notebook_path
-      : name === "Read" || name === "Write" || name === "Edit" || name === "MultiEdit"
-        ? input.file_path
-        : undefined;
-  if (typeof rawPath !== "string") return false;
-  return addExternalFile(state, rawPath, "tool");
+ * MAX_PENDING_TOOL_USES bound. A call whose input does not read as its tool's
+ * (a broken __unparsedToolInput, a path that is not text) grants nothing, and
+ * empty or relative paths are skipped. NotebookEdit/MultiEdit had no observed
+ * transcript examples when DR-0024 was accepted, so their notebook_path /
+ * file_path handling defensively follows the tool definitions. */
+function foldExternalFile(state: SessionStatusState, call: ToolUse): boolean {
+  if (!isKnownToolUse(call)) return false;
+  switch (call.name) {
+    case "NotebookEdit":
+      return addExternalFile(state, call.input.notebook_path, "tool");
+    case "Read":
+    case "Write":
+    case "Edit":
+    case "MultiEdit":
+      return addExternalFile(state, call.input.file_path, "tool");
+    default:
+      return false;
+  }
 }
 
 /** Spelling used for every DR-0024 external_files entry, and the spelling a
@@ -245,9 +277,9 @@ export function canonicalizeExternalPath(absPath: string): string {
       try {
         real = fs.realpathSync(cursor);
       } catch (e) {
-        const err = e as NodeJS.ErrnoException;
         const parent = path.dirname(cursor);
-        if (err.code !== "ENOENT" || parent === cursor) return normalized;
+        const missing = e instanceof Error && "code" in e && e.code === "ENOENT";
+        if (!missing || parent === cursor) return normalized;
         cursor = parent;
         continue;
       }
@@ -276,14 +308,8 @@ function addExternalFile(
   return true;
 }
 
-function addPendingToolUse(
-  state: SessionStatusState,
-  id: string,
-  name: string,
-  input: Record<string, unknown>,
-  timestamp: string,
-): void {
-  state.pendingToolUse.set(id, { name, input, timestamp });
+function addPendingToolUse(state: SessionStatusState, call: ToolUse, timestamp: string): void {
+  state.pendingToolUse.set(call.id, { call, timestamp });
   while (state.pendingToolUse.size > MAX_PENDING_TOOL_USES) {
     const oldest = state.pendingToolUse.keys().next().value;
     if (typeof oldest !== "string") break;
@@ -291,49 +317,45 @@ function addPendingToolUse(
   }
 }
 
-function isTrackedToolUse(name: string, input: Record<string, unknown>): boolean {
-  if (name === "Agent") {
+function isTrackedToolUse(call: ToolUse): boolean {
+  // Workflow's input is not read, only its result.
+  if (!isKnownToolUse(call)) return call.name === "Workflow";
+  switch (call.name) {
     // r44 m6: 同期 Agent (subagent) も Status に載せるため、run_in_background /
     // name の有無に関わらず全 Agent tool_use を追跡する。teammate 判定は
     // applyToolResult 側 (foldTeammateSpawn) が result.status で行うため、
     // ここは分岐せず「Agent の tool_use は全部 pending に積む」で済ませる。
-    void input;
-    return true;
+    case "Agent":
+      return true;
+    case "Bash":
+      return call.input.run_in_background === true;
+    case "TaskCreate":
+    case "TaskUpdate":
+    case "TaskStop":
+    case "Monitor":
+    case "SendMessage":
+      return true;
+    default:
+      return false;
   }
-  if (name === "Bash") return input.run_in_background === true;
-  return (
-    name === "TaskCreate" ||
-    name === "TaskUpdate" ||
-    name === "TaskStop" ||
-    name === "Workflow" ||
-    name === "Monitor" ||
-    name === "SendMessage"
-  );
 }
 
 /** The latest accepted assistant usage row replaces the prior observation even
  * when the total decreases after compaction. Tail batches produce at most one
  * push after all lines are folded, so changing context on normal assistant
  * turns does not create one write per line. */
-function foldContextUsage(state: SessionStatusState, row: Record<string, unknown>): boolean {
-  if (row.isSidechain === true) return false;
-  const timestamp = stringValue(row.timestamp);
-  const message = row.message;
-  if (!timestamp || !isRecord(message)) return false;
-  const model = stringValue(message.model);
-  const usage = message.usage;
-  if (!model || model === "<synthetic>" || !isRecord(usage)) return false;
+function foldContextUsage(state: SessionStatusState, row: AssistantRow): boolean {
+  if (row.isSidechain) return false;
+  const { model, usage } = row.message;
+  if (model === "<synthetic>") return false;
   const tokens =
-    tokenValue(usage.input_tokens) +
-    tokenValue(usage.cache_read_input_tokens) +
-    tokenValue(usage.cache_creation_input_tokens);
+    usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens;
   if (tokens === 0) return false;
   // effort is a TOP-LEVEL row field (not under message). Older CC versions
   // (≤2.1.211 observed) do not write it, so absence keeps context.effort
-  // undefined rather than failing the fold. "" normalizes to absent so the
-  // change check and the stored shape agree (a raw "" would compare unequal
-  // to the stored-as-absent value and re-trigger a push on every row).
-  const effort = stringValue(row.effort) || undefined;
+  // undefined rather than failing the fold.
+  const effort = row.effort;
+  const timestamp = row.timestamp;
   const current = state.context;
   if (
     current &&
@@ -343,7 +365,7 @@ function foldContextUsage(state: SessionStatusState, row: Record<string, unknown
   ) {
     return false;
   }
-  state.context = { tokens, model, ...(effort ? { effort } : {}), timestamp };
+  state.context = { tokens, model, ...(effort !== undefined ? { effort } : {}), timestamp };
   return true;
 }
 
@@ -371,37 +393,31 @@ function foldContextUsage(state: SessionStatusState, row: Record<string, unknown
  * connected peer without paying for a full status fold per session. */
 export type ApiErrorSignal = { kind: "error"; error: SessionApiError } | { kind: "clear" };
 
-export function classifyApiErrorRow(row: Record<string, unknown>): ApiErrorSignal | undefined {
-  if (row.type !== "assistant" || row.isSidechain === true) return undefined;
-  const message = row.message;
-  if (!isRecord(message)) return undefined;
+export function classifyApiErrorRow(row: AssistantRow): ApiErrorSignal | undefined {
+  if (row.isSidechain) return undefined;
   if (row.isApiErrorMessage !== true) {
     // A real turn is one the model produced; `<synthetic>` marks every row the
     // harness wrote itself, error or not.
-    const model = stringValue(message.model);
-    return model && model !== "<synthetic>" ? { kind: "clear" } : undefined;
+    return row.message.model !== "<synthetic>" ? { kind: "clear" } : undefined;
   }
-  const text = errorText(message.content);
-  if (!text) return undefined;
-  return { kind: "error", error: { text, timestamp: stringValue(row.timestamp) ?? "" } };
+  const text = errorText(row.message.content);
+  if (text === "") return undefined;
+  return { kind: "error", error: { text, timestamp: row.timestamp } };
 }
 
 /** Joins an error row's text blocks. Observed rows carry exactly one, but the
  * content is a normal block array, so a multi-block row concatenates rather
  * than reporting only its first line. */
-function errorText(content: unknown): string | undefined {
-  if (typeof content === "string") return content.trim() || undefined;
-  if (!Array.isArray(content)) return undefined;
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!isRecord(block) || block.type !== "text") continue;
-    const text = stringValue(block.text);
-    if (text) parts.push(text);
-  }
-  return parts.join("\n").trim() || undefined;
+function errorText(content: AssistantMessage["content"]): string {
+  return content
+    .flatMap((block) =>
+      isKnownContentBlock(block) && block.type === "text" && block.text !== "" ? [block.text] : [],
+    )
+    .join("\n")
+    .trim();
 }
 
-function foldApiError(state: SessionStatusState, row: Record<string, unknown>): boolean {
+function foldApiError(state: SessionStatusState, row: AssistantRow): boolean {
   const signal = classifyApiErrorRow(row);
   if (!signal) return false;
   if (signal.kind === "clear") {
@@ -419,22 +435,18 @@ function foldApiError(state: SessionStatusState, row: Record<string, unknown>): 
   return true;
 }
 
-function foldAssistant(state: SessionStatusState, row: Record<string, unknown>): boolean {
+function foldAssistant(state: SessionStatusState, row: AssistantRow): boolean {
   let changed = foldContextUsage(state, row);
   if (foldApiError(state, row)) changed = true;
-  const timestamp = stringValue(row.timestamp);
-  const message = row.message;
-  if (!isRecord(message) || !Array.isArray(message.content)) return changed;
-
-  for (const block of message.content) {
-    if (!isRecord(block) || block.type !== "tool_use") continue;
-    const id = stringValue(block.id);
-    const name = stringValue(block.name);
-    const input = block.input;
-    if (!name || !isRecord(input)) continue;
-    if (foldExternalFile(state, name, input)) changed = true;
-    if (!timestamp || !id || !isTrackedToolUse(name, input)) continue;
-    addPendingToolUse(state, id, name, input, timestamp);
+  for (const block of row.message.content) {
+    if (!isKnownContentBlock(block) || block.type !== "tool_use") continue;
+    // The model wrote the input: one that does not read as its tool's is a
+    // call that failed, and says nothing about the status.
+    const read = parseWith(ToolUseSchema, block);
+    if (!read.ok) continue;
+    const call = read.value;
+    if (foldExternalFile(state, call)) changed = true;
+    if (isTrackedToolUse(call)) addPendingToolUse(state, call, row.timestamp);
   }
   return changed;
 }
@@ -455,11 +467,9 @@ function compareTaskIds(a: string, b: string): number {
 
 function mergeTaskIdList(
   current: readonly string[] | undefined,
-  add: unknown,
+  additions: readonly string[] | undefined,
 ): { list: readonly string[] | undefined; changed: boolean } {
-  if (!Array.isArray(add)) return { list: current, changed: false };
-  const additions = add.filter((v): v is string => typeof v === "string" && v.length > 0);
-  if (additions.length === 0) return { list: current, changed: false };
+  if (additions === undefined || additions.length === 0) return { list: current, changed: false };
   const set = new Set(current ?? []);
   let changed = false;
   for (const id of additions) {
@@ -483,20 +493,23 @@ function taskIdListEquals(
   return true;
 }
 
+/** The current state of a task an update names. A task the fold has not seen
+ * created (its creation predates the transcript, or a subagent made it) starts
+ * from "(unknown)" and "pending" for what the update does not say. */
 function applyTodoUpdate(
   state: SessionStatusState,
-  input: Record<string, unknown>,
-  result: Record<string, unknown>,
+  call: CallOf<"TaskUpdate">,
+  result: Exclude<TaskUpdateToolResult, string>,
 ): boolean {
-  if (result.success !== true) return false;
-  const taskId = stringValue(input.taskId) ?? stringValue(result.taskId);
-  if (!taskId) return false;
-
-  const status = stringValue(input.status);
-  const owner = stringValue(input.owner);
-  const subject = stringValue(input.subject);
-  const hasBlocking = "addBlockedBy" in input || "addBlocks" in input;
-  if (status === undefined && owner === undefined && subject === undefined && !hasBlocking) {
+  if (!result.success) return false;
+  const { taskId, status, owner, subject, addBlockedBy, addBlocks } = call.input;
+  if (
+    status === undefined &&
+    owner === undefined &&
+    subject === undefined &&
+    addBlockedBy === undefined &&
+    addBlocks === undefined
+  ) {
     return false;
   }
 
@@ -507,8 +520,8 @@ function applyTodoUpdate(
 
   const current = state.todos.get(taskId);
   const nextOwner = owner ?? current?.owner;
-  const blockedBy = mergeTaskIdList(current?.blocked_by, input.addBlockedBy).list;
-  const blocks = mergeTaskIdList(current?.blocks, input.addBlocks).list;
+  const blockedBy = mergeTaskIdList(current?.blocked_by, addBlockedBy).list;
+  const blocks = mergeTaskIdList(current?.blocks, addBlocks).list;
   const next: SessionTodo = {
     id: taskId,
     subject: subject ?? current?.subject ?? "(unknown)",
@@ -534,11 +547,9 @@ function applyTodoUpdate(
 /** Full task-id list straight from a task_reminder item. Unlike the TaskUpdate
  * path this one is authoritative (the harness writes both directions, including
  * the `blocks` back-edges `addBlockedBy` never states), so it replaces rather
- * than merges. Anything but a non-empty string array collapses to undefined,
- * matching the "no field when empty" invariant snapshot relies on. */
-function taskIdListFrom(value: unknown): readonly string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const ids = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+ * than merges. An empty list collapses to undefined, matching the "no field
+ * when empty" invariant snapshot relies on. */
+function taskIdListFrom(ids: readonly string[]): readonly string[] | undefined {
   return ids.length > 0 ? [...new Set(ids)].sort(compareTaskIds) : undefined;
 }
 
@@ -562,22 +573,18 @@ function taskIdListFrom(value: unknown): readonly string[] | undefined {
  * status a newer tool_use row already advanced. The staleness is bounded by the
  * next reminder or the next TaskUpdate for that id, both of which win by
  * arriving later in the file. */
-function foldTaskReminder(state: SessionStatusState, attachment: Record<string, unknown>): boolean {
-  const content = attachment.content;
-  if (!Array.isArray(content)) return false;
+function foldTaskReminder(state: SessionStatusState, items: readonly TaskReminderItem[]): boolean {
   let changed = false;
-  for (const item of content) {
-    if (!isRecord(item)) continue;
-    const id = stringValue(item.id);
-    if (!id) continue;
+  for (const item of items) {
+    const id = item.id;
     const current = state.todos.get(id);
-    const owner = stringValue(item.owner) ?? current?.owner;
+    const owner = item.owner ?? current?.owner;
     const blockedBy = taskIdListFrom(item.blockedBy);
     const blocks = taskIdListFrom(item.blocks);
     const next: SessionTodo = {
       id,
-      subject: stringValue(item.subject) ?? current?.subject ?? "(unknown)",
-      status: stringValue(item.status) ?? current?.status ?? "pending",
+      subject: item.subject,
+      status: item.status,
       ...(owner !== undefined ? { owner } : {}),
       ...(blockedBy ? { blocked_by: blockedBy } : {}),
       ...(blocks ? { blocks } : {}),
@@ -598,47 +605,35 @@ function foldTaskReminder(state: SessionStatusState, attachment: Record<string, 
   return changed;
 }
 
-/** Attachment types whose payload names a file the session was shown, mapped to
- * the field holding its absolute path. The list is explicit rather than "any
- * payload field that looks like a path": external_files is an authorization
- * surface, so a future attachment type widens it only once someone has looked
- * at its shape. A type absent here still renders in the timeline (the webui
- * falls back to a generic path trailing); it just cannot be opened from Files.
- * Same grant shape as every other DR-0024 entry — one exact path the transcript
- * itself named. */
-const ATTACHMENT_PATH_FIELD: Record<string, string> = {
-  edited_text_file: "filename",
-  file: "filename",
-};
-
-function foldAttachmentFile(
-  state: SessionStatusState,
-  attachment: Record<string, unknown>,
-): boolean {
-  const type = stringValue(attachment.type);
-  if (!type) return false;
-  const fieldName = ATTACHMENT_PATH_FIELD[type];
-  if (!fieldName) return false;
-  const rawPath = stringValue(attachment[fieldName]);
-  if (rawPath === undefined) return false;
-  return addExternalFile(state, rawPath, "attachment");
-}
-
-function foldAttachment(state: SessionStatusState, row: Record<string, unknown>): boolean {
+/** The attachments whose payload names a file the session was shown grant a
+ * read of it (`filename`, its absolute path). The kinds are listed one by one
+ * rather than "any payload field that looks like a path": external_files is an
+ * authorization surface, so a future attachment kind widens it only once
+ * someone has looked at its shape. A kind not listed still renders in the
+ * timeline (the webui falls back to a generic path trailing); it just cannot be
+ * opened from Files. Same grant shape as every other DR-0024 entry — one exact
+ * path the transcript itself named. */
+function foldAttachment(state: SessionStatusState, row: AttachmentRow): boolean {
   const attachment = row.attachment;
-  if (!isRecord(attachment)) return false;
-  if (attachment.type === "task_reminder") return foldTaskReminder(state, attachment);
-  return foldAttachmentFile(state, attachment);
+  if (!isKnownAttachment(attachment)) return false;
+  switch (attachment.type) {
+    case "task_reminder":
+      return foldTaskReminder(state, attachment.content);
+    case "edited_text_file":
+    case "file":
+      return addExternalFile(state, attachment.filename, "attachment");
+    default:
+      return false;
+  }
 }
 
 function applyTaskStop(
   state: SessionStatusState,
-  input: Record<string, unknown>,
-  result: Record<string, unknown>,
-  timestamp: string | undefined,
+  call: CallOf<"TaskStop">,
+  result: Exclude<TaskStopToolResult, string>,
+  timestamp: string,
 ): boolean {
-  const taskId = stringValue(input.task_id);
-  if (!taskId) return false;
+  const taskId = call.input.task_id;
   // Agent-teams teammates are stoppable via TaskStop by name: the observed
   // result carries task_type:"in_process_teammate" with input.task_id being
   // the teammate name (result.task_id is the internal task id). Without this
@@ -654,44 +649,31 @@ function applyTaskStop(
   const workflow = state.workflows.get(taskId);
   if (workflow) {
     if (workflow.status === "stopped" && workflow.ended_at === timestamp) return false;
-    state.workflows.set(taskId, {
-      ...workflow,
-      status: "stopped",
-      ...(timestamp ? { ended_at: timestamp } : {}),
-    });
+    state.workflows.set(taskId, { ...workflow, status: "stopped", ended_at: timestamp });
     return true;
   }
   const background = state.background.get(taskId);
   if (!background) return false;
   if (background.status === "stopped" && background.ended_at === timestamp) return false;
-  state.background.set(taskId, {
-    ...background,
-    status: "stopped",
-    ...(timestamp ? { ended_at: timestamp } : {}),
-  });
+  state.background.set(taskId, { ...background, status: "stopped", ended_at: timestamp });
   return true;
 }
 
 function foldTeammateSpawn(
   state: SessionStatusState,
-  pending: PendingToolUse,
-  result: Record<string, unknown>,
-  timestamp: string | undefined,
+  result: TeammateSpawnedResult,
+  timestamp: string,
 ): boolean {
-  if (result.status !== "teammate_spawned") return false;
-  const name = stringValue(result.name) ?? stringValue(pending.input.name);
-  if (!name) return false;
+  const name = result.name;
   const current = state.teammates.get(name);
   const next: TeammateState = {
     ...(current ?? { name, spawned: false, state: "spawned" }),
     name,
     spawned: true,
     state: "spawned",
-    ...(stringValue(result.agent_type)
-      ? { agent_type: stringValue(result.agent_type)! }
-      : { agent_type: undefined }),
-    ...(stringValue(result.color) ? { color: stringValue(result.color)! } : { color: undefined }),
-    ...(timestamp ? { spawned_at: timestamp } : {}),
+    agent_type: result.agent_type,
+    color: result.color,
+    spawned_at: timestamp,
   };
   state.teammates.set(name, next);
   return true;
@@ -699,13 +681,12 @@ function foldTeammateSpawn(
 
 function foldSendMessage(
   state: SessionStatusState,
-  pending: PendingToolUse,
-  result: Record<string, unknown>,
-  timestamp: string | undefined,
+  call: CallOf<"SendMessage">,
+  result: Exclude<SendMessageToolResult, string>,
+  timestamp: string,
 ): boolean {
-  if (result.success !== true || !timestamp) return false;
-  const name = stringValue(pending.input.to);
-  if (!name) return false;
+  if (!result.success) return false;
+  const name = call.input.to;
   const current = state.teammates.get(name);
   if (current?.last_sent_at === timestamp) return false;
   // Sending does not prove the recipient is active. A first-seen recipient
@@ -717,146 +698,165 @@ function foldSendMessage(
   return true;
 }
 
+/** A subagent an Agent call ran. One that runs in the background is running
+ * until its task notification says otherwise; one the call waited for is done
+ * with the status its result names, at the result's time. */
+function foldSubagent(
+  state: SessionStatusState,
+  pending: PendingToolUse,
+  call: CallOf<"Agent">,
+  result: SubagentResult,
+  timestamp: string,
+): boolean {
+  const isAsync = result.isAsync === true || result.status === "async_launched";
+  // r44 m6: agent_type = subagent_type of the spawn call (`general-purpose`,
+  // `Explore`, custom agent name...). Absent when Claude Code omits it from
+  // the input row — keep the field optional rather than fabricate a value.
+  const agentType = call.input.subagent_type;
+  state.background.set(result.agentId, {
+    task_id: result.agentId,
+    kind: "agent",
+    description: call.input.description,
+    status: isAsync ? "running" : result.status,
+    started_at: pending.timestamp,
+    ...(agentType !== undefined ? { agent_type: agentType } : {}),
+    ...(isAsync ? {} : { ended_at: timestamp }),
+  });
+  return true;
+}
+
+function foldWorkflow(
+  state: SessionStatusState,
+  pending: PendingToolUse,
+  result: JsonValue,
+): boolean {
+  const read = parseWith(WorkflowToolResultSchema, result);
+  if (!read.ok || typeof read.value === "string") return false;
+  const { taskId, workflowName, summary, status, runId } = read.value;
+  // DR-0025 Phase 1: `runId` is intentionally re-validated on the fold side
+  // (transcript rows are AI-controlled input) — only `wf_XXXXXXXX-XXX` is
+  // accepted, everything else is silently dropped and the workflow simply
+  // has no `run_id` (drilldown disabled). See RUN_ID_RE for the exact
+  // shape; the value is written back into `path.join` by
+  // workflow-drilldown.ts, so no unvetted value ever reaches the fs.
+  state.workflows.set(taskId, {
+    task_id: taskId,
+    name: workflowName,
+    summary,
+    status: status === "async_launched" ? "running" : status,
+    started_at: pending.timestamp,
+    ...(RUN_ID_RE.test(runId) ? { run_id: runId } : {}),
+  });
+  return true;
+}
+
+/** Fold the result of a pending call, read by the tool that was called. A
+ * result that does not read as its tool's (the error text of a failed call,
+ * or a shape the tool no longer writes) changes nothing. */
 function applyToolResult(
   state: SessionStatusState,
   pending: PendingToolUse,
-  result: Record<string, unknown>,
-  timestamp: string | undefined,
+  result: JsonValue,
+  timestamp: string,
   isError: boolean,
 ): boolean {
   if (isError) return false;
-  const { name, input } = pending;
-
-  if (name === "Agent" && result.status === "teammate_spawned") {
-    return foldTeammateSpawn(state, pending, result, timestamp);
+  const { call } = pending;
+  if (!isKnownToolUse(call)) {
+    return call.name === "Workflow" && foldWorkflow(state, pending, result);
   }
-  if (name === "SendMessage") return foldSendMessage(state, pending, result, timestamp);
-
-  if (name === "TaskCreate") {
-    const task = result.task;
-    if (!isRecord(task)) return false;
-    const id = stringValue(task.id);
-    if (!id) return false;
-    const subject = stringValue(task.subject) ?? stringValue(input.subject) ?? "(unknown)";
-    const next: SessionTodo = { id, subject, status: "pending" };
-    const current = state.todos.get(id);
-    if (
-      current &&
-      current.subject === next.subject &&
-      current.status === next.status &&
-      current.owner === undefined
-    ) {
-      return false;
+  switch (call.name) {
+    case "Agent": {
+      const read = parseWith(AgentToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      return isTeammateSpawnedResult(read.value)
+        ? foldTeammateSpawn(state, read.value, timestamp)
+        : foldSubagent(state, pending, call, read.value, timestamp);
     }
-    state.todos.set(id, next);
-    return true;
+    case "SendMessage": {
+      const read = parseWith(SendMessageToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      return foldSendMessage(state, call, read.value, timestamp);
+    }
+    case "TaskCreate": {
+      const read = parseWith(TaskCreateToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      const { id, subject } = read.value.task;
+      const next: SessionTodo = { id, subject, status: "pending" };
+      const current = state.todos.get(id);
+      if (
+        current &&
+        current.subject === next.subject &&
+        current.status === next.status &&
+        current.owner === undefined
+      ) {
+        return false;
+      }
+      state.todos.set(id, next);
+      return true;
+    }
+    case "TaskUpdate": {
+      const read = parseWith(TaskUpdateToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      return applyTodoUpdate(state, call, read.value);
+    }
+    case "TaskStop": {
+      const read = parseWith(TaskStopToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      return applyTaskStop(state, call, read.value, timestamp);
+    }
+    case "Monitor": {
+      const read = parseWith(MonitorToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      state.background.set(read.value.taskId, {
+        task_id: read.value.taskId,
+        kind: "monitor",
+        description: call.input.description,
+        status: "running",
+        started_at: pending.timestamp,
+      });
+      return true;
+    }
+    case "Bash": {
+      const read = parseWith(BashToolResultSchema, result);
+      if (!read.ok || typeof read.value === "string") return false;
+      const taskId = read.value.backgroundTaskId;
+      if (taskId === undefined) return false;
+      state.background.set(taskId, {
+        task_id: taskId,
+        kind: "bash",
+        description: call.input.description,
+        status: "running",
+        started_at: pending.timestamp,
+      });
+      return true;
+    }
+    default:
+      return false;
   }
-
-  if (name === "TaskUpdate") return applyTodoUpdate(state, input, result);
-
-  if (name === "Workflow") {
-    const taskId = stringValue(result.taskId);
-    const workflowName = stringValue(result.workflowName);
-    if (!taskId || !workflowName) return false;
-    const rawStatus = stringValue(result.status);
-    const rawRunId = stringValue(result.runId);
-    // DR-0025 Phase 1: `runId` is intentionally re-validated on the fold side
-    // (transcript rows are AI-controlled input) — only `wf_XXXXXXXX-XXX` is
-    // accepted, everything else is silently dropped and the workflow simply
-    // has no `run_id` (drilldown disabled). See RUN_ID_RE for the exact
-    // shape; the value is written back into `path.join` by
-    // workflow-drilldown.ts, so no unvetted value ever reaches the fs.
-    const runId = rawRunId && RUN_ID_RE.test(rawRunId) ? rawRunId : undefined;
-    const workflow: SessionWorkflowStatus = {
-      task_id: taskId,
-      name: workflowName,
-      ...(stringValue(result.summary) ? { summary: stringValue(result.summary)! } : {}),
-      status: rawStatus === "async_launched" || rawStatus === undefined ? "running" : rawStatus,
-      started_at: pending.timestamp,
-      ...(runId ? { run_id: runId } : {}),
-    };
-    state.workflows.set(taskId, workflow);
-    return true;
-  }
-
-  if (name === "Monitor") {
-    const taskId = stringValue(result.taskId);
-    if (!taskId) return false;
-    state.background.set(taskId, {
-      task_id: taskId,
-      kind: "monitor",
-      description: stringValue(input.description) ?? "",
-      status: "running",
-      started_at: pending.timestamp,
-    });
-    return true;
-  }
-
-  if (name === "Bash") {
-    const taskId = stringValue(result.backgroundTaskId);
-    if (!taskId) return false;
-    state.background.set(taskId, {
-      task_id: taskId,
-      kind: "bash",
-      description: stringValue(input.description) ?? "",
-      status: "running",
-      started_at: pending.timestamp,
-    });
-    return true;
-  }
-
-  if (name === "Agent") {
-    const taskId = stringValue(result.agentId);
-    if (!taskId) return false;
-    // r44 m6: agent_type = subagent_type of the spawn call (`general-purpose`,
-    // `Explore`, custom agent name...). Absent when Claude Code omits it from
-    // the input row — keep the field optional rather than fabricate a value.
-    const agentType = stringValue(input.subagent_type);
-    // Sync Agent completes inline (result carries the final status, no async
-    // task-notification will follow). Async spawn returns `status:
-    // "async_launched"` (or `isAsync: true`) with completion coming later via
-    // foldNotification. Distinguish so sync subagents show as finished the
-    // moment their tool_result lands, matching the observation the fold has.
-    const rawStatus = stringValue(result.status);
-    const isAsync = result.isAsync === true || rawStatus === "async_launched";
-    const status = isAsync ? "running" : (rawStatus ?? "completed");
-    state.background.set(taskId, {
-      task_id: taskId,
-      kind: "agent",
-      description: stringValue(input.description) ?? "",
-      status,
-      started_at: pending.timestamp,
-      ...(agentType ? { agent_type: agentType } : {}),
-      ...(!isAsync && timestamp ? { ended_at: timestamp } : {}),
-    });
-    return true;
-  }
-
-  if (name === "TaskStop") return applyTaskStop(state, input, result, timestamp);
-  return false;
 }
+
+/** A teammate's message that is its idle notice rather than words. */
+const IdleNotificationLineSchema = jsonText(
+  v.looseObject({ type: v.literal("idle_notification") }),
+);
 
 function relayState(body: string): "active" | "idle" {
   const trimmed = body.trim();
   if (!trimmed.startsWith('{"type":"idle_notification"')) return "active";
-  try {
-    const value: unknown = JSON.parse(trimmed);
-    return isRecord(value) && value.type === "idle_notification" ? "idle" : "active";
-  } catch {
-    return "active";
-  }
+  return parseWith(IdleNotificationLineSchema, trimmed).ok ? "idle" : "active";
 }
 
-function foldTeammateRelay(state: SessionStatusState, row: Record<string, unknown>): boolean {
-  const timestamp = stringValue(row.timestamp);
-  const message = row.message;
-  if (!timestamp || !isRecord(message) || typeof message.content !== "string") return false;
-  if (!message.content.startsWith("Another Claude session sent a message:")) return false;
+function foldTeammateRelay(state: SessionStatusState, row: UserRow): boolean {
+  const timestamp = row.timestamp;
+  const content = row.message.content;
+  if (typeof content !== "string") return false;
+  if (!content.startsWith("Another Claude session sent a message:")) return false;
 
   const pattern =
     /<teammate-message\s+teammate_id="([^"]+)"([^>]*)>([\s\S]*?)<\/teammate-message>/g;
   let changed = false;
-  for (const match of message.content.matchAll(pattern)) {
+  for (const match of content.matchAll(pattern)) {
     const name = match[1];
     if (!name) continue;
     // teammate_id="system" carries lifecycle notices (teammate_terminated),
@@ -918,27 +918,22 @@ function foldPersistedOutput(state: SessionStatusState, content: string): boolea
   return addExternalFile(state, sidecar, "tool");
 }
 
-function foldUser(state: SessionStatusState, row: Record<string, unknown>): boolean {
-  const message = row.message;
-  if (!isRecord(message)) return false;
+function foldUser(state: SessionStatusState, row: UserRow): boolean {
   let changed = foldTeammateRelay(state, row);
-  if (typeof message.content === "string" && foldPersistedOutput(state, message.content)) {
-    changed = true;
+  const content = row.message.content;
+  if (typeof content === "string") {
+    if (foldPersistedOutput(state, content)) changed = true;
+    return changed;
   }
-  if (!Array.isArray(message.content)) return changed;
   const result = row.toolUseResult;
 
-  for (const block of message.content) {
-    if (!isRecord(block) || block.type !== "tool_result") continue;
-    const toolUseId = stringValue(block.tool_use_id);
-    if (!toolUseId) continue;
-    const pending = state.pendingToolUse.get(toolUseId);
+  for (const block of content) {
+    if (!isKnownContentBlock(block) || block.type !== "tool_result") continue;
+    const pending = state.pendingToolUse.get(block.tool_use_id);
     if (!pending) continue;
-    state.pendingToolUse.delete(toolUseId);
-    if (!isRecord(result)) continue;
-    if (
-      applyToolResult(state, pending, result, stringValue(row.timestamp), block.is_error === true)
-    ) {
+    state.pendingToolUse.delete(block.tool_use_id);
+    if (result === undefined) continue;
+    if (applyToolResult(state, pending, result, row.timestamp, block.is_error === true)) {
       changed = true;
     }
   }
@@ -965,52 +960,52 @@ function tagValue(content: string, tag: string): string | undefined {
   return match?.[1]?.trim();
 }
 
-function foldNotification(state: SessionStatusState, row: Record<string, unknown>): boolean {
+function foldNotification(state: SessionStatusState, row: QueueOperationRow): boolean {
   if (row.operation !== "enqueue") return false;
-  const content = stringValue(row.content);
-  if (!content || !content.includes("<task-notification>")) return false;
+  const content = row.content;
+  if (content === undefined || !content.includes("<task-notification>")) return false;
   const prefix = notificationPrefix(content);
   const taskId = tagValue(prefix, "task-id");
   const status = tagValue(prefix, "status");
   if (!taskId || !status || status === "running") return false;
-  const timestamp = stringValue(row.timestamp);
+  const timestamp = row.timestamp;
 
   const workflow = state.workflows.get(taskId);
   if (workflow) {
     if (workflow.status === status && workflow.ended_at === timestamp) return false;
-    state.workflows.set(taskId, {
-      ...workflow,
-      status,
-      ...(timestamp ? { ended_at: timestamp } : {}),
-    });
+    state.workflows.set(taskId, { ...workflow, status, ended_at: timestamp });
     return true;
   }
 
   const background = state.background.get(taskId);
   if (!background) return false;
   if (background.status === status && background.ended_at === timestamp) return false;
-  state.background.set(taskId, {
-    ...background,
-    status,
-    ...(timestamp ? { ended_at: timestamp } : {}),
-  });
+  state.background.set(taskId, { ...background, status, ended_at: timestamp });
   return true;
 }
 
-/** Fold one candidate jsonl line. Malformed JSON and non-matching shapes are ignored. */
+/** Fold one candidate jsonl line. A line that does not read as a row is
+ * ignored. */
 export function foldLine(state: SessionStatusState, line: string): boolean {
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return false;
+  const read = parseWith(TranscriptRowLineSchema, line);
+  return read.ok && foldRow(state, read.value);
+}
+
+/** Fold one row. A row of a kind the status does not follow is ignored. */
+export function foldRow(state: SessionStatusState, row: TranscriptRow): boolean {
+  if (!isKnownTranscriptRow(row)) return false;
+  switch (row.type) {
+    case "assistant":
+      return foldAssistant(state, row);
+    case "user":
+      return foldUser(state, row);
+    case "queue-operation":
+      return foldNotification(state, row);
+    case "attachment":
+      return foldAttachment(state, row);
+    default:
+      return false;
   }
-  if (!isRecord(row)) return false;
-  if (row.type === "assistant") return foldAssistant(state, row);
-  if (row.type === "user") return foldUser(state, row);
-  if (row.type === "queue-operation") return foldNotification(state, row);
-  if (row.type === "attachment") return foldAttachment(state, row);
-  return false;
 }
 
 /**
@@ -1199,6 +1194,15 @@ function parseAgentIdFromFilename(filename: string): string | undefined {
   return agentId.length > 0 ? agentId : undefined;
 }
 
+/** An assistant row, read for the content of its message alone: the tool
+ * calls it made. */
+const AssistantContentLineSchema = jsonText(
+  v.looseObject({
+    type: v.literal("assistant"),
+    message: v.looseObject({ content: AssistantMessageSchema.entries.content }),
+  }),
+);
+
 /** Collect every `id` from `tool_use` blocks whose `name` is `"Agent"` in one
  * transcript line. */
 function collectAgentToolUseIds(line: string, out: Set<string>): void {
@@ -1206,20 +1210,12 @@ function collectAgentToolUseIds(line: string, out: Set<string>): void {
   // literal `"name":"Agent"` need JSON parsing.
   if (!line.includes('"name":"Agent"')) return;
   if (!line.includes('"type":"tool_use"')) return;
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return;
-  }
-  if (!isRecord(row)) return;
-  const message = row.message;
-  if (!isRecord(message) || !Array.isArray(message.content)) return;
-  for (const block of message.content) {
-    if (!isRecord(block) || block.type !== "tool_use") continue;
-    if (block.name !== "Agent") continue;
-    const id = stringValue(block.id);
-    if (id) out.add(id);
+  const read = parseWith(AssistantContentLineSchema, line);
+  if (!read.ok) return;
+  for (const block of read.value.message.content) {
+    if (isKnownContentBlock(block) && block.type === "tool_use" && block.name === "Agent") {
+      out.add(block.id);
+    }
   }
 }
 
@@ -1541,8 +1537,9 @@ export async function readAgentTree(
         (m.mtimeMs > 0 && nowMs - m.mtimeMs < AGENT_LIVE_MTIME_WINDOW_MS ? "active" : "stopped");
       const node = buildAgentTreeNode(m, "workflow_member", liveState, { workflow_id: runId });
       const idx = drill?.phase_index;
-      if (idx !== undefined && phaseByIndex.has(idx)) {
-        phaseByIndex.get(idx)!.members.push(node);
+      const phase = idx !== undefined ? phaseByIndex.get(idx) : undefined;
+      if (phase) {
+        phase.members.push(node);
       } else {
         unassigned.push(node);
       }
@@ -1641,6 +1638,11 @@ function buildAgentTreeNode(
 ): AgentTreeNode {
   const name = stringValue(m.meta.name);
   const spawnDepth = typeof m.meta.spawnDepth === "number" ? m.meta.spawnDepth : 0;
+  const agentType = stringValue(m.meta.agentType);
+  const description = stringValue(m.meta.description);
+  const color = stringValue(m.meta.color);
+  const model = stringValue(m.meta.model);
+  const teamName = stringValue(m.meta.teamName);
   return {
     agent_id: m.agentId,
     spawn_depth: spawnDepth,
@@ -1648,11 +1650,11 @@ function buildAgentTreeNode(
     state,
     children: [],
     ...(kind === "teammate" && name ? { teammate_name: name } : {}),
-    ...(stringValue(m.meta.agentType) ? { agent_type: stringValue(m.meta.agentType)! } : {}),
-    ...(stringValue(m.meta.description) ? { description: stringValue(m.meta.description)! } : {}),
-    ...(stringValue(m.meta.color) ? { color: stringValue(m.meta.color)! } : {}),
-    ...(stringValue(m.meta.model) ? { model: stringValue(m.meta.model)! } : {}),
-    ...(stringValue(m.meta.teamName) ? { team_name: stringValue(m.meta.teamName)! } : {}),
+    ...(agentType ? { agent_type: agentType } : {}),
+    ...(description ? { description } : {}),
+    ...(color ? { color } : {}),
+    ...(model ? { model } : {}),
+    ...(teamName ? { team_name: teamName } : {}),
     ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
     ...(extra?.workflow_id ? { workflow_id: extra.workflow_id } : {}),
   };

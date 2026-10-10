@@ -6,8 +6,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FS_READ_MAX_BYTES, PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { FS_READ_MAX_BYTES, PROTOCOL_VERSION, type JsonObject } from "@ccmsg/protocol";
 import { validateRepoRoot } from "../src/fs-access.ts";
+import {
+  assistantContentRow,
+  attachmentRow,
+  line,
+  toolUseBlock,
+} from "../../protocol/test/transcript-rows.ts";
 import {
   connect,
   startTestDaemon,
@@ -75,23 +81,23 @@ async function sessionAtWithTranscript(
 }
 
 function externalAttachmentRow(filePath: string): string {
-  return JSON.stringify({
-    type: "attachment",
-    timestamp: "2026-07-17T00:00:00.000Z",
-    attachment: { type: "edited_text_file", filename: filePath, snippet: "1\tedited" },
-  });
+  return line(
+    attachmentRow(
+      { type: "edited_text_file", filename: filePath, snippet: "1\tedited" },
+      { timestamp: "2026-07-17T00:00:00.000Z" },
+    ),
+  );
 }
 
-function externalToolUse(id: string, name: string, filePath: string): string {
-  const key = name === "NotebookEdit" ? "notebook_path" : "file_path";
-  return JSON.stringify({
-    type: "assistant",
-    timestamp: "2026-07-17T00:00:00.000Z",
-    message: {
-      role: "assistant",
-      content: [{ type: "tool_use", id, name, input: { [key]: filePath } }],
-    },
-  });
+/** A Read of `filePath`, or a Write of it. */
+function externalToolUse(id: string, name: "Read" | "Write", filePath: string): string {
+  const input: JsonObject =
+    name === "Write" ? { file_path: filePath, content: "x" } : { file_path: filePath };
+  return line(
+    assistantContentRow([toolUseBlock(name, input, id)], {
+      timestamp: "2026-07-17T00:00:00.000Z",
+    }),
+  );
 }
 
 async function userAt(ctx: DaemonCtx): Promise<TestClient> {

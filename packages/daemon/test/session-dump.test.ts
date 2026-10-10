@@ -11,7 +11,14 @@ import {
   type ContextAgentRecord,
   type SessionDump,
 } from "../src/session-dump.ts";
-import { renderDirectDelivery } from "@ccmsg/protocol";
+import { renderDirectDelivery, type JsonObject, type JsonValue } from "@ccmsg/protocol";
+import {
+  assistantContentRow,
+  attachmentRow,
+  line,
+  queueOperationRow,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const roots: string[] = [];
@@ -42,8 +49,17 @@ async function rejection(p: Promise<unknown>): Promise<Error> {
   throw new Error("expected dumpSession to throw");
 }
 
-function row(timestamp: string, type: string, content: unknown, extra = {}): string {
-  return JSON.stringify({ timestamp, type, message: { role: type, content }, ...extra });
+function row(
+  timestamp: string,
+  type: "user" | "assistant",
+  content: JsonValue,
+  extra: JsonObject = {},
+): string {
+  return line(
+    type === "user"
+      ? userContentRow(content, { timestamp, ...extra })
+      : assistantContentRow(content, { timestamp, ...extra }),
+  );
 }
 
 describe("dumpSession", () => {
@@ -126,12 +142,12 @@ describe("dumpSession", () => {
         `<agent-message from="worker" summary="done">plain peer report</agent-message>`,
         { isMeta: true },
       ),
-      JSON.stringify({
-        timestamp: "2026-07-20T00:01:03Z",
-        type: "queue-operation",
-        operation: "enqueue",
-        content: `<agent-message from="worker" summary="done">plain peer report</agent-message>`,
-      }),
+      line(
+        queueOperationRow({
+          timestamp: "2026-07-20T00:01:03Z",
+          content: `<agent-message from="worker" summary="done">plain peer report</agent-message>`,
+        }),
+      ),
       row("2026-07-20T00:01:50Z", "assistant", [
         {
           type: "tool_use",
@@ -454,13 +470,13 @@ describe("dumpSession", () => {
       type: "tool_use",
       id: "team-use",
       name: "Agent",
-      input: { name: "worker", description: "team work" },
+      input: { name: "worker", description: "team work", prompt: "work" },
     };
     const staleTeammateUse = {
       type: "tool_use",
       id: "stale-use",
       name: "Agent",
-      input: { name: "stale", description: "finished work" },
+      input: { name: "stale", description: "finished work", prompt: "work" },
     };
     const stopUse = {
       type: "tool_use",
@@ -484,7 +500,7 @@ describe("dumpSession", () => {
       type: "tool_use",
       id: "direct-use",
       name: "Agent",
-      input: { description: "direct work", run_in_background: true },
+      input: { description: "direct work", prompt: "work", run_in_background: true },
     };
     const workflowUse = {
       type: "tool_use",
@@ -496,13 +512,13 @@ describe("dumpSession", () => {
       type: "tool_use",
       id: "monitor-use",
       name: "Monitor",
-      input: { description: "ccmsg subscribe", persistent: true },
+      input: { command: "ccmsg subscribe", description: "ccmsg subscribe", persistent: true },
     };
     const bashUse = {
       type: "tool_use",
       id: "bash-use",
       name: "Bash",
-      input: { description: "background build", run_in_background: true },
+      input: { command: "make", description: "background build", run_in_background: true },
     };
     const cronKeepUse = {
       type: "tool_use",
@@ -536,13 +552,13 @@ describe("dumpSession", () => {
           "2026-07-20T00:00:01Z",
           "user",
           [{ type: "tool_result", tool_use_id: "team-use", content: "ok" }],
-          { toolUseResult: { status: "teammate_spawned", name: "worker" } },
+          { toolUseResult: { status: "teammate_spawned", name: "worker", color: "cyan" } },
         ),
         row(
           "2026-07-20T00:00:01Z",
           "user",
           [{ type: "tool_result", tool_use_id: "stale-use", content: "ok" }],
-          { toolUseResult: { status: "teammate_spawned", name: "stale" } },
+          { toolUseResult: { status: "teammate_spawned", name: "stale", color: "green" } },
         ),
         row(
           "2026-07-20T00:00:01Z",
@@ -578,6 +594,7 @@ describe("dumpSession", () => {
               workflowName: "handoff-check",
               status: "async_launched",
               runId,
+              summary: "check the handoff",
             },
           },
         ),
@@ -619,27 +636,27 @@ describe("dumpSession", () => {
         row("2026-07-20T00:00:09Z", "user", [
           { type: "tool_result", tool_use_id: "cron-remove-use", content: "Deleted task." },
         ]),
-        JSON.stringify({
-          timestamp: "2026-07-20T00:00:10Z",
-          type: "queue-operation",
-          operation: "enqueue",
-          content:
-            "<task-notification><task-id>a1234567890abcdef</task-id><status>completed</status></task-notification>",
-        }),
-        JSON.stringify({
-          timestamp: "2026-07-20T00:00:11Z",
-          type: "queue-operation",
-          operation: "enqueue",
-          content:
-            "<task-notification><task-id>a2222222222222222</task-id><status>completed</status><summary>nested finished</summary><result>body with <status>failed</status></result></task-notification>",
-        }),
-        JSON.stringify({
-          timestamp: "2026-07-20T00:00:12Z",
-          type: "queue-operation",
-          operation: "enqueue",
-          content:
-            "<task-notification><task-id>bash-task</task-id><status>completed</status></task-notification>",
-        }),
+        line(
+          queueOperationRow({
+            timestamp: "2026-07-20T00:00:10Z",
+            content:
+              "<task-notification><task-id>a1234567890abcdef</task-id><status>completed</status></task-notification>",
+          }),
+        ),
+        line(
+          queueOperationRow({
+            timestamp: "2026-07-20T00:00:11Z",
+            content:
+              "<task-notification><task-id>a2222222222222222</task-id><status>completed</status><summary>nested finished</summary><result>body with <status>failed</status></result></task-notification>",
+          }),
+        ),
+        line(
+          queueOperationRow({
+            timestamp: "2026-07-20T00:00:12Z",
+            content:
+              "<task-notification><task-id>bash-task</task-id><status>completed</status></task-notification>",
+          }),
+        ),
       ].join("\n") + "\n",
     );
     const member = {
@@ -900,7 +917,12 @@ describe("dumpSession", () => {
               name: "Agent",
               input: { name: "late", description: "late job", prompt: "late prompt" },
             },
-            { type: "tool_use", id: "bg-use", name: "Agent", input: { description: "bg job" } },
+            {
+              type: "tool_use",
+              id: "bg-use",
+              name: "Agent",
+              input: { description: "bg job", prompt: "bg prompt" },
+            },
           ]),
           row(
             "2026-07-20T02:00:01Z",
@@ -1167,12 +1189,12 @@ describe("standalone ccmsg in the dump", () => {
     const envelope = `<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="${mid}" ccmsg-from="user">\nv2でのユーザメッセージ\n\nReply with: ccmsg reply ${mid} <text>\n</cross-session-message>`;
     const lines = [
       row("2026-09-26T07:46:00Z", "user", "start", { origin: { kind: "human" } }),
-      JSON.stringify({
-        timestamp: "2026-09-26T07:46:39.045Z",
-        type: "queue-operation",
-        operation: "enqueue",
-        content: envelope,
-      }),
+      line(
+        queueOperationRow({
+          timestamp: "2026-09-26T07:46:39.045Z",
+          content: envelope,
+        }),
+      ),
       row(
         "2026-09-26T07:46:39.054Z",
         "user",
@@ -1299,28 +1321,28 @@ const QUEUED_PROMPT =
   '<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r349m12" ccmsg-from="user">\n両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？\n\nReply in your normal assistant response.\n</cross-session-message>';
 const QUEUED_BODY =
   "両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？";
-const queuedAttachmentRow = JSON.stringify({
-  type: "attachment",
-  timestamp: "2026-09-28T06:44:03.962Z",
-  attachment: {
-    type: "queued_command",
-    prompt: QUEUED_PROMPT,
-    commandMode: "prompt",
-    origin: { kind: "peer" },
-    isMeta: true,
-  },
-  rendered: [
+const queuedAttachmentRow = line(
+  attachmentRow(
     {
-      content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+      type: "queued_command",
+      prompt: QUEUED_PROMPT,
+      commandMode: "prompt",
+      origin: { kind: "peer" },
+      isMeta: true,
     },
-  ],
-});
-const queuedEnqueueRow = JSON.stringify({
-  type: "queue-operation",
-  operation: "enqueue",
-  timestamp: "2026-09-28T06:44:03.962Z",
-  content: QUEUED_PROMPT,
-});
+    {
+      timestamp: "2026-09-28T06:44:03.962Z",
+      rendered: [
+        {
+          content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+        },
+      ],
+    },
+  ),
+);
+const queuedEnqueueRow = line(
+  queueOperationRow({ timestamp: "2026-09-28T06:44:03.962Z", content: QUEUED_PROMPT }),
+);
 
 describe("standalone ccmsg delivered mid-turn in the dump", () => {
   test("the queued_command attachment is one ccmsg-received entry", async () => {
