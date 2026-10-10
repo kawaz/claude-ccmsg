@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [webui-blank-without-navigation-api](./2026-10-10-webui-blank-without-navigation-api.md) | webui が Navigation API の無いブラウザ (iOS Safari 26.1 以下) で描画前に TypeError となり真っ黒になる。対応要件明記か History API フォールバックかの裁定待ち |
 | 2026-10-10 | bug | open | [verify-isolated-daemon-receives-live-sessions](./2026-10-10-verify-isolated-daemon-receives-live-sessions.md) | verify の隔離 daemon に実行中の実セッションが繋がる。socket パス解決が state dir 外にある可能性、原因特定と隔離の完成 |
 | 2026-10-10 | bug | open | [transcript-schema-parse-cost-on-image-heavy-sessions](./2026-10-10-transcript-schema-parse-cost-on-image-heavy-sessions.md) | transcript の行を valibot のスキーマで読む (DR-0038 §3、段 A・B) ようにした結果、13MB の transcript で JSON.parse 13ms に対し…… |
