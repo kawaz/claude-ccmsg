@@ -7,7 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   ErrorCode,
+  parseWith,
   TRANSCRIPT_READ_MAX_BYTES,
+  TranscriptRowTimestampLineSchema,
   type TranscriptReadResponse,
   type TranscriptSubscribeResponse,
   type TranscriptUnsubscribeResponse,
@@ -488,6 +490,16 @@ function broadcast(
   for (const listener of watch.lineListeners) listener(payload);
 }
 
+/** The timestamp of the last of `lines` that carries one, for the trace. */
+export function extractEntryTimestamp(lines: readonly string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    // A row that does not read is still delivered; it simply has no entry timestamp.
+    const row = parseWith(TranscriptRowTimestampLineSchema, lines[i]);
+    if (row.ok && row.value.timestamp !== undefined) return row.value.timestamp;
+  }
+  return undefined;
+}
+
 /**
  * Read `[from, to)` of `file` and trim to the last complete line boundary —
  * mirrors transcriptRead's trailing-trim rule but for a forward-growing
@@ -495,18 +507,6 @@ function broadcast(
  * line (the writer mid-append) is dropped and left for the next check
  * (`end` stays at `from` in that case, signaling "nothing complete yet").
  */
-export function extractEntryTimestamp(lines: readonly string[]): string | undefined {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    try {
-      const value = JSON.parse(lines[i]!) as { timestamp?: unknown };
-      if (typeof value.timestamp === "string") return value.timestamp;
-    } catch {
-      // malformed transcript rows are still delivered; they simply have no entry timestamp
-    }
-  }
-  return undefined;
-}
-
 function readLinesForTail(
   file: string,
   from: number,

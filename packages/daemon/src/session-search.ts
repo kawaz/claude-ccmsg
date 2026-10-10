@@ -1,9 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { yieldToEventLoop } from "./event-loop.ts";
+import * as v from "valibot";
 import {
   ADMIN_ID,
+  CustomTitleRowSchema,
   ErrorCode,
+  jsonText,
+  parseWith,
+  RowHeadEntries,
   SESSION_SEARCH_MATCH_SUMMARY_MAX,
   SESSION_SEARCH_RESULT_MAX,
   parseSearchQueryPatterns,
@@ -20,6 +25,19 @@ import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const REQUEST_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
+
+/** What the head of a candidate session gives a hit, read from each row of
+ * the early window: where the session ran, when it started, and the title
+ * `/rename` gave it (a `custom-title` row's `customTitle`). Only these fields
+ * are read, so a row whose other fields are wrong still gives them. */
+const SearchHeadLineSchema = jsonText(
+  v.looseObject({
+    type: v.optional(RowHeadEntries.type),
+    cwd: v.optional(RowHeadEntries.cwd),
+    timestamp: v.optional(RowHeadEntries.timestamp),
+    customTitle: v.optional(CustomTitleRowSchema.entries.customTitle),
+  }),
+);
 
 export interface SessionSearchLog {
   error(msg: string): void;
@@ -82,7 +100,7 @@ function regexRequiredLiteral(pattern: string): string | null {
   const runs: string[] = [];
 
   for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i]!;
+    const ch = pattern[i];
     if (ch === "\\") {
       const escapeKind = pattern[i + 1];
       if (escapeKind === "x") i += 3;
@@ -98,7 +116,7 @@ function regexRequiredLiteral(pattern: string): string | null {
         i = end >= 0 ? end : pattern.length;
       } else if (escapeKind === "c") i += 2;
       else if (escapeKind && /[0-9]/.test(escapeKind)) {
-        while (i + 1 < pattern.length && /[0-9]/.test(pattern[i + 1]!)) i += 1;
+        while (i + 1 < pattern.length && /[0-9]/.test(pattern[i + 1])) i += 1;
       } else i += 1;
       continue;
     }
@@ -127,7 +145,7 @@ function regexRequiredLiteral(pattern: string): string | null {
     if (depth !== 0 || !/[A-Za-z0-9]/.test(ch)) continue;
 
     const start = i;
-    while (i + 1 < pattern.length && /[A-Za-z0-9]/.test(pattern[i + 1]!)) i += 1;
+    while (i + 1 < pattern.length && /[A-Za-z0-9]/.test(pattern[i + 1])) i += 1;
     let run = pattern.slice(start, i + 1);
     const next = pattern[i + 1];
     if (next === "?" || next === "*" || next === "+" || next === "{") {
@@ -312,7 +330,7 @@ export async function readSessionLaunchContext(file: string): Promise<SessionLau
       // is unparseable and belongs to the next, wider window.
       if (start > 0) lines.shift();
       for (let i = lines.length - 1; i >= 0; i--) {
-        const context = launchContextFromRow(lines[i]!);
+        const context = launchContextFromRow(lines[i]);
         if (context) return context;
       }
       if (start === 0) return {};
@@ -397,7 +415,7 @@ async function scanCandidateFile(
   // Per clause, the indexes of its AND terms seen anywhere in this session.
   const matchedTerms = clauses.map(() => new Set<number>());
   const someClauseComplete = (): boolean =>
-    clauses.some((clause, clauseIndex) => matchedTerms[clauseIndex]!.size === clause.length);
+    clauses.some((clause, clauseIndex) => matchedTerms[clauseIndex].size === clause.length);
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   // Best-effort within the same early window that establishes cwd/timestamp
@@ -416,10 +434,10 @@ async function scanCandidateFile(
       forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
         const matchingPatterns: CompiledQueryPattern[] = [];
         for (let clauseIndex = 0; clauseIndex < clauses.length; clauseIndex++) {
-          const clause = clauses[clauseIndex]!;
-          const matched = matchedTerms[clauseIndex]!;
+          const clause = clauses[clauseIndex];
+          const matched = matchedTerms[clauseIndex];
           for (let termIndex = 0; termIndex < clause.length; termIndex++) {
-            const pattern = clause[termIndex]!;
+            const pattern = clause[termIndex];
             if (patternIndex(text, pattern) < 0) continue;
             matched.add(termIndex);
             matchingPatterns.push(pattern);
@@ -451,15 +469,11 @@ async function scanCandidateFile(
     // title costs no extra disk I/O — only a little more CPU on data already
     // in hand.
     if (cwd !== null && firstTimestamp !== null && title !== null) return;
-    let row: unknown;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (!isRecord(row)) return;
-    if (cwd === null && typeof row.cwd === "string" && path.isAbsolute(row.cwd)) cwd = row.cwd;
-    if (firstTimestamp === null && typeof row.timestamp === "string") {
+    const read = parseWith(SearchHeadLineSchema, line);
+    if (!read.ok) return;
+    const row = read.value;
+    if (cwd === null && row.cwd !== undefined && path.isAbsolute(row.cwd)) cwd = row.cwd;
+    if (firstTimestamp === null && row.timestamp !== undefined) {
       const parsed = Date.parse(row.timestamp);
       if (Number.isFinite(parsed)) firstTimestamp = new Date(parsed).toISOString();
     }
@@ -470,7 +484,7 @@ async function scanCandidateFile(
     if (
       title === null &&
       row.type === "custom-title" &&
-      typeof row.customTitle === "string" &&
+      row.customTitle !== undefined &&
       row.customTitle !== ""
     ) {
       title = row.customTitle;
@@ -793,7 +807,7 @@ export async function sessionSearch(
   let truncated = false;
 
   for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
-    const candidate = candidates[candidateIndex]!;
+    const candidate = candidates[candidateIndex];
     const remaining = REQUEST_SCAN_MAX_BYTES - scannedBytes;
     if (remaining <= 0) {
       truncated = true;

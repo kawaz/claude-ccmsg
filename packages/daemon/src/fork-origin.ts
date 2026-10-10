@@ -20,7 +20,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { yieldToEventLoop } from "./event-loop.ts";
-import type { ForkOrigin } from "@ccmsg/protocol";
+import { type ForkOrigin, parseWith, TranscriptRowUuidLineSchema } from "@ccmsg/protocol";
 import { isValidSid } from "./virtual-sessions.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -39,23 +39,13 @@ export interface ForkOriginLog {
   error(msg: string): void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function rowUuid(line: string): string | undefined {
   // Cheap reject first: most of the bytes in a transcript are inside a handful
   // of huge tool-result rows, and parsing those to learn they have no uuid is
   // the dominant cost of the sweep.
   if (!line.includes('"uuid"')) return undefined;
-  let row: unknown;
-  try {
-    row = JSON.parse(line);
-  } catch {
-    return undefined;
-  }
-  if (!isRecord(row)) return undefined;
-  return typeof row.uuid === "string" && row.uuid !== "" ? row.uuid : undefined;
+  const row = parseWith(TranscriptRowUuidLineSchema, line);
+  return row.ok ? row.value.uuid : undefined;
 }
 
 /** Streams `file`, handing each row's uuid to `onUuid`. Stops early when
@@ -229,7 +219,7 @@ export async function resolveForkOrigin(
     }
     if (ancestor === null) continue;
     let copied = 0;
-    while (copied < sequence.length && ancestor.has(sequence[copied]!)) copied += 1;
+    while (copied < sequence.length && ancestor.has(sequence[copied])) copied += 1;
     // Sibling forks of one ancestor share a prefix too, so several candidates
     // can match; the longest run is the nearest ancestor and the true seam.
     if (copied > 0 && (best === null || copied > best.copied)) {
@@ -240,7 +230,7 @@ export async function resolveForkOrigin(
   // The whole file being copied would mean no forked turns exist yet; there is
   // no seam to draw below the last row.
   if (best.copied >= sequence.length) return null;
-  return { sid: best.sid, boundary_uuid: sequence[best.copied - 1]!, copied: best.copied };
+  return { sid: best.sid, boundary_uuid: sequence[best.copied - 1], copied: best.copied };
 }
 
 /**

@@ -1,7 +1,12 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ErrorCode, type ErrorCode as ErrorCodeType } from "@ccmsg/protocol";
+import {
+  ErrorCode,
+  type ErrorCode as ErrorCodeType,
+  parseWith,
+  TranscriptRowCwdLineSchema,
+} from "@ccmsg/protocol";
 import { detectConfigDirs } from "./agents.ts";
 
 const CWD_SCAN_MAX_BYTES = 4 * 1024 * 1024;
@@ -9,12 +14,8 @@ const SCAN_CHUNK_BYTES = 64 * 1024;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function isValidSid(sid: unknown): sid is string {
-  return typeof sid === "string" && UUID_RE.test(sid);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isValidSid(sid: string): boolean {
+  return UUID_RE.test(sid);
 }
 
 /**
@@ -74,16 +75,9 @@ export async function scanTranscriptCwd(
   let offset = 0;
   let carry = Buffer.alloc(0);
   const inspect = (line: string): string | undefined => {
-    let row: unknown;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      return undefined;
-    }
-    if (!isRecord(row) || typeof row.cwd !== "string" || !path.isAbsolute(row.cwd)) {
-      return undefined;
-    }
-    return row.cwd;
+    const row = parseWith(TranscriptRowCwdLineSchema, line);
+    if (!row.ok || row.value.cwd === undefined || !path.isAbsolute(row.value.cwd)) return undefined;
+    return row.value.cwd;
   };
 
   try {
@@ -139,8 +133,8 @@ export function deriveRepoLocation(cwd: string): RepoLocation {
   }
   if (reposIndex < 0) return { root: absolute, repo: null, ws: null };
 
-  const owner = parts[reposIndex + 2]!;
-  const repoName = parts[reposIndex + 3]!;
+  const owner = parts[reposIndex + 2];
+  const repoName = parts[reposIndex + 3];
   const root = path.join(parsed.root, ...parts.slice(0, reposIndex + 4));
   const workspace = parts.slice(reposIndex + 4);
   return {
