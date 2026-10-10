@@ -110,6 +110,63 @@ export const BashToolResultSchema = toolResult(
 );
 export type BashToolResult = Output<typeof BashToolResultSchema>;
 
+/** A Read of a text file: the text read (`startLine` and the line counts
+ * beside it say which part). */
+export const ReadTextResultSchema = v.looseObject({
+  type: v.literal("text"),
+  file: v.looseObject({
+    content: v.string(),
+  }),
+});
+export type ReadTextResult = Output<typeof ReadTextResultSchema>;
+
+/** A Read of an image: the bytes as base64 (`file.type` is the media type),
+ * sized to `dimensions.display*`, what the model was shown (Claude Code
+ * scales a large image down first). Some results carry no dimensions. */
+export const ReadImageResultSchema = v.looseObject({
+  type: v.literal("image"),
+  file: v.looseObject({
+    base64: v.string(),
+    type: v.string(),
+    dimensions: v.optional(
+      v.looseObject({
+        displayWidth: v.number(),
+        displayHeight: v.number(),
+      }),
+    ),
+  }),
+});
+export type ReadImageResult = Output<typeof ReadImageResultSchema>;
+
+const KNOWN_READ_RESULTS = [ReadTextResultSchema, ReadImageResultSchema] as const;
+
+/** The `type` of every Read result read here. */
+export const KNOWN_READ_RESULT_TYPES = KNOWN_READ_RESULTS.map(
+  (option) => option.entries.type.literal,
+);
+
+/** A Read result of a kind not read here (`file_unchanged`, a PDF, ...). */
+export const OtherReadResultSchema = v.looseObject({
+  type: otherThan(KNOWN_READ_RESULT_TYPES),
+});
+
+/** What a Read call read, told apart by `type`. */
+export const ReadToolResultSchema = toolResult(
+  v.variant("type", [...KNOWN_READ_RESULTS, OtherReadResultSchema]),
+);
+export type ReadToolResult = Output<typeof ReadToolResultSchema>;
+export type KnownReadResult = Output<(typeof KNOWN_READ_RESULTS)[number]>;
+
+const KNOWN_READ_RESULT_TYPE_SET: ReadonlySet<string> = new Set<string>(KNOWN_READ_RESULT_TYPES);
+
+/** Whether a Read result is of a kind read here (and so narrows by its
+ * `type`), rather than other. */
+export function isKnownReadResult(
+  result: Exclude<ReadToolResult, string>,
+): result is KnownReadResult {
+  return KNOWN_READ_RESULT_TYPE_SET.has(result.type);
+}
+
 /** A workflow the call launched: the background task it runs as, and the run
  * whose state and journal hold its progress. */
 export const WorkflowToolResultSchema = toolResult(

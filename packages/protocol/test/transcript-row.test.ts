@@ -1,9 +1,9 @@
 // Claude Code's transcript rows as their schemas read them (DR-0038 §3): the
 // rows Claude Code writes read, a row of a known kind in a wrong shape fails,
-// a kind not known yet reads as other, and a projection reads its fields
-// whatever the rest of the row holds.
+// a kind not known yet reads as other, a projection reads its fields
+// whatever the rest of the row holds, and a Read's result reads by its kind.
 import { describe, expect, test } from "bun:test";
-import type { JsonObject } from "../src/json-value.ts";
+import type { JsonObject, JsonValue } from "../src/json-value.ts";
 import { type Parsed, parseWith } from "../src/parse.ts";
 import { isKnownAttachment } from "../src/transcript-attachment.ts";
 import {
@@ -21,6 +21,7 @@ import {
   TranscriptRowTimestampLineSchema,
   TranscriptRowUuidLineSchema,
 } from "../src/transcript-row.ts";
+import { isKnownReadResult, ReadToolResultSchema } from "../src/transcript-tool-result.ts";
 import {
   assistantContentRow,
   assistantMessage,
@@ -425,5 +426,48 @@ describe("a tool call is read by its tool, apart from its row", () => {
         describeRow(readRow(assistantContentRow([textBlock("x"), toolUseBlock(name, input)]))),
       ).toBe("assistant text,tool_use");
     }
+  });
+});
+
+describe("a Read's result is read by its kind", () => {
+  const readResult = (value: JsonValue): string => {
+    const read = parseWith(ReadToolResultSchema, value);
+    if (!read.ok) return "fails";
+    const result = read.value;
+    if (typeof result === "string") return `error ${result}`;
+    if (!isKnownReadResult(result)) return `other ${result.type}`;
+    switch (result.type) {
+      case "text":
+        return `text ${result.file.content}`;
+      case "image":
+        return `image ${result.file.type} ${result.file.dimensions?.displayWidth ?? "unsized"}`;
+    }
+  };
+
+  test("text, an image with or without its size, a kind not known here, and a failed call", () => {
+    expect(
+      readResult({ type: "text", file: { filePath: "/a", content: "x\n", startLine: 1 } }),
+    ).toBe("text x\n");
+    const dimensions = {
+      originalWidth: 1776,
+      originalHeight: 287,
+      displayWidth: 888,
+      displayHeight: 143,
+    };
+    expect(
+      readResult({ type: "image", file: { base64: "iVBOR", type: "image/png", dimensions } }),
+    ).toBe("image image/png 888");
+    expect(readResult({ type: "image", file: { base64: "iVBOR", type: "image/png" } })).toBe(
+      "image image/png unsized",
+    );
+    expect(readResult({ type: "file_unchanged", file: { filePath: "/a" } })).toBe(
+      "other file_unchanged",
+    );
+    expect(readResult("File does not exist.")).toBe("error File does not exist.");
+  });
+
+  test("a result of a known kind in a wrong shape fails", () => {
+    expect(readResult({ type: "text", file: { filePath: "/a" } })).toBe("fails");
+    expect(readResult({ type: "image", file: { type: "image/png" } })).toBe("fails");
   });
 });

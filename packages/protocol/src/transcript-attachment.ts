@@ -55,7 +55,8 @@ export const EditedTextFileAttachmentSchema = v.looseObject({
 export type EditedTextFileAttachment = Output<typeof EditedTextFileAttachmentSchema>;
 
 /** A file mentioned in a prompt, read into the turn. `content.file` holds
- * text (`content`, `startLine`) or an image, by the file. */
+ * text (`content`, `startLine`) or an image, by the file. Text with no
+ * `startLine` starts at the file's first line. */
 export const FileAttachmentSchema = v.looseObject({
   type: v.literal("file"),
   filename: v.string(),
@@ -64,7 +65,7 @@ export const FileAttachmentSchema = v.looseObject({
     type: v.string(),
     file: v.looseObject({
       content: v.optional(v.string()),
-      startLine: v.optional(v.number()),
+      startLine: v.optional(v.number(), 1),
     }),
   }),
 });
