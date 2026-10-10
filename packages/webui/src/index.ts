@@ -57,9 +57,9 @@ function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
   };
 }
 
-// Serve-time bundle of the preact/TSX client (DR-0005 §3): built on the first
-// request that needs it, compressed in the same step, then kept in memory (no
-// dist/ committed or generated on disk). Process-level (vs per-app) matters
+// Serve-time bundle of the preact/TSX client (DR-0005 §3): built and compressed
+// once, starting when the app is created (see createWebuiApp), then kept in
+// memory (no dist/ committed or generated on disk). Process-level (vs per-app) matters
 // beyond economy: test suites create many app instances, and concurrent
 // Bun.build runs over the client graph have been observed to fail flakily on
 // Linux with EBADF/"Unexpected reading file" — one shared build removes that
@@ -98,6 +98,15 @@ const STATIC_FILES: ReadonlyMap<string, StaticFile> = new Map([
 ]);
 
 export function createWebuiApp(): WebuiApp {
+  // Start reading, building and compressing every asset now, while the daemon
+  // starts up, so the first page load waits only for what is left of it
+  // (brotli alone takes ~1.7s on the bundle). A request that comes earlier
+  // awaits the same load. A failure is dropped here because it is not cached:
+  // the request that asks next loads again and gets that failure as its 500.
+  for (const load of [getShell, ...Array.from(STATIC_FILES.values(), (f) => f.load)]) {
+    load().catch(() => {});
+  }
+
   const app = new Hono();
 
   app.get("/assets/*", async (c) => {
