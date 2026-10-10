@@ -32,10 +32,12 @@
 //   apart only by whether it is an Error (`errorText`); no other value is made
 //   into text.
 //
-// This file and the schema files beside it import nothing but valibot, so a
+// This file and the schema files beside it import nothing but valibot and
+// each other, so a
 // module that cannot load imports at run time (the hooks module) can bundle
 // them.
 import * as v from "valibot";
+import type { JsonValue } from "./json-value.ts";
 
 /** `T` with every property and element read-only, all the way down: the
  * type of a value read from outside (DR-0038 §6). valibot's `v.readonly()`
@@ -43,8 +45,17 @@ import * as v from "valibot";
  * options take no pipe, so the depth is given by the type instead. A mapped
  * type over an array is a read-only array, and over a primitive the
  * primitive itself. `unknown` (a value read as any JSON) stays `unknown`: a
- * mapped type over it would be `{}`, which says the value is not null. */
-export type Immutable<T> = unknown extends T ? T : { readonly [K in keyof T]: Immutable<T[K]> };
+ * mapped type over it would be `{}`, which says the value is not null.
+ * `JsonValue` is read-only all the way down already, and stays itself: going
+ * down a recursive type would build a new type at every level, which
+ * TypeScript cannot compare. */
+export type Immutable<T> = unknown extends T
+  ? T
+  : IsJsonValue<T> extends true
+    ? T
+    : { readonly [K in keyof T]: Immutable<T[K]> };
+
+type IsJsonValue<T> = [T] extends [JsonValue] ? ([JsonValue] extends [T] ? true : false) : false;
 
 /** What a schema reads, as immutable data. */
 export type Output<S extends v.GenericSchema> = Immutable<v.InferOutput<S>>;
@@ -113,6 +124,20 @@ export function jsonText<S extends v.GenericSchema>(
   readonly [v.StringSchema<undefined>, v.ParseJsonAction<string, undefined, undefined>, S]
 > {
   return v.pipe(v.string(), v.parseJson(), schema);
+}
+
+/** The schema of a discriminator that names none of `known`: the one "other"
+ * option of a variant over kinds another program adds to (Claude Code's
+ * transcript), so a kind not known yet is read rather than failed. Only an
+ * unknown name is other: a value of a known kind whose shape is wrong fails
+ * its own option instead of reading as other. Built once per variant, as a
+ * module-level constant. */
+export function otherThan(
+  known: readonly string[],
+): v.SchemaWithPipe<
+  readonly [v.StringSchema<undefined>, v.NotValuesAction<string, readonly string[], undefined>]
+> {
+  return v.pipe(v.string(), v.notValues(known));
 }
 
 /** A value caught by `catch`, as text for a log or an answer: an Error by its
