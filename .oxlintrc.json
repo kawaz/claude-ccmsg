@@ -95,7 +95,11 @@
         "packages/webui/src/client/components/TimelinePanes.tsx",
         "packages/webui/src/client/components/FilesPanes.tsx",
         "packages/webui/src/client/components/UsageView.tsx",
-        "packages/webui/src/client/components/SessionInputComposer.tsx"
+        "packages/webui/src/client/components/SessionInputComposer.tsx",
+        "packages/webui/src/index.ts",
+        "packages/webui/src/encoded-asset.ts",
+        "packages/webui/test/app.test.ts",
+        "packages/webui/test/encoded-asset.test.ts"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

@@ -3,33 +3,22 @@
 // touches the socket/WS layer itself, only serves the HTML shell + the
 // preact/TSX client (bundled at serve time) that talks to `/ws`.
 import { Hono } from "hono";
+import { encodeAsset, encodedResponse, type EncodedAsset } from "./encoded-asset.ts";
 
-// Static assets (HTML shell, CSS) are read straight off disk (no bundler for
-// these, DR-0004 §4) so `bun run` works unmodified whether this package is
+// Static assets (HTML shell, CSS) are read straight off disk, once per process
+// (no bundler for these, DR-0004 §4) so `bun run` works unmodified whether this package is
 // loaded from source or from a plugin install. Resolve relative to this
 // module, not process.cwd().
 const PUBLIC_DIR = new URL("./public/", import.meta.url);
 const CLIENT_ENTRY = new URL("./client/main.tsx", import.meta.url);
 const CLIENT_TSCONFIG = new URL("../tsconfig.json", import.meta.url);
 
-interface Asset {
-  file: string;
-  contentType: string;
-}
-
-const ASSETS: Record<string, Asset> = {
-  "/": { file: "index.html", contentType: "text/html; charset=utf-8" },
-  "/index.html": { file: "index.html", contentType: "text/html; charset=utf-8" },
-  "/app.css": { file: "app.css", contentType: "text/css; charset=utf-8" },
-};
-
 export interface WebuiApp {
   fetch(req: Request): Response | Promise<Response>;
 }
 
 interface ClientBundle {
-  code: string;
-  hash: string;
+  asset: EncodedAsset;
   path: string;
 }
 
@@ -51,27 +40,62 @@ async function bundleClient(): Promise<ClientBundle> {
   if (!output) throw new Error("Bun.build produced no output for the webui client entry");
   const code = await output.text();
   const hash = new Bun.CryptoHasher("sha256").update(code).digest("hex").slice(0, 16);
-  return { code, hash, path: `/assets/app.${hash}.js` };
+  return { asset: await encodeAsset(code), path: `/assets/app.${hash}.js` };
 }
 
-// Serve-time bundle of the preact/TSX client (DR-0005 §3): built once per
-// PROCESS (module-level memo, not per createWebuiApp instance) on the first
-// `/assets/app.js` request, then kept in memory for the process lifetime (no
+/** One load per PROCESS (a module-level memo, not per createWebuiApp instance),
+ * kept for the process lifetime. A failed load is not cached: the failure
+ * reaches the request that asked, and the next request loads again. */
+function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | null = null;
+  return () => {
+    pending ??= load().catch((err: unknown) => {
+      pending = null;
+      throw err;
+    });
+    return pending;
+  };
+}
+
+// Serve-time bundle of the preact/TSX client (DR-0005 §3): built on the first
+// request that needs it, compressed in the same step, then kept in memory (no
 // dist/ committed or generated on disk). Process-level (vs per-app) matters
 // beyond economy: test suites create many app instances, and concurrent
 // Bun.build runs over the client graph have been observed to fail flakily on
 // Linux with EBADF/"Unexpected reading file" — one shared build removes that
-// surface. A build failure is surfaced as a 500 with the
-// error text — never a silent fallback to stale or missing content — and is
-// not cached, so the next request retries the build.
-let bundlePromise: Promise<ClientBundle> | null = null;
-function getBundle(): Promise<ClientBundle> {
-  bundlePromise ??= bundleClient().catch((err: unknown) => {
-    bundlePromise = null;
-    throw err;
-  });
-  return bundlePromise;
+// surface. A build failure is surfaced as a 500 with the error text — never a
+// silent fallback to stale or missing content.
+const getBundle = loadOnce(bundleClient);
+
+// The shell is index.html with the bundle's hashed path filled in, so it is
+// complete (and compressed) once the bundle is.
+const getShell = loadOnce(async () => {
+  const [template, bundle] = await Promise.all([
+    Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
+    getBundle(),
+  ]);
+  return encodeAsset(template.replace("/assets/app.js", bundle.path));
+});
+
+interface StaticFile {
+  contentType: string;
+  /** null when the file is not there to serve. */
+  load: () => Promise<EncodedAsset | null>;
 }
+
+function staticFile(file: string, contentType: string): StaticFile {
+  return {
+    contentType,
+    load: loadOnce(async () => {
+      const source = Bun.file(new URL(file, PUBLIC_DIR));
+      return (await source.exists()) ? encodeAsset(await source.text()) : null;
+    }),
+  };
+}
+
+const STATIC_FILES: ReadonlyMap<string, StaticFile> = new Map([
+  ["/app.css", staticFile("app.css", "text/css; charset=utf-8")],
+]);
 
 export function createWebuiApp(): WebuiApp {
   const app = new Hono();
@@ -80,12 +104,15 @@ export function createWebuiApp(): WebuiApp {
     try {
       const bundle = await getBundle();
       if (c.req.path !== bundle.path) return c.notFound();
-      return new Response(bundle.code, {
-        headers: {
+      return encodedResponse(
+        bundle.asset,
+        c.req.raw,
+        {
           "content-type": "text/javascript; charset=utf-8",
           "cache-control": "public, max-age=31536000, immutable",
         },
-      });
+        { etag: false },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.text(`webui client build failed:\n\n${message}`, 500);
@@ -104,20 +131,21 @@ export function createWebuiApp(): WebuiApp {
   // シェルを返せば少なくともアプリが立ち上がり、サイドバーから復帰できる。
   // 未知パスをどう扱うか (SPA 側でのエラー表示) は URL 再設計側の担当。
   app.get("*", async (c) => {
-    const asset = ASSETS[c.req.path];
-    if (asset && asset.file !== "index.html") {
-      const file = Bun.file(new URL(asset.file, PUBLIC_DIR));
-      if (!(await file.exists())) return c.notFound();
-      return new Response(file, { headers: { "content-type": asset.contentType } });
+    const staticEntry = STATIC_FILES.get(c.req.path);
+    if (staticEntry) {
+      const asset = await staticEntry.load();
+      if (asset === null) return c.notFound();
+      return encodedResponse(
+        asset,
+        c.req.raw,
+        { "content-type": staticEntry.contentType },
+        { etag: false },
+      );
     }
 
-    let template: string;
-    let bundle: ClientBundle;
+    let shell: EncodedAsset;
     try {
-      [template, bundle] = await Promise.all([
-        Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
-        getBundle(),
-      ]);
+      shell = await getShell();
     } catch (err) {
       // Same surfacing as /assets/*: a build failure must reach the person
       // looking at the browser as its own text, not as Hono's bare
@@ -127,15 +155,12 @@ export function createWebuiApp(): WebuiApp {
       const message = err instanceof Error ? err.message : String(err);
       return c.text(`webui failed to serve the app shell:\n\n${message}`, 500);
     }
-    const shell = template.replace("/assets/app.js", bundle.path);
-    const etag = `"${new Bun.CryptoHasher("sha256").update(shell).digest("hex")}"`;
-    const headers = {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-cache",
-      etag,
-    };
-    if (c.req.header("if-none-match") === etag) return new Response(null, { status: 304, headers });
-    return new Response(shell, { headers });
+    return encodedResponse(
+      shell,
+      c.req.raw,
+      { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+      { etag: true },
+    );
   });
 
   return app;

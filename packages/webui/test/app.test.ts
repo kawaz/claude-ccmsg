@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createWebuiApp } from "../src/index.ts";
 import { isUnknownAppPath } from "../src/client/utils.ts";
 
@@ -20,9 +21,9 @@ describe("createWebuiApp", () => {
     const res = await app.fetch(new Request("http://localhost/"));
     expect(res.headers.get("cache-control")).toBe("no-cache");
     const etag = res.headers.get("etag");
-    expect(etag).not.toBeNull();
+    if (etag === null) throw new Error("the shell has no etag");
     const revalidated = await app.fetch(
-      new Request("http://localhost/s/s1/status", { headers: { "if-none-match": etag! } }),
+      new Request("http://localhost/s/s1/status", { headers: { "if-none-match": etag } }),
     );
     expect(revalidated.status).toBe(304);
   });
@@ -55,6 +56,74 @@ describe("createWebuiApp", () => {
       expect(res.status).toBe(200);
       expect(res.headers.get("content-type")).toContain("text/html");
     }
+  });
+});
+
+async function fetchBytes(
+  app: ReturnType<typeof createWebuiApp>,
+  path: string,
+  acceptEncoding: string | null,
+): Promise<{ res: Response; bytes: Uint8Array }> {
+  const headers = new Headers();
+  if (acceptEncoding !== null) headers.set("accept-encoding", acceptEncoding);
+  const res = await app.fetch(new Request(`http://localhost${path}`, { headers }));
+  return { res, bytes: new Uint8Array(await res.arrayBuffer()) };
+}
+
+describe("compressed assets", () => {
+  const decode = (coding: "br" | "gzip", bytes: Uint8Array): Uint8Array =>
+    new Uint8Array(coding === "br" ? brotliDecompressSync(bytes) : gunzipSync(bytes));
+
+  test("bundle, stylesheet and shell come in the coding Accept-Encoding asks for and decode to the uncompressed body", async () => {
+    const { app, path } = await shellAndBundlePath();
+    for (const assetPath of [path, "/app.css", "/"]) {
+      const plain = await fetchBytes(app, assetPath, null);
+      expect(plain.res.headers.get("content-encoding")).toBeNull();
+      expect(plain.res.headers.get("vary")).toBe("accept-encoding");
+      expect(plain.res.headers.get("content-length")).toBe(String(plain.bytes.byteLength));
+      for (const coding of ["br", "gzip"] as const) {
+        const encoded = await fetchBytes(app, assetPath, coding);
+        expect(encoded.res.headers.get("content-encoding")).toBe(coding);
+        expect(encoded.res.headers.get("vary")).toBe("accept-encoding");
+        expect(encoded.res.headers.get("content-length")).toBe(String(encoded.bytes.byteLength));
+        expect(encoded.bytes.byteLength).toBeLessThan(plain.bytes.byteLength);
+        expect(decode(coding, encoded.bytes)).toEqual(plain.bytes);
+      }
+    }
+  });
+
+  test("the hashed bundle stays immutable in every coding", async () => {
+    const { app, path } = await shellAndBundlePath();
+    for (const acceptEncoding of [null, "gzip", "gzip, deflate, br"]) {
+      const { res } = await fetchBytes(app, path, acceptEncoding);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    }
+  });
+
+  test("the shell's etag names its coding, and only the same coding's etag revalidates", async () => {
+    const app = createWebuiApp();
+    const etags = new Map<string, string>();
+    for (const coding of ["identity", "br", "gzip"]) {
+      const { res } = await fetchBytes(app, "/", coding);
+      const etag = res.headers.get("etag");
+      if (etag === null) throw new Error(`the ${coding} shell has no etag`);
+      etags.set(coding, etag);
+    }
+    expect(new Set(etags.values()).size).toBe(3);
+    const brEtag = etags.get("br") ?? "";
+    const sameCoding = await app.fetch(
+      new Request("http://localhost/", {
+        headers: { "accept-encoding": "br", "if-none-match": brEtag },
+      }),
+    );
+    expect(sameCoding.status).toBe(304);
+    const otherCoding = await app.fetch(
+      new Request("http://localhost/", {
+        headers: { "accept-encoding": "gzip", "if-none-match": brEtag },
+      }),
+    );
+    expect(otherCoding.status).toBe(200);
+    expect(otherCoding.headers.get("content-encoding")).toBe("gzip");
   });
 });
 
