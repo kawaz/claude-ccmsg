@@ -84,7 +84,8 @@
         "packages/webui/src/client/utils.ts",
         "packages/webui/src/client/navigation.ts",
         "packages/webui/src/client/files-view-store.ts",
-        "packages/webui/src/client/components/session-input-store.ts"
+        "packages/webui/src/client/components/session-input-store.ts",
+        "packages/daemon/test/http-transport.test.ts"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

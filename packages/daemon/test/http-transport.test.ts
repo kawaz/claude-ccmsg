@@ -5,22 +5,42 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import {
+  connect,
+  isKind,
+  readStreamItem,
+  servedReply,
+  startTestDaemon,
+  stopTestDaemon,
+  type DaemonCtx,
+  type ItemOf,
+  type StreamItem,
+  type StreamKind,
+} from "./helpers.ts";
 import { fakeHarness, parseEnvelope, sessionWithConfig } from "./peer-harness.ts";
 import { tryAcquireLock } from "../src/flock.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import {
+  PROTOCOL_VERSION,
+  readDaemonFrame,
+  type ReplyOf,
+  type RequestInput,
+  type ResponseOf,
+} from "@ccmsg/protocol";
 
 const T = 15000;
 const S = "50000000-0000-4000-8000-000000000001";
 
-/** Minimal WS counterpart of helpers.ts's TestClient: same request/readEvent shape,
- *  backed by a browser-standard WebSocket instead of a UDS Bun.connect socket. */
+/** Minimal WS counterpart of helpers.ts's TestClient: the same typed
+ * request/readEvent surface, every line read with the wire's schemas the same
+ * way, backed by a browser-standard WebSocket instead of a UDS Bun.connect
+ * socket. */
 class WsTestClient {
   private ws: WebSocket;
   private lines: string[] = [];
   private waiters: Array<(l: string | null) => void> = [];
   private ended = false;
   private opened: Promise<void>;
+  private nextRequestId = 0;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
@@ -39,7 +59,7 @@ class WsTestClient {
     });
     this.ws.addEventListener("close", () => {
       this.ended = true;
-      while (this.waiters.length) this.waiters.shift()!(null);
+      for (const waiter of this.waiters.splice(0)) waiter(null);
     });
   }
   async ready(): Promise<this> {
@@ -47,18 +67,17 @@ class WsTestClient {
     return this;
   }
   readLine(): Promise<string | null> {
-    if (this.lines.length) return Promise.resolve(this.lines.shift()!);
+    const buffered = this.lines.shift();
+    if (buffered !== undefined) return Promise.resolve(buffered);
     if (this.ended) return Promise.resolve(null);
     return new Promise((res) => this.waiters.push(res));
   }
-  write(obj: unknown): void {
-    this.ws.send(`${JSON.stringify(obj)}\n`);
-  }
-  /** Same correlation the real clients do: stamp a request_id and take the
-   * reply that carries it back, leaving anything else for readEvent. */
-  async request<T = any>(obj: unknown): Promise<T> {
+  /** Send `body` under a request_id of its own and return the reply line
+   * that names it, leaving anything else for readEvent (the same correlation
+   * the real clients do). */
+  private async replyLine(body: RequestInput): Promise<string> {
     const rid = `w${++this.nextRequestId}`;
-    this.write({ ...(obj as Record<string, unknown>), request_id: rid });
+    this.ws.send(`${JSON.stringify({ ...body, request_id: rid })}\n`);
     const deferred: string[] = [];
     for (;;) {
       const line = await this.readLine();
@@ -66,32 +85,62 @@ class WsTestClient {
         this.lines.unshift(...deferred);
         throw new Error("connection closed before response");
       }
-      const parsed = JSON.parse(line);
-      if (parsed?.request_id === rid) {
+      const frame = readDaemonFrame(line);
+      if (frame.kind === "reply" && frame.requestId === rid) {
         this.lines.unshift(...deferred);
-        return parsed as T;
+        return line;
       }
       deferred.push(line);
     }
   }
-  private nextRequestId = 0;
-  async readEvent<T = any>(): Promise<T | null> {
-    const line = await this.readLine();
-    return line === null ? null : (JSON.parse(line) as T);
+  /** Send an op and return its reply, read as the answer to the op: its
+   * success reply or an error, without its correlation envelope. */
+  async request<B extends RequestInput>(body: B): Promise<ReplyOf<B["op"]>> {
+    const frame = readDaemonFrame(await this.replyLine(body));
+    if (frame.kind !== "reply") throw new Error(`the reply to ${body.op} is not a reply`);
+    const read = frame.reply<B["op"]>(body.op);
+    if (!read.ok) {
+      throw new Error(`the reply to ${body.op} is not its answer: ${read.failure.summary}`);
+    }
+    return read.value;
   }
-  async readEventUntil<T = any>(pred: (ev: any) => boolean): Promise<{ ev: T; seen: any[] }> {
-    const seen: any[] = [];
+  /** `request`, for a request the test expects served. */
+  async requestOk<B extends RequestInput>(body: B): Promise<ResponseOf<B["op"]>> {
+    return servedReply<B["op"]>(body.op, await this.replyLine(body));
+  }
+  /** The next stream item, or null once the connection has closed. Given a
+   * kind, the next item has to be of it. A line outside the wire's schemas
+   * fails the test. */
+  async readEvent(): Promise<StreamItem | null>;
+  async readEvent<K extends StreamKind>(kind: K): Promise<ItemOf<K>>;
+  async readEvent<K extends StreamKind>(kind?: K): Promise<StreamItem | null> {
+    const line = await this.readLine();
+    const next = line === null ? null : streamItemOf(line);
+    if (kind === undefined) return next;
+    if (next === null) throw new Error(`connection closed before a ${kind}`);
+    if (!isKind(kind)(next)) throw new Error(`expected a ${kind}, got ${JSON.stringify(next)}`);
+    return next;
+  }
+  /** Read events until one of `kind` that `pred` accepts arrives, with every
+   * item seen on the way. */
+  async readEventUntil<K extends StreamKind>(
+    kind: K,
+    pred: (ev: ItemOf<K>) => boolean = () => true,
+  ): Promise<{ ev: ItemOf<K>; seen: StreamItem[] }> {
+    const seen: StreamItem[] = [];
     for (;;) {
       const ev = await this.readEvent();
       if (ev === null) throw new Error(`connection closed; seen ${JSON.stringify(seen)}`);
       seen.push(ev);
-      if (pred(ev)) return { ev: ev as T, seen };
+      if (isKind(kind)(ev) && pred(ev)) return { ev, seen };
     }
   }
-  async hello(identity: { role: "user" } | { role: "session"; sid: string }): Promise<any> {
+  async hello(
+    identity: { role: "user" } | { role: "session"; sid: string },
+  ): Promise<ResponseOf<"hello">> {
     if (identity.role === "user")
-      return this.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-    return this.request({
+      return this.requestOk({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+    return this.requestOk({
       op: "hello",
       protocol: PROTOCOL_VERSION,
       role: "session",
@@ -110,6 +159,15 @@ class WsTestClient {
   }
 }
 
+/** A line the daemon sent over WS, read as a stream item the way TestClient
+ * reads one: an event, or an error no request claimed. */
+function streamItemOf(line: string): StreamItem {
+  const read = readStreamItem(line, readDaemonFrame(line), undefined);
+  if (!read.ok)
+    throw new Error(`the daemon wrote a line outside the wire's schemas: ${read.problem}`);
+  return read.item;
+}
+
 async function startHttpDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
   return startTestDaemon({ CCMSG_HTTP_BIND: "127.0.0.1:0", ...extraEnv });
 }
@@ -121,7 +179,9 @@ async function httpAddress(ctx: DaemonCtx): Promise<string> {
   const pong = await c.requestOk({ op: "ping" });
   c.close();
   expect(pong.http.length).toBe(1);
-  return pong.http[0]!;
+  const [address] = pong.http;
+  if (address === undefined) throw new Error("the daemon listens on no HTTP address");
+  return address;
 }
 
 async function connectWs(ctx: DaemonCtx): Promise<WsTestClient> {
@@ -200,14 +260,14 @@ describe("HTTP/WS transport (DR-0004)", () => {
         const helloRes = await ws.hello({ role: "user" });
         expect(helloRes.ok).toBe(true);
 
-        const rooms = await ws.request<{ ok: true; rooms: { id: string }[] }>({ op: "rooms" });
+        const rooms = await ws.requestOk({ op: "rooms" });
         expect(rooms.rooms.some((r) => r.id === created.room)).toBe(true);
 
         // `backlog: true` mirrors the real webui client (packages/webui/src/client/ws.ts),
         // which always opts into the join snapshot — the daemon's bare default
         // (issue 2026-07-17-subscribe-no-backlog-default) sends only a `room_cursors`
         // summary for a room with no since/since_seq cursor.
-        const sub = await ws.request<{ ok: true; subscribed: true }>({
+        const sub = await ws.requestOk({
           op: "subscribe",
           backlog: true,
         });
@@ -215,10 +275,9 @@ describe("HTTP/WS transport (DR-0004)", () => {
         // the ack is followed by the room's join-snapshot backlog (here: the one member
         // event from create_room) before any request/response can resume on this
         // connection — drain it first, same as UDS subscribers must.
-        const backlog = await ws.readEvent<{ type: string }>();
-        expect(backlog?.type).toBe("member");
+        await ws.readEvent("member");
 
-        const posted = await ws.request<{ ok: true; mid: number }>({
+        const posted = await ws.requestOk({
           op: "post",
           room: created.room,
           msg: "hello from ws",
@@ -254,19 +313,19 @@ describe("HTTP/WS transport (DR-0004)", () => {
         });
         expect(helloRes.ok).toBe(true);
 
-        const posted = await ws.request<{ ok: true; mid: number }>({
+        const posted = await ws.requestOk({
           op: "post",
           room: created.room,
           msg: "am I pinned?",
         });
         expect(posted.ok).toBe(true);
 
-        const read = await ws.request<{ ok: true; msgs: { from: string }[] }>({
+        const read = await ws.requestOk({
           op: "read",
           room: created.room,
           mids: [posted.mid],
         });
-        expect(read.msgs[0]!.from).toBe("u1"); // ADMIN_ID, not a session member id
+        expect(read.msgs[0]?.from).toBe("u1"); // ADMIN_ID, not a session member id
 
         ws.close();
         owner.close();
@@ -296,13 +355,11 @@ describe("HTTP/WS transport (DR-0004)", () => {
 
         // UDS session posts -> WS user (id "u1", sees every room per DR-0003 §5) receives it live
         await udsSession.request({ op: "post", room, msg: "from uds" });
-        const { ev: fromUds } = await wsUser.readEventUntil(
-          (e) => e.type === "msg" && e.msg === "from uds",
-        );
+        const { ev: fromUds } = await wsUser.readEventUntil("msg", (e) => e.msg === "from uds");
         expect(fromUds.r).toBe(room);
 
         // WS user posts -> the UDS session receives it through its peer socket
-        const posted = await wsUser.request<{ mid: number }>({ op: "post", room, msg: "from ws" });
+        const posted = await wsUser.requestOk({ op: "post", room, msg: "from ws" });
         const { attrs, body } = parseEnvelope(await harness.nextContent());
         expect(attrs["ccmsg-mid"]).toBe(`${room}m${posted.mid}`);
         expect(attrs["ccmsg-from"]).toBe("user"); // the WS poster, pinned to user
@@ -574,7 +631,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
         await uds.request({ op: "shutdown" }); // triggers gracefulShutdown() in the daemon process
         uds.close();
 
-        const { ev } = await ws.readEventUntil((e) => e.ev === "restarting");
+        const { ev } = await ws.readEventUntil("restarting");
         expect(ev.ev).toBe("restarting");
         ws.close();
       } finally {
