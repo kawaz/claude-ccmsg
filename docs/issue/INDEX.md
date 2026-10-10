@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-10 | perf | open | [webui-bundle-size-shiki-grammars](./2026-10-10-webui-bundle-size-shiki-grammars.md) | webui の JS bundle は minify 後 1.48 MB (br 251 KB)。内訳の上位は @shikijs/langs の 15 言語文法 715 KB (48%)…… |
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [json-value-schema-deep-recursion-throws](./2026-10-10-json-value-schema-deep-recursion-throws.md) | JsonValueSchema の再帰が 20,000 階層で RangeError を parseWith の外へ throw し、DR-0038 §1・§3 に反する。優先度低 |
 | 2026-10-10 | bug | open | [verify-isolated-daemon-receives-live-sessions](./2026-10-10-verify-isolated-daemon-receives-live-sessions.md) | verify の隔離 daemon に実行中の実セッションが繋がる。socket パス解決が state dir 外にある可能性、原因特定と隔離の完成 |
