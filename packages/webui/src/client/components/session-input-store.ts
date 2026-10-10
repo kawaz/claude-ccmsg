@@ -35,7 +35,7 @@ export const DRAFT_STORAGE_PREFIX = "ccmsg.sessionInput.draft.";
  * 形が読めなくても本文は残すため (DR-0035 §5: 人が書いた文を失わせない)。 */
 export const DRAFT_ATTACHMENTS_STORAGE_PREFIX = "ccmsg.sessionInput.draftAttachments.";
 /** 本文と添付を 1 つの値で持っていた頃の下書き。読めれば今のキーへ分けて移し、
- * 読めなければ捨てる (`migrateLegacyDraft`、1 回限りの移行)。 */
+ * 読めなければ捨てる (`loadDraft`、1 回限りの移行)。 */
 export const LEGACY_DRAFT_STORAGE_PREFIX = "ccmsg.1on1.";
 /** 送信の記録 (sid ごとに SendRecord の配列)。 */
 export const SENDS_STORAGE_PREFIX = "ccmsg.sessionInput.sends.";
@@ -73,15 +73,28 @@ export type StoredAttachment = Output<typeof StoredAttachmentSchema>;
 
 /** The text of a draft as `saveDraft` stores it. `updatedAt` (ISO-8601, the
  * last edit) is the cleanup sweep's fallback when peers.last_activity_at isn't
- * available. */
+ * available. `rev` names the write, and the attachments saved with it carry
+ * the same; a text with no `rev` has no attachments. */
 const DraftTextSchema = v.object({
   text: v.string(),
   updatedAt: v.string(),
+  rev: v.optional(v.string()),
 });
 const DraftTextTextSchema = jsonText(DraftTextSchema);
 
-/** The attachments of a draft as `saveDraft` stores them. */
-const DraftAttachmentsTextSchema = jsonText(v.array(StoredAttachmentSchema));
+/** The attachments of a draft as `saveDraft` stores them, with the `rev` of
+ * the text they were saved with: they belong to the stored text only while
+ * the two match, so attachments left over by a failed write are never joined
+ * to a newer text.
+ *
+ * Design rationale: a write is named by `rev`, not by `updatedAt`, because
+ * two saves can fall in the same millisecond and a time would then name both. */
+const DraftAttachmentsTextSchema = jsonText(
+  v.object({
+    rev: v.string(),
+    attachments: v.array(StoredAttachmentSchema),
+  }),
+);
 
 /** A draft as it is read back: its text, and its attachments when they read. */
 export type StoredDraft = Output<typeof DraftTextSchema> & {
@@ -155,28 +168,11 @@ export function sameContent(a: InputContent | null, b: InputContent | null): boo
   );
 }
 
-/** Moves a draft stored before the split (`ccmsg.1on1.<sid>`) to the text
- * and attachments keys, once: a value that reads is split and stored again,
- * one that does not is dropped. A draft already under the new keys wins. */
-function migrateLegacyDraft(sid: string): void {
-  const raw = readStorage(legacyDraftKey(sid));
-  if (raw === null) return;
-  removeStorage(legacyDraftKey(sid));
-  if (readStorage(draftKey(sid)) !== null) return;
-  const read = parseWith(LegacyDraftTextSchema, raw);
-  if (!read.ok) return;
-  const { text, updatedAt, attachments } = read.value;
-  writeStorage(draftKey(sid), JSON.stringify({ text, updatedAt }));
-  if (attachments !== undefined && attachments.length > 0) {
-    writeStorage(draftAttachmentsKey(sid), JSON.stringify(attachments));
-  }
-}
-
-/** The stored draft of a session, or null when there is none or its text
- * does not read. Attachments that do not read are left out and the text
- * kept. */
-export function loadDraft(sid: string): StoredDraft | null {
-  migrateLegacyDraft(sid);
+/** The draft under the text and attachments keys, or null when there is
+ * none or its text does not read. Attachments are taken only when they read
+ * and were saved with this text (the same `updatedAt`); otherwise the text
+ * stands alone. */
+function readDraft(sid: string): StoredDraft | null {
   const raw = readStorage(draftKey(sid));
   if (raw === null) return null;
   const read = parseWith(DraftTextTextSchema, raw);
@@ -184,9 +180,73 @@ export function loadDraft(sid: string): StoredDraft | null {
   const rawAttachments = readStorage(draftAttachmentsKey(sid));
   const attachments =
     rawAttachments === null ? null : parseWith(DraftAttachmentsTextSchema, rawAttachments);
-  return attachments?.ok && attachments.value.length > 0
-    ? { ...read.value, attachments: attachments.value }
+  return attachments?.ok &&
+    attachments.value.rev === read.value.rev &&
+    attachments.value.attachments.length > 0
+    ? { ...read.value, attachments: attachments.value.attachments }
     : read.value;
+}
+
+/** Stores a draft under a new `rev`: the attachments first, then the text,
+ * both with the `rev`. A write that fails (quota, private mode) leaves the two
+ * out of step, and `readDraft` then keeps the text without them. */
+function writeDraft(sid: string, draft: StoredDraft): void {
+  const rev = newDraftRev();
+  const attachments = draft.attachments ?? [];
+  if (attachments.length > 0) {
+    writeStorage(draftAttachmentsKey(sid), JSON.stringify({ rev, attachments }));
+  } else {
+    removeStorage(draftAttachmentsKey(sid));
+  }
+  writeStorage(
+    draftKey(sid),
+    JSON.stringify({ text: draft.text, updatedAt: draft.updatedAt, rev }),
+  );
+}
+
+let draftRevCounter = 0;
+function newDraftRev(): string {
+  draftRevCounter += 1;
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Math.random()}`.slice(2);
+  return `${draftRevCounter}-${random}`;
+}
+
+function sameDraft(a: StoredDraft | null, b: StoredDraft): boolean {
+  return a !== null && a.updatedAt === b.updatedAt && sameContent(a, b);
+}
+
+/** The stored draft of a session, or null when there is none or its text
+ * does not read. Attachments that do not read are left out and the text
+ * kept.
+ *
+ * A draft stored before the split (`ccmsg.1on1.<sid>`, text and attachments
+ * in one value) is moved to the text and attachments keys, once. A draft
+ * already under those keys wins only when it reads. The old value is removed
+ * only after the draft it holds reads back from the new keys; a move that
+ * does not (a write failed) is undone and tried again next time, and the old
+ * draft is what this returns meanwhile. An old value that does not read is
+ * dropped. */
+export function loadDraft(sid: string): StoredDraft | null {
+  const current = readDraft(sid);
+  const legacyRaw = readStorage(legacyDraftKey(sid));
+  if (legacyRaw === null) return current;
+  if (current !== null) {
+    removeStorage(legacyDraftKey(sid));
+    return current;
+  }
+  const legacy = parseWith(LegacyDraftTextSchema, legacyRaw);
+  if (!legacy.ok) {
+    removeStorage(legacyDraftKey(sid));
+    return null;
+  }
+  writeDraft(sid, legacy.value);
+  if (sameDraft(readDraft(sid), legacy.value)) {
+    removeStorage(legacyDraftKey(sid));
+  } else {
+    removeStorage(draftKey(sid));
+    removeStorage(draftAttachmentsKey(sid));
+  }
+  return legacy.value;
 }
 
 /** 下書きを保存する。空の本文は保存せず消す。保存済みと同じ中身なら書かない:
@@ -203,9 +263,7 @@ export function saveDraft(
   const stored = storedAttachments(attachments);
   if (sameContent(loadDraft(sid), { text, attachments: stored })) return;
   // storage unavailable (private mode / quota) 時は drop silently。
-  writeStorage(draftKey(sid), JSON.stringify({ text, updatedAt: new Date().toISOString() }));
-  if (stored.length > 0) writeStorage(draftAttachmentsKey(sid), JSON.stringify(stored));
-  else removeStorage(draftAttachmentsKey(sid));
+  writeDraft(sid, { text, updatedAt: new Date().toISOString(), attachments: stored });
 }
 
 export function clearDraft(sid: string): void {
@@ -243,7 +301,7 @@ function saveSends(sid: string, records: readonly SendRecord[]): void {
  * (no reference to compare against) and re-runs on the next visit. */
 export function cleanupStaleSessionInputs(state: AppState, now: number = Date.now()): void {
   for (const key of listStorageKeys(LEGACY_DRAFT_STORAGE_PREFIX)) {
-    migrateLegacyDraft(key.slice(LEGACY_DRAFT_STORAGE_PREFIX.length));
+    loadDraft(key.slice(LEGACY_DRAFT_STORAGE_PREFIX.length));
   }
   // 添付を本文より先に見る: 本文を先に消すと添付の updatedAt が引けなくなる。
   sweepStaleBySid(

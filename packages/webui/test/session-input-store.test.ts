@@ -36,6 +36,8 @@ import { initialState, type AppState } from "../src/client/store.ts";
 // before each test. Deliberately minimal: only the methods the helpers call.
 class MemStorage {
   private data = new Map<string, string>();
+  /** Keys whose writes fail, as a full storage's do (quota). */
+  failingWrites = new Set<string>();
   get length(): number {
     return this.data.size;
   }
@@ -46,6 +48,7 @@ class MemStorage {
     return this.data.get(k) ?? null;
   }
   setItem(k: string, v: string): void {
+    if (this.failingWrites.has(k)) throw new Error("QuotaExceededError");
     this.data.set(k, v);
   }
   removeItem(k: string): void {
@@ -56,8 +59,11 @@ class MemStorage {
   }
 }
 
+let storage = new MemStorage();
+
 beforeEach(() => {
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+  storage = new MemStorage();
+  (globalThis as unknown as { localStorage: MemStorage }).localStorage = storage;
   resetSessionInputPageState();
 });
 
@@ -255,6 +261,20 @@ describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
     expect(loadDraft("sid-up")?.attachments).toBeUndefined();
   });
 
+  // 何を保証するか: 添付の書き込みだけが失敗 (quota) しても、前の添付が新しい
+  // 本文に結び付かない (送信時に古いファイルで [FILE<N>] が置き換わらない)。
+  // 添付は保存した本文と同じ updatedAt を持つ時だけ採る。
+  test("attachments a failed write left behind are not joined to a newer text", () => {
+    const a = { n: 1, name: "a.png", status: "done", progress: 100, path: "/tmp/a.png" } as const;
+    const b = { n: 1, name: "b.png", status: "done", progress: 100, path: "/tmp/b.png" } as const;
+    saveDraft("sid-q", "first [FILE1]", [a]);
+    storage.failingWrites.add(`${DRAFT_ATTACHMENTS_STORAGE_PREFIX}sid-q`);
+    saveDraft("sid-q", "second [FILE1]", [b]);
+    const got = loadDraft("sid-q");
+    expect(got?.text).toBe("second [FILE1]");
+    expect(got?.attachments).toBeUndefined();
+  });
+
   // 何を保証するか (DR-0035 §5): 添付は本文と別のキーにあるので、添付の形が
   // 読めなくても人が書いた本文は残る (添付だけ無いものとして扱う)。
   test("attachments that do not read leave the text of the draft", () => {
@@ -304,6 +324,34 @@ describe("drafts stored before the split", () => {
     );
     expect(loadDraft("sid-broken")).toBeNull();
     expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-broken`)).toBeNull();
+  });
+
+  // 新キーに読めない値があっても、それは下書きではない: 読める旧本文を捨てずに
+  // 移す (新キーが優先されるのはスキーマで読めた時だけ)。
+  test("a new key that does not read does not win over a stored draft that reads", () => {
+    localStorage.setItem(`${DRAFT_STORAGE_PREFIX}sid-mixed`, "{not json");
+    localStorage.setItem(
+      `${LEGACY_DRAFT_STORAGE_PREFIX}sid-mixed`,
+      JSON.stringify({ text: "old text", updatedAt: "2026-10-01T00:00:00.000Z" }),
+    );
+    expect(loadDraft("sid-mixed")?.text).toBe("old text");
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-mixed`)).toBeNull();
+    expect(loadDraft("sid-mixed")?.text).toBe("old text");
+  });
+
+  // 新キーへ書けなかった (quota) 移行は旧キーを消さない: 旧本文は残り、読めば
+  // それが返り、次に読む時にもう一度移す。
+  test("a move whose write fails keeps the stored draft", () => {
+    localStorage.setItem(
+      `${LEGACY_DRAFT_STORAGE_PREFIX}sid-full`,
+      JSON.stringify({ text: "old text", updatedAt: "2026-10-01T00:00:00.000Z" }),
+    );
+    storage.failingWrites.add(`${DRAFT_STORAGE_PREFIX}sid-full`);
+    expect(loadDraft("sid-full")?.text).toBe("old text");
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-full`)).not.toBeNull();
+    storage.failingWrites.clear();
+    expect(loadDraft("sid-full")?.text).toBe("old text");
+    expect(localStorage.getItem(`${LEGACY_DRAFT_STORAGE_PREFIX}sid-full`)).toBeNull();
   });
 
   test("the mount-time sweep moves every stored draft, opened or not", () => {
