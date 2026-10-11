@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-10-10T21:05:22+09:00
 discard_reason:
 pending_reason:
-close_reason: ["implemented","done:daemon が webui の資産を Accept-Encoding に応じて br / gzip で返す (commit tqvyrktn)。bundle は br で 1,483,352 → 251,007 byte","pending:iPhone 実機で完走するかは未確認。足りなければ bundle の削減 (約半分が shiki の言語文法) を別 issue に"]
+close_reason: ["implemented","done:daemon が webui の資産を Accept-Encoding に応じて br / gzip で返す (commit tqvyrktn)。bundle は br で 1,483,352 → 251,007 byte","done:真っ黒の原因は iPhone 側の回線速度 (1〜10 KB/s) で、10-11 に回線が戻った iPhone は無圧縮の 1,473,461 byte を 0.277 秒で受け取った"]
 blocked_by:
 origin: 自リポ TODO
 ---
