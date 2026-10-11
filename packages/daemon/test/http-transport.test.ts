@@ -2,8 +2,10 @@
 // identity-pinned to id "u1" (User), and CCMSG_HTTP_BIND controls whether it exists at all.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { constants as zlibConstants, inflateRawSync } from "node:zlib";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
@@ -191,6 +193,88 @@ async function connectWs(ctx: DaemonCtx): Promise<WsTestClient> {
   return client;
 }
 
+/** The first server frame of a raw WS connection to /ws: the 101 response's
+ * Sec-WebSocket-Extensions, whether the frame came compressed (RSV1), and its
+ * text (inflated when compressed). `offerDeflate` is whether the upgrade request
+ * offers permessage-deflate; after the upgrade one masked, uncompressed text
+ * frame carries `line`. */
+async function firstWsFrame(
+  addr: string,
+  offerDeflate: boolean,
+  line: string,
+): Promise<{ extensions: string | null; compressed: boolean; text: string }> {
+  const [host = "", port = ""] = addr.split(":");
+  const sock = net.connect(Number(port), host);
+  const chunks: Buffer[] = [];
+  let sentLine = false;
+  try {
+    return await new Promise((resolve, reject) => {
+      sock.on("error", reject);
+      sock.on("close", () => reject(new Error("connection closed before the first frame")));
+      sock.on("connect", () => {
+        sock.write(
+          "GET /ws HTTP/1.1\r\nHost: " +
+            addr +
+            "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" +
+            (offerDeflate ? "Sec-WebSocket-Extensions: permessage-deflate\r\n" : "") +
+            "\r\n",
+        );
+      });
+      sock.on("data", (d: Buffer) => {
+        chunks.push(d);
+        const buf = Buffer.concat(chunks);
+        const headEnd = buf.indexOf("\r\n\r\n");
+        if (headEnd < 0) return;
+        const head = buf.subarray(0, headEnd).toString("latin1");
+        if (!sentLine) {
+          sentLine = true;
+          expect(head.startsWith("HTTP/1.1 101")).toBe(true);
+          const payload = Buffer.from(line);
+          const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
+          const masked = payload.map((b, i) => b ^ (mask[i % 4] ?? 0));
+          const len =
+            payload.length < 126
+              ? Buffer.from([0x80 | payload.length])
+              : Buffer.from([0x80 | 126, payload.length >> 8, payload.length & 0xff]);
+          sock.write(Buffer.concat([Buffer.from([0x81]), len, mask, masked]));
+        }
+        const frame = buf.subarray(headEnd + 4);
+        const b0 = frame[0];
+        const b1 = frame[1];
+        if (b0 === undefined || b1 === undefined) return;
+        let len = b1 & 0x7f;
+        let off = 2;
+        if (len === 126) {
+          if (frame.length < 4) return;
+          len = frame.readUInt16BE(2);
+          off = 4;
+        } else if (len === 127) {
+          if (frame.length < 10) return;
+          len = Number(frame.readBigUInt64BE(2));
+          off = 10;
+        }
+        if (frame.length < off + len) return;
+        const body = frame.subarray(off, off + len);
+        const compressed = (b0 & 0x40) !== 0;
+        const ext = /^Sec-WebSocket-Extensions: (.*)$/im.exec(head);
+        resolve({
+          extensions: ext?.[1] ?? null,
+          compressed,
+          text: (compressed
+            ? inflateRawSync(Buffer.concat([body, Buffer.from([0, 0, 0xff, 0xff])]), {
+                finishFlush: zlibConstants.Z_SYNC_FLUSH,
+              })
+            : body
+          ).toString("utf8"),
+        });
+      });
+    });
+  } finally {
+    sock.destroy();
+  }
+}
+
 async function waitUdsGone(sock: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -369,6 +453,34 @@ describe("HTTP/WS transport (DR-0004)", () => {
         wsUser.close();
       } finally {
         harness.dispose();
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "permessage-deflate: a client offering it gets the extension and compressed frames; one that doesn't gets plain frames",
+    async () => {
+      const ctx = await startHttpDaemon();
+      try {
+        const addr = await httpAddress(ctx);
+        const hello = JSON.stringify({
+          op: "hello",
+          role: "user",
+          protocol: PROTOCOL_VERSION,
+          request_id: "d1",
+        });
+        for (const offerDeflate of [true, false]) {
+          const got = await firstWsFrame(addr, offerDeflate, `${hello}\n`);
+          if (offerDeflate) expect(got.extensions).toContain("permessage-deflate");
+          else expect(got.extensions).toBeNull();
+          expect(got.compressed).toBe(offerDeflate);
+          const reply = got.text.split("\n").find((l) => l.includes('"d1"'));
+          if (reply === undefined) throw new Error(`no hello reply in ${got.text}`);
+          servedReply("hello", reply);
+        }
+      } finally {
         await stopTestDaemon(ctx);
       }
     },

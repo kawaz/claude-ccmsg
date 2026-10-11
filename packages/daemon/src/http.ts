@@ -40,12 +40,12 @@ interface WsData {
  *  the UDS side's flushPending. Stops (without emptying the queue) on the first line
  *  that's still over backpressureLimit, so it doesn't busy-loop; the next `drain`
  *  event resumes from there. */
-function flushWsPending(ws: { data: WsData; send(line: string): number }): void {
+function flushWsPending(ws: { data: WsData; send(line: string, compress: boolean): number }): void {
   const state = ws.data;
   for (let line = state.pending[0]; line !== undefined; line = state.pending[0]) {
     let status: number;
     try {
-      status = ws.send(line);
+      status = ws.send(line, true);
     } catch {
       // ws closing mid-flush; drop the rest, delivery is best-effort
       state.pending.length = 0;
@@ -311,6 +311,11 @@ export function startHttpListener(
       return new Response("Not Found", { status: 404 });
     },
     websocket: {
+      // Timeline transcripts and file transfers send large JSON text. "shared" deflates
+      // a 1.1MB transcript reply to ~22% in ~6ms; every dedicated size ("3KB".."dedicated")
+      // left it at ~80% and took ~8x longer, gaining only on small event lines.
+      // Bun compresses only a send() passed `true`.
+      perMessageDeflate: { compress: "shared" },
       open(ws) {
         const conn = ws.data.conn;
         conn.write = (line: string) => {
@@ -322,7 +327,7 @@ export function startHttpListener(
           }
           let status: number;
           try {
-            status = ws.send(line);
+            status = ws.send(line, true);
           } catch {
             // ws may be closing; delivery is best-effort, mirrors UDS send()
             return;
