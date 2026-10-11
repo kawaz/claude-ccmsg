@@ -76,6 +76,7 @@
         "packages/daemon/src/session-kill.ts",
         "packages/daemon/src/tailscale-origin.ts",
         "packages/daemon/src/translate-helper.ts",
+        "packages/daemon/src/storage.ts",
         "packages/cli/src/client.ts",
         "packages/webui/src/client/ws.ts",
         "packages/daemon/test/log.test.ts",

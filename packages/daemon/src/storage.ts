@@ -8,7 +8,16 @@
 // growth is acceptable for now.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { MemberEvent, MsgEvent, RoomKind, StorageEvent } from "@ccmsg/protocol";
+import {
+  errorText,
+  jsonText,
+  parseWith,
+  StorageEventSchema,
+  type MemberEvent,
+  type MsgEvent,
+  type RoomKind,
+  type StorageEvent,
+} from "@ccmsg/protocol";
 import type { Logger } from "./log.ts";
 
 const FSYNC_DEBOUNCE_MS = 100;
@@ -157,7 +166,8 @@ export function sayUnreadSeqs(room: Room): number[] {
 /** ts of the last event, or null for an empty room. */
 export function lastTs(room: Room): string | null {
   for (let i = room.events.length - 1; i >= 0; i--) {
-    const ev = room.events[i]!;
+    const ev = room.events[i];
+    if (ev === undefined) continue;
     const ts = ev.type === "member" ? ev.joined_at : "ts" in ev ? ev.ts : null;
     if (ts) return ts;
   }
@@ -290,22 +300,24 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
   // If the file doesn't end with a newline, the last element is a candidate torn line.
   let tornLine: string | null = null;
   if (!endsWithNewline && lines.length > 0) {
-    const last = lines[lines.length - 1]!;
-    if (tryParse(last) === null) {
+    const last = lines.at(-1);
+    if (last !== undefined && !parseWith(StorageEventTextSchema, last).ok) {
       tornLine = lines.pop() ?? null;
     }
   }
 
   for (const line of lines) {
     if (line.trim() === "") continue;
-    const ev = tryParse(line);
-    if (ev === null) {
+    const ev = parseWith(StorageEventTextSchema, line);
+    if (!ev.ok) {
       // A non-tail corrupt line is unexpected under append-only writes. Skip it
       // (keep the rest of the log usable) and record the anomaly.
-      log.error(`room ${id}: skipping unparseable line: ${line.slice(0, 120)}`);
+      log.error(
+        `room ${id}: skipping unreadable line (${ev.failure.summary}): ${line.slice(0, 120)}`,
+      );
       continue;
     }
-    room.events.push(ev);
+    room.events.push(ev.value);
   }
 
   if (tornLine !== null) {
@@ -319,7 +331,7 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
         `room ${id}: torn tail recovered to ${path.basename(tornPath)} (${raw.length - keepLen} bytes)`,
       );
     } catch (e) {
-      log.error(`room ${id}: torn tail recovery failed: ${String(e)}`);
+      log.error(`room ${id}: torn tail recovery failed: ${errorText(e)}`);
     }
   } else if (!endsWithNewline) {
     // Last line is valid JSON but was written without its newline. Normalize.
@@ -335,13 +347,8 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
   return room;
 }
 
-function tryParse(line: string): StorageEvent | null {
-  try {
-    return JSON.parse(line) as StorageEvent;
-  } catch {
-    return null;
-  }
-}
+/** One line of a room's file. */
+const StorageEventTextSchema = jsonText(StorageEventSchema);
 
 /**
  * Append one event to the room's file (durable log) and in-memory mirror.
