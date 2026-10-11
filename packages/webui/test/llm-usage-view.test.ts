@@ -380,9 +380,8 @@ describe("sortedWindows", () => {
   });
 
   // The gateway's window may carry neither figure: one without utilization
-  // has no bar to draw, and one without a verdict draws with no colour of
-  // alarm (observed 2026-10-11: `{"utilization": 0, "window_seconds": 18000}`).
-  test("a window without utilization draws no row, one without status draws plainly", () => {
+  // has no bar to draw, and one without a verdict is "unknown", not healthy (observed 2026-10-11: `{"utilization": 0, "window_seconds": 18000}`).
+  test("a window without utilization draws no row, one without status is unknown", () => {
     const rows = sortedWindows(
       snapshot({
         "5h": { utilization: 0, window_seconds: 18000 },
@@ -390,7 +389,15 @@ describe("sortedWindows", () => {
       }),
       NOW,
     );
-    expect(rows.map((w) => [w.key, w.status, w.tone])).toEqual([["5h", undefined, "ok"]]);
+    expect(rows.map((w) => [w.key, w.status, w.tone])).toEqual([["5h", undefined, "unknown"]]);
+  });
+
+  test("a window with an unrecognised status is unknown", () => {
+    const rows = sortedWindows(
+      snapshot({ "5h": { utilization: 0.1, window_seconds: 18000, status: "exotic" } }),
+      NOW,
+    );
+    expect(rows.map((w) => [w.key, w.tone])).toEqual([["5h", "unknown"]]);
   });
 });
 
@@ -459,10 +466,10 @@ describe("severityTone", () => {
     expect(severityTone("critical")).toBe("bad");
   });
 
-  // Colouring an unrecognised severity red would invent a problem the reading
-  // does not state.
-  test("an unknown severity is not alarming", () => {
-    expect(severityTone("catastrophic")).toBe("ok");
+  // Neither red nor healthy: the reading states no verdict we understand.
+  test("an unrecognised or missing severity is unknown", () => {
+    expect(severityTone("exotic")).toBe("unknown");
+    expect(severityTone(undefined)).toBe("unknown");
   });
 });
 

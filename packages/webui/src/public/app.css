@@ -8371,6 +8371,13 @@ button.usage-figure {
   background: var(--danger);
 }
 
+/* No verdict to colour by: the consumption track is outlined, not filled, so
+   it cannot be mistaken for the healthy accent. */
+.usage-bar.tone-unknown .usage-bar-fill {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--fg-muted);
+}
+
 .usage-utilization {
   font-weight: 600;
   color: var(--fg);
@@ -8396,6 +8403,10 @@ button.usage-reset:hover {
 
 .usage-utilization.tone-bad {
   color: var(--danger);
+}
+
+.usage-utilization.tone-unknown {
+  color: var(--fg-muted);
 }
 
 .usage-overage,

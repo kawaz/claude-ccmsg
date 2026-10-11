@@ -35,7 +35,7 @@ const UNIT_MS: Readonly<Record<string, number>> = {
 /** Colour bucket for a window. `bad` = upstream is refusing requests now;
  * `warn` = allowed but heading for trouble (upstream said so, or the burn
  * rate says so). */
-export type UsageTone = "ok" | "warn" | "bad";
+export type UsageTone = "ok" | "warn" | "bad" | "unknown";
 
 /** What the two-track bar needs to draw one row, whether that row came from a
  * quota window or from a provider limit. The two arrive in different units and
@@ -159,10 +159,15 @@ export function formatPercent(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
 }
 
+/** A window's verdict on the screen's scale. A missing or unrecognised status
+ * is "unknown", not "ok": drawing it in the healthy colour would state a
+ * verdict the gateway never gave. Pace still raises it to a warning, since
+ * that reading stands on its own figures. */
 function toneFor(status: string | undefined, overPace: boolean): UsageTone {
   if (status === "rejected") return "bad";
   if (status === "allowed_warning" || overPace) return "warn";
-  return "ok";
+  if (status === "allowed") return "ok";
+  return "unknown";
 }
 
 /** How far into a period we are, given its total length and what remains.
@@ -239,14 +244,15 @@ export function limitKindDurationMs(kind: string): number | null {
   return null;
 }
 
-/** Upstream's verdict for a limit, on the same three-way scale the windows
- * use. An unrecognised severity reads as "ok" rather than as alarming: the
- * gateway may add a word, and colouring an unknown one red would invent a
- * problem the reading does not state. No verdict at all reads the same way. */
+/** Upstream's verdict for a limit, on the same scale the windows use. An
+ * unrecognised severity, like no verdict at all, reads as "unknown": the
+ * gateway may add a word, and colouring it red would invent a problem while
+ * colouring it healthy would invent a clean bill. */
 export function severityTone(severity: string | undefined): UsageTone {
   if (severity === "critical") return "bad";
   if (severity === "warning") return "warn";
-  return "ok";
+  if (severity === "normal") return "ok";
+  return "unknown";
 }
 
 /** Normalize one limit for display. The unit conversion lives here and only
@@ -272,7 +278,7 @@ export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgres
     // Upstream's own verdict wins when it says anything is wrong; the pace
     // reading can only raise a "normal" limit to a warning, never talk a
     // critical one down.
-    tone: tone === "ok" && overPace ? "warn" : tone,
+    tone: (tone === "ok" || tone === "unknown") && overPace ? "warn" : tone,
     ...(limit.severity !== undefined ? { severity: limit.severity } : {}),
     ...(limit.model !== undefined ? { model: limit.model } : {}),
     isActive: limit.is_active === true,

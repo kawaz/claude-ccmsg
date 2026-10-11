@@ -134,6 +134,14 @@ function TrackRow({
       <span class="usage-window-key" title={keyTitle}>
         {glyph} {label}
         {extra}
+        {progress.tone === "unknown" ? (
+          <span
+            class="usage-window-expired"
+            title="gateway が状態を返していない、または未知の値です"
+          >
+            不明
+          </span>
+        ) : null}
       </span>
       <span class={`usage-figure usage-utilization tone-${progress.tone}`}>
         {formatPercent(progress.utilization)}
