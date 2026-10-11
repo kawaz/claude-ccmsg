@@ -6,14 +6,23 @@
 // report the daemon cannot use fails as one actionable error — plus the
 // debounce/single-flight that keeps a 529 storm from becoming a fetch storm.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode } from "@ccmsg/protocol";
+import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
 import {
   fetchLlmStatus,
   LlmStatusRefresher,
-  parseStatusPayload,
+  parseStatusPayload as parseStatusDocument,
   statusUrlWithRefresh,
 } from "../src/llm-status.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
+
+/** A test value as the JSON a gateway would post: what the parser reads. */
+function json(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseStatusPayload(document: unknown) {
+  return parseStatusDocument(json(document));
+}
 
 /** The live endpoint's report, trimmed to one service per interesting shape:
  * a fetched source with an incident, a `link` placeholder that can only ever
@@ -98,6 +107,14 @@ function okPayload(overrides: Record<string, unknown> = {}) {
   return result.data;
 }
 
+/** Why a report does not read. */
+function refusal(overrides: Record<string, unknown>): string {
+  const result = parseStatusPayload({ ...UPSTREAM, ...overrides });
+  if (result.ok) throw new Error("expected the report not to read");
+  expect(result.code).toBe(ErrorCode.llm_status_unavailable);
+  return result.msg;
+}
+
 describe("parseStatusPayload", () => {
   test("passes the gateway's verdicts through untouched", () => {
     const report = okPayload();
@@ -149,10 +166,11 @@ describe("parseStatusPayload", () => {
   });
 
   // Forward compatibility (gateway DR-0021 §7): a vocabulary this build does
-  // not know must arrive as "unknown", never as the raw word.
-  test("normalizes unknown severity and states to unknown", () => {
+  // not know arrives as the gateway wrote it; the webui shows it as unknown
+  // (llm-status-view). The report still reads.
+  test("passes severity and states this build does not know through as written", () => {
     const report = okPayload({
-      overall: { severity: "apocalyptic", service_counts: { ok: "many" } },
+      overall: { severity: "apocalyptic", service_counts: { ok: 1 } },
       services: [
         {
           id: "x",
@@ -164,12 +182,17 @@ describe("parseStatusPayload", () => {
         },
       ],
     });
-    expect(report.overall.severity).toBe("unknown");
-    // A non-numeric count is dropped rather than coerced: the strip sums these.
-    expect(report.overall.service_counts).toEqual({});
-    expect(report.services[0]?.severity).toBe("unknown");
-    expect(report.services[0]?.official?.state).toBe("unknown");
-    expect(report.services[0]?.observed?.state).toBe("unknown");
+    expect(report.overall.severity).toBe("apocalyptic");
+    expect(report.services[0]?.severity).toBe("meltdown");
+    expect(report.services[0]?.official?.state).toBe("on_fire");
+    expect(report.services[0]?.observed?.state).toBe("flaky");
+  });
+
+  // The strip sums the counts, so one that is not a number is not read as one.
+  test("a non-numeric count does not read", () => {
+    expect(refusal({ overall: { severity: "ok", service_counts: { ok: "many" } } })).toContain(
+      "overall.service_counts.ok",
+    );
   });
 
   test("a newer schema_version is still parsed, not rejected", () => {
@@ -178,48 +201,37 @@ describe("parseStatusPayload", () => {
     expect(report.services).toHaveLength(3);
   });
 
-  // Everything but the identifiers degrades to absent; the row still renders
-  // its severity, which is what the strip is read for.
-  test("a service with only an id and a severity still renders", () => {
-    const report = okPayload({ services: [{ id: "bare", severity: "warning" }] });
-    expect(report.services[0]).toEqual({
-      id: "bare",
-      name: "bare",
-      severity: "warning",
-      routes: [],
-    });
+  // The gateway always sends a service's name and routes; one without them is
+  // not a report this build reads, and the error names the place.
+  test("a service missing what the gateway always sends does not read", () => {
+    expect(refusal({ services: [{ id: "bare", severity: "warning" }] })).toContain(
+      "services.0.name",
+    );
   });
 
-  test("drops entries that cannot be keyed or labelled", () => {
-    const report = okPayload({
-      services: [
-        "not an object",
-        { name: "no id" },
-        {
-          id: "keeps-going",
-          severity: "ok",
-          routes: ["a", 7, ""],
-          official: {
-            state: "operational",
-            components: [{ state: "operational" }, { name: "kept", state: "operational" }],
-            incidents: [{ state: "investigating" }, { name: "kept incident" }],
+  // An entry that does not read is not left out of the report: the report
+  // does not read, naming the entry.
+  test("an entry that does not read is named, not dropped", () => {
+    expect(refusal({ services: ["not an object"] })).toContain("services.0");
+    expect(
+      refusal({
+        services: [
+          {
+            id: "x",
+            name: "X",
+            severity: "ok",
+            routes: ["a", 7],
+            official: { state: "operational", components: [], incidents: [] },
           },
-        },
-      ],
-    });
-    expect(report.services).toHaveLength(1);
-    expect(report.services[0]?.routes).toEqual(["a"]);
-    expect(report.services[0]?.official?.components).toEqual([
-      { name: "kept", state: "operational" },
-    ]);
-    expect(report.services[0]?.official?.incidents).toEqual([{ name: "kept incident" }]);
+        ],
+      }),
+    ).toContain("services.0.routes.1");
   });
 
-  // A report with no roll-up is reported as unknown rather than recomputed:
-  // the gateway owns the rule, and a second one here would drift from the CLI.
-  test("a missing overall reads as unknown with no counts", () => {
-    const report = okPayload({ overall: undefined });
-    expect(report.overall).toEqual({ severity: "unknown", service_counts: {} });
+  // A report with no roll-up is not recomputed here: the gateway owns the
+  // rule, and a second one here would drift from the CLI.
+  test("a report without its roll-up does not read", () => {
+    expect(refusal({ overall: undefined })).toContain("overall");
   });
 
   test("rejects a body that is not a report", () => {

@@ -9,112 +9,96 @@
 // see webhook.ts) rather than the daemon subscribing outward: the gateway runs
 // as two processes at once (stable and unstable), and a single subscription
 // only ever saw whichever one it happened to connect to. A receiver sees both.
-import { llmCacheWindowEndMs, type LlmRequestInfo } from "@ccmsg/protocol";
+import {
+  llmCacheWindowEndMs,
+  parseWith,
+  type JsonValue,
+  type LlmRequestInfo,
+} from "@ccmsg/protocol";
+import * as v from "valibot";
 
 /** One observed event, before the daemon decides whether its series is the
  * session's main one — that verdict belongs to the cache (it needs the other
  * series to make it), not to the parser. */
 export type LlmRequestObservation = Omit<LlmRequestInfo, "main">;
 
-/** Validate one posted request event into the shape the wire type promises.
- * Returns null for anything unusable — including the events the gateway emits
- * for clients that sent no session id, which carry `session_id: null` and
- * cannot be attached to a session row. One bad event in a batch must never
- * cost the good ones, so this never throws; the caller drops and logs. */
-export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
-  // A posted batch mixes event kinds, and the others carry a `session_id` and
-  // a `ts` of their own — a `response` event would sail through the checks
-  // below and restart a series' countdown off the moment its answer FINISHED.
-  // So an item that names its kind is only a request when it says so, and one
-  // that names none is a request by position, as request events have always
-  // arrived.
-  if (raw.type !== undefined && raw.type !== "request") return null;
-  const ts = raw.ts;
-  const sid = raw.session_id;
-  if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
-  if (typeof sid !== "string" || sid === "") return null;
-  // A gateway older than v0.13.0 sends no prefix; "" then stands for "this
-  // session has one unnamed series", which is exactly the pre-prefix
-  // behaviour. A non-string prefix is treated the same way rather than
-  // rejecting the event — the timestamp is still usable.
-  const rawPrefix = raw.prefix;
-  const prefix = typeof rawPrefix === "string" ? rawPrefix : "";
-  // Only a deadline in the future of its own request opens a window; anything
-  // else (a null from a request that cached nothing, a value at or before
-  // `ts`) is dropped so the fallback length applies instead of a window that
-  // was never open.
-  const expires = raw.cache_expires_at;
+/** A request event as the gateway posts it (its `events.rs` Event), read for
+ * what the ring is drawn from; the gateway's other fields are not read.
+ *
+ * A posted batch mixes event kinds, and the others carry a `session_id` and a
+ * `ts` of their own — a `response` event read as a request would restart a
+ * series' countdown off the moment its answer FINISHED. So an item that names
+ * its kind is only a request when it says so, and one that names none is a
+ * request, as request events have always arrived. */
+const GatewayRequestEventSchema = v.object({
+  type: v.optional(v.literal("request")),
+  ts: v.number(),
+  /** Null for a client that sent no session id. */
+  session_id: v.nullable(v.pipe(v.string(), v.nonEmpty())),
+  /** A gateway older than v0.13.0 sends no prefix; "" then stands for "this
+   * session has one unnamed series", which is exactly the pre-prefix
+   * behaviour. */
+  prefix: v.optional(v.string(), ""),
+  /** Whether the series is the session's main one, in the gateway's words
+   * ("main" / "sub" / "oneshot" …, from its v0.33.0). */
+  origin: v.optional(v.string()),
+  /** Null from a request that cached nothing. */
+  cache_expires_at: v.nullish(v.number()),
+  cache_ttl_secs: v.optional(v.number()),
+  cache_since: v.optional(v.number()),
+  cache_count: v.optional(v.number()),
+  next_keepalive_at: v.optional(v.number()),
+  cache_until: v.optional(v.number()),
+  cache_until_count: v.optional(v.number()),
+  cache_breakeven_until: v.optional(v.number()),
+  cache_breakeven_count: v.optional(v.number()),
+  cache_paused: v.optional(v.boolean()),
+  keepalive: v.optional(v.string()),
+  ns: v.optional(v.string()),
+  model: v.optional(v.string()),
+  credential: v.optional(v.string()),
+  status: v.optional(v.number()),
+});
+
+/** Read one posted request event into the shape the wire type promises.
+ * Returns null for an item that does not read as one, and for the events the
+ * gateway emits for clients that sent no session id (`session_id: null`),
+ * which cannot be attached to a session row. One bad event in a batch must
+ * never cost the good ones, so this never throws; the caller drops and logs. */
+export function parseLlmRequestEvent(item: JsonValue): LlmRequestObservation | null {
+  const read = parseWith(GatewayRequestEventSchema, item);
+  if (!read.ok) return null;
+  // `type` names the kind; the observation is the event's own fields.
+  const { type: _kind, session_id: sid, cache_expires_at: expires, ...event } = read.value;
+  if (sid === null) return null;
   return {
-    ts,
+    ...event,
     session_id: sid,
-    prefix,
-    // The origin vocabulary is the gateway's to grow ("oneshot" arrived in its
-    // v0.34.0); any string is kept as stated, and everything downstream asks
-    // only "is it main?" — so a new word behaves like sub without a change here.
-    ...(typeof raw.origin === "string" && raw.origin !== "" ? { origin: raw.origin } : {}),
-    ...(typeof expires === "number" && Number.isFinite(expires) && expires > ts
+    // The keepalive strategy's own bookkeeping is relayed as stated: these
+    // are projections the gateway recomputes per event, so a client reads the
+    // newest event and never merges two. Only a deadline in the future of its
+    // own request opens a window; one at or before `ts` is dropped so the
+    // fallback length applies instead of a window that was never open.
+    ...(expires !== undefined && expires !== null && expires > event.ts
       ? { cache_expires_at: expires }
-      : {}),
-    // The keepalive strategy's own bookkeeping, relayed as stated: these are
-    // projections the gateway recomputes per event, so a client reads the
-    // newest event and never merges two. Each is carried only when it is a
-    // usable number, which is also how a series the strategy does not cover
-    // (a subagent's, a passthrough) arrives — with the whole group absent.
-    ...(typeof raw.cache_ttl_secs === "number" && Number.isFinite(raw.cache_ttl_secs)
-      ? { cache_ttl_secs: raw.cache_ttl_secs }
-      : {}),
-    ...(typeof raw.cache_since === "number" && Number.isFinite(raw.cache_since)
-      ? { cache_since: raw.cache_since }
-      : {}),
-    ...(typeof raw.cache_count === "number" && Number.isFinite(raw.cache_count)
-      ? { cache_count: raw.cache_count }
-      : {}),
-    ...(typeof raw.next_keepalive_at === "number" && Number.isFinite(raw.next_keepalive_at)
-      ? { next_keepalive_at: raw.next_keepalive_at }
-      : {}),
-    ...(typeof raw.cache_until === "number" && Number.isFinite(raw.cache_until)
-      ? { cache_until: raw.cache_until }
-      : {}),
-    ...(typeof raw.cache_until_count === "number" && Number.isFinite(raw.cache_until_count)
-      ? { cache_until_count: raw.cache_until_count }
-      : {}),
-    ...(typeof raw.cache_breakeven_until === "number" && Number.isFinite(raw.cache_breakeven_until)
-      ? { cache_breakeven_until: raw.cache_breakeven_until }
-      : {}),
-    ...(typeof raw.cache_breakeven_count === "number" && Number.isFinite(raw.cache_breakeven_count)
-      ? { cache_breakeven_count: raw.cache_breakeven_count }
-      : {}),
-    ...(typeof raw.cache_paused === "boolean" ? { cache_paused: raw.cache_paused } : {}),
-    ...(typeof raw.keepalive === "string" && raw.keepalive !== ""
-      ? { keepalive: raw.keepalive }
-      : {}),
-    ...(typeof raw.ns === "string" && raw.ns !== "" ? { ns: raw.ns } : {}),
-    ...(typeof raw.model === "string" && raw.model !== "" ? { model: raw.model } : {}),
-    ...(typeof raw.credential === "string" && raw.credential !== ""
-      ? { credential: raw.credential }
-      : {}),
-    ...(typeof raw.status === "number" && Number.isFinite(raw.status)
-      ? { status: raw.status }
       : {}),
   };
 }
 
-/** Event kinds the gateway posts that ccmsg reads nothing from: the answer's
- * completion (`response`) and the keepalive strategy being held off
- * (`keepalive_paused`, whose state also rides on every request event as
- * `cache_paused`). Named one by one rather than "anything that isn't a
- * request" so a kind the gateway grows still reaches the drop log, which is
- * what makes a schema change visible instead of silent. */
-const IGNORED_EVENT_TYPES = new Set(["response", "keepalive_paused"]);
+/** The kind of an item ccmsg reads nothing from: the answer's completion
+ * (`response`) and the keepalive strategy being held off (`keepalive_paused`,
+ * whose state also rides on every request event as `cache_paused`). Named one
+ * by one rather than "anything that isn't a request" so a kind the gateway
+ * grows still reaches the drop log, which is what makes a schema change
+ * visible instead of silent. */
+const IgnoredGatewayItemSchema = v.object({
+  type: v.picklist(["response", "keepalive_paused"]),
+});
 
 /** True for an item this daemon deliberately reads nothing from, so the caller
  * skips it without counting it as unusable. */
-export function isIgnoredGatewayItem(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const type = (value as { type?: unknown }).type;
-  return typeof type === "string" && IGNORED_EVENT_TYPES.has(type);
+export function isIgnoredGatewayItem(item: JsonValue): boolean {
+  return parseWith(IgnoredGatewayItemSchema, item).ok;
 }
 
 /** Upper bound on remembered series. The TTL prune below already keeps this

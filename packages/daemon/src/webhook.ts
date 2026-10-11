@@ -17,6 +17,10 @@
 // rather than buffered on trust — this endpoint shares the event loop with
 // every WS client.
 import { timingSafeEqual } from "node:crypto";
+import { errorText, JsonValueSchema, jsonText, parseWith, type JsonValue } from "@ccmsg/protocol";
+
+/** A posted body: any JSON. What its items mean is the source's to read. */
+const WebhookBodyTextSchema = jsonText(JsonValueSchema);
 
 /** Cap on one posted body. The gateway sends single events or small batches of
  * them (a few hundred bytes each); a megabyte is already thousands of events,
@@ -30,9 +34,9 @@ const SOURCE_PATTERN = /^[a-z0-9-]{1,64}$/;
 export interface WebhookSource {
   /** Shared secret this producer must present as `Authorization: Bearer`. */
   token: string;
-  /** Handle one posted batch. Items are raw JSON values: validating them is
-   * the source's own business, and one bad item must not fail the request. */
-  handle(items: unknown[]): void;
+  /** Handle one posted batch. Items are any JSON: reading them with a schema
+   * is the source's own business, and one bad item must not fail the request. */
+  handle(items: readonly JsonValue[]): void;
 }
 
 export interface WebhookLog {
@@ -62,7 +66,9 @@ function isAuthorized(header: string | null, token: string): boolean {
 async function readBounded(req: Request, maxBytes: number): Promise<string | null> {
   const body = req.body;
   if (!body) return "";
-  const reader = body.getReader();
+  // Through a typed pass-through: the body's own stream is typed `any` by the
+  // runtime's declarations.
+  const reader = body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>()).getReader();
   const decoder = new TextDecoder();
   let size = 0;
   let text = "";
@@ -111,29 +117,32 @@ export async function handleWebhookRequest(
   try {
     text = await readBounded(req, WEBHOOK_MAX_BYTES);
   } catch (e) {
-    return new Response(`body could not be read: ${String(e)}`, { status: 400 });
+    return new Response(`body could not be read: ${errorText(e)}`, { status: 400 });
   }
   if (text === null) {
     return new Response(`payload too large (max ${WEBHOOK_MAX_BYTES} bytes)`, { status: 413 });
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (e) {
+  const body = parseWith(WebhookBodyTextSchema, text);
+  if (!body.ok) {
     // The one failure the sender can actually act on, so the one it hears about.
-    log.error(`webhook ${source}: invalid JSON body (${String(e)})`);
+    log.error(`webhook ${source}: invalid JSON body (${body.failure.summary})`);
     return new Response("invalid JSON body", { status: 400 });
   }
 
   // A bare event and a batch of them are the same thing to a handler.
-  const items = Array.isArray(parsed) ? parsed : [parsed];
+  const parsed = body.value;
+  const items = isJsonArray(parsed) ? parsed : [parsed];
   try {
     registered.handle(items);
   } catch (e) {
     // A handler that throws is a ccmsg bug, not the sender's problem: log it
     // and still answer 204 rather than provoking a retry loop.
-    log.error(`webhook ${source}: handler failed (${String(e)})`);
+    log.error(`webhook ${source}: handler failed (${errorText(e)})`);
   }
   return new Response(null, { status: 204 });
+}
+
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
 }

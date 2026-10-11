@@ -20,11 +20,15 @@ const STALE_AFTER_MS = 60_000;
  * a credential on course to hit its limit before the window resets. */
 const PACE_MARGIN = 0.05;
 
-const UNIT_MS: Record<string, number> = {
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
+
+const UNIT_MS: Readonly<Record<string, number>> = {
   s: 1000,
-  m: 60_000,
-  h: 3_600_000,
-  d: 86_400_000,
+  m: MINUTE_MS,
+  h: HOUR_MS,
+  d: DAY_MS,
   w: 604_800_000,
 };
 
@@ -66,15 +70,17 @@ export interface BarProgress {
 }
 
 export interface WindowProgress extends BarProgress {
-  status: string;
+  /** Upstream's verdict for the window; absent when it gave none. */
+  status?: string;
   /** The reading predates its own reset, so it describes a period that has
    * already rolled over rather than the quota available now. */
   expired: boolean;
 }
 
 export interface LimitProgress extends BarProgress {
-  /** Upstream's own word for this limit, untranslated. */
-  severity: string;
+  /** Upstream's own word for this limit, untranslated; absent when it gave
+   * none. */
+  severity?: string;
   /** Model family the limit is scoped to, when it is scoped to one. */
   model?: string;
   /** Whether upstream is currently counting against this limit. Shown as a
@@ -107,13 +113,13 @@ export function formatDurationShort(ms: number | null): string {
   // long window is "7d", and a denominator reading "/1w" beside a row labelled
   // "7d" would look like a different period.
   for (const [unit, size] of [
-    ["d", UNIT_MS.d!],
-    ["h", UNIT_MS.h!],
-    ["m", UNIT_MS.m!],
+    ["d", DAY_MS],
+    ["h", HOUR_MS],
+    ["m", MINUTE_MS],
   ] as const) {
     if (ms % size === 0) return `${ms / size}${unit}`;
   }
-  return `${Math.round(ms / UNIT_MS.m!)}m`;
+  return `${Math.round(ms / MINUTE_MS)}m`;
 }
 
 /** "1h29m" under a day, "02d02h" at or above one — the CLI's format, which
@@ -153,7 +159,7 @@ export function formatPercent(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
 }
 
-function toneFor(status: string, overPace: boolean): UsageTone {
+function toneFor(status: string | undefined, overPace: boolean): UsageTone {
   if (status === "rejected") return "bad";
   if (status === "allowed_warning" || overPace) return "warn";
   return "ok";
@@ -194,7 +200,10 @@ export function limitDurationMs(limit: LlmUsageLimit): number | null {
   return statedDurationMs(limit.window_seconds) ?? limitKindDurationMs(limit.kind);
 }
 
-export function windowProgress(key: string, window: LlmUsageWindow, nowMs: number): WindowProgress {
+/** A window that carries its utilization: the ones a bar can be drawn for. */
+export type MeasuredWindow = LlmUsageWindow & { readonly utilization: number };
+
+export function windowProgress(key: string, window: MeasuredWindow, nowMs: number): WindowProgress {
   const resetAtMs = window.reset === undefined ? null : window.reset;
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const durationMs = windowDurationMs(key, window);
@@ -203,7 +212,7 @@ export function windowProgress(key: string, window: LlmUsageWindow, nowMs: numbe
   return {
     key,
     utilization: window.utilization,
-    status: window.status,
+    ...(window.status !== undefined ? { status: window.status } : {}),
     durationMs,
     elapsed,
     remainingMs,
@@ -225,16 +234,16 @@ export function windowProgress(key: string, window: LlmUsageWindow, nowMs: numbe
  * and anything else (including a kind added later) renders as consumption
  * alone rather than against a guessed clock. */
 export function limitKindDurationMs(kind: string): number | null {
-  if (kind === "session") return 5 * UNIT_MS.h!;
-  if (kind.startsWith("weekly_")) return 7 * UNIT_MS.d!;
+  if (kind === "session") return 5 * HOUR_MS;
+  if (kind.startsWith("weekly_")) return 7 * DAY_MS;
   return null;
 }
 
 /** Upstream's verdict for a limit, on the same three-way scale the windows
  * use. An unrecognised severity reads as "ok" rather than as alarming: the
  * gateway may add a word, and colouring an unknown one red would invent a
- * problem the reading does not state. */
-export function severityTone(severity: string): UsageTone {
+ * problem the reading does not state. No verdict at all reads the same way. */
+export function severityTone(severity: string | undefined): UsageTone {
   if (severity === "critical") return "bad";
   if (severity === "warning") return "warn";
   return "ok";
@@ -264,7 +273,7 @@ export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgres
     // reading can only raise a "normal" limit to a warning, never talk a
     // critical one down.
     tone: tone === "ok" && overPace ? "warn" : tone,
-    severity: limit.severity,
+    ...(limit.severity !== undefined ? { severity: limit.severity } : {}),
     ...(limit.model !== undefined ? { model: limit.model } : {}),
     isActive: limit.is_active === true,
   };
@@ -299,7 +308,13 @@ export function limitLabel(progress: LimitProgress): string {
  * last, alphabetically among themselves — they cannot be placed on the scale,
  * and appending them keeps the known windows in a stable position. */
 export function sortedWindows(snapshot: LlmUsageSnapshot, nowMs: number): WindowProgress[] {
+  // A window whose reading carried no utilization has no bar to draw.
   return Object.entries(snapshot.windows)
+    .flatMap(([key, window]): [string, MeasuredWindow][] =>
+      window.utilization === undefined
+        ? []
+        : [[key, { ...window, utilization: window.utilization }]],
+    )
     .sort(([a, wa], [b, wb]) => {
       const da = windowDurationMs(a, wa);
       const db = windowDurationMs(b, wb);

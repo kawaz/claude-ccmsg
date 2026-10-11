@@ -5,14 +5,23 @@
 // degrades instead of disappearing, and that every upstream failure arrives
 // as one actionable error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode } from "@ccmsg/protocol";
+import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
 import {
   fetchLlmStats,
   isValidDays,
-  parseStatsPayload,
+  parseStatsPayload as parseStatsDocument,
   statsUrlWithDays,
 } from "../src/llm-stats.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
+
+/** A test value as the JSON a gateway would post: what the parser reads. */
+function json(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseStatsPayload(document: unknown) {
+  return parseStatsDocument(json(document));
+}
 
 /** The live endpoint's document, trimmed to two credentials on one day —
  * including the "-" bucket the gateway uses for unattributed traffic. */
@@ -95,6 +104,14 @@ describe("isValidDays", () => {
   });
 });
 
+/** Why a stats document does not read. */
+function refusal(document: unknown): string {
+  const result = parseStatsPayload(document);
+  if (result.ok) throw new Error("expected the document not to read");
+  expect(result.code).toBe(ErrorCode.llm_stats_unavailable);
+  return result.msg;
+}
+
 describe("parseStatsPayload", () => {
   test("passes through the live endpoint's document", () => {
     const data = unwrap(parseStatsPayload(UPSTREAM));
@@ -112,39 +129,30 @@ describe("parseStatsPayload", () => {
     });
   });
 
-  // The UI sums these counters, so a string that slipped through upstream
-  // must not become part of a total as NaN.
-  test("drops non-numeric counters instead of coercing them", () => {
-    const data = unwrap(
-      parseStatsPayload({
+  // The UI sums these counters, so a string that slipped through upstream must
+  // not become part of a total: the document does not read, naming it.
+  test("a non-numeric counter does not read", () => {
+    expect(
+      refusal({
         days: { "2026-07-31": { credentials: { c: { m: { usd: "1.5", requests: 3 } } } } },
       }),
-    );
-    expect(data.days["2026-07-31"]?.credentials.c?.m).toEqual({ requests: 3 });
+    ).toContain("days.2026-07-31.credentials.c.m.usd");
   });
 
-  test("a day with an unusable credentials field still keeps its total", () => {
-    const data = unwrap(
-      parseStatsPayload({ days: { "2026-07-31": { credentials: 7, total_usd: 12 } } }),
+  test("a day whose credentials are not a map does not read", () => {
+    expect(refusal({ days: { "2026-07-31": { credentials: 7, total_usd: 12 } } })).toContain(
+      "days.2026-07-31.credentials",
     );
-    expect(data.days["2026-07-31"]).toEqual({ credentials: {}, total_usd: 12 });
   });
 
-  test("a day the gateway sent as a non-object is dropped, the rest survive", () => {
-    const data = unwrap(
-      parseStatsPayload({
-        days: { "2026-07-30": null, "2026-07-31": { credentials: {}, total_usd: 1 } },
-      }),
-    );
-    expect(Object.keys(data.days)).toEqual(["2026-07-31"]);
+  test("a day that is not an object is named, not dropped", () => {
+    expect(
+      refusal({ days: { "2026-07-30": null, "2026-07-31": { credentials: {}, total_usd: 1 } } }),
+    ).toContain("days.2026-07-30");
   });
 
-  test("a body with no days object is the one shape the UI cannot work around", () => {
-    expect(parseStatsPayload({ credentials: [] })).toEqual({
-      ok: false,
-      code: ErrorCode.llm_stats_unavailable,
-      msg: "stats endpoint returned no days object",
-    });
+  test("a body with no days object does not read", () => {
+    expect(refusal({ credentials: [] })).toContain("days");
     expect(parseStatsPayload("<html>").ok).toBe(false);
   });
 });

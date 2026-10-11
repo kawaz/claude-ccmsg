@@ -5,7 +5,18 @@
 // in the document they parse and the size they expect, so the fetch, the
 // bounded read, and the collapse of every upstream failure into one
 // actionable error live here once. Everything is async IO per DR-0029.
-import type { ErrorCode as ErrorCodeType } from "@ccmsg/protocol";
+import {
+  errorText,
+  JsonValueSchema,
+  jsonText,
+  parseWith,
+  type ErrorCode as ErrorCodeType,
+  type JsonValue,
+  type ParseFailure,
+} from "@ccmsg/protocol";
+
+/** A gateway document's text: any JSON, read by its endpoint's schema next. */
+const GatewayDocumentTextSchema = jsonText(JsonValueSchema);
 
 /** Just the call these modules make, rather than `typeof globalThis.fetch`:
  * the dependency is "fetch this URL", and narrowing it keeps a test stub from
@@ -30,7 +41,9 @@ export type GatewayFailure = { ok: false; code: ErrorCodeType; msg: string };
 async function readBounded(res: Response, maxBytes: number): Promise<string | null> {
   const body = res.body;
   if (!body) return "";
-  const reader = body.getReader();
+  // Through a typed pass-through: the body's own stream is typed `any` by the
+  // runtime's declarations.
+  const reader = body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>()).getReader();
   const decoder = new TextDecoder();
   let size = 0;
   let text = "";
@@ -62,13 +75,13 @@ export interface GatewayRequest {
   timeoutMs: number;
 }
 
-/** Fetch one gateway document and hand back its parsed JSON, or the one error
- * every upstream failure mode collapses to. Shape validation is the caller's:
- * what counts as a usable document differs per endpoint. */
+/** Fetch one gateway document and hand back its JSON, or the one error every
+ * upstream failure mode collapses to. Its shape is read by the caller: what
+ * the document is differs per endpoint (unreadable, below). */
 export async function fetchGatewayJson(
   req: GatewayRequest,
   deps: LlmGatewayDeps = productionGatewayDeps,
-): Promise<{ ok: true; parsed: unknown } | GatewayFailure> {
+): Promise<{ ok: true; document: JsonValue } | GatewayFailure> {
   const fail = (msg: string): GatewayFailure => ({ ok: false, code: req.code, msg });
 
   let res: Response;
@@ -82,7 +95,7 @@ export async function fetchGatewayJson(
     return fail(
       timedOut
         ? `${req.label} endpoint did not respond within ${req.timeoutMs}ms`
-        : `${req.label} endpoint unreachable: ${String(e)}`,
+        : `${req.label} endpoint unreachable: ${errorText(e)}`,
     );
   }
   if (!res.ok) return fail(`${req.label} endpoint returned HTTP ${res.status}`);
@@ -91,15 +104,29 @@ export async function fetchGatewayJson(
   try {
     text = await readBounded(res, req.maxBytes);
   } catch (e) {
-    return fail(`${req.label} endpoint response could not be read: ${String(e)}`);
+    return fail(`${req.label} endpoint response could not be read: ${errorText(e)}`);
   }
   if (text === null) return fail(`${req.label} endpoint response exceeds ${req.maxBytes} bytes`);
 
-  try {
-    return { ok: true, parsed: JSON.parse(text) };
-  } catch {
-    return fail(`${req.label} endpoint returned invalid JSON`);
-  }
+  const document = parseWith(GatewayDocumentTextSchema, text);
+  return document.ok
+    ? { ok: true, document: document.value }
+    : fail(`${req.label} endpoint returned invalid JSON`);
+}
+
+/** The error for a document of the wrong shape, naming where it is wrong:
+ * the gateway and ccmsg disagree about the document, and which field is the
+ * place to start looking. */
+export function unreadable(
+  label: string,
+  code: ErrorCodeType,
+  failure: ParseFailure,
+): GatewayFailure {
+  return {
+    ok: false,
+    code,
+    msg: `${label} endpoint returned a document ccmsg does not read: ${failure.summary}`,
+  };
 }
 
 /** Put one query parameter on a configured URL. `set` rather than `append` so
@@ -111,16 +138,4 @@ export function withQueryParam(base: string, key: string, value: string): string
   const url = new URL(base);
   url.searchParams.set(key, value);
   return url.toString();
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function optionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-export function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value !== "" ? value : undefined;
 }

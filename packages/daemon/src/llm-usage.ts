@@ -4,24 +4,67 @@
 // what is here is the shape this endpoint's document has to have.
 import {
   ErrorCode,
+  errorText,
+  LlmUsageLimitSchema,
+  LlmUsageOverageSchema,
+  LlmUsageWindowSchema,
+  parseWith,
   type ErrorCode as ErrorCodeType,
+  type JsonValue,
   type LlmUsageAuth,
   type LlmUsageCredential,
-  type LlmUsageLimit,
-  type LlmUsageOverage,
   type LlmUsageResponse,
   type LlmUsageSnapshot,
-  type LlmUsageWindow,
+  type Output,
 } from "@ccmsg/protocol";
+import * as v from "valibot";
 import {
   fetchGatewayJson,
-  isRecord,
-  optionalNumber,
-  optionalString,
   productionGatewayDeps,
+  unreadable,
   withQueryParam,
   type LlmGatewayDeps,
 } from "./llm-gateway.ts";
+
+// The gateway's usage document (its `quota.rs` CredentialUsage and Snapshot),
+// read for what the screen draws. A window, an overage and a limit are the
+// wire's own shapes; the credential, its auth and its snapshot differ from
+// the wire and are read here, then built into it below. Fields the gateway
+// adds are not read and leave the document readable.
+
+/** What the gateway last observed of a credential's authentication. */
+const GatewayAuthSchema = v.object({
+  status: v.string(),
+  reason: v.optional(v.string()),
+  observed_at: v.optional(v.number()),
+  /** Relative path of the gateway's browser re-login page. */
+  login_path: v.optional(v.string()),
+});
+
+/** One observation of a credential's quota: its two windows sit beside
+ * `observed_at` under their own keys. */
+const GatewaySnapshotSchema = v.object({
+  observed_at: v.optional(v.number()),
+  "5h": v.optional(LlmUsageWindowSchema),
+  "7d": v.optional(LlmUsageWindowSchema),
+  overage: v.optional(LlmUsageOverageSchema),
+});
+
+const GatewayCredentialSchema = v.object({
+  name: v.string(),
+  type: v.optional(v.string()),
+  support: v.string(),
+  auth: v.optional(GatewayAuthSchema),
+  snapshot: v.optional(GatewaySnapshotSchema),
+  limits: v.optional(v.array(LlmUsageLimitSchema)),
+  probe_error: v.optional(v.string()),
+});
+type GatewayCredential = Output<typeof GatewayCredentialSchema>;
+
+const UsageDocumentSchema = v.object({
+  generated_at: v.optional(v.number()),
+  credentials: v.array(GatewayCredentialSchema),
+});
 
 /** Upstream is a small JSON document (a handful of credentials); anything at
  * this size is a misconfigured URL pointing at something else entirely, and
@@ -41,27 +84,6 @@ export const LLM_USAGE_PROBE_TIMEOUT_MS = 60_000;
 export type LlmUsageResult =
   | { ok: true; data: LlmUsageResponse }
   | { ok: false; code: ErrorCodeType; msg: string };
-
-/** A sibling key of `observed_at` counts as a quota window only if it carries
- * the two fields the UI needs to draw one. Shape rather than an allowlist of
- * "5h"/"7d" so a gateway that adds a window needs no daemon change, and a
- * gateway that adds an unrelated key is dropped instead of drawn as an empty
- * bar (LlmUsageSnapshot.windows). */
-function parseWindow(value: unknown): LlmUsageWindow | null {
-  if (!isRecord(value)) return null;
-  const utilization = optionalNumber(value.utilization);
-  const status = optionalString(value.status);
-  if (utilization === undefined || status === undefined) return null;
-  const reset = optionalNumber(value.reset);
-  const windowSeconds = optionalNumber(value.window_seconds);
-  return {
-    utilization,
-    status,
-    ...(reset !== undefined ? { reset } : {}),
-    ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
-    ...(value.expired === true ? { expired: true } : {}),
-  };
-}
 
 /** Resolve the gateway's relative `login_path` against the address the daemon
  * fetched usage from, which is the only address it knows reaches the gateway.
@@ -88,132 +110,64 @@ export function resolveLoginUrl(loginPath: string, base: string): string | undef
   return resolved.toString();
 }
 
-/** `auth` is the gateway's own reading of whether the credential can still
- * authenticate. Only `status` is required — everything else degrades to absent
- * and the badge still renders — and an entry without one is dropped rather
- * than shown as a state the UI would have to invent a word for. */
-function parseAuth(value: unknown, base: string | undefined): LlmUsageAuth | undefined {
-  if (!isRecord(value)) return undefined;
-  const status = optionalString(value.status);
-  if (status === undefined) return undefined;
-  const reason = optionalString(value.reason);
-  const observedAt = optionalNumber(value.observed_at);
-  const loginPath = optionalString(value.login_path);
+/** `auth` for the wire: the gateway's `login_path` resolved to a link the
+ * browser can follow (resolveLoginUrl), when there is an endpoint to resolve
+ * it against. */
+function wireAuth(
+  { login_path: loginPath, ...auth }: NonNullable<GatewayCredential["auth"]>,
+  base: string | undefined,
+): LlmUsageAuth {
   const loginUrl =
     loginPath === undefined || base === undefined ? undefined : resolveLoginUrl(loginPath, base);
+  return { ...auth, ...(loginUrl !== undefined ? { login_url: loginUrl } : {}) };
+}
+
+/** `snapshot` for the wire: its windows gathered under `windows`, by key. */
+function wireSnapshot({
+  "5h": fiveHour,
+  "7d": sevenDay,
+  ...rest
+}: NonNullable<GatewayCredential["snapshot"]>): LlmUsageSnapshot {
   return {
-    status,
-    ...(reason !== undefined ? { reason } : {}),
-    ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
-    ...(loginUrl !== undefined ? { login_url: loginUrl } : {}),
+    ...rest,
+    windows: {
+      ...(fiveHour !== undefined ? { "5h": fiveHour } : {}),
+      ...(sevenDay !== undefined ? { "7d": sevenDay } : {}),
+    },
   };
 }
 
-function parseOverage(value: unknown): LlmUsageOverage | undefined {
-  if (!isRecord(value)) return undefined;
-  const status = optionalString(value.status);
-  if (status === undefined) return undefined;
-  const reason = optionalString(value.disabled_reason);
-  return { status, ...(reason !== undefined ? { disabled_reason: reason } : {}) };
-}
-
-function parseSnapshot(value: unknown): LlmUsageSnapshot | undefined {
-  if (!isRecord(value)) return undefined;
-  const windows: Record<string, LlmUsageWindow> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (key === "observed_at" || key === "overage") continue;
-    const window = parseWindow(entry);
-    if (window) windows[key] = window;
-  }
-  const observedAt = optionalNumber(value.observed_at);
-  const overage = parseOverage(value.overage);
+function wireCredential(
+  { auth, snapshot, limits, ...credential }: GatewayCredential,
+  base: string | undefined,
+): LlmUsageCredential {
   return {
-    ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
-    ...(overage ? { overage } : {}),
-    windows,
-  };
-}
-
-/** Recognised by shape, like parseWindow: an entry counts as a limit only if
- * it carries the two fields the UI needs to draw one (a name for it and a
- * figure). Everything else degrades to absent and the row still renders, so a
- * gateway that adds a field needs no daemon change. */
-function parseLimit(value: unknown): LlmUsageLimit | null {
-  if (!isRecord(value)) return null;
-  const kind = optionalString(value.kind);
-  const percent = optionalNumber(value.percent);
-  if (kind === undefined || percent === undefined) return null;
-  const resetsAt = optionalNumber(value.resets_at);
-  const model = optionalString(value.model);
-  const windowSeconds = optionalNumber(value.window_seconds);
-  return {
-    kind,
-    percent,
-    severity: optionalString(value.severity) ?? "unknown",
-    ...(resetsAt !== undefined ? { resets_at: resetsAt } : {}),
-    ...(model !== undefined ? { model } : {}),
-    ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
-    ...(typeof value.is_active === "boolean" ? { is_active: value.is_active } : {}),
-  };
-}
-
-/** A credential without a name cannot be labelled or told apart from its
- * neighbours, so it is dropped; every other field degrades to absent and the
- * row still renders. */
-function parseCredential(value: unknown, base: string | undefined): LlmUsageCredential | null {
-  if (!isRecord(value)) return null;
-  const name = optionalString(value.name);
-  if (name === undefined) return null;
-  const type = optionalString(value.type);
-  const support = optionalString(value.support) ?? "unknown";
-  const auth = parseAuth(value.auth, base);
-  const snapshot = parseSnapshot(value.snapshot);
-  const probeError = optionalString(value.probe_error);
-  // An absent `limits` and an unusable one both collapse to "no limits": the
-  // screen shows nothing extra either way, and a gateway too old to send the
-  // field is the common case rather than an error.
-  const limits = Array.isArray(value.limits)
-    ? value.limits.map(parseLimit).filter((limit): limit is LlmUsageLimit => limit !== null)
-    : [];
-  return {
-    name,
-    ...(type !== undefined ? { type } : {}),
-    support,
-    ...(auth ? { auth } : {}),
-    ...(snapshot ? { snapshot } : {}),
-    ...(limits.length > 0 ? { limits } : {}),
-    ...(probeError !== undefined ? { probe_error: probeError } : {}),
+    ...credential,
+    ...(auth !== undefined ? { auth: wireAuth(auth, base) } : {}),
+    ...(snapshot !== undefined ? { snapshot: wireSnapshot(snapshot) } : {}),
+    // The wire leaves `limits` out when there are none (LlmUsageCredential).
+    ...(limits !== undefined && limits.length > 0 ? { limits } : {}),
   };
 }
 
 /** Split out from the fetch so the shape rules are testable without a
- * Response object. Rejects only the one thing the UI cannot work around: a
- * body that is not an object with a `credentials` array.
+ * Response object. A document that does not read is answered with where it is
+ * wrong.
  *
  * `base` is the endpoint this document came from, and the only thing it is
  * used for is turning the gateway's relative `login_path` into an address a
  * browser can follow (resolveLoginUrl). Omitting it drops those links and
  * leaves the rest of the document unchanged. */
-export function parseUsagePayload(parsed: unknown, base?: string): LlmUsageResult {
-  if (!isRecord(parsed) || !Array.isArray(parsed.credentials)) {
-    return {
-      ok: false,
-      code: ErrorCode.llm_usage_unavailable,
-      msg: "usage endpoint returned no credentials array",
-    };
-  }
-  const credentials: LlmUsageCredential[] = [];
-  for (const entry of parsed.credentials) {
-    const credential = parseCredential(entry, base);
-    if (credential) credentials.push(credential);
-  }
-  const generatedAt = optionalNumber(parsed.generated_at);
+export function parseUsagePayload(document: JsonValue, base?: string): LlmUsageResult {
+  const read = parseWith(UsageDocumentSchema, document);
+  if (!read.ok) return unreadable("usage", ErrorCode.llm_usage_unavailable, read.failure);
+  const { credentials, ...rest } = read.value;
   return {
     ok: true,
     data: {
       ok: true,
-      ...(generatedAt !== undefined ? { generated_at: generatedAt } : {}),
-      credentials,
+      ...rest,
+      credentials: credentials.map((credential) => wireCredential(credential, base)),
     },
   };
 }
@@ -239,7 +193,7 @@ export async function fetchLlmUsage(
     return {
       ok: false,
       code: ErrorCode.llm_usage_unavailable,
-      msg: `usage endpoint URL is unusable: ${String(e)}`,
+      msg: `usage endpoint URL is unusable: ${errorText(e)}`,
     };
   }
   const res = await fetchGatewayJson(
@@ -257,5 +211,5 @@ export async function fetchLlmUsage(
   if (!res.ok) return res;
   // Resolved against the configured endpoint rather than the probe variant of
   // it, so a login link does not carry `?refresh=true` along.
-  return parseUsagePayload(res.parsed, url);
+  return parseUsagePayload(res.document, url);
 }

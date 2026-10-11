@@ -19,24 +19,31 @@
 // own nonce guard. So the only question here is whether the deadline has
 // already passed — which makes this a relay, with no state to keep and nothing
 // to wait for.
-import type { NotifyFrom } from "@ccmsg/protocol";
+import { parseWith, type JsonValue, type NotifyFrom, type Output } from "@ccmsg/protocol";
+import * as v from "valibot";
 
-/** One `type: "cache_keepalive"` item from the gateway, validated.
+/** One `type: "cache_keepalive"` item from the gateway, read.
  *
  * The wire payload carries more than this (`prefix`, `ts`) — those are the
  * gateway's own bookkeeping and describe the cache series it is protecting,
  * which is not something this relay decides anything from. Only the four
  * fields below change what happens. */
-export interface CacheKeepaliveEvent {
+const CacheKeepaliveEventSchema = v.object({
+  type: v.literal("cache_keepalive"),
   /** Claude session id the marker must reach. */
-  session_id: string;
+  session_id: v.pipe(v.string(), v.nonEmpty()),
   /** Exact notification text. Relayed unchanged — see module doc. */
-  marker: string;
+  marker: v.pipe(v.string(), v.nonEmpty()),
   /** Epoch ms after which delivering is pointless (the cache has lapsed). */
-  deadline: number;
+  deadline: v.number(),
   /** Single-use id of this keepalive, for logs. */
-  nonce: string;
-}
+  nonce: v.optional(v.string(), ""),
+});
+/** A keepalive, by the fields that decide what happens to it. */
+export type CacheKeepaliveEvent = Omit<Output<typeof CacheKeepaliveEventSchema>, "type">;
+
+/** What an item says it is, read alone. */
+const CacheKeepaliveKindSchema = v.object({ type: v.literal("cache_keepalive") });
 
 /** True for an item claiming to be a keepalive, whether or not it is valid.
  * Split from parsing so the webhook fold can route an item to this handler and
@@ -44,25 +51,18 @@ export interface CacheKeepaliveEvent {
  * keepalive must not silently fall through and be recorded as a request event
  * (its `session_id`/`ts` would pass that parser and restart a cache countdown
  * that nothing actually refreshed). */
-export function isCacheKeepaliveItem(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  return (value as { type?: unknown }).type === "cache_keepalive";
+export function isCacheKeepaliveItem(item: JsonValue): boolean {
+  return parseWith(CacheKeepaliveKindSchema, item).ok;
 }
 
-/** Validate one keepalive item. Returns null for anything unusable; the caller
- * logs and drops, never throws — one bad item in a posted batch must not cost
- * the good ones. */
-export function parseCacheKeepaliveEvent(value: unknown): CacheKeepaliveEvent | null {
-  if (!isCacheKeepaliveItem(value)) return null;
-  const raw = value as Record<string, unknown>;
-  const sid = raw.session_id;
-  const marker = raw.marker;
-  const deadline = raw.deadline;
-  if (typeof sid !== "string" || sid === "") return null;
-  if (typeof marker !== "string" || marker === "") return null;
-  if (typeof deadline !== "number" || !Number.isFinite(deadline)) return null;
-  const nonce = typeof raw.nonce === "string" ? raw.nonce : "";
-  return { session_id: sid, marker, deadline, nonce };
+/** Read one keepalive item. Returns null for one that does not read; the
+ * caller logs and drops, never throws — one bad item in a posted batch must
+ * not cost the good ones. */
+export function parseCacheKeepaliveEvent(item: JsonValue): CacheKeepaliveEvent | null {
+  const read = parseWith(CacheKeepaliveEventSchema, item);
+  if (!read.ok) return null;
+  const { type: _kind, ...event } = read.value;
+  return event;
 }
 
 /** Stamped on the relayed notify: from the session's side this is

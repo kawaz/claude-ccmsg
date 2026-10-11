@@ -62,13 +62,16 @@ export type TranslateResponse = Output<typeof TranslateResponseSchema>;
  * future gateway adds — see LlmUsageSnapshot.windows). */
 export const LlmUsageWindowSchema = v.object({
   /** Fraction of the window's quota already consumed, 0..1 (upstream sends
-   * 0.13 for 13%). Values above 1 are possible and are NOT clamped here. */
-  utilization: v.number(),
+   * 0.13 for 13%). Values above 1 are possible and are NOT clamped here.
+   * Absent when upstream's reading did not carry it; the UI draws no bar for
+   * such a window. */
+  utilization: v.optional(v.number()),
   /** Upstream verdict for the window. Known values are "allowed",
    * "allowed_warning" and "rejected"; kept as a string because the set is the
    * gateway's to grow and an unknown value must reach the UI as-is rather
-   * than being flattened into a wrong one. */
-  status: v.string(),
+   * than being flattened into a wrong one. Absent when upstream's reading
+   * carried no verdict (observed 2026-10-11 on a window with utilization 0). */
+  status: v.optional(v.string()),
   /** Epoch ms at which the window's counter resets. */
   reset: v.optional(v.number()),
   /** Length of the window's period in seconds (18000 for a 5h window, 604800
@@ -89,7 +92,8 @@ export type LlmUsageWindow = Output<typeof LlmUsageWindowSchema>;
  * window (a credential can be out of credits while both windows are still
  * "allowed"). */
 export const LlmUsageOverageSchema = v.object({
-  status: v.string(),
+  /** Absent when upstream reported only the reason. */
+  status: v.optional(v.string()),
   disabled_reason: v.optional(v.string()),
 });
 export type LlmUsageOverage = Output<typeof LlmUsageOverageSchema>;
@@ -103,9 +107,7 @@ export const LlmUsageSnapshotSchema = v.object({
   overage: v.optional(LlmUsageOverageSchema),
   /** Window key → window, keys verbatim from upstream. A map rather than
    * named `five_hour`/`seven_day` fields so a gateway that starts reporting a
-   * third window shows up in the UI without a protocol change; the daemon
-   * decides membership by shape (a `utilization` number + a `status` string),
-   * so a future non-window sibling key is dropped rather than mis-rendered. */
+   * third window needs no protocol change. */
   windows: v.record(v.string(), LlmUsageWindowSchema),
 });
 export type LlmUsageSnapshot = Output<typeof LlmUsageSnapshotSchema>;
@@ -126,8 +128,8 @@ export const LlmUsageLimitSchema = v.object({
    * normalizes at the presentation boundary. */
   percent: v.number(),
   /** Upstream's own verdict: "normal" / "warning" / "critical" today. String
-   * for `kind`'s reason. */
-  severity: v.string(),
+   * for `kind`'s reason. Absent when upstream gave none. */
+  severity: v.optional(v.string()),
   /** Epoch ms the limit's counter resets at. Absent for a limit with no
    * scheduled reset. */
   resets_at: v.optional(v.number()),
@@ -255,29 +257,27 @@ export type LlmStatsResponse = Output<typeof LlmStatsResponseSchema>;
 // --- llm_status --------------------------------------------------------------
 
 /** The gateway's display verdict for one service, and for the report as a
- * whole. ccmsg never recomputes it: the gateway is the one that knows which
- * of `official` and `observed` outweighs the other, and a second opinion here
- * would disagree with the CLI showing the same report. A value outside this
- * set normalizes to "unknown" rather than being passed through, so a future
- * vocabulary cannot reach the UI as a word it has no colour for. */
-export const LlmStatusSeveritySchema = v.picklist(["ok", "warning", "critical", "unknown"]);
+ * whole: "ok" / "warning" / "critical" / "unknown" today. ccmsg never
+ * recomputes it: the gateway is the one that knows which of `official` and
+ * `observed` outweighs the other, and a second opinion here would disagree
+ * with the CLI showing the same report. A string rather than a union, as the
+ * transcript's other kinds (DR-0038 §3): the vocabulary is the gateway's to
+ * grow, and the UI shows a word it does not know as unknown rather than the
+ * report failing to read. */
+export const LlmStatusSeveritySchema = v.string();
 export type LlmStatusSeverity = Output<typeof LlmStatusSeveritySchema>;
 
-/** What the provider's own status page says. Fixed vocabulary; anything else
- * (a state the gateway added, or a malformed document) is "unknown". */
-export const LlmStatusOfficialStateSchema = v.picklist([
-  "operational",
-  "degraded",
-  "partial_outage",
-  "major_outage",
-  "maintenance",
-  "unknown",
-]);
+/** What the provider's own status page says: "operational" / "degraded" /
+ * "partial_outage" / "major_outage" / "maintenance" / "unknown" today. A
+ * string for LlmStatusSeverity's reason. */
+export const LlmStatusOfficialStateSchema = v.string();
 export type LlmStatusOfficialState = Output<typeof LlmStatusOfficialStateSchema>;
 
-/** What this gateway saw on the wire. Deliberately disjoint from the official
- * vocabulary so a reader can never mistake one signal for the other. */
-export const LlmStatusObservedStateSchema = v.picklist(["reachable", "failing", "unknown"]);
+/** What this gateway saw on the wire: "reachable" / "failing" / "unknown"
+ * today, deliberately disjoint from the official vocabulary so a reader can
+ * never mistake one signal for the other. A string for LlmStatusSeverity's
+ * reason. */
+export const LlmStatusObservedStateSchema = v.string();
 export type LlmStatusObservedState = Output<typeof LlmStatusObservedStateSchema>;
 
 /** One status-page component the gateway watches for this service. */
@@ -318,8 +318,9 @@ export const LlmStatusOfficialSchema = v.object({
   source: v.optional(v.string()),
   /** The human status page, for the "詳しくは公式ページ" link. */
   source_url: v.optional(v.string()),
-  /** When the gateway last read the source (epoch ms). */
-  observed_at: v.optional(v.number()),
+  /** When the gateway last read the source (epoch ms); null when it never
+   * has. */
+  observed_at: v.nullish(v.number()),
   /** True when that reading is older than the gateway's `stale_after`: the
    * value shown is the last success, not a current one. */
   stale: v.optional(v.boolean()),
@@ -334,12 +335,14 @@ export type LlmStatusOfficial = Output<typeof LlmStatusOfficialSchema>;
 /** What this gateway itself observed for the service's routes. */
 export const LlmStatusObservedSchema = v.object({
   state: LlmStatusObservedStateSchema,
-  /** Epoch ms, like every other instant in this report. */
-  observed_at: v.optional(v.number()),
+  /** Epoch ms, like every other instant in this report; null while the
+   * gateway has observed nothing. */
+  observed_at: v.nullish(v.number()),
   /** When the observation stops counting and the state falls back to
-   * "unknown" (the gateway's `observation_ttl`). */
-  expires_at: v.optional(v.number()),
-  last_success_at: v.optional(v.number()),
+   * "unknown" (the gateway's `observation_ttl`); null with `observed_at`. */
+  expires_at: v.nullish(v.number()),
+  /** Null until a request has succeeded. */
+  last_success_at: v.nullish(v.number()),
   last_failure: v.optional(
     v.object({
       at: v.optional(v.number()),
@@ -355,11 +358,11 @@ export type LlmStatusObserved = Output<typeof LlmStatusObservedSchema>;
 
 /** One upstream service, with the two signals kept apart. Both are optional
  * because a gateway may report a service it has neither read nor exercised;
- * `severity` is always present (normalizing to "unknown" if need be) since it
- * is what the row's icon is chosen from. */
+ * `severity` is always present since it is what the row's icon is chosen
+ * from. */
 export const LlmStatusServiceSchema = v.object({
   id: v.string(),
-  /** Display name from the gateway; falls back to `id` when absent. */
+  /** Display name from the gateway. */
   name: v.string(),
   severity: LlmStatusSeveritySchema,
   /** Which configured routes draw on this service. */
@@ -385,8 +388,7 @@ export type LlmStatusOverall = Output<typeof LlmStatusOverallSchema>;
  * `ok: true` envelope is not part of it. */
 export const LlmStatusReportSchema = v.object({
   /** The gateway's own version of this document's shape. Passed through
-   * rather than gated on: every field is normalized defensively, so a newer
-   * schema degrades to "unknown"s instead of to nothing at all. */
+   * rather than gated on. */
   schema_version: v.optional(v.number()),
   /** When the gateway assembled the report (epoch ms). */
   generated_at: v.optional(v.number()),

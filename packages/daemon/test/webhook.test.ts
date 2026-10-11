@@ -3,12 +3,13 @@
 // the HTTP listener's own concerns (source-IP allowlist, Origin) are tested in
 // http-transport.test.ts and would only obscure these cases.
 import { describe, expect, test } from "bun:test";
+import type { JsonValue } from "@ccmsg/protocol";
 import { WEBHOOK_MAX_BYTES, handleWebhookRequest, type WebhookSource } from "../src/webhook.ts";
 
 const TOKEN = "s3cr3t-token";
 const SILENT = { error() {} };
 
-function sources(handle: (items: unknown[]) => void): Map<string, WebhookSource> {
+function sources(handle: WebhookSource["handle"]): Map<string, WebhookSource> {
   return new Map<string, WebhookSource>([["llm-gateway", { token: TOKEN, handle }]]);
 }
 
@@ -35,7 +36,7 @@ const event = {
 
 describe("webhook auth", () => {
   test("a valid token is accepted", async () => {
-    const got: unknown[][] = [];
+    const got: (readonly JsonValue[])[] = [];
     const res = await handleWebhookRequest(
       post(JSON.stringify(event)),
       "llm-gateway",
@@ -88,7 +89,7 @@ describe("webhook auth", () => {
 
 describe("webhook payload", () => {
   test("a bare event and a batch arrive at the handler the same way", async () => {
-    const got: unknown[][] = [];
+    const got: (readonly JsonValue[])[] = [];
     const batch = [event, { ...event, ts: event.ts + 1 }];
     await handleWebhookRequest(
       post(JSON.stringify(batch)),
@@ -113,7 +114,7 @@ describe("webhook payload", () => {
     // Fire-and-forget: a producer that retried on these would resend an event
     // ccmsg can never place, forever. Dropping is the handler's business; the
     // transport's job is to accept the delivery.
-    const got: unknown[][] = [];
+    const got: (readonly JsonValue[])[] = [];
     const res = await handleWebhookRequest(
       post(JSON.stringify([event, { garbage: true }, 42])),
       "llm-gateway",

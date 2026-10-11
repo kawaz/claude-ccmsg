@@ -85,9 +85,10 @@ export function observedLabel(state: LlmStatusObservedState): string {
 /** How long ago, in the units a reader of an outage screen cares about:
  * seconds while it is happening, coarser once it is history. Empty for an
  * absent instant — the column stays, so a service with no reading does not
- * pull the rows around it out of line. */
-export function formatStatusAge(atMs: number | undefined, nowMs: number): string {
-  if (atMs === undefined || !Number.isFinite(atMs)) return "";
+ * pull the rows around it out of line. An instant the gateway has not seen yet
+ * arrives as null. */
+export function formatStatusAge(atMs: number | null | undefined, nowMs: number): string {
+  if (atMs === undefined || atMs === null || !Number.isFinite(atMs)) return "";
   const ageMs = Math.max(0, nowMs - atMs);
   const seconds = Math.floor(ageMs / 1000);
   if (seconds < 60) return `${seconds} 秒前`;

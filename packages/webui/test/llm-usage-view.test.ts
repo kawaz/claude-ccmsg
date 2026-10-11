@@ -378,6 +378,20 @@ describe("sortedWindows", () => {
   test("an empty snapshot yields no rows", () => {
     expect(sortedWindows(snapshot({}), NOW)).toEqual([]);
   });
+
+  // The gateway's window may carry neither figure: one without utilization
+  // has no bar to draw, and one without a verdict draws with no colour of
+  // alarm (observed 2026-10-11: `{"utilization": 0, "window_seconds": 18000}`).
+  test("a window without utilization draws no row, one without status draws plainly", () => {
+    const rows = sortedWindows(
+      snapshot({
+        "5h": { utilization: 0, window_seconds: 18000 },
+        "7d": { status: "allowed" },
+      }),
+      NOW,
+    );
+    expect(rows.map((w) => [w.key, w.status, w.tone])).toEqual([["5h", undefined, "ok"]]);
+  });
 });
 
 describe("snapshotAge", () => {

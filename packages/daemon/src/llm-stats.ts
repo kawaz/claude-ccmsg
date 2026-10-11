@@ -7,19 +7,30 @@ import {
   ErrorCode,
   LLM_STATS_DAYS_MAX,
   LLM_STATS_DAYS_MIN,
+  LlmStatsDaySchema,
+  errorText,
+  parseWith,
   type ErrorCode as ErrorCodeType,
-  type LlmStatsDay,
-  type LlmStatsModelUsage,
+  type JsonValue,
   type LlmStatsResponse,
 } from "@ccmsg/protocol";
+import * as v from "valibot";
 import {
   fetchGatewayJson,
-  isRecord,
-  optionalNumber,
   productionGatewayDeps,
+  unreadable,
   withQueryParam,
   type LlmGatewayDeps,
 } from "./llm-gateway.ts";
+
+/** The gateway's spend document (its `stats.rs` Report), read for what the
+ * screen draws. Its days and counters are the wire's own shape; what else the
+ * gateway reports (the `tokens` breakdown, per-origin entries, the window's
+ * total) is not read, and leaves the document readable. */
+const StatsDocumentSchema = v.object({
+  generated_at: v.optional(v.number()),
+  days: v.record(v.string(), LlmStatsDaySchema),
+});
 
 /** A year of daily spend across every credential and model runs to a few
  * hundred KB at the observed density (~1.6 KB/day). Four megabytes leaves
@@ -45,76 +56,13 @@ export function statsUrlWithDays(base: string, days?: number): string {
   return days === undefined ? base : withQueryParam(base, "days", String(days));
 }
 
-/** Counters for one model. Non-numeric fields are dropped rather than
- * coerced: a counter the UI sums has to be a number or absent, never NaN. */
-function parseModelUsage(value: unknown): LlmStatsModelUsage | null {
-  if (!isRecord(value)) return null;
-  const requests = optionalNumber(value.requests);
-  const inputTokens = optionalNumber(value.input_tokens);
-  const outputTokens = optionalNumber(value.output_tokens);
-  const cacheCreationInputTokens = optionalNumber(value.cache_creation_input_tokens);
-  const cacheReadInputTokens = optionalNumber(value.cache_read_input_tokens);
-  const usd = optionalNumber(value.usd);
-  return {
-    ...(requests !== undefined ? { requests } : {}),
-    ...(inputTokens !== undefined ? { input_tokens: inputTokens } : {}),
-    ...(outputTokens !== undefined ? { output_tokens: outputTokens } : {}),
-    ...(cacheCreationInputTokens !== undefined
-      ? { cache_creation_input_tokens: cacheCreationInputTokens }
-      : {}),
-    ...(cacheReadInputTokens !== undefined
-      ? { cache_read_input_tokens: cacheReadInputTokens }
-      : {}),
-    ...(usd !== undefined ? { usd } : {}),
-  };
-}
-
-/** One day. A day whose `credentials` is not an object still renders as an
- * empty day with its total, which is more useful than dropping the date out
- * of the series and leaving a hole in the chart. */
-function parseDay(value: unknown): LlmStatsDay | null {
-  if (!isRecord(value)) return null;
-  const credentials: Record<string, Record<string, LlmStatsModelUsage>> = {};
-  if (isRecord(value.credentials)) {
-    for (const [name, models] of Object.entries(value.credentials)) {
-      if (!isRecord(models)) continue;
-      const byModel: Record<string, LlmStatsModelUsage> = {};
-      for (const [model, entry] of Object.entries(models)) {
-        const usage = parseModelUsage(entry);
-        if (usage) byModel[model] = usage;
-      }
-      credentials[name] = byModel;
-    }
-  }
-  const totalUsd = optionalNumber(value.total_usd);
-  return { credentials, ...(totalUsd !== undefined ? { total_usd: totalUsd } : {}) };
-}
-
 /** Split out from the fetch so the shape rules are testable without a
- * Response object. Rejects only what the UI cannot work around: a body that
- * is not an object with a `days` object. */
-export function parseStatsPayload(parsed: unknown): LlmStatsResult {
-  if (!isRecord(parsed) || !isRecord(parsed.days)) {
-    return {
-      ok: false,
-      code: ErrorCode.llm_stats_unavailable,
-      msg: "stats endpoint returned no days object",
-    };
-  }
-  const days: Record<string, LlmStatsDay> = {};
-  for (const [date, entry] of Object.entries(parsed.days)) {
-    const day = parseDay(entry);
-    if (day) days[date] = day;
-  }
-  const generatedAt = optionalNumber(parsed.generated_at);
-  return {
-    ok: true,
-    data: {
-      ok: true,
-      ...(generatedAt !== undefined ? { generated_at: generatedAt } : {}),
-      days,
-    },
-  };
+ * Response object. A document that does not read is answered with where it is
+ * wrong. */
+export function parseStatsPayload(document: JsonValue): LlmStatsResult {
+  const read = parseWith(StatsDocumentSchema, document);
+  if (!read.ok) return unreadable("stats", ErrorCode.llm_stats_unavailable, read.failure);
+  return { ok: true, data: { ok: true, ...read.value } };
 }
 
 /** Fetch and normalize the gateway's spend document for a window of days. */
@@ -131,7 +79,7 @@ export async function fetchLlmStats(
     return {
       ok: false,
       code: ErrorCode.llm_stats_unavailable,
-      msg: `stats endpoint URL is unusable: ${String(e)}`,
+      msg: `stats endpoint URL is unusable: ${errorText(e)}`,
     };
   }
   const res = await fetchGatewayJson(
@@ -145,5 +93,5 @@ export async function fetchLlmStats(
     deps,
   );
   if (!res.ok) return res;
-  return parseStatsPayload(res.parsed);
+  return parseStatsPayload(res.document);
 }

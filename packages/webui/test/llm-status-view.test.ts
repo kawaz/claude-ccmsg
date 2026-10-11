@@ -51,6 +51,17 @@ describe("severity vocabulary", () => {
     ]);
   });
 
+  // The gateway's vocabulary may grow; a word this UI does not know shows as
+  // unknown rather than the report failing to read.
+  test("a word not known here reads as unknown", () => {
+    expect([severityTone("degraded_badly"), severityLabel("degraded_badly")]).toEqual([
+      "unknown",
+      "不明",
+    ]);
+    expect(officialLabel("under_review")).toBe("不明");
+    expect(observedLabel("throttled")).toBe("未観測");
+  });
+
   // The two signals must never read as one scale: "稼働中" is the provider's
   // claim, "疎通" is what this gateway's own traffic did.
   test("official and observed states have disjoint wording", () => {
@@ -92,6 +103,8 @@ describe("formatStatusAge", () => {
   // does not pull the rows around it out of line.
   test("is empty for an absent or unusable instant", () => {
     expect(formatStatusAge(undefined, NOW)).toBe("");
+    // The gateway sends null for an instant it has not seen yet.
+    expect(formatStatusAge(null, NOW)).toBe("");
     expect(formatStatusAge(Number.NaN, NOW)).toBe("");
   });
 

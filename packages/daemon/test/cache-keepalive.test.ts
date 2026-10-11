@@ -3,12 +3,26 @@
 // side effects. The wiring itself is covered end-to-end in
 // cache-keepalive-relay.test.ts.
 import { describe, expect, test } from "bun:test";
+import type { JsonValue } from "@ccmsg/protocol";
 import {
-  isCacheKeepaliveItem,
-  parseCacheKeepaliveEvent,
+  isCacheKeepaliveItem as isKeepaliveItem,
+  parseCacheKeepaliveEvent as parseKeepaliveEvent,
   relayCacheKeepalive,
   type CacheKeepaliveEvent,
 } from "../src/cache-keepalive.ts";
+
+/** A test value as the JSON a gateway would post: what the parser reads. */
+function json(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseCacheKeepaliveEvent(item: unknown) {
+  return parseKeepaliveEvent(json(item));
+}
+
+function isCacheKeepaliveItem(item: unknown) {
+  return isKeepaliveItem(json(item));
+}
 
 const MARKER = "[llm-gateway cache keepalive nonce=n1]";
 

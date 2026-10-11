@@ -2,8 +2,25 @@
 // cache they feed (llm-events.ts). The transport that carries them in is
 // webhook.ts's concern and is tested there.
 import { describe, expect, test } from "bun:test";
-import { LLM_PROMPT_CACHE_TTL_MS } from "@ccmsg/protocol";
-import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "../src/llm-events.ts";
+import { LLM_PROMPT_CACHE_TTL_MS, type JsonValue } from "@ccmsg/protocol";
+import {
+  isIgnoredGatewayItem as isIgnoredItem,
+  LlmRequestCache,
+  parseLlmRequestEvent as parseRequestEvent,
+} from "../src/llm-events.ts";
+
+/** A test value as the JSON a gateway would post: what the parser reads. */
+function json(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseLlmRequestEvent(item: unknown) {
+  return parseRequestEvent(json(item));
+}
+
+function isIgnoredGatewayItem(item: unknown) {
+  return isIgnoredItem(json(item));
+}
 
 describe("parseLlmRequestEvent", () => {
   test("keeps the fields the countdown and its tooltip need", () => {
@@ -57,13 +74,13 @@ describe("parseLlmRequestEvent", () => {
     });
   });
 
-  test("an unusable cache deadline leaves the window to the assumed length", () => {
-    // The gateway sends no deadline for a request that cached nothing; older
-    // ones send none at all. A deadline at or before its own request would be
-    // a window that was never open, so it is dropped the same way rather than
-    // drawing a ring that is already over.
+  test("a deadline that opens no window leaves it to the assumed length", () => {
+    // The gateway sends no deadline (or null) for a request that cached
+    // nothing; older ones send none at all. A deadline at or before its own
+    // request would be a window that was never open, so it is dropped the same
+    // way rather than drawing a ring that is already over.
     const base = { ts: 1785564745, session_id: "s", prefix: "p", origin: "main" };
-    for (const expires of [null, undefined, "soon", 1785564745, 1785564700, Number.NaN]) {
+    for (const expires of [null, undefined, 1785564745, 1785564700]) {
       expect(parseLlmRequestEvent({ ...base, cache_expires_at: expires })).toEqual({
         ts: 1785564745,
         session_id: "s",
@@ -71,26 +88,25 @@ describe("parseLlmRequestEvent", () => {
         origin: "main",
       });
     }
+    // A deadline that is not a number is not one: the event does not read.
+    expect(parseLlmRequestEvent({ ...base, cache_expires_at: "soon" })).toBeNull();
   });
 
-  test("origin is an open vocabulary: any stated string is kept, non-strings dropped", () => {
+  test("origin is an open vocabulary: any stated string is kept", () => {
     // Absent origin is what a pre-v0.33.0 gateway sends, and the cache reads
     // it as "estimate this session's main series". The word list is the
     // gateway's to grow ("oneshot" arrived in its v0.34.0), so an unknown
-    // string is kept as stated — downstream only ever asks "is it main?" —
-    // while a non-string degrades to unstated.
-    for (const origin of [undefined, null, 1, ""]) {
-      const info = parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin });
-      expect(info?.origin).toBeUndefined();
-    }
-    for (const origin of ["sub", "oneshot", "MAIN", "agent"]) {
+    // string is kept as stated — downstream only ever asks "is it main?".
+    expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p" })?.origin).toBeUndefined();
+    for (const origin of ["sub", "oneshot", "MAIN", "agent", "unknown"]) {
       expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin })?.origin).toBe(
         origin,
       );
     }
-    expect(
-      parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin: "unknown" })?.origin,
-    ).toBe("unknown");
+    // An origin that is not a string is not one: the event does not read.
+    for (const origin of [null, 1]) {
+      expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin })).toBeNull();
+    }
   });
 
   test("drops what cannot be attached to a session row or placed in time", () => {
@@ -149,13 +165,8 @@ describe("parseLlmRequestEvent", () => {
     // series per session, which is what ccmsg did before prefixes existed.
     const info = parseLlmRequestEvent({ ts: 1, session_id: "s" });
     expect(info).toEqual({ ts: 1, session_id: "s", prefix: "" });
-    // A malformed prefix degrades the same way rather than dropping a usable
-    // timestamp on the floor.
-    expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: 7 })).toEqual({
-      ts: 1,
-      session_id: "s",
-      prefix: "",
-    });
+    // A prefix that is not a string is not one: the event does not read.
+    expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: 7 })).toBeNull();
   });
 });
 

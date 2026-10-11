@@ -2,6 +2,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as v from "valibot";
 import {
   ADMIN_ID,
   DEFAULT_DEDUP_WINDOW_MS,
@@ -43,6 +44,8 @@ import {
   type SayReadEvent,
   type SessionIdentity,
   type StaleClientInfo,
+  type JsonValue,
+  parseWith,
   type StorageEvent,
   type TitleEvent,
   migrateLegacyConfigFiles,
@@ -904,14 +907,17 @@ export function createStatusRefresher(daemon: Daemon): LlmStatusRefresher | null
   });
 }
 
+/** An item of any kind whose `status` is 529, read alone. */
+const UpstreamOverloadSchema = v.object({ status: v.literal(529) });
+
 /** True for an event reporting the one upstream failure that means "this
  * provider is refusing traffic right now" (gateway DR-0021 §2: 401/403/429 are
  * credential problems and general 5xx can be synthesized by a relay). Read off
  * the raw item rather than the parsed one: an event whose client sent no
  * session id is dropped by the parser but is just as good a signal that the
  * upstream is failing. */
-function reportsUpstreamOverload(item: unknown): boolean {
-  return typeof item === "object" && item !== null && "status" in item && item.status === 529;
+function reportsUpstreamOverload(item: JsonValue): boolean {
+  return parseWith(UpstreamOverloadSchema, item).ok;
 }
 
 /** Push one `ev:"notify"` down every subscribe stream held by `sid`, returning
@@ -939,7 +945,7 @@ function notifySession(daemon: Daemon, sid: string, from: NotifyFrom, text: stri
  * the cache already ignores an event that is not newer than what that series
  * holds. One broadcast per batch, not per event — a batch is one observation
  * of the world as far as a subscriber is concerned. */
-export function recordLlmRequests(daemon: Daemon, items: unknown[], log: Logger): void {
+export function recordLlmRequests(daemon: Daemon, items: readonly JsonValue[], log: Logger): void {
   let accepted = 0;
   let dropped = 0;
   // Independent of whether the events parse: an outage is exactly the moment

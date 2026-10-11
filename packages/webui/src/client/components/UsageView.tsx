@@ -201,7 +201,7 @@ function LimitRow({ progress, reset }: { progress: LimitProgress; reset: ResetDi
       label={limitLabel(progress)}
       glyph={periodGlyph(progress.durationMs)}
       reset={reset}
-      keyTitle={`severity: ${progress.severity}`}
+      {...(progress.severity !== undefined ? { keyTitle: `severity: ${progress.severity}` } : {})}
       extra={
         // Marked, not toned: "upstream is counting against this one" is a
         // different fact from "this one is in trouble", and an inactive limit
@@ -311,7 +311,7 @@ function CredentialRow({
           {probe.retainedAge ? ` (観測: ${probe.retainedAge})` : ""}
         </div>
       ) : null}
-      {overage && overage.status !== "allowed" ? (
+      {overage?.status !== undefined && overage.status !== "allowed" ? (
         <div class="usage-overage">
           追加利用: {overage.status}
           {overage.disabled_reason ? ` (${overage.disabled_reason})` : ""}

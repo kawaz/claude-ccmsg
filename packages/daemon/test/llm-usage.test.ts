@@ -5,9 +5,22 @@
 // allowlist, and that every upstream failure mode arrives as one actionable
 // error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode } from "@ccmsg/protocol";
-import { fetchLlmUsage, parseUsagePayload, usageUrlWithRefresh } from "../src/llm-usage.ts";
+import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
+import {
+  fetchLlmUsage,
+  parseUsagePayload as parseUsageDocument,
+  usageUrlWithRefresh,
+} from "../src/llm-usage.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
+
+/** A test value as the JSON a gateway would post: what the parser reads. */
+function json(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function parseUsagePayload(document: unknown, base?: string) {
+  return parseUsageDocument(json(document), base);
+}
 
 /** The live endpoint's document, trimmed to one credential per support kind. */
 const UPSTREAM = {
@@ -48,6 +61,14 @@ function unwrap(result: ReturnType<typeof parseUsagePayload>) {
   return result.data;
 }
 
+/** Why a usage document does not read. */
+function refusal(document: unknown): string {
+  const result = parseUsagePayload(document);
+  if (result.ok) throw new Error("expected the document not to read");
+  expect(result.code).toBe(ErrorCode.llm_usage_unavailable);
+  return result.msg;
+}
+
 describe("parseUsagePayload", () => {
   test("passes through the live endpoint's document", () => {
     const data = unwrap(parseUsagePayload(UPSTREAM));
@@ -72,21 +93,25 @@ describe("parseUsagePayload", () => {
     expect(snapshot?.overage).toEqual({ status: "rejected", disabled_reason: "out_of_credits" });
   });
 
-  // The point of shape-based detection: a gateway that starts reporting a
-  // third window needs no daemon change to reach the UI.
-  test("accepts a window key the daemon has never heard of", () => {
+  // The gateway's snapshot carries its windows under the two keys its contract
+  // names (quota.rs Snapshot: "5h", "7d"); a key it does not send is not read,
+  // and the document still reads.
+  test("reads the gateway's two windows, and no other key", () => {
     const windows = unwrap(
       parseUsagePayload({
         credentials: [
           {
             name: "x",
             support: "observed",
-            snapshot: { "30d": { utilization: 0.5, status: "allowed" } },
+            snapshot: {
+              "30d": { utilization: 0.5, status: "allowed" },
+              "7d": { utilization: 0.2, status: "allowed" },
+            },
           },
         ],
       }),
     ).credentials[0]?.snapshot?.windows;
-    expect(windows).toEqual({ "30d": { utilization: 0.5, status: "allowed" } });
+    expect(windows).toEqual({ "7d": { utilization: 0.2, status: "allowed" } });
   });
 
   // ...and its converse: a non-window sibling key is dropped rather than
@@ -112,15 +137,21 @@ describe("parseUsagePayload", () => {
   });
 
   test("keeps a credential whose optional fields are all absent", () => {
-    const credentials = unwrap(parseUsagePayload({ credentials: [{ name: "bare" }] })).credentials;
-    expect(credentials).toEqual([{ name: "bare", support: "unknown" }]);
+    const credentials = unwrap(
+      parseUsagePayload({ credentials: [{ name: "bare", support: "unobserved" }] }),
+    ).credentials;
+    expect(credentials).toEqual([{ name: "bare", support: "unobserved" }]);
+    // `support` is always sent; a credential without it does not read.
+    expect(refusal({ credentials: [{ name: "bare" }] })).toContain("credentials.0.support");
   });
 
-  test("drops entries with no usable name", () => {
-    const credentials = unwrap(
-      parseUsagePayload({ credentials: [{ type: "relay" }, "nope", null, { name: "kept" }] }),
-    ).credentials;
-    expect(credentials.map((c) => c.name)).toEqual(["kept"]);
+  // An entry that does not read is not left out of the list: the document does
+  // not read, naming the entry.
+  test("an entry that does not read is named, not dropped", () => {
+    expect(
+      refusal({ credentials: [{ name: "kept", support: "observed" }, { support: "observed" }] }),
+    ).toContain("credentials.1.name");
+    expect(refusal({ credentials: ["nope"] })).toContain("credentials.0");
   });
 
   // `expired` is how the gateway says a reading predates its own reset. It
@@ -197,9 +228,14 @@ describe("parseUsagePayload", () => {
       });
     });
 
-    test("drops an auth object with no status", () => {
-      expect(withAuth({ reason: "who knows" })).toBeUndefined();
-      expect(withAuth("relogin_required")).toBeUndefined();
+    test("an auth object with no status does not read", () => {
+      for (const auth of [{ reason: "who knows" }, "relogin_required"]) {
+        expect(
+          refusal({
+            credentials: [{ name: "x", type: "claude_oauth", support: "observed", auth }],
+          }),
+        ).toContain("credentials.0.auth");
+      }
     });
   });
 
@@ -397,30 +433,46 @@ describe("parseUsagePayload limits", () => {
     ]);
   });
 
-  test("an entry without the two fields a bar needs is dropped, the rest survive", () => {
-    const credential = withCredential({
-      limits: [
-        { percent: 10, severity: "normal" },
-        { kind: "session", severity: "normal" },
-        "nonsense",
-        null,
-        { kind: "weekly_all", percent: 40, severity: "normal" },
-      ],
-    });
-    expect(credential?.limits).toEqual([{ kind: "weekly_all", percent: 40, severity: "normal" }]);
+  test("an entry without the two fields a bar needs does not read, named", () => {
+    for (const entry of [
+      { percent: 10, severity: "normal" },
+      { kind: "session", severity: "normal" },
+      "nonsense",
+      null,
+    ]) {
+      expect(
+        refusal({
+          credentials: [
+            {
+              name: "c",
+              support: "observed",
+              limits: [{ kind: "weekly_all", percent: 40, severity: "normal" }, entry],
+            },
+          ],
+        }),
+      ).toContain("credentials.0.limits.1");
+    }
   });
 
-  test("a missing severity degrades to unknown rather than claiming health", () => {
+  // The gateway may give no verdict; it stays absent rather than being given
+  // one (the webui reads no verdict as nothing to announce).
+  test("a missing severity stays absent", () => {
     const credential = withCredential({ limits: [{ kind: "session", percent: 5 }] });
-    expect(credential?.limits?.[0]?.severity).toBe("unknown");
+    expect(credential?.limits?.[0]).toEqual({ kind: "session", percent: 5 });
   });
 
   // The common case on a gateway that does not send the field at all.
-  test("absent or unusable limits leave the key off entirely", () => {
+  test("absent or empty limits leave the key off entirely", () => {
     expect(withCredential({})?.limits).toBeUndefined();
     expect(withCredential({ limits: [] })?.limits).toBeUndefined();
-    expect(withCredential({ limits: "nope" })?.limits).toBeUndefined();
-    expect(withCredential({ limits: [{ kind: "session" }] })?.limits).toBeUndefined();
+  });
+
+  test("limits that are not a list of limits do not read", () => {
+    for (const limits of ["nope", [{ kind: "session" }]]) {
+      expect(refusal({ credentials: [{ name: "c", support: "observed", limits }] })).toContain(
+        "credentials.0.limits",
+      );
+    }
   });
 
   test("probe_error is carried alongside whatever reading survives", () => {
@@ -432,10 +484,12 @@ describe("parseUsagePayload limits", () => {
     expect(credential?.snapshot?.windows["5h"]?.utilization).toBe(0.2);
   });
 
-  test("an empty or non-string probe_error is treated as no failure", () => {
-    expect(withCredential({ probe_error: "" })?.probe_error).toBeUndefined();
-    expect(withCredential({ probe_error: 500 })?.probe_error).toBeUndefined();
+  test("probe_error is carried as stated, and one that is not text does not read", () => {
     expect(withCredential({})?.probe_error).toBeUndefined();
+    expect(withCredential({ probe_error: "" })?.probe_error).toBe("");
+    expect(
+      refusal({ credentials: [{ name: "c", support: "observed", probe_error: 500 }] }),
+    ).toContain("credentials.0.probe_error");
   });
 });
 
@@ -514,12 +568,14 @@ describe("parseUsagePayload window_seconds", () => {
   test("passes a window's stated period through", () => {
     const windows = credential({
       snapshot: {
-        primary: { utilization: 0.5, status: "allowed", window_seconds: 604800 },
-        secondary: { utilization: 0.1, status: "allowed", window_seconds: 18000 },
+        // A provider whose short slot is a week long (observed 2026-10-11):
+        // the stated period, not the key, says how long it is.
+        "5h": { utilization: 0.5, status: "allowed", window_seconds: 604800 },
+        "7d": { utilization: 0.1, status: "allowed", window_seconds: 18000 },
       },
     })?.snapshot?.windows;
-    expect(windows?.primary?.window_seconds).toBe(604800);
-    expect(windows?.secondary?.window_seconds).toBe(18000);
+    expect(windows?.["5h"]?.window_seconds).toBe(604800);
+    expect(windows?.["7d"]?.window_seconds).toBe(18000);
   });
 
   test("passes a limit's stated period through", () => {
@@ -540,12 +596,28 @@ describe("parseUsagePayload window_seconds", () => {
     expect(c?.limits?.[0]).not.toHaveProperty("window_seconds");
   });
 
-  test("a non-numeric period is dropped rather than carried as junk", () => {
-    const c = credential({
-      snapshot: { "5h": { utilization: 0.5, status: "allowed", window_seconds: "604800" } },
-      limits: [{ kind: "session", percent: 1, severity: "normal", window_seconds: null }],
-    });
-    expect(c?.snapshot?.windows["5h"]).not.toHaveProperty("window_seconds");
-    expect(c?.limits?.[0]).not.toHaveProperty("window_seconds");
+  test("a non-numeric period does not read", () => {
+    expect(
+      refusal({
+        credentials: [
+          {
+            name: "c",
+            support: "observed",
+            snapshot: { "5h": { utilization: 0.5, status: "allowed", window_seconds: "604800" } },
+          },
+        ],
+      }),
+    ).toContain("credentials.0.snapshot.5h.window_seconds");
+    expect(
+      refusal({
+        credentials: [
+          {
+            name: "c",
+            support: "observed",
+            limits: [{ kind: "session", percent: 1, severity: "normal", window_seconds: null }],
+          },
+        ],
+      }),
+    ).toContain("credentials.0.limits.0.window_seconds");
   });
 });
