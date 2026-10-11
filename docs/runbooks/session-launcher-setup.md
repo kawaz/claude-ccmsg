@@ -29,9 +29,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    YAML 表記は設計時のスケッチ)。
 
    **`<configDir>/config.ts`** — `config.js` と受け付ける形は同一 (ES module
-   の default export)。差は default export に型注釈を当てられること。Bun の
-   `createRequire` がビルドなしで型を剥がして評価するので、動かすためだけなら
-   `.js` と同じ書き方で足りる。
+   の default export)。差は default export に型注釈を当てられること。daemon は `import()` (dynamic import) で読み、Bun の ESM loader がビルドなしで型を剥がして評価するので、動かすためだけなら `.js` と同じ書き方で足りる。
 
    型を当てるための `<configDir>/ccmsg-config.d.ts` は **daemon が起動するたびに
    自動生成・上書き**する (手で編集するファイルではない — ヘッダに generated
