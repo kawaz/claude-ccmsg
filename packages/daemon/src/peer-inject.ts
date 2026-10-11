@@ -13,6 +13,8 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import { chmod, readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
+import { ClaudeSessionFileTextSchema, jsonText, parseWith, type Output } from "@ccmsg/protocol";
+import * as v from "valibot";
 
 export type InjectOutcome = "delivered" | "unavailable" | "refused" | "unconfirmed";
 
@@ -52,6 +54,25 @@ export const INJECT_STATUS_MS = 250;
 export const INJECT_SCAN_MS = 1_000;
 
 const REFUSING = new Set(["refused", "denied", "dropped", "expired", "held"]);
+
+/** `<pid>.<hex>.key` beside a session's state file: the token a peer
+ * authenticates with. Claude Code's file; the field read is listed and the rest
+ * let through. */
+const SessionKeyTextSchema = jsonText(v.looseObject({ peerToken: v.string() }));
+
+/** The one frame the status socket is read for: the receiver reporting what
+ * became of a message (DR-0034). Any other frame does not read and is passed
+ * over. */
+const PeerStatusFrameTextSchema = jsonText(
+  v.looseObject({
+    action: v.literal("peer_message_status"),
+    status: v.string(),
+    /** The message the status is about. */
+    orig_msg_id: v.optional(v.string()),
+    /** Messages dropped together with it. */
+    dropped_msg_ids: v.optional(v.array(v.string())),
+  }),
+);
 
 /** One message as the receiving model reads it. */
 export interface InjectMessage {
@@ -203,25 +224,10 @@ class StatusInbox {
 
   #line(line: string): void {
     if (line.trim() === "") return;
-    let frame: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (typeof parsed !== "object" || parsed === null) return;
-      frame = parsed as Record<string, unknown>;
-    } catch {
-      return;
-    }
-    if (frame["action"] !== "peer_message_status") return;
-    const status = frame["status"];
-    if (typeof status !== "string") return;
-    const original = frame["orig_msg_id"];
-    const dropped = frame["dropped_msg_ids"];
-    const named = [
-      ...(typeof original === "string" ? [original] : []),
-      ...(Array.isArray(dropped)
-        ? dropped.filter((id): id is string => typeof id === "string")
-        : []),
-    ];
+    const frame = parseWith(PeerStatusFrameTextSchema, line);
+    if (!frame.ok) return;
+    const { status, orig_msg_id: original, dropped_msg_ids: dropped = [] } = frame.value;
+    const named = [...(original !== undefined ? [original] : []), ...dropped];
     for (const mid of named) this.#waiting.get(mid)?.(status);
   }
 }
@@ -317,15 +323,12 @@ export class PeerInjector {
     sessionsDir: string,
     sid: string,
   ): Promise<{ pid: number; socketPath: string } | undefined> {
-    const rows = await this.#rows(sessionsDir, /^\d+\.json$/);
+    const rows = await this.#rows(sessionsDir, /^\d+\.json$/, ClaudeSessionFileTextSchema);
     for (const row of rows ?? []) {
-      if (row === undefined || row["sessionId"] !== sid) continue;
-      const pid = row["pid"];
-      const socketPath = row["messagingSocketPath"];
-      if (typeof pid !== "number" || typeof socketPath !== "string" || socketPath === "") {
-        return undefined;
-      }
-      return row["peerProtocol"] === PEER_PROTOCOL ? { pid, socketPath } : undefined;
+      if (row === undefined || row.sessionId !== sid) continue;
+      const { pid, messagingSocketPath: socketPath, peerProtocol } = row;
+      if (socketPath === undefined || socketPath === "") return undefined;
+      return peerProtocol === PEER_PROTOCOL ? { pid, socketPath } : undefined;
     }
     return undefined;
   }
@@ -333,18 +336,25 @@ export class PeerInjector {
   /** Found by the pid the key is named after: the digest part of
    * `<pid>.<hex>.key` is not rebuilt here. */
   async #token(sessionsDir: string, pid: number): Promise<string | undefined> {
-    const rows = await this.#rows(sessionsDir, new RegExp(`^${pid}\\.[0-9a-f]+\\.key$`));
+    const rows = await this.#rows(
+      sessionsDir,
+      new RegExp(`^${pid}\\.[0-9a-f]+\\.key$`),
+      SessionKeyTextSchema,
+    );
     for (const row of rows ?? []) {
-      const token = row?.["peerToken"];
-      if (typeof token === "string" && token !== "") return token;
+      const token = row?.peerToken;
+      if (token !== undefined && token !== "") return token;
     }
     return undefined;
   }
 
-  async #rows(
+  /** The files in `sessionsDir` named like `pattern`, each read with
+   * `schema`: undefined for one that cannot be read or does not read. */
+  async #rows<S extends v.GenericSchema>(
     sessionsDir: string,
     pattern: RegExp,
-  ): Promise<(Record<string, unknown> | undefined)[] | undefined> {
+    schema: S,
+  ): Promise<(Output<S> | undefined)[] | undefined> {
     let names: string[];
     try {
       names = await readdir(sessionsDir);
@@ -356,7 +366,7 @@ export class PeerInjector {
     const deadline = setTimeout(() => late.resolve(undefined), this.#scanMs);
     try {
       return await Promise.race([
-        Promise.all(wanted.map((name) => readJson(path.join(sessionsDir, name)))),
+        Promise.all(wanted.map((name) => readWith(schema, path.join(sessionsDir, name)))),
         late.promise,
       ]);
     } finally {
@@ -438,14 +448,18 @@ export async function writeSocket(
   }
 }
 
-async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
+async function readWith<S extends v.GenericSchema>(
+  schema: S,
+  file: string,
+): Promise<Output<S> | undefined> {
+  let text: string;
   try {
-    const document: unknown = JSON.parse(await readFile(file, "utf8"));
-    if (typeof document !== "object" || document === null) return undefined;
-    return document as Record<string, unknown>;
+    text = await readFile(file, "utf8");
   } catch {
     return undefined;
   }
+  const read = parseWith(schema, text);
+  return read.ok ? read.value : undefined;
 }
 
 /** The launcher a recipient runs to answer: `bin/ccmsg` of the tree this

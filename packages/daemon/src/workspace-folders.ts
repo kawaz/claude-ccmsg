@@ -15,10 +15,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { WorkspaceFolder } from "@ccmsg/protocol";
+import { parseWith, type WorkspaceFolder } from "@ccmsg/protocol";
+import * as v from "valibot";
 import { createMtimeCache } from "./mtime-cache.ts";
 
-/** Strip JSONC comments (line + block) and trailing commas, then JSON.parse.
+/** Strip JSONC comments (line + block) and trailing commas, leaving JSON.
  * VS Code's own `.code-workspace` files are documented as JSONC — real files
  * in kawaz's tree use tab indentation and no comments today, but VS Code
  * itself accepts both, so the parser matches. Kept small (no dep) — the JSONC
@@ -27,21 +28,19 @@ import { createMtimeCache } from "./mtime-cache.ts";
  *
  * String-literal handling matters for `//` and `,` inside JSON strings: we
  * track an in-string flag and skip escapes so a folder path containing
- * `,` or `//` (e.g. an escaped URL, unlikely but possible) is not mangled.
- * Returns `undefined` on any post-strip JSON.parse failure — caller treats
- * as "workspace file unreadable" and skips it. */
-export function parseJsonc(source: string): unknown {
+ * `,` or `//` (e.g. an escaped URL, unlikely but possible) is not mangled. */
+function stripJsonc(source: string): string {
   let out = "";
   let i = 0;
   const n = source.length;
   let inString = false;
   let stringQuote: string = '"';
   while (i < n) {
-    const ch = source[i]!;
+    const ch = source.charAt(i);
     if (inString) {
       out += ch;
       if (ch === "\\" && i + 1 < n) {
-        out += source[i + 1]!;
+        out += source.charAt(i + 1);
         i += 2;
         continue;
       }
@@ -84,11 +83,11 @@ export function parseJsonc(source: string): unknown {
   let inStr = false;
   let strQuote = '"';
   while (j < m) {
-    const c = out[j]!;
+    const c = out.charAt(j);
     if (inStr) {
       stripped += c;
       if (c === "\\" && j + 1 < m) {
-        stripped += out[j + 1]!;
+        stripped += out.charAt(j + 1);
         j += 2;
         continue;
       }
@@ -107,7 +106,7 @@ export function parseJsonc(source: string): unknown {
       // Look ahead past whitespace: a `}` or `]` next means this comma is a
       // JSONC trailing comma — drop it (whitespace is preserved as-is).
       let k = j + 1;
-      while (k < m && /\s/.test(out[k]!)) k += 1;
+      while (k < m && /\s/.test(out.charAt(k))) k += 1;
       if (k < m && (out[k] === "}" || out[k] === "]")) {
         j += 1;
         continue;
@@ -116,16 +115,25 @@ export function parseJsonc(source: string): unknown {
     stripped += c;
     j += 1;
   }
-  try {
-    return JSON.parse(stripped);
-  } catch {
-    return undefined;
-  }
+  return stripped;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/** A `.code-workspace` file's text (JSONC), read for its `folders[]`. The
+ * file is VS Code's: the fields read are listed and the rest let through. A
+ * folder given by `uri` (a remote one) has no `path`. */
+export const CodeWorkspaceTextSchema = v.pipe(
+  v.string(),
+  v.transform(stripJsonc),
+  v.parseJson(),
+  v.looseObject({
+    folders: v.array(
+      v.looseObject({
+        path: v.optional(v.string()),
+        name: v.optional(v.string()),
+      }),
+    ),
+  }),
+);
 
 /** Reject folder roots that would grant an effectively unbounded browse
  * surface: `/` itself, the daemon user's `$HOME`, and any ancestor of
@@ -147,21 +155,14 @@ async function isOverbroadFolderRoot(real: string): Promise<boolean> {
   return home === real || home.startsWith(real + path.sep);
 }
 
-/** Return the workspace folder entries advertised by the parsed workspace
- * document, or `undefined` if the shape is not a `folders[]` array of records.
- * Non-record / missing-path entries are individually dropped — a partially
- * malformed workspace file still yields whatever valid folders it lists. */
-function extractFolderSpecs(doc: unknown): Array<{ path: string; name?: string }> | undefined {
-  if (!isRecord(doc)) return undefined;
-  const folders = doc.folders;
-  if (!Array.isArray(folders)) return undefined;
+/** The local folders a workspace file lists: those given by a `path`. */
+function folderSpecs(source: string): Array<{ path: string; name?: string }> {
+  const doc = parseWith(CodeWorkspaceTextSchema, source);
+  if (!doc.ok) return [];
   const specs: Array<{ path: string; name?: string }> = [];
-  for (const entry of folders) {
-    if (!isRecord(entry)) continue;
-    const p = entry.path;
-    if (typeof p !== "string" || p === "") continue;
-    const name = typeof entry.name === "string" && entry.name !== "" ? entry.name : undefined;
-    specs.push(name ? { path: p, name } : { path: p });
+  for (const { path: p, name } of doc.value.folders) {
+    if (p === undefined || p === "") continue;
+    specs.push(name !== undefined && name !== "" ? { path: p, name } : { path: p });
   }
   return specs;
 }
@@ -233,8 +234,7 @@ async function resolveWorkspaceFile(file: string): Promise<WorkspaceFolder[]> {
   } catch {
     return [];
   }
-  const specs = extractFolderSpecs(parseJsonc(source));
-  if (!specs) return [];
+  const specs = folderSpecs(source);
   const folders: WorkspaceFolder[] = [];
   for (const spec of specs) {
     // `folders[].path` in a `.code-workspace` file is resolved relative to

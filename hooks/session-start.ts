@@ -14,23 +14,14 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolvePaths, sessionProjectDir } from "@ccmsg/protocol";
+import {
+  parseWith,
+  resolvePaths,
+  SessionStartInputTextSchema,
+  sessionProjectDir,
+  type SessionStateFile,
+} from "@ccmsg/protocol";
 import { armHookDeadline, exitHook } from "./deadline.ts";
-
-interface SessionStartInput {
-  session_id?: string;
-  source?: string;
-  /** absolute path of this session's Claude Code transcript jsonl, per Claude
-   *  Code's SessionStart hook input schema (DR-0009). */
-  transcript_path?: string;
-  /** event-time cwd, present on SessionStart and later hook events
-   *  per the hooks common-field table. Not necessarily this hook process's own
-   *  cwd (verified to diverge from it), so repo/ws derivation must read this
-   *  field rather than call process.cwd(). On SessionStart it still names where
-   *  the session was put, which is why this hook alone may state it as the
-   *  session's location (see `sessionLocation`). */
-  cwd?: string;
-}
 
 /** Raw VCS facts `getRepoWsFromVcs` reads via `bump-semver vcs get <key>`, and
  *  the input to the pure `deriveWs`/`deriveRepoRoot` below. Empty string means
@@ -249,24 +240,6 @@ export function sessionLocation(
 // repo/ws) ride through this file, so no command the AI runs needs an env
 // prefix for them.
 
-/** Shape written by this hook, and read by
- *  packages/cli/src/index.ts's resolveIdentity. All fields but `updated_at` are
- *  optional because any of them may be undiscoverable (no cwd from stdin, no VCS
- *  facts, no transcript_path announced) without that being an error. */
-export interface SessionFileData {
-  transcript_path?: string;
-  cwd?: string;
-  repo?: string;
-  ws?: string;
-  /** absolute path of the repo container holding all workspaces/worktrees
-   *  (DR-0008 addendum); see deriveRepoRoot's doc for when this is present. */
-  repo_root?: string;
-  /** current branch/bookmark of the session's checkout (informational, for
-   *  the webui session list); absent when detached or unresolvable. */
-  branch?: string;
-  updated_at: string;
-}
-
 /** Absolute path of the per-session state file. packages/cli/src/index.ts computes
  *  this same path independently (a shared protocol-level helper was considered but
  *  deferred to keep this change's footprint to hooks/ + the CLI's own file — see
@@ -278,7 +251,7 @@ export function sessionFilePath(stateDir: string, sid: string): string {
 /** Best-effort write (mkdir -p + overwrite); failures (unwritable stateDir, races,
  *  ...) are swallowed — the state file is an enrichment for hello, never a hard
  *  dependency for the hook or the CLI to function. */
-export function writeSessionFile(stateDir: string, sid: string, data: SessionFileData): void {
+export function writeSessionFile(stateDir: string, sid: string, data: SessionStateFile): void {
   try {
     const file = sessionFilePath(stateDir, sid);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -327,13 +300,10 @@ function resolveBin(): string {
 }
 
 async function main(): Promise<void> {
-  let input: SessionStartInput;
-  try {
-    input = JSON.parse(await Bun.stdin.text()) as SessionStartInput;
-  } catch {
-    // Non-JSON stdin: nothing to do, stay silent.
-    process.exit(0);
-  }
+  const read = parseWith(SessionStartInputTextSchema, await Bun.stdin.text());
+  // Input that does not read: nothing to do, stay silent.
+  if (!read.ok) process.exit(0);
+  const input = read.value;
 
   const bin = resolveBin();
   const stateDir = resolvePaths().stateDir;

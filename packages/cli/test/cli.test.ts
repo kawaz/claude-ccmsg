@@ -1727,7 +1727,7 @@ describe("hello が名乗る所在", () => {
     const project = mk("project");
     const override = mk("override");
     // state file は SessionStart hook が書くもの。ここでは hook を回す代わりに
-    // 同じ形を直接置く (hooks/session-start.ts の SessionFileData)。
+    // 同じ形を直接置く (protocol の SessionStateFile)。
     fs.mkdirSync(path.join(env.CCMSG_STATE_DIR, "sessions"), { recursive: true });
     fs.writeFileSync(
       path.join(env.CCMSG_STATE_DIR, "sessions", "10cf0000-0000-4000-8000-000000000000.json"),

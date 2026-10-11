@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  AllowedOriginsTextSchema,
   DIRECT_DELIVERY_USER_SENDER,
   DIRECT_SEND_UNCONFIRMED_EXIT,
   VERSION,
@@ -13,6 +14,7 @@ import {
   isSessionIdShape,
   migrateLegacyConfigFiles,
   parseWith,
+  SessionStateFileTextSchema,
   SidecarReplyTextSchema,
   SinceSeqTextSchema,
   splitSendWords,
@@ -23,6 +25,7 @@ import {
   type MessageSendRequest,
   type ReplyOf,
   type RequestInput,
+  type SessionStateFile,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
@@ -78,7 +81,8 @@ function parseArgs(args: string[]): Parsed {
   const opts: Record<string, string | boolean> = {};
   let commandAt: number | undefined;
   for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
+    const a = args[i];
+    if (a === undefined) break;
     if (a === "--") {
       if (i + 1 < args.length) commandAt ??= i + 1;
       positionals.push(...args.slice(i + 1));
@@ -126,7 +130,7 @@ function parseSendArgs(argv: string[], commandAt: number): Parsed {
   }
   return {
     positionals: [
-      argv[commandAt]!,
+      ...argv.slice(commandAt, commandAt + 1),
       ...split.leading,
       ...(split.body.length > 0 ? [split.body.join(" ")] : []),
     ],
@@ -154,11 +158,11 @@ function requireArg(v: string | undefined, name: string, usage: string): string 
 }
 
 function parseReadArgs(args: string[], usage: string): { room: string; mids: string } {
-  const compact = args[0]?.match(/^(r\d+)m(\d+(?:,m\d+)*)$/);
-  if (compact) {
+  const [, room, mids] = args[0]?.match(/^(r\d+)m(\d+(?:,m\d+)*)$/) ?? [];
+  if (room !== undefined && mids !== undefined) {
     if (args[1] !== undefined)
       throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
-    return { room: compact[1]!, mids: compact[2]!.replaceAll(",m", ",") };
+    return { room, mids: mids.replaceAll(",m", ",") };
   }
   return {
     room: requireArg(args[0], "room", usage),
@@ -168,49 +172,31 @@ function parseReadArgs(args: string[], usage: string): { room: string; mids: str
 
 // --- identity --------------------------------------------------------------
 
-/** Shape the SessionStart hook writes to
- *  `<stateDir>/sessions/<sid>.json` (see hooks/session-start.ts's
- *  SessionFileData). Kept as a separate, loosely-typed mirror here rather than
- *  importing that type: hooks/ isn't a workspace package the CLI can depend on
- *  (only packages/* are), and this file only ever reads string fields off of
- *  it — a shared protocol-level type was considered but deferred to keep this
- *  change's footprint small (see the delegation report). */
-interface StoredSessionFile {
-  transcript_path?: unknown;
-  cwd?: unknown;
-  repo?: unknown;
-  ws?: unknown;
-  repo_root?: unknown;
-  branch?: unknown;
-}
-
-/** Mirrors hooks/session-start.ts's sessionFilePath — same reasoning as
- *  StoredSessionFile above for why this isn't a shared import. */
+/** Mirrors hooks/session-start.ts's sessionFilePath. */
 function sessionFilePath(stateDir: string, sid: string): string {
   return path.join(stateDir, "sessions", `${sid}.json`);
 }
 
 /** Best-effort read of the hook-written session state file. Missing file,
- *  unreadable, or malformed/non-object JSON all resolve to undefined — this is
- *  an optional enrichment (repo/ws/transcript_path for a richer hello), never a
- *  hard requirement for `hello` to succeed (mirrors the pre-existing "session
- *  file didn't exist" degrade path this replaces). */
-function readSessionFile(stateDir: string, sid: string): StoredSessionFile | undefined {
+ *  unreadable, or not of the state file's shape all resolve to undefined —
+ *  this is an optional enrichment (repo/ws/transcript_path for a richer hello),
+ *  never a hard requirement for `hello` to succeed. */
+function readSessionFile(stateDir: string, sid: string): SessionStateFile | undefined {
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(sessionFilePath(stateDir, sid), "utf8"));
-    if (parsed === null || typeof parsed !== "object") return undefined;
-    return parsed as StoredSessionFile;
+    text = fs.readFileSync(sessionFilePath(stateDir, sid), "utf8");
   } catch {
     return undefined;
   }
+  const stored = parseWith(SessionStateFileTextSchema, text);
+  return stored.ok ? stored.value : undefined;
 }
 
-/** Non-empty-string coercion: `undefined`, non-string, and `""` all collapse to
- *  `undefined` — an env var present-but-blank (a CI/shell environment accident)
- *  must not shadow a real value from the session file, and a session file field
- *  of the wrong JSON type must not be trusted. */
-function strField(v: unknown): string | undefined {
-  return typeof v === "string" && v !== "" ? v : undefined;
+/** `undefined` and `""` both collapse to `undefined` — an env var
+ *  present-but-blank (a CI/shell environment accident) must not shadow a real
+ *  value from the session file. */
+function strField(v: string | undefined): string | undefined {
+  return v !== undefined && v !== "" ? v : undefined;
 }
 
 /** Resolve a session identity from flags + env, or null when no sid is
@@ -667,16 +653,16 @@ async function runSubscribe(
       ? watchSubscribeOwner(process.env.CLAUDE_CONFIG_DIR, identity.sid)
       : null;
   const OWNER_STALE: unique symbol = Symbol("owner-stale");
-  const ownerStale = ownerWatch?.stale.then(() => OWNER_STALE);
+  const ownerStale = ownerWatch?.stale.then((): typeof OWNER_STALE => OWNER_STALE);
   const stopForStaleOwner = (): never => {
     ownerWatch?.close();
     process.exit(0);
   };
-  const raceOwner = async <T>(operation: Promise<T>): Promise<T> => {
-    if (!ownerStale) return operation;
+  const raceOwner = async <T>(operation: Promise<T>): Promise<Awaited<T>> => {
+    if (!ownerStale) return await operation;
     const result = await Promise.race([operation, ownerStale]);
-    if (result === OWNER_STALE) stopForStaleOwner();
-    return result as T;
+    if (result === OWNER_STALE) return stopForStaleOwner();
+    return result;
   };
   let client: Client = await ensureDaemon(paths, identity);
   const ack = await client.request({
@@ -687,7 +673,8 @@ async function runSubscribe(
   // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
   // Monitor 相当のセッション寿命プロセスなので、上限に達したら fixed 5s で
   // 回り続ける (docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md)。
-  const BACKOFFS_MS = [250, 500, 1000, 2000, 4000, 5000] as const;
+  const BACKOFFS_MS = [250, 500, 1000, 2000, 4000] as const;
+  const MAX_BACKOFF_MS = 5000;
   let attempt = 0;
   outer: for (;;) {
     for (;;) {
@@ -745,7 +732,7 @@ async function runSubscribe(
         attempt = 0;
         continue outer;
       }
-      const delay = BACKOFFS_MS[Math.min(attempt, BACKOFFS_MS.length - 1)]!;
+      const delay = BACKOFFS_MS[attempt] ?? MAX_BACKOFF_MS;
       attempt++;
       await raceOwner(new Promise<void>((res) => setTimeout(res, delay)));
     }
@@ -1138,12 +1125,11 @@ async function main(): Promise<void> {
     process.stdout.write(`${VERSION}\n`);
     return;
   }
-  if (opts.help === true || positionals.length === 0) {
+  const [cmd, ...args] = positionals;
+  if (opts.help === true || cmd === undefined) {
     printHelp();
     return;
   }
-  const cmd = positionals[0]!;
-  const args = positionals.slice(1);
 
   if (cmd === "daemon") {
     handleDaemon(args, opts);
@@ -1210,14 +1196,14 @@ async function main(): Promise<void> {
         }
         await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
       }
-      const m = ref.match(/^(r\d+)m(\d+)$/);
-      if (!m) {
+      const [, room, mid] = ref.match(/^(r\d+)m(\d+)$/) ?? [];
+      if (room === undefined || mid === undefined) {
         process.stderr.write(
           `invalid reply target "${ref}" — expected <instance id>/<n> (a direct message, with --to) or r<N>m<M> (a room message, e.g. r17m16)\nusage: ${usage}\n`,
         );
         process.exit(1);
       }
-      await runOnce(identity, { op: "reply", room: m[1]!, mid: Number(m[2]), msg });
+      await runOnce(identity, { op: "reply", room, mid: Number(mid), msg });
       return;
     }
     case "create-room": {
@@ -1465,15 +1451,26 @@ function runOrigins(args: string[]): void {
     warn: (m) => process.stderr.write(`ccmsg: ${m}\n`),
   });
   const file = paths.allowedOrigins;
-  const load = (): string[] => {
+  // A file that is missing reads as no origins. One that does not read is
+  // refused rather than taken as empty: `add` / `remove` would overwrite it
+  // with what was read, dropping every origin it held.
+  const load = (): readonly string[] => {
+    let text: string;
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
-    } catch {
-      return [];
+      text = fs.readFileSync(file, "utf8");
+    } catch (e) {
+      if (e instanceof Error && "code" in e && e.code === "ENOENT") return [];
+      throw e;
     }
+    const origins = parseWith(AllowedOriginsTextSchema, text);
+    if (!origins.ok) {
+      throw new Error(
+        `${file} is not a JSON array of origins (${origins.failure.summary}); fix or delete it`,
+      );
+    }
+    return origins.value;
   };
-  const save = (origins: string[]): void => {
+  const save = (origins: readonly string[]): void => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify(origins, null, 2)}\n`);
   };
@@ -1497,12 +1494,10 @@ function runOrigins(args: string[]): void {
           `invalid origin: ${origin} — use the exact origin form ${parsed.origin} (no path / trailing slash)`,
         );
       }
-      const origins = load();
-      const already = origins.includes(origin);
-      if (!already) {
-        origins.push(origin);
-        save(origins);
-      }
+      const loaded = load();
+      const already = loaded.includes(origin);
+      const origins = already ? loaded : [...loaded, origin];
+      if (!already) save(origins);
       process.stdout.write(`${JSON.stringify({ ok: true, origin, already, origins })}\n`);
       return;
     }

@@ -6,7 +6,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { discoverWorkspaceFolders, parseJsonc } from "../src/workspace-folders.ts";
+import { parseWith } from "@ccmsg/protocol";
+import { CodeWorkspaceTextSchema, discoverWorkspaceFolders } from "../src/workspace-folders.ts";
+
+/** A workspace file's text as read, or undefined when it does not read. */
+function parseJsonc(source: string) {
+  const read = parseWith(CodeWorkspaceTextSchema, source);
+  return read.ok ? read.value : undefined;
+}
 
 function mkfixture(): string {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-ws-")));
@@ -21,7 +28,7 @@ afterEach(() => {
 });
 
 describe("parseJsonc", () => {
-  test("plain JSON parses to a record", async () => {
+  test("plain JSON parses to a workspace", async () => {
     // Baseline: nothing to strip — the parser must not garble a valid input.
     expect(parseJsonc('{"folders": [{"path": "."}]}')).toEqual({
       folders: [{ path: "." }],
@@ -67,8 +74,7 @@ describe("parseJsonc", () => {
     const src = `{
       "folders": [{"path": "a", "name": "has // slashes"}]
     }`;
-    const parsed = parseJsonc(src) as { folders: { path: string; name: string }[] };
-    expect(parsed.folders[0]!.name).toBe("has // slashes");
+    expect(parseJsonc(src)?.folders[0]?.name).toBe("has // slashes");
   });
 
   test("a literal `, }` / `, ]` inside a string value is preserved", async () => {

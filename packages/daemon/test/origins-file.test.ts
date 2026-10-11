@@ -72,12 +72,14 @@ describe("createOriginsFile", () => {
     expect(warns).toBe(1);
   });
 
-  // Non-string entries (hand-edited file) are skipped, not fatal.
-  test("non-string array entries are ignored", async () => {
+  // A hand-edited file with a non-string entry does not read (DR-0038 §6: no
+  // reading around the bad part): no extra origins, with a warn, not fatal.
+  test("a file with a non-string entry reads as empty and warns", async () => {
     const file = tmpFile();
     fs.writeFileSync(file, JSON.stringify(["https://a.example", 42, null]));
-    const of = createOriginsFile(file, silentLog);
-    expect((await of.get()).size).toBe(1);
-    expect((await of.get()).has("https://a.example")).toBe(true);
+    let warns = 0;
+    const of = createOriginsFile(file, { warn: () => warns++ });
+    expect((await of.get()).size).toBe(0);
+    expect(warns).toBe(1);
   });
 });

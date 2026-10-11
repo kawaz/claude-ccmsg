@@ -11,9 +11,10 @@
 // Origin failed every other check — the happy path never touches the
 // filesystem beyond the first read, and a just-added origin takes effect on
 // the very next request (its failing lookup re-stats the file, sees the new
-// mtime, reloads). A deleted/corrupted file degrades to "no extra origins"
-// with one log line, never a crash.
+// mtime, reloads). A deleted file, or one that is not a JSON array of strings,
+// degrades to "no extra origins" with one log line, never a crash.
 import * as fs from "node:fs";
+import { AllowedOriginsTextSchema, errorText, parseWith } from "@ccmsg/protocol";
 
 export interface OriginsFile {
   /** current allowed origins; do not mutate (replaced wholesale on reload).
@@ -36,16 +37,26 @@ export function createOriginsFile(file: string, log: { warn(msg: string): void }
       return;
     }
     if (cachedMtimeMs !== null && stat.mtimeMs === cachedMtimeMs) return;
+    // Whatever happens, this mtime has been read: broken content is not
+    // re-read on every request.
+    cachedMtimeMs = stat.mtimeMs;
+    let text: string;
     try {
-      const parsed: unknown = JSON.parse(await fs.promises.readFile(file, "utf8"));
-      if (!Array.isArray(parsed)) throw new Error("not a JSON array");
-      cached = new Set(parsed.filter((v): v is string => typeof v === "string"));
-      cachedMtimeMs = stat.mtimeMs;
+      text = await fs.promises.readFile(file, "utf8");
     } catch (e) {
-      log.warn(`allowed-origins: unreadable ${file} (${String(e)}) — treating as empty`);
+      log.warn(`allowed-origins: unreadable ${file} (${errorText(e)}) — treating as empty`);
       cached = new Set();
-      cachedMtimeMs = stat.mtimeMs; // don't re-parse the same broken content every request
+      return;
     }
+    const origins = parseWith(AllowedOriginsTextSchema, text);
+    if (!origins.ok) {
+      log.warn(
+        `allowed-origins: ${file} is not a JSON array of origins (${origins.failure.summary}) — treating as empty`,
+      );
+      cached = new Set();
+      return;
+    }
+    cached = new Set(origins.value);
   }
 
   return {

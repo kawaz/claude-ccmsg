@@ -1,34 +1,25 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-interface ClaudeSessionRegistryEntry {
-  pid: number;
-  sessionId: string;
-}
+import { ClaudeSessionFileTextSchema, parseWith, type ClaudeSessionFile } from "@ccmsg/protocol";
 
 export interface SubscribeOwnerWatch {
   stale: Promise<void>;
   close(): void;
 }
 
-function readRegistryEntry(file: string): ClaudeSessionRegistryEntry | null {
+/** The registry record in `file`, or null when it cannot be read or does not
+ * name a process and a session. */
+function readRegistryEntry(file: string): ClaudeSessionFile | null {
+  let text: string;
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (parsed === null || typeof parsed !== "object") return null;
-    const entry = parsed as Record<string, unknown>;
-    if (
-      typeof entry.pid !== "number" ||
-      !Number.isInteger(entry.pid) ||
-      entry.pid <= 0 ||
-      typeof entry.sessionId !== "string" ||
-      entry.sessionId === ""
-    ) {
-      return null;
-    }
-    return { pid: entry.pid, sessionId: entry.sessionId };
+    text = fs.readFileSync(file, "utf8");
   } catch {
     return null;
   }
+  const entry = parseWith(ClaudeSessionFileTextSchema, text);
+  if (!entry.ok) return null;
+  const { pid, sessionId } = entry.value;
+  return Number.isInteger(pid) && pid > 0 && sessionId !== "" ? entry.value : null;
 }
 
 /** Find the Claude process registry entry that currently owns `sid`.
@@ -52,7 +43,8 @@ export function findSubscribeOwnerFile(configDir: string, sid: string): string |
     const entry = readRegistryEntry(file);
     if (entry?.sessionId === sid && name === `${entry.pid}.json`) matches.push(file);
   }
-  return matches.length === 1 ? matches[0]! : null;
+  const [only, ...others] = matches;
+  return only !== undefined && others.length === 0 ? only : null;
 }
 
 /** Watch the owning Claude process's registry record until it no longer names
@@ -73,10 +65,7 @@ export function watchSubscribeOwner(
 
   let settled = false;
   let missingTimer: ReturnType<typeof setTimeout> | null = null;
-  let resolveStale!: () => void;
-  const stale = new Promise<void>((resolve) => {
-    resolveStale = resolve;
-  });
+  const { promise: stale, resolve: resolveStale } = Promise.withResolvers<void>();
 
   const settle = (): void => {
     if (settled) return;

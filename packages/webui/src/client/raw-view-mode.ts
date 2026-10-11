@@ -7,7 +7,7 @@
 // ないので、raw 側の verbatim 保証 (rawTranscriptRows のドクコメント) は
 // そのまま残し、pretty はいつでも raw に戻せる派生表示として扱う。
 import { useEffect, useState } from "preact/hooks";
-import { parseWith } from "@ccmsg/protocol";
+import { JsonValueSchema, jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { flagText, readStorage, writeStorage } from "./storage.ts";
 
@@ -28,6 +28,9 @@ export type RawLinePretty =
   | { ok: true; text: string }
   | { ok: false; reason: "invalid-json" | "too-large" };
 
+/** 生 JSONL の 1 行: どんな JSON でもよい (raw ビューは形を問わず見せる)。 */
+const RawLineTextSchema = jsonText(JsonValueSchema);
+
 /**
  * 生 JSONL 1 行を 2 スペースインデントの JSON に整形する。
  *
@@ -37,30 +40,16 @@ export type RawLinePretty =
  */
 export function prettyRawLine(text: string, limit: number = RAW_PRETTY_MAX_CHARS): RawLinePretty {
   if (text.length > limit) return { ok: false, reason: "too-large" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, reason: "invalid-json" };
-  }
-  // `undefined` を返し得るのは JSON.parse の結果としてはあり得ない
-  // (JSON に undefined は無い) が、型の上では string を返す保証が無いので
-  // 明示的に潰しておく。
-  const out = JSON.stringify(parsed, null, 2);
-  if (typeof out !== "string") return { ok: false, reason: "invalid-json" };
-  return { ok: true, text: out };
+  const parsed = parseWith(RawLineTextSchema, text, { firstIssue: true });
+  if (!parsed.ok) return { ok: false, reason: "invalid-json" };
+  return { ok: true, text: JSON.stringify(parsed.value, null, 2) };
 }
 
 /** pretty 化できる行かだけを判定する (整形結果は捨てる)。モード切替ボタンの
  * 活殺判定用 — 行が 1 つも整形できないなら pretty を選ばせない。 */
 export function canPrettyRawLine(text: string, limit: number = RAW_PRETTY_MAX_CHARS): boolean {
   if (text.length > limit) return false;
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
-  }
+  return parseWith(RawLineTextSchema, text, { firstIssue: true }).ok;
 }
 
 /** raw 表示のモードの localStorage key。セッションごとではなくグローバル —

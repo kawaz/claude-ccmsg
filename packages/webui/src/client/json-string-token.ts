@@ -6,6 +6,11 @@
 // トークンは行単位に切られるため、複数行にまたがる文字列や途中で切れた
 // トークンは parse に失敗する。その場合は null を返し、呼び出し側は
 // コピー UI を出さない (壊れた値を黙ってコピーさせない)。
+import { jsonText, parseWith } from "@ccmsg/protocol";
+import * as v from "valibot";
+
+/** JSON の文字列リテラル 1 つ。 */
+const StringLiteralTextSchema = jsonText(v.string());
 
 /**
  * JSON 文字列リテラルなら parse 後の値、そうでなければ null。
@@ -16,13 +21,6 @@ export function parseJsonStringToken(text: string | null | undefined): string | 
   if (text == null) return null;
   const trimmed = text.trim();
   if (trimmed.length < 2 || !trimmed.startsWith('"') || !trimmed.endsWith('"')) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-  // `"a" + "b"` のような複数リテラルは JSON.parse が弾くので、ここに来る
-  // 時点で string 以外にはなり得ない。型の保証として残す。
-  return typeof parsed === "string" ? parsed : null;
+  const parsed = parseWith(StringLiteralTextSchema, trimmed);
+  return parsed.ok ? parsed.value : null;
 }
