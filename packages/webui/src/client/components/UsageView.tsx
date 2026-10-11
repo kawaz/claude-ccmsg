@@ -14,6 +14,7 @@ import {
   formatResetAt,
   formatRemaining,
   limitLabel,
+  overageNotice,
   probeRecordOf,
   probeView,
   snapshotAge,
@@ -243,7 +244,7 @@ function CredentialRow({
   const probe = probeView(credential, retained, now);
   const limits = sortedLimits(probe.limits, now);
   const age = snapshot ? snapshotAge(snapshot, now) : null;
-  const overage = snapshot?.overage;
+  const overageLine = overageNotice(snapshot?.overage);
   const auth = authNotice(credential, now);
   return (
     <li class="usage-credential">
@@ -319,11 +320,8 @@ function CredentialRow({
           {probe.retainedAge ? ` (観測: ${probe.retainedAge})` : ""}
         </div>
       ) : null}
-      {overage?.status !== undefined && overage.status !== "allowed" ? (
-        <div class="usage-overage">
-          追加利用: {overage.status}
-          {overage.disabled_reason ? ` (${overage.disabled_reason})` : ""}
-        </div>
+      {overageLine ? (
+        <div class={`usage-overage tone-${overageLine.tone}`}>{overageLine.text}</div>
       ) : null}
     </li>
   );

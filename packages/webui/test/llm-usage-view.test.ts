@@ -14,6 +14,7 @@ import {
   limitKindDurationMs,
   limitLabel,
   limitProgress,
+  overageNotice,
   parseWindowDurationMs,
   probeRecordOf,
   probeView,
@@ -785,5 +786,23 @@ describe("window_seconds", () => {
       NOW,
     ).map((l) => l.key);
     expect(kinds).toEqual(["monthly_all", "weekly_all"]);
+  });
+});
+
+describe("overageNotice", () => {
+  test("a reason without a status is drawn as unknown", () => {
+    expect(overageNotice({ disabled_reason: "out_of_credits" })).toEqual({
+      text: "追加利用: 不明 (out_of_credits)",
+      tone: "unknown",
+    });
+  });
+
+  test("a status is drawn with its reason, and allowed or empty draws nothing", () => {
+    expect(overageNotice({ status: "rejected", disabled_reason: "x" })?.text).toBe(
+      "追加利用: rejected (x)",
+    );
+    expect(overageNotice({ status: "allowed" })).toBeNull();
+    expect(overageNotice({})).toBeNull();
+    expect(overageNotice(undefined)).toBeNull();
   });
 });

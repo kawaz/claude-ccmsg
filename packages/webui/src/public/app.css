@@ -8416,6 +8416,10 @@ button.usage-reset:hover {
   color: var(--danger);
 }
 
+.usage-overage.tone-unknown {
+  color: var(--fg-muted);
+}
+
 /* A reading from a period that has already reset. Faded rather than hidden —
    the last known figure is still the best information about that window — and
    labelled beside it, since fading alone does not say why. */

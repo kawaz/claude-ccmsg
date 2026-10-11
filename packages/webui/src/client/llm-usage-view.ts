@@ -4,6 +4,7 @@
 import type {
   LlmUsageCredential,
   LlmUsageLimit,
+  LlmUsageOverage,
   LlmUsageSnapshot,
   LlmUsageWindow,
 } from "@ccmsg/protocol";
@@ -454,4 +455,18 @@ export function probeView(
         ? null
         : (formatAge(Math.max(0, nowMs - retained.observedAt)) ?? "直前"),
   };
+}
+
+/** The line for pay-as-you-go usage, or null while it is allowed or absent.
+ * Status and disabled_reason are independent on the wire, so a reason can
+ * arrive alone; that reads as "不明" with the reason rather than as nothing. */
+export function overageNotice(
+  overage: LlmUsageOverage | undefined,
+): { text: string; tone: UsageTone } | null {
+  if (overage === undefined || overage.status === "allowed") return null;
+  const reason = overage.disabled_reason ? ` (${overage.disabled_reason})` : "";
+  if (overage.status !== undefined)
+    return { text: `追加利用: ${overage.status}${reason}`, tone: "bad" };
+  if (reason === "") return null;
+  return { text: `追加利用: 不明${reason}`, tone: "unknown" };
 }
