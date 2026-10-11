@@ -1,10 +1,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { TranslateResult } from "@ccmsg/protocol";
+import {
+  errorText,
+  jsonText,
+  parseWith,
+  TranslateResultSchema,
+  type TranslateResult,
+} from "@ccmsg/protocol";
+import * as v from "valibot";
 
 export type TranslateBatchResult =
-  | { ok: true; results: TranslateResult[] }
+  | { ok: true; results: readonly TranslateResult[] }
   | { ok: false; code: string; msg: string };
 
 export interface TranslateService {
@@ -12,23 +19,26 @@ export interface TranslateService {
   stop(): void;
 }
 
-interface HelperItemResult {
-  ok: boolean;
-  text?: string;
-  error?: string;
-}
+/** One answer line of the helper (translate-helper/main.swift's
+ * TranslationBatchResponse): per text, the translation or the
+ * Translation.framework error. Swift's encoder leaves a nil field out, so a
+ * result carries `text` or `error`, never both. */
+const HelperResponseTextSchema = jsonText(
+  v.object({
+    id: v.string(),
+    results: v.array(TranslateResultSchema),
+  }),
+);
 
-interface HelperResponse {
-  id: string;
-  results: HelperItemResult[];
-}
+/** The helper process: its three streams are pipes. */
+type HelperProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
 
 interface PendingRequest {
   /** Number of texts sent — a response whose results.length differs is wire
    * drift (e.g. the helper's decode-error path answers with results:[]), and
    * silently accepting it would hand N callers a shorter array as ok:true. */
   expected: number;
-  resolve(results: TranslateResult[]): void;
+  resolve(results: readonly TranslateResult[]): void;
   reject(error: Error): void;
 }
 
@@ -85,8 +95,8 @@ class TranslationHelperService implements TranslateService {
   private readonly spawn: typeof Bun.spawn;
   private readonly watchdogTimeoutMs: (totalChars: number) => number;
   private buildPromise: Promise<TranslateBatchResult> | null = null;
-  private startPromise: Promise<Bun.Subprocess> | null = null;
-  private process: Bun.Subprocess | null = null;
+  private startPromise: Promise<HelperProcess> | null = null;
+  private process: HelperProcess | null = null;
   private pending = new Map<string, PendingRequest>();
   private nextId = 0;
   private stopped = false;
@@ -144,11 +154,11 @@ class TranslationHelperService implements TranslateService {
     if (this.stopped) {
       return { ok: false, code: "translate_unavailable", msg: "translation helper is stopped" };
     }
-    let proc: Bun.Subprocess;
+    let proc: HelperProcess;
     try {
       proc = await this.ensureProcess();
     } catch (error) {
-      return { ok: false, code: "translate_unavailable", msg: String(error) };
+      return { ok: false, code: "translate_unavailable", msg: errorText(error) };
     }
 
     // Wire shape: one JSONL line in, one line out, carrying every text in
@@ -166,7 +176,7 @@ class TranslationHelperService implements TranslateService {
     // daemon restart.
     const deadline = this.watchdogTimeoutMs(texts.reduce((n, t) => n + t.length, 0));
     let watchdog: ReturnType<typeof setTimeout> | null = null;
-    const promise = new Promise<TranslateResult[]>((resolve, reject) => {
+    const promise = new Promise<readonly TranslateResult[]>((resolve, reject) => {
       this.pending.set(id, {
         expected: texts.length,
         resolve: (results) => {
@@ -189,13 +199,12 @@ class TranslationHelperService implements TranslateService {
 
     try {
       const input = JSON.stringify({ id, texts }) + "\n";
-      const stdin = proc.stdin as Bun.FileSink;
       // FileSink.write/flush return a Promise under backpressure; await both so
       // a broken pipe rejects into this catch instead of floating unobserved.
-      await stdin.write(input);
-      await stdin.flush();
+      await proc.stdin.write(input);
+      await proc.stdin.flush();
     } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
+      const failure = error instanceof Error ? error : new Error(errorText(error));
       if (watchdog !== null) clearTimeout(watchdog);
       this.pending.delete(id);
       promise.catch(() => {});
@@ -206,7 +215,7 @@ class TranslationHelperService implements TranslateService {
     try {
       return { ok: true, results: await promise };
     } catch (error) {
-      return { ok: false, code: "translate_helper_failed", msg: String(error) };
+      return { ok: false, code: "translate_helper_failed", msg: errorText(error) };
     }
   }
 
@@ -303,8 +312,8 @@ class TranslationHelperService implements TranslateService {
     );
     const [exitCode, stdout, stderr] = await Promise.all([
       build.exited,
-      new Response(build.stdout as ReadableStream<Uint8Array>).text(),
-      new Response(build.stderr as ReadableStream<Uint8Array>).text(),
+      new Response(build.stdout).text(),
+      new Response(build.stderr).text(),
     ]);
     if (exitCode !== 0 || !executable(this.binaryPath)) {
       const detail = stderr.trim() || stdout.trim() || `swiftc exited ${exitCode}`;
@@ -317,7 +326,7 @@ class TranslationHelperService implements TranslateService {
     return { ok: true, results: [] };
   }
 
-  private ensureProcess(): Promise<Bun.Subprocess> {
+  private ensureProcess(): Promise<HelperProcess> {
     if (this.process && this.process.exitCode === null) return Promise.resolve(this.process);
     if (this.startPromise) return this.startPromise;
     this.startPromise = Promise.resolve().then(() => {
@@ -340,8 +349,8 @@ class TranslationHelperService implements TranslateService {
     return this.startPromise;
   }
 
-  private async readStdout(proc: Bun.Subprocess): Promise<void> {
-    const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
+  private async readStdout(proc: HelperProcess): Promise<void> {
+    const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     try {
@@ -357,50 +366,43 @@ class TranslationHelperService implements TranslateService {
         }
       }
     } catch (error) {
-      this.failProcess(proc, error instanceof Error ? error : new Error(String(error)));
+      this.failProcess(proc, error instanceof Error ? error : new Error(errorText(error)));
     } finally {
       reader.releaseLock();
     }
   }
 
-  private async consumeStderr(proc: Bun.Subprocess): Promise<void> {
+  private async consumeStderr(proc: HelperProcess): Promise<void> {
     try {
-      await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+      await new Response(proc.stderr).text();
     } catch {
       // stderr is diagnostic-only; process exit is handled through proc.exited.
     }
   }
 
-  private acceptResponse(proc: Bun.Subprocess, line: string): void {
-    let response: HelperResponse;
-    try {
-      response = JSON.parse(line) as HelperResponse;
-    } catch {
-      this.failProcess(proc, new Error("translation helper returned invalid JSON"));
+  private acceptResponse(proc: HelperProcess, line: string): void {
+    // A line that does not read cannot be told apart from a helper speaking
+    // another protocol, so the helper is dropped like one that broke its pipe.
+    const response = parseWith(HelperResponseTextSchema, line);
+    if (!response.ok) {
+      this.failProcess(
+        proc,
+        new Error(`translation helper returned an invalid response: ${response.failure.summary}`),
+      );
       return;
     }
-    const pending = this.pending.get(response.id);
+    const { id, results } = response.value;
+    const pending = this.pending.get(id);
     if (!pending) return;
-    this.pending.delete(response.id);
-    if (!Array.isArray(response.results) || response.results.length !== pending.expected) {
+    this.pending.delete(id);
+    if (results.length !== pending.expected) {
       pending.reject(new Error("translation helper returned an invalid response"));
       return;
-    }
-    const results: TranslateResult[] = [];
-    for (const item of response.results) {
-      if (item.ok && typeof item.text === "string") {
-        results.push({ ok: true, text: item.text });
-      } else if (!item.ok && typeof item.error === "string") {
-        results.push({ ok: false, error: item.error });
-      } else {
-        pending.reject(new Error("translation helper returned an invalid response"));
-        return;
-      }
     }
     pending.resolve(results);
   }
 
-  private failProcess(proc: Bun.Subprocess, error: Error): void {
+  private failProcess(proc: HelperProcess, error: Error): void {
     if (this.process === proc) this.process = null;
     try {
       proc.kill();

@@ -4,6 +4,7 @@
 // with every external effect injectable so tests can drive all branches
 // without a real `claude`/`ps`, and the integration test can keep real
 // signals while faking only the two command runners.
+import { ClaudeAgentsAllTextSchema, parseWith } from "@ccmsg/protocol";
 
 /** Per-`claude agents --json --all` child budget — same rationale as
  * agents.ts's POLL_TIMEOUT_MS: one hung CLI in one config dir must not stall
@@ -61,7 +62,7 @@ export interface SessionKillDeps {
  * order and the FIRST matching row wins — session UUIDs don't collide across
  * config dirs in practice, and a deterministic pick beats failing the whole
  * request on a hypothetical duplicate. Any per-dir failure (spawn error,
- * non-zero exit, bad JSON) skips that dir, same isolation posture as
+ * non-zero exit, output that does not read) skips that dir, same isolation posture as
  * agents.ts's pollOne. Returns null when no dir yields a match. */
 export async function resolvePid(sessionId: string, deps: SessionKillDeps): Promise<number | null> {
   for (const dir of deps.configDirs()) {
@@ -71,28 +72,16 @@ export async function resolvePid(sessionId: string, deps: SessionKillDeps): Prom
     } catch {
       continue;
     }
-    let rows: unknown;
-    try {
-      rows = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    if (!Array.isArray(rows)) continue;
-    for (const row of rows) {
-      if (typeof row !== "object" || row === null) continue;
-      const r = row as { sessionId?: unknown; pid?: unknown };
+    const rows = parseWith(ClaudeAgentsAllTextSchema, text);
+    if (!rows.ok) continue;
+    for (const { sessionId: rowSid, pid } of rows.value) {
       // pid must be an integer > 1: process.kill(0) signals the daemon's OWN
       // process group and negative pids signal whole groups — a corrupted
       // registry row must never be able to reach either (ps verification
       // would also refuse, but an irreversible op deserves the explicit
-      // gate at the source).
-      if (
-        r.sessionId === sessionId &&
-        typeof r.pid === "number" &&
-        Number.isInteger(r.pid) &&
-        r.pid > 1
-      ) {
-        return r.pid;
+      // gate at the source). A finished background session has no pid.
+      if (rowSid === sessionId && pid !== undefined && Number.isInteger(pid) && pid > 1) {
+        return pid;
       }
     }
   }
@@ -141,7 +130,7 @@ export async function verifyPid(pid: number, deps: SessionKillDeps): Promise<boo
  * signal it) must surface as an error, or the UI would report "終了を確認"
  * about a process that is demonstrably still alive. */
 function isGone(e: unknown): boolean {
-  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "ESRCH";
+  return e instanceof Error && "code" in e && e.code === "ESRCH";
 }
 
 export async function killSession(

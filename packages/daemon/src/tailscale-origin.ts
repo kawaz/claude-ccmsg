@@ -6,18 +6,33 @@
 // machine by serve) — so its origin can be trusted the same way a loopback bind's own
 // origin is, without requiring CCMSG_HTTP_ALLOW_ORIGIN to be set by hand on every daemon
 // respawn. Everything here is best-effort: tailscale not installed, not running, not
-// serving, or any parse hiccup all resolve to an empty set, never an error the caller
+// serving, or output that does not read all resolve to an empty set, never an error the caller
 // has to handle.
 
+import { errorText, jsonText, parseWith, type Output } from "@ccmsg/protocol";
+import * as v from "valibot";
 import type { Logger } from "./log.ts";
 
-/** Shape of the parts of `tailscale serve status --json` this module reads. Everything
- *  else in the real payload (TCP block, Handlers.Path/Text for non-proxy handler kinds,
- *  etc.) is irrelevant here and deliberately left untyped (`unknown`) rather than
- *  modeled, since a schema drift there must never break origin detection. */
-interface ServeStatusShape {
-  Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
-}
+/** The parts of `tailscale serve status --json` this module reads, as a schema.
+ *  The payload is tailscale's: everything else in it (the TCP block, handlers
+ *  of other kinds) is let through unread, and a `Web` entry or handler with no
+ *  `Handlers` / `Proxy` is a serve config of another kind, not a broken one. */
+const ServeStatusSchema = v.looseObject({
+  Web: v.optional(
+    v.record(
+      v.string(),
+      v.looseObject({
+        Handlers: v.optional(
+          v.record(v.string(), v.looseObject({ Proxy: v.optional(v.string()) })),
+        ),
+      }),
+    ),
+  ),
+});
+export type ServeStatus = Output<typeof ServeStatusSchema>;
+
+/** The text `tailscale serve status --json` prints. */
+export const ServeStatusTextSchema = jsonText(ServeStatusSchema);
 
 function extractPort(proxyUrl: string): number | undefined {
   try {
@@ -41,9 +56,8 @@ function splitWebKey(key: string): { hostname: string; port: number } | undefine
   return { hostname: key.slice(0, idx), port };
 }
 
-/** Pure JSON->origins extraction (RED/GREEN unit-testable without a real tailscale
- *  binary). `status` is `unknown` because it's untrusted subprocess output — every shape
- *  assumption is guarded rather than asserted.
+/** Pure status->origins extraction (RED/GREEN unit-testable without a real tailscale
+ *  binary).
  *
  *  A `Web` entry is trusted iff at least one of its Handlers proxies to a port in
  *  `boundPorts` (this daemon's own HTTP bind ports): that's the "serve is fronting *this*
@@ -52,19 +66,13 @@ function splitWebKey(key: string): { hostname: string; port: number } | undefine
  *  what the browser's Origin will actually carry, not the backend port being proxied to
  *  — so the returned origin omits :443 (the standard "https implies 443" elision) and
  *  keeps other ports explicit. */
-export function extractProxiedOrigins(status: unknown, boundPorts: Set<number>): Set<string> {
+export function extractProxiedOrigins(status: ServeStatus, boundPorts: Set<number>): Set<string> {
   const origins = new Set<string>();
-  if (status === null || typeof status !== "object") return origins;
-  const web = (status as ServeStatusShape).Web;
-  if (web === null || typeof web !== "object") return origins;
-  for (const [key, entry] of Object.entries(web)) {
+  for (const [key, entry] of Object.entries(status.Web ?? {})) {
     const parsed = splitWebKey(key);
     if (!parsed) continue;
-    if (entry === null || typeof entry !== "object") continue;
-    const handlers = entry.Handlers;
-    if (handlers === null || typeof handlers !== "object") continue;
-    const proxiesToBoundPort = Object.values(handlers).some((h) => {
-      if (h === null || typeof h !== "object" || typeof h.Proxy !== "string") return false;
+    const proxiesToBoundPort = Object.values(entry.Handlers ?? {}).some((h) => {
+      if (h.Proxy === undefined) return false;
       const port = extractPort(h.Proxy);
       return port !== undefined && boundPorts.has(port);
     });
@@ -126,8 +134,14 @@ export async function fetchTailscaleServeOrigins(
       opts.log?.info(`tailscale serve status exited ${exitCode}, skipping origin auto-allow`);
       return new Set();
     }
-    const parsed: unknown = JSON.parse(stdout);
-    const origins = extractProxiedOrigins(parsed, boundPorts);
+    const status = parseWith(ServeStatusTextSchema, stdout);
+    if (!status.ok) {
+      opts.log?.info(
+        `tailscale serve status --json is unreadable, skipping origin auto-allow: ${status.failure.summary}`,
+      );
+      return new Set();
+    }
+    const origins = extractProxiedOrigins(status.value, boundPorts);
     opts.log?.info(
       origins.size > 0
         ? `tailscale serve origin auto-allow: ${[...origins].join(", ")}`
@@ -135,7 +149,9 @@ export async function fetchTailscaleServeOrigins(
     );
     return origins;
   } catch (e) {
-    opts.log?.info(`tailscale serve status unavailable, skipping origin auto-allow: ${String(e)}`);
+    opts.log?.info(
+      `tailscale serve status unavailable, skipping origin auto-allow: ${errorText(e)}`,
+    );
     return new Set();
   }
 }

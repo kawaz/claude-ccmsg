@@ -12,7 +12,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentInfo } from "@ccmsg/protocol";
+import { ClaudeAgentsTextSchema, errorText, parseWith, type AgentInfo } from "@ccmsg/protocol";
 
 /** Per-`claude agents --json` child process budget; a hung/slow CLI in one
  *  config dir must not stall the poll of the others or the poll cycle itself. */
@@ -174,7 +174,7 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] |
       killSignal: "SIGKILL",
     });
   } catch (e) {
-    log.error(`agents poll: failed to spawn 'claude' for ${configDir}: ${String(e)}`);
+    log.error(`agents poll: failed to spawn 'claude' for ${configDir}: ${errorText(e)}`);
     return null;
   }
   let code: number | null;
@@ -194,7 +194,7 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] |
     ]);
   } catch (e) {
     log.error(
-      `agents poll: failed reading 'claude agents --json' output for ${configDir}: ${String(e)}`,
+      `agents poll: failed reading 'claude agents --json' output for ${configDir}: ${errorText(e)}`,
     );
     return null;
   }
@@ -206,20 +206,16 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] |
     );
     return null;
   }
-  let rows: unknown;
-  try {
-    rows = JSON.parse(text);
-  } catch {
-    log.error(`agents poll: invalid JSON from 'claude agents --json' for ${configDir}`);
+  // One row that does not read fails the whole dir rather than being left
+  // out: a session missing from a dir that answered reads as ended.
+  const rows = parseWith(ClaudeAgentsTextSchema, text);
+  if (!rows.ok) {
+    log.error(
+      `agents poll: unreadable output from 'claude agents --json' for ${configDir}: ${rows.failure.summary}`,
+    );
     return null;
   }
-  if (!Array.isArray(rows)) {
-    log.error(`agents poll: 'claude agents --json' for ${configDir} did not return an array`);
-    return null;
-  }
-  return rows
-    .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
-    .map((r) => ({ ...r, config_dir: configDir }) as AgentInfo);
+  return rows.value.map((row) => ({ ...row, config_dir: configDir }));
 }
 
 export interface AgentsPoll {
@@ -317,7 +313,7 @@ export function startAgentsPoller(
         poller.cache = { agents: poll.agents, polledAt };
         await onPoll?.(poll);
       } catch (e) {
-        log.error(`agents poll: ${String(e)}`);
+        log.error(`agents poll: ${errorText(e)}`);
       } finally {
         inFlight = false;
       }

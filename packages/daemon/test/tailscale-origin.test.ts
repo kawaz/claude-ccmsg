@@ -1,9 +1,14 @@
 // tailscale serve origin auto-allow (docs/issue/2026-07-11-tailscale-serve-origin-auto-
 // allow.md). extractProxiedOrigins is pure (no subprocess), so RED/GREEN unit tests here
-// cover the JSON shape; the subprocess/timeout seam and the end-to-end WS effect are
+// cover the status shape and ServeStatusTextSchema what does not read; the subprocess/timeout seam and the end-to-end WS effect are
 // covered in http-transport.test.ts.
 import { afterEach, describe, expect, test } from "bun:test";
-import { extractProxiedOrigins, resolveStatusTimeoutMs } from "../src/tailscale-origin.ts";
+import { parseWith } from "@ccmsg/protocol";
+import {
+  extractProxiedOrigins,
+  resolveStatusTimeoutMs,
+  ServeStatusTextSchema,
+} from "../src/tailscale-origin.ts";
 
 // Observed 2026-07-11 via `tailscale serve status --json` on a machine with a single
 // serve config fronting this daemon's default port (8642) over HTTPS on 443 — the
@@ -86,13 +91,14 @@ describe("extractProxiedOrigins", () => {
     expect(extractProxiedOrigins({}, new Set([8642]))).toEqual(new Set());
   });
 
-  test("null input: returns empty", () => {
-    expect(extractProxiedOrigins(null, new Set([8642]))).toEqual(new Set());
+  test("output that is not a status object (null, a bare string or number, not JSON) does not read", () => {
+    for (const text of ["null", '"not json shaped"', "42", "not json {"]) {
+      expect(parseWith(ServeStatusTextSchema, text).ok).toBe(false);
+    }
   });
 
-  test("non-object input (e.g. a bare string or number, malformed subprocess output): returns empty", () => {
-    expect(extractProxiedOrigins("not json shaped", new Set([8642]))).toEqual(new Set());
-    expect(extractProxiedOrigins(42, new Set([8642]))).toEqual(new Set());
+  test("a Web block that is not a map of entries does not read", () => {
+    expect(parseWith(ServeStatusTextSchema, JSON.stringify({ Web: 42 })).ok).toBe(false);
   });
 
   test("Web entry with no Handlers, or a Handler with no Proxy (e.g. a Text/static handler): skipped, no crash", () => {
