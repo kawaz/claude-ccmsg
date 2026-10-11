@@ -94,8 +94,8 @@ shell から起動されるため、daemon プロセスが元セッション由�
 リテラル・大文字小文字区別・アンカー付き完全一致 (正規表現メタ文字は literal 扱い)。
 spawn 前に daemon env からマッチするキーを除去し、その上に launcher の
 `CWD`/`MODEL`/`EFFORT`/`PROMPT` を重ねる (= パターンがこの 4 変数を名指ししても
-launch env が勝つ)。既定 = 未指定なら空配列で従来同様クリーニングなし。不正型は
-警告して no-cleaning に degrade (launcher 自体は使用可能なまま)。
+launch env が勝つ)。既定 = 未指定なら空配列でクリーニングなし。配列でない値や、空・文字列でない
+要素があれば config が読めないものとして daemon は起動時に止まる (§3.3 の config 読み込み)。
 
 **Addendum 2026-07-18 (2nd): `keep_env` (クリーニング除外 allowlist)**: §3.1 の
 config に optional `keep_env: string[]` を追加。動機: 実運用の
@@ -107,9 +107,8 @@ broad な clean パターンは必要 (元セッション変数の列挙は漏�
 一致)。**優先関係: keep_env が clean_env に勝つ** — 両方にマッチするキーは残す。
 keep_env のみにマッチするキーは元々除去されないので no-op (keep_env は保護のみで
 除去はしない)。launch の `CWD`/`MODEL`/`EFFORT`/`PROMPT` overlay は keep/clean の
-判定後に重ねるため従来どおり常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正型は
-警告して空配列に degrade — clean_env と逆で「より多く消える」方向であり、壊れた
-allowlist がクリーニング自体を黙って無効化しない安全側。
+判定後に重ねるため常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正な値は clean_env と同じく
+config が読めないものとして daemon を起動時に止める。
 
 **Addendum 2026-07-28 (kawaz r76m15): 受け渡し変数を子プロセスへ引き継がせない**:
 LN-Q2 の env 渡しは受け渡し手段として良かったが、env である以上 `PROMPT` 等が
@@ -161,8 +160,9 @@ config の形は §3.1 の supersede 後の 1 つだけ:
 
 - `templates` は必須。各テンプレは `command` と `params` を自分で全部書く。
   launcher 直下から継承するのは `shell` の既定値のみ
-- `command` / `params` を欠くテンプレは warn してそのエントリだけ無視。
-  使えるテンプレが 0 件なら launcher 無効 (root_dirs 不正時と同じ posture)
+- `command` / `params` を欠くテンプレ、`name` が空・重複するテンプレがあれば、また
+  `templates` が空なら、config が読めないものとして daemon は起動時に止まる
+  (§3.3 の config 読み込み、`root_dirs` が空・相対パスを含む時も同じ)
 - 既定プロンプトは `params.PROMPT` の初期値として書く
 
 ### 3.2 protocol (新 op)
@@ -187,7 +187,11 @@ config の形は §3.1 の supersede 後の 1 つだけ:
 
 ### 3.3 daemon 実装
 
-- config 読み込み: 起動時 (既存 config path に統合)
+- config 読み込み: 起動時 (既存 config path に統合)。config 全体を 1 つのスキーマで読み
+  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。
+  エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で、daemon.log に書かれ、
+  CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、
+  不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える
 - `dir_tree`: `readdir` を深さ制限 + dot-filter で walking
 - `session_launch` (LN-Q2 裁定反映):
   1. env に `CWD` / `MODEL` / `EFFORT` / `PROMPT` をセット (daemon は文字列置換しない)

@@ -192,12 +192,12 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    フィールドの意味 (詳細は `docs/decisions/DR-0018-session-launcher.md` §3.1):
    - `root_dirs`: cwd ピッカー (CwdTree) が表示するルート一覧。`~/` プレフィクス
      または絶対パスのみ。相対パスがあると daemon は起動しない
-   - `shell`: `"bash"` または `"zsh"` のみ (暗黙の `sh -c` はしない、LN-Q2 裁定)。
+   - `shell`: `"bash"` または `"zsh"` のみ (暗黙の `sh -c` はしない、LN-Q2 裁定)。それ以外の値なら daemon は起動しない。
      上の `command` 例は `${...:t1}` (zsh の modifier 展開) を使うため `"zsh"`
      必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
      `"bash"` で良い
-   - `timeout_seconds`: 省略時 10。超過で SIGTERM → 少し待って SIGKILL
-   - `dir_tree_depth`: cwd ツリーの初期一括ロード深さ。省略時 2
+   - `timeout_seconds`: 省略時 10。超過で SIGTERM → 少し待って SIGKILL。正の数でなければ daemon は起動しない
+   - `dir_tree_depth`: cwd ツリーの初期一括ロード深さ。省略時 2。正の数でなければ daemon は起動しない
    - `templates`: 名前付きの起動レシピ一覧。`templates[0]` が既定のレシピ
    - `templates[].command`: 実行するコマンド。文字列置換ではなく **変数渡し**
      なので quote は書き手の責務
