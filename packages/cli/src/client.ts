@@ -6,6 +6,7 @@
 // docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md: a
 // same-or-newer daemon is left alone so old and new clients don't fight over
 // which version should run during a gradual plugin rollout).
+import * as fs from "node:fs";
 import type { Socket } from "bun";
 import {
   compareVersions,
@@ -240,7 +241,7 @@ function daemonSpawnCmd(): string[] {
   return [exec, "daemon", "run"];
 }
 
-function spawnDaemon(): void {
+function spawnDaemon(): Bun.Subprocess<"ignore", "ignore", "ignore"> {
   const cmd = daemonSpawnCmd();
   const proc = Bun.spawn(cmd, {
     stdin: "ignore",
@@ -262,6 +263,32 @@ function spawnDaemon(): void {
     detached: true,
   });
   proc.unref();
+  return proc;
+}
+
+/** daemon.log's size now: where the lines of a daemon about to be spawned
+ * begin. */
+function logSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
+/** The daemon.log lines written from byte `from` on — the whole log when it
+ * has rotated since. */
+function logSince(file: string, from: number): string {
+  let log: Buffer;
+  try {
+    log = fs.readFileSync(file);
+  } catch {
+    return "";
+  }
+  return log
+    .subarray(from <= log.length ? from : 0)
+    .toString("utf8")
+    .trimEnd();
 }
 
 // Exponential backoff schedule for reconnecting to a freshly spawned daemon.
@@ -269,14 +296,29 @@ function spawnDaemon(): void {
 // the daemon usually answers within the first few hundred ms.
 const SPAWN_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 400, 600, 800, 1000, 1500, 2000, 3000];
 
-async function connectWithSpawn(sockPath: string): Promise<Client> {
-  const c = await tryConnect(sockPath);
+/** Connect, spawning the daemon when none answers. A spawned daemon that
+ * exits with a failure before it answers (a configuration that does not read,
+ * an invalid CCMSG_HTTP_ALLOW) is reported with the lines it logged, since its
+ * own stderr goes nowhere. One that exits cleanly lost the startup lock to
+ * another daemon coming up, which the retries then reach. */
+async function connectWithSpawn(paths: Paths): Promise<Client> {
+  const c = await tryConnect(paths.sock);
   if (c) return c;
-  spawnDaemon();
+  const logFrom = logSize(paths.log);
+  const spawned: { exitCode: number | null } = { exitCode: null };
+  void spawnDaemon().exited.then((code) => {
+    spawned.exitCode = code;
+  });
   for (const delay of SPAWN_RETRY_DELAYS_MS) {
     await sleep(delay);
-    const c2 = await tryConnect(sockPath);
+    const c2 = await tryConnect(paths.sock);
     if (c2) return c2;
+    if (spawned.exitCode !== null && spawned.exitCode !== 0) {
+      throw new Error(
+        `daemon exited with code ${spawned.exitCode} while starting; ${paths.log} says:\n` +
+          logSince(paths.log, logFrom),
+      );
+    }
   }
   throw new Error("ccmsg: daemon did not become reachable after spawn");
 }
@@ -315,7 +357,7 @@ export function helloRequest(identity: Identity): Extract<RequestInput, { op: "h
 
 /** Connect (spawning + upgrading the daemon as needed) and complete the hello handshake. */
 export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Client> {
-  let client = await connectWithSpawn(paths.sock);
+  let client = await connectWithSpawn(paths);
   let hello = await client.request(helloRequest(identity));
   if (hello.ok && compareVersions(VERSION, hello.version) > 0) {
     // we are strictly newer than the running daemon: shut it down and spawn ours.
@@ -327,7 +369,7 @@ export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Cl
     }
     client.close();
     await waitDaemonGone(paths.sock);
-    client = await connectWithSpawn(paths.sock);
+    client = await connectWithSpawn(paths);
     hello = await client.request(helloRequest(identity));
   }
   if (!hello.ok) throw new Error("ccmsg: hello handshake failed");

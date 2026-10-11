@@ -859,10 +859,13 @@ async function runSessionKill(sessionId: string, force: boolean): Promise<never>
   process.exit(output(reply));
 }
 
-function handleDaemon(positionals: string[], opts: Record<string, string | boolean>): void {
+async function handleDaemon(
+  positionals: string[],
+  opts: Record<string, string | boolean>,
+): Promise<void> {
   const sub = positionals[0];
   if (sub === "start") {
-    void runDaemonStart();
+    await runDaemonStart();
     return;
   }
   if (sub === "run") {
@@ -871,11 +874,11 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
     return;
   }
   if (sub === "stop") {
-    void runDaemonStop();
+    await runDaemonStop();
     return;
   }
   if (sub === "restart") {
-    void runDaemonRestart();
+    await runDaemonRestart();
     return;
   }
   process.stderr.write("ccmsg: usage: ccmsg daemon <start|run|stop|restart>\n");
@@ -1132,7 +1135,7 @@ async function main(): Promise<void> {
   }
 
   if (cmd === "daemon") {
-    handleDaemon(args, opts);
+    await handleDaemon(args, opts);
     return;
   }
 

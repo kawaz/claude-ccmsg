@@ -3570,7 +3570,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const rooms = scanRooms(paths.roomsDir, log);
   migrateLegacyConfigFiles(paths, log);
   writeConfigTypesFile(paths.configDir, VERSION, log);
-  const config = await loadConfig(paths, log);
+  const loaded = await loadConfig(paths, log);
+  if (!loaded.ok) {
+    // A configuration that does not read stops the daemon rather than starting
+    // it with parts left out (DR-0038 §6). The lines go to daemon.log (and to
+    // stderr in the foreground); a CLI that spawned this daemon prints them.
+    log.error("config does not read; the daemon does not start");
+    for (const line of loaded.errors) log.error(line);
+    lock.release();
+    process.exit(1);
+  }
+  const config = loaded.config;
   const trace = new TraceWriter(paths.trace);
   const daemon: Daemon = {
     paths,

@@ -110,7 +110,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    非同期に組み立てる、またはモジュール先頭で `await` する top-level await も可)。
    daemon は起動時に `import()` (dynamic import) で評価するため、Promise は
    `await` してから同じ検証にかける。reject した場合は他の壊れ方と同様に
-   1 行 warn して空設定へ degrade する。関数 (`() => object`) を default
+   daemon が起動せず、理由がエラーとして出る。関数 (`() => object`) を default
    export にする形は受け付けない — 非同期構築が要るなら Promise を直接返す。
 
    **`<configDir>/config.js`** — ES module の default export でオブジェクトを
@@ -149,7 +149,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    注意点 (`config.ts` にも同様に適用される):
    - `export default` は**プレーンなオブジェクト、または Promise でオブジェクトに
      解決するもの**であること (`default` が無い / オブジェクトでない /
-     Promise が reject した場合は warn + 設定なし扱い)
+     Promise が reject した場合は daemon が起動せず、理由がエラーとして出る)
    - **top-level `await` は使える** (daemon は起動時に dynamic import で
      評価するため)。関数 (`() => object`) を default export にする形は
      受け付けない
@@ -191,7 +191,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
    フィールドの意味 (詳細は `docs/decisions/DR-0018-session-launcher.md` §3.1):
    - `root_dirs`: cwd ピッカー (CwdTree) が表示するルート一覧。`~/` プレフィクス
-     または絶対パスのみ有効、相対パスは無視される
+     または絶対パスのみ。相対パスがあると daemon は起動しない
    - `shell`: `"bash"` または `"zsh"` のみ (暗黙の `sh -c` はしない、LN-Q2 裁定)。
      上の `command` 例は `${...:t1}` (zsh の modifier 展開) を使うため `"zsh"`
      必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
@@ -222,8 +222,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 - 値は **export されていないシェル変数** として渡る — command が起動する
   プロセス (= claude セッションとその子孫) には引き継がれない
 - 宣言した変数は必ず定義される (未入力なら空文字。`set -u` で落ちない)
-- 変数名はシェル識別子 (`[A-Za-z_][A-Za-z0-9_]*`) のみ。それ以外はその
-  1 件だけ warn して無視される
+- 変数名はシェル識別子 (`[A-Za-z_][A-Za-z0-9_]*`) のみ。それ以外 (と
+  `__proto__` / `constructor` / `prototype`) があると daemon は起動しない
 - `CWD` の値は `root_dirs` に対して realpath で封じ込め検査される唯一の値
 
 ### 複数テンプレート (fork 等の起動形を並べる)
@@ -253,8 +253,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
 - 各テンプレートは `command` と `params` を自分で全部書く (継承は `shell` の
   デフォルトのみ)
-- 個別エントリが壊れていても (name が空 / 重複 / `command` や `params` が無い)
-  そのエントリだけ warn して無視し、残りは生きる。全滅すると launcher 無効
+- エントリが 1 つでも壊れていると (name が空 / 重複 / `command` や `params` が
+  無い / 知らないキーがある) daemon は起動せず、壊れた場所を全部エラーに出す
 - **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している
   最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
 - **resume テンプレの判定は `SESSION_ID` を宣言し `RESUME_AT` を宣言しない
@@ -283,9 +283,11 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    cache が同一プロセス内での読み直しを許さない)。接続中の webui /
    `ccmsg subscribe` は自動再接続で復帰する。
 
-   期待結果: 起動ログにエラーが出ない。`root_dirs` / `command` が不正な形
-   (非配列、絶対パスでない要素のみ、等) だと daemon はクラッシュせず
-   session launcher を無効化した状態で起動する (warn ログが出る)。
+   期待結果: 起動ログにエラーが出ない。設定が読めない (構文エラー、知らない
+   キー、型の合わない値、絶対パスでない `root_dirs` 等) と daemon は起動せず、
+   `config: <file>: <場所>: <理由>` の行を daemon.log に残して終了する。
+   CLI から daemon を立ち上げた場合 (`ccmsg daemon restart` 等) は同じ行が
+   CLI のエラーとして出る。
 
 3. **webui で確認する**
 
@@ -297,7 +299,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
-| 「+ 新規」を押しても未設定の案内のまま | `config.ts` / `config.js` / `config.json` の構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、各 template は非空の `command` を持つ必要がある |
+| 「+ 新規」を押しても未設定の案内のまま | `session_launcher` を書いた設定ファイルが読まれていない (`config.ts` > `config.js` > `config.json` の優先順で、別のファイルが読まれている) | daemon の起動ログの `config: <file>: ... also present and being ignored` の warn 行を確認 |
+| daemon が起動しない (`daemon exited with code 1 while starting`) | `config.ts` / `config.js` / `config.json` が読めない (構文エラー、知らないキー、型の合わない値) | エラーの `config: <file>: <場所>: <理由>` の行が壊れた場所を指す。`root_dirs` は非空の絶対パス配列、各 template は非空の `name` / `command` と `params` を持つ必要がある |
 | cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
 | 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に 宣言した各変数への代入 (`CWD=...; MODEL=...; ...`) を書いた状態で手元で試して構文を確認 |
 | テンプレートで起動した shell / REPL がすぐ終わる、外からの入力が届かない | daemon は端末の無い起動元で、`hyoui run` は呼び出し元の stdin が端末でないとき、それを子の stdin にそのまま渡す (hyoui DR-0042)。shell / REPL は stdin (`/dev/null`) の EOF を読んで終わる | shell / REPL を起動するテンプレートだけ `hyoui run` に `--pty-stdin` を付ける。claude などの TUI はキーを `/dev/tty` (hyoui の PTY) から読むので付けない (付けると pipe で渡した最初の入力が使われない) |

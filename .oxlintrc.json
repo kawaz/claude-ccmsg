@@ -82,6 +82,8 @@
         "packages/protocol/src/workflow-run.ts",
         "packages/daemon/src/workflow-drilldown.ts",
         "packages/daemon/src/workspace-folders.ts",
+        "packages/daemon/src/config.ts",
+        "packages/daemon/src/launcher-paths.ts",
         "hooks/session-start.ts",
         "packages/protocol/src/hook-input.ts",
         "packages/webui/src/client/json-string-token.ts",

@@ -1782,3 +1782,24 @@ describe("hello が名乗る所在", () => {
     }
   }, 30000);
 });
+
+describe("a daemon that does not start (DR-0038 §6)", () => {
+  // The CLI spawns the daemon with its stderr going nowhere, so a daemon that
+  // stops at startup over its configuration would otherwise leave only "did
+  // not become reachable" after the retries ran out. The reasons it logged
+  // reach the CLI's stderr instead, at once.
+  test("a configuration that does not read is reported with its reasons", async () => {
+    const { env, cleanup } = makeEnv();
+    fs.mkdirSync(env.CCMSG_CONFIG_DIR, { recursive: true });
+    const config = path.join(env.CCMSG_CONFIG_DIR, "config.json");
+    fs.writeFileSync(config, JSON.stringify({ llm_usage_url: "ftp://gw.example" }));
+    try {
+      const { code, err } = await runCli(["peers"], env);
+      expect(code).toBe(1);
+      expect(err).toContain("daemon exited with code 1 while starting");
+      expect(err).toContain(`config: ${config}: llm_usage_url: must be http:// or https://`);
+    } finally {
+      cleanup();
+    }
+  }, 30000);
+});

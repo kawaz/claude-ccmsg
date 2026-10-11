@@ -13,11 +13,11 @@ function contains(root: string, candidate: string): boolean {
 }
 
 export function containedInRoots(
-  configuredRoots: string[],
-  candidate: unknown,
+  configuredRoots: readonly string[],
+  candidate: string,
   field: string,
 ): FsAccessResult<{ realPath: string }> {
-  if (typeof candidate !== "string" || candidate === "" || !path.isAbsolute(candidate)) {
+  if (candidate === "" || !path.isAbsolute(candidate)) {
     return {
       ok: false,
       code: ErrorCode.invalid_args,
@@ -29,8 +29,7 @@ export function containedInRoots(
   try {
     realPath = fs.realpathSync(candidate);
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") {
       return { ok: false, code: ErrorCode.not_found, msg: `not found: ${candidate}` };
     }
     return {

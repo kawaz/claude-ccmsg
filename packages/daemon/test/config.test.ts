@@ -1,5 +1,6 @@
-// Session launcher config parsing (DR-0018 Phase 1): malformed or partial
-// user configuration must never prevent the daemon from starting.
+// Daemon configuration reading (DR-0018 Phase 1, DR-0038 §6): the whole file is
+// read by one schema, and a file that does not read is answered with every
+// reason (file, place, what was expected) so the daemon stops at startup.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -44,6 +45,21 @@ describe("loadConfig", () => {
   let warnings: string[];
   const log = { warn: (msg: string) => warnings.push(msg) };
 
+  /** The configuration the files read as, failing the test when they do not
+   * read. */
+  async function loaded(): Promise<ResolvedCcmsgConfig> {
+    const read = await loadConfig(files, log);
+    if (!read.ok) throw new Error(read.errors.join("\n"));
+    return read.config;
+  }
+
+  /** Why the files do not read, failing the test when they do. */
+  async function refusal(): Promise<readonly string[]> {
+    const read = await loadConfig(files, log);
+    if (read.ok) throw new Error(`the configuration read: ${JSON.stringify(read.config)}`);
+    return read.errors;
+  }
+
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-config-"));
     file = path.join(dir, "config.json");
@@ -60,26 +76,23 @@ describe("loadConfig", () => {
   // A missing file is the normal unconfigured state, so startup stays quiet and
   // exposes no launcher rather than treating first use as an error.
   test("missing file returns an empty config without warning", async () => {
-    expect(await loadConfig(files, log)).toEqual({});
+    expect(await loaded()).toEqual({});
     expect(warnings).toEqual([]);
   });
 
-  // Broken JSON is user-editable garbage: the daemon must stay available and
-  // make the launcher unavailable, with one diagnostic for repair.
-  test("broken JSON returns an empty config with one warning", async () => {
+  // Broken JSON is not a configuration: the daemon does not start, and the
+  // reason names the file.
+  test("broken JSON does not read", async () => {
     fs.writeFileSync(file, "{not-json");
-    expect(await loadConfig(files, log)).toEqual({});
-    expect(warnings).toHaveLength(1);
+    expect(await refusal()).toEqual([expect.stringContaining(file)]);
   });
 
   // The top-level contract is a JSON object. Scalars and arrays cannot contain
-  // daemon keys, so both degrade to the same safe empty configuration.
-  test("non-object JSON values return an empty config with a warning", async () => {
+  // daemon keys, so they do not read.
+  test("non-object JSON values do not read", async () => {
     for (const value of ["null", "42", "[]"]) {
       fs.writeFileSync(file, value);
-      warnings = [];
-      expect(await loadConfig(files, log)).toEqual({});
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toHaveLength(1);
     }
   });
 
@@ -108,7 +121,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(declaredConfig(await loadConfig(files, log))).toEqual({
+    expect(declaredConfig(await loaded())).toEqual({
       session_launcher: {
         root_dirs: [path.resolve(root)],
         templates: [
@@ -147,7 +160,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates[0]?.params).toEqual([
+    expect((await loaded()).session_launcher?.templates[0]?.params).toEqual([
       { name: "CWD", default: "" },
       { name: "PROMPT", default: "hi" },
     ]);
@@ -155,10 +168,10 @@ describe("loadConfig", () => {
   });
 
   // A parameter name reaches the launcher shell as a variable assignment, so
-  // anything that is not an identifier would be a syntax error at launch;
-  // rejecting it here costs one input instead of the whole launch. A
-  // non-string default is the same class of repairable typo.
-  test("a parameter with a bad name or a non-string default is skipped", async () => {
+  // anything that is not an identifier would be a syntax error at launch; it
+  // stops the daemon at startup instead. A non-string default is refused too,
+  // and every reason is reported at once.
+  test("a parameter with a bad name or a non-string default does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -175,38 +188,29 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates[0]?.params).toEqual([
-      { name: "CWD", default: "" },
-      { name: "PROMPT", default: "" },
-    ]);
-    expect(warnings).toHaveLength(3);
+    const errors = await refusal();
+    expect(errors).toHaveLength(3);
+    expect(errors[0]).toContain("is not a shell identifier");
+    expect(errors[2]).toContain("session_launcher.templates.0.params.MODEL");
   });
 
   // A launch request's values are read by a schema built from the declared
   // names, and an object schema does not read the names a prototype answers
   // to, so they cannot be declared.
-  test("a parameter named like a prototype member is skipped", async () => {
-    fs.writeFileSync(
-      file,
-      `{"session_launcher":{"root_dirs":[${JSON.stringify(dir)}],"templates":[{"name":"t","command":"run","params":{"__proto__":"","constructor":"","prototype":"","PROMPT":""}}]}}`,
-    );
-
-    expect((await loadConfig(files, log)).session_launcher?.templates[0]?.params).toEqual([
-      { name: "CWD", default: "" },
-      { name: "PROMPT", default: "" },
-    ]);
-    expect(warnings).toEqual([
-      expect.stringContaining("__proto__ is a reserved name"),
-      expect.stringContaining("constructor is a reserved name"),
-      expect.stringContaining("prototype is a reserved name"),
-    ]);
+  test("a parameter named like a prototype member does not read", async () => {
+    for (const name of ["__proto__", "constructor", "prototype"]) {
+      fs.writeFileSync(
+        file,
+        `{"session_launcher":{"root_dirs":[${JSON.stringify(dir)}],"templates":[{"name":"t","command":"run","params":{"${name}":"","PROMPT":""}}]}}`,
+      );
+      expect(await refusal()).toEqual([expect.stringContaining("must not declare __proto__")]);
+    }
   });
 
   // `params` is the only source of truth for the form's inputs, so a template
-  // that omits it (or its command) is unusable and must not silently launch a
-  // recipe nobody declared — it is skipped with a warning, exactly like any
-  // other malformed entry, while its siblings keep working.
-  test("templates without params or command are ignored with a warning", async () => {
+  // that omits it (or its command) is unusable: it must not silently launch a
+  // recipe nobody declared, and it stops the daemon with the place named.
+  test("templates without params or command do not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -221,31 +225,24 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
-      {
-        name: "ok",
-        command: 'run "$PROMPT"',
-        params: [
-          { name: "CWD", default: "" },
-          { name: "PROMPT", default: "hi" },
-        ],
-        shell: "bash",
-      },
-    ]);
-    expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toContain("no params");
-    expect(warnings[1]).toContain("command must be a non-empty string");
+    const errors = await refusal();
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("session_launcher.templates.0.params");
+    expect(errors[1]).toContain("session_launcher.templates.1.command");
   });
 
-  // No `templates` key at all leaves nothing to launch, so the launcher is
-  // disabled rather than inferring a recipe from other fields.
-  test("a launcher without templates is disabled", async () => {
-    fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
-
-    expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
-    expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toContain("templates must be an array");
-    expect(warnings[1]).toContain("launcher disabled");
+  // No `templates` key at all leaves nothing to launch, and a recipe is not
+  // inferred from other fields.
+  test("a launcher without templates does not read", async () => {
+    for (const templates of [undefined, []]) {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          session_launcher: { root_dirs: [dir], ...(templates ? { templates } : {}) },
+        }),
+      );
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.templates")]);
+    }
   });
 
   // DR-0018's user-facing examples use ~/..., so the parser expands it against
@@ -261,32 +258,36 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.root_dirs).toEqual([
+    expect((await loaded()).session_launcher?.root_dirs).toEqual([
       path.join(os.homedir(), "launcher-root"),
     ]);
   });
 
   // shell is deliberately a built-in two-choice contract. Missing selects the
-  // documented bash default; malformed supplied values also default but warn.
+  // documented bash default; any other value does not read.
   test("shell defaults to bash and rejects values outside bash or zsh", async () => {
-    for (const [shell, warningCount] of [
-      [undefined, 0],
-      ["fish", 1],
-      [123, 1],
-    ] as const) {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+        },
+      }),
+    );
+    expect((await loaded()).session_launcher?.templates[0]?.shell).toBe("bash");
+    for (const shell of ["fish", 123]) {
       fs.writeFileSync(
         file,
         JSON.stringify({
           session_launcher: {
             root_dirs: [dir],
             templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-            ...(shell === undefined ? {} : { shell }),
+            shell,
           },
         }),
       );
-      warnings = [];
-      expect((await loadConfig(files, log)).session_launcher?.templates[0]?.shell).toBe("bash");
-      expect(warnings).toHaveLength(warningCount);
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.shell")]);
     }
   });
 
@@ -313,7 +314,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
+    expect((await loaded()).session_launcher?.templates.map(declared)).toEqual([
       {
         name: "plain",
         command: "run $PROMPT",
@@ -336,10 +337,9 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
   });
 
-  // One unusable recipe must not take the usable ones down with it — the same
-  // entry-level degradation the env pattern lists use. Each rejected entry
-  // gets its own warning so the user knows which line to repair.
-  test("a broken template entry is skipped while its siblings survive", async () => {
+  // Every unusable recipe is reported, each with its place, so the user knows
+  // which line to repair; none is left out silently.
+  test("broken template entries do not read, each reported", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -349,22 +349,37 @@ describe("loadConfig", () => {
             "not-an-object",
             { name: "", command: "run", params: {} },
             { name: "good", command: "run", params: {} },
-            { name: "good", command: "shadow", params: {} },
             { name: "commandless", params: {} },
           ],
         },
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.templates.map(declared)).toEqual([
-      { name: "good", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
-    ]);
-    expect(warnings).toHaveLength(4);
+    const errors = await refusal();
+    expect(errors).toHaveLength(3);
+    expect(errors[0]).toContain("session_launcher.templates.0");
+    expect(errors[1]).toContain("session_launcher.templates.1.name");
+    expect(errors[2]).toContain("session_launcher.templates.3.command");
   });
 
-  // With no usable recipe left there is nothing to launch, so the launcher
-  // disables itself exactly as a missing command used to.
-  test("templates that all fail to parse disable session_launcher", async () => {
+  // Two recipes under one name cannot both be picked by it.
+  test("duplicate template names do not read", async () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [
+            { name: "good", command: "run", params: {} },
+            { name: "good", command: "shadow", params: {} },
+          ],
+        },
+      }),
+    );
+    expect(await refusal()).toEqual([expect.stringContaining("template names must be unique")]);
+  });
+
+  test("a template with only a name does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -375,12 +390,12 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
+    expect(await refusal()).toHaveLength(2);
   });
 
   // Containment cannot be defined without at least one root, so absent, empty,
-  // or wrong-typed roots disable the whole launcher rather than opening it wide.
-  test("missing, empty, or non-array root_dirs disables session_launcher", async () => {
+  // or wrong-typed roots do not read rather than opening the launcher wide.
+  test("missing, empty, or non-array root_dirs does not read", async () => {
     for (const root_dirs of [undefined, [], "not-an-array"]) {
       fs.writeFileSync(
         file,
@@ -391,15 +406,25 @@ describe("loadConfig", () => {
           },
         }),
       );
-      warnings = [];
-      expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.root_dirs")]);
     }
   });
 
-  // Numeric garbage is localized to the affected field: the launcher remains
-  // usable and receives the DR defaults instead of crashing or accepting zero.
-  test("invalid timeout and tree depth fall back to defaults", async () => {
+  // Absent numbers take the DR defaults; a value that is not a positive number
+  // does not read rather than being replaced by one.
+  test("timeout and tree depth default when absent and refuse invalid values", async () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+        },
+      }),
+    );
+    const cfg = (await loaded()).session_launcher;
+    expect(cfg?.timeout_seconds).toBe(DEFAULT_LAUNCH_TIMEOUT_SECONDS);
+    expect(cfg?.dir_tree_depth).toBe(DEFAULT_DIR_TREE_DEPTH);
     for (const invalid of ["abc", -1, 0]) {
       fs.writeFileSync(
         file,
@@ -412,17 +437,16 @@ describe("loadConfig", () => {
           },
         }),
       );
-      warnings = [];
-      const cfg = (await loadConfig(files, log)).session_launcher!;
-      expect(cfg.timeout_seconds).toBe(DEFAULT_LAUNCH_TIMEOUT_SECONDS);
-      expect(cfg.dir_tree_depth).toBe(DEFAULT_DIR_TREE_DEPTH);
-      expect(warnings).toHaveLength(2);
+      const errors = await refusal();
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toContain("session_launcher.timeout_seconds");
+      expect(errors[1]).toContain("session_launcher.dir_tree_depth");
     }
   });
 
-  // A bad element must not erase independent good roots. Relative entries are
-  // excluded with a warning, preserving the valid containment boundary.
-  test("relative root entries are excluded while valid roots survive", async () => {
+  // A relative root is not a containment boundary; it does not read, with the
+  // entry named.
+  test("a relative root entry does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -433,8 +457,9 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect((await loadConfig(files, log)).session_launcher?.root_dirs).toEqual([path.resolve(dir)]);
-    expect(warnings).toHaveLength(1);
+    expect(await refusal()).toEqual([
+      expect.stringContaining("session_launcher.root_dirs.0: must be absolute or start with ~/"),
+    ]);
   });
 
   // clean_env absent means "no cleaning" (the pre-addendum contract): the
@@ -450,14 +475,11 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.clean_env).toEqual([]);
+    expect((await loaded()).session_launcher?.clean_env).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
-  // A wrong-typed clean_env is a repairable pattern list, not a security
-  // boundary like root_dirs: it degrades to "no cleaning" with one warning
-  // while the launcher itself stays available.
-  test("non-array clean_env warns and degrades to no cleaning", async () => {
+  test("non-array clean_env does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -468,14 +490,10 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.clean_env).toEqual([]);
-    expect(warnings).toHaveLength(1);
+    expect(await refusal()).toEqual([expect.stringContaining("session_launcher.clean_env")]);
   });
 
-  // Bad elements are skipped individually (same policy as root_dirs entries):
-  // an empty string or non-string entry cannot express a key pattern, but it
-  // must not erase the independent good patterns beside it.
-  test("empty or non-string clean_env entries are skipped while good patterns survive", async () => {
+  test("empty or non-string clean_env entries do not read, each reported", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -486,11 +504,10 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.clean_env).toEqual([
-      "CLAUDE_*",
-      "AI_AGENT",
-    ]);
-    expect(warnings).toHaveLength(2);
+    const errors = await refusal();
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("session_launcher.clean_env.1");
+    expect(errors[1]).toContain("session_launcher.clean_env.2");
   });
 
   // keep_env absent means "no exceptions" (clean_env removes its matches
@@ -506,49 +523,39 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.keep_env).toEqual([]);
+    expect((await loaded()).session_launcher?.keep_env).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
-  // Same degrade policy as clean_env (shared parser): a wrong-typed keep_env
-  // is a repairable pattern list — one warning, empty list, launcher stays
-  // available. Note the failure direction differs from clean_env: degrading
-  // keep_env to [] means MORE keys get cleaned, which is the safe direction
-  // for the cleaning contract (an unparseable allowlist must not silently
-  // disable cleaning).
-  test("non-array keep_env warns and degrades to no exceptions", async () => {
+  test("non-array keep_env does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
           templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          keep_env: "CLAUDE_CONFIG_DIR",
+          keep_env: "CLAUDE_*",
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.keep_env).toEqual([]);
-    expect(warnings).toHaveLength(1);
+    expect(await refusal()).toEqual([expect.stringContaining("session_launcher.keep_env")]);
   });
 
-  // Element-level skipping mirrors clean_env: a malformed entry is dropped
-  // with a warning, and independent good keep patterns beside it survive.
-  test("empty or non-string keep_env entries are skipped while good patterns survive", async () => {
+  test("empty or non-string keep_env entries do not read, each reported", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
           templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          keep_env: ["CLAUDE_CONFIG_DIR", "", 42, "CLAUDE_CODE_ENTRYPOINT"],
+          keep_env: ["CLAUDE_*", "", 42, "AI_AGENT"],
         },
       }),
     );
-    expect((await loadConfig(files, log)).session_launcher?.keep_env).toEqual([
-      "CLAUDE_CONFIG_DIR",
-      "CLAUDE_CODE_ENTRYPOINT",
-    ]);
-    expect(warnings).toHaveLength(2);
+    const errors = await refusal();
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("session_launcher.keep_env.1");
+    expect(errors[1]).toContain("session_launcher.keep_env.2");
   });
 
   // terminal_gateway_url (issue 2026-07-21-webui-terminal-tab-embed):
@@ -556,41 +563,40 @@ describe("loadConfig", () => {
   describe("terminal_gateway_url", () => {
     test("valid https URL is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "https://gw.example" }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("https://gw.example");
+      expect((await loaded()).terminal_gateway_url).toBe("https://gw.example");
       expect(warnings).toEqual([]);
     });
 
     test("valid http URL with port is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://127.0.0.1:43690" }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("http://127.0.0.1:43690");
+      expect((await loaded()).terminal_gateway_url).toBe("http://127.0.0.1:43690");
     });
 
     test("whitespace is trimmed", async () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "  https://gw.example  " }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("https://gw.example");
+      expect((await loaded()).terminal_gateway_url).toBe("https://gw.example");
     });
 
-    test("non-string / empty value degrades to unset with a warning", async () => {
+    test("non-string / empty value does not read", async () => {
       for (const value of [42, "", "   ", null]) {
         fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
-        warnings = [];
-        expect((await loadConfig(files, log)).terminal_gateway_url).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("terminal_gateway_url")]);
       }
     });
 
-    test("unparseable URL degrades to unset with a warning", async () => {
+    test("unparseable URL does not read", async () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "not a url" }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBeUndefined();
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([
+        expect.stringContaining("terminal_gateway_url: must be an absolute URL"),
+      ]);
     });
 
     test("non-http scheme is rejected (ftp / javascript / file)", async () => {
       for (const value of ["ftp://gw.example", "javascript:alert(1)", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
-        warnings = [];
-        expect((await loadConfig(files, log)).terminal_gateway_url).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([
+          expect.stringContaining("terminal_gateway_url: must be http:// or https://"),
+        ]);
       }
     });
 
@@ -605,7 +611,7 @@ describe("loadConfig", () => {
           terminal_gateway_url: "https://gw.example",
         }),
       );
-      const cfg = await loadConfig(files, log);
+      const cfg = await loaded();
       expect(cfg.session_launcher).toBeDefined();
       expect(cfg.terminal_gateway_url).toBe("https://gw.example");
     });
@@ -618,27 +624,24 @@ describe("loadConfig", () => {
   describe("llm_usage_url", () => {
     test("valid https URL is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "https://gw.example/usage" }));
-      expect((await loadConfig(files, log)).llm_usage_url).toBe("https://gw.example/usage");
+      expect((await loaded()).llm_usage_url).toBe("https://gw.example/usage");
       expect(warnings).toEqual([]);
     });
 
     test("whitespace is trimmed", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "  http://127.0.0.1:8080/usage  " }));
-      expect((await loadConfig(files, log)).llm_usage_url).toBe("http://127.0.0.1:8080/usage");
+      expect((await loaded()).llm_usage_url).toBe("http://127.0.0.1:8080/usage");
     });
 
-    test("non-string / empty / unparseable / non-http degrades to unset with a warning", async () => {
+    test("non-string / empty / unparseable / non-http does not read", async () => {
       for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ llm_usage_url: value }));
-        warnings = [];
-        expect((await loadConfig(files, log)).llm_usage_url).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("llm_usage_url")]);
       }
     });
 
-    // Each URL key must degrade on its own: a typo in one cannot take the
-    // other feature down with it.
-    test("a malformed sibling URL key does not disturb this one", async () => {
+    // A typo in one URL key is reported by its own name, not as the other's.
+    test("a malformed sibling URL key is reported by its own name", async () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
@@ -646,10 +649,7 @@ describe("loadConfig", () => {
           llm_usage_url: "https://gw.example/usage",
         }),
       );
-      const cfg = await loadConfig(files, log);
-      expect(cfg.terminal_gateway_url).toBeUndefined();
-      expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([expect.stringContaining("terminal_gateway_url")]);
     });
   });
 
@@ -659,7 +659,7 @@ describe("loadConfig", () => {
   describe("llm_stats_url", () => {
     test("valid https URL is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats" }));
-      expect((await loadConfig(files, log)).llm_stats_url).toBe("https://gw.example/stats");
+      expect((await loaded()).llm_stats_url).toBe("https://gw.example/stats");
       expect(warnings).toEqual([]);
     });
 
@@ -668,19 +668,17 @@ describe("loadConfig", () => {
     // config (the op overwrites just the `days` parameter).
     test("an existing query string is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats?days=30" }));
-      expect((await loadConfig(files, log)).llm_stats_url).toBe("https://gw.example/stats?days=30");
+      expect((await loaded()).llm_stats_url).toBe("https://gw.example/stats?days=30");
     });
 
-    test("non-string / empty / unparseable / non-http degrades to unset with a warning", async () => {
+    test("non-string / empty / unparseable / non-http does not read", async () => {
       for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ llm_stats_url: value }));
-        warnings = [];
-        expect((await loadConfig(files, log)).llm_stats_url).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("llm_stats_url")]);
       }
     });
 
-    test("the two llm URL keys degrade independently of each other", async () => {
+    test("the two llm URL keys are reported by their own names", async () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
@@ -688,10 +686,7 @@ describe("loadConfig", () => {
           llm_stats_url: "https://gw.example/stats",
         }),
       );
-      const cfg = await loadConfig(files, log);
-      expect(cfg.llm_usage_url).toBeUndefined();
-      expect(cfg.llm_stats_url).toBe("https://gw.example/stats");
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([expect.stringContaining("llm_usage_url")]);
     });
   });
 
@@ -702,16 +697,14 @@ describe("loadConfig", () => {
   describe("llm_status_url", () => {
     test("valid https URL is retained", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_status_url: "https://gw.example/status" }));
-      expect((await loadConfig(files, log)).llm_status_url).toBe("https://gw.example/status");
+      expect((await loaded()).llm_status_url).toBe("https://gw.example/status");
       expect(warnings).toEqual([]);
     });
 
-    test("non-string / empty / unparseable / non-http degrades to unset with a warning", async () => {
+    test("non-string / empty / unparseable / non-http does not read", async () => {
       for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ llm_status_url: value }));
-        warnings = [];
-        expect((await loadConfig(files, log)).llm_status_url).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("llm_status_url")]);
       }
     });
 
@@ -719,38 +712,48 @@ describe("loadConfig", () => {
     // reads has to come from this key alone.
     test("is unset when only the usage endpoint is configured", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "https://gw.example/usage" }));
-      const cfg = await loadConfig(files, log);
+      const cfg = await loaded();
       expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
       expect(cfg.llm_status_url).toBeUndefined();
     });
 
-    test("the three llm URL keys degrade independently of each other", async () => {
+    test("the three llm URL keys are reported by their own names", async () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
           llm_usage_url: "not a url",
-          llm_stats_url: "https://gw.example/stats",
+          llm_stats_url: "ftp://gw.example/stats",
           llm_status_url: "https://gw.example/status",
         }),
       );
-      const cfg = await loadConfig(files, log);
-      expect(cfg.llm_usage_url).toBeUndefined();
-      expect(cfg.llm_stats_url).toBe("https://gw.example/stats");
-      expect(cfg.llm_status_url).toBe("https://gw.example/status");
-      expect(warnings).toHaveLength(1);
+      const errors = await refusal();
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toContain("llm_usage_url");
+      expect(errors[1]).toContain("llm_stats_url");
     });
   });
 
-  // llm_events_url named the SSE stream the daemon used to subscribe to. The
-  // gateway now posts to ccmsg instead, so the key is dead — but a config
-  // still carrying it must say so rather than silently doing nothing.
-  describe("llm_events_url (retired)", () => {
-    test("is ignored with a warning pointing at its replacement", async () => {
+  // A key the configuration does not have is a typo or a retired key: it does
+  // not read, with its name, rather than doing nothing without a word.
+  describe("unknown keys", () => {
+    test("an unknown top-level key does not read", async () => {
       fs.writeFileSync(file, JSON.stringify({ llm_events_url: "http://127.0.0.1:8402/events" }));
-      const cfg = await loadConfig(files, log);
-      expect(cfg).toEqual({});
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("webhooks");
+      expect(await refusal()).toEqual([expect.stringContaining("llm_events_url")]);
+    });
+
+    test("an unknown key in a template does not read", async () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          session_launcher: {
+            root_dirs: [dir],
+            templates: [{ name: "t", command: "run", params: {}, shel: "zsh" }],
+          },
+        }),
+      );
+      expect(await refusal()).toEqual([
+        expect.stringContaining("session_launcher.templates.0.shel"),
+      ]);
     });
   });
 
@@ -763,7 +766,7 @@ describe("loadConfig", () => {
         file,
         JSON.stringify({ webhooks: { "llm-gateway": { token_file: "~/secrets/gw.token" } } }),
       );
-      const cfg = await loadConfig(files, log);
+      const cfg = await loaded();
       expect(cfg.webhooks?.["llm-gateway"]?.token_file).toBe(
         path.join(os.homedir(), "secrets/gw.token"),
       );
@@ -780,24 +783,22 @@ describe("loadConfig", () => {
           },
         }),
       );
-      expect(Object.keys((await loadConfig(files, log)).webhooks ?? {}).sort()).toEqual([
+      expect(Object.keys((await loaded()).webhooks ?? {}).sort()).toEqual([
         "llm-gateway",
         "some-other",
       ]);
     });
 
-    test("a source name that could not be a path segment is dropped", async () => {
+    test("a source name that could not be a path segment does not read", async () => {
       // The name selects a config entry from a URL path, so anything that
-      // could express traversal or case tricks must not survive parsing.
+      // could express traversal or case tricks must not be accepted.
       for (const source of ["../etc", "Llm-Gateway", "llm gateway", "a".repeat(65), ""]) {
         fs.writeFileSync(file, JSON.stringify({ webhooks: { [source]: { token_file: "/t" } } }));
-        warnings = [];
-        expect((await loadConfig(files, log)).webhooks).toBeUndefined();
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("is not a source name")]);
       }
     });
 
-    test("an entry without a usable token_file is dropped, leaving the others", async () => {
+    test("an entry without a usable token_file does not read, each reported", async () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
@@ -808,15 +809,15 @@ describe("loadConfig", () => {
           },
         }),
       );
-      const cfg = await loadConfig(files, log);
-      expect(Object.keys(cfg.webhooks ?? {})).toEqual(["llm-gateway"]);
-      expect(warnings).toHaveLength(2);
+      const errors = await refusal();
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toContain("webhooks.broken.token_file");
+      expect(errors[1]).toContain("webhooks.also-broken.token_file");
     });
 
-    test("a non-object webhooks value degrades to unset with a warning", async () => {
+    test("a non-object webhooks value does not read", async () => {
       fs.writeFileSync(file, JSON.stringify({ webhooks: "llm-gateway" }));
-      expect((await loadConfig(files, log)).webhooks).toBeUndefined();
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([expect.stringContaining("webhooks")]);
     });
   });
   // `config.js` exists because a launcher command is a shell script, and JSON
@@ -843,7 +844,7 @@ describe("loadConfig", () => {
           "};",
         ].join("\n"),
       );
-      const templates = (await loadConfig(files, log)).session_launcher?.templates;
+      const templates = (await loaded()).session_launcher?.templates;
       expect(templates?.[0]?.command).toBe("cd $CWD &&\n  claude --model $MODEL");
       expect(warnings).toEqual([]);
     });
@@ -853,23 +854,20 @@ describe("loadConfig", () => {
     test("config.js wins over config.json, with one warning naming both", async () => {
       fs.writeFileSync(jsFile, 'export default { terminal_gateway_url: "http://js.example/" };');
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://json.example/" }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("http://js.example/");
+      expect((await loaded()).terminal_gateway_url).toBe("http://js.example/");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("config.json");
     });
 
-    // A module that cannot be evaluated is user-editable garbage, exactly like
-    // broken JSON: warn once, start the daemon, expose nothing.
-    test("a module that throws or fails to parse returns an empty config", async () => {
-      for (const source of ["export default { a: ;", 'throw new Error("boom");']) {
-        fs.rmSync(jsFile, { force: true });
+    // A module that cannot be evaluated is not a configuration, exactly like
+    // broken JSON: the daemon does not start, and the reason names the file.
+    test("a module that throws or fails to parse does not read", async () => {
+      for (const [i, source] of ["export default { a: ;", 'throw new Error("boom");'].entries()) {
         // A fresh path per case: modules are cached by path once required.
-        jsFile = path.join(dir, `broken-${warnings.length}-${source.length}.js`);
+        jsFile = path.join(dir, `broken-${i}.js`);
         files = { config: file, configJs: jsFile, configTs: tsFile };
         fs.writeFileSync(jsFile, source);
-        warnings = [];
-        expect(await loadConfig(files, log)).toEqual({});
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toEqual([expect.stringContaining("could not be loaded")]);
       }
     });
 
@@ -881,7 +879,7 @@ describe("loadConfig", () => {
         jsFile,
         'await Promise.resolve();\nexport default { llm_usage_url: "http://127.0.0.1:1/u" };',
       );
-      const config = await loadConfig(files, log);
+      const config = await loaded();
       expect(config.llm_usage_url).toBe("http://127.0.0.1:1/u");
       expect(warnings).toEqual([]);
     });
@@ -894,36 +892,29 @@ describe("loadConfig", () => {
         jsFile,
         'export default Promise.resolve({ llm_usage_url: "http://127.0.0.1:1/p" });',
       );
-      const config = await loadConfig(files, log);
+      const config = await loaded();
       expect(config.llm_usage_url).toBe("http://127.0.0.1:1/p");
       expect(warnings).toEqual([]);
     });
 
-    // A rejected default export is user-editable garbage exactly like a
-    // thrown module body: warn once, degrade to empty, never crash startup.
-    test("a rejected default export returns an empty config with one warning", async () => {
+    test("a rejected default export does not read", async () => {
       fs.writeFileSync(jsFile, 'export default Promise.reject(new Error("boom"));');
-      expect(await loadConfig(files, log)).toEqual({});
-      expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain("boom");
+      expect(await refusal()).toEqual([expect.stringContaining("boom")]);
     });
 
-    // A Promise that resolves to something other than an object degrades the
-    // same way a synchronous non-object default export does.
-    test("a Promise default export resolving to a non-object degrades with a warning", async () => {
+    // A Promise that resolves to something other than an object is refused the
+    // same way a synchronous non-object default export is.
+    test("a Promise default export resolving to a non-object does not read", async () => {
       fs.writeFileSync(jsFile, "export default Promise.resolve(42);");
-      expect(await loadConfig(files, log)).toEqual({});
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toHaveLength(1);
     });
 
-    test("a module without an object default export returns an empty config", async () => {
+    test("a module without an object default export does not read", async () => {
       for (const source of ["export const a = 1;", "export default 42;"]) {
         jsFile = path.join(dir, `nodefault-${source.length}.js`);
         files = { config: file, configJs: jsFile, configTs: tsFile };
         fs.writeFileSync(jsFile, source);
-        warnings = [];
-        expect(await loadConfig(files, log)).toEqual({});
-        expect(warnings).toHaveLength(1);
+        expect(await refusal()).toHaveLength(1);
       }
     });
   });
@@ -947,7 +938,7 @@ describe("loadConfig", () => {
           "};",
         ].join("\n"),
       );
-      const config = await loadConfig(files, log);
+      const config = await loaded();
       expect(config.session_launcher?.root_dirs).toEqual([dir]);
       expect(warnings).toEqual([]);
     });
@@ -958,7 +949,7 @@ describe("loadConfig", () => {
       fs.writeFileSync(tsFile, 'export default { terminal_gateway_url: "http://ts.example/" };');
       fs.writeFileSync(jsFile, 'export default { terminal_gateway_url: "http://js.example/" };');
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://json.example/" }));
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("http://ts.example/");
+      expect((await loaded()).terminal_gateway_url).toBe("http://ts.example/");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("config.js");
       expect(warnings[0]).toContain("config.json");
@@ -967,17 +958,16 @@ describe("loadConfig", () => {
     test("config.ts wins over config.js alone", async () => {
       fs.writeFileSync(tsFile, 'export default { terminal_gateway_url: "http://ts.example/" };');
       fs.writeFileSync(jsFile, 'export default { terminal_gateway_url: "http://js.example/" };');
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("http://ts.example/");
+      expect((await loaded()).terminal_gateway_url).toBe("http://ts.example/");
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("config.js");
     });
 
-    // A broken .ts degrades exactly like a broken .js — evaluation goes
+    // A broken .ts is refused exactly like a broken .js — evaluation goes
     // through the same readJsConfig path.
-    test("a .ts module that throws returns an empty config with one warning", async () => {
+    test("a .ts module that throws does not read", async () => {
       fs.writeFileSync(tsFile, 'throw new Error("boom");');
-      expect(await loadConfig(files, log)).toEqual({});
-      expect(warnings).toHaveLength(1);
+      expect(await refusal()).toEqual([expect.stringContaining("boom")]);
     });
 
     // Top-level await and a Promise default export are the same ordinary ESM
@@ -993,7 +983,7 @@ describe("loadConfig", () => {
           "export default cfg;",
         ].join("\n"),
       );
-      expect((await loadConfig(files, log)).terminal_gateway_url).toBe("http://ts.example/");
+      expect((await loaded()).terminal_gateway_url).toBe("http://ts.example/");
       expect(warnings).toEqual([]);
     });
   });

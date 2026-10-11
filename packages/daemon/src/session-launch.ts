@@ -17,8 +17,8 @@ export type SessionLaunchValidation =
       cwd: string;
       env: Record<string, string>;
       shellArgv: string[];
-      cleanEnv: string[];
-      keepEnv: string[];
+      cleanEnv: readonly string[];
+      keepEnv: readonly string[];
     }
   | { ok: false; code: ErrorCode; msg: string };
 
@@ -229,9 +229,9 @@ function cleanEnvPatternToRegExp(pattern: string): RegExp {
  * command runs. Exported for tests. */
 export function buildLaunchEnv(
   baseEnv: Record<string, string | undefined>,
-  cleanEnv: string[],
+  cleanEnv: readonly string[],
   launchEnv: Record<string, string>,
-  keepEnv: string[] = [],
+  keepEnv: readonly string[] = [],
 ): Record<string, string | undefined> {
   const cleanRes = cleanEnv.map(cleanEnvPatternToRegExp);
   const keepRes = keepEnv.map(cleanEnvPatternToRegExp);
