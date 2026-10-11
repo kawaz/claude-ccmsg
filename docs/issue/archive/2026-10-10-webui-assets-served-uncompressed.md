@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-10-10T21:05:22+09:00
 discard_reason:
 pending_reason:
-close_reason: ["implemented","done:daemon が webui の資産を Accept-Encoding に応じて br / gzip で返す (commit tqvyrktn)。bundle は br で 1,483,352 → 251,007 byte","done:真っ黒の原因は iPhone 側の回線速度 (1〜10 KB/s) で、10-11 に回線が戻った iPhone は無圧縮の 1,473,461 byte を 0.277 秒で受け取った"]
+close_reason: ["implemented","done:daemon が webui の資産を Accept-Encoding に応じて br / gzip で返す (commit tqvyrktn)。bundle は br で 1,483,352 → 251,007 byte","done:10-10 の時間帯は iPhone への転送が 1〜10 KB/s で切れていた。10-11 には同じ無圧縮の 1,473,461 byte が 0.277 秒で届いた。遅かった理由は未特定で、圧縮配信は転送量を約 1/6 にする改善 (原因への対処ではない)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-daemon は webui の資産を `Accept-Encoding` に関わらず無圧縮で返していた (client の bundle は 1.47 MB)。iPhone で webui が真っ黒になった原因は iPhone 側の回線が 1〜10 KB/s まで落ちていたことで、無圧縮はそれを悪化させる要因だった。遅い回線への耐性を上げるため、daemon で br / gzip で返すようにする。
+daemon は webui の資産を `Accept-Encoding` に関わらず無圧縮で返していた (client の bundle は 1.47 MB)。2026-10-10 に iPhone で webui が開けなかった時間帯は、iPhone への転送が 1〜10 KB/s で切れていた (遅かった理由は未特定)。転送量を減らすため、daemon で br / gzip で返すようにする。原因への対処ではない。
 
 調査は `docs/findings/2026-10-10-iphone-webui-blank-uncompressed-assets.md`。
 

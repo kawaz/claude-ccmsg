@@ -1,10 +1,15 @@
-# iPhone で webui が真っ黒になる件の調査 (iPhone の回線が 1〜10 KB/s まで落ちていた。資産の無圧縮配信は悪化要因)
+# iPhone で webui が開けなかった件の観測
 
 - Date: 2026-10-10
 
 ## 結論
 
-原因は iPhone 側の回線が 1〜10 KB/s まで落ちていたこと。資産が無圧縮 (JS 1.47 MB) で配られていたことはそれを悪化させる要因だが、それ自体は原因ではない。daemon の br / gzip 配信は、遅い回線への耐性を上げる改善として入れた。
+- 2026-10-10 の時間帯は、iPhone への転送が 1〜10 KB/s で途中で切れていた。daemon の配信 (`ccmsg.*`) でも、caddy の静的配信 (`ccmsg2.*`) でも同じだった
+- 2026-10-11 には、同じ無圧縮の 1.47 MB が 0.277 秒で iPhone に届いた
+- kawaz の申告では、1 週間ほど Safari / PWA のどちらでも開けず、たまに CSS の無い白い画面になっていた
+- 遅かった理由 (iPhone 側の回線 / tailscale の経路 / Mac 側) は裏付けが無く、未特定
+- bundle のサイズは 7 月から変わっておらず、原因ではない
+- daemon の br / gzip 配信は転送量を約 1/6 にする改善で、原因への対処ではない
 
 ## 判明した事実
 
@@ -12,14 +17,15 @@
 - caddy の access log で、iPhone (`100.104.30.107`) からの `/assets/app.d6e1b6c37a5997ac.js` (`Content-Length: 1473461`) の取得は 2026-10-10 に 9 回あり、すべて途中で切れている (受け取った byte は 2,392〜511,138)。完走は 0 回
 - `/app.css` (`Content-Length: 297480`) は 8 回のうち 1 回だけ完走した (15:34:36、caddy の duration 28.7 秒、約 10 KB/s)。途中で切れた転送も、経過秒から 1〜10 KB/s 程度
 - iPhone からの `/ws` (101) は 0 件。JS が最後まで届かず、実行に至っていない
-- 真っ黒だった時間帯の iPhone は外出先のセルラー回線、iPad は WiFi (kawaz の申告)。2026-10-11 の `tailscale status` では iPhone は relay を通らず direct で、モバイル回線のグローバル IP から繋がっている (真っ黒の時間帯の経路は log に残っておらず未確認)
-- 2026-10-11 14:15 (JST)、圧縮配信を入れる前の同じ daemon・同じ無圧縮の bundle (`app.d6e1b6c37a5997ac.js`) を、iPhone は 1,473,461 byte 完走で 0.28 秒で受け取った (HTTP/2.0)。`/app.css` 297,480 byte も 0.18 秒。回線が戻れば無圧縮でも届く
+- caddy の静的配信 (`ccmsg2.*`) でも同じ時間帯に iPhone への転送が遅く切れていた (統括の観測。その日の log はローテーションで消えており、この findings では再確認していない)
+- 2026-10-11 14:15 (JST)、圧縮配信を入れる前の同じ daemon・同じ無圧縮の bundle (`app.d6e1b6c37a5997ac.js`) を、iPhone は 1,473,461 byte を最後まで 0.277 秒で受け取った (HTTP/2.0)。`/app.css` 297,480 byte は 0.184 秒
+- 2026-10-11 の `tailscale status` では、iPhone は relay を通らず direct で繋がっている。2026-10-10 の時間帯の経路は記録が無く、分からない
 - bundle は 0.153.1 で 1,431,906、0.155.0 で 1,434,780、0.157.0 で 1,444,701、0.158.0 で 1,473,461 byte (統括の計測)。7 月から 1.4 MB 台で変わっておらず、その間 iPhone でも使えていた
 - 応答に `Content-Encoding` は無かった。daemon は `Accept-Encoding` に関わらず無圧縮で返していた (curl で `gzip` / `br` / 無しのどれでも 1,473,461 byte)。同じ JS を `gzip -9` にすると 313,045 byte。caddy の設定 (autosave.json) に `encode` handler は無く、proxy も圧縮しない
 - iPad (`100.84.237.16`) は同じ caddy 経路で 07:59 に `/app.css` 297,480 byte を 0.1 秒で受け取り、08:10 と 20:54 に `/ws` 101 を張っている。JS の取得は当日の log に無い (immutable でキャッシュ済みと見られる。未検証)
 - Mac (`100.76.5.89`、caddy が動いているマシン自身) は 13:27 から `/ws` 101 を約 12.7 時間保っている
 - iPhone の iOS は 26.7.1 (link preview 取得の UA `NetworkingExtension/... iOS/26.7.1`)。Safari の UA は `iPhone OS 18_7 ... Version/26.6.2 Mobile/15E148 Safari/604.1`
-- 転送が切れた理由 (Safari 側の打ち切りか回線の切断か) は log から判別できず、未確定
+- 転送が切れた理由 (Safari 側の打ち切りか、経路のどこかでの切断か) は log から判別できず、未特定
 
 ## 当初の仮説 (Navigation API 欠如) について
 
@@ -27,9 +33,9 @@
 
 ## 実用的な示唆 / ベストプラクティス
 
-- 遅い回線では「JS が届かない」と「JS が途中で落ちた」が同じ真っ黒に見える。切り分けは caddy の access log で `size` と `Content-Length` を比べ、`/ws` の 101 の有無を見るのが早い。同じ端末で正常だった時の転送時間と比べると、回線の問題かどうかが分かる
-- 遅い回線への耐性を上げるため、daemon が webui の資産 (JS / CSS / HTML) を br / gzip で返すようにした (`packages/webui/src/encoded-asset.ts`)。資産を読み込む時に一度だけ圧縮し、リクエストは `Accept-Encoding` で出来上がった本文を選ぶだけ。JS は 1,483,352 → br 251,007 byte (約 1/6)
-- 1〜10 KB/s では br の 251 KB でも数十秒かかる。そこまで落ちた回線でも使えるようにするなら、次はバンドル自体を削る (下記の内訳で約半分が shiki の言語文法)
+- 転送が遅いと「JS が届かない」と「JS が途中で落ちた」が同じ真っ黒に見える。切り分けは caddy の access log で `size` と `Content-Length` を比べ、`/ws` の 101 の有無を見るのが早い。同じ端末で正常だった時の転送時間とも比べる
+- 遅かった理由を特定するには、遅い時にその場で観測する必要がある: iPhone の `tailscale status` / `tailscale ping` (direct か relay か、往復時間)、同じ時刻の別のサイトでの速度、Mac 側の他の端末への転送
+- daemon が webui の資産 (JS / CSS / HTML) を br / gzip で返すようにした (`packages/webui/src/encoded-asset.ts`)。資産を読み込む時に一度だけ圧縮し、リクエストは `Accept-Encoding` で出来上がった本文を選ぶだけ。JS は 1,483,352 → br 251,007 byte (約 1/6)。転送量を減らす改善で、1〜10 KB/s では 251 KB でも数十秒かかる
 
 ## 検証の詳細
 
