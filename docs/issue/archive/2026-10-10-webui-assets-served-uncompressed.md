@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-daemon は webui の資産を `Accept-Encoding` に関わらず無圧縮で返していた。client の bundle は 1.47 MB あり、tailnet 越しの iPhone (1〜10 KB/s) では一度も最後まで届かず、webui が真っ黒のままになる。daemon で br / gzip で返すようにする。
+daemon は webui の資産を `Accept-Encoding` に関わらず無圧縮で返していた (client の bundle は 1.47 MB)。iPhone で webui が真っ黒になった原因は iPhone 側の回線が 1〜10 KB/s まで落ちていたことで、無圧縮はそれを悪化させる要因だった。遅い回線への耐性を上げるため、daemon で br / gzip で返すようにする。
 
 調査は `docs/findings/2026-10-10-iphone-webui-blank-uncompressed-assets.md`。
 
