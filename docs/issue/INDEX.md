@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |
 | 2026-10-11 | bug | open | [llm-stats-tokens-object-not-mapped-to-wire](./2026-10-11-llm-stats-tokens-object-not-mapped-to-wire.md) | llm gateway の stats の tokens object が wire に写らず webui の token 集計が常に 0。daemon の stats スキーマに tokens を足して写す |
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [json-value-schema-deep-recursion-throws](./2026-10-10-json-value-schema-deep-recursion-throws.md) | JsonValueSchema の再帰が 20,000 階層で RangeError を parseWith の外へ throw し、DR-0038 §1・§3 に反する。優先度低 |
