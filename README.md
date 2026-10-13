@@ -78,7 +78,7 @@ Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses i
 
 ```
 packages/
-  protocol/          # shared types (wire protocol / XDG paths / version)
+  protocol/          # shared types (wire protocol / XDG paths / version), overview: docs/design/protocol-package.md
   daemon/            # central daemon (bun)
   cli/               # CLI client (session sidecar + user CLI)
   webui/             # web UI (hono + vanilla ESM, served by the daemon)

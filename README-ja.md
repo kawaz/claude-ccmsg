@@ -78,7 +78,7 @@ room は (1)(2) を構造的に解決する (1 post が全員に届く)。(3) �
 
 ```
 packages/
-  protocol/          # 共有型定義 (wire protocol / XDG paths / version)
+  protocol/          # 共有型定義 (wire protocol / XDG paths / version)、概略は docs/design/protocol-package.md
   daemon/            # 中央デーモン (bun)
   cli/               # CLI クライアント (session sidecar + ユーザ CLI)
   webui/             # Web UI (hono + vanilla ESM、daemon が配信)
