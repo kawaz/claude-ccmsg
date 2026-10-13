@@ -1,6 +1,6 @@
 # DR-0038: データの形はスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す (valibot)。`as` と `any` は使わない
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — 🟡 部分実装 (外から来る JSON はすべてスキーマで読む: 本番コードに素の `JSON.parse` は無い。残りは §5 の lint の全体 error 化で、`as` / `!` / 型の付かない値が残る本番ファイルが .oxlintrc.json の overrides の外にある)
+- Status: Accepted (2026-10-09、kawaz 裁定) — 🟡 部分実装 (外から来る JSON はすべてスキーマで読む: 本番コードに素の `JSON.parse` は無い。§5 の lint は本番コード全体で error。残りはテストファイルの lint で、.oxlintrc.json の overrides がテストファイルだけ §5 の規則を off にしている)
 - Date: 2026-10-09
 
 ## Context
