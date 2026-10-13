@@ -33,7 +33,26 @@ export function instanceOf<V, T extends V>(
   return value;
 }
 
-const JsonObjectTextSchema = jsonText(JsonObjectSchema);
+/** Put `value` in place of the global `name` (a browser API the bun runtime
+ * lacks, or a builtin of its own a test drives by hand) and return what puts
+ * the original back: its own property as it was, or none when there was none.
+ * bun runs every test file in one process, so a global left replaced or
+ * deleted leaks into the files that run after. */
+export function stubGlobal<T>(name: string, value: T): () => void {
+  const original = Object.getOwnPropertyDescriptor(globalThis, name);
+  Object.defineProperty(globalThis, name, {
+    value,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+  return () => {
+    if (original === undefined) Reflect.deleteProperty(globalThis, name);
+    else Object.defineProperty(globalThis, name, original);
+  };
+}
+
+export const JsonObjectTextSchema = jsonText(JsonObjectSchema);
 
 /** A line of JSON text that has to be an object (a frame the client sent), read
  * as one with every field it carries; anything else fails the test. */

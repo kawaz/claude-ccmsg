@@ -54,8 +54,8 @@ class MemStorage {
 // 寸法は sessionStorage + localStorage の 2 段に書かれる (storage.ts) ので、
 // 窓を開き直したのと同じ状態にするには両方を差し替える。
 beforeEach(() => {
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
-  (globalThis as unknown as { sessionStorage: MemStorage }).sessionStorage = new MemStorage();
+  globalThis.localStorage = new MemStorage();
+  globalThis.sessionStorage = new MemStorage();
 });
 
 describe("defaultDrawerWidth", () => {

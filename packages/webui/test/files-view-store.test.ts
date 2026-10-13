@@ -15,6 +15,7 @@ import {
   saveFilesView,
 } from "../src/client/files-view-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
+import { defined } from "./helpers.ts";
 
 // session-input-store.test.ts と同じ最小 localStorage shim (helpers が
 // 直接 browser global を読むため、bun test では自前で生やす)。
@@ -41,7 +42,7 @@ class MemStorage {
 }
 
 beforeEach(() => {
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+  globalThis.localStorage = new MemStorage();
 });
 
 function makePeer(sid: string, opts: { lastActivityAt?: string } = {}): PeerInfo {
@@ -68,7 +69,7 @@ describe("filesView save/load round-trip", () => {
     expect(got?.path).toBe("docs/README.md");
     expect(got?.viewMode).toBe("preview");
     expect(typeof got?.updatedAt).toBe("string");
-    expect(Number.isFinite(Date.parse(got!.updatedAt))).toBe(true);
+    expect(Number.isFinite(Date.parse(defined(got, "the saved view").updatedAt))).toBe(true);
   });
 
   // 何を保証するか (壊れた record の拒否): 手編集・旧版・別アプリ由来の

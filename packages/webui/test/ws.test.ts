@@ -10,7 +10,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createWsClient } from "../src/client/ws.ts";
 import { initialState, type Action } from "../src/client/store.ts";
-import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import { parseWith, PROTOCOL_VERSION, VERSION, type JsonObject } from "@ccmsg/protocol";
+import {
+  instanceOf,
+  JsonObjectTextSchema,
+  jsonObjectOf,
+  requestOf,
+  stubGlobal,
+} from "./helpers.ts";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -47,14 +54,12 @@ class MockWebSocket {
    * an explicit `request_id` in the frame and this leaves it alone. */
   triggerMessage(data: string): void {
     let frame = data;
-    const obj = JSON.parse(data);
-    const isReply =
-      obj !== null &&
-      typeof obj === "object" &&
-      Object.hasOwn(obj, "ok") &&
-      !Object.hasOwn(obj, "ev");
+    const read = parseWith(JsonObjectTextSchema, data);
+    const obj = read.ok ? read.value : undefined;
+    const isReply = obj !== undefined && Object.hasOwn(obj, "ok") && !Object.hasOwn(obj, "ev");
     if (isReply && Object.hasOwn(obj, "request_id")) {
-      this.answered.add(obj.request_id);
+      const rid = obj.request_id;
+      if (typeof rid === "string") this.answered.add(rid);
     } else if (isReply) {
       const rid = this.sentRequestIds().find((id) => !this.answered.has(id));
       if (rid !== undefined) {
@@ -65,7 +70,10 @@ class MockWebSocket {
     for (const cb of this.listeners.message ?? []) cb({ data: frame });
   }
   private sentRequestIds(): string[] {
-    return this.sent.map((line) => JSON.parse(line).request_id).filter((id) => id !== undefined);
+    return this.sent.flatMap((line) => {
+      const id = jsonObjectOf(line).request_id;
+      return typeof id === "string" ? [id] : [];
+    });
   }
   /** request_ids already answered, so the next unaddressed reply moves on to
    * the next outstanding request instead of re-answering this one. */
@@ -88,8 +96,8 @@ class MockWebSocket {
 /** The nth frame this socket sent, without its correlation envelope — so a
  * test can assert the exact wire body (excess fields included) without
  * restating the request_id the client stamps on every request. */
-function sentBody(ws: MockWebSocket, index: number): Record<string, unknown> {
-  const { request_id: _rid, ...body } = JSON.parse(ws.sent[index] ?? "{}");
+function sentBody(ws: MockWebSocket, index: number): JsonObject {
+  const { request_id: _rid, ...body } = jsonObjectOf(ws.sent[index] ?? "{}");
   return body;
 }
 
@@ -103,8 +111,7 @@ let storage: Record<string, string> = {};
 // exact leak made packages/daemon/test/http-transport.test.ts fail with
 // "WebSocket is not defined" on CI runners where this file happens to run
 // first; locally the file order differed and hid it.)
-const originalGlobals: Record<string, unknown> = {};
-const MOCKED_GLOBALS = ["WebSocket", "location", "localStorage", "sessionStorage"] as const;
+let restoreGlobals: (() => void)[] = [];
 
 // location.reload() は実行せずここを数えるだけにして、テストプロセスが実
 // ページ遷移を試みないようにする (version-guard がページを捨てないことの確認)。
@@ -121,42 +128,39 @@ beforeEach(() => {
   instances = [];
   storage = {};
   openHandles = [];
-  for (const key of MOCKED_GLOBALS) {
-    originalGlobals[key] = (globalThis as any)[key];
-  }
-  (globalThis as any).WebSocket = MockWebSocket;
+  restoreGlobals = [stubGlobal("WebSocket", MockWebSocket)];
   reloads = 0;
   sessionStore = {};
-  (globalThis as any).location = {
-    protocol: "http:",
-    host: "localhost:8642",
-    reload: () => {
-      reloads++;
-    },
-  };
-  (globalThis as any).sessionStorage = {
-    getItem: (k: string) => sessionStore[k] ?? null,
-    setItem: (k: string, v: string) => {
-      sessionStore[k] = v;
-    },
-  };
-  (globalThis as any).localStorage = {
-    getItem: (k: string) => storage[k] ?? null,
-    setItem: (k: string, v: string) => {
-      storage[k] = v;
-    },
-  };
+  restoreGlobals.push(
+    stubGlobal("location", {
+      protocol: "http:",
+      host: "localhost:8642",
+      reload: () => {
+        reloads++;
+      },
+    }),
+  );
+  restoreGlobals.push(
+    stubGlobal("sessionStorage", {
+      getItem: (k: string) => sessionStore[k] ?? null,
+      setItem: (k: string, v: string) => {
+        sessionStore[k] = v;
+      },
+    }),
+  );
+  restoreGlobals.push(
+    stubGlobal("localStorage", {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => {
+        storage[k] = v;
+      },
+    }),
+  );
 });
 
 afterEach(() => {
   for (const handle of openHandles) handle.close();
-  for (const key of MOCKED_GLOBALS) {
-    if (originalGlobals[key] === undefined) {
-      delete (globalThis as any)[key];
-    } else {
-      (globalThis as any)[key] = originalGlobals[key];
-    }
-  }
+  for (const restore of restoreGlobals.reverse()) restore();
 });
 
 describe("createWsClient keepalive", () => {
@@ -168,7 +172,7 @@ describe("createWsClient keepalive", () => {
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0]!;
+    const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
 
@@ -176,7 +180,7 @@ describe("createWsClient keepalive", () => {
     // dead TCP/WebSocket can remain OPEN locally while delivering no daemon
     // frames. Keepalive must not depend on the handshake Promise settling.
     await Bun.sleep(50);
-    expect(ws1.sent.map((raw) => JSON.parse(raw).op)).toContain("ping");
+    expect(ws1.sent.map((raw) => jsonObjectOf(raw).op)).toContain("ping");
     expect(instances.length).toBeGreaterThanOrEqual(2);
     expect(ws1.readyState).toBe(MockWebSocket.CLOSED);
   });
@@ -561,7 +565,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     });
     expect(sentBody(ws1, 1)).toEqual({ op: "fs_list", sid: "sess-1" });
 
-    const queuedRid = (JSON.parse(ws1.sent[1] ?? "{}") as { request_id: string }).request_id;
+    const queuedRid = requestOf(ws1.sent[1] ?? "{}").request_id;
     ws1.triggerMessage(
       JSON.stringify({ ok: true, sid: "sess-1", path: "", entries: [], request_id: queuedRid }),
     );
@@ -589,7 +593,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
       caught = error;
     }
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("ws connection closed");
+    expect(instanceOf(caught, Error, "the rejection").message).toBe("ws connection closed");
   });
 
   // DR-0012: archive_room wire shape (RoomView's header toggle button).
@@ -859,9 +863,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["English.日本語。", "Second."]);
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
-      request_id: string;
-    };
+    const sent = jsonObjectOf(ws1.sent[0] ?? "");
     expect(sent).toEqual({
       op: "translate",
       request_id: sent.request_id,
@@ -902,9 +904,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionRename("sid-1", "新しいタイトル");
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
-      request_id: string;
-    };
+    const sent = jsonObjectOf(ws1.sent[0] ?? "");
     expect(sent).toEqual({
       op: "session_rename",
       request_id: sent.request_id,
@@ -942,9 +942,7 @@ describe("createWsClient agents/ping (U1)", () => {
 
     const req = handle.sessionInput("sid-1", "1 行目\n2 行目");
     expect(ws1.sent).toHaveLength(1);
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
-      request_id: string;
-    };
+    const sent = jsonObjectOf(ws1.sent[0] ?? "");
     expect(sent).toEqual({
       op: "session_input",
       request_id: sent.request_id,
@@ -1002,7 +1000,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionInput("sid-1", "hello");
-    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    const sent = requestOf(ws1.sent[0] ?? "");
     expect(await req).toEqual({
       ok: false,
       error: { code: "request_timeout", msg: "no reply within 20 ms" },
@@ -1028,7 +1026,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionInput("sid-1", "hello");
-    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    const sent = requestOf(ws1.sent[0] ?? "");
     ws1.triggerMessage(
       JSON.stringify({ request_id: sent.request_id, ok: true, outcome: "accepted" }),
     );
@@ -1059,7 +1057,7 @@ describe("createWsClient agents/ping (U1)", () => {
       rejected = err;
     }
     expect(rejected).toBeInstanceOf(Error);
-    expect((rejected as Error).message).toBe("ws not open");
+    expect(instanceOf(rejected, Error, "the rejection").message).toBe("ws not open");
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
     expect(ws1.sent.some((frame) => frame.includes('"session_input"'))).toBe(false);
@@ -1077,7 +1075,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionRename("sid-1", "t");
-    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    const sent = requestOf(ws1.sent[0] ?? "");
     ws1.triggerMessage(
       JSON.stringify({
         request_id: sent.request_id,
@@ -1106,10 +1104,8 @@ describe("createWsClient agents/ping (U1)", () => {
 
     const slow = handle.translate(["slow text"]);
     const quick = handle.ping();
-    const sentTranslate = JSON.parse(ws1.sent[0] ?? "") as {
-      request_id: string;
-    };
-    const sentPing = JSON.parse(ws1.sent[1] ?? "") as { request_id: string };
+    const sentTranslate = requestOf(ws1.sent[0] ?? "");
+    const sentPing = requestOf(ws1.sent[1] ?? "");
     // ping's reply comes back first — the daemon is no longer gating the
     // connection on the running translation. Named explicitly so it cannot be
     // mis-paired with the translate that is still running.
@@ -1164,8 +1160,8 @@ describe("createWsClient agents/ping (U1)", () => {
 
     const first = handle.translate(["first"]);
     const second = handle.translate(["second"]);
-    const rid1 = (JSON.parse(ws1.sent[0] ?? "") as { request_id: string }).request_id;
-    const rid2 = (JSON.parse(ws1.sent[1] ?? "") as { request_id: string }).request_id;
+    const rid1 = requestOf(ws1.sent[0] ?? "").request_id;
+    const rid2 = requestOf(ws1.sent[1] ?? "").request_id;
     expect(rid1).not.toBe(rid2);
     // second finishes first — cross order on purpose.
     ws1.triggerMessage(
@@ -1281,9 +1277,7 @@ describe("createWsClient agents/ping (U1)", () => {
       regex: true,
       mtime_within: "2h",
     });
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
-      request_id: string;
-    };
+    const sent = jsonObjectOf(ws1.sent[0] ?? "");
     expect(sent).toEqual({
       op: "session_search",
       request_id: sent.request_id,
@@ -1417,9 +1411,7 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
     // empty-batch host translation capability probe: one reply carries the
     // outcome.
-    const probe = JSON.parse(ws1.sent[7] ?? "{}") as Record<string, unknown> & {
-      request_id: string;
-    };
+    const probe = jsonObjectOf(ws1.sent[7] ?? "{}");
     expect(probe).toEqual({
       op: "translate",
       request_id: probe.request_id,

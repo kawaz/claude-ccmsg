@@ -36,11 +36,11 @@ class MemStorage {
 
 /** 新しい窓を開く = sessionStorage だけが空になり、localStorage は残る。 */
 function openNewWindow(): void {
-  (globalThis as unknown as { sessionStorage: MemStorage }).sessionStorage = new MemStorage();
+  globalThis.sessionStorage = new MemStorage();
 }
 
 beforeEach(() => {
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+  globalThis.localStorage = new MemStorage();
   openNewWindow();
 });
 

@@ -5,6 +5,7 @@
 // mirroring ws.test.ts's approach to mocking browser-only globals
 // (WebSocket/location/localStorage) for the duration of this file.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { defined, stubGlobal } from "./helpers.ts";
 import {
   _resetTranslatorStateForTest,
   hasCachedHostText,
@@ -16,19 +17,15 @@ import {
   translateTextOnHost,
 } from "../src/client/translate.ts";
 
-const originalGlobals: Record<string, unknown> = {};
+let restoreTranslator = (): void => {};
 
 beforeEach(() => {
-  originalGlobals.Translator = (globalThis as any).Translator;
+  restoreTranslator = stubGlobal("Translator", globalThis.Translator);
   _resetTranslatorStateForTest();
 });
 
 afterEach(() => {
-  if (originalGlobals.Translator === undefined) {
-    delete (globalThis as any).Translator;
-  } else {
-    (globalThis as any).Translator = originalGlobals.Translator;
-  }
+  restoreTranslator();
 });
 
 /** Installs a mock Translator whose `translate()` records every call and
@@ -45,7 +42,7 @@ function installMockTranslator(opts?: {
       calls.push(text);
       return `[ja]${text}`;
     });
-  (globalThis as any).Translator = {
+  globalThis.Translator = {
     create: async (createOpts: { sourceLanguage: string; targetLanguage: string }) => {
       if (opts?.createShouldFail) throw new Error("model unavailable");
       expect(createOpts).toEqual({ sourceLanguage: "en", targetLanguage: "ja" });
@@ -65,7 +62,7 @@ function installMockTranslator(opts?: {
 
 describe("hasTranslatorApi", () => {
   test("no globalThis.Translator -> false", () => {
-    delete (globalThis as any).Translator;
+    delete globalThis.Translator;
     expect(hasTranslatorApi()).toBe(false);
   });
 
@@ -109,11 +106,11 @@ describe("translateTextInBrowser", () => {
     await new Promise((r) => setTimeout(r, 5));
     expect(partials).toEqual([]);
 
-    resolvers.get("Second.")!("二番目");
+    defined(resolvers.get("Second."), "the pending translation of Second.")("二番目");
     await new Promise((r) => setTimeout(r, 5));
     expect(partials).toEqual(["First.\n\n二番目"]);
 
-    resolvers.get("First.")!("一番目");
+    defined(resolvers.get("First."), "the pending translation of First.")("一番目");
     expect(await translated).toBe("一番目\n\n二番目");
     expect(partials).toEqual(["First.\n\n二番目", "一番目\n\n二番目"]);
   });
@@ -206,7 +203,7 @@ describe("translateTextInBrowser", () => {
   // must retry create().
   test("a transient Translator.create() failure is retried on the next call, not cached forever", async () => {
     let createCalls = 0;
-    (globalThis as any).Translator = {
+    globalThis.Translator = {
       create: async (createOpts: { sourceLanguage: string; targetLanguage: string }) => {
         createCalls++;
         expect(createOpts).toEqual({ sourceLanguage: "en", targetLanguage: "ja" });
@@ -248,7 +245,7 @@ describe("translateTextInBrowser", () => {
   // hasTranslatorApi() and not even offer the "ja" tab, but the function
   // itself must still degrade gracefully rather than throw).
   test("no Translator API present -> translateTextInBrowser falls back to the original text", async () => {
-    delete (globalThis as any).Translator;
+    delete globalThis.Translator;
     const result = await translateTextInBrowser("Some English text.");
     expect(result).toBe("Some English text.");
   });
@@ -285,7 +282,7 @@ describe("translateTextOnHost", () => {
   // 同 op に居るだけで短文段落まで待たされる)。日本語段落と split が作る空段落は
   // daemon へ送らず原文のまま保持し、元の段落順・境界で再結合する。
   test("sends one op per English paragraph, each carrying exactly one text", async () => {
-    const recorder = { ops: [] as string[][] };
+    const recorder: { ops: string[][] } = { ops: [] };
     const input = "First paragraph.\n\n日本語を含む段落。\n\n\n\nHello 日本語\n\nFinal paragraph.";
     const result = await translateTextOnHost(input, makeEchoRequest(recorder));
 
@@ -303,7 +300,7 @@ describe("translateTextOnHost", () => {
       "First.\n\nSecond.",
       (texts) =>
         new Promise((resolve) => {
-          resolvers.set(texts[0]!, (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+          resolvers.set(texts[0], (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
         }),
     );
     // request() 呼び出しは microtask 越しなので 1 tick 待つ。
@@ -311,8 +308,8 @@ describe("translateTextOnHost", () => {
 
     expect([...resolvers.keys()].sort()).toEqual(["First.", "Second."]);
     // 入力と逆順に解決させる。
-    resolvers.get("Second.")!("二番目");
-    resolvers.get("First.")!("一番目");
+    defined(resolvers.get("Second."), "the pending translation of Second.")("二番目");
+    defined(resolvers.get("First."), "the pending translation of First.")("一番目");
     expect(await translated).toBe("一番目\n\n二番目");
   });
 
@@ -327,7 +324,7 @@ describe("translateTextOnHost", () => {
       input,
       (texts) =>
         new Promise((resolve) => {
-          resolvers.set(texts[0]!, (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+          resolvers.set(texts[0], (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
         }),
       (partial) => partials.push(partial),
     );
@@ -336,12 +333,12 @@ describe("translateTextOnHost", () => {
     expect([...resolvers.keys()].sort()).toEqual(["First.", "Second."]);
     expect(partials).toEqual([]);
 
-    resolvers.get("Second.")!("二番目");
+    defined(resolvers.get("Second."), "the pending translation of Second.")("二番目");
     await new Promise((r) => setTimeout(r, 5));
     // 先に返った段落だけが訳文、未完了の段落は原文のまま。
     expect(partials).toEqual(["First.\n\n日本語。\n\n二番目"]);
 
-    resolvers.get("First.")!("一番目");
+    defined(resolvers.get("First."), "the pending translation of First.")("一番目");
     expect(await translated).toBe("一番目\n\n日本語。\n\n二番目");
     // 最終値と最後の途中経過は一致する (完成後に表示が揺れない)。
     expect(partials.at(-1)).toBe("一番目\n\n日本語。\n\n二番目");
@@ -371,7 +368,7 @@ describe("translateTextOnHost", () => {
 
   // 複数 thinking を同時に翻訳しても段落は束ねられず、段落ごとに 1 op が出る。
   test("keeps ops separate across concurrent translateTextOnHost calls", async () => {
-    const recorder = { ops: [] as string[][] };
+    const recorder: { ops: string[][] } = { ops: [] };
     const request = makeEchoRequest(recorder);
     const [a, b] = await Promise.all([
       translateTextOnHost("Alpha1.\n\nAlpha2.", request),
@@ -385,7 +382,7 @@ describe("translateTextOnHost", () => {
 
   // 同一段落の並行要求は hostTextCache の Promise を共有し、op は 1 回で済む。
   test("collapses concurrent requests for the same paragraph into a single op", async () => {
-    const recorder = { ops: [] as string[][] };
+    const recorder: { ops: string[][] } = { ops: [] };
     const request = makeEchoRequest(recorder);
     const [a, b] = await Promise.all([
       translateTextOnHost("Same paragraph.", request),
@@ -458,7 +455,7 @@ describe("translateTextOnHost", () => {
   // 成功結果は全文でなく段落をキーに共有する。同じ段落が別 thinking text に再登場
   // しても daemon へ再送せず、新しい段落だけを翻訳する。
   test("caches successful translations per paragraph across different texts and skips ops for cached ones", async () => {
-    const recorder = { ops: [] as string[][] };
+    const recorder: { ops: string[][] } = { ops: [] };
     const request = makeEchoRequest(recorder);
 
     expect(await translateTextOnHost("Repeated.\n\nFirst only.", request)).toBe(

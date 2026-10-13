@@ -29,6 +29,7 @@ import {
   unconfirmedSends,
 } from "../src/client/components/session-input-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
+import { defined } from "./helpers.ts";
 
 // Minimal in-memory localStorage shim. Bun runs each test file in its own
 // module scope, but `localStorage` is a browser global — the composer's
@@ -63,7 +64,7 @@ let storage = new MemStorage();
 
 beforeEach(() => {
   storage = new MemStorage();
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = storage;
+  globalThis.localStorage = storage;
   resetSessionInputPageState();
 });
 
@@ -101,7 +102,9 @@ describe("draft save/load/clear", () => {
     expect(restored?.text).toBe("hello there");
     expect(typeof restored?.updatedAt).toBe("string");
     // updatedAt is a valid ISO string
-    expect(Number.isFinite(Date.parse(restored!.updatedAt))).toBe(true);
+    expect(Number.isFinite(Date.parse(defined(restored, "the restored draft").updatedAt))).toBe(
+      true,
+    );
   });
 
   // 何を保証するか (§2.6 「送信時は当然ローカルストレージは消す」): clearing
@@ -550,7 +553,7 @@ describe("send records (DR-0035 §5)", () => {
     }));
     const [recordA] = loadSends("sid-8");
     saveDraft("sid-8", "B");
-    discardSend("sid-8", recordA!.id);
+    discardSend("sid-8", recordA.id);
     expect(loadSends("sid-8")).toEqual([]);
     expect(loadDraft("sid-8")?.text).toBe("B");
 
@@ -560,7 +563,7 @@ describe("send records (DR-0035 §5)", () => {
       outcome: "unconfirmed",
     }));
     const [recordA2] = loadSends("sid-8");
-    discardSend("sid-8", recordA2!.id);
+    discardSend("sid-8", recordA2.id);
     expect(loadDraft("sid-8")).toBeNull();
   });
 
