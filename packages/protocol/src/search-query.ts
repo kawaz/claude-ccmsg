@@ -19,7 +19,7 @@ export interface ParsedSearchQueryPatterns {
 
 function plainLinePatterns(line: string, flags: string): SearchQueryPattern[] {
   return [...line.matchAll(/("[^"]*"|\S+)/gv)].flatMap((match) => {
-    const word = match[0]!.replace(/^"|"$/g, "");
+    const word = match[0].replace(/^"|"$/g, "");
     const parts = word.split(/\s+/v).filter(Boolean);
     if (parts.length === 0) return [];
     return [

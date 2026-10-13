@@ -16,7 +16,6 @@
 // itself are index material only, never authorization (§3.1).
 import { timingSafeEqual } from "node:crypto";
 import * as crypto from "node:crypto";
-import * as fs from "node:fs";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
 import { mimeForExtension } from "./attachment.ts";
@@ -39,7 +38,7 @@ const BASE32_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 function randomBase32(length: number): string {
   const bytes = crypto.randomBytes(length);
   let out = "";
-  for (let i = 0; i < length; i++) out += BASE32_ALPHABET[bytes[i]! & 31];
+  for (const byte of bytes) out += BASE32_ALPHABET.charAt(byte & 31);
   return out;
 }
 
@@ -140,9 +139,9 @@ export function compileSandboxOrigin(template: string | undefined): SandboxOrigi
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (url.pathname !== "/" || url.search !== "" || url.hash !== "") return null;
   const host = url.hostname;
-  const parts = host.split("{gid}");
-  if (parts.length !== 2) return null;
-  const hostRe = new RegExp(`^${escapeRegExp(parts[0]!)}([a-z2-7]+)${escapeRegExp(parts[1]!)}$`);
+  const [head, tail, ...rest] = host.split("{gid}");
+  if (head === undefined || tail === undefined || rest.length > 0) return null;
+  const hostRe = new RegExp(`^${escapeRegExp(head)}([a-z2-7]+)${escapeRegExp(tail)}$`);
   return { template: template.replace(/\/+$/, ""), hostRe };
 }
 
@@ -163,7 +162,7 @@ export function sandboxGidFromHost(
 ): string | null {
   if (origin === null || hostHeader === null) return null;
   const m = origin.hostRe.exec(hostnameOf(hostHeader).toLowerCase());
-  return m ? m[1]! : null;
+  return m?.[1] ?? null;
 }
 
 // --- mint / revoke -------------------------------------------------------
@@ -299,8 +298,9 @@ function parseSandboxPath(pathname: string): { token: string; relPath: string } 
     if (value.includes("/") || value.includes("\\") || value.includes("\0")) return null;
     decoded.push(value);
   }
-  const token = decoded[0]!;
-  return { token, relPath: decoded.slice(1).join("/") };
+  const [token, ...rel] = decoded;
+  if (token === undefined) return null;
+  return { token, relPath: rel.join("/") };
 }
 
 export interface SandboxServeDeps {
@@ -460,7 +460,6 @@ export async function handleSandboxRequest(
   // DR-0029 / §4.5: stream rather than read the file into daemon memory — the
   // sizes this endpoint exists for (large binaries, long transcript dumps) are
   // exactly the ones that would stall the shared event loop.
-  const bunFile = (globalThis as { Bun?: { file: (p: string) => Blob } }).Bun?.file;
-  const body = bunFile ? bunFile(realPath) : fs.readFileSync(realPath);
+  const body = Bun.file(realPath);
   return new Response(body, { headers });
 }

@@ -50,9 +50,9 @@ export interface IgnoreLayer {
 function segmentToRegex(segment: string): string {
   let out = "";
   for (let i = 0; i < segment.length; i++) {
-    const ch = segment[i]!;
+    const ch = segment.charAt(i);
     if (ch === "\\" && i + 1 < segment.length) {
-      out += escapeLiteral(segment[++i]!);
+      out += escapeLiteral(segment.charAt(++i));
     } else if (ch === "*") {
       out += "[^/]*";
     } else if (ch === "?") {
@@ -148,8 +148,7 @@ export function compileIgnoreRule(rawLine: string): IgnoreRule | null {
   // fragment consumes the separator that follows it, so the segment after one
   // must not add a second.
   let needSeparator = false;
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i]!;
+  for (const [i, segment] of segments.entries()) {
     if (segment === "**") {
       if (i === segments.length - 1) {
         // Trailing `a/**` matches everything under `a`, and nothing else.
@@ -227,14 +226,12 @@ export function isIgnored(
   isDir: boolean,
   layers: readonly IgnoreLayer[],
 ): boolean {
-  for (let i = layers.length - 1; i >= 0; i--) {
-    const layer = layers[i]!;
+  for (const layer of layers.toReversed()) {
     const rel = path.relative(layer.baseDir, absPath);
     // Outside this layer's subtree (shouldn't happen in the walk, but a
     // caller passing an unrelated path shouldn't get a garbage `../..` match).
     if (rel === "" || rel.startsWith("..")) continue;
-    for (let r = layer.rules.length - 1; r >= 0; r--) {
-      const rule = layer.rules[r]!;
+    for (const rule of layer.rules.toReversed()) {
       if (rule.dirOnly && !isDir) continue;
       if (rule.regex.test(rel)) return !rule.negated;
     }

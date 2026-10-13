@@ -21,9 +21,7 @@ import pkg from "../../../package.json";
 const versionOverride =
   typeof process !== "undefined" ? process.env.CCMSG_VERSION_OVERRIDE : undefined;
 export const VERSION: string =
-  versionOverride && versionOverride !== ""
-    ? versionOverride
-    : (pkg as { version: string }).version;
+  versionOverride && versionOverride !== "" ? versionOverride : pkg.version;
 
 /**
  * Wire protocol generation, bumped by hand — never by a release — whenever a

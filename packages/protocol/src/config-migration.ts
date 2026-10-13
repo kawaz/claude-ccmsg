@@ -44,7 +44,7 @@ function moveFile(from: string, to: string): void {
   } catch (e) {
     // configDir and dataDir can sit on different filesystems, where rename(2)
     // fails with EXDEV; copy+unlink is the portable fallback.
-    if ((e as NodeJS.ErrnoException).code !== "EXDEV") throw e;
+    if (!(e instanceof Error && "code" in e && e.code === "EXDEV")) throw e;
     fs.copyFileSync(from, to);
     fs.unlinkSync(from);
   }

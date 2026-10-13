@@ -43,8 +43,9 @@ function parseIPv6(addr: string): bigint | null {
   const halves = s.split("::");
   if (halves.length > 2) return null; // more than one "::" is not valid
 
-  const leftGroups = halves[0] === "" ? [] : halves[0]!.split(":");
-  const rightGroups = halves.length === 2 ? (halves[1] === "" ? [] : halves[1]!.split(":")) : [];
+  const [left = "", right] = halves;
+  const leftGroups = left === "" ? [] : left.split(":");
+  const rightGroups = right === undefined || right === "" ? [] : right.split(":");
   for (const g of [...leftGroups, ...rightGroups]) {
     if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;
   }

@@ -132,15 +132,12 @@ export async function dirTree(
       msg: "session launcher is not configured",
     };
   }
-  if (!Array.isArray(roots) || roots.length === 0) {
+  if (roots.length === 0) {
     return {
       ok: false,
       code: ErrorCode.invalid_args,
       msg: "dir_tree roots must be a non-empty array",
     };
-  }
-  if (filter !== undefined && typeof filter !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "dir_tree filter must be a string" };
   }
   const boundedDepth = effectiveDepth(cfg.dir_tree_depth, depth);
   if (!boundedDepth.ok) return boundedDepth;

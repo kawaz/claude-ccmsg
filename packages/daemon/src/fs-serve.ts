@@ -15,7 +15,6 @@
 // and search, and non-image binaries stay as the existing "バイナリファイル"
 // notice. Extending the allowlist is an intentional decision (e.g. video / pdf
 // preview) rather than an accidental widening.
-import * as fs from "node:fs";
 import { fsResolveForServe } from "./fs-access.ts";
 import type { SessionStatusStore } from "./session-status.ts";
 import type { SessionLookup } from "./fs-access.ts";
@@ -76,8 +75,7 @@ export async function handleFsServe(
   // Belt: match /attachment/'s inline-only serve — this endpoint hands raw
   // bytes to the browser, an inline disposition keeps <img src=...> working
   // without prompting a download.
-  const bunFile = (globalThis as { Bun?: { file: (p: string) => Blob } }).Bun?.file;
-  const body = bunFile ? bunFile(realPath) : fs.readFileSync(realPath);
+  const body = Bun.file(realPath);
   const headers: Record<string, string> = {
     "content-type": mime,
     "content-disposition": "inline",

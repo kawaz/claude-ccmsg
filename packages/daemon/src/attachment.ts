@@ -137,13 +137,13 @@ export async function handleAttachmentUpload(req: Request): Promise<Response> {
     }
   }
 
-  let entry: unknown;
+  let form: Awaited<ReturnType<typeof req.formData>>;
   try {
-    const form = await req.formData();
-    entry = (form as unknown as { get(name: string): unknown }).get("file");
+    form = await req.formData();
   } catch (err) {
     return new Response(`invalid multipart body: ${String(err)}`, { status: 400 });
   }
+  const entry = form.get("file");
   if (!(entry instanceof File)) {
     return new Response("missing 'file' field in multipart body", { status: 400 });
   }
@@ -250,12 +250,9 @@ export async function handleAttachmentServe(pathnameTail: string): Promise<Respo
     return new Response("not found", { status: 404 });
   }
 
-  // Bun's Response accepts a Bun.file() body for zero-copy streaming; fall
-  // back to a Buffer when running under plain Node (tests may exercise this
-  // path via `bun test`, but the guard keeps the file usable elsewhere).
+  // Bun's Response accepts a Bun.file() body for zero-copy streaming.
   const mime = mimeForExtension(ext);
-  const bunFile = (globalThis as { Bun?: { file: (p: string) => Blob } }).Bun?.file;
-  const body = bunFile ? bunFile(filePath) : fs.readFileSync(filePath);
+  const body = Bun.file(filePath);
   return new Response(body, {
     headers: {
       "content-type": mime,
