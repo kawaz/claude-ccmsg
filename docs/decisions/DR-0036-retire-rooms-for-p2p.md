@@ -1,6 +1,6 @@
 # DR-0036: room を廃止し、セッション間メッセージを p2p (sid 宛の直送) にする
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ⬜ 未実装
+- Status: Accepted (2026-10-09、kawaz 裁定) — 🟡 一部実装 (段 A・B: §1 の直送の送り口 `message_send`、§3 の `ccmsg say` の記録と未読を 1on1 room から外して daemon のメモリに置き `ev:"says"` で webui に送ること。段 C: §2 の room・room 系 op・room storage・webui の room 操作の削除は残り)
 - Date: 2026-10-06
 
 ## Context
