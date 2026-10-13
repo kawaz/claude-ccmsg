@@ -371,7 +371,6 @@ function AvatarSection() {
 const CATALOG_ROOM: RoomState = {
   id: "catalog-demo",
   title: "カタログ見本",
-  sayUnread: new Set<number>(),
   membersById: new Map<string, MemberInfo>([
     [
       "a1",

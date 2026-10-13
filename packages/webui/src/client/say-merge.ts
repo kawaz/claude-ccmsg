@@ -1,11 +1,11 @@
 // Where a session's `say` bubbles sit inside its own Timeline (kawaz r244m14).
 //
-// A `ccmsg say` is recorded in the session's 1on1 room and never echoed into
-// the session transcript (protocol/index.ts SayEvent: mirroring it would spend
-// agent context for nothing), so the transcript the Timeline renders has no
-// row for it. The bubbles are therefore merged in at render time by wall-clock
-// time: the room events and the transcript rows are two logs of the same
-// session, and `ts` is the only thing they share.
+// A `ccmsg say` is recorded by the daemon (in memory, the `ev:"says"` push)
+// and never echoed into the session transcript (mirroring it would spend agent
+// context for nothing), so the transcript the Timeline renders has no row for
+// it. The bubbles are therefore merged in at render time by wall-clock time:
+// the say records and the transcript rows are two logs of the same session,
+// and `ts` is the only thing they share.
 //
 // Pure, per DR-0005 §1, so the placement rule is testable without a Timeline.
 // Same shape as fork-divider.ts, which likewise turns "where does this belong"
@@ -13,13 +13,10 @@
 // and can place them past the end, hence a slot array rather than one index.
 import type { ParsedLine, TimelineGroup } from "./transcript-model.ts";
 
-/** What placement needs from a say event: when it happened, and a tiebreak for
- * two says sharing a stamp. Generic over the caller's event type so the room
- * timeline's `DeliveredEvent` flavour (which carries routing fields on top of
- * SayEvent) comes back out unchanged. */
+/** What placement needs from a say: when it happened. Generic over the
+ * caller's record type so the record comes back out unchanged. */
 interface SayPlacement {
   ts: string;
-  seq?: number;
 }
 
 function lineTs(line: ParsedLine): string | null {
@@ -62,9 +59,9 @@ export function saySlots<T extends SayPlacement>(
   const slots: T[][] = Array.from({ length: groups.length + 1 }, () => []);
   if (says.length === 0) return slots;
   const stamps = groups.map(groupTs);
-  const ordered = [...says].sort(
-    (a, b) => toMillis(a.ts) - toMillis(b.ts) || (a.seq ?? 0) - (b.seq ?? 0),
-  );
+  // Two says sharing a stamp keep the order they came in (the daemon's
+  // record order): Array.prototype.sort is stable.
+  const ordered = [...says].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
   for (const say of ordered) {
     const at = toMillis(say.ts);
     let slot = groups.length;

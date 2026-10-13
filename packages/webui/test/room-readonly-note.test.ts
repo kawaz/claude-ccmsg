@@ -20,7 +20,6 @@ function makeRoom(kind: RoomState["kind"], members: MemberInfo[]): RoomState {
     timeline: [],
     lastMid: 0,
     lastTs: null,
-    sayUnread: new Set<number>(),
     kind,
     history: "loaded",
   };

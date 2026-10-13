@@ -127,12 +127,11 @@ export interface WsHandle {
    * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
    * this response. */
   kick(room: string, id: string): Promise<ReplyOf<"kick">>;
-  /** Ack one `say` event as read (kawaz r244 m5-m6): the 既読 button on a
-   * 📣 bubble. `seq` is the SayEvent's own seq. Like every other room
-   * mutation here the update is non-optimistic — the `say_read` event comes
-   * back on the subscribe stream and the store clears the unread entry from
+  /** Ack one say record as read (kawaz r244 m5-m6): the 既読 button on a
+   * 📣 bubble. `id` is the SayRecord's id. Non-optimistic — the daemon pushes
+   * the updated `ev:"says"` set to every tab and the store takes it from
    * there, so every open tab converges on the same badge. */
-  sayRead(room: string, seq: number): Promise<ReplyOf<"say_read">>;
+  sayRead(id: string): Promise<ReplyOf<"say_read">>;
   /** Create a room whose initial members (besides the always-implicit
    * User/u1) are `members` (U3: SessionView's "+ 新規 Room" passes a single
    * sid; the sidebar ROOMS "+ 新規" (RoomCreator.tsx) passes an explicit
@@ -776,6 +775,14 @@ export function createWsClient(
       dispatch({ type: "peers/loaded", peers: streamEv.peers });
       return;
     }
+    // Every `ccmsg say` record the daemon holds (memory only, DR-0036 §3) —
+    // the full set, both on connect and after every say or ack. Replacing
+    // rather than merging is what drops the old daemon's says after a
+    // restart. Same "replace the set" shape as ev:"peers" above.
+    if ("ev" in streamEv && streamEv.ev === "says") {
+      dispatch({ type: "says/loaded", says: streamEv.says });
+      return;
+    }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
     // event stream — the full non-expired set, both on connect (catch-up for
     // windows that opened before this tab existed) and on every new request.
@@ -982,7 +989,7 @@ export function createWsClient(
     setTitle: (room, title) => send({ op: "set_title", room, title }),
     archiveRoom: (room, archived) => send({ op: "archive_room", room, archived }),
     kick: (room, id) => send({ op: "kick", room, id }),
-    sayRead: (room, seq) => send({ op: "say_read", room, seq }),
+    sayRead: (id) => send({ op: "say_read", id }),
     createRoom: (members, title, kind) =>
       send({
         op: "create_room",

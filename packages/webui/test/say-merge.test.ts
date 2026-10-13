@@ -1,7 +1,7 @@
 // Placing say bubbles in the rendered group list (say-merge.ts). A say is
 // never echoed into the transcript, so its only anchor is wall-clock time.
 import { describe, expect, test } from "bun:test";
-import type { SayEvent } from "@ccmsg/protocol";
+import type { SayRecord } from "@ccmsg/protocol";
 import { saySlots } from "../src/client/say-merge.ts";
 import type { ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
 
@@ -17,8 +17,8 @@ function fold(...lines: { offset: number; line: ParsedLine }[]): TimelineGroup {
   return { kind: "fold", entries: lines };
 }
 
-function say(ts: string, seq: number): SayEvent {
-  return { type: "say", sid: "s1", text: `say ${seq}`, ts, seq };
+function say(ts: string, n: number): SayRecord {
+  return { id: `i/${n}`, sid: "s1", text: `say ${n}`, ts, read: false };
 }
 
 const GROUPS: TimelineGroup[] = [
@@ -36,12 +36,12 @@ describe("saySlots", () => {
   test("a say newer than the whole window trails the transcript", () => {
     // The live case: the turn that spoke has not been written to the jsonl yet.
     const slots = saySlots(GROUPS, [say("2026-08-31T11:00:00.000Z", 2)]);
-    expect(slots[3].map((s) => s.seq)).toEqual([2]);
+    expect(slots[3].map((s) => s.id)).toEqual(["i/2"]);
   });
 
   test("a say older than the window sits at the top rather than vanishing", () => {
     const slots = saySlots(GROUPS, [say("2026-08-31T09:00:00.000Z", 3)]);
-    expect(slots[0].map((s) => s.seq)).toEqual([3]);
+    expect(slots[0].map((s) => s.id)).toEqual(["i/3"]);
   });
 
   test("several says in one slot keep chronological order", () => {
@@ -49,7 +49,15 @@ describe("saySlots", () => {
       say("2026-08-31T10:08:00.000Z", 5),
       say("2026-08-31T10:06:00.000Z", 4),
     ]);
-    expect(slots[2].map((s) => s.seq)).toEqual([4, 5]);
+    expect(slots[2].map((s) => s.id)).toEqual(["i/4", "i/5"]);
+  });
+
+  test("two says sharing a stamp keep the order they came in", () => {
+    const slots = saySlots(GROUPS, [
+      say("2026-08-31T10:06:00.000Z", 8),
+      say("2026-08-31T10:06:00.000Z", 7),
+    ]);
+    expect(slots[2].map((s) => s.id)).toEqual(["i/8", "i/7"]);
   });
 
   test("unstamped groups are transparent, not boundaries", () => {

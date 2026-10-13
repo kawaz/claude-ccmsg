@@ -1,4 +1,4 @@
-import type { DeliveredEvent, PeerInfo } from "@ccmsg/protocol";
+import type { DeliveredEvent, PeerInfo, SayRecord } from "@ccmsg/protocol";
 import type { ComponentChildren } from "preact";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
@@ -186,47 +186,45 @@ function MsgItem({
   );
 }
 
-/** A `say` event's bubble (kawaz r244 m5-m6). Reads as a message rather than
- * as a thin status line because it carries what the machine actually said —
- * the text is the content, not metadata about the room. The 既読 button is
- * the only way the unread 📣 in the Sessions list goes away, so it stays
- * visible until acked and then reports the ack rather than vanishing (a
- * disappearing control leaves the reader unsure whether the click landed). */
-function SayItem({
-  event,
+/** A `ccmsg say` record's bubble in its session's Timeline (kawaz r244
+ * m5-m6). Reads as a message rather than as a thin status line because it
+ * carries what the machine actually said. The 既読 button is the only way the
+ * unread 📣 in the Sessions list goes away, so it stays visible until acked
+ * and then reports the ack rather than vanishing (a disappearing control
+ * leaves the reader unsure whether the click landed). */
+export function SayRecordBubble({
+  record,
   now,
-  unread,
   onRead,
 }: {
-  event: Extract<DeliveredEvent, { type: "say" }>;
+  record: SayRecord;
   now: number;
-  unread: boolean;
-  onRead?: (seq: number) => void;
+  onRead: (id: string) => void;
 }) {
-  const seq = event.seq;
   return (
     <SayBubble
       label="say"
-      text={event.text}
-      ts={event.ts}
+      text={record.text}
+      ts={record.ts}
       now={now}
-      unread={unread}
+      unread={!record.read}
       read={
-        seq !== undefined && unread ? (
-          <button type="button" class="say-read-btn" onClick={() => onRead?.(seq)}>
+        record.read ? (
+          <span class="say-read-done">既読</span>
+        ) : (
+          <button type="button" class="say-read-btn" onClick={() => onRead(record.id)}>
             既読
           </button>
-        ) : (
-          <span class="say-read-done">既読</span>
         )
       }
     />
   );
 }
 
-/** The 📣 bubble itself, shared by the room's `say` event and the
- * transcript's PushNotification call. `read` is the footer's read control;
- * a bubble outside read tracking passes none. */
+/** The 📣 bubble itself, shared by `ccmsg say` (a say record, or the `say`
+ * row an existing 1on1 room holds) and the transcript's PushNotification
+ * call. `read` is the footer's read control; a bubble outside read tracking
+ * passes none. */
 export function SayBubble({
   label,
   text,
@@ -270,28 +268,19 @@ export function TimelineItem({
   room,
   peers,
   now,
-  onSayRead,
 }: {
   event: DeliveredEvent;
   room: RoomState;
   peers: readonly PeerInfo[];
   now: number;
-  /** Sends the `say_read` ack for a 📣 bubble. Absent in read-only contexts
-   * (the component catalog), where the button simply does nothing. */
-  onSayRead?: (seq: number) => void;
 }) {
   switch (event.type) {
     case "msg":
       return <MsgItem event={event} room={room} peers={peers} now={now} />;
     case "say":
-      return (
-        <SayItem
-          event={event}
-          now={now}
-          unread={event.seq !== undefined && room.sayUnread.has(event.seq)}
-          onRead={onSayRead}
-        />
-      );
+      // An existing 1on1 room's say, read-only like the room (DR-0035 §2):
+      // no read control, since unread tracking is the daemon's say records.
+      return <SayBubble label="say" text={event.text} ts={event.ts} now={now} />;
     case "member":
       return <div class="event event-member">+ {memberLabel(event.id, room)} が参加</div>;
     case "leave":

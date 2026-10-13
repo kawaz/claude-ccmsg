@@ -3,7 +3,13 @@
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
-import type { AgentInfo, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type {
+  AgentInfo,
+  MemberEvent,
+  PeerInfo,
+  SayRecord,
+  SessionSearchHit,
+} from "@ccmsg/protocol";
 import type { MemberInfo, RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
@@ -166,7 +172,6 @@ function member(overrides: Partial<MemberEvent>): MemberEvent {
 function roomWithMember(m: MemberEvent): RoomState {
   return {
     id: "r1",
-    sayUnread: new Set<number>(),
     membersById: new Map([[m.id, { ...m, left: false }]]),
     memberOrder: [m.id],
     msgs: new Map(),
@@ -179,39 +184,31 @@ function roomWithMember(m: MemberEvent): RoomState {
 }
 
 describe("sayUnreadBySid (kawaz r244 m5-m6)", () => {
-  const roomWith = (id: string, sids: string[], unread: number[]): RoomState => ({
-    ...makeRoom({ id }),
-    kind: "1on1",
-    membersById: new Map(
-      sids.map((sid, i) => [`a${i + 1}`, { ...member({ id: `a${i + 1}`, sid }), left: false }]),
-    ),
-    memberOrder: sids.map((_, i) => `a${i + 1}`),
-    sayUnread: new Set(unread),
+  const record = (id: string, sid: string, read: boolean): SayRecord => ({
+    id,
+    sid,
+    text: `say ${id}`,
+    ts: "2026-10-13T00:00:00.000Z",
+    read,
   });
 
-  // 輪郭: 未読は room の唯一の非 User member に帰属し、複数 room 分は合算される。
-  test("attributes each room's unread to its single member sid", () => {
-    const rooms = new Map([
-      ["r1", roomWith("r1", ["sid-a"], [3])],
-      ["r2", roomWith("r2", ["sid-a"], [5, 6])],
-      ["r3", roomWith("r3", ["sid-b"], [1])],
-      ["r4", roomWith("r4", ["sid-c"], [])],
+  // 輪郭: 未読は記録の sid に帰属し、同じ sid の分は合算される。既読は数えない。
+  test("counts each sid's unread records", () => {
+    const got = sayUnreadBySid([
+      record("i/1", "sid-a", false),
+      record("i/2", "sid-a", false),
+      record("i/3", "sid-a", true),
+      record("i/4", "sid-b", false),
+      record("i/5", "sid-c", true),
     ]);
-    const got = sayUnreadBySid(rooms);
-    expect(got.get("sid-a")).toBe(3);
+    expect(got.get("sid-a")).toBe(2);
     expect(got.get("sid-b")).toBe(1);
     // 未読ゼロの sid はエントリごと出さない (呼び出し側は ?? 0 で読む)。
     expect(got.has("sid-c")).toBe(false);
   });
 
-  // 輪郭: member が 1 人に定まらない room は誰にも帰属させない。マーカーの意味は
-  // 「このセッションが鳴らした」なので、当て推量で別セッションを指すより出さない。
-  test("skips a room whose present members are not exactly one", () => {
-    const rooms = new Map([
-      ["r1", roomWith("r1", ["sid-a", "sid-b"], [3])],
-      ["r2", roomWith("r2", [], [4])],
-    ]);
-    expect([...sayUnreadBySid(rooms).keys()]).toEqual([]);
+  test("no records, no entries", () => {
+    expect([...sayUnreadBySid([]).keys()]).toEqual([]);
   });
 });
 
@@ -270,7 +267,6 @@ describe("memberLabel", () => {
 function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
   return {
     id: "r1",
-    sayUnread: new Set<number>(),
     membersById: new Map(),
     memberOrder: [],
     msgs: new Map(),

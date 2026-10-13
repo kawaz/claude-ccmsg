@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import type { DeliveredEvent, ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
@@ -33,7 +33,7 @@ import {
   filePathCtxForSender,
   MemberAvatar,
   SayBubble,
-  TimelineItem,
+  SayRecordBubble,
 } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
@@ -144,7 +144,6 @@ import { forkActionState, liveChain, type ForkActionState } from "../fork-point.
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
 import { saySlots } from "../say-merge.ts";
-import { findExistingOneOnOne } from "../one-on-one-room.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
@@ -3622,55 +3621,26 @@ export function Timeline({
   // 判定が変わってしまう。
   // --- `ccmsg say` バブルの差し込み (kawaz r244m14) ---
   //
-  // say はセッション transcript には echo されない (protocol の SayEvent 参照:
-  // 喋った本人の context を食うだけなので意図的に切ってある) ので、TL に出すには
-  // transcript 以外の唯一の記録 — そのセッションの 1on1 room — から時刻で合流
-  // させるしかない (say-merge.ts)。バブル自体は RoomView と同じ TimelineItem を
-  // 使う (見た目も既読ボタンの経路も 1 実装のまま)。agent TL は別セッションの
-  // transcript を見ているので対象外 — その say はこの transcript のものではない。
-  const oneOnOne = useMemo(
-    () => (agent ? null : findExistingOneOnOne(appState, sid)),
-    [appState.rooms, sid, agent],
-  );
-  const oneOnOneId = oneOnOne?.id;
-  const oneOnOneHistory = oneOnOne?.history;
-  // room の events は「開いた room だけ」取りに行く設計 (store の room.history)。
-  // TL に say を出すにはその履歴が要るので、TL が実際に画面に出ている時にだけ
-  // 1 回取る — 見ていない間は何もしない (DR-0009/0020 と同じ線引き)。失敗は
-  // "error" のまま置き、reconnect / 再表示が再試行になる (RoomView と同じ)。
-  useEffect(() => {
-    if (!visible || !oneOnOneId || oneOnOneHistory !== "idle") return;
-    store.dispatch({ type: "room-history/loading", room: oneOnOneId });
-    void ws
-      .roomHistory(oneOnOneId)
-      .then((res) => {
-        store.dispatch({
-          type: "room-history/loaded",
-          room: oneOnOneId,
-          ...(res.ok ? {} : { error: res.error.msg }),
-        });
-      })
-      .catch(() => {
-        store.dispatch({ type: "room-history/loaded", room: oneOnOneId, error: "disconnected" });
-      });
-  }, [visible, oneOnOneId, oneOnOneHistory, store, ws]);
+  // say はセッション transcript には echo されない (喋った本人の context を
+  // 食うだけなので意図的に切ってある) ので、TL に出すには daemon がメモリに
+  // 持つ say の記録 (ev:"says"、DR-0036 §3) から時刻で合流させるしかない
+  // (say-merge.ts)。見た目は PushNotification と同じ 📣 バブル。agent TL は
+  // 別セッションの transcript を見ているので対象外 — その say はこの
+  // transcript のものではない。
+  const allSays = appState.says;
   const says = useMemo(
-    () =>
-      (oneOnOne?.timeline ?? []).filter(
-        (ev): ev is Extract<DeliveredEvent, { type: "say" }> => ev.type === "say",
-      ),
-    [oneOnOne?.timeline],
+    () => (agent ? [] : allSays.filter((r) => r.sid === sid)),
+    [allSays, sid, agent],
   );
   const saySlotsByGroup = useMemo(() => saySlots(groups, says), [groups, says]);
-  // 既読は RoomView と同じ非楽観 — 成功は broadcast される say_read を store が
-  // 畳んで未読集合から消す。失敗を黙って捨てると「押しても何も起きない」に
+  // 既読は非楽観 — 成功すると daemon が更新後の ev:"says" を全タブに送り、
+  // store がそれで置き換える。失敗を黙って捨てると「押しても何も起きない」に
   // 見えるので、TL でも 1 行のエラーとして出して次の試行まで残す。
   const [sayReadError, setSayReadError] = useState<string | null>(null);
   const handleSayRead = useCallback(
-    (seq: number): void => {
-      if (!oneOnOneId) return;
+    (id: string): void => {
       void ws
-        .sayRead(oneOnOneId, seq)
+        .sayRead(id)
         .then((res) => {
           setSayReadError(res.ok ? null : res.error.msg);
         })
@@ -3678,21 +3648,12 @@ export function Timeline({
           setSayReadError("接続エラーのため既読にできませんでした");
         });
     },
-    [ws, oneOnOneId],
+    [ws],
   );
-  const sayNodes = (slot: number) => {
-    if (!oneOnOne) return [];
-    return (saySlotsByGroup[slot] ?? []).map((ev) => (
-      <TimelineItem
-        key={`say-${ev.seq ?? ev.ts}`}
-        event={ev}
-        room={oneOnOne}
-        peers={appState.peers}
-        now={now}
-        onSayRead={handleSayRead}
-      />
+  const sayNodes = (slot: number) =>
+    (saySlotsByGroup[slot] ?? []).map((record) => (
+      <SayRecordBubble key={`say-${record.id}`} record={record} now={now} onRead={handleSayRead} />
     ));
-  };
 
   const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
   // Which folds enclose each line, so that nav can open them by key. Only the

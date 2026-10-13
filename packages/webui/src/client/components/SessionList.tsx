@@ -451,7 +451,7 @@ function SessionRowItem({
   cacheRequest: LlmRequestInfo | null;
   /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
-   * ようにするためのもので、既読は 1on1 room の 📣 バブル側で付ける。 */
+   * ようにするためのもので、既読はセッションの TL の 📣 バブル側で付ける。 */
   sayUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -567,7 +567,7 @@ function SessionRowItem({
           {sayUnread > 0 ? (
             <span
               class="session-say-unread"
-              title={`未読の say ${sayUnread} 件 — 1on1 room の say バブルで既読にできます`}
+              title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
               aria-label={`未読の say ${sayUnread} 件`}
             >
               📣{sayUnread > 1 ? sayUnread : ""}
@@ -721,7 +721,7 @@ function PinnedSessionRow({
           {sayUnread > 0 ? (
             <span
               class="session-say-unread"
-              title={`未読の say ${sayUnread} 件 — 1on1 room の say バブルで既読にできます`}
+              title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
               aria-label={`未読の say ${sayUnread} 件`}
             >
               📣{sayUnread > 1 ? sayUnread : ""}
@@ -795,7 +795,7 @@ function PinnedSessionsSection({
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
-  /** sid → 未読 say 件数 (SessionList が rooms から引いたもの)。 */
+  /** sid → 未読 say 件数 (SessionList が says から引いたもの)。 */
   sayUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
@@ -876,12 +876,11 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, rooms } =
+  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, says } =
     useStoreState(store);
-  // 1on1 room 由来なので rooms が変わった時だけ引き直す。room を開いていなく
-  // ても say/say_read は subscribe で届き store が畳むので、未読は「まだ開いて
-  // いないセッション」でも正しく出る (store.ts applyProtocolEvent の say 分岐)。
-  const sayUnreadBy = useMemo(() => sayUnreadBySid(rooms), [rooms]);
+  // say の記録は daemon が ev:"says" で全件 push するので、TL を開いていない
+  // セッションの未読もここで数えられる。
+  const sayUnreadBy = useMemo(() => sayUnreadBySid(says), [says]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [
