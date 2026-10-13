@@ -24,6 +24,7 @@ import { createSessionErrorsStore } from "../src/session-errors.ts";
 import { createSessionStatusStore } from "../src/session-status.ts";
 import { createSessionUserInputStore } from "../src/session-user-input.ts";
 import { createSessionWakeState } from "../src/session-wake.ts";
+import { createSayLog } from "../src/say-log.ts";
 import { RunPids, SidecarReplies } from "../src/sidecar-call.ts";
 import { TraceWriter } from "../src/trace.ts";
 import { createTranscriptTailStore } from "../src/transcript.ts";
@@ -86,6 +87,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     peerInjector: new PeerInjector(),
     launcher: "/nonexistent/ccmsg",
     issueDirectMid: createMidIssuer(),
+    says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     runPids: new RunPids(),
     ...fields,

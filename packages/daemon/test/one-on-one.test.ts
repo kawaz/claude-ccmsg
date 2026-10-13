@@ -2,8 +2,7 @@
 //
 // Coverage layout (each `test` documents "何を保証するか" per §):
 //   DR-0035 §2 create_room refuses kind "1on1" (no room is opened); an
-//        existing 1on1 room comes from the say op, the only path that still
-//        opens one
+//        existing 1on1 room is one an earlier daemon left in storage
 //   DR-0035 §2 an existing 1on1 room is read-only: post / reply / next_room
 //        are refused for every role, a normal room is unaffected
 //   DR-0017 addendum reply instruction: the peer-inject envelope's reply line
@@ -64,14 +63,6 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
-/** The 1on1 room of the session behind `conn`. The say op is the only path
- * that still opens a 1on1 room, so it stands in for "an existing 1on1 room". */
-async function oneOnOneOf(conn: TestClient): Promise<string> {
-  const res = await conn.requestOk({ op: "say", text: "hello" });
-  expect(res.ok).toBe(true);
-  return res.room;
-}
-
 /** The error every write op gets on a 1on1 room (DR-0035 §2: read-only). */
 function readOnlyError(room: string, op: string) {
   return {
@@ -119,6 +110,13 @@ async function restartWithRoom(ctx: DaemonCtx, id?: string, events?: object[]): 
   }
   ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
   await waitConnectable(ctx.sock);
+}
+
+/** An existing 1on1 room of `sid` (no API opens one), placed in storage and
+ * loaded by restarting the daemon. */
+async function oneOnOneOf(ctx: DaemonCtx, sid: string): Promise<string> {
+  await restartWithRoom(ctx, "r1", [{ type: "kind", kind: "1on1", ts: TS }, memberRow("a1", sid)]);
+  return "r1";
 }
 
 describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
@@ -187,15 +185,15 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
   // 何を保証するか (DR-0035 §2 読み取り専用): 既存の 1on1 room への post は
   // user role からも session role からも invalid_args で拒否され、jsonl に
   // msg が 1 行も増えない。人がセッションへ書く経路は session_input なので、
-  // 1on1 room は say の記録と既存の msg を読むだけの場所になる。
+  // 1on1 room は既存の say の記録と msg を読むだけの場所になる。
   test(
     "post to a 1on1 room is refused for the user and the session and appends nothing",
     async () => {
       const ctx = await startTestDaemon();
       try {
+        const room = await oneOnOneOf(ctx, SID_A);
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
-        const room = await oneOnOneOf(a);
         for (const c of [u, a]) {
           const res = await c.requestError({
             op: "post",
@@ -313,9 +311,9 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
+        const parent = await oneOnOneOf(ctx, SID_A);
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
-        const parent = await oneOnOneOf(a);
         const attempts: [TestClient, Record<string, unknown>][] = [
           [u, {}],
           [u, { msg: "u1 opens the next thread" }],
@@ -341,25 +339,17 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
     },
     T,
   );
-  // 何を保証するか (kind の永続化): the 1on1 KindEvent lands in the jsonl and
-  // is recovered by scanRooms on daemon restart — so a 1on1 room stays 1on1
-  // (and therefore read-only) across a stop/start cycle. Mirrors the broadcast
-  // persistence test — regression guard on the same KindEvent-based recovery
-  // path.
+  // 何を保証するか (kind の永続化): the 1on1 KindEvent in the jsonl is
+  // recovered by scanRooms on every daemon start — so a 1on1 room stays 1on1
+  // (and therefore read-only) across another stop/start cycle. Mirrors the
+  // broadcast persistence test — regression guard on the same KindEvent-based
+  // recovery path.
   test(
     "1on1 kind persists across a daemon restart",
     async () => {
       const ctx = await startTestDaemon();
       try {
-        let roomId: string;
-        {
-          const a = await session(ctx, SID_A);
-          roomId = await oneOnOneOf(a);
-          const raw = fs.readFileSync(`${ctx.roomsDir}/${roomId}.jsonl`, "utf8");
-          expect(raw).toContain('"type":"kind"');
-          expect(raw).toContain('"kind":"1on1"');
-          a.close();
-        }
+        const roomId = await oneOnOneOf(ctx, SID_A);
         await restartWithRoom(ctx);
 
         // After restart, rooms surfaces kind:"1on1" AND a post is still

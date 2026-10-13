@@ -1,18 +1,21 @@
-// `ccmsg say` の観測イベント (kawaz r244 m5-m6) の wire 契約。
+// `ccmsg say` の記録 (kawaz r244 m5-m6、DR-0036 §3) の wire 契約。
 //
 // 何を保証するか (各 test の doc comment 参照):
-//   - say op が「呼び出し元セッション自身の 1on1 room」を解決 / 新規作成する
-//   - say / say_read は user role にだけ配信される (session の subscribe に
-//     流さない = kawaz 「セッションへの echo は不要、コンテキストの無駄」)
-//   - 未読集合 (rooms 応答の say_unread_seqs) が say で増え say_read で減る
+//   - say op は daemon のメモリに記録し、room storage に何も書かない
+//     (room を作らず、既存の 1on1 room にも行を足さない)
+//   - 記録は ev:"says" (全件) で user role にだけ届く。subscribe 時にも全件
+//     (空でも) 届き、session の subscribe には一切流さない (kawaz 「セッション
+//     への echo は不要、コンテキストの無駄」)
+//   - 既存の 1on1 room が持つ say / say_read の行も session には遡って渡さない
+//   - say_read が記録の read を立て、全タブに更新後の全件を送る
 //   - role gate: say は session 限定、say_read は user 限定
-//   - 再起動後も say / say_read が jsonl から復元される (未読が消えない)
+//   - 再起動で記録 (未読含む) が消える
 //
 // 実 daemon を UDS 越しに叩く (one-on-one.test.ts と同じ harness): 配信経路の
-// 抑制ルールは storage 単体テストでは踏めないので、出荷する線の上で確かめる。
+// 抑制ルールは単体テストでは踏めないので、出荷する線の上で確かめる。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import type { ResponseOf } from "@ccmsg/protocol";
+import type { SayRecord } from "@ccmsg/protocol";
 import {
   connect,
   spawnDaemonProc,
@@ -34,6 +37,7 @@ const SID_SAY_7 = "5a900000-0000-4000-8000-000000000007";
 const SID_SAY_8 = "5a900000-0000-4000-8000-000000000008";
 
 const T = 15000;
+const TS = "2026-01-01T00:00:00.000Z";
 
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
@@ -47,47 +51,82 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
-async function roomsOf(c: TestClient): Promise<ResponseOf<"rooms">["rooms"]> {
-  const res = await c.requestOk({ op: "rooms" });
-  return res.rooms;
+/** A subscribed user connection and the say records its subscribe-time
+ * catch-up carried. */
+async function subscribedUser(
+  ctx: DaemonCtx,
+): Promise<{ u: TestClient; says: readonly SayRecord[] }> {
+  const u = await user(ctx);
+  await u.request({ op: "subscribe" });
+  const { ev } = await u.readEventUntil("says");
+  return { u, says: ev.says };
 }
 
-async function roomOf(c: TestClient, id: string): Promise<ResponseOf<"rooms">["rooms"][number]> {
-  const room = (await roomsOf(c)).find((r) => r.id === id);
-  if (room === undefined) throw new Error(`no room ${id}`);
-  return room;
+/** Stop the daemon, optionally place a room file, and start it again on the
+ * same data dir (stopTestDaemon would also remove it). */
+async function restart(ctx: DaemonCtx, room?: { id: string; events: object[] }): Promise<void> {
+  const c = await connect(ctx.sock);
+  await c.request({ op: "shutdown" });
+  c.close();
+  await ctx.proc.exited;
+  try {
+    fs.unlinkSync(ctx.sock);
+  } catch {
+    // shutdown usually cleans it up
+  }
+  if (room !== undefined) {
+    fs.mkdirSync(ctx.roomsDir, { recursive: true });
+    fs.writeFileSync(
+      `${ctx.roomsDir}/${room.id}.jsonl`,
+      room.events.map((e) => `${JSON.stringify(e)}\n`).join(""),
+    );
+  }
+  ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
+  await waitConnectable(ctx.sock);
+}
+
+/** A 1on1 room of `sid` as an earlier daemon left it, holding one say and its
+ * ack. */
+function oneOnOneWithSay(sid: string): object[] {
+  return [
+    { type: "kind", kind: "1on1", ts: TS },
+    { type: "title", title: "existing 1on1", ts: TS },
+    { type: "member", id: "a1", sid, repo: "", ws: "", cwd: "", joined_at: TS },
+    { type: "say", sid, text: "old say", ts: TS },
+    { type: "say_read", ref: 4, ts: TS },
+  ];
 }
 
 describe("say op", () => {
-  // 何を保証するか: 呼び出し元は room を名指ししない。daemon が「u1 + 自分」の
-  // 1on1 room を作り、2 回目以降は同じ room に積む — セッションごとに 1 本の
-  // 発話履歴になる (呼ぶたびに room が増えない)。
+  // 何を保証するか: say は daemon のメモリにだけ記録され、room storage に
+  // 依存しない (DR-0036 §3、room を削る段 C の前提)。room を作らず、rooms dir
+  // にファイルも作らない。記録は user の subscribe に ev:"says" で届き、呼んだ
+  // セッション自身の sid・本文・未読で入る。
   test(
-    "creates the caller's 1on1 room once, then reuses it",
+    "records the say in memory and pushes it to user subscribers, creating no room",
     async () => {
       const ctx = await startTestDaemon();
       try {
+        const { u, says: before } = await subscribedUser(ctx);
+        expect(before).toEqual([]);
         const s = await session(ctx, SID_SAY_1);
         const first = await s.requestOk({ op: "say", text: "hello" });
-        expect(first.ok).toBe(true);
-        expect(first.created).toBe(true);
-        expect(typeof first.seq).toBe("number");
+        const { ev: afterFirst } = await u.readEventUntil("says");
+        expect(afterFirst.says.map((r) => [r.id, r.sid, r.text, r.read])).toEqual([
+          [first.id, SID_SAY_1, "hello", false],
+        ]);
 
         const second = await s.requestOk({ op: "say", text: "again" });
-        expect(second.created).toBe(false);
-        expect(second.room).toBe(first.room);
-        expect(second.seq).toBeGreaterThan(first.seq);
+        expect(second.id).not.toBe(first.id);
+        const { ev: afterSecond } = await u.readEventUntil("says");
+        expect(afterSecond.says.map((r) => [r.id, r.text, r.read])).toEqual([
+          [first.id, "hello", false],
+          [second.id, "again", false],
+        ]);
 
-        const u = await user(ctx);
-        const rooms = await roomsOf(u);
-        const mine = rooms.filter((r) => r.kind === "1on1");
-        expect(mine).toHaveLength(1);
-        expect(mine[0].id).toBe(first.room);
-        // 既存の 1on1 room と同じ `<repo> 1on1 <sid8>` 形で、sidebar の見え方を
-        // 揃える。
-        expect(mine[0].title).toBe("repo-5a900000-0000-4000-8000-000000000001 1on1 5a900000");
-        expect(mine[0]?.members.map((m) => m.sid)).toEqual([SID_SAY_1]);
-        expect(mine[0].say_unread_seqs).toEqual([first.seq, second.seq]);
+        expect((await u.requestOk({ op: "rooms" })).rooms).toEqual([]);
+        const files = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir) : [];
+        expect(files).toEqual([]);
         u.close();
         s.close();
       } finally {
@@ -97,57 +136,23 @@ describe("say op", () => {
     T,
   );
 
-  // 何を保証するか: そのセッションの 1on1 room が既に storage にあれば say は
-  // そこへ入る (別の room に分岐しない)。「今までの会話の続き」として読める
-  // ことが 1on1 に置く理由なので、ここが割れると設計目的を失う。create_room
-  // では 1on1 room を開けないので、既存の room は storage に置いた jsonl を
-  // daemon の起動で読み込ませて用意する。
+  // 何を保証するか: そのセッションの 1on1 room が storage にあっても、say は
+  // そこへ行を足さない。既存の 1on1 room は読み取り専用で残るだけ
+  // (DR-0035 §2 / DR-0036 §3)。
   test(
-    "reuses an existing 1on1 room loaded from storage",
+    "appends nothing to the session's existing 1on1 room",
     async () => {
       const ctx = await startTestDaemon();
       try {
-        // Stop the daemon, place the room file, start it again so scanRooms
-        // loads the room the same way it loads rooms left by a previous run.
-        const c = await connect(ctx.sock);
-        await c.request({ op: "shutdown" });
-        c.close();
-        await ctx.proc.exited;
-        try {
-          fs.unlinkSync(ctx.sock);
-        } catch {
-          // shutdown usually cleans it up
-        }
-        const ts = "2026-01-01T00:00:00.000Z";
-        fs.mkdirSync(ctx.roomsDir, { recursive: true });
-        fs.writeFileSync(
-          `${ctx.roomsDir}/r1.jsonl`,
-          [
-            { type: "kind", kind: "1on1", ts },
-            { type: "title", title: "existing 1on1", ts },
-            {
-              type: "member",
-              id: "a1",
-              sid: SID_SAY_2,
-              repo: "",
-              ws: "",
-              cwd: "",
-              joined_at: ts,
-            },
-          ]
-            .map((e) => `${JSON.stringify(e)}\n`)
-            .join(""),
-        );
-        ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
-        await waitConnectable(ctx.sock);
+        await restart(ctx, { id: "r1", events: oneOnOneWithSay(SID_SAY_2) });
+        const before = fs.readFileSync(`${ctx.roomsDir}/r1.jsonl`, "utf8");
 
         const s = await session(ctx, SID_SAY_2);
+        await s.requestOk({ op: "say", text: "yo" });
         const u = await user(ctx);
-        const said = await s.requestOk({ op: "say", text: "yo" });
-        expect(said.created).toBe(false);
-        expect(said.room).toBe("r1");
-        // 既存 room の title は say が上書きしない。
-        expect((await roomOf(u, "r1")).title).toBe("existing 1on1");
+        const rooms = (await u.requestOk({ op: "rooms" })).rooms;
+        expect(rooms.map((r) => [r.id, r.kind, r.last_mid])).toEqual([["r1", "1on1", 0]]);
+        expect(fs.readFileSync(`${ctx.roomsDir}/r1.jsonl`, "utf8")).toBe(before);
         u.close();
         s.close();
       } finally {
@@ -158,33 +163,29 @@ describe("say op", () => {
   );
 
   // 何を保証するか (kawaz r244 m6「webui とかが知りたいだけなのでセッションへの
-  // echo は不要」): user の subscribe には say が届き、session の subscribe には
-  // 届かない。喋った本人にも、他のエージェントにも流さない。
+  // echo は不要」): user の subscribe には ev:"says" が届き、session の
+  // subscribe には subscribe 時にも say の後にも届かない。喋った本人にも、
+  // 他のエージェントにも流さない。
   test(
-    "delivers say to user subscribers only",
+    "pushes says to user subscribers only, never to a session",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const speaker = await session(ctx, SID_SAY_3);
         await speaker.request({ op: "subscribe" });
-        const u = await user(ctx);
-        await u.request({ op: "subscribe" });
+        const { u } = await subscribedUser(ctx);
 
         const said = await speaker.requestOk({ op: "say", text: "listen up" });
-        const { ev } = await u.readEventUntil("say");
-        expect(ev).toMatchObject({
-          type: "say",
-          r: said.room,
-          sid: SID_SAY_3,
-          text: "listen up",
-          seq: said.seq,
-        });
+        const { ev } = await u.readEventUntil("says");
+        expect(ev.says.map((r) => [r.id, r.sid, r.text])).toEqual([
+          [said.id, SID_SAY_3, "listen up"],
+        ]);
 
-        // 話者側の stream に say が無いことを、順序の確定した round trip の後で
+        // 話者側の stream に says が無いことを、順序の確定した round trip の後で
         // 確認する (pendingEvents は「今そこに無い」しか言えないため)。
         await speaker.request({ op: "ping" });
         const speakerEvents = await speaker.pendingEvents();
-        expect(speakerEvents.filter(isKind("say"))).toEqual([]);
+        expect(speakerEvents.filter(isKind("says"))).toEqual([]);
         u.close();
         speaker.close();
       } finally {
@@ -194,21 +195,23 @@ describe("say op", () => {
     T,
   );
 
-  // 何を保証するか: 後から subscribe / room_history でさかのぼった session にも
-  // say は復元されない。live だけ抑制して replay で漏れる、が起きない。
+  // 何を保証するか: 既存の 1on1 room が持つ say / say_read の行も、後から
+  // subscribe / room_history でさかのぼった session には渡らない。user には
+  // room の本文として渡る (読み取り専用の閲覧)。
   test(
-    "never replays say into a session's backlog or room_history",
+    "never replays an existing 1on1 room's say rows into a session's backlog or room_history",
     async () => {
       const ctx = await startTestDaemon();
       try {
+        await restart(ctx, { id: "r1", events: oneOnOneWithSay(SID_SAY_4) });
         const speaker = await session(ctx, SID_SAY_4);
-        const said = await speaker.requestOk({ op: "say", text: "before subscribing" });
 
         // 話者は room の member なので room_history を引ける。それでも say は無い。
         await speaker.request({ op: "subscribe", backlog: true });
-        await speaker.request({ op: "room_history", room: said.room });
+        await speaker.request({ op: "room_history", room: "r1" });
         const events = await speaker.pendingEvents();
         expect(events.filter(isKind("say"))).toEqual([]);
+        expect(events.filter(isKind("say_read"))).toEqual([]);
         // member イベントは通常どおり見えている = 抑制が say に限定されている。
         expect(events.some(isKind("member"))).toBe(true);
 
@@ -218,7 +221,7 @@ describe("say op", () => {
         // with a round trip before asserting on what did (not) arrive.
         await u.request({ op: "ping" });
         const userEvents = await u.pendingEvents();
-        expect(userEvents.filter(isKind("say")).filter((e) => e.seq === said.seq)).toHaveLength(1);
+        expect(userEvents.filter(isKind("say")).map((e) => e.text)).toEqual(["old say"]);
         u.close();
         speaker.close();
       } finally {
@@ -230,8 +233,9 @@ describe("say op", () => {
 });
 
 describe("say_read op", () => {
-  // 何を保証するか: 既読は未読集合から当該 seq だけを外す (他は残る)。同じ seq
-  // への二重 ack が数を壊さないことも含む — ボタン連打は普通に起きる。
+  // 何を保証するか: 既読は当該 id の記録だけを read にし (他は残る)、更新後の
+  // 全件を subscribe 中の全タブに送る。同じ id への二重 ack が状態を壊さない
+  // ことも含む — ボタン連打は普通に起きる。
   test(
     "acks one say, leaving the others unread and staying idempotent",
     async () => {
@@ -240,22 +244,26 @@ describe("say_read op", () => {
         const s = await session(ctx, SID_SAY_5);
         const a = await s.requestOk({ op: "say", text: "one" });
         const b = await s.requestOk({ op: "say", text: "two" });
-        const u = await user(ctx);
-        await u.request({ op: "subscribe" });
+        const { u, says } = await subscribedUser(ctx);
+        expect(says.map((r) => r.read)).toEqual([false, false]);
+        const { u: otherTab } = await subscribedUser(ctx);
 
-        const ack = await u.request({ op: "say_read", room: a.room, seq: a.seq });
-        expect(ack).toMatchObject({ ok: true, room: a.room, ref: a.seq });
-        const { ev } = await u.readEventUntil("say_read");
-        expect(ev).toMatchObject({ type: "say_read", r: a.room, ref: a.seq });
+        expect(await u.request({ op: "say_read", id: a.id })).toMatchObject({ ok: true, id: a.id });
+        const unreadAfter = (ev: { says: readonly SayRecord[] }) =>
+          ev.says.filter((r) => !r.read).map((r) => r.id);
+        expect(unreadAfter((await u.readEventUntil("says")).ev)).toEqual([b.id]);
+        expect(unreadAfter((await otherTab.readEventUntil("says")).ev)).toEqual([b.id]);
 
-        expect((await roomOf(u, a.room)).say_unread_seqs).toEqual([b.seq]);
-        await u.request({ op: "say_read", room: a.room, seq: a.seq });
-        expect((await roomOf(u, a.room)).say_unread_seqs).toEqual([b.seq]);
-
-        await u.request({ op: "say_read", room: b.room, seq: b.seq });
-        // 全部読んだ room はフィールドごと消える (「未読 0」は不在で表す契約)。
-        expect((await roomOf(u, a.room)).say_unread_seqs).toBeUndefined();
+        // 二度目の ack は成功を返し、状態は変わらない。
+        expect(await u.request({ op: "say_read", id: a.id })).toMatchObject({ ok: true, id: a.id });
+        await u.request({ op: "say_read", id: b.id });
+        const { ev } = await u.readEventUntil("says");
+        expect(ev.says.map((r) => [r.id, r.read])).toEqual([
+          [a.id, true],
+          [b.id, true],
+        ]);
         u.close();
+        otherTab.close();
         s.close();
       } finally {
         await stopTestDaemon(ctx);
@@ -264,21 +272,18 @@ describe("say_read op", () => {
     T,
   );
 
-  // 何を保証するか: 存在しない seq の ack は黙って成功しない。成功を返すと
+  // 何を保証するか: 存在しない id の ack は黙って成功しない。成功を返すと
   // 「既読にしたのにバッジが減らない」という追いにくい形で壊れる。
   test(
-    "rejects an ack for a seq that is not a say event",
+    "rejects an ack for an id that is not a say",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_6);
-        const said = await s.requestOk({ op: "say", text: "hi" });
+        await s.requestOk({ op: "say", text: "hi" });
         const u = await user(ctx);
-        const res = await u.requestError({ op: "say_read", room: said.room, seq: 9999 });
-        expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("invalid_args");
-        const missing = await u.requestError({ op: "say_read", room: "r9999", seq: 1 });
-        expect(missing.error.code).toBe("room_not_found");
+        const res = await u.requestError({ op: "say_read", id: "0000/9999" });
+        expect(res.error).toEqual({ code: "invalid_args", msg: "no say with id 0000/9999" });
         u.close();
         s.close();
       } finally {
@@ -304,11 +309,7 @@ describe("say role gates", () => {
 
         const userSay = await u.requestError({ op: "say", text: "nope" });
         expect(userSay.error.code).toBe("bad_request");
-        const sessionAck = await s.requestError({
-          op: "say_read",
-          room: said.room,
-          seq: said.seq,
-        });
+        const sessionAck = await s.requestError({ op: "say_read", id: said.id });
         expect(sessionAck.error.code).toBe("bad_request");
         u.close();
         s.close();
@@ -320,41 +321,29 @@ describe("say role gates", () => {
   );
 });
 
-describe("say persistence", () => {
-  // 何を保証するか: say / say_read は room jsonl の永続イベントで、daemon を
-  // 入れ替えても未読状態が残る。未読は「kawaz がまだ見ていない」の記録なので、
-  // 再起動で消えるとマーカーとして信用できなくなる。
+describe("say memory", () => {
+  // 何を保証するか (DR-0036 §3「daemon の再起動で未読が消えるのは許容」):
+  // 記録は daemon のメモリだけにあり、再起動した daemon は未読を含めて何も
+  // 持たない。subscribe 時の ev:"says" は空で届く — これで再接続したタブが
+  // 前の daemon の say を捨てられる。前の daemon の id への ack は失敗する。
   test(
-    "say and say_read survive a daemon restart",
+    "a daemon restart forgets every say, unread ones included",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_8);
-        const a = await s.requestOk({ op: "say", text: "kept" });
-        const b = await s.requestOk({ op: "say", text: "acked" });
-        const u = await user(ctx);
-        await u.request({ op: "say_read", room: b.room, seq: b.seq });
+        const a = await s.requestOk({ op: "say", text: "unread" });
+        const { u, says } = await subscribedUser(ctx);
+        expect(says.map((r) => [r.id, r.read])).toEqual([[a.id, false]]);
         u.close();
         s.close();
 
-        // Bounce the daemon in place (stopTestDaemon also removes the data
-        // dir, which would make "recovered from disk" vacuously true).
-        const c = await connect(ctx.sock);
-        await c.request({ op: "shutdown" });
-        c.close();
-        await ctx.proc.exited;
-        try {
-          fs.unlinkSync(ctx.sock);
-        } catch {
-          // shutdown usually cleans it up
-        }
-        ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
-        await waitConnectable(ctx.sock);
+        await restart(ctx);
 
-        const u2 = await user(ctx);
-        const room = await roomOf(u2, a.room);
-        expect(room.kind).toBe("1on1");
-        expect(room.say_unread_seqs).toEqual([a.seq]);
+        const { u: u2, says: after } = await subscribedUser(ctx);
+        expect(after).toEqual([]);
+        const res = await u2.requestError({ op: "say_read", id: a.id });
+        expect(res.error.code).toBe("invalid_args");
         u2.close();
       } finally {
         await stopTestDaemon(ctx);
