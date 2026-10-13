@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { JsonObjectSchema, jsonText, parseWith, type JsonObject } from "@ccmsg/protocol";
 import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 import {
   deriveRepoRoot,
@@ -327,6 +328,17 @@ describe("sessionFilePath", () => {
   });
 });
 
+const JsonObjectTextSchema = jsonText(JsonObjectSchema);
+
+// 書かれたファイルを JSON オブジェクトとして読む。フィールドを落とさずに読むため
+// SessionStateFileSchema でなく任意のオブジェクトとして通す (余計なフィールドが
+// 書かれていれば toEqual で落ちる)。
+function writtenObject(file: string): JsonObject {
+  const read = parseWith(JsonObjectTextSchema, fs.readFileSync(file, "utf8"));
+  if (!read.ok) throw new Error(`not a JSON object: ${read.failure.summary}: ${file}`);
+  return read.value;
+}
+
 // writeSessionFile: mkdir -p + JSON 書き込みの best-effort I/O。
 describe("writeSessionFile", () => {
   let dir: string;
@@ -348,7 +360,7 @@ describe("writeSessionFile", () => {
       ws: "main",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
-    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({
       transcript_path: "/home/u/.claude/proj/sess-1.jsonl",
       cwd: "/some/cwd",
@@ -368,7 +380,7 @@ describe("writeSessionFile", () => {
       repo_root: "/repo",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
-    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({
       cwd: "/repo/main",
       repo: "repo",
@@ -382,7 +394,7 @@ describe("writeSessionFile", () => {
   test("既存ファイルは上書きされる", () => {
     writeSessionFile(dir, "sess-1", { updated_at: "2026-07-11T00:00:00.000Z" });
     writeSessionFile(dir, "sess-1", { repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
-    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({ repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
   });
 

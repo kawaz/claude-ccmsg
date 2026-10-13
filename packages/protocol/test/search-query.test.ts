@@ -37,7 +37,7 @@ describe("parseSearchQueryPatterns", () => {
     expect(parsed.clauses[0]).toEqual([
       { text: "foo bar", source: "foo bar", flags: "v", error: null },
     ]);
-    expect(parsed.clauses[1]![0]!.error).toBeString();
+    expect(parsed.clauses[1]?.[0]?.error).toBeString();
     expect(parsed.hasError).toBe(true);
   });
 });

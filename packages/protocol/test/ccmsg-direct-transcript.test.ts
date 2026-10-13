@@ -163,7 +163,7 @@ describe("renderDirectDelivery", () => {
     const envelope = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nbody\n\n${other}\n</cross-session-message>`;
     expect(parseDirectDeliveries(envelope).map((d) => d.text)).toEqual([`body\n\n${other}`]);
     const relative = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nbody\n\nReply with: bin/ccmsg reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`;
-    expect(parseDirectDeliveries(relative)[0]!.text).toContain("Reply with: bin/ccmsg");
+    expect(parseDirectDeliveries(relative)[0]?.text).toContain("Reply with: bin/ccmsg");
   });
 
   test("shellQuote: plain words unchanged, anything else one single-quoted word", () => {

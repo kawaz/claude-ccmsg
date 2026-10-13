@@ -16,7 +16,7 @@ describe("resolvePaths (DR-0002 §1)", () => {
       CCMSG_STATE_DIR: "/s",
       CCMSG_CONFIG_DIR: "/c",
       CCMSG_DATA_DIR: "/d",
-    } as NodeJS.ProcessEnv);
+    });
     expect(p.stateDir).toBe("/s");
     expect(p.configDir).toBe("/c");
     expect(p.dataDir).toBe("/d");
@@ -40,7 +40,7 @@ describe("resolvePaths (DR-0002 §1)", () => {
       XDG_STATE_HOME: "/xs",
       XDG_CONFIG_HOME: "/xc",
       XDG_DATA_HOME: "/xd",
-    } as NodeJS.ProcessEnv);
+    });
     expect(p.stateDir).toBe("/xs/ccmsg");
     expect(p.configDir).toBe("/xc/ccmsg");
     expect(p.dataDir).toBe("/xd/ccmsg");
@@ -51,9 +51,7 @@ describe("sidecar sockets (DR-0035 §3)", () => {
   const sid = "11111111-2222-4333-8444-555555555555";
 
   test("live under the state dir when the widest name fits sun_path", () => {
-    expect(resolvePaths({ CCMSG_STATE_DIR: "/s" } as NodeJS.ProcessEnv).sidecars).toBe(
-      "/s/sidecars",
-    );
+    expect(resolvePaths({ CCMSG_STATE_DIR: "/s" }).sidecars).toBe("/s/sidecars");
   });
 
   // The widest name carries a pid of MAX_SAFE_INTEGER's 16 digits: a state

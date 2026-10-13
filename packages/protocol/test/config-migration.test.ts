@@ -10,7 +10,7 @@ function tmpPaths(): ReturnType<typeof resolvePaths> {
     CCMSG_STATE_DIR: path.join(base, "s"),
     CCMSG_CONFIG_DIR: path.join(base, "c"),
     CCMSG_DATA_DIR: path.join(base, "d"),
-  } as NodeJS.ProcessEnv);
+  });
   fs.mkdirSync(paths.dataDir, { recursive: true });
   return paths;
 }
@@ -97,7 +97,7 @@ describe("migrateLegacyConfigFiles", () => {
       CCMSG_STATE_DIR: path.join(base, "s"),
       CCMSG_CONFIG_DIR: base,
       CCMSG_DATA_DIR: base,
-    } as NodeJS.ProcessEnv);
+    });
     fs.writeFileSync(path.join(base, "config.json"), "{}");
     const c = collector();
 

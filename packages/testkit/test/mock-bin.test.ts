@@ -30,8 +30,8 @@ async function run(
     stdout: "pipe",
     stderr: "pipe",
   });
-  const stdout = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
   return { stdout, stderr, code: await proc.exited };
 }
 
@@ -113,7 +113,7 @@ for await (const line of lines) {
     );
 
     const proc = Bun.spawn([bin], { stdout: "pipe", stderr: "ignore" });
-    await (proc.stdout as ReadableStream<Uint8Array>).getReader().read(); // it is running
+    await proc.stdout.getReader().read(); // it is running
     proc.kill("SIGTERM");
     expect(await proc.exited).not.toBe(0);
   });
