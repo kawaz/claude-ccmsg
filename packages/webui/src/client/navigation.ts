@@ -33,6 +33,10 @@ const NavigationInfoSchema = v.looseObject({ sidebar: v.optional(v.string()) });
 
 export type WsClient = ReturnType<typeof createWsClient>;
 
+/** The two reads restoring a recent place makes: whether the timeline row it
+ * named is still in the transcript, whether the file it named still opens. */
+export type RecentProbe = Pick<WsClient, "transcriptRead" | "fsStatBatch">;
+
 export function rememberTimelinePosition(sid: string, position: string): void {
   if (position === "head") timelinePositions.delete(sid);
   else timelinePositions.set(sid, position);
@@ -111,7 +115,7 @@ export async function recentIsValid(
   record: RecentRecord,
   sid: string,
   state: AppState,
-  ws: WsClient,
+  ws: RecentProbe,
   origin: string = location.origin,
 ): Promise<boolean> {
   if (!sessionExists(state, sid)) return false;
@@ -215,7 +219,7 @@ export async function resolveSessionRootTarget(
   recent: RecentRecord | null,
   sid: string,
   state: AppState,
-  ws: WsClient,
+  ws: RecentProbe,
   origin: string = location.origin,
 ): Promise<string> {
   return recent && (await recentIsValid(recent, sid, state, ws, origin))

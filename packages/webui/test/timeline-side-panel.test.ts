@@ -14,7 +14,7 @@ function containerStub(contains: boolean) {
   return { contains: () => contains };
 }
 
-const NODE = {} as unknown;
+const NODE = {};
 
 describe("shouldCloseSidePanel", () => {
   test("パネルの中の click では閉じない", () => {

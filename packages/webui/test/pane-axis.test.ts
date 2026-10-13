@@ -15,7 +15,7 @@ function rect(x: number, y: number, width: number, height: number): DOMRect {
     right: x + width,
     bottom: y + height,
     toJSON: () => ({}),
-  } as DOMRect;
+  };
 }
 
 describe("paneAxis", () => {
@@ -55,7 +55,7 @@ describe("paneAxisMetrics", () => {
   // 横並びで手前 (左) = 一覧、縦積みでは `order` でフォームが前に出るので
   // 奥 (下) = 一覧、という対で使う。
   test("手前からの距離と奥からの距離は軸の長さで足し合う", () => {
-    for (const axis of ["row", "column"] as PaneAxis[]) {
+    for (const axis of ["row", "column"] satisfies PaneAxis[]) {
       const m = paneAxisMetrics(axis, box, { clientX: 300, clientY: 500 });
       expect(m.pointer - m.start + (m.end - m.pointer)).toBe(m.size);
     }

@@ -2,15 +2,21 @@
 // say を TL に重ねるために使う)。
 import { describe, expect, test } from "bun:test";
 import { findExistingOneOnOne } from "../src/client/one-on-one-room.ts";
-import { initialState, type AppState, type RoomState } from "../src/client/store.ts";
+import type { DeliveredEvent } from "@ccmsg/protocol";
+import {
+  initialState,
+  type AppState,
+  type MemberInfo,
+  type RoomState,
+} from "../src/client/store.ts";
 
 function makeRoomState(overrides: Partial<RoomState> & { id: string }): RoomState {
   return {
     id: overrides.id,
     title: overrides.title,
-    membersById: overrides.membersById ?? new Map(),
+    membersById: overrides.membersById ?? new Map<string, MemberInfo>(),
     memberOrder: overrides.memberOrder ?? [],
-    msgs: overrides.msgs ?? new Map(),
+    msgs: overrides.msgs ?? new Map<number, DeliveredEvent & { type: "msg" }>(),
     timeline: overrides.timeline ?? [],
     lastMid: overrides.lastMid ?? 0,
     lastTs: overrides.lastTs ?? null,

@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import type { MemberEvent, PeerInfo, RoomSummary } from "@ccmsg/protocol";
 import { initialState, reducer } from "../src/client/store.ts";
 import { roomsForSession, roomsForSids, sameCwdSids } from "../src/client/rooms-filter.ts";
+import { defined } from "./helpers.ts";
 
 function member(overrides: Partial<MemberEvent> & { id: string; sid: string }): MemberEvent {
   return {
@@ -116,7 +117,7 @@ describe("roomsForSids", () => {
       },
     ];
     const state = reducer(initialState(), { type: "rooms/loaded", rooms: summaries });
-    const own = [state.rooms.get("r1")!];
+    const own = [defined(state.rooms.get("r1"), "room r1")];
     expect(roomsForSids(state.rooms, ["sid-B"], own)).toEqual([]);
   });
 });

@@ -436,7 +436,9 @@ describe("parseTranscriptLine / user turns", () => {
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
-    const seg = line.segments[0] as Extract<Segment, { kind: "tool-result" }>;
+    const seg = line.segments[0];
+    expect(seg.kind).toBe("tool-result");
+    if (seg.kind !== "tool-result") return;
     expect(seg.isError).toBe(true);
   });
 
@@ -457,7 +459,9 @@ describe("parseTranscriptLine / user turns", () => {
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
-    const seg = line.segments[0] as Extract<Segment, { kind: "tool-result" }>;
+    const seg = line.segments[0];
+    expect(seg.kind).toBe("tool-result");
+    if (seg.kind !== "tool-result") return;
     expect(seg.text).toBe("line one");
   });
 
@@ -1150,7 +1154,7 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
       summary: "queue-operation: enqueue",
       raw: enqueue(STOPPED),
     });
-    const kept = lines[1]!;
+    const kept = lines[1];
     expect(kept.kind).toBe("turn");
     if (kept.kind !== "turn") return;
     expect(kept.userMessageKind).toBe("task-notification");
@@ -1168,8 +1172,8 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
         origin: { kind: "human" },
       }),
     ]);
-    expect(lines[0]!.kind).toBe("meta");
-    const kept = lines[1]!;
+    expect(lines[0].kind).toBe("meta");
+    const kept = lines[1];
     expect(kept.kind).toBe("turn");
     if (kept.kind !== "turn") return;
     expect(kept.userMessageKind).toBe("user-prompt");
@@ -1181,7 +1185,7 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   // The queued copy is then the only record of that text and must render.
   test("a queued prompt never delivered stays a rendered turn", () => {
     const lines = parseTranscriptLines([enqueue("pr用のブランチとか")]);
-    const only = lines[0]!;
+    const only = lines[0];
     expect(only.kind).toBe("turn");
     if (only.kind !== "turn") return;
     expect(only.userMessageKind).toBe("user-prompt");
@@ -1202,8 +1206,8 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
         },
       ),
     ]);
-    expect(lines[0]!.kind).toBe("meta");
-    const kept = lines[1]!;
+    expect(lines[0].kind).toBe("meta");
+    const kept = lines[1];
     expect(kept.kind).toBe("turn");
     if (kept.kind !== "turn") return;
     expect(kept.userMessageKind).toBe("peer-message");
@@ -1228,8 +1232,8 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
         { promptSource: "system", origin: { kind: "peer" } },
       ),
     ]);
-    expect(lines[0]!.kind).toBe("meta");
-    const kept = lines[1]!;
+    expect(lines[0].kind).toBe("meta");
+    const kept = lines[1];
     expect(kept.kind).toBe("turn");
     if (kept.kind !== "turn") return;
     expect(kept.userMessageKind).toBe("peer-message");
@@ -1259,8 +1263,8 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
       enqueue(notice),
       delivered(notice, { promptSource: "system", isMeta: true }),
     ]);
-    expect(lines[0]!.kind).toBe("meta");
-    const kept = lines[1]!;
+    expect(lines[0].kind).toBe("meta");
+    const kept = lines[1];
     expect(kept.kind).toBe("turn");
     if (kept.kind !== "turn") return;
     expect(kept.userMessageKind).toBe("cross-session-notice");
@@ -2936,15 +2940,15 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
 
     // Agent 通信は summary で自分のカテゴリを名乗るが、外側 fold と
     // 各通信 details は既定閉。通常 tool segment と他の system message は対象外。
-    expect(send.line.kind === "turn" && isAgentCommunicationSegment(send.line.segments[0]!)).toBe(
+    expect(send.line.kind === "turn" && isAgentCommunicationSegment(send.line.segments[0])).toBe(
       true,
     );
-    expect(spawn.line.kind === "turn" && isAgentCommunicationSegment(spawn.line.segments[0]!)).toBe(
+    expect(spawn.line.kind === "turn" && isAgentCommunicationSegment(spawn.line.segments[0])).toBe(
       true,
     );
     expect(isPeerMessageLine(peer.line)).toBe(true);
     const bashLine = assistantToolUse("Bash");
-    expect(bashLine.kind === "turn" && isAgentCommunicationSegment(bashLine.segments[0]!)).toBe(
+    expect(bashLine.kind === "turn" && isAgentCommunicationSegment(bashLine.segments[0])).toBe(
       false,
     );
     expect(isPeerMessageLine(userToolResult("tu_1"))).toBe(false);
@@ -3104,12 +3108,10 @@ describe("extractCcmsgMessages", () => {
 
     const msgs = extractCcmsgMessages(parseTranscriptLine(actualMid99TranscriptLine));
     expect(msgs.length).toBe(1);
-    expect(msgs[0]!.from).toBe("u1");
-    expect(msgs[0]!.room).toBe("?");
-    expect(msgs[0]!.msg).toContain(
-      "あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。",
-    );
-    expect(msgs[0]!.msg).toContain("切り詰め");
+    expect(msgs[0].from).toBe("u1");
+    expect(msgs[0].room).toBe("?");
+    expect(msgs[0].msg).toContain("あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。");
+    expect(msgs[0].msg).toContain("切り詰め");
   });
 
   // Monitor 通知の <event> は長い msg を「...(truncated)」で切ることがあり、
@@ -3130,10 +3132,10 @@ describe("extractCcmsgMessages", () => {
     );
     const msgs = extractCcmsgMessages(line);
     expect(msgs.length).toBe(1);
-    expect(msgs[0]!.from).toBe("u1");
-    expect(msgs[0]!.room).toBe("r20");
-    expect(msgs[0]!.msg).toContain("さっき間違えて");
-    expect(msgs[0]!.msg).toContain("切り詰め");
+    expect(msgs[0].from).toBe("u1");
+    expect(msgs[0].room).toBe("r20");
+    expect(msgs[0].msg).toContain("さっき間違えて");
+    expect(msgs[0].msg).toContain("切り詰め");
   });
 
   // docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: daemon の
@@ -3155,10 +3157,10 @@ describe("extractCcmsgMessages", () => {
     );
     const msgs = extractCcmsgMessages(line);
     expect(msgs.length).toBe(1);
-    expect(msgs[0]!.from).toBe("a1");
-    expect(msgs[0]!.room).toBe("r30");
-    expect(msgs[0]!.msg).toContain("a very long message body");
-    expect(msgs[0]!.msg).toContain("切り詰め");
+    expect(msgs[0].from).toBe("a1");
+    expect(msgs[0].room).toBe("r30");
+    expect(msgs[0].msg).toContain("a very long message body");
+    expect(msgs[0].msg).toContain("切り詰め");
   });
 
   // 対極 (誤爆防止): truncated marker があっても msg event でない行や、
@@ -3405,7 +3407,7 @@ describe("extractCcmsgMessages", () => {
     );
     const msgs = extractCcmsgMessages(line);
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.mid).toBe(77);
+    expect(msgs[0].mid).toBe(77);
   });
 
   // DR-0027 §2 (truncated fragment 経路): 現行の wire order (msg が最後) では
@@ -3422,7 +3424,7 @@ describe("extractCcmsgMessages", () => {
     );
     const msgs = extractCcmsgMessages(line);
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.mid).toBe(110);
+    expect(msgs[0].mid).toBe(110);
   });
 
   // 対極 (DR-0027 §2.1): canonical lookup key は (r, mid) の組。旧 wire order
@@ -3441,10 +3443,10 @@ describe("extractCcmsgMessages", () => {
     );
     const msgs = extractCcmsgMessages(line);
     expect(msgs).toHaveLength(1);
-    expect(msgs[0]!.room).toBe("?");
-    expect(msgs[0]!.mid).toBeUndefined();
+    expect(msgs[0].room).toBe("?");
+    expect(msgs[0].mid).toBeUndefined();
     // 本文の救済 parse は従来通り生きている (最終フォールバック)。
-    expect(msgs[0]!.msg).toContain("a long body cut before the r field");
+    expect(msgs[0].msg).toContain("a long body cut before the r field");
   });
 });
 
@@ -3865,8 +3867,8 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
     ];
     const groups = groupTimelineLines(lines, [0, 1]);
     expect(groups).toHaveLength(1);
-    expect(groups[0]!.kind).toBe("fold");
-    expect(groups[0]!.kind === "fold" ? groups[0]!.entries : []).toHaveLength(2);
+    expect(groups[0].kind).toBe("fold");
+    expect(groups[0].kind === "fold" ? groups[0].entries : []).toHaveLength(2);
   });
 
   // kawaz r259 m60/m61: fold 内で他の item と同じ「▶ 時刻 ラベル」の 1 行に
@@ -4591,7 +4593,7 @@ describe("parseSystemMessageFields", () => {
     // メッセージのように fold へ沈めず、ユーザ側の流れに standalone で出す。
     test("a `! <cmd>` run is a boundary (stands alone) rather than folding away", () => {
       const [merged] = resolveToolResults([invocation, output]);
-      expect(classifyBoundaryLine(merged!)).toMatchObject({
+      expect(classifyBoundaryLine(merged)).toMatchObject({
         kind: "bash-command",
       });
     });
@@ -4599,10 +4601,10 @@ describe("parseSystemMessageFields", () => {
     // 相方の来なかった出力行も同様に standalone (= バイトを黙って隠さない)。
     test("an orphaned output row still stands alone instead of sinking into a fold", () => {
       const [only] = resolveToolResults([output]);
-      expect(classifyBoundaryLine(only!)).toMatchObject({
+      expect(classifyBoundaryLine(only)).toMatchObject({
         kind: "bash-command-output",
       });
-      expect(groupTimelineLines([only!], [0])).toMatchObject([{ kind: "entry" }]);
+      expect(groupTimelineLines([only], [0])).toMatchObject([{ kind: "entry" }]);
     });
 
     test("parseBashInputText trims the command", () => {
@@ -4920,7 +4922,7 @@ describe("standalone ccmsg in the transcript", () => {
 
   test("a person's envelope is a u1 bubble on the boundary, with the full body", () => {
     const [line] = parse([deliveredRow(ENVELOPE)]);
-    expect(extractCcmsgMessages(line!)).toEqual([
+    expect(extractCcmsgMessages(line)).toEqual([
       {
         from: "u1",
         room: "",
@@ -4929,7 +4931,7 @@ describe("standalone ccmsg in the transcript", () => {
         direct: { direction: "in", id: MID },
       },
     ]);
-    expect(classifyBoundaryLine(line!)).toMatchObject({ kind: "ccmsg" });
+    expect(classifyBoundaryLine(line)).toMatchObject({ kind: "ccmsg" });
   });
 
   test("the queue-operation copy is not a second bubble", () => {
@@ -4942,15 +4944,15 @@ describe("standalone ccmsg in the transcript", () => {
 
   test("an unpaired queue-operation copy yields no bubble either", () => {
     const [line] = parse([enqueueRow]);
-    expect(extractCcmsgMessages(line!)).toEqual([]);
+    expect(extractCcmsgMessages(line)).toEqual([]);
   });
 
   test("a session's envelope is a peer bubble inside the fold, from its sid", () => {
     const [line] = parse([deliveredRow(sessionEnvelope)]);
-    const [message] = extractCcmsgMessages(line!);
+    const [message] = extractCcmsgMessages(line);
     expect(message).toMatchObject({ from: SID, msg: "report", direct: { id: "abc/7" } });
-    expect(classifyBoundaryLine(line!)).toBeNull();
-    expect(ccmsgDedupKey(message!)).toBe("direct-in|abc/7");
+    expect(classifyBoundaryLine(line)).toBeNull();
+    expect(ccmsgDedupKey(message)).toBe("direct-in|abc/7");
   });
 
   test("ccmsg reply to a person with a {} result is a sent bubble", () => {
@@ -4958,7 +4960,7 @@ describe("standalone ccmsg in the transcript", () => {
       bashUse("t1", `ccmsg reply ${MID} 'サンプル受領。確認した'`),
       bashResult("t1", "{}"),
     ]);
-    expect(extractCcmsgMessages(lines[0]!)).toEqual([
+    expect(extractCcmsgMessages(lines[0])).toEqual([
       {
         from: "",
         to: ["u1"],
@@ -4975,7 +4977,7 @@ describe("standalone ccmsg in the transcript", () => {
         },
       },
     ]);
-    expect(classifyBoundaryLine(lines[0]!)).toBeNull();
+    expect(classifyBoundaryLine(lines[0])).toBeNull();
   });
 
   test("post with {delivered:true}, a failing call, and one still waiting for its result", () => {
@@ -4986,16 +4988,16 @@ describe("standalone ccmsg in the transcript", () => {
       bashResult("t3", "Exit code 1\nunknown mid", true),
       bashUse("t4", "ccmsg notify 'done'"),
     ]);
-    expect(extractCcmsgMessages(lines[0]!)[0]).toMatchObject({
+    expect(extractCcmsgMessages(lines[0])[0]).toMatchObject({
       to: [SID],
       msg: "hello",
       direct: { verb: "post", status: "sent" },
     });
-    expect(extractCcmsgMessages(lines[2]!)[0]).toMatchObject({
+    expect(extractCcmsgMessages(lines[2])[0]).toMatchObject({
       to: [SID],
       direct: { status: "failed", error: "Exit code 1\nunknown mid" },
     });
-    expect(extractCcmsgMessages(lines[4]!)[0]).toMatchObject({
+    expect(extractCcmsgMessages(lines[4])[0]).toMatchObject({
       msg: "done",
       direct: { verb: "notify", status: "pending" },
     });
@@ -5013,7 +5015,7 @@ describe("standalone ccmsg in the transcript", () => {
       ),
       bashResult("u1", unconfirmed, true),
     ]);
-    expect(extractCcmsgMessages(lines[0]!)[0]).toMatchObject({
+    expect(extractCcmsgMessages(lines[0])[0]).toMatchObject({
       to: [SID],
       msg: "T6 受領",
       direct: { verb: "reply", status: "unconfirmed", error: unconfirmed },
@@ -5035,7 +5037,7 @@ describe("standalone ccmsg in the transcript", () => {
       "/plugin/bin/ccmsg",
     );
     const [line] = parse([deliveredRow(envelope)]);
-    const [message] = extractCcmsgMessages(line!);
+    const [message] = extractCcmsgMessages(line);
     expect(message).toEqual({
       from: SID,
       room: "",
@@ -5047,8 +5049,8 @@ describe("standalone ccmsg in the transcript", () => {
         replyTo: "0123456789abcdef0123456789abcdef/1",
       },
     });
-    expect(classifyBoundaryLine(line!)).toBeNull();
-    expect(ccmsgDedupKey(message!)).toBe(`direct-in|${directMid}`);
+    expect(classifyBoundaryLine(line)).toBeNull();
+    expect(ccmsgDedupKey(message)).toBe(`direct-in|${directMid}`);
   });
 
   test("this plugin's post <ccmsg:sid> and reply --to (quoted launcher): sent, or failed with why", () => {
@@ -5063,21 +5065,21 @@ describe("standalone ccmsg in the transcript", () => {
         true,
       ),
     ]);
-    expect(extractCcmsgMessages(lines[0]!)[0]).toMatchObject({
+    expect(extractCcmsgMessages(lines[0])[0]).toMatchObject({
       to: [SID],
       msg: "hello",
       direct: { verb: "post", status: "sent" },
     });
-    expect(extractCcmsgMessages(lines[2]!)[0]).toMatchObject({
+    const [failed] = extractCcmsgMessages(lines[2]);
+    expect(failed).toMatchObject({
       to: [SID],
       msg: "answer",
-      direct: {
-        verb: "reply",
-        replyTo: directMid,
-        status: "failed",
-        error: expect.stringContaining("届かなかった (refused)"),
-      },
+      direct: { verb: "reply", replyTo: directMid, status: "failed" },
     });
+    const direct = failed.direct;
+    expect(direct?.direction).toBe("out");
+    if (direct?.direction !== "out") return;
+    expect(direct.error).toContain("届かなかった (refused)");
   });
 
   test("the room CLI's own post ({ok:…}) is left to the room path", () => {
@@ -5085,7 +5087,7 @@ describe("standalone ccmsg in the transcript", () => {
       bashUse("t5", "/plugin/bin/ccmsg post r9 'canonical'"),
       bashResult("t5", '{"ok":true,"room":"r9","mid":2}'),
     ]);
-    expect(extractCcmsgMessages(lines[0]!)).toEqual([]);
+    expect(extractCcmsgMessages(lines[0])).toEqual([]);
   });
 
   test("PushNotification is its own boundary with the notified text", () => {
@@ -5104,8 +5106,8 @@ describe("standalone ccmsg in the transcript", () => {
         ),
       ),
     ]);
-    expect(pushNotificationOf(line!)).toBe("終わりました");
-    expect(classifyBoundaryLine(line!)).toEqual({
+    expect(pushNotificationOf(line)).toBe("終わりました");
+    expect(classifyBoundaryLine(line)).toEqual({
       kind: "push-notification",
       text: "終わりました",
     });
@@ -5121,7 +5123,7 @@ describe("standalone ccmsg in the transcript", () => {
         ]),
       ),
     ]);
-    expect(pushNotificationOf(line!)).toBeNull();
+    expect(pushNotificationOf(line)).toBeNull();
     expect(line?.kind === "turn" ? line.segments[0] : null).toEqual({
       kind: "tool-use",
       name: "PushNotification",
@@ -5167,7 +5169,7 @@ describe("standalone ccmsg delivered mid-turn (queued_command attachment)", () =
   test("the attachment is the u1 bubble on the boundary; the enqueue copy is dropped", () => {
     const lines = resolveToolResults(parseTranscriptLines([queuedEnqueueRow, queuedAttachmentRow]));
     expect(lines[0]).toMatchObject({ kind: "meta", type: "queue-operation" });
-    expect(extractCcmsgMessages(lines[1]!)).toEqual([
+    expect(extractCcmsgMessages(lines[1])).toEqual([
       {
         from: "u1",
         room: "",

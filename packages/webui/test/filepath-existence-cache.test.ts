@@ -47,8 +47,8 @@ describe("filepath-existence-cache", () => {
     await Promise.resolve(); // let queueMicrotask flush
     await Promise.resolve(); // let the async sender resolve
     expect(calls.length).toBe(1);
-    expect(calls[0]!.sid).toBe("s1");
-    expect(calls[0]!.paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
+    expect(calls[0].sid).toBe("s1");
+    expect(calls[0].paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
     expect(getFilePathStatus("s1", "/a.md")).toEqual({ kind: "contained", path: "a.md" });
     expect(getFilePathStatus("s1", "/b.md")).toEqual({ kind: "contained", path: "b.md" });
     expect(getFilePathStatus("s1", "/c.md")).toBeNull();

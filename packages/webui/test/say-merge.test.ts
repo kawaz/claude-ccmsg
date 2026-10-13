@@ -36,12 +36,12 @@ describe("saySlots", () => {
   test("a say newer than the whole window trails the transcript", () => {
     // The live case: the turn that spoke has not been written to the jsonl yet.
     const slots = saySlots(GROUPS, [say("2026-08-31T11:00:00.000Z", 2)]);
-    expect(slots[3]!.map((s) => s.seq)).toEqual([2]);
+    expect(slots[3].map((s) => s.seq)).toEqual([2]);
   });
 
   test("a say older than the window sits at the top rather than vanishing", () => {
     const slots = saySlots(GROUPS, [say("2026-08-31T09:00:00.000Z", 3)]);
-    expect(slots[0]!.map((s) => s.seq)).toEqual([3]);
+    expect(slots[0].map((s) => s.seq)).toEqual([3]);
   });
 
   test("several says in one slot keep chronological order", () => {
@@ -49,7 +49,7 @@ describe("saySlots", () => {
       say("2026-08-31T10:08:00.000Z", 5),
       say("2026-08-31T10:06:00.000Z", 4),
     ]);
-    expect(slots[2]!.map((s) => s.seq)).toEqual([4, 5]);
+    expect(slots[2].map((s) => s.seq)).toEqual([4, 5]);
   });
 
   test("unstamped groups are transparent, not boundaries", () => {

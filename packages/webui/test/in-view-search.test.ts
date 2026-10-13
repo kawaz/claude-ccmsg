@@ -73,7 +73,7 @@ describe("parseSearchQuery", () => {
     expect(unitMatchesQuery("foo or bar", q.words)).toBe(false);
 
     const spaced = parseSearchQuery(" foo ", { caseSensitive: false, regex: true });
-    expect(spaced.words[0]!.text).toBe(" foo ");
+    expect(spaced.words[0].text).toBe(" foo ");
     expect(unitMatchesQuery("x foo y", spaced.words)).toBe(true);
     expect(unitMatchesQuery("foo", spaced.words)).toBe(false);
   });
@@ -116,8 +116,8 @@ describe("parseSearchQuery", () => {
   test("regex mode isolates a per-line compile error without dropping other lines", () => {
     const q = parseSearchQuery("foo(\nbar", { caseSensitive: false, regex: true });
     expect(q.words).toHaveLength(2);
-    expect(q.words[0]!.error).not.toBeNull();
-    expect(q.words[1]!.error).toBeNull();
+    expect(q.words[0].error).not.toBeNull();
+    expect(q.words[1].error).toBeNull();
     expect(q.hasError).toBe(true);
   });
 

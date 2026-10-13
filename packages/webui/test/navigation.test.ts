@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ReplyOf } from "@ccmsg/protocol";
 import { initialState, reducer, type AppState } from "../src/client/store.ts";
 import {
   initialLocatorReady,
@@ -13,7 +14,7 @@ import {
   transcriptContainsUuid,
   urlWithRememberedTimelinePosition,
   type RecentRecord,
-  type WsClient,
+  type RecentProbe,
 } from "../src/client/navigation.ts";
 import type { Locator } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
@@ -31,14 +32,27 @@ function stateWithSession(sid = "s1", cwd = "/repo"): AppState {
   const state = hydratedState();
   return {
     ...state,
-    peers: [{ sid, cwd } as AppState["peers"][number]],
+    peers: [{ sid, cwd, repo: "repo", ws: "main" }],
   };
 }
 
-function wsWithStat(result: unknown): WsClient {
-  return {
-    fsStatBatch: async () => result,
-  } as unknown as WsClient;
+function transcriptReply(lines: string[]): ReplyOf<"transcript_read"> {
+  return { ok: true, sid: "s1", lines, start: 0, end: 0, size: 0 };
+}
+
+/** A probe for a restoration that must not read anything: either read fails
+ * the restoration the way an unreachable daemon would. */
+const unprobed: RecentProbe = {
+  transcriptRead: async () => {
+    throw new Error("transcript_read was not expected");
+  },
+  fsStatBatch: async () => {
+    throw new Error("fs_stat_batch was not expected");
+  },
+};
+
+function wsWithStat(result: ReplyOf<"fs_stat_batch">): RecentProbe {
+  return { ...unprobed, fsStatBatch: async () => result };
 }
 
 const files = (sid: string, path: string | null = null): Locator => ({
@@ -131,14 +145,14 @@ describe("recent session restoration", () => {
   test("a valid non-file recent URL is restored without probing the filesystem", async () => {
     const record = recent("/s/s1/status");
     expect(
-      await recentIsValid(record, "s1", stateWithSession(), wsWithStat(null), "http://localhost"),
+      await recentIsValid(record, "s1", stateWithSession(), unprobed, "http://localhost"),
     ).toBe(true);
     expect(
       await resolveSessionRootTarget(
         record,
         "s1",
         stateWithSession(),
-        wsWithStat(null),
+        unprobed,
         "http://localhost",
       ),
     ).toBe(record.url);
@@ -150,7 +164,7 @@ describe("recent session restoration", () => {
         recent("/s/s1/status"),
         "s1",
         hydratedState(),
-        wsWithStat(null),
+        unprobed,
         "http://localhost",
       ),
     ).toBe(false);
@@ -158,12 +172,13 @@ describe("recent session restoration", () => {
 
   test("relative file recents are checked against the session cwd", async () => {
     let probed: string[] = [];
-    const ws = {
-      fsStatBatch: async (_sid: string, paths: string[]) => {
+    const ws: RecentProbe = {
+      ...unprobed,
+      fsStatBatch: async (_sid, paths) => {
         probed = paths;
-        return { ok: true, results: [{ path: paths[0] }] };
+        return { ok: true, results: [{ kind: "contained", path: paths[0] }] };
       },
-    } as unknown as WsClient;
+    };
     const record = recent("/s/s1/files?path=src%2Fapp.ts");
     expect(await recentIsValid(record, "s1", stateWithSession(), ws, "http://localhost")).toBe(
       true,
@@ -173,12 +188,14 @@ describe("recent session restoration", () => {
 
   test("a timeline UUID recent is valid only when the loaded transcript window contains that row", async () => {
     const record = recent("/s/s1/timeline/u-2");
-    const present = {
-      transcriptRead: async () => ({ ok: true, lines: ['{"uuid":"u-1"}', '{"uuid":"u-2"}'] }),
-    } as unknown as WsClient;
-    const missing = {
-      transcriptRead: async () => ({ ok: true, lines: ['{"uuid":"u-1"}'] }),
-    } as unknown as WsClient;
+    const present: RecentProbe = {
+      ...unprobed,
+      transcriptRead: async () => transcriptReply(['{"uuid":"u-1"}', '{"uuid":"u-2"}']),
+    };
+    const missing: RecentProbe = {
+      ...unprobed,
+      transcriptRead: async () => transcriptReply(['{"uuid":"u-1"}']),
+    };
 
     expect(await recentIsValid(record, "s1", stateWithSession(), present, "http://localhost")).toBe(
       true,
@@ -208,7 +225,7 @@ describe("recent session restoration", () => {
 
   test("an agent TL is never restored for the session root, so the sidebar always lands on the session's own timeline", async () => {
     const state = stateWithSession();
-    const ws = wsWithStat(null);
+    const ws = unprobed;
     for (const url of agentUrls) {
       expect(await recentIsValid(recent(url), "s1", state, ws, "http://localhost")).toBe(false);
       expect(await resolveSessionRootTarget(recent(url), "s1", state, ws, "http://localhost")).toBe(

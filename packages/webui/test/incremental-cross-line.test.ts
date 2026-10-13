@@ -70,7 +70,7 @@ function replay(windows: readonly (readonly string[])[]): CrossLineCache {
   const parses = new Map<string, ReturnType<typeof parseTranscriptLine>>();
   let cache = emptyCrossLineCache();
   for (const window of windows) cache = step(cache, window, parses);
-  const expected = fromScratch(windows[windows.length - 1]!);
+  const expected = fromScratch(windows[windows.length - 1]);
   expect(cache.parsed).toEqual(expected.parsed);
   expect(cache.offsets).toEqual(expected.offsets);
   expect(cache.groups).toEqual(expected.groups);
@@ -114,7 +114,7 @@ function enqueue(content: string): string {
 /** Offsets of every group, the coarse "did the grouping come out the same"
  * signal used where a full toEqual would be noise. */
 function groupOffsets(groups: readonly TimelineGroup[]): number[] {
-  return groups.map((g) => (g.kind === "entry" ? g.offset : g.entries[0]!.offset));
+  return groups.map((g) => (g.kind === "entry" ? g.offset : g.entries[0].offset));
 }
 
 /** How many of `next`'s groups are the *same objects* as `previous`'s. */
@@ -160,10 +160,10 @@ describe("incremental cross-line derivation", () => {
 
     // The tool_use line is rewritten (it now carries its result) and so is the
     // fold group holding it; the user prompt ahead of them is untouched.
-    expect(cache.parsed[0]).toBe(parsedBefore[0]!);
-    expect(cache.parsed[4]).not.toBe(parsedBefore[4]!);
-    expect(cache.groups[0]).toBe(groupsBefore[0]!);
-    expect(cache.groups[1]).not.toBe(groupsBefore[1]!);
+    expect(cache.parsed[0]).toBe(parsedBefore[0]);
+    expect(cache.parsed[4]).not.toBe(parsedBefore[4]);
+    expect(cache.groups[0]).toBe(groupsBefore[0]);
+    expect(cache.groups[1]).not.toBe(groupsBefore[1]);
   });
 
   test("a live-tail append keeps every group ahead of the tail", () => {
@@ -192,7 +192,7 @@ describe("incremental cross-line derivation", () => {
     // Only the trailing fold group grows; the rest are the same objects.
     expect(cache.groups).toHaveLength(before.length);
     expect(sharedGroupCount(before, cache.groups)).toBe(before.length - 1);
-    expect(cache.groups[before.length - 1]).not.toBe(before[before.length - 1]!);
+    expect(cache.groups[before.length - 1]).not.toBe(before[before.length - 1]);
   });
 
   test("a queued turn cancelled by a later delivery re-derives from scratch identically", () => {

@@ -21,6 +21,7 @@ import {
 } from "../src/client/store.ts";
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
+import { defined } from "./helpers.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
@@ -295,15 +296,14 @@ describe("reducer / broadcast kind (DR-0013)", () => {
 });
 
 describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
-  const say = (seq: number, text: string): DeliveredEvent =>
-    ({
-      type: "say",
-      r: "r1",
-      sid: "sid-abcdefgh",
-      text,
-      ts: "2026-08-31T00:00:00.000Z",
-      seq,
-    }) as DeliveredEvent;
+  const say = (seq: number, text: string): DeliveredEvent => ({
+    type: "say",
+    r: "r1",
+    sid: "sid-abcdefgh",
+    text,
+    ts: "2026-08-31T00:00:00.000Z",
+    seq,
+  });
 
   // 輪郭: 未読の追跡は room を開いていなくても動く。サイドバーの 📣 は「まだ
   // 開いていないセッションが鳴らした」を伝えるためのものなので、painted 判定に
@@ -315,7 +315,7 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
     });
     expect(state.rooms.get("r1")?.history).toBe("idle");
     state = dispatch(state, { type: "protocol-event", event: say(7, "hi") });
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([7]);
     // 未 painted の room には bubble を積まない (msg と同じ規則)。
     expect(state.rooms.get("r1")?.timeline).toEqual([]);
   });
@@ -331,7 +331,7 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
     state = dispatch(state, { type: "protocol-event", event: say(7, "hi") });
     state = dispatch(state, { type: "protocol-event", event: say(9, "again") });
     expect(state.rooms.get("r1")?.timeline).toHaveLength(2);
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7, 9]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([7, 9]);
 
     state = dispatch(state, {
       type: "protocol-event",
@@ -341,9 +341,9 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
         ref: 7,
         ts: "2026-08-31T00:00:01.000Z",
         seq: 10,
-      } as DeliveredEvent,
+      },
     });
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([9]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([9]);
     expect(state.rooms.get("r1")?.timeline).toHaveLength(2);
   });
 
@@ -361,13 +361,13 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
     }
     state = dispatch(state, {
       type: "protocol-event",
-      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 } as DeliveredEvent,
+      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 },
     });
     state = dispatch(state, {
       type: "protocol-event",
-      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 } as DeliveredEvent,
+      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 },
     });
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([9]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([9]);
   });
 
   // 輪郭: rooms 応答は未読の正本。別タブで既読にされた分が、再接続後に
@@ -377,12 +377,12 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
       type: "rooms/loaded",
       rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null, say_unread_seqs: [7, 9] }],
     });
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7, 9]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([7, 9]);
     state = dispatch(state, {
       type: "rooms/loaded",
       rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null }],
     });
-    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([]);
+    expect([...defined(state.rooms.get("r1"), "room r1").sayUnread]).toEqual([]);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   sessionInputSendFailure,
   shouldClearAfter,
 } from "../src/client/components/session-input.ts";
+import { defined } from "./helpers.ts";
 
 const ALL_REASONS: SessionInputReason[] = [
   "dialog",
@@ -99,7 +100,7 @@ describe("sessionInputNotice", () => {
       expect(notice?.tone).toBe("danger");
       expect(notice?.title).toBe("届きませんでした");
       expect(notice?.detail).not.toBe("");
-      details.add(notice!.detail);
+      details.add(defined(notice, "the notice").detail);
     }
     expect(details.size).toBe(ALL_REASONS.length);
   });
@@ -109,7 +110,7 @@ describe("sessionInputNotice", () => {
   // 更新、hyoui での起動、対話モード) は具体的な手順を書く。
   test("names the next step for each reason", () => {
     const detail = (reason: SessionInputReason) =>
-      sessionInputNotice({ kind: "not_delivered", reason })!.detail;
+      defined(sessionInputNotice({ kind: "not_delivered", reason }), "the notice").detail;
     expect(detail("dialog")).toContain("ダイアログを閉じてから送り直して");
     expect(detail("no_terminal")).toContain("hyoui で起動したセッションだけ");
     expect(detail("no_terminal")).toContain("端末から直接入力して");

@@ -11,6 +11,7 @@ import {
   cacheRingPhase,
   cacheRingProps,
 } from "../src/client/llm-cache-view.ts";
+import { defined } from "./helpers.ts";
 
 const NOW = 1_785_564_745_000;
 const HOUR_MS = 3_600_000;
@@ -111,7 +112,7 @@ describe("cacheRingPhase", () => {
     expect(cacheRingPhase(chain, NOW)).toEqual({
       phase: "extended",
       start: tsAgo(70 * 60_000),
-      end: chain.cache_until as number,
+      end: defined(chain.cache_until, "the chain's cache_until"),
     });
   });
 
@@ -120,8 +121,8 @@ describe("cacheRingPhase", () => {
     // ring carries on from where it was rather than filling up again.
     const second = cacheRingPhase(chained(70 * 60_000, 300_000, 2), NOW);
     const third = cacheRingPhase(chained(70 * 60_000, 60_000, 3), NOW);
-    expect(third?.start).toBe(second?.start as number);
-    expect(third?.end).toBe(second?.end as number);
+    expect(third?.start).toBe(defined(second, "the ring phase").start);
+    expect(third?.end).toBe(defined(second, "the ring phase").end);
   });
 
   test("a paused chain is drawn as the plain window it has become", () => {
@@ -204,7 +205,7 @@ describe("cacheRingProps", () => {
     const second = cacheRingProps(chained(70 * 60_000, 300_000, 2), NOW);
     const third = cacheRingProps(chained(70 * 60_000, 60_000, 3), NOW);
     expect(third?.class).toBe(second?.class);
-    expect(third?.style).toEqual(second?.style as Record<string, string>);
+    expect(third?.style).toEqual(defined(second, "the ring props").style);
   });
 
   test("a request that cached nothing draws no ring at all", () => {

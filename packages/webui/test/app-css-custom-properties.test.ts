@@ -14,6 +14,7 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { defined } from "./helpers.ts";
 
 const CSS_PATH = path.join(import.meta.dir, "..", "src", "public", "app.css");
 
@@ -32,8 +33,8 @@ function customPropertyDeclarations(): { name: string; value: string; line: numb
   const re = /(--[\w-]+)\s*:\s*([^;{}]*);/g;
   for (let m = re.exec(css); m !== null; m = re.exec(css)) {
     out.push({
-      name: m[1]!,
-      value: m[2]!,
+      name: m[1],
+      value: m[2],
       line: css.slice(0, m.index).split("\n").length,
     });
   }
@@ -72,7 +73,7 @@ describe("app.css custom properties", () => {
         `${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`,
       ).exec(css);
       expect(block, `${selector} block not found`).not.toBeNull();
-      expect(block![1]).toContain(`--md-surface: var(${source})`);
+      expect(defined(block, `${selector} block`)[1]).toContain(`--md-surface: var(${source})`);
     }
   });
 });

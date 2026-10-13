@@ -25,21 +25,6 @@
     "typescript/no-unsafe-member-access": "error",
     "typescript/no-unsafe-return": "error"
   },
-  "overrides": [
-    {
-      "files": ["packages/webui/test/**"],
-      "rules": {
-        "typescript/no-explicit-any": "off",
-        "typescript/no-non-null-assertion": "off",
-        "typescript/consistent-type-assertions": "off",
-        "typescript/no-unsafe-argument": "off",
-        "typescript/no-unsafe-assignment": "off",
-        "typescript/no-unsafe-call": "off",
-        "typescript/no-unsafe-member-access": "off",
-        "typescript/no-unsafe-return": "off"
-      }
-    }
-  ],
   "env": {
     "builtin": true
   },

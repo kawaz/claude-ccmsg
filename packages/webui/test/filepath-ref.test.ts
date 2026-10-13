@@ -21,6 +21,7 @@ import {
   containmentRootOf,
 } from "../src/client/filepath-ref.ts";
 import { fileHref } from "../src/client/locator.ts";
+import { defined } from "./helpers.ts";
 
 describe("looksLikePath", () => {
   test("accepts absolute / relative / repo-relative shapes", () => {
@@ -264,7 +265,10 @@ describe("previewFilePathCtx", () => {
   });
 
   test("a sibling link resolves next to the file, not next to the repo root", () => {
-    const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)!;
+    const ctx = defined(
+      previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT),
+      "the preview ctx",
+    );
     expect(refToAbsolutePath({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
     expect(refToAbsolutePath({ path: "../spec.md" }, ctx)).toBe("/repo/main/docs/spec.md");
   });
@@ -272,7 +276,7 @@ describe("previewFilePathCtx", () => {
   // An absolute link means the same thing under either anchor, so it must not
   // be rebased onto the file's directory.
   test("an absolute link target ignores the anchor", () => {
-    const ctx = previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)!;
+    const ctx = defined(previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT), "the preview ctx");
     expect(refToAbsolutePath({ path: "/etc/hosts" }, ctx)).toBe("/etc/hosts");
   });
 
@@ -334,7 +338,10 @@ describe("previewFilePathCtx (worktree layout: document below the containment ro
   });
 
   test("a resolved target is addressed relative to what the daemon serves from", () => {
-    const ctx = previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER)!;
+    const ctx = defined(
+      previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER),
+      "the preview ctx",
+    );
     expect(refLinkTarget({ path: "decisions/DR-0008.md" }, ctx)).toBe(
       "/repo/main/docs/decisions/DR-0008.md",
     );
@@ -350,7 +357,10 @@ describe("previewFilePathCtx (worktree layout: document below the containment ro
 // root-relative one is a convention the author only might have meant. A
 // root-relative intent 404s and is recovered by `alternateLinkReading` below.
 describe("refLinkTarget", () => {
-  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main")!;
+  const ctx = defined(
+    previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main"),
+    "the preview ctx",
+  );
 
   test("a relative target anchors at the document's own directory", () => {
     expect(refLinkTarget({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
@@ -442,7 +452,10 @@ describe("containmentRootOf", () => {
 // (`refLinkTarget` -> `viewerPathForAbsolute(containmentRootOf(ctx))`).
 describe("markdown link target -> viewer path (message-body ctx)", () => {
   const viewerPath = (target: string, ctx: Parameters<typeof containmentRootOf>[0]) =>
-    viewerPathForAbsolute(refLinkTarget({ path: target }, ctx)!, containmentRootOf(ctx));
+    viewerPathForAbsolute(
+      defined(refLinkTarget({ path: target }, ctx), "the link target"),
+      containmentRootOf(ctx),
+    );
 
   test("an in-project absolute target opens as a contained (relative) path", () => {
     const ctx = { sid: "S1", cwd: "/repo/main" };

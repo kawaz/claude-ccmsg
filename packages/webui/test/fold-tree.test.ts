@@ -82,8 +82,8 @@ describe("foldPathsByOffset", () => {
       assistantText("a"),
     ];
     const { offsets, paths } = build(raws);
-    expect(paths.get(offsets[0]!)).toBeUndefined();
-    expect(paths.get(offsets[4]!)).toBeUndefined();
+    expect(paths.get(offsets[0])).toBeUndefined();
+    expect(paths.get(offsets[4])).toBeUndefined();
   });
 
   test("every entry of a fold group needs only that group's outer fold", () => {
@@ -115,7 +115,7 @@ describe("foldPathsByOffset", () => {
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     expect(fold.entries.length).toBe(1);
-    expect(paths.get(offsets[1]!)).toEqual([]);
+    expect(paths.get(offsets[1])).toEqual([]);
   });
 
   test("a tool-only run of several entries still folds under its own outer fold", () => {
@@ -131,8 +131,8 @@ describe("foldPathsByOffset", () => {
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     const outer = foldGroupKey(fold.entries);
-    expect(paths.get(offsets[1]!)).toEqual([outer]);
-    expect(paths.get(offsets[3]!)).toEqual([outer]);
+    expect(paths.get(offsets[1])).toEqual([outer]);
+    expect(paths.get(offsets[3])).toEqual([outer]);
   });
 
   test("every fold entry is accounted for, and only fold entries are", () => {

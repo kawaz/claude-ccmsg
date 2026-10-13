@@ -138,23 +138,32 @@ describe("alignBottomRight (FAB ↔ panel 位置連動、r46m51)", () => {
 });
 
 describe("isPanelDragHandle", () => {
+  /** An event target with `closest()` (what an Element has), answering a hit
+   * for the selectors `hits` picks. */
+  class ClosestTarget extends EventTarget {
+    constructor(private readonly hits: (sel: string) => boolean) {
+      super();
+    }
+    closest(sel: string): object | null {
+      return this.hits(sel) ? {} : null;
+    }
+  }
+
   test("rejects null / targets without closest()", () => {
     expect(isPanelDragHandle(null)).toBe(false);
     // closest 未実装 = Element ではないので false。
-    expect(isPanelDragHandle({} as EventTarget)).toBe(false);
+    expect(isPanelDragHandle(new EventTarget())).toBe(false);
   });
 
   test("rejects targets inside form controls", () => {
     // closest が form control セレクタにヒットする target (= textarea 上等)。
-    const target = {
-      closest: (sel: string) => (sel.includes("textarea") ? ({} as Element) : null),
-    } as unknown as EventTarget;
+    const target = new ClosestTarget((sel) => sel.includes("textarea"));
     expect(isPanelDragHandle(target)).toBe(false);
   });
 
   test("allows targets outside form controls", () => {
     // closest が何にもヒットしない = 純粋な panel 余白領域。
-    const target = { closest: () => null } as unknown as EventTarget;
+    const target = new ClosestTarget(() => false);
     expect(isPanelDragHandle(target)).toBe(true);
   });
 });
