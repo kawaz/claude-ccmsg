@@ -23,6 +23,14 @@ origin: 自リポ TODO
 
 just test で 1 件が 5 秒 timeout した (1 回のみ、test 名未特定)。2026-10-10 02:xx、段 A (transcript スキーマ) の worker が bun install 直後に /verify 用の隔離 daemon 2 つを並走させながら実行した 1 回目だけ。その後 worker 2 回 + 統括 3 回の `bun test` (daemon 無し) は 3916 pass で再現せず。出力は取り損ねていて test 名・ファイル不明。仮説: daemon 2 つ + playwright の並走による CPU 競合で 5 秒を超えた (未検証)。次に timeout を見たら `bun test 2>&1 | tee` でログを取り、test 名と並走していたプロセスを記録する。
 
+## 2 回目の発生 (2026-10-13 16:3x)
+
+worker unify-ccmsg-address の `just test` 1 回目が 3985 pass / 1 fail / 1 error (189.62 s)。直後の `bun test` と 2 回目の `just test` は 0 fail (133 s)。test 名は今回も出力未保存で不明。
+
+共通点: 1 回目だけ落ちる、落ちた回は 40〜60 s 遅い (10-10 は 127 s vs 100 s)。
+
+次に worker を出す時は委譲プロンプトに「`just test` は必ず `2>&1 | tee <一時ベース>/just-test-N.log` で記録する」を入れる。
+
 ## 受け入れ条件
 
 - [ ] timeout 再発時にログを取得し、test 名と並走プロセスを記録する
