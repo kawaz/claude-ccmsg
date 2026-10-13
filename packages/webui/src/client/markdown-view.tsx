@@ -1109,13 +1109,49 @@ function protectTagLikeAngleBrackets(source: string): {
   };
 }
 
-/** Undo one `protect*` substitution everywhere in the tree: every string field
- * of every node, so protected text inside `code.value` is restored too. */
+/** Undo one `protect*` substitution everywhere in the tree: every field that
+ * carries source text, so protected text inside `code.value` is restored too. */
 function restoreProtectedText(node: Nodes, marker: string, replacement: string): void {
-  for (const [key, field] of Object.entries(node)) {
-    if (typeof field === "string" && field.includes(marker)) {
-      Reflect.set(node, key, field.replaceAll(marker, replacement));
-    }
+  const restore = (text: string): string => text.replaceAll(marker, replacement);
+  const restoreOptional = (text: string | null | undefined): string | null | undefined =>
+    text == null ? text : restore(text);
+  switch (node.type) {
+    case "text":
+    case "inlineCode":
+    case "html":
+      node.value = restore(node.value);
+      break;
+    case "code":
+      node.value = restore(node.value);
+      node.lang = restoreOptional(node.lang);
+      node.meta = restoreOptional(node.meta);
+      break;
+    case "link":
+      node.url = restore(node.url);
+      node.title = restoreOptional(node.title);
+      break;
+    case "image":
+      node.url = restore(node.url);
+      node.title = restoreOptional(node.title);
+      node.alt = restoreOptional(node.alt);
+      break;
+    case "definition":
+      node.url = restore(node.url);
+      node.title = restoreOptional(node.title);
+      node.identifier = restore(node.identifier);
+      node.label = restoreOptional(node.label);
+      break;
+    case "linkReference":
+      node.identifier = restore(node.identifier);
+      node.label = restoreOptional(node.label);
+      break;
+    case "imageReference":
+      node.identifier = restore(node.identifier);
+      node.label = restoreOptional(node.label);
+      node.alt = restoreOptional(node.alt);
+      break;
+    default:
+      break;
   }
   if ("children" in node) {
     for (const child of node.children) restoreProtectedText(child, marker, replacement);
