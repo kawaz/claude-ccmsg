@@ -226,12 +226,19 @@ export function isIgnored(
   isDir: boolean,
   layers: readonly IgnoreLayer[],
 ): boolean {
-  for (const layer of layers.toReversed()) {
+  // Indexed loops rather than `toReversed()`: this runs for every entry the
+  // walk visits, and copying each rule array per path turns the early return
+  // on a late rule into a scan of the whole file.
+  for (let li = layers.length - 1; li >= 0; li--) {
+    const layer = layers.at(li);
+    if (layer === undefined) continue;
     const rel = path.relative(layer.baseDir, absPath);
     // Outside this layer's subtree (shouldn't happen in the walk, but a
     // caller passing an unrelated path shouldn't get a garbage `../..` match).
     if (rel === "" || rel.startsWith("..")) continue;
-    for (const rule of layer.rules.toReversed()) {
+    for (let ri = layer.rules.length - 1; ri >= 0; ri--) {
+      const rule = layer.rules.at(ri);
+      if (rule === undefined) continue;
       if (rule.dirOnly && !isDir) continue;
       if (rule.regex.test(rel)) return !rule.negated;
     }
