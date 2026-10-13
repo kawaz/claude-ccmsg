@@ -261,10 +261,16 @@ export class PeerInjector {
 
   /** Any envelope, already rendered, answered with why when it did not
    * arrive. `configDir` is the CLAUDE_CONFIG_DIR the target session runs
-   * under. */
-  async deliver(configDir: string, sid: string, frame: InjectFrame): Promise<InjectResult> {
+   * under. With `pid`, only the run of the session in that harness process
+   * is written to; without, the first run found. */
+  async deliver(
+    configDir: string,
+    sid: string,
+    frame: InjectFrame,
+    pid?: number,
+  ): Promise<InjectResult> {
     const sessionsDir = path.join(configDir, "sessions");
-    const target = await this.#target(sessionsDir, sid);
+    const target = await this.#target(sessionsDir, sid, pid);
     if (target === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
     const token = await this.#token(sessionsDir, target.pid);
     if (token === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
@@ -322,10 +328,12 @@ export class PeerInjector {
   async #target(
     sessionsDir: string,
     sid: string,
+    runPid: number | undefined,
   ): Promise<{ pid: number; socketPath: string } | undefined> {
     const rows = await this.#rows(sessionsDir, /^\d+\.json$/, ClaudeSessionFileTextSchema);
     for (const row of rows ?? []) {
       if (row === undefined || row.sessionId !== sid) continue;
+      if (runPid !== undefined && row.pid !== runPid) continue;
       const { pid, messagingSocketPath: socketPath, peerProtocol } = row;
       if (socketPath === undefined || socketPath === "") return undefined;
       return peerProtocol === PEER_PROTOCOL ? { pid, socketPath } : undefined;

@@ -18,6 +18,9 @@ import { jsonText, type Output } from "./parse.ts";
 export const ClaudeSessionFileSchema = v.looseObject({
   pid: v.number(),
   sessionId: v.string(),
+  /** The working directory, as a realpath (observed 2026-10-09 with the
+   * session started through a symlink and with a trailing `/`). */
+  cwd: v.optional(v.string()),
   /** The socket the session takes peer messages on. */
   messagingSocketPath: v.optional(v.string()),
   /** The peer protocol generation the socket speaks. */

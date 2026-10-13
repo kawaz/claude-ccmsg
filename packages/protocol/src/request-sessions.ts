@@ -112,6 +112,25 @@ export const MessageSendRequestSchema = v.object({
 });
 export type MessageSendRequest = Output<typeof MessageSendRequestSchema>;
 
+/** Send a message to a `ccmsg:` address: what a session's hooks module does
+ * with a SendMessage it takes over (session role only, DR-0037).
+ *
+ * The daemon resolves `to` to the live session runs it names and writes the
+ * envelope into each run's peer messaging socket (DR-0034), the sender being
+ * `ccmsg:<sid>` of the asking session. It answers delivered when at least one
+ * run took the message: SendMessage has one result for one `to`, and a "not
+ * sent" there would have the sender send again to the runs that did get it.
+ * Unlike message_send, the envelope carries no reply line and no reply_to:
+ * the recipient answers with SendMessage to the envelope's `from`. */
+export const AddressSendRequestSchema = v.object({
+  op: v.literal("address_send"),
+  /** `ccmsg:<sid>`, `ccmsg:<sid>.<pid>` or `ccmsg:path:<dir>`. */
+  to: v.string(),
+  /** Non-empty; delivered exactly as written. */
+  text: v.string(),
+});
+export type AddressSendRequest = Output<typeof AddressSendRequestSchema>;
+
 /** Session-launcher cwd tree (DR-0018 §3.2, user role only). Requested roots
  * may be configured roots or any descendants: descendant roots are required
  * for LN-Q3 lazy expansion after the initial bounded fetch. */

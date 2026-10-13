@@ -64,6 +64,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "message_send", to: 1, text: "hi" },
     ],
   },
+  address_send: {
+    ok: { op: "address_send", to: `ccmsg:path:/w`, text: "hi" },
+    bad: [
+      { op: "address_send", to: `ccmsg:${SID}` },
+      { op: "address_send", to: 1, text: "hi" },
+    ],
+  },
   create_room: {
     ok: {
       op: "create_room",

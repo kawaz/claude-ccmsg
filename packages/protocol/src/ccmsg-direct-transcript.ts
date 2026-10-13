@@ -31,6 +31,7 @@
 // and the schema files beside it, so the browser bundle and the daemon share it
 // as is.
 import * as v from "valibot";
+import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
@@ -73,11 +74,6 @@ function escapeAttribute(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 }
-
-/** The namespace a session is addressed in: `ccmsg:<sid>`. The envelope's
- * `from` / `from-name` carry the sender in it, and a recipient may be written
- * either this way or as the bare sid. */
-export const DIRECT_ADDRESS_PREFIX = "ccmsg:";
 
 /** The sid an address names: `ccmsg:<sid>` loses its prefix, a bare sid stays
  * as written. */
@@ -130,6 +126,19 @@ export interface DirectDeliveryMessage {
  * `ccmsg:<sid>` in both `from` and `from-name`, the ccmsg identity attributes,
  * the text untouched, then the reply line naming `launcher`. */
 export function renderDirectDelivery(m: DirectDeliveryMessage, launcher: string): string {
+  return directEnvelope(m, `${m.text}\n\n${directDeliveryReplyLine(m.mid, m.from, launcher)}`);
+}
+
+/** The envelope a message sent with SendMessage to a `ccmsg:` address reaches
+ * its recipient in (DR-0037 §3): the attributes of `renderDirectDelivery`, the
+ * text untouched and nothing under it. The recipient answers by writing the
+ * envelope's `from` as SendMessage's `to`, which the harness's own SendMessage
+ * tells it to do, so no reply line names a command. */
+export function renderAddressedDelivery(m: Omit<DirectDeliveryMessage, "replyTo">): string {
+  return directEnvelope(m, m.text);
+}
+
+function directEnvelope(m: DirectDeliveryMessage, body: string): string {
   const address = `${DIRECT_ADDRESS_PREFIX}${m.from}`;
   const attributes = [
     `from="${escapeAttribute(address)}"`,
@@ -139,7 +148,6 @@ export function renderDirectDelivery(m: DirectDeliveryMessage, launcher: string)
     `ccmsg-from="${escapeAttribute(m.from)}"`,
     ...(m.replyTo !== undefined ? [`ccmsg-reply-to="${escapeAttribute(m.replyTo)}"`] : []),
   ];
-  const body = `${m.text}\n\n${directDeliveryReplyLine(m.mid, m.from, launcher)}`;
   return `<${TAG} ${attributes.join(" ")}>\n${body}\n</${TAG}>`;
 }
 

@@ -43,6 +43,7 @@ import {
   SubscribeRequestSchema,
 } from "./request-rooms.ts";
 import {
+  AddressSendRequestSchema,
   AgentsRequestSchema,
   DirTreeRequestSchema,
   ForkOriginRequestSchema,
@@ -124,6 +125,7 @@ const OP_REQUEST_SCHEMAS = [
   PostRequestSchema,
   ReplyRequestSchema,
   MessageSendRequestSchema,
+  AddressSendRequestSchema,
   CreateRoomRequestSchema,
   NextRoomRequestSchema,
   SayRequestSchema,

@@ -216,6 +216,11 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "not_delivered", reason: "no_peer_socket" },
     { ok: true, outcome: "unconfirmed", mid: "i1/2" },
   ],
+  address_send: [
+    { ok: true, outcome: "delivered" },
+    { ok: true, outcome: "not_delivered", reason: "no_recipient" },
+    { ok: true, outcome: "unconfirmed" },
+  ],
   create_room: [
     { ok: true, room: "r2", reused: false },
     { ok: true, room: "r3", reused: false, mid: 1, warning: "--members is ignored" },

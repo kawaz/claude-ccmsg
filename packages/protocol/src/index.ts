@@ -10,6 +10,7 @@ export * from "./paths.ts";
 export * from "./config-migration.ts";
 export * from "./search-query.ts";
 export * from "./file-search-query.ts";
+export * from "./ccmsg-address.ts";
 export * from "./ccmsg-direct-transcript.ts";
 export * from "./parse.ts";
 export * from "./json-value.ts";

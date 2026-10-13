@@ -16,6 +16,7 @@
 // (tests depend on them).
 import * as os from "node:os";
 import * as path from "node:path";
+import { isSessionIdShape } from "./ccmsg-address.ts";
 
 export interface Paths {
   stateDir: string;
@@ -72,14 +73,6 @@ const MAX_SOCKET_PATH = 104;
  * be loaded into one session run. Sharing a directory would have the two
  * sidecars of one run unlink each other's `<sid>.<pid>.sock` (DR-0035 §3). */
 export const SIDECAR_DIR = "sidecars";
-
-/** A session id as it may become part of a socket name: a separator in it
- * would name a file outside the directory. */
-const SID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-export function isSessionIdShape(sid: string): boolean {
-  return SID_SHAPE.test(sid);
-}
 
 /** `<sid>.<pid>.sock`: one socket per run of a session, the pid being the
  * harness process's, so two runs of one session (a resume started twice) do

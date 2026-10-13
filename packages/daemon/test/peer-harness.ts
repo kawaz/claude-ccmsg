@@ -82,21 +82,34 @@ export interface FakeHarness {
  *
  * `readAfterMs`: the socket starts reading each connection that long after
  * accepting it, so a write bigger than its buffer finishes only then. Frames
- * are recorded and answered as usual. */
+ * are recorded and answered as usual.
+ *
+ * `pid` names the harness process (a pid no process has by default; a live
+ * one for what looks for running processes), `cwd` is the working directory
+ * the state file records, and `configDir` puts this run into another
+ * harness's config dir, as a second run of the same config home. */
 export function fakeHarness(
   sid: string,
-  opts: { peerProtocol?: number; stall?: boolean; readAfterMs?: number } = {},
+  opts: {
+    peerProtocol?: number;
+    stall?: boolean;
+    readAfterMs?: number;
+    pid?: number;
+    cwd?: string;
+    configDir?: string;
+  } = {},
 ): FakeHarness {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
+  const configDir = opts.configDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
   const sockDir = fs.mkdtempSync("/tmp/pi-");
   const socketPath = path.join(sockDir, "s.sock");
-  const pid = 424242;
-  fs.mkdirSync(path.join(configDir, "sessions"));
+  const pid = opts.pid ?? 424242;
+  fs.mkdirSync(path.join(configDir, "sessions"), { recursive: true });
   fs.writeFileSync(
     path.join(configDir, "sessions", `${pid}.json`),
     JSON.stringify({
       pid,
       sessionId: sid,
+      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       messagingSocketPath: socketPath,
       peerProtocol: opts.peerProtocol ?? 1,
     }),
@@ -124,7 +137,8 @@ export function fakeHarness(
     stop: () => stopServer(),
     dispose: () => {
       stopServer();
-      fs.rmSync(configDir, { recursive: true, force: true });
+      // A config dir lent by another harness is that harness's to remove.
+      if (opts.configDir === undefined) fs.rmSync(configDir, { recursive: true, force: true });
       fs.rmSync(sockDir, { recursive: true, force: true });
     },
   };

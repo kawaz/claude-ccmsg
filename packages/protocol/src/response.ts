@@ -46,6 +46,7 @@ import {
   SubscribeAckSchema,
 } from "./response-rooms.ts";
 import {
+  AddressSendResponseSchema,
   AgentsResponseSchema,
   DirTreeResponseSchema,
   ForkOriginResponseSchema,
@@ -104,6 +105,7 @@ export const RESPONSE_SCHEMAS = {
   post: PostResponseSchema,
   reply: ReplyResponseSchema,
   message_send: MessageSendResponseSchema,
+  address_send: AddressSendResponseSchema,
   create_room: CreateRoomResponseSchema,
   next_room: NextRoomResponseSchema,
   say: SayResponseSchema,

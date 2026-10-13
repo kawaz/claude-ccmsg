@@ -117,8 +117,9 @@ import { deriveRepoWs } from "./repo-derive.ts";
 import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
+import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
 import { productionInputDeps, sessionInput } from "./session-input.ts";
-import { RunPids, SidecarReplies } from "./sidecar-call.ts";
+import { isProcessAlive, RunPids, SidecarReplies } from "./sidecar-call.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -133,6 +134,7 @@ import {
 import {
   agentsPollEnabled,
   createAgentsPoller,
+  detectConfigDirs,
   startAgentsPoller,
   stopAgentsPoller,
   type AgentsPoll,
@@ -812,6 +814,17 @@ function clientBuildFields(
     ...(s.clientProtocol !== undefined ? { protocol: s.clientProtocol } : {}),
     ...(stale ? { stale_client: stale } : {}),
   };
+}
+
+/** The CLAUDE_CONFIG_DIRs whose sessions an address_send may reach: those the
+ * agents poll scans, and those sessions announced in hello. Like the poll, a
+ * daemon that does not poll (a test daemon) scans no config dir of its own
+ * finding, so it never reaches the sessions running on the machine. */
+function knownConfigDirs(daemon: Daemon): string[] {
+  const announced = [...daemon.sessions.values()].flatMap((s) =>
+    s.configDir !== undefined ? [s.configDir] : [],
+  );
+  return [...new Set([...(agentsPollEnabled() ? detectConfigDirs() : []), ...announced])];
 }
 
 /** currentPeers() as one session sees it: every peer running under the same
@@ -1549,6 +1562,7 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "post",
   "message_send",
+  "address_send",
   "say",
   "say_read",
   "create_room",
@@ -1996,6 +2010,39 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           issueMid: daemon.issueDirectMid,
           deliver: (configDir, sid, frame) => daemon.peerInjector.deliver(configDir, sid, frame),
           launcher: daemon.launcher,
+          log: (line) => daemon.log.info(line),
+        },
+      );
+      send(conn, { ok: true, ...outcome });
+      return;
+    }
+
+    case "address_send": {
+      // Session role only: the sender is the session whose hooks module took
+      // the SendMessage over (DR-0037 §2), and becomes the envelope's from.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "address_send is sent by a session; a person's input reaches a session through session_input",
+        );
+        return;
+      }
+      if (req.text === "") {
+        sendErr(conn, ErrorCode.invalid_args, "address_send requires a non-empty text");
+        return;
+      }
+      // Waits for every run's write and refusal window (DR-0034 §2), the runs
+      // in parallel; other requests on this connection run on meanwhile.
+      const outcome = await sendToAddress(
+        { from: id.sid, to: req.to, text: req.text },
+        {
+          runs: () => liveRuns(knownConfigDirs(daemon), isProcessAlive),
+          realpath: realpathOrUndefined,
+          issueMid: daemon.issueDirectMid,
+          deliver: (run, frame) =>
+            daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
           log: (line) => daemon.log.info(line),
         },
       );
