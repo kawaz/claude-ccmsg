@@ -6,10 +6,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   AllowedOriginsTextSchema,
+  type AddressSendReason,
   DIRECT_DELIVERY_USER_SENDER,
   DIRECT_SEND_UNCONFIRMED_EXIT,
   VERSION,
   directAddressSid,
+  errorText,
   isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
@@ -25,6 +27,7 @@ import {
   type MessageSendRequest,
   type ReplyOf,
   type RequestInput,
+  type SendMessageResult,
   type SessionStateFile,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
@@ -434,13 +437,15 @@ async function runDirectSend(
 // --- sidecar ---------------------------------------------------------------
 
 const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
-session, and the way the module's replies go back. Not for direct use.
+session, and the way the module's replies and the SendMessage messages it takes
+over go to the daemon. Not for direct use.
 `;
 
-/** `ccmsg sidecar` and `ccmsg sidecar reply` (DR-0035 §3). Both are the
- * hooks module's: it starts the first for its session's life and runs the
- * second to answer a request the first copied to it. The help says no more
- * than that on purpose (DR-0035 §4). */
+/** `ccmsg sidecar`, `ccmsg sidecar reply` (DR-0035 §3) and `ccmsg sidecar
+ * send` (DR-0037 §2). All are the hooks module's: it starts the first for its
+ * session's life, runs the second to answer a request the first copied to it,
+ * and the third to send a SendMessage to a `ccmsg:` address. The help says no
+ * more than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -449,6 +454,10 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   }
   if (positionals[0] === "reply") {
     await runSidecarReply(opts);
+    return;
+  }
+  if (positionals[0] === "send") {
+    await runSidecarSend(positionals.slice(1), opts);
     return;
   }
   if (positionals.length > 0) {
@@ -522,6 +531,102 @@ async function runSidecarReply(opts: Record<string, string | boolean>): Promise<
   const identity = resolveSessionIdentity(opts, "sidecar");
   if (identity === null) refuseWriteWithoutSid("sidecar reply");
   return runOnce(identity, { op: "sidecar_reply", reply: read.value });
+}
+
+/** What the sending agent reads when its SendMessage reached nobody: why,
+ * and what it can do next. Inside the harness's "Not sent: a plugin hook
+ * refused it (<reason>)", so no parenthesis of its own. */
+const ADDRESS_NOT_DELIVERED: Record<AddressSendReason, (to: string) => string> = {
+  invalid_address: (to) =>
+    `宛先 ${to} は ccmsg:<sid>、ccmsg:<sid>.<pid>、ccmsg:path:<絶対パス> のどれでもない。ccmsg peers で宛先の綴りを確かめて送り直す`,
+  self: (to) => `宛先 ${to} は送り主自身のセッションなので送らない`,
+  no_recipient: (to) =>
+    `宛先 ${to} に当たる生きているセッションが無い。終了したか、sid や pid の誤りか、そのディレクトリで動くセッションが送り主のほかに無い。ccmsg peers で今いるセッションの宛先を確かめて送り直すか、送るのをやめる`,
+  no_peer_socket: () =>
+    "宛先のセッションの peer socket が見つからない。終了した直後か、peer messaging に対応しない Claude Code。ccmsg peers で宛先がまだ居るか確かめ、居なければ送るのをやめる",
+  no_status_socket: () =>
+    "受け手の受領拒否を聞く socket を送り手側で作れなかったため、送っていない。daemon の側の問題なので、少し置いて一度だけ送り直し、また同じなら送るのをやめる",
+  unreachable: () =>
+    "宛先のセッションの peer socket に書き込めなかった。終了した直後か、応答しない。少し置いて一度だけ送り直すか、送るのをやめる",
+  refused: () =>
+    "宛先のセッションが受け取りを拒否した。送り直しても拒否されうるので、時間を置いて送り直すか、送るのをやめる",
+};
+
+/** The reason for a send whose arrival cannot be told: sending again may
+ * deliver it twice. */
+const ADDRESS_SEND_UNCONFIRMED =
+  "届いたか確かめられなかった。宛先の peer socket への書き込みが途中で時間切れになった。送り直すと二重に届くかもしれないので、まず相手の返事を待ち、送り直す時は重複しうることを本文に書く";
+
+/** `ccmsg sidecar send --sid <sid> --to <address> <file>` (DR-0037 §2): send
+ * the text in `<file>` to a `ccmsg:` address as session `<sid>`, and print the
+ * result the hooks module hands the harness for the SendMessage it took over
+ * — `{"isDelivered":true}` or `{"isDelivered":false,"reason":…}` — exiting 0.
+ * Only arguments that do not make a send exit non-zero, with why on stderr.
+ *
+ * The text comes from a file named by path: the module names `/dev/stdin` and
+ * writes the text there with `$.process.run`'s `stdin`, so it never becomes an
+ * argument (bounded in size, and shown to every user by `ps`). */
+async function runSidecarSend(
+  positionals: string[],
+  opts: Record<string, string | boolean>,
+): Promise<never> {
+  const usage = "ccmsg sidecar send --sid <sid> --to <address> <file>";
+  const to = str(opts, "to");
+  const [file, ...extra] = positionals;
+  if (to === undefined || file === undefined || extra.length > 0) {
+    process.stderr.write(`ccmsg sidecar send: usage: ${usage}\n`);
+    process.exit(2);
+  }
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar send");
+  let text: string;
+  try {
+    text = await Bun.file(file).text();
+  } catch (e) {
+    process.stderr.write(`ccmsg sidecar send: cannot read ${file}: ${errorText(e)}\n`);
+    process.exit(2);
+  }
+  const result = await sendToAddress(identity, to, text);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  process.exit(0);
+}
+
+async function sendToAddress(
+  identity: Identity,
+  to: string,
+  text: string,
+): Promise<SendMessageResult> {
+  let client: Client;
+  try {
+    client = await ensureDaemon(resolvePaths(), identity);
+  } catch (e) {
+    return {
+      isDelivered: false,
+      reason: `ccmsg の daemon に繋がらず、送っていない: ${errorText(e)}。少し置いて一度だけ送り直す`,
+    };
+  }
+  let res: ReplyOf<"address_send">;
+  try {
+    res = await client.request({ op: "address_send", to, text });
+  } catch (e) {
+    return {
+      isDelivered: false,
+      reason: `daemon の返事を受け取れず、届いたか確かめられなかった: ${errorText(e)}。送り直すと二重に届くかもしれないので、まず相手の返事を待つ`,
+    };
+  } finally {
+    client.close();
+  }
+  if (!res.ok) {
+    return { isDelivered: false, reason: `daemon が送信を受け付けなかった: ${res.error.msg}` };
+  }
+  switch (res.outcome) {
+    case "delivered":
+      return { isDelivered: true };
+    case "unconfirmed":
+      return { isDelivered: false, reason: ADDRESS_SEND_UNCONFIRMED };
+    case "not_delivered":
+      return { isDelivered: false, reason: ADDRESS_NOT_DELIVERED[res.reason](to) };
+  }
 }
 
 // --- say -------------------------------------------------------------------

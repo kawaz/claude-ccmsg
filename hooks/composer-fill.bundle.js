@@ -681,6 +681,8 @@ function safeParse(schema, input, config$1) {
   };
 }
 
+var DIRECT_ADDRESS_PREFIX = "ccmsg:";
+
 function failureOf(issues) {
   const read = issues.map((issue) => ({
     path: getDotPath(issue) ?? "",
@@ -767,6 +769,14 @@ var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
 }
+var SendMessageResultSchema = variant("isDelivered", [
+  object({ isDelivered: literal(true) }),
+  object({
+    isDelivered: literal(false),
+    reason: pipe(string(), nonEmpty("a reason is not empty"))
+  })
+]);
+var SendMessageResultTextSchema = jsonText(SendMessageResultSchema);
 
 var SessionStartInputSchema = looseObject({
   isInteractive: optional(boolean()),
@@ -779,6 +789,7 @@ var PromptSubmitInputSchema = looseObject({
   text: optional(string()),
   origin: optional(looseObject({ kind: optional(string()) }))
 });
+var SessionSendInputSchema = looseObject({ to: string(), text: string() });
 async function observe($, e, next, event, schema, observer) {
   const read = parseWith(schema, e);
   if (!read.ok)
@@ -800,6 +811,7 @@ async function observe($, e, next, event, schema, observer) {
 var HYOUI_TIMEOUT_MS = 3000;
 var ACCEPT_WAIT_MS = 3000;
 var REPLY_TIMEOUT_MS = 3000;
+var SEND_TIMEOUT_MS = 1e4;
 var RESPAWN_MIN_MS = 500;
 var RESPAWN_MAX_MS = 30000;
 var STABLE_MS = 1e4;
@@ -917,6 +929,46 @@ async function sendReply($, sid, reply) {
   } catch (e) {
     $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }
+}
+function sendArgv(root, sid, to) {
+  return [`${root}/bin/ccmsg`, "sidecar", "send", "--sid", sid, "--to", to, "/dev/stdin"];
+}
+var SEND_UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
+async function sendToAddress($, to, text) {
+  try {
+    return await sendThroughDaemon($, to, text);
+  } catch (e) {
+    return {
+      isDelivered: false,
+      reason: `送信の途中で失敗し、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`
+    };
+  }
+}
+async function sendThroughDaemon($, to, text) {
+  const sid = await $.session.id();
+  let run;
+  try {
+    run = await $.process.run(sendArgv($.plugin.root, sid, to), {
+      stdin: text,
+      timeoutMs: SEND_TIMEOUT_MS
+    });
+  } catch (e) {
+    $.ui.log(`ccmsg: send to ${to} failed: ${errorText(e)}`, { to: "debug" });
+    return {
+      isDelivered: false,
+      reason: `ccmsg sidecar send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`
+    };
+  }
+  const result = parseWith(SendMessageResultTextSchema, run.stdout);
+  if (result.ok)
+    return result.value;
+  const said = run.stderr.trim().split(`
+`)[0] ?? "";
+  $.ui.log(`ccmsg: send to ${to} exited ${String(run.exitCode)} without a result (${result.failure.summary}): ${run.stderr.trim()}`, { to: "debug" });
+  return {
+    isDelivered: false,
+    reason: `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${SEND_UNCONFIRMED_ADVICE}`
+  };
 }
 async function promptSend($, state, request) {
   if (request.generation !== state.generation || request.sid !== state.sid) {
@@ -1072,6 +1124,12 @@ function register(on) {
         await putBackDraft($, restoring.text, restoring.draft);
     }
   })).catch(async (_$, e, next) => next(e));
+  on("session.send", async ($, e, next) => {
+    const read = parseWith(SessionSendInputSchema, e);
+    if (!read.ok || !read.value.to.startsWith(DIRECT_ADDRESS_PREFIX))
+      return next(e);
+    return sendToAddress($, read.value.to, read.value.text);
+  });
   return state;
 }
 export {
@@ -1080,6 +1138,7 @@ export {
   REPLY_TIMEOUT_MS,
   RESPAWN_MAX_MS,
   RESPAWN_MIN_MS,
+  SEND_TIMEOUT_MS,
   STABLE_MS,
   answer,
   handlePromptSend,
@@ -1088,5 +1147,7 @@ export {
   newState,
   register,
   replyArgv,
-  samePrompt
+  samePrompt,
+  sendArgv,
+  sendToAddress
 };

@@ -6,6 +6,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./address": "./src/ccmsg-address.ts",
     "./parse": "./src/parse.ts",
     "./sidecar": "./src/sidecar.ts"
   },

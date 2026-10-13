@@ -16,6 +16,15 @@
 // fires for that text. The draft is filled back right after the submit.
 // `describe` says which ops the module has.
 //
+// A SendMessage to a `ccmsg:` address (DR-0037) is taken over at
+// session.send: harness SendMessage reaches only the sessions of its own
+// config home, so the module hands the message to the daemon through `ccmsg
+// sidecar send`, which delivers it to the sessions the address names in any
+// config home. The hook answers with the send's result and never throws: a
+// throwing session.send hook has the harness look the address up as an agent
+// name of its own, which hides why the message did not go. Any other
+// SendMessage goes on to the harness untouched.
+//
 // A session without a composer (`-p`, the SDK) gets no sidecar. When the
 // session changes its id (/clear, /resume) the module moves on a generation:
 // a request that arrived under the old id is not put into the new session.
@@ -33,12 +42,15 @@
 // each hook is a function literal, and `$` is passed only to functions
 // declared at the top of the file.
 import * as v from "valibot";
+import { DIRECT_ADDRESS_PREFIX } from "@ccmsg/protocol/address";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
   type FailedSidecarReply,
   type PromptSendResult,
   readSidecarRequest,
+  type SendMessageResult,
+  SendMessageResultTextSchema,
   SIDECAR_OP_NAMES,
   SIDECAR_REQUEST_VERSION,
   type SidecarErrorCode,
@@ -85,18 +97,28 @@ export interface Engine {
   ui: { log(text: string, options?: { to?: "debug" }): void };
 }
 
-/** The events this module hooks. */
-export type HookedEvent =
+/** The events this module observes and passes on. */
+export type ObservedEvent =
   | "session.start"
   | "session.end"
   | "classic.SessionStart"
   | "classic.UserPromptSubmit"
   | "prompt.submit";
 
+/** The events this module hooks. */
+export type HookedEvent = ObservedEvent | "session.send";
+
 /** A hook: generic in the event's input and in its result, so all it can do
  * with either is read the input through a schema and pass both on as
  * received. */
 export type Hook = <E, R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promise<R>;
+/** The session.send hook: it passes the event on, or settles it with a
+ * result of its own instead (DR-0037 §2). */
+export type SendHook = <E, R>(
+  $: Engine,
+  e: E,
+  next: (e: E) => Promise<R>,
+) => Promise<R | SendMessageResult>;
 /** What `on(...)` returns: one `.catch`, run in the hook's place when the
  * hook throws or overruns its budget. The engine's `next` there is
  * replay-safe: after the hook called it, it answers what that call settled
@@ -104,7 +126,10 @@ export type Hook = <E, R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promis
 export interface Registration {
   catch(handler: Hook): void;
 }
-export type On = (event: HookedEvent, hook: Hook) => Registration;
+export interface On {
+  (event: "session.send", hook: SendHook): Registration;
+  (event: ObservedEvent, hook: Hook): Registration;
+}
 
 // The engine's input for each event, as far as this module reads it. The
 // engine is another program, and its inputs change between its versions, so
@@ -122,6 +147,7 @@ const PromptSubmitInputSchema = v.looseObject({
   text: v.optional(v.string()),
   origin: v.optional(v.looseObject({ kind: v.optional(v.string()) })),
 });
+const SessionSendInputSchema = v.looseObject({ to: v.string(), text: v.string() });
 
 /** What a hook of this module does with an event it observes: `before` runs
  * ahead of the event, `after` once the event went through. */
@@ -146,7 +172,7 @@ async function observe<E, R, S extends v.GenericSchema>(
   $: Engine,
   e: E,
   next: (e: E) => Promise<R>,
-  event: HookedEvent,
+  event: ObservedEvent,
   schema: S,
   observer: Observer<Output<S>>,
 ): Promise<R> {
@@ -182,6 +208,13 @@ export const ACCEPT_WAIT_MS = 3_000;
  * at about 0.3 s. `ccmsg version` for describe is the same process without
  * the round trip. */
 export const REPLY_TIMEOUT_MS = 3_000;
+/** `ccmsg sidecar send` budget, for the whole SendMessage: the process, the
+ * daemon resolving the address (its state files read within 1 s), and every
+ * run's write (2 s) and refusal window (0.25 s), the runs in parallel — about
+ * 5 s at worst, with the rest left for a daemon the command has to start. The
+ * harness shows the turn as running meanwhile; past this the send is answered
+ * as unconfirmed rather than hit `$.process.run`'s own 30 s, which throws. */
+export const SEND_TIMEOUT_MS = 10_000;
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar
  * has lived STABLE_MS. */
@@ -379,6 +412,69 @@ async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
   } catch (e) {
     $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }
+}
+
+/** `ccmsg sidecar send` for one SendMessage of session `sid` to `to`. The
+ * text goes on standard input, named to the command as `/dev/stdin` (see
+ * `sendToAddress`). */
+export function sendArgv(root: string, sid: string, to: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", "send", "--sid", sid, "--to", to, "/dev/stdin"];
+}
+
+/** The text of a send whose arrival cannot be told. */
+const SEND_UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
+
+/** Send `text` to the `ccmsg:` address `to` through the daemon, and settle
+ * the SendMessage with how it went. Never rejects: whatever fails is a
+ * not-delivered result saying so, since a session.send hook that throws has
+ * the harness send to `to` as an agent name of its own.
+ *
+ * The text goes on standard input rather than as an argument: a message may
+ * be long, an argument is bounded in size and shown to every user by `ps`,
+ * and `$.process.run` writes `stdin` once and closes it. The command takes it
+ * from a file named by path, as its other users do, and `/dev/stdin` is that
+ * file here. */
+export async function sendToAddress(
+  $: Engine,
+  to: string,
+  text: string,
+): Promise<SendMessageResult> {
+  try {
+    return await sendThroughDaemon($, to, text);
+  } catch (e) {
+    return {
+      isDelivered: false,
+      reason: `送信の途中で失敗し、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`,
+    };
+  }
+}
+
+async function sendThroughDaemon($: Engine, to: string, text: string): Promise<SendMessageResult> {
+  const sid = await $.session.id();
+  let run: { exitCode: number; stdout: string; stderr: string };
+  try {
+    run = await $.process.run(sendArgv($.plugin.root, sid, to), {
+      stdin: text,
+      timeoutMs: SEND_TIMEOUT_MS,
+    });
+  } catch (e) {
+    $.ui.log(`ccmsg: send to ${to} failed: ${errorText(e)}`, { to: "debug" });
+    return {
+      isDelivered: false,
+      reason: `ccmsg sidecar send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`,
+    };
+  }
+  const result = parseWith(SendMessageResultTextSchema, run.stdout);
+  if (result.ok) return result.value;
+  const said = run.stderr.trim().split("\n")[0] ?? "";
+  $.ui.log(
+    `ccmsg: send to ${to} exited ${String(run.exitCode)} without a result (${result.failure.summary}): ${run.stderr.trim()}`,
+    { to: "debug" },
+  );
+  return {
+    isDelivered: false,
+    reason: `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${SEND_UNCONFIRMED_ADVICE}`,
+  };
 }
 
 async function promptSend(
@@ -599,5 +695,13 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
+  // No `.catch` here: the hook does not throw (sendToAddress settles every
+  // failure as a result), and a `.catch` passing the event on to `next` would
+  // send a `ccmsg:` address to the harness as an agent name (DR-0037 §4).
+  on("session.send", async ($, e, next) => {
+    const read = parseWith(SessionSendInputSchema, e);
+    if (!read.ok || !read.value.to.startsWith(DIRECT_ADDRESS_PREFIX)) return next(e);
+    return sendToAddress($, read.value.to, read.value.text);
+  });
   return state;
 }

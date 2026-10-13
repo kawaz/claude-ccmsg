@@ -1,6 +1,7 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
-// carries the module's reply to the daemon.
+// carries the module's reply to the daemon; `ccmsg sidecar send` (DR-0037 §2)
+// sends a SendMessage the module took over and prints its result.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -9,6 +10,7 @@ import {
   jsonText,
   parseWith,
   resolveSidecarDir,
+  SendMessageResultTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
   sidecarSocketName,
@@ -22,6 +24,7 @@ import {
   waitConnectable,
   type DaemonCtx,
 } from "../../daemon/test/helpers.ts";
+import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -268,33 +271,33 @@ function runReply(stdin: string, env: Record<string, string>) {
   });
 }
 
-describe("ccmsg sidecar reply", () => {
-  async function startShortDaemon(): Promise<DaemonCtx> {
-    const base = shortBase();
-    const stateDir = path.join(base, "s");
-    const dataDir = path.join(base, "d");
-    fs.mkdirSync(stateDir);
-    fs.mkdirSync(dataDir);
-    const proc = spawnDaemonProc(stateDir, dataDir);
-    const sock = path.join(stateDir, "daemon.sock");
-    await waitConnectable(sock);
-    return {
-      base,
-      stateDir,
-      configDir: testConfigDir(dataDir),
-      dataDir,
-      roomsDir: path.join(dataDir, "rooms"),
-      sock,
-      proc,
-      env: {
-        CCMSG_STATE_DIR: stateDir,
-        CCMSG_CONFIG_DIR: testConfigDir(dataDir),
-        CCMSG_DATA_DIR: dataDir,
-        CCMSG_NO_SELF_EXEC: "1",
-      },
-    };
-  }
+async function startShortDaemon(): Promise<DaemonCtx> {
+  const base = shortBase();
+  const stateDir = path.join(base, "s");
+  const dataDir = path.join(base, "d");
+  fs.mkdirSync(stateDir);
+  fs.mkdirSync(dataDir);
+  const proc = spawnDaemonProc(stateDir, dataDir);
+  const sock = path.join(stateDir, "daemon.sock");
+  await waitConnectable(sock);
+  return {
+    base,
+    stateDir,
+    configDir: testConfigDir(dataDir),
+    dataDir,
+    roomsDir: path.join(dataDir, "rooms"),
+    sock,
+    proc,
+    env: {
+      CCMSG_STATE_DIR: stateDir,
+      CCMSG_CONFIG_DIR: testConfigDir(dataDir),
+      CCMSG_DATA_DIR: dataDir,
+      CCMSG_NO_SELF_EXEC: "1",
+    },
+  };
+}
 
+describe("ccmsg sidecar reply", () => {
   // The whole route the module uses: the daemon writes to the sidecar, the
   // sidecar copies the request out, and `sidecar reply` answers it.
   test("answers the session_input request the sidecar copied out", async () => {
@@ -356,4 +359,86 @@ describe("ccmsg sidecar reply", () => {
       expect(await new Response(proc.stderr).text()).toContain(says);
     });
   }
+});
+
+/** `ccmsg sidecar send` as the module's `$.process.run` runs it: the text on
+ * standard input, named as `/dev/stdin`. */
+async function runSend(
+  args: string[],
+  stdin: string,
+  env: Record<string, string | undefined>,
+): Promise<{ code: number; out: string; err: string }> {
+  const proc = Bun.spawn([process.execPath, CLI, "sidecar", "send", ...args], {
+    env,
+    stdin: new TextEncoder().encode(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { code, out, err };
+}
+
+/** The reason a printed result gives for a send that reached nobody. */
+function notDeliveredReason(out: string): string {
+  const read = parseWith(SendMessageResultTextSchema, out);
+  if (!read.ok || read.value.isDelivered) throw new Error(`not a refused send: ${out}`);
+  return read.value.reason;
+}
+
+describe("ccmsg sidecar send", () => {
+  const OTHER = "22222222-2222-4333-8444-555555555555";
+
+  test("sends the text on standard input to the address, and prints that it was delivered", async () => {
+    const ctx = await startShortDaemon();
+    // The recipient's state file names a running process: this test's.
+    const harness = fakeHarness(OTHER, { pid: process.pid });
+    try {
+      // The sender announces the config dir it runs under, which the daemon
+      // then looks for the recipient in.
+      const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: harness.configDir };
+      const text = "line 1\n`not run` $HOME 'quoted' \"double\"\n";
+      const sent = await runSend(["--sid", SID, "--to", `ccmsg:${OTHER}`, "/dev/stdin"], text, env);
+      expect(sent).toEqual({ code: 0, out: '{"isDelivered":true}\n', err: "" });
+      const { attrs, body } = parseEnvelope(await harness.nextContent());
+      expect(attrs.from).toBe(`ccmsg:${SID}`);
+      expect(body).toBe(text);
+
+      const missing = await runSend(
+        ["--sid", SID, "--to", "ccmsg:33333333-2222-4333-8444-555555555555", "/dev/stdin"],
+        "hi",
+        env,
+      );
+      expect(missing.code).toBe(0);
+      expect(notDeliveredReason(missing.out)).toContain(
+        "ccmsg peers で今いるセッションの宛先を確かめて",
+      );
+
+      const unreadable = await runSend(
+        ["--sid", SID, "--to", "ccmsg:nobody", "/dev/stdin"],
+        "hi",
+        env,
+      );
+      expect(notDeliveredReason(unreadable.out)).toContain("ccmsg:path:<絶対パス> のどれでもない");
+    } finally {
+      harness.dispose();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("arguments that do not make a send exit 2 and print no result", async () => {
+    const env = sidecarEnv(path.join(shortBase(), "s"));
+    for (const args of [
+      ["--sid", SID, "/dev/stdin"],
+      ["--sid", SID, "--to", `ccmsg:${OTHER}`],
+      ["--sid", SID, "--to", `ccmsg:${OTHER}`, "/dev/stdin", "extra"],
+    ]) {
+      const run = await runSend(args, "hi", env);
+      expect({ args, code: run.code, out: run.out }).toEqual({ args, code: 2, out: "" });
+      expect(run.err).toContain("usage: ccmsg sidecar send");
+    }
+  });
 });

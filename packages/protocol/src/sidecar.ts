@@ -222,3 +222,22 @@ const SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 export function readSidecarRequest(line: string): Parsed<SidecarRequest> {
   return parseWith(SidecarRequestLineSchema, line);
 }
+
+// --- the module's SendMessage (DR-0037 §2) ----------------------------------
+
+/** What `ccmsg sidecar send` prints, and the hooks module hands the harness as
+ * the result of a SendMessage to a `ccmsg:` address it took over (the
+ * `session.send` hook's result). The model reads `reason` inside the
+ * harness's "Not sent: a plugin hook refused it (<reason>)", so it says what
+ * happened and what to do next. */
+export const SendMessageResultSchema = v.variant("isDelivered", [
+  v.object({ isDelivered: v.literal(true) }),
+  v.object({
+    isDelivered: v.literal(false),
+    reason: v.pipe(v.string(), v.nonEmpty("a reason is not empty")),
+  }),
+]);
+export type SendMessageResult = Output<typeof SendMessageResultSchema>;
+
+/** The result as `ccmsg sidecar send` prints it: JSON text. */
+export const SendMessageResultTextSchema = jsonText(SendMessageResultSchema);

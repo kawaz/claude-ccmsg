@@ -7,6 +7,8 @@ import { describe, expect, test } from "bun:test";
 import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
+  type SendMessageResult,
+  SendMessageResultSchema,
   SIDECAR_OP_NAMES,
   type SidecarReply,
   SidecarReplyTextSchema,
@@ -15,7 +17,6 @@ import {
   ACCEPT_WAIT_MS,
   type Engine,
   type HookedEvent,
-  type Hook,
   answer,
   handlePromptSend,
   hyouiEnterArgv,
@@ -27,6 +28,9 @@ import {
   replyArgv,
   RESPAWN_MIN_MS,
   samePrompt,
+  SEND_TIMEOUT_MS,
+  sendArgv,
+  type SendHook,
   type SpawnChunk,
   type SpawnEnd,
 } from "./composer-fill.ts";
@@ -80,8 +84,10 @@ function controlledStream() {
   };
 }
 
-/** The hooks the module registered, by event. */
-type HookTable = Partial<Record<HookedEvent, Hook>>;
+/** The hooks the module registered, by event. Each is held as the widest
+ * hook (one that may settle the event itself, as session.send's does); every
+ * pass-through hook is one. */
+type HookTable = Partial<Record<HookedEvent, SendHook>>;
 
 interface Fake {
   $: Engine;
@@ -114,6 +120,12 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
+    /** What `ccmsg sidecar send` does, given what it was run with. */
+    send?: (init: { stdin?: string; timeoutMs?: number }) => Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+    }>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -157,6 +169,10 @@ function fakeEngine(
         if (argv[0] === "hyoui") {
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
+        }
+        if (argv[1] === "sidecar" && argv[2] === "send") {
+          if (options.send === undefined) throw new Error("no ccmsg sidecar send here");
+          return options.send(init ?? {});
         }
         if (argv.at(-1) === "version") {
           const version = options.version ?? "9.9.9";
@@ -217,7 +233,7 @@ async function fire<E, R>(
   event: HookedEvent,
   e: E,
   next: (e: E) => Promise<R>,
-): Promise<R> {
+): Promise<R | SendMessageResult> {
   const hook = fake.hooks[event];
   if (hook === undefined) throw new Error(`no hook on ${event}`);
   let called: Promise<R> | undefined;
@@ -270,7 +286,7 @@ async function submitComposer(fake: Fake): Promise<number> {
 }
 
 function registerOn(fake: Fake): ModuleState {
-  const on: On = (event, hook) => {
+  const on: On = (event: HookedEvent, hook: SendHook) => {
     fake.hooks[event] = hook;
     fake.registered.push(event);
     return {
@@ -828,7 +844,9 @@ describe("each hook passes the event on once", () => {
     };
     registerOn(fake);
     expect(fake.registered.length).toBeGreaterThan(0);
-    for (const event of fake.registered) {
+    // session.send settles a SendMessage itself when it is to a ccmsg:
+    // address; its failures are its own tests'.
+    for (const event of fake.registered.filter((e) => e !== "session.send")) {
       logged = 0;
       const { calls, next } = countingNext({ passed: event });
       // No hook reads this input; logging that is what throws.
@@ -836,6 +854,136 @@ describe("each hook passes the event on once", () => {
       expect(calls.count).toBe(1);
       expect(logged).toBe(1);
     }
+  });
+});
+
+describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
+  const TO = "ccmsg:bbbbbbbb-2222-4333-8444-555555555555";
+  const SEND = { to: TO, text: "long\nmessage `with` $chars", summary: "s" };
+
+  function sendFake(send: NonNullable<Parameters<typeof fakeEngine>[0]>["send"]) {
+    const fake = fakeEngine({ send });
+    registerOn(fake);
+    return fake;
+  }
+  /** The reason of a send the hook settled as not delivered. */
+  function notDeliveredReason(result: object): string {
+    const read = parseWith(SendMessageResultSchema, result);
+    if (!read.ok || read.value.isDelivered)
+      throw new Error(`not a refused send: ${JSON.stringify(result)}`);
+    return read.value.reason;
+  }
+  const printed = (result: object) => async () => ({
+    exitCode: 0,
+    stdout: `${JSON.stringify(result)}\n`,
+    stderr: "",
+  });
+
+  test("is taken over: sent through ccmsg sidecar send, the text on standard input", async () => {
+    const fake = sendFake(printed({ isDelivered: true }));
+    const { calls, next } = countingNext({ native: true });
+    expect(await fire(fake, "session.send", SEND, next)).toEqual({ isDelivered: true });
+    expect(calls.count).toBe(0);
+    expect(fake.runs).toEqual([sendArgv("/plugin", fake.sid.value, TO)]);
+    expect(fake.runs[0]).toEqual([
+      "/plugin/bin/ccmsg",
+      "sidecar",
+      "send",
+      "--sid",
+      fake.sid.value,
+      "--to",
+      TO,
+      "/dev/stdin",
+    ]);
+    expect(fake.stdins).toEqual([SEND.text]);
+  });
+
+  test("the budget is set, not left at $.process.run's 30 s", async () => {
+    const seen: (number | undefined)[] = [];
+    const fake = sendFake(async (init) => {
+      seen.push(init.timeoutMs);
+      return printed({ isDelivered: true })();
+    });
+    await fire(fake, "session.send", SEND, countingNext().next);
+    expect(seen).toEqual([SEND_TIMEOUT_MS]);
+    expect(SEND_TIMEOUT_MS).toBeLessThan(30_000);
+  });
+
+  test("a send that reached nobody is settled with the command's reason", async () => {
+    const fake = sendFake(printed({ isDelivered: false, reason: "宛先が無い" }));
+    expect(await fire(fake, "session.send", SEND, countingNext().next)).toEqual({
+      isDelivered: false,
+      reason: "宛先が無い",
+    });
+  });
+
+  test("any other address goes on to the harness, untouched", async () => {
+    const fake = sendFake(printed({ isDelivered: true }));
+    for (const to of ["team-lead", "ccmsg", "uds:/tmp/x.sock", " ccmsg:x"]) {
+      const { calls, next } = countingNext({ native: to });
+      const e = { to, text: "hi" };
+      expect(await fire(fake, "session.send", e, next)).toEqual({ native: to });
+      expect(calls.count).toBe(1);
+    }
+    // An input that does not read is not the module's to take over either.
+    const { calls, next } = countingNext({ native: true });
+    expect(await fire(fake, "session.send", { to: TO }, next)).toEqual({ native: true });
+    expect(calls.count).toBe(1);
+    expect(fake.runs).toEqual([]);
+  });
+
+  // A throwing hook would have the harness look the address up as its own
+  // agent name; every failure is a result instead, and next is never run.
+  test("a send that times out or cannot start is unconfirmed, never a throw", async () => {
+    const fake = sendFake(async () => {
+      throw new Error("$.process.run(ccmsg) aborted: still running after 10000ms");
+    });
+    const { calls, next } = countingNext({ native: true });
+    const result = await fire(fake, "session.send", SEND, next);
+    expect(calls.count).toBe(0);
+    expect(notDeliveredReason(result)).toContain(
+      "届いたか確かめられなかった: Error: $.process.run(ccmsg) aborted",
+    );
+  });
+
+  test("a command that prints no result is unconfirmed, with its first stderr line", async () => {
+    const fake = sendFake(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "ccmsg: something broke\n  detail\n",
+    }));
+    expect(
+      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
+    ).toContain("届いたか確かめられなかった: ccmsg: something broke。");
+  });
+
+  test("a failing engine, log included, still settles the send", async () => {
+    const fake = sendFake(async () => {
+      throw new Error("run broke");
+    });
+    fake.$.ui = {
+      log: () => {
+        throw new Error("log broke");
+      },
+    };
+    expect(
+      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
+    ).toContain("log broke");
+    fake.$.session = {
+      ...fake.$.session,
+      id: async () => {
+        throw new Error("no id");
+      },
+    };
+    expect(
+      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
+    ).toContain("no id");
+  });
+
+  test("the hook has no .catch: nothing would pass the address on to the harness", () => {
+    const fake = sendFake(printed({ isDelivered: true }));
+    expect(fake.registered).toContain("session.send");
+    expect(fake.catchers["session.send"]).toBeUndefined();
   });
 });
 

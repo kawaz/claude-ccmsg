@@ -10,7 +10,7 @@
 
 ### ファイルの系統
 
-`src/index.ts` はすべてのファイルを re-export し、利用側は `@ccmsg/protocol` から import する。hooks module (`hooks/composer-fill.ts`) だけは bundle に入れるものを絞るため、サブパス `@ccmsg/protocol/parse` と `@ccmsg/protocol/sidecar` から import する。`index.ts` 自身は系統をまたぐ定数 (`ADMIN_ID`、各種の上限値・既定値、`ErrorCode`) と `Identity` の型を持つ。
+`src/index.ts` はすべてのファイルを re-export し、利用側は `@ccmsg/protocol` から import する。hooks module (`hooks/composer-fill.ts`) だけは bundle に入れるものを絞るため、サブパス `@ccmsg/protocol/parse`、`@ccmsg/protocol/sidecar`、`@ccmsg/protocol/address` から import する。`index.ts` 自身は系統をまたぐ定数 (`ADMIN_ID`、各種の上限値・既定値、`ErrorCode`) と `Identity` の型を持つ。
 
 #### 部品
 
@@ -43,7 +43,7 @@
 
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
-| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest` | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module |
+| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。hooks module が横取りした SendMessage の結果 (`SendMessageResultSchema`、[DR-0037](../decisions/DR-0037-agent-messages-ride-sendmessage.md) §2) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。SendMessage の結果は CLI (`ccmsg sidecar send`) が書き hooks module が読む |
 
 hooks module は実行時に import できないので、このファイルは valibot と `parse.ts` 以外を import せず、bundle して使う。
 
