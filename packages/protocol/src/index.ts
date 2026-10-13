@@ -1,14 +1,8 @@
-// Wire protocol & storage schema shared by daemon and cli (DR-0003).
-//
-// Two byte streams, both newline-delimited JSON ("jsonl", DR-0003 §1):
-//   - storage: room event log, one <room-id>.jsonl per room, append-only
-//   - wire: client<->daemon request/response, plus subscribe event stream
-//
-// `id` = typed member identifier, `u1`/`a3` style (DR-0006). The `u`/`a` namespace
-// disambiguates human vs agent members sharing a single `from`/`to` field. `u1` is
-// the reserved User (kawaz) admin, implicitly present in every room with no member
-// row. `u2+` are guests (room-local, explicit member row, `role: "guest"`). Agents
-// get `a1, a2, ...` in room join order. This is NOT the Unix UID.
+// The shapes of the JSON that crosses process boundaries, shared by the
+// daemon, the CLI, the webui and the hooks (DR-0038 §3), and the constants
+// both ends of them must agree on. This file re-exports every module beside
+// it; which module holds which shape, who reads it and the house rules for
+// reading are laid out in docs/design/protocol-package.md.
 
 export { VERSION, PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
