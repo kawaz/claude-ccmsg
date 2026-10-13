@@ -113,7 +113,7 @@ import {
   type SessionStatusStore,
 } from "./session-status.ts";
 import { deriveRepoWs } from "./repo-derive.ts";
-import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
+import { normalizeConfigDir } from "./config-dir.ts";
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
@@ -208,10 +208,10 @@ interface SessionEntry {
     branch?: string;
   };
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
-   * announced one. Deliberately outside `meta`: it exists only to answer
-   * `PeerInfo.send_message` for a session asking about its peers, and `meta`
-   * is copied verbatim onto the wire (peers, ev:"peers") where a bare config
-   * dir path would be noise nobody reads. */
+   * announced one. Deliberately outside `meta`: it exists to find the
+   * session's harness state files (peer injection, the config dirs an
+   * address_send reads), and `meta` is copied verbatim onto the wire (peers,
+   * ev:"peers") where a bare config dir path would be noise nobody reads. */
   configDir?: string;
   /** ccmsg build / wire generation the latest hello for this sid announced
    * (PeerInfo.client_version / .protocol). Outside `meta` for the same reason
@@ -559,8 +559,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // omits it is telling us nothing new — an older CLI, or one invoked from a
   // subprocess whose environment lost the variable. Preserve what an earlier
   // hello for this sid established (transcript_path's rule, for the same
-  // reason: silently dropping it would take a genuinely reachable peer's
-  // `send_message` flag away mid-session).
+  // reason: silently dropping it would make the session unreachable by peer
+  // injection mid-session).
   const configDir = id.config_dir ?? entry?.configDir;
   const isNewEntry = !entry;
   const previousTranscriptPath = entry?.meta.transcript_path;
@@ -834,26 +834,15 @@ function knownConfigDirs(daemon: Daemon): string[] {
 }
 
 /** currentPeers() as a `peers` reply: each peer with the `ccmsg:` addresses
- * it is reached at (PeerInfo.addresses), and, for a session asking, every
- * peer running under the same CLAUDE_CONFIG_DIR with `send_message: true`,
- * marking it reachable with Claude Code's own SendMessage tool by name (see
- * PeerInfo.send_message). The asker's own row is not flagged, and an asker
- * whose own config dir is unknown flags nothing at all. */
-function peersFor(daemon: Daemon, asker: Identity | null): PeerInfo[] {
+ * it is reached at (PeerInfo.addresses). */
+function peersFor(daemon: Daemon): PeerInfo[] {
   const pids = new Map<string, number[]>();
   for (const row of daemon.agentsPoller.cache.agents) {
     pids.set(row.sessionId, [...(pids.get(row.sessionId) ?? []), row.pid]);
   }
-  const askerConfigDir =
-    asker?.role === "session" ? daemon.sessions.get(asker.sid)?.configDir : undefined;
   return currentPeers(daemon).map((p) => ({
     ...p,
     addresses: sessionAddresses({ sid: p.sid, cwd: p.cwd, pids: pids.get(p.sid) ?? [] }),
-    ...(asker?.role === "session" &&
-    p.sid !== asker.sid &&
-    canNativeSendMessage(askerConfigDir, daemon.sessions.get(p.sid)?.configDir)
-      ? { send_message: true as const }
-      : {}),
   }));
 }
 
@@ -2512,7 +2501,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // this tab subscribed moments ago may still be folding, and a peers list
       // whose ordering key fills in afterwards would sort wrong on first paint.
       if (conn.identity?.role === "user") await sessionUserInputsReady(daemon.sessionUserInputs);
-      send(conn, { ok: true, peers: peersFor(daemon, conn.identity) });
+      send(conn, { ok: true, peers: peersFor(daemon) });
       return;
     }
 

@@ -41,7 +41,7 @@ const PEER = {
   connected_at: "2026-10-09T00:00:00.000Z",
   last_activity_at: "2026-10-09T00:00:01.000Z",
   last_user_input_at: "2026-10-09T00:00:02.000Z",
-  send_message: true,
+  addresses: [`ccmsg:${SID}`, "ccmsg:path:/w/x/main"],
   client_version: "0.157.0",
   protocol: 3,
   stale_client: { last_seen: "2026-10-09T00:00:03.000Z", version: "0.1.0", protocol: 2 },

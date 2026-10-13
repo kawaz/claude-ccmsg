@@ -31,9 +31,10 @@ export const HelloRequestSchema = v.object({
   branch: v.optional(v.string()),
   /** CLAUDE_CONFIG_DIR of the session's own process — the CLI reads it from
    * its environment (falling back to Claude Code's default `$HOME/.claude`
-   * when unset) and the daemon normalizes it. Only used to answer "can this
-   * pair of sessions reach each other with the native SendMessage tool"
-   * (`PeerInfo.send_message`); never echoed back on the wire. */
+   * when unset) and the daemon normalizes it. Only used to find the sessions
+   * a `ccmsg:` address may name: the daemon reads the live runs of every
+   * config dir it knows (`address_send`, DR-0037 §1); never echoed back on the
+   * wire. */
   config_dir: v.optional(v.string()),
   /** The ccmsg build this client runs (`VERSION`). Diagnostic only — the
    * daemon never gates on it — but it is what turns "this session's client is

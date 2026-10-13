@@ -121,18 +121,6 @@ export const PeerInfoSchema = v.object({
    * `origin`/`promptSource` fields the fold reads. Clients sort a peer without
    * it after every peer that has one rather than treating it as epoch. */
   last_user_input_at: v.optional(v.string()),
-  /** present (always `true`) iff the *asking* session can reach this peer with
-   * Claude Code's own SendMessage tool — i.e. both run under the same
-   * CLAUDE_CONFIG_DIR, the boundary native cross-session messaging does not
-   * cross (docs/findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md).
-   * A flagged peer is reachable inline, with no `ccmsg read` round trip.
-   *
-   * Computed per request against the asker, so it never appears for the
-   * asker's own row, for a user-role (webui) asker — which has no config dir
-   * to compare against — or on the `ev:"peers"` push. Absent whenever either
-   * side's config dir is unknown: an unflagged peer merely costs a `ccmsg
-   * post`, a wrongly flagged one costs a message that never arrives. */
-  send_message: v.optional(v.literal(true)),
   /** The `ccmsg:` addresses that reach this session with SendMessage from any
    * config dir (DR-0037 §1), on a `peers` reply: `ccmsg:<sid>`, a
    * `ccmsg:<sid>.<pid>` per run when the session runs in more than one

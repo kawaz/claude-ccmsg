@@ -23,6 +23,7 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 - `ccmsg:<sid>`: そのセッション。同じ sid の生きている run が複数あれば、その全部に届ける
 - `ccmsg:<sid>.<pid>`: 同じ sid の特定の run。同じ sid が複数のプロセスで生きている時のための綴りで、通常は使わない
 - `ccmsg:path:<project_dir>`: その作業ディレクトリで動いているセッション全部 (送り主自身を除く)。1 つなら 1 対 1、複数なら全部に届ける
+- セッション間の宛先は `ccmsg:` に統一し、harness の名前での直接送信は案内しない (kawaz 2026-10-13)
 
 ### 2. 送る側: hooks module が SendMessage を横取りする
 

@@ -147,9 +147,8 @@ export interface SessionIdentity {
    * for the webui session list). Empty/absent when detached or unknown. */
   branch?: string;
   /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
-   * daemon normalized it at hello time. Claude Code's own cross-session
-   * messaging (the SendMessage tool) only reaches sessions sharing this
-   * directory, so it is what `PeerInfo.send_message` is computed from.
+   * daemon normalized it at hello time. It adds the directory to those whose
+   * sessions a `ccmsg:` address may reach (`address_send`, DR-0037 §1).
    * Absent when the client did not announce one. */
   config_dir?: string;
 }
