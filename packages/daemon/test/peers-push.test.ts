@@ -294,6 +294,9 @@ describe("ev:peers push", () => {
       // op:"peers" poll (issued after that stamp lands) legitimately includes it.
       // That's a timing artifact of *when* each snapshot was taken, not a shape
       // mismatch between the two payloads.
+      //
+      // `addresses` is the other: the `peers` reply adds the ccmsg: addresses
+      // an agent sends to (DR-0037 §1), which the push does not carry.
       const ctx = await startTestDaemon();
       try {
         const u = await userConn(ctx);
@@ -311,8 +314,10 @@ describe("ev:peers push", () => {
           "polled",
         );
         const { last_activity_at: _pushedLastActivity, ...pushedRest } = pushed;
-        const { last_activity_at: _polledLastActivity, ...polledRest } = polled;
+        const { last_activity_at: _polledLastActivity, addresses, ...polledRest } = polled;
         expect(pushedRest).toEqual(polledRest);
+        expect(pushed.addresses).toBeUndefined();
+        expect(addresses).toEqual([`ccmsg:${SID_A}`, `ccmsg:path:${polled.cwd}`]);
         (await a).close();
       } finally {
         await stopTestDaemon(ctx);

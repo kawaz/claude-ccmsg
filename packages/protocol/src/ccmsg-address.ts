@@ -62,3 +62,21 @@ export function formatCcmsgAddress(address: CcmsgAddress): string {
       return `${DIRECT_ADDRESS_PREFIX}${PATH_PREFIX}${address.dir}`;
   }
 }
+
+/** The addresses one session is reached at, as `ccmsg peers` lists them:
+ * `ccmsg:<sid>`; then, when it runs in more than one harness process,
+ * `ccmsg:<sid>.<pid>` for each; then `ccmsg:path:<cwd>` when its working
+ * directory is known. The last reaches every other session working there too. */
+export function sessionAddresses(session: {
+  sid: string;
+  cwd: string;
+  pids: readonly number[];
+}): string[] {
+  const pids = [...new Set(session.pids)].toSorted((a, b) => a - b);
+  const runs = pids.length > 1 ? pids : [];
+  return [
+    formatCcmsgAddress({ kind: "session", sid: session.sid }),
+    ...runs.map((pid) => formatCcmsgAddress({ kind: "run", sid: session.sid, pid })),
+    ...(session.cwd !== "" ? [formatCcmsgAddress({ kind: "path", dir: session.cwd })] : []),
+  ];
+}

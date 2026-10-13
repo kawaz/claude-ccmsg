@@ -94,7 +94,7 @@ const MINIMAL_HELP = `Commands:
   post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
-  peers [cwd(partial)]                      セッション一覧取得
+  peers [cwd(partial)]                      セッション一覧と SendMessage の宛先 (addresses)
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)

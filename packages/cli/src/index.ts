@@ -1000,7 +1000,7 @@ function printHelp(): void {
   post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
-  peers [cwd(partial)]                      セッション一覧取得
+  peers [cwd(partial)]                      セッション一覧と SendMessage の宛先 (addresses)
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
@@ -1060,7 +1060,12 @@ Commands:
                                live_members; archived rooms and rooms whose members
                                are all disconnected are omitted — use --all to include)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
-                               by substring match on each session's cwd
+                               by substring match on each session's cwd. Each
+                               lists in "addresses" what to write as SendMessage's
+                               to, from any config dir: ccmsg:<sid>; one
+                               ccmsg:<sid>.<pid> per process when the session runs
+                               in several; ccmsg:path:<cwd>, every other session
+                               working there
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   say [args...]                Speak via /usr/bin/say, recording a say event in
                                this session's 1on1 room first so the webui can
@@ -1158,6 +1163,9 @@ Notes:
   into it are refused; use a normal room instead.
   No command sends to the person: their input reaches a session from the
   webui, and a session tells them something with PushNotification.
+  A session sends to another with SendMessage, an address from peers as its
+  to; the ccmsg hooks module delivers it, across config dirs. The answer goes
+  to the from the message arrived with.
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)

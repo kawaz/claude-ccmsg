@@ -18,6 +18,7 @@ import {
   isSessionIdShape,
   readRequest,
   resolvePaths,
+  sessionAddresses,
   type AgentInfo,
   type ArchiveEvent,
   type Identity,
@@ -827,21 +828,28 @@ function knownConfigDirs(daemon: Daemon): string[] {
   return [...new Set([...(agentsPollEnabled() ? detectConfigDirs() : []), ...announced])];
 }
 
-/** currentPeers() as one session sees it: every peer running under the same
- * CLAUDE_CONFIG_DIR gets `send_message: true`, marking it reachable with
- * Claude Code's own SendMessage tool instead of a ccmsg post (see
- * PeerInfo.send_message). The asker's own row is left alone, and an asker
+/** currentPeers() as a `peers` reply: each peer with the `ccmsg:` addresses
+ * it is reached at (PeerInfo.addresses), and, for a session asking, every
+ * peer running under the same CLAUDE_CONFIG_DIR with `send_message: true`,
+ * marking it reachable with Claude Code's own SendMessage tool by name (see
+ * PeerInfo.send_message). The asker's own row is not flagged, and an asker
  * whose own config dir is unknown flags nothing at all. */
 function peersFor(daemon: Daemon, asker: Identity | null): PeerInfo[] {
-  const peers = currentPeers(daemon);
-  if (asker?.role !== "session") return peers;
-  const askerConfigDir = daemon.sessions.get(asker.sid)?.configDir;
-  return peers.map((p) =>
+  const pids = new Map<string, number[]>();
+  for (const row of daemon.agentsPoller.cache.agents) {
+    pids.set(row.sessionId, [...(pids.get(row.sessionId) ?? []), row.pid]);
+  }
+  const askerConfigDir =
+    asker?.role === "session" ? daemon.sessions.get(asker.sid)?.configDir : undefined;
+  return currentPeers(daemon).map((p) => ({
+    ...p,
+    addresses: sessionAddresses({ sid: p.sid, cwd: p.cwd, pids: pids.get(p.sid) ?? [] }),
+    ...(asker?.role === "session" &&
     p.sid !== asker.sid &&
     canNativeSendMessage(askerConfigDir, daemon.sessions.get(p.sid)?.configDir)
-      ? { ...p, send_message: true as const }
-      : p,
-  );
+      ? { send_message: true as const }
+      : {}),
+  }));
 }
 
 /** The subset of currentPeers() compared to decide whether anything worth a push

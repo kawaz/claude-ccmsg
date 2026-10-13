@@ -670,6 +670,35 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     T,
   );
 
+  // DR-0037 §1: the addresses an agent sends to, with a run address per
+  // process only for a session that runs in more than one.
+  test(
+    "peers の返事は宛先の綴りを持ち、複数の process で動く sid には run ごとの綴りが付く",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const one = "231e3d3d-1aed-4050-be17-7e5cdf2f7402";
+        const two = "8b0c7f3e-5d2a-4c1b-9e8f-0a1b2c3d4e5f";
+        const u = await watcher(ctx);
+        setRows(dirA, [
+          row(one, cwd, { pid: 101 }),
+          row(two, cwd, { pid: 303 }),
+          row(two, cwd, { pid: 202 }),
+        ]);
+        await u.readEventUntil("agents", (e) => e.agents.length === 3);
+        const res = await u.requestOk({ op: "peers" });
+        const addresses = (sid: string) => res.peers.find((p) => p.sid === sid)?.addresses;
+        expect(addresses(one)).toEqual([`ccmsg:${one}`, `ccmsg:path:${cwd}`]);
+        expect(addresses(two)).toEqual([
+          `ccmsg:${two}`,
+          `ccmsg:${two}.202`,
+          `ccmsg:${two}.303`,
+          `ccmsg:path:${cwd}`,
+        ]);
+      });
+    },
+    T,
+  );
+
   test(
     "登録時に無かった transcript が後で書かれたら次の poll で peers に載る",
     async () => {

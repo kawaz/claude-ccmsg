@@ -133,6 +133,13 @@ export const PeerInfoSchema = v.object({
    * side's config dir is unknown: an unflagged peer merely costs a `ccmsg
    * post`, a wrongly flagged one costs a message that never arrives. */
   send_message: v.optional(v.literal(true)),
+  /** The `ccmsg:` addresses that reach this session with SendMessage from any
+   * config dir (DR-0037 §1), on a `peers` reply: `ccmsg:<sid>`, a
+   * `ccmsg:<sid>.<pid>` per run when the session runs in more than one
+   * process (as the agents poll last saw it), and `ccmsg:path:<cwd>` when the
+   * cwd is known (`sessionAddresses`). Absent on the `ev:"peers"` push, which
+   * the webui reads and which carries no address. */
+  addresses: v.optional(v.array(v.string())),
   /** ccmsg build of the client that last hello'd for this sid, when it
    * announced one (`HelloRequest.client_version`). */
   client_version: v.optional(v.string()),

@@ -5,6 +5,7 @@ import {
   parseCcmsgAddress,
   parseDirectDeliveries,
   renderAddressedDelivery,
+  sessionAddresses,
 } from "../src/index.ts";
 
 const SID = "aaaaaaaa-2222-4333-8444-555555555555";
@@ -54,5 +55,21 @@ describe("renderAddressedDelivery", () => {
     expect(parseDirectDeliveries(content)).toEqual([
       { mid, from: SID, fromLabel: `ccmsg:${SID}`, text: 'a "quote"\n\nend' },
     ]);
+  });
+});
+
+describe("sessionAddresses", () => {
+  test("the session, a run per process only when there are several, and the directory", () => {
+    expect(sessionAddresses({ sid: SID, cwd: "/w", pids: [7] })).toEqual([
+      `ccmsg:${SID}`,
+      "ccmsg:path:/w",
+    ]);
+    expect(sessionAddresses({ sid: SID, cwd: "/w", pids: [30, 7, 30] })).toEqual([
+      `ccmsg:${SID}`,
+      `ccmsg:${SID}.7`,
+      `ccmsg:${SID}.30`,
+      "ccmsg:path:/w",
+    ]);
+    expect(sessionAddresses({ sid: SID, cwd: "", pids: [] })).toEqual([`ccmsg:${SID}`]);
   });
 });
