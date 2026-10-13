@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import type { VNode } from "preact";
 import type { MemberInfo, RoomState } from "../src/client/store.ts";
 import { RoomReadOnlyNote } from "../src/client/components/RoomReadOnlyNote.tsx";
+import { collect, defined, flattenText, stringProp } from "./helpers.ts";
 
 function makeRoom(kind: RoomState["kind"], members: MemberInfo[]): RoomState {
   return {
@@ -38,24 +39,13 @@ function member(id: string, sid: string, left: boolean): MemberInfo {
   };
 }
 
-function isVNode(x: unknown): x is VNode {
-  return x != null && typeof x === "object" && "type" in x && "props" in x;
-}
-
-function childList(node: VNode): unknown[] {
-  const c = (node.props as { children?: unknown }).children;
-  return (Array.isArray(c) ? c : [c]).flat(Infinity);
-}
-
 /** Visible text of the note, links included. */
 function textOf(node: VNode): string {
-  return childList(node)
-    .map((c) => (isVNode(c) ? textOf(c) : typeof c === "string" ? c : ""))
-    .join("");
+  return flattenText(node);
 }
 
 function linkOf(node: VNode): VNode | undefined {
-  return childList(node).find((c): c is VNode => isVNode(c) && c.type === "a");
+  return collect(node.props.children, (n) => n.type === "a")[0];
 }
 
 describe("RoomReadOnlyNote (DR-0035 §2)", () => {
@@ -72,21 +62,20 @@ describe("RoomReadOnlyNote (DR-0035 §2)", () => {
   // リンクする。
   test("a 1on1 room says it is read-only and links to its session's input box", () => {
     const note = RoomReadOnlyNote({ room: makeRoom("1on1", [member("a1", "sid-A", false)]) });
-    expect(isVNode(note)).toBe(true);
-    const p = note as VNode;
+    const p = defined(note, "the note");
     expect(p.type).toBe("p");
-    expect((p.props as { class?: string }).class).toBe("room-readonly-note");
+    expect(stringProp(p, "class")).toBe("room-readonly-note");
     expect(textOf(p)).toBe(
       "この 1on1 room は読み取り専用です。セッションへの入力はセッション画面の入力欄から。",
     );
-    expect((linkOf(p)!.props as { href?: string }).href).toBe("/s/sid-A");
+    expect(stringProp(defined(linkOf(p), "the link"), "href")).toBe("/s/sid-A");
   });
 
   // 何を保証するか: 在室メンバーが居ない (kick / leave 済み) 1on1 room でも
   // 読み取り専用の注記は出し、行き先が分からないのでリンクは付けない。
   test("a 1on1 room with no present member still shows the note, without a link", () => {
     const note = RoomReadOnlyNote({ room: makeRoom("1on1", [member("a1", "sid-A", true)]) });
-    const p = note as VNode;
+    const p = defined(note, "the note");
     expect(textOf(p)).toBe(
       "この 1on1 room は読み取り専用です。セッションへの入力はセッション画面の入力欄から。",
     );

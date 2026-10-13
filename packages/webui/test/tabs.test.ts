@@ -10,28 +10,29 @@
 // covered in the same file because it is the other half of the same task and
 // just as small.
 import { describe, expect, test } from "bun:test";
-import type { VNode } from "preact";
+import type { ComponentChild, ComponentChildren, VNode } from "preact";
 import { Tabs } from "../src/client/components/Tabs.tsx";
 import { Fold } from "../src/client/components/Fold.tsx";
+import { handlerProp, isChildList, isVNode, propsOf } from "./helpers.ts";
 
-function isVNode(x: unknown): x is VNode {
-  return x != null && typeof x === "object" && "type" in x && "props" in x;
-}
-
-function children(node: VNode): unknown[] {
-  const c = (node.props as { children?: unknown }).children;
-  return Array.isArray(c) ? c : [c];
+function children(node: VNode): ComponentChild[] {
+  const c = node.props.children;
+  return isChildList(c) ? c : [c];
 }
 
 /** The rendered tabs, in order. `items.map` leaves one nested array. */
 function tabsOf(row: VNode): VNode[] {
-  return children(row)
-    .flat(Infinity)
-    .filter((c): c is VNode => isVNode(c));
+  const tabs: VNode[] = [];
+  const walk = (c: ComponentChildren): void => {
+    if (isChildList(c)) for (const child of c) walk(child);
+    else if (isVNode(c)) tabs.push(c);
+  };
+  walk(row.props.children);
+  return tabs;
 }
 
 function props(node: VNode): Record<string, unknown> {
-  return node.props as Record<string, unknown>;
+  return propsOf(node, {});
 }
 
 describe("Tabs", () => {
@@ -73,7 +74,7 @@ describe("Tabs", () => {
     )[2];
     expect(tab.type).toBe("button");
     expect(props(tab).type).toBe("button");
-    (props(tab).onClick as () => void)();
+    handlerProp(tab, "onClick")();
     expect(picked).toEqual(["status"]);
   });
 
@@ -139,7 +140,7 @@ describe("Fold", () => {
       children: null,
       onToggle: () => seen.push("toggled"),
     });
-    (props(fold).onToggle as () => void)();
+    handlerProp(fold, "onToggle")();
     expect(seen).toEqual(["toggled"]);
     expect(props(Fold({ summary: "s", children: null })).onToggle).toBeUndefined();
   });

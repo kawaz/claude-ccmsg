@@ -12,8 +12,16 @@
 // hand via `.type`/`.props.children`, which is all Preact's `h()` output
 // exposes without a DOM.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { VNode } from "preact";
-import type { Root } from "mdast";
+import type { ComponentChildren, VNode } from "preact";
+import type {
+  Blockquote,
+  Heading,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  RootContent,
+  Table,
+} from "mdast";
 import {
   attachmentUrlFromPath,
   collectMarkdownSectionKeys,
@@ -28,28 +36,37 @@ import {
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
 import { parseSearchQuery, type SearchWord } from "../src/client/in-view-search.ts";
+import {
+  collect,
+  defined,
+  flattenText,
+  handlerProp,
+  isChildList,
+  isVNode,
+  keyOf,
+  propsOf,
+  RenderedChildSchema,
+  stringProp,
+} from "./helpers.ts";
+import * as v from "valibot";
 
-function isVNode(x: unknown): x is VNode {
-  return x != null && typeof x === "object" && "type" in x && "props" in x;
+// Node types this renderer has never heard of, joined to mdast's content map
+// the way an mdast extension would (mdast's documented extension point), so
+// the fallback for a node of an unrecognized extension is tested with a tree
+// that is still an mdast tree.
+interface SomeFutureExtension {
+  type: "someFutureExtension";
+  children: PhrasingContent[];
 }
-
-function collect(node: unknown, predicate: (n: VNode) => boolean, acc: VNode[] = []): VNode[] {
-  if (Array.isArray(node)) {
-    for (const c of node) collect(c, predicate, acc);
-    return acc;
+interface SomeOpaqueNode {
+  type: "someOpaqueNode";
+  value: string;
+}
+declare module "mdast" {
+  interface RootContentMap {
+    someFutureExtension: SomeFutureExtension;
+    someOpaqueNode: SomeOpaqueNode;
   }
-  if (!isVNode(node)) return acc;
-  if (predicate(node)) acc.push(node);
-  collect((node.props as { children?: unknown }).children, predicate, acc);
-  return acc;
-}
-
-function flattenText(node: unknown): string {
-  if (typeof node === "string") return node;
-  if (typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(flattenText).join("");
-  if (!isVNode(node)) return "";
-  return flattenText((node.props as { children?: unknown }).children);
 }
 
 describe("isSafeUrl", () => {
@@ -166,7 +183,7 @@ describe("renderMarkdownAst / XSS defenses", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect((links[0]!.props as { href?: string }).href).toBe("https://example.com/pic.png");
+    expect(stringProp(links[0], "href")).toBe("https://example.com/pic.png");
   });
 
   // A safe-scheme link does get a real <a href>.
@@ -185,7 +202,7 @@ describe("renderMarkdownAst / XSS defenses", () => {
     const vnode = renderMarkdownAst(root);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect((links[0]!.props as { href?: string }).href).toBe("https://example.com");
+    expect(stringProp(links[0], "href")).toBe("https://example.com");
   });
 
   // Required-coverage item: "html ノードがテキスト化される". A raw-HTML mdast
@@ -202,7 +219,7 @@ describe("renderMarkdownAst / XSS defenses", () => {
     // the walker never uses that escape hatch.
     const dangerous = collect(
       vnode,
-      (n) => n.props != null && "dangerouslySetInnerHTML" in (n.props as object),
+      (n) => n.props != null && "dangerouslySetInnerHTML" in n.props,
     );
     expect(dangerous).toHaveLength(0);
   });
@@ -268,8 +285,8 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
   test("protected underscores are restored in inline code and link URLs", () => {
     const vnode = renderSource("`snake_case` [link](https://example.com/a_b)");
     expect(flattenText(collect(vnode, (n) => n.type === "code")[0])).toBe("snake_case");
-    const link = collect(vnode, (n) => n.type === "a")[0]!;
-    expect((link.props as { href?: string }).href).toBe("https://example.com/a_b");
+    const link = collect(vnode, (n) => n.type === "a")[0];
+    expect(stringProp(link, "href")).toBe("https://example.com/a_b");
   });
 
   // Boundary-delimited underscore emphasis remains valid; only intraword runs
@@ -331,7 +348,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     const fenced = renderSource("```txt\n<script>\n```");
     const blocks = collect(fenced, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.props).toMatchObject({ lang: "txt", code: "<script>" });
+    expect(blocks[0].props).toMatchObject({ lang: "txt", code: "<script>" });
   });
 
   // CommonMark URL/email autolinks are not tag-like prose and remain links;
@@ -340,7 +357,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     const vnode = renderSource("<https://example.com> <user@example.com>");
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(2);
-    expect(links.map((link) => (link.props as { href?: string }).href)).toEqual([
+    expect(links.map((link) => stringProp(link, "href"))).toEqual([
       "https://example.com",
       "mailto:user@example.com",
     ]);
@@ -412,7 +429,7 @@ describe("parseMarkdownSource / non-heading hash runs", () => {
   // renderer byte-for-byte.
   test("hash runs inside fenced and indented code are verbatim", () => {
     const codeValues = (source: string) =>
-      parseMarkdownSource(source).children.map((n) => (n as { value?: string }).value);
+      parseMarkdownSource(source).children.map((n) => ("value" in n ? n.value : undefined));
     expect(codeValues("```\n#1 code\n```")).toEqual(["#1 code"]);
     expect(codeValues("    #1 indented")).toEqual(["#1 indented"]);
   });
@@ -460,7 +477,7 @@ describe("extractMarkdownHeadings", () => {
     const vnode = renderMarkdownAst(root, undefined, headings);
     const renderedHeadings = collect(vnode, (node) => /^h[1-6]$/.test(String(node.type)));
 
-    expect(renderedHeadings.map((node) => (node.props as { id?: string }).id)).toEqual([
+    expect(renderedHeadings.map((node) => stringProp(node, "id"))).toEqual([
       "md-section-1",
       "md-section-1-1",
     ]);
@@ -477,7 +494,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.props).toMatchObject({ lang: "ts", code: "const x = 1;" });
+    expect(blocks[0].props).toMatchObject({ lang: "ts", code: "const x = 1;" });
   });
 
   // A fence with no info-string still renders through CodeBlock, with a
@@ -488,7 +505,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.props).toMatchObject({ lang: null, code: "plain text" });
+    expect(blocks[0].props).toMatchObject({ lang: null, code: "plain text" });
   });
 
   // inlineCode is a separate mdast node type from a fenced code block and
@@ -608,7 +625,7 @@ describe("renderMarkdownAst / structural coverage", () => {
   // walker has never seen (a future CommonMark/GFM/mdast-extension addition)
   // must still surface its text content by recursing into `children`.
   test("unknown node type with children recurses into them (safe fallback)", () => {
-    const root = {
+    const root: Root = {
       type: "root",
       children: [
         {
@@ -617,7 +634,7 @@ describe("renderMarkdownAst / structural coverage", () => {
           children: [{ type: "text", value: "future content" }],
         },
       ],
-    } as unknown as Root;
+    };
     const vnode = renderMarkdownAst(root);
     expect(flattenText(vnode)).toContain("future content");
   });
@@ -625,10 +642,10 @@ describe("renderMarkdownAst / structural coverage", () => {
   // An unknown node type with no `children` at all must not throw and must
   // render nothing (rather than e.g. JSON.stringify-ing arbitrary fields).
   test("unknown node type with no children renders nothing, without throwing", () => {
-    const root = {
+    const root: Root = {
       type: "root",
       children: [{ type: "someOpaqueNode", value: "opaque" }],
-    } as unknown as Root;
+    };
     expect(() => renderMarkdownAst(root)).not.toThrow();
     expect(flattenText(renderMarkdownAst(root))).toBe("");
   });
@@ -670,9 +687,10 @@ describe("renderMarkdownAst / structural coverage", () => {
     expect(cells).toHaveLength(2);
     expect(flattenText(headers[0])).toBe("H1");
     expect(flattenText(cells[0])).toBe("A");
-    expect((headers[1]!.props as { style?: { textAlign?: string } }).style?.textAlign).toBe(
-      "right",
-    );
+    expect(
+      propsOf(headers[1], { style: v.optional(v.object({ textAlign: v.optional(v.string()) })) })
+        .style?.textAlign,
+    ).toBe("right");
   });
 
   // A table with many columns must not be squeezed into the container's
@@ -697,7 +715,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     const wrappers = collect(
       vnode,
-      (n) => n.type === "div" && (n.props as { class?: string }).class === "md-table-scroll",
+      (n) => n.type === "div" && stringProp(n, "class") === "md-table-scroll",
     );
     expect(wrappers).toHaveLength(1);
     expect(collect(wrappers[0], (n) => n.type === "table")).toHaveLength(1);
@@ -728,8 +746,8 @@ describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
   test("matches TMPDIR attachment path, extracts basename, and flags image mime by extension", () => {
     const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/abc-uuid.png");
     expect(got).not.toBeNull();
-    expect(got!.url).toBe("/attachment/abc-uuid.png");
-    expect(got!.isImage).toBe(true);
+    expect(got?.url).toBe("/attachment/abc-uuid.png");
+    expect(got?.isImage).toBe(true);
   });
 
   // 非画像拡張子は isImage=false — link のまま daemon URL に投げる (webui は
@@ -737,8 +755,8 @@ describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
   test("non-image extension gets isImage=false but still rewrites the URL", () => {
     const got = attachmentUrlFromPath("/private/tmp/claude-ccmsg-501/attachment/xyz.pdf");
     expect(got).not.toBeNull();
-    expect(got!.url).toBe("/attachment/xyz.pdf");
-    expect(got!.isImage).toBe(false);
+    expect(got?.url).toBe("/attachment/xyz.pdf");
+    expect(got?.isImage).toBe(false);
   });
 
   // 拡張子なしの basename (Makefile 等) も daemon URL に変換される。isImage=false
@@ -746,8 +764,8 @@ describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
   test("extension-less basename is still rewritten (isImage=false)", () => {
     const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/bareuuid");
     expect(got).not.toBeNull();
-    expect(got!.url).toBe("/attachment/bareuuid");
-    expect(got!.isImage).toBe(false);
+    expect(got?.url).toBe("/attachment/bareuuid");
+    expect(got?.isImage).toBe(false);
   });
 
   // 別 uid も TMPDIR path prefix にマッチする (macOS `/private/tmp/claude-ccmsg-1000/...`
@@ -772,7 +790,7 @@ describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
   // 拡張子は大小文字非依存で判定される (PNG 等の upload に対応)。
   test("image extension check is case-insensitive", () => {
     const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/uuid.PNG");
-    expect(got!.isImage).toBe(true);
+    expect(got?.isImage).toBe(true);
   });
 });
 
@@ -801,13 +819,13 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(imgs).toHaveLength(1);
     // src は daemon の GET endpoint。生の TMPDIR path は browser sandbox 越えで
     // fetch できないので、そのまま出したら壊れる → GET URL に変換が必須。
-    expect((imgs[0]!.props as { src?: string }).src).toBe("/attachment/abc.png");
+    expect(stringProp(imgs[0], "src")).toBe("/attachment/abc.png");
     // alt は link text から抽出 (`FILE1:diagram.png` 表記のまま)。
-    expect((imgs[0]!.props as { alt?: string }).alt).toBe("FILE1:diagram.png");
+    expect(stringProp(imgs[0], "alt")).toBe("FILE1:diagram.png");
     // 親 <a> の href も同じ GET URL — click で開くルートを維持。
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect((links[0]!.props as { href?: string }).href).toBe("/attachment/abc.png");
+    expect(stringProp(links[0], "href")).toBe("/attachment/abc.png");
   });
 
   // 非画像添付 (pdf 等): <img> にはならず、link のまま daemon URL を href に持つ。
@@ -831,7 +849,7 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect((links[0]!.props as { href?: string }).href).toBe("/attachment/uuid.pdf");
+    expect(stringProp(links[0], "href")).toBe("/attachment/uuid.pdf");
     expect(flattenText(links[0])).toBe("FILE1:notes.pdf");
   });
 
@@ -857,7 +875,7 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect((links[0]!.props as { href?: string }).href).toBe("https://example.com/");
+    expect(stringProp(links[0], "href")).toBe("https://example.com/");
   });
 });
 
@@ -901,8 +919,10 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
     const marks = collect(vnode, (n) => n.type === "mark");
     expect(marks).toHaveLength(1);
-    expect((marks[0]!.props as { class?: string }).class).toBe("search-hl");
-    expect((marks[0]!.props as { style?: Record<string, string> }).style).toEqual({
+    expect(stringProp(marks[0], "class")).toBe("search-hl");
+    expect(
+      propsOf(marks[0], { style: v.optional(v.record(v.string(), v.string())) }).style,
+    ).toEqual({
       "--hl-color": "var(--search-color-1)",
     });
     expect(flattenText(vnode)).toBe("hello world"); // content itself is unchanged, only wrapped
@@ -920,8 +940,8 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
         clicked += 1;
       },
     });
-    const mark = collect(vnode, (n) => n.type === "mark")[0]!;
-    (mark.props as unknown as { onClick: () => void }).onClick();
+    const mark = collect(vnode, (n) => n.type === "mark")[0];
+    handlerProp(mark, "onClick")();
     expect(clicked).toBe(1);
   });
 
@@ -955,14 +975,14 @@ describe("renderRestrictedMarkdown", () => {
     // Characters untouched (the backticks are the code span's own markup).
     expect(flattenText(vnode)).toBe(src.replaceAll("`", ""));
     const links = collect(vnode, (n) => n.type === "a");
-    expect(links.map((a) => (a.props as unknown as { href: string }).href)).toEqual([
+    expect(links.map((a) => stringProp(a, "href"))).toEqual([
       "https://github.com/owner/repo/issues/12",
       "https://github.com/owner/other/issues/3#issuecomment-9",
     ]);
     // Without a repo only the fully qualified reference can still link.
     expect(
-      collect(renderRestrictedMarkdown(src), (n) => n.type === "a").map(
-        (a) => (a.props as unknown as { href: string }).href,
+      collect(renderRestrictedMarkdown(src), (n) => n.type === "a").map((a) =>
+        stringProp(a, "href"),
       ),
     ).toEqual(["https://github.com/owner/other/issues/3#issuecomment-9"]);
   });
@@ -999,7 +1019,7 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(src);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    const props = blocks[0]!.props as unknown as { code: string; lang: string | null };
+    const props = propsOf(blocks[0], { code: v.string(), lang: v.nullable(v.string()) });
     expect(props.code).toBe("const x = 1");
     expect(props.lang).toBe("ts");
     // The `#`-heading disaster does not happen inside fences either — the
@@ -1042,7 +1062,7 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(cleanSrc);
     const imgs = collect(vnode, (n) => n.type === "img");
     expect(imgs).toHaveLength(1);
-    const props = imgs[0]!.props as unknown as { src: string; alt: string };
+    const props = propsOf(imgs[0], { src: v.string(), alt: v.string() });
     // Rewritten to daemon HTTP endpoint (DR-0015 §2.6), not the raw fs path.
     expect(props.src).toBe("/attachment/abcd.png");
     expect(props.alt).toBe("FILE1:screenshot.png");
@@ -1057,7 +1077,7 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(src);
     const anchors = collect(vnode, (n) => n.type === "a");
     expect(anchors).toHaveLength(1);
-    const props = anchors[0]!.props as unknown as { href: string; class?: string };
+    const props = propsOf(anchors[0], { href: v.string(), class: v.optional(v.string()) });
     expect(props.href).toBe("/attachment/xyz.txt");
     expect(props.class).toBe("md-attachment-link");
     expect(flattenText(anchors[0])).toBe("FILE2:trace.txt");
@@ -1070,13 +1090,13 @@ describe("renderRestrictedMarkdown", () => {
     const anchors = collect(vnode, (n) => n.type === "a");
     // Only the https link produces an <a>; javascript: becomes a bare <span>.
     expect(anchors).toHaveLength(1);
-    const props = anchors[0]!.props as unknown as { href: string };
+    const props = propsOf(anchors[0], { href: v.string() });
     expect(props.href).toBe("https://example.com/x");
     // The disarmed link's label is still visible.
     expect(flattenText(vnode)).toContain("悪");
     // And no href ever carried the javascript: scheme.
     for (const a of anchors) {
-      const p = a.props as unknown as { href: string };
+      const p = propsOf(a, { href: v.string() });
       expect(p.href.toLowerCase()).not.toContain("javascript:");
     }
   });
@@ -1124,11 +1144,15 @@ describe("parseMarkdownDocument / <details> folding", () => {
   });
 
   test("`<details open>` renders expanded, a bare `<details>` collapsed", () => {
-    const openProps = details(render("<details open>\n<summary>t</summary>\n\nx\n\n</details>"))[0]!
-      .props as unknown as { open: boolean };
+    const openProps = propsOf(
+      details(render("<details open>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+      { open: v.boolean() },
+    );
     expect(openProps.open).toBe(true);
-    const shutProps = details(render("<details>\n<summary>t</summary>\n\nx\n\n</details>"))[0]!
-      .props as unknown as { open: boolean };
+    const shutProps = propsOf(
+      details(render("<details>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+      { open: v.boolean() },
+    );
     expect(shutProps.open).toBe(false);
   });
 
@@ -1138,7 +1162,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
     const vnode = render(
       "<details>\n<summary>**bold** and [d](https://e.com)</summary>\n\nx\n\n</details>",
     );
-    const summary = summaries(vnode)[0]!;
+    const summary = summaries(vnode)[0];
     expect(collect(summary, (n) => n.type === "strong")).toHaveLength(1);
     expect(collect(summary, (n) => n.type === "a")).toHaveLength(1);
     expect(flattenText(summary)).toContain("bold");
@@ -1175,7 +1199,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
     const found = details(vnode);
     expect(found).toHaveLength(2);
     // The inner one is a descendant of the outer, not a sibling.
-    expect(collect(found[0]!, (n) => n.type === "details")).toHaveLength(2);
+    expect(collect(found[0], (n) => n.type === "details")).toHaveLength(2);
     expect(flattenText(vnode)).toContain("deep");
     expect(summaries(vnode).map(flattenText)).toEqual(["outer", "inner"]);
   });
@@ -1226,7 +1250,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
 
   test("no attribute other than `open` ever reaches the rendered element", () => {
     const vnode = render("<details open>\n<summary>t</summary>\n\nx\n\n</details>");
-    const props = details(vnode)[0]!.props as unknown as Record<string, unknown>;
+    const props = propsOf(details(vnode)[0], {});
     expect(Object.keys(props).sort()).toEqual(["children", "class", "open"]);
     expect(props.class).toBe("md-details");
   });
@@ -1236,7 +1260,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
     expect(details(vnode)).toHaveLength(0);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect((blocks[0]!.props as unknown as { code: string }).code).toContain("<details>");
+    expect(stringProp(blocks[0], "code")).toContain("<details>");
   });
 
   test("a tag mentioned mid-sentence is prose, not a fold", () => {
@@ -1267,22 +1291,25 @@ describe("parseMarkdownDocument / <details> folding", () => {
 // of those characters, and is merely disabled where it can't be clicked.
 describe("renderMarkdownAst / task lists", () => {
   const source = "- [ ] a\n- [x] b\n  - [ ] nested\n- plain\n";
-  const checkboxes = (vnode: unknown) =>
-    collect(vnode, (n) => n.type === "input") as (VNode & {
-      props: { checked?: boolean; disabled?: boolean; onClick?: () => void };
-    })[];
+  const checkboxProps = {
+    checked: v.optional(v.boolean()),
+    disabled: v.optional(v.boolean()),
+    onClick: v.optional(v.function()),
+  };
+  const checkboxes = (vnode: VNode) =>
+    collect(vnode, (n) => n.type === "input").map((n) => propsOf(n, checkboxProps));
 
   test("task items render a checkbox reflecting `checked`; plain items do not", () => {
     const vnode = renderMarkdownAst(parseMarkdownDocument(source));
     const boxes = checkboxes(vnode);
-    expect(boxes.map((b) => b.props.checked)).toEqual([false, true, false]);
+    expect(boxes.map((b) => b.checked)).toEqual([false, true, false]);
     expect(collect(vnode, (n) => n.type === "li")).toHaveLength(4);
   });
 
   test("without a taskList ctx every checkbox is disabled and inert", () => {
     const boxes = checkboxes(renderMarkdownAst(parseMarkdownDocument(source)));
-    expect(boxes.every((b) => b.props.disabled === true)).toBe(true);
-    expect(boxes.every((b) => b.props.onClick === undefined)).toBe(true);
+    expect(boxes.every((b) => b.disabled === true)).toBe(true);
+    expect(boxes.every((b) => b.onClick === undefined)).toBe(true);
   });
 
   // Ordinals are the coordinate the write uses (see markdown-task-list.ts), so
@@ -1295,7 +1322,7 @@ describe("renderMarkdownAst / task lists", () => {
     });
     const boxes = checkboxes(vnode);
     expect(boxes).toHaveLength(3);
-    for (const box of boxes) box.props.onClick?.();
+    for (const box of boxes) box.onClick?.();
     expect(seen).toEqual([
       [0, false, true],
       [1, true, false],
@@ -1311,9 +1338,9 @@ describe("renderMarkdownAst / task lists", () => {
       taskList: { onToggle: (ordinal) => seen.push(ordinal) },
     });
     const boxes = checkboxes(vnode);
-    expect(boxes.every((b) => b.props.disabled === false)).toBe(true);
-    boxes[0]!.props.onClick?.();
-    boxes[0]!.props.onClick?.();
+    expect(boxes.every((b) => b.disabled === false)).toBe(true);
+    boxes[0].onClick?.();
+    boxes[0].onClick?.();
     expect(seen).toEqual([0, 0]);
   });
 
@@ -1332,14 +1359,15 @@ describe("renderMarkdownAst / task lists", () => {
       renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
         taskList: { onToggle: () => {}, errors, onDismissError },
       });
-    const items = (vnode: unknown) =>
-      collect(vnode, (n) => n.type === "li") as (VNode & { props: { class?: string } })[];
-    const errorNodes = (vnode: unknown) =>
-      collect(vnode, (n) => (n.props as { class?: string }).class === "md-task-error");
+    const items = (vnode: VNode) => collect(vnode, (n) => n.type === "li");
+    const errorNodes = (vnode: VNode) =>
+      collect(vnode, (n) => stringProp(n, "class") === "md-task-error");
 
     test("the message renders inside the failing item, not at the document top", () => {
       const vnode = withErrors(new Map([[1, { message: "競合しました", seq: 1 }]]));
-      const errored = items(vnode).filter((li) => li.props.class?.includes("md-task-item-error"));
+      const errored = items(vnode).filter((li) =>
+        stringProp(li, "class")?.includes("md-task-item-error"),
+      );
       expect(errored).toHaveLength(1);
       // Ordinal 1 is the second task item ("b"), so the message must live in
       // that item's subtree alongside its own text.
@@ -1350,7 +1378,9 @@ describe("renderMarkdownAst / task lists", () => {
 
     test("items without an error are untouched", () => {
       const vnode = withErrors(new Map([[1, { message: "競合しました", seq: 1 }]]));
-      const clean = items(vnode).filter((li) => !li.props.class?.includes("md-task-item-error"));
+      const clean = items(vnode).filter(
+        (li) => !stringProp(li, "class")?.includes("md-task-item-error"),
+      );
       expect(clean).toHaveLength(3);
       for (const li of clean) expect(flattenText(li)).not.toContain("競合しました");
     });
@@ -1366,7 +1396,7 @@ describe("renderMarkdownAst / task lists", () => {
       );
       expect(errorNodes(vnode)).toHaveLength(2);
       expect(
-        items(vnode).filter((li) => li.props.class?.includes("md-task-item-error")),
+        items(vnode).filter((li) => stringProp(li, "class")?.includes("md-task-item-error")),
       ).toHaveLength(2);
     });
 
@@ -1375,9 +1405,13 @@ describe("renderMarkdownAst / task lists", () => {
     test("a new seq changes the item's key so its flash replays", () => {
       const first = items(withErrors(new Map([[1, { message: "競合", seq: 1 }]])));
       const again = items(withErrors(new Map([[1, { message: "競合", seq: 2 }]])));
-      const keyOf = (li: VNode) => (li as unknown as { key?: unknown }).key;
       const erroredKey = (list: VNode[]) =>
-        keyOf(list.find((li) => (li.props as { class?: string }).class?.includes("error"))!);
+        keyOf(
+          defined(
+            list.find((li) => stringProp(li, "class")?.includes("error")),
+            "the errored item",
+          ),
+        );
       expect(erroredKey(first)).not.toBe(erroredKey(again));
     });
 
@@ -1388,15 +1422,15 @@ describe("renderMarkdownAst / task lists", () => {
       );
       const buttons = collect(
         withButton,
-        (n) => (n.props as { class?: string }).class === "md-task-error-dismiss",
-      ) as (VNode & { props: { onClick?: () => void } })[];
+        (n) => stringProp(n, "class") === "md-task-error-dismiss",
+      );
       expect(buttons).toHaveLength(1);
-      buttons[0]!.props.onClick?.();
+      handlerProp(buttons[0], "onClick")();
       expect(dismissed).toEqual([2]);
 
       const noHandler = collect(
         withErrors(new Map([[2, { message: "競合", seq: 1 }]])),
-        (n) => (n.props as { class?: string }).class === "md-task-error-dismiss",
+        (n) => stringProp(n, "class") === "md-task-error-dismiss",
       );
       expect(noHandler).toHaveLength(0);
     });
@@ -1404,7 +1438,9 @@ describe("renderMarkdownAst / task lists", () => {
     test("a read-only render (no taskList ctx) shows no error decoration", () => {
       const vnode = renderMarkdownAst(parseMarkdownDocument(source));
       expect(errorNodes(vnode)).toHaveLength(0);
-      expect(items(vnode).some((li) => li.props.class?.includes("md-task-item-error"))).toBe(false);
+      expect(
+        items(vnode).some((li) => stringProp(li, "class")?.includes("md-task-item-error")),
+      ).toBe(false);
     });
   });
 });
@@ -1428,7 +1464,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
   }
 
   const anchors = (v: VNode): VNode[] => collect(v, (n) => n.type === "a");
-  const hrefOf = (n: VNode): string | undefined => (n.props as { href?: string }).href;
+  const hrefOf = (n: VNode): string | undefined => stringProp(n, "href");
 
   test("a relative path with no resolver renders inert — no href at all", () => {
     const vnode = renderMarkdownAst(linkRoot("fixtures/seq-parse/literal.json"));
@@ -1458,10 +1494,10 @@ describe("renderMarkdownAst / markdown links to files", () => {
     });
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0]!)).toBe("#sSID:docs%2Fspec.md");
+    expect(hrefOf(a[0])).toBe("#sSID:docs%2Fspec.md");
     // target="_blank" would leave a standalone PWA with no way back, and the
     // destination is this same app anyway.
-    expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+    expect(stringProp(a[0], "target")).toBeUndefined();
   });
 
   test("the parsed ref reaches the resolver, line fragment included", () => {
@@ -1479,9 +1515,9 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0]!)).toBe("https://example.com/x");
-    expect((a[0]!.props as { target?: string }).target).toBe("_blank");
-    expect((a[0]!.props as { rel?: string }).rel).toBe("noopener noreferrer");
+    expect(hrefOf(a[0])).toBe("https://example.com/x");
+    expect(stringProp(a[0], "target")).toBe("_blank");
+    expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
   });
 
   // Self-referential ccmsg links (a session sharing its own webui URL) must
@@ -1491,7 +1527,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
   // `currentOrigin()` — these tests shim it in and restore it after.
   describe("with a same-origin absolute URL (location shimmed in)", () => {
     const origin = "https://ccmsg.example.com";
-    const previousLocation = (globalThis as { location?: unknown }).location;
+    const previousLocation: Location | undefined = globalThis.location;
 
     beforeEach(() => {
       Object.defineProperty(globalThis, "location", {
@@ -1502,7 +1538,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
 
     afterEach(() => {
       if (previousLocation === undefined) {
-        delete (globalThis as { location?: unknown }).location;
+        Reflect.deleteProperty(globalThis, "location");
       } else {
         Object.defineProperty(globalThis, "location", {
           value: previousLocation,
@@ -1515,17 +1551,17 @@ describe("renderMarkdownAst / markdown links to files", () => {
       const vnode = renderMarkdownAst(linkRoot(`${origin}/s/abc/timeline/head`));
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect(hrefOf(a[0]!)).toBe(`${origin}/s/abc/timeline/head`);
-      expect((a[0]!.props as { target?: string }).target).toBeUndefined();
-      expect((a[0]!.props as { rel?: string }).rel).toBeUndefined();
+      expect(hrefOf(a[0])).toBe(`${origin}/s/abc/timeline/head`);
+      expect(stringProp(a[0], "target")).toBeUndefined();
+      expect(stringProp(a[0], "rel")).toBeUndefined();
     });
 
     test("a link to a different origin still opens a new tab", () => {
       const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect((a[0]!.props as { target?: string }).target).toBe("_blank");
-      expect((a[0]!.props as { rel?: string }).rel).toBe("noopener noreferrer");
+      expect(stringProp(a[0], "target")).toBe("_blank");
+      expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
     });
 
     // A relative link's routing (the FileViewer `path` kind) must stay
@@ -1536,8 +1572,8 @@ describe("renderMarkdownAst / markdown links to files", () => {
       });
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect(hrefOf(a[0]!)).toBe("#sSID:docs%2Fspec.md");
-      expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+      expect(hrefOf(a[0])).toBe("#sSID:docs%2Fspec.md");
+      expect(stringProp(a[0], "target")).toBeUndefined();
     });
   });
 
@@ -1545,8 +1581,8 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("#md-section-2"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0]!)).toBe("#md-section-2");
-    expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+    expect(hrefOf(a[0])).toBe("#md-section-2");
+    expect(stringProp(a[0], "target")).toBeUndefined();
   });
 
   test("a resolver is never consulted for a hostile scheme", () => {
@@ -1579,7 +1615,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
     });
     const a = anchors(resolved);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0]!)).toBe("#sSID:assets%2Fd.png");
+    expect(hrefOf(a[0])).toBe("#sSID:assets%2Fd.png");
     expect(collect(resolved, (n) => n.type === "img")).toHaveLength(0);
   });
 
@@ -1589,7 +1625,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("/tmp/claude-ccmsg-501/attachment/x.pdf", "FILE1:x"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0]!)).toBe("/attachment/x.pdf");
+    expect(hrefOf(a[0])).toBe("/attachment/x.pdf");
   });
 });
 
@@ -1607,37 +1643,33 @@ describe("renderRestrictedMarkdown / link targets", () => {
     const vnode = renderRestrictedMarkdown("see [site](https://example.com)");
     const a = collect(vnode, (n) => n.type === "a");
     expect(a).toHaveLength(1);
-    expect((a[0]!.props as { href?: string }).href).toBe("https://example.com");
+    expect(stringProp(a[0], "href")).toBe("https://example.com");
   });
 });
 
 describe("parseMarkdownSource / empty table header cells", () => {
-  function tableNodes(source: string): { align: unknown; rows: string[][] }[] {
-    const out: { align: unknown; rows: string[][] }[] = [];
-    const walk = (node: unknown): void => {
-      if (Array.isArray(node)) {
-        for (const child of node) walk(child);
-        return;
-      }
-      if (node === null || typeof node !== "object") return;
-      const typed = node as { type?: string; align?: unknown; children?: unknown };
-      if (typed.type === "table") {
-        out.push({
-          align: typed.align,
-          rows: (typed.children as { children: unknown[] }[]).map((row) =>
-            row.children.map((cell) =>
-              flattenText(
-                renderMarkdownAst({
-                  type: "root",
-                  children: [{ type: "paragraph", children: (cell as { children: [] }).children }],
-                } as unknown as Root),
+  function tableNodes(source: string): { align: Table["align"]; rows: string[][] }[] {
+    const out: { align: Table["align"]; rows: string[][] }[] = [];
+    const walk = (nodes: readonly RootContent[]): void => {
+      for (const node of nodes) {
+        if (node.type === "table") {
+          out.push({
+            align: node.align,
+            rows: node.children.map((row) =>
+              row.children.map((cell) =>
+                flattenText(
+                  renderMarkdownAst({
+                    type: "root",
+                    children: [{ type: "paragraph", children: cell.children }],
+                  }),
+                ),
               ),
             ),
-          ),
-        });
-        return;
+          });
+        } else if ("children" in node) {
+          walk(node.children);
+        }
       }
-      walk(typed.children);
     };
     walk(parseMarkdownSource(source).children);
     return out;
@@ -1744,8 +1776,9 @@ describe("parseMarkdownSource / empty table header cells", () => {
   test("pipes inside fenced code and non-table prose are untouched", () => {
     const fenced = ["```", "| | A | B |", "|---|---|---|", "| x | 1 | 2 |", "```"].join("\n");
     expect(tableNodes(fenced)).toHaveLength(0);
-    const code = parseMarkdownSource(fenced).children[0] as { type: string; value: string };
-    expect(code.type).toBe("code");
+    const code = parseMarkdownSource(fenced).children[0];
+    expect(code?.type).toBe("code");
+    if (code?.type !== "code") return;
     expect(code.value).toBe("| | A | B |\n|---|---|---|\n| x | 1 | 2 |");
 
     const prose = "a | b | c\nnot a delimiter row";
@@ -1770,10 +1803,8 @@ describe("parseMarkdownSource / empty table header cells", () => {
 // shape rather than rendered output because the shape is what the walker
 // consumes, and because a wrong shape is what made the rendered output wrong.
 describe("parseMarkdownSource / CommonMark conformance", () => {
-  const skeleton = (node: unknown): string => {
-    const n = node as { type: string; children?: unknown[] };
-    return n.children ? `${n.type}(${n.children.map(skeleton).join(",")})` : n.type;
-  };
+  const skeleton = (node: RootContent): string =>
+    "children" in node ? `${node.type}(${node.children.map(skeleton).join(",")})` : node.type;
   const shape = (source: string) => parseMarkdownSource(source).children.map(skeleton).join(",");
 
   // A continuation line indented under a bullet belongs to that item; it must
@@ -1902,16 +1933,11 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
   test("position offsets are document-absolute UTF-16 indices", () => {
     const itemOffsets = (source: string): number[] => {
       const out: number[] = [];
-      const walk = (node: unknown): void => {
-        const n = node as {
-          type?: string;
-          position?: { start?: { offset?: number } };
-          children?: unknown[];
-        };
-        if (n.type === "listItem" && n.position?.start?.offset !== undefined) {
-          out.push(n.position.start.offset);
+      const walk = (node: Root | RootContent): void => {
+        if (node.type === "listItem" && node.position?.start.offset !== undefined) {
+          out.push(node.position.start.offset);
         }
-        for (const child of n.children ?? []) walk(child);
+        if ("children" in node) for (const child of node.children) walk(child);
       };
       walk(parseMarkdownSource(source));
       return out;
@@ -1943,11 +1969,11 @@ function describeStrongLinkTests(): void {
     });
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(links[0]!.props).toMatchObject({
+    expect(links[0].props).toMatchObject({
       href: "#/file/S1/docs/x.md",
       class: "md-strong-file-link",
     });
-    expect(collect(links[0]!, (n) => n.type === "strong")).toHaveLength(1);
+    expect(collect(links[0], (n) => n.type === "strong")).toHaveLength(1);
     expect(flattenText(vnode)).toBe("docs/x.md");
   });
 
@@ -1996,7 +2022,7 @@ function describeStrongLinkTests(): void {
     const vnode = renderMarkdownAst(root, undefined, undefined, { filePathLinker: linker });
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(links[0]!.props).toMatchObject({ class: "md-inline-code-file-link" });
+    expect(links[0].props).toMatchObject({ class: "md-inline-code-file-link" });
   });
 }
 
@@ -2005,31 +2031,28 @@ function describeStrongLinkTests(): void {
 // which key identifies it — so it is pinned here against hand-built trees,
 // away from the DOM the fold's open/closed state needs.
 describe("foldMarkdownSections", () => {
-  type TestNode = { type: string; [k: string]: unknown };
+  type Outline = (string | [string, Outline])[];
 
-  function heading(depth: number, text: string): TestNode {
+  function heading(depth: Heading["depth"], text: string): Heading {
     return { type: "heading", depth, children: [{ type: "text", value: text }] };
   }
-  function para(text: string): TestNode {
+  function para(text: string): Paragraph {
     return { type: "paragraph", children: [{ type: "text", value: text }] };
   }
   /** `2:1 "…"` for a section (depth:key), the node type otherwise — a shape
    * the expectations can be read as an outline. */
-  function outline(nodes: readonly unknown[]): unknown[] {
-    return nodes.map((n) => {
-      const node = n as TestNode;
+  function outline(nodes: readonly RootContent[]): Outline {
+    return nodes.map((node) => {
       if (node.type !== "ccmsgSection") return node.type;
-      const h = node.heading as { children: { value: string }[] };
+      const title = node.heading.children[0];
       return [
-        `${String(node.depth)}:${String(node.key)} ${h.children[0]!.value}`,
-        outline(node.children as unknown[]),
+        `${String(node.depth)}:${node.key} ${title?.type === "text" ? title.value : `<${title?.type}>`}`,
+        outline(node.children),
       ];
     });
   }
-  function fold(nodes: TestNode[]): unknown[] {
-    // The helpers build mdast shapes structurally; the fold only reads
-    // `type`/`depth`, so the cast keeps the fixtures readable.
-    return outline(foldMarkdownSections(nodes as never));
+  function fold(nodes: RootContent[]): Outline {
+    return outline(foldMarkdownSections(nodes));
   }
 
   test("a heading swallows the blocks that follow it", () => {
@@ -2082,7 +2105,7 @@ describe("foldMarkdownSections", () => {
 
   test("a document with no headings round-trips unchanged", () => {
     const nodes = [para("a"), para("b")];
-    expect(foldMarkdownSections(nodes as never)).toEqual(nodes as never);
+    expect(foldMarkdownSections(nodes)).toEqual(nodes);
   });
 
   test("a document whose only heading is h1 has no sections", () => {
@@ -2105,12 +2128,12 @@ describe("foldMarkdownSections", () => {
       heading(3, "A.2"),
       heading(4, "A.2.1"),
       heading(2, "B"),
-    ] as never);
+    ]);
     expect(collectMarkdownSectionKeys(folded)).toEqual(["1", "1.1", "1.2", "1.2.1", "2"]);
   });
 
   test("headings inside containers are left alone (only top level folds)", () => {
-    const quoted: TestNode = { type: "blockquote", children: [heading(2, "quoted")] };
+    const quoted: Blockquote = { type: "blockquote", children: [heading(2, "quoted")] };
     expect(fold([quoted, heading(2, "A")])).toEqual(["blockquote", ["2:1 A", []]]);
   });
 });
@@ -2121,7 +2144,7 @@ describe("renderMarkdownAst with sections", () => {
   function renderFolded(): VNode {
     const parsed = parseMarkdownDocument(source);
     const headings = extractMarkdownHeadings(parsed);
-    const root = { ...parsed, children: foldMarkdownSections(parsed.children as never) } as never;
+    const root: Root = { ...parsed, children: foldMarkdownSections(parsed.children) };
     return renderMarkdownAst(root, undefined, headings, { sections: true });
   }
 
@@ -2129,32 +2152,34 @@ describe("renderMarkdownAst with sections", () => {
    * shell through props rather than children (the mdast walk stays one
    * synchronous pass — see MarkdownSectionShell), so the shared `collect`
    * walker stops at the shell; this one steps through those two props too. */
-  function allNodes(node: unknown, acc: VNode[] = []): VNode[] {
-    if (Array.isArray(node)) {
+  function allNodes(node: ComponentChildren, acc: VNode[] = []): VNode[] {
+    if (isChildList(node)) {
       for (const c of node) allNodes(c, acc);
       return acc;
     }
     if (!isVNode(node)) return acc;
-    acc.push(node);
-    const props = node.props as { children?: unknown; heading?: unknown; body?: unknown };
-    allNodes(props.children, acc);
-    allNodes(props.heading, acc);
-    allNodes(props.body, acc);
+    const element: VNode = node;
+    acc.push(element);
+    const { heading, body } = propsOf(element, {
+      heading: v.optional(RenderedChildSchema),
+      body: v.optional(v.array(RenderedChildSchema)),
+    });
+    allNodes(element.props.children, acc);
+    allNodes(heading, acc);
+    allNodes(body, acc);
     return acc;
   }
 
   function blocks(): { tag: string; text: string; id?: string }[] {
-    return allNodes(renderFolded())
-      .filter((n) => typeof n.type === "string" && /^(h[1-6]|p)$/.test(n.type))
-      .map((n) => ({
-        tag: n.type as string,
-        text: flattenText(n),
-        id: (n.props as { id?: string }).id,
-      }));
+    return allNodes(renderFolded()).flatMap((n) =>
+      typeof n.type === "string" && /^(h[1-6]|p)$/.test(n.type)
+        ? [{ tag: n.type, text: flattenText(n), id: stringProp(n, "id") }]
+        : [],
+    );
   }
 
   test("the root carries the section layout class", () => {
-    expect((renderFolded().props as { class?: string }).class).toBe("md md-sections");
+    expect(stringProp(renderFolded(), "class")).toBe("md md-sections");
   });
 
   test("every block survives the regrouping, in document order", () => {
@@ -2183,16 +2208,11 @@ describe("renderMarkdownAst with sections", () => {
 
   test("each section element is keyed by its structural position", () => {
     const sections = allNodes(renderFolded()).filter(
-      (n) =>
-        typeof n.type === "function" && (n.props as unknown as { sectionKey?: string }).sectionKey,
+      (n) => typeof n.type === "function" && stringProp(n, "sectionKey"),
     );
-    expect(sections.map((n) => (n.props as unknown as { sectionKey: string }).sectionKey)).toEqual([
-      "1",
-      "1.1",
-      "2",
-    ]);
+    expect(sections.map((n) => stringProp(n, "sectionKey"))).toEqual(["1", "1.1", "2"]);
     expect(
-      sections.map((n) => [...(n.props as unknown as { descendantKeys: string[] }).descendantKeys]),
+      sections.map((n) => [...propsOf(n, { descendantKeys: v.array(v.string()) }).descendantKeys]),
     ).toEqual([["1.1"], [], []]);
   });
 });
@@ -2209,24 +2229,21 @@ describe("renderMarkdownAst / issue references", () => {
     const vnode = renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
       issueRepo: repo,
     });
-    return collect(
-      vnode,
-      (n) => n.type === "a" && (n.props as { class?: string }).class === "md-issue-link",
-    );
+    return collect(vnode, (n) => n.type === "a" && stringProp(n, "class") === "md-issue-link");
   }
 
   function hrefs(source: string, repo: string | undefined = REPO): string[] {
-    return issueLinks(source, repo).map((n) => (n.props as unknown as { href: string }).href);
+    return issueLinks(source, repo).map((n) => propsOf(n, { href: v.string() }).href);
   }
 
   test("plain text gets an external issue link", () => {
     const links = issueLinks("この件は #123 で対応する");
     expect(links).toHaveLength(1);
-    const props = links[0]!.props as unknown as {
-      href: string;
-      target?: string;
-      rel?: string;
-    };
+    const props = propsOf(links[0], {
+      href: v.string(),
+      target: v.optional(v.string()),
+      rel: v.optional(v.string()),
+    });
     expect(props.href).toBe("https://github.com/kawaz/claude-ccmsg/issues/123");
     expect(props.target).toBe("_blank");
     expect(props.rel).toBe("noopener noreferrer");
@@ -2262,7 +2279,7 @@ describe("renderMarkdownAst / issue references", () => {
     );
     const anchors = collect(vnode, (n) => n.type === "a");
     expect(anchors).toHaveLength(1);
-    expect((anchors[0]!.props as unknown as { href: string }).href).toBe("https://example.com/x");
+    expect(stringProp(anchors[0], "href")).toBe("https://example.com/x");
   });
 
   test("token-boundary exclusions hold through the parser", () => {
@@ -2298,8 +2315,8 @@ describe("renderMarkdownAst / issue references", () => {
     );
     const link = collect(
       vnode,
-      (n) => n.type === "a" && (n.props as { class?: string }).class === "md-issue-link",
-    )[0]!;
+      (n) => n.type === "a" && stringProp(n, "class") === "md-issue-link",
+    )[0];
     expect(flattenText(link)).toBe("#123");
     expect(collect(link, (n) => n.type === "mark").map(flattenText)).toEqual(["123"]);
   });
