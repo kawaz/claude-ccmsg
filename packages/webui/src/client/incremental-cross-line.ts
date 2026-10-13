@@ -30,12 +30,19 @@
 // both ends for the same reason incremental-line-map.ts is — a live tail
 // appends, a "load older" page prepends.
 
+import type { JsonObject, JsonValue } from "@ccmsg/protocol";
 import {
+  type AttachmentDetail,
+  type AttachmentFile,
+  type BashCommandOutput,
   byteOffsetsFromLengths,
+  type FileToolResult,
   groupTimelineLines,
   pairQueuedTurns,
-  resolveToolResults,
   type ParsedLine,
+  resolveToolResults,
+  type Segment,
+  type SystemMessageField,
   type TimelineGroup,
 } from "./transcript-model.ts";
 
@@ -63,27 +70,256 @@ export interface CrossLineInput {
   byteLengths: readonly number[];
 }
 
-/**
- * Structural equality that treats reference identity as the answer.
- *
- * Every leaf of a ParsedLine that a pass did not rewrite is the *same object*
- * as last time (the passes spread over their input rather than rebuilding it
- * from the raw text), so the walk stops at the first `===` on every branch
- * that is genuinely unchanged. A line the tail really did change is walked in
- * full, but there are only ever a handful of those per update and the walk is
- * cheaper than the parse that produced it.
- */
-function equalByStructure<T>(a: T, b: T): boolean {
+// Field-by-field equality for each type a ParsedLine is made of. Every
+// comparison starts with `===`: a leaf a pass did not rewrite is the *same
+// object* as last time (the passes spread over their input rather than
+// rebuilding it from the raw text), so an unchanged branch settles in one
+// pointer compare. A line the tail really did change is walked in full, but
+// there are only ever a handful of those per update and the walk is cheaper
+// than the parse that produced it. A reload hands over fresh parses, where
+// nothing matches by reference and the walk is what recovers the identity.
+
+function equalArray<T>(a: readonly T[], b: readonly T[], equal: (x: T, y: T) => boolean): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a.at(i);
+    const y = b.at(i);
+    if (x === undefined || y === undefined || !equal(x, y)) return false;
+  }
+  return true;
+}
+
+function equalNullable<T>(a: T | null, b: T | null, equal: (x: T, y: T) => boolean): boolean {
+  if (a === null || b === null) return a === b;
+  return equal(a, b);
+}
+
+function equalOptional<T>(
+  a: T | undefined,
+  b: T | undefined,
+  equal: (x: T, y: T) => boolean,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return equal(a, b);
+}
+
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
+}
+
+function equalJsonValue(a: JsonValue, b: JsonValue): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  // An array's own entries are its elements, so one walk covers both kinds.
-  const aEntries = Object.entries(a);
-  const bFields = new Map(Object.entries(b));
-  if (aEntries.length !== bFields.size) return false;
-  return aEntries.every(
-    ([key, value]) => bFields.has(key) && equalByStructure(value, bFields.get(key)),
+  if (isJsonArray(a)) return isJsonArray(b) && equalArray(a, b, equalJsonValue);
+  if (isJsonArray(b)) return false;
+  return equalJsonObject(a, b);
+}
+
+function equalJsonObject(a: JsonObject, b: JsonObject): boolean {
+  if (a === b) return true;
+  // `Object.hasOwn` keeps an inherited name (`toString`, …) on the other side
+  // from being read as a field: the index signature would type it JsonValue.
+  let size = 0;
+  for (const key in a) {
+    if (!Object.hasOwn(a, key)) continue;
+    size++;
+    if (!Object.hasOwn(b, key)) return false;
+    const x = a[key];
+    const y = b[key];
+    if (x === undefined || y === undefined || !equalJsonValue(x, y)) return false;
+  }
+  for (const key in b) {
+    if (Object.hasOwn(b, key)) size--;
+  }
+  return size === 0;
+}
+
+function equalFileToolResult(a: FileToolResult, b: FileToolResult): boolean {
+  if (a === b) return true;
+  switch (a.kind) {
+    case "text":
+      return b.kind === "text" && a.content === b.content;
+    case "image":
+      return (
+        b.kind === "image" &&
+        a.mediaType === b.mediaType &&
+        a.base64 === b.base64 &&
+        a.width === b.width &&
+        a.height === b.height
+      );
+    case "error":
+      return b.kind === "error" && a.message === b.message;
+  }
+}
+
+function equalBashCommandOutput(a: BashCommandOutput, b: BashCommandOutput): boolean {
+  if (a === b) return true;
+  return (
+    a.stdout === b.stdout &&
+    a.stderr === b.stderr &&
+    equalNullable(
+      a.persisted,
+      b.persisted,
+      (x, y) => x.note === y.note && x.path === y.path && x.preview === y.preview,
+    )
   );
+}
+
+function equalBashResult(
+  a: { text: string; isError: boolean },
+  b: { text: string; isError: boolean },
+): boolean {
+  return a.text === b.text && a.isError === b.isError;
+}
+
+function equalSegment(a: Segment, b: Segment): boolean {
+  if (a === b) return true;
+  switch (a.kind) {
+    case "text":
+      return b.kind === "text" && a.role === b.role && a.text === b.text;
+    case "thinking":
+      return b.kind === "thinking" && a.text === b.text;
+    case "thinking-hidden":
+      return b.kind === "thinking-hidden" && a.reason === b.reason;
+    case "tool-use":
+      return b.kind === "tool-use" && a.name === b.name && equalJsonObject(a.input, b.input);
+    case "file-read":
+      return (
+        b.kind === "file-read" &&
+        a.toolUseId === b.toolUseId &&
+        a.path === b.path &&
+        a.offset === b.offset &&
+        a.limit === b.limit &&
+        equalNullable(a.result, b.result, equalFileToolResult)
+      );
+    case "file-write":
+      return b.kind === "file-write" && a.path === b.path && a.content === b.content;
+    case "file-edit":
+      return (
+        b.kind === "file-edit" &&
+        a.path === b.path &&
+        a.oldString === b.oldString &&
+        a.newString === b.newString
+      );
+    case "file-tool-result":
+      return (
+        b.kind === "file-tool-result" &&
+        a.toolUseId === b.toolUseId &&
+        equalFileToolResult(a.result, b.result) &&
+        equalOptional(a.toolUseResult, b.toolUseResult, equalJsonValue)
+      );
+    case "bash-use":
+      return (
+        b.kind === "bash-use" &&
+        a.toolUseId === b.toolUseId &&
+        a.command === b.command &&
+        a.description === b.description &&
+        a.background === b.background &&
+        a.hasResult === b.hasResult &&
+        equalNullable(a.result, b.result, equalBashResult)
+      );
+    case "bash-result":
+      return (
+        b.kind === "bash-result" &&
+        a.toolUseId === b.toolUseId &&
+        a.text === b.text &&
+        a.isError === b.isError &&
+        a.background === b.background &&
+        a.hasCommand === b.hasCommand
+      );
+    case "agent-send":
+      return (
+        b.kind === "agent-send" &&
+        a.to === b.to &&
+        a.summary === b.summary &&
+        a.message === b.message &&
+        a.messageType === b.messageType
+      );
+    case "agent-spawn":
+      return (
+        b.kind === "agent-spawn" &&
+        a.name === b.name &&
+        a.agentType === b.agentType &&
+        a.model === b.model &&
+        a.description === b.description &&
+        a.prompt === b.prompt &&
+        a.background === b.background
+      );
+    case "slash-command-prefix":
+      return b.kind === "slash-command-prefix" && a.command === b.command;
+    case "bash-command":
+      return (
+        b.kind === "bash-command" &&
+        a.command === b.command &&
+        equalNullable(a.output, b.output, equalBashCommandOutput)
+      );
+    case "bash-command-output":
+      return (
+        b.kind === "bash-command-output" &&
+        a.hasCommand === b.hasCommand &&
+        equalBashCommandOutput(a, b)
+      );
+    case "tool-result":
+      return (
+        b.kind === "tool-result" &&
+        a.toolUseId === b.toolUseId &&
+        a.isError === b.isError &&
+        a.text === b.text &&
+        equalOptional(a.toolUseResult, b.toolUseResult, equalJsonValue)
+      );
+    case "unknown-segment":
+      return b.kind === "unknown-segment" && a.type === b.type && equalJsonValue(a.raw, b.raw);
+  }
+}
+
+function equalSystemMessageField(a: SystemMessageField, b: SystemMessageField): boolean {
+  return a.name === b.name && a.value === b.value;
+}
+
+function equalAttachmentFile(a: AttachmentFile, b: AttachmentFile): boolean {
+  return a.path === b.path && a.content === b.content && a.startLine === b.startLine;
+}
+
+function equalAttachmentDetail(a: AttachmentDetail, b: AttachmentDetail): boolean {
+  if (a === b) return true;
+  return (
+    a.type === b.type &&
+    a.trailing === b.trailing &&
+    equalArray(a.fields, b.fields, equalSystemMessageField) &&
+    equalOptional(a.file, b.file, equalAttachmentFile)
+  );
+}
+
+function equalParsedLine(a: ParsedLine, b: ParsedLine): boolean {
+  if (a === b) return true;
+  switch (a.kind) {
+    case "turn":
+      return (
+        b.kind === "turn" &&
+        a.ts === b.ts &&
+        a.uuid === b.uuid &&
+        a.parentUuid === b.parentUuid &&
+        a.role === b.role &&
+        a.userMessageKind === b.userMessageKind &&
+        a.assistantMessageKind === b.assistantMessageKind &&
+        a.queuedContent === b.queuedContent &&
+        equalArray(a.segments, b.segments, equalSegment)
+      );
+    case "meta":
+      return (
+        b.kind === "meta" &&
+        a.ts === b.ts &&
+        a.uuid === b.uuid &&
+        a.parentUuid === b.parentUuid &&
+        a.type === b.type &&
+        a.summary === b.summary &&
+        a.raw === b.raw &&
+        equalOptional(a.attachment, b.attachment, equalAttachmentDetail)
+      );
+    case "broken":
+      return b.kind === "broken" && a.raw === b.raw && a.error === b.error;
+  }
 }
 
 /** Number of leading elements two arrays share under `equal`. */
@@ -177,7 +413,7 @@ export function crossLineIncrementally(
   const parsed = reuseUnchanged(
     cache.parsed,
     resolveToolResults(pairQueuedTurns(perLine, raws)),
-    equalByStructure,
+    equalParsedLine,
   );
   // Nothing downstream can have changed if neither input to the grouping did,
   // and the grouping is the expensive half.
