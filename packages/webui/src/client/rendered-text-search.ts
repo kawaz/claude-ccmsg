@@ -5,11 +5,6 @@ interface HighlightRegistryLike {
   delete(name: string): boolean;
 }
 
-interface HighlightWindow extends Window {
-  CSS?: typeof CSS & { highlights?: HighlightRegistryLike };
-  Highlight?: new (...ranges: AbstractRange[]) => Highlight;
-}
-
 interface RootHighlights {
   byColor: Range[][];
   all: Range[];
@@ -122,10 +117,11 @@ function highlightApi(doc: Document): {
   registry: HighlightRegistryLike;
   HighlightCtor: new (...ranges: AbstractRange[]) => Highlight;
 } | null {
-  const win = doc.defaultView as HighlightWindow | null;
-  const registry = (win?.CSS as (typeof CSS & { highlights?: HighlightRegistryLike }) | undefined)
-    ?.highlights;
-  const HighlightCtor = win?.Highlight;
+  const win = doc.defaultView;
+  // lib.dom declares both, but a browser without the CSS Custom Highlight API
+  // has neither, so they are read as possibly absent.
+  const registry: HighlightRegistryLike | undefined = win?.CSS?.highlights;
+  const HighlightCtor: (new (...ranges: AbstractRange[]) => Highlight) | undefined = win?.Highlight;
   return registry && HighlightCtor ? { registry, HighlightCtor } : null;
 }
 
@@ -175,10 +171,11 @@ function pointFallsInRange(point: Range, range: Range): boolean {
   }
 }
 
-function isTextNodeVisible(node: Text): boolean {
+function isTextNodeVisible(node: Node): boolean {
   let element = node.parentElement;
   while (element) {
-    if (element.tagName === "DETAILS" && !(element as HTMLDetailsElement).open) {
+    // `open` reflects the attribute, so the attribute is the state.
+    if (element.tagName === "DETAILS" && !element.hasAttribute("open")) {
       const summary = Array.from(element.children).find((child) => child.tagName === "SUMMARY");
       if (!summary?.contains(node)) return false;
     }
@@ -195,25 +192,26 @@ function collectRootRanges(
   const doc = root.ownerDocument;
   const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
   const walker = doc.createTreeWalker(root, showText);
-  const nodes: Text[] = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text);
+  // SHOW_TEXT: every node is a text node, whose nodeValue is its data.
+  const nodes: Node[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
 
   const result = collectRenderedTextRangeSpans(
-    nodes.map((node) => node.data),
+    nodes.map((node) => node.nodeValue ?? ""),
     words,
     nodes.map((node) => isTextNodeVisible(node)),
     countHidden,
   );
-  const byColor = Array.from({ length: 6 }, () => [] as Range[]);
+  const byColor = Array.from({ length: 6 }, (): Range[] => []);
   const all: Range[] = [];
   for (const match of result.ranges) {
-    if (match.spans.length === 0) continue;
-    const first = match.spans[0]!;
-    const last = match.spans[match.spans.length - 1]!;
+    const first = match.spans.at(0);
+    const last = match.spans.at(-1);
+    if (first === undefined || last === undefined) continue;
     const range = doc.createRange();
-    range.setStart(nodes[first.nodeIndex]!, first.start);
-    range.setEnd(nodes[last.nodeIndex]!, last.end);
-    byColor[match.colorIndex]!.push(range);
+    range.setStart(nodes[first.nodeIndex], first.start);
+    range.setEnd(nodes[last.nodeIndex], last.end);
+    byColor[match.colorIndex].push(range);
     all.push(range);
   }
   return { matched: result.matched, byColor, all };
@@ -235,7 +233,7 @@ export function visibleRenderedText(root: HTMLElement): string {
   const walker = doc.createTreeWalker(root, showText);
   let out = "";
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (isTextNodeVisible(node as Text)) out += (node as Text).data;
+    if (isTextNodeVisible(node)) out += node.nodeValue ?? "";
   }
   return out;
 }
@@ -323,10 +321,10 @@ export function setRenderedTextCurrent(root: HTMLElement, current: boolean): voi
 export function removeRenderedTextHighlights(root: HTMLElement): void {
   const roots = rootsByDocument.get(root.ownerDocument);
   const entry = roots?.get(root);
-  if (!entry) return;
+  if (!roots || !entry) return;
   root.removeEventListener("click", entry.clickListener);
-  roots!.delete(root);
-  if (roots!.size === 0) {
+  roots.delete(root);
+  if (roots.size === 0) {
     const doc = root.ownerDocument;
     rootsByDocument.delete(doc);
     const toggleListener = toggleListenersByDocument.get(doc);

@@ -940,8 +940,8 @@ export function rawTranscriptRowsFrom(
  * already drops it.
  */
 export function itemRawSourceOffsets(
-  lines: ParsedLine[],
-  offsets: number[],
+  lines: readonly ParsedLine[],
+  offsets: readonly number[],
 ): Map<number, number[]> {
   const ownerOffsetByToolUseId = new Map<string, number>();
   lines.forEach((line, i) => {
@@ -1263,7 +1263,7 @@ export function ccmsgUnitKey(offset: number, messageIndex: number): string {
  * the first one in the transcript, regardless of the fact that Preact renders
  * every boundary bubble before it descends into any fold group.
  */
-export function ccmsgRenderTargets(groups: TimelineGroup[]): CcmsgRenderTarget[] {
+export function ccmsgRenderTargets(groups: readonly TimelineGroup[]): CcmsgRenderTarget[] {
   const targets: CcmsgRenderTarget[] = [];
   const seen = new Set<string>();
   const push = (
@@ -1305,7 +1305,7 @@ export function ccmsgRenderTargets(groups: TimelineGroup[]): CcmsgRenderTarget[]
  * to. ccmsg messages reuse `ccmsgRenderTargets`' deduplication, so the counter
  * and the set of registered DOM targets stay equal.
  */
-export function userNavTargets(groups: TimelineGroup[]): UserNavTarget[] {
+export function userNavTargets(groups: readonly TimelineGroup[]): UserNavTarget[] {
   const rendered = new Set(
     ccmsgRenderTargets(groups)
       .filter((target) => target.placement === "boundary" && target.message.from === "u1")
@@ -1426,7 +1426,10 @@ function isBoundaryLine(line: ParsedLine): boolean {
  * `offsets` must be the same length as `lines` (Timeline.tsx's
  * `lineByteOffsets` output) so each entry keeps its stable Preact key.
  */
-export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): TimelineGroup[] {
+export function groupTimelineLines(
+  lines: readonly ParsedLine[],
+  offsets: readonly number[],
+): TimelineGroup[] {
   const groups: TimelineGroup[] = [];
   let pending: TimelineEntry[] = [];
   const flushPending = () => {

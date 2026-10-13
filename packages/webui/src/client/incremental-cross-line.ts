@@ -42,9 +42,9 @@ import {
 /** Inputs and outputs of one cross-line derivation, kept so the next one can
  * reuse whatever it still agrees with. */
 export interface CrossLineCache {
-  parsed: ParsedLine[];
-  offsets: number[];
-  groups: TimelineGroup[];
+  parsed: readonly ParsedLine[];
+  offsets: readonly number[];
+  groups: readonly TimelineGroup[];
 }
 
 export function emptyCrossLineCache(): CrossLineCache {
@@ -76,30 +76,21 @@ export interface CrossLineInput {
 function equalByStructure(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  const aIsArray = Array.isArray(a);
-  if (aIsArray !== Array.isArray(b)) return false;
-  if (aIsArray) {
-    const bArray = b as unknown[];
-    if (a.length !== bArray.length) return false;
-    for (let i = 0; i < a.length; i++) if (!equalByStructure(a[i], bArray[i])) return false;
-    return true;
-  }
-  const aRecord = a as Record<string, unknown>;
-  const bRecord = b as Record<string, unknown>;
-  const keys = Object.keys(aRecord);
-  if (keys.length !== Object.keys(bRecord).length) return false;
-  for (const key of keys) {
-    if (!Object.hasOwn(bRecord, key)) return false;
-    if (!equalByStructure(aRecord[key], bRecord[key])) return false;
-  }
-  return true;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  // An array's own entries are its elements, so one walk covers both kinds.
+  const aEntries = Object.entries(a);
+  const bFields = new Map(Object.entries(b));
+  if (aEntries.length !== bFields.size) return false;
+  return aEntries.every(
+    ([key, value]) => bFields.has(key) && equalByStructure(value, bFields.get(key)),
+  );
 }
 
 /** Number of leading elements two arrays share under `equal`. */
 function sharedPrefix<T>(a: readonly T[], b: readonly T[], equal: (x: T, y: T) => boolean): number {
   const max = Math.min(a.length, b.length);
   let i = 0;
-  while (i < max && equal(a[i]!, b[i]!)) i++;
+  while (i < max && equal(a[i], b[i])) i++;
   return i;
 }
 
@@ -112,7 +103,7 @@ function sharedSuffix<T>(
   equal: (x: T, y: T) => boolean,
 ): number {
   let i = 0;
-  while (i < limit && equal(a[a.length - 1 - i]!, b[b.length - 1 - i]!)) i++;
+  while (i < limit && equal(a[a.length - 1 - i], b[b.length - 1 - i])) i++;
   return i;
 }
 
@@ -125,17 +116,21 @@ function sharedSuffix<T>(
  * (a websocket push that adds no lines, a re-render with the same store state)
  * propagates no new identity anywhere.
  */
-function reuseUnchanged<T>(previous: readonly T[], next: T[], equal: (x: T, y: T) => boolean): T[] {
+function reuseUnchanged<T>(
+  previous: readonly T[],
+  next: T[],
+  equal: (x: T, y: T) => boolean,
+): readonly T[] {
   const prefix = sharedPrefix(previous, next, equal);
-  if (prefix === previous.length && prefix === next.length) return previous as T[];
+  if (prefix === previous.length && prefix === next.length) return previous;
   const suffix = sharedSuffix(
     previous,
     next,
     Math.min(previous.length, next.length) - prefix,
     equal,
   );
-  for (let i = 0; i < prefix; i++) next[i] = previous[i]!;
-  for (let i = 0; i < suffix; i++) next[next.length - 1 - i] = previous[previous.length - 1 - i]!;
+  for (let i = 0; i < prefix; i++) next[i] = previous[i];
+  for (let i = 0; i < suffix; i++) next[next.length - 1 - i] = previous[previous.length - 1 - i];
   return next;
 }
 
@@ -153,8 +148,8 @@ function equalGroup(a: TimelineGroup, b: TimelineGroup): boolean {
   }
   if (b.kind !== "fold" || a.entries.length !== b.entries.length) return false;
   for (let i = 0; i < a.entries.length; i++) {
-    const x = a.entries[i]!;
-    const y = b.entries[i]!;
+    const x = a.entries[i];
+    const y = b.entries[i];
     if (x.offset !== y.offset || x.line !== y.line) return false;
   }
   return true;

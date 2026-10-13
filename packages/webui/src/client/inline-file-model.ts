@@ -22,10 +22,10 @@ export function lineDiff(oldText: string, newText: string): DiffLine[] {
   const table = Array.from({ length: before.length + 1 }, () => new Uint32Array(after.length + 1));
   for (let i = before.length - 1; i >= 0; i -= 1) {
     for (let j = after.length - 1; j >= 0; j -= 1) {
-      table[i]![j] =
+      table[i][j] =
         before[i] === after[j]
-          ? table[i + 1]![j + 1]! + 1
-          : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+          ? table[i + 1][j + 1] + 1
+          : Math.max(table[i + 1][j], table[i][j + 1]);
     }
   }
   const out: DiffLine[] = [];
@@ -33,13 +33,13 @@ export function lineDiff(oldText: string, newText: string): DiffLine[] {
   let j = 0;
   while (i < before.length || j < after.length) {
     if (i < before.length && j < after.length && before[i] === after[j]) {
-      out.push({ kind: "same", text: before[i]! });
+      out.push({ kind: "same", text: before[i] });
       i += 1;
       j += 1;
-    } else if (j >= after.length || (i < before.length && table[i + 1]![j]! >= table[i]![j + 1]!)) {
-      out.push({ kind: "delete", text: before[i++]! });
+    } else if (j >= after.length || (i < before.length && table[i + 1][j] >= table[i][j + 1])) {
+      out.push({ kind: "delete", text: before[i++] });
     } else {
-      out.push({ kind: "add", text: after[j++]! });
+      out.push({ kind: "add", text: after[j++] });
     }
   }
   return out;
