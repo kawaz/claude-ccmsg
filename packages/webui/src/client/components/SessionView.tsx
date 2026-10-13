@@ -59,7 +59,13 @@ function sessionTabItems(
           title: NO_TRANSCRIPT_MESSAGE,
         },
     ...(hasTerminal
-      ? [{ id: "terminal", label: "Terminal", href: terminalHref(sid) } as TabItem<SessionTab>]
+      ? [
+          {
+            id: "terminal",
+            label: "Terminal",
+            href: terminalHref(sid),
+          } satisfies TabItem<SessionTab>,
+        ]
       : []),
     { id: "status", label: "Status", href: statusHref(sid) },
     { id: "rooms", label: "Rooms", href: sessionRoomsHref(sid) },

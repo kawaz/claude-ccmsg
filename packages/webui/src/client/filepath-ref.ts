@@ -464,7 +464,7 @@ function extractTokens(source: string, inlineRe: RegExp): string[] {
     if (inFence) continue;
     inlineRe.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = inlineRe.exec(line)) !== null) tokens.push(m[1]!);
+    while ((m = inlineRe.exec(line)) !== null) tokens.push(m[1]);
   }
   return tokens;
 }

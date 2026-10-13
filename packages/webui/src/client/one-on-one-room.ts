@@ -12,9 +12,9 @@ export function findExistingOneOnOne(state: AppState, sid: string): RoomState | 
     // u1 is implicit (no member row per DR-0006), so the room's member list
     // is exactly the target session — modulo "left" flags after a kick or
     // leave. Filter to present members and require exactly one, matching sid.
-    const present = [...room.membersById.values()].filter((m) => !m.left);
-    if (present.length !== 1) continue;
-    if (present[0]!.sid === sid) return room;
+    const [only, ...others] = [...room.membersById.values()].filter((m) => !m.left);
+    if (only === undefined || others.length > 0) continue;
+    if (only.sid === sid) return room;
   }
   return null;
 }

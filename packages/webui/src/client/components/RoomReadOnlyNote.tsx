@@ -12,11 +12,16 @@ export function RoomReadOnlyNote({ room }: { room: RoomState }) {
   const present = room.memberOrder
     .map((id) => room.membersById.get(id))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && !m.left);
+  const [only, ...others] = present;
   const target = "セッション画面の入力欄";
   return (
     <p class="room-readonly-note">
       この 1on1 room は読み取り専用です。セッションへの入力は
-      {present.length === 1 ? <a href={sessionHref(present[0]!.sid)}>{target}</a> : target}
+      {only !== undefined && others.length === 0 ? (
+        <a href={sessionHref(only.sid)}>{target}</a>
+      ) : (
+        target
+      )}
       から。
     </p>
   );

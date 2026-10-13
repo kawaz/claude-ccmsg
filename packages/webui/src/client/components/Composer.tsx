@@ -335,11 +335,11 @@ export function Composer({
         placeholder={placeholder}
         rows={3}
         value={text}
-        onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+        onInput={(e) => setText(e.currentTarget.value)}
         // kawaz r26 mid=20: panel close (外側クリック) の直前に必ず blur が
         // 発火するので、ここでカーソル位置を保存 → 次回 open 時に復元。
         onBlur={(e) => {
-          const el = e.target as HTMLTextAreaElement;
+          const el = e.currentTarget;
           lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
         }}
         onKeyDown={onKeyDown}

@@ -88,7 +88,7 @@ function PeriodPicker({ period, days }: { period: StatsPeriod; days: number }) {
           max={LLM_STATS_DAYS_MAX}
           value={draft}
           aria-label={`取得日数 (${LLM_STATS_DAYS_MIN}〜${LLM_STATS_DAYS_MAX})`}
-          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onInput={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}

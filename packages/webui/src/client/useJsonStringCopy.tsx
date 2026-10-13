@@ -26,11 +26,14 @@ type Anchor = {
 };
 
 /** イベント発生元から、コピー対象になる `.shiki-tok` を探す。 */
-function closestStringToken(target: EventTarget | null): HTMLElement | null {
+function closestStringToken(
+  target: EventTarget | null,
+): { readonly tok: HTMLElement; readonly value: string } | null {
   if (!(target instanceof Element)) return null;
   const tok = target.closest(".shiki-tok");
   if (!(tok instanceof HTMLElement)) return null;
-  return parseJsonStringToken(tok.textContent) === null ? null : tok;
+  const value = parseJsonStringToken(tok.textContent);
+  return value === null ? null : { tok, value };
 }
 
 /**
@@ -92,12 +95,12 @@ export function useJsonStringCopy(): {
       if (buttonRef.current && e.target instanceof Node && buttonRef.current.contains(e.target)) {
         return;
       }
-      const tok = closestStringToken(e.target);
-      if (!tok) {
+      const hit = closestStringToken(e.target);
+      if (!hit) {
         setAnchor(null);
         return;
       }
-      showFor(tok, parseJsonStringToken(tok.textContent) as string);
+      showFor(hit.tok, hit.value);
     },
     [showFor],
   );
@@ -111,8 +114,8 @@ export function useJsonStringCopy(): {
       if (buttonRef.current && e.target instanceof Node && buttonRef.current.contains(e.target)) {
         return;
       }
-      const tok = closestStringToken(e.target);
-      if (tok) showFor(tok, parseJsonStringToken(tok.textContent) as string);
+      const hit = closestStringToken(e.target);
+      if (hit) showFor(hit.tok, hit.value);
     },
     [showFor],
   );

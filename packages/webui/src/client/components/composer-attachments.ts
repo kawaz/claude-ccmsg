@@ -125,10 +125,7 @@ export function extractTransferFiles(
   const out: File[] = [];
   // items may be a DataTransferItemList (array-like) or an iterable; loop over
   // both via for-of on a materialized array.
-  const arr: Array<{ kind: string; type: string; getAsFile(): File | null }> = Array.isArray(items)
-    ? items
-    : Array.from(items as Iterable<{ kind: string; type: string; getAsFile(): File | null }>);
-  for (const item of arr) {
+  for (const item of Array.from(items)) {
     if (item.kind !== "file") continue;
     const file = item.getAsFile();
     if (file) out.push(file);

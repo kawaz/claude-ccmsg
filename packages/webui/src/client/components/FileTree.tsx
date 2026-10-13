@@ -901,7 +901,7 @@ export function FileTree({
           placeholder="Search files by name"
           aria-label="ファイル名検索 (空白区切りで AND、-語 で除外)"
           value={searchQuery}
-          onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
+          onInput={(e) => setSearchQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
             // Esc clears rather than just blurring — the query is what's
             // hiding the tree, so "get me out of search" and "empty the box"
@@ -922,7 +922,7 @@ export function FileTree({
               type="checkbox"
               checked={respectGitignore}
               onChange={(e) => {
-                const next = (e.target as HTMLInputElement).checked;
+                const next = e.currentTarget.checked;
                 setRespectGitignore(next);
                 saveRespectGitignore(next);
               }}

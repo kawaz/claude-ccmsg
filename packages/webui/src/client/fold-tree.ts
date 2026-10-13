@@ -15,7 +15,7 @@ import {
  * component's Preact key — stable across live-tail appends and "load older"
  * prepends for the same reason (transcript-model.ts's lineByteOffsets doc). */
 export function foldGroupKey(entries: readonly TimelineEntry[]): string {
-  return `fold:${entries[0]!.offset}`;
+  return `fold:${entries[0].offset}`;
 }
 
 /**

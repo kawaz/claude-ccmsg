@@ -36,13 +36,13 @@ export interface FabPopup {
  * 判定を pure 関数に切り出してあるのは、hook 本体が DOM + focus 挙動前提で
  * bun test から回せないため (useDraggable の `clampPosition` /
  * `isPanelDragHandle` と同じ流儀)。 */
-export function isOutsideIframeFocus(
-  activeElement: { tagName?: string } | null,
-  panel: { contains: (n: never) => boolean } | null,
+export function isOutsideIframeFocus<E extends { tagName?: string }>(
+  activeElement: E | null,
+  panel: { contains: (n: E) => boolean } | null,
 ): boolean {
   if (!activeElement || activeElement.tagName !== "IFRAME") return false;
   // panel 自身が内包する iframe は「外側」ではない (他の内外判定と同じ基準)。
-  if (panel && panel.contains(activeElement as never)) return false;
+  if (panel && panel.contains(activeElement)) return false;
   return true;
 }
 

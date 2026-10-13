@@ -148,7 +148,7 @@ function CwdPicker({
         class="session-creator-cwd-input"
         placeholder="検索 (パス部分一致)、またはパスを直接入力して Enter"
         value={filterInput}
-        onInput={(e) => setFilterInput((e.target as HTMLInputElement).value)}
+        onInput={(e) => setFilterInput(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key !== "Enter") return;
           e.preventDefault();
@@ -219,7 +219,7 @@ function ParamField({
     return (
       <label class="session-creator-field">
         {label}
-        <select value={value} onChange={(e) => onChange((e.target as HTMLSelectElement).value)}>
+        <select value={value} onChange={(e) => onChange(e.currentTarget.value)}>
           {options.map((option) => (
             <option key={option} value={option}>
               {option}
@@ -251,7 +251,7 @@ function ParamField({
           class="session-creator-prompt"
           rows={paramRows(value)}
           value={value}
-          onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
+          onInput={(e) => onChange(e.currentTarget.value)}
         />
       ) : (
         <input
@@ -259,7 +259,7 @@ function ParamField({
           class="session-creator-resume-input"
           value={value}
           placeholder={`$${param.name}`}
-          onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+          onInput={(e) => onChange(e.currentTarget.value)}
         />
       )}
     </label>
@@ -406,11 +406,7 @@ export function SessionCreator({
                 value={form.template}
                 onChange={(e) =>
                   setForm(
-                    selectSessionCreatorTemplate(
-                      form,
-                      probe.templates,
-                      (e.target as HTMLSelectElement).value,
-                    ),
+                    selectSessionCreatorTemplate(form, probe.templates, e.currentTarget.value),
                   )
                 }
               >
@@ -459,9 +455,7 @@ export function SessionCreator({
               class="session-creator-prompt"
               rows={paramRows(form.command)}
               value={form.command}
-              onInput={(e) =>
-                setForm({ ...form, command: (e.target as HTMLTextAreaElement).value })
-              }
+              onInput={(e) => setForm({ ...form, command: e.currentTarget.value })}
             />
           </label>
           <button

@@ -23,6 +23,10 @@ interface TranslatorLike {
 interface TranslatorStatic {
   create(opts: { sourceLanguage: string; targetLanguage: string }): Promise<TranslatorLike>;
 }
+declare global {
+  /** 対応ブラウザだけにある (無い環境では undefined)。 */
+  var Translator: TranslatorStatic | undefined;
+}
 
 /** \p{Script=...} は Unicode script property escape — ES2018+ の RegExp `u`
  * フラグで使える。ひらがな/カタカナ/漢字を「日本語の文字」として数える。 */
@@ -59,11 +63,9 @@ export function isTranslationSkippedText(text: string): boolean {
 }
 
 function getTranslatorStatic(): TranslatorStatic | null {
-  const t = (globalThis as Record<string, unknown>).Translator;
   // 実ブラウザではコンストラクタ (function)、テストの mock では単なる
-  // {create: ...} オブジェクトを差し込むことがあるため両方を受け付ける。
-  if (t && (typeof t === "function" || typeof t === "object")) return t as TranslatorStatic;
-  return null;
+  // {create: ...} オブジェクトを差し込むことがあるが、どちらも create を持つ。
+  return globalThis.Translator ?? null;
 }
 
 /** feature-detect: Chrome built-in Translator API がこの環境に存在するか。

@@ -317,7 +317,7 @@ export function SessionSearchPanel({
                 : 'query words\n空白で AND・改行で OR・"引用句"'
             }
             value={form.query}
-            onInput={(e) => setForm({ ...form, query: (e.target as HTMLTextAreaElement).value })}
+            onInput={(e) => setForm({ ...form, query: e.currentTarget.value })}
           />
           <SearchModeToggles
             caseSensitive={form.caseSensitive}
@@ -331,9 +331,7 @@ export function SessionSearchPanel({
             <input
               type="checkbox"
               checked={form.targetUser}
-              onChange={(e) =>
-                setForm({ ...form, targetUser: (e.target as HTMLInputElement).checked })
-              }
+              onChange={(e) => setForm({ ...form, targetUser: e.currentTarget.checked })}
             />
             user
           </label>
@@ -341,9 +339,7 @@ export function SessionSearchPanel({
             <input
               type="checkbox"
               checked={form.targetAgent}
-              onChange={(e) =>
-                setForm({ ...form, targetAgent: (e.target as HTMLInputElement).checked })
-              }
+              onChange={(e) => setForm({ ...form, targetAgent: e.currentTarget.checked })}
             />
             agent
           </label>
@@ -352,13 +348,13 @@ export function SessionSearchPanel({
           type="text"
           placeholder="cwd words..."
           value={form.cwd}
-          onInput={(e) => setForm({ ...form, cwd: (e.target as HTMLInputElement).value })}
+          onInput={(e) => setForm({ ...form, cwd: e.currentTarget.value })}
         />
         <input
           type="text"
           placeholder="session id (partial)"
           value={form.sid}
-          onInput={(e) => setForm({ ...form, sid: (e.target as HTMLInputElement).value })}
+          onInput={(e) => setForm({ ...form, sid: e.currentTarget.value })}
         />
         {configDirOptions.length > 1 ? (
           <fieldset class="session-search-config-dirs">
@@ -381,7 +377,7 @@ export function SessionSearchPanel({
             type="text"
             placeholder="5d"
             value={form.mtimeWithin}
-            onInput={(e) => setForm({ ...form, mtimeWithin: (e.target as HTMLInputElement).value })}
+            onInput={(e) => setForm({ ...form, mtimeWithin: e.currentTarget.value })}
           />
         </label>
         <button type="submit" class="session-search-submit" disabled={loading}>

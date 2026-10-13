@@ -147,7 +147,7 @@ function NewRoomForm({ sid }: { sid: string }) {
         disabled={saving}
         maxLength={200}
         placeholder="room タイトル (省略可, Shift+Enter で作成, Escape でキャンセル)"
-        onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+        onInput={(e) => setDraft(e.currentTarget.value)}
         onKeyDown={onKeyDown}
       />
       <button

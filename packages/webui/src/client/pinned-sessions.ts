@@ -173,9 +173,11 @@ export function pinnedSessionTitle(hit: SessionSearchHit, agent: AgentInfo | und
 }
 
 /** frozen hit's sid → its pin key, for the refreshes below. */
-function pinKeysBySid(pins: Map<string, SessionSearchHit>): Map<string, string> {
-  const index = new Map<string, string>();
-  for (const [key, hit] of pins) index.set(hit.sid, key);
+function pinsBySid(
+  pins: Map<string, SessionSearchHit>,
+): Map<string, { readonly key: string; readonly hit: SessionSearchHit }> {
+  const index = new Map<string, { readonly key: string; readonly hit: SessionSearchHit }>();
+  for (const [key, hit] of pins) index.set(hit.sid, { key, hit });
   return index;
 }
 
@@ -201,12 +203,12 @@ export function refreshPinsFromPeers(
   peers: readonly PeerInfo[],
 ): Map<string, SessionSearchHit> {
   if (pins.size === 0) return pins;
-  const keyBySid = pinKeysBySid(pins);
+  const pinBySid = pinsBySid(pins);
   let next: Map<string, SessionSearchHit> | null = null;
   for (const peer of peers) {
-    const key = keyBySid.get(peer.sid);
-    if (key === undefined) continue;
-    const hit = pins.get(key)!; // non-null: key came from pins itself
+    const pin = pinBySid.get(peer.sid);
+    if (pin === undefined) continue;
+    const { key, hit } = pin;
     const { repo, ws } = pinnedSessionLabel(hit, peer);
     if (repo === (hit.repo ?? "") && ws === (hit.ws ?? "")) continue;
     next ??= new Map(pins);
@@ -230,12 +232,12 @@ export function refreshPinsFromAgents(
   agents: readonly AgentInfo[],
 ): Map<string, SessionSearchHit> {
   if (pins.size === 0) return pins;
-  const keyBySid = pinKeysBySid(pins);
+  const pinBySid = pinsBySid(pins);
   let next: Map<string, SessionSearchHit> | null = null;
   for (const agent of agents) {
-    const key = keyBySid.get(agent.sessionId);
-    if (key === undefined) continue;
-    const hit = pins.get(key)!; // non-null: key came from pins itself
+    const pin = pinBySid.get(agent.sessionId);
+    if (pin === undefined) continue;
+    const { key, hit } = pin;
     const title = pinnedSessionTitle(hit, agent);
     if (title === "" || title === hit.title) continue;
     next ??= new Map(pins);

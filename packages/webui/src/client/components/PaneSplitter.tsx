@@ -44,7 +44,7 @@ export function PaneSplitter({
         // pointer leaves the splitter's own hitbox — otherwise a fast drag
         // would strand the splitter mid-move. Mouse and touch share the
         // pointer-events pipeline.
-        (e.currentTarget as Element).setPointerCapture(e.pointerId);
+        e.currentTarget.setPointerCapture(e.pointerId);
         e.preventDefault();
       }}
       onPointerMove={(e) => {
@@ -55,13 +55,13 @@ export function PaneSplitter({
         if (!draggingRef.current) return;
         draggingRef.current = false;
         setDragging(false);
-        (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+        e.currentTarget.releasePointerCapture(e.pointerId);
       }}
       onPointerCancel={(e) => {
         if (!draggingRef.current) return;
         draggingRef.current = false;
         setDragging(false);
-        (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+        e.currentTarget.releasePointerCapture(e.pointerId);
       }}
     />
   );

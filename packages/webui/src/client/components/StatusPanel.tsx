@@ -331,8 +331,8 @@ function EnvPanel({
     });
   }
 
-  function handleToggle(e: Event): void {
-    if (!(e.currentTarget as HTMLDetailsElement).open) return;
+  function handleToggle(e: JSX.TargetedEvent<HTMLDetailsElement, Event>): void {
+    if (!e.currentTarget.open) return;
     setState({ kind: "loading" });
     void onLoadEnv()
       .then((res) => {
@@ -363,13 +363,13 @@ function EnvPanel({
                 placeholder="空白区切りで AND 検索 (名前・値の両方)"
                 aria-label="環境変数を検索"
                 value={query}
-                onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+                onInput={(e) => setQuery(e.currentTarget.value)}
               />
               <label class="status-env-split">
                 <input
                   type="checkbox"
                   checked={splitColons}
-                  onChange={(e) => setSplitColons((e.currentTarget as HTMLInputElement).checked)}
+                  onChange={(e) => setSplitColons(e.currentTarget.checked)}
                 />
                 コロンを改行で表示
               </label>

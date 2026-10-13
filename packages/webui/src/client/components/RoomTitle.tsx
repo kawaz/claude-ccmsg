@@ -102,7 +102,7 @@ export function RoomTitle({ room }: { room: RoomState }) {
           disabled={saving}
           maxLength={200}
           placeholder="room タイトル (Shift+Enter で確定, Escape でキャンセル)"
-          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onInput={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={onKeyDown}
         />
         <button

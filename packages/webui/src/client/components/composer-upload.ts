@@ -5,7 +5,14 @@
 // XHR (not fetch) は Composer 側の doc comment 参照 — `fetch` に upload
 // progress hook が無いため、`xhr.upload.onprogress` で bytes-sent を chip に
 // 反映する用途では XHR しか選択肢が無い。
-import type { AttachmentUploadResponse } from "@ccmsg/protocol";
+import {
+  type AttachmentUploadResponse,
+  AttachmentUploadResponseSchema,
+  jsonText,
+  parseWith,
+} from "@ccmsg/protocol";
+
+const AttachmentUploadResponseTextSchema = jsonText(AttachmentUploadResponseSchema);
 
 /** POST /attachment に multipart form で `file` を送信し、`AttachmentUploadResponse`
  * を resolve。progress は `onProgress(0..100)` で呼ぶ。非 2xx / transport error
@@ -20,7 +27,6 @@ export function uploadAttachment(
     form.append("file", file);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/attachment", true);
-    xhr.responseType = "json";
     xhr.upload.onprogress = (e) => {
       // total may be 0 on some browsers when Content-Length can't be
       // computed; clamp to 0-100 and only report meaningful values.
@@ -29,9 +35,9 @@ export function uploadAttachment(
     };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        const body = xhr.response as AttachmentUploadResponse | null;
-        if (body && body.ok) resolve(body);
-        else reject(new Error(`unexpected response body: ${xhr.responseText}`));
+        const body = parseWith(AttachmentUploadResponseTextSchema, xhr.responseText);
+        if (body.ok) resolve(body.value);
+        else reject(new Error(`unexpected response body: ${body.failure.summary}`));
       } else {
         // 413 = size cap、400 = invalid form、500 = write failure。error msg に
         // status を含めて chip の tooltip に載せる。

@@ -76,7 +76,7 @@ export function saySlots<T extends SayPlacement>(
         break;
       }
     }
-    slots[slot]!.push(say);
+    slots[slot].push(say);
   }
   return slots;
 }

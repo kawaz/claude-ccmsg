@@ -75,7 +75,7 @@ export function RoomCreator({
             maxLength={200}
             placeholder="省略可"
             value={form.title}
-            onInput={(e) => setForm({ ...form, title: (e.target as HTMLInputElement).value })}
+            onInput={(e) => setForm({ ...form, title: e.currentTarget.value })}
           />
         </label>
         {/* kawaz r26 mid=118: broadcast の webui 作成経路。broadcast はメンバー

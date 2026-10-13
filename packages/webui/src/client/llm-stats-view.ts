@@ -202,7 +202,7 @@ export function periodDays(period: StatsPeriod): number {
 }
 
 export function isStatsPeriod(value: string): value is StatsPeriod {
-  return (STATS_PERIODS as readonly string[]).includes(value);
+  return STATS_PERIODS.some((period) => period === value);
 }
 
 export const PERIOD_LABEL: Record<StatsPeriod, string> = {
@@ -551,7 +551,7 @@ export function axisBucketLabel(key: string): string {
   const day = DATE_KEY.exec(key);
   if (day) return `${day[2]}-${day[3]}`;
   const week = /^\d{4}-(W\d{2})$/.exec(key);
-  if (week) return week[1]!;
+  if (week) return week[1];
   return formatBucket(key);
 }
 

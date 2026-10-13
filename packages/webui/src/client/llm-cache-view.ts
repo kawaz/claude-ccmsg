@@ -72,20 +72,16 @@ interface RingPhase {
 export function cacheRingPhase(window: CacheWindow, now: number): RingPhase | null {
   const windowEnd = llmCacheWindowEndMs(window);
   if (windowEnd <= now) return null;
+  const since = window.cache_since;
+  const until = window.cache_until;
   const chained =
     window.cache_paused !== true &&
     (window.cache_count ?? 0) >= 1 &&
-    window.cache_since !== undefined &&
-    window.cache_until !== undefined &&
-    window.cache_until > now &&
-    window.cache_until > window.cache_since;
-  if (chained) {
-    return {
-      phase: "extended",
-      start: window.cache_since as number,
-      end: window.cache_until as number,
-    };
-  }
+    since !== undefined &&
+    until !== undefined &&
+    until > now &&
+    until > since;
+  if (chained) return { phase: "extended", start: since, end: until };
   // The first cache runs out either when the machinery takes over from the
   // conversation or, with no marker planned, when the cache itself goes cold.
   const planned = window.cache_paused === true ? undefined : window.next_keepalive_at;

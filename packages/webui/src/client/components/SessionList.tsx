@@ -121,8 +121,12 @@ function useShiftHover(): {
 function selectSessionOnRowClick(sid: string): (e: MouseEvent) => void {
   return (e) => {
     if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
-    const target = e.target as Element | null;
-    if (target?.closest("a, button, input, textarea, select, summary")) return;
+    if (
+      e.target instanceof Element &&
+      e.target.closest("a, button, input, textarea, select, summary")
+    ) {
+      return;
+    }
     if (window.getSelection()?.isCollapsed === false) return;
     pushNavigation(sessionHref(sid));
   };
@@ -340,7 +344,7 @@ function SessionTitle({
           readOnly={saving}
           maxLength={200}
           placeholder="Enter で送信, Escape で中止"
-          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onInput={(e) => setDraft(e.currentTarget.value)}
           onKeyDown={onKeyDown}
           onCompositionStart={() => {
             composingRef.current = true;

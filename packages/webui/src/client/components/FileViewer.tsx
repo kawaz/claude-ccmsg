@@ -101,14 +101,13 @@ function LineNumberedTextarea({
   ariaLabel: string;
   placeholder?: string;
   disabled?: boolean;
-  onInput: (e: Event) => void;
+  onInput: (e: JSX.TargetedEvent<HTMLTextAreaElement, Event>) => void;
   onKeyDown?: (e: KeyboardEvent) => void;
 }) {
   const gutterRef = useRef<HTMLDivElement | null>(null);
   const lineCount = editorLineCount(value);
-  const handleScroll = (e: Event) => {
-    const ta = e.currentTarget as HTMLTextAreaElement;
-    if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
+  const handleScroll = (e: JSX.TargetedEvent<HTMLTextAreaElement, Event>) => {
+    if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop;
   };
   const items: JSX.Element[] = [];
   for (let i = 1; i <= lineCount; i += 1) items.push(<div key={i}>{i}</div>);
@@ -202,7 +201,7 @@ function InboxNewEditor({
           aria-label="メモのファイル名"
           placeholder={`自動命名: ${autoName}`}
           value={name}
-          onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          onInput={(e) => setName(e.currentTarget.value)}
           disabled={creating}
         />
         <div class="memo-editor-actions">
@@ -220,7 +219,7 @@ function InboxNewEditor({
         ariaLabel="メモ本文"
         placeholder="メモ本文"
         value={content}
-        onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+        onInput={(e) => setContent(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.metaKey && e.key === "Enter") {
             e.preventDefault();
@@ -624,7 +623,7 @@ function TextFileEditor({
         textareaRef={bodyRef}
         ariaLabel="ファイル本文"
         value={content}
-        onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+        onInput={(e) => setContent(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.metaKey && e.key === "Enter") {
             e.preventDefault();

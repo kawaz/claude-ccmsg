@@ -102,12 +102,12 @@ export function splitTextForIssueRefs(
   ISSUE_REF_RE.lastIndex = 0;
   for (let m = ISSUE_REF_RE.exec(text); m; m = ISSUE_REF_RE.exec(text)) {
     const slug = resolveRepo(m[1], m[2], repo);
-    const href = slug ? issueRefUrl(slug, m[3]!, m[4]) : null;
+    const href = slug ? issueRefUrl(slug, m[3], m[4]) : null;
     if (href) hits.push({ index: m.index, text: m[0], href, external: true });
   }
   ROOM_REF_RE.lastIndex = 0;
   for (let m = ROOM_REF_RE.exec(text); m; m = ROOM_REF_RE.exec(text)) {
-    hits.push({ index: m.index, text: m[0], href: roomRefUrl(m[1]!, m[2]!), external: false });
+    hits.push({ index: m.index, text: m[0], href: roomRefUrl(m[1], m[2]), external: false });
   }
   if (hits.length === 0) return [{ text, href: null, external: false }];
   hits.sort((a, b) => a.index - b.index);

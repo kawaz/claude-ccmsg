@@ -51,7 +51,7 @@ function urlScheme(url: string): string | null {
   const stripped = url.replace(/[\u0000-\u0020]+/g, "");
   if (stripped.startsWith("//")) return "//";
   const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped);
-  return m ? m[1]!.toLowerCase() : null;
+  return m ? m[1].toLowerCase() : null;
 }
 
 /**

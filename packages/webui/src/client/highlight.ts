@@ -200,7 +200,7 @@ export async function tokenizeLines(src: string, lang: HighlightLang): Promise<H
       themes: { light: "github-light", dark: "github-dark" },
       defaultColor: false,
     });
-    if (src.endsWith("\n") && tokens.length > 0 && tokens[tokens.length - 1]!.length === 0) {
+    if (src.endsWith("\n") && tokens.at(-1)?.length === 0) {
       tokens.pop();
     }
     return tokens.map((line) =>

@@ -374,6 +374,13 @@ export function useFabPanelPositionLink(
   return { onFabRef, onPanelRef };
 }
 
+/** `closest` を持つ target か (isPanelDragHandle の duck typing)。 */
+function hasClosest(
+  target: EventTarget,
+): target is EventTarget & { closest(sel: string): unknown } {
+  return "closest" in target && typeof target.closest === "function";
+}
+
 /** panel 側で使う handleFilter: textarea / input / button / select / a /
  * contenteditable のいずれかに含まれる target は drag を開始しない。パネル
  * の余白・ヘッダ・ラベル領域は許可される。 */
@@ -382,11 +389,8 @@ export function isPanelDragHandle(target: EventTarget | null): boolean {
   // ブラウザ以外のテスト環境 (bun/node) で Element が未定義でも参照エラーに
   // ならないようにするための予防。closest を持たない target (Text / Window
   // / null) は handle 対象外 (false)。
-  if (!target || typeof (target as { closest?: unknown }).closest !== "function") {
-    return false;
-  }
-  const el = target as unknown as { closest: (sel: string) => Element | null };
-  if (el.closest('textarea, input, button, select, a, [contenteditable="true"]')) {
+  if (!target || !hasClosest(target)) return false;
+  if (target.closest('textarea, input, button, select, a, [contenteditable="true"]')) {
     return false;
   }
   return true;

@@ -202,7 +202,7 @@ export function SearchBar({
                 : '検索ワード\n空白で AND・改行で OR・"引用句"'
             }
             value={queryText}
-            onInput={(e) => onQueryChange((e.target as HTMLTextAreaElement).value)}
+            onInput={(e) => onQueryChange(e.currentTarget.value)}
           />
           <SearchModeToggles
             caseSensitive={caseSensitive}

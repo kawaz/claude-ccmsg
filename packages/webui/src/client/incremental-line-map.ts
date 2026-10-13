@@ -71,9 +71,10 @@ export function mapLinesIncrementally<T>(
     lines,
     Math.min(previous.length, lines.length) - prefix,
   );
-  const values: T[] = [];
-  for (let i = 0; i < prefix; i++) values.push(cache.values[i]!);
-  for (let i = prefix; i < lines.length - suffix; i++) values.push(compute(lines[i]!));
-  for (let i = previous.length - suffix; i < previous.length; i++) values.push(cache.values[i]!);
+  const values = [
+    ...cache.values.slice(0, prefix),
+    ...lines.slice(prefix, lines.length - suffix).map(compute),
+    ...cache.values.slice(previous.length - suffix),
+  ];
   return { lines, values };
 }
