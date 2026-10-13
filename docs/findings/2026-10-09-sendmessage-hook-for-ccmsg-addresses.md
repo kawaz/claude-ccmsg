@@ -50,6 +50,23 @@
 - `ccmsg:path:<dir>` は realpath にして完全一致で比べる
 - 隔離実験で `ccmsg` の socket を実セッションと分けるには、runtime 系の 3 変数を作業ディレクトリに向ける
 
+## 実装後の e2e (2026-10-13、Claude Code 2.1.296)
+
+DR-0037 段 1-3 の実装 (daemon の `address_send`、hooks module の `session.send`、`ccmsg sidecar send`) を、隔離 daemon (`HOME` を一時ディレクトリに向け、その下の config home 2 つだけを agents poll に見せる)・隔離 config home 2 つ・hyoui 内の対話セッション 2 つ (haiku、`--plugin-dir` で作業コピー) で動かした。daemon の `peers` 返事の `addresses` は両セッションに `ccmsg:<sid>` と `ccmsg:path:<cwd>` を出した。
+
+| 送信 | 送り手の model が読んだ結果 | daemon の注入 |
+|---|---|---|
+| X → `ccmsg:<Y の sid>` | `Delivered by a plugin hook; nothing else was sent.` | Y の run に 1 回 |
+| Y → envelope の `from` (`ccmsg:<X の sid>`) | 同上 | X の run に 1 回 |
+| X → `ccmsg:path:/tmp/<base>/ws-y/` (symlink 経由・末尾 `/`) | 同上 | Y の run に 1 回 |
+| X → 生きていない sid | `Not sent: a plugin hook refused it (宛先 … に当たる生きているセッションが無い。… ccmsg peers で今いるセッションの宛先を確かめて送り直すか、送るのをやめる).` | なし |
+| X → 誰も居ないディレクトリ | 同じ文面 (宛先がそのディレクトリ) | なし |
+| X → `ccmsg:nobody` | `Not sent: a plugin hook refused it (宛先 ccmsg:nobody は ccmsg:<sid>、ccmsg:<sid>.<pid>、ccmsg:path:<絶対パス> のどれでもない。…).` | なし |
+
+- Y の model は届いた封筒の `from` をそのまま SendMessage の `to` に書いて返した (tool_use の input `to: "ccmsg:<X の sid>"`)。transcript の行は `origin: {kind: "peer", from: "uds:<daemon の受領拒否用 socket>"}` で、model が読む本文は `Another Claude session sent a message:` に続く daemon の封筒 (`from="ccmsg:<X の sid>"`)。frame の `from` が `uds:` でも、返信先は封筒の `from` で決まった
+- 初回は 1 通の SendMessage が相手に 2 通届いた。agents poll が見る `$HOME/.claude-*` (`/tmp` の symlink 経由) と registry の config dir (realpath、`/private/tmp`) が同じ config dir を 2 通りに名指し、同じ run を 2 回列挙していた。config dir を realpath にそろえ、run を pid で 1 つにまとめて直した後は 1 回ずつ
+- 同じ sid が 2 つの process で動く場合 (`ccmsg:<sid>.<pid>`) と、受け手の拒否 (`peer_message_status`) の実機は確かめていない (単体テストと偽の harness で確認)
+
 ## 未確認事項
 
 - `session.send` hook 自体の時間予算 (30 秒の失敗は hook 内の `$.process.run` の期限だった)
