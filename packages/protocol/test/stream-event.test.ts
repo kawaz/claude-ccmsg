@@ -25,6 +25,16 @@ const PUSHES: {
     { ev: "notify", text: "just push", from: { role: "session", sid: SID } },
     { ev: "notify", text: "keepalive", from: { role: "gateway" } },
   ],
+  says: [
+    { ev: "says", says: [] },
+    {
+      ev: "says",
+      says: [
+        { id: "0f0f/1", sid: SID, text: "-v Kyoko hello", ts: "t", read: true },
+        { id: "0f0f/2", sid: SID, text: "", ts: "t", read: false },
+      ],
+    },
+  ],
   restarting: [{ ev: "restarting" }, { ev: "restarting", reason: "upgrade" }],
   subscribe_superseded: [{ ev: "subscribe_superseded", sid: SID }],
   room_cursors: [{ ev: "room_cursors", rooms: [{ room: "r1", last_mid: 3 }] }],

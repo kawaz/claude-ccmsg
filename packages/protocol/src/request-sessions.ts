@@ -93,6 +93,29 @@ export const NotifyRequestSchema = v.object({
 });
 export type NotifyRequest = Output<typeof NotifyRequestSchema>;
 
+/** Record that this session spoke through `ccmsg say` (session role only).
+ * The daemon keeps the record in memory and pushes it to user-role
+ * subscribers as part of `ev:"says"` (stream-event.ts SayRecord); the speaker
+ * is the caller's own sid, so the request names no session. The CLI ignores
+ * the reply and execs `/usr/bin/say` regardless, so a failure here costs the
+ * observation, never the speech. */
+export const SayRequestSchema = v.object({
+  op: v.literal("say"),
+  /** The argv forwarded to `/usr/bin/say`, joined by spaces (see SayRecord.text). */
+  text: v.string(),
+});
+export type SayRequest = Output<typeof SayRequestSchema>;
+
+/** Mark one say record as read (the webui's 既読 button). User role only: the
+ * unread count exists for the person watching the session list, and a session
+ * acking its own speech would clear a badge nobody looked at. */
+export const SayReadRequestSchema = v.object({
+  op: v.literal("say_read"),
+  /** `id` of the SayRecord being acked. */
+  id: v.string(),
+});
+export type SayReadRequest = Output<typeof SayReadRequestSchema>;
+
 /** Send a message straight to one session, without a room (session role
  * only, DR-0036 §1).
  *

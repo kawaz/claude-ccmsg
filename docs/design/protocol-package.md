@@ -26,8 +26,8 @@
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
 | `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest`、別世代の hello を見分ける `isOtherGenerationHello` | daemon |
-| `request-rooms.ts` | room の依頼: `post` `reply` `create_room` `say` `say_read` `next_room` `set_title` `archive_room` `kick` `subscribe` `read` `room_history` `rooms` `leave` `invite` | daemon |
-| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `peers` `notify` `message_send` `address_send` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `sidecar_reply` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
+| `request-rooms.ts` | room の依頼: `post` `reply` `create_room` `next_room` `set_title` `archive_room` `kick` `subscribe` `read` `room_history` `rooms` `leave` `invite` | daemon |
+| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `peers` `notify` `say` `say_read` `message_send` `address_send` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `sidecar_reply` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` | daemon |

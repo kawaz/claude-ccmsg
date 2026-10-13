@@ -63,32 +63,6 @@ export const CreateRoomRequestSchema = v.object({
 });
 export type CreateRoomRequest = Output<typeof CreateRoomRequestSchema>;
 
-/** Record that this session spoke through `ccmsg say`.
- * Session role only. The daemon resolves the caller's own 1on1 room (u1 + this
- * sid), creating one if none exists, and appends a `SayEvent` there — the
- * caller names no room, because "the session's own 1on1" is the only place
- * this belongs. The reply carries the room and the event's `seq`; the CLI
- * ignores both and goes on to exec `/usr/bin/say` regardless, so a failure
- * here costs the observation, never the speech. */
-export const SayRequestSchema = v.object({
-  op: v.literal("say"),
-  /** The argv forwarded to `/usr/bin/say`, joined by spaces (see SayEvent.text). */
-  text: v.string(),
-});
-export type SayRequest = Output<typeof SayRequestSchema>;
-
-/** Ack one `say` event as read (webui 既読 button). User role only: the
- * unread count exists for the person watching the session list, and a session
- * acking its own speech would clear a badge nobody looked at. */
-export const SayReadRequestSchema = v.object({
-  op: v.literal("say_read"),
-  room: v.string(),
-  /** `seq` of the SayEvent being acked (SayEvent doc comment explains why the
-   * ack target is `seq` and not a `mid`). */
-  seq: v.number(),
-});
-export type SayReadRequest = Output<typeof SayReadRequestSchema>;
-
 /** Spawn the next thread of a room. A 1on1 room is read-only (DR-0035 §2)
  * and has no next thread: next_room on one is refused with `invalid_args`. */
 export const NextRoomRequestSchema = v.object({

@@ -118,24 +118,16 @@ export const KindEventSchema = v.object({
 });
 export type KindEvent = Output<typeof KindEventSchema>;
 
-/** A session spoke through `ccmsg say`. Recorded in the
- * session's 1on1 room so the webui can answer "which session just made my
- * speakers talk" — with several sessions running, macOS `say` alone is
- * anonymous. NOT a `msg`: it is paired with its own read-ack (`say_read`) and
- * is deliberately never delivered back into a session-role subscribe stream
- * (the session that spoke already knows it spoke; mirroring it would spend
- * agent context for nothing). `seq` doubles as the ack target — say events
- * carry no `mid` because they are not messages and must not consume the
- * room's msg numbering. */
+/** A session spoke through `ccmsg say`, as a 1on1 room holds it. The daemon
+ * reads these rows from existing 1on1 rooms (read-only, DR-0035 §2) and never
+ * appends one: a say is kept in daemon memory and pushed as `ev:"says"`
+ * (stream-event.ts SayRecord, DR-0036 §3). Never delivered into a session-role
+ * subscribe stream (the session that spoke already knows it spoke). */
 export const SayEventSchema = v.object({
   type: v.literal("say"),
-  /** sid of the session that spoke. Redundant with the 1on1 room's single
-   * member row, but recorded so a reader of the raw jsonl (or a future room
-   * shape) never has to resolve membership to answer "who". */
+  /** sid of the session that spoke. */
   sid: v.string(),
-  /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces —
-   * verbatim, options included. Empty when the caller piped text on stdin
-   * (the CLI must not consume that stream to peek at it). */
+  /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces. */
   text: v.string(),
   ts: v.string(),
   /** per-room sequence number (DR-0016), see file banner above. */
@@ -143,12 +135,9 @@ export const SayEventSchema = v.object({
 });
 export type SayEvent = Output<typeof SayEventSchema>;
 
-/** Read-ack for one `say` event, from the webui's per-bubble 既読 button.
- * `ref` is the acked SayEvent's `seq`. Per-say rather than a "everything up
- * to here" watermark: the UI element is one button on one bubble, and a
- * watermark would silently clear older bubbles the reader never looked at.
- * Repeated acks for the same `ref` are harmless (the unread count derives
- * from set membership, not from a running total). */
+/** Read-ack for one `say` event of the same room (`ref` is the acked
+ * SayEvent's `seq`). Like SayEvent, a row the daemon reads from existing 1on1
+ * rooms and never appends. */
 export const SayReadEventSchema = v.object({
   type: v.literal("say_read"),
   /** `seq` of the SayEvent this acks. */

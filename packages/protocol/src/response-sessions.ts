@@ -171,6 +171,21 @@ export const NotifyResponseSchema = v.object({
 });
 export type NotifyResponse = Output<typeof NotifyResponseSchema>;
 
+export const SayResponseSchema = v.object({
+  ok: v.literal(true),
+  /** `id` of the SayRecord the daemon now holds — the ack target a later
+   * `say_read` names. */
+  id: v.string(),
+});
+export type SayResponse = Output<typeof SayResponseSchema>;
+
+export const SayReadResponseSchema = v.object({
+  ok: v.literal(true),
+  /** echo of the acked SayRecord's id */
+  id: v.string(),
+});
+export type SayReadResponse = Output<typeof SayReadResponseSchema>;
+
 /** Why a direct message did not arrive (DR-0036 §3). The message is not kept
  * anywhere in any of these cases.
  *

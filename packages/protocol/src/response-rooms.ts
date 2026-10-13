@@ -38,26 +38,6 @@ export const CreateRoomResponseSchema = v.object({
 });
 export type CreateRoomResponse = Output<typeof CreateRoomResponseSchema>;
 
-export const SayResponseSchema = v.object({
-  ok: v.literal(true),
-  /** The 1on1 room the say landed in (resolved or freshly created). */
-  room: v.string(),
-  /** `seq` stamped on the appended SayEvent — the ack target a later
-   * `say_read` names. */
-  seq: v.number(),
-  /** true when this call is what created the 1on1 room. */
-  created: v.boolean(),
-});
-export type SayResponse = Output<typeof SayResponseSchema>;
-
-export const SayReadResponseSchema = v.object({
-  ok: v.literal(true),
-  room: v.string(),
-  /** echo of the acked SayEvent's seq */
-  ref: v.number(),
-});
-export type SayReadResponse = Output<typeof SayReadResponseSchema>;
-
 export const NextRoomResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
@@ -127,17 +107,6 @@ export const RoomSummarySchema = v.object({
    * reachable; absent means the daemon predates the field (a client must then
    * treat liveness as unknown rather than as zero). */
   live_members: v.optional(v.number()),
-  /** `seq` of every `say` event in this room with no matching `say_read` ack
-   * Only ever non-empty on a 1on1 room; absent when there
-   * is nothing unread. Seeds the webui's sidebar 📣 marker, which then tracks
-   * live `say` / `say_read` deliveries on the subscribe stream.
-   *
-   * Design rationale (the seqs, not just their count): the client keeps this
-   * as a set, so folding a replayed history — opening the room refetches every
-   * past `say` and `say_read` through `room_history` — is idempotent. A bare
-   * count plus increment/decrement deltas would double-count on exactly that
-   * very ordinary path. */
-  say_unread_seqs: v.optional(v.array(v.number())),
 });
 export type RoomSummary = Output<typeof RoomSummarySchema>;
 

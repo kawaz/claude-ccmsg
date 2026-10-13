@@ -40,8 +40,6 @@ import {
   ReplyResponseSchema,
   RoomHistoryResponseSchema,
   RoomsResponseSchema,
-  SayReadResponseSchema,
-  SayResponseSchema,
   SetTitleResponseSchema,
   SubscribeAckSchema,
 } from "./response-rooms.ts";
@@ -54,6 +52,8 @@ import {
   MessageSendResponseSchema,
   NotifyResponseSchema,
   PeersResponseSchema,
+  SayReadResponseSchema,
+  SayResponseSchema,
   SessionDumpFileResponseSchema,
   SessionEnvResponseSchema,
   SessionErrorsResponseSchema,

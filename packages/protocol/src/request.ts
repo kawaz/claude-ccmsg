@@ -37,8 +37,6 @@ import {
   ReplyRequestSchema,
   RoomHistoryRequestSchema,
   RoomsRequestSchema,
-  SayReadRequestSchema,
-  SayRequestSchema,
   SetTitleRequestSchema,
   SubscribeRequestSchema,
 } from "./request-rooms.ts";
@@ -50,6 +48,8 @@ import {
   MessageSendRequestSchema,
   NotifyRequestSchema,
   PeersRequestSchema,
+  SayReadRequestSchema,
+  SayRequestSchema,
   SessionDumpFileRequestSchema,
   SessionEnvRequestSchema,
   SessionErrorsRequestSchema,

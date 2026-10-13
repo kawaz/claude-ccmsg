@@ -97,6 +97,43 @@ export const NotifyStreamEventSchema = v.object({
 });
 export type NotifyStreamEvent = Output<typeof NotifyStreamEventSchema>;
 
+/** One `ccmsg say` as the daemon holds it: which session made the speakers
+ * talk, with what, and whether the person watching has acked it. With several
+ * sessions running, macOS `say` alone is anonymous. Held in daemon memory
+ * only (DR-0036 §3): a restarted daemon starts with none, unread ones
+ * included. */
+export const SayRecordSchema = v.object({
+  /** `<instance id>/<n>`, unique across daemon restarts (a fresh instance id
+   * per daemon process), so an ack from a tab that has not yet caught up with
+   * a restart cannot land on a different say. The ack target `say_read`
+   * names. */
+  id: v.string(),
+  /** sid of the session that spoke (the `say` caller's own). */
+  sid: v.string(),
+  /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces —
+   * verbatim, options included. Empty when the caller piped text on stdin
+   * (the CLI must not consume that stream to peek at it). */
+  text: v.string(),
+  ts: v.string(),
+  /** Set by `say_read`; never cleared. */
+  read: v.boolean(),
+});
+export type SayRecord = Output<typeof SayRecordSchema>;
+
+/** Every say record the daemon holds, oldest first (user-role subscribers
+ * only, same webui-only posture as ev:"peers"). Sent at subscribe time and
+ * again whenever a say is recorded or acked — always the full set, so a tab
+ * that reconnects to a restarted daemon replaces what it held with the new
+ * daemon's (possibly empty) set instead of keeping says that no longer
+ * exist. Never sent to a session: the session that spoke already knows it
+ * spoke, and the ack is the person's gesture, so either would only spend
+ * agent context. */
+export const SaysStreamEventSchema = v.object({
+  ev: v.literal("says"),
+  says: v.array(SayRecordSchema),
+});
+export type SaysStreamEvent = Output<typeof SaysStreamEventSchema>;
+
 export const RestartingStreamEventSchema = v.object({
   ev: v.literal("restarting"),
   reason: v.optional(v.string()),
@@ -311,6 +348,7 @@ export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 /** Every push of the daemon's own, told apart by `ev`. */
 export const PushStreamEventSchema = v.variant("ev", [
   NotifyStreamEventSchema,
+  SaysStreamEventSchema,
   RestartingStreamEventSchema,
   SubscribeSupersededStreamEventSchema,
   RoomCursorsStreamEventSchema,
