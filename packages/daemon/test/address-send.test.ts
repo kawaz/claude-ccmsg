@@ -354,6 +354,25 @@ describe("address_send through the daemon", () => {
     T,
   );
 
+  // A test daemon polls no config dir of its own, so the recipient's config
+  // dir is known only from the sender's first hello: a later hello for the
+  // same sid without config_dir (an older CLI, a subprocess that lost the
+  // environment) must not forget it.
+  test(
+    "a re-hello without config_dir keeps the config dir the first hello announced",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(B, { pid: LIVE_PID });
+      await sessionWithConfig(ctx, A, hb.configDir);
+      const a = await sessionWithConfig(ctx, A);
+      expect(await a.request({ op: "address_send", to: `ccmsg:${B}`, text: "still here" })).toEqual(
+        { ok: true, outcome: "delivered" },
+      );
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("still here");
+    },
+    T,
+  );
+
   test(
     "a run refusing while another takes it is delivered; every run refusing is refused",
     async () => {
