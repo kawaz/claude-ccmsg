@@ -5,7 +5,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-13 | design | open | [agent-guidance-for-ccmsg-addresses](./2026-10-13-agent-guidance-for-ccmsg-addresses.md) | DR-0037 の ccmsg:<sid> 宛先をエージェントが初手で知る面が peers --help しか無い。skill / hook / rules のどこに案内を置くか裁定待ち |
-| 2026-10-13 | design | open | [peerinfo-send-message-flag-vs-ccmsg-address](./2026-10-13-peerinfo-send-message-flag-vs-ccmsg-address.md) | PeerInfo.send_message と DR-0037 の ccmsg:<sid> 宛先の役割が重なる。addresses 導入後の send_message の意味と、webui/CLI の案内先を決める |
 | 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |
 | 2026-10-11 | bug | open | [llm-stats-tokens-object-not-mapped-to-wire](./2026-10-11-llm-stats-tokens-object-not-mapped-to-wire.md) | llm gateway の stats の tokens object が wire に写らず webui の token 集計が常に 0。daemon の stats スキーマに tokens を足して写す |
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |

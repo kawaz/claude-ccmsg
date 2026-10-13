@@ -1,6 +1,6 @@
 ---
 title: PeerInfo.send_message と ccmsg:<sid> 宛先の役割整理
-status: open
+status: resolved
 category: design
 created: 2026-10-13T15:45:03+09:00
 last_read: 2026-10-13T16:21:31+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-13T16:26:40+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","dr/DR-0037"]
 blocked_by:
 origin: 自リポ TODO
 ---
