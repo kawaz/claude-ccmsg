@@ -1025,7 +1025,7 @@ describe("writeConfigTypesFile", () => {
     const content = fs.readFileSync(path.join(dir, CONFIG_TYPES_BASENAME), "utf8");
     const match = content.match(/^export type \{ CcmsgConfig \} from "([^"]+)";$/m);
     expect(match).not.toBeNull();
-    expect(fs.existsSync(match![1]!)).toBe(true);
+    expect(fs.existsSync(match?.[1] ?? "")).toBe(true);
   });
 
   test("a second call overwrites the first with the new version", async () => {

@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import type { Socket } from "bun";
 import {
   ErrorResponseSchema,
+  JsonObjectSchema,
   JsonTextSchema,
+  JsonValueSchema,
   jsonText,
   parseWith,
   PROTOCOL_VERSION,
@@ -16,6 +18,8 @@ import {
   type DaemonFrame,
   type DeliveredEvent,
   type ErrorResponse,
+  type JsonObject,
+  type JsonValue,
   type PushStreamEvent,
   type ReplyOf,
   type Request,
@@ -216,7 +220,7 @@ export type ItemOf<K extends StreamKind> =
   | (K extends "reply" ? WireReply : never);
 
 /** The kind a stream item is of: only a reply has `ok`, only a push `ev`. */
-function kindOf(item: StreamItem): StreamKind {
+export function kindOf(item: StreamItem): StreamKind {
   if ("ok" in item) return "reply";
   return "ev" in item ? item.ev : item.type;
 }
@@ -225,6 +229,42 @@ function kindOf(item: StreamItem): StreamKind {
  * test has seen. */
 export function isKind<K extends StreamKind>(kind: K): (item: StreamItem) => item is ItemOf<K> {
   return (item): item is ItemOf<K> => kindOf(item) === kind;
+}
+
+/** `value`, which the test needs to be there: a lookup that found nothing
+ * (`find`, an index past the end, a getter answering null) fails the test,
+ * naming `what` was looked for, instead of an error thrown later from reading
+ * a field of nothing. */
+export function defined<T>(value: T | null | undefined, what: string): T {
+  if (value === undefined || value === null) throw new Error(`expected ${what}, found none`);
+  return value;
+}
+
+/** Whether a stream item is a delivered storage event: neither a reply
+ * (`ok`) nor a push (`ev`). */
+export function isDelivered(item: StreamItem): item is DeliveredEvent {
+  return !("ok" in item) && !("ev" in item);
+}
+
+const JsonObjectTextSchema = jsonText(JsonObjectSchema);
+
+/** A line of JSON text that has to be an object (a log row, a file the daemon
+ * wrote), read as one; anything else is an error thrown. */
+export function jsonObjectOf(line: string): JsonObject {
+  const read = parseWith(JsonObjectTextSchema, line);
+  if (!read.ok) throw new Error(`not a JSON object: ${read.failure.summary}: ${line}`);
+  return read.value;
+}
+
+const JsonValueTextSchema = jsonText(JsonValueSchema);
+
+/** A test value as JSON another program would send it: written out and read
+ * back, so what a parser under test is given is JSON and nothing else (no
+ * `undefined` fields, no class instances). */
+export function throughJson<T>(value: T): JsonValue {
+  const read = parseWith(JsonValueTextSchema, JSON.stringify(value));
+  if (!read.ok) throw new Error(`not writable as JSON: ${read.failure.summary}`);
+  return read.value;
 }
 
 /** A line the daemon wrote, read as a StreamItem, or why it is not what the
@@ -275,6 +315,15 @@ export function readStreamItem(
   return Bun.deepEquals(item, raw)
     ? { ok: true, item }
     : { ok: false, problem: `as the answer to ${op}: fields outside its schema` };
+}
+
+/** A line a daemon wrote to a subscriber unasked (a push or a delivered
+ * event), read as a stream item; a line outside the wire's schemas is an
+ * error thrown. */
+export function streamItemOf(line: string): StreamItem {
+  const read = readStreamItem(line, readDaemonFrame(line), undefined);
+  if (!read.ok) throw new Error(`${read.problem}: ${line}`);
+  return read.item;
 }
 
 /** A reply line read as the success reply to a request of `op`; a refusal,

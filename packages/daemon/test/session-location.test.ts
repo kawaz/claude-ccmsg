@@ -5,27 +5,19 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, type PeerInfo } from "@ccmsg/protocol";
 import {
   connect,
   startTestDaemon,
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  jsonObjectOf,
 } from "./helpers.ts";
 
 const T = 15000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
-
-interface PeerLite {
-  sid: string;
-  repo?: string;
-  ws?: string;
-  cwd?: string;
-  repo_root?: string;
-  branch?: string;
-}
 
 async function hello(
   ctx: DaemonCtx,
@@ -47,9 +39,9 @@ async function hello(
   return c;
 }
 
-async function peerOf(c: TestClient, sid: string): Promise<PeerLite | undefined> {
-  const res = (await c.request({ op: "peers", all: true })) as { peers?: PeerLite[] };
-  return res.peers?.find((p) => p.sid === sid);
+async function peerOf(c: TestClient, sid: string): Promise<PeerInfo | undefined> {
+  const res = await c.requestOk({ op: "peers", all: true });
+  return res.peers.find((p) => p.sid === sid);
 }
 
 describe("session location", () => {
@@ -92,16 +84,16 @@ describe("session location", () => {
 
           // room の member イベントも同じ登録済み所在から書かれる (本 issue の
           // 実際の観測点)。
-          const room = (await drifted.request({
+          const room = await drifted.requestOk({
             op: "create_room",
             members: [A],
             title: "t",
-          })) as { room?: string };
+          });
           const jsonl = fs.readFileSync(path.join(ctx.roomsDir, `${room.room}.jsonl`), "utf8");
           const member = jsonl
             .split("\n")
             .filter((l) => l !== "")
-            .map((l) => JSON.parse(l) as { type?: string; sid?: string; cwd?: string })
+            .map(jsonObjectOf)
             .find((ev) => ev.type === "member" && ev.sid === A);
           expect(member?.cwd).toBe(stationed);
         } finally {

@@ -5,21 +5,17 @@
 // allowlist, and that every upstream failure mode arrives as one actionable
 // error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
+import { ErrorCode } from "@ccmsg/protocol";
 import {
   fetchLlmUsage,
   parseUsagePayload as parseUsageDocument,
   usageUrlWithRefresh,
 } from "../src/llm-usage.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
-
-/** A test value as the JSON a gateway would post: what the parser reads. */
-function json(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value));
-}
+import { throughJson } from "./helpers.ts";
 
 function parseUsagePayload(document: unknown, base?: string) {
-  return parseUsageDocument(json(document), base);
+  return parseUsageDocument(throughJson(document), base);
 }
 
 /** The live endpoint's document, trimmed to one credential per support kind. */

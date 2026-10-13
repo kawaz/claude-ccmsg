@@ -30,6 +30,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  isKind,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -492,7 +493,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
           '<teammate-message teammate_id="b" color="green">B</teammate-message>',
       ),
     ]);
-    expect(result.teammates!.map((teammate) => teammate.name)).toEqual(["a", "b"]);
+    expect(result.teammates?.map((teammate) => teammate.name)).toEqual(["a", "b"]);
   });
 
   test("idle_notification relay は teammate の推定状態を idle にする", async () => {
@@ -2286,7 +2287,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         const room = await peer.requestOk({ op: "create_room", members: [] });
         await peer.request({ op: "post", room: room.room, msg: "marker" });
         const { seen } = await user.readEventUntil("msg", (event) => event.msg === "marker");
-        expect(seen.some((event: any) => event.ev === "session_status")).toBe(false);
+        expect(seen.some(isKind("session_status"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -2482,7 +2483,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         );
         const transcript = await user.readEventUntil("transcript");
         expect(transcript.ev.lines).toHaveLength(2);
-        expect(transcript.seen.some((event: any) => event.ev === "session_status")).toBe(false);
+        expect(transcript.seen.some(isKind("session_status"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

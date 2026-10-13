@@ -14,6 +14,7 @@ import {
   shellArgv,
   validateSessionLaunch,
 } from "../src/session-launch.ts";
+import { defined } from "./helpers.ts";
 
 /** The parameter set these tests declare on their templates — the legacy
  * vocabulary, which config.ts also derives when normalizing an old config. */
@@ -44,7 +45,7 @@ function config(root: string, shell: "bash" | "zsh" = "bash"): SessionLauncherCo
 /** Swap the single template's command — each execution test pins the exact
  * script the launcher shell must run. */
 function withCommand(cfg: SessionLauncherConfig, command: string): SessionLauncherConfig {
-  return { ...cfg, templates: [{ ...cfg.templates[0]!, command }] };
+  return { ...cfg, templates: [{ ...defined(cfg.templates[0], "the template"), command }] };
 }
 
 function request(cwd: string, prompt = "do the work"): SessionLaunchRequest {
@@ -221,13 +222,13 @@ describe("session launch validation", () => {
   // the request's own `cwd` field. Sending it as a parameter too would be two
   // sources for one value; the boundary refuses rather than picking a winner.
   test("CWD sent as a parameter is invalid_args", () => {
-    expect(
-      validateSessionLaunch(config(root), { ...request(cwd), params: { CWD: "/elsewhere" } }),
-    ).toMatchObject({
-      ok: false,
-      code: "invalid_args",
-      msg: expect.stringContaining('CWD: Invalid key: Expected never but received "CWD"'),
+    const result = validateSessionLaunch(config(root), {
+      ...request(cwd),
+      params: { CWD: "/elsewhere" },
     });
+    expect(result).toMatchObject({ ok: false, code: "invalid_args" });
+    if (result.ok) throw new Error("CWD as a parameter was accepted");
+    expect(result.msg).toContain('CWD: Invalid key: Expected never but received "CWD"');
   });
 
   // DR-0018 §3.2 addendum 2026-07-17: user role may override the command

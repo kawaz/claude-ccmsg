@@ -7,13 +7,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { TraceWriter } from "../src/trace.ts";
 import { extractEntryTimestamp } from "../src/transcript.ts";
+import { defined, jsonObjectOf } from "./helpers.ts";
+import { type JsonObject } from "@ccmsg/protocol";
 
-const readLines = (file: string): Record<string, unknown>[] =>
+const readLines = (file: string): JsonObject[] =>
   fs
     .readFileSync(file, "utf8")
     .split("\n")
     .filter((l) => l !== "")
-    .map((l) => JSON.parse(l) as Record<string, unknown>);
+    .map(jsonObjectOf);
 
 describe("TraceWriter", () => {
   let dir: string;
@@ -57,9 +59,11 @@ describe("TraceWriter", () => {
 
     const lines = readLines(file);
     expect(lines).toHaveLength(2);
-    expect(lines[0]!.kind).toBe("transcript_detect");
-    expect(typeof lines[0]!.ts).toBe("string");
-    expect(Date.parse(lines[0]!.ts as string)).not.toBeNaN();
+    expect(lines[0]?.kind).toBe("transcript_detect");
+    expect(typeof lines[0]?.ts).toBe("string");
+    const ts = lines[0]?.ts;
+    if (typeof ts !== "string") throw new Error("the line carries no ts");
+    expect(Date.parse(ts)).not.toBeNaN();
   });
 
   // Browser points are timestamped in the tab; re-stamping them on arrival would
@@ -75,7 +79,7 @@ describe("TraceWriter", () => {
       start: 0,
       end: 10,
     });
-    expect(readLines(file)[0]!.ts).toBe("2026-07-29T00:00:00.000Z");
+    expect(readLines(file)[0]?.ts).toBe("2026-07-29T00:00:00.000Z");
   });
 
   // An explicit `ts: undefined` reaches here whenever a caller forwards an
@@ -91,7 +95,7 @@ describe("TraceWriter", () => {
       start: 0,
       end: 10,
     });
-    expect(typeof readLines(file)[0]!.ts).toBe("string");
+    expect(typeof readLines(file)[0]?.ts).toBe("string");
   });
 
   // Extra keys are how each boundary carries its own detail (source, mtime_ms,
@@ -108,7 +112,7 @@ describe("TraceWriter", () => {
       source: "fs_watch",
       mtime_ms: 1234.5,
     });
-    const line = readLines(file)[0]!;
+    const line = defined(readLines(file)[0], "line");
     expect(line.source).toBe("fs_watch");
     expect(line.mtime_ms).toBe(1234.5);
   });
@@ -139,8 +143,8 @@ describe("TraceWriter", () => {
     // rotation must not lose the line that triggered it
     const current = readLines(file);
     expect(current).toHaveLength(1);
-    expect(current[0]!.sid).toBe("overflow");
-    expect(readLines(`${file}.1`)[0]!.sid).toBe("first");
+    expect(current[0]?.sid).toBe("overflow");
+    expect(readLines(`${file}.1`)[0]?.sid).toBe("first");
   });
 
   // Only one generation is kept: a second rotation replaces .1 rather than

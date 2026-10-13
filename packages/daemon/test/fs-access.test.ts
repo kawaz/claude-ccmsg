@@ -20,6 +20,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  defined,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -175,9 +176,15 @@ describe("fs_list / fs_read", () => {
           ["b.txt", "file"],
         ]);
         // size is reported for files only
-        const aTxt = res.entries.find((e) => e.name === "a.txt")!;
+        const aTxt = defined(
+          res.entries.find((e) => e.name === "a.txt"),
+          "aTxt",
+        );
         expect(aTxt.size).toBe(1);
-        const mDir = res.entries.find((e) => e.name === "m_dir")!;
+        const mDir = defined(
+          res.entries.find((e) => e.name === "m_dir"),
+          "mDir",
+        );
         expect(mDir.size).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -389,7 +396,10 @@ describe("fs_list / fs_read", () => {
           op: "fs_list",
           sid: A,
         });
-        const linkEntry = rootList.entries.find((e) => e.name === "link_in")!;
+        const linkEntry = defined(
+          rootList.entries.find((e) => e.name === "link_in"),
+          "linkEntry",
+        );
         expect(linkEntry.type).toBe("symlink");
 
         // but traversing *through* it works: fs_list("link_in") and
@@ -2352,7 +2362,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -2372,7 +2387,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -2392,7 +2412,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -2411,7 +2436,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -2434,7 +2464,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -2460,7 +2495,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         const peers = await c.requestOk({
           op: "peers",
         });
-        expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
+        expect(
+          defined(
+            peers.peers.find((p) => p.sid === A),
+            "self",
+          ).repo_root,
+        ).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -3008,7 +3048,10 @@ describe("session cwd canonicalization (hello)", () => {
 
         const session = await sessionAt(ctx, A, link);
         const peers = await session.requestOk({ op: "peers" });
-        const self = peers.peers.find((p) => p.sid === A)!;
+        const self = defined(
+          peers.peers.find((p) => p.sid === A),
+          `the peer ${A}`,
+        );
         expect(self.repo_root).toBeUndefined();
         expect(self.cwd).toBe(real);
 
@@ -3045,7 +3088,10 @@ describe("session cwd canonicalization (hello)", () => {
 
         const session = await sessionAtWithRoot(ctx, A, link, container);
         const peers = await session.requestOk({ op: "peers" });
-        const self = peers.peers.find((p) => p.sid === A)!;
+        const self = defined(
+          peers.peers.find((p) => p.sid === A),
+          `the peer ${A}`,
+        );
         expect(self.cwd).toBe(main);
         expect(self.repo_root).toBe(container);
       } finally {

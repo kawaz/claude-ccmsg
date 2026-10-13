@@ -21,7 +21,10 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  isDelivered,
+  jsonObjectOf,
 } from "./helpers.ts";
+import type { DeliveredEvent } from "@ccmsg/protocol";
 
 const T = 15000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -42,9 +45,9 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
 /** Everything a subscribe pushed as its backlog. The backlog is written before
  * the subscribe reply, so after one more round trip on the same connection the
  * complete backlog is already queued and is read without waiting. */
-async function drainBacklog(sub: TestClient): Promise<any[]> {
+async function drainBacklog(sub: TestClient): Promise<DeliveredEvent[]> {
   await sub.request({ op: "rooms" });
-  return sub.pendingEvents();
+  return (await sub.pendingEvents()).filter(isDelivered);
 }
 
 describe("DR-0016 seq: assignment and delivery", () => {
@@ -75,7 +78,7 @@ describe("DR-0016 seq: assignment and delivery", () => {
         const sub = await user(ctx);
         await sub.request({ op: "subscribe", backlog: true });
         const backlog = await drainBacklog(sub);
-        const roomEvents = backlog.filter((ev) => ev.r === room && typeof ev.type === "string");
+        const roomEvents = backlog.filter((ev) => ev.r === room);
         expect(roomEvents.length).toBeGreaterThanOrEqual(4); // 2 member + msg + title + archive
         const types = new Set(roomEvents.map((ev) => ev.type));
         expect(types.has("member")).toBe(true);
@@ -83,8 +86,10 @@ describe("DR-0016 seq: assignment and delivery", () => {
         expect(types.has("title")).toBe(true);
         expect(types.has("archive")).toBe(true);
         for (const ev of roomEvents) expect(typeof ev.seq).toBe("number");
-        const seqs = roomEvents.map((ev) => ev.seq as number);
-        for (let i = 1; i < seqs.length; i++) expect(seqs[i]!).toBeGreaterThan(seqs[i - 1]!);
+        const seqs = roomEvents.map((ev) => ev.seq ?? Number.NaN);
+        for (const [i, seq] of seqs.entries()) {
+          if (i > 0) expect(seq).toBeGreaterThan(seqs[i - 1] ?? Number.NaN);
+        }
 
         // Live delivery too: the next event (another title change) arrives
         // with seq = previous max + 1 (same counter, no reset between backlog
@@ -95,7 +100,7 @@ describe("DR-0016 seq: assignment and delivery", () => {
           "title",
           (ev) => ev.title === "seq test 2",
         );
-        expect((liveTitle as any).seq).toBeGreaterThan(maxSeq);
+        expect(liveTitle.seq).toBeGreaterThan(maxSeq);
         sub.close();
         a.close();
         b.close();
@@ -134,8 +139,9 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         await sub1.hello({ role: "session", sid: B });
         await sub1.request({ op: "subscribe", backlog: true });
         const { ev: archiveEv } = await sub1.readEventUntil("archive", (ev) => ev.r === room);
-        const tailSeq = (archiveEv as any).seq as number;
+        const tailSeq = archiveEv.seq;
         expect(typeof tailSeq).toBe("number");
+        if (tailSeq === undefined) throw new Error("the archive carries no seq");
         sub1.close();
 
         // Reconnect with since_seq = the tail's seq (client saw everything).
@@ -180,7 +186,8 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
           "msg",
           (ev) => ev.r === room && ev.msg === "m1",
         );
-        const msgSeq = (msgEv as any).seq as number;
+        const msgSeq = msgEv.seq;
+        if (msgSeq === undefined) throw new Error("the msg carries no seq");
         sub1.close();
 
         // Archive lands after the client went away.
@@ -192,7 +199,8 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const replayed = await drainBacklog(sub2);
         const archives = replayed.filter((ev) => ev.r === room && ev.type === "archive");
         expect(archives.length).toBe(1);
-        const archiveSeq = archives[0]!.seq as number;
+        const archiveSeq = archives[0]?.seq;
+        if (archiveSeq === undefined) throw new Error("the archive carries no seq");
         sub2.close();
 
         // Cursor advanced past the archive → clean reconnect, zero replay.
@@ -233,7 +241,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         await sub.request({ op: "subscribe", since: { [room]: 1 } });
         const replayed = await drainBacklog(sub);
         const msgs = replayed.filter((ev) => ev.r === room && ev.type === "msg");
-        expect(msgs.map((m) => m.msg)).toEqual(["m2"]);
+        expect(msgs.map((m) => (m.type === "msg" ? m.msg : undefined))).toEqual(["m2"]);
         sub.close();
         a.close();
       } finally {
@@ -316,12 +324,12 @@ describe("DR-0016 seq: legacy log backfill (storage unit)", () => {
 
       // New append continues the sequence AND persists it in the line itself.
       appendEvent(room, { type: "msg", mid: 2, from: "a1", ts, msg: "new" });
-      expect(room.events[3]!.seq).toBe(4);
+      expect(room.events[3]?.seq).toBe(4);
       const diskLines = fs.readFileSync(file, "utf8").trim().split("\n");
       // legacy rows on disk still have no seq (never rewritten) …
-      expect(JSON.parse(diskLines[0]!).seq).toBeUndefined();
+      expect(jsonObjectOf(diskLines[0] ?? "").seq).toBeUndefined();
       // … while the new row carries its persisted seq.
-      expect(JSON.parse(diskLines[3]!).seq).toBe(4);
+      expect(jsonObjectOf(diskLines[3] ?? "").seq).toBe(4);
 
       // And a reload reconstructs the exact same numbering from the mix.
       closeRoom(room);

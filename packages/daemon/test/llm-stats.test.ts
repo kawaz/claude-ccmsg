@@ -5,7 +5,7 @@
 // degrades instead of disappearing, and that every upstream failure arrives
 // as one actionable error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
+import { ErrorCode } from "@ccmsg/protocol";
 import {
   fetchLlmStats,
   isValidDays,
@@ -13,14 +13,10 @@ import {
   statsUrlWithDays,
 } from "../src/llm-stats.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
-
-/** A test value as the JSON a gateway would post: what the parser reads. */
-function json(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value));
-}
+import { throughJson } from "./helpers.ts";
 
 function parseStatsPayload(document: unknown) {
-  return parseStatsDocument(json(document));
+  return parseStatsDocument(throughJson(document));
 }
 
 /** The live endpoint's document, trimmed to two credentials on one day —

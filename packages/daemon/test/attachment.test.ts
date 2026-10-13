@@ -12,13 +12,19 @@
 // tests define what "safe endpoint" means at this trust boundary.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx, defined } from "./helpers.ts";
 import {
   attachmentDir,
   extractExtension,
   isValidUuidV4,
   mimeForExtension,
 } from "../src/attachment.ts";
+import {
+  AttachmentUploadResponseSchema,
+  type AttachmentUploadResponse,
+  jsonText,
+  parseWith,
+} from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -32,7 +38,17 @@ async function httpAddress(ctx: DaemonCtx): Promise<string> {
   const pong = await c.requestOk({ op: "ping" });
   c.close();
   expect(pong.http.length).toBe(1);
-  return pong.http[0]!;
+  return defined(pong.http[0], "the HTTP address");
+}
+
+const AttachmentUploadTextSchema = jsonText(AttachmentUploadResponseSchema);
+
+/** The body of a `POST /attachment` that has to have succeeded. */
+async function uploaded(res: Response): Promise<AttachmentUploadResponse> {
+  const text = await res.text();
+  const read = parseWith(AttachmentUploadTextSchema, text);
+  if (!read.ok) throw new Error(`not an upload reply: ${read.failure.summary}: ${text}`);
+  return read.value;
 }
 
 describe("attachment pure helpers", () => {
@@ -103,15 +119,7 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
 
         const res = await fetch(`http://${addr}/attachment`, { method: "POST", body: form });
         expect(res.status).toBe(200);
-        const body = (await res.json()) as {
-          ok: boolean;
-          uuid: string;
-          ext: string;
-          size: number;
-          mime: string;
-          path: string;
-          name: string;
-        };
+        const body = await uploaded(res);
         expect(body.ok).toBe(true);
         expect(body.name).toBe("diagram.png");
         expect(body.ext).toBe(".png");
@@ -147,15 +155,7 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
 
         const res = await fetch(`http://${addr}/attachment`, { method: "POST", body: form });
         expect(res.status).toBe(200);
-        const body = (await res.json()) as {
-          ok: boolean;
-          uuid: string;
-          ext: string;
-          size: number;
-          mime: string;
-          path: string;
-          name: string;
-        };
+        const body = await uploaded(res);
         expect(body.ext).toBe("");
         expect(body.mime).toBe("application/octet-stream");
         expect(body.name).toBe("Makefile");
@@ -226,15 +226,7 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
         form.append("file", new File([bytes], "sample.png", { type: "image/png" }));
         const upRes = await fetch(`http://${addr}/attachment`, { method: "POST", body: form });
         expect(upRes.status).toBe(200);
-        const meta = (await upRes.json()) as {
-          ok: boolean;
-          uuid: string;
-          ext: string;
-          path: string;
-          name: string;
-          mime: string;
-          size: number;
-        };
+        const meta = await uploaded(upRes);
 
         const getRes = await fetch(`http://${addr}/attachment/${meta.uuid}.png`);
         expect(getRes.status).toBe(200);
@@ -261,15 +253,7 @@ describe("HTTP attachment endpoints (DR-0015)", () => {
         const form = new FormData();
         form.append("file", new File([new Uint8Array([9, 9, 9])], "Makefile", { type: "" }));
         const upRes = await fetch(`http://${addr}/attachment`, { method: "POST", body: form });
-        const meta = (await upRes.json()) as {
-          ok: boolean;
-          uuid: string;
-          ext: string;
-          path: string;
-          name: string;
-          mime: string;
-          size: number;
-        };
+        const meta = await uploaded(upRes);
 
         const getRes = await fetch(`http://${addr}/attachment/${meta.uuid}`);
         expect(getRes.status).toBe(200);

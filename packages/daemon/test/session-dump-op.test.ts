@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
 import { line, userContentRow } from "../../protocol/test/transcript-rows.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -28,9 +28,7 @@ afterEach(() => {
 function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-dump-op-"));
   roots.push(root);
-  const dataDir = path.join(root, "data");
-  fs.mkdirSync(dataDir, { recursive: true });
-  const sessions = new Map<string, unknown>();
+  const sessions: Daemon["sessions"] = new Map();
   if (opts.transcript) {
     const file = path.join(root, `${SID}.jsonl`);
     fs.writeFileSync(
@@ -42,25 +40,25 @@ function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: s
         .map((r) => line(userContentRow(r.content, { timestamp: r.timestamp, uuid: r.uuid })))
         .join("\n") + "\n",
     );
-    sessions.set(SID, { conns: new Set([{}]), meta: { transcript_path: file } });
+    sessions.set(SID, {
+      meta: { sid: SID, repo: "", ws: "", cwd: "", transcript_path: file },
+      connectedAt: new Date().toISOString(),
+    });
   }
-  const daemon = {
-    paths: { dataDir, dumps: path.join(dataDir, "dumps") },
-    config: {},
-    sessions,
-    connections: new Set<Conn>(),
-    log: { error() {}, warn() {} },
-  } as unknown as Daemon;
+  const daemon = stubDaemon({ sessions }, root);
+  const dataDir = daemon.paths.dataDir;
+  fs.mkdirSync(dataDir, { recursive: true });
   return { daemon, dataDir };
 }
 
-const USER: Conn["identity"] = { role: "user", id: "u1" } as Conn["identity"];
+const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
   sid: "s1",
   repo: "r",
   ws: "w",
-} as Conn["identity"];
+  cwd: "",
+};
 
 describe("session_dump_file op", () => {
   test("answers with the absolute path of the written text dump", async () => {

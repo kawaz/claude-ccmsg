@@ -14,6 +14,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  defined,
 } from "./helpers.ts";
 import {
   deriveRepoWs,
@@ -157,7 +158,10 @@ describe("hello の repo/ws フォールバック", () => {
     try {
       const c = await sessionHello(ctx, A, { cwd: root });
       const peers = await c.requestOk({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === A)!;
+      const me = defined(
+        peers.peers.find((p) => p.sid === A),
+        `the peer ${A}`,
+      );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
     } finally {
       await stopTestDaemon(ctx);
@@ -170,7 +174,10 @@ describe("hello の repo/ws フォールバック", () => {
     try {
       const c = await sessionHello(ctx, A, { cwd: root, repo: "declared/repo", ws: "declared" });
       const peers = await c.requestOk({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === A)!;
+      const me = defined(
+        peers.peers.find((p) => p.sid === A),
+        `the peer ${A}`,
+      );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
     } finally {
       await stopTestDaemon(ctx);
@@ -184,7 +191,10 @@ describe("hello の repo/ws フォールバック", () => {
     try {
       const c = await sessionHello(ctx, A, { cwd: plain });
       const peers = await c.requestOk({ op: "peers" });
-      const me = peers.peers.find((p) => p.sid === A)!;
+      const me = defined(
+        peers.peers.find((p) => p.sid === A),
+        `the peer ${A}`,
+      );
       expect(me.repo ?? "").toBe("");
       expect(me.ws ?? "").toBe("");
     } finally {

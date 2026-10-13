@@ -12,7 +12,7 @@ import {
   writeSocket,
   type InjectMessage,
 } from "../src/peer-inject.ts";
-import { connect, startTestDaemon, stopTestDaemon, isKind } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon, isKind, defined } from "./helpers.ts";
 import {
   PEER_TOKEN,
   fakeHarness as spawnHarness,
@@ -54,7 +54,7 @@ describe("PeerInjector", () => {
     cleanups.push(() => injector.close());
     expect(await injector.send(h.configDir, SID, MESSAGE)).toBe("delivered");
     expect(h.frames[0]).toEqual({ type: "auth", token: PEER_TOKEN });
-    const user = h.frames[1]!;
+    const user = defined(h.frames[1], "user");
     expect(user.type).toBe("user");
     expect(user.session_id).toBe(SID);
     expect(user.msg_id).toBe("r7m3");

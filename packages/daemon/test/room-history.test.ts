@@ -12,6 +12,8 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  isKind,
+  type StreamItem,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -39,7 +41,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * helper's `request()` would take the first snapshot event for the reply (it
  * only sets aside frames carrying `ev`, and delivered events carry none), so
  * this reads the stream itself — which is also what the assertion needs. */
-async function fetchHistory(c: TestClient, room: string): Promise<any[]> {
+async function fetchHistory(c: TestClient, room: string): Promise<StreamItem[]> {
   c.write({ op: "room_history", room, request_id: "history" });
   const { seen } = await c.readEventUntil("reply");
   return seen;
@@ -66,9 +68,9 @@ describe("room_history", () => {
         expect(first.rooms.map((r) => r.room)).toEqual([room]);
 
         const seen = await fetchHistory(u, room);
-        expect(seen.filter((e) => e.type === "msg").map((e) => e.mid)).toEqual([1, 2]);
+        expect(seen.filter(isKind("msg")).map((e) => e.mid)).toEqual([1, 2]);
         // member state comes with it, so the room paints without a second op
-        expect(seen.some((e) => e.type === "member" && e.sid === A)).toBe(true);
+        expect(seen.filter(isKind("member")).some((e) => e.sid === A)).toBe(true);
         // the reply is last, and it names the room it completed
         expect(seen.at(-1)).toMatchObject({ ok: true, room });
       } finally {
@@ -93,7 +95,7 @@ describe("room_history", () => {
         await u.request({ op: "subscribe" });
         await u.readEvent(); // room_cursors
         const seen = await fetchHistory(u, room);
-        const mids = seen.filter((e) => e.type === "msg").map((e) => e.mid);
+        const mids = seen.filter(isKind("msg")).map((e) => e.mid);
         expect(mids.length).toBe(55);
         expect(mids[0]).toBe(1);
 
@@ -124,7 +126,7 @@ describe("room_history", () => {
         await b.readEvent(); // room_cursors (shared only)
 
         const seen = await fetchHistory(b, shared);
-        expect(seen.filter((e) => e.type === "msg").map((e) => e.msg)).toEqual(["hello B"]);
+        expect(seen.filter(isKind("msg")).map((e) => e.msg)).toEqual(["hello B"]);
 
         // A room B is not a member of is reported as absent rather than as a
         // permission error — room ids are opaque, "exists but not yours" would

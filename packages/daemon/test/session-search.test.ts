@@ -21,6 +21,7 @@ import {
   toolResultBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
+import { defined } from "./helpers.ts";
 
 const roots: string[] = [];
 const log = { error(_msg: string): void {} };
@@ -78,7 +79,7 @@ async function search(config: string, req: Partial<SessionSearchRequest>) {
 }
 
 afterEach(() => {
-  while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("session_search three-stage filtering", () => {
@@ -103,7 +104,7 @@ describe("session_search three-stage filtering", () => {
     // Summaries are the first matching rows, capped at
     // SESSION_SEARCH_MATCH_SUMMARY_MAX (3).
     expect(
-      result.hits.find((hit) => hit.sid === sid(1))!.matches.map((match) => match.text),
+      result.hits.find((hit) => hit.sid === sid(1))?.matches.map((match) => match.text),
     ).toEqual(["alpha first", "alpha second", "alpha third"]);
   });
 
@@ -116,7 +117,7 @@ describe("session_search three-stage filtering", () => {
 
     const result = await search(config, { query: "alpha beta" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.hits[0]!.matches.map((match) => match.text)).toEqual([
+    expect(result.hits[0]?.matches.map((match) => match.text)).toEqual([
       "alpha first",
       "beta later",
     ]);
@@ -145,7 +146,7 @@ describe("session_search three-stage filtering", () => {
 
     const result = await search(config, { query: "single" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.hits[0]!.matches.map((match) => match.text)).toEqual(["single needle"]);
+    expect(result.hits[0]?.matches.map((match) => match.text)).toEqual(["single needle"]);
   });
 
   test("plain query uses whitespace AND within a line and newline OR between lines", async () => {
@@ -202,7 +203,7 @@ describe("session_search three-stage filtering", () => {
 
     const result = await search(config, { query: "foo bar\nbuz", regex: true });
     expect(result.hits.map((hit) => hit.sid).sort()).toEqual([sid(1), sid(2)].sort());
-    expect(result.hits.find((hit) => hit.sid === sid(1))!.matches).toHaveLength(1);
+    expect(result.hits.find((hit) => hit.sid === sid(1))?.matches).toHaveLength(1);
   });
 
   test("regex mode does not trim spaces from a line", async () => {
@@ -221,7 +222,7 @@ describe("session_search three-stage filtering", () => {
     writeSession(config, sid(1), [user("before foo\nbar after")]);
 
     const result = await search(config, { query: "foo\\nbar", regex: true });
-    expect(result.hits[0]!.matches[0]!.text).toContain("foo\nbar");
+    expect(result.hits[0]?.matches[0]?.text).toContain("foo\nbar");
   });
 
   // case_sensitive applies to RegExp flags too, not only literal indexOf mode.
@@ -349,14 +350,14 @@ describe("session_search three-stage filtering", () => {
       target_user: false,
       target_agent: true,
     });
-    expect(agentOnly.hits[0]!.matches.map((match) => match.role)).toEqual(["agent"]);
+    expect(agentOnly.hits[0]?.matches.map((match) => match.role)).toEqual(["agent"]);
 
     const userOnly = await search(config, {
       query: "shared needle",
       target_user: true,
       target_agent: false,
     });
-    expect(userOnly.hits[0]!.matches.map((match) => match.role)).toEqual(["user"]);
+    expect(userOnly.hits[0]?.matches.map((match) => match.role)).toEqual(["user"]);
   });
 
   // Guarantees attachment-bearing prompts stay searchable: pasting an image
@@ -409,7 +410,7 @@ describe("session_search three-stage filtering", () => {
     ]);
 
     const result = await search(config, { query: "ccmsg role needle" });
-    expect(result.hits[0]!.matches.map((match) => match.role)).toEqual(["user", "agent"]);
+    expect(result.hits[0]?.matches.map((match) => match.role)).toEqual(["user", "agent"]);
   });
 
   // Guarantees the real Monitor-delivery shape: the <event> body is a JSONL
@@ -481,8 +482,8 @@ describe("session_search three-stage filtering", () => {
       target_user: false,
       target_agent: true,
     });
-    expect(asAgent.hits[0]!.matches).toHaveLength(1);
-    expect(asAgent.hits[0]!.matches[0]!.role).toBe("agent");
+    expect(asAgent.hits[0]?.matches).toHaveLength(1);
+    expect(asAgent.hits[0]?.matches[0]?.role).toBe("agent");
   });
 
   // Guarantees literal-mode prefilter finds escape-bearing needles inside
@@ -578,7 +579,7 @@ describe("session_search result metadata and limits", () => {
     const result = await search(config, { query: "limit needle" });
     expect(result.hits).toHaveLength(SESSION_SEARCH_RESULT_MAX);
     expect(result.truncated).toBe(true);
-    expect(result.hits[0]!.matches).toHaveLength(SESSION_SEARCH_MATCH_SUMMARY_MAX);
+    expect(result.hits[0]?.matches).toHaveLength(SESSION_SEARCH_MATCH_SUMMARY_MAX);
   });
 
   // Structural prefilter false positives are decoded and discarded without a
@@ -625,7 +626,7 @@ describe("session_search result metadata and limits", () => {
     ]);
 
     const result = await search(config, {});
-    expect(result.hits[0]!.created_at).toBe("2026-07-16T01:02:03.000Z");
+    expect(result.hits[0]?.created_at).toBe("2026-07-16T01:02:03.000Z");
   });
 
   // Guarantees repo/workspace labels are heuristic annotations only: the known
@@ -643,8 +644,14 @@ describe("session_search result metadata and limits", () => {
     );
 
     const result = await search(config, {});
-    const known = result.hits.find((hit) => hit.sid === sid(1))!;
-    const unknown = result.hits.find((hit) => hit.sid === sid(2))!;
+    const known = defined(
+      result.hits.find((hit) => hit.sid === sid(1)),
+      "known",
+    );
+    const unknown = defined(
+      result.hits.find((hit) => hit.sid === sid(2)),
+      "unknown",
+    );
     expect(known.repo).toBe("owner/repo");
     expect(known.ws).toBe(path.join("worktrees", "feature"));
     expect(unknown.repo).toBeNull();
@@ -695,7 +702,7 @@ describe("session_search result metadata and limits", () => {
     ]);
 
     const result = await search(config, {});
-    expect(result.hits[0]!.title).toBe("first title");
+    expect(result.hits[0]?.title).toBe("first title");
   });
 });
 
@@ -750,7 +757,7 @@ describe("session_search launch context", () => {
     const config = configDir();
     writeSession(config, sid(1), [agentRun("claude-fable-5")]);
 
-    const hit = (await search(config, {})).hits[0]!;
+    const hit = defined((await search(config, {})).hits[0], "hit");
     expect(hit.model).toBe("claude-fable-5");
     expect(hit.effort).toBeUndefined();
   });
@@ -761,7 +768,7 @@ describe("session_search launch context", () => {
     const config = configDir();
     writeSession(config, sid(1), [user("hello"), user("anyone there")]);
 
-    const hit = (await search(config, {})).hits[0]!;
+    const hit = defined((await search(config, {})).hits[0], "hit");
     expect(hit.model).toBeUndefined();
     expect(hit.effort).toBeUndefined();
   });
@@ -786,7 +793,7 @@ describe("session_search launch context", () => {
     const filler = Array.from({ length: 300 }, () => user("x".repeat(1000)));
     writeSession(config, sid(1), [agentRun("claude-opus-5", "high"), ...filler]);
 
-    expect((await search(config, {})).hits[0]!.model).toBeUndefined();
+    expect(defined((await search(config, {})).hits[0], "the hit").model).toBeUndefined();
   });
 });
 
@@ -827,7 +834,7 @@ describe("session_search event loop yielding", () => {
     const ticks = ticker.stop();
 
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.hits[0]!.matches[0]!.text).toBe("chunkstraddlingneedle");
+    expect(result.hits[0]?.matches[0]?.text).toBe("chunkstraddlingneedle");
     // One turn per chunk boundary at minimum; the pre-scan and per-project-dir
     // yields push the real count higher.
     expect(ticks).toBeGreaterThanOrEqual(3);

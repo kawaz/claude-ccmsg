@@ -180,7 +180,7 @@ describe("createForkOriginCache", () => {
     fs.appendFileSync(fork, `${row(SID_B, "f-2")}\n`);
     fs.rmSync(path.join(dir, `${SID_A}.jsonl`));
 
-    expect(await cache.resolve(fork, log, opts)).toEqual(first!);
+    expect(await cache.resolve(fork, log, opts)).toEqual(first);
   });
 
   test("concurrent asks share one sweep", async () => {
@@ -192,7 +192,7 @@ describe("createForkOriginCache", () => {
       cache.resolve(fork, log, opts),
       cache.resolve(fork, log, opts),
     ]);
-    expect(a).toEqual(b!);
+    expect(a).toEqual(b);
     expect(a).toMatchObject({ copied: 2 });
   });
 });

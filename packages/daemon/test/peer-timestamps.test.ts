@@ -64,7 +64,7 @@ describe("peers timestamps", () => {
         const admin = await adminConn(ctx);
         const me = await getPeer(admin, A);
         expect(me.connected_at).toBeDefined();
-        expect(() => new Date(me.connected_at as string).toISOString()).not.toThrow();
+        expect(() => new Date(me.connected_at ?? "").toISOString()).not.toThrow();
         // hello 自体も post-dispatch 更新の対象なので、最初の照会時点で
         // last_activity_at も既に載っているはず
         expect(me.last_activity_at).toBeDefined();
@@ -86,8 +86,8 @@ describe("peers timestamps", () => {
         await new Promise((res) => setTimeout(res, 10));
         await c.request({ op: "ping" });
         const second = await getPeer(admin, A);
-        expect(Date.parse(second.last_activity_at as string)).toBeGreaterThan(
-          Date.parse(first.last_activity_at as string),
+        expect(Date.parse(second.last_activity_at ?? "")).toBeGreaterThan(
+          Date.parse(first.last_activity_at ?? ""),
         );
         expect(second.connected_at).toBe(first.connected_at);
       } finally {

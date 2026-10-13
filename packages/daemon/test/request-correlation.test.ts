@@ -122,8 +122,8 @@ describe("request correlation", () => {
           c.write({ op: "session_status", sid: A, request_id: "slow" });
           c.write({ op: "ping", request_id: "fast" });
 
-          const first = (await c.readEvent()) as Record<string, unknown>;
-          const second = (await c.readEvent()) as Record<string, unknown>;
+          const first = await c.readEvent();
+          const second = await c.readEvent();
           expect(first).toMatchObject({ ok: true, pong: true, request_id: "fast" });
           expect(second).toMatchObject({ ok: true, sid: A, request_id: "slow" });
 

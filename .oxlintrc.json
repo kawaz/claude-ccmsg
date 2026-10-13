@@ -27,7 +27,13 @@
   },
   "overrides": [
     {
-      "files": ["**/test/**", "**/*.test.ts", "**/*.test.tsx", "hooks/*.test.ts"],
+      "files": [
+        "packages/cli/test/**",
+        "packages/protocol/test/**",
+        "packages/testkit/test/**",
+        "packages/webui/test/**",
+        "hooks/*.test.ts"
+      ],
       "rules": {
         "typescript/no-explicit-any": "off",
         "typescript/no-non-null-assertion": "off",

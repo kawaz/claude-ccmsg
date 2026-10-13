@@ -2,24 +2,20 @@
 // cache they feed (llm-events.ts). The transport that carries them in is
 // webhook.ts's concern and is tested there.
 import { describe, expect, test } from "bun:test";
-import { LLM_PROMPT_CACHE_TTL_MS, type JsonValue } from "@ccmsg/protocol";
+import { LLM_PROMPT_CACHE_TTL_MS } from "@ccmsg/protocol";
 import {
   isIgnoredGatewayItem as isIgnoredItem,
   LlmRequestCache,
   parseLlmRequestEvent as parseRequestEvent,
 } from "../src/llm-events.ts";
-
-/** A test value as the JSON a gateway would post: what the parser reads. */
-function json(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value));
-}
+import { throughJson } from "./helpers.ts";
 
 function parseLlmRequestEvent(item: unknown) {
-  return parseRequestEvent(json(item));
+  return parseRequestEvent(throughJson(item));
 }
 
 function isIgnoredGatewayItem(item: unknown) {
-  return isIgnoredItem(json(item));
+  return isIgnoredItem(throughJson(item));
 }
 
 describe("parseLlmRequestEvent", () => {

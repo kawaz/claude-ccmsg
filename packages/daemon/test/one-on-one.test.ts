@@ -27,8 +27,10 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
+  jsonObjectOf,
 } from "./helpers.ts";
 import { fakeHarness, parseEnvelope, replyWith, sessionWithConfig } from "./peer-harness.ts";
+import { type JsonObject } from "@ccmsg/protocol";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -80,12 +82,12 @@ function readOnlyError(room: string, op: string) {
 
 /** The `type:"msg"` lines of a room's jsonl, read straight from storage so a
  * refused write is checked where it would have landed. */
-function msgLines(ctx: DaemonCtx, room: string): unknown[] {
+function msgLines(ctx: DaemonCtx, room: string): JsonObject[] {
   return fs
     .readFileSync(`${ctx.roomsDir}/${room}.jsonl`, "utf8")
     .split("\n")
     .filter((l) => l !== "")
-    .map((l) => JSON.parse(l) as { type: string })
+    .map(jsonObjectOf)
     .filter((e) => e.type === "msg");
 }
 
@@ -365,7 +367,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         // kind, not just that the KindEvent is in the jsonl.
         const u2 = await user(ctx);
         const rooms = await u2.requestOk({ op: "rooms" });
-        expect(rooms.rooms.find((r) => r.id === roomId)!.kind).toBe("1on1");
+        expect(rooms.rooms.find((r) => r.id === roomId)?.kind).toBe("1on1");
 
         const res = await u2.requestError({
           op: "post",

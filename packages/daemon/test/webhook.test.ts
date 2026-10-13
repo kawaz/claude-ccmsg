@@ -140,7 +140,7 @@ describe("webhook payload", () => {
   });
 
   test("an oversized body is refused without being buffered whole", async () => {
-    const huge = JSON.stringify([...Array(40_000)].map(() => event));
+    const huge = JSON.stringify(Array.from({ length: 40_000 }, () => event));
     expect(huge.length).toBeGreaterThan(WEBHOOK_MAX_BYTES);
     let handled = false;
     const res = await handleWebhookRequest(
@@ -158,7 +158,7 @@ describe("webhook payload", () => {
   test("a lying content-length is refused on the bytes actually read", async () => {
     // content-length is advisory (and absent under chunked encoding), so the
     // ceiling has to hold on the stream itself.
-    const huge = JSON.stringify([...Array(40_000)].map(() => event));
+    const huge = JSON.stringify(Array.from({ length: 40_000 }, () => event));
     const req = new Request("http://127.0.0.1/webhook/llm-gateway", {
       method: "POST",
       headers: { Authorization: `Bearer ${TOKEN}`, "content-length": "10" },

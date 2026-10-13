@@ -8,8 +8,9 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
-import { connect, type DaemonCtx, type TestClient } from "./helpers.ts";
+import { type JsonObject, type Output, parseWith, PROTOCOL_VERSION } from "@ccmsg/protocol";
+import * as v from "valibot";
+import { connect, type DaemonCtx, jsonObjectOf, type TestClient } from "./helpers.ts";
 
 export const PEER_TOKEN = "tok-abc";
 
@@ -30,18 +31,40 @@ export function parseEnvelope(content: string): {
 } {
   const m = /^<cross-session-message ([^>]*)>\n([\s\S]*)\n<\/cross-session-message>$/.exec(content);
   if (!m) throw new Error(`not an envelope: ${content}`);
+  const [, attributes = "", body = ""] = m;
   const attrs: Record<string, string> = {};
-  for (const a of m[1]!.matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]!] = a[2]!;
-  return { attrs, body: m[2]! };
+  for (const [, name = "", value = ""] of attributes.matchAll(/([\w-]+)="([^"]*)"/g)) {
+    attrs[name] = value;
+  }
+  return { attrs, body };
+}
+
+/** The message frame peer-inject writes after the token. Fields the test
+ * does not read are kept, so a frame compares whole. */
+const UserFrameSchema = v.looseObject({
+  type: v.literal("user"),
+  from: v.optional(v.string()),
+  session_id: v.string(),
+  msg_id: v.string(),
+  message: v.looseObject({ content: v.string() }),
+});
+type UserFrame = Output<typeof UserFrameSchema>;
+
+/** A `user` frame read as one: a frame of that type in another shape fails
+ * the test that sent it. */
+function readUserFrame(frame: JsonObject): UserFrame {
+  const read = parseWith(UserFrameSchema, frame);
+  if (!read.ok) throw new Error(`not a peer-inject user frame: ${read.failure.summary}`);
+  return read.value;
 }
 
 export interface FakeHarness {
   configDir: string;
   socketPath: string;
   /** Every line the socket received, parsed. */
-  frames: Record<string, any>[];
+  frames: JsonObject[];
   /** Resolves with the next `user` frame, in arrival order. */
-  nextUser(): Promise<Record<string, any>>;
+  nextUser(): Promise<UserFrame>;
   /** Resolves with the next `user` frame's envelope text. */
   nextContent(): Promise<string>;
   /** Answer each `user` frame with this status on its `from` socket. */
@@ -82,19 +105,21 @@ export function fakeHarness(
     path.join(configDir, "sessions", `${pid}.0123abcd.key`),
     JSON.stringify({ peerToken: PEER_TOKEN }),
   );
-  const waiters: ((f: Record<string, any>) => void)[] = [];
-  const users: Record<string, any>[] = [];
-  const nextUser = (): Promise<Record<string, any>> =>
-    users.length > 0
-      ? Promise.resolve(users.shift()!)
+  const waiters: ((f: UserFrame) => void)[] = [];
+  const users: UserFrame[] = [];
+  const nextUser = (): Promise<UserFrame> => {
+    const buffered = users.shift();
+    return buffered !== undefined
+      ? Promise.resolve(buffered)
       : new Promise((resolve) => waiters.push(resolve));
+  };
   let stopServer = (): void => {};
   const harness: FakeHarness = {
     configDir,
     socketPath,
     frames: [],
     nextUser,
-    nextContent: async () => (await nextUser()).message.content as string,
+    nextContent: async () => (await nextUser()).message.content,
     listening: Promise.resolve(),
     stop: () => stopServer(),
     dispose: () => {
@@ -105,16 +130,17 @@ export function fakeHarness(
   };
 
   /** One frame read: recorded, refused at once when asked to, handed on. */
-  const onFrame = (frame: Record<string, any>): void => {
+  const onFrame = (frame: JsonObject): void => {
     harness.frames.push(frame);
     if (frame.type !== "user") return;
-    if (harness.refuseWith !== undefined && typeof frame.from === "string") {
+    const user = readUserFrame(frame);
+    if (harness.refuseWith !== undefined && user.from !== undefined) {
       void Bun.connect({
-        unix: frame.from.slice("uds:".length),
+        unix: user.from.slice("uds:".length),
         socket: {
           open(s) {
             s.write(
-              `${JSON.stringify({ action: "peer_message_status", status: harness.refuseWith, orig_msg_id: frame.msg_id })}\n`,
+              `${JSON.stringify({ action: "peer_message_status", status: harness.refuseWith, orig_msg_id: user.msg_id })}\n`,
             );
             s.end();
           },
@@ -123,8 +149,8 @@ export function fakeHarness(
       });
     }
     const w = waiters.shift();
-    if (w) w(frame);
-    else users.push(frame);
+    if (w) w(user);
+    else users.push(user);
   };
   /** A line splitter for one connection. */
   const reader = (): ((chunk: Uint8Array) => void) => {
@@ -133,7 +159,7 @@ export function fakeHarness(
       buf += Buffer.from(chunk).toString("utf8");
       const parts = buf.split("\n");
       buf = parts.pop() ?? "";
-      for (const line of parts) onFrame(JSON.parse(line));
+      for (const line of parts) onFrame(jsonObjectOf(line));
     };
   };
 

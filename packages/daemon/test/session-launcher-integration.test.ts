@@ -183,8 +183,8 @@ describe("session launcher wire ops", () => {
         });
         client.write({ op: "ping", request_id: "slow-ping" });
 
-        const first = JSON.parse((await client.readLine())!) as Record<string, unknown>;
-        const second = JSON.parse((await client.readLine())!) as Record<string, unknown>;
+        const first = await client.readEvent();
+        const second = await client.readEvent();
         expect(first).toMatchObject({ ok: true, pong: true, request_id: "slow-ping" });
         expect(second).toMatchObject({
           request_id: "slow-launch",

@@ -2,15 +2,95 @@
 // what the daemon writes, for the op tests that stub the daemon around one op.
 // Every line written is read as a frame of the wire's schemas, as the
 // TestClient does, and a line that does not read fails the request.
+import * as path from "node:path";
 import {
   readDaemonFrame,
+  resolvePaths,
+  VERSION,
   type ErrorResponse,
   type Request,
   type RequestOp,
   type ResponseOf,
 } from "@ccmsg/protocol";
+import { createAgentsPoller } from "../src/agents.ts";
+import { createMidIssuer } from "../src/direct-send.ts";
+import { createForkOriginCache } from "../src/fork-origin.ts";
+import { LlmRequestCache } from "../src/llm-events.ts";
+import { Logger } from "../src/log.ts";
+import { PeerInjector } from "../src/peer-inject.ts";
+import { createSandboxGrants } from "../src/sandbox.ts";
 import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
+import { createSessionErrorsStore } from "../src/session-errors.ts";
+import { createSessionStatusStore } from "../src/session-status.ts";
+import { createSessionUserInputStore } from "../src/session-user-input.ts";
+import { createSessionWakeState } from "../src/session-wake.ts";
+import { RunPids, SidecarReplies } from "../src/sidecar-call.ts";
+import { TraceWriter } from "../src/trace.ts";
+import { createTranscriptTailStore } from "../src/transcript.ts";
+import { createTranslateService } from "../src/translate-helper.ts";
 import { readStreamItem, refusedReply, servedReply, type StreamItem } from "./helpers.ts";
+
+/** A Logger that writes nothing: the op tests read what a request is
+ * answered with, not what the daemon logs on the way. */
+class SilentLogger extends Logger {
+  override log(): void {}
+}
+
+/** A daemon in memory for driving one op with `handleRequest`: nothing is
+ * listening, polling or locked, and `fields` sets what the op under test
+ * reads. Its paths name `base`, which nothing here creates or writes; a test
+ * whose op writes files passes a directory of its own. */
+export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/ccmsg-stub"): Daemon {
+  const paths = resolvePaths({
+    CCMSG_STATE_DIR: path.join(base, "s"),
+    CCMSG_CONFIG_DIR: path.join(base, "c"),
+    CCMSG_DATA_DIR: path.join(base, "d"),
+  });
+  const trace = new TraceWriter(paths.trace);
+  return {
+    paths,
+    config: {},
+    version: VERSION,
+    startTime: Date.now(),
+    rooms: new Map(),
+    dedupIndex: new Map(),
+    connections: new Set(),
+    sessions: new Map(),
+    subscribers: new Set(),
+    log: new SilentLogger(paths.log),
+    lock: { fd: -1, release() {} },
+    server: null,
+    httpListeners: [],
+    httpAllow: [],
+    dedupWindowMs: 0,
+    shuttingDown: false,
+    agentsPoller: createAgentsPoller(),
+    agentsSeen: new Map(),
+    transcriptTail: createTranscriptTailStore(trace),
+    trace,
+    sessionStatus: createSessionStatusStore(),
+    sessionErrors: createSessionErrorsStore(),
+    sessionUserInputs: createSessionUserInputStore(),
+    sessionErrorsSnapshot: "",
+    networkWatch: null,
+    sessionWake: createSessionWakeState(),
+    sandboxGrants: createSandboxGrants(),
+    sandboxOrigin: null,
+    forkOrigins: createForkOriginCache(),
+    translator: createTranslateService(),
+    peersSnapshot: "",
+    staleClients: new Map(),
+    llmRequests: new LlmRequestCache(),
+    llmStatusRefresher: null,
+    webhooks: new Map(),
+    peerInjector: new PeerInjector(),
+    launcher: "/nonexistent/ccmsg",
+    issueDirectMid: createMidIssuer(),
+    sidecarReplies: new SidecarReplies(),
+    runPids: new RunPids(),
+    ...fields,
+  };
+}
 
 /** A line the daemon wrote back: as it came, and what it reads as. */
 interface WrittenLine {

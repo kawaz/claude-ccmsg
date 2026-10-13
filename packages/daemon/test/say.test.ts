@@ -86,7 +86,7 @@ describe("say op", () => {
         // 既存の 1on1 room と同じ `<repo> 1on1 <sid8>` 形で、sidebar の見え方を
         // 揃える。
         expect(mine[0].title).toBe("repo-5a900000-0000-4000-8000-000000000001 1on1 5a900000");
-        expect(mine[0].members.map((m: any) => m.sid)).toEqual([SID_SAY_1]);
+        expect(mine[0]?.members.map((m) => m.sid)).toEqual([SID_SAY_1]);
         expect(mine[0].say_unread_seqs).toEqual([first.seq, second.seq]);
         u.close();
         s.close();

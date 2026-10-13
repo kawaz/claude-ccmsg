@@ -144,15 +144,17 @@ describe("createMtimeCache", () => {
       return path.basename(file, ".json");
     };
 
-    await cache.get(files[0]!, load(files[0]!));
-    await cache.get(files[1]!, load(files[1]!));
+    const [a = "", b = "", c = ""] = files;
+
+    await cache.get(a, load(a));
+    await cache.get(b, load(b));
     // Touching `a` makes `b` the least recently used, so admitting `c` drops b.
-    await cache.get(files[0]!, load(files[0]!));
-    await cache.get(files[2]!, load(files[2]!));
+    await cache.get(a, load(a));
+    await cache.get(c, load(c));
     expect(loaded).toEqual(["a.json", "b.json", "c.json"]);
 
-    await cache.get(files[0]!, load(files[0]!)); // still cached
-    await cache.get(files[1]!, load(files[1]!)); // evicted, reloads
+    await cache.get(a, load(a)); // still cached
+    await cache.get(b, load(b)); // evicted, reloads
     expect(loaded).toEqual(["a.json", "b.json", "c.json", "b.json"]);
   });
 });

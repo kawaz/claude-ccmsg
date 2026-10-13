@@ -3,25 +3,20 @@
 // side effects. The wiring itself is covered end-to-end in
 // cache-keepalive-relay.test.ts.
 import { describe, expect, test } from "bun:test";
-import type { JsonValue } from "@ccmsg/protocol";
 import {
   isCacheKeepaliveItem as isKeepaliveItem,
   parseCacheKeepaliveEvent as parseKeepaliveEvent,
   relayCacheKeepalive,
   type CacheKeepaliveEvent,
 } from "../src/cache-keepalive.ts";
-
-/** A test value as the JSON a gateway would post: what the parser reads. */
-function json(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value));
-}
+import { throughJson } from "./helpers.ts";
 
 function parseCacheKeepaliveEvent(item: unknown) {
-  return parseKeepaliveEvent(json(item));
+  return parseKeepaliveEvent(throughJson(item));
 }
 
 function isCacheKeepaliveItem(item: unknown) {
-  return isKeepaliveItem(json(item));
+  return isKeepaliveItem(throughJson(item));
 }
 
 const MARKER = "[llm-gateway cache keepalive nonce=n1]";
@@ -29,11 +24,13 @@ const MARKER = "[llm-gateway cache keepalive nonce=n1]";
 /** Wall clock the relay reads, pinned rather than real — a deadline test that
  * waited out a real one would either be slow or racy. */
 function harness(options: { subscribed?: boolean } = {}) {
+  const delivered: { sid: string; text: string }[] = [];
+  const logs: string[] = [];
   const state = {
     subscribed: options.subscribed ?? true,
     now: 1_000_000,
-    delivered: [] as { sid: string; text: string }[],
-    logs: [] as string[],
+    delivered,
+    logs,
   };
   const relay = (event: CacheKeepaliveEvent): void =>
     relayCacheKeepalive(event, {

@@ -13,6 +13,8 @@ import {
   type TranslateService,
   type TranslateServiceOptions,
 } from "../src/translate-helper.ts";
+import { jsonText, parseWith, TranslateResultSchema } from "@ccmsg/protocol";
+import * as v from "valibot";
 
 const services: TranslateService[] = [];
 const tempDirs: string[] = [];
@@ -386,6 +388,10 @@ describe("translateWatchdogTimeoutMs", () => {
 // and a fresh checkout do not build it; a macOS developer who ran the build
 // recipe exercises Translation.framework itself in the normal bun test suite.
 const helperBinary = defaultTranslateHelperPaths().binary;
+/** One answer line of the helper, as the daemon reads it. */
+const HelperResponseTextSchema = jsonText(
+  v.object({ id: v.string(), results: v.array(TranslateResultSchema) }),
+);
 const realHelperTest = fs.existsSync(helperBinary) ? test : test.skip;
 realHelperTest(
   "the built Swift helper translates a mixed-text batch over JSONL",
@@ -395,7 +401,7 @@ realHelperTest(
     // test deadline. Give it a generous ceiling — this test is a smoke check on
     // the real binary, not a latency bound.
     const proc = Bun.spawn([helperBinary], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    const stdin = proc.stdin as Bun.FileSink;
+    const stdin = proc.stdin;
     await stdin.write(
       JSON.stringify({
         id: "mixed",
@@ -403,18 +409,22 @@ realHelperTest(
       }) + "\n",
     );
     await stdin.end();
-    const output = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-    const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+    const output = await new Response(proc.stdout).text();
+    const stderr = await new Response(proc.stderr).text();
     expect(await proc.exited).toBe(0);
     expect(stderr).toBe("");
-    const response = JSON.parse(output.trim());
+    const read = parseWith(HelperResponseTextSchema, output.trim());
+    if (!read.ok) throw new Error(`not a helper answer: ${read.failure.summary}: ${output}`);
+    const response = read.value;
     expect(response.id).toBe("mixed");
     expect(response.results).toHaveLength(2);
-    expect(response.results[0].ok).toBe(true);
-    expect(response.results[0].text).toContain("ここから日本語です。");
-    expect(response.results[0].text).not.toContain("The build completed successfully.");
-    expect(response.results[1].ok).toBe(true);
-    expect(response.results[1].text).toBe("これは日本語です。");
+    const [first, second] = response.results;
+    expect(first?.ok).toBe(true);
+    expect(second?.ok).toBe(true);
+    if (first?.ok !== true || second?.ok !== true) throw new Error("a text was not translated");
+    expect(first.text).toContain("ここから日本語です。");
+    expect(first.text).not.toContain("The build completed successfully.");
+    expect(second.text).toBe("これは日本語です。");
   },
   30_000,
 );

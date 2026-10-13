@@ -12,6 +12,8 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  defined,
+  isKind,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -45,22 +47,6 @@ async function userConn(ctx: DaemonCtx): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   return c;
-}
-
-interface PeerLite {
-  sid: string;
-  repo?: string;
-  ws?: string;
-  cwd?: string;
-  transcript_path?: string;
-  repo_root?: string;
-  branch?: string;
-  connected_at?: string;
-  last_activity_at?: string;
-}
-interface PeersEv {
-  ev: "peers";
-  peers: PeerLite[];
 }
 
 /** Post a distinguishable marker msg via an ALREADY-connected session (never a
@@ -105,7 +91,7 @@ describe("ev:peers push", () => {
         a.close();
         await postMarkerVia(m, "marker");
         const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
-        expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
+        expect(seen.some(isKind("peers"))).toBe(false);
         const res = await u.requestOk({ op: "peers" });
         expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         m.close();
@@ -129,10 +115,10 @@ describe("ev:peers push", () => {
         // is the ordering anchor (the daemon writes every subscriber's copy in
         // one synchronous loop); a round trip on S then orders its stream past it.
         const b = await sessionHello(ctx, SID_B);
-        await u.readEventUntil("peers", (e) => (e as PeersEv).peers.some((p) => p.sid === SID_B));
+        await u.readEventUntil("peers", (e) => e.peers.some((p) => p.sid === SID_B));
         await s.request({ op: "rooms" });
         const seen = await s.pendingEvents();
-        expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
+        expect(seen.some(isKind("peers"))).toBe(false);
         b.close();
         u.close();
       } finally {
@@ -166,7 +152,7 @@ describe("ev:peers push", () => {
         });
         await postMarkerVia(m, "marker");
         const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
-        expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
+        expect(seen.some(isKind("peers"))).toBe(false);
         a.close();
         m.close();
       } finally {
@@ -222,7 +208,7 @@ describe("ev:peers push", () => {
         a1.close(); // one of two conns for sid A closes; A stays registered via a2
         await postMarkerVia(m, "marker");
         const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
-        expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
+        expect(seen.some(isKind("peers"))).toBe(false);
         a2.close();
         m.close();
       } finally {
@@ -314,10 +300,16 @@ describe("ev:peers push", () => {
         await u.request({ op: "subscribe" });
         const a = sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
         const { ev } = await u.readEventUntil("peers");
-        const pushed = ev.peers.find((p) => p.sid === SID_A)!;
+        const pushed = defined(
+          ev.peers.find((p) => p.sid === SID_A),
+          "pushed",
+        );
 
         const res = await u.requestOk({ op: "peers" });
-        const polled = res.peers.find((p) => p.sid === SID_A)!;
+        const polled = defined(
+          res.peers.find((p) => p.sid === SID_A),
+          "polled",
+        );
         const { last_activity_at: _pushedLastActivity, ...pushedRest } = pushed;
         const { last_activity_at: _polledLastActivity, ...polledRest } = polled;
         expect(pushedRest).toEqual(polledRest);

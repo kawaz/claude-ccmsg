@@ -6,7 +6,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
 
 const GATEWAY_PORT = 18941;
 
@@ -40,22 +40,18 @@ afterAll(() => {
 });
 
 function daemonWith(llmStatsUrl?: string): Daemon {
-  return {
-    config: llmStatsUrl ? { llm_stats_url: llmStatsUrl } : {},
-    sessions: new Map(),
-    connections: new Set<Conn>(),
-    log: { error() {}, warn() {} },
-  } as unknown as Daemon;
+  return stubDaemon({ config: llmStatsUrl ? { llm_stats_url: llmStatsUrl } : {} });
 }
 
 const URL_OK = `http://127.0.0.1:${GATEWAY_PORT}/stats`;
-const USER: Conn["identity"] = { role: "user", id: "u1" } as Conn["identity"];
+const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
   sid: "s1",
   repo: "r",
   ws: "w",
-} as Conn["identity"];
+  cwd: "",
+};
 
 describe("llm_stats op", () => {
   test("delivers the gateway document as the reply", async () => {

@@ -14,6 +14,8 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
+  isKind,
+  type StreamItem,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -132,7 +134,7 @@ async function seenBeforeMarker(
   poster: TestClient,
   reader: TestClient,
   room: string,
-): Promise<Record<string, any>[]> {
+): Promise<StreamItem[]> {
   await poster.request({ op: "post", room, msg: "marker" });
   const { seen } = await reader.readEventUntil("msg", (e) => e.msg === "marker");
   return seen;
@@ -331,7 +333,7 @@ describe("webhook → ev:llm_requests", () => {
         await u.readEventUntil("llm_requests");
         await s.request({ op: "rooms" });
         const seen = await s.pendingEvents();
-        expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);
+        expect(seen.some(isKind("llm_requests"))).toBe(false);
         u.close();
         s.close();
       } finally {
@@ -356,7 +358,7 @@ describe("webhook → ev:llm_requests", () => {
         ).toBe(401);
         const [marker, room] = await markerSession(ctx, []);
         const seen = await seenBeforeMarker(marker, u, room);
-        expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);
+        expect(seen.some(isKind("llm_requests"))).toBe(false);
         marker.close();
         u.close();
       } finally {

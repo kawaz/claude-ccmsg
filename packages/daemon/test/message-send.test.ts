@@ -65,8 +65,11 @@ describe("message_send", () => {
       const b = await sessionWithConfig(ctx, B, hb.configDir);
 
       const sent = await a.requestOk({ op: "message_send", to: B, text: "question\nline 2" });
-      expect(sent).toEqual({ ok: true, outcome: "delivered", mid: expect.stringMatching(MID_RE) });
+      expect(sent.outcome).toBe("delivered");
       if (sent.outcome !== "delivered") throw new Error("not delivered");
+      const { mid: sentMid, ...sentRest } = sent;
+      expect(sentRest).toEqual({ ok: true, outcome: "delivered" });
+      expect(sentMid).toMatch(MID_RE);
       const content = await hb.nextContent();
       const { attrs, body } = parseEnvelope(content);
       expect(attrs).toEqual({
@@ -151,12 +154,16 @@ describe("message_send", () => {
       await hb.listening;
       const a = await sessionWithConfig(ctx, A);
       await sessionWithConfig(ctx, B, hb.configDir);
-      const res = await a.request({
+      const res = await a.requestOk({
         op: "message_send",
         to: B,
         text: "x".repeat(4 * 1024 * 1024),
       });
-      expect(res).toEqual({ ok: true, outcome: "unconfirmed", mid: expect.stringMatching(MID_RE) });
+      expect(res.outcome).toBe("unconfirmed");
+      if (res.outcome !== "unconfirmed") throw new Error("not unconfirmed");
+      const { mid, ...rest } = res;
+      expect(rest).toEqual({ ok: true, outcome: "unconfirmed" });
+      expect(mid).toMatch(MID_RE);
     },
     T,
   );

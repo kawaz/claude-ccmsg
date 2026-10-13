@@ -16,6 +16,9 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
+  defined,
+  isDelivered,
+  type ItemOf,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -41,7 +44,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * between" (§2.3 stream-filter contract). Bun's test-level timeout backs the
  * wait, so an event that never arrives fails the test — no local timeout knob
  * is needed. */
-async function readUntilMsg(sub: TestClient, pred: (ev: any) => boolean = () => true) {
+async function readUntilMsg(sub: TestClient, pred: (ev: ItemOf<"msg">) => boolean = () => true) {
   return sub.readEventUntil("msg", (ev) => pred(ev));
 }
 
@@ -70,7 +73,10 @@ describe("DR-0013 broadcast room", () => {
           "--members is ignored for broadcast rooms (members are auto-populated)",
         );
         const rooms = await creator.requestOk({ op: "rooms" });
-        const room = rooms.rooms.find((r) => r.id === res.room)!;
+        const room = defined(
+          rooms.rooms.find((r) => r.id === res.room),
+          "room",
+        );
         // §2.1 rooms response surfaces kind so the CLI/webui can badge
         expect(room.kind).toBe("broadcast");
         // Only the active peer A (auto-populated) is a member — X/Y from the
@@ -102,7 +108,10 @@ describe("DR-0013 broadcast room", () => {
           kind: "broadcast",
         });
         const rooms = await creator.requestOk({ op: "rooms" });
-        const room = rooms.rooms.find((r) => r.id === res.room)!;
+        const room = defined(
+          rooms.rooms.find((r) => r.id === res.room),
+          "room",
+        );
         expect(room.members.map((m) => m.sid)).toEqual([SID_A, SID_B, SID_C]);
         expect(room.members.map((m) => m.id)).toEqual(["a1", "a2", "a3"]);
       } finally {
@@ -141,7 +150,10 @@ describe("DR-0013 broadcast room", () => {
         // The broadcast now has a1=A and a2=B (sids sorted deterministically
         // via auto-populate; nextAgentMemberId picks the next free `a`).
         const rooms = await creator.requestOk({ op: "rooms" });
-        const roomMembers = rooms.rooms.find((r) => r.id === room)!.members;
+        const roomMembers = defined(
+          rooms.rooms.find((r) => r.id === room),
+          "the room",
+        ).members;
         expect(roomMembers.some((m) => m.sid === SID_B)).toBe(true);
         // A sends a post so we have a positive marker to read towards. Include
         // u1 in `to` since A is an agent — see the constraint test below.
@@ -170,7 +182,7 @@ describe("DR-0013 broadcast room", () => {
         // and don't reference the broadcast room's id — filter to broadcast-
         // room events only.
         const broadcastLifecycle = seen.seen.filter(
-          (ev: any) => ev.r === room && (ev.type === "member" || ev.type === "leave"),
+          (ev) => isDelivered(ev) && ev.r === room && (ev.type === "member" || ev.type === "leave"),
         );
         expect(broadcastLifecycle).toEqual([]);
       } finally {
@@ -337,7 +349,7 @@ describe("DR-0013 broadcast room", () => {
         const rooms = await creator.requestOk({
           op: "rooms",
         });
-        expect(rooms.rooms.find((r) => r.id === nextRoom)!.kind).toBe("broadcast");
+        expect(rooms.rooms.find((r) => r.id === nextRoom)?.kind).toBe("broadcast");
         // §2.4 constraint applies to the new room too
         const rej = await aPost.requestError({
           op: "post",
@@ -385,10 +397,10 @@ describe("DR-0013 broadcast room", () => {
 
         // u1's stream sees the archive event on the broadcast room
         const got = await uSub.readEventUntil("archive", (ev) => ev.r === room);
-        expect((got.ev as any).archived).toBe(true);
+        expect(got.ev.archived).toBe(true);
 
         const rooms = await creator.requestOk({ op: "rooms" });
-        expect(rooms.rooms.find((r) => r.id === room)!.archived).toBe(true);
+        expect(rooms.rooms.find((r) => r.id === room)?.archived).toBe(true);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -425,7 +437,10 @@ describe("DR-0013 broadcast room", () => {
 
         // Post-close snapshot: A still on the broadcast member list
         const rooms = await creator.requestOk({ op: "rooms" });
-        const members = rooms.rooms.find((r) => r.id === room)!.members;
+        const members = defined(
+          rooms.rooms.find((r) => r.id === room),
+          "the room",
+        ).members;
         expect(members.map((m) => m.sid).sort()).toEqual([SID_A, SID_B]);
 
         // Nothing streamed in the meantime that mentions the broadcast leave.
@@ -434,7 +449,9 @@ describe("DR-0013 broadcast room", () => {
         // leave-type event referencing this broadcast room.
         await creator.request({ op: "archive_room", room, archived: true });
         const got = await uSub.readEventUntil("archive", (ev) => ev.r === room);
-        const leaveInBetween = got.seen.filter((ev: any) => ev.r === room && ev.type === "leave");
+        const leaveInBetween = got.seen.filter(
+          (ev) => isDelivered(ev) && ev.r === room && ev.type === "leave",
+        );
         expect(leaveInBetween).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
@@ -495,6 +512,7 @@ describe("DR-0013 broadcast room", () => {
         const rooms = await c2.requestOk({ op: "rooms" });
         const bcast = rooms.rooms.find((r) => r.kind === "broadcast");
         expect(bcast).toBeDefined();
+        if (bcast === undefined) throw new Error("no broadcast room after the restart");
 
         // And the u1-in-to constraint still applies — proves computeDerived
         // set room.kind = "broadcast", not just that the KindEvent is in the
@@ -502,7 +520,7 @@ describe("DR-0013 broadcast room", () => {
         const aAfter = await session(ctx, SID_A);
         const rej = await aAfter.requestError({
           op: "post",
-          room: bcast!.id,
+          room: bcast.id,
           msg: "no to",
         });
         expect(rej.ok).toBe(false);

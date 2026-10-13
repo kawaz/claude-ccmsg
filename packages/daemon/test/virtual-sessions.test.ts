@@ -51,7 +51,7 @@ function transcript(config: string, id: string, cwd: string, rows: unknown[] = [
 }
 
 afterEach(() => {
-  while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("virtual session lookup boundary", () => {

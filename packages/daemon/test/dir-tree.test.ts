@@ -7,6 +7,7 @@ import * as path from "node:path";
 import type { DirTreeEntry } from "@ccmsg/protocol";
 import { launcherTemplate, type SessionLauncherConfig } from "../src/config.ts";
 import { dirTree, matchesAllTokens, tokenizeFilter } from "../src/dir-tree.ts";
+import { defined } from "./helpers.ts";
 
 function config(root: string, depth = 2): SessionLauncherConfig {
   return {
@@ -100,9 +101,9 @@ describe("dirTree", () => {
     if (!result.ok) return;
 
     expect(names(result.data.entries)).toEqual(["alpha"]);
-    const alpha = result.data.entries[0]!;
-    expect(names(alpha.children!)).toEqual(["beta"]);
-    expect(alpha.children![0]!.children).toBeUndefined();
+    const alpha = defined(result.data.entries[0], "alpha");
+    expect(names(alpha.children ?? [])).toEqual(["beta"]);
+    expect(defined(alpha.children?.[0], "beta").children).toBeUndefined();
   });
 
   // Lazy expansion requests a contained node as a new root with depth=1. The
@@ -115,7 +116,7 @@ describe("dirTree", () => {
     if (!result.ok) return;
 
     expect(names(result.data.entries)).toEqual(["workspace"]);
-    expect(result.data.entries[0]!.children).toBeUndefined();
+    expect(defined(result.data.entries[0], "workspace").children).toBeUndefined();
   });
 
   // A lexical absolute path outside every configured root is never traversed;
@@ -145,7 +146,7 @@ describe("dirTree", () => {
     if (!result.ok) return;
 
     expect(names(result.data.entries)).toEqual(["visible"]);
-    expect(names(result.data.entries[0]!.children!)).toEqual(["child"]);
+    expect(names(result.data.entries[0]?.children ?? [])).toEqual(["child"]);
   });
 
   // The picker selects directories only; ordinary files must not appear even
@@ -169,9 +170,12 @@ describe("dirTree", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    const alias = result.data.entries.find((entry) => path.basename(entry.path) === "alias")!;
+    const alias = defined(
+      result.data.entries.find((entry) => path.basename(entry.path) === "alias"),
+      "alias",
+    );
     expect(alias.is_dir).toBe(true);
-    expect(names(alias.children!)).toEqual(["child"]);
+    expect(names(alias.children ?? [])).toEqual(["child"]);
   });
 
   // Filtering matches the root-relative path and retains ancestors required to
@@ -185,7 +189,7 @@ describe("dirTree", () => {
     if (!result.ok) return;
 
     expect(names(result.data.entries)).toEqual(["group"]);
-    expect(names(result.data.entries[0]!.children!)).toEqual(["foo-project"]);
+    expect(names(result.data.entries[0]?.children ?? [])).toEqual(["foo-project"]);
   });
 
   // Multi-token filters (kawaz r46m31) require every whitespace-separated
@@ -199,7 +203,7 @@ describe("dirTree", () => {
     if (!result.ok) return;
 
     expect(names(result.data.entries)).toEqual(["group"]);
-    expect(names(result.data.entries[0]!.children!)).toEqual(["foo-project"]);
+    expect(names(result.data.entries[0]?.children ?? [])).toEqual(["foo-project"]);
   });
 
   // A whitespace-only filter is equivalent to no filter: it should not
@@ -251,10 +255,10 @@ describe("dirTree", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    let entry = result.data.entries[0]!;
+    let entry = defined(result.data.entries[0], "entry");
     let returnedLevels = 1;
     while (entry.children) {
-      entry = entry.children[0]!;
+      entry = defined(entry.children[0], "a child");
       returnedLevels++;
     }
     expect(returnedLevels).toBe(5);

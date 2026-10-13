@@ -17,6 +17,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  jsonObjectOf,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -72,7 +73,7 @@ async function readMsgLine(sub: TestClient, body: string): Promise<string> {
   for (;;) {
     const line = await sub.readLine();
     if (line === null) throw new Error("connection closed before msg arrived");
-    const parsed = JSON.parse(line);
+    const parsed = jsonObjectOf(line);
     if (parsed.type === "msg" && parsed.msg === body) return line;
   }
 }
@@ -195,7 +196,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         .split("\n")
         .filter((l) => l.length > 0);
       const msgLine = lines.find((l) => {
-        const parsed = JSON.parse(l);
+        const parsed = jsonObjectOf(l);
         return parsed.type === "msg" && parsed.msg === "stored message";
       });
       if (!msgLine) throw new Error("stored msg line not found");

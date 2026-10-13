@@ -4,18 +4,25 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import {
+  connect,
+  startTestDaemon,
+  stopTestDaemon,
+  type DaemonCtx,
+  jsonObjectOf,
+} from "./helpers.ts";
+import { type JsonObject } from "@ccmsg/protocol";
 
 const T = 15000;
 
-const traceLines = (ctx: DaemonCtx): Record<string, unknown>[] => {
+const traceLines = (ctx: DaemonCtx): JsonObject[] => {
   const file = path.join(ctx.stateDir, "trace.jsonl");
   if (!fs.existsSync(file)) return [];
   return fs
     .readFileSync(file, "utf8")
     .split("\n")
     .filter((l) => l !== "")
-    .map((l) => JSON.parse(l) as Record<string, unknown>);
+    .map(jsonObjectOf);
 };
 
 describe("client_trace", () => {
@@ -46,7 +53,7 @@ describe("client_trace", () => {
         const webui = traceLines(ctx).filter((l) => l.comp === "webui");
         expect(webui.map((l) => l.kind)).toEqual(["ws_receive", "store_dispatch", "dom_commit"]);
         // ブラウザで測った時刻がそのまま残る (到着時に打ち直すと遅延自体が消える)
-        expect(webui[0]!.ts).toBe("2026-07-29T00:00:00.000Z");
+        expect(webui[0]?.ts).toBe("2026-07-29T00:00:00.000Z");
         // 相関キーは全 point で共通 — daemon 側の行と突き合わせられる
         for (const line of webui) {
           expect([line.sid, line.start, line.end]).toEqual(["S1", 100, 200]);

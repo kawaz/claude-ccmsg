@@ -13,6 +13,8 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  defined,
+  isKind,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -63,7 +65,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.transcript_path).toBe(file);
       } finally {
         await stopTestDaemon(ctx);
@@ -81,7 +86,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
         const sid = SID_A;
         const c = await sessionHello(ctx, sid, { transcript_path: `${sid}.jsonl` });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.transcript_path).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -101,7 +109,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.transcript_path).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -122,7 +133,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.transcript_path).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -181,7 +195,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
         await sessionHello(ctx, sid, { cwd: "/tmp/other" });
 
         const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.transcript_path).toBe(file);
       } finally {
         await stopTestDaemon(ctx);
@@ -209,7 +226,10 @@ describe("hello transcript_path validation (DR-0009)", () => {
           await sessionHello(ctx, sid, { transcript_path: file2 });
 
           const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
-          const me = peers.peers.find((p) => p.sid === sid)!;
+          const me = defined(
+            peers.peers.find((p) => p.sid === sid),
+            `the peer ${sid}`,
+          );
           expect(me.transcript_path).toBe(file2);
         } finally {
           fs.rmSync(dir2, { recursive: true, force: true });
@@ -967,7 +987,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         const created = await s2.requestOk({ op: "create_room", members: [] });
         await s2.request({ op: "post", room: created.room, msg: "marker" });
         const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
-        expect(seen.some((e: any) => e.ev === "transcript")).toBe(false);
+        expect(seen.some(isKind("transcript"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

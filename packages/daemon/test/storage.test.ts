@@ -12,6 +12,7 @@ import {
   presentMembers,
   readMsgs,
 } from "../src/storage.ts";
+import { defined } from "./helpers.ts";
 
 function tmpFile(): { file: string; log: Logger; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-s-"));
@@ -64,7 +65,9 @@ describe("loadRoom: torn tail recovery (DR-0002 §6)", () => {
       const dir = path.dirname(file);
       const tornFiles = fs.readdirSync(dir).filter((n) => n.includes(".torn-"));
       expect(tornFiles.length).toBe(1);
-      expect(fs.readFileSync(path.join(dir, tornFiles[0]!), "utf8")).toBe(torn);
+      expect(fs.readFileSync(path.join(dir, defined(tornFiles[0], "the torn file")), "utf8")).toBe(
+        torn,
+      );
 
       // the live file no longer contains the torn fragment; a fresh append lands cleanly
       const after = fs.readFileSync(file, "utf8");

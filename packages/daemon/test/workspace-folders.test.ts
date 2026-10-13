@@ -150,7 +150,7 @@ describe("discoverWorkspaceFolders", () => {
     );
     const result = await discoverWorkspaceFolders(cwd);
     expect(result).toHaveLength(1);
-    expect(result[0]!.path).toBe(fs.realpathSync(target));
+    expect(result[0]?.path).toBe(fs.realpathSync(target));
   });
 
   test("silently skips folders whose path doesn't exist", async () => {
@@ -202,7 +202,7 @@ describe("discoverWorkspaceFolders", () => {
     expect(result).toHaveLength(1);
     // First occurrence wins (a.code-workspace sorts before b.code-workspace) —
     // no name from the duplicate leaks through.
-    expect(result[0]!.name).toBe(path.basename(cwd));
+    expect(result[0]?.name).toBe(path.basename(cwd));
   });
 
   test("falls back to the folder basename when `name` is absent", async () => {
@@ -215,7 +215,7 @@ describe("discoverWorkspaceFolders", () => {
       JSON.stringify({ folders: [{ path: "." }] }),
     );
     const result = await discoverWorkspaceFolders(cwd);
-    expect(result[0]!.name).toBe(path.basename(cwd));
+    expect(result[0]?.name).toBe(path.basename(cwd));
   });
 
   test("does not recurse into subdirectories looking for `.code-workspace`", async () => {

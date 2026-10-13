@@ -12,6 +12,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  jsonObjectOf,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -71,13 +72,10 @@ describe("DR-0017 reply op", () => {
 
         // The stored msg carries reply_to pointing at the original.
         const raw = fs.readFileSync(`${ctx.roomsDir}/${room}.jsonl`, "utf8");
-        const lines = raw
-          .trim()
-          .split("\n")
-          .map((l) => JSON.parse(l));
+        const lines = raw.trim().split("\n").map(jsonObjectOf);
         const replyLine = lines.find((l) => l.type === "msg" && l.mid === replied.mid);
-        expect(replyLine.reply_to).toBe(`${room}m${posted.mid}`);
-        expect(replyLine.to).toEqual(["a1", "a3"]);
+        expect(replyLine?.reply_to).toBe(`${room}m${posted.mid}`);
+        expect(replyLine?.to).toEqual(["a1", "a3"]);
       } finally {
         await stopTestDaemon(ctx);
       }

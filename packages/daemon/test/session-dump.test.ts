@@ -19,6 +19,7 @@ import {
   queueOperationRow,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
+import { defined, jsonObjectOf } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const roots: string[] = [];
@@ -44,7 +45,8 @@ async function rejection(p: Promise<unknown>): Promise<Error> {
   try {
     await p;
   } catch (e) {
-    return e as Error;
+    if (e instanceof Error) return e;
+    throw new Error(`dumpSession rejected with something not an Error: ${String(e)}`);
   }
   throw new Error("expected dumpSession to throw");
 }
@@ -244,8 +246,8 @@ describe("dumpSession", () => {
     );
 
     const dump = await dumpSession(SID, { dataDir, configDirs: [configDir] });
-    expect(dump.entries.filter((entry) => entry.kind === "user")).toEqual([
-      expect.objectContaining({ text: "human prompt" }),
+    expect(dump.entries.filter((entry) => entry.kind === "user")).toMatchObject([
+      { text: "human prompt" },
     ]);
   });
 
@@ -749,17 +751,17 @@ describe("dumpSession", () => {
         state: "possibly-alive",
       },
     ]);
-    expect(context.rooms).toEqual([
-      expect.objectContaining({
+    expect(context.rooms).toMatchObject([
+      {
         room: "r3",
         title: "handoff room",
         kind: "broadcast",
         last_mid: 7,
         members: [
-          expect.objectContaining({ id: "a1", sid: SID }),
-          expect.objectContaining({ id: "a2", sid: "peer" }),
+          { id: "a1", sid: SID },
+          { id: "a2", sid: "peer" },
         ],
-      }),
+      },
     ]);
   });
 
@@ -776,7 +778,7 @@ describe("dumpSession", () => {
     );
     const { entries } = await dumpSession(SID, { configDirs: [configDir], dataDir });
     expect(entries.map((e) => e.kind)).toEqual(["thinking", "assistant"]);
-    const thinking = entries[0]!;
+    const thinking = defined(entries[0], "thinking");
     expect(thinking.text).toBe("internal reasoning");
     expect(thinking.to).toBeNull();
   });
@@ -1132,7 +1134,7 @@ describe("dump file output", () => {
       entries: [
         { t: 0, kind: "user", from: null, to: null, text: "a", meta: {} },
         { t: 1, kind: "assistant", from: null, to: null, text: "b", meta: {} },
-      ] as unknown as SessionDump["entries"],
+      ],
     };
   }
 
@@ -1141,9 +1143,9 @@ describe("dump file output", () => {
     // trailing newline leaves an empty final element: 2 + 2 entries + "".
     expect(lines.length).toBe(5);
     expect(lines[4]).toBe("");
-    expect(JSON.parse(lines[0]!).format).toBe("ccmsg-session-dump-v2");
-    expect(JSON.parse(lines[1]!).kind).toBe("session-context");
-    expect(lines.slice(2, 4).map((l) => JSON.parse(l).text)).toEqual(["a", "b"]);
+    expect(jsonObjectOf(lines[0] ?? "").format).toBe("ccmsg-session-dump-v2");
+    expect(jsonObjectOf(lines[1] ?? "").kind).toBe("session-context");
+    expect(lines.slice(2, 4).map((l) => jsonObjectOf(l).text)).toEqual(["a", "b"]);
   });
 
   test("auto-names inside a directory by sid and local wall-clock", () => {

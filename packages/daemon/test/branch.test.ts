@@ -10,6 +10,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  defined,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -46,7 +47,10 @@ describe("hello branch field", () => {
       try {
         const c = await sessionHello(ctx, A, { branch: "feat/branch-label" });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === A)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === A),
+          `the peer ${A}`,
+        );
         expect(me.branch).toBe("feat/branch-label");
       } finally {
         await stopTestDaemon(ctx);
@@ -62,7 +66,10 @@ describe("hello branch field", () => {
       try {
         const c = await sessionHello(ctx, A);
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === A)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === A),
+          `the peer ${A}`,
+        );
         expect(me.branch).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -78,7 +85,10 @@ describe("hello branch field", () => {
       try {
         const c = await sessionHello(ctx, A, { branch: "" });
         const peers = await c.requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === A)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === A),
+          `the peer ${A}`,
+        );
         expect(me.branch).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -100,7 +110,10 @@ describe("hello branch field", () => {
         await sessionHello(ctx, sid, { cwd: "/tmp/other" });
 
         const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.branch).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
@@ -119,7 +132,10 @@ describe("hello branch field", () => {
         await sessionHello(ctx, sid, { branch: "feature/x" });
 
         const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
-        const me = peers.peers.find((p) => p.sid === sid)!;
+        const me = defined(
+          peers.peers.find((p) => p.sid === sid),
+          `the peer ${sid}`,
+        );
         expect(me.branch).toBe("feature/x");
       } finally {
         await stopTestDaemon(ctx);

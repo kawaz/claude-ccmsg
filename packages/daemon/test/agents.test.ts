@@ -16,6 +16,8 @@ import {
   type DaemonCtx,
   type ItemOf,
   type TestClient,
+  isKind,
+  jsonObjectOf,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -147,20 +149,6 @@ function callCount(callLog: string): number {
   return text.split("\n").filter((l) => l.trim() !== "").length;
 }
 
-interface AgentsOk {
-  ok: true;
-  agents: Array<{
-    pid: number;
-    sessionId: string;
-    config_dir: string;
-    kind?: string;
-    startedAt?: number;
-    status?: string;
-    waitingFor?: string;
-  }>;
-  polled_at: string | null;
-}
-
 describe("agents polling: config dir detection", () => {
   test(
     "$HOME/.claude* のうちディレクトリのみ検出され、regular file の ~/.claude は除外される",
@@ -198,7 +186,7 @@ describe("agents polling: config dir detection", () => {
           const u = await userConn(ctx);
           await u.request({ op: "subscribe" });
           const { ev } = await u.readEventUntil("agents");
-          const agents = (ev as unknown as AgentsOk & { ev: string }).agents;
+          const agents = ev.agents;
           const sids = agents.map((a) => a.sessionId).sort();
           expect(sids).toEqual(["sA", "sB"]);
           const dirs = agents.map((a) => a.config_dir).sort();
@@ -322,8 +310,8 @@ describe("agents polling: lifecycle", () => {
           // but polled_at may have advanced. Exact-timestamp equality would be
           // over-asserting a timing coincidence the op contract never promised.
           expect(cached.polled_at).not.toBeNull();
-          expect(new Date(cached.polled_at as string).getTime()).toBeGreaterThanOrEqual(
-            new Date(ev.polled_at as string).getTime(),
+          expect(new Date(cached.polled_at ?? "").getTime()).toBeGreaterThanOrEqual(
+            new Date(ev.polled_at).getTime(),
           );
         } finally {
           await stopAgentsTestDaemon(ctx);
@@ -365,7 +353,7 @@ describe("agents polling: lifecycle", () => {
           const created = await s.requestOk({ op: "create_room", members: [] });
           await s.request({ op: "post", room: created.room, msg: "marker" });
           const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
-          expect(seen.some((e: any) => e.ev === "agents")).toBe(false);
+          expect(seen.some(isKind("agents"))).toBe(false);
         } finally {
           await stopAgentsTestDaemon(ctx);
         }
@@ -584,11 +572,9 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         const u = await watcher(ctx);
         setRows(dirA, [row("sA", cwd)]);
         const { ev } = await u.readEventUntil("peers", hasPeer("sA"));
-        expect(ev.peers.find((p) => p.sid === "sA")).toMatchObject({
-          cwd,
-          repo: expect.stringContaining("somerepo"),
-          ws: "feat",
-        });
+        const peer = ev.peers.find((p) => p.sid === "sA");
+        expect(peer).toMatchObject({ cwd, ws: "feat" });
+        expect(peer?.repo).toContain("somerepo");
       });
     },
     T,
@@ -617,7 +603,7 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
           .readFileSync(path.join(ctx.roomsDir, `${created.room}.jsonl`), "utf-8")
           .split("\n")
           .filter((l) => l.trim() !== "")
-          .map((l) => JSON.parse(l));
+          .map(jsonObjectOf);
         expect(lines.some((l) => l.type === "leave" && l.id === aId)).toBe(true);
       });
     },

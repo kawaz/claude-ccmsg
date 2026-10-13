@@ -166,11 +166,11 @@ describe("wire protocol integration", () => {
           room,
           mids: "1",
         });
-        expect(read.msgs[0]!.msg).toBe("hey");
+        expect(read.msgs[0]?.msg).toBe("hey");
         const rooms = await c.conn.requestOk({
           op: "rooms",
         });
-        expect(rooms.rooms.find((r) => r.id === room)!.last_mid).toBe(2);
+        expect(rooms.rooms.find((r) => r.id === room)?.last_mid).toBe(2);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -489,7 +489,7 @@ describe("wire protocol integration", () => {
         });
         expect(posted.ok).toBe(true);
         const read = await u.requestOk({ op: "read", room, mids: "1" });
-        expect(read.msgs[0]!.from).toBe("u1");
+        expect(read.msgs[0]?.from).toBe("u1");
 
         // a session that isn't a member is refused (only User is implicit)
         const c = await session(ctx, C);
@@ -499,7 +499,7 @@ describe("wire protocol integration", () => {
           msg: "nope",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
 
         // the User's subscribe sees every room even without membership. `backlog: true`
         // opts into the join snapshot (issue 2026-07-17-subscribe-no-backlog-default).
@@ -581,7 +581,7 @@ describe("wire protocol integration", () => {
         // module's own filename (index.ts, per spawnDaemonProc's argv).
         expect(pong.script).toBeTruthy();
         expect(pong.script?.endsWith("index.ts")).toBe(true);
-        expect(fs.existsSync(pong.script as string)).toBe(true);
+        expect(fs.existsSync(pong.script ?? "")).toBe(true);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -716,8 +716,8 @@ describe("wire protocol integration", () => {
         const rooms = await aPost.requestOk({
           op: "rooms",
         });
-        const listed = rooms.rooms.find((r) => r.id === room)!;
-        expect(listed.members.map((m) => m.sid)).toEqual([A]);
+        const listed = rooms.rooms.find((r) => r.id === room);
+        expect(listed?.members.map((m) => m.sid)).toEqual([A]);
 
         // live delivery still works for the remaining room after a leave: use the User
         // (u1, implicit member of every room, DR-0003 §3) as a third-party observer
@@ -763,7 +763,7 @@ describe("wire protocol integration", () => {
           msg: "after leave",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -786,7 +786,7 @@ describe("wire protocol integration", () => {
           room: "r-nope",
         });
         expect(missing.ok).toBe(false);
-        expect(missing.error!.code).toBe("room_not_found");
+        expect(missing.error.code).toBe("room_not_found");
 
         // a session that never joined this room -> not_a_member
         const c = await session(ctx, C);
@@ -795,7 +795,7 @@ describe("wire protocol integration", () => {
           room,
         });
         expect(notMember.ok).toBe(false);
-        expect(notMember.error!.code).toBe("not_a_member");
+        expect(notMember.error.code).toBe("not_a_member");
 
         // the implicit User (u1) is never a real member row, so leave is refused too
         // (id resolves to ADMIN_ID, which the handler explicitly excludes)
@@ -805,7 +805,7 @@ describe("wire protocol integration", () => {
           room,
         });
         expect(userLeave.ok).toBe(false);
-        expect(userLeave.error!.code).toBe("not_a_member");
+        expect(userLeave.error.code).toBe("not_a_member");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -844,9 +844,9 @@ describe("wire protocol integration", () => {
         const rooms = await a2.requestOk({
           op: "rooms",
         });
-        const listed = rooms.rooms.find((r) => r.id === room)!;
+        const listed = rooms.rooms.find((r) => r.id === room);
         // B stays left: replaying member+leave from the log yields only A as present
-        expect(listed.members.map((m) => m.sid)).toEqual([A]);
+        expect(listed?.members.map((m) => m.sid)).toEqual([A]);
 
         // and B (same sid, fresh connection) still can't post post-restart
         const b2 = await session(base, B);
@@ -856,7 +856,7 @@ describe("wire protocol integration", () => {
           msg: "nope",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
 
         const c = await connect(base.sock);
         await c.request({ op: "shutdown" });
@@ -955,7 +955,7 @@ describe("wire protocol integration", () => {
           title: "hijacked",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
 
         // the room's title is untouched
         const rooms = await aPost.requestOk({
@@ -984,7 +984,7 @@ describe("wire protocol integration", () => {
           title: "",
         });
         expect(empty.ok).toBe(false);
-        expect(empty.error!.code).toBe("invalid_args");
+        expect(empty.error.code).toBe("invalid_args");
 
         const whitespace = await aPost.requestError({
           op: "set_title",
@@ -992,7 +992,7 @@ describe("wire protocol integration", () => {
           title: "   ",
         });
         expect(whitespace.ok).toBe(false);
-        expect(whitespace.error!.code).toBe("invalid_args");
+        expect(whitespace.error.code).toBe("invalid_args");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1012,7 +1012,7 @@ describe("wire protocol integration", () => {
           title: "x",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("room_not_found");
+        expect(denied.error.code).toBe("room_not_found");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1076,7 +1076,7 @@ describe("wire protocol integration", () => {
           title: "a".repeat(201),
         });
         expect(over.ok).toBe(false);
-        expect(over.error!.code).toBe("invalid_args");
+        expect(over.error.code).toBe("invalid_args");
 
         // the rejected attempt didn't clobber the previously-accepted title.
         const rooms = await aPost.requestOk({
@@ -1207,7 +1207,7 @@ describe("wire protocol integration", () => {
           archived: true,
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
 
         const rooms = await aPost.requestOk({
           op: "rooms",
@@ -1268,7 +1268,7 @@ describe("wire protocol integration", () => {
           msg: "still here?",
         });
         expect(afterKick.ok).toBe(false);
-        expect(afterKick.error!.code).toBe("not_a_member");
+        expect(afterKick.error.code).toBe("not_a_member");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1297,7 +1297,7 @@ describe("wire protocol integration", () => {
         expect(denied.ok).toBe(false);
         // straight permission rejection, not not_a_member (same pattern as the other
         // user-role-only ops, e.g. "agents"/"transcript_subscribe").
-        expect(denied.error!.code).toBe("bad_request");
+        expect(denied.error.code).toBe("bad_request");
 
         // B is still a member — the rejected kick didn't touch membership
         const rooms = await aPost.requestOk({
@@ -1332,7 +1332,7 @@ describe("wire protocol integration", () => {
           id: "a99",
         });
         expect(unknownId.ok).toBe(false);
-        expect(unknownId.error!.code).toBe("invalid_args");
+        expect(unknownId.error.code).toBe("invalid_args");
 
         // the implicit admin (u1) has no member row and is never kickable, even by
         // itself: naturally falls out of the presentIds check as invalid_args.
@@ -1342,7 +1342,7 @@ describe("wire protocol integration", () => {
           id: "u1",
         });
         expect(selfKick.ok).toBe(false);
-        expect(selfKick.error!.code).toBe("invalid_args");
+        expect(selfKick.error.code).toBe("invalid_args");
 
         // membership untouched by either rejected attempt
         const rooms = await aPost.requestOk({
@@ -1405,7 +1405,7 @@ describe("wire protocol integration", () => {
           id: "a1",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("room_not_found");
+        expect(denied.error.code).toBe("room_not_found");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1498,7 +1498,7 @@ describe("wire protocol integration", () => {
           room,
           mids: "1",
         });
-        expect(read.msgs[0]!.msg).toBe("hello before you joined");
+        expect(read.msgs[0]?.msg).toBe("hello before you joined");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1549,7 +1549,7 @@ describe("wire protocol integration", () => {
           sid: B,
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("not_a_member");
+        expect(denied.error.code).toBe("not_a_member");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1572,7 +1572,7 @@ describe("wire protocol integration", () => {
           sid: "ghost-not-connected",
         });
         expect(denied.ok).toBe(false);
-        expect(denied.error!.code).toBe("session_not_found");
+        expect(denied.error.code).toBe("session_not_found");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1606,8 +1606,8 @@ describe("wire protocol integration", () => {
         const rooms = await aPost.requestOk({
           op: "rooms",
         });
-        const ids = rooms.rooms.find((r) => r.id === room)!.members.map((m) => m.id);
-        expect(ids.sort()).toEqual(["a1", "a2"]);
+        const ids = rooms.rooms.find((r) => r.id === room)?.members.map((m) => m.id);
+        expect(ids?.sort()).toEqual(["a1", "a2"]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1647,9 +1647,9 @@ describe("wire protocol integration", () => {
 
         const rooms = await aPost.requestOk({ op: "rooms" });
         const room2Members = rooms.rooms
-          .find((r) => r.id === created2.room)!
-          .members.map((m) => m.id);
-        expect(room2Members.sort()).toEqual(["a1", "a2"]); // A, B only — no C
+          .find((r) => r.id === created2.room)
+          ?.members.map((m) => m.id);
+        expect(room2Members?.sort()).toEqual(["a1", "a2"]); // A, B only — no C
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -1682,13 +1682,13 @@ describe("error handling & boundaries", () => {
           room: "r-nope",
           mids: "1",
         });
-        expect(readMiss.error!.code).toBe("room_not_found");
+        expect(readMiss.error.code).toBe("room_not_found");
         const postMiss = await a.requestError({
           op: "post",
           room: "r-nope",
           msg: "x",
         });
-        expect(postMiss.error!.code).toBe("room_not_found");
+        expect(postMiss.error.code).toBe("room_not_found");
 
         // malformed request line -> bad_request (not a crash)
         const c = await connect(ctx.sock);
@@ -1706,7 +1706,7 @@ describe("error handling & boundaries", () => {
           room: created.room,
           msg: "x",
         });
-        expect(early.error!.code).toBe("hello_required");
+        expect(early.error.code).toBe("hello_required");
         d.close();
       } finally {
         await stopTestDaemon(ctx);

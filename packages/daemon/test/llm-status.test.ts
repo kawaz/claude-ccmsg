@@ -6,7 +6,7 @@
 // report the daemon cannot use fails as one actionable error — plus the
 // debounce/single-flight that keeps a 529 storm from becoming a fetch storm.
 import { describe, expect, test } from "bun:test";
-import { ErrorCode, type JsonValue } from "@ccmsg/protocol";
+import { ErrorCode } from "@ccmsg/protocol";
 import {
   fetchLlmStatus,
   LlmStatusRefresher,
@@ -14,14 +14,10 @@ import {
   statusUrlWithRefresh,
 } from "../src/llm-status.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
-
-/** A test value as the JSON a gateway would post: what the parser reads. */
-function json(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value));
-}
+import { throughJson } from "./helpers.ts";
 
 function parseStatusPayload(document: unknown) {
-  return parseStatusDocument(json(document));
+  return parseStatusDocument(throughJson(document));
 }
 
 /** The live endpoint's report, trimmed to one service per interesting shape:
@@ -325,7 +321,11 @@ function refresherHarness(fetchImpl: () => Promise<ReturnType<typeof parseStatus
     onError: (msg) => errors.push(msg),
     setTimer: (fn) => {
       timers.push(fn);
-      return timers.length as unknown as ReturnType<typeof setTimeout>;
+      // A handle of the type the refresher keeps, cleared at once: what runs
+      // is decided by tick(), never by the clock.
+      const handle = setTimeout(() => {}, 0);
+      clearTimeout(handle);
+      return handle;
     },
     clearTimer: () => {},
   });

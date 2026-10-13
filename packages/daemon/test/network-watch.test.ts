@@ -113,7 +113,7 @@ describe("wake targets", () => {
     const state = createSessionWakeState();
     const wakes = wakesForOnline(state, [err("A", "t1"), err("B", "t2")]);
     expect(wakes.map((w) => w.sid)).toEqual(["A", "B"]);
-    expect(wakes[0]!.event).toEqual({ ev: "net_online", text: WAKE_TEXT, error_ts: "t1" });
+    expect(wakes[0]?.event).toEqual({ ev: "net_online", text: WAKE_TEXT, error_ts: "t1" });
     expect(wakesForOnline(state, [])).toEqual([]);
   });
 

@@ -1,16 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { Conn, Daemon } from "../src/server.ts";
-import { requestFrames, requestRefusal } from "./drive-request.ts";
+import type { Daemon } from "../src/server.ts";
+import { requestFrames, requestRefusal, stubDaemon } from "./drive-request.ts";
 import type { TranslateService } from "../src/translate-helper.ts";
 
 function daemonWith(translator: TranslateService): Daemon {
-  const daemon = {
-    translator,
-    sessions: new Map(),
-    connections: new Set<Conn>(),
-    log: { error() {}, warn() {} },
-  } as unknown as Daemon;
-  return daemon;
+  return stubDaemon({ translator });
 }
 
 describe("translate op", () => {

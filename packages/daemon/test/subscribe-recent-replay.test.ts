@@ -140,11 +140,12 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         const first = await bSub1.readEventUntil("room_cursors");
         const firstSeq = first.seen.find(isKind("msg"))?.seq;
         expect(typeof firstSeq).toBe("number");
+        if (firstSeq === undefined) throw new Error("the replayed msg carries no seq");
 
         // Second subscribe with since_seq at that cursor: delta path, no recent-replay,
         // no room_cursors summary (since_seq counts as a cursor for the room).
         const bSub2 = await user(ctx);
-        await bSub2.request({ op: "subscribe", since_seq: { [room]: firstSeq! } });
+        await bSub2.request({ op: "subscribe", since_seq: { [room]: firstSeq } });
         // Nothing to read up to a terminator we can force: post m2 live and assert
         // that only m2 arrives, with no replay flag.
         await a.request({ op: "post", room, msg: "m2" });
