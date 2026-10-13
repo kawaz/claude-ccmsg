@@ -44,6 +44,7 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 - **config home をまたぐ往復は閉じる**: X の hook が横取りして Y の socket に `from="ccmsg:<X の sid>"` で注入すると、Y には peer として届き (`origin.kind: "peer"`、「Another Claude session sent a message」の枠)、Y の model が `from` をそのまま `to` に書いた SendMessage を Y の hook が横取りして X に戻る
 - **1 つの宛先が複数のセッションに解決された時 (`ccmsg:path:<dir>`、同じ sid の複数の run) の一部失敗は `isDelivered: true`**: SendMessage の `to` は文字列 1 つで、hook が返せる結果も 1 つ。`false` にすると、既に届いた相手がいても model には `Not sent` と見え、送り直して二重に届く。1 つでも届けば成功とし、届かなかった相手の内訳は送り手に伝えない (kawaz 2026-10-09)。全部に届かなかった時だけ `isDelivered: false` と理由を返す
 - **`ccmsg:path:<dir>` は realpath で正規化して完全一致**: harness の state file と `claude agents --json` の cwd は、起動のパスに symlink (`/tmp` → `/private/tmp`、workspace の symlink) や末尾 `/` があっても realpath に揃っていた。宛先の path も realpath にしてから完全一致で比べる。サブディレクトリは含めない (同じ作業ディレクトリのセッションへの broadcast という意図に合わせる)
+- **自分自身を名指す宛先は送らない**: `ccmsg:<自分の sid>` と `ccmsg:<自分の sid>.<pid>` (自分の別の run も含む) は、届けずに理由 (`self`) を返す。`ccmsg:path:<dir>` では送り主の run を除いて残りに届ける
 
 ### 5. 対象外
 
