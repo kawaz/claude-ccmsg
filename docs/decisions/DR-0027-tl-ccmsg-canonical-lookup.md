@@ -89,4 +89,4 @@ lazy read にそのまま乗る。
 
 ### 6.3 PushNotification
 
-- tool_use `{name:"PushNotification", input:{message}}` を、1on1 room の `say` と同じ見た目の 📣 バブルとして境界行に出す (`say` の代替となる通知)。既読ボタンは持たない (既読管理の対象外)
+- tool_use `{name:"PushNotification", input:{message}}` を、`ccmsg say` と同じ見た目の 📣 バブルとして境界行に出す (`say` の代替となる通知)。既読ボタンは持たない (既読管理の対象外)。`ccmsg say` の記録は daemon のメモリにあり `ev:"says"` で届き ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3)、TL では発声元セッションの同じ段に、既読ボタン付きの 📣 バブルとして時刻で差し込む
