@@ -6,7 +6,7 @@
 // `innerHTML`/`dangerouslySetInnerHTML` — every renderable value reaches the
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
-import { h, createContext, type VNode } from "preact";
+import { createContext, type VNode } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
@@ -16,24 +16,14 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 import type {
-  Blockquote,
-  Code,
-  Delete,
-  Emphasis,
+  BlockContent,
+  DefinitionContent,
   Heading,
-  Html,
-  Image,
-  InlineCode,
-  Link,
-  List,
-  ListItem,
+  Nodes,
   Paragraph,
   PhrasingContent,
   Root,
   RootContent,
-  Strong,
-  Table,
-  Text,
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
@@ -115,7 +105,7 @@ const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
 export function attachmentUrlFromPath(url: string): { url: string; isImage: boolean } | null {
   const m = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url);
   if (!m) return null;
-  const basename = m[1]!;
+  const basename = m[1];
   const dot = basename.lastIndexOf(".");
   const ext = dot >= 0 ? basename.slice(dot).toLowerCase() : "";
   return {
@@ -136,7 +126,7 @@ export interface MarkdownDetails {
    * Absent when the block had no recognizable `<summary>` line (the browser
    * then supplies its own default disclosure label). */
   summary?: PhrasingContent[];
-  children: AnyNode[];
+  children: RootContent[];
 }
 
 /** Heading depths that own a foldable section. `h1` is the document's title
@@ -158,10 +148,35 @@ export interface MarkdownSection {
    * keyed on it lives (a new source builds a new store). */
   key: string;
   heading: Heading;
-  children: AnyNode[];
+  children: RootContent[];
 }
 
-type AnyNode = RootContent | PhrasingContent | MarkdownDetails | MarkdownSection;
+// The two synthetic nodes join mdast's own content maps (mdast's documented
+// extension point), so a tree that holds them is still an mdast tree: a
+// `<details>` fold sits wherever block content does, a section only at the
+// top level of the document.
+declare module "mdast" {
+  interface BlockContentMap {
+    ccmsgDetails: MarkdownDetails;
+  }
+  interface RootContentMap {
+    ccmsgDetails: MarkdownDetails;
+    ccmsgSection: MarkdownSection;
+  }
+}
+
+/** What a blockquote, a list item and a `<details>` fold hold. */
+type FlowContent = BlockContent | DefinitionContent;
+
+type AnyNode = RootContent;
+
+/** The child nodes of `node`, or undefined for a leaf. */
+function childrenOf(node: AnyNode): AnyNode[] | undefined {
+  return "children" in node ? node.children : undefined;
+}
+
+/** `h<depth>` for a heading's depth (mdast's depth is 1-6). */
+const HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"] as const;
 
 export interface MarkdownHeading {
   depth: Heading["depth"];
@@ -181,8 +196,7 @@ function headingPlainText(node: PhrasingContent): string {
     case "break":
       return " ";
     default: {
-      const parent = node as PhrasingContent & { children?: PhrasingContent[] };
-      return parent.children?.map(headingPlainText).join("") ?? "";
+      return "children" in node ? node.children.map(headingPlainText).join("") : "";
     }
   }
 }
@@ -198,7 +212,7 @@ export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
     if (!nodes) return;
     for (const node of nodes) {
       if (node.type === "heading") {
-        const heading = node as Heading;
+        const heading = node;
         const index = heading.depth - 1;
         counters[index] += 1;
         counters.fill(0, index + 1);
@@ -213,8 +227,7 @@ export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
         });
         continue;
       }
-      const parent = node as AnyNode & { children?: AnyNode[] };
-      visit(parent.children);
+      visit(childrenOf(node));
     }
   }
 
@@ -231,11 +244,10 @@ export function extractTaskStates(root: Root): boolean[] {
   function visit(nodes: AnyNode[] | undefined): void {
     if (!nodes) return;
     for (const node of nodes) {
-      if (node.type === "listItem" && typeof (node as ListItem).checked === "boolean") {
-        states.push((node as ListItem).checked as boolean);
+      if (node.type === "listItem" && typeof node.checked === "boolean") {
+        states.push(node.checked);
       }
-      const parent = node as AnyNode & { children?: AnyNode[] };
-      visit(parent.children);
+      visit(childrenOf(node));
     }
   }
   visit(root.children);
@@ -549,7 +561,7 @@ function renderTextRun(
 ): VNode | string {
   if (!search || search.words.length === 0) return value;
   const pieces = splitTextForHighlight(value, search.words);
-  if (pieces.length === 1 && pieces[0]!.colorIndex === null) return value;
+  if (pieces.length === 1 && pieces[0].colorIndex === null) return value;
   return (
     <span key={key}>
       {pieces.map((p, i) =>
@@ -607,7 +619,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
   const search = ctx.search;
   switch (node.type) {
     case "text": {
-      const value = (node as Text).value;
+      const value = node.value;
       // kawaz r259 m1: `#NNN` becomes an issue link when the repo is known and
       // we are not already inside an <a>. Code spans and fenced blocks never
       // reach here (separate node types), so that exclusion is structural.
@@ -638,28 +650,22 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "paragraph":
-      return <p key={key}>{renderChildren((node as Paragraph).children, key, ctx)}</p>;
+      return <p key={key}>{renderChildren(node.children, key, ctx)}</p>;
 
     case "heading": {
-      const heading = node as Heading;
-      const tag = `h${Math.min(6, Math.max(1, heading.depth))}` as
-        | "h1"
-        | "h2"
-        | "h3"
-        | "h4"
-        | "h5"
-        | "h6";
+      const heading = node;
+      const Tag = HEADING_TAGS[heading.depth - 1];
       const outlineHeading = ctx.headings?.[ctx.headingIndex];
       ctx.headingIndex += 1;
-      return h(
-        tag,
-        { key, id: outlineHeading?.id },
-        renderChildren(heading.children, key, ctx),
-      ) as VNode;
+      return (
+        <Tag key={key} id={outlineHeading?.id}>
+          {renderChildren(heading.children, key, ctx)}
+        </Tag>
+      );
     }
 
     case "strong": {
-      const strong = node as Strong;
+      const strong = node;
       // kawaz r119 m15: a bold path gets the same FileViewer link an
       // inline-code path gets — agents write `**docs/x.md**` and
       // `` `docs/x.md` `` interchangeably, and only one of them being
@@ -671,9 +677,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // (any inline code inside still linkifies through its own case).
       const only = strong.children.length === 1 ? strong.children[0] : undefined;
       const href =
-        only?.type === "text" && ctx.filePathLinker
-          ? ctx.filePathLinker((only as Text).value)
-          : null;
+        only?.type === "text" && ctx.filePathLinker ? ctx.filePathLinker(only.value) : null;
       if (!href) return <strong key={key}>{renderChildren(strong.children, key, ctx)}</strong>;
       return (
         <a key={key} class="md-strong-file-link" href={href}>
@@ -683,13 +687,13 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "emphasis":
-      return <em key={key}>{renderChildren((node as Emphasis).children, key, ctx)}</em>;
+      return <em key={key}>{renderChildren(node.children, key, ctx)}</em>;
 
     case "delete":
-      return <del key={key}>{renderChildren((node as Delete).children, key, ctx)}</del>;
+      return <del key={key}>{renderChildren(node.children, key, ctx)}</del>;
 
     case "inlineCode": {
-      const value = (node as InlineCode).value;
+      const value = node.value;
       // kawaz r46 m55-m58: linkify inline-code tokens shaped like
       // `packages/foo.ts:L10-12` / `foo.ts:42` when the sender's session has
       // a real file matching that token. The link's *text* keeps the exact
@@ -714,12 +718,12 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "code": {
-      const code = node as Code;
+      const code = node;
       return <CodeBlock key={key} code={code.value} lang={code.lang ?? null} />;
     }
 
     case "link": {
-      const link = node as Link;
+      const link = node;
       // DR-0015 §2.6: attachment paths (`.../claude-ccmsg-<uid>/attachment/…`)
       // are rewritten to the daemon's HTTP endpoint (`/attachment/<basename>`)
       // and image mimes are rendered inline as <img>. Same-origin (the webui
@@ -732,7 +736,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
         // Extract text-only alt for the <img>; falls back to link text as-is
         // when children include non-text (rare for `[FILE1:name](path)` shape
         // which is a single text run, but be defensive).
-        const alt = link.children.map((c) => (c.type === "text" ? (c as Text).value : "")).join("");
+        const alt = link.children.map((c) => (c.type === "text" ? c.value : "")).join("");
         if (attachment.isImage) {
           // kawaz r26 mid=49: target="_blank" は standalone PWA で脱出不能に
           // なる (戻る UI が無い) ため in-app lightbox で開く。
@@ -825,7 +829,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // CSP-controlled surface (viewer IP/UA reaches an arbitrary third
       // party the moment the markdown renders, no click required) — shown
       // instead as alt text plus a clickable link the user opts into.
-      const image = node as Image;
+      const image = node;
       const label = image.alt || image.url;
       const target = classifyMarkdownLinkUrl(image.url, currentOrigin());
       if (target.kind === "disarm") {
@@ -870,17 +874,17 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "list": {
-      const list = node as List;
-      const tag = list.ordered ? "ol" : "ul";
-      return h(
-        tag,
-        { key, start: list.start ?? undefined },
-        renderChildren(list.children, key, ctx),
-      ) as VNode;
+      const list = node;
+      const Tag = list.ordered ? "ol" : "ul";
+      return (
+        <Tag key={key} start={list.start ?? undefined}>
+          {renderChildren(list.children, key, ctx)}
+        </Tag>
+      );
     }
 
     case "listItem": {
-      const item = node as ListItem;
+      const item = node;
       // `checked` is non-null exactly for GFM task items (confirmed against
       // the real parser). Every task item consumes an ordinal whether or not
       // interaction is enabled, so the numbering the click reports is the
@@ -944,9 +948,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "blockquote":
-      return (
-        <blockquote key={key}>{renderChildren((node as Blockquote).children, key, ctx)}</blockquote>
-      );
+      return <blockquote key={key}>{renderChildren(node.children, key, ctx)}</blockquote>;
 
     case "thematicBreak":
       return <hr key={key} />;
@@ -959,7 +961,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // Only `open` crosses from source into the DOM, and only as a boolean —
       // the tag's own text never becomes markup, so this stays inside the
       // "no raw HTML" guarantee the module doc comment describes.
-      const details = node as MarkdownDetails;
+      const details = node;
       return (
         <details key={key} class="md-details" open={details.open}>
           {details.summary && details.summary.length > 0 ? (
@@ -973,7 +975,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     }
 
     case "ccmsgSection": {
-      const section = node as MarkdownSection;
+      const section = node;
       // Heading first, then body: `renderNode` is a single document-order
       // pass and `ctx.headingIndex` counts on it staying that way.
       const heading = renderNode(section.heading, `${key}.h`, ctx);
@@ -996,12 +998,12 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // injected via innerHTML — see module doc comment.
       return (
         <span class="md-raw-html" key={key}>
-          {(node as Html).value}
+          {node.value}
         </span>
       );
 
     case "table": {
-      const table = node as Table;
+      const table = node;
       const align = table.align ?? [];
       return (
         // Wrapper scrolls horizontally so a wide table (many columns) doesn't
@@ -1017,16 +1019,16 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
               {table.children.map((row, ri) => (
                 <tr key={`${key}.${ri}`}>
                   {row.children.map((cell, ci) => {
-                    const cellTag = ri === 0 ? "th" : "td";
+                    const CellTag = ri === 0 ? "th" : "td";
                     const cellAlign = align[ci];
-                    return h(
-                      cellTag,
-                      {
-                        key: `${key}.${ri}.${ci}`,
-                        style: cellAlign ? { textAlign: cellAlign } : undefined,
-                      },
-                      renderChildren(cell.children, `${key}.${ri}.${ci}`, ctx),
-                    ) as VNode;
+                    return (
+                      <CellTag
+                        key={`${key}.${ri}.${ci}`}
+                        style={cellAlign ? { textAlign: cellAlign } : undefined}
+                      >
+                        {renderChildren(cell.children, `${key}.${ri}.${ci}`, ctx)}
+                      </CellTag>
+                    );
                   })}
                 </tr>
               ))}
@@ -1040,9 +1042,9 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // Safe fallback for both "known-but-unhandled" and "never-seen-before"
       // node shapes: recurse into `children` (duck-typed — see module doc
       // comment) so text content still surfaces, otherwise render nothing.
-      const maybeParent = node as unknown as { children?: unknown };
-      if (Array.isArray(maybeParent.children)) {
-        return <span key={key}>{renderChildren(maybeParent.children as AnyNode[], key, ctx)}</span>;
+      const children = childrenOf(node);
+      if (Array.isArray(children)) {
+        return <span key={key}>{renderChildren(children, key, ctx)}</span>;
       }
       return "";
     }
@@ -1109,20 +1111,14 @@ function protectTagLikeAngleBrackets(source: string): {
 
 /** Undo one `protect*` substitution everywhere in the tree: every string field
  * of every node, so protected text inside `code.value` is restored too. */
-function restoreProtectedText(value: unknown, marker: string, replacement: string): void {
-  if (Array.isArray(value)) {
-    for (const item of value) restoreProtectedText(item, marker, replacement);
-    return;
-  }
-  if (value === null || typeof value !== "object") return;
-  for (const [key, child] of Object.entries(value)) {
-    if (typeof child === "string") {
-      if (child.includes(marker)) {
-        (value as Record<string, unknown>)[key] = child.replaceAll(marker, replacement);
-      }
-    } else {
-      restoreProtectedText(child, marker, replacement);
+function restoreProtectedText(node: Nodes, marker: string, replacement: string): void {
+  for (const [key, field] of Object.entries(node)) {
+    if (typeof field === "string" && field.includes(marker)) {
+      Reflect.set(node, key, field.replaceAll(marker, replacement));
     }
+  }
+  if ("children" in node) {
+    for (const child of node.children) restoreProtectedText(child, marker, replacement);
   }
 }
 
@@ -1162,9 +1158,9 @@ const SUMMARY_CLOSE_RE = /^([\s\S]*)<\/summary\s*>$/i;
 /** One source line's worth of inline nodes, tagged with the paragraph it came
  * from so the rebuild can tell "two lines of one paragraph" from "two
  * paragraphs". `block` items are every other node kind, passed through whole. */
-type FoldItem =
+type FoldItem<N> =
   | { kind: "line"; line: PhrasingContent[]; group: number }
-  | { kind: "block"; node: AnyNode };
+  | { kind: "block"; node: N };
 
 /** Flatten a sibling list into the line stream the fold scans. Paragraphs
  * explode into their source lines — mdast encodes a soft break inside a
@@ -1172,8 +1168,8 @@ type FoldItem =
  * `<details>` block written without blank lines (which the parser keeps as a
  * *single* paragraph) is matched by exactly the same code path as the
  * blank-line-separated form. */
-function toFoldItems(nodes: AnyNode[]): FoldItem[] {
-  const items: FoldItem[] = [];
+function toFoldItems<N extends RootContent>(nodes: N[]): FoldItem<N>[] {
+  const items: FoldItem<N>[] = [];
   nodes.forEach((node, group) => {
     if (node.type !== "paragraph") {
       items.push({ kind: "block", node });
@@ -1208,8 +1204,8 @@ function toFoldItems(nodes: AnyNode[]): FoldItem[] {
  * (`group`), restoring the `"\n"` separators `toFoldItems` consumed. Blocks
  * pass through untouched, and all-whitespace remnants are dropped rather than
  * emitted as empty paragraphs. */
-function fromFoldItems(items: FoldItem[]): AnyNode[] {
-  const out: AnyNode[] = [];
+function fromFoldItems<N>(items: FoldItem<N>[]): (N | Paragraph)[] {
+  const out: (N | Paragraph)[] = [];
   let pending: PhrasingContent[][] = [];
   let pendingGroup = -1;
   const flush = () => {
@@ -1263,14 +1259,14 @@ function matchSummaryLine(line: PhrasingContent[]): PhrasingContent[] | null {
   if (line.length === 1) {
     const m = /^<summary\s*>([\s\S]*)<\/summary\s*>$/i.exec(first.value.trim());
     if (!m) return null;
-    const inner = m[1]!.trim();
+    const inner = m[1].trim();
     return inner === "" ? [] : [{ type: "text", value: inner }];
   }
   const openMatch = SUMMARY_OPEN_RE.exec(first.value.trimStart());
   const closeMatch = SUMMARY_CLOSE_RE.exec(last.value.trimEnd());
   if (!openMatch || !closeMatch) return null;
-  const head = openMatch[1]!;
-  const tail = closeMatch[1]!;
+  const head = openMatch[1];
+  const tail = closeMatch[1];
   const middle = line.slice(1, -1);
   const label: PhrasingContent[] = [];
   if (head !== "") label.push({ type: "text", value: head });
@@ -1291,25 +1287,26 @@ function matchSummaryLine(line: PhrasingContent[]): PhrasingContent[] | null {
  * Termination: the outer scan advances past the closer it consumed each time,
  * and the recursive call receives the strictly shorter body slice (both tag
  * lines excluded), so depth is bounded by the input length. */
-function foldDetailsBlocks(nodes: AnyNode[]): AnyNode[] {
+function foldDetailsBlocks<N extends RootContent>(
+  nodes: Folded<N>[],
+  foldInside: (node: Folded<N>) => Folded<N>,
+): Folded<N>[] {
   const items = toFoldItems(nodes);
-  const out: FoldItem[] = [];
+  const out: FoldItem<Folded<N>>[] = [];
   let i = 0;
   while (i < items.length) {
-    const item = items[i]!;
+    const item = items[i];
     const tag = item.kind === "line" ? lineAsPlainText(item.line) : null;
     const openMatch = tag === null ? null : DETAILS_OPEN_TAG_RE.exec(tag);
     if (!openMatch) {
-      out.push(
-        item.kind === "block" ? { kind: "block", node: foldInsideContainer(item.node) } : item,
-      );
+      out.push(item.kind === "block" ? { kind: "block", node: foldInside(item.node) } : item);
       i += 1;
       continue;
     }
     let depth = 1;
     let closeAt = -1;
     for (let j = i + 1; j < items.length; j += 1) {
-      const candidate = items[j]!;
+      const candidate = items[j];
       if (candidate.kind !== "line") continue;
       const text = lineAsPlainText(candidate.line);
       if (text === null) continue;
@@ -1338,7 +1335,7 @@ function foldDetailsBlocks(nodes: AnyNode[]): AnyNode[] {
         type: "ccmsgDetails",
         open: openMatch[1] !== undefined,
         ...(summary ? { summary } : {}),
-        children: foldDetailsBlocks(fromFoldItems(items.slice(bodyStart, closeAt))),
+        children: foldDetailsBlocks(fromFoldItems(items.slice(bodyStart, closeAt)), foldInside),
       },
     });
     i = closeAt + 1;
@@ -1346,13 +1343,39 @@ function foldDetailsBlocks(nodes: AnyNode[]): AnyNode[] {
   return fromFoldItems(out);
 }
 
-/** Recurse the fold into a non-`<details>` container's children (blockquote,
- * list, listItem, …) without disturbing leaf nodes. */
-function foldInsideContainer(node: AnyNode): AnyNode {
-  if (node.type === "heading" || node.type === "code") return node;
-  const parent = node as AnyNode & { children?: AnyNode[] };
-  if (!Array.isArray(parent.children)) return node;
-  return { ...node, children: foldDetailsBlocks(parent.children) } as AnyNode;
+/** A sibling list the fold produced from nodes of type `N`: the fold adds the
+ * paragraphs it rebuilds and the `<details>` nodes it makes. */
+type Folded<N> = N | Paragraph | MarkdownDetails;
+
+/** Recurse the fold into a non-`<details>` container's children. Only flow
+ * containers (blockquote, list items) can hold the paragraphs a `<details>`
+ * tag line lives in, so every other node passes through untouched. */
+function foldInsideFlow(node: FlowContent): FlowContent {
+  switch (node.type) {
+    case "blockquote":
+      return { ...node, children: foldDetailsBlocks(node.children, foldInsideFlow) };
+    case "list":
+      return {
+        ...node,
+        children: node.children.map((item) => ({
+          ...item,
+          children: foldDetailsBlocks(item.children, foldInsideFlow),
+        })),
+      };
+    default:
+      return node;
+  }
+}
+
+/** `foldInsideFlow` for a node at the document's top level. */
+function foldInsideRoot(node: RootContent): RootContent {
+  switch (node.type) {
+    case "blockquote":
+    case "list":
+      return foldInsideFlow(node);
+    default:
+      return node;
+  }
 }
 
 /** Group a flat block sequence into nested sections (kawaz r151 m41).
@@ -1379,23 +1402,21 @@ export function foldMarkdownSections(nodes: AnyNode[]): AnyNode[] {
   let rootCount = 0;
 
   for (const node of nodes) {
-    const depth = node.type === "heading" ? (node as Heading).depth : 0;
-
-    if (depth === 1) {
-      stack.length = 0;
-      out.push(node);
-      continue;
-    }
-
-    if (depth >= 2) {
-      while (stack.length > 0 && stack[stack.length - 1]!.section.depth >= depth) stack.pop();
-      const parent = stack[stack.length - 1];
+    if (node.type === "heading") {
+      const depth = node.depth;
+      if (depth === 1) {
+        stack.length = 0;
+        out.push(node);
+        continue;
+      }
+      while ((stack.at(-1)?.section.depth ?? 0) >= depth) stack.pop();
+      const parent = stack.at(-1);
       const ordinal = parent ? (parent.childCount += 1) : (rootCount += 1);
       const section: MarkdownSection = {
         type: "ccmsgSection",
-        depth: depth as SectionDepth,
+        depth,
         key: parent ? `${parent.section.key}.${ordinal}` : String(ordinal),
-        heading: node as Heading,
+        heading: node,
         children: [],
       };
       (parent ? parent.section.children : out).push(section);
@@ -1403,7 +1424,7 @@ export function foldMarkdownSections(nodes: AnyNode[]): AnyNode[] {
       continue;
     }
 
-    (stack.length > 0 ? stack[stack.length - 1]!.section.children : out).push(node);
+    (stack.at(-1)?.section.children ?? out).push(node);
   }
 
   return out;
@@ -1418,7 +1439,7 @@ export function collectMarkdownSectionKeys(
 ): string[] {
   for (const node of nodes) {
     if (node.type !== "ccmsgSection") continue;
-    const section = node as MarkdownSection;
+    const section = node;
     acc.push(section.key);
     collectMarkdownSectionKeys(section.children, acc);
   }
@@ -1448,7 +1469,7 @@ export function parseMarkdownSource(source: string): Root {
  * into itself. */
 export function parseMarkdownDocument(source: string): Root {
   const root = parseMarkdownSource(source);
-  return { ...root, children: foldDetailsBlocks(root.children) as RootContent[] };
+  return { ...root, children: foldDetailsBlocks(root.children, foldInsideRoot) };
 }
 
 /** Restricted-mode renderer for user-authored messages (kawaz r55 m12).
@@ -1489,17 +1510,17 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
     );
   };
   while (i < lines.length) {
-    const line = lines[i]!;
+    const line = lines[i];
     const fence = /^(`{3,})(\S*)\s*$/.exec(line);
     if (fence) {
       flushText();
-      const marker = fence[1]!;
+      const marker = fence[1];
       const lang = fence[2] ? fence[2] : null;
       const body: string[] = [];
       i += 1;
       const closer = new RegExp(`^${marker}\\s*$`);
-      while (i < lines.length && !closer.test(lines[i]!)) {
-        body.push(lines[i]!);
+      while (i < lines.length && !closer.test(lines[i])) {
+        body.push(lines[i]);
         i += 1;
       }
       if (i < lines.length) i += 1; // consume closing fence
@@ -1509,8 +1530,8 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
     if (/^>\s?/.test(line)) {
       flushText();
       const quoted: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i]!)) {
-        quoted.push(lines[i]!.replace(/^>\s?/, ""));
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        quoted.push(lines[i].replace(/^>\s?/, ""));
         i += 1;
       }
       const text = quoted.join("\n");
@@ -1800,7 +1821,7 @@ export function MarkdownView({
     const parsed = parseMarkdownDocument(source);
     const headings = tableOfContents ? extractMarkdownHeadings(parsed) : [];
     const root = sectionFold
-      ? { ...parsed, children: foldMarkdownSections(parsed.children) as RootContent[] }
+      ? { ...parsed, children: foldMarkdownSections(parsed.children) }
       : parsed;
     const markdown = renderMarkdownAst(root, search, tableOfContents ? headings : undefined, {
       filePathLinker,
