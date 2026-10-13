@@ -1,6 +1,6 @@
 # DR-0037: エージェント間のメッセージは harness の SendMessage に乗せ、`ccmsg:` 宛を hooks module が横取りして届ける
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ⬜ 未実装
+- Status: Accepted (2026-10-09、kawaz 裁定) — ✅ 実装済み (daemon の `address_send`、hooks module の `session.send` と `ccmsg sidecar send`、`ccmsg peers` の `addresses`。実機の往復は [findings](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md) の「実装後の e2e」。同じ sid の複数 run への送信と受け手の拒否はテストだけで、実機は未確認。CLI の直送を消すかは Consequences のとおり未決)
 - Date: 2026-10-09
 
 ## Context

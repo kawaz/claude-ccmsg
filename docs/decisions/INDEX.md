@@ -52,7 +52,7 @@
 | [DR-0034](./DR-0034-peer-socket-injection.md) | Accepted / 実装済 | 置き換わる予定 | v1 daemon による room msg の peer messaging socket 直接注入 — v2 の配送経路は protocol-v2 が別途定める |
 | [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (✅ 実装済み) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を作らず既存の 1on1 room を読み取り専用にする — v2 の DR-0016 §2.2 / §5 の方式で、Enter は module が自分の端末に送る |
 | [DR-0036](./DR-0036-retire-rooms-for-p2p.md) | Accepted (⬜ 未実装) | 据え置き | room を廃止し、セッション間メッセージを sid 宛の直送 (v2 の契約の封筒・mid・返信行) にする — DR-0001 §3-§6 / 0003 / 0011 / 0012 / 0013 / 0016 / 0017 の room 前提部分を置き換える予定 |
-| [DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) | Accepted (⬜ 未実装) | 据え置き | エージェント間のメッセージは SendMessage に乗せ、`ccmsg:<sid>` / `ccmsg:path:<dir>` 宛を hooks module が横取りして peer 注入で届ける (config home をまたぐ)。DR-0036 §1 の CLI 直送を置き換える予定 |
+| [DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) | Accepted (✅ 実装済み) | 据え置き | エージェント間のメッセージは SendMessage に乗せ、`ccmsg:<sid>` / `ccmsg:path:<dir>` 宛を hooks module が横取りして peer 注入で届ける (config home をまたぐ)。DR-0036 §1 の CLI 直送を消すかは未決 |
 | [DR-0038](./DR-0038-json-is-parsed-by-schema.md) | Accepted (✅ 実装済み) | 据え置き | データの形は valibot のスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す。`as` (`as const` 以外)・`any`・非 null の主張は使わず lint で検査する |
 
 ## Superseded (一部)
