@@ -44,7 +44,7 @@ The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human 
 
 ## Speaking with `say`
 
-`ccmsg say` forwards its arguments to macOS's `/usr/bin/say` unchanged, and records the speech in the calling session's 1on1 room first. With several Claude Code sessions running, a spoken notification is otherwise anonymous — the web UI's Sessions list marks the session that spoke with 📣, and its 1on1 room shows what was said with a 既読 (read) button that clears the marker. The 1on1 room is read-only; to type into a session, use the input box in its session view.
+`ccmsg say` forwards its arguments to macOS's `/usr/bin/say` unchanged, and first tells the daemon which session spoke. With several Claude Code sessions running, a spoken notification is otherwise anonymous — the web UI's Sessions list marks the session that spoke with 📣, and that session's timeline shows what was said with a 既読 (read) button that clears the marker. The daemon keeps these records and their unread state in memory only, so a daemon restart forgets them.
 
 Speech never depends on the recording: no session id, no running daemon, or a
 daemon that refuses the event all still speak. `bin/say` is a PATH shim that

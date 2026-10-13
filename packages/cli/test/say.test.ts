@@ -7,7 +7,7 @@
 //   - 引数は一切解釈されずそのまま say へ渡る (say のオプションが生きる)
 //   - 終了コードは say のものが伝播する
 //   - daemon がいない / sid が無い場合でも発声は必ず起きる (観測は諦める)
-//   - sid + daemon がある場合は 1on1 room に say イベントが記録される
+//   - sid + daemon がある場合は daemon に say が記録される (room には書かない)
 //   - --help は ccmsg 側の説明を出し、say を起動しない
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
-import { defined, jsonObjectOf } from "../../daemon/test/helpers.ts";
+import { connect } from "../../daemon/test/helpers.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const T = 20000;
@@ -145,11 +145,12 @@ describe("ccmsg say", () => {
     T,
   );
 
-  // 何を保証するか: daemon が動いていれば、発声と同時に自分の 1on1 room へ
-  // say イベントが積まれる — これが webui で「どのセッションが喋ったか」を
-  // 答える唯一の材料。
+  // 何を保証するか: daemon が動いていれば、発声の前にどのセッションが喋ったか
+  // が daemon に記録され、webui (user role の subscribe) に ev:"says" で届く —
+  // これが webui で「どのセッションが喋ったか」を答える唯一の材料。記録は
+  // daemon のメモリだけで、room storage には何も書かない (DR-0036 §3)。
   test(
-    "records a say event in the session's 1on1 room when a daemon is running",
+    "records the say in the running daemon, not in a room",
     async () => {
       const f = makeFixture();
       try {
@@ -163,24 +164,21 @@ describe("ccmsg say", () => {
         expect(res.code).toBe(0);
         expect(sayInvocations(f)).toEqual([["-v", "Alex", "hello there"]]);
 
+        const u = await connect(path.join(f.env.CCMSG_STATE_DIR, "daemon.sock"));
+        try {
+          await u.hello({ role: "user" });
+          await u.request({ op: "subscribe" });
+          const { ev } = await u.readEventUntil("says");
+          expect(ev.says.map((r) => [r.sid, r.text, r.read])).toEqual([
+            // argv そのまま (say に渡した形が読み手にも見える)
+            ["5a000000-0000-4000-8000-000000000000", "-v Alex hello there", false],
+          ]);
+        } finally {
+          u.close();
+        }
         const roomsDir = path.join(f.env.CCMSG_DATA_DIR, "rooms");
-        const files = fs.readdirSync(roomsDir).filter((n) => n.endsWith(".jsonl"));
-        expect(files).toHaveLength(1);
-        const events = fs
-          .readFileSync(path.join(roomsDir, defined(files[0], "the room file")), "utf8")
-          .split("\n")
-          .filter((l) => l !== "")
-          .map(jsonObjectOf);
-        expect(events.find((e) => e.type === "kind")).toMatchObject({ kind: "1on1" });
-        expect(events.find((e) => e.type === "member")).toMatchObject({
-          sid: "5a000000-0000-4000-8000-000000000000",
-        });
-        expect(events.find((e) => e.type === "say")).toMatchObject({
-          type: "say",
-          sid: "5a000000-0000-4000-8000-000000000000",
-          // argv そのまま (say に渡した形が読み手にも見える)
-          text: "-v Alex hello there",
-        });
+        const files = fs.existsSync(roomsDir) ? fs.readdirSync(roomsDir) : [];
+        expect(files).toEqual([]);
       } finally {
         await runCli(["daemon", "stop"], f.env);
         f.cleanup();

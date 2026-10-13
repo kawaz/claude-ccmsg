@@ -636,7 +636,7 @@ async function sendToAddress(
  * re-enter the shim and loop. */
 const SYSTEM_SAY = "/usr/bin/say";
 
-/** How long the say-event record may take before the speech goes ahead
+/** How long the say record may take before the speech goes ahead
  * without it. The event is a nicety (which session spoke); the speech is the
  * thing the caller asked for, so a wedged daemon must cost latency once, not
  * silence. */
@@ -656,8 +656,10 @@ exception is a lone --help / -h, which prints this text (${SYSTEM_SAY} has no
 --help of its own to shadow).
 
 Before speaking, the session id in CCMSG_SID / CLAUDE_CODE_SESSION_ID is used to
-record a say event in that session's 1on1 room, so the webui can answer "which
-session just talked" when several are running. Speech happens either way: no
+tell the running daemon which session spoke, so the webui can answer "which
+session just talked" when several are running: the text appears in that
+session's timeline, unread until acked there. The daemon keeps this in memory
+only, so a daemon restart forgets it. Speech happens either way: no
 session id, no running daemon, or a daemon that errors all fall through to
 ${SYSTEM_SAY} unchanged.
 
@@ -1067,9 +1069,9 @@ Commands:
                                in several; ccmsg:path:<cwd>, every other session
                                working there
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
-  say [args...]                Speak via /usr/bin/say, recording a say event in
-                               this session's 1on1 room first so the webui can
-                               show which session spoke. Every argument is
+  say [args...]                Speak via /usr/bin/say, first telling the daemon
+                               which session spoke so the webui can show it in
+                               that session's timeline. Every argument is
                                forwarded verbatim (say's own -v/-r/-o keep
                                working); speech still happens when there is no
                                session id or no running daemon. Run
@@ -1159,8 +1161,8 @@ Notes:
   User admin identity is issued by the webui backend only; the CLI cannot act
   as u1 for write ops. subscribe still runs without a sid (with a stderr
   warning), giving kawaz a plain-terminal observation path until the webui.
-  A 1on1 room (where say records) is read-only: post, reply and next-room
-  into it are refused; use a normal room instead.
+  A 1on1 room is read-only: post, reply and next-room into it are refused;
+  use a normal room instead.
   No command sends to the person: their input reaches a session from the
   webui, and a session tells them something with PushNotification.
   A session sends to another with SendMessage, an address from peers as its
