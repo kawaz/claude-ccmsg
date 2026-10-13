@@ -73,7 +73,7 @@ export interface CrossLineInput {
  * full, but there are only ever a handful of those per update and the walk is
  * cheaper than the parse that produced it.
  */
-function equalByStructure(a: unknown, b: unknown): boolean {
+function equalByStructure<T>(a: T, b: T): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
