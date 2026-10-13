@@ -28,7 +28,6 @@
   "overrides": [
     {
       "files": [
-        "packages/cli/test/**",
         "packages/protocol/test/**",
         "packages/testkit/test/**",
         "packages/webui/test/**",

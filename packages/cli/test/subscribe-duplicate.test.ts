@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { jsonObjectLine, served } from "./cli-output.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -90,8 +91,8 @@ async function waitForLeaveLine(
       accum.buf = accum.buf.slice(idx + 1);
       accum.lines.push(line);
       try {
-        const ev = JSON.parse(line) as { type?: string; r?: string };
-        if (ev.type === "leave" && ev.r === room) return;
+        const ev = jsonObjectLine(line);
+        if (ev?.type === "leave" && ev.r === room) return;
       } catch {
         // 非 JSON 行は無視 (現契約では発生しない)
       }
@@ -105,7 +106,8 @@ async function waitForLeaveLine(
 describe("ccmsg subscribe: 同一 sid の二重起動", () => {
   test("後発の subscribe が残り、先発は理由を stderr に出して exit 0 する", async () => {
     const { env, cleanup } = makeEnv();
-    const created = JSON.parse(
+    const created = served(
+      "create_room",
       (
         await runCli(
           [
@@ -119,7 +121,7 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
           env,
         )
       ).out,
-    ) as { ok: boolean; room: string };
+    );
     expect(created.ok).toBe(true);
     const room = created.room;
 
@@ -129,16 +131,14 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
       // 先発が hello + subscribe を済ませたことを peers で観測する
       // (reconnect.test.ts と同じ readiness signal)。
       for (let i = 0; i < 200; i++) {
-        const peers = JSON.parse((await runCli(["peers"], env)).out) as {
-          peers: { sid: string }[];
-        };
+        const peers = served("peers", (await runCli(["peers"], env)).out);
         if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
         await sleep(25);
       }
 
       second = spawnSubscribe(env, "5b000000-0000-4000-8000-000000000000");
-      const secondReader = (second.stdout as ReadableStream<Uint8Array>).getReader();
-      const secondAccum = { buf: "", lines: [] as string[] };
+      const secondReader = second.stdout.getReader();
+      const secondAccum: { buf: string; lines: string[] } = { buf: "", lines: [] };
 
       // 先発の exit 自体が「後発の subscribe が daemon に届いた」証跡なので、
       // これを readiness signal にする (待ち時間ベースの推測をしない)。
@@ -151,11 +151,10 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
       expect(firstOut).not.toContain("subscribe_superseded");
 
       // 収束後の配信 (S1 の leave) は後発が受け取る。
-      const left = JSON.parse(
+      const left = served(
+        "leave",
         (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
-      ) as {
-        ok: boolean;
-      };
+      );
       expect(left.ok).toBe(true);
       await waitForLeaveLine(secondReader, secondAccum, room);
       expect(second.exitCode).toBeNull();

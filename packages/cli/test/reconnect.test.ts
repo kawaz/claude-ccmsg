@@ -18,6 +18,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CliRoomsSchema, CliStatusSchema, jsonObjectLine, printed, served } from "./cli-output.ts";
+import { type JsonObject } from "@ccmsg/protocol";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -112,7 +114,8 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       // Setup: 別 session CREATOR が --exclude-self で S1, S2, SUB が member の room を
       // 作成する。跨ぎ前に S1、跨ぎ後に S2 が leave し、その leave イベント (seq 付きの
       // room イベント) で配信を観測する。
-      const created = JSON.parse(
+      const created = served(
+        "create_room",
         (
           await runCli(
             [
@@ -126,7 +129,7 @@ describe("ccmsg subscribe daemon restart transparency", () => {
             env,
           )
         ).out,
-      ) as { ok: boolean; room: string };
+      );
       expect(created.ok).toBe(true);
       const room = created.room;
 
@@ -143,15 +146,9 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const reader = (sub.stdout as ReadableStream<Uint8Array>).getReader();
-      const accum = { buf: "", lines: [] as string[] };
-      const parsed = (l: string): { type?: string; ev?: string; r?: string; id?: string } => {
-        try {
-          return JSON.parse(l);
-        } catch {
-          return {};
-        }
-      };
+      const reader = sub.stdout.getReader();
+      const accum: { buf: string; lines: string[] } = { buf: "", lines: [] };
+      const parsed = (l: string): JsonObject => jsonObjectLine(l) ?? {};
       const isLeave = (l: string): boolean => {
         const ev = parsed(l);
         return ev.type === "leave" && ev.r === room;
@@ -162,15 +159,11 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         // 同じ socket の subscribe request も処理されるため、以降のイベントは live
         // delivery 対象になる。room_cursors 自体は stdout readiness signal に使わない。
         for (let i = 0; i < 100; i++) {
-          const peers = JSON.parse((await runCli(["peers"], env)).out) as {
-            peers: { sid: string }[];
-          };
+          const peers = served("peers", (await runCli(["peers"], env)).out);
           if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
           await sleep(25);
         }
-        const peers = JSON.parse((await runCli(["peers"], env)).out) as {
-          peers: { sid: string }[];
-        };
+        const peers = served("peers", (await runCli(["peers"], env)).out);
         expect(peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")).toBe(
           true,
         );
@@ -178,17 +171,19 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         // 跨ぎ前: S1 が post してから leave。leave は stdout に現れ、post は現れない
         // (同じ stream 上で post の後に書かれる leave が見えた時点で、post が流れて
         // いればその行は既に accum に入っている)。
-        const posted = JSON.parse(
+        const posted = served(
+          "post",
           (
             await runCli(
               ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "hello-before"],
               env,
             )
           ).out,
-        ) as { ok: boolean };
+        );
         expect(posted.ok).toBe(true);
         expect(
-          JSON.parse(
+          served(
+            "leave",
             (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env))
               .out,
           ).ok,
@@ -197,9 +192,7 @@ describe("ccmsg subscribe daemon restart transparency", () => {
 
         // 跨ぎ: daemon を stop → 別コマンドで re-spawn する (ensureDaemon 経路)。
         // subscribe subprocess は生存し続けるはず。
-        const stopped = JSON.parse((await runCli(["daemon", "stop"], env)).out) as {
-          stopped?: boolean;
-        };
+        const stopped = printed(CliStatusSchema, (await runCli(["daemon", "stop"], env)).out);
         expect(stopped.stopped).toBe(true);
         // socket 消失を確認: daemon.sock が無い状態で subscribe が再接続失敗を
         // 吸収して spawn しないことも兼ねて観測する。
@@ -210,16 +203,14 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         // subscribe はまだ再接続 backoff の途中かもしれない。既定の一覧は
         // 接続中メンバーが居ない room を隠すので、そのタイミング次第で
         // 結果が変わってしまう。
-        const roomsAfter = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
-          ok: boolean;
-          rooms: { id: string }[];
-        };
+        const roomsAfter = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
         expect(roomsAfter.ok).toBe(true);
         expect(roomsAfter.rooms.map((r) => r.id)).toContain(room);
 
         // 跨ぎ後: S2 が leave。subscribe が自動再接続で受信することを確認。
         expect(
-          JSON.parse(
+          served(
+            "leave",
             (await runCli(["--sid", "50000002-0000-4000-8000-000000000000", "leave", room], env))
               .out,
           ).ok,
@@ -297,7 +288,7 @@ describe("ccmsg subscribe daemon restart transparency", () => {
 
         // status で running=true を先に固定 (= subscribe が initial ensureDaemon
         // を完走した証拠)。
-        const st1 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+        const st1 = printed(CliStatusSchema, (await runCli(["status"], env)).out);
         expect(st1.running).toBe(true);
 
         // daemon stop。daemon.sock が消える。
@@ -311,7 +302,7 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         expect(fs.existsSync(sock)).toBe(false);
 
         // status も running=false のまま (連鎖 spawn していないことの追証)。
-        const st2 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+        const st2 = printed(CliStatusSchema, (await runCli(["status"], env)).out);
         expect(st2.running).toBe(false);
 
         // subprocess はまだ生きている (= 再接続失敗を fatal 化していない)。

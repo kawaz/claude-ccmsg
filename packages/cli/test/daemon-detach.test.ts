@@ -81,7 +81,7 @@ describe("daemon process-group detachment", () => {
       try {
         process.kill(-cliPid, "SIGKILL");
       } catch (e) {
-        expect((e as NodeJS.ErrnoException).code).toBe("ESRCH");
+        expect(e).toMatchObject({ code: "ESRCH" });
       }
       await sleep(300);
 

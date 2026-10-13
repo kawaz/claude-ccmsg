@@ -6,7 +6,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, expect, test } from "bun:test";
-import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import {
+  jsonText,
+  parseWith,
+  PROTOCOL_VERSION,
+  readRequest,
+  type Request,
+  type RequestFrame,
+  RequestFrameSchema,
+  UNANNOUNCED_PROTOCOL_VERSION,
+  VERSION,
+} from "@ccmsg/protocol";
 import { Client, helloRequest } from "../src/client.ts";
 
 let cleanup: Array<() => void> = [];
@@ -16,8 +26,25 @@ afterEach(() => {
   cleanup = [];
 });
 
+const RequestFrameTextSchema = jsonText(RequestFrameSchema);
+
+/** A request line the client wrote, read as the frame every request has. */
+function frameOf(line: string): RequestFrame {
+  const read = parseWith(RequestFrameTextSchema, line);
+  if (!read.ok) throw new Error(`the client wrote no request frame: ${read.failure.summary}`);
+  return read.value;
+}
+
+/** A request line the client wrote, read as a request of this generation. */
+function requestOf(line: string): Request {
+  const read = readRequest(line);
+  if (read.kind !== "request")
+    throw new Error(`the client wrote no request: ${line.slice(0, 200)}`);
+  return read.request;
+}
+
 /** A UDS peer that answers each request line with `reply(request)`. */
-async function fakeDaemon(reply: (req: any) => unknown[]): Promise<string> {
+async function fakeDaemon(reply: (req: RequestFrame) => object[]): Promise<string> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-client-corr-"));
   const sock = path.join(dir, "daemon.sock");
   const server = Bun.listen<undefined>({
@@ -26,7 +53,7 @@ async function fakeDaemon(reply: (req: any) => unknown[]): Promise<string> {
       data(socket, chunk) {
         for (const line of new TextDecoder().decode(chunk).split("\n")) {
           if (line.trim() === "") continue;
-          for (const frame of reply(JSON.parse(line))) {
+          for (const frame of reply(frameOf(line))) {
             socket.write(`${JSON.stringify(frame)}\n`);
           }
         }
@@ -45,11 +72,11 @@ async function fakeDaemon(reply: (req: any) => unknown[]): Promise<string> {
 
 test("a reply is paired by request_id, not by arrival order", async () => {
   // Answers in reverse: the second request is replied to first.
-  const held: any[] = [];
+  const held: RequestFrame[] = [];
   const sock = await fakeDaemon((req) => {
     held.push(req);
-    if (held.length < 2) return [];
     const [first, second] = held;
+    if (first === undefined || second === undefined) return [];
     return [
       { ok: true, room: "r2", request_id: second.request_id },
       { ok: true, room: "r1", request_id: first.request_id },
@@ -153,8 +180,9 @@ test("large requests arrive whole, in the order written", async () => {
         buf += decoder.decode(chunk, { stream: true });
         let at: number;
         while ((at = buf.indexOf("\n")) >= 0) {
-          const req = JSON.parse(buf.slice(0, at));
+          const req = requestOf(buf.slice(0, at));
           buf = buf.slice(at + 1);
+          if (req.op !== "post") throw new Error(`expected a post, got ${req.op}`);
           socket.write(
             `${JSON.stringify({ ok: true, room: String(req.msg.length), mid: 1, request_id: req.request_id })}\n`,
           );

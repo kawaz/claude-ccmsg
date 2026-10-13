@@ -5,7 +5,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveSidecarDir, sidecarSocketName } from "@ccmsg/protocol";
+import {
+  jsonText,
+  parseWith,
+  resolveSidecarDir,
+  type SidecarRequest,
+  SidecarRequestSchema,
+  sidecarSocketName,
+} from "@ccmsg/protocol";
 import { harnessPid, startSidecar, type AskProcess } from "../src/sidecar.ts";
 import {
   connect,
@@ -17,6 +24,15 @@ import {
 } from "../../daemon/test/helpers.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+
+const SidecarRequestTextSchema = jsonText(SidecarRequestSchema);
+
+/** A line the sidecar wrote for the hooks module, read as the request it is. */
+function sidecarRequestOf(line: string): SidecarRequest {
+  const read = parseWith(SidecarRequestTextSchema, line);
+  if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}: ${line}`);
+  return read.value;
+}
 const SID = "11111111-2222-4333-8444-555555555555";
 
 /** Sidecar sockets need a directory short enough for `sun_path`, which
@@ -151,7 +167,7 @@ describe("harnessPid", () => {
 
 function sidecarEnv(stateDir: string): Record<string, string> {
   return {
-    ...(process.env as Record<string, string>),
+    ...process.env,
     CCMSG_STATE_DIR: stateDir,
     CCMSG_NO_SELF_EXEC: "1",
   };
@@ -245,7 +261,7 @@ describe("ccmsg sidecar (process)", () => {
  * module's `$.process.run` runs it. */
 function runReply(stdin: string, env: Record<string, string>) {
   return Bun.spawn([process.execPath, CLI, "sidecar", "reply", "--sid", SID], {
-    env: { ...(process.env as Record<string, string>), ...env },
+    env: { ...process.env, ...env },
     stdin: new TextEncoder().encode(stdin),
     stdout: "pipe",
     stderr: "pipe",
@@ -286,7 +302,7 @@ describe("ccmsg sidecar reply", () => {
     const sidecar = Bun.spawn(
       [process.execPath, CLI, "sidecar", "--sid", SID, "--pid", String(process.pid)],
       {
-        env: { ...(process.env as Record<string, string>), ...ctx.env },
+        env: { ...process.env, ...ctx.env },
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
@@ -297,7 +313,9 @@ describe("ccmsg sidecar reply", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const answer = user.request({ op: "session_input", session_id: SID, text: "from the web" });
-      const line = JSON.parse(await readUntil(sidecar.stdout.getReader(), (t) => t.includes("\n")));
+      const line = sidecarRequestOf(
+        await readUntil(sidecar.stdout.getReader(), (t) => t.includes("\n")),
+      );
       expect(line).toEqual({
         v: 1,
         op: "prompt.send",

@@ -55,10 +55,11 @@ describe("subscribe owner supervision", () => {
     const file = writeOwner(sessionsDir, 303, "old-sid");
     const watch = watchSubscribeOwner(configDir, "old-sid", 20);
     expect(watch).not.toBeNull();
+    if (watch === null) throw new Error("no watch on an owned sid");
 
     fs.writeFileSync(file, JSON.stringify({ pid: 303, sessionId: "new-sid" }));
-    await watch!.stale;
-    watch!.close();
+    await watch.stale;
+    watch.close();
   });
 
   // A truncate-and-rewrite of the same registry row is an ordinary persistence
@@ -69,15 +70,16 @@ describe("subscribe owner supervision", () => {
     const file = writeOwner(sessionsDir, 353, "stable-sid");
     const watch = watchSubscribeOwner(configDir, "stable-sid", 10, 40);
     expect(watch).not.toBeNull();
+    if (watch === null) throw new Error("no watch on an owned sid");
 
     fs.writeFileSync(file, "");
     setTimeout(() => writeOwner(sessionsDir, 353, "stable-sid"), 5);
     const survived = await Promise.race([
-      watch!.stale.then(() => false),
+      watch.stale.then(() => false),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 80)),
     ]);
     expect(survived).toBe(true);
-    watch!.close();
+    watch.close();
   });
 
   // A normal Claude process exit removes its PID registry row. Once ownership
@@ -87,10 +89,11 @@ describe("subscribe owner supervision", () => {
     const file = writeOwner(sessionsDir, 404, "owned-sid");
     const watch = watchSubscribeOwner(configDir, "owned-sid", 20);
     expect(watch).not.toBeNull();
+    if (watch === null) throw new Error("no watch on an owned sid");
 
     fs.unlinkSync(file);
-    await watch!.stale;
-    watch!.close();
+    await watch.stale;
+    watch.close();
   });
 
   // Missing registry support is ambiguous (older Claude, unusual launcher, or

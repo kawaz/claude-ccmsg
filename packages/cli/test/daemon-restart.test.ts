@@ -19,6 +19,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "../../daemon/test/helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { CliStatusSchema, jsonObjectLine, printed, served } from "./cli-output.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -125,9 +126,7 @@ describe("ccmsg daemon restart", () => {
     const { env, sock, configDir, cleanup } = makeEnv();
     try {
       // 設定なしで起動: llm_status_url 未設定 = capability キー自体が載らない。
-      const started = JSON.parse((await runCli(["daemon", "start"], env)).out) as {
-        started?: boolean;
-      };
+      const started = printed(CliStatusSchema, (await runCli(["daemon", "start"], env)).out);
       expect(started.started).toBe(true);
       expect((await helloCapabilities(sock)).llm_status_available).toBeUndefined();
 
@@ -139,11 +138,7 @@ describe("ccmsg daemon restart", () => {
       expect((await helloCapabilities(sock)).llm_status_available).toBeUndefined();
 
       // restart で反映される。
-      const restarted = JSON.parse((await runCli(["daemon", "restart"], env)).out) as {
-        ok?: boolean;
-        restarted?: boolean;
-        started?: boolean;
-      };
+      const restarted = printed(CliStatusSchema, (await runCli(["daemon", "restart"], env)).out);
       expect(restarted.ok).toBe(true);
       expect(restarted.restarted).toBe(true);
       expect(restarted.started).toBe(false);
@@ -173,15 +168,13 @@ describe("ccmsg daemon restart", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const reader = (sub.stdout as ReadableStream<Uint8Array>).getReader();
-      const accum = { buf: "", lines: [] as string[] };
+      const reader = sub.stdout.getReader();
+      const accum: { buf: string; lines: string[] } = { buf: "", lines: [] };
 
       try {
         // hello 完了の観測: peers に SUB が現れるまで。
         for (let i = 0; i < 100; i++) {
-          const peers = JSON.parse((await runCli(["peers"], env)).out) as {
-            peers: { sid: string }[];
-          };
+          const peers = served("peers", (await runCli(["peers"], env)).out);
           if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
           await sleep(25);
         }
@@ -189,7 +182,8 @@ describe("ccmsg daemon restart", () => {
         // subscribe 中に room を作ると SUB に member snapshot (seq 付き) が届き、
         // 再接続の since_seq cursor がこの room を含む。跨ぎ後の leave は、再接続が
         // leave より先でも後でも (live / delta replay のどちらかで) 届く。
-        const created = JSON.parse(
+        const created = served(
+          "create_room",
           (
             await runCli(
               [
@@ -203,40 +197,37 @@ describe("ccmsg daemon restart", () => {
               env,
             )
           ).out,
-        ) as { ok: boolean; room: string };
+        );
         expect(created.ok).toBe(true);
         const room = created.room;
         await waitForLine(reader, accum, (l) => {
           try {
-            const ev = JSON.parse(l) as { type?: string; r?: string };
-            return ev.type === "member" && ev.r === room;
+            const ev = jsonObjectLine(l);
+            return ev?.type === "member" && ev.r === room;
           } catch {
             return false;
           }
         });
 
-        const restarted = JSON.parse((await runCli(["daemon", "restart"], env)).out) as {
-          restarted?: boolean;
-        };
+        const restarted = printed(CliStatusSchema, (await runCli(["daemon", "restart"], env)).out);
         expect(restarted.restarted).toBe(true);
 
         // 跨ぎ後の room イベント (S1 の leave) が subscribe に届く = 自動再接続が
         // 成立している。
-        const left = JSON.parse(
+        const left = served(
+          "leave",
           (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
-        ) as {
-          ok: boolean;
-        };
+        );
         expect(left.ok).toBe(true);
         const line = await waitForLine(reader, accum, (l) => {
           try {
-            const ev = JSON.parse(l) as { type?: string; r?: string };
-            return ev.type === "leave" && ev.r === room;
+            const ev = jsonObjectLine(l);
+            return ev?.type === "leave" && ev.r === room;
           } catch {
             return false;
           }
         });
-        expect(JSON.parse(line).r).toBe(room);
+        expect(jsonObjectLine(line)?.r).toBe(room);
         expect(sub.exitCode).toBeNull();
       } finally {
         reader.releaseLock();
@@ -256,12 +247,7 @@ describe("ccmsg daemon restart", () => {
   test("daemon が居なければ restart は起動になる", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = JSON.parse((await runCli(["daemon", "restart"], env)).out) as {
-        ok?: boolean;
-        running?: boolean;
-        restarted?: boolean;
-        started?: boolean;
-      };
+      const res = printed(CliStatusSchema, (await runCli(["daemon", "restart"], env)).out);
       expect(res.ok).toBe(true);
       expect(res.running).toBe(true);
       expect(res.restarted).toBe(false);

@@ -15,6 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
+import { defined, jsonObjectOf } from "../../daemon/test/helpers.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const T = 20000;
@@ -127,7 +128,7 @@ describe("ccmsg say", () => {
         expect(res.code).toBe(0);
         expect(sayInvocations(f)).toEqual([["no session here"]]);
         // 発声のために daemon を起こさない (起動は明示的な操作であるべき)。
-        expect(fs.existsSync(path.join(f.env.CCMSG_STATE_DIR!, "daemon.sock"))).toBe(false);
+        expect(fs.existsSync(path.join(f.env.CCMSG_STATE_DIR, "daemon.sock"))).toBe(false);
 
         // sid はあるが daemon が居ない場合も同じ: 記録は諦め、発声は行う。
         const res2 = await runCli(["say", "daemon down"], {
@@ -136,7 +137,7 @@ describe("ccmsg say", () => {
         });
         expect(res2.code).toBe(0);
         expect(sayInvocations(f)[1]).toEqual(["daemon down"]);
-        expect(fs.existsSync(path.join(f.env.CCMSG_STATE_DIR!, "daemon.sock"))).toBe(false);
+        expect(fs.existsSync(path.join(f.env.CCMSG_STATE_DIR, "daemon.sock"))).toBe(false);
       } finally {
         f.cleanup();
       }
@@ -162,14 +163,14 @@ describe("ccmsg say", () => {
         expect(res.code).toBe(0);
         expect(sayInvocations(f)).toEqual([["-v", "Alex", "hello there"]]);
 
-        const roomsDir = path.join(f.env.CCMSG_DATA_DIR!, "rooms");
+        const roomsDir = path.join(f.env.CCMSG_DATA_DIR, "rooms");
         const files = fs.readdirSync(roomsDir).filter((n) => n.endsWith(".jsonl"));
         expect(files).toHaveLength(1);
         const events = fs
-          .readFileSync(path.join(roomsDir, files[0]!), "utf8")
+          .readFileSync(path.join(roomsDir, defined(files[0], "the room file")), "utf8")
           .split("\n")
           .filter((l) => l !== "")
-          .map((l) => JSON.parse(l));
+          .map(jsonObjectOf);
         expect(events.find((e) => e.type === "kind")).toMatchObject({ kind: "1on1" });
         expect(events.find((e) => e.type === "member")).toMatchObject({
           sid: "5a000000-0000-4000-8000-000000000000",

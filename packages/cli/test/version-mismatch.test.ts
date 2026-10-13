@@ -170,8 +170,9 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       // 本当に「差し替わった」ことの直接的証拠)。
       const newPid = readPid(env.pidFile);
       expect(newPid).not.toBeNull();
+      if (newPid === null) throw new Error("no pid file after the replacement");
       expect(newPid).not.toBe(oldPid);
-      expect(pong.pid).toBe(newPid!);
+      expect(pong.pid).toBe(newPid);
 
       client.close();
     },
@@ -286,6 +287,7 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       await waitConnectable(env.sock);
       const pidBefore = readPid(env.pidFile);
       expect(pidBefore).not.toBeNull();
+      if (pidBefore === null) throw new Error("no pid file for the running daemon");
 
       const paths = resolvePaths();
       const client = await ensureDaemon(paths, {
@@ -302,7 +304,7 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       });
       if (!pong.ok) throw new Error(pong.error.msg);
       expect(pong.version).toBe(VERSION);
-      expect(pong.pid).toBe(pidBefore!);
+      expect(pong.pid).toBe(pidBefore);
 
       // proc がまだ生きている (= 再起動していない) ことを別経路でも確認: exited は
       // subprocess が終了したときに解決される Promise なので、Promise.race で
@@ -336,6 +338,7 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       await waitConnectable(env.sock);
       const pidBefore = readPid(env.pidFile);
       expect(pidBefore).not.toBeNull();
+      if (pidBefore === null) throw new Error("no pid file for the running daemon");
 
       const paths = resolvePaths();
       const client = await ensureDaemon(paths, {
@@ -352,7 +355,7 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       });
       if (!pong.ok) throw new Error(pong.error.msg);
       expect(pong.version).toBe(FUTURE_VERSION);
-      expect(pong.pid).toBe(pidBefore!);
+      expect(pong.pid).toBe(pidBefore);
 
       // proc がまだ生きていることも別経路で確認 (version 一致テストと同じ手法)。
       const stillAliveMarker = Symbol("alive");

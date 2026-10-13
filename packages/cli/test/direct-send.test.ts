@@ -16,7 +16,7 @@ import {
   shellQuote,
 } from "@ccmsg/protocol";
 import { dumpSession } from "@ccmsg/daemon/session-dump";
-import { connect, type TestClient } from "../../daemon/test/helpers.ts";
+import { connect, type TestClient, defined } from "../../daemon/test/helpers.ts";
 import {
   LAUNCHER,
   fakeHarness,
@@ -30,6 +30,7 @@ import {
   toolUseBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
+import { CliDeliveredSchema, CliStatusSchema, printed } from "./cli-output.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const T = 30000;
@@ -131,8 +132,8 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
       const asB = { ...env, CLAUDE_CONFIG_DIR: hb.configDir };
       const posted = await runCli(["--sid", A, "post", `ccmsg:${B}`, "question"], asA);
       expect(posted.code).toBe(0);
-      const sent = JSON.parse(posted.out) as { delivered: boolean; mid: string };
-      expect(sent).toEqual({ delivered: true, mid: expect.stringMatching(/^[0-9a-f]{32}\/\d+$/) });
+      const sent = printed(CliDeliveredSchema, posted.out);
+      expect(sent.mid).toMatch(/^[0-9a-f]{32}\/\d+$/);
       expect(classifyCcmsgSendResult(posted.out, false)).toEqual({ status: "sent" });
 
       const received = parseEnvelope(await hb.nextContent());
@@ -141,7 +142,7 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
 
       const replied = await runCli(["--sid", B, ...replyArgs(received.body, "answer")], asB);
       expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
-      const answer = JSON.parse(replied.out) as { mid: string };
+      const answer = printed(CliDeliveredSchema, replied.out);
       const back = parseEnvelope(await ha.nextContent());
       expect(back.attrs["ccmsg-mid"]).toBe(answer.mid);
       expect(back.attrs["ccmsg-reply-to"]).toBe(sent.mid);
@@ -191,7 +192,7 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
       expect(bad.code).toBe(1);
       expect(bad.err).toContain("<instance id>/<n>");
       // None of these reached for a daemon.
-      const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      const status = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(status.running).toBe(false);
     },
     T,
@@ -265,9 +266,10 @@ describe("the reply line is one shell command whatever its words hold", () => {
       await hold(sock, B, hb.configDir);
       const asA = { ...env, CLAUDE_CONFIG_DIR: ha.configDir };
       const asB = { ...env, CLAUDE_CONFIG_DIR: hb.configDir };
-      const sent = JSON.parse((await runCli(["--sid", A, "post", B, "question"], asA)).out) as {
-        mid: string;
-      };
+      const sent = printed(
+        CliDeliveredSchema,
+        (await runCli(["--sid", A, "post", B, "question"], asA)).out,
+      );
       expect(parseEnvelope(await hb.nextContent()).attrs["ccmsg-mid"]).toBe(sent.mid);
 
       // This CLI, reached through a path that needs quoting.
@@ -327,7 +329,7 @@ describe("the reply line is one shell command whatever its words hold", () => {
     "the CLI refuses an identity that is not a session id, before reaching for a daemon",
     async () => {
       const { env } = makeEnv();
-      for (const [args, extra] of [
+      const cases: [string[], Record<string, string>][] = [
         [["--sid", "x; printf PWNED >&2; #", "post", B, "hi"], {}],
         [["post", B, "hi"], { CCMSG_SID: "S1" }],
         [
@@ -342,13 +344,14 @@ describe("the reply line is one shell command whatever its words hold", () => {
           ],
           {},
         ],
-      ] as [string[], Record<string, string>][]) {
+      ];
+      for (const [args, extra] of cases) {
         const res = await runCli(args, { ...env, ...extra });
         expect({ args, code: res.code }).toEqual({ args, code: 1 });
         expect(res.err).toContain("lowercase UUID");
         expect(res.err).not.toContain("PWNED\n");
       }
-      const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      const status = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(status.running).toBe(false);
     },
     T,
@@ -416,7 +419,7 @@ describe("message bodies", () => {
       expect(received.body.startsWith("T5 質問 です\n\nReply with: ")).toBe(true);
       expect(parseCcmsgSendCommand(`ccmsg post ${B} T5 質問 です`)?.text).toBe("T5 質問 です");
 
-      const mid = received.attrs["ccmsg-mid"]!;
+      const mid = defined(received.attrs["ccmsg-mid"], "ccmsg-mid");
       const replied = await runCli(["--sid", B, "reply", mid, "--to", A, "T6", "受領"], asB);
       expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
       expect(parseEnvelope(await ha.nextContent()).body.startsWith("T6 受領\n\nReply with: ")).toBe(
@@ -446,18 +449,19 @@ describe("message bodies", () => {
         return body.slice(0, body.lastIndexOf("\n\nReply with: "));
       };
       let mid = "";
-      for (const [words, text] of [
+      const cases: [string[], string][] = [
         [["hello", "--foo", "world"], "hello --foo world"],
         [["--foo bar"], "--foo bar"],
         [["--", "--foo"], "--foo"],
         [["--", "--to", "x"], "--to x"],
         [["result", "--to-be", "decided", "--to"], "result --to-be decided --to"],
-      ] as [string[], string][]) {
+      ];
+      for (const [words, text] of cases) {
         const posted = await runCli(["--sid", A, "post", B, ...words], asA);
         expect({ words, code: posted.code, err: posted.err }).toEqual({ words, code: 0, err: "" });
         const content = await hb.nextContent();
         expect(bodyOf(content)).toBe(text);
-        mid = parseEnvelope(content).attrs["ccmsg-mid"]!;
+        mid = defined(parseEnvelope(content).attrs["ccmsg-mid"], "ccmsg-mid");
         const command = `ccmsg post ${[B, ...words].map(shellQuote).join(" ")}`;
         expect(parseCcmsgSendCommand(command)).toEqual({ verb: "post", to: B, text });
       }
