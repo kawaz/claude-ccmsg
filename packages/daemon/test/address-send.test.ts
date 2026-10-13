@@ -256,6 +256,23 @@ describe("liveRuns", () => {
       { configDir: c2, sid: C, pid: OTHER_LIVE_PID },
     ]);
   });
+
+  // Seen on a real machine: the poll's $HOME/.claude-* through /tmp and the
+  // registry's realpath through /private/tmp named one config dir twice, and
+  // each run was sent the message twice.
+  test("a config dir named twice, through a symlink and by its realpath, lists each run once", async () => {
+    const c1 = tempDir("as-cfg-");
+    fs.mkdirSync(path.join(c1, "sessions"));
+    fs.writeFileSync(
+      path.join(c1, "sessions", `${LIVE_PID}.json`),
+      JSON.stringify({ pid: LIVE_PID, sessionId: A }),
+    );
+    const link = path.join(tempDir("as-link-"), "cfg");
+    fs.symlinkSync(c1, link);
+    expect(await liveRuns([link, c1], (pid) => pid === LIVE_PID)).toEqual([
+      { configDir: link, sid: A, pid: LIVE_PID },
+    ]);
+  });
 });
 
 describe("address_send through the daemon", () => {

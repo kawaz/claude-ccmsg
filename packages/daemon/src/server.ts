@@ -818,14 +818,19 @@ function clientBuildFields(
 }
 
 /** The CLAUDE_CONFIG_DIRs whose sessions an address_send may reach: those the
- * agents poll scans, and those sessions announced in hello. Like the poll, a
+ * agents poll scans, and those sessions announced in hello, each as a realpath
+ * as the registry keeps them, so one dir is read once. Like the poll, a
  * daemon that does not poll (a test daemon) scans no config dir of its own
  * finding, so it never reaches the sessions running on the machine. */
 function knownConfigDirs(daemon: Daemon): string[] {
   const announced = [...daemon.sessions.values()].flatMap((s) =>
     s.configDir !== undefined ? [s.configDir] : [],
   );
-  return [...new Set([...(agentsPollEnabled() ? detectConfigDirs() : []), ...announced])];
+  const detected = (agentsPollEnabled() ? detectConfigDirs() : []).flatMap((dir) => {
+    const normalized = normalizeConfigDir(dir);
+    return normalized !== undefined ? [normalized] : [];
+  });
+  return [...new Set([...detected, ...announced])];
 }
 
 /** currentPeers() as a `peers` reply: each peer with the `ccmsg:` addresses

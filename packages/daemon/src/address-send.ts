@@ -128,7 +128,10 @@ export const RUNS_SCAN_MS = 1_000;
 /** The live runs recorded in `<config dir>/sessions/<pid>.json` of each of
  * `configDirs`. A file whose process no longer runs is a run that ended
  * without removing it, and is left out. A config dir that cannot be read, or
- * whose files are not all read within `scanMs`, adds none. */
+ * whose files are not all read within `scanMs`, adds none. A process is one
+ * run however many of `configDirs` name its config dir (one through a
+ * symlink, another by its realpath): it is listed once, so it is sent to
+ * once. */
 export async function liveRuns(
   configDirs: readonly string[],
   isAlive: (pid: number) => boolean,
@@ -145,7 +148,9 @@ export async function liveRuns(
       }
     }),
   );
-  return perDir.flat();
+  const byPid = new Map<number, SessionRun>();
+  for (const run of perDir.flat()) if (!byPid.has(run.pid)) byPid.set(run.pid, run);
+  return [...byPid.values()];
 }
 
 async function runsIn(configDir: string, isAlive: (pid: number) => boolean): Promise<SessionRun[]> {
