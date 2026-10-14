@@ -1,6 +1,6 @@
 ---
 title: webui の useStoreState に selector を導入し useSyncExternalStore で購読する
-status: open
+status: resolved
 category: design
 created: 2026-10-14T13:51:02+09:00
 last_read: 2026-10-14T14:51:04+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-14T15:27:44+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:hidden の SessionView/Timeline は自 slice の変化で再描画する(隠れている間の購読停止は別判断)、受け入れ条件 4 は tick で再実行されないところまで"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -31,8 +31,8 @@ fresh-eyes findings の high 4・5。「最初に直すべき 3 つ」の 2 番�
 
 ## 受け入れ条件
 
-- [ ] `useStoreState(store, selector, isEqual)` が `useSyncExternalStore` ベースで、初回 render と購読登録の間の dispatch を取りこぼさない
-- [ ] 各購読コンポーネントが必要な slice だけを selector で選び、無関係な dispatch で再描画されない
-- [ ] AppState 丸渡し (11 コンポーネント) が無くなる
-- [ ] inactive SessionView の memo が有効に戻り、キャッシュ中の Timeline が tick で再実行されない
-- [ ] raw-view-mode.ts も同じ hook を使う
+- [x] `useStoreState(store, selector, isEqual)` が `useSyncExternalStore` ベースで、初回 render と購読登録の間の dispatch を取りこぼさない
+- [x] 各購読コンポーネントが必要な slice だけを selector で選び、無関係な dispatch で再描画されない
+- [x] AppState 丸渡し (11 コンポーネント) が無くなる
+- [x] inactive SessionView の memo が有効に戻り、キャッシュ中の Timeline が tick で再実行されない
+- [x] raw-view-mode.ts も同じ hook を使う
