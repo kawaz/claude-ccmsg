@@ -125,7 +125,7 @@ const CachedSessionViewComponent = memo(SessionView, (previous, next) =>
 
 export function App() {
   const { store } = useApp();
-  const state = useStoreState(store);
+  const state = useStoreState(store, (s) => s);
   const versionMismatch = state.versionMismatch;
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();

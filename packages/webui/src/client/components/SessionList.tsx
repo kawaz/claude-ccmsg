@@ -877,7 +877,7 @@ export function SessionList({
   useTick(TICK_MS);
   const { store } = useApp();
   const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, says } =
-    useStoreState(store);
+    useStoreState(store, (s) => s);
   // say の記録は daemon が ev:"says" で全件 push するので、TL を開いていない
   // セッションの未読もここで数えられる。
   const sayUnreadBy = useMemo(() => sayUnreadBySid(says), [says]);

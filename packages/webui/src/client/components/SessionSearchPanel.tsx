@@ -184,7 +184,7 @@ export function SessionSearchPanel({
   query: string | null;
 }) {
   const { store, ws } = useApp();
-  const state = useStoreState(store);
+  const state = useStoreState(store, (s) => s);
   const currentSid = selectedSid(state);
   const [form, setForm] = useState<SessionSearchForm>(() =>
     query === null ? DEFAULT_SESSION_SEARCH_FORM : { ...DEFAULT_SESSION_SEARCH_FORM, query },

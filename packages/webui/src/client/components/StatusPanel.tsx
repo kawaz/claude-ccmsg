@@ -423,7 +423,7 @@ export function StatusPanel({
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
 }) {
   const { store } = useApp();
-  const state = useStoreState(store);
+  const state = useStoreState(store, (s) => s);
   const cwd = resolveSessionTopbar(state, sid).cwd;
   const agent = state.agents.find((candidate) => candidate.sessionId === sid);
   const liveState = formatAgentLiveState(agent);

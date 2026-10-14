@@ -6,10 +6,10 @@
 // JSON として整形した複数行。整形は「読むための投影」であって元データでは
 // ないので、raw 側の verbatim 保証 (rawTranscriptRows のドクコメント) は
 // そのまま残し、pretty はいつでも raw に戻せる派生表示として扱う。
-import { useEffect, useState } from "preact/hooks";
 import { JsonValueSchema, jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { flagText, readStorage, writeStorage } from "./storage.ts";
+import { useStoreState, type ReadableStore } from "./useStore.ts";
 
 /** pretty 化を試みる上限文字数。これを超える行は raw のまま表示する。
  *
@@ -98,16 +98,19 @@ export function setRawViewPretty(value: boolean): void {
   for (const listener of listeners) listener();
 }
 
-export function subscribeRawViewPretty(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+const rawViewPrettyStore: ReadableStore<boolean> = {
+  getState: getRawViewPretty,
+  subscribe(listener) {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  },
+};
 
-/** 呼び出し元を pretty 設定の変更で再描画させる (useStoreState と同じ形)。 */
+const wholeValue = (value: boolean): boolean => value;
+
+/** 呼び出し元を pretty 設定の変更で再描画させる。 */
 export function useRawViewPretty(): boolean {
-  const [value, setValue] = useState(getRawViewPretty);
-  useEffect(() => subscribeRawViewPretty(() => setValue(getRawViewPretty())), []);
-  return value;
+  return useStoreState(rawViewPrettyStore, wholeValue);
 }

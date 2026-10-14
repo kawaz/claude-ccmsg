@@ -3203,7 +3203,7 @@ export function Timeline({
   visible: boolean;
 }) {
   const { store, ws } = useApp();
-  const appState = useStoreState(store);
+  const appState = useStoreState(store, (s) => s);
   const connStatus = appState.connStatus;
   const currentPosition =
     appState.currentSid === sid ? (appState.timelinePosition ?? "head") : "head";

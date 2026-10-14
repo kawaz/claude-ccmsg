@@ -604,7 +604,7 @@ export function FileTree({
   onNewMemo: () => void;
 }) {
   const { store, ws } = useApp();
-  const connStatus = useStoreState(store).connStatus;
+  const connStatus = useStoreState(store, (s) => s).connStatus;
   // Browsing origin is the session's own cwd (kawaz r55 m97), expressed in the
   // containment-root-relative space every fs path key uses — see treeRootPath.
   // `null` peer means the daemon hasn't told us this sid's cwd yet, in which
