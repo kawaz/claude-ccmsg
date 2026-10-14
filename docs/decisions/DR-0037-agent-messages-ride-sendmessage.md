@@ -21,7 +21,7 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 ### 1. 宛先の綴り
 
 - `ccmsg:<sid>`: そのセッション。同じ sid の生きている run が複数あれば、その全部に届ける
-- `ccmsg:<sid>.<pid>`: 同じ sid の特定の run。同じ sid が複数のプロセスで生きている時のための綴りで、通常は使わない
+- `ccmsg:<sid>.<pid>`: 同じ sid の特定の run。`<pid>` は run の harness の process の pid で、daemon が Claude Code の登録 (`sessions/<pid>.json`、`claude agents --json`) から引く。module とサイドカーは自分の pid を知らない ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。同じ sid が複数のプロセスで生きている時のための綴りで、通常は使わない
 - `ccmsg:path:<project_dir>`: その作業ディレクトリで動いているセッション全部 (送り主自身を除く)。1 つなら 1 対 1、複数なら全部に届ける
 - セッション間の宛先は `ccmsg:` に統一し、harness の名前での直接送信は案内しない (kawaz 2026-10-13)
 
