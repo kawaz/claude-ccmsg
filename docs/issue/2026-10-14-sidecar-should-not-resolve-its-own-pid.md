@@ -45,6 +45,7 @@ mods が確実に知れるのは次の 4 つ。pid はこの中に無い。
 - sidecar は sid + 起動時刻 (または乱数の run id) で名乗る。socket 名もそれにする
 - daemon は `claude agents --json` (pid / cwd / startedAt / sessionId / name) の同 sid の行から、startedAt が最も近いものを選んで pid を引き、保管する。cwd は照合の確認用
 - 同 sid の複数 run は startedAt で区別できる
+- 名乗りに `CLAUDE_CONFIG_DIR` (`$.env.get`) も含める。daemon は複数の config dir を扱うので、これがあれば照合のために全 config dir の `claude agents --json` を見て回らず、その 1 つだけを引けばよい
 - pid への対応付けは daemon の責務。sidecar は自分の pid を知らなくてよい
 
 ## 受け入れ条件
