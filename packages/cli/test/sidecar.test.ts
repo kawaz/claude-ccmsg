@@ -454,6 +454,10 @@ describe("keepNamed", () => {
     const askedOnce = Promise.withResolvers<void>();
     const gate = Promise.withResolvers<void>();
     const lines: string[] = [];
+    // keepNamed says it named the run once the daemon's answer reaches it,
+    // which may be after the daemon's push to a watcher has: what it says is
+    // read once it has said it.
+    const namedTwice = Promise.withResolvers<void>();
     let named: Promise<void> | undefined;
     let second: DaemonCtx | undefined;
     try {
@@ -465,7 +469,10 @@ describe("keepNamed", () => {
         identity,
         name,
         stopped: stop.promise,
-        log: (line) => lines.push(line),
+        log: (line) => {
+          lines.push(line);
+          if (lines.filter((l) => l.startsWith("named ")).length === 2) namedTwice.resolve();
+        },
         wait: (ms) => {
           asked.push(ms);
           askedOnce.resolve();
@@ -508,6 +515,7 @@ describe("keepNamed", () => {
       ]);
       gate.resolve();
       await after.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
+      await namedTwice.promise;
 
       // The sidecar going closes the connection: the run goes with it.
       stop.resolve();
