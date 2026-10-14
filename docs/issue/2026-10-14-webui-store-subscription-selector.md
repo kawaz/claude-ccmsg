@@ -3,7 +3,7 @@ title: webui の useStoreState に selector を導入し useSyncExternalStore �
 status: open
 category: design
 created: 2026-10-14T13:51:02+09:00
-last_read:
+last_read: 2026-10-14T14:51:04+09:00
 open_entered: 2026-10-14T13:51:02+09:00
 wip_entered:
 blocked_entered:
