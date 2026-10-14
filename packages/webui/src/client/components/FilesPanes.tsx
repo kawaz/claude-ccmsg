@@ -137,7 +137,10 @@ export function FilesPanes({
   return (
     <div class="session-panes" ref={containerRef}>
       <div class="session-pane session-pane-tree" style={treeStyle}>
+        {/* Keyed by the favorites root (the session's cwd, "" until the peer
+         * is known): FileTree reads that root's favorites once at mount. */}
         <FileTree
+          key={peer ? peer.cwd : ""}
           sid={sid}
           tree={paneTree}
           peer={peer}

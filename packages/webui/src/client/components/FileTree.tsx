@@ -620,21 +620,22 @@ export function FileTree({
   // undefined means the daemon hasn't told us this sid's cwd yet at all — the
   // key would be undefined too, so favorites stay off (`favRoot === null`)
   // rather than briefly keying on nothing and losing/overwriting the real
-  // list once `peer` arrives. State lives here (useState + localStorage
-  // effect), not the reducer, per DR-0005 §1 — same split as FilesPanes'
-  // pane-ratio persistence, which this mirrors deliberately.
+  // list once `peer` arrives. State lives here (useState + localStorage), not
+  // the reducer, per DR-0005 §1. The stored list is read once, as the initial
+  // state, and written by the toggle that changes it — nothing is written
+  // just because the component rendered, so a mount cannot overwrite the
+  // stored list with an empty one. An instance serves one root: FilesPanes
+  // keys FileTree by it, so a root change is a fresh mount that reads the new
+  // root's list rather than carrying the old one over.
   const favRoot = peer ? peer.cwd : null;
-  const [favorites, setFavorites] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState(() => (favRoot ? loadFavorites(favRoot) : []));
 
-  useEffect(() => {
-    setFavorites(favRoot ? loadFavorites(favRoot) : []);
-  }, [favRoot]);
-
-  useEffect(() => {
-    if (favRoot) saveFavorites(favRoot, favorites);
-  }, [favRoot, favorites]);
-
-  const onToggleFavorite = (path: string) => setFavorites((prev) => toggleFavorite(prev, path));
+  const onToggleFavorite = (path: string) => {
+    if (!favRoot) return;
+    const next = toggleFavorite(favorites, path);
+    setFavorites(next);
+    saveFavorites(favRoot, next);
+  };
   const fav: FavContext | null = favRoot
     ? { favorites: new Set(favorites), onToggle: onToggleFavorite }
     : null;
