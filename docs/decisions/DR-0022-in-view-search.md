@@ -1,14 +1,14 @@
 # DR-0022: In-view キーワード検索 (Timeline / ファイルビューアのハイライト検索)
 
-Status: Accepted (kawaz r26 mid=59 が仕様を直接指定、裁定項目なし。§2.1 のクエリ AND/OR 割当は kawaz r76m78 指定が正本)
+Status: Accepted (kawaz が仕様を直接指定、裁定項目なし。§2.1 のクエリ AND/OR 割当は kawaz 指定が正本)
 Date: 2026-07-17
-Sponsor: kawaz r26 mid=59
+Sponsor: kawaz
 
 ## 1. 背景
 
 表示中の Timeline / ファイルビューア内をキーワード検索したい (kawaz)。ブラウザ標準のCmd+F は standalone PWA では使えず、fold された TL 構造にも効かない。
 
-## 2. 仕様 (kawaz mid=59 の指定を転記)
+## 2. 仕様 (kawaz の指定を転記)
 
 ### 2.1 検索 UI
 
@@ -45,5 +45,5 @@ Sponsor: kawaz r26 mid=59
 
 ## 5. 関連
 
-- kawaz r26 mid=59 (仕様全文)
+- kawaz (仕様全文)
 - DR-0010 (timeline markdown render) — ハイライト差し込みの対象層

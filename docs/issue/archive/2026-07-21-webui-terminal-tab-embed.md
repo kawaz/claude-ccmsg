@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-07-21T02:12:07+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done:v0.68.0で実装・push済み、CI green","done:Terminalタブ(hyoui_session_id解決済みセッションのみ表示)","done:iframe src=<gateway>/sessions/<id>?embed=1、gateway URLはlocalStorage ccmsg.terminalGatewayUrl(未設定時は入力欄フォールバック)","done:r45でhyoui側に完了報告済み・設計了承済み(r45m4)","pending:kawaz iPadでの実表示確認はgateway v0.9.13リリース後にr45で調整予定"]
+close_reason: ["done:v0.68.0で実装・push済み、CI green","done:Terminalタブ(hyoui_session_id解決済みセッションのみ表示)","done:iframe src=<gateway>/sessions/<id>?embed=1、gateway URLはlocalStorage ccmsg.terminalGatewayUrl(未設定時は入力欄フォールバック)","done:r45でhyoui側に完了報告済み・設計了承済み","pending:kawaz iPadでの実表示確認はgateway v0.9.13リリース後にr45で調整予定"]
 blocked_by:
 origin: 依頼元プロジェクト (別セッション経由の指示)
 ---

@@ -39,7 +39,7 @@ SESSIONS 側は `SessionCreator` によりサイドバーから直接新規作�
 - [ ] フォームに kind 選択 (normal / broadcast) がある
 - [ ] broadcast 選択時はメンバー選択欄を隠す (DR-0013: broadcast は自動 populate でメンバー指定不要)
 
-## 補足 (kawaz r26 mid=118)
+## 補足 (kawaz)
 
 broadcast は現状 webui に作成経路が無く、CLI の `create-room --kind broadcast` のみ。
 本 issue のフォームで kind 選択を追加し、webui からも broadcast room を作成可能にする。

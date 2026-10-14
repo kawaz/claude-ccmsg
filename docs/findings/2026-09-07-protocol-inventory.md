@@ -424,9 +424,9 @@ error 欄は当該 op に固有のコードのみ (全 op が `bad_request` / `i
 | `RoomSummary.live_members` の absent 分岐 | 「daemon predates the field」 |
 | `PeerInfo.protocol` の absent 分岐 | 同上 |
 | `LlmRequestInfo.prefix` の空文字 | 「gateway older than v0.13.0」— 外部の版番号が契約の説明に埋まっている |
-| `TRANSCRIPT_READ_MAX_BYTES` のコメント | 「1 MB (kawaz r76 m107、2026-07-31。500KB を試して増量)。旧 2 MB (kawaz r15 mid=18 …) は … 縮小した」— **値の変遷史がそのまま残っている** ([[no-historical-noise]] に照らして削除対象) |
+| `TRANSCRIPT_READ_MAX_BYTES` のコメント | 「1 MB (kawaz、2026-07-31。500KB を試して増量)。旧 2 MB (kawaz …) は … 縮小した」— **値の変遷史がそのまま残っている** ([[no-historical-noise]] に照らして削除対象) |
 | `SessionLauncherConfig.clean_env` / `keep_env` | 「DR-0018 §3.1 addendum 2026-07-18」「(2nd)」と追補の回数が本文に |
-| ルーム参照コメント全般 | `kawaz r38 mid=23` / `r44 m7` / `r46 m8` / `r135m16` / `r244 m5-m6` / `r55m133` 等、**room+mid の会話参照が 20 箇所以上**。protocol 外の会話ログに依存した根拠付け |
+| ルーム参照コメント全般 | 「kawaz + room 番号 + メッセージ番号」の形の、**会話参照が 20 箇所以上**。protocol 外の会話ログに依存した根拠付け |
 | `SessionTodo.blocked_by` / `AgentTreeNode.kind` 等 | doc コメントが日本語と英語で混在 (同一 interface 内で切り替わる箇所もある) |
 
 ### 5.6 クラスタ化 (`docs/issue/2026-09-07-multi-host-cluster.md`) の観点で足りない概念

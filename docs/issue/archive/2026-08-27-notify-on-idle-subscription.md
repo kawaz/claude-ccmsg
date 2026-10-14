@@ -10,7 +10,7 @@ blocked_entered:
 pending_entered:
 discarded_entered: 2026-09-04T14:42:23+09:00
 resolved_entered:
-discard_reason: ["kawaz 裁定で不要 (r273m1「Bは不要」)。実装せず"]
+discard_reason: ["kawaz 裁定で不要 (「Bは不要」)。実装せず"]
 pending_reason:
 close_reason: ["discarded"]
 blocked_by:
@@ -22,7 +22,7 @@ origin: 自リポ TODO
 ## 概要
 
 ネイティブ SendMessage の `notify_when_idle` 相当を ccmsg にも導入する検討。
-kawaz r151m28「idle通知に関してはhookとかと連動させてccmsg側でも取り入れられそう」。
+kawaz (2026-08-27)「idle通知に関してはhookとかと連動させてccmsg側でも取り入れられそう」。
 
 ## 背景
 

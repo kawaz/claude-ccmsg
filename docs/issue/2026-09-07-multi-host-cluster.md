@@ -26,8 +26,8 @@ origin:
 
 ## 背景
 
-kawaz r278m34/m35、2026-09-07 の相談で合意した骨子 (r278m36 の訂正を反映済み)。
-以下「ホスト」は歴史的な表現で、r278m41 の裁定によりクラスタ単位は **instance**
+kawaz と 2026-09-07 に合意した骨子 (後続の訂正を反映済み)。
+以下「ホスト」は歴史的な表現で、kawaz の裁定 (2026-09-07) によりクラスタ単位は **instance**
 (id 例: `personal@<hostname>`、host は instance の属性の 1 つ) に読み替える:
 
 1. 設定にクラスタの endpoint リストを持ち、起動後に自分を除いた他 daemon へ WS で
@@ -57,7 +57,7 @@ webui コンポーネント整理 (`docs/findings/2026-09-07-webui-component-inv
 
 llm-gateway の通知は複数 instance の ccmsg から使われる前提でブロードキャスト対応予定(gateway 側)。
 
-### r278m41 裁定 (instance 単位への読み替え、2026-09-07)
+### 裁定 (instance 単位への読み替え、2026-09-07)
 
 含意:
 

@@ -79,7 +79,7 @@ Timeline.tsx の `SegmentView` で `segment.role === "assistant"` の場合の�
 1. dogfood: 実際の assistant transcript (コードブロック・テーブル・リンクを含むもの) で表示を確認 (kawaz)
 2. bundle サイズが実運用上問題になった場合、markdown レンダリングパスの dynamic import 化を検討 (未着手、DR 化は問題が顕在化してから)
 
-## Addendum 2026-08-13 (kawaz r119m12): パーサを mdast-util-from-markdown へ差し替え — §上記の `@mizchi/markdown` 採用を supersede
+## Addendum 2026-08-13 (kawaz): パーサを mdast-util-from-markdown へ差し替え — §上記の `@mizchi/markdown` 採用を supersede
 
 `@mizchi/markdown` 0.6.5 に実バグ 7 種を実測確認した (リスト継続行が list を分断 —継続行が list 外へ脱出し後続 bullet が別 list になる / strong 内 inline 後のテキスト重複 / link reference 非対応 — definition が AST から消失 / inline HTML を link として誤生成 / ネスト emphasis 不発 / tab インデント非対応 — `\tcode` が先頭文字を食う /
 position がコードポイント単位かつ入れ子でリセットされる破損)。週次 DL 42 の実質単独メンテでワークアラウンド蓄積のコストが上回るため、パーサのみ差し替える:

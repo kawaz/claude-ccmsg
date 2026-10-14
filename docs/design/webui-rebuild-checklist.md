@@ -216,7 +216,7 @@
 | テンプレ設定の取得 | `op:session_launcher_config` | DR-0018 | 移す | |
 | cwd ピッカー | `CwdTree.tsx` + `cwd-tree.ts` | DR-0018 | 移す | |
 | 起動結果パネル | `LaunchResultPanel` (`SessionCreator` 内) | DR-0018 | 移す | |
-| フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz r259 m47-m53 | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
+| フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
 | `session-creator` の 4 export | `RESUME_AT_PARAM` / `TITLE_PARAM` / `cwdWithinRoots` / `launchDefaultsFromTranscript` | DR-0018 | 保留 | 参照 0 だが `cwdWithinRoots` は cwd の許可範囲判定、`launchDefaultsFromTranscript` は「このセッションから再開」の種。**機能として意図されて未接続の可能性が高い** |
 | 起動先 instance の選択 | — | DR-0032 §2.3 | 保留 | **新規要件**。クラスタ化で「どの instance で起動するか」が要る |
 
@@ -267,7 +267,7 @@
 | TL 位置の URL 表現 (`position`) | `locator.ts` | DR-0004 | 移す | |
 | agent 指定の URL 表現 (`agent`) | `locator.ts` の `AgentRef` | DR-0025 | 保留 | DR-0025 が Proposed。かつ「agent と position を同時に表せない」制約が §2 の場当たり分岐の原因。**両立させるなら文法の変更が要る** |
 | ファイル + 行範囲の URL 表現 | `locator.ts` の `path` / `lineRange` | DR-0008 | 移す | |
-| `sb.*` サイドバー文法 | `sidebar-url.ts` | kawaz r259 m47-m53 | 移す | |
+| `sb.*` サイドバー文法 | `sidebar-url.ts` | kawaz | 移す | |
 | popstate / pushState の双方向同期 | `navigation.ts` | DR-0004 | 移す | |
 | 位置記憶 (`timelinePositions`) | `navigation.ts:14` | DR-0004 | 移す | |
 | localStorage / sessionStorage の集約 | `storage.ts` | — | 移す | ただし 3 系統 18 キーが呼び出し側の規律だけで振り分けられている (§5.9) |
@@ -336,7 +336,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 
 ---
 
-## 14. 保留の一覧 (画面を作る段階で統括が判断する。kawaz r278m67: 溜めて裁定待ちにしない)
+## 14. 保留の一覧 (画面を作る段階で統括が判断する。kawaz: 溜めて裁定待ちにしない)
 
 各 1 行の問いの形。番号は §11 までの表と対応しない独立の連番。
 
@@ -369,7 +369,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 
 - 2: **移す**。停止ボタンは SS-Q1 (a+c) で「Paused へ移す」として裁定済み (`session_kill` に `retain: true`)
 - 21: **grep が効く区切りに変える** (統括判断。`\0` は棚卸しで grep の欠落を実際に起こした)
-- 23: **反映してから移す**。活動判定の正は llm-gateway のイベント (r278m10) で裁定済み。gateway 側の start / complete 通知待ち
+- 23: **反映してから移す**。活動判定の正は llm-gateway のイベントで裁定済み。gateway 側の start / complete 通知待ち
 - 24: **マイルストーン 1 には含めない**。DR-0032 §2.2 の順で、契約に `instance` を足すのが先 (webui は任意フィールドとして無視)。表示・起動先選択・room id の形はクラスタ化 issue の実装単位
 
 残り 19 件は、その機能を含むマイルストーンに着手する時に統括が判断し、判断に迷うものだけその時点で kawaz に聞く。

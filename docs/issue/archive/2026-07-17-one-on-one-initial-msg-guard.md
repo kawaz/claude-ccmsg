@@ -25,7 +25,7 @@ origin: 自リポ TODO
 
 ## 背景
 
-kawaz 裁定 (r26 mid=103)「そもそもその機能が不要、混ぜない」により、RL-Q1 で残っていた「create-room/next-room の初期 msg なら 1on1 でもsession 発を許す」という抜け道を塞ぐことが確定した。
+kawaz 裁定「そもそもその機能が不要、混ぜない」により、RL-Q1 で残っていた「create-room/next-room の初期 msg なら 1on1 でもsession 発を許す」という抜け道を塞ぐことが確定した。
 
 ## 受け入れ条件
 

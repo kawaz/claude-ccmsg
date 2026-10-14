@@ -26,7 +26,7 @@ ccmsg CLI が plugin cache 内のバージョン付き絶対パス (例:
 
 ## 背景
 
-kawaz からの起票依頼 (r26 mid=92)。plugin cache 経由で起動されたセッションが古いバージョンの `bin/ccmsg` を掴んだまま動き続けるケースがあり、plugin reload の手間を基本不要にしたいという要望。daemon 側には既に newer-wins の自動 upgrade があり、本 issue はそれと対になる CLI 側のレールという位置づけ。
+kawaz からの起票依頼。plugin cache 経由で起動されたセッションが古いバージョンの `bin/ccmsg` を掴んだまま動き続けるケースがあり、plugin reload の手間を基本不要にしたいという要望。daemon 側には既に newer-wins の自動 upgrade があり、本 issue はそれと対になる CLI 側のレールという位置づけ。
 
 ## 受け入れ条件
 
@@ -38,7 +38,7 @@ kawaz からの起票依頼 (r26 mid=92)。plugin cache 経由で起動された
 
 ## 設計注意 (起票時メモ)
 
-- redirect 判定は「realpath 不一致」ではなく **semver 比較で PATH 側が自分より新しい時のみ exec** する方式にする (kawaz r26 mid=95)。バージョン単調増加が保証されるため、exec 先で再判定しても「自分より新しい」は二度成立せず構造的に無限ループしない。daemon の newer-wins と同じ判定原理で対称性も良い。
+- redirect 判定は「realpath 不一致」ではなく **semver 比較で PATH 側が自分より新しい時のみ exec** する方式にする (kawaz)。バージョン単調増加が保証されるため、exec 先で再判定しても「自分より新しい」は二度成立せず構造的に無限ループしない。daemon の newer-wins と同じ判定原理で対称性も良い。
   `CCMSG_REEXEC` ガードは保険として残してもよいが必須ではなくなる
 - `PATH` に `ccmsg` が無ければそのまま続行 (redirect 不可時のフォールバック)
 - `subscribe` 等の長寿命プロセスは既に起動済みのものはそのまま (新規起動分から効けばよい)

@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-kawaz が TUI (`/workflows`) の実スクショ 13 枚を提供 (r46m16、2026-07-21 06:05-06:24)。webui ツリーパネル (v0.69.0 のグループ化 + フェーズ done/total) と TUI の表示差分を埋める:
+kawaz が TUI (`/workflows`) の実スクショ 13 枚を提供 (2026-07-21 06:05-06:24)。webui ツリーパネル (v0.69.0 のグループ化 + フェーズ done/total) と TUI の表示差分を埋める:
 
 1. agent 行にモデル名 + トークン数 (「Haiku 4.5 · 59k tok」形式、meta.json の model field + journal から)
 2. 状態注記 (running / idle Nm Ns / stopped、pause 中は stopped)
@@ -35,7 +35,7 @@ kawaz 提供の Status タブ実スクショ (2026-07-21 06:35) で判明した�
 
 ## 背景
 
-参照スクショは r46m16 の添付 13 枚。前提: v0.69.0 の AgentTreeGroups 構造の上に載せる。
+参照スクショは会話での添付 13 枚。前提: v0.69.0 の AgentTreeGroups 構造の上に載せる。
 
 kawaz 方針 (2026-07-21): Status タブの現在の workflow 表示は「まぁまぁ良い」ので、似た感じでセッションツリーに載せる = ゼロから TUI を模写するのでなく、Status タブの既存 workflow 表示コンポーネント/整形ロジック (StatusPanel の workflow セクション) を AgentTreePanel の workflow ノードに再利用する方向。データ経路は v0.69.0 時点で既に両者とも workflow-drilldown で共通なので、表示層の流用が主作業。着手は v0.69.0 の実機確認後。
 

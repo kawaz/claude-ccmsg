@@ -21,12 +21,12 @@ origin: 自リポ TODO
 
 ## 概要
 
-Phase A (v0.73.0 予定) で inline code 内の `filepath[:L1[-L2]]` / `filepath[:LINE[:COL]]` をリンク化済み(拡張子 or 行番号ヒューリスティックで branch 名/ディレクトリを排除、kawaz r46m55-58 の対象/対象外例をテスト固定)。
+Phase A (v0.73.0 予定) で inline code 内の `filepath[:L1[-L2]]` / `filepath[:LINE[:COL]]` をリンク化済み(拡張子 or 行番号ヒューリスティックで branch 名/ディレクトリを排除、kawaz の対象/対象外例をテスト固定)。
 
 本 issue は精度を上げる Phase B/C の設計。kawaz 裁定済み事項:
 
-- (r46m57) 存在確認は daemon 経由で OK (レイテンシ許容)
-- (r46m58) プロジェクト外絶対パスは DR-0024 external files allowlist に乗せ、認可外は存在有無を漏らさない
+- 存在確認は daemon 経由で OK (レイテンシ許容)
+- プロジェクト外絶対パスは DR-0024 external files allowlist に乗せ、認可外は存在有無を漏らさない
 
 worker (impl-filepath-linkify) の設計提案:
 

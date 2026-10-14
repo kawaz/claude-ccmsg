@@ -22,7 +22,7 @@ origin: 自リポ TODO
 ## 概要
 
 v0.136.0 で全要求に request_id が付き応答が相関されるようになったため(DR-0029 addendum)、「accept 即返し + request_id 付き result イベント」という2-phase の型は不要になった。現在 acceptTwoPhase 経由の op (session_search /
-session_launch / session_kill / session_dump_file / translate 等) は単に未着手で残っているだけで、後方互換のために残しているのではない(kawaz r259m33: 後方互換は原則実装しない、host 単位で丸ごと進化)。
+session_launch / session_kill / session_dump_file / translate 等) は単に未着手で残っているだけで、後方互換のために残しているのではない(kawaz: 後方互換は原則実装しない、host 単位で丸ごと進化)。
 
 各 op を「await して 1 応答で返す」形に畳み、acceptTwoPhase と result イベント型、webui ws.ts の sendTwoPhase 経路を撤去する。translate のように部分結果を段階的に流す op はイベント配信として残す (それは 2-phase ではなく stream)。
 

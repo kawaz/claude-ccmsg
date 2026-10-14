@@ -10,7 +10,7 @@ blocked_entered:
 pending_entered:
 discarded_entered: 2026-07-17T18:04:13+09:00
 resolved_entered:
-discard_reason: ["host-translation-followups 項目4で select 機能を完全削除する裁定に置き換え (kawaz r26 mid=107)"]
+discard_reason: ["host-translation-followups 項目4で select 機能を完全削除する裁定に置き換え (kawaz)"]
 pending_reason:
 close_reason: ["discarded"]
 blocked_by:
@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-thinking タブの「前選択」(全選択) ボタンを改善する (kawaz r26 mid=74)。
+thinking タブの「前選択」(全選択) ボタンを改善する (kawaz)。
 
 1. DR-0023 の翻訳比較タブ (original / ja(host) / ja(browser)) 導入後も、このボタンは
    original タブ選択時の動作として残す

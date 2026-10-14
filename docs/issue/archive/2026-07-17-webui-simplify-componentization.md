@@ -14,14 +14,14 @@ discard_reason:
 pending_reason:
 close_reason: ["done:カタログ作業(v0.99.0)に吸収して実施済み - localStorage/FAB先行解消、details折りたたみをFoldへ6箇所、タブUIをTabsへ6箇所正規化、MemberChip presentational分離。残るStatusPanelのdetails4箇所は別issueで追跡"]
 blocked_by:
-origin: kawaz r26 mid=77
+origin: kawaz
 ---
 
 # webui の場当たり改修で重複したパターンのコンポーネント化・simplify 棚卸し
 
 ## 概要
 
-webui の場当たり改修で重複したパターンをコンポーネント化・simplify する (kawaz r26 mid=77、優先順位は AI 裁量)。
+webui の場当たり改修で重複したパターンをコンポーネント化・simplify する (kawaz、優先順位は AI 裁量)。
 
 候補 (実施時に全数走査して確定):
 

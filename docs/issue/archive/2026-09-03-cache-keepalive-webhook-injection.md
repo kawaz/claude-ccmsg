@@ -12,9 +12,9 @@ discarded_entered:
 resolved_entered: 2026-09-03T12:45:14+09:00
 discard_reason:
 pending_reason:
-close_reason: ["implemented:v0.140.0 (commit e0f1462d)", "done:設計変更 — hyoui PTY注入ではなくセッションのsubscribe streamへ通常notify(text=marker, from{role:user})として送る形に変更。busy待ち不要(次requestに相乗り)。deadline超過/未接続sessionはlogのみ。kawaz裁定(r259m39/m40/m41)とgateway合意(r261m16/m17)。gateway側は末尾userメッセージ内nonce一致判定に緩和済み"]
+close_reason: ["implemented:v0.140.0 (commit e0f1462d)", "done:設計変更 — hyoui PTY注入ではなくセッションのsubscribe streamへ通常notify(text=marker, from{role:user})として送る形に変更。busy待ち不要(次requestに相乗り)。deadline超過/未接続sessionはlogのみ。kawaz裁定とgateway合意。gateway側は末尾userメッセージ内nonce一致判定に緩和済み"]
 blocked_by:
-origin: llm-gateway (依頼 r261m11、2026-09-03、kawaz 合意済み設計 DR-0024)
+origin: llm-gateway (依頼2026-09-03、kawaz 合意済み設計 DR-0024)
 ---
 
 # llm-gateway の cache_keepalive webhook を受けてセッションにマーカーを注入する
@@ -42,6 +42,6 @@ ccmsg 側の当たり:
 - [ ] hyoui session が解決できない (webui 外で起動された等) 場合は log のみで失敗しない
 - [ ] テスト: 受信 → 注入 / deadline 超過 / busy 待ち → idle 注入 / 未解決
 
-## payload 確定 (r261m13)
+## payload 確定
 
 `{"type":"cache_keepalive","session_id":"<uuid>","prefix":"<DR-0012 の prefix と同じ短縮 sha>","nonce":"<base64url 32B>","deadline":<unix 秒 (整数)>,"deadline_iso":"<RFC3339>","marker":"[llm-gateway cache keepalive nonce=<nonce>] Ignore this message; do not think; reply with exactly \"ok\"."}`。既存 request event と同じく `ts` / `ts_iso` も付く。marker は文面そのまま注入。gateway 側の判定は末尾 user ブロック先頭の `[llm-gateway cache keepalive nonce=` と nonce の一致。

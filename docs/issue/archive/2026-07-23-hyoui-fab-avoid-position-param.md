@@ -12,9 +12,9 @@ discarded_entered:
 resolved_entered: 2026-07-23T00:00:00+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done: v0.73.1 で解決済み。r53m4 で正式仕様化された fab=right:16,bottom:80 を buildTerminalEmbedUrl (packages/webui/src/client/terminal-gateway-store.ts) に付与し、hyoui 側実機検証済み"]
+close_reason: ["done: v0.73.1 で解決済み。会話で正式仕様化された fab=right:16,bottom:80 を buildTerminalEmbedUrl (packages/webui/src/client/terminal-gateway-store.ts) に付与し、hyoui 側実機検証済み"]
 blocked_by: hyoui 側のパラメータ仕様確定 (r53 を watch)
-origin: r53m1 (hyoui セッション、kawaz 指示)
+origin: (hyoui セッション、kawaz 指示)
 ---
 
 # Terminal iframe に hyoui fab の回避位置パラメータを追加
@@ -32,7 +32,7 @@ ccmsg 側の対応は `buildTerminalEmbedUrl`
 
 - 回避位置の目安は「右下から left 方向 ~80px または bottom ~80px」
   (ccmsg FAB 初期位置 right/bottom 1.2rem + サイズ 3.2rem との重なり回避)
-- r53m2 で ccmsg 側の FAB 情報は hyoui セッションへ返信済み
+- 会話で ccmsg 側の FAB 情報は hyoui セッションへ返信済み
 - blocked: hyoui 側のパラメータ仕様確定待ち (r53 を watch)
 
 ## 受け入れ条件

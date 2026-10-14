@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-04 (起草) / 2026-08-07 (kawaz 裁定により Accepted)
-Sponsor: kawaz r99 mid=38 (「別ドメインの canddy 設定がしてあるんじゃなかったっけ」)
+Sponsor: kawaz (「別ドメインの canddy 設定がしてあるんじゃなかったっけ」)
 関連 issue: `docs/issue/2026-07-29-sandbox-origin-raw-content-serving.md` (要件の正本)、`docs/issue/2026-07-11-origin-isolated-app-reverse-proxy.md` (本 DR が supersede、§8)
 
 ## 1. 背景

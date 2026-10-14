@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-07-25T19:43:28+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done: 受け入れ条件すべて実機確認 (2026-07-25, v0.73.25)", "done: --helpデフォルト出力は基本レール(reply/post/read/dump/peers/create-room/subscribe/notify)+--help-fullのみ、環境変数記載0件(grep確認)", "done: 環境変数説明は--help-fullのEnvironment Variablesセクションのみに存在", "done: --help-fullで従来相当の全情報が閲覧可能", "done: SKILL.mdはpost(新規声かけ)/reply(reply_via指示)の使い分けを前面に出す構成にダイエット済み", "implemented: reply_hint:tl問題はdaemon側レール化を採用、post/reply/create-room初期msgの3経路にkind==='1on1'&&role==='session'ガードでsendReplyViaTlError (packages/daemon/src/server.ts, one-on-one.test.ts、2026-07-25に別issueで検証済み)", "done: r26m91のuN除外指定(--to <aN[,aN...]>のみ、u1例示なし)はhelp/SKILL双方で遵守", "done: completionはccmsg未実装のためhelp↔SKILLの2者同期対象、内容に矛盾なし"]
+close_reason: ["done: 受け入れ条件すべて実機確認 (2026-07-25, v0.73.25)", "done: --helpデフォルト出力は基本レール(reply/post/read/dump/peers/create-room/subscribe/notify)+--help-fullのみ、環境変数記載0件(grep確認)", "done: 環境変数説明は--help-fullのEnvironment Variablesセクションのみに存在", "done: --help-fullで従来相当の全情報が閲覧可能", "done: SKILL.mdはpost(新規声かけ)/reply(reply_via指示)の使い分けを前面に出す構成にダイエット済み", "implemented: reply_hint:tl問題はdaemon側レール化を採用、post/reply/create-room初期msgの3経路にkind==='1on1'&&role==='session'ガードでsendReplyViaTlError (packages/daemon/src/server.ts, one-on-one.test.ts、2026-07-25に別issueで検証済み)", "done: r26m91のuN除外指定(--to <aN[aN...]>のみ、u1例示なし)はhelp/SKILL双方で遵守", "done: completionはccmsg未実装のためhelp↔SKILLの2者同期対象、内容に矛盾なし"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -25,7 +25,7 @@ ccmsg CLI の `--help` と SKILL.md を「基本レール」だけに絞り、�
 
 ## 背景
 
-kawaz 指定 (r26 mid=84) により、`--help` のデフォルト表示を以下の基本レールのみに絞る:
+kawaz 指定により、`--help` のデフォルト表示を以下の基本レールのみに絞る:
 
 - `reply <rNmN> <msg>` — 返信用
 - `post <room> [--to <aN,...>] <msg>` — 新規メッセージ用
@@ -43,7 +43,7 @@ SKILL.md も同方針でダイエットし、「新規声かけは post、応答
 
 CLI help ↔ SKILL ↔ completion の 3 者同期 (cli-design-preferences ルール) を崩さないこと。
 
-## 実害構造 (kawaz r26 mid=85-87 で確定、2026-07-17)
+## 実害構造 (kawaz 裁定で確定、2026-07-17)
 
 - **(1) post が reply_hint:"tl" ガードを構造的に素通りする**: post は元メッセージと紐付かないため、reply_hint:"tl" の daemon 拒否ガードの対象にならない。1on1 room で a1 が自己判断で post すると、誰も見ない場所に報告が消える実害がある。
   - 対処: 1on1 room では、未応答の u1 メッセージが reply_hint:"tl" のとき、a1 の post も daemon が拒否し「TL (transcript 出力) で応答せよ」エラーを返すレールを追加する。
@@ -65,7 +65,7 @@ CLI help ↔ SKILL ↔ completion の 3 者同期 (cli-design-preferences ルー
 
 <!-- wip 時のみ -->
 
-## kawaz 追加補足 (r26 mid=91、2026-07-17)
+## kawaz 追加補足 (2026-07-17)
 
 help の post `--to <aN[,aN...]>` 表記は意図的に **uN を含めない**:
 

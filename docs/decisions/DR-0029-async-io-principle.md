@@ -2,25 +2,25 @@
 
 - Status: Accepted
 - Date: 2026-07-31
-- 発端: kawaz r99m3〜m5 (thinking 翻訳の microbatch 集約への指摘から一般化)
+- 発端: kawaz (thinking 翻訳の microbatch 集約への指摘から一般化)
 
 ## 決定
 
 daemon / webui (UI) を問わず、**IO を伴うイベントやメッセージの処理はasync/await による非同期処理を原則とする**。
 
 - 1 イベント = 1 単位で個別に処理し、個別に結果を返す。呼び出し側がまとめて待たされる形 (時間窓での集約、複数ジョブの運命共同体化) を勝手に入れない
-- 所要時間がばらつくジョブを他のジョブと束ねると、短いジョブが長いジョブに巻き込まれる head-of-line blocking が起きる。総時間が多少増えても**小出しに返す方が UX として正** (kawaz r99m3: 「文章を読むのは 9 翻訳を同時に脳にぶち込んで同時に読むわけではない」)
+- 所要時間がばらつくジョブを他のジョブと束ねると、短いジョブが長いジョブに巻き込まれる head-of-line blocking が起きる。総時間が多少増えても**小出しに返す方が UX として正** (kawaz: 「文章を読むのは 9 翻訳を同時に脳にぶち込んで同時に読むわけではない」)
 - 同期 IO (同期 fs API、イベントループを塞ぐ重い同期処理) をイベントハンドラ / メッセージハンドラに置かない
 
 ## まとめ処理 (batching / 窓集約) を入れたい場合
 
-kawaz の承認を得てから入れる。勝手に導入しない (r99m4: 翻訳 microbatchは未承認のまとめ処理の再導入で、既裁定 r34m11 とも矛盾していた)。
+kawaz の承認を得てから入れる。勝手に導入しない (翻訳 microbatch は未承認のまとめ処理の再導入で、既裁定とも矛盾していた)。
 
 承認を求める際は「何が束ねられ、最悪ケースで何が何に巻き込まれるか」を明示する。参考として、既存で性質上問題になっていない集約はfs_stat_batch (均質・軽量なメタデータ確認の microtask 束ね) とstorage の fsync debounce (書き込み自体は即時、耐久性同期のみ集約) の2 つ (2026-07-31 時点の実査)。
 
 ## 追補 (2026-09-03): 相関 id 付き RPC を土台にし、接続ごとの FIFO を撤去
 
-- 発端: kawaz r259m25「最初から 2 パターンどちらでも同じ感じでメッセージング処理できるような両端のインターフェースを作っておいて、rpc したら Promise で結果が返ってくるみたいな土台を 1 回作れば済む話では」
+- 発端: kawaz (2026-09-03)「最初から 2 パターンどちらでも同じ感じでメッセージング処理できるような両端のインターフェースを作っておいて、rpc したら Promise で結果が返ってくるみたいな土台を 1 回作れば済む話では」
 
 本 DR の「1 イベント = 1 単位で個別に処理し、個別に結果を返す」は、wire protocolに **相関 id が無い**ことで頭打ちになっていた。応答は到着順で request と pairingされていた (client 側は `pending.shift()`) ため、await を含む op が後続の応答を追い越せず、daemon 側は接続ごとの FIFO で直列化するしかなかった (= 同一接続内のhead-of-line blocking。実測は`docs/findings/2026-09-02-session-status-same-connection-latency.md`: 218MB transcript の cold scan 中、同一接続の `ping` が 1.15 秒待つ)。
 
@@ -47,9 +47,9 @@ parse 不能な JSON と、`request_id` (空でない文字列) か `op` (文字
 ### subscribe 経路の互換を切る意図的な変更
 
 本追補は DR-0002 §4「設計意図」でいう **subscribe 経路の互換を意図的に切る変更**。
-旧 version の `subscribe` は id を送らないため新 daemon の hello を通れず、**そのセッションでは subscribe の張り直しが必要**になる。`request_id` 欠落を旧 protocolとして受け付ける互換経路は**設けない** (kawaz 裁定 r259m32、今後も戻さない)。
+旧 version の `subscribe` は id を送らないため新 daemon の hello を通れず、**そのセッションでは subscribe の張り直しが必要**になる。`request_id` 欠落を旧 protocolとして受け付ける互換経路は**設けない** (kawaz 裁定、今後も戻さない)。
 
-一方、遅い op を 1 応答へ畳んだ変更で **`PROTOCOL_VERSION` は 1 のまま**。世代を上げる基準は「稼働中の subscribe client が通らなくなるか」であり (kawaz 裁定r259m36)、2-phase 撤去は hello / subscribe / イベント配信のどれにも触れないので世代 1 の subscribe はそのまま動く。ここで世代を上げると稼働中の全 subscribe がhello で拒否され、避けたいはずの張り直しを全セッションに強いることになる。
+一方、遅い op を 1 応答へ畳んだ変更で **`PROTOCOL_VERSION` は 1 のまま**。世代を上げる基準は「稼働中の subscribe client が通らなくなるか」であり (kawaz 裁定)、2-phase 撤去は hello / subscribe / イベント配信のどれにも触れないので世代 1 の subscribe はそのまま動く。ここで世代を上げると稼働中の全 subscribe がhello で拒否され、避けたいはずの張り直しを全セッションに強いることになる。
 
 世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) とCLI の単発コマンド (ランチャーの self-exec で最新版に流れる) だけなので、実害は無い。
 

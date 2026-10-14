@@ -8,7 +8,7 @@
 
 ## 1. Context / 動機
 
-kawaz が新機能を発案 (r12 mid=10 + mid=27、verbatim §7):
+kawaz が新機能を発案 (verbatim §7):
 
 - **1on1**: SessionView の Timeline / File viewer 画面から特定 session へ priv を送りたい。1on1 room を経由し、返信は SessionView TL 側で表示。
 - **reply_via**: 応答経路の 5〜6 パターンが暗黙知になってきた (通常 room / 通常 room に to / broadcast の u1 priv / broadcast の複数宛 priv / 1on1 tl / 不要) ため、msg jsonl に daemon が応答経路を刻印して agent が迷わず従える形にする。
@@ -37,7 +37,7 @@ kawaz が新機能を発案 (r12 mid=10 + mid=27、verbatim §7):
 - **member 制約**: `kind: "1on1"` は「u1 + 単一 session」の 2 者 room。u1 は暗黙参加、session member は 1 名だけを許容する
   - `create_room --kind 1on1 --members <sid>` で作成、members が空 or 複数だと error
   - auto-populate は行わない (broadcast と違って動的加入なし)
-- **agent post 制約はなし** *(2026-07-17 supersede: kawaz r26 mid=85-90 裁定で session 発の 1on1 post は常に reply_via_tl 拒否に変更 — 1on1 の応答は TL が正経路で、room post はユーザから不可視のため。詳細は issue cli-help-diet-and-reply-rails)*: 1on1 は元々「u1 と特定 session の 2 人」なので配信対象は必然的に絞られる
+- **agent post 制約はなし** *(2026-07-17 supersede: kawaz 裁定で session 発の 1on1 post は常に reply_via_tl 拒否に変更 — 1on1 の応答は TL が正経路で、room post はユーザから不可視のため。詳細は issue cli-help-diet-and-reply-rails)*: 1on1 は元々「u1 と特定 session の 2 人」なので配信対象は必然的に絞られる
 
 ### 2.2 1on1 room の auto-create (webui 側)
 
@@ -56,24 +56,24 @@ kawaz が新機能を発案 (r12 mid=10 + mid=27、verbatim §7):
 
 **msg イベントに daemon が刻印する** (自称ではなく) 応答経路の記法。値は文字列。
 
-記法 (kawaz r12 mid=25 提案):
+記法 (kawaz 提案):
 
 | 値の例 | 意味 |
 |---|---|
-| `r10` | room r10 で通常 msg 返信 (to なし = room 全員) |
-| `r10u1` | room r10 で to:[u1] priv 返信 |
-| `r10u1a32a35` | room r10 で to:[u1, a32, a35] priv 返信 (broadcast の複数宛選択返信) |
+| `r3` | room r3 で通常 msg 返信 (to なし = room 全員) |
+| `r3u1` | room r3 で to:[u1] priv 返信 |
+| `r3u1a32a35` | room r3 で to:[u1, a32, a35] priv 返信 (broadcast の複数宛選択返信) |
 | `tl` | 自セッションの TL 側で返信 (1on1 room から u1 priv を受けた agent の応答経路) |
 | `不要` | 応答不要 (静穏化。archive 済み room の惰性 msg 等) |
 
 **syntax**:
 
-- prefix `r<room-id>` = 対象 room。room-id はサフィックス無しの ID (`r7` / `r10` / `r42` 等、DR-0006 の room id namespace)
+- prefix `r<room-id>` = 対象 room。room-id はサフィックス無しの ID (`r7` / `r3` / `r5` 等、DR-0006 の room id namespace)
 - 続く `u<N>` / `a<N>` = to に含める member id を連結 (セパレータなし、id は完全一致で読める)
 - `tl` = 特別値、「自セッションの TL」の意
 - `不要` = 特別値、応答不要 ([提案] 実装値は `none` などの英語も許容、UI/log 表示時は kawaz 提示の日本語表現も対応)
 
-[提案] 実装での値表現: **daemon 側で発行する値は英字/数字のみ** (`r10u1a32a35` / `tl` / `none`) に統一し、`不要` は agent 側で `none` を表示する時の視覚表現 (SKILL 内での説明) とする。日本語 literal は identifier に混ぜない (typo / エンコード事故耐性)。
+[提案] 実装での値表現: **daemon 側で発行する値は英字/数字のみ** (`r3u1a32a35` / `tl` / `none`) に統一し、`不要` は agent 側で `none` を表示する時の視覚表現 (SKILL 内での説明) とする。日本語 literal は identifier に混ぜない (typo / エンコード事故耐性)。
 
 ### 2.5 daemon の刻印ロジック
 
@@ -94,7 +94,7 @@ daemon は post を受け取った時、room state と参加者情報から `rep
 
 ### 2.6 webui SessionView の 1on1 floating composer
 
-kawaz r12 mid=27 (verbatim §7):
+kawaz (verbatim §7):
 
 - SessionView の Timeline tab / Files tab の **右下** に position:fixed の **丸い ＋ ボタン** を常時表示
 - ＋ ボタン押下 → 1on1 入力欄 (popup) が出現
@@ -110,7 +110,7 @@ kawaz r12 mid=27 (verbatim §7):
 
 ### 2.7 SessionView TL 側の 1on1 応答表示
 
-kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に表示される実装がある」を根拠に **追加実装は基本不要**。既存の SessionView Timeline が u1 発の priv を transcript 上に表示する経路がある想定。
+kawaz 「既存で既に ccmsg の u1 メッセージ通知は tl に表示される実装がある」を根拠に **追加実装は基本不要**。既存の SessionView Timeline が u1 発の priv を transcript 上に表示する経路がある想定。
 
 [保留] webui 側の実装確認: 実装時に SessionView Timeline (`packages/webui/src/client/components/Timeline.tsx` and SessionView tab) が 1on1 room の u1 msg を表示しているか確認。していない場合は補助 fix を追加。
 
@@ -121,7 +121,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 - **reply_via 値に日本語 literal (`不要`) を採用**: 不採用 [提案]。identifier に日本語混ぜると encoding / typo 事故のリスク。`none` などの英字値に統一
 - **1on1 room の member 上限を 2 に固定しない (multi-user session)**: 不採用。1on1 の意味論は「u1 と 1 session」、複数 session なら通常 room / broadcast room を使う
 - **1on1 room に auto-populate を入れる**: 不採用。1on1 は明示的な 2 者 room = 動的加入は不要
-- **応答経路をロケータ syntax (`#r7-u1`) で書く**: 不採用 (現状)。ロケータは kawaz 用のリンク記法 (人間読み)、reply_via は agent の hint (機械読み)。ただし §2.4 の `r10u1a32a35` は連結 syntax = ロケータ syntax (セパレータ `-`) との差別化になっている
+- **応答経路をロケータ syntax (`#r7-u1`) で書く**: 不採用 (現状)。ロケータは kawaz 用のリンク記法 (人間読み)、reply_via は agent の hint (機械読み)。ただし §2.4 の `r3u1a32a35` は連結 syntax = ロケータ syntax (セパレータ `-`) との差別化になっている
 
 ## 4. 実装スコープ
 
@@ -178,7 +178,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 
 ## 7. verbatim
 
-### r12 mid=10 (2026-07-14)
+### kawaz (2026-07-14)
 
 > セッションのtimelineビューからメッセージ送信ができるようにしたい。仕様は以下の通り。
 > 
@@ -192,14 +192,14 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 > 
 > ５位はどんなのが良いかな?
 
-### r12 mid=25 (2026-07-14、a3 の OTO-Q1..Q3 提示への回答)
+### kawaz (2026-07-14、a3 の OTO-Q1..Q3 提示への回答)
 
 > OTO-Q1既存で既にccmsgのu1メッセージ通知ははtlに表示される実装があるから何もしなくて良い筈。
 > 
 > OTO-Q2 aパターンとしてはこんな感じに入れときゃ伝わるか？
 > r10（ルームメッセージr10u1 （ユーザとpriv r10u1a32a35  （ユーザ+3セッション会話priv tl（自分のセッションタイムサインに返事不要
 
-### r12 mid=27 (2026-07-14、1on1 の UI 仕様変更)
+### kawaz (2026-07-14、1on1 の UI 仕様変更)
 
 > 1on1について仕様変更。
 > 基本仕様は先ほど伝えた通りだが、tl下に入力欄を置くのをやめる。

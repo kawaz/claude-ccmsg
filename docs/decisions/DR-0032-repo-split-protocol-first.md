@@ -1,8 +1,8 @@
 # DR-0032: リポ分離と規約ファーストの作り直し (daemon / protocol / webui)
 
-Status: Accepted (2026-09-08。骨子は kawaz 裁定 r278m37〜m67、細部は統括判断)
+Status: Accepted (2026-09-08。骨子は kawaz 裁定、細部は統括判断)
 Date: 2026-09-07
-Sponsor: kawaz r278m37/m38 (2026-09-07)「この機に抜本的な作り直し」「リポ分離を基本方針」「規約ファーストで」「プロトコルも一度見直す」
+Sponsor: kawaz (2026-09-07)「この機に抜本的な作り直し」「リポ分離を基本方針」「規約ファーストで」「プロトコルも一度見直す」
 関連: [docs/findings/2026-09-07-webui-component-inventory.md](../findings/2026-09-07-webui-component-inventory.md)、[docs/issue/2026-09-07-multi-host-cluster.md](../issue/2026-09-07-multi-host-cluster.md)、[docs/design/webui-architecture.md](../design/webui-architecture.md) (Draft、本 DR 確定後に再構成)
 
 ## 1. 背景
@@ -27,7 +27,7 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 
 ### 2.2 進め方
 
-新系 (protocol v2 の daemon + 新 webui + 新 plugin) は **別 instance として横に立て、旧系(現行 daemon + webui + plugin) は凍結して放置する** (kawaz r278m59)。instance ごとに socket /
+新系 (protocol v2 の daemon + 新 webui + 新 plugin) は **別 instance として横に立て、旧系(現行 daemon + webui + plugin) は凍結して放置する** (kawaz)。instance ごとに socket /
 state dir / room の記録が `iss` 由来のパスで分離されるので、両系が共有するものは読み取り専用の外部資源 (`claude agents`、`sessions/<pid>.json`、transcript、hyoui) だけ。daemon が v1 と v2 を両受けする必要は無い。
 
 1. protocol を版付きの契約として切り出す。session 系オブジェクトは最初から `instance` を持つ
@@ -43,14 +43,14 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
 
 ### 2.3 コンポーネント整理に持ち込む規約 (クラスタ化由来)
 
-クラスタの単位は **instance** (= 1 config home につき 1 daemon、kawaz r278m41)。同じ PC の複数 instance (personal / emrd …) もメンバーになる。host は instance の属性の 1 つ。
+クラスタの単位は **instance** (= 1 config home につき 1 daemon、kawaz)。同じ PC の複数 instance (personal / emrd …) もメンバーになる。host は instance の属性の 1 つ。
 
 - session 系オブジェクトは `instance` 属性を持つ (紐付けは最低 1 回で足りる)
 - per-instance の値 (接続状態・hello の能力フラグ) と全体の値を混ぜない
 - room id は instance を含意する
 - instance は自分の config home だけを見る (`~/.claude*` の自動検出は廃止)
 
-### 2.4 配布 (kawaz r278m40)
+### 2.4 配布 (kawaz)
 
 - `ccmsg` (daemon + CLI) を `bun install -g` / `brew install` で入れ、これを入口にする
 - エージェント側の plugin は `ccmsg plugin <install|update> <claude|codex> [--config-home <dir>]`
@@ -60,13 +60,13 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
 
 ## 3. 細部の確定 (統括判断、異論があれば直す)
 
-- plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を同梱、分離は protocol とwebui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui` (r278m41)
-- **互換経路は持たない**。protocol の世代が違う相手とは話さず、webui には更新 / リロードの警告を出す(r278m58)
+- plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を同梱、分離は protocol とwebui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui`
+- **互換経路は持たない**。protocol の世代が違う相手とは話さず、webui には更新 / リロードの警告を出す
 - **protocol の配布**: npm registry の `@ccmsg` org 配下に publish する (`@ccmsg/protocol`。`ccmsg` 本体も`bun install -g` の経路が npm なので揃う。unscoped の `ccmsg` は第三者が取得済みなので本体・webui も`@ccmsg/*` に置く)。`ccmsg` と `ccmsg-webui` は package.json で版を固定して依存する
 - **版付け**: 契約の世代は `PROTOCOL_VERSION` (整数)。package の版は semver で、世代を上げる変更はmajor を上げる。同一世代内の追加 (任意フィールド・任意 op) は minor
 - **DR / docs の振り分け**: リポを分ける時点で、webui 固有の DR (0005 / 0010 / 0014 の UI 部 / 0015 /
   0018 / 0020〜0022 / 0024〜0026 / 0031) は新 webui リポの設計文書へ内容を移し、本リポの INDEX には移管先を残す。protocol 固有 (0003 / 0006 / 0011 / 0016 / 0017 / 0029) は contract リポの DESIGN とop 表に吸収済みのものから Superseded にする
-- **instance の起動**: 常駐。`ccmsg daemon add <config home>` で登録し、`ccmsg service register` が監督者(`ccmsg daemon supervise`) を launchd / systemd に登録して instance を子として保つ (r284 m25〜m34)
+- **instance の起動**: 常駐。`ccmsg daemon add <config home>` で登録し、`ccmsg service register` が監督者(`ccmsg daemon supervise`) を launchd / systemd に登録して instance を子として保つ
 - **エージェント側 plugin の配布**: marketplace ではなく `ccmsg plugin install <agent>` が正本 (対称な`status` / `uninstall`、receipt で自分が書いた変更だけを戻す)。Claude Code にはローカル marketplace 経由でネイティブの plugin 機構に乗せる。先行事例調査は kawaz/ccmsg `docs/research/2026-09-08-plugin-distribution-survey.md`
 - **instance 間認証**: [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md)
   (自己識別の「全 peer 到達必須」は緩和して採用)
@@ -74,7 +74,7 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
 ## 4. 却下した案
 
 - **モノリポ内で新 package として作り直す**: 並走はできるが、契約の規律が同じツリーの中で緩みやすく、コンテキストも減らない。mesh のための契約版管理が別途必要になる
-- **現 webui の段階的リファクタ** (webui-architecture Draft §8 の移行順): 購読層の置換自体は正しいが、二重実装や参照 0 の部品をそのまま引き継ぐ。「今の形の再現」を目的にしない(kawaz r278m33)
+- **現 webui の段階的リファクタ** (webui-architecture Draft §8 の移行順): 購読層の置換自体は正しいが、二重実装や参照 0 の部品をそのまま引き継ぐ。「今の形の再現」を目的にしない(kawaz)
 
 ## 5. 影響
 

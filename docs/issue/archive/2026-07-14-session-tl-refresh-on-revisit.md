@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-kawaz の r12 mid=12 (2026-07-14) 観測: SessionView の Timeline tab で最新が読まれておらず、中身が空だったりする残 fix。ROOM 選択時の過去ログ空バグは v0.26.x で fix 済みだが、これは別問題。
+kawaz の 2026-07-14 観測: SessionView の Timeline tab で最新が読まれておらず、中身が空だったりする残 fix。ROOM 選択時の過去ログ空バグは v0.26.x で fix 済みだが、これは別問題。
 
 ## 背景
 
@@ -36,7 +36,7 @@ webui-history-fix worker の調査による原因判明: `Timeline.tsx` が `Ses
 
 ## 裁定 (TLR-Q1)
 
-kawaz r15 mid=4 (2026-07-14) で **(b) tab 復帰時に自動 refresh** を選択。
+kawaz (2026-07-14) が **(b) tab 復帰時に自動 refresh** を選択。
 (a) は帯域負荷増、(c)/(d) は cache TTL・手動ボタンとも不要と判断し不採用。
 
 ### 実装方針

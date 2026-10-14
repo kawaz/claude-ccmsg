@@ -2,7 +2,7 @@
 
 Status: Accepted (LN-Q1..4 裁定 2026-07-16)
 Date: 2026-07-15
-Sponsor: kawaz r17 mid=66+69
+Sponsor: kawaz
 
 ## 1. 背景
 
@@ -25,7 +25,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
   1. 設定ファイルの **コマンドテンプレ**に値を embed
   2. daemon 経由で **exec 実行** (webui は fetch で結果を待つ)
   3. **stdout / stderr / exit code** を結果パネルに表示、それだけ
-- **timeout 10 秒**、フォアグラウンドですぐ返ってこなければ `SIGTERM` → 待って `SIGKILL` (kill x2)、それ以上は追わない (mid=69 明示)
+- **timeout 10 秒**、フォアグラウンドですぐ返ってこなければ `SIGTERM` → 待って `SIGKILL` (kill x2)、それ以上は追わない (kawaz 明示)
 
 ### 2.2 cwd ディレクトリツリー UI
 
@@ -41,7 +41,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
 
 ### 2.3 やらないこと (明示除外)
 
-- **プロセス管理はしない** (kawaz r17 mid=69: 「プロセス管理したがりがちなのを抑制するため『深追いしない』と言った」)
+- **プロセス管理はしない** (kawaz: 「プロセス管理したがりがちなのを抑制するため『深追いしない』と言った」)
   - 起動後の pid tracking / stdin 送信 / SIGCHLD 監視 / progress 表示 / 自動再起動、いずれも不要
   - 実行 → 結果 (stdout/stderr/exit) 表示 → 終わり
 - 実行結果セッションの subscribe 追従 (もし新セッションが hello → daemon に連絡してくれば peers に自動で載る、それだけ)
@@ -52,7 +52,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
 
 ### 3.1 設定ファイル
 
-**LN-Q1 裁定 (kawaz 2026-07-16, r26 mid=4) = 既存 daemon config に統合**:
+**LN-Q1 裁定 (kawaz 2026-07-16) = 既存 daemon config に統合**:
 
 ```yaml
 session_launcher:
@@ -88,7 +88,7 @@ spawn 前に daemon env からマッチするキーを除去し、その上に l
 broad な clean パターンは必要 (元セッション変数の列挙は漏れる) なので、除去の側を狭めるのではなく例外 allowlist を重ねる。パターン文法は clean_env と完全に同一(`*` = キー名内の任意文字列、それ以外リテラル・大文字小文字区別・アンカー付き完全一致)。**優先関係: keep_env が clean_env に勝つ** — 両方にマッチするキーは残す。
 keep_env のみにマッチするキーは元々除去されないので no-op (keep_env は保護のみで除去はしない)。launch の `CWD`/`MODEL`/`EFFORT`/`PROMPT` overlay は keep/clean の判定後に重ねるため常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正な値は clean_env と同じくconfig が読めないものとして daemon を起動時に止める。
 
-**Addendum 2026-07-28 (kawaz r76m15): 受け渡し変数を子プロセスへ引き継がせない**:
+**Addendum 2026-07-28 (kawaz): 受け渡し変数を子プロセスへ引き継がせない**:
 LN-Q2 の env 渡しは受け渡し手段として良かったが、env である以上 `PROMPT` 等が**起動された claude セッションのさらに子プロセス群まで引き継がれる**。一時的な受け渡し変数なので望ましくない。そこで transport と template 語彙を分離する:
 
 - daemon は値を **`ccmsg_new_session_cwd` / `_model` / `_effort` / `_prompt`**
@@ -104,13 +104,13 @@ LN-Q2 の env 渡しは受け渡し手段として良かったが、env であ�
   非 export 変数は子 shell に渡らず、渡すには再 export が必要になって設計目的が消えるため
 - prologue は固定の識別子だけで構成され、request の値を shell source に埋め込むことは一切ない (= injection 面は従来どおり config 筆者の quote 責務に閉じる)
 
-**Addendum 2026-08-12 (kawaz r119m6): テンプレ params 宣言化 — §3.1 のトップレベル `command`/`default_prompt` と固定 4 変数語彙を supersede**:
+**Addendum 2026-08-12 (kawaz): テンプレ params 宣言化 — §3.1 のトップレベル `command`/`default_prompt` と固定 4 変数語彙を supersede**:
 launcher がテンプレ構造なのに既定値がテンプレの外にあり、webui は「command が変数を使うか」の推測で入力欄を出し分けるねじれがあった。テンプレを完結した宣言に改める:
 
-- テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値(string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された入力欄だけを描画する (widget: CWD=picker、MODEL/EFFORT=select、それ以外は値に改行があれば textarea、無ければ input。並びは CWD/MODEL/EFFORT が先頭、`COMMAND` が末尾、残りは宣言順 — kawaz r259m47)
+- テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値(string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された入力欄だけを描画する (widget: CWD=picker、MODEL/EFFORT=select、それ以外は値に改行があれば textarea、無ければ input。並びは CWD/MODEL/EFFORT が先頭、`COMMAND` が末尾、残りは宣言順 — kawaz)
 - `CWD` のみ wire の独立フィールド (realpath 封じ込め + spawn cwd と daemon自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
 - wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は`params` に一本化。params はテンプレートの宣言から組み立てた strict なスキーマで読み([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、宣言に無い名前はスキーマの失敗になる (黙って捨てない)。`CWD` は宣言されるが params のスキーマからは除く (値は wire の `cwd` で来る) ので、params に `CWD` を入れた依頼も失敗になる。`__proto__` / `constructor` / `prototype` の名前は wire の `params` (`v.record`) を読む時点で落ち、失敗にはならない。設定の param 名でこの 3 つは禁じる。carrier は `ccmsg_new_session_param_<NAME>` に改名(変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
-**Addendum 2026-09-02 (kawaz r259m19): 移行経路の撤去**: 上の supersede に伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの`default_prompt`、`params` 未宣言テンプレの変数推測) を撤去する。既定値がテンプレの外にあること自体が是正対象だったので、移行用の受け皿を残すと「入力欄が command 文字列から推測される」旧モデルが型と実装に生き続ける。
+**Addendum 2026-09-02 (kawaz): 移行経路の撤去**: 上の supersede に伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの`default_prompt`、`params` 未宣言テンプレの変数推測) を撤去する。既定値がテンプレの外にあること自体が是正対象だったので、移行用の受け皿を残すと「入力欄が command 文字列から推測される」旧モデルが型と実装に生き続ける。
 config の形は §3.1 の supersede 後の 1 つだけ:
 
 - `templates` は必須。各テンプレは `command` と `params` を自分で全部書く。
@@ -198,7 +198,7 @@ fork テンプレは次の二段で書く:
 
 各 Phase は kawaz 裁定の後に順次実装。Phase 間の依存: 1 → 2 → 3 → 4 (protocol 型が固まらないと daemon 実装が組めない、daemon がないと webui のフォームが叩けない)。
 
-## 5. 裁定記録 (kawaz 2026-07-16, r26 mid=4)
+## 5. 裁定記録 (kawaz 2026-07-16)
 
 - **LN-Q1 = (a)** 既存 daemon config に統合
 - **LN-Q2 = 環境変数渡し** (`CWD`/`MODEL`/`EFFORT`/`PROMPT`)。shell は暗黙にせず config の`shell: bash | zsh` で組み込み 2 択から明示選択 (bash = `-eu -o pipefail -c`)。quote はconfig 筆者責務、`$(date)` 等の shell 展開も可 — § 3.1 / 3.3 に反映済み
@@ -207,6 +207,6 @@ fork テンプレは次の二段で書く:
 
 ## 6. 関連
 
-- kawaz r17 mid=66 (要件全文)、mid=67 (Phase 分割提案 = 本 DR)、mid=69 (深追いしない = プロセス管理抑制 + timeout 10s + kill x2)
+- kawaz (要件全文、Phase 分割提案 = 本 DR、深追いしない = プロセス管理抑制 + timeout 10s + kill x2)
 - [DR-0008](./DR-0008-workspace-file-access.md) — fs_list op (dir_tree は subset として整合)
 - [DR-0009](./DR-0009-session-transcript-access.md) — 新セッションが起動後 hello → daemon → webui peers に自動掲載される既存経路

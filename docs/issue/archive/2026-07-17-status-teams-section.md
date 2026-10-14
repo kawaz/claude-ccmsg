@@ -29,7 +29,7 @@ Status タブに teams (agent teams) セクションを追加する。daemon の
 
 ## 背景
 
-kawaz r26 mid=67 での依頼。DR-0022 (in-view 検索) workflow 完了後の実装キューとして起票。
+kawaz からの依頼。DR-0022 (in-view 検索) workflow 完了後の実装キューとして起票。
 
 制約として、teammate の生死は TUI 内部状態を直接観測できないためtranscript からの推定 (spawn / 完了通知の突合) にとどまる。「最後に観測した活動」ベースの表示とする。
 

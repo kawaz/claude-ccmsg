@@ -23,7 +23,7 @@
 
 - 「read のワンクッション不要」「subscribe 常駐不要」はネイティブ側の明確な優位。セッション間の軽い調整はネイティブに流れる可能性が高い
 - ccmsg の固有価値は「ユーザが会話に参加・観測できる」(room、webui Timeline、履歴、通知) + メッセージング以外のプラットフォーム機能 (dump / fs / todos / rename / launcher)。純粋なセッション間 1:1 通信は競合、ユーザ可視性とプラットフォームは非競合
-- 統合方針 (kawaz 裁定 r151m27): ネイティブメッセージを ccmsg Timeline のエージェント間通信バブルとして表示する (transcript の `<cross-session-message>` タグをマッチパターンで拾う)。issue `docs/issue/2026-08-27-timeline-native-cross-session-message-bubbles.md` に起票済み
+- 統合方針 (kawaz 裁定): ネイティブメッセージを ccmsg Timeline のエージェント間通信バブルとして表示する (transcript の `<cross-session-message>` タグをマッチパターンで拾う)。issue `docs/issue/2026-08-27-timeline-native-cross-session-message-bubbles.md` に起票済み
 
 ## 検証の詳細
 

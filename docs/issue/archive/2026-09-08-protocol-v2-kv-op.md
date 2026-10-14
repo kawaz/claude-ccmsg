@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-v2 に汎用 kv op (kv_read / kv_write / kv_delete + topic kv:<ns>) を追加する。用途は DR-0033 §7 のテーマ永続化 (ユーザデフォルト / デバイス固有)。案の正本は DR-0033 §7.1、main ws (protocol 担当) が op 表と ccmsg-protocol リポ (TypeBox) に反映する。合意経緯: r281m8/m9
+v2 に汎用 kv op (kv_read / kv_write / kv_delete + topic kv:<ns>) を追加する。用途は DR-0033 §7 のテーマ永続化 (ユーザデフォルト / デバイス固有)。案の正本は DR-0033 §7.1、main ws (protocol 担当) が op 表と ccmsg-protocol リポ (TypeBox) に反映する。合意経緯:
 
 ## 背景
 

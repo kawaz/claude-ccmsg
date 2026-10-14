@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-09-03T09:47:22+09:00
 discard_reason:
 pending_reason:
-close_reason: ["dr/DR-0029", "implemented: v0.136.0 commit c11cbdbe で 2-phase 化ではなく全要求への request_id 付与によるRPC土台を実装し、接続ごとFIFOを撤去 (kawaz裁定 r259m25, 2026-09-03)。218MB transcriptのcold scan中でも同一接続の後続pingが0.5ms (旧1147ms)"]
+close_reason: ["dr/DR-0029", "implemented: v0.136.0 commit c11cbdbe で 2-phase 化ではなく全要求への request_id 付与によるRPC土台を実装し、接続ごとFIFOを撤去 (kawaz裁定)。218MB transcriptのcold scan中でも同一接続の後続pingが0.5ms (旧1147ms)"]
 blocked_by:
 origin: 自リポ TODO
 ---

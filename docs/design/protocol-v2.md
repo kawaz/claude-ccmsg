@@ -24,16 +24,16 @@
 | **control** | webui、CLI の管理コマンド (user role) | セッション観測・操作、transcript、fs、launcher、sandbox、llm-* | WS / HTTP |
 | **mesh** | instance 同士 | 他 instance への op 転送、event の relay、instance の生死 | WS (instance 間) |
 
-### 2.1 messaging は room を持たない (kawaz r278m63/m64)
+### 2.1 messaging は room を持たない (kawaz)
 
 複数メンバーの会話 (room) は初期に数回使われた後は使われておらず、会話の様子は webui がtranscript で全部見せている。よって v2 の messaging は **会話の器を持たず、sid 宛の配送に縮める**:
 
 - `message_send {to: sid, text}` と、受信側への配送 (返信経路の指示を含む)、`say`、`notify`
 - 会話ログの正本は transcript (Timeline)。ccmsg 側の永続ログ (room jsonl)、`mid` / `seq`、既読カーソル(BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
-- 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
+- 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、kawaz)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
   Paused / Disappeared / instance に到達不能 / 受信側の一時的な拒否 (throttled) / inbox 上限 (inbox_full)。
   送信側 (エージェント) はそれを見て待つか諦めるかを決める。
-  宛先が Paused / Disappeared の時は、**同じ repo root で今動いているセッションがあれば候補 sid を添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
+  宛先が Paused / Disappeared の時は、**同じ repo root で今動いているセッションがあれば候補 sid を添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに世代交代している場合、送信側がそちらへ送り直せる。kawaz)
 - inbox の保持: 宛先 sid が一覧から消える (Disappeared 行を ✕ で消す / 再接続で配送し切る) まで、または7 日。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との対称、[findings 2026-09-08](../findings/2026-09-08-claude-code-messaging-socket.md) §6)、超えた分は古い方から落として送信側に `reason: inbox_full` を返す。受信側で一時的に受け付けられなかった (rate limit /
   queue full / duplicate) ものは inbox に残して再送し、応答は `reason: throttled`
 - 配送 frame の識別子 `mid` は `<instance>/<連番>` (発行 instance 内の連番)。`reply_to` はこれを指す。
@@ -123,7 +123,7 @@ one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で�
 - 旧系 (v1 の daemon / webui / plugin) は凍結し、新系は別 instance として横に立てる (DR-0032 §2.2)。
   daemon が v1 と v2 を両受けする必要は無い
 
-## 9. 統括判断 (kawaz r278m67「溜めずに決めて進めろ」に従い確定)
+## 9. 統括判断 (kawaz「溜めずに決めて進めろ」に従い確定)
 
 | # | 論点 | 判断 | 理由 |
 |---|---|---|---|
@@ -133,4 +133,4 @@ one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で�
 | PV-Q4 | op 命名 | **名詞先頭** (`room_*` は消えるので実質 `session_*` / `fs_*` / `message_*` / `instance_*`) | topic 名 (名詞) と揃う。改名コストは新系なので無い |
 | PV-Q5 | 契約の正本 | **TS 型を正本、schema を生成** | 既存 184 interface を出発点にできる。生成器は実装時に選ぶ (未検証) |
 | PV-Q7 | role で可視範囲が変わる 3 op | **属性 `scope` を足す** | op を割ると messaging / control の両面に同じ op が要る。表で挙動が読める方を取る |
-| PV-Q8 | 未配送 | **sid 単位 inbox + 理由 + 同 cwd の候補 sid** | kawaz 裁定 (r278m65/m66) |
+| PV-Q8 | 未配送 | **sid 単位 inbox + 理由 + 同 cwd の候補 sid** | kawaz 裁定 |

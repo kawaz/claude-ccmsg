@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-09-04T14:41:27+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done:usage 再ログインリンク+reason 表示+expired 表示 実装済み(v0.144系)、kawaz が実機で再ログイン動作を確認(r273m1)"]
+close_reason: ["done:usage 再ログインリンク+reason 表示+expired 表示 実装済み(v0.144系)、kawaz が実機で再ログイン動作を確認"]
 blocked_by:
 origin: llm-gateway (依頼元プロジェクト)
 ---

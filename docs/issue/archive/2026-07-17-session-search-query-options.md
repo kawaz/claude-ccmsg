@@ -14,7 +14,7 @@ discard_reason:
 pending_reason:
 close_reason: ["done: SessionSearchRequest に case_sensitive/regex フラグ追加","done: 複数行AND は共通 parseSearchQuery で実装","done: regex プリフィルタは literal 断片抽出 + 抽出不能時の全行decode+RegExp.testフォールバックの2段構成","done: webui は SearchModeToggles で in-view検索とUX統一","done: session-search.test.ts でテスト済み、棚卸しで確認 (2026-07-21)"]
 blocked_by:
-origin: kawaz r26 mid=60
+origin: kawaz
 ---
 
 # Session Search クエリに case-sensitive / regex トグルと複数 AND を導入
@@ -31,9 +31,9 @@ DR-0022 の in-view 検索で導入した `[Aa]` / `[.*]` トグルと同系の 
 
 プリフィルタは daemon 自前の行単位判定であり (外部 grep ではない)、本質は「JSON.parse コストを払う前の枝打ち」。
 
-**mid=61 時点の想定は成立しない** (kawaz r26 mid=62 の指摘): regex を生 jsonl行にそのまま当てる案は、JSON エスケープ (`\"` や `\n` 等) によってマッチが崩れる。literal モードは既存どおり (Phase 1 実装済み) パターン文字列を JSONエスケープ後の綴りに変換してから `indexOf` するので正確に枝打ちできるが、regex パターンは同じ変換ができない (任意の正規表現をエスケープ後綴りに機械変換するのは一般には不可能)。
+**当初の想定は成立しない** (kawaz): regex を生 jsonl行にそのまま当てる案は、JSON エスケープ (`\"` や `\n` 等) によってマッチが崩れる。literal モードは既存どおり (Phase 1 実装済み) パターン文字列を JSONエスケープ後の綴りに変換してから `indexOf` するので正確に枝打ちできるが、regex パターンは同じ変換ができない (任意の正規表現をエスケープ後綴りに機械変換するのは一般には不可能)。
 
-regex モードの設計は **kawaz 裁定 (r26 mid=63)「a で」により確定** (a + b の自動切替として決定、以下は確定仕様):
+regex モードの設計は **kawaz 裁定「a で」により確定** (a + b の自動切替として決定、以下は確定仕様):
 
 - **(a) 近似プリフィルタ**: pattern から JSON エスケープの影響を受けないliteral 断片 (英数字等、エスケープされない文字種の連続) を抽出できた場合、それを使って `indexOf` ベースの近似プリフィルタを掛ける。抽出する断片は「マッチするなら必ず含まれる」方向の **false negative を出さない近似**に限定する (false positive は後段の strict 判定 (decode 後の `RegExp.test`)
   が落とすので許容)

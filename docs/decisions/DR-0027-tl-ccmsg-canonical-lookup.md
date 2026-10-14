@@ -1,8 +1,8 @@
 # DR-0027: TL の ccmsg メッセージを daemon 一次情報で完全復元 (断片復元の廃止)
 
-Status: Accepted (kawaz r26 mid=122 が方針を直接指定)
+Status: Accepted (kawaz が方針を直接指定)
 Date: 2026-07-18
-Sponsor: kawaz r26 mid=122
+Sponsor: kawaz
 
 ## 1. 背景
 
@@ -36,7 +36,7 @@ TL 上の ccmsg メッセージ表示は現在 transcript の断片 (subscribe e
 | Phase 1 | webui: (r,mid) 同定 + lazy read + キャッシュ + フォールバック (受信側) |
 | Phase 2 | webui: tool result 検出 → AI 発バブル (送信側) |
 
-## 4. Addendum 2026-07-29: §2.2 の実現手段を daemon の軽量エコーに置換 (kawaz r76 mid=74)
+## 4. Addendum 2026-07-29: §2.2 の実現手段を daemon の軽量エコーに置換 (kawaz)
 
 §2.2 の**目的** (AI 自身の post を TL にバブル表示する) は維持し、**手段**を差し替えた。
 Bash tool result の応答 JSON パターンマッチ (`extractCcmsgToolResultRefs`) は削除。
@@ -47,7 +47,7 @@ lazy read にそのまま乗る。
 
 ## 5. 関連
 
-- kawaz r26 mid=122 (方針)
+- kawaz (方針)
 - v0.42.1 (truncated room 欠落救済) / v0.53.1 (msg-last カラム順) — 本 DR で救済 parse はフォールバックに降格
 
 ## 6. Addendum 2026-09-26: 単体 ccmsg (peer messaging socket 注入) の受信・送信・PushNotification

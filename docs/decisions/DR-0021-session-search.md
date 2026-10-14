@@ -1,14 +1,14 @@
 # DR-0021: Session Search (ccmsg 未起動の過去セッションのブラウズ)
 
-Status: Accepted (SS-Q1=a / SS-Q2=a、kawaz 2026-07-16 r26 mid=48。検索クエリの AND/OR 割当は DR-0022 §2.1 と共通で kawaz r76m78 指定が正本)
+Status: Accepted (SS-Q1=a / SS-Q2=a、kawaz 2026-07-16。検索クエリの AND/OR 割当は DR-0022 §2.1 と共通で kawaz 指定が正本)
 Date: 2026-07-16
-Sponsor: kawaz r26 mid=47
+Sponsor: kawaz
 
 ## 1. 背景
 
 webui は ccmsg 接続中セッション + `claude agents --json` 検出分しか見えない。過去セッション(ccmsg 未起動・終了済み) の transcript を探して読む手段が webui に無い。daemon は`~/.claude*/projects/**/*.jsonl` に到達できるので、daemon 仲介だけで検索・閲覧が可能なはず(kawaz)。
 
-## 2. スコープ (kawaz mid=47 の要件を転記)
+## 2. スコープ (kawaz の要件を転記)
 
 ### 2.1 検索フォーム (SESSIONS に search 導線)
 
@@ -71,6 +71,6 @@ webui localStorage。daemon 側の永続化はしない。
 
 ## 5. 関連
 
-- kawaz r26 mid=47 (要件全文)
+- kawaz (要件全文)
 - DR-0009 (transcript access) — 読み出し経路の拡張元
 - DR-0020 (session status) — grep→parse→strict の前例

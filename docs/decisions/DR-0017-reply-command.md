@@ -7,12 +7,12 @@
 
 ## 1. Context / 動機
 
-DR-0014 の `reply_via` は「agent が読んで従う hint」だったが、実運用初日に**hint を読めても従わない**失敗が観測された (r17 mid=16、本リポ担当セッション自身が reply_via:"tl" を無視して room に post し続けた)。原因の内省 (r17 mid=17-18 の議論):
+DR-0014 の `reply_via` は「agent が読んで従う hint」だったが、実運用初日に**hint を読めても従わない**失敗が観測された (本リポ担当セッション自身が reply_via:"tl" を無視して room に post し続けた)。原因の内省:
 
 - LLM は JSON field を「データ」として処理し「自分への行動指示」として内面化しにくい。msg 内容 (要望) に注意が向くと metadata は素通りする
 - 宛先構成の記法 (`r10u1a32a35`) は agent に宛先計算をさせないための情報だが、そもそも**計算自体を daemon に移せば wire で運ぶ必要がない**
 
-kawaz 提案 (r17 mid=16,19): 返信は `ccmsg reply` で msg を指して送り、daemon が宛先を構成する。subscribe が届ける msg には jsonl 行 + 改行 +
+kawaz 提案: 返信は `ccmsg reply` で msg を指して送り、daemon が宛先を構成する。subscribe が届ける msg には jsonl 行 + 改行 +
 **具体的なコマンドを含む自然言語の指示文 1 行**を添える。
 
 ## 2. Decision
@@ -42,7 +42,7 @@ kawaz 提案 (r17 mid=16,19): 返信は `ccmsg reply` で msg を指して送り
 - §2.2 の storage 上の `reply_to` (返信元 pointer) と配信 hint の `reply_to`
   (返信手段) は**同名別義にしない**: 配信時、storage の reply_to はそのまま、hint は従来 reply_via と同じく配信時 injection。衝突するため **hint field名は `reply_hint`** とする [提案: kawaz の「reply_to にする?」は hint の改名意図と解釈したが、storage pointer と両立させるための命名調整]
 
-### 2.4 指示文行 (kawaz r17 mid=19 の形)
+### 2.4 指示文行 (kawaz の形)
 
 - subscribe の stdout で、**msg event の jsonl 行の直後に平文 1 行**を出す:
   - `reply_hint: "rNmN"` → `返信用コマンド: ccmsg reply rNmN --msg <text>`

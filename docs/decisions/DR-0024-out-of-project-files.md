@@ -1,14 +1,14 @@
 # DR-0024: プロジェクト外セクション (セッションが触った cwd 外ファイルの表示)
 
-Status: Accepted (kawaz r26 mid=99 が仕様を直接指定)
+Status: Accepted (kawaz が仕様を直接指定)
 Date: 2026-07-17
-Sponsor: kawaz r26 mid=99
+Sponsor: kawaz
 
 ## 1. 背景
 
 セッションが Read/Write/Edit で触った **cwd (containment root) 外のファイル**を webui で見たい。自由なプロジェクト外ブラウズではなく、**セッションが実際に触ったファイルのフルパスリスト**に限定 (kawaz 明示)。
 
-## 2. 仕様 (kawaz mid=99 の指定)
+## 2. 仕様 (kawaz の指定)
 
 - Files ツリーの「お気に入り」「プロジェクト」に続く第 3 セクション **「プロジェクト外」**
 - 内容: そのセッションの transcript から Read/Write/Edit (+ NotebookEdit) の tool call file_path を抽出し、**containment root 内のものを除外**したフルパス一覧 (重複除去)
@@ -53,7 +53,7 @@ fs_read の containment は root 配下限定のまま。プロジェクト外�
 
 webui は無変更。バッシュカードの「全文を別タブで開く」リンクは元から実在プローブで gate されているため、allowlist 化により自然に点灯する。
 
-## 4.2 Addendum: file 系 attachment と由来別グループ (kawaz r99 m35)
+## 4.2 Addendum: file 系 attachment と由来別グループ (kawaz)
 
 TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カード同様にプレビューし、そのパスから Files を開けるようにする。そのため attachment 行が名指す絶対パスも allowlist に加える。
 
@@ -65,6 +65,6 @@ TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カ�
 
 ## 5. 関連
 
-- kawaz r26 mid=99 (仕様全文)
+- kawaz (仕様全文)
 - DR-0008 (fs_list/fs_read containment) — 認可の基盤
 - DR-0020 (session_status fold) — 抽出の相乗り候補

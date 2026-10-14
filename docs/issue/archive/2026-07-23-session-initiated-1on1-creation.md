@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-07-23T16:46:48+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done: 実機調査で既に完全実装済みと確認 (daemon server.ts の post/reply/create_room 初期 msg 全経路に kind==='1on1' && role==='session' ガードあり、sendReplyViaTlError で TL 案内、one-on-one.test.ts 該当テスト4件、fresh実行22 pass)","done: 今朝の事象の実態は create-room 自作 room が kind 無しで 1on1 レール対象外だったこと。r55m23 裁定で1on1自作はユーザ起点のみに運用制限済み、r54は archive済み、residualなし"]
+close_reason: ["done: 実機調査で既に完全実装済みと確認 (daemon server.ts の post/reply/create_room 初期 msg 全経路に kind==='1on1' && role==='session' ガードあり、sendReplyViaTlError で TL 案内、one-on-one.test.ts 該当テスト4件、fresh実行22 pass)","done: 今朝の事象の実態は create-room 自作 room が kind 無しで 1on1 レール対象外だったこと。 裁定で1on1自作はユーザ起点のみに運用制限済み、r54は archive済み、residualなし"]
 blocked_by:
 origin: 依頼元プロジェクト (claude-ccmsg dogfooding セッション)
 ---
@@ -24,14 +24,14 @@ origin: 依頼元プロジェクト (claude-ccmsg dogfooding セッション)
 セッションから kawaz への報告は、自セッションの TL (通常応答) で行うのが正。
 1on1 room はユーザ起点 (= ユーザからのプロンプトと同値) の場でしかなく、セッション側が 1on1 を持っていない/使えないからといって room を自作するのは誤り。
 
-## 裁定 (r55m23)
+## 裁定
 
 > なんで1on1を作る必要があるの？TLでしゃべれよ。って感じでSKILLで案内するなりなんなりで上手くガイドあれば良いでしょ。1on1はユーザからのプロンプトと同値と考えて良い。
 
 セッション側から正規 1on1 (kind='1on1') を作成/取得する手段を用意する方向((a) create-room に --kind 1on1 相当を許可 / (b) 初回 post 時に daemon が自動生成
 / (c) 既存 room の kind 変更・archive を CLI から可能にする) は **全て不採用**。
 
-## 補足裁定 (r55m24)
+## 補足裁定
 
 > 1on1は返信は必ず reply_via:"tl" とかのはずだし、ユーザからの一方通行にしか使わない。
 
@@ -39,15 +39,15 @@ origin: 依頼元プロジェクト (claude-ccmsg dogfooding セッション)
 
 ## 背景
 
-2026-07-23 の実例: 新セッションが前セッションの 1on1 (r46) に post しようとして`not_a_member` で拒否された。代替として `create-room --members <自sid>` で room (r54) を自作したが、kind が 1on1 にならず通常 room として表示された(kawaz 指摘 r55m21)。この r54 自作自体が誤り (= TL で報告すべきだった)。
+2026-07-23 の実例: 新セッションが前セッションの 1on1 (r46) に post しようとして`not_a_member` で拒否された。代替として `create-room --members <自sid>` で room (r54) を自作したが、kind が 1on1 にならず通常 room として表示された(kawaz 指摘)。この r54 自作自体が誤り (= TL で報告すべきだった)。
 
-## 追加裁定 (r55m25)
+## 追加裁定
 
 > SKILLに書く必要ゼロだな
 
 ガイド文追記 (SKILL.md / CLI docs) は不採用。対応はレール側のみに絞る(= create-room や post の拒否/警告メッセージ等、機械的な誘導のみで解決する)。
 
-## 最終裁定 (r55m26)
+## 最終裁定
 
 > コンテキストの無駄なので、1on1 に post 自体が問題なので、TL にかけとエラーで案内すれば良い。
 

@@ -7,7 +7,7 @@
 
 ## 1. Context / 動機
 
-kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
+kawaz が新機能を発案 (verbatim は §6):
 
 > 生きてる全セッションにブロードキャストする機能が欲しい。特殊なルームとして実装するでも良い。
 
@@ -22,7 +22,7 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 - `create_room` に **`kind: "broadcast"`** フラグを追加 (default: `"normal"`)
 - storage (room 1 jsonl) / id 体系 / post / read / archive / kick / next_room の経路はすべて通常 room と共通
 - 通常 room との差分は **§2.2 auto-populate** と **§2.4 agent post 制約** の 2 点だけ
-- 複数の broadcast room を並存できる [kawaz、r12 mid=3「一個限定である必要無し」]
+- 複数の broadcast room を並存できる [kawaz 2026-07-13「一個限定である必要無し」]
 
 ### 2.2 auto-populate: session lifecycle と連動
 
@@ -60,7 +60,7 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 ### 2.7 過去 msg の可視性 / 生き死に管理
 
 - 新規 session が auto-join した時の初期配信は **通常 room と同じ** (直近 N=50 msg + since 遡り可能、DR-0003 §5)
-- 「ゴミが溜まったら適宜アーカイブして新規で作る」運用で回避 [kawaz、r12 mid=3]
+- 「ゴミが溜まったら適宜アーカイブして新規で作る」運用で回避 [kawaz]
 - 新規 session を過去 msg から隔離する仕組み (例: 「join した後の msg しか流さない」フラグ) は導入しない (実装コスト > 便益)
 
 ### 2.8 既存 op との共存
@@ -83,7 +83,7 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 ## 3. Alternatives considered
 
 - **完全に別 primitive `create_broadcast` op を新設**: 不採用。既存 room の kind 拡張で足り、CLI/webui/storage が二重にならない。archive/kick も既存 op が使える
-- **1 個 global broadcast room に限定**: 不採用 [kawaz r12 mid=3、「一個限定である必要無し」]。目的別 (dev broadcast / debug broadcast など) の使い分けを許容
+- **1 個 global broadcast room に限定**: 不採用 [kawaz「一個限定である必要無し」]。目的別 (dev broadcast / debug broadcast など) の使い分けを許容
 - **auto-populate せず kawaz が `--members` で列挙**: 不採用。動機 §1 の通り、列挙コストを消すのが本 DR の目的
 - **member/leave イベントを storage にも書かない**: 不採用。§2.3 の通り、監査目的で永続記録は残し、subscribe に流さないだけで agent の noise 抑制は達成される
 
@@ -122,16 +122,16 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 
 (なし — 全 open questions は kawaz 裁定 2026-07-14 で §2 に確定済み)
 
-## 6. verbatim (kawaz、r12 mid=1 / mid=3)
+## 6. verbatim (kawaz)
 
 `docs/research/` に一次資料として別途収蔵する。以下はカット無しの原文:
 
-**r12 mid=1** (2026-07-13):
+**kawaz** (2026-07-13):
 
 > 生きてる全セッションにブロードキャストする機能が欲しい。特殊なルームとして実装するでも良い。どういう抽象化設計が良いかから考えてくれて良い。
 > 要件はそこで話せば全員にprivが個別に飛ぶ感じ。まだそのルームに参加してないセッションならジョインさせて飛ばす。そのルームでは他セッションの出入りはAIには通知されない。ユーザは全員または個別セッションを選択して発言すると、選択したセッション全てに対して個別privが飛ぶ。返信があればユーザが見るROOMには各メッセージが表示される。そのルームではエージェントはユーザ宛のメッセージしか送れない。新規セッションがあれば自動ジョインし停止したら自動leaveする。
 
-**r12 mid=3** (2026-07-13、a3 の裁定要点 mid=2 への回答):
+**kawaz** (2026-07-13、a3 の裁定要点への回答):
 
 > 一個限定である必要無し。過去のブロードキャストはゴミが溜まったら適宜アーカイブして新規で作るでよし。
 

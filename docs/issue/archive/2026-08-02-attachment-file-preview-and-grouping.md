@@ -23,7 +23,7 @@ origin: 自リポ TODO
 
 実装着手 (2026-08-12)。
 
-kawaz r99m35 の後半要望 (前半の type 表示は v0.95.0 で出荷済み)。
+kawaz の後半要望 (前半の type 表示は v0.95.0 で出荷済み)。
 
 1. TL の file 系 attachment (edited_text_file 等) を開いた時に、Read カード同様のファイルプレビューを出せるようにする。
 2. その場合プロジェクト外ファイルの allowlist に追加しないと Files で見られないため対応が必要。

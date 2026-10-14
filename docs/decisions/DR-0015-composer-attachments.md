@@ -7,7 +7,7 @@
 
 ## 1. Context / 動機
 
-kawaz が新機能を発案 (r12 mid=35、verbatim §7):
+kawaz が新機能を発案 (verbatim §7):
 
 > ROOM の入力フォーム左側に画像アップロードボタン (iOS の写真ライブラリ) とファイルアップロードボタン (ダウンロードとか iCloud ファイルなどの選択のやつ) を置きたい。
 
@@ -55,7 +55,7 @@ kawaz が新機能を発案 (r12 mid=35、verbatim §7):
   - 画像アップロードボタン (`<input type="file" accept="image/*" capture="library">`、iOS で写真ライブラリを開く)
   - ファイルアップロードボタン (`<input type="file">`、iOS でファイル App / iCloud を開く)
 - 選択時 **即 upload**、直ちに送信はしない [kawaz]
-- **upload は非同期 fetch + 進捗付き** [kawaz、r12 mid=37]。`fetch()` の Response body を streaming で受ける or `XMLHttpRequest.upload.onprogress` (fetch API は upload progress を公式に持たないため、素直な実装は XHR 経由の progress 監視、または fetch + `ReadableStream` の request body で自前 chunked upload):
+- **upload は非同期 fetch + 進捗付き** [kawaz]。`fetch` の Response body を streaming で受ける or `XMLHttpRequest.upload.onprogress` (fetch API は upload progress を公式に持たないため、素直な実装は XHR 経由の progress 監視、または fetch + `ReadableStream` の request body で自前 chunked upload):
   - 添付一覧の各 entry に **進捗状態** を持たせる (`uploading` / `done` / `error`)、UI で「アップロード中… 42%」を表示
   - upload 中の添付は本文への `[FILE<N>]` プレースホルダ挿入をどう扱うか — [提案] upload 開始時点で `[FILE<N>]` を挿入し、完了で filename を確定、失敗時は削除ボタンを目立たせる (中断/削除で本文から `[FILE<N>]` も removed)
   - **送信時**: 未完了 upload があれば送信ボタンを disable (or 送信で全 upload の Promise.all を待つ)
@@ -131,7 +131,7 @@ kawaz が新機能を発案 (r12 mid=35、verbatim §7):
 - **webui 側の image インライン表示ロジック**: MIME 見て `<img>` にするか、link のまま Markdown renderer に任せるか — [提案] MIME `image/*` は `<img>` に置換、他は link のまま
 - **agent への path 通知**: agent は post 経由で受け取った本文の Markdown link を parse するだけ ([FILE<N>:name](path) の path 部分)、追加の hint フィールドは不要 [提案]
 
-## 6. verbatim (kawaz r12 mid=35、2026-07-14)
+## 6. verbatim (kawaz 2026-07-14)
 
 > ROOMの入力フォーム左側に画像アップロードボタン（iOSの写真ライブラリ）とファイルアップロードボタン（ダウンロードとかiCloudファイルなどの選択のやつ）を置きたい。ファイルや画像選択したら即送らず入力欄の下に添付ファイルがあるかのように表示しておくだけでメッセージ送信と共にファイルも送りつける。クリップボードにmimeがimageが入ってればペーストで添付したい。ファイル自体はwsに乗せるとデカくて気になるなら別postでも良いやり易い形でok。添付した時点で即uploadで送る。送る際「UUID.拡張子」で送りフォーム下に「FILE1:ファイル名」みたいなのを小さめフォントで並んで存在アピールしてれば良い。添付ファイルはTMPDIR/claude-ccms-{uid}/attachment/UUID.ext とか適当な場所に置く。アップロードしたらメッセージ本文にのカーソル位置または末尾に [FILE1] とテキスト挿入。送信時には [FILE1] の部分を [FILE1:ファイル名](フルパス/uuid.ext) に書き換えてjsonlに記録して通知を送る。アップロード一時ファイルの削除はtmpなのでOS任せで放置でok。
 

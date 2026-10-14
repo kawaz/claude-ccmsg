@@ -14,7 +14,7 @@ discard_reason:
 pending_reason:
 close_reason: ["done:v0.144.0 (commit c256709d) で実装。リングは origin=main の最新 event の ts..cache_expires_at の実窓 (1h keepalive で 55 分持続)。origin 付きで cache_expires_at 無し = キャッシュ無しはリングを描かない。origin 欄自体が無い旧 event のみ 5 分固定 fallback。gateway v0.33.0 の実 SSE で shape 確認済み。"]
 blocked_by:
-origin: llm-gateway (r261m32、kawaz 依頼 2026-09-03)
+origin: llm-gateway (kawaz 依頼 2026-09-03)
 ---
 
 # SESSIONS のキャッシュ残り時間リングを実 TTL (gateway の cache_expires_at) に

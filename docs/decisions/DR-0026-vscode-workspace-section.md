@@ -1,8 +1,8 @@
 # DR-0026: ワークスペースセクション (.code-workspace の folders ブラウズ)
 
-Status: Accepted (kawaz r26 mid=113 が仕様を直接指定、認可は DR-0024 前例踏襲)
+Status: Accepted (kawaz が仕様を直接指定、認可は DR-0024 前例踏襲)
 Date: 2026-07-17
-Sponsor: kawaz r26 mid=113
+Sponsor: kawaz
 
 ## 1. 背景
 
@@ -28,5 +28,5 @@ Sponsor: kawaz r26 mid=113
 
 ## 4. 関連
 
-- kawaz r26 mid=113 (要件) / docs/issue/2026-07-17-files-vscode-workspace-section.md
+- kawaz (要件) / docs/issue/2026-07-17-files-vscode-workspace-section.md
 - DR-0024 (allowlist 読み出しの前例) / DR-0008 (fs containment)

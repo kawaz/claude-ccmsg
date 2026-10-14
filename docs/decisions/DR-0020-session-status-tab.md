@@ -2,11 +2,11 @@
 
 Status: Accepted (ST-Q1..2 裁定 2026-07-16)
 Date: 2026-07-16
-Sponsor: kawaz r26 mid=24+25
+Sponsor: kawaz
 
 ## 1. 背景
 
-TUI の Claude Code は画面下部に workflow リスト / background タスク / TODO リストのステータスを常時表示するが、ccmsg webui にはこれが無く、セッションが「作業中なのか、idle で何かを待っているだけなのか」が分からない (kawaz mid=24)。
+TUI の Claude Code は画面下部に workflow リスト / background タスク / TODO リストのステータスを常時表示するが、ccmsg webui にはこれが無く、セッションが「作業中なのか、idle で何かを待っているだけなのか」が分からない (kawaz)。
 
 必要なデータは daemon が既に配信している transcript jsonl に tool call として全部記録されている (Workflow / Agent / TaskCreate / TaskUpdate / Monitor / Bash background)。
 不足しているのは抽出と表示 UI のみ (抽出は daemon 側で行う、§ 3.1)。
@@ -15,7 +15,7 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
 
 ### 2.1 やること
 
-- **表示場所 (ST-Q2 裁定 = 両方、kawaz r26 mid=27)**:
+- **表示場所 (ST-Q2 裁定 = 両方、kawaz)**:
   - **Status タブ**: SessionView のタブ列を Files / Timeline / Rooms / Status に増やし、詳細・全体一覧はこちら
   - **TL 下余白の常駐ミニパネル**: 走行中 workflow と in_progress TODO だけの要約1-2 行。タップで Status タブへ遷移
 - **抽出** (daemon 側、§ 3.1): transcript jsonl から status 関連イベントを全量抽出し、畳み込んで現在ステータスを導出
@@ -33,7 +33,7 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
 
 ## 3. 設計判断
 
-### 3.1 データソース = daemon 側抽出 (ST-Q1 裁定、kawaz r26 mid=32)
+### 3.1 データソース = daemon 側抽出 (ST-Q1 裁定、kawaz)
 
 webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**daemon が transcript jsonl を grep 相当で絞り込み → jsonl parse → strict フィルタで status 関連イベント(TaskCreate / TaskUpdate / Workflow / Monitor / Agent / task-notification) だけを全量抽出**して返す。ファイル全走査でも対象行の抽出は一瞬で終わる想定 (kawaz)。
 
@@ -53,11 +53,11 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 
 ## 5. 関連
 
-- kawaz r26 mid=24 (要件) / mid=25 (タブ配置の裁定)
+- kawaz (要件、タブ配置の裁定)
 - DR-0009 (transcript access) — データ経路の正本
 - DR-0010 (timeline markdown) — transcript parse 層の前例
 
-## Addendum 2026-07-18: model / effort 表示 (kawaz r34 mid=8)
+## Addendum 2026-07-18: model / effort 表示 (kawaz)
 
 セッション自身とチームメイトの現在 model・effort を Status タブ + TL ミニパネルに表示する (DR-0020 の延長、独立 DR は立てない)。
 

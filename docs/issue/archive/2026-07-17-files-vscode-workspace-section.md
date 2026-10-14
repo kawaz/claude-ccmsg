@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-Files ツリーに「ワークスペース」セクションを追加する (kawaz r26 mid=113)。セッションの cwd 直下 (working copy 直下) に `*.code-workspace` ファイル (例 `kuu/main/kuu.code-workspace`) がある場合、その `folders[].path` を解決して各パスをブラウズ可能な root としてセクション表示する。
+Files ツリーに「ワークスペース」セクションを追加する (kawaz)。セッションの cwd 直下 (working copy 直下) に `*.code-workspace` ファイル (例 `kuu/main/kuu.code-workspace`) がある場合、その `folders.path` を解決して各パスをブラウズ可能な root としてセクション表示する。
 
 ## 背景
 

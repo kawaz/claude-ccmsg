@@ -135,7 +135,7 @@ commit `dc7495a72df0` で `session-input-store.test.ts` の "nothing to show whe
 
 #### #12 テスト名・コメントの出典がリポ外のチャット参照
 
-`fs-access.test.ts:1968` "(kawaz r46 mid=24)"、`cli.test.ts:1481, 1555` "(RL-Q2 kawaz r26 mid=104、裁定=a)" など 135 箇所。room / mid はリポ外で第三者には解けない。DR 参照 (321 箇所) は解ける。名前は仕様を書き、出典は DR か `docs/findings/` の path に。
+`fs-access.test.ts:1968` の "(kawaz + room 番号 + メッセージ番号)"、`cli.test.ts:1481, 1555` の "(RL-Q2 kawaz + room 番号 + メッセージ番号、裁定=a)" など 135 箇所。room 番号・メッセージ番号はリポ外で第三者には解けない。DR 参照 (321 箇所) は解ける。名前は仕様を書き、出典は DR か `docs/findings/` の path に。
 
 ### low
 

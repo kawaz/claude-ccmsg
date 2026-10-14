@@ -38,14 +38,14 @@
 | 15 | DR-0003 §5「[保留] N は dogfood で調整」「user (id 0)」 | §2.4 §3.4 | N=50 の根拠 (context cost) が DR-0001 にしか無い、id 0 | 直 |
 | 16 | DR-0003 §1 と不採用表の binary frame 重複 | §3.6 | 同じ不採用理由が 2 箇所 | 直: 表のみに |
 | 17 | DR-0003 §7「これで DR-0001 §13 の移行 blocker は解消」 | §3.4 | 過去の blocker 解消 narrative | 直 |
-| 18 | DR-0003 `mid=9` / `r76 mid=74` 等の会話参照 | no-historical-noise | 辿れない参照 | 直 (裁定日付は attribution として残す) |
+| 18 | DR-0003 の room・メッセージ番号による会話参照 | no-historical-noise | 辿れない参照 | 直 (裁定日付は attribution として残す) |
 | 19 | DR-0002 §4 追補 (等値 → newer-wins) | §3.4 | 本文「不一致なら」の直後に追補で「等値ではなく」 | 直: 本文を newer-wins に、等値比較は不採用表へ |
-| 20 | DR-0002 §4 設計意図節「以前は自動再起動していたが撤廃」「v0.136.0」「kawaz r259m32/33」 | §3.4 | 変遷史・版番号・会話参照 | 直: 現行規定 + 理由のみ、自動再起動は不採用表へ |
+| 20 | DR-0002 §4 設計意図節「以前は自動再起動していたが撤廃」「v0.136.0」「kawaz + room・メッセージ番号の会話参照」 | §3.4 | 変遷史・版番号・会話参照 | 直: 現行規定 + 理由のみ、自動再起動は不採用表へ |
 | 21 | DR-0002 §5 追補 (当初案 vs 実装の乖離経緯) | §3.4 | codex レビュー指摘の経緯を DR 本文に記述 | 直: 削除、当初案は不採用表へ |
 | 22 | DR-0002 §5「25ms → 3000ms、計 12 回」 | §2.4 | 値のみで根拠なし | 注: 根拠 (前半細かく / 後半は起動が遅い環境の保険) を追記 |
 | 23 | DR-0002 §7「10MB 目安」 | §2.4 | 「目安」= 決めるべきことを実装に投げている。実装は 10 MB 固定・1 世代 | 注: 値を確定し根拠を追記、Open question を閉じる |
 | 24 | DR-0002 §4「後方互換は原則実装しない (1 ホストに閉じた系)」 | §3.1 | DR-0016 §2.3 (since mid を互換のため残す) および DR-0032 (mesh で version の違う daemon) と矛盾 | 裁: DR-0032 §3/§5 に矛盾を記録。`since` (mid) 経路を削るか、mesh の互換方針を決めてから DR-0002 §4 を supersede するか |
-| 25 | DR-0016 §1「kawaz r15 mid=19-20 で検討の上棄却」 | §3.6 | 却下理由が §3 と重複 + 会話参照 | 直 |
+| 25 | DR-0016 §1「kawaz の会話で検討の上棄却」 | §3.6 | 却下理由が §3 と重複 + 会話参照 | 直 |
 | 26 | DR-0016 §1 目的 | §1.1 | 目的が bug 症状の narrative でしか書かれていない | 直: 「切断中の全 event を 1 回ずつ受け取れる」を目的として追記 |
 | 27 | DR-0016 §2.1「~20 call site の変更ゼロ」 | design-priority | diff 量が採番位置の理由になっている | 直: 採番の正しさを 1 箇所に閉じる理由に |
 | 28 | DR-0016 §2.2「v0.32 以前」「旧行」、§2.4「従来は」「key を → に変更」 | §3.4 | 版番号・変遷表現 | 直: 「seq を持たない行」等の現在形に |
@@ -60,7 +60,7 @@
 | 37 | DR-0001 §12「入れない: 検索、room 一覧の高機能化」 | §2.5 | 理由なしの除外 | 裁 (MVP 記録なので削除でも良い) |
 | 38 | DR-0032 §2.3「room id はホストを含意する」 | §2.3 | 複数 daemon が同じ結論に達する必要がある箇所が意図のみ | 直: §3 未確定に「規則として固定する」を明記 |
 | 39 | DR-0032 §1 前提 vs DR-0002 §4 / DR-0001 §1 | §3.1 | 前提の変更が影響節に無い | 直: §5 に追記 |
-| 40 | DR-0032 `kawaz r278m37/m38`、`WA-Q1 = a` | no-historical-noise | 会話参照。Sponsor 行は attribution として許容 | 裁: Proposed なので確定時に整理 |
+| 40 | DR-0032 の room・メッセージ番号による会話参照、`WA-Q1 = a` | no-historical-noise | 会話参照。Sponsor 行は attribution として許容 | 裁: Proposed なので確定時に整理 |
 | 41 | DR-0032 §2.1「webui は caddy / tailscale の FQDN を持つ」 | §1.5 | 前提条件だが満たさない場合が無い | 裁 |
 | 42 | webui-architecture §8 移行計画 | §3.4 | DR-0032 §4 が却下した手順が本文に残る | 直: DR-0032 §2.2 参照に置換 |
 | 43 | webui-architecture Status と §9 | §3.6 | 裁定済み WA-Q1/Q3 が 2 箇所 | 直: Status に集約 |
@@ -77,7 +77,7 @@
 | 54 | server.ts `detachSession`「stayed … forever … adversarial review finding 2026-07-12」 | §3.4 | bug の経緯 narrative | 直: 不変条件 (conn は同時に 1 sid にだけ属する) として記述 |
 | 55 | server.ts `orderedMsgFrame`「with the old field order … ate the trailing fields」 | §3.4 | 旧 field order の narrative | 直 |
 | 56 | server.ts `rooms` case「Clients used to have to fetch peers…」、hello case「used to show blank columns」「same as before」 | §3.4 | 変遷表現 | 直 |
-| 57 | server.ts `RL-Q1 (kawaz r26 mid=103)` ×3 | no-historical-noise | QUESTIONS id + 会話参照。DR-0014 §2.1 の supersede 注記と issue archive が辿れる出所 | 直: 辿れる参照に |
+| 57 | server.ts `RL-Q1` + room・メッセージ番号による会話参照 ×3 | no-historical-noise | QUESTIONS id + 会話参照。DR-0014 §2.1 の supersede 注記と issue archive が辿れる出所 | 直: 辿れる参照に |
 | 58 | server.ts `RECENT_REPLAY_WINDOW_MS`「3 min default」 | §2.4 | 根拠なし | 注: 根拠 (peer 起動時間を覆う / 古い履歴を live と誤認しない) を追記 |
 | 59 | server.ts `WIRE_MSG_SAFE_BYTES`「kawaz spec: 8-9 割で予測遮断」 | §2.4 | 値と割合はあるが「なぜ 8-9 割か」が無い | 注: wrapper overhead の変動を吸う margin として追記 |
 | 60 | server.ts `SET_TITLE_MAX_LEN = 200`「reasonably short」 | §2.4 | 曖昧な形容のみ | 裁 (200 の由来不明) |
@@ -120,8 +120,7 @@
 
 - **DR (判断記録) と仕様の区別が規範に無い**。§3.4「廃止したものへの言及を消す」を DR に適用すると、Accepted 時点の決定文を後から書き換えることになる。本リポの DR は「Superseded by」注記 + 追補で運用されていて、規範の想定 (現行仕様を 1 文書で保つ) と合わない。規範側で「DR は不変、現行仕様はdesign/ に置く」か「DR も現行化する」かを決めないと、§3.4 の適用範囲が人によって割れる。
   本監査は「DR も現行化する (Status/Superseded 注記は残す)」で進めた
-- **§3.4 と attribution の衝突**: DR-0001 の記述規約 ([kawaz] / [提案] + 一次資料参照) は決定の出所を残すためのもので、`kawaz 2026-07-12 裁定` のような日付付き attribution は正当。一方 `kawaz r26 mid=103`
-  は room 番号だけで辿れない。規範に「参照は辿れる形 (一次資料 path / DR 節 / issue file) で書く。
+- **§3.4 と attribution の衝突**: DR-0001 の記述規約 ([kawaz] / [提案] + 一次資料参照) は決定の出所を残すためのもので、`kawaz 2026-07-12 裁定` のような日付付き attribution は正当。一方 room・メッセージ番号による参照は room 番号だけで辿れない。規範に「参照は辿れる形 (一次資料 path / DR 節 / issue file) で書く。
   会話 id は辿れないので書かない」の一行があると、no-historical-noise の `kawaz rNN mMM` 禁止と一貫する
 - **§2.4 は「値がない」ケースしか例示していない**。実際に多かったのは「値はあるが根拠がない」
   (`3 min default`、`10MB 目安`)。根拠が無いと監査側が推定で埋めるしかなく (#5 参照)、それは規範が防ぎたい「実装に投げる」の別形。例に「値だけ書いて根拠を省く」を足すと良い

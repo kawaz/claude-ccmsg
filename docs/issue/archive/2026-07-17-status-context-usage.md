@@ -25,7 +25,7 @@ Status タブ (+ サイドバーバッジ検討) にメインセッションの�
 
 ## 背景
 
-kawaz r26 mid=70 での依頼。実測確認済み: transcript jsonl の各 assistant 行`message.usage` に `input_tokens` / `cache_read_input_tokens` /
+kawaz からの依頼。実測確認済み: transcript jsonl の各 assistant 行`message.usage` に `input_tokens` / `cache_read_input_tokens` /
 `cache_creation_input_tokens` があり、直近 assistant 行の合算が現在のメインコンテキストサイズにほぼ一致する (自セッションで ~522k を実測)。
 
 使用率の分母はモデル名 (`message.model`) からの推定 (200k / `[1m]` = 1M)。

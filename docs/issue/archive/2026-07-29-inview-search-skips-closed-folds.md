@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-07-30T20:54:08+09:00
 discard_reason:
 pending_reason:
-close_reason: ["done:起票の前提が誤りと確定 (実機再検証 2026-07-30)。閉じた fold の中身は従来から検索対象で実装とコメントに食い違いは無かった。当初の「数えない」観測は thinking の ja 翻訳が fold を開くまで DOM に生成されないケースと推定。kawaz 裁定 (r76m73) により「閉じた fold を対象にするか」の on/off トグルを実装 (commit 954dce7c、既定 ON = 従来動作)"]
+close_reason: ["done:起票の前提が誤りと確定 (実機再検証 2026-07-30)。閉じた fold の中身は従来から検索対象で実装とコメントに食い違いは無かった。当初の「数えない」観測は thinking の ja 翻訳が fold を開くまで DOM に生成されないケースと推定。kawaz 裁定により「閉じた fold を対象にするか」の on/off トグルを実装 (commit 954dce7c、既定 ON = 従来動作)"]
 blocked_by:
 origin: 自リポ TODO
 ---

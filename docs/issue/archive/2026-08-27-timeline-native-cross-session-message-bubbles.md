@@ -27,7 +27,7 @@ Claude Code ネイティブのクロスセッションメッセージ (SendMessa
 
 ネイティブ機能は本文 inline 配送で read ステップ不要という UX 優位があり併用が予想されるが、kawaz からはやり取りが一切見えない (ccmsg room に乗らない)。
 
-kawaz 案 (r151m27): 受信側 transcript には`<cross-session-message from="uds:..." from-name="..." from-mode="...">` タグ付き user-turnレコードとして残るので、transcript 解析 (transcript-model の segment 分類) に新種のマッチパターンを追加し、既存のエージェント間通信メッセージバブルの見た目に落とし込めば良い。
+kawaz 案: 受信側 transcript には`<cross-session-message from="uds:..." from-name="..." from-mode="...">` タグ付き user-turnレコードとして残るので、transcript 解析 (transcript-model の segment 分類) に新種のマッチパターンを追加し、既存のエージェント間通信メッセージバブルの見た目に落とし込めば良い。
 送信側は SendMessage の tool_use レコードから対で拾える見込み。
 
 実機確認済みの実例: 2026-08-27 に本セッション (sid 78f7a78b... 由来の worktree main ws) ↔

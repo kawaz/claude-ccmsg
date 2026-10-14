@@ -12,7 +12,7 @@ discarded_entered:
 resolved_entered: 2026-07-13T14:08:34+09:00
 discard_reason:
 pending_reason:
-close_reason: ["implemented:v0.25.0 (c24b5ea6)","dr/DR-0003","CLI write系5opがidentity無しでhard-fail、CLAUDE_CODE_SESSION_IDを自動採用、--as-userを削除","skills/ccmsg/SKILL.mdに「write系はsession identity必須」節+「room運用の作法」節を追加","根拠:r10 mid=9(kawaz裁定)、実装:worker=u1-fix、team-lead監査済み"]
+close_reason: ["implemented:v0.25.0 (c24b5ea6)","dr/DR-0003","CLI write系5opがidentity無しでhard-fail、CLAUDE_CODE_SESSION_IDを自動採用、--as-userを削除","skills/ccmsg/SKILL.mdに「write系はsession identity必須」節+「room運用の作法」節を追加","根拠:kawaz裁定、実装:worker=u1-fix、team-lead監査済み"]
 blocked_by:
 origin: 依頼元プロジェクト
 ---

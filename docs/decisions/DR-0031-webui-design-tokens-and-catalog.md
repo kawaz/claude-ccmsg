@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-12
-Sponsor: kawaz r76m76 (2026-07-30)「404と403のデザインがバラバラ。場当たり的にデザインしてる感が強い。デザインシステムやストーリーブックなどを導入したくなる」
+Sponsor: kawaz (2026-07-30)「404と403のデザインがバラバラ。場当たり的にデザインしてる感が強い。デザインシステムやストーリーブックなどを導入したくなる」
 関連 issue: `docs/issue/2026-07-30-webui-component-catalog-design-system.md` (要件の正本、本 DR の Accepted をもって close)
 
 ## 1. 背景
@@ -43,7 +43,7 @@ app.css の `:root` に CSS 変数として定義する。
 ## 5. 導線
 
 usage 画面のタブ列 (クオータ / 使用量 / カタログ) にカタログタブを追加する。
-topbar に独立アイコンを増やさない (kawaz r119m7)。
+topbar に独立アイコンを増やさない (kawaz)。
 
 ## 6. 派生する正規化
 

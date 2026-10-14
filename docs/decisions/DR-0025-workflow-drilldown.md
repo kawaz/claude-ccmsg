@@ -2,7 +2,7 @@
 
 Status: Proposed
 Date: 2026-07-17
-Sponsor: kawaz r26 mid=109 (TUI スクショ 4 枚付き)
+Sponsor: kawaz (TUI スクショ 4 枚付き)
 
 ## 1. 背景
 
@@ -39,5 +39,5 @@ Status タブの workflow 表示は現状トップ (名前と走行/完了) だ�
 
 ## 4. 関連
 
-- kawaz r26 mid=109 (要件 + TUI スクショ)
+- kawaz (要件 + TUI スクショ)
 - DR-0020 (session_status fold) / DR-0021 (仮想 session 読み出し) — 拡張元

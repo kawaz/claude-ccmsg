@@ -28,7 +28,7 @@ ccmsg 等のバブルだけ個別表示、間の連続 item は『N items』の 
 
 ## 背景
 
-kawaz 指示 (r151m38、2026-08-27)。kawaz 曰く「ここ無駄に複雑な処理になってたのでだいぶシンプルになる」— グルーピング判定ロジックの削除が主。
+kawaz 指示 (2026-08-27)。kawaz 曰く「ここ無駄に複雑な処理になってたのでだいぶシンプルになる」— グルーピング判定ロジックの削除が主。
 
 着手タイミング: ネイティブメッセージバブル統合(2026-08-27-timeline-native-cross-session-message-bubbles) が Timeline.tsx /
 transcript-model.ts を編集中のため、その land 後に着手する。

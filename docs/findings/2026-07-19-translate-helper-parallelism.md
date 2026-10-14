@@ -16,12 +16,12 @@
 
 ## 実用的な示唆 / ベストプラクティス
 
-- **helper の並列化は実装しない (= 現状維持)**。DR-0023 の 1 op = 1 段落 (r34 mid=15) の設計は helper 側での並列度に依存していない。
+- **helper の並列化は実装しない (= 現状維持)**。DR-0023 の 1 op = 1 段落の設計は helper 側での並列度に依存していない。
 - **理由**: Translation.framework がプロセス/デバイス側で serialize しているため、helper 内で session / Task / process を増やしても total は変わらない。追加した並列化コード (Actor Writer、Dispatcher、TaskGroup 管理) の複雑さと first-response の悪化だけが残る (design-priority.md「悪くする変更を入れない」)。
 - **1 op = 1 段落は保つ**。1 request に 8 段落詰め込むと 4-8s wedge のあいだ daemon はキャンセル手段なく待たされる。1 op = 1 段落なら watchdog (input length に比例) を段落単位で発火でき、次段落の受信は独立に進む。
 - **並列送信は保つ (webui 側 `Promise.all(paragraphs.map(...))`)**。helper が直列でも、request 発火が並列なら「先頭段落から順に arrive する」効果があり、UI に段落単位で流し込める。webui が段落間で await にすると first response が入力順の 1 番目に固定される (= 現状) が、それは並列送信でも変わらない (先頭が最初に完成するのが実測値だから)。
 - **将来 Translation.framework が並列化されたら再実測する**。同じベンチスクリプト (`scratchpad/bench.ts`) で回帰確認できる。
-- **kawaz 指摘 (r34 mid=15)** への回答: 直列 readLine は「並列化サボり」ではなく **Translation.framework 側の制約に合わせた設計** で、並列化しても総所要時間は変わらず (むしろ first response が遅くなる)。helper 内での並列度向上は現状の Apple の翻訳エンジン API では不可能。
+- **kawaz 指摘** への回答: 直列 readLine は「並列化サボり」ではなく **Translation.framework 側の制約に合わせた設計** で、並列化しても総所要時間は変わらず (むしろ first response が遅くなる)。helper 内での並列度向上は現状の Apple の翻訳エンジン API では不可能。
 
 ## 検証の詳細
 

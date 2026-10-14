@@ -49,7 +49,7 @@ body cap を含めた notification 全体の長さは、500-body cluster で ~77
 
 ## 実用的な示唆
 
-- **予測遮断の基準を 500-cluster に合わせる**: 両モードが並存する以上、安全側 = 小さい cap を基準にすべき。kawaz r34 mid=18 の実観測 (最近のClaude Code version) も 500-body 帯で切られている
+- **予測遮断の基準を 500-cluster に合わせる**: 両モードが並存する以上、安全側 = 小さい cap を基準にすべき。kawaz の実観測 (最近のClaude Code version) も 500-body 帯で切られている
 - **80% を safe budget として `WIRE_MSG_SAFE_BYTES=400` をデフォルトに**:
   serialized JSON frame (`{"type":"msg","mid":N,"from":"aN","ts":"...", "r":"rN","seq":M,"reply_via":"Use `ccmsg reply rNmM <msg>`","msg":"..."}`) の長さが 400 byte を超えたら msg 本文を preview + `ccmsg read` 案内に差し替える (実装:
   packages/daemon/src/server.ts の `orderedMsgFrame`)

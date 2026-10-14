@@ -33,7 +33,7 @@ daemon のセッション状態取得元を `claude agents --json` から `<conf
 - [ ] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る(subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream非公開なので変化に備えたフォールバックを残す
 - [ ] SessionList の Busy / Idle 判定は `claude agents` の値 (transcript の turn 状態)
       でなく、llm-gateway から届く request/response イベント (cache ring のために
-      既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、リクエスト進行中 = Busy (kawaz r278m10 の裁定)。transcript / jsonl は活動判定に
+      既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、リクエスト進行中 = Busy (kawaz)。transcript / jsonl は活動判定に
       使わない
 - [ ] `claude agents` 由来の値は「プロセスの存在」「waiting (dialog)」「pid / cwd / name」
       にだけ使う
@@ -46,7 +46,7 @@ daemon のセッション状態取得元を `claude agents --json` から `<conf
 
 gateway 側への起票先 (llm-gateway の docs/issue または r276 経由) は kawaz 裁定待ち。
 
-追記: kawaz r278m22 (2026-09-06) — llm-gateway 側でリングタイマー用の通知を改修中で、gateway 目線の Idle 通知も提供される見込み (r276 経由で連絡が来る)。Idle は状態として導出するが、UI での活用は当面「行のアイコン表示」に留める (セクション分け・並びには使わない、r278m21 の「ソート順でよく別なことはしない」と整合)。
+追記: kawaz (2026-09-06) — llm-gateway 側でリングタイマー用の通知を改修中で、gateway 目線の Idle 通知も提供される見込み (r276 経由で連絡が来る)。Idle は状態として導出するが、UI での活用は当面「行のアイコン表示」に留める (セクション分け・並びには使わない、「ソート順でよく別なことはしない」と整合)。
 
 ## TODO
 

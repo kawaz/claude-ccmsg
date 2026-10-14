@@ -2,7 +2,7 @@
 
 Status: Accepted (IB-Q3=a、kawaz 2026-07-16)
 Date: 2026-07-16
-Sponsor: kawaz r26 mid=1 + 続く transcript 議論
+Sponsor: kawaz + 続く transcript 議論
 
 ## 1. 背景
 

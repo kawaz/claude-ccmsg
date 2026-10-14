@@ -27,7 +27,7 @@ origin: 自リポ TODO
 
 harness の task-notification truncation はブロック末尾から切る。現状のカラム順(`msg` が中程、`r` / `seq` / `reply_hint` が後ろ) だと、長文 `msg` のときに後続フィールドだけが silent に消える。
 
-mid=99 の実例では `reply_hint` が消えつつ本文はギリギリ読める状態になり、エージェントが truncation の発生に気づかず後続フィールドの存在を認識しない事故が起きた(kawaz r26 mid=110 で報告)。
+ある実例では `reply_hint` が消えつつ本文はギリギリ読める状態になり、エージェントが truncation の発生に気づかず後続フィールドの存在を認識しない事故が起きた(kawaz が報告)。
 
 `msg` を最後に置けば、切れるのは常に `msg` の途中になる。「切れている」ことが出力から視認できるようになり、全文読み (transcript read 等) に誘導される。
 
