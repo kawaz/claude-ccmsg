@@ -29,6 +29,7 @@
 - 一時ディレクトリは `mkdtemp` で作り、テストの後で消す。
 - テストが起動する daemon の `CCMSG_*` は全部テスト側で固定し、開発者の shell から継承しない。
 - グローバル (`WebSocket` 等) の差し替えは `packages/webui/test/helpers.ts` の `stubGlobal` で行い、`afterEach` で戻す。bun test は全ファイルを 1 プロセスで走らせるので、戻し忘れは別ファイルのテストを壊す。
+- DOM の prototype (`HTMLElement.prototype` の `clientHeight` 等) の差し替えは同じ helpers.ts の `stubProperty` で行い、元の記述子に戻す。happy-dom の class は `withDom` の登録をまたいで同じなので、`delete` で消すと happy-dom 自身の定義まで消え、後に走るファイルで値が `undefined` になる。ファイルの実行順は OS で違う (ubuntu と macOS で前後が入れ替わる) ので、戻し方の誤りは片方の OS でだけ落ちる。
 
 ## webui
 

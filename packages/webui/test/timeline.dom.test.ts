@@ -17,7 +17,7 @@ import { timelineHref } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { timelineAutoOpenStorageKey } from "../src/client/timeline-auto-open.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
-import { defined, instanceOf, stubGlobal } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
   endOf,
@@ -39,8 +39,9 @@ const VIEWPORT_PX = 200;
 let scrollTos: number[] = [];
 let navigations: Array<{ url: string; history: string | undefined }> = [];
 let restores: Array<() => void> = [];
-/** 差し替えた HTMLElement.prototype (afterAll の時点では DOM が外れている)。 */
-let patched: object | null = null;
+/** HTMLElement.prototype の差し替えを戻す (戻す先は差し替えた時に掴んだ
+ * prototype なので、DOM が外れた後の afterAll でも戻せる)。 */
+let layoutRestores: Array<() => void> = [];
 const mounted = new Mounted();
 
 function isScroller(el: HTMLElement): boolean {
@@ -48,34 +49,35 @@ function isScroller(el: HTMLElement): boolean {
 }
 
 beforeAll(() => {
-  patched = HTMLElement.prototype;
-  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
-    configurable: true,
-    get(this: HTMLElement) {
-      return isScroller(this) ? this.querySelectorAll("[data-timeline-uuid]").length * ITEM_PX : 0;
-    },
-  });
-  Object.defineProperty(HTMLElement.prototype, "clientHeight", {
-    configurable: true,
-    get(this: HTMLElement) {
-      return isScroller(this) ? VIEWPORT_PX : 0;
-    },
-  });
-  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
-    configurable: true,
-    value(this: HTMLElement, options: ScrollToOptions) {
-      if (isScroller(this)) scrollTos.push(options.top ?? 0);
-      this.scrollTop = options.top ?? this.scrollTop;
-    },
-  });
+  const proto = HTMLElement.prototype;
+  layoutRestores = [
+    stubProperty(proto, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isScroller(this)
+          ? this.querySelectorAll("[data-timeline-uuid]").length * ITEM_PX
+          : 0;
+      },
+    }),
+    stubProperty(proto, "clientHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return isScroller(this) ? VIEWPORT_PX : 0;
+      },
+    }),
+    stubProperty(proto, "scrollTo", {
+      configurable: true,
+      value(this: HTMLElement, options: ScrollToOptions) {
+        if (isScroller(this)) scrollTos.push(options.top ?? 0);
+        this.scrollTop = options.top ?? this.scrollTop;
+      },
+    }),
+  ];
 });
 
 afterAll(() => {
-  const proto = patched;
-  if (proto === null) return;
-  for (const name of ["scrollHeight", "clientHeight", "scrollTo"]) {
-    Reflect.deleteProperty(proto, name);
-  }
+  for (const restore of layoutRestores.reverse()) restore();
+  layoutRestores = [];
 });
 
 beforeEach(() => {

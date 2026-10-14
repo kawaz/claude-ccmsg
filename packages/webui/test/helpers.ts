@@ -39,16 +39,31 @@ export function instanceOf<V, T extends V>(
  * bun runs every test file in one process, so a global left replaced or
  * deleted leaks into the files that run after. */
 export function stubGlobal<T>(name: string, value: T): () => void {
-  const original = Object.getOwnPropertyDescriptor(globalThis, name);
-  Object.defineProperty(globalThis, name, {
+  return stubProperty(globalThis, name, {
     value,
     configurable: true,
     enumerable: true,
     writable: true,
   });
+}
+
+/** Define `name` on `target` as `descriptor` (a getter on a DOM prototype the
+ * test gives the layout happy-dom does not compute) and return what puts the
+ * original back: `target`'s own property as it was, or none when there was
+ * none. Deleting is not putting back: happy-dom defines some of these as the
+ * prototype's own (`clientHeight` on `HTMLElement.prototype`), and its classes
+ * are the same across `withDom` registrations, so a deleted one is gone for
+ * the files that run after. */
+export function stubProperty(
+  target: object,
+  name: string,
+  descriptor: PropertyDescriptor,
+): () => void {
+  const original = Object.getOwnPropertyDescriptor(target, name);
+  Object.defineProperty(target, name, descriptor);
   return () => {
-    if (original === undefined) Reflect.deleteProperty(globalThis, name);
-    else Object.defineProperty(globalThis, name, original);
+    if (original === undefined) Reflect.deleteProperty(target, name);
+    else Object.defineProperty(target, name, original);
   };
 }
 
