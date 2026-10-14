@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PROTOCOL_VERSION, type SessionFacts, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { SessionFactsStore } from "../src/session-facts.ts";
-import { contextWithFacts, withFacts } from "../src/session-status.ts";
+import { apiErrorOfFacts, contextWithFacts, withFacts } from "../src/session-status.ts";
 import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -98,6 +98,34 @@ describe("the context with the module's facts laid over the transcript's", () =>
       context: { ...FOLDED, window: 1_000_000, model: "claude-opus-5-5[1m]" },
     });
     expect(withFacts(snapshot, undefined)).toBe(snapshot);
+  });
+});
+
+describe("the API error with the module's facts", () => {
+  const FOLDED_ERROR = { text: "Prompt is too long", timestamp: "2026-10-14T00:00:00.000Z" };
+  const snapshot: SessionStatusSnapshot = {
+    todos: [],
+    workflows: [],
+    background: [],
+    api_error: FOLDED_ERROR,
+  };
+
+  test("the module's error carries its kind, and its text when the harness showed one", () => {
+    const at = Date.parse("2026-10-14T00:00:05.000Z");
+    expect(apiErrorOfFacts({ at, api_error: { kind: "overloaded", text: "529", at } })).toEqual({
+      text: "529",
+      timestamp: "2026-10-14T00:00:05.000Z",
+      kind: "overloaded",
+    });
+    expect(apiErrorOfFacts({ at, api_error: { kind: "unknown", at } })?.text).toBe("unknown");
+    expect(apiErrorOfFacts({ at })).toBeUndefined();
+  });
+
+  // The module always says whether the latest turn ended on an error, so its
+  // "none" stands over an error row the transcript fold still holds.
+  test("facts without an error clear the fold's; without facts the fold's stands", () => {
+    expect(withFacts(snapshot, { at: 1 }).api_error).toBeUndefined();
+    expect(withFacts(snapshot, undefined).api_error).toEqual(FOLDED_ERROR);
   });
 });
 

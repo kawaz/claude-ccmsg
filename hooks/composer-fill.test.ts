@@ -972,6 +972,56 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(fake.factsSent.map((f) => f.facts.context?.window)).toEqual([1_000_000, 400_000]);
   });
 
+  // Claude Code classifies the error at StopFailure, before the turn ends.
+  test("a main-thread StopFailure sends the error, its kind and its text", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const stop = { error: "rate_limit", last_assistant_message: "API Error: 429" };
+    await fire(fake, "classic.StopFailure", stop, async () => ({}));
+    await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
+    await untilFacts(fake, 1);
+    await settle();
+    expect(fake.factsSent.map((f) => f.facts.api_error?.kind)).toEqual(["rate_limit"]);
+    expect(factsAt(fake, 0).facts.api_error?.text).toBe("API Error: 429");
+  });
+
+  test("a subagent's failure and turn end leave the session's error alone", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const stop = { error: "overloaded", agent_id: "a1" };
+    await fire(fake, "classic.StopFailure", stop, async () => ({}));
+    await fire(fake, "turn.complete", { reason: "error", agentId: "a1" }, async () => ({}));
+    await settle();
+    expect(fake.factsSent).toEqual([]);
+  });
+
+  // The turn ended on an error Claude Code raised no StopFailure for.
+  test("a turn that ends on an error without a StopFailure is an unknown error", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
+    await untilFacts(fake, 1);
+    expect(factsAt(fake, 0).facts.api_error?.kind).toBe("unknown");
+  });
+
+  // An answer is what clears the error, as a real assistant row clears the
+  // transcript's; an interrupted turn answered nothing.
+  test("an answer clears the error; an interrupted turn keeps it", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "classic.StopFailure", { error: "server_error" }, async () => ({}));
+    await fire(fake, "turn.complete", { reason: "error", turnId: "t1" }, async () => ({}));
+    await untilFacts(fake, 1);
+    await settle();
+    const sent = fake.factsSent.length;
+    await fire(fake, "turn.complete", { reason: "aborted", turnId: "t2" }, async () => ({}));
+    await settle();
+    expect(fake.factsSent.length).toBe(sent);
+    await fire(fake, "turn.complete", { reason: "answer", turnId: "t3" }, async () => ({}));
+    await untilFacts(fake, sent + 1);
+    expect(factsAt(fake, sent).facts.api_error).toBeUndefined();
+  });
+
   test("a facts send that fails is logged, and the event goes on once", async () => {
     const fake = fakeEngine();
     const process = fake.$.process;

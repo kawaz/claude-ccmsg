@@ -283,8 +283,11 @@ export const ExternalFileSchema = v.object({
 });
 export type ExternalFile = Output<typeof ExternalFileSchema>;
 
-/** A harness-synthesized API-error row observed as the last thing the main
- * context did (`{"type":"assistant","isApiErrorMessage":true,...}` with
+/** The API error the session's latest main-context turn ended on. Where the
+ * session's hooks module sends facts (DR-0035 §3) it is the module's, from
+ * Claude Code's own StopFailure and turn end; otherwise it is folded off the
+ * transcript: a harness-synthesized API-error row observed as the last thing
+ * the main context did (`{"type":"assistant","isApiErrorMessage":true,...}` with
  * `message.model === "<synthetic>"`). Claude Code writes these in the agent's
  * own voice — "Prompt is too long", "API Error: 500 ...", "You're out of extra
  * usage · resets 7pm", "Please run /login" — but they are the CLI reporting a
@@ -296,11 +299,16 @@ export type ExternalFile = Output<typeof ExternalFileSchema>;
  * Sidechain (subagent) error rows never set it — a failed subagent does not
  * stop the main context. */
 export const SessionApiErrorSchema = v.object({
-  /** Verbatim error text of the row, so a client can show *why* the session
-   * stopped. Concatenation of the row's text blocks; may be multi-line. */
+  /** Verbatim error text, so a client can show *why* the session stopped: the
+   * row's text blocks concatenated, or what the harness showed as the module
+   * saw it (its kind when it showed nothing). May be multi-line. */
   text: v.string(),
-  /** ISO timestamp of the error row. */
+  /** ISO timestamp of the error row, or of when the module saw the error. */
   timestamp: v.string(),
+  /** Claude Code's classification of the error (StopFailure's `error`, an
+   * open set), from the hooks module; absent when folded off the
+   * transcript, which carries none. */
+  kind: v.optional(v.string()),
 });
 export type SessionApiError = Output<typeof SessionApiErrorSchema>;
 

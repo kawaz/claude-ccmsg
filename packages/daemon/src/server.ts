@@ -42,6 +42,7 @@ import {
   type StreamEvent,
   type RoomKind,
   type SessionIdentity,
+  type SessionErrorEntry,
   type SessionFacts,
   type SessionInputReadiness,
   type StaleClientInfo,
@@ -110,6 +111,7 @@ import {
   getSessionStatus,
   refreshInputReadiness,
   refreshSessionFacts,
+  apiErrorOfFacts,
   sessionStatusUnsubscribeAll,
   stopAllSessionStatus,
   subscribeSessionStatus,
@@ -630,7 +632,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
  * Callers push ev:"peers" themselves. */
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
-  daemon.sessionFacts.forget(sid);
+  // An API error its module said goes with it.
+  if (daemon.sessionFacts.forget(sid)) broadcastSessionErrors(daemon);
   // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
   // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
   leaveAllBroadcasts(daemon, sid);
@@ -646,6 +649,10 @@ const SESSION_FACTS_ASK_MS = 5_000;
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
   if (!daemon.sessionFacts.take(sid, facts)) return;
   refreshSessionFacts(daemon.sessionStatus, sid, daemon.log);
+  // The session says its API error now: its transcript watch goes, and the
+  // list moves if the error did.
+  syncSessionErrors(daemon);
+  broadcastSessionErrors(daemon);
 }
 
 /** Ask the module behind `run` for its facts (`session.facts`). A module
@@ -1182,7 +1189,7 @@ function hasUserSubscriber(daemon: Daemon): boolean {
  * sent — a transcript event that leaves the error state alone (the common
  * case, since every appended line is examined) must not produce a push. */
 function broadcastSessionErrors(daemon: Daemon): void {
-  const errors = sessionErrorEntries(daemon.sessionErrors);
+  const errors = currentSessionErrors(daemon);
   const key = JSON.stringify(errors);
   if (key === daemon.sessionErrorsSnapshot) return;
   daemon.sessionErrorsSnapshot = key;
@@ -1191,9 +1198,25 @@ function broadcastSessionErrors(daemon: Daemon): void {
   }
 }
 
+/** Which sessions are stopped on an API error, sorted by sid: from the hooks
+ * module's facts where the session sends them (apiErrorOfFacts), and folded
+ * off the transcript for the rest. A transcript fold of a session that has
+ * facts (one started before it sent any) is not read. */
+function currentSessionErrors(daemon: Daemon): SessionErrorEntry[] {
+  const entries = sessionErrorEntries(daemon.sessionErrors).filter(
+    (entry) => daemon.sessionFacts.get(entry.sid) === undefined,
+  );
+  for (const [sid, facts] of daemon.sessionFacts.entries()) {
+    const error = apiErrorOfFacts(facts);
+    if (error !== undefined) entries.push({ sid, ...error });
+  }
+  return entries.sort((a, b) => a.sid.localeCompare(b.sid));
+}
+
 /** Follow every connected session's transcript for api_error — but only while
  * a user-role subscriber is connected: webui-only work costs nothing when no
- * webui is watching. With no such subscriber the wanted set is empty, which tears every
+ * webui is watching. A session whose hooks module sends facts says its API
+ * error itself, so its transcript is not followed for it. With no such subscriber the wanted set is empty, which tears every
  * watch down. Called from the three places that can change either input: peers
  * changing (maybeBroadcastPeers), a user subscribing, and a subscriber leaving. */
 function syncSessionErrors(daemon: Daemon): void {
@@ -1201,7 +1224,11 @@ function syncSessionErrors(daemon: Daemon): void {
   // which sessions are stopped at the moment the link returns, and a stall
   // that happened while no webui was open is exactly the one worth waking.
   const wanted = hasUserSubscriber(daemon) || daemon.networkWatch?.enabled === true;
-  const sids = wanted ? [...daemon.sessions.values()].map((s) => s.meta.sid) : [];
+  const sids = wanted
+    ? [...daemon.sessions.values()]
+        .map((s) => s.meta.sid)
+        .filter((sid) => daemon.sessionFacts.get(sid) === undefined)
+    : [];
   syncSessionErrorWatches(
     daemon.sessionErrors,
     daemon.transcriptTail,
@@ -1245,7 +1272,7 @@ function networkState(daemon: Daemon): PingResponse["network"] {
  * so a session with no live subscribe simply is not woken — there is nothing
  * to deliver to, and no other channel reaches an idle CLI. */
 export function wakeStalledSessions(daemon: Daemon): void {
-  const wakes = wakesForOnline(daemon.sessionWake, sessionErrorEntries(daemon.sessionErrors));
+  const wakes = wakesForOnline(daemon.sessionWake, currentSessionErrors(daemon));
   if (wakes.length === 0) return;
   let delivered = 0;
   for (const wake of wakes) {
@@ -3268,7 +3295,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // A watch started moments ago may still be folding; the op contract is a
       // settled list, so wait for the scans already under way.
       await sessionErrorsReady(daemon.sessionErrors);
-      send(conn, { ok: true, errors: sessionErrorEntries(daemon.sessionErrors) });
+      send(conn, { ok: true, errors: currentSessionErrors(daemon) });
       return;
     }
 

@@ -1843,16 +1843,31 @@ export function contextWithFacts(
   };
 }
 
+/** The API error the hooks module says the latest main-thread turn ended
+ * on, as the snapshot and the session-error list carry one. The module's
+ * facts always say whether there is one, so a session with facts takes this
+ * over the transcript's fold, absent included. */
+export function apiErrorOfFacts(facts: SessionFacts): SessionApiError | undefined {
+  const error = facts.api_error;
+  if (error === undefined) return undefined;
+  return { text: error.text ?? error.kind, timestamp: isoAt(error.at), kind: error.kind };
+}
+
 /** A fold's snapshot with what is not read off the transcript laid over it:
- * the hooks module's facts (contextWithFacts). */
+ * the hooks module's facts (contextWithFacts, apiErrorOfFacts). */
 export function withFacts(
   data: SessionStatusSnapshot,
   facts: SessionFacts | undefined,
 ): SessionStatusSnapshot {
   if (facts === undefined) return data;
-  const { context: folded, ...rest } = data;
+  const { context: folded, api_error: _folded, ...rest } = data;
   const context = contextWithFacts(folded, facts);
-  return { ...rest, ...(context !== undefined ? { context } : {}) };
+  const apiError = apiErrorOfFacts(facts);
+  return {
+    ...rest,
+    ...(context !== undefined ? { context } : {}),
+    ...(apiError !== undefined ? { api_error: apiError } : {}),
+  };
 }
 
 /** The snapshot of a fold with the session's input readiness and its hooks

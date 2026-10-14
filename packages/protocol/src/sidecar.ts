@@ -144,10 +144,24 @@ export const SessionFactsContextSchema = v.object({
 });
 export type SessionFactsContext = Output<typeof SessionFactsContextSchema>;
 
+/** The API error that ended the session's latest main-thread turn, as Claude
+ * Code classified it (StopFailure's `error`: `rate_limit`, `overloaded`,
+ * `server_error`, `authentication_failed`, ...; `unknown` when the turn ended
+ * on an error with no StopFailure before it). An open set: Claude Code names
+ * the kinds. `text` is what the harness showed for it, when it said; `at` is
+ * when the module saw it. */
+export const SessionFactsApiErrorSchema = v.object({
+  kind: v.pipe(v.string(), v.nonEmpty()),
+  text: v.optional(v.string()),
+  at: EpochMsSchema,
+});
+export type SessionFactsApiError = Output<typeof SessionFactsApiErrorSchema>;
+
 /** What a session's hooks module knows of its session through Claude Code
- * itself (DR-0035 §3), and the transcript cannot tell: the model as the
- * session names it (`$.session.model()`, a launch-time `[1m]` kept) and the
- * context window. The module sends the whole of it each time a part moves, so
+ * itself (DR-0035 §3), and the transcript cannot tell, or tells late: the
+ * model as the session names it (`$.session.model()`, a launch-time `[1m]`
+ * kept), the context window, and whether the latest main-thread turn ended on
+ * an API error (absent when it did not). The module sends the whole of it each time a part moves, so
  * the facts the daemon holds are replaced, never merged; `at` is when the
  * module put them together, and facts older than the ones held are dropped.
  * A part the module does not know yet is absent. */
@@ -155,6 +169,7 @@ export const SessionFactsSchema = v.object({
   at: EpochMsSchema,
   model: v.optional(v.pipe(v.string(), v.nonEmpty())),
   context: v.optional(SessionFactsContextSchema),
+  api_error: v.optional(SessionFactsApiErrorSchema),
 });
 export type SessionFacts = Output<typeof SessionFactsSchema>;
 

@@ -22,6 +22,11 @@ export class SessionFactsStore {
     return this.#bySid.get(sid);
   }
 
+  /** Every session's facts, by sid. */
+  entries(): IterableIterator<[string, SessionFacts]> {
+    return this.#bySid.entries();
+  }
+
   /** Drop `sid`'s facts (the session ended). True when there were any. */
   forget(sid: string): boolean {
     return this.#bySid.delete(sid);

@@ -12,6 +12,12 @@
 // It tails rather than polls: the Watch already exists (fs.watch with a poll
 // fallback inside transcript.ts) and reports appends as they land, so an error
 // reaches the sidebar immediately instead of on a timer.
+//
+// A session whose hooks module sends facts (session-facts.ts, DR-0035 §3)
+// says its API error itself, classified by Claude Code: the daemon does not
+// hand its sid here, and lays the module's error into the list instead
+// (server.ts currentSessionErrors). What is folded here is for the sessions
+// without the module.
 import {
   isKnownTranscriptRow,
   parseWith,

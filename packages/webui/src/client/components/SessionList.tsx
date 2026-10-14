@@ -505,7 +505,9 @@ function SessionRowItem({
   // 停止理由は行内には 1 行分しか出せない (下の session-error-text は CSS で
   // 省略される) ので、全文は hover の title 側で読めるようにしておく。
   if (row.api_error)
-    titleParts.push(`API error (${row.api_error.timestamp}):\n${row.api_error.text}`);
+    titleParts.push(
+      `API error${row.api_error.kind !== undefined ? ` ${row.api_error.kind}` : ""} (${row.api_error.timestamp}):\n${row.api_error.text}`,
+    );
   const staleClient = staleClientWarning(row);
   if (staleClient) titleParts.push(staleClient.text);
 
