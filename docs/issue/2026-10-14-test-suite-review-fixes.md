@@ -26,13 +26,13 @@ origin: 自リポ TODO
 ### high
 
 1. webui の component / hook の配線が 0 カバレッジ。happy-dom (GlobalRegistrator を bunfig の preload) で preact の render をマウントする基盤を `webui/test` に 1 本置く。最初の対象は SessionInputComposer (storage event → 入力欄) と Timeline の effect (issue `webui-timeline-decomposition-and-hook-tests` と連動)
-2. `broadcast.test.ts:577-601, 635-651` の「起きないこと」を `Bun.sleep` で主張する negative テストを、marker の round-trip で順序づける形にする
-3. `webui/test/ws.test.ts:182, 537, 1034` の実時間待ち。ws.ts に clock を注入 (hooks の `Engine.clock` と同型) して決定的にする
+2. (済 d3b34fa329eb。残: `cli/test/sidecar.test.ts:108` の `Bun.sleep(1)` は「バイトを別々の write で届ける」ための間隔で観測待ちではないが、coalesce で vacuous pass し得る。sidecar 側に読み取りの区切りを観測する口が無いため未対応) `broadcast.test.ts:577-601, 635-651` の「起きないこと」を `Bun.sleep` で主張する negative テストを、marker の round-trip で順序づける形にする
+3. (済 385c4f956ae0) `webui/test/ws.test.ts:182, 537, 1034` の実時間待ち。ws.ts に clock を注入 (hooks の `Engine.clock` と同型) して決定的にする
 
 ### medium
 
-4. `llm-stats-op` / `llm-usage-op` の固定ポート 18941 / 18921 を port 0 にする
-5. `ws.test.ts` の送信フレームを index で固定している 37 箇所を、op で引く helper にする
+4. (済 7578f3cdfff8) `llm-stats-op` / `llm-usage-op` の固定ポート 18941 / 18921 を port 0 にする
+5. (済 17257a95fa93) `ws.test.ts` の送信フレームを index で固定している 37 箇所を、op で引く helper にする
 6. `session-input.test.ts` の readiness テストを fs.watch から poll 経路に差し替えた件 (v0.166.1 で CI 対策として入れた) は実装の都合で緩めた典型。issue `sidecar-should-not-resolve-its-own-pid` の案 A (bind 時の名乗りを契機) で fs.watch 依存ごと解消し、テストは名乗り経路で書き直す
 
 ### 残り (7)〜(12)
@@ -45,6 +45,6 @@ findings を参照: 文字列 JSON assert、storedDraftChange の null 経路テ
 
 ## 受け入れ条件
 
-- [ ] high (1)〜(3) が解消している
-- [ ] medium (4)〜(6) が解消している
+- [ ] high (1) が解消している
+- [ ] medium (6) が解消している
 - [ ] (7)〜(12) が findings に沿って解消している
