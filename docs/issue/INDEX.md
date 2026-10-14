@@ -10,6 +10,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
 | 2026-10-13 | design | open | [agent-guidance-for-ccmsg-addresses](./2026-10-13-agent-guidance-for-ccmsg-addresses.md) | DR-0037 の ccmsg:<sid> 宛先をエージェントが初手で知る面が peers --help しか無い。skill / hook / rules のどこに案内を置くか裁定待ち |
 | 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |
+| 2026-10-14 | bug | open | [test-suite-review-fixes](./2026-10-14-test-suite-review-fixes.md) | テスト群の第三者レビュー指摘 (test-suite-review-fresh-eyes) を直す |
 | 2026-10-14 | bug | open | [webui-async-generation-guards-and-effect-bugs](./2026-10-14-webui-async-generation-guards-and-effect-bugs.md) | webui の非同期応答の世代ガードと Effect 起因の bug 群 |
 | 2026-10-14 | bug | open | [webui-hooks-lint-and-rules-of-hooks](./2026-10-14-webui-hooks-lint-and-rules-of-hooks.md) | webui の hooks lint 導入と rules-of-hooks 違反の解消 |
 | 2026-10-11 | bug | open | [llm-stats-tokens-object-not-mapped-to-wire](./2026-10-11-llm-stats-tokens-object-not-mapped-to-wire.md) | llm gateway の stats の tokens object が wire に写らず webui の token 集計が常に 0。daemon の stats スキーマに tokens を足して写す |
@@ -36,7 +37,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-09-06 | design | open | [session-status-from-sessions-json](./2026-09-06-session-status-from-sessions-json.md) | セッション状態の取得元を `claude agents --json` から `sessions/<pid>.json` 直読みに変え、活動判定を transcript の turn 状態に寄せる |
 | 2026-09-06 | task | open | [webui-connection-log-id](./2026-09-06-webui-connection-log-id.md) | webui 接続ログに接続 ID / User-Agent を付けて、古い bundle のまま残った端末を特定できるようにする |
 | 2026-09-05 | request | open | [keepalive-pause-button](./2026-09-05-keepalive-pause-button.md) | webui からセッション単位で llm-gateway の keepalive を止める。daemon が gateway HTTP API を叩く方式 |
-| 2026-08-20 | design | open | [timeline-message-hover-toolbar](./2026-08-20-timeline-message-hover-toolbar.md) | Timeline のメッセージバブル hover ツールバー設計 (kawaz r135m48-57 議論まとめ)。応答バブルの翻訳タブ・md/source 切替・重い操作の格下げを決定、実装未着手 |
+| 2026-08-20 | design | open | [timeline-message-hover-toolbar](./2026-08-20-timeline-message-hover-toolbar.md) | Timeline のメッセージバブル hover ツールバー設計 (kawaz 議論まとめ)。応答バブルの翻訳タブ・md/source 切替・重い操作の格下げを決定、実装未着手 |
 | 2026-09-19 | idea | idea | [replace-chat-refs-with-quotes](./2026-09-19-replace-chat-refs-with-quotes.md) | ccmsg room/メッセージ参照 (mid=) を引用形式に置き換える。docs lint PoC で 168 件検出、v1 廃止で room log が消える前に |
 | 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
 | 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
