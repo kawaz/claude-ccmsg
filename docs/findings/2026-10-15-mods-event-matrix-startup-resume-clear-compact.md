@@ -489,6 +489,251 @@ exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color LANG=ja_J
 - 保持区間 (`preservedSegment`) が付く compaction の条件
 - subagent・teammate の turn での注入
 
+## `$.tool.register` の可視範囲と typed call
+
+ccmsg がエージェントに使わせる口を、CLI から `$.tool.register` の tool (JSON Schema で型の付いた tool) に置き換えられるかを決めるための追加の観測。環境は上と同じ隔離 config home と代役の API で、代役に「tool を 3 つ以上持つ request (main か subagent の loop) には台本 (`script.jsonl`) の先頭の応答 (tool_use か text) を返す」機能を足し、model が tool を呼ぶ場面を再現した。probe mod は上の観測 mod とは別の `mods-tool` (下の source) で、`session.start` で 3 つの tool を登録する。
+
+| 登録名 (model から見える名前) | `isDeferred` | handler |
+|---|---|---|
+| `ccmsg_send` (`mcp__mods-tool__ccmsg_send`) | `false` | `tool.call` で `next` を呼ばずに `{ result }` を返す |
+| `ccmsg_deferred` (`mcp__mods-tool__ccmsg_deferred`) | `true` | 同上 |
+| `ccmsg_checked` (`mcp__mods-tool__ccmsg_checked`) | `false` | `tool.call` で先に `await next(e)` を呼び、その後で `{ result }` を返す |
+
+input schema は 3 つとも `{ session_id?: string, cwd?: string, name?: string, pid?: string, text: string }` (`required: ['text']`、`additionalProperties: false`)。
+
+### 結論
+
+- **置き換えは可能**。`--plugin-dir` (managed でない user tier) の mod が `session.start` で登録した tool は、対話・`-p`・subagent の request の `tools` に載り、model の呼び出しが `tool.call` の handler に届き、返した文字列がそのまま tool_result になった
+- handler の中で、呼び手の session id (`$.session.id()`)、cwd (`$.session.cwd()`)、subagent なら `e.agentId` が取れる。**subagent からの呼び出しでも `$.session.id()` は親 (main) の session id** で、subagent の区別は `e.agentId` だけ (3/3)
+- 制約が 4 つある
+  - **engine は input schema で入力を検査しない**。`text` 欠落、`text: 123`、`pid: 42` (数値) がそのまま handler に届き、エラーにもならなかった (`-p` 4 件、subagent 1 件)。handler の入口で parse する (valibot 等) のが必須
+  - **`next` を呼ばずに答えると permission の判定を一切通らない** (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier のどれも起きない)。permission を通したいなら `next(e)` を呼ぶ形になるが、そうすると core まで降りて「no tool.call hook answered」のエラー結果が返る (下記)
+  - **`isDeferred: true` は、`ANTHROPIC_BASE_URL` が first-party でないと効かない**。代役の URL では ToolSearch 自体が無効になり、deferred の tool も全文で `tools` に載った。`ENABLE_TOOL_SEARCH=true` で有効にすると期待どおり後ろに回った。kawaz の個人面の settings は gateway の `ANTHROPIC_BASE_URL` を持つので、同じく無効になっている可能性がある (未確認。実 session の debug log の `[ToolSearch:optimistic]` の行で分かる)
+  - **hot reload で説明文を変えても、main thread の request は session 開始時の説明のまま**。subagent の request には新しい説明が載った (2/2)。tool 自体は reload 後も呼べ、新しい instance の handler が答えた
+
+### マトリクス
+
+| 観測 | `-p` tool search 無効 (P1) | `-p` tool search 有効 (P2) | 対話 (I1・I2・I3、有効) | subagent (I2・I3 で計 3 本) | hot reload 後 (I2・I3) |
+|---|---|---|---|---|---|
+| `isDeferred: false` の tool が `tools` に載る | ○ | ○ | ○ (3) | ○ (子の request 8 件すべて) | ○ (2) |
+| `isDeferred: true` の tool | `tools` に全文で載る (deferral 無効) | `tools` に無く、system-reminder の deferred 一覧に名前だけ。ToolSearch の後は `defer_loading: true` 付きで `tools` に載る | 同左 (I1) | 子の deferred 一覧に名前 | — |
+| handler の `$.session.id()` | main の id | main の id | main の id | **親の id** | main の id |
+| handler の `e.agentId` | 無し | 無し | 無し | 子の agentId | 無し |
+| handler の `$.session.cwd()` | 作業ディレクトリの realpath | 同 | 同 | 同 | 同 |
+| 戻り値 `{ result: string }` | tool_result の content がその文字列、`is_error` 無し | 同 | 同 (画面には `mods-tool - ccmsg_send (MCP)(...)` と結果) | 同 | 同 |
+| schema 違反の入力 | handler に届く、エラーにならない (2 件) | 同 (2 件) | — | 同 (1 件) | — |
+| 未ロードの deferred tool を名前で直接呼ぶ | (deferral 無効なので該当なし) | — | handler に届いた (I1。一覧の注記は「InputValidationError で失敗する」と書くが、そうならなかった) | — | — |
+| `tool.call` | 通る (handler はここ) | 通る | 通る | 通る (`e.agentId` 付き) | 通る |
+| `tool.check` (`next` を呼ばずに答えた時) | 起きない | 起きない | 起きない | 起きない | 起きない |
+| `tool.check` (`next(e)` を呼んだ時、`ccmsg_checked`) | — | `ask` → auto mode の classifier (代役なので判定できず) → `next` の結果は「Auto mode could not evaluate this action ...」のエラー文 | default mode: `ask` → 許可ダイアログ (「mods-tool — Ccmsg Checked Tool: (MCP)」、Yes / 以後聞かない / No) → Yes → `next` の結果は `Error: mods-tool registered the tool ccmsg_checked but no tool.call hook answered this call: ...` | — | — |
+| `tool.describe` で SendMessage の説明を書き換え | 書き換えた説明が `tools` に載る | SendMessage は deferred で `tools` に無い | ToolSearch で SendMessage を読み込んだ後、書き換えた説明で載る (I1) | — | — |
+| reload 後の説明文 | — | — | — | 新しい説明 (2) | main は session 開始時の説明のまま (2) |
+
+- 「—」は観測していない欄
+- `tool.describe` は登録した tool にも起き、`provider` は `{ plugin: 'mods-tool@inline', tier: 'user' }`、`isDeferred` は `isDeferred: true` で登録した方だけに `true` が入る
+- `Agent` tool は今回の config では background 起動 (`isAsync: true`, `status: async_launched`) になった。auto mode では `Agent` の呼び出しも classifier に回り、代役では判定できずに拒まれたので、subagent の観測は `--permission-mode default --allowedTools Agent` で行った
+
+### context のコスト
+
+| request | `tools` の数 | `tools` の JSON の大きさ |
+|---|---|---|
+| `-p`、tool search 無効 | 23 | 59,320 byte |
+| `-p`、tool search 有効 | 14 | 28,844 byte |
+| 対話、tool search 有効 | 15 | 33,334 byte |
+| subagent (対話の子)、tool search 有効 | 10 | 14,863 byte |
+
+- probe の tool 1 つの entry は 487 byte (説明 54 字、property 5 つ)。説明を 70 字にすると 503 byte
+- deferred の tool は、読み込まれるまで一覧の名前 1 行 (`mcp__mods-tool__ccmsg_deferred`、30 字) だけ。読み込まれると `defer_loading: true` が付いた 494 byte の entry になる
+- tool search が無効だと、SendMessage 等の engine の deferred tool も全文で載り、`tools` は約 2 倍になった
+
+### 実行した run
+
+| run | 起動 | 台本 |
+|---|---|---|
+| P1 | `-p`、`ENABLE_TOOL_SEARCH` 無し | `ccmsg_send` 正常 → `text` 欠落 → `text: 123` → ToolSearch (無効なので `No such tool available: ToolSearch`) → `ccmsg_deferred` → 終了 |
+| P2 | `-p`、`ENABLE_TOOL_SEARCH=true` | P1 に `ccmsg_checked` を足したもの |
+| I1 | 対話、有効、auto mode | `ccmsg_send` → 未ロードの `ccmsg_deferred` → ToolSearch (`select:SendMessage,mcp__mods-tool__ccmsg_deferred`) → `Agent` (classifier で拒否され subagent は起きず) |
+| I2 | 対話、有効、`--permission-mode default --allowedTools Agent` | `ccmsg_send` → `Agent` → 子が `ccmsg_send` → hot reload (説明を変更) → 同じ流れをもう 1 回 (2 回目は main と子が並行し、子向けの台本を main が取ったので子の handler の観測からは外した) |
+| I3 | I2 と同じ | 台本を main / 子で振り分ける版にして `Agent` → 子が `ccmsg_send` 正常と `pid: 42` → hot reload → main の `ccmsg_send` と `Agent` → 子が `ccmsg_send` → main が `ccmsg_checked` (ダイアログで Yes) |
+
+### probe mod (`mods-tool`)
+
+`$LAB/mod-tool/.claude-plugin/plugin.json` は `{ "name": "mods-tool", "version": "0.1.0", "description": "Probe: $.tool.register visibility and typed calls." }`、`hooks/hooks.json` は `{ "modules": ["./register.ts"] }`。`hooks/register.ts` (最終版。説明文は hot reload の観測のため v3 に書き換えた後のもの):
+
+```ts
+// Probe for $.tool.register: registers two tools at session.start and answers them in tool.call.
+//   ccmsg_send       isDeferred: false (kept in the request's tools)
+//   ccmsg_deferred   isDeferred: true  (behind ToolSearch)
+//   ccmsg_checked    isDeferred: false, and its tool.call hook runs next(e) first (the engine's permission path)
+// Logs to $MODS_LAB_DIR/tool-<inst>.jsonl: registrations, tool.describe / tool.check / tool.call of
+// these tools and SendMessage, and what the handler can read ($.session.id / cwd, agentId).
+// SendMessage's description gets a MARK-DESC suffix through tool.describe.
+
+const INST = Math.random().toString(36).slice(2, 8)
+const SEND = 'mcp__mods-tool__ccmsg_send'
+const DEFERRED = 'mcp__mods-tool__ccmsg_deferred'
+const CHECKED = 'mcp__mods-tool__ccmsg_checked'
+let seq = 0
+let buf: unknown[] = []
+let dir: string | undefined
+let timer: (() => void) | undefined
+
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    session_id: { type: 'string', description: 'Target session id' },
+    cwd: { type: 'string', description: 'Target cwd' },
+    name: { type: 'string', description: 'Target session name' },
+    pid: { type: 'string', description: 'Target pid' },
+    text: { type: 'string', description: 'Message text' },
+  },
+  required: ['text'],
+  additionalProperties: false,
+}
+
+function clip(v: unknown, n = 600): unknown {
+  try {
+    const s = JSON.stringify(v)
+    if (s === undefined) return String(v)
+    return s.length > n ? s.slice(0, n) + '...<clipped>' : JSON.parse(s)
+  } catch (err) {
+    return `<unserializable: ${String(err)}>`
+  }
+}
+
+function log(entry: Record<string, unknown>): void {
+  seq += 1
+  buf.push({ inst: INST, n: seq, t: Date.now(), ...entry })
+}
+
+async function flush($: any): Promise<void> {
+  if (dir === undefined || buf.length === 0) return
+  const lines = buf; buf = []
+  const path = `${dir}/tool-${INST}.jsonl`
+  let prev = ''
+  try { prev = await $.fs.read(path) } catch { prev = '' }
+  await $.fs.write(path, prev + lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+}
+
+async function answer($: any, e: any, which: string): Promise<unknown> {
+  const facts: Record<string, unknown> = { agentId: e.agentId ?? null }
+  try { facts.sid = await $.session.id() } catch (err) { facts.sidErr = String(err) }
+  try { facts.cwd = await $.session.cwd() } catch (err) { facts.cwdErr = String(err) }
+  log({ ev: '#handler', which, e: clip(e), facts })
+  return { result: `TOOL-RESULT ${which} text=${JSON.stringify(e.text)} sid=${facts.sid} agent=${facts.agentId} inst=${INST}` }
+}
+
+export function register(on: any): void {
+  log({ ev: '#register' })
+
+  on('session.start', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (timer === undefined) {
+      dir = (await $.env.get('MODS_LAB_DIR')) ?? `${$.plugin.root}/log`
+      timer = $.clock.every(500, () => { void flush($) })
+    }
+    for (const spec of [
+      { name: 'ccmsg_send', description: 'Send a message to another Claude Code session (probe v3 after reload).', inputSchema: SCHEMA, isDeferred: false },
+      { name: 'ccmsg_deferred', description: 'Deferred twin of ccmsg_send (probe).', inputSchema: SCHEMA, isDeferred: true },
+      { name: 'ccmsg_checked', description: 'Twin of ccmsg_send answered after next(e) (probe).', inputSchema: SCHEMA, isDeferred: false },
+    ]) {
+      try { log({ ev: '#tool.register', name: spec.name, res: clip(await $.tool.register(spec)) }) } catch (err) { log({ ev: '#tool.register', name: spec.name, err: String(err) }) }
+    }
+    return r
+  })
+
+  on('tool.describe', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (e.tool === SEND || e.tool === DEFERRED || e.tool === CHECKED || e.tool === 'SendMessage' || e.tool === 'ToolSearch') {
+      log({ ev: 'tool.describe', tool: e.tool, isDeferred: e.isDeferred ?? null, provider: e.provider, descLen: String(e.description).length })
+    }
+    if (e.tool === 'SendMessage') return { ...r, description: `${r.description}\nMARK-DESC appended by mods-tool inst=${INST}` }
+    return r
+  })
+
+  on('tool.check', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    log({ ev: 'tool.check', tool: e.tool, agentId: e.agentId ?? null, input: clip(e.input, 200), r: clip(r, 300) })
+    return r
+  })
+
+  on('tool.call', async ($: any, e: any, next: any) => {
+    if (e.tool === SEND) return answer($, e, 'send')
+    if (e.tool === DEFERRED) return answer($, e, 'deferred')
+    if (e.tool === CHECKED) {
+      let below: unknown
+      try { below = clip(await next(e), 400) } catch (err) { below = `<threw: ${String(err)}>` }
+      log({ ev: '#checked.next', below })
+      return answer($, e, 'checked')
+    }
+    const r = await next(e)
+    log({ ev: 'tool.call', tool: e.tool, agentId: e.agentId ?? null, r: clip(r, 300) })
+    return r
+  })
+
+  on('turn.complete', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    log({ ev: 'turn.complete', agentId: e.agentId ?? null, reason: e.reason })
+    return r
+  })
+
+  on('session.end', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    await flush($)
+    return r
+  })
+}
+```
+
+### 代役の API の差分 (台本)
+
+上の「Messages API の代役」に次を足した。台本の 1 行は `{"tool_use":{"name","input"},"for"?}` か `{"text","for"?}` で、`for` (`main` / `sub`) があればその呼び手だけが取る。subagent の request は最初の message に台本の合言葉 `SUBTASK-` を含むことで見分ける (`Agent` の `prompt` に入れる)。
+
+```ts
+type Scripted = { tool_use?: { name: string; input: unknown }; text?: string; for?: "main" | "sub" };
+
+// A line with `for` is taken only by that requester (a subagent's first message carries SUBTASK-).
+function takeScript(who: "main" | "sub"): Scripted | undefined {
+  const f = `${dir}/script.jsonl`;
+  if (!existsSync(f)) return undefined;
+  const lines = readFileSync(f, "utf8").split("\n").filter(Boolean);
+  const i = lines.findIndex((l) => { const s = JSON.parse(l) as Scripted; return s.for === undefined || s.for === who; });
+  if (i < 0) return undefined;
+  writeFileSync(f, lines.filter((_, j) => j !== i).map((l) => l + "\n").join(""));
+  return JSON.parse(lines[i]!) as Scripted;
+}
+
+function sseToolUse(model: string, name: string, input: unknown): string {
+  const usage = { input_tokens: inputTokens(), output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+  const ev = (type: string, data: unknown) => `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  return (
+    ev("message_start", { type: "message_start", message: { id: `msg_fake_${n}`, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage } }) +
+    ev("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: `toolu_fake_${n}`, name, input: {} } }) +
+    ev("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } }) +
+    ev("content_block_stop", { type: "content_block_stop", index: 0 }) +
+    ev("message_delta", { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 5 } }) +
+    ev("message_stop", { type: "message_stop" })
+  );
+}
+
+// fetch の /v1/messages の先頭で:
+//   const who = /SUBTASK-/.test(JSON.stringify(b?.messages?.[0] ?? "")) ? "sub" : "main";
+//   const scripted = (b?.tools?.length ?? 0) >= 3 ? takeScript(who) : undefined;
+//   if (scripted?.tool_use && b?.stream) return new Response(sseToolUse(...), { headers: { "content-type": "text/event-stream" } });
+//   text の応答は scripted?.text を優先する
+```
+
+起動は上の `run-claude.sh` の `--plugin-dir` を `$LAB/mod-tool` にし、tool search を有効にする run では env に `ENABLE_TOOL_SEARCH=true` を足した。代役の URL で tool search が無効になる理由は debug log に `[ToolSearch:optimistic] disabled: ANTHROPIC_BASE_URL=http://127.0.0.1:<port> is not a first-party Anthropic host. Set ENABLE_TOOL_SEARCH=true (or auto / auto:N) if your proxy forwards tool_reference blocks.` と出る。
+
+### 未観測 (`$.tool.register`)
+
+- managed settings の `allowedMcpServers` がある機械で user tier の登録が拒まれるか (リファレンスの記述のみ)
+- `next(e)` を呼ぶ形で、許可ダイアログで No を選んだ時・deny rule がある時の `next` の結果 (許可した時の形だけ見た)。permission を通しつつ自前で答える正規の形は見つけていない
+- first-party の API に対する request の形 (`defer_loading` や `tool_reference` が同じか)
+- `-p` の subagent、teammate、workflow の agent からの呼び出し
+- `/clear` と resume の後に登録が残るか (`session.start` は resume では起き `/clear` では起きないので、`/clear` の後に tool が残るかは要確認)
+- handler の戻り値に `isError` や画像を含める形
+
 ## リファレンス (claude-mods) への反映候補
 
 - `events` の「意味論の注意」: `/clear` の列に `command.run` の resolve の位置 (`classic.SessionStart (clear)` の dispatch の後) を足す。compact の列 (`command.run → session.compact → classic.PreCompact → classic.SessionStart (compact) → classic.PostCompact → session.compact と command.run の resolve`) と、自動 compact が `turn.start` の後・その turn の request の前に起きることを足す。根拠: 本 findings の「event 列」
@@ -500,4 +745,7 @@ exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color LANG=ja_J
 - `practices` の「model に文脈を足す」: 「最初の turn の前に入れるなら `prompt.submit` の before + `$.state` の印、compact は `session.compact` の after で印を立てて次の `prompt.submit` で足し直す」を推奨形として足す
 - `practices` の「状態の置き場」の `$.state` の寿命: 「`/clear`・resume・終了で消える」を「compact と hot reload では残る。`/clear` では次の `prompt.submit` までに消えるが、`classic.SessionStart (clear)` の hook の入口では前の session の値が読めることがある」に直す
 - `dollar-api` の `state` / `develop` の validate: `$.state` の key は `types/index.d.ts` の `PluginState` の契約が無いと validate が落ちる (エラー文言付き)。観測 mod を真似て `$.state` を足す人が最初に踏む
-- `lab-setup`: (1) Messages API の代役を `ANTHROPIC_BASE_URL` に向ける構成 (認証無しで turn と compaction が回り、request の body で到達を判定できる)、(2) `.claude.json` の事前設定で初回ダイアログを飛ばす方法、(3) tmux の構成を「未検証」から実測済みに (`-S` の専用 socket で普段の tmux と分ける)、(4) 観測 mod の `*` hook で `$` を `await` してから行を書くと同じ ms の event の順が入れ替わりうるので、dispatch 時に連番を取る、(5) `-p` は stdin を `/dev/null` に、(6) 今回の起動では messaging socket は `/tmp/cc-socks/` 側に作られた (終了後は残っていない)
+- `lab-setup`: (1) Messages API の代役を `ANTHROPIC_BASE_URL` に向ける構成 (認証無しで turn と compaction が回り、request の body で到達を判定できる)、(2) `.claude.json` の事前設定で初回ダイアログを飛ばす方法、(3) tmux の構成を「未検証」から実測済みに (`-S` の専用 socket で普段の tmux と分ける)、(4) 観測 mod の `*` hook で `$` を `await` してから行を書くと同じ ms の event の順が入れ替わりうるので、dispatch 時に連番を取る、(5) `-p` は stdin を `/dev/null` に、(6) 今回の起動では messaging socket は `/tmp/cc-socks/` 側に作られた (終了後は残っていない)、(7) 代役に台本を持たせて tool_use を返すと tool の呼び出しも再現できる。auto mode では `Agent` や permission の要る tool が classifier に回り代役では判定できないので、`--permission-mode default` と `--allowedTools` で起動する、(8) background の `Agent` は `TMPDIR` を作業ディレクトリに向けても `/private/tmp/claude-<uid>/<cwd を変形した名前>/<session id>/tasks/` に output を作る (後始末で消す)
+- `dollar-api` の `tool` / `practices` の「skill と tool の分担」: `$.tool.register` の tool の入力は engine が input schema で検査しない (handler に違反した入力がそのまま届く) ので handler の入口で parse すること、`tool.call` で `next` を呼ばずに答えると permission の判定 (`tool.check`・PreToolUse・ダイアログ・classifier) を一切通らないこと、`next(e)` を呼ぶと判定を通った後に `no tool.call hook answered` のエラー結果が返ること、handler の `$.session.id()` は subagent からの呼び出しでも親の id であること
+- `practices` の「skill と tool の分担」の `isDeferred`: `ANTHROPIC_BASE_URL` が first-party でない時は `ENABLE_TOOL_SEARCH` を設定しない限り ToolSearch が無効で、`isDeferred: true` の tool も全文で載る (debug の文言付き)。未ロードの deferred tool を名前で直接呼んでも、plugin の tool なら handler に届いた
+- `capabilities` の `tool.describe` の行: 「session 内で cache」の実例として、hot reload で登録し直した tool の説明は main thread の request では変わらず、以後に起こした subagent の request には新しい説明が載る。engine の deferred tool (SendMessage) の書き換えは、ToolSearch で読み込まれた後の entry に反映される
