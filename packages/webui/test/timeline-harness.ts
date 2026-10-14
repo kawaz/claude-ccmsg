@@ -5,7 +5,7 @@
 // 検証される。
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { ReplyOf } from "@ccmsg/protocol";
+import type { ForkOrigin, ReplyOf } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -37,6 +37,8 @@ export class FakeTranscriptWs {
   readonly subscribes: string[] = [];
   readonly unsubscribes: string[] = [];
   readonly forkOrigins: string[] = [];
+  /** fork_origin の答え (既定は fork ではない)。 */
+  origin: ForkOrigin | null = null;
   readonly handle: WsHandle;
 
   constructor(store: Store) {
@@ -74,7 +76,7 @@ export class FakeTranscriptWs {
       },
       forkOrigin: (sid) => {
         this.forkOrigins.push(sid);
-        return Promise.resolve({ ok: true, origin: null });
+        return Promise.resolve({ ok: true, origin: this.origin });
       },
     };
   }
