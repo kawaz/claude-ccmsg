@@ -12,7 +12,8 @@
 // `unconfirmed` は送信ごとに「送信済みかもしれない」と示し、どちらも下書きを
 // 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
 // 同じ文が二重に入るのを防ぐ。下書きは人の編集 (入力・添付の追加と削除) の
-// handler で保存し、別タブでの変更は storage event で映すだけで保存しない。
+// handler で保存し、別タブでの変更は、このタブで編集していない (空か、書き換え
+// 前の下書きのまま) 時だけ storage event で映す (映すだけで保存しない)。
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
 // daemon が peers の行と session_status に載せる input_readiness の理由と対処を
 // 先に示す。
@@ -45,7 +46,6 @@ import {
   cleanupStaleSessionInputs,
   clearLastFailure,
   discardSend,
-  draftAttachmentsKey,
   draftKey,
   isSending,
   lastFailure,
@@ -55,9 +55,11 @@ import {
   saveDraft,
   sendSessionInput,
   sendsKey,
+  otherTabDraft,
   storedDraftChange,
   subscribeSessionInput,
   unconfirmedSends,
+  type InputContent,
 } from "./session-input-store.ts";
 import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
@@ -138,18 +140,16 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     // even when the underlying set didn't change).
   }, [state.peers.length]);
 
-  // 保存されている下書きを入力欄に映す (別タブでの書き換え、このページの送信の
-  // 結果で消えた下書き)。保存はしない: 映した値を保存し直すと、入力している
-  // タブへ古い文が storage event で戻る。中身が違う時だけ置き換え、入力中の
-  // state を無駄に作り直さない。
-  const restoreDraft = useCallback(() => {
-    const draft = storedDraftChange(sid, contentRef.current);
+  // 保存されている下書きを入力欄に映す。保存はしない: 映した値を保存し直すと、
+  // 入力しているタブへ古い文が storage event で戻る。null (映すものが無い) の
+  // 時は入力中の state を作り直さない。
+  const restoreDraft = useCallback((draft: InputContent | null) => {
     if (draft === null) return;
     const next = { text: draft.text, attachments: [...(draft.attachments ?? [])] };
     contentRef.current = next;
     setText(next.text);
     setAttachments(next.attachments);
-  }, [sid]);
+  }, []);
 
   // 送信の記録と直近の結果を映す (この部品が unmount 中に届いた結果、別タブの
   // 記録の変化も)。
@@ -163,18 +163,21 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     const off = subscribeSessionInput((changed) => {
       if (changed !== sid) return;
       refreshSends();
-      restoreDraft();
+      // このページの送信の結果で消えた下書き (accepted、「届いていたので消す」)。
+      restoreDraft(storedDraftChange(sid, contentRef.current));
     });
     const onStorage = (e: StorageEvent) => {
       if (e.key === null || e.key === sendsKey(sid)) refreshSends();
-      if (e.key === null || e.key === draftKey(sid) || e.key === draftAttachmentsKey(sid)) {
-        restoreDraft();
+      // 添付は本文より先に書かれ、本文の書き込みが下書きの 1 回の保存を締める
+      // ので、本文のキーで映す。
+      if (e.key === null || e.key === draftKey(sid)) {
+        restoreDraft(otherTabDraft(sid, contentRef.current, e.oldValue));
       }
     };
     window.addEventListener("storage", onStorage);
     // 初回 render から購読までの間に起きた変化を拾う。
     refreshSends();
-    restoreDraft();
+    restoreDraft(storedDraftChange(sid, contentRef.current));
     return () => {
       off();
       window.removeEventListener("storage", onStorage);

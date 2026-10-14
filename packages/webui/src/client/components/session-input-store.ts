@@ -275,6 +275,21 @@ export function storedDraftChange(sid: string, current: InputContent): InputCont
   return sameContent(draft, current) ? null : draft;
 }
 
+/** 別タブが下書きの本文を書き換えた時 (storage event) に入力欄に映す中身。
+ * 映すのは、入力欄が空か、書き換え前の本文 (`previousRaw`、storage event の
+ * oldValue) のままの時 (このタブでは編集していない) だけ。このタブで書いた文が
+ * あれば null で、相手の文を取り込まない (両方で書けば後から保存した方が残る)。 */
+export function otherTabDraft(
+  sid: string,
+  current: InputContent,
+  previousRaw: string | null,
+): InputContent | null {
+  const previous = previousRaw === null ? null : parseWith(DraftTextTextSchema, previousRaw);
+  const untouched =
+    current.text === "" || (previous?.ok === true && previous.value.text === current.text);
+  return untouched ? storedDraftChange(sid, current) : null;
+}
+
 export function clearDraft(sid: string): void {
   removeStorage(draftKey(sid));
   removeStorage(draftAttachmentsKey(sid));

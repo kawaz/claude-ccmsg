@@ -25,6 +25,7 @@ import {
   saveDraft,
   sendSessionInput,
   SENDS_STORAGE_PREFIX,
+  otherTabDraft,
   storedDraftChange,
   subscribeSessionInput,
   unconfirmedSends,
@@ -397,44 +398,48 @@ describe("saveDraft writes only on a change", () => {
 });
 
 describe("a draft another tab wrote (DR-0035 §5)", () => {
-  // 何を保証するか: 入力欄に映す下書きを読むだけで、保存領域に書かない。
-  // 映したタブが保存し直すと、その保存は入力しているタブの次の保存より後に
-  // 走りうり、古い文が storage event で入力しているタブへ戻る (片方のタブで
-  // 打っているだけで文字が消えて戻る)。
-  test("reading the draft to show writes nothing", () => {
-    saveDraft("sid-tab", "from the other tab", []);
-    let before = storage.writes;
-    expect(storedDraftChange("sid-tab", { text: "" })?.text).toBe("from the other tab");
-    expect(storage.writes).toBe(before);
-    clearDraft("sid-tab");
-    before = storage.writes;
-    expect(storedDraftChange("sid-tab", { text: "shown" })).toEqual({ text: "" });
-    expect(storage.writes).toBe(before);
+  // 2 つのタブの入力欄を、保存領域を共有する本文で表す。部品は onInput (と添付の
+  // 追加・削除) で saveDraft を、storage event で otherTabDraft を呼ぶ。
+  const sid = "sid-tab";
+  const textKey = `${DRAFT_STORAGE_PREFIX}${sid}`;
+  /** タブ A が打つ: onInput の保存。戻り値は storage event の oldValue。 */
+  function typeInOtherTab(text: string): string | null {
+    const oldValue = localStorage.getItem(textKey);
+    saveDraft(sid, text, []);
+    return oldValue;
+  }
+
+  // 何を保証するか: 人の編集 (onInput) は下書きを保存し、空にすれば消す。
+  test("an edit saves the draft, and emptying it clears the draft", () => {
+    typeInOtherTab("typed");
+    expect(loadDraft(sid)?.text).toBe("typed");
+    typeInOtherTab("");
+    expect(loadDraft(sid)).toBeNull();
   });
 
-  // 何を保証するか: 入力欄が既に映している中身なら何も返さない (入力中の
-  // state を作り直さない)。
-  test("nothing to show when the input already shows the draft", () => {
-    saveDraft("sid-tab", "same", []);
-    expect(storedDraftChange("sid-tab", { text: "same", attachments: [] })).toBeNull();
-    expect(storedDraftChange("sid-other", { text: "" })).toBeNull();
-  });
-
-  // 何を保証するか: 片方のタブだけで打つ間、もう片方が遅れて映しても (背景
-  // タブで render が遅れる)、保存領域は打っているタブの最新の文のまま。
-  test("a tab that only shows the other tab's typing never moves the draft back", () => {
+  // 何を保証するか: このタブで編集していない入力欄 (空、または書き換え前の
+  // 下書きのまま) は別タブの書き込みを映し続け、このタブで書いた文がある入力欄
+  // は変えない (後勝ち)。
+  test("an untouched input follows the other tab; an edited one stays", () => {
     let shown = "";
-    const show = () => {
-      shown = storedDraftChange("sid-tab", { text: shown })?.text ?? shown;
-    };
-    saveDraft("sid-tab", "a", []);
-    saveDraft("sid-tab", "ab", []);
-    show();
-    saveDraft("sid-tab", "abc", []);
-    expect(loadDraft("sid-tab")?.text).toBe("abc");
-    show();
-    expect(shown).toBe("abc");
-    expect(loadDraft("sid-tab")?.text).toBe("abc");
+    for (const text of ["a", "ab", "abc"]) {
+      const oldValue = typeInOtherTab(text);
+      shown = otherTabDraft(sid, { text: shown }, oldValue)?.text ?? shown;
+      expect(shown).toBe(text);
+    }
+    const oldValue = typeInOtherTab("abcd");
+    expect(otherTabDraft(sid, { text: "abc!" }, oldValue)).toBeNull();
+  });
+
+  // 何を保証するか: 映すことでは保存領域に書かない。映したタブが保存し直すと、
+  // その保存は入力しているタブの次の保存より後に走りうり、古い文が storage
+  // event で入力しているタブへ戻る (片方のタブで打つだけで文字が消えて戻る)。
+  test("following the other tab writes nothing", () => {
+    const oldValue = typeInOtherTab("from the other tab");
+    const before = storage.writes;
+    expect(otherTabDraft(sid, { text: "" }, oldValue)?.text).toBe("from the other tab");
+    expect(storedDraftChange(sid, { text: "" })?.text).toBe("from the other tab");
+    expect(storage.writes).toBe(before);
   });
 });
 
