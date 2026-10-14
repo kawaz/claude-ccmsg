@@ -131,12 +131,15 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 | 自動 compact の後に案内が足し直される | 成り立つが 1 turn 遅れる (2/2) | §5 |
 | kawaz の個人面の実セッションで `isDeferred` が効く | 効く。debug log の `[ToolSearch:optimistic]` は `mode=tst-auto, result=true` が約 177 万行で、`disabled` は 826 行 (統括が確認) | §3 の登録の形 |
 
-実装時に確認すること (どれも本 DR の判断を変えない見込みだが、未観測):
+実装時に確認したこと (代役の API と隔離 config home、どれも本 DR の判断を変えなかった):
 
-- model が応答を stream している最中の busy の Enter で、`prompt.submit` が Enter の時点で起きるか、queue された prompt がどの turn に入るか
-- 実物の `ccmsg daemon start` を `$.process.run` で呼んだ時の所要 (daemon の応答を待つ分。最初の `session.start` は await される)
-- retry が有効 (既定) な時の API error の行と event の並び (probe は `CLAUDE_CODE_MAX_RETRIES=0`)
-- transcript の API error の行の `error` 欄の語彙が `classic.StopFailure` の分類と同じか
+- model が応答を stream している最中 (request の応答待ち) の busy の Enter: `prompt.submit` は Enter の時点で起きて受け付けになった (webui の入力で 163 ms)。queue された prompt は実行中の turn の次の request ではなく、その turn の終わった後の別の turn (`promptSource: "queued"`) に入った。tool の実行中の Enter (「前提の確認」) とは入る turn が違う
+- 実物の daemon の起動: `ccmsg sidecar begin` (state file の書き込みと daemon の起動) の所要は daemon が無い時 0.38 s、いる時 0.28 s。module は待たずに走らせるので、最初の `session.start` は待たされない
+- retry が有効な時の API error: 途中の試行では transcript に行を書かず、retry が尽きた時に最後の error の行を 1 本だけ書いた。retry が成功した時は error の行を書かなかった
+- transcript の API error の行の `error` 欄の語彙: 実 transcript で `server_error` / `invalid_request` / `rate_limit` / `unknown` / `authentication_failed` / `model_not_found` / `billing_error` と欄の無い行で、どれも `classic.StopFailure` の分類 (engine の型定義の 13 語) に含まれた。`kind` は open な文字列のまま読む
+
+未観測:
+
 - teammate のループへの `agentId` 付きの `$.session.append` (§6 の一覧には teammate も入れている)
 - §6 の直送の、foreground の `Agent` の子・応答の stream の途中・`-p` の子への到達
 - `prompt.submit` の `text` の末尾空白の扱い (受け付けの照合は `classic.UserPromptSubmit` で測った許容を流用している)
