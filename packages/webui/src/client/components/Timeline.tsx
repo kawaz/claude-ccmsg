@@ -4,15 +4,7 @@
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { createContext, type ComponentChildren } from "preact";
 import { memo, useSyncExternalStore } from "preact/compat";
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "preact/hooks";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
@@ -22,15 +14,11 @@ import { pushNavigation, rememberTimelinePosition, replaceNavigation } from "../
 import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import type { Store } from "../useStore.ts";
-import type { WsHandle } from "../ws.ts";
-import { nextRequestGeneration } from "../request-generation.ts";
-import { activeTraceCollector } from "../trace.ts";
 import { setBounded } from "../bounded-map.ts";
 import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-map.ts";
 import { crossLineIncrementally, emptyCrossLineCache } from "../incremental-cross-line.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
-import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
+import { formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import {
   bubbleHue,
   filePathCtxForSender,
@@ -157,6 +145,9 @@ import {
 } from "./timeline/useAutoOpenSettings.ts";
 import { useSidePanel } from "./timeline/useSidePanel.ts";
 import { useTimelineFolds } from "./timeline/useTimelineFolds.ts";
+import { useForkOrigin } from "./timeline/useForkOrigin.ts";
+import { useLiveTailSubscription } from "./timeline/useLiveTailSubscription.ts";
+import { useTranscriptLoader } from "./timeline/useTranscriptLoader.ts";
 
 /**
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
@@ -3180,36 +3171,6 @@ function revealAndScroll(el: HTMLElement, scrollHold: ScrollHold) {
   scrollHold.toElement(target, (_scroller, el) => el.scrollIntoView({ block: "center" }));
 }
 
-/** One transcript_read for the Timeline's cache, tagged with a fresh request
- * generation (request-generation.ts): `started` records the generation (and,
- * for "timeline/loading", blanks the pane), and the answer is dispatched with
- * the same generation, so the reducer drops it if another read for this sid
- * started meanwhile (another agent, a refresh, load-older). Resolves once the
- * answer has been dispatched, whether or not the reducer kept it. */
-function readTranscriptIntoStore(
-  store: Store,
-  ws: WsHandle,
-  sid: string,
-  read: {
-    started: "timeline/loading" | "timeline/resyncing";
-    mode: "replace" | "prepend";
-    opts: Parameters<WsHandle["transcriptRead"]>[1];
-  },
-): Promise<void> {
-  const generation = nextRequestGeneration();
-  const { mode } = read;
-  store.dispatch({ type: read.started, sid, generation });
-  return ws
-    .transcriptRead(sid, read.opts)
-    .then((res) => {
-      if (res.ok) store.dispatch({ type: "timeline/loaded", sid, generation, mode, response: res });
-      else store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: res.error.msg });
-    })
-    .catch((err) => {
-      store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: errorMessage(err) });
-    });
-}
-
 export function Timeline({
   sid,
   timeline,
@@ -3245,7 +3206,6 @@ export function Timeline({
   visible: boolean;
 }) {
   const { store, ws } = useApp();
-  const connStatus = useStoreState(store, (s) => s.connStatus);
   const currentPosition = useStoreState(store, (s) =>
     s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
   );
@@ -3306,22 +3266,6 @@ export function Timeline({
   // 3 分おきの再描画で十分。
   const now = useNow();
 
-  // Live tail (DR-0009 addendum, transcript_subscribe): このセッションの
-  // Timeline が表示されている間だけ subscribe し、タブ切替/セッション切替/
-  // unmount (依存 [sid, connStatus] のいずれかが変わる、またはアンマウント)
-  // で unsubscribe する。届いた行は ws.ts の ev:"transcript" ハンドラが
-  // `timeline/tail` action に変換し、store.ts の applyTimelineTail が
-  // contiguous なときだけ追記する — このコンポーネントは購読の開始/終了だけ
-  // 管理し、フォールドロジックには関与しない。send() は socket が open で
-  // ない間 reject するので (ws.ts) catch で握りつぶす — 再接続後の
-  // onOpen 側で改めて subscribe できる余地を持たせるため、ここではエラー
-  // 表示もリトライも行わない (次の connStatus 変化でこの effect が再実行
-  // される)。
-  // DR-0025 Phase 2: agent transcripts have no live tail (§2.2 "リアルタイム
-  // 完全進捗はスコープ外" — the daemon only offers subscribe on the session
-  // itself, not on its subagents). Skip the subscribe when an agent ref is
-  // active so we don't tail the wrong file (which would race back stale
-  // lines and confuse the byte-cache).
   // agentKey identifies *which* subagent this drilldown Timeline belongs to,
   // for the per-agent auto-open storage key — agentId is the primary
   // identity, runId/teammate are fallbacks for refs that only carry those.
@@ -3329,165 +3273,9 @@ export function Timeline({
   const autoOpen = useAutoOpenSettings({ sid, agentKey, agentActive });
   const tlLinesRef = useRef<HTMLDivElement | null>(null);
   const sidePanel = useSidePanel(tlLinesRef);
-  useEffect(() => {
-    if (!active || agentActive) return;
-    if (connStatus !== "connected") return;
-    // Wait for the subscribe before undoing it: the daemon runs this
-    // connection's requests concurrently, so an unsubscribe sent while the
-    // subscribe is still in flight could be answered first and leave the tail
-    // watch installed with nobody reading it.
-    const subscribed = ws.transcriptSubscribe(sid).catch(() => {});
-    return () => {
-      void subscribed.then(() => ws.transcriptUnsubscribe(sid).catch(() => {}));
-    };
-  }, [active, sid, connStatus, agentActive, ws]);
-
-  // Ask once per session where its copied fork history ends. An agent
-  // transcript is never a fork of anything (only whole sessions fork), and the
-  // seam cannot move as the session appends, so there is nothing to refresh:
-  // the store keeping the answer (incl. `null` = no seam) is what stops this
-  // from re-asking on every visit.
-  const forkOrigin = useStoreState(store, (s) => s.sessionTrees.get(sid)?.forkOrigin);
-  const forkOriginKnown = forkOrigin !== undefined;
-  useEffect(() => {
-    if (!active || agentActive) return;
-    if (connStatus !== "connected") return;
-    if (forkOriginKnown) return;
-    void ws
-      .forkOrigin(sid)
-      .then((res) => {
-        if (!res.ok) return;
-        store.dispatch({ type: "timeline/fork-origin", sid, origin: res.origin });
-      })
-      // A seam is decoration: a failed resolve leaves the Timeline as it was,
-      // and the next visit retries.
-      .catch(() => {});
-  }, [active, agentActive, sid, connStatus, forkOriginKnown, store, ws]);
-
-  // Build the transcriptRead opts once so every call site below stays in sync.
-  // Keyed on the ref's fields rather than the object: the store hands a new
-  // AgentRef on every locator change, the same agent included.
-  const hasAgent = !!agent;
-  const agentId = agent?.agentId;
-  const agentRunId = agent?.runId;
-  const agentTeammate = agent?.teammate;
-  const agentOpts = useMemo(() => {
-    if (!hasAgent) return undefined;
-    return {
-      ...(agentId ? { agent_id: agentId } : {}),
-      ...(agentRunId ? { run_id: agentRunId } : {}),
-      ...(agentTeammate ? { teammate: agentTeammate } : {}),
-    };
-  }, [hasAgent, agentId, agentRunId, agentTeammate]);
-
-  // Tail-load on first visit only — re-visiting a session whose Timeline is
-  // already "loaded"/"error" must not refetch (mirrors FileViewer's
-  // path-keyed effect guard). Gated on connStatus so a direct `#t<sid>` link
-  // opened before the WS handshake completes doesn't race ws.send() (rejects
-  // synchronously while not open, see ws.ts) — status stays "idle" (still
-  // rendered as "読み込み中…" below) until connStatus flips to "connected",
-  // which re-evaluates this effect via the dep list.
-  useEffect(() => {
-    if (!active || timeline.status !== "idle") return;
-    if (connStatus !== "connected") return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/loading",
-      mode: "replace",
-      opts: agentOpts,
-    });
-  }, [active, sid, timeline.status, connStatus, store, ws, agentOpts]);
-
-  // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
-  // review fix): applyTimelineTail (store.ts) can only detect that a
-  // `timeline/tail` push doesn't line up with the cached `end` — it can't
-  // fetch, so it flags `timeline.needsResync` instead of just dropping the
-  // push and leaving live tail silently stuck (DR-0005 §1: side effects stay
-  // out of the reducer). This effect is the side effect: a background
-  // "replace" read that catches the cache up. Starts with `timeline/resyncing`
-  // rather than `timeline/loading` (which every other read here uses) —
-  // flipping status to "loading" would blank the pane (Timeline's
-  // "読み込み中…" branch below) for what should be an invisible catch-up, not
-  // a user-visible reload. If the re-read's own result is already stale by the
-  // time it lands (more appends happened meanwhile), the next tail push simply
-  // re-flags needsResync and this effect fires again — self-healing, no bound
-  // on retries needed since each attempt is a normal full tail read.
-  useEffect(() => {
-    if (!active || !timeline.needsResync) return;
-    if (connStatus !== "connected") return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/resyncing",
-      mode: "replace",
-      opts: agentOpts,
-    });
-  }, [active, sid, timeline.needsResync, connStatus, store, ws, agentOpts]);
-
-  // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
-  // 2026-07-14-session-tl-refresh-on-revisit): SessionTreeState's timeline
-  // cache is intentionally preserved across tab/session switches (store.ts's
-  // newSessionTree — clicking Files/Rooms and returning must not discard
-  // what's already loaded), but the transcript_subscribe above is torn down
-  // alongside this component's unmount. Any live-tail updates that landed
-  // while the Timeline was unmounted never reached the cache, so a revisit
-  // sees an `end` byte frozen at unmount time — the symptom kawaz observed
-  // (SessionView Timeline "空だったり", r12 mid=12 2026-07-14). This effect
-  // re-reads the tail once per "arrival at a Timeline to look at" so the
-  // stale cache is caught up before the user sees it.
-  //
-  // - Skipped when status is "idle" (initial-load effect above owns first
-  //   visit) or "loading" (a fetch is already in flight; overlapping it
-  //   would just collide on the same replace dispatch).
-  // - The arrival (Timeline mounts / becomes active / a reconnect lands) is
-  //   what fires this, NOT a timeline.status change: reacting to the
-  //   loading→loaded flip caused by our own fetch would loop. So the status
-  //   gate (and the agent opts) are read in an Effect Event, which sees the
-  //   current values without being a reason to re-run.
-  // - mode: "replace" because DR-0009's transcript_read has no "after"
-  //   parameter — an incremental "just what's new" is not representable in
-  //   the current protocol. The response's own start/end/lines become the
-  //   new cache wholesale (same shape as refresh() below).
-  const revalidateOnArrival = useEffectEvent(() => {
-    if (timeline.status !== "loaded" && timeline.status !== "error") return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/loading",
-      mode: "replace",
-      opts: agentOpts,
-    });
-  });
-  useEffect(() => {
-    if (!active || connStatus !== "connected") return;
-    revalidateOnArrival();
-  }, [active, sid, connStatus]);
-
-  function loadOlder() {
-    if (timeline.status === "loading" || timeline.atStart) return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/loading",
-      mode: "prepend",
-      opts: { ...agentOpts, before: timeline.start },
-    });
-  }
-
-  // "更新" (refresh): re-reads the tail (before omitted) and replaces the
-  // cache wholesale rather than fetching only what's new since `end` — DR-0009
-  // offers no cheaper "read what's new" shape (transcript_read has no
-  // "after" parameter), and re-reading the tail is simple and correct at the
-  // cost of re-fetching content we may already have (implementation
-  // simplicity prioritized per the delegated spec).
-  function refresh() {
-    if (timeline.status === "loading") return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/loading",
-      mode: "replace",
-      opts: agentOpts,
-    }).then(() => {
-      // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
-      // replace で end が同値のままだと tail-append effect が発火しないため
-      // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
-      // 届く live tail への追従を継続させる)。
-      isNearBottomRef.current = true;
-      scrollHold.toBottom();
-    });
-  }
+  useLiveTailSubscription({ sid, active, agentActive, timeline });
+  const forkOrigin = useForkOrigin({ sid, active, agentActive });
+  const loader = useTranscriptLoader({ sid, agent, active, timeline });
 
   // Per-line derivations (JSON parse, UTF-8 size) are memoized per *line*,
   // not per lines-array: the store hands us a new array for every live-tail
@@ -4191,15 +3979,6 @@ export function Timeline({
   // で、この条件は自然に prepend を除外し、tail 追記 (と初回 tail ロード)
   // だけに反応する。smooth アニメーションなし — 高頻度で届く tail 行ごとに
   // アニメーションが重なるとかえって読みにくいため、即座にジャンプする。
-  // Closes the latency trace started in ws.ts: useLayoutEffect runs once the
-  // appended rows are in the document, which is the boundary the trace names
-  // dom_commit. (The later scroll settle below is deliberately not part of it —
-  // markdown/highlight keep resizing for a second after the rows are visible.)
-  useLayoutEffect(() => {
-    if (timeline.status !== "loaded") return;
-    activeTraceCollector()?.noteDomCommit(sid, timeline.end);
-  }, [sid, timeline.end, timeline.status]);
-
   // 反応するのは timeline.end の変化だけ。user turn 数・位置・末尾付近かは
   // 伸びた瞬間の値を読むだけなので Effect Event に置く。
   const followTailGrowth = useEffectEvent((end: number) => {
@@ -4269,6 +4048,17 @@ export function Timeline({
       container.scrollTo({ top: topBelowToolbar(container, el) }),
     );
   }, [sid, currentPosition, timeline.status, parsed, scrollHold]);
+
+  // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
+  // replace で end が同値のままだと tail-append effect が発火しないため
+  // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
+  // 届く live tail への追従を継続させる)。
+  function refresh() {
+    void loader.refresh()?.then(() => {
+      isNearBottomRef.current = true;
+      scrollHold.toBottom();
+    });
+  }
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
   // エフェクトはウザいので削除)。
@@ -4459,7 +4249,7 @@ export function Timeline({
                       <button
                         type="button"
                         disabled={timeline.atStart || timeline.status === "loading"}
-                        onClick={loadOlder}
+                        onClick={loader.loadOlder}
                       >
                         {timeline.atStart ? "先頭まで" : "older"}
                       </button>
