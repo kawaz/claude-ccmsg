@@ -1027,9 +1027,33 @@ function answer($, state, sid, generation, line) {
     $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
   });
 }
-async function runSidecar($, state, sid) {
+var HARNESS_PID_ARGV = ["/bin/sh", "-c", 'echo "$PPID"'];
+async function harnessPid($, state) {
+  if (state.harnessPid !== undefined)
+    return state.harnessPid;
+  let pid = null;
+  try {
+    const run = await $.process.run(HARNESS_PID_ARGV, { timeoutMs: 3000 });
+    const read = Number(run.stdout.trim());
+    if (run.exitCode === 0 && Number.isSafeInteger(read) && read > 1)
+      pid = read;
+    else
+      $.ui.log(`ccmsg sidecar: no harness pid from sh (${run.stderr.trim()})`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg sidecar: no harness pid from sh: ${errorText(e)}`, { to: "debug" });
+  }
+  state.harnessPid = pid;
+  return pid;
+}
+async function runSidecar($, state, sid, pid) {
   const child = $.process.spawn({
-    argv: [`${$.plugin.root}/bin/ccmsg`, "sidecar", "--sid", sid]
+    argv: [
+      `${$.plugin.root}/bin/ccmsg`,
+      "sidecar",
+      ...pid === null ? [] : ["--pid", String(pid)],
+      "--sid",
+      sid
+    ]
   });
   const mine = { sid, child };
   state.sidecar = mine;
@@ -1079,7 +1103,7 @@ async function replaceSidecar($, state) {
   state.sidecar = undefined;
   if (old !== undefined)
     await old.child.return(undefined);
-  runSidecar($, state, sid);
+  runSidecar($, state, sid, await harnessPid($, state));
 }
 function register(on) {
   const state = newState();
@@ -1134,6 +1158,7 @@ function register(on) {
 }
 export {
   ACCEPT_WAIT_MS,
+  HARNESS_PID_ARGV,
   HYOUI_TIMEOUT_MS,
   REPLY_TIMEOUT_MS,
   RESPAWN_MAX_MS,

@@ -19,6 +19,7 @@ import {
   type HookedEvent,
   answer,
   handlePromptSend,
+  HARNESS_PID_ARGV,
   hyouiEnterArgv,
   lineSplitter,
   type ModuleState,
@@ -93,6 +94,8 @@ interface Fake {
   $: Engine;
   composer: { text: string };
   runs: string[][];
+  /** The runs that asked the harness pid. */
+  pidAsks: string[][];
   /** What each run got on standard input, by the index of the run. */
   stdins: (string | undefined)[];
   /** The env each run was given, by the index of the run. */
@@ -120,6 +123,8 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
+    /** What asking the harness pid (HARNESS_PID_ARGV) prints, or throws. */
+    harnessPid?: string | Error;
     /** What `ccmsg sidecar send` does, given what it was run with. */
     send?: (init: { stdin?: string; timeoutMs?: number }) => Promise<{
       exitCode: number;
@@ -137,6 +142,7 @@ function fakeEngine(
   let now = 0;
   const composer = { text: options.draft ?? "" };
   const runs: string[][] = [];
+  const pidAsks: string[][] = [];
   const stdins: (string | undefined)[] = [];
   const envs: (Record<string, string> | undefined)[] = [];
   const spawns: Fake["spawns"] = [];
@@ -163,6 +169,14 @@ function fakeEngine(
     },
     process: {
       run: async (argv, init) => {
+        // Asked once per load before any sidecar; kept out of `runs`, which
+        // the tests read for what a request ran.
+        if (argv.join("\0") === HARNESS_PID_ARGV.join("\0")) {
+          pidAsks.push([...argv]);
+          const printed = options.harnessPid ?? "4242\n";
+          if (printed instanceof Error) throw printed;
+          return { exitCode: 0, stdout: printed, stderr: "" };
+        }
         runs.push([...argv]);
         stdins.push(init?.stdin);
         envs.push(init?.env);
@@ -210,6 +224,7 @@ function fakeEngine(
     $,
     composer,
     runs,
+    pidAsks,
     stdins,
     envs,
     spawns,
@@ -436,7 +451,7 @@ describe("the sidecar the module keeps", () => {
     await fire(fake, "session.start", START, async () => ({}));
     await settle();
     expect(fake.spawns.map((s) => s.argv)).toEqual([
-      ["/plugin/bin/ccmsg", "sidecar", "--sid", fake.sid.value],
+      ["/plugin/bin/ccmsg", "sidecar", "--pid", "4242", "--sid", fake.sid.value],
     ]);
     spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9",');
     spawned(fake, 0).stream.push('"args":{"text":"hello"}}\n');
@@ -450,6 +465,36 @@ describe("the sidecar the module keeps", () => {
       ok: true,
       result: { outcome: "accepted" },
     });
+  });
+
+  // A sandboxed session cannot run `ps`, so the sidecar cannot find the
+  // harness among its ancestors; the module names it with --pid instead.
+  test("the sidecar is given the harness pid, asked once per load", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    spawned(fake, 0).stream.end();
+    await settle();
+    lastTimer(fake).fn();
+    await settle();
+    expect(fake.spawns.map((s) => s.argv.slice(2, 4))).toEqual([
+      ["--pid", "4242"],
+      ["--pid", "4242"],
+    ]);
+    expect(fake.pidAsks).toEqual([[...HARNESS_PID_ARGV]]);
+  });
+
+  test("without a pid the sidecar is started without --pid", async () => {
+    for (const harnessPid of ["", "1\n", "not a pid\n", new Error("spawn failed")]) {
+      const fake = fakeEngine({ harnessPid });
+      registerOn(fake);
+      await fire(fake, "session.start", START, async () => ({}));
+      await settle();
+      expect(fake.spawns.map((s) => s.argv)).toEqual([
+        ["/plugin/bin/ccmsg", "sidecar", "--sid", fake.sid.value],
+      ]);
+    }
   });
 
   test("session.start and classic.SessionStart together start one sidecar", async () => {

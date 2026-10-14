@@ -286,6 +286,8 @@ export interface ModuleState {
   /** Sidecar starts run one at a time, so session.start and
    * classic.SessionStart arriving together cannot each start one. */
   starting: Promise<void>;
+  /** The harness's pid, once asked (null when it could not be told). */
+  harnessPid?: number | null;
 }
 
 export function newState(): ModuleState {
@@ -572,13 +574,50 @@ export function answer(
     });
 }
 
+/** `sh` prints its parent's pid: the engine starts a command as a child of
+ * the harness process itself (a sidecar's parent is the `claude` process), so
+ * that parent is the harness. */
+export const HARNESS_PID_ARGV = ["/bin/sh", "-c", 'echo "$PPID"'] as const;
+
+/** The pid of the harness this module runs in, for the sidecar's socket name.
+ * `$` has no pid of its own and the module has no `process`, so it is asked
+ * of a child. Without it (the child failed, or printed no pid) the sidecar is
+ * started without `--pid` and looks for the harness among its ancestors with
+ * `ps` — which a sandboxed session cannot run. Asked once per module load: a
+ * process's pid does not change. */
+async function harnessPid($: Engine, state: ModuleState): Promise<number | null> {
+  if (state.harnessPid !== undefined) return state.harnessPid;
+  let pid: number | null = null;
+  try {
+    const run = await $.process.run(HARNESS_PID_ARGV, { timeoutMs: 3_000 });
+    const read = Number(run.stdout.trim());
+    if (run.exitCode === 0 && Number.isSafeInteger(read) && read > 1) pid = read;
+    else $.ui.log(`ccmsg sidecar: no harness pid from sh (${run.stderr.trim()})`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg sidecar: no harness pid from sh: ${errorText(e)}`, { to: "debug" });
+  }
+  state.harnessPid = pid;
+  return pid;
+}
+
 /** Run one sidecar for `sid` until it ends, then start the next one unless it
  * was replaced. The next start goes through `$.clock.after`, which a module
  * unload cancels: the unload kills the child, and this is what keeps that
  * death from being answered with a new one. */
-async function runSidecar($: Engine, state: ModuleState, sid: string): Promise<void> {
+async function runSidecar(
+  $: Engine,
+  state: ModuleState,
+  sid: string,
+  pid: number | null,
+): Promise<void> {
   const child = $.process.spawn({
-    argv: [`${$.plugin.root}/bin/ccmsg`, "sidecar", "--sid", sid],
+    argv: [
+      `${$.plugin.root}/bin/ccmsg`,
+      "sidecar",
+      ...(pid === null ? [] : ["--pid", String(pid)]),
+      "--sid",
+      sid,
+    ],
   });
   const mine = { sid, child };
   state.sidecar = mine;
@@ -628,7 +667,7 @@ async function replaceSidecar($: Engine, state: ModuleState): Promise<void> {
   const old = state.sidecar;
   state.sidecar = undefined;
   if (old !== undefined) await old.child.return(undefined);
-  void runSidecar($, state, sid);
+  void runSidecar($, state, sid, await harnessPid($, state));
 }
 
 export function register(on: On): ModuleState {
