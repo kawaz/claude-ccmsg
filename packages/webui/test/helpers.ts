@@ -67,6 +67,32 @@ export function stubProperty(
   };
 }
 
+/** An in-memory `Storage` for code that reads `localStorage` /
+ * `sessionStorage` directly, which the bun runtime lacks. Put it in place with
+ * `stubGlobal` and put the original back after the test: a storage left on
+ * `globalThis` carries what the test wrote into the files that run after. */
+export class MemStorage {
+  private data = new Map<string, string>();
+  get length(): number {
+    return this.data.size;
+  }
+  key(i: number): string | null {
+    return [...this.data.keys()][i] ?? null;
+  }
+  getItem(k: string): string | null {
+    return this.data.get(k) ?? null;
+  }
+  setItem(k: string, v: string): void {
+    this.data.set(k, v);
+  }
+  removeItem(k: string): void {
+    this.data.delete(k);
+  }
+  clear(): void {
+    this.data.clear();
+  }
+}
+
 export const JsonObjectTextSchema = jsonText(JsonObjectSchema);
 
 /** A line of JSON text that has to be an object (a frame the client sent), read

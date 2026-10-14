@@ -1,6 +1,6 @@
 // サイドバーの 2 段 (一覧 / フォーム) の寸法 (sidebar-panes.ts)。同じ 2 段が軸で並び替わるので、値は軸ごとに別のキーを
 // 持つ — 横に広げた幅を、縦に積んだときの高さとして復元しても意味がない。
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   DRAWER_DEFAULT_MAX_PX,
   DRAWER_WIDTH_KEY,
@@ -27,35 +27,21 @@ import {
   opensOnMain,
 } from "../src/client/sidebar-panes.ts";
 import { PANE_MIN_PX } from "../src/client/utils.ts";
+import { MemStorage, stubGlobal } from "./helpers.ts";
 
-// files-view-store.test.ts と同じ最小 localStorage shim。
-class MemStorage {
-  private data = new Map<string, string>();
-  get length(): number {
-    return this.data.size;
-  }
-  key(i: number): string | null {
-    return [...this.data.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
-    this.data.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.data.delete(k);
-  }
-  clear(): void {
-    this.data.clear();
-  }
-}
+let restores: Array<() => void> = [];
 
 // 寸法は sessionStorage + localStorage の 2 段に書かれる (storage.ts) ので、
 // 窓を開き直したのと同じ状態にするには両方を差し替える。
 beforeEach(() => {
-  globalThis.localStorage = new MemStorage();
-  globalThis.sessionStorage = new MemStorage();
+  restores = [
+    stubGlobal("localStorage", new MemStorage()),
+    stubGlobal("sessionStorage", new MemStorage()),
+  ];
+});
+
+afterEach(() => {
+  for (const restore of restores.reverse()) restore();
 });
 
 describe("defaultDrawerWidth", () => {

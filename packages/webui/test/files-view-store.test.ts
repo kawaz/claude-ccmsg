@@ -3,7 +3,7 @@
 // 保存・削除ルールを踏襲していることをテストで固定する: round-trip、
 // 壊れた record の拒否、mount-time sweep の 2 規則 (peers 不在 / 10 日超
 // 非アクティブ)、誤爆防止 (無関係 key と fresh record を残す)。
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import {
   cleanupStaleFilesViews,
@@ -15,34 +15,18 @@ import {
   saveFilesView,
 } from "../src/client/files-view-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
-import { defined } from "./helpers.ts";
+import { defined, MemStorage, stubGlobal } from "./helpers.ts";
 
-// session-input-store.test.ts と同じ最小 localStorage shim (helpers が
-// 直接 browser global を読むため、bun test では自前で生やす)。
-class MemStorage {
-  private data = new Map<string, string>();
-  get length(): number {
-    return this.data.size;
-  }
-  key(i: number): string | null {
-    return [...this.data.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
-    this.data.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.data.delete(k);
-  }
-  clear(): void {
-    this.data.clear();
-  }
-}
+// helpers が直接 browser global の localStorage を読むため、bun test では
+// テストごとに空のものを生やし、終わったら外す。
+let restoreStorage = () => {};
 
 beforeEach(() => {
-  globalThis.localStorage = new MemStorage();
+  restoreStorage = stubGlobal("localStorage", new MemStorage());
+});
+
+afterEach(() => {
+  restoreStorage();
 });
 
 function makePeer(sid: string, opts: { lastActivityAt?: string } = {}): PeerInfo {

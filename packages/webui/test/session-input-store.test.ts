@@ -4,7 +4,7 @@
 // 下書き、再送、無応答の期限切れ、A→B の置き換え) はここで固定する。返事の
 // 分類と文言は session-input.test.ts。 A tiny in-memory `localStorage` polyfill lets the sweep run
 // under bun test where `window.localStorage` isn't available.
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import type { ErrorResponse, SessionInputResponse } from "@ccmsg/protocol";
 import {
@@ -31,47 +31,38 @@ import {
   unconfirmedSends,
 } from "../src/client/components/session-input-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
-import { defined } from "./helpers.ts";
+import { defined, MemStorage, stubGlobal } from "./helpers.ts";
 
-// Minimal in-memory localStorage shim. Bun runs each test file in its own
-// module scope, but `localStorage` is a browser global — the composer's
-// helpers read it directly, so we hang a compatible object off `globalThis`
-// before each test. Deliberately minimal: only the methods the helpers call.
-class MemStorage {
-  private data = new Map<string, string>();
+// `localStorage` is a browser global the composer's helpers read directly, so
+// each test hangs one off `globalThis` and takes it off afterwards (bun runs
+// every file in one process). This one also counts and fails writes.
+class WriteCountingStorage extends MemStorage {
   /** Keys whose writes fail, as a full storage's do (quota). */
   failingWrites = new Set<string>();
   /** setItem / removeItem calls so far. */
   writes = 0;
-  get length(): number {
-    return this.data.size;
-  }
-  key(i: number): string | null {
-    return [...this.data.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
+  override setItem(k: string, v: string): void {
     this.writes += 1;
     if (this.failingWrites.has(k)) throw new Error("QuotaExceededError");
-    this.data.set(k, v);
+    super.setItem(k, v);
   }
-  removeItem(k: string): void {
+  override removeItem(k: string): void {
     this.writes += 1;
-    this.data.delete(k);
-  }
-  clear(): void {
-    this.data.clear();
+    super.removeItem(k);
   }
 }
 
-let storage = new MemStorage();
+let storage = new WriteCountingStorage();
+let restoreStorage = () => {};
 
 beforeEach(() => {
-  storage = new MemStorage();
-  globalThis.localStorage = storage;
+  storage = new WriteCountingStorage();
+  restoreStorage = stubGlobal("localStorage", storage);
   resetSessionInputPageState();
+});
+
+afterEach(() => {
+  restoreStorage();
 });
 
 function makePeer(sid: string, opts: { lastActivityAt?: string; repo?: string } = {}): PeerInfo {

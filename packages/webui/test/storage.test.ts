@@ -1,7 +1,7 @@
 // 置き場の 3 分類 (storage.ts のヘッダの表)。ここで押さえるのは 2 段目の
 // レイアウト寸法 — 「窓ごとに独立して動かせる」と「次に開く窓は最後に使った
 // 値で始まる」を同時に満たす読み書きになっているか。
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   readLayoutStorage,
   readSessionStorage,
@@ -10,29 +10,9 @@ import {
   writeSessionStorage,
   writeStorage,
 } from "../src/client/storage.ts";
+import { MemStorage, stubGlobal } from "./helpers.ts";
 
-// files-view-store.test.ts と同じ最小 storage shim を 2 面ぶん。
-class MemStorage {
-  private data = new Map<string, string>();
-  get length(): number {
-    return this.data.size;
-  }
-  key(i: number): string | null {
-    return [...this.data.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
-    this.data.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.data.delete(k);
-  }
-  clear(): void {
-    this.data.clear();
-  }
-}
+let restores: Array<() => void> = [];
 
 /** 新しい窓を開く = sessionStorage だけが空になり、localStorage は残る。 */
 function openNewWindow(): void {
@@ -40,8 +20,14 @@ function openNewWindow(): void {
 }
 
 beforeEach(() => {
-  globalThis.localStorage = new MemStorage();
-  openNewWindow();
+  restores = [
+    stubGlobal("localStorage", new MemStorage()),
+    stubGlobal("sessionStorage", new MemStorage()),
+  ];
+});
+
+afterEach(() => {
+  for (const restore of restores.reverse()) restore();
 });
 
 describe("readLayoutStorage / writeLayoutStorage", () => {
