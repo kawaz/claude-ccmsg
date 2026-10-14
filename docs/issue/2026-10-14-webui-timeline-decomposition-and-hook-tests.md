@@ -1,11 +1,11 @@
 ---
 title: webui Timeline.tsx の分解と hook 単位のテスト基盤
-status: open
+status: wip
 category: design
 created: 2026-10-14T13:51:25+09:00
 last_read: 2026-10-15T02:14:12+09:00
 open_entered: 2026-10-14T13:51:25+09:00
-wip_entered:
+wip_entered: 2026-10-15T02:25:37+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:

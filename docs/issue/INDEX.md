@@ -6,7 +6,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 |---|---|---|---|---|
 | 2026-10-14 | bug | open | [sidecar-hello-ghost-peer-after-harness-death](./2026-10-14-sidecar-hello-ghost-peer-after-harness-death.md) | sidecar が hello して名乗る形で、daemon 再起動で last_activity_at が更新される副作用と、harness 死亡後に幽霊 peer が残るおそれ |
 | 2026-10-14 | design | open | [hidden-sessionview-stop-store-notifications](./2026-10-14-hidden-sessionview-stop-store-notifications.md) | 隠れている SessionView 配下の Timeline が store 変更で再描画する (612 render)。隠れている間は変更通知を止める store を配る |
-| 2026-10-14 | design | open | [webui-timeline-decomposition-and-hook-tests](./2026-10-14-webui-timeline-decomposition-and-hook-tests.md) | webui の Timeline() 1812 行を custom hook に分解し timeline/ に分割、happy-dom で hook 単位のテストを足す |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
 | 2026-10-13 | design | open | [agent-guidance-for-ccmsg-addresses](./2026-10-13-agent-guidance-for-ccmsg-addresses.md) | DR-0037 の ccmsg:<sid> 宛先をエージェントが初手で知る面が peers --help しか無い。skill / hook / rules のどこに案内を置くか裁定待ち |
 | 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |
@@ -45,3 +44,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
+| 2026-10-14 | design | wip | [webui-timeline-decomposition-and-hook-tests](./2026-10-14-webui-timeline-decomposition-and-hook-tests.md) | webui の Timeline() 1812 行を custom hook に分解し timeline/ に分割、happy-dom で hook 単位のテストを足す |
