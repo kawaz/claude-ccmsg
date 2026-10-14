@@ -61,8 +61,8 @@ body cap を含めた notification 全体の長さは、500-body cluster で ~77
 ### 抽出クエリ
 
 ```python
-import json, re, glob
-files = glob.glob("/Users/kawaz/.claude-personal/projects/**/*.jsonl", recursive=True)
+import json, os, re, glob
+files = glob.glob(os.path.expanduser("~/.claude-personal/projects/**/*.jsonl"), recursive=True)
 ev_lens = []
 for p in files:
     for line in open(p):

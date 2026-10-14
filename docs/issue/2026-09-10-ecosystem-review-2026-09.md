@@ -23,8 +23,8 @@ origin: kawaz 依頼 (2026-09-10、claude-rules-personal セッション経由)
 
 外部レビューで本リポ (claude-ccmsg) 向けの指摘が出た。以下 2 ファイルを読んで対応を検討する。
 
-- 個別ファイル: `/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal/main/docs/research/2026-09-10-ecosystem-review/claude-ccmsg.md`
-- 共通ファイル: `/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal/main/docs/research/2026-09-10-ecosystem-review/common.md`
+- 個別ファイル: `~/.local/share/repos/github.com/kawaz/claude-rules-personal/main/docs/research/2026-09-10-ecosystem-review/claude-ccmsg.md`
+- 共通ファイル: `~/.local/share/repos/github.com/kawaz/claude-rules-personal/main/docs/research/2026-09-10-ecosystem-review/common.md`
 
 ## 背景
 
