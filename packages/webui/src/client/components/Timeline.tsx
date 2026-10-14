@@ -40,6 +40,7 @@ import {
 } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
+import { useScrollHold, type ScrollHold } from "../useScrollHold.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
@@ -2972,50 +2973,6 @@ function ForkDivider({ origin }: { origin: ForkOrigin }) {
   );
 }
 
-/** 目的の scroll 位置を 0/60/300/1000ms の 4 回書く (kawaz r17 mid=26)。
- * fold group / 画像 / フォント / markdown / Shiki highlight の非同期差し替えで
- * paint 後も scrollHeight が伸びるため、1 発では狙いの位置に落ち着かない。
- * 末尾 1000ms はリロード直後の初期 fetch (2MB) 向け。
- *
- * 中断条件は scroll 位置でなく **ユーザ入力 (wheel / touch / キー)** で判定
- * する (kawaz r17 mid=37 のリグレッション対策): 位置ベースのガードだと、初回
- * ロード直後の「まだ top に居る」状態を「ユーザが上に離れた」と誤認して全
- * タイマーが空振りする。programmatic scroll はこれらのイベントを発火しない
- * ので、ユーザの意図した離脱だけを正確に拾える。
- *
- * 戻り値は effect の cleanup にそのまま返せる中断関数。 */
-function settledScroll(
-  getEl: () => HTMLElement | null,
-  apply: (el: HTMLElement) => void,
-): () => void {
-  const el0 = getEl();
-  let cancelled = false;
-  const onUserInput = () => {
-    cancelled = true;
-    detach();
-  };
-  const detach = () => {
-    el0?.removeEventListener("wheel", onUserInput);
-    el0?.removeEventListener("touchstart", onUserInput);
-    el0?.removeEventListener("keydown", onUserInput);
-  };
-  el0?.addEventListener("wheel", onUserInput, { passive: true });
-  el0?.addEventListener("touchstart", onUserInput, { passive: true });
-  el0?.addEventListener("keydown", onUserInput);
-  const ids = [0, 60, 300, 1000].map((ms) =>
-    setTimeout(() => {
-      const el = getEl();
-      if (el && !cancelled) apply(el);
-    }, ms),
-  );
-  const lastId = setTimeout(detach, 1001);
-  return () => {
-    ids.forEach(clearTimeout);
-    clearTimeout(lastId);
-    detach();
-  };
-}
-
 /** `container` の scrollTop に書けば `target` が「TL の表示領域の一番上」＝
  * sticky な `.tl-toolbar` のすぐ下に来る値。toolbar の実高さを毎回測るのは
  * モバイル幅で 2 行以上に wrap するため (kawaz r35 mid=51: 固定の
@@ -3169,6 +3126,68 @@ function ForkAction({
       </p>
     </div>
   );
+}
+
+// Auto-expand every ancestor <details> (fold group / system-message fold)
+// before scrolling — Phase 2's "fold との相互作用込み"
+// (DR-0022 §4): a match living inside a collapsed fold must actually
+// become visible when navigated to, not silently scroll to a hidden
+// element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
+// used elsewhere in this file, walking outward through nested folds.
+// Opens a closed <details> in a way that survives the imminent re-render.
+// FoldGroup/ThinkingSegment both render a *controlled*
+// `<details open={state}>` synced via onToggle. The browser fires `toggle`
+// asynchronously (as a task), but the setSearchCurrentIndex re-render from
+// searchNext/Prev lands first and writes the still-false state's `open`
+// back to the DOM, silently re-closing the fold (observed 2026-07-17: nav
+// into a closed fold moved scroll but the fold stayed shut). Dispatching
+// the toggle synchronously runs the component's onToggle → setState now,
+// so that re-render sees open=true and keeps it. (FoldGuide's close path
+// doesn't need this: nothing re-renders between its DOM write and the
+// browser's own toggle task.)
+function forceOpenDetails(d: HTMLDetailsElement) {
+  if (d.open) return;
+  d.open = true;
+  d.dispatchEvent(new Event("toggle"));
+}
+
+function revealAndScroll(el: HTMLElement, scrollHold: ScrollHold) {
+  // The match text usually lives *inside* the unit's own fold — a tool_use/
+  // tool_result/unknown-segment/thinking segment IS a <details class=
+  // "tl-fold">, whose summary shows only the label (never the matched
+  // text). The ancestor walk below starts *outside* the unit (closest()
+  // from the display:contents wrapper resolves to the wrapper's enclosing
+  // details, not the unit's own), so without this the nav would center a
+  // collapsed summary with the highlight still hidden (observed
+  // 2026-07-17). Text-segment units have no descendant details — querySelectorAll
+  // finds nothing and this is a no-op for them.
+  for (const d of el.querySelectorAll("details")) forceOpenDetails(d);
+  let node: HTMLElement | null = el;
+  while (node) {
+    const ancestorDetails: HTMLDetailsElement | null = node.closest("details");
+    if (!ancestorDetails) break;
+    forceOpenDetails(ancestorDetails);
+    node = ancestorDetails.parentElement;
+  }
+  // `el` is the `display: contents` .tl-search-unit wrapper — its own box
+  // is 0x0 (that's the point of `contents`, it doesn't participate in
+  // layout), and Chromium treats scrollIntoView on a boxless element as a
+  // no-op (observed 2026-07-17: scrollTop unchanged). Scroll the first
+  // rendered child instead; the ancestor-<details> walk above still works
+  // from the wrapper since `contents` only removes the box, not the DOM
+  // position.
+  const first = el.firstElementChild;
+  const target = first instanceof HTMLElement ? first : el;
+  // Held, not scrolled once: opening the ancestor folds just above
+  // triggers Preact re-renders that keep shifting layout after this
+  // synchronous call — a fold group's first open auto-expands every
+  // thinking inside it and kicks off ja translation (ThinkingSegment's
+  // foldGroupOpen effect), each of which grows content above/around the
+  // match and strands a single immediate scrollIntoView at a stale position
+  // (observed 2026-07-17: match ends up outside the viewport on first nav
+  // into a closed fold). The hold re-centres on every such resize until the
+  // reader scrolls (useScrollHold.ts).
+  scrollHold.toElement(target, (_scroller, el) => el.scrollIntoView({ block: "center" }));
 }
 
 /** One transcript_read for the Timeline's cache, tagged with a fresh request
@@ -3566,7 +3585,7 @@ export function Timeline({
       // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
       // 届く live tail への追従を継続させる)。
       isNearBottomRef.current = true;
-      scrollToBottomSettled();
+      scrollHold.toBottom();
     });
   }
 
@@ -3710,6 +3729,10 @@ export function Timeline({
   const userTurnKeySet = useMemo(() => new Set(userTurnKeys), [userTurnKeys]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Every jump that should survive later growth (tail follow, pin landing,
+  // search reveal, refresh, ⤓) goes through this instead of a one-off
+  // scrollTop write; see useScrollHold.ts.
+  const scrollHold = useScrollHold(scrollRef, tlLinesRef);
   const userNavScrollAnimationRef = useRef<number | null>(null);
   // nav key -> mounted DOM node for each green bubble. Entries for turns
   // dropped by a "更新" (replace) reload are pruned below rather than leaked.
@@ -4035,72 +4058,6 @@ export function Timeline({
     displayRevision,
   ]);
 
-  // Auto-expand every ancestor <details> (fold group / system-message fold)
-  // before scrolling — Phase 2's "fold との相互作用込み"
-  // (DR-0022 §4): a match living inside a collapsed fold must actually
-  // become visible when navigated to, not silently scroll to a hidden
-  // element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
-  // used elsewhere in this file, walking outward through nested folds.
-  // Opens a closed <details> in a way that survives the imminent re-render.
-  // FoldGroup/ThinkingSegment both render a *controlled*
-  // `<details open={state}>` synced via onToggle. The browser fires `toggle`
-  // asynchronously (as a task), but the setSearchCurrentIndex re-render from
-  // searchNext/Prev lands first and writes the still-false state's `open`
-  // back to the DOM, silently re-closing the fold (observed 2026-07-17: nav
-  // into a closed fold moved scroll but the fold stayed shut). Dispatching
-  // the toggle synchronously runs the component's onToggle → setState now,
-  // so that re-render sees open=true and keeps it. (FoldGuide's close path
-  // doesn't need this: nothing re-renders between its DOM write and the
-  // browser's own toggle task.)
-  function forceOpenDetails(d: HTMLDetailsElement) {
-    if (d.open) return;
-    d.open = true;
-    d.dispatchEvent(new Event("toggle"));
-  }
-
-  function revealAndScroll(el: HTMLElement) {
-    // The match text usually lives *inside* the unit's own fold — a tool_use/
-    // tool_result/unknown-segment/thinking segment IS a <details class=
-    // "tl-fold">, whose summary shows only the label (never the matched
-    // text). The ancestor walk below starts *outside* the unit (closest()
-    // from the display:contents wrapper resolves to the wrapper's enclosing
-    // details, not the unit's own), so without this the nav would center a
-    // collapsed summary with the highlight still hidden (observed
-    // 2026-07-17). Text-segment units have no descendant details — querySelectorAll
-    // finds nothing and this is a no-op for them.
-    for (const d of el.querySelectorAll("details")) forceOpenDetails(d);
-    let node: HTMLElement | null = el;
-    while (node) {
-      const ancestorDetails: HTMLDetailsElement | null = node.closest("details");
-      if (!ancestorDetails) break;
-      forceOpenDetails(ancestorDetails);
-      node = ancestorDetails.parentElement;
-    }
-    // `el` is the `display: contents` .tl-search-unit wrapper — its own box
-    // is 0x0 (that's the point of `contents`, it doesn't participate in
-    // layout), and Chromium treats scrollIntoView on a boxless element as a
-    // no-op (observed 2026-07-17: scrollTop unchanged). Scroll the first
-    // rendered child instead; the ancestor-<details> walk above still works
-    // from the wrapper since `contents` only removes the box, not the DOM
-    // position.
-    const first = el.firstElementChild;
-    const target = first instanceof HTMLElement ? first : el;
-    // Multi-shot scroll (same settled pattern as scrollToBottomSettled
-    // below): opening the ancestor folds just above triggers Preact
-    // re-renders that keep shifting layout after this synchronous call —
-    // a fold group's first open auto-expands every thinking inside it and
-    // kicks off ja translation (ThinkingSegment's foldGroupOpen effect),
-    // each of which grows content above/around the match and strands a
-    // single immediate scrollIntoView at a stale position (observed
-    // 2026-07-17: match ends up outside the viewport on first nav into a
-    // closed fold). Re-scrolling at 60/300ms tracks those reflows;
-    // scrollIntoView on an already-visible target is a no-op so the extra
-    // shots don't cause visible jitter.
-    for (const ms of [0, 60, 300]) {
-      setTimeout(() => target.scrollIntoView({ block: "center" }), ms);
-    }
-  }
-
   // A match inside a fold that has never been opened has no element yet: the
   // fold's body is only rendered once it opens. Opening it by key is the first
   // half of the jump; `pendingSearchReveal` is the second, resumed by the
@@ -4111,15 +4068,15 @@ export function Timeline({
     const el = searchUnitRefs.current.get(pendingSearchReveal);
     if (!el) return;
     setPendingSearchReveal(null);
-    revealAndScroll(el);
-  }, [pendingSearchReveal, foldMountRevision]);
+    revealAndScroll(el, scrollHold);
+  }, [pendingSearchReveal, foldMountRevision, scrollHold]);
 
   function scrollToSearchMatch(oneBasedIdx: number) {
     const key = matchingUnitKeys[oneBasedIdx - 1];
     if (key === undefined) return;
     const el = searchUnitRefs.current.get(key);
     if (el) {
-      revealAndScroll(el);
+      revealAndScroll(el, scrollHold);
       return;
     }
     openFoldsAt(searchUnitOffsets.get(key));
@@ -4275,7 +4232,7 @@ export function Timeline({
       });
     };
     // ユーザ自身のスクロール操作だけを拾う (programmatic scroll はこれらの
-    // イベントを発火しない — settledScroll の中断判定と同じ考え方)。pin 中の
+    // イベントを発火しない — useScrollHold が保持を手放す判定と同じ考え方)。pin 中の
     // 「最下部まで自分で降りてきたら head に戻す」判定に使う。
     const onUserScrollIntent = () => {
       userScrolledSincePinRef.current = true;
@@ -4308,19 +4265,9 @@ export function Timeline({
   // スクロールする。既存 tail-append effect は `timeline.end` の伸びに反応
   // する形式なので、cache がすでに埋まった状態 (前訪問済 or 再訪 revalidate)
   // で end が変わらないケースで scroll が発火せず「一番上のまま」になる
-  // ことがあった。setTimeout(0) で initial render 完了を待ってから scroll
-  // を書く — mount 直後の scrollHeight は content flush 前で 0 相当のため。
+  // ことがあった。末尾は保持 (useScrollHold) で取るので、mount 直後に
+  // scrollHeight が確定していなくても、内容が伸びた時点で末尾へ書き直される。
   const prevEndRef = useRef(timeline.end);
-  const scrollToBottomSettled = useCallback(
-    () =>
-      settledScroll(
-        () => scrollRef.current,
-        (el) => {
-          el.scrollTop = el.scrollHeight;
-        },
-      ),
-    [],
-  );
   // 反応するのは sid だけ — timeline.end / currentPosition はその時点の値を
   // 読むだけの Effect Event に置く。end に反応すると「セッション切替検知」
   // ではなく毎回の tail 追記でもリセットされてしまい、下の tail-append effect
@@ -4329,7 +4276,7 @@ export function Timeline({
     prevEndRef.current = timeline.end;
     isNearBottomRef.current = currentPosition === "head";
     if (currentPosition !== "head") return;
-    return scrollToBottomSettled();
+    scrollHold.toBottom();
   });
   useEffect(() => enterSession(), [sid]);
 
@@ -4344,8 +4291,8 @@ export function Timeline({
     const becameVisible = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
     if (!becameVisible || currentPosition !== "head") return;
-    return scrollToBottomSettled();
-  }, [visible, currentPosition, scrollToBottomSettled]);
+    scrollHold.toBottom();
+  }, [visible, currentPosition, scrollHold]);
 
   // Live tail で新しい行が追記されたとき (`timeline.end` が伸びる) だけ、か
   // つユーザが最下部付近を見ているときだけ自動スクロールする (kawaz spec)。
@@ -4381,10 +4328,10 @@ export function Timeline({
     // 従来通り「末尾付近に居る時だけ」追従 (kawaz spec、上へ遡り中の読書を
     // 吹っ飛ばさない)。
     if (!initialLoad && !isNearBottomRef.current) return;
-    // settled 方式 (0/60/300/1000ms の複数回書き): 初期 fetch (2MB) の
-    // 大量行は markdown / highlight の非同期差し替えで effect 後も
-    // scrollHeight が伸びるので、1 発の書き込みでは上に取り残される。
-    return scrollToBottomSettled();
+    // 1 発の書き込みでなく保持 (useScrollHold): 初期 fetch (2MB) の大量行は
+    // markdown / highlight の非同期差し替えで effect 後も scrollHeight が
+    // 伸びるので、1 度書いただけでは上に取り残される。
+    scrollHold.toBottom();
   });
   useEffect(() => followTailGrowth(timeline.end), [timeline.end]);
 
@@ -4424,11 +4371,13 @@ export function Timeline({
     // 画面中央ではなく先頭に置く。scrollIntoView({block:"center"}) では
     // sticky toolbar を考慮できず、そもそも中央になってしまうので、👤 nav
     // と同じ topBelowToolbar で位置を計算して container 側へ書く。
-    return settledScroll(
-      () => scrollRef.current,
-      (container) => container.scrollTo({ top: topBelowToolbar(container, target) }),
+    // 保持 (useScrollHold) なので、着地の後に上の項目が伸びても対象は
+    // toolbar 直下に留まる。この effect の再実行 (parsed の変化) は着地済み
+    // として上で抜けるので、保持を取り消さない。
+    scrollHold.toElement(target, (container, el) =>
+      container.scrollTo({ top: topBelowToolbar(container, el) }),
     );
-  }, [sid, currentPosition, timeline.status, parsed]);
+  }, [sid, currentPosition, timeline.status, parsed, scrollHold]);
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
   // エフェクトはウザいので削除)。
@@ -4437,9 +4386,7 @@ export function Timeline({
   }
 
   function scrollToBottom() {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight });
+    scrollHold.toBottom();
   }
 
   function scrollToUserTurn(oneBasedIdx: number) {
