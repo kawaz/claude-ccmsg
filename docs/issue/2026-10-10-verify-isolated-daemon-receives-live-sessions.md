@@ -33,3 +33,14 @@ origin: 自リポ TODO
 - [ ] 隔離 daemon には擬似セッションだけが繋がる
 - [ ] 害の有無 (実セッションへの誤配、実 daemon の状態汚染) を確認して記録する
 - [ ] 再発防止の検証手順 (verify skill) を更新する
+
+## 実害 (2026-10-14)
+
+worker の /verify が隔離 daemon (`CCMSG_STATE_DIR` / `CONFIG` / `DATA` は隔離ベース) に fake の session 接続を `hello role:session` で張る時に、実セッションの sid を使ったため、room の投稿が peer-inject で実セッション 2 つに届いた (68236664 に 120 通、0f0aae1d に 64 通)。
+
+原因: peer-inject は daemon の state dir と無関係に、走査した実 config dir から対象 sid の harness socket を引いて直接注入する。隔離 daemon でも sid が実在すれば届く。
+
+対策候補:
+
+- (a) verify skill の手順に「hello の sid は必ず架空 (UUID を新規生成)、実セッションの sid を使わない」を明記する (即時)
+- (b) daemon 側で、自分の config dir の走査対象 (`CCMSG_CONFIG_DIR` 等) に無い config dir のセッションには注入しない、というガードを入れる (隔離を daemon の責務にする、要設計)
