@@ -1,2 +1,13 @@
 [test]
 preload = ["./packages/testkit/src/test-env.ts"]
+# coverage は `bun test --coverage` (= `just coverage`) の時だけ計測する。
+# 閾値の根拠と計測値は docs/findings/2026-10-14-test-coverage-baseline.md
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = [
+  "packages/*/test/**",
+  "packages/testkit/**",
+  "hooks/*.bundle.js",
+  "../**",
+]

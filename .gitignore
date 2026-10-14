@@ -36,3 +36,6 @@ logs/
 
 # VS Code workspace (ローカル絶対パスを含む個人ファイル)
 ccmsg.code-workspace
+
+# bun test --coverage の出力 (just coverage)
+coverage/

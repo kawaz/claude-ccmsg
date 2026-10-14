@@ -41,7 +41,15 @@ jobs:
       # ubuntu-latest で通ることで libc.so.6 経路 (docs/issue/2026-07-03-mvp-followups.md
       # 受け入れ条件 1) が CI 上で継続検証される。
       - name: Test
+        if: matrix.os != 'macos-latest'
         run: just test
+
+      # justfile の `coverage` recipe (bun test --coverage + package 別下限の検査)。
+      # 下限 (justfile の coverage-thresholds) は macOS での実測から決めているので macOS だけで測る
+      # (docs/findings/2026-10-14-test-coverage-baseline.md)
+      - name: Test with coverage
+        if: matrix.os == 'macos-latest'
+        run: just coverage
 
       # validate (claude plugin validate .) は claude CLI が runner に無いため CI では実行しない。
 

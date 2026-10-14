@@ -25,6 +25,12 @@ bump-trigger-paths := "packages/ bin/ hooks/ bun.lock tsconfig.json"
 
 version-files := ".claude-plugin/plugin.json .claude-plugin/marketplace.json package.json"
 
+# package 別のカバレッジ下限 (`package:lines%:functions%`)。coverage/lcov.info の合計
+# (LH/LF・FNH/FNF) と比べ、どれかを下回ったら `just coverage` を落とす。
+# 値の根拠は docs/findings/2026-10-14-test-coverage-baseline.md
+
+coverage-thresholds := "protocol:97:98 daemon:58:75 cli:84:85 webui:79:86 hooks:80:85"
+
 # ---------- default ----------
 
 # レシピ一覧を表示
@@ -49,8 +55,8 @@ bump-version bump="patch": ensure-clean
     new_version=$(bump-semver {{ bump }} {{ version-files }} --write --no-hint)
     bump-semver vcs commit --allow-nonexistent-path -m "Release v${new_version}" {{ version-files }}
 
-# CI 単一エントリ (lint→typecheck→test→validate→hooks module の bundle 確認を依存重複排除で1回ずつ保証)
-ci: lint typecheck test validate check-hooks-bundle
+# CI 単一エントリ (lint→typecheck→coverage (= test + 計測)→validate→hooks module の bundle 確認を依存重複排除で1回ずつ保証)
+ci: lint typecheck coverage validate check-hooks-bundle
 
 # ---------- dev recipes (push/ci の依存、利用者が直接叩くこともある) ----------
 
@@ -79,6 +85,46 @@ test: lint typecheck
     bun packages/testkit/src/warm.ts
     bun test
 
+# テスト + カバレッジ計測 (要約を表示し coverage/lcov.info を出力、package 別下限を検査)。
+# 計測の設定 (除外パターン等) は bunfig.toml の [test]
+coverage: lint typecheck
+    bun packages/testkit/src/warm.ts
+    bun test --coverage
+    @just _coverage-check
+
+# coverage/lcov.info を package 別に合計し coverage-thresholds と比べる。
+# bun の coverageThreshold はファイル単位で判定する (1 ファイルでも下回れば落ちる) ため
+# package 単位の下限には使えず、ここで検査する
+[private]
+[script]
+_coverage-check:
+    awk -v thresholds="{{ coverage-thresholds }}" '
+      /^SF:/ {
+        path = substr($0, 4)
+        if (path ~ /^packages\//) { split(path, seg, "/"); pkg = seg[2] }
+        else if (path ~ /^hooks\//) { pkg = "hooks" }
+        else { pkg = "other" }
+      }
+      /^LF:/ { lf[pkg] += substr($0, 4) }
+      /^LH:/ { lh[pkg] += substr($0, 4) }
+      /^FNF:/ { ff[pkg] += substr($0, 5) }
+      /^FNH:/ { fh[pkg] += substr($0, 5) }
+      function pct(hit, found) { return found == 0 ? 100 : 100 * hit / found }
+      END {
+        n = split(thresholds, items, " ")
+        fail = 0
+        printf "%-10s %8s %8s %12s\n", "package", "lines%", "funcs%", "min(l/f)"
+        for (i = 1; i <= n; i++) {
+          split(items[i], t, ":")
+          p = t[1]
+          l = pct(lh[p], lf[p]); f = pct(fh[p], ff[p])
+          ng = (l < t[2] || f < t[3])
+          printf "%-10s %8.2f %8.2f %12s%s\n", p, l, f, t[2] "/" t[3], ng ? "  FAIL" : ""
+          if (ng) fail = 1
+        }
+        if (fail) { print "coverage が下限を下回った (下限は justfile の coverage-thresholds)" > "/dev/stderr"; exit 1 }
+      }
+    ' coverage/lcov.info
 # Claude Plugin の構造検証
 validate: lint
     claude plugin validate .
