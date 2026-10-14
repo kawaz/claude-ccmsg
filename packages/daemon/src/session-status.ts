@@ -40,6 +40,7 @@ import {
   type SessionApiError,
   type SessionBackgroundStatus,
   type SessionContextUsage,
+  type SessionFacts,
   type SessionInputReadiness,
   type SessionStatusSnapshot,
   type SessionTeammate,
@@ -1795,24 +1796,68 @@ function startRefold(
   });
 }
 
-export interface SessionStatusStore {
-  sessions: Map<string, LiveSessionStatus>;
+export interface SessionStatusSnapshotSources {
   /** Whether a person's input can reach a session now, carried on every
    * snapshot as `input_readiness`. Not read off the transcript: it depends on
-   * the runs the session's sidecars named (session-input.ts inputReadiness).
-   * Absent where nothing can tell (tests of the fold alone). */
+   * the runs the session's sidecars named (session-input.ts inputReadiness). */
   inputReadiness?: (sid: string) => SessionInputReadiness;
+  /** What the session's hooks module last said of it (session-facts.ts),
+   * laid over the transcript's fold (withFacts). */
+  facts?: (sid: string) => SessionFacts | undefined;
+}
+
+/** Each source is absent where nothing can tell (tests of the fold alone). */
+export interface SessionStatusStore extends SessionStatusSnapshotSources {
+  sessions: Map<string, LiveSessionStatus>;
 }
 
 export function createSessionStatusStore(
-  inputReadiness?: (sid: string) => SessionInputReadiness,
+  sources: SessionStatusSnapshotSources = {},
 ): SessionStatusStore {
-  return { sessions: new Map(), ...(inputReadiness ? { inputReadiness } : {}) };
+  return { sessions: new Map(), ...sources };
 }
 
-/** The snapshot of a fold with the session's input readiness beside it. A
- * `live` fold remembers the readiness it published, for
- * refreshInputReadiness. */
+function isoAt(ms: number): string {
+  return new Date(ms).toISOString();
+}
+
+/** The context as the transcript's fold has it, with what the hooks module
+ * said laid over it: the window is only ever the module's, and the model the
+ * module read (`[1m]` kept) names it over the transcript's. Without facts the
+ * fold stands as it is. */
+export function contextWithFacts(
+  context: SessionContextUsage | undefined,
+  facts: SessionFacts | undefined,
+): SessionContextUsage | undefined {
+  if (facts === undefined) return context;
+  const model = facts.model ?? context?.model;
+  if (model === undefined) return context;
+  const window = facts.context?.window;
+  const timestamp = context?.timestamp ?? isoAt(facts.context?.at ?? facts.at);
+  return {
+    ...(context?.tokens !== undefined ? { tokens: context.tokens } : {}),
+    ...(window !== undefined ? { window } : {}),
+    model,
+    ...(context?.effort !== undefined ? { effort: context.effort } : {}),
+    timestamp,
+  };
+}
+
+/** A fold's snapshot with what is not read off the transcript laid over it:
+ * the hooks module's facts (contextWithFacts). */
+export function withFacts(
+  data: SessionStatusSnapshot,
+  facts: SessionFacts | undefined,
+): SessionStatusSnapshot {
+  if (facts === undefined) return data;
+  const { context: folded, ...rest } = data;
+  const context = contextWithFacts(folded, facts);
+  return { ...rest, ...(context !== undefined ? { context } : {}) };
+}
+
+/** The snapshot of a fold with the session's input readiness and its hooks
+ * module's facts beside it. A `live` fold remembers the readiness it
+ * published, for refreshInputReadiness. */
 async function fullSnapshot(
   store: SessionStatusStore,
   sid: string,
@@ -1821,7 +1866,7 @@ async function fullSnapshot(
   cwd: string | undefined,
   live?: LiveSessionStatus,
 ): Promise<SessionStatusSnapshot> {
-  const data = await snapshot(state, sidDir, cwd);
+  const data = withFacts(await snapshot(state, sidDir, cwd), store.facts?.(sid));
   const readiness = store.inputReadiness?.(sid);
   if (readiness === undefined) return data;
   if (live) live.inputReadiness = readiness.kind;
@@ -1857,6 +1902,13 @@ export function refreshInputReadiness(store: SessionStatusStore, log?: TailLog):
     if (live.statusConns.size === 0) continue;
     if (readinessOf(sid).kind !== live.inputReadiness) pushSnapshot(store, sid, live, log);
   }
+}
+
+/** Push `sid`'s status to its subscribers, for what its hooks module said of
+ * it: the facts are not a transcript line, so nothing else would. */
+export function refreshSessionFacts(store: SessionStatusStore, sid: string, log?: TailLog): void {
+  const live = store.sessions.get(sid);
+  if (live !== undefined && live.statusConns.size > 0) pushSnapshot(store, sid, live, log);
 }
 
 /** Publish the current fold to every subscriber of `sid`.

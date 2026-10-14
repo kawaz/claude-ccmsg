@@ -21,6 +21,7 @@ import { PeerInjector } from "../src/peer-inject.ts";
 import { createSandboxGrants } from "../src/sandbox.ts";
 import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
 import { createSessionErrorsStore } from "../src/session-errors.ts";
+import { SessionFactsStore } from "../src/session-facts.ts";
 import { createSessionStatusStore } from "../src/session-status.ts";
 import { createSessionUserInputStore } from "../src/session-user-input.ts";
 import { createSessionWakeState } from "../src/session-wake.ts";
@@ -49,6 +50,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     CCMSG_DATA_DIR: path.join(base, "d"),
   });
   const trace = new TraceWriter(paths.trace);
+  const sessionFacts = fields.sessionFacts ?? new SessionFactsStore();
   return {
     paths,
     config: {},
@@ -70,7 +72,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
-    sessionStatus: createSessionStatusStore(),
+    sessionStatus: createSessionStatusStore({ facts: (sid) => sessionFacts.get(sid) }),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
@@ -90,6 +92,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
+    sessionFacts,
     sidecarRuns: new SidecarRuns({
       sidecarDir: paths.sidecars,
       isAlive: () => true,

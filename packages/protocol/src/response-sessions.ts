@@ -425,6 +425,13 @@ export const SidecarHelloResponseSchema = v.object({
 });
 export type SidecarHelloResponse = Output<typeof SidecarHelloResponseSchema>;
 
+/** Payload of a session_facts the daemon took (newer facts than it held, or
+ * older ones it dropped: the module has nothing to do about either). */
+export const SessionFactsResponseSchema = v.object({
+  ok: v.literal(true),
+});
+export type SessionFactsResponse = Output<typeof SessionFactsResponseSchema>;
+
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
  *

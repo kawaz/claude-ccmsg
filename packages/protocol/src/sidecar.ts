@@ -103,15 +103,18 @@ export type PromptSendResult = Output<typeof PromptSendResultSchema>;
 
 // --- describe --------------------------------------------------------------
 
-/** `describe`: what the module can be asked. It takes no arguments: `args` is
- * `{}`, and a key in it or an array is refused, so a caller that means more
- * learns that this module does not do it. An object schema takes an array
- * for an object with no keys, so the array is refused before it. */
-export const DescribeArgsSchema = v.pipe(
+/** The args of an op that takes none: `{}`, and a key in it or an array is
+ * refused, so a caller that means more learns that this module does not do
+ * it. An object schema takes an array for an object with no keys, so the
+ * array is refused before it. */
+const NoArgsSchema = v.pipe(
   v.unknown(),
   v.check((args) => !Array.isArray(args), "args is an object, not an array"),
   v.strictObject({}),
 );
+
+/** `describe`: what the module can be asked. It takes no arguments. */
+export const DescribeArgsSchema = NoArgsSchema;
 export type DescribeArgs = Output<typeof DescribeArgsSchema>;
 
 export const DescribeResultSchema = v.object({
@@ -125,19 +128,64 @@ export const DescribeResultSchema = v.object({
 });
 export type DescribeResult = Output<typeof DescribeResultSchema>;
 
+// --- session.facts ---------------------------------------------------------
+
+/** A moment, in epoch milliseconds as the module's clock (`$.clock.now()`)
+ * reads it. */
+const EpochMsSchema = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
+
+/** The session's context window as Claude Code itself uses it
+ * (`$.session.usage().context`): `window` is the window of the model the
+ * session runs now, environment overrides included. `at` is when the module
+ * read it. */
+export const SessionFactsContextSchema = v.object({
+  window: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  at: EpochMsSchema,
+});
+export type SessionFactsContext = Output<typeof SessionFactsContextSchema>;
+
+/** What a session's hooks module knows of its session through Claude Code
+ * itself (DR-0035 §3), and the transcript cannot tell: the model as the
+ * session names it (`$.session.model()`, a launch-time `[1m]` kept) and the
+ * context window. The module sends the whole of it each time a part moves, so
+ * the facts the daemon holds are replaced, never merged; `at` is when the
+ * module put them together, and facts older than the ones held are dropped.
+ * A part the module does not know yet is absent. */
+export const SessionFactsSchema = v.object({
+  at: EpochMsSchema,
+  model: v.optional(v.pipe(v.string(), v.nonEmpty())),
+  context: v.optional(SessionFactsContextSchema),
+});
+export type SessionFacts = Output<typeof SessionFactsSchema>;
+
+/** The facts as `ccmsg sidecar facts` takes them on standard input: JSON
+ * text. */
+export const SessionFactsTextSchema = jsonText(SessionFactsSchema);
+
+/** `session.facts`: the module's facts as they are now. The daemon asks it
+ * when a run's sidecar names the run, which is when a daemon that started
+ * after the module has none of what the module sent before. It takes no
+ * arguments. */
+export const SessionFactsArgsSchema = NoArgsSchema;
+
 // --- the ops ---------------------------------------------------------------
 
 /** Each op's arguments and result. */
 export const SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
+  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
 export type SidecarResult<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["result"]>;
 
 /** The ops, in the order describe lists them. */
-export const SIDECAR_OP_NAMES = ["describe", "prompt.send"] as const satisfies readonly SidecarOp[];
+export const SIDECAR_OP_NAMES = [
+  "describe",
+  "prompt.send",
+  "session.facts",
+] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
 type RequestSchema<
@@ -170,6 +218,7 @@ function requestSchema<const Op extends SidecarOp, A extends (typeof SIDECAR_OPS
 export const SidecarRequestSchema = v.variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
+  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;

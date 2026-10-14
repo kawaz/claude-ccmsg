@@ -63,11 +63,10 @@ export function buildStatusSections(snapshot: SessionStatusSnapshot): StatusSect
   };
 }
 
-/** Transcript model values omit launch-only [1m] suffixes, so the 200k/1M
- * denominator cannot be recovered directly. Exceeding 200k is positive
- * evidence for a 1M session; values at or below it remain a 200k estimate. */
-export function estimateContextLimit(tokens: number): 200_000 | 1_000_000 {
-  return tokens > 200_000 ? 1_000_000 : 200_000;
+/** A context window as the ctx line spells it: whole millions as `1M`,
+ * anything else in thousands (`200k`, `300k`). */
+export function formatContextWindow(window: number): string {
+  return window % 1_000_000 === 0 ? `${window / 1_000_000}M` : `${Math.round(window / 1000)}k`;
 }
 
 /** Display shortening for model names: drops the redundant `claude-` prefix
@@ -155,21 +154,31 @@ export function formatAgentLiveState(agent: AgentInfo | undefined): string | nul
   return agent.waitingFor ? `${agent.status} (${agent.waitingFor})` : agent.status;
 }
 
+/** The ctx line: the fill over the window Claude Code reported through the
+ * session's hooks module. Without that window (a session without the module)
+ * the fill stands alone: the window depends on the model's default and on
+ * environment overrides the transcript does not record, so it is not guessed.
+ * Before the first response there is no fill, shown as `—`. */
 export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {
-  const limit = estimateContextLimit(ctx.tokens);
-  const limitLabel = limit === 1_000_000 ? "1M" : "200k";
-  const percentage = Math.round((ctx.tokens / limit) * 100);
+  const { tokens, window } = ctx;
+  const fill = tokens !== undefined ? `${Math.round(tokens / 1000)}k` : "—";
+  const limit = window !== undefined ? `/${formatContextWindow(window)}` : "";
+  const percentage =
+    tokens !== undefined && window !== undefined
+      ? ` (${Math.round((tokens / window) * 100)}%)`
+      : "";
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
   // the transcript row carried one (older CC rows lack the field).
   const effortSuffix = ctx.effort ? ` · ${ctx.effort}` : "";
   return {
-    text:
-      `ctx ${Math.round(ctx.tokens / 1000)}k/${limitLabel}* (${percentage}%)` +
-      ` · ${shortModel(ctx.model)}${effortSuffix}`,
+    text: `ctx ${fill}${limit}${percentage} · ${shortModel(ctx.model)}${effortSuffix}`,
     title:
-      `${ctx.tokens.toLocaleString("en-US")} tokens / model ${ctx.model}` +
-      (ctx.effort ? ` / effort ${ctx.effort}` : "") +
-      ` / context limit ${limit.toLocaleString("en-US")} is estimated; transcript cannot observe environment overrides`,
+      (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
+      (window !== undefined
+        ? ` / context window ${window.toLocaleString("en-US")}`
+        : " / context window unknown (the session has no ccmsg hooks module)") +
+      ` / model ${ctx.model}` +
+      (ctx.effort ? ` / effort ${ctx.effort}` : ""),
   };
 }
 

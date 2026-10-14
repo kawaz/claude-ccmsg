@@ -63,6 +63,7 @@ import {
   SessionStatusSubscribeRequestSchema,
   SessionStatusUnsubscribeRequestSchema,
   SidecarHelloRequestSchema,
+  SessionFactsRequestSchema,
   SidecarReplyRequestSchema,
 } from "./request-sessions.ts";
 import {
@@ -147,6 +148,7 @@ const OP_REQUEST_SCHEMAS = [
   SessionInputRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
+  SessionFactsRequestSchema,
   SessionEnvRequestSchema,
   SessionLauncherConfigRequestSchema,
   LlmUsageRequestSchema,

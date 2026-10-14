@@ -475,13 +475,17 @@ async function fakeSidecar(
   };
 }
 
-/** The next request the daemon wrote to `sidecar`. */
+/** The next request the daemon wrote to `sidecar`, past the `session.facts`
+ * it asks each run that names itself (session-facts.test.ts). */
 async function nextRequest(sidecar: {
   lines: AsyncGenerator<string, void>;
 }): Promise<SidecarRequest> {
-  const next = await sidecar.lines.next();
-  if (next.done === true) throw new Error("the sidecar closed");
-  return requestIn(next.value);
+  for (;;) {
+    const next = await sidecar.lines.next();
+    if (next.done === true) throw new Error("the sidecar closed");
+    const request = requestIn(next.value);
+    if (request.op !== "session.facts") return request;
+  }
 }
 
 /** A module's reply as `ccmsg sidecar reply` hands it to the daemon. */
@@ -689,6 +693,52 @@ describe("session_input over the wire", () => {
       await reply;
     } finally {
       sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+});
+
+describe("session.facts asked of a run that names itself", () => {
+  // A daemon that started after the module has none of the facts the module
+  // sent before: it asks the run as soon as the run names itself, and takes
+  // the answer as if the module had sent it.
+  test("the module's answer is taken as its facts", async () => {
+    const ctx = await startShortDaemon();
+    const transcript = path.join(ctx.base, `${SID}.jsonl`);
+    fs.writeFileSync(transcript, "");
+    let sidecar: { close(): void } | undefined;
+    try {
+      const session = await connect(ctx.sock);
+      await session.requestOk({
+        op: "hello",
+        role: "session",
+        protocol: PROTOCOL_VERSION,
+        sid: SID,
+        cwd: "/tmp",
+        transcript_path: transcript,
+      });
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      await user.requestOk({ op: "session_status_subscribe", sid: SID });
+      const named = await fakeSidecar(ctx, SID, "run1", "hy-1");
+      sidecar = named;
+      const next = await named.lines.next();
+      if (next.done === true) throw new Error("the sidecar closed");
+      const asked = requestIn(next.value);
+      expect(asked).toEqual({ v: 1, op: "session.facts", id: asked.id, args: {} });
+      const facts = { at: 5, model: "claude-opus-5-5[1m]", context: { window: 1_000_000, at: 5 } };
+      expect(
+        await session.request(sidecarReply({ id: asked.id, ok: true, result: facts })),
+      ).toEqual({ ok: true });
+      const pushed = await user.readEventUntil(
+        "session_status",
+        (ev) => ev.context?.window === 1_000_000,
+      );
+      expect(pushed.ev.context?.model).toBe("claude-opus-5-5[1m]");
+      user.close();
+      session.close();
+    } finally {
+      sidecar?.close();
       await stopTestDaemon(ctx);
     }
   });

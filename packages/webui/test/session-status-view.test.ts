@@ -15,9 +15,9 @@ import {
   buildWorkflowDrilldown,
   canonicalModelId,
   dedupeWorkflowRunsByRunId,
-  estimateContextLimit,
   formatAgentLiveState,
   formatContextUsage,
+  formatContextWindow,
   formatSessionModelEffort,
   shortModel,
   formatSidebarBadge,
@@ -164,11 +164,16 @@ describe("miniSummaryLines", () => {
       workflows: [],
       background: [],
       teammates: [],
-      context: { tokens: 640_000, model: "claude-fable-5", timestamp: "2026-07-17T00:00:00.000Z" },
+      context: {
+        tokens: 640_000,
+        window: 1_000_000,
+        model: "claude-fable-5",
+        timestamp: "2026-07-17T00:00:00.000Z",
+      },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "todo", text: "#t1 fix bug" },
-      { kind: "context", text: "ctx 640k/1M* (64%) · fable-5" },
+      { kind: "context", text: "ctx 640k/1M (64%) · fable-5" },
     ]);
   });
 
@@ -178,10 +183,10 @@ describe("miniSummaryLines", () => {
       workflows: [],
       background: [],
       teammates: [],
-      context: { tokens: 100_000, model: "m", timestamp: "t" },
+      context: { tokens: 100_000, window: 200_000, model: "m", timestamp: "t" },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "context", text: "ctx 100k/200k* (50%) · m" },
+      { kind: "context", text: "ctx 100k/200k (50%) · m" },
     ]);
   });
 
@@ -238,13 +243,13 @@ describe("miniSummaryLines", () => {
       workflows: [workflow({ task_id: "w1", status: "running", name: "wf" })],
       background: [],
       teammates: [{ name: "researcher", spawned: true, state: "active" }],
-      context: { tokens: 522_000, model: "m", timestamp: "t" },
+      context: { tokens: 522_000, window: 1_000_000, model: "m", timestamp: "t" },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "wf" },
       { kind: "todo", text: "#t1 a" },
       { kind: "todo", text: "#t2 b" },
-      { kind: "context", text: "ctx 522k/1M* (52%) · m" },
+      { kind: "context", text: "ctx 522k/1M (52%) · m" },
       { kind: "teammate", text: "researcher" },
     ]);
   });
@@ -276,43 +281,53 @@ describe("agent live state display", () => {
 });
 
 describe("context usage display", () => {
-  test("200k 帯は推定マーカー付きの 200k 分母で表示する", () => {
-    // transcript から分母を直接観測できないため、100k は 200k と推定し、生値と推定理由を title に残す。
+  // 分母は hooks module が Claude Code から読んだ window (findings
+  // 2026-10-14-mods-vs-transcript-information-sources)。opus[1m] で起動した
+  // 直後でも 1M で割る。
+  test("window があればその値で割る", () => {
     const formatted = formatContextUsage({
       tokens: 100_000,
-      model: "claude-haiku-4-5-20251001",
+      window: 1_000_000,
+      model: "claude-opus-5-5[1m]",
       timestamp: "2026-07-17T00:00:00.000Z",
     });
-    expect(formatted.text).toBe("ctx 100k/200k* (50%) · haiku-4-5-20251001");
+    expect(formatted.text).toBe("ctx 100k/1M (10%) · opus-5-5[1m]");
     expect(formatted.title).toContain("100,000 tokens");
-    expect(formatted.title).toContain("estimated");
+    expect(formatted.title).toContain("context window 1,000,000");
   });
 
-  test("200k を超えた観測値は 1M セッションの証拠として扱う", () => {
-    // [1m] suffix が transcript に載らない実形でも、522k という値自体が 200k 上限を否定する。
+  // window はモデルの既定と環境変数の上書きで決まり、transcript には残らない。
+  // module の無いセッションでは分母を推定せず、使用量だけを出す。
+  test("window が無ければ分母も % も出さない", () => {
+    const formatted = formatContextUsage({
+      tokens: 522_000,
+      model: "claude-fable-5",
+      timestamp: "2026-07-17T00:00:00.000Z",
+    });
+    expect(formatted.text).toBe("ctx 522k · fable-5");
+    expect(formatted.title).toContain("context window unknown");
+  });
+
+  // 最初の応答の前は使用量が無い。window と model は module が起動直後に送る。
+  test("使用量の無い window は — で出す", () => {
+    const formatted = formatContextUsage({ window: 1_000_000, model: "m", timestamp: "t" });
+    expect(formatted.text).toBe("ctx —/1M · m");
+    expect(formatted.title).toContain("no response yet");
+  });
+
+  test("100 万の倍数でない window は k で出す", () => {
+    // DISABLE_COMPACT + CLAUDE_CODE_MAX_CONTEXT_TOKENS の上書きで 300,000 になる実測がある。
+    expect(formatContextWindow(200_000)).toBe("200k");
+    expect(formatContextWindow(300_000)).toBe("300k");
+    expect(formatContextWindow(1_000_000)).toBe("1M");
+    expect(formatContextWindow(2_000_000)).toBe("2M");
+  });
+
+  test("100% 超を丸め込まず表示する", () => {
+    // clamp すると「window より多く使っている」という診断情報を失う。
     expect(
-      formatContextUsage({
-        tokens: 522_000,
-        model: "claude-fable-5",
-        timestamp: "2026-07-17T00:00:00.000Z",
-      }).text,
-    ).toBe("ctx 522k/1M* (52%) · fable-5");
-  });
-
-  test("200k 境界は超過した場合だけ 1M 推定へ切り替える", () => {
-    // 200k ちょうどは 200k モデルでも成立し、200001 だけが 200k 上限では説明不能になる。
-    expect(estimateContextLimit(200_000)).toBe(200_000);
-    expect(estimateContextLimit(200_001)).toBe(1_000_000);
-    expect(formatContextUsage({ tokens: 200_000, model: "m", timestamp: "t" }).text).toBe(
-      "ctx 200k/200k* (100%) · m",
-    );
-  });
-
-  test("100% 超を丸め込まず推定外れの手掛かりとして表示する", () => {
-    // 推定分母より大きい観測値を clamp すると診断情報を失うため、1.1M は 110% のまま出す。
-    expect(formatContextUsage({ tokens: 1_100_000, model: "m", timestamp: "t" }).text).toBe(
-      "ctx 1100k/1M* (110%) · m",
-    );
+      formatContextUsage({ tokens: 1_100_000, window: 1_000_000, model: "m", timestamp: "t" }).text,
+    ).toBe("ctx 1100k/1M (110%) · m");
   });
 
   test("formatSessionModelEffort は model を持つ最初の候補だけを採用する", () => {
@@ -362,11 +377,12 @@ describe("context usage display", () => {
     // DR-0020 addendum 2026-07-18 の表示形を仕様として厳密固定する。
     const formatted = formatContextUsage({
       tokens: 331_000,
+      window: 1_000_000,
       model: "claude-fable-5",
       effort: "low",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("ctx 331k/1M* (33%) · fable-5 · low");
+    expect(formatted.text).toBe("ctx 331k/1M (33%) · fable-5 · low");
     expect(formatted.title).toContain("effort low");
   });
 
@@ -375,10 +391,11 @@ describe("context usage display", () => {
     // 出さない境界を固定する。
     const formatted = formatContextUsage({
       tokens: 100_000,
+      window: 200_000,
       model: "claude-fable-5",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("ctx 100k/200k* (50%) · fable-5");
+    expect(formatted.text).toBe("ctx 100k/200k (50%) · fable-5");
     expect(formatted.title).not.toContain("effort");
   });
 });

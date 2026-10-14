@@ -134,6 +134,22 @@ function maxLength(requirement, message$1) {
     }
   };
 }
+function minValue(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "min_value",
+    reference: minValue,
+    async: false,
+    expects: `>=${requirement instanceof Date ? requirement.toJSON() : /* @__PURE__ */ _stringify(requirement)}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && !(dataset.value >= this.requirement))
+        _addIssue(this, "value", dataset, config$1, { received: dataset.value instanceof Date ? dataset.value.toJSON() : /* @__PURE__ */ _stringify(dataset.value) });
+      return dataset;
+    }
+  };
+}
 function nonEmpty(message$1) {
   return {
     kind: "validation",
@@ -183,6 +199,22 @@ function regex(requirement, message$1) {
     "~run"(dataset, config$1) {
       if (dataset.typed && !this.requirement.test(dataset.value))
         _addIssue(this, "format", dataset, config$1);
+      return dataset;
+    }
+  };
+}
+function safeInteger(message$1) {
+  return {
+    kind: "validation",
+    type: "safe_integer",
+    reference: safeInteger,
+    async: false,
+    expects: null,
+    requirement: Number.isSafeInteger,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && !this.requirement(dataset.value))
+        _addIssue(this, "safe integer", dataset, config$1);
       return dataset;
     }
   };
@@ -762,17 +794,35 @@ var PromptSendResultSchema = variant("outcome", [
   object({ outcome: literal("not_delivered"), reason: SessionInputModuleReasonSchema }),
   object({ outcome: literal("unconfirmed") })
 ]);
-var DescribeArgsSchema = pipe(unknown(), check((args) => !Array.isArray(args), "args is an object, not an array"), strictObject({}));
+var NoArgsSchema = pipe(unknown(), check((args) => !Array.isArray(args), "args is an object, not an array"), strictObject({}));
+var DescribeArgsSchema = NoArgsSchema;
 var DescribeResultSchema = object({
   v: array(number()),
   ops: array(string()),
   version: optional(string())
 });
+var EpochMsSchema = pipe(number(), safeInteger(), minValue(1));
+var SessionFactsContextSchema = object({
+  window: pipe(number(), safeInteger(), minValue(1)),
+  at: EpochMsSchema
+});
+var SessionFactsSchema = object({
+  at: EpochMsSchema,
+  model: optional(pipe(string(), nonEmpty())),
+  context: optional(SessionFactsContextSchema)
+});
+var SessionFactsTextSchema = jsonText(SessionFactsSchema);
+var SessionFactsArgsSchema = NoArgsSchema;
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
-  "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema }
+  "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
+  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema }
 };
-var SIDECAR_OP_NAMES = ["describe", "prompt.send"];
+var SIDECAR_OP_NAMES = [
+  "describe",
+  "prompt.send",
+  "session.facts"
+];
 function requestSchema(op, args) {
   return object({
     v: literal(SIDECAR_REQUEST_VERSION),
@@ -783,7 +833,8 @@ function requestSchema(op, args) {
 }
 var SidecarRequestSchema = variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
-  requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args)
+  requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
+  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -822,6 +873,10 @@ var SessionStartInputSchema = looseObject({
 });
 var SessionEndInputSchema = looseObject({ reason: optional(string()) });
 var ClassicSessionStartInputSchema = looseObject({});
+var SessionMeasureInputSchema = looseObject({
+  context: optional(looseObject({ window: optional(number()) }))
+});
+var PostModelSwitchInputSchema = looseObject({});
 var UserPromptSubmitInputSchema = looseObject({ prompt: optional(string()) });
 var PromptSubmitInputSchema = looseObject({
   text: optional(string()),
@@ -880,7 +935,9 @@ function newState() {
     generation: 0,
     queue: Promise.resolve(),
     delay: RESPAWN_MIN_MS,
-    starting: Promise.resolve()
+    starting: Promise.resolve(),
+    facts: {},
+    factsSend: { chain: Promise.resolve(), queued: false }
   };
 }
 function nextGeneration(state) {
@@ -1032,6 +1089,45 @@ async function describe($) {
   }
   return described;
 }
+function factsArgv(root, sid) {
+  return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
+}
+async function currentFacts($, state) {
+  return { at: Math.floor(await $.clock.now()), ...state.facts };
+}
+function sendFacts($, state) {
+  const send = state.factsSend;
+  if (send.queued)
+    return;
+  send.queued = true;
+  send.chain = send.chain.then(async () => {
+    send.queued = false;
+    const facts = await currentFacts($, state);
+    const sid = await $.session.id();
+    const done = await $.process.run(factsArgv($.plugin.root, sid), {
+      stdin: JSON.stringify(facts),
+      timeoutMs: REPLY_TIMEOUT_MS
+    });
+    if (done.exitCode !== 0) {
+      $.ui.log(`ccmsg: facts exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+    }
+  }).catch((e) => {
+    send.queued = false;
+    $.ui.log(`ccmsg: facts not sent: ${errorText(e)}`, { to: "debug" });
+  });
+}
+async function readModelAndWindow($, state) {
+  try {
+    const model = await $.session.model();
+    const { context } = await $.session.usage();
+    const at = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, model, context: { window: context.window, at } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
+    return;
+  }
+  sendFacts($, state);
+}
 async function replyTo($, state, sid, generation, request) {
   const { id } = request;
   try {
@@ -1048,6 +1144,8 @@ async function replyTo($, state, sid, generation, request) {
         });
         return await result;
       }
+      case "session.facts":
+        return { id, ok: true, result: await currentFacts($, state) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -1143,6 +1241,7 @@ function register(on) {
     after: (input) => {
       state.interactive = input.isInteractive !== false && input.surface !== null;
       startSidecar($, state);
+      readModelAndWindow($, state);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.end", async ($, e, next) => observe($, e, next, "session.end", SessionEndInputSchema, {
@@ -1154,7 +1253,25 @@ function register(on) {
     }
   })).catch(async (_$, e, next) => next(e));
   on("classic.SessionStart", async ($, e, next) => observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
-    after: () => startSidecar($, state)
+    after: () => {
+      startSidecar($, state);
+      readModelAndWindow($, state);
+    }
+  })).catch(async (_$, e, next) => next(e));
+  on("session.measure", async ($, e, next) => observe($, e, next, "session.measure", SessionMeasureInputSchema, {
+    after: async (input) => {
+      const window = input.context?.window;
+      if (window === undefined)
+        return;
+      const at = Math.floor(await $.clock.now());
+      state.facts = { ...state.facts, context: { window, at } };
+      sendFacts($, state);
+    }
+  })).catch(async (_$, e, next) => next(e));
+  on("classic.PostModelSwitch", async ($, e, next) => observe($, e, next, "classic.PostModelSwitch", PostModelSwitchInputSchema, {
+    after: () => {
+      readModelAndWindow($, state);
+    }
   })).catch(async (_$, e, next) => next(e));
   on("classic.UserPromptSubmit", async ($, e, next) => observe($, e, next, "classic.UserPromptSubmit", UserPromptSubmitInputSchema, {
     before: (input) => {
@@ -1197,6 +1314,7 @@ export {
   SEND_TIMEOUT_MS,
   STABLE_MS,
   answer,
+  factsArgv,
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,

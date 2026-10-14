@@ -9,6 +9,8 @@ import {
   type DescribeResult,
   type SendMessageResult,
   SendMessageResultSchema,
+  type SessionFacts,
+  SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
   type SidecarReply,
   SidecarReplyTextSchema,
@@ -93,6 +95,13 @@ type HookTable = Partial<Record<HookedEvent, SendHook>>;
 interface Fake {
   $: Engine;
   composer: { text: string };
+  /** What the session says of itself through `$.session`. */
+  session: { model: string; window: number };
+  /** The facts each `ccmsg sidecar facts` was given, with the sid it named,
+   * in order. Kept apart from `runs`: they go with every session event, and
+   * what a test of the other commands runs is told without them. */
+  factsSent: { sid: string; facts: SessionFacts }[];
+  /** The commands the module ran other than `ccmsg sidecar facts`. */
   runs: string[][];
   /** The runs that asked the harness pid. */
   /** What each run got on standard input, by the index of the run. */
@@ -152,6 +161,8 @@ function fakeEngine(
   const spawns: Fake["spawns"] = [];
   const timers: Timer[] = [];
   const sid = { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" };
+  const session = { model: "claude-opus-5-5[1m]", window: 1_000_000 };
+  const factsSent: Fake["factsSent"] = [];
   const fills: string[] = [];
   const logs: string[] = [];
   const $: Engine = {
@@ -159,6 +170,8 @@ function fakeEngine(
     session: {
       id: async () => sid.value,
       surfaces: async () => options.surfaces ?? ["terminal"],
+      model: async () => session.model,
+      usage: async () => ({ context: { window: session.window } }),
     },
     prompt: {
       read: async () => ({ text: composer.text, cursor: composer.text.length }),
@@ -173,6 +186,12 @@ function fakeEngine(
     },
     process: {
       run: async (argv, init) => {
+        if (argv[1] === "sidecar" && argv[2] === "facts") {
+          const read = parseWith(SessionFactsTextSchema, init?.stdin ?? "");
+          if (!read.ok) throw new Error(`facts not readable: ${read.failure.summary}`);
+          factsSent.push({ sid: flagOf(argv, "--sid"), facts: read.value });
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
         runs.push([...argv]);
         stdins.push(init?.stdin);
         envs.push(init?.env);
@@ -219,6 +238,8 @@ function fakeEngine(
   const fake: Fake = {
     $,
     composer,
+    session,
+    factsSent,
     runs,
     stdins,
     envs,
@@ -799,7 +820,11 @@ describe("requests the module answers without running prompt.send", () => {
     const fake = fakeEngine({ version: "1.2.3" });
     registerOn(fake);
     const reply = await replyTo(fake, '{"v":1,"op":"describe","id":"d1","args":{}}');
-    const result: DescribeResult = { v: [1], ops: ["describe", "prompt.send"], version: "1.2.3" };
+    const result: DescribeResult = {
+      v: [1],
+      ops: ["describe", "prompt.send", "session.facts"],
+      version: "1.2.3",
+    };
     expect(reply).toEqual({ id: "d1", ok: true, result });
     expect(fake.runs[0]).toEqual(["/plugin/bin/ccmsg", "version"]);
     // The launcher must not hand over to a newer ccmsg on PATH, whose version
@@ -824,6 +849,149 @@ function countingNext(result: object = {}) {
   };
   return { calls, next };
 }
+
+/** Settle until `count` facts have been sent. */
+async function untilFacts(fake: Fake, count: number): Promise<void> {
+  for (let i = 0; i < 20 && fake.factsSent.length < count; i++) await settle();
+  expect(fake.factsSent.length).toBe(count);
+}
+
+/** The facts the `index`th `ccmsg sidecar facts` was given. */
+function factsAt(fake: Fake, index: number): { sid: string; facts: SessionFacts } {
+  const sent = fake.factsSent[index];
+  if (sent === undefined) throw new Error(`no facts #${index}`);
+  return sent;
+}
+
+describe("the facts the module sends of its session (session.facts)", () => {
+  // The window is Claude Code's own, so the daemon has the denominator from
+  // the start (findings 2026-10-14-mods-vs-transcript-information-sources);
+  // the model keeps the `[1m]` the transcript drops.
+  test("session.start sends the model as the session names it and the window", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilFacts(fake, 1);
+    const { sid, facts } = factsAt(fake, 0);
+    expect(sid).toBe(fake.sid.value);
+    expect(facts.model).toBe("claude-opus-5-5[1m]");
+    expect(facts.context?.window).toBe(1_000_000);
+  });
+
+  // `-p` and the SDK have no sidecar, but the daemon still shows them.
+  test("a session without a composer sends them too", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(
+      fake,
+      "session.start",
+      { cwd: "/w", isInteractive: false, surface: null },
+      async () => ({}),
+    );
+    await untilFacts(fake, 1);
+    expect(fake.spawns).toEqual([]);
+    expect(factsAt(fake, 0).facts.context?.window).toBe(1_000_000);
+  });
+
+  test("session.measure sends the window it says, the model kept", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilFacts(fake, 1);
+    const { calls, next } = countingNext({ changed: ["context"] });
+    const measure = { context: { window: 300_000 }, rateLimits: [], changed: ["context"] };
+    expect(await fire(fake, "session.measure", measure, next)).toEqual({ changed: ["context"] });
+    expect(calls.count).toBe(1);
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.model).toBe("claude-opus-5-5[1m]");
+    expect(factsAt(fake, 1).facts.context?.window).toBe(300_000);
+  });
+
+  // A switch raises no session.measure, so the module reads both again.
+  test("a model switch sends the new model and its window", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilFacts(fake, 1);
+    fake.session.model = "claude-haiku-4-5-20251001";
+    fake.session.window = 200_000;
+    await fire(fake, "classic.PostModelSwitch", { to_model: "x" }, async () => ({}));
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.model).toBe("claude-haiku-4-5-20251001");
+    expect(factsAt(fake, 1).facts.context?.window).toBe(200_000);
+  });
+
+  // /clear raises classic.SessionStart under the new id and no session.start.
+  test("after /clear the facts go under the new id", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilFacts(fake, 1);
+    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
+    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).sid).toBe("ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+  });
+
+  // A daemon that came up after the module asks for what it missed.
+  test("the session.facts request is answered with the facts as they are", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const reply = await replyTo(fake, '{"v":1,"op":"session.facts","id":"f1","args":{}}');
+    if (!reply.ok) throw new Error("session.facts failed");
+    const read = parseWith(SessionFactsTextSchema, JSON.stringify(reply.result));
+    if (!read.ok) throw new Error(read.failure.summary);
+    expect(read.value.model).toBe("claude-opus-5-5[1m]");
+    expect(read.value.context?.window).toBe(1_000_000);
+  });
+
+  // One send at a time, and changes while one runs cost one more send, which
+  // carries the latest of them.
+  test("changes during a send are sent once, as they stand when it starts", async () => {
+    const fake = fakeEngine();
+    const gate = Promise.withResolvers<void>();
+    const process = fake.$.process;
+    let held = 0;
+    fake.$.process = {
+      ...process,
+      run: async (argv, init) => {
+        if (argv[2] === "facts" && held++ === 0) await gate.promise;
+        return process.run(argv, init);
+      },
+    };
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    for (const window of [200_000, 300_000, 400_000]) {
+      await fire(fake, "session.measure", { context: { window } }, async () => ({}));
+    }
+    gate.resolve();
+    await untilFacts(fake, 2);
+    await settle();
+    expect(fake.factsSent.map((f) => f.facts.context?.window)).toEqual([1_000_000, 400_000]);
+  });
+
+  test("a facts send that fails is logged, and the event goes on once", async () => {
+    const fake = fakeEngine();
+    const process = fake.$.process;
+    fake.$.process = {
+      ...process,
+      run: async (argv, init) => {
+        if (argv[2] === "facts") throw new Error("spawn failed");
+        return process.run(argv, init);
+      },
+    };
+    registerOn(fake);
+    const { calls, next } = countingNext();
+    await fire(fake, "session.measure", { context: { window: 1 } }, next);
+    expect(calls.count).toBe(1);
+    for (let i = 0; i < 10 && !fake.logs.some((l) => l.includes("facts not sent")); i++) {
+      await settle();
+    }
+    expect(fake.logs.some((l) => l === "ccmsg: facts not sent: Error: spawn failed")).toBe(true);
+  });
+});
 
 describe("each hook passes the event on once", () => {
   // The engine's input is read by a schema: a prompt.submit without `origin`

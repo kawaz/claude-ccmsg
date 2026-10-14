@@ -18,6 +18,7 @@ import {
   type Paths,
   type ReplyOf,
   type RequestInput,
+  type SessionFacts,
 } from "@ccmsg/protocol";
 
 type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
@@ -478,6 +479,35 @@ export async function nameRunNoSpawn(
   }
   client.close();
   return null;
+}
+
+/**
+ * Send the facts of `identity`'s session (session_facts, DR-0035 §3) to the
+ * daemon listening now, **without spawning** one: the same stance as
+ * nameRunNoSpawn, since the hooks module sends facts on every turn and must
+ * not bring back a daemon the person stopped. A daemon that starts later asks
+ * the module for its facts when the run's sidecar names the run.
+ *
+ * Returns false when no daemon is connectable or it refuses the hello or the
+ * facts.
+ */
+export async function sendFactsNoSpawn(
+  paths: Paths,
+  identity: Identity,
+  facts: SessionFacts,
+): Promise<boolean> {
+  const client = await tryConnect(paths.sock);
+  if (!client) return false;
+  try {
+    const hello = await client.request(helloRequest(identity));
+    const sent = hello.ok ? await client.request({ op: "session_facts", facts }) : hello;
+    return sent.ok;
+  } catch {
+    // dropped mid-request (a daemon shutting down)
+    return false;
+  } finally {
+    client.close();
+  }
 }
 
 export { waitDaemonGone };

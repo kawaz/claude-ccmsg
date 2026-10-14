@@ -7,6 +7,8 @@ import {
   DescribeResultSchema,
   PromptSendResultSchema,
   readSidecarRequest,
+  SessionFactsSchema,
+  SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
   SIDECAR_OPS,
   SidecarReplySchema,
@@ -122,6 +124,48 @@ describe("the ops' results", () => {
     expect(parseWith(DescribeResultSchema, { v: [1], ops: [], version: "1.2.3" }).ok).toBe(true);
     expect(parseWith(DescribeResultSchema, { v: ["1"], ops: [] }).ok).toBe(false);
     expect(parseWith(DescribeResultSchema, { v: [1], ops: [], version: 1 }).ok).toBe(false);
+  });
+
+  // The facts are whole each time and stamped with when the module put them
+  // together; a part it does not know yet is absent, never zeroed.
+  test("session.facts: a stamp, and the parts the module knows", () => {
+    for (const facts of [
+      { at: 1 },
+      { at: 1_791_955_713_123, model: "claude-opus-5-5[1m]" },
+      { at: 2, model: "m", context: { window: 1_000_000, at: 2 } },
+    ]) {
+      expect(parseWith(SessionFactsSchema, facts)).toEqual({ ok: true, value: facts });
+    }
+    for (const facts of [
+      {},
+      { at: 0 },
+      { at: 1.5 },
+      { at: 1, model: "" },
+      { at: 1, context: { window: 0, at: 1 } },
+      { at: 1, context: { at: 1 } },
+      { at: 1, context: { window: 200_000 } },
+    ]) {
+      expect(parseWith(SessionFactsSchema, facts).ok).toBe(false);
+    }
+  });
+
+  test("session.facts is asked with no arguments", () => {
+    expect(readSidecarRequest(line({ v: 1, op: "session.facts", id: "f", args: {} }))).toEqual({
+      ok: true,
+      value: { v: 1, op: "session.facts", id: "f", args: {} },
+    });
+    expect(
+      readSidecarRequest(line({ v: 1, op: "session.facts", id: "f", args: { x: 1 } })).ok,
+    ).toBe(false);
+  });
+
+  // What `ccmsg sidecar facts` reads on standard input.
+  test("the facts as text are JSON of that shape", () => {
+    expect(parseWith(SessionFactsTextSchema, '{"at":3,"model":"m"}')).toEqual({
+      ok: true,
+      value: { at: 3, model: "m" },
+    });
+    expect(parseWith(SessionFactsTextSchema, "{").ok).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   isSessionIdShape,
   migrateLegacyConfigFiles,
   parseWith,
+  SessionFactsTextSchema,
   SessionStateFileTextSchema,
   SidecarReplyTextSchema,
   SidecarRunIdSchema,
@@ -44,6 +45,7 @@ import {
   helloRequest,
   ensureDaemon,
   reconnectSubscribeNoSpawn,
+  sendFactsNoSpawn,
   waitDaemonGone,
 } from "./client.ts";
 import { watchSubscribeOwner } from "./subscribe-owner.ts";
@@ -438,15 +440,16 @@ async function runDirectSend(
 // --- sidecar ---------------------------------------------------------------
 
 const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
-session, and the way the module's replies and the SendMessage messages it takes
-over go to the daemon. Not for direct use.
+session, and the way the module's replies, what it knows of its session, and
+the SendMessage messages it takes over go to the daemon. Not for direct use.
 `;
 
-/** `ccmsg sidecar`, `ccmsg sidecar reply` (DR-0035 §3) and `ccmsg sidecar
- * send` (DR-0037 §2). All are the hooks module's: it starts the first for its
- * session's life, runs the second to answer a request the first copied to it,
- * and the third to send a SendMessage to a `ccmsg:` address. The help says no
- * more than that on purpose (DR-0035 §4). */
+/** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
+ * §3) and `ccmsg sidecar send` (DR-0037 §2). All are the hooks module's: it
+ * starts the first for its session's life, runs the second to answer a
+ * request the first copied to it, the third to hand the daemon what it knows
+ * of its session, and the fourth to send a SendMessage to a `ccmsg:` address.
+ * The help says no more than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -459,6 +462,10 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   }
   if (positionals[0] === "send") {
     await runSidecarSend(positionals.slice(1), opts);
+    return;
+  }
+  if (positionals[0] === "facts") {
+    await runSidecarFacts(opts);
     return;
   }
   if (positionals.length > 0) {
@@ -561,6 +568,28 @@ async function runSidecarReply(opts: Record<string, string | boolean>): Promise<
   const identity = resolveSessionIdentity(opts, "sidecar");
   if (identity === null) refuseWriteWithoutSid("sidecar reply");
   return runOnce(identity, { op: "sidecar_reply", reply: read.value });
+}
+
+/** `ccmsg sidecar facts --sid <sid> < facts.json`: hand the daemon what the
+ * hooks module knows of its session (session_facts), read from standard input
+ * for the reason a reply is. No daemon is started: facts that find none
+ * listening are dropped, and exit 0 says so on stderr — the module has
+ * nothing to do about it, and the next daemon asks the module for its facts
+ * when the run's sidecar names the run. */
+async function runSidecarFacts(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar facts --sid <sid> < facts.json";
+  const read = parseWith(SessionFactsTextSchema, await Bun.stdin.text());
+  if (!read.ok) {
+    throw new Error(
+      `standard input must be the session's facts as JSON: ${read.failure.summary}\n  usage: ${usage}`,
+    );
+  }
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar facts");
+  if (!(await sendFactsNoSpawn(resolvePaths(), identity, read.value))) {
+    process.stderr.write("ccmsg sidecar facts: no daemon took the facts; dropped\n");
+  }
+  process.exit(0);
 }
 
 /** What the sending agent reads when its SendMessage reached nobody: why,

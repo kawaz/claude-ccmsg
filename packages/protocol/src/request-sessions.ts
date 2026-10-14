@@ -8,7 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
-import { SidecarReplySchema, SidecarRunIdSchema } from "./sidecar.ts";
+import { SessionFactsSchema, SidecarReplySchema, SidecarRunIdSchema } from "./sidecar.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 
 /** A Claude Code session id as a request names one. Its shape (a lowercase
@@ -369,6 +369,17 @@ export const SidecarHelloRequestSchema = v.object({
   hyoui_session_id: v.optional(v.pipe(v.string(), v.nonEmpty())),
 });
 export type SidecarHelloRequest = Output<typeof SidecarHelloRequestSchema>;
+
+/** Hand the daemon what a session's hooks module knows of its session
+ * through Claude Code itself (session role, DR-0035 §3): `ccmsg sidecar
+ * facts` sends it each time a part moves. The facts are the session's (its
+ * hello), replace the ones the daemon holds unless they are older, and go
+ * when the session does. */
+export const SessionFactsRequestSchema = v.object({
+  op: v.literal("session_facts"),
+  facts: SessionFactsSchema,
+});
+export type SessionFactsRequest = Output<typeof SessionFactsRequestSchema>;
 
 /** Read the environment variables of a session's own process (user role
  * only). The env is read from the resolved pid rather than

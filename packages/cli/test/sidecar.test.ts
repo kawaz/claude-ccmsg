@@ -328,9 +328,20 @@ describe("ccmsg sidecar reply", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const answer = user.request({ op: "session_input", session_id: SID, text: "from the web" });
-      const line = sidecarRequestOf(
-        await readUntil(sidecar.stdout.getReader(), (t) => t.includes("\n")),
-      );
+      // The daemon asks the run for its facts when it is named; the
+      // session_input's request is the prompt.send.
+      const promptSendIn = (text: string): SidecarRequest | undefined =>
+        text
+          .split("\n")
+          .filter((l) => l !== "")
+          .map(sidecarRequestOf)
+          .find((r) => r.op === "prompt.send");
+      const out = await readUntil(sidecar.stdout.getReader(), (t) => {
+        const complete = t.slice(0, t.lastIndexOf("\n") + 1);
+        return promptSendIn(complete) !== undefined;
+      });
+      const line = promptSendIn(out);
+      if (line === undefined) throw new Error(`no prompt.send in ${out}`);
       expect(line).toEqual({
         v: 1,
         op: "prompt.send",
@@ -371,6 +382,56 @@ describe("ccmsg sidecar reply", () => {
       expect(await new Response(proc.stderr).text()).toContain(says);
     });
   }
+});
+
+/** `ccmsg sidecar facts --sid SID` with `stdin` on its standard input, as the
+ * module's `$.process.run` runs it. */
+function runFacts(stdin: string, env: Record<string, string>) {
+  return Bun.spawn([process.execPath, CLI, "sidecar", "facts", "--sid", SID], {
+    env: { ...process.env, ...env },
+    stdin: new TextEncoder().encode(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+describe("ccmsg sidecar facts", () => {
+  const FACTS = '{"at":5,"model":"claude-opus-5-5[1m]","context":{"window":1000000,"at":5}}';
+
+  test("hands the facts to the daemon, as the session's", async () => {
+    const ctx = await startShortDaemon();
+    try {
+      const proc = runFacts(FACTS, ctx.env);
+      expect(await proc.exited).toBe(0);
+      expect(await new Response(proc.stderr).text()).toBe("");
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const status = await user.requestError({ op: "session_status", sid: SID });
+      // No transcript for this session, but the facts registered it.
+      expect(status.error.code).toBe("not_found");
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.some((p) => p.sid === SID)).toBe(true);
+      user.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // No daemon is started for facts: a daemon the person stopped stays
+  // stopped, and the next one asks the module for them.
+  test("with no daemon listening the facts are dropped, and none is started", async () => {
+    const stateDir = path.join(shortBase(), "s");
+    const proc = runFacts(FACTS, sidecarEnv(stateDir));
+    expect(await proc.exited).toBe(0);
+    expect(await new Response(proc.stderr).text()).toContain("no daemon took the facts");
+    expect(fs.existsSync(path.join(stateDir, "daemon.sock"))).toBe(false);
+  });
+
+  test("input that is not the facts is refused before reaching the daemon", async () => {
+    const proc = runFacts('{"model":"m"}', sidecarEnv(path.join(shortBase(), "s")));
+    expect(await proc.exited).toBe(1);
+    expect(await new Response(proc.stderr).text()).toContain("must be the session's facts");
+  });
 });
 
 /** A `ps` that records being run: naming the run needs none, and a sidecar

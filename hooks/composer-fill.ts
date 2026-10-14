@@ -19,6 +19,17 @@
 // fires for that text. The draft is filled back right after the submit.
 // `describe` says which ops the module has.
 //
+// The module also tells the daemon what it knows of its session through
+// Claude Code itself and the transcript cannot tell (`session.facts`): the
+// model as the session names it, `[1m]` kept, and the context window the
+// session runs with. It reads them at session.start, after a model switch and
+// after /clear, and takes the window again from each session.measure; each
+// time, it sends the whole of what it knows through `ccmsg sidecar facts`,
+// which starts no daemon. A daemon that comes up later asks for them with the
+// `session.facts` request when the run's sidecar names the run. Sessions
+// without a composer send them too: they have no sidecar, but the daemon
+// still shows them.
+//
 // A SendMessage to a `ccmsg:` address (DR-0037) is taken over at
 // session.send: harness SendMessage reaches only the sessions of its own
 // config home, so the module hands the message to the daemon through `ccmsg
@@ -52,6 +63,8 @@ import {
   type FailedSidecarReply,
   type PromptSendResult,
   readSidecarRequest,
+  type SessionFacts,
+  type SessionFactsContext,
   type SendMessageResult,
   SendMessageResultTextSchema,
   SIDECAR_OP_NAMES,
@@ -78,7 +91,13 @@ export type SpawnEnd = { code: number | null; signal: string | null } | undefine
  * loaded mod. */
 export interface Engine {
   plugin: { root: string };
-  session: { id(): Promise<string>; surfaces(): Promise<readonly string[]> };
+  session: {
+    id(): Promise<string>;
+    surfaces(): Promise<readonly string[]>;
+    /** The model as `/model` names it, a launch-time `[1m]` kept. */
+    model(): Promise<string>;
+    usage(): Promise<{ context: { window: number } }>;
+  };
   prompt: {
     read(): Promise<{ text: string; cursor: number }>;
     fill(input: {
@@ -105,7 +124,9 @@ export interface Engine {
 export type ObservedEvent =
   | "session.start"
   | "session.end"
+  | "session.measure"
   | "classic.SessionStart"
+  | "classic.PostModelSwitch"
   | "classic.UserPromptSubmit"
   | "prompt.submit";
 
@@ -146,6 +167,10 @@ const SessionStartInputSchema = v.looseObject({
 });
 const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
 const ClassicSessionStartInputSchema = v.looseObject({});
+const SessionMeasureInputSchema = v.looseObject({
+  context: v.optional(v.looseObject({ window: v.optional(v.number()) })),
+});
+const PostModelSwitchInputSchema = v.looseObject({});
 const UserPromptSubmitInputSchema = v.looseObject({ prompt: v.optional(v.string()) });
 const PromptSubmitInputSchema = v.looseObject({
   text: v.optional(v.string()),
@@ -227,7 +252,10 @@ export const RESPAWN_MAX_MS = 30_000;
 export const STABLE_MS = 10_000;
 
 /** The reply to one request this module runs. */
-export type Reply = SidecarReplyOf<"describe"> | SidecarReplyOf<"prompt.send">;
+export type Reply =
+  | SidecarReplyOf<"describe">
+  | SidecarReplyOf<"prompt.send">
+  | SidecarReplyOf<"session.facts">;
 
 /** A prompt.send, as the module queues it: under which session id and which
  * generation of it the line arrived. */
@@ -294,6 +322,13 @@ export interface ModuleState {
    * sidecar starts, which is about when the harness started, and kept across
    * sidecars and session ids so the daemon sees one run. */
   run?: { id: string; startedAt: number };
+  /** What the module knows of the session through Claude Code (session.facts):
+   * each part once it has been read. */
+  facts: { model?: string; context?: SessionFactsContext };
+  /** Facts are sent one at a time; `queued` is whether a send waits its turn,
+   * which then sends what the module knows when it starts, so any number of
+   * changes meanwhile cost one send. */
+  factsSend: { chain: Promise<void>; queued: boolean };
 }
 
 export function newState(): ModuleState {
@@ -302,6 +337,8 @@ export function newState(): ModuleState {
     queue: Promise.resolve(),
     delay: RESPAWN_MIN_MS,
     starting: Promise.resolve(),
+    facts: {},
+    factsSend: { chain: Promise.resolve(), queued: false },
   };
 }
 
@@ -520,6 +557,59 @@ async function describe($: Engine): Promise<DescribeResult> {
   return described;
 }
 
+/** `ccmsg sidecar facts` for session `sid`. The facts go on standard input,
+ * for the reason a reply does (see `sendReply`). */
+export function factsArgv(root: string, sid: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
+}
+
+/** The facts as the module knows them now. */
+async function currentFacts($: Engine, state: ModuleState): Promise<SessionFacts> {
+  return { at: Math.floor(await $.clock.now()), ...state.facts };
+}
+
+/** Send the facts to the daemon, behind any send still running. A send that
+ * waits its turn already sends what the module will know by then, so no
+ * second one is queued behind it. Never rejects: a failed send is logged, and
+ * the next change or the daemon's `session.facts` request makes up for it. */
+function sendFacts($: Engine, state: ModuleState): void {
+  const send = state.factsSend;
+  if (send.queued) return;
+  send.queued = true;
+  send.chain = send.chain
+    .then(async () => {
+      send.queued = false;
+      const facts = await currentFacts($, state);
+      const sid = await $.session.id();
+      const done = await $.process.run(factsArgv($.plugin.root, sid), {
+        stdin: JSON.stringify(facts),
+        timeoutMs: REPLY_TIMEOUT_MS,
+      });
+      if (done.exitCode !== 0) {
+        $.ui.log(`ccmsg: facts exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+      }
+    })
+    .catch((e: unknown) => {
+      send.queued = false;
+      $.ui.log(`ccmsg: facts not sent: ${errorText(e)}`, { to: "debug" });
+    });
+}
+
+/** Read the model and the context window off the session, and send the
+ * facts. Never rejects. */
+async function readModelAndWindow($: Engine, state: ModuleState): Promise<void> {
+  try {
+    const model = await $.session.model();
+    const { context } = await $.session.usage();
+    const at = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, model, context: { window: context.window, at } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
+    return;
+  }
+  sendFacts($, state);
+}
+
 /** The reply to one request: the op's, or `internal` when anything is thrown
  * on the way, so every request is answered. */
 async function replyTo(
@@ -545,6 +635,8 @@ async function replyTo(
         );
         return await result;
       }
+      case "session.facts":
+        return { id, ok: true, result: await currentFacts($, state) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -681,6 +773,7 @@ export function register(on: On): ModuleState {
         // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
         state.interactive = input.isInteractive !== false && input.surface !== null;
         startSidecar($, state);
+        void readModelAndWindow($, state);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -696,7 +789,32 @@ export function register(on: On): ModuleState {
   ).catch(async (_$, e, next) => next(e));
   on("classic.SessionStart", async ($, e, next) =>
     observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
-      after: () => startSidecar($, state),
+      // After /clear the facts belong to the new id: session.start does not
+      // run for it.
+      after: () => {
+        startSidecar($, state);
+        void readModelAndWindow($, state);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  // session.measure says the window each main-thread turn; a model switch
+  // raises none, so the window is read again after one.
+  on("session.measure", async ($, e, next) =>
+    observe($, e, next, "session.measure", SessionMeasureInputSchema, {
+      after: async (input) => {
+        const window = input.context?.window;
+        if (window === undefined) return;
+        const at = Math.floor(await $.clock.now());
+        state.facts = { ...state.facts, context: { window, at } };
+        sendFacts($, state);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("classic.PostModelSwitch", async ($, e, next) =>
+    observe($, e, next, "classic.PostModelSwitch", PostModelSwitchInputSchema, {
+      after: () => {
+        void readModelAndWindow($, state);
+      },
     }),
   ).catch(async (_$, e, next) => next(e));
   on("classic.UserPromptSubmit", async ($, e, next) =>

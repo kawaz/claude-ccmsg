@@ -42,6 +42,7 @@ import {
   type StreamEvent,
   type RoomKind,
   type SessionIdentity,
+  type SessionFacts,
   type SessionInputReadiness,
   type StaleClientInfo,
   type JsonValue,
@@ -108,6 +109,7 @@ import {
   createSessionStatusStore,
   getSessionStatus,
   refreshInputReadiness,
+  refreshSessionFacts,
   sessionStatusUnsubscribeAll,
   stopAllSessionStatus,
   subscribeSessionStatus,
@@ -121,8 +123,14 @@ import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
 import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
-import { isProcessAlive, SidecarReplies } from "./sidecar-call.ts";
-import { type AgentRow, SidecarRuns } from "./sidecar-runs.ts";
+import {
+  callSidecar,
+  isProcessAlive,
+  productionSidecarDeps,
+  SidecarReplies,
+} from "./sidecar-call.ts";
+import { type AgentRow, type SidecarRun, SidecarRuns } from "./sidecar-runs.ts";
+import { SessionFactsStore } from "./session-facts.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -342,6 +350,9 @@ export interface Daemon {
    * connections still open (sidecar-runs.ts, sidecar_hello): where
    * session_input writes, and what input readiness is judged from. */
   sidecarRuns: SidecarRuns;
+  /** What each session's hooks module last said of its session
+   * (session-facts.ts, session_facts). */
+  sessionFacts: SessionFactsStore;
   /** When the agents poll last finished a round: the next round began after
    * this, which is what lets it say a run named before it has no process. */
   agentsRoundAt: number;
@@ -619,10 +630,44 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
  * Callers push ev:"peers" themselves. */
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
+  daemon.sessionFacts.forget(sid);
   // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
   // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
   leaveAllBroadcasts(daemon, sid);
   refreshReadiness(daemon);
+}
+
+/** How long the daemon waits for a module to answer `session.facts`: the
+ * write, then one `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3). */
+const SESSION_FACTS_ASK_MS = 5_000;
+
+/** Hold `facts` as `sid`'s unless they are older than the ones held, and push
+ * the session's status for them. */
+function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
+  if (!daemon.sessionFacts.take(sid, facts)) return;
+  refreshSessionFacts(daemon.sessionStatus, sid, daemon.log);
+}
+
+/** Ask the module behind `run` for its facts (`session.facts`). A module
+ * without the op (an older plugin) logs the request and answers nothing,
+ * which leaves the session as it was. */
+async function askSessionFacts(daemon: Daemon, run: SidecarRun): Promise<void> {
+  const call = await callSidecar(
+    run.socket,
+    run.sid,
+    "session.facts",
+    {},
+    SESSION_FACTS_ASK_MS,
+    productionSidecarDeps(daemon.sidecarReplies),
+  );
+  if (call.write === "not_written" || call.reply === undefined) return;
+  if (!call.reply.ok) {
+    daemon.log.warn(
+      `session.facts from ${run.sid}.${run.runId} not read: ${call.reply.failure.summary}`,
+    );
+    return;
+  }
+  if (call.reply.value.ok) takeSessionFacts(daemon, run.sid, call.reply.value.result);
 }
 
 /** Push whether a person's input can reach each session, where it moved:
@@ -1626,6 +1671,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "session_input",
   "sidecar_reply",
   "sidecar_hello",
+  "session_facts",
   "session_launcher_config",
   "leave",
   "invite",
@@ -2793,6 +2839,21 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       );
       send(conn, { ok: true });
       refreshReadiness(daemon);
+      // A daemon that started after the module has none of the facts it sent
+      // before; one that had them loses nothing by asking again.
+      void askSessionFacts(daemon, run);
+      return;
+    }
+
+    case "session_facts": {
+      // The sender is the session the facts are of: its hooks module runs
+      // `ccmsg sidecar facts`, which hellos as that session.
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_facts' requires session role");
+        return;
+      }
+      takeSessionFacts(daemon, conn.identity.sid, req.facts);
+      send(conn, { ok: true });
       return;
     }
 
@@ -3691,7 +3752,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
-    sessionStatus: createSessionStatusStore((sid) => readinessOf(daemon, sid)),
+    sessionStatus: createSessionStatusStore({
+      inputReadiness: (sid) => readinessOf(daemon, sid),
+      facts: (sid) => daemon.sessionFacts.get(sid),
+    }),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
@@ -3711,6 +3775,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
+    sessionFacts: new SessionFactsStore(),
     sidecarRuns: new SidecarRuns({
       sidecarDir: paths.sidecars,
       isAlive: isProcessAlive,

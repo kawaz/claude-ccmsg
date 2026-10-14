@@ -199,6 +199,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "sidecar_hello", run_id: "abc", started_at: 1, config_dir: "" },
     ],
   },
+  session_facts: {
+    ok: {
+      op: "session_facts",
+      facts: { at: 1, model: "claude-opus-5-5[1m]", context: { window: 1_000_000, at: 1 } },
+    },
+    bad: [{ op: "session_facts" }, { op: "session_facts", facts: { model: "m" } }],
+  },
   session_env: {
     ok: { op: "session_env", session_id: SID },
     bad: [{ op: "session_env" }, { op: "session_env", session_id: "" }],
