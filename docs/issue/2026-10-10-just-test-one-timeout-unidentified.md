@@ -31,6 +31,12 @@ worker unify-ccmsg-address の `just test` 1 回目が 3985 pass / 1 fail / 1 er
 
 次に worker を出す時は委譲プロンプトに「`just test` は必ず `2>&1 | tee <一時ベース>/just-test-N.log` で記録する」を入れる。
 
+## 3 回目の発生 (2026-10-15、test 名を特定)
+
+`bun test --coverage` (just coverage と同じ手順) の 1 回目で `packages/daemon/test/translate-e2e.test.ts` の "daemon translate replies with a real en→ja mixed-text result" が 5000ms で timeout。直前に Unhandled error "connection closed before response" (test/helpers.ts:520 replyLine ← requestOk ← translate-e2e.test.ts:25)。直後の 2 回目・3 回目の coverage 実行と、その前の coverage 無しの `bun test` は全件 pass。macOS、bun 1.4.2。変更していたのは webui のみ (Timeline の分解) で daemon には触れていない。
+
+共通点: 1 回目だけ落ちる。今回は daemon 側の変更が無い状態で起きたので、変更起因ではない。
+
 ## 受け入れ条件
 
 - [ ] timeout 再発時にログを取得し、test 名と並走プロセスを記録する
