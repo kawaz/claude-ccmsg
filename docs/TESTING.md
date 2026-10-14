@@ -35,7 +35,8 @@
 - component / hook は DOM 基盤 (happy-dom) でマウントし、effect の配線まで含めて検証する。pure 関数に切り出してテストするのは補助で、マウントでの検証の代わりにはしない。
 - DOM を使う test file は冒頭で `withDom()` (`packages/webui/test/dom.ts`) を 1 度呼ぶ。そのファイルの間だけ happy-dom の window / document が globalThis に載り、終わると元に戻る。マウントは preact の `render` を `act` (`preact/test-utils`) で包み、effect まで流してから DOM と render 回数を見る (例: `use-store-state.dom.test.ts`)。
 - 配線の正しさは happy-dom でマウントして確かめ、見た目と実ブラウザでの振る舞いは playwright (`/verify`) で確かめる。
-- Timeline の分解と hook 単位のテストは [webui Timeline.tsx の分解と hook 単位のテスト基盤](issue/2026-10-14-webui-timeline-decomposition-and-hook-tests.md) で扱う。
+- custom hook は `packages/webui/test/render-hook.ts` の `renderHook` で 1 つだけマウントし、戻り値と DOM を見る。hook に渡す ref の DOM は `extra` で同じ component の中に描く。
+- Timeline とその hook (`components/timeline/`) は `packages/webui/test/timeline-harness.ts` を使う。`FakeTranscriptWs` が transcript 系の要求 (read / subscribe / fork_origin) を記録し、応答はテストが任意の時点で返す。store は本物を使い、応答が reducer を通って描画に届くまでを検証する。
 
 ## 名前と記述
 
