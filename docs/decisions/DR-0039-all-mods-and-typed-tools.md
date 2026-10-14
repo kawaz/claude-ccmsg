@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Proposed
+- Status: Accepted (2026-10-15) — ⬜ 未実装
 - Date: 2026-10-15
 
 ## Context
@@ -23,6 +23,7 @@ Claude Code 2.1.299 の実機で、classic を使わずに同じことができ�
 - 最初の turn の前に model へ文脈を入れる口ごとの到達 (同 findings の「最初の turn の前の注入: 口ごとの到達」)
 - `$.tool.register` で登録した tool が対話・`-p`・subagent の request に載り、model の呼び出しが `tool.call` の handler に届くこと (同 findings の「`$.tool.register` の可視範囲と typed call」の「結論」)
 - `agentId` 付きの `$.session.append` が走行中の subagent の次の request にだけ載ること (同 findings の「`agentId` 付きの `$.session.append` で走行中の subagent に文脈を入れる」)
+- 本 DR の前提 (`/clear`・`/resume`・`/model` の拾い方、busy 中の入力、`daemon start`、tool の登録の寿命と結果の形、API error の行、handler の待ち、自動 compact の後の案内) (同 findings の「DR-0039 の前提の probe」。結果は「前提の確認」の節)
 
 kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でなく `$.tool.register` の typed tool にし、宛先は部分指定で解決して config dir 跨ぎは裏で行い、`ccmsg:` 接頭辞のような規約を利用者に課さない。say も typed tool にする。CLI はエージェントがメッセージを入れる口を持たない。classic hook は残さず全部 mods に寄せる。module の無いセッション向けのフォールバック経路は作らない。
 
@@ -36,16 +37,16 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 
 ### 2. classic の各口の置き換え
 
-| 今の口 | 用途 | mods での拾い方 | 前提の確度と、成り立たない時 |
+| 今の口 | 用途 | mods での拾い方 | 根拠 |
 |---|---|---|---|
-| command hook SessionStart `startup` / `resume` (`--resume` / `--continue`) | state file の書き出しと `daemon start` | `session.start` の after から `$.process.run` で `bin/ccmsg` を呼び、state file を書いて daemon を起こす。cwd は `$.session.cwd()`、repo の root と remote は `$.session.repo()`、ws / branch は今と同じく bump-semver を `$.process.run` で呼ぶ | `session.start` は startup・resume・continue のどれでも起きる (event-matrix 実測、対話と `-p`)。hot reload でも起きるので冪等にする (同実測)。最初の `session.start` は await されるので、起動を待たせない形にする。`daemon start` を `$.process.run` で呼んで detached の daemon を待たずに返るかは未検証 (「Accepted の前提」) |
-| 同 `clear`、module の `classic.SessionStart (clear)` | 新しい sid でサイドカーを起こし直し、事実を読み直し、turn を idle にし、新しい sid の state file を書く | `session.end` (`reason: 'clear'`) で旧 id の世代を進め、`command.run` を `{ command: 'clear' }` で hook して `await next(e)` の後に `$.session.id()` を読み直し、新しい sid の state file を `$.process.run` で書く | `command.run` の `next(e)` が resolve するのは新しい session の `classic.SessionStart (clear)` の dispatch の後 (event-matrix 実測 2/2)。その時点で `$.session.id()` が新しい id を返すことは未観測 (「Accepted の前提」) |
-| セッション内の `/resume` | 同上 | `session.end` (`reason: 'resume'`) と `command.run` (`resume`) の after。新しい sid の state file を同じく書く | 未観測 (「Accepted の前提」) |
+| command hook SessionStart `startup` / `resume` (`--resume` / `--continue`) | state file の書き出しと `daemon start` | `session.start` の after から `$.process.run` で `bin/ccmsg` を呼び、state file を書いて daemon を起こす。cwd は `$.session.cwd()`、repo の root と remote は `$.session.repo()`、ws / branch は今と同じく bump-semver を `$.process.run` で呼ぶ | `session.start` は startup・resume・continue のどれでも起きる (event-matrix 実測、対話と `-p`)。hot reload でも起きるので冪等にする (同実測)。最初の `session.start` は await されるので、起動を待たせない形にする。CLI と同じ形 (stdio ignore、`detached`) で子を起こすスクリプトに対し、`$.process.run` は 25〜26 ms で返り子は生き残った (probe 2/2)。実物の `ccmsg daemon start` の所要は実装時に確認する |
+| 同 `clear`、module の `classic.SessionStart (clear)` | 新しい sid でサイドカーを起こし直し、事実を読み直し、turn を idle にし、新しい sid の state file を書く | `session.end` (`reason: 'clear'`) で旧 id の世代を進め、`command.run` を `{ command: 'clear' }` で hook して `await next(e)` の後に `$.session.id()` を読み直し、新しい sid の state file を `$.process.run` で書く | `command.run` の `next(e)` が resolve するのは新しい session の `classic.SessionStart (clear)` の dispatch の後 (event-matrix 実測 2/2)。その後で読んだ `$.session.id()` は新しい id だった (probe 2/2) |
+| セッション内の `/resume` | 同上 | `command.run` を `{ command: 'resume' }` で hook し、after で `$.session.id()` を読み直して同じことをする。`session.end` (`reason: 'resume'`) で旧 id の世代を進める | `command.run (resume)` → `session.end (resume、旧 id)` → `classic.SessionStart (resume)` の後に after が resolve し、`$.session.id()` は再開した id。`session.start` は起きない (probe 2/2) |
 | 同 `compact`、module の `classic.SessionStart (compact)` | state file の書き直しと model / window の読み直し | 事実の読み直しはしない (§5 の印を置く `session.compact` の hook だけを持つ) | session id は変わらない (event-matrix 実測)。compaction で変わるのは使用量だけで次の `session.measure` で取り直せる、というのは B5 の表の読みで、compaction の後の使用量の再取得は未観測 |
 | `classic.Stop` の `effort.level` | 本体の turn の effort | `turn.step` を `async function*` と `yield* next(e)` で hook し、`e.agentId === undefined` の request の `e.effort` を取る (context-notify の `turn.step` の hook と同じ形、B17) | 実測 (mods-vs-transcript findings、context-notify DR-0003)。request の時点で分かるので今より早い。effort 非対応のモデルでは key が無い |
-| `classic.PostModelSwitch` | 切替直後の model と window の読み直し | 次の request の `turn.step` の `e.model` と、その時の `$.session.usage().context.window` | engine event の一覧にモデル切替は無い。`/model` が `config.set` (key `model`) か `command.run` (`model`) を通るかは未検証 (B5 の表、「Accepted の前提」)。通るならその after で読み直す。通らなければ、切替から次の prompt までの間、webui の model / window は古いまま (Consequences) |
-| `classic.UserPromptSubmit` | `prompt.send` の受け付け (DR-0035 §5 の成功の時点) | `prompt.submit` の hook で `origin.kind === 'composer'` と fill した文の一致を見て、`next(e)` が resolve し結果が `{ drop }` でない時点を受け付けとする。書きかけの復元は今も同じ event でしている | idle では `prompt.submit` が `classic.UserPromptSubmit` より先に起きる (event-matrix の event 列)。busy 中の Enter で `next(e)` がいつ resolve するかは未観測 (「Accepted の前提」) |
-| `classic.StopFailure` の `error` / `last_assistant_message` | API error の分類と表示文 | 分類は残す (kawaz 2026-10-15)。`turn.complete` の `reason: 'error'` で立て、分類と表示文は `$.session.append` の hook (保存される行ごとに保存の前に起きる。harness が書く API error の行が通るか。どの door で通るかは未観測で、findings 2026-10-14 が観測した door は `queue` / `prompt` / `attachment` / `command` / `response`) から取る | engine event の欄には分類が無い (B5 の表)。`session.append` で取れるかは未観測 (「Accepted の前提」)。取れなければ、分類と表示文は今の transcript の API error の行の読みで取り続ける (要る事実のために既にある経路を残すもので、§7 の言うフォールバックではない) |
+| `classic.PostModelSwitch` | 切替直後の model と window の読み直し | `command.run` を `{ command: 'model' }` で hook し、after で `$.session.model()` と `$.session.usage().context.window` を読み直す。request ごとの値は `turn.step` の `e.model` でも取れる | `/model` は picker (既定として保存・この session だけ) でも引数付きでも `command.run (model)` を通り、after は `classic.PostModelSwitch` の後に resolve した (probe 4/4、うち切替あり 2)。`config.set` (key `model`) は既定として保存する時しか起きないので使わない |
+| `classic.UserPromptSubmit` | `prompt.send` の受け付け (DR-0035 §5 の成功の時点) | `prompt.submit` の hook で `origin.kind === 'composer'` と fill した文の一致を見て、`next(e)` が resolve し結果が `{ drop }` でない時点を受け付けとする。書きかけの復元は今も同じ event でしている | idle では `prompt.submit` が `classic.UserPromptSubmit` より先に起きる (event-matrix の event 列)。busy 中 (tool の実行中) の Enter でも `prompt.submit` は Enter の時点で起き、`next(e)` は 9〜15 ms で resolve した。queue された prompt は別の turn にならず、実行中の turn の次の request に入った (probe 2/2)。model が応答を stream している最中の Enter は実装時に確認する |
+| `classic.StopFailure` の `error` / `last_assistant_message` | API error の分類と表示文 | daemon が transcript の API error の行 (`isApiErrorMessage`) から、表示文と分類を読む。module のあるセッションも同じ経路にし、module は API error を事実として送らない。分類は行の `error` 欄 (`authentication_failed` / `invalid_request` / `unknown` 等) を読む (分類は残す、kawaz 2026-10-15) | mods では表示文しか取れない。API error の行は `$.session.append` の door `response` (`origin: { kind: 'model', model: '<synthetic>' }`) で通り表示文を持つが、分類は `e` に無く、`turn.complete` は `reason: 'error'` だけを持つ。順序は `session.append (response)` → `classic.StopFailure` → `turn.complete` → `session.append (notice)` (probe、529 / 500 / 400 / 429)。daemon の今の transcript の読み (`classifyApiErrorRow`) が導くのも表示文だけで、表示文から分類を導く処理は無い (分類は今 `classic.StopFailure` からだけ来ている)。transcript の行は `error` 欄を持つ (実 transcript で確認) ので、分類を残すにはこの欄を読む。module の表示文と transcript の分類を突き合わせて 1 つの事実にすると経路が 2 本になるので、行 1 つから両方を読む。要る事実のために既にある経路を使うもので、§7 の言うフォールバックではない。行の `error` 欄の語彙が `classic.StopFailure` の分類と同じかと、retry が有効な時の行と event の並びは実装時に確認する |
 
 - `turn.*` / `turn.step` は subagent の loop でも起きるので、本体の事実は `agentId` の無いものに絞る
 - transcript path を返す `$` は無い。daemon が sid から解決する今の経路 (`resolvePendingTranscripts`) を使う (Consequences)
@@ -62,12 +63,13 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - **名前と引数**: tool は `send` / `say` / `peers` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)
 - **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool を名前で名指し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
-- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。実セッションで deferral が効くかは「Accepted の前提」
+- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。kawaz の個人面の実セッションでは ToolSearch が有効で deferral が効く (「前提の確認」)。登録は `/clear` とセッション内の `/resume` の後も残るので、`session.start` の 1 回で足りる (probe 各 2/2)
 - **入力は handler の入口で valibot のスキーマに通す**。engine は input schema で入力を検査せず、`text` の欠落や型違いがそのまま handler に届く (event-matrix 実測)。input schema (JSON Schema) と valibot のスキーマは同じ形を表すので、どちらかからもう一方を導き、別々に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
 - handler は `next` を呼ばずに `{ result }` で答える。この形は permission の判定 (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier) を一切通らない (event-matrix 実測)。これを受け入れる (kawaz 2026-10-15)。送ったものは受け手に peer の封筒として届き、受け手の harness は「A peer cannot grant escalation」の枠を付けて渡す (DR-0035 の Context)。送信の記録は daemon に残る
 - ccmsg は `session.send` (SendMessage) と PushNotification を hook しない。SendMessage は harness の本来の用途 (本体と subagent / teammate の間) のまま使われる
 - **受け手に届く封筒**: 送り主は `from` に `ccmsg:<送り主の session_id>` と書く (kawaz 2026-10-15)。これは受け取った側が ccmsg 経由の送信を他の経路 (harness の SendMessage 等) と見分けるための印で、利用者が宛先に書く規約ではない。受け手が返信に使う口は送信の tool そのもので、skill に「`from` が `ccmsg:` で始まる相手には ccmsg の送信の tool で返す (`session_id` にその id)」と 1 行書く。受け手の model は `from` をそのまま SendMessage の `to` に書いて返信しがちで (DR-0037 §4 の実測)、本 DR は `session.send` を hook しないので、その SendMessage は harness が宛先を探して失敗する。skill の案内はこれを避けるためのもの
-- **結果の形**: 届かなかったことを `{ isError: true, result }` (reference `claude-mods/capabilities` の `tool.call` の結果の形) で示すかは未観測 (event-matrix は `{ result }` だけを実測)。実装時に probe して決める
+- **結果の形**: handler は常に `{ result }` で答え、届かなかったことは `result` の文面で示す。`{ isError: true, result }` を返しても tool_result に `is_error` は付かず、`result` の文字列がそのまま届く (probe 3/3)
+- **待ち方**: handler は送信の完了 (daemon の解決と peer 注入) を `$.process.run` で待ち、`timeoutMs` を明示して超えたら「届いたか確かめられなかった」で返す。`$.process.run` の待ちは hook の予算 (10 秒) に数えられない (15 秒・40 秒とも待ち切った) が、`$.clock.sleep` 等の待ちは数えられ、10 秒を超えると hook が飛ばされて core に落ち、許可ダイアログが出て `no tool.call hook answered` のエラーになる (probe)。handler の中で時計の待ちを使わない。待ちの間に人が Esc を押すと `$.process.run` は `aborted` で reject して子を kill し、turn は `aborted` で終わる (probe 2/2)。その送信が届いたかは model に返らず、daemon の送信の記録が正になる
 - `-p` / SDK のセッションと codex は、DR-0037 §5 の判断 (kawaz 2026-10-09: `-p` で別セッションとやりとりするユースケースはほとんど無い) を引き継いで対象外にする。tool を登録しないか、登録して理由を返すかは実装時に決める
 
 ### 4. CLI は人の口と module の transport の 2 面に縮める
@@ -84,7 +86,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 - `prompt.submit` の before で、`$.state` に「この session で案内を入れた」印が無ければ `$.session.append` (`type: 'user'`) で案内を足して印を置く (event-matrix の推奨 E)。`session.compact` の after で `$.state` に「compact 済み」を置き、次の `prompt.submit` の before で足し直す (同 I)
 - E は対話と `-p`、startup / resume / continue / `/clear` で次の request に載った (同 findings の実測)。`/clear` と resume では `$.state` が空になるので、何もしなくても足し直される。hot reload では `$.state` が残るので二重にならない
-- I は対話の手動 compact 1 回で確認した。自動 compact の後は未観測 (「Accepted の前提」)
+- I は手動 compact (1 回) と自動 compact (probe 2/2) の後に足し直された。自動 compact はその turn の `turn.start` の後に起きるので、compaction 直後の request には案内が無く、次の turn の request から載る (1 turn 遅れる)
 - `$.state` の印は `prompt.submit` 以降に読む。`/clear` の直後の hook の入口では前の session の値が見えることがある (同 findings の「`$.state` と module の生死」)
 - `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
@@ -111,23 +113,30 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - §7 のフォールバック経路を作らない。経路が 2 本あると、どちらで届いたか・どちらが壊れているかの切り分けが常に要り、no_module という状態の意味もぼやける
 - §6 の `agentId` 付き append を、permission の許可や classifier の判断材料の代わりに使わない
 
-## Accepted の前提 (probe)
+## 前提の確認
 
-次を実機で確かめてから Accepted にする。`isDeferred` の行は実セッションの debug log で、それ以外は代役の API と隔離 config home で行える (event-matrix の「実験の作り方」)。
+Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mods-event-matrix-startup-resume-clear-compact の「DR-0039 の前提の probe」(代役の API と隔離 config home、2.1.299) と実セッションの debug log で確かめた。
 
-| 確かめること | 成り立たない時 |
-|---|---|
-| `command.run (clear)` の `next(e)` の後で `$.session.id()` が新しい id を返す | `session.end (clear)` の後の最初の `prompt.submit` で読み直す |
-| セッション内の `/resume` で `session.end (resume)` と `command.run (resume)` の after が起き、新しい id が読める | `/resume` の追従の拾い方を別に決める |
-| busy 中の Enter で、`prompt.submit` の `next(e)` が Enter の時点で resolve する (DR-0035 §5 は `classic.UserPromptSubmit` について Enter の数 ms 後を実測している) | queue された prompt が model に渡る時点まで resolve しないなら、busy 中の入力は daemon の期限 (12 秒) を過ぎて `unconfirmed` になる。成功の時点の定め方を見直す |
-| `$.process.run` で `daemon start` を呼び、detached の daemon を待たずに返る (CLI は daemon の stdio を ignore して起こす、B5) | 起こし方を変える (`$.process.spawn` 等) |
-| `/clear` とセッション内の `/resume` の後に `$.tool.register` の登録が残る (起動時の resume は新しい process で `session.start` が起き登録し直すが、`/clear` では `session.start` が起きない)。hot reload の後に登録し直した tool は呼べた (event-matrix 実測 2 回) ので、登録し直しが通ることには部分的な証拠がある | `command.run (clear)` の after で登録し直す |
-| `/model` での切替が `config.set` (key `model`) か `command.run` (`model`) を通る | 切替の後の読み直しは次の request の `turn.step` まで遅れる (§2) |
-| tool の handler が `{ isError: true, result }` を返した時に model に error として届く | 届かなかったことは `{ result }` の文面だけで示す |
-| API error の時に、harness が書く API error の行が `$.session.append` の hook を通り、分類と表示文が読める (どの door で通るか)。`turn.complete (reason: 'error')` との順序 | 分類と表示文は transcript の行の読みで取り続ける (§2) |
-| `tool.call` の handler が送信の完了 (daemon の解決と peer 注入) を待てる上限。`$.process.run` の既定の期限は 30 秒で、DR-0037 §4 は `session.send` の hook で 10 秒の await を実測している | handler の待ちを上限の内に収め、超えたら「届いたか確かめられなかった」で返す |
-| 自動 compact の後に、§5 の I で案内が足し直される | 足し直しの契機を別に決める |
-| 実セッション (kawaz の個人面の settings。gateway の `ANTHROPIC_BASE_URL` を持つ) で `isDeferred: true` が効く。debug log の `[ToolSearch:optimistic]` の行で分かる。代役の URL では `ENABLE_TOOL_SEARCH` を設定しない限り無効だった (event-matrix 実測) | deferred が効かない環境では tool が全文で `tools` に載る。description を短くしておく (§3) ことでその量を抑える |
+| 確かめたこと | 結果 | 本 DR への帰結 |
+|---|---|---|
+| `command.run (clear)` の after で `$.session.id()` が新しい id | 成り立つ (2/2) | §2 の clear の行 |
+| セッション内の `/resume` で新しい id が読める | 成り立つ。`command.run (resume)` の after、`session.start` は起きない (2/2) | §2 の `/resume` の行 |
+| busy 中の Enter で `prompt.submit` が Enter の時点で起きる | 成り立つ (tool の実行中、2/2)。queue された prompt は同じ turn の次の request に入る | §2 の受け付けの行 |
+| `$.process.run` で detached の子を起こして待たずに返る | 成り立つ (代役のスクリプト、2/2) | §2 の startup の行 |
+| `/clear` と `/resume` の後に tool の登録が残る | 成り立つ (各 2/2) | §3 の登録の形。登録し直さない |
+| `/model` が `command.run (model)` を通る | 成り立つ (4/4)。after は `classic.PostModelSwitch` の後 | §2 のモデル切替の行 |
+| `{ isError: true }` が model に error として届く | 成り立たない (3/3) | §3 の結果の形。文面で示す |
+| API error の行が `session.append` を通り、分類と表示文が読める | 表示文は読める (door `response`)、分類は読めない | §2 の API error の行。transcript の行から読む |
+| handler が待てる上限 | `$.process.run` の待ちは予算に数えられない。時計の待ちは 10 秒で飛ばされる。Esc で `aborted` | §3 の待ち方 |
+| 自動 compact の後に案内が足し直される | 成り立つが 1 turn 遅れる (2/2) | §5 |
+| kawaz の個人面の実セッションで `isDeferred` が効く | 効く。debug log の `[ToolSearch:optimistic]` は `mode=tst-auto, result=true` が約 177 万行で、`disabled` は 826 行 (統括が確認) | §3 の登録の形 |
+
+実装時に確認すること (どれも本 DR の判断を変えない見込みだが、未観測):
+
+- model が応答を stream している最中の busy の Enter で、`prompt.submit` が Enter の時点で起きるか、queue された prompt がどの turn に入るか
+- 実物の `ccmsg daemon start` を `$.process.run` で呼んだ時の所要 (daemon の応答を待つ分。最初の `session.start` は await される)
+- retry が有効 (既定) な時の API error の行と event の並び (probe は `CLAUDE_CODE_MAX_RETRIES=0`)
+- transcript の API error の行の `error` 欄の語彙が `classic.StopFailure` の分類と同じか
 
 ## Alternatives Considered
 
@@ -149,11 +158,10 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 ## Consequences
 
-- 置き換わる判断: 本 DR が Accepted になり実装された時点で、[DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) は Superseded になる。[DR-0035](./DR-0035-user-input-via-composer-fill.md) の §3 (事実を取る classic の event、「daemon はセッションの起動 (SessionStart) で立つ」) と §5 (成功の時点を `classic.UserPromptSubmit` とする定め) は §2 の対応表に置き換わる。[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1 の CLI の直送と、v2 の契約に揃えた返信行 (`Reply with: ccmsg reply <mid> --to <sid> <text>`) は §3 の送信の tool に置き換わり、返信行の形の v2 との整合は崩れる (封筒の `from` の `ccmsg:<sid>` は残り、返信は skill の案内で送信の tool に導く、§3)。DR-0036 §3 の「人へ知らせるのは PushNotification で足りる」は say の tool に置き換わる。[DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6 の送信の認識 (`ccmsg-direct-transcript.ts` が agent の `ccmsg post` / `reply` の Bash 呼び出しを認識する部分) には、送信と say の tool の tool_use の形を足す
+- 置き換わる判断: 本 DR の実装の時点で、[DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) は Superseded になる。[DR-0035](./DR-0035-user-input-via-composer-fill.md) の §3 (事実を取る classic の event、「daemon はセッションの起動 (SessionStart) で立つ」) と §5 (成功の時点を `classic.UserPromptSubmit` とする定め) は §2 の対応表に置き換わる。[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1 の CLI の直送と、v2 の契約に揃えた返信行 (`Reply with: ccmsg reply <mid> --to <sid> <text>`) は §3 の送信の tool に置き換わり、返信行の形の v2 との整合は崩れる (封筒の `from` の `ccmsg:<sid>` は残り、返信は skill の案内で送信の tool に導く、§3)。DR-0036 §3 の「人へ知らせるのは PushNotification で足りる」は say の tool に置き換わる。[DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6 の送信の認識 (`ccmsg-direct-transcript.ts` が agent の `ccmsg post` / `reply` の Bash 呼び出しを認識する部分) には、送信と say の tool の tool_use の形を足す
 - 移行の順序: 「tool と新しい op を足す → 旧 op (`message_send` / `address_send`) を deprecate する → 次のリリースで旧 op を削る」。動いているセッションには前の版の module が残りうる (DR-0035 §3) ので、daemon が旧 op を先に削ると、旧 module の SendMessage の横取りがその場で壊れる。旧 module のセッションは再起動 (か `/reload-plugins`) で新しい module になる
 - 組織が管理する機械では次のものが効かない (reference `claude-mods/overview` の `sec-default` 節の記述で、ccmsg では未検証): `session.compact` の hook が飛ばされるので compact の後の案内の足し直し (§5) が起きない。managed の `allowedMcpServers` がある間は user tier の `$.tool.register` が拒まれるので、§3 の tool が登録されず、そのセッションは送信と say を持たない (§7 により別経路は無い)
 - transcript path の出所が無くなる: 今は SessionStart の command hook が stdin の `transcript_path` を state file に書き、CLI の hello で daemon に届く。module には transcript path を返す `$` が無いので、module のあるセッションも daemon の `resolvePendingTranscripts` (未入力のセッションについて poll ごとに config dir を走査する) で探すことになり、走査の対象が全セッションに広がる。走査のコストは測っていない
-- モデルを切り替えてから次の prompt までの間、webui の model と window は切替前の値のまま
 - §5 の案内は resume のたびに 1 つずつ会話に積み重なる (event-matrix 実測)。compaction で summary に置き換わるので、積み重なるのは compact までの間に限られる (`preservedSegment` の付く compaction で末尾の行が残った例は 1 回ある、同実測)。`$.session.messages()` で既に入っているかを見てから足す手はある (未検証)
 - tool 1 つの entry は約 0.5 KB (event-matrix の「context のコスト」で、説明 54 字・property 5 つの entry が 487 byte)。deferred が効く間は、読み込まれるまで一覧の名前 1 行だけになる。hot reload で説明を変えても本体の request は session 開始時の説明のまま (同実測)
 - daemon が立つ契機は module の `session.start` と人の CLI になる。module の無いセッションは daemon を起こさない
@@ -162,6 +170,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - 案内の追従: CLI の help (「人に知らせるには PushNotification を使う」「SendMessage で `peers` の address に送る」)、rules 側でエージェントに PushNotification を案内している記述を、say の tool と送信の tool に合わせる。PushNotification の 📣 表示 (DR-0027 §6.3、transcript の tool_use の読み取り) は残すが、エージェントには案内しない
 - 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin は今 skill を持たないので、§3 の skill が初めての skill になる。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
 - `turn.step` を hook する (§2) ことで、DR-0035 §3 の「`turn.step` を hook すると応答の断片がすべて module を通るので使わない」は撤回になる。断片が module を通るコストは測っていない (B17。context-notify は同じ形で本番で使っている)
+- module は API error を事実として送らなくなり、daemon は module のあるセッションも transcript の API error の行を tail する (§2)。今は module のあるセッションを tail から外している (`session-errors.ts`) ので、tail の対象が全セッションに戻る
 - tool の呼び出し 1 回ごとに CLI の process が 1 つ乗る (handler が `$.process.run` で `sidecar` 系を起こす。bun の起動を含む往復は約 0.3 秒、B7)
 - `$.state` を使うので、plugin の `types/index.d.ts` の `PluginState` の宣言が `claude plugin validate` の必須になる。validate は push の依存 (`just ci` の `validate`) で担保し、GitHub CI では runner に `claude` が無いので検査されない
 - hooks.json を `modules` だけにすると、Mods に対応しない古い Claude Code の build が `modules` を含む hooks.json を丸ごと捨てるかは未確認 (reference `claude-mods/overview` の未確認)。本 DR の前提の実測は 2.1.299 で行った。plugin が要る Claude Code の最低版をどこに示すかは実装時に決める
