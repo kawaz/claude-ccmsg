@@ -121,19 +121,27 @@ export function Composer({
     el.setSelectionRange(start, end);
   }, [focusOnOpen]);
 
+  // 親への通知 (sending 遷移と下書きの有無) は、state を変える handler の中で
+  // 同じ event の更新として送る。Effect で後から送ると親の state が 1 commit
+  // 遅れ、送信を始めた直後の外部タップを popup がまだ blocked でない状態で
+  // 拾いうる (docs/findings/2026-10-14-webui-hooks-review-react-guidance.md
+  // medium 2)。
+  //
   // UNIF-Q1=b: sending 遷移を親に通知。popup 側が sending 中の外部タップを
   // 無視するため。inline mode では onSendingChange 未指定なので no-op。
-  useEffect(() => {
-    onSendingChange?.(sending);
-  }, [sending, onSendingChange]);
+  function changeSending(next: boolean): void {
+    setSending(next);
+    onSendingChange?.(next);
+  }
 
   // kawaz r26 mid=15: 書きかけの有無 (空白のみの text は下書き扱いしない) を
   // 親に通知。popup close 中も Composer は mount されたままなので、この通知が
-  // fab の「下書きあり」表示の唯一の情報源になる。
-  const hasDraft = text.trim().length > 0 || attachments.length > 0;
-  useEffect(() => {
-    onDraftChange?.(hasDraft);
-  }, [hasDraft, onDraftChange]);
+  // fab の「下書きあり」表示の唯一の情報源になる。text / attachments の件数を
+  // 変える handler (入力・添付開始・添付削除・送信成功) がそれぞれ変更後の値で
+  // 呼ぶ。upload の進捗・完了・失敗は件数を変えないので呼ばない。
+  function reportDraft(nextText: string, nextAttachments: readonly ComposerAttachment[]): void {
+    onDraftChange?.(nextText.trim().length > 0 || nextAttachments.length > 0);
+  }
 
   /** 添付エントリを一件追加し、XHR upload を開始する。DR-0015 §2.5 の
    *  「選択時 即 upload、直ちに送信はしない」経路。placeholder 挿入は
@@ -159,6 +167,8 @@ export function Composer({
       assignedN = n;
       return [...prev, { n, name: file.name || "upload", status: "uploading", progress: 0 }];
     });
+    // 添付が 1 件増えたので、本文に関わらず下書きあり。
+    onDraftChange?.(true);
     // 2. text にプレースホルダ挿入 (caret 位置 or 末尾)。setAttachments と別
     //    setter なので、この時点で assignedN は上の setter 実行を待たない —
     //    Preact の同期 update batch 内で走る (state 更新の関数形式なので
@@ -228,6 +238,10 @@ export function Composer({
   function removeAttachment(n: number): void {
     setAttachments((prev) => prev.filter((a) => a.n !== n));
     setText((current) => removePlaceholder(current, n));
+    reportDraft(
+      removePlaceholder(text, n),
+      attachments.filter((a) => a.n !== n),
+    );
   }
 
   /** clipboard paste のファイルを beginUpload に流す (DR-0015 §2.5 +
@@ -266,7 +280,7 @@ export function Composer({
     const trimmed = text.trim();
     if (!trimmed) return;
     if (hasPendingUpload(attachments)) return; // safety net (ボタン disable 済)
-    setSending(true);
+    changeSending(true);
     try {
       const finalText = substitutePlaceholders(trimmed, attachments);
       const to = [...mentionTo];
@@ -286,13 +300,14 @@ export function Composer({
         });
         setText("");
         setAttachments([]);
+        reportDraft("", []);
         // UNIF-Q1=b: 送信成功で popup を閉じる (inline mode では省略で no-op)。
         // 失敗時 (res.ok=false) は開いたまま — text/attachments はまだ残って
         // いるので再送 UI を維持する。
         onSent?.();
       }
     } finally {
-      setSending(false);
+      changeSending(false);
     }
   }
 
@@ -335,7 +350,11 @@ export function Composer({
         placeholder={placeholder}
         rows={3}
         value={text}
-        onInput={(e) => setText(e.currentTarget.value)}
+        onInput={(e) => {
+          const next = e.currentTarget.value;
+          setText(next);
+          reportDraft(next, attachments);
+        }}
         // kawaz r26 mid=20: panel close (外側クリック) の直前に必ず blur が
         // 発火するので、ここでカーソル位置を保存 → 次回 open 時に復元。
         onBlur={(e) => {
