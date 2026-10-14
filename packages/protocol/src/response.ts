@@ -66,6 +66,7 @@ import {
   SessionStatusResponseSchema,
   SessionStatusSubscribeResponseSchema,
   SessionStatusUnsubscribeResponseSchema,
+  SidecarHelloResponseSchema,
   SidecarReplyResponseSchema,
 } from "./response-sessions.ts";
 import {
@@ -125,6 +126,7 @@ export const RESPONSE_SCHEMAS = {
   session_rename: SessionRenameResponseSchema,
   session_input: SessionInputResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
+  sidecar_hello: SidecarHelloResponseSchema,
   session_env: SessionEnvResponseSchema,
   session_launcher_config: SessionLauncherConfigResponseSchema,
   llm_usage: LlmUsageResponseSchema,

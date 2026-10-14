@@ -295,6 +295,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "unconfirmed" },
   ],
   sidecar_reply: [{ ok: true }],
+  sidecar_hello: [{ ok: true }],
   session_env: [{ ok: true, pid: 42, env: { PATH: "/bin", HOME: "/h" } }],
   session_launcher_config: [
     {

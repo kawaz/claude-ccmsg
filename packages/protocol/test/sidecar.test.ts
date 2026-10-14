@@ -10,6 +10,8 @@ import {
   SIDECAR_OP_NAMES,
   SIDECAR_OPS,
   SidecarReplySchema,
+  sidecarRunId,
+  SidecarRunIdSchema,
 } from "../src/sidecar.ts";
 
 const line = (value: object): string => JSON.stringify(value);
@@ -120,5 +122,28 @@ describe("the ops' results", () => {
     expect(parseWith(DescribeResultSchema, { v: [1], ops: [], version: "1.2.3" }).ok).toBe(true);
     expect(parseWith(DescribeResultSchema, { v: ["1"], ops: [] }).ok).toBe(false);
     expect(parseWith(DescribeResultSchema, { v: [1], ops: [], version: 1 }).ok).toBe(false);
+  });
+});
+
+describe("the run id", () => {
+  // Drawn once per module load: the load time, then random digits, so two
+  // runs of a session loaded in the same millisecond still differ.
+  test("is the start time and random digits, in the run id's own shape", () => {
+    const startedAt = 1_791_955_713_123;
+    const id = sidecarRunId(startedAt, 0.5);
+    expect(id.startsWith(startedAt.toString(36))).toBe(true);
+    expect(sidecarRunId(startedAt, 0.25)).not.toBe(id);
+    for (const random of [0, 0.5, 0.999_999_999]) {
+      expect(parseWith(SidecarRunIdSchema, sidecarRunId(startedAt, random)).ok).toBe(true);
+    }
+  });
+
+  // It becomes part of a socket name, so nothing that can climb or split a
+  // path is one.
+  test("is lowercase letters and digits only, and not long", () => {
+    for (const bad of ["", "../x", "a.b", "A1", "a b", "z".repeat(17)]) {
+      expect(parseWith(SidecarRunIdSchema, bad).ok).toBe(false);
+    }
+    expect(parseWith(SidecarRunIdSchema, "z".repeat(16)).ok).toBe(true);
   });
 });

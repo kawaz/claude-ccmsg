@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  parseSidecarSocketName,
-  resolvePaths,
-  resolveSidecarDir,
-  sidecarSocketName,
-  sidecarSocketPid,
-} from "../src/index.ts";
+import { resolvePaths, resolveSidecarDir, sidecarSocketName } from "../src/index.ts";
 
 describe("resolvePaths (DR-0002 §1)", () => {
   // CCMSG_STATE_DIR / CCMSG_CONFIG_DIR / CCMSG_DATA_DIR are direct overrides that tests
@@ -54,38 +48,25 @@ describe("sidecar sockets (DR-0035 §3)", () => {
     expect(resolvePaths({ CCMSG_STATE_DIR: "/s" }).sidecars).toBe("/s/sidecars");
   });
 
-  // The widest name carries a pid of MAX_SAFE_INTEGER's 16 digits: a state
-  // dir that fits a 7-digit pid but not that one still falls back.
+  // The widest name carries the longest run id (16 characters): a state dir
+  // that fits a shorter one but not that one still falls back.
   test("fall back to a short per-uid directory when it would not fit", () => {
-    const deep = `/${"x".repeat(39)}`;
-    expect(resolveSidecarDir(deep)).toBe(
+    expect(resolveSidecarDir(`/${"x".repeat(35)}`)).toBe(
       `/tmp/claude-ccmsg-${String(process.getuid?.() ?? 0)}/sidecars`,
     );
+    expect(resolveSidecarDir(`/${"x".repeat(34)}`)).toBe(`/${"x".repeat(34)}/sidecars`);
   });
 
-  test("are named <sid>.<pid>.sock and read back for that sid only", () => {
-    const name = sidecarSocketName(sid, 4242);
-    expect(name).toBe(`${sid}.4242.sock`);
-    expect(sidecarSocketPid(name, sid)).toBe(4242);
-    expect(sidecarSocketPid(name, "99999999-2222-4333-8444-555555555555")).toBeUndefined();
-    expect(sidecarSocketPid(`${sid}.0.sock`, sid)).toBeUndefined();
-    expect(sidecarSocketPid(`${sid}.12.sock.old`, sid)).toBeUndefined();
+  // Named after the session and the run, not the harness process: the
+  // sidecar does not know its harness's pid, and needs no `ps` to name itself.
+  test("are named <sid>.<run id>.sock", () => {
+    expect(sidecarSocketName(sid, "mgq1k2x3abcd1234")).toBe(`${sid}.mgq1k2x3abcd1234.sock`);
   });
 
-  test("refuse what is not a session id or a pid", () => {
-    expect(() => sidecarSocketName("../etc", 1)).toThrow(RangeError);
-    expect(() => sidecarSocketName(sid, 0)).toThrow(RangeError);
-    expect(() => sidecarSocketName(sid, 1.5)).toThrow(RangeError);
-  });
-});
-
-describe("parseSidecarSocketName", () => {
-  test("reads the id and pid of a socket name, and nothing else", () => {
-    const sid = "11111111-2222-4333-8444-555555555555";
-    expect(parseSidecarSocketName(`${sid}.42.sock`)).toEqual({ sid, pid: 42 });
-    expect(parseSidecarSocketName(`${sid}.0.sock`)).toBeUndefined();
-    expect(parseSidecarSocketName(`${sid}.42.sock.tmp`)).toBeUndefined();
-    expect(parseSidecarSocketName("x.42.sock")).toBeUndefined();
-    expect(parseSidecarSocketName("noname")).toBeUndefined();
+  test("refuse what is not a session id or a run id", () => {
+    expect(() => sidecarSocketName("../etc", "abc")).toThrow(RangeError);
+    expect(() => sidecarSocketName(sid, "")).toThrow(RangeError);
+    expect(() => sidecarSocketName(sid, "../x")).toThrow(RangeError);
+    expect(() => sidecarSocketName(sid, "4242.sock")).toThrow(RangeError);
   });
 });

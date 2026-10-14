@@ -418,6 +418,13 @@ export const SidecarReplyResponseSchema = v.object({
 });
 export type SidecarReplyResponse = Output<typeof SidecarReplyResponseSchema>;
 
+/** Payload of a sidecar_hello the daemon took: the run is live until the
+ * connection closes. */
+export const SidecarHelloResponseSchema = v.object({
+  ok: v.literal(true),
+});
+export type SidecarHelloResponse = Output<typeof SidecarHelloResponseSchema>;
+
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
  *

@@ -182,6 +182,23 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],
   },
+  sidecar_hello: {
+    ok: {
+      op: "sidecar_hello",
+      run_id: "mgq1k2x3abcd1234",
+      started_at: 1_791_955_713_123,
+      config_dir: "/h/.claude",
+      hyoui_session_id: "hy-1",
+    },
+    bad: [
+      { op: "sidecar_hello", started_at: 1 },
+      { op: "sidecar_hello", run_id: "../x", started_at: 1 },
+      { op: "sidecar_hello", run_id: "abc", started_at: 0 },
+      { op: "sidecar_hello", run_id: "abc", started_at: 1.5 },
+      { op: "sidecar_hello", run_id: "abc", started_at: 1, hyoui_session_id: "" },
+      { op: "sidecar_hello", run_id: "abc", started_at: 1, config_dir: "" },
+    ],
+  },
   session_env: {
     ok: { op: "session_env", session_id: SID },
     bad: [{ op: "session_env" }, { op: "session_env", session_id: "" }],

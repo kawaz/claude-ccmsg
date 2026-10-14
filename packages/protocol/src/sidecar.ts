@@ -19,6 +19,34 @@ export const SIDECAR_REQUEST_VERSION = 1;
 /** What a request and its reply are matched by: unique per request. */
 export const SidecarRequestIdSchema = v.pipe(v.string(), v.nonEmpty("an id is not empty"));
 
+// --- the run ---------------------------------------------------------------
+
+/** What tells one run of a session from another (two harness processes of one
+ * session, a resume started twice). The hooks module draws it when it is
+ * loaded, which is when the run starts, and keeps it for the run's life: a
+ * sidecar started again and a sidecar under a new session id (/clear,
+ * /resume) name the same run. The sidecar's socket is named after it
+ * (`<sid>.<run id>.sock`), and the sidecar names it to the daemon
+ * (sidecar_hello). Lowercase letters and digits, so it can sit in a file name,
+ * and at most 16 of them, which keeps the widest socket name inside `sun_path`
+ * under the usual state dir (resolveSidecarDir). */
+export const SIDECAR_RUN_ID_MAX = 16;
+export const SidecarRunIdSchema = v.pipe(
+  v.string(),
+  v.regex(/^[0-9a-z]+$/, "a run id is lowercase letters and digits"),
+  v.maxLength(SIDECAR_RUN_ID_MAX, `a run id is at most ${String(SIDECAR_RUN_ID_MAX)} characters`),
+);
+
+/** A run id for a run started at `startedAt` (epoch ms): the start in base 36,
+ * then digits of `random` (in [0, 1)), so two runs of a session loaded in the
+ * same millisecond still differ. */
+export function sidecarRunId(startedAt: number, random: number): string {
+  const digits = Math.floor(random * 36 ** 8)
+    .toString(36)
+    .padStart(8, "0");
+  return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
+}
+
 // --- prompt.send -----------------------------------------------------------
 
 /** `prompt.send`: put `text` into the session as the person's own prompt —

@@ -8,7 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
-import { SidecarReplySchema } from "./sidecar.ts";
+import { SidecarReplySchema, SidecarRunIdSchema } from "./sidecar.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 
 /** A Claude Code session id as a request names one. Its shape (a lowercase
@@ -344,6 +344,31 @@ export const SidecarReplyRequestSchema = v.object({
   reply: SidecarReplySchema,
 });
 export type SidecarReplyRequest = Output<typeof SidecarReplyRequestSchema>;
+
+/** Name a run of the session to the daemon (session role, DR-0035 §3). The
+ * session's sidecar sends it once it has bound its socket, on a connection of
+ * its own that it keeps open for its life: the run counts among the session's
+ * live runs — the ones a session_input is written to — until that connection
+ * closes, and a sidecar whose daemon went away connects to the next one and
+ * names the run again. The session is the connection's (its hello), and the
+ * socket is `<sid>.<run_id>.sock` in the sidecar directory both sides derive
+ * from the state dir, so no path is taken from the sender. */
+export const SidecarHelloRequestSchema = v.object({
+  op: v.literal("sidecar_hello"),
+  run_id: SidecarRunIdSchema,
+  /** When the run started (the hooks module was loaded), epoch ms. The daemon
+   * ties the run to its harness process by the session's row in `claude
+   * agents --json` whose start is nearest this. */
+  started_at: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  /** The run's CLAUDE_CONFIG_DIR as its hooks module reads it, which is where
+   * the daemon looks for that row; absent when the variable is unset. */
+  config_dir: v.optional(v.pipe(v.string(), v.nonEmpty())),
+  /** The run's HYOUI_SESSION_ID as its hooks module reads it — the terminal
+   * the module presses Enter on; absent outside hyoui, where a person's input
+   * cannot be submitted (`no_terminal`). */
+  hyoui_session_id: v.optional(v.pipe(v.string(), v.nonEmpty())),
+});
+export type SidecarHelloRequest = Output<typeof SidecarHelloRequestSchema>;
 
 /** Read the environment variables of a session's own process (user role
  * only). The env is read from the resolved pid rather than

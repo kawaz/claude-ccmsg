@@ -4,7 +4,7 @@
 //
 //   state:  ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
-//             sidecars/<sid>.<pid>.sock (DR-0035 §3)
+//             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
 //             allowed-origins.json
@@ -17,6 +17,8 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { isSessionIdShape } from "./ccmsg-address.ts";
+import { parseWith } from "./parse.ts";
+import { SIDECAR_RUN_ID_MAX, SidecarRunIdSchema } from "./sidecar.ts";
 
 export interface Paths {
   stateDir: string;
@@ -58,8 +60,8 @@ export interface Paths {
    * path is meant to be pasted somewhere and read back later, possibly after
    * a daemon restart. */
   dumps: string;
-  /** Where each session run's sidecar binds `<sid>.<pid>.sock` (DR-0035 §3);
-   * see resolveSidecarDir. */
+  /** Where each session run's sidecar binds `<sid>.<run id>.sock` (DR-0035
+   * §3); see resolveSidecarDir. */
   sidecars: string;
 }
 
@@ -71,51 +73,29 @@ const MAX_SOCKET_PATH = 104;
  * Plural on purpose: kawaz/ccmsg (v2) keeps its own sidecars in `sidecar/`
  * under the same `~/.local/state/ccmsg` this daemon uses, and both plugins can
  * be loaded into one session run. Sharing a directory would have the two
- * sidecars of one run unlink each other's `<sid>.<pid>.sock` (DR-0035 §3). */
+ * sidecars of one run unlink each other's socket (DR-0035 §3). */
 export const SIDECAR_DIR = "sidecars";
 
-/** `<sid>.<pid>.sock`: one socket per run of a session, the pid being the
- * harness process's, so two runs of one session (a resume started twice) do
- * not take each other's socket. */
-export function sidecarSocketName(sid: string, pid: number): string {
+/** `<sid>.<run id>.sock`: one socket per run of a session, so two runs of one
+ * session (a resume started twice) do not take each other's socket. */
+export function sidecarSocketName(sid: string, runId: string): string {
   if (!isSessionIdShape(sid)) throw new RangeError(`not a session id: ${sid}`);
-  if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`not a pid: ${String(pid)}`);
-  return `${sid}.${String(pid)}.sock`;
-}
-
-/** The harness pid a socket name in the sidecar directory carries for `sid`,
- * or undefined when the name belongs to another session or is not a socket
- * name at all. */
-export function sidecarSocketPid(name: string, sid: string): number | undefined {
-  const prefix = `${sid}.`;
-  if (!name.startsWith(prefix)) return undefined;
-  const match = /^([1-9][0-9]*)\.sock$/.exec(name.slice(prefix.length));
-  if (match === null) return undefined;
-  const pid = Number(match[1]);
-  return Number.isSafeInteger(pid) ? pid : undefined;
-}
-
-/** The session id and harness pid a socket name in the sidecar directory
- * carries, or undefined when it is not a socket name. */
-export function parseSidecarSocketName(name: string): { sid: string; pid: number } | undefined {
-  const sid = name.slice(0, Math.max(0, name.indexOf(".")));
-  if (!isSessionIdShape(sid)) return undefined;
-  const pid = sidecarSocketPid(name, sid);
-  return pid === undefined ? undefined : { sid, pid };
+  if (!parseWith(SidecarRunIdSchema, runId).ok) throw new RangeError(`not a run id: ${runId}`);
+  return `${sid}.${runId}.sock`;
 }
 
 /** `<stateDir>/sidecars`, or the short per-uid directory under `/tmp` when the
  * widest socket name would not fit in `sun_path` there. The daemon and every
- * sidecar derive it from the same state dir, so neither registers anything
- * with the other — which is why the widest name is judged by the largest pid
- * a name can carry rather than by any one run's pid: a run whose pid happened
- * to fit would bind where a run with a longer pid could not, and the daemon
- * would have to look in both. */
+ * sidecar derive it from the same state dir, so the sidecar names its run to
+ * the daemon (sidecar_hello) and no path travels — which is why the widest
+ * name is judged by the longest run id rather than by any one run's: a run
+ * whose id happened to fit would bind where a run with a longer one could
+ * not, and the two would disagree on where to look. */
 export function resolveSidecarDir(stateDir: string): string {
   const beside = path.join(stateDir, SIDECAR_DIR);
   const widest = path.join(
     beside,
-    sidecarSocketName("00000000-0000-0000-0000-000000000000", Number.MAX_SAFE_INTEGER),
+    sidecarSocketName("00000000-0000-0000-0000-000000000000", "z".repeat(SIDECAR_RUN_ID_MAX)),
   );
   if (Buffer.byteLength(widest) < MAX_SOCKET_PATH) return beside;
   return path.join("/tmp", `claude-ccmsg-${String(process.getuid?.() ?? 0)}`, SIDECAR_DIR);
