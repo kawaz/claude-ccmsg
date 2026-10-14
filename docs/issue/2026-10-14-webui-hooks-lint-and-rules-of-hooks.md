@@ -3,7 +3,7 @@ title: webui の hooks lint 導入と rules-of-hooks 違反の解消
 status: open
 category: bug
 created: 2026-10-14T13:50:57+09:00
-last_read:
+last_read: 2026-10-14T13:52:34+09:00
 open_entered: 2026-10-14T13:50:57+09:00
 wip_entered:
 blocked_entered:
