@@ -17,10 +17,12 @@ import {
   SidecarRequestSchema,
   sidecarSocketName,
 } from "@ccmsg/protocol";
+import { nameRunNoSpawn } from "../src/client.ts";
 import { keepNamed, startSidecar } from "../src/sidecar.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
+  defined,
   spawnDaemonProc,
   stopTestDaemon,
   testConfigDir,
@@ -398,10 +400,14 @@ describe("ccmsg sidecar names its run to the daemon", () => {
     peers.find((p) => p.sid === SID)?.input_readiness?.kind;
 
   // The daemon learns of the run from the sidecar itself, and of its end from
-  // the connection closing: no directory watched, no `ps`.
+  // the connection closing: no directory watched, no `ps`. The watcher
+  // subscribes before the sidecar starts, as subscribing pushes no peers list.
   test("named once bound, gone once it leaves, with no ps run", async () => {
     const ctx = await startShortDaemon();
     const ps = psRecorder(ctx.base);
+    const user = await connect(ctx.sock);
+    await user.hello({ role: "user" });
+    await user.request({ op: "subscribe" });
     const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
       env: { ...process.env, ...ctx.env, PATH: ps.path },
       stdin: "ignore",
@@ -409,9 +415,6 @@ describe("ccmsg sidecar names its run to the daemon", () => {
       stderr: "pipe",
     });
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
-      await user.request({ op: "subscribe" });
       await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
       sidecar.kill("SIGTERM");
       expect(await sidecar.exited).toBe(0);
@@ -427,13 +430,22 @@ describe("ccmsg sidecar names its run to the daemon", () => {
 });
 
 describe("keepNamed", () => {
-  const rowOf = (peers: readonly { sid: string; input_readiness?: { kind: string } }[]) =>
-    peers.find((p) => p.sid === SID)?.input_readiness?.kind;
+  const PROBE_SID = "11111111-2222-4333-8444-666666666666";
+  const PROBE_RUN = "mgq1k2x3abcd5678";
+  const rowOf = (
+    peers: readonly { sid: string; input_readiness?: { kind: string } }[],
+    sid: string = SID,
+  ) => peers.find((p) => p.sid === sid)?.input_readiness?.kind;
   const identity = { role: "session", sid: SID, repo: "", ws: "", cwd: "" } as const;
   const name = { runId: RUN, startedAt: 1, hyouiSessionId: "hy-1" };
 
   // A daemon that starts after the sidecar (a restart, an upgrade) knows
   // nothing of the run until the sidecar connects to it and names it again.
+  //
+  // Subscribing pushes no peers list, only the changes after it, so each
+  // watcher subscribes before the run is named to its daemon: keepNamed is
+  // started once `before` is subscribed, and the next attempt is let go once
+  // `after` is.
   test("names the run, and again to the daemon that listens after the first", async () => {
     const first = await startShortDaemon();
     const paths = resolvePaths(first.env);
@@ -442,23 +454,24 @@ describe("keepNamed", () => {
     const askedOnce = Promise.withResolvers<void>();
     const gate = Promise.withResolvers<void>();
     const lines: string[] = [];
-    const named = keepNamed({
-      paths,
-      identity,
-      name,
-      stopped: stop.promise,
-      log: (line) => lines.push(line),
-      wait: (ms) => {
-        asked.push(ms);
-        askedOnce.resolve();
-        return gate.promise;
-      },
-    });
+    let named: Promise<void> | undefined;
     let second: DaemonCtx | undefined;
     try {
       const before = await connect(first.sock);
       await before.hello({ role: "user" });
       await before.request({ op: "subscribe" });
+      named = keepNamed({
+        paths,
+        identity,
+        name,
+        stopped: stop.promise,
+        log: (line) => lines.push(line),
+        wait: (ms) => {
+          asked.push(ms);
+          askedOnce.resolve();
+          return gate.promise;
+        },
+      });
       await before.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
       before.close();
       await stopKeepingDirs(first);
@@ -468,10 +481,32 @@ describe("keepNamed", () => {
 
       second = { ...first, proc: spawnDaemonProc(first.stateDir, first.dataDir) };
       await waitConnectable(first.sock);
-      gate.resolve();
       const after = await connect(first.sock);
       await after.hello({ role: "user" });
       await after.request({ op: "subscribe" });
+      // A daemon that takes a run named now is not enough: once a probe run of
+      // another session, named the way keepNamed names, shows as ready, this
+      // run still does not, as its next attempt waits for the wait to be over.
+      const probe = defined(
+        await nameRunNoSpawn(
+          paths,
+          { ...identity, sid: PROBE_SID },
+          { runId: PROBE_RUN, startedAt: 1, hyouiSessionId: "hy-2" },
+        ),
+        "the probe run named",
+      );
+      const { ev } = await after.readEventUntil(
+        "peers",
+        (e) => rowOf(e.peers, PROBE_SID) === "ready",
+      );
+      probe.close();
+      expect(rowOf(ev.peers)).not.toBe("ready");
+      expect(asked).toEqual([250]);
+      expect(lines).toEqual([
+        `named ${RUN} to ${paths.sock}`,
+        `lost ${paths.sock}; naming the run again once a daemon listens`,
+      ]);
+      gate.resolve();
       await after.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
 
       // The sidecar going closes the connection: the run goes with it.
