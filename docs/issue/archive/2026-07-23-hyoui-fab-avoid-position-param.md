@@ -22,8 +22,7 @@ origin: r53m1 (hyoui セッション、kawaz 指示)
 ## 概要
 
 Terminal タブで hyoui embed の fab と ccmsg の＋ボタンが右下で重なる問題。
-hyoui 側が fab 初期位置をエッジ相対のクエリパラメータで指定可能にする実装中で、
-仕様確定後に r53 で共有される。
+hyoui 側が fab 初期位置をエッジ相対のクエリパラメータで指定可能にする実装中で、仕様確定後に r53 で共有される。
 
 ccmsg 側の対応は `buildTerminalEmbedUrl`
 (`packages/webui/src/client/terminal-gateway-store.ts`、現状 `embed=1&resize=1` に集約済み)

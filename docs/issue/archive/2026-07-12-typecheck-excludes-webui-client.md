@@ -21,18 +21,13 @@ origin: 自リポ TODO
 
 ## 概要
 
-`just typecheck` (root の `tsc --noEmit`) が `packages/webui/src/client/**` と
-`packages/webui/test/**` を exclude しており、webui クライアントコードの
-型エラーが CI で検出されない盲点がある。Wave5 worker が発見 (2026-07-12)。
+`just typecheck` (root の `tsc --noEmit`) が `packages/webui/src/client/**` と`packages/webui/test/**` を exclude しており、webui クライアントコードの型エラーが CI で検出されない盲点がある。Wave5 worker が発見 (2026-07-12)。
 
-`packages/webui/tsconfig.json` 自体は別途 client を include (カバー) している
-が、root の `just typecheck` / CI からはこの tsconfig が呼ばれておらず、
-client 側の型チェックが実質未実施のまま通ってしまう。
+`packages/webui/tsconfig.json` 自体は別途 client を include (カバー) しているが、root の `just typecheck` / CI からはこの tsconfig が呼ばれておらず、client 側の型チェックが実質未実施のまま通ってしまう。
 
 ## 背景
 
-exclude の経緯は未確認。おそらく DOM lib 型 (`lib.dom.d.ts`) と daemon 側
-(Node/Bun 環境) の型定義の衝突回避が理由と推測されるが、裏取りできていない。
+exclude の経緯は未確認。おそらく DOM lib 型 (`lib.dom.d.ts`) と daemon 側(Node/Bun 環境) の型定義の衝突回避が理由と推測されるが、裏取りできていない。
 
 ## 受け入れ条件
 

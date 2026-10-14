@@ -1,57 +1,39 @@
 # protocol (契約) 棚卸し (作り直し議論の一次資料)
 
 - 日付: 2026-09-07
-- 対象: `packages/protocol/src/` 全 7 ファイル (3,631 行) + それを補う daemon / webui / cli
-  側の「実装上の約束事」
+- 対象: `packages/protocol/src/` 全 7 ファイル (3,631 行) + それを補う daemon / webui / cli側の「実装上の約束事」
 - 目的: ccmsg を daemon / protocol / webui の 3 リポに分離し、規約 (プロトコル)
-  ファーストで作り直す議論の一次資料。**設計案は書かない**。事実の棚卸しと、
-  疑わしいものの根拠付き列挙まで。
-- 前提資料: `docs/decisions/DR-0003` (wire/storage)、`DR-0016` (seq)、`DR-0029` 追補
-  (request_id)、`docs/issue/2026-09-07-multi-host-cluster.md` (クラスタ化)
+  ファーストで作り直す議論の一次資料。**設計案は書かない**。事実の棚卸しと、疑わしいものの根拠付き列挙まで。
+- 前提資料: `docs/decisions/DR-0003` (wire/storage)、`DR-0016` (seq)、`DR-0029` 追補(request_id)、`docs/issue/2026-09-07-multi-host-cluster.md` (クラスタ化)
 - 数値は 2026-09-07 時点の `wc -l` / `grep` 実測。
 
 ## 判明した事実
 
 1. **protocol は 3,631 行、うち `index.ts` が 3,220 行 (89%)**。`index.ts` の
    **1,713 行 (53%) がコメント**で、実行時コードは `llmCacheWindowEndMs` 1 関数だけ。
-   残りはすべて型宣言 (interface 184 / type 19 / const 20)。**wire を検証する
-   コードは protocol に 1 行も無く**、`typeof req.x` 相当の検査は daemon の
-   `server.ts` (4,008 行) に手書きで散っている。
+   残りはすべて型宣言 (interface 184 / type 19 / const 20)。**wire を検証するコードは protocol に 1 行も無く**、`typeof req.x` 相当の検査は daemon の`server.ts` (4,008 行) に手書きで散っている。
 2. **op は 56 個**。宣言 (`RequestBody` union) と daemon の `case` は**完全に一致**
-   (declared − handled = 空、handled − declared = 空)。定義されていない op を呼ぶ
-   コードも、呼ばれない op も**リポ内には無い**。
+   (declared − handled = 空、handled − declared = 空)。定義されていない op を呼ぶコードも、呼ばれない op も**リポ内には無い**。
 3. **role の内訳は user-only 36 / session-only 1 (`say`) / どちらでも 19**。
-   つまり **op の 64% は webui 専用**で、エージェント (session role) が使うのは
-   room 系 + `say` + `notify` + `subscribe` の 20 個だけ。
-4. **role 違反は専用エラーコードを持たず `bad_request` を返す** (`sendErr(conn,
-   ErrorCode.bad_request, "op 'kick' requires user role")` の形)。`ErrorCode` は
-   29 個の値を持つ const object だが、**wire の型は `ErrorBody { code: string }`**
-   で ErrorCode を参照しておらず、**クライアント側は `ErrorCode` を一度も import
-   していない** (webui / cli とも 0 件)。判定は `res.error.code === "file_conflict"`
+   つまり **op の 64% は webui 専用**で、エージェント (session role) が使うのはroom 系 + `say` + `notify` + `subscribe` の 20 個だけ。
+4. **role 違反は専用エラーコードを持たず `bad_request` を返す** (`sendErr(conn, ErrorCode.bad_request, "op 'kick' requires user role")` の形)。`ErrorCode` は29 個の値を持つ const object だが、**wire の型は `ErrorBody { code: string }`**
+   で ErrorCode を参照しておらず、**クライアント側は `ErrorCode` を一度も importしていない** (webui / cli とも 0 件)。判定は `res.error.code === "file_conflict"`
    のような文字列リテラル比較 (webui に 5 箇所)。
 5. **push event は 12 種**。うち **`ev:"net_online"` だけが `StreamEvent` union に
-   入っていない** (`index.ts:869` で定義、`889-901` の union に不在)。daemon は
-   送っているが、型の上ではストリームに流れないことになっている。
+   入っていない** (`index.ts:869` で定義、`889-901` の union に不在)。daemon は送っているが、型の上ではストリームに流れないことになっている。
 6. **`seq` と `mid` の二重系列**。`mid` は msg 専用の per-room 連番、`seq` (DR-0016) は
    全 event 型を貫く per-room 連番。`subscribe` は `since` (mid) と `since_seq` (seq)
-   の**両方**を受け取り、daemon は room ごとにどちらを使うか分岐する
-   (`server.ts:2568-2571`)。`since` を送るクライアントは**リポ内に存在しない**
+   の**両方**を受け取り、daemon は room ごとにどちらを使うか分岐する(`server.ts:2568-2571`)。`since` を送るクライアントは**リポ内に存在しない**
    (cli / webui とも `since_seq` のみ)。
 7. **時刻の単位が同じ命名で 2 系統に割れている**。`_at` サフィックスは ISO 文字列
    (`connected_at` / `joined_at` / `polled_at` …) と epoch ms (`observed_at` /
-   `generated_at` / `expires_at` …) の両方に使われ、**`started_at` は
-   `WorkflowAgentStatus` で number、`SessionWorkflowStatus` / `SessionBackgroundStatus`
-   で string**。`created_at` / `updated_at` も `LlmStatusIncident` は number、
-   `SessionSearchHit` は string。`ts` も `MsgEvent` は ISO 文字列、`LlmRequestInfo` は
-   epoch ms。
+   `generated_at` / `expires_at` …) の両方に使われ、**`started_at` は`WorkflowAgentStatus` で number、`SessionWorkflowStatus` / `SessionBackgroundStatus`
+   で string**。`created_at` / `updated_at` も `LlmStatusIncident` は number、`SessionSearchHit` は string。`ts` も `MsgEvent` は ISO 文字列、`LlmRequestInfo` はepoch ms。
 8. **契約が webui という特定実装を名指ししている箇所がある**。`ClientTracePoint.comp`
    は `"webui"` のみを許すリテラル型 (`index.ts:1878`)。`HelloRequest` の `nav_type`
-   (`PerformanceNavigationTiming.type`) と `ua` (`<platform>/<browser>`) もブラウザ
-   固有で、どちらも「診断専用」と明記されている。
+   (`PerformanceNavigationTiming.type`) と `ua` (`<platform>/<browser>`) もブラウザ固有で、どちらも「診断専用」と明記されている。
 9. **クラスタ化に必要な概念が 1 つも無い**。`host` に相当するフィールドは protocol
-   全体で 0 件、room id は daemon ローカルの連番 `r<N>` (`server.ts:1615-1616` で
-   `while (daemon.rooms.has(id)) id = \`r${++n}\`` と採番、protocol 側に定義も正規表現も
-   無い)、op を他 daemon へ転送する封筒も `host_unreachable` 相当のエラーコードも無い。
+   全体で 0 件、room id は daemon ローカルの連番 `r<N>` (`server.ts:1615-1616` で`while (daemon.rooms.has(id)) id = \`r${++n}\`` と採番、protocol 側に定義も正規表現も無い)、op を他 daemon へ転送する封筒も `host_unreachable` 相当のエラーコードも無い。
 10. **配布は monorepo の workspace package 1 個** (`@ccmsg/protocol`、`main` が
     `./src/index.ts` = ビルド無しの TS 直参照)。import しているファイルは daemon 66 /
     webui 64 / cli 7 の計 137。testkit と translate-helper は protocol を使わない。
@@ -59,18 +41,12 @@
 ## 実用的な示唆
 
 - op の 64% が user-only という偏りは、「1 つの wire に *エージェント間メッセージング*
-  と *webui のバックエンド API* が同居している」ことの数値的な現れ。分離議論の
-  第一の切れ目はここ (role) にあり、次が「room 系 (11 op) / fs 系 (12 op) /
+  と *webui のバックエンド API* が同居している」ことの数値的な現れ。分離議論の第一の切れ目はここ (role) にあり、次が「room 系 (11 op) / fs 系 (12 op) /
   session 系 (11 op) / llm 系 (3 op) / transcript 系 (4 op)」のドメイン境界。
-- 「型だけ / 検証は daemon 側の手書き」という現状は、protocol リポを独立させた瞬間に
-  **契約の唯一の実行可能な表現が無くなる**ことを意味する。既に `sendDeliveredMsg`
-  (`server.ts:473-500`) は `DeliveredEvent` 型を使わず `Record<string, unknown>` を
-  手で組み立てており、型と実装の乖離を検出する仕組みが無い。
-- 時刻・識別子・エラーの 3 つは、いずれも「upstream (claude agents / llm-gateway) の
-  値をそのまま通す」判断が入口で、その pass-through が命名と単位の不統一として
-  契約に漏れている (§4)。作り直すなら「正本が誰か」を型ごとに宣言する場所が要る。
-- クラスタ化の観点では、room id・sid→pid・パス・sandbox URL・hyoui ハンドルがすべて
-  ホストローカルであり (§5.6)、「host を足す」だけでは済まない箇所が列挙できる。
+- 「型だけ / 検証は daemon 側の手書き」という現状は、protocol リポを独立させた瞬間に**契約の唯一の実行可能な表現が無くなる**ことを意味する。既に `sendDeliveredMsg`
+  (`server.ts:473-500`) は `DeliveredEvent` 型を使わず `Record<string, unknown>` を手で組み立てており、型と実装の乖離を検出する仕組みが無い。
+- 時刻・識別子・エラーの 3 つは、いずれも「upstream (claude agents / llm-gateway) の値をそのまま通す」判断が入口で、その pass-through が命名と単位の不統一として契約に漏れている (§4)。作り直すなら「正本が誰か」を型ごとに宣言する場所が要る。
+- クラスタ化の観点では、room id・sid→pid・パス・sandbox URL・hyoui ハンドルがすべてホストローカルであり (§5.6)、「host を足す」だけでは済まない箇所が列挙できる。
 
 ---
 
@@ -181,8 +157,7 @@ error 欄は当該 op に固有のコードのみ (全 op が `bad_request` / `i
 
 ### 2.6 ファイルアクセス (12)
 
-`kind` は認可面の選択子: `contained` (containment root 相対) / `workspace` (DR-0026 の
-ディレクトリ prefix 許可、絶対パス) / `external` (DR-0024 の完全一致 1 ファイル許可、絶対パス)。
+`kind` は認可面の選択子: `contained` (containment root 相対) / `workspace` (DR-0026 のディレクトリ prefix 許可、絶対パス) / `external` (DR-0024 の完全一致 1 ファイル許可、絶対パス)。
 
 | op | role | request | response | 固有 error | 呼び出し元 |
 |---|---|---|---|---|---|
@@ -228,8 +203,7 @@ error 欄は当該 op に固有のコードのみ (全 op が `bad_request` / `i
 
 ## 2'. push event 一覧 (12)
 
-購読単位の凡例: **conn** = その接続全体、**room** = 可視 room 単位、**sid** = 明示的に
-subscribe した sid 単位。
+購読単位の凡例: **conn** = その接続全体、**room** = 可視 room 単位、**sid** = 明示的にsubscribe した sid 単位。
 
 | ev | 発火契機 | 宛先 role | 購読単位 | seq | 再送・差分再生 |
 |---|---|---|---|---|---|
@@ -249,14 +223,10 @@ subscribe した sid 単位。
 
 補足:
 
-- **seq を持つのは `DeliveredEvent` だけ**。ephemeral な 11 種は順序保証も再送も無く、
-  再接続時は「全量 push を待つ」か「対応する op を叩き直す」かの二択。
-- `net_online` は `StreamEvent` union に**入っていない**ため、型としては消費側に
-  現れない。cli は未知 ev をそのまま stdout に流すので、実質「テキストとして届く」。
-- cli が stdout から落とす ev は `restarting` / `room_cursors` の 2 つ
-  (`index.ts:473`)。`subscribe_superseded` は exit 契機。それ以外は素通し。
-- webui が `ws.ts` で明示分岐する ev は 10 種 (`notify` は「UI には出さない」と
-  コメントして捨てている)。
+- **seq を持つのは `DeliveredEvent` だけ**。ephemeral な 11 種は順序保証も再送も無く、再接続時は「全量 push を待つ」か「対応する op を叩き直す」かの二択。
+- `net_online` は `StreamEvent` union に**入っていない**ため、型としては消費側に現れない。cli は未知 ev をそのまま stdout に流すので、実質「テキストとして届く」。
+- cli が stdout から落とす ev は `restarting` / `room_cursors` の 2 つ(`index.ts:473`)。`subscribe_superseded` は exit 契機。それ以外は素通し。
+- webui が `ws.ts` で明示分岐する ev は 10 種 (`notify` は「UI には出さない」とコメントして捨てている)。
 
 ---
 
@@ -382,10 +352,8 @@ subscribe した sid 単位。
 
 ### 4.6 「省略 = 何を意味するか」の明文化
 
-明文化されている箇所は多い (「absent は unknown であって healthy ではない」等が
-`LlmUsageCredential.auth` / `LlmStatusOfficial` / `PeerInfo.last_user_input_at` /
-`LastLiveSession.title` などで繰り返し書かれている)。一方で規約としては統一されておらず、
-同じ「空」に 3 通りの意味がある:
+明文化されている箇所は多い (「absent は unknown であって healthy ではない」等が`LlmUsageCredential.auth` / `LlmStatusOfficial` / `PeerInfo.last_user_input_at` /
+`LastLiveSession.title` などで繰り返し書かれている)。一方で規約としては統一されておらず、同じ「空」に 3 通りの意味がある:
 
 | 意味 | 例 |
 |---|---|
@@ -479,10 +447,8 @@ issue の骨子 1〜8 に対して、現契約に**存在しない**もの:
 
 ホストローカルであることが型から読み取れない値 (クラスタ化で意味が壊れる箇所):
 
-`sid`→pid 解決を前提とする `session_kill` / `session_env` / `session_rename`、
-絶対パスを扱う全 `fs_*` op と `dir_tree` / `session_launch` / `session_dump_file` /
-`session_search`、ホスト固有 origin を返す `sandbox_grant`、ホストの gateway を
-指す `llm_usage` / `llm_stats` / `llm_status`、`ping` の全フィールド。
+`sid`→pid 解決を前提とする `session_kill` / `session_env` / `session_rename`、絶対パスを扱う全 `fs_*` op と `dir_tree` / `session_launch` / `session_dump_file` /
+`session_search`、ホスト固有 origin を返す `sandbox_grant`、ホストの gateway を指す `llm_usage` / `llm_stats` / `llm_status`、`ping` の全フィールド。
 
 ### 5.7 その他の疑わしいもの
 

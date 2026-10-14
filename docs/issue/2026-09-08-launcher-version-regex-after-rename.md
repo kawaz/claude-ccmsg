@@ -21,18 +21,13 @@ origin: 自リポ TODO
 
 ## 概要
 
-`bin/ccmsg` の `__ccmsg_extract_version` は `/ccmsg/<ver>/` パターンを要求するため、
-改名後の cache パス `cache/claude-ccmsg/claude-ccmsg/<ver>/` に一致せず、
-self-update / self-exec が無効化されている。
+`bin/ccmsg` の `__ccmsg_extract_version` は `/ccmsg/<ver>/` パターンを要求するため、改名後の cache パス `cache/claude-ccmsg/claude-ccmsg/<ver>/` に一致せず、self-update / self-exec が無効化されている。
 
 ## 背景
 
-DR-0032 §2.2-4 の最終 patch で PATH symlink と self-exec を意図的に停止する方針なら、
-regex 修正は不要でそのまま「停止扱い」として確定させてよい。その判断自体をこの issue で
-明示的に処理する (= 直すか、意図的に停止のまま確定するかを決める)。
+DR-0032 §2.2-4 の最終 patch で PATH symlink と self-exec を意図的に停止する方針なら、regex 修正は不要でそのまま「停止扱い」として確定させてよい。その判断自体をこの issue で明示的に処理する (= 直すか、意図的に停止のまま確定するかを決める)。
 
-今回の暫定対応として、`~/.local/bin/ccmsg` を手動で 0.152.4 に付け替えて凌いだ
-(2026-09-08)。
+今回の暫定対応として、`~/.local/bin/ccmsg` を手動で 0.152.4 に付け替えて凌いだ(2026-09-08)。
 
 ## 追記 (plugin 改名)
 

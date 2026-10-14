@@ -1,38 +1,22 @@
 # 同期 IO・イベントループ阻害の全量監査 (DR-0029)
 
 issue `2026-07-31-audit-blocking-io-paths` の受け入れ条件 1〜3 を満たす全量監査。
-`2026-07-31-blocking-io-audit.md` (以下「前回」) の続きで、そちらが挙げた項目の
-現状 (v0.100.2) を再確認しつつ、経路単位で全ての同期 API 呼び出しを仕分けた。
+`2026-07-31-blocking-io-audit.md` (以下「前回」) の続きで、そちらが挙げた項目の現状 (v0.100.2) を再確認しつつ、経路単位で全ての同期 API 呼び出しを仕分けた。
 
 ## 判明した事実
 
 - 前回の high 4 件のうち **3 件は既に解消済み** (実機コード確認)。
-  `scanTranscript` は `scanTranscriptLines` として chunk ごとに
-  `yieldToEventLoop()` する非同期実装に、`session_search` は
-  `fs.promises` + open handle に、attachment upload は `Bun.write` の
-  非同期ストリーミングに置き換わっている。`readAgentToolUseIds` は
-  full read から **incremental tail scan + per-path キャッシュ** になり、
-  定常状態のコストは追記分のみに落ちている (ただし同期 API のまま、初回/
+  `scanTranscript` は `scanTranscriptLines` として chunk ごとに`yieldToEventLoop()` する非同期実装に、`session_search` は`fs.promises` + open handle に、attachment upload は `Bun.write` の非同期ストリーミングに置き換わっている。`readAgentToolUseIds` はfull read から **incremental tail scan + per-path キャッシュ** になり、定常状態のコストは追記分のみに落ちている (ただし同期 API のまま、初回/
   キャッシュ evict 後は全長を同期リード)。
-- 前回 medium だった `client_trace`/`trace.ts`、`fs-find`/`dir-tree` の走査系は
-  非同期化済み (`fs.promises`、FileHandle 保持)。
-- **現在の最大の残件は `session-status.ts` の `snapshot()`**。status push
-  (= transcript が 1 行伸びるたび) に、`readAgentTree` / `readTeammateModels` /
+- 前回 medium だった `client_trace`/`trace.ts`、`fs-find`/`dir-tree` の走査系は非同期化済み (`fs.promises`、FileHandle 保持)。
+- **現在の最大の残件は `session-status.ts` の `snapshot()`**。status push (= transcript が 1 行伸びるたび) に、`readAgentTree` / `readTeammateModels` /
   `readWorkflowDrilldown` / `discoverWorkspaceFolders` が **全て同期 fs** で走る。
   subagent や workflow が多いセッションほど readdir + per-file readFileSync +
-  statSync の積み上がりが大きく、fs.watch コールバック内で完結するため
-  全クライアントの WS 配信を止める。前回 high #1 の周辺は直ったが、
-  その呼び出し元である snapshot 全体は同期のまま残っている。
+  statSync の積み上がりが大きく、fs.watch コールバック内で完結するため全クライアントの WS 配信を止める。前回 high #1 の周辺は直ったが、その呼び出し元である snapshot 全体は同期のまま残っている。
 - `fs-access.ts` は **部分的にしか非同期化されていない**。`fsList` /
-  `fsListWorkspace` / `fsEdit` / `fsCreate` / `fsDelete` は async 化されたが、
-  **`fsRead` と `fsWrite` は同期関数のまま** で、`resolveContained` の
-  realpath 祖先ウォークも全経路が `realpathSync`。fs_read は最大
-  `FS_READ_MAX_BYTES` を同期リードする。
-- webui は前回同様、同期 fs は無く memo 化も行き届いている。ただし
-  **live-tail 1 行ごとに transcript 全行を走る cross-line パスが複数ある**
-  (pairQueuedTurns / offsets / groupTimelineLines / boundaries 等)。per-line
-  parse は `incremental-line-map.ts` で差分化済みだが、その後段の全走査は
-  差分化されていない。DOM 規模 (別 issue) とは独立した CPU コスト。
+  `fsListWorkspace` / `fsEdit` / `fsCreate` / `fsDelete` は async 化されたが、**`fsRead` と `fsWrite` は同期関数のまま** で、`resolveContained` のrealpath 祖先ウォークも全経路が `realpathSync`。fs_read は最大`FS_READ_MAX_BYTES` を同期リードする。
+- webui は前回同様、同期 fs は無く memo 化も行き届いている。ただし**live-tail 1 行ごとに transcript 全行を走る cross-line パスが複数ある**
+  (pairQueuedTurns / offsets / groupTimelineLines / boundaries 等)。per-line parse は `incremental-line-map.ts` で差分化済みだが、その後段の全走査は差分化されていない。DOM 規模 (別 issue) とは独立した CPU コスト。
 - daemon に worker_threads / child_process へのオフロードは依然として存在しない。
 
 ## 仕分けの総数
@@ -45,8 +29,7 @@ issue `2026-07-31-audit-blocking-io-paths` の受け入れ条件 1〜3 を満た
 | 性質上同期で問題ない | 17 |
 | 合計 (経路単位) | 34 |
 
-行単位の同期 API 呼び出しは daemon 130 / cli 8 / hooks 12 箇所あるが、
-同一経路のものは 1 項目にまとめている。
+行単位の同期 API 呼び出しは daemon 130 / cli 8 / hooks 12 箇所あるが、同一経路のものは 1 項目にまとめている。
 
 ## 非同期化する (優先度順)
 
@@ -107,11 +90,7 @@ issue `2026-07-31-audit-blocking-io-paths` の受け入れ条件 1〜3 を満た
 ## 補足
 
 - H1〜H4 と M1〜M4 は全て **daemon のイベントループ独占**という同じ根に繋がる。
-  前回の「体感の詰まりの主因は daemon 側」という結論は、snapshot 経路が
-  丸ごと残っている点で今も有効。
-- H1/H2/M3/M4 は「push ごとに毎回ディスクを読み直す」という共通の構造を
-  持つので、非同期化と同時に **mtime ベースのキャッシュ**を入れるのが
-  自然な形になる (`origins-file.ts` が既にその型を持っている)。
+  前回の「体感の詰まりの主因は daemon 側」という結論は、snapshot 経路が丸ごと残っている点で今も有効。
+- H1/H2/M3/M4 は「push ごとに毎回ディスクを読み直す」という共通の構造を持つので、非同期化と同時に **mtime ベースのキャッシュ**を入れるのが自然な形になる (`origins-file.ts` が既にその型を持っている)。
 - M5/M6 は Timeline の DOM 規模 (別 issue `2026-07-29-timeline-virtual-scroll`)
-  とは独立した CPU コスト。仮想スクロール導入で DOM を減らしても、
-  cross-line パスの全走査は残る。
+  とは独立した CPU コスト。仮想スクロール導入で DOM を減らしても、cross-line パスの全走査は残る。

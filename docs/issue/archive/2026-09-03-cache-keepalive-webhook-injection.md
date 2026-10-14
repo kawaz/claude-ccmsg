@@ -21,15 +21,10 @@ origin: llm-gateway (依頼 r261m11、2026-09-03、kawaz 合意済み設計 DR-0
 
 ## 概要
 
-llm-gateway が prompt cache の idle keepalive (DR-0024 §2) のため、既存 webhook
-(`POST /webhook/llm-gateway`) に新 event 種別 `cache_keepalive` を additive に追加する
-(次の minor で出荷)。payload: `{type:"cache_keepalive", session_id, prefix, nonce,
-deadline (unix), deadline_iso, marker}`。
+llm-gateway が prompt cache の idle keepalive (DR-0024 §2) のため、既存 webhook (`POST /webhook/llm-gateway`) に新 event 種別 `cache_keepalive` を additive に追加する(次の minor で出荷)。payload: `{type:"cache_keepalive", session_id, prefix, nonce, deadline (unix), deadline_iso, marker}`。
 
-ccmsg 側はこの event を受けたら `session_id` のセッションに `marker` の文面をそのまま
-ユーザ入力として注入する (`notify --as-session` 相当)。文面例:
-`[llm-gateway cache keepalive nonce=…] Ignore this message; do not think; reply with
-exactly "ok".`
+ccmsg 側はこの event を受けたら `session_id` のセッションに `marker` の文面をそのままユーザ入力として注入する (`notify --as-session` 相当)。文面例:
+`[llm-gateway cache keepalive nonce=…] Ignore this message; do not think; reply with exactly "ok".`
 
 ## 背景
 
@@ -37,15 +32,13 @@ exactly "ok".`
 
 ccmsg 側の当たり:
 - webhook 受信: `packages/daemon/src/server.ts` の `recordLlmRequests` / `llm-events.ts`
-- セッションへの入力注入: `session-rename.ts` が使う hyoui input 経路 (hyoui session id
-  解決含む)
+- セッションへの入力注入: `session-rename.ts` が使う hyoui input 経路 (hyoui session id解決含む)
 
 ## 受け入れ条件
 
 - [ ] `cache_keepalive` event を受けた daemon が `marker` を該当セッションへ hyoui 経由で注入する
 - [ ] `deadline` 超過は注入せず log のみ
-- [ ] セッションが busy (ターン実行中) の間は待ち、`deadline` 内に idle になれば注入、超えたら捨てる
-      (`session_status` の busy/idle 観測を使う)
+- [ ] セッションが busy (ターン実行中) の間は待ち、`deadline` 内に idle になれば注入、超えたら捨てる(`session_status` の busy/idle 観測を使う)
 - [ ] hyoui session が解決できない (webui 外で起動された等) 場合は log のみで失敗しない
 - [ ] テスト: 受信 → 注入 / deadline 超過 / busy 待ち → idle 注入 / 未解決
 

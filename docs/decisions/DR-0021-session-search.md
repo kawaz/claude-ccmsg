@@ -6,10 +6,7 @@ Sponsor: kawaz r26 mid=47
 
 ## 1. 背景
 
-webui は ccmsg 接続中セッション + `claude agents --json` 検出分しか見えない。過去セッション
-(ccmsg 未起動・終了済み) の transcript を探して読む手段が webui に無い。daemon は
-`~/.claude*/projects/**/*.jsonl` に到達できるので、daemon 仲介だけで検索・閲覧が可能なはず
-(kawaz)。
+webui は ccmsg 接続中セッション + `claude agents --json` 検出分しか見えない。過去セッション(ccmsg 未起動・終了済み) の transcript を探して読む手段が webui に無い。daemon は`~/.claude*/projects/**/*.jsonl` に到達できるので、daemon 仲介だけで検索・閲覧が可能なはず(kawaz)。
 
 ## 2. スコープ (kawaz mid=47 の要件を転記)
 
@@ -35,8 +32,7 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 ### 2.3 検索結果リスト
 
 各行: リポ / wt・ws / SID / 作成日 / 更新日 / サイズ (ファイルサイズ) /
-検索マッチテキストのサマリ (ユーザ・エージェントメッセージの区別がつく形) をブロックにして
-リスト表示。
+検索マッチテキストのサマリ (ユーザ・エージェントメッセージの区別がつく形) をブロックにしてリスト表示。
 
 ### 2.4 選択 → pinned session
 
@@ -46,16 +42,14 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 - Files ツリーのお気に入りも同じ `cwd` を key にする (同じ理由で worktree ごとに分ける)
 - 表示規則: pin したディレクトリに接続中 peer が 1 つ以上あれば、その全員を pin の下に列挙する (世代交代中の旧・新セッションをどちらも落とさない)。0 なら pin 時に凍結した検索ヒットを表示する
 - SESSIONS サイドバーに表示され、Files (パスが現存するなら) / TL 等が閲覧可能
-- ccmsg 接続なしで daemon 仲介のみで動く (transcript_read は path ベースで拡張が要る —
-  現行は hello 済みセッションの announce した path しか読めない、§ 3 設計判断)
+- ccmsg 接続なしで daemon 仲介のみで動く (transcript_read は path ベースで拡張が要る —現行は hello 済みセッションの announce した path しか読めない、§ 3 設計判断)
 
 ## 3. 設計判断 (SS-Q1=a / SS-Q2=a 裁定済み)
 
 ### 3.1 daemon 側: 新 op 群
 
 - `session_search`: § 2.1 のパラメータ → § 2.2 の 3 段 → § 2.3 の行データを返す。クエリ parser は protocol package の直列化可能な AND/OR 正規表現構造を webui と共有する
-- 過去セッションの transcript / files 閲覧 (**SS-Q1=a**): daemon が jsonl から cwd を復元し
-  「仮想 session」として既存 transcript_read / fs_list / fs_read を path ベースで拡張。
+- 過去セッションの transcript / files 閲覧 (**SS-Q1=a**): daemon が jsonl から cwd を復元し「仮想 session」として既存 transcript_read / fs_list / fs_read を path ベースで拡張。
   認可は user role のみ (webui 経由限定)
 - 走査範囲は daemon が既に agents poll で検出している config_dir 群の projects/ 配下に限定
 

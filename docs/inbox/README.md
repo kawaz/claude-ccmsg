@@ -1,7 +1,6 @@
 # docs/inbox/ — kawaz の雑メモ・指示置き場 (先行運用)
 
-kawaz がエージェントの作業とは無関係に、**AI に拾ってほしい雑なメモ・指示**を
-雑な名前・雑な文面で置くディレクトリ。
+kawaz がエージェントの作業とは無関係に、**AI に拾ってほしい雑なメモ・指示**を雑な名前・雑な文面で置くディレクトリ。
 
 ## AI 側の運用
 
@@ -16,5 +15,4 @@ kawaz がエージェントの作業とは無関係に、**AI に拾ってほし
 
 - `docs/issue/` (local-issue plugin 管理、frontmatter + INDEX + archive) とは別物。
   inbox は plugin 管理外の一時置き場で、常に空が定常状態
-- ccmsg リポでの先行運用 (kawaz 裁定 2026-07-16)。良さそうなら
-  claude-rules-personal でルール化して他リポへ展開する
+- ccmsg リポでの先行運用 (kawaz 裁定 2026-07-16)。良さそうならclaude-rules-personal でルール化して他リポへ展開する

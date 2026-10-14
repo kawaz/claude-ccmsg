@@ -21,11 +21,8 @@ origin:
 
 ## 概要
 
-クラスタの単位は「ホスト」ではなく **instance** (= 1 config home につき 1 ccmsg
-daemon)。personal / emrd のように config home ごとに instance を起動し、同じ PC の
-複数 instance もクラスタメンバーになる (= 1 台でクラスタの dogfooding が可能)。
-ユーザがどの instance の endpoint に繋いでいてもクラスタ全体のセッションを
-把握・操作できるようにする。
+クラスタの単位は「ホスト」ではなく **instance** (= 1 config home につき 1 ccmsg daemon)。personal / emrd のように config home ごとに instance を起動し、同じ PC の複数 instance もクラスタメンバーになる (= 1 台でクラスタの dogfooding が可能)。
+ユーザがどの instance の endpoint に繋いでいてもクラスタ全体のセッションを把握・操作できるようにする。
 
 ## 背景
 
@@ -39,15 +36,10 @@ kawaz r278m34/m35、2026-09-07 の相談で合意した骨子 (r278m36 の訂正
 3. op は「いま繋いでいる daemon に投げる」だけで、担当 sid でなければ担当 daemon へ
    そのまま relay する (Transport は webui から見て 1 本のまま)。
 4. **room はクラスタ横断** (別ホストのセッション同士が同じ room で会話できる)。各
-   room に持ち主 daemon を 1 つ決め (作成側のホスト)、mid / seq はその daemon だけが
-   振る。他ホストのメンバの post は自 daemon → 持ち主へ relay、イベントは持ち主 →
-   各 daemon → 配下メンバへ配る。seq の発行主体は room ごとに 1 つなので since_seq は
-   `Record<roomId, seq>` のまま。持ち主ホストが落ちている間その room は読み書き不可
-   (host_unreachable)、所在の移動は当面持たない。room id は最初からホストを含意する
-   形にする。
+   room に持ち主 daemon を 1 つ決め (作成側のホスト)、mid / seq はその daemon だけが振る。他ホストのメンバの post は自 daemon → 持ち主へ relay、イベントは持ち主 →
+   各 daemon → 配下メンバへ配る。seq の発行主体は room ごとに 1 つなので since_seq は`Record<roomId, seq>` のまま。持ち主ホストが落ちている間その room は読み書き不可(host_unreachable)、所在の移動は当面持たない。room id は最初からホストを含意する形にする。
 5. hyoui もホスト単位: sid → 担当ホスト → その daemon の hyoui endpoint と辿る。
-6. セッション系オブジェクトに instance 属性を持たせる (紐付けは最低 1 回で足りる、
-   全オブジェクトに付ける必要は無い)。
+6. セッション系オブジェクトに instance 属性を持たせる (紐付けは最低 1 回で足りる、全オブジェクトに付ける必要は無い)。
 7. 別 instance が断絶した時、その instance のセッションは Disappeared の一種として
    扱い、復帰時に戻す。
 8. daemon 間認証は当面なし (tailnet 前提。llm-gateway との共有キー管理と合わせて
@@ -63,19 +55,15 @@ webui コンポーネント整理 (`docs/findings/2026-09-07-webui-component-inv
 - instance 属性 / per-instance の接続状態・能力フラグを全体の値と混ぜない
 - room id は instance を含意する
 
-llm-gateway の通知は複数 instance の ccmsg から使われる前提でブロードキャスト対応予定
-(gateway 側)。
+llm-gateway の通知は複数 instance の ccmsg から使われる前提でブロードキャスト対応予定(gateway 側)。
 
 ### r278m41 裁定 (instance 単位への読み替え、2026-09-07)
 
 含意:
 
-- (a) `~/.claude*` の自動検出は廃止。instance は自分の config home だけを見る
-  (claude agents の poll / `sessions/<pid>.json` の読み取りも自 config home のみ)
-- (b) 「host 属性」は「instance 属性」に置き換え (id 例: `personal@<hostname>`、
-  host は instance の属性の 1 つ)
-- (c) instance ごとに UDS socket / HTTP port / state dir を分ける。セッション内の
-  CLI は `CLAUDE_CONFIG_DIR` から自分の instance を引く
+- (a) `~/.claude*` の自動検出は廃止。instance は自分の config home だけを見る(claude agents の poll / `sessions/<pid>.json` の読み取りも自 config home のみ)
+- (b) 「host 属性」は「instance 属性」に置き換え (id 例: `personal@<hostname>`、host は instance の属性の 1 つ)
+- (c) instance ごとに UDS socket / HTTP port / state dir を分ける。セッション内のCLI は `CLAUDE_CONFIG_DIR` から自分の instance を引く
 - (d) instance は認証境界 (gateway の token、hyoui の名前空間) と一致する
 - (e) webui は mesh の性質で 1 FQDN のまま
 - (f) 起動は必要になった時 (その config home のセッションが最初に ccmsg を呼んだ時)
@@ -83,16 +71,12 @@ llm-gateway の通知は複数 instance の ccmsg から使われる前提でブ
 
 ## 受け入れ条件
 
-- [ ] クラスタ設定 (config home の列挙、endpoint リスト) を持ち、必要になった時に
-      他 instance へ WS 接続できる (自動検出はしない)
-- [ ] room がクラスタ横断で動作し、持ち主 daemon が mid/seq を発行、他 instance からの
-      post が持ち主へ relay される
+- [ ] クラスタ設定 (config home の列挙、endpoint リスト) を持ち、必要になった時に他 instance へ WS 接続できる (自動検出はしない)
+- [ ] room がクラスタ横断で動作し、持ち主 daemon が mid/seq を発行、他 instance からのpost が持ち主へ relay される
 - [ ] 持ち主 instance 断絶時に instance_unreachable を返し、復帰後に読み書きが再開する
 - [ ] hyoui が instance 単位 (認証境界と一致する名前空間) の endpoint 解決で動作する
-- [ ] セッション系オブジェクトに instance 属性が付与され、断絶時に Disappeared 系
-      として扱われる
-- [ ] instance は自分の config home だけを見る (`~/.claude*` 自動検出・他 config
-      home の poll / `sessions/<pid>.json` 読み取りをしない)
+- [ ] セッション系オブジェクトに instance 属性が付与され、断絶時に Disappeared 系として扱われる
+- [ ] instance は自分の config home だけを見る (`~/.claude*` 自動検出・他 config home の poll / `sessions/<pid>.json` 読み取りをしない)
 
 ## TODO
 

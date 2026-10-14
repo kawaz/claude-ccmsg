@@ -1,20 +1,17 @@
 # 2026 フロントエンド動向と DR-0005 選定 (preact+TSX+reducer+Bun.build) の照合
 
-kawaz の「流行っててモダンなのだと何がある？」(2026-07-10、DR-0004/0005 レビュー時) を受けた
-web 調査 (3 観点並列、opus47-worker、出典 URL 付き) の要約。
+kawaz の「流行っててモダンなのだと何がある？」(2026-07-10、DR-0004/0005 レビュー時) を受けたweb 調査 (3 観点並列、opus47-worker、出典 URL 付き) の要約。
 
 ## 判明した事実
 
 ### フレームワーク勢力図 (State of JS 2025 / npm)
 
-- **React 19/19.2**: usage 83%・npm 50M/週で首位不変。Server Components stable、React Compiler が
-  RC (手動 memo 化を自動化)。ただし satisfaction 62% で「使われてるが好かれてない」
+- **React 19/19.2**: usage 83%・npm 50M/週で首位不変。Server Components stable、React Compiler がRC (手動 memo 化を自動化)。ただし satisfaction 62% で「使われてるが好かれてない」
 - **Svelte 5 (runes)**: satisfaction 74% で最上位常連、usage 23% (+8pt YoY)、npm +45% YoY。
   「学習コスト無視で 2026 最先端を選ぶなら総合トップ」評価
 - **Vue 3.6 Vapor Mode**: VDOM 廃止モードが beta (2025-12)、本番推奨はまだ
 - **SolidJS 2.0**: 2026-03 に 2.0 Beta。伸び率は高いが少数派
-- **preact**: 独立指標での存在感は薄まり気味だが、「React 互換 API + 小バンドル」のニッチは
-  React 本体が軽くならない限り残り続ける
+- **preact**: 独立指標での存在感は薄まり気味だが、「React 互換 API + 小バンドル」のニッチはReact 本体が軽くならない限り残り続ける
 - **Qwik**: resumability は SSR/初期ロード特化。内部ツール SPA には利得なし
 
 ### 状態管理
@@ -32,14 +29,12 @@ web 調査 (3 観点並列、opus47-worker、出典 URL 付き) の要約。
 
 ### ビルドレス / Bun
 
-- **Bun 1.3 (2025 後半) がフルスタック化**: HTML import + `Bun.serve({ routes })` で
-  TSX/CSS を自動トランスパイル + バンドル。`development: false` で初回リクエスト lazy bundle +
+- **Bun 1.3 (2025 後半) がフルスタック化**: HTML import + `Bun.serve({ routes })` でTSX/CSS を自動トランスパイル + バンドル。`development: false` で初回リクエスト lazy bundle +
   メモリキャッシュ、Cache-Control/ETag 自動付与。development モードは HMR (React Fast Refresh) +
   ブラウザ console のターミナル転送付き
 - = **ccmsg が自作した「サーブ時 Bun.build + メモリキャッシュ」構成は Bun 公式機能でほぼ置換可能**。
   TSX を route に直接渡す形は未実装 (oven-sh/bun#20075 open、2026-07 時点)
-- Vite 8 (2026-03 stable) は Rolldown + Oxc に統一 (build 10-30x 高速化)。oxc エコシステム
-  (oxlint/oxfmt 採用済み) は 2026 年末までに parse/lint/format/minify/transform を単一 Rust runtime 化予定
+- Vite 8 (2026-03 stable) は Rolldown + Oxc に統一 (build 10-30x 高速化)。oxc エコシステム(oxlint/oxfmt 採用済み) は 2026 年末までに parse/lint/format/minify/transform を単一 Rust runtime 化予定
 - no-build 潮流: import maps 全ブラウザ対応完了、HTMX + islands が対抗軸として存在
 
 ## 実用的な示唆 (DR-0005 への評価)
@@ -49,8 +44,7 @@ web 調査 (3 観点並列、opus47-worker、出典 URL 付き) の要約。
    pure reducer なので問題なし)、(b) preact signals を安易に混ぜない (中央 reducer と思想競合。
    使うなら view 購読の細粒度化に限定する hybrid が正)
 2. **Bun 1.3 の fullstack 機能への乗り換えは検討価値あり** (自作のサーブ時トランスパイル +
-   メモリキャッシュ経路を公式機能に置換、HMR が無償で付く)。ただし現行実装は動いており、
-   置換は「dev 体験が必要になった時」で十分。issue 化候補
+   メモリキャッシュ経路を公式機能に置換、HMR が無償で付く)。ただし現行実装は動いており、置換は「dev 体験が必要になった時」で十分。issue 化候補
 3. Svelte 5 は総合トップだが、専用コンパイラ前提でサーブ時トランスパイル方針 (DR-0005 §3) に
    乗らない点は当時の判断通り変わらず。乗り換え動機なし
 

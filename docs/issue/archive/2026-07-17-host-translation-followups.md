@@ -30,10 +30,7 @@ origin: 自リポ TODO
 
 残る 1 件に issue を絞る: **webui が表示中の thinking を 1 リクエストに束ねるバッチ化**。
 
-下位層 (daemon translate op の `texts: string[]` 受入、Swift helper の
-`session.translations(from:)`) は実装済み。webui 側 `translate.ts` が
-`request([paragraph])` の 1 段落 1 リクエストのままで、複数 thinking が
-並ぶと 400-900ms × N の直列遅延が出る。
+下位層 (daemon translate op の `texts: string[]` 受入、Swift helper の`session.translations(from:)`) は実装済み。webui 側 `translate.ts` が`request([paragraph])` の 1 段落 1 リクエストのままで、複数 thinking が並ぶと 400-900ms × N の直列遅延が出る。
 
 ## 受け入れ条件
 
@@ -44,5 +41,4 @@ origin: 自リポ TODO
 
 ## TODO
 
-`translate.ts` に、保留中の段落を短時間 (例 20ms) 蓄積してから 1 batch で
-flush する集約層を追加する。`Timeline.tsx` 側の呼び出し API は不変。
+`translate.ts` に、保留中の段落を短時間 (例 20ms) 蓄積してから 1 batch でflush する集約層を追加する。`Timeline.tsx` 側の呼び出し API は不変。

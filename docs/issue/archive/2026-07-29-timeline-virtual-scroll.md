@@ -21,27 +21,20 @@ origin: 自リポ TODO
 
 ## 概要
 
-Timeline (TL) は全行を DOM 化しているため、DOM ノード数・イベントリスナ数が
-セッション規模に比例して際限なく増える。windowing (仮想スクロール) の導入を
-検討する。
+Timeline (TL) は全行を DOM 化しているため、DOM ノード数・イベントリスナ数がセッション規模に比例して際限なく増える。windowing (仮想スクロール) の導入を検討する。
 
 ## 背景
 
-webui-memory-probe による実測 (2026-07-29, r76m58) で、1 セッションで DOM
-73,000 ノード / イベントリスナ 12,000 個 (3MB transcript) を確認。SessionView
-の LRU 3 面保持で常時 28.6 万ノード / 5 万リスナが乗り、ブラウザの体感の重さの
-主因になっている。追記 1 turn ごとに DOM +42 / リスナ +7 で増加に上限がない。
+webui-memory-probe による実測 (2026-07-29, r76m58) で、1 セッションで DOM 73,000 ノード / イベントリスナ 12,000 個 (3MB transcript) を確認。SessionViewの LRU 3 面保持で常時 28.6 万ノード / 5 万リスナが乗り、ブラウザの体感の重さの主因になっている。追記 1 turn ごとに DOM +42 / リスナ +7 で増加に上限がない。
 
 ### 課題
 
 Timeline.tsx (3,679 行) は fold グループ / in-view 検索 / ユーザ発言ナビ /
-スクロール位置復元 / uuid 位置アンカーが全て「全 item が DOM にいる」前提で
-組まれており、素朴な windowing 導入は広範囲に影響する。設計からの検討が必要。
+スクロール位置復元 / uuid 位置アンカーが全て「全 item が DOM にいる」前提で組まれており、素朴な windowing 導入は広範囲に影響する。設計からの検討が必要。
 
 ### 先行する安価な緩和 (別対応)
 
-`.tl-item` への `content-visibility: auto` + `contain-intrinsic-size` は
-レイアウト/ペイントコストのみの削減 (DOM/リスナ数自体は不変)。効果は要実測。
+`.tl-item` への `content-visibility: auto` + `contain-intrinsic-size` はレイアウト/ペイントコストのみの削減 (DOM/リスナ数自体は不変)。効果は要実測。
 こちらはメモリ対策バッチとして先行実施予定。
 
 ## 受け入れ条件

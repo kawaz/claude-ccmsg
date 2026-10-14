@@ -50,9 +50,7 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 ### 5. Crash 回復 [提案]
 
 - 監視プロセスは置かない。crash → 次のクライアント接触 (ターン毎 hook 含む) で再 spawn される = 自然回復
-- crash loop 対策はクライアント側: spawn 後の接続確立を backoff 付きでリトライし (`SPAWN_RETRY_DELAYS_MS`、25ms から 3s まで 12 回、累計約 10 秒。daemon は通常数百 ms で応答するので前半を細かく刻み、後半は起動が遅い環境の保険)、
-  全て失敗したら `throw` してエラーを呼び出し元に伝播させる。hook 側の warn-once + 沈黙のような専用状態管理は置かない
-  (エラーは hook の `try/catch` を通じて自然に表面化するため、追加の通知ロジックを持つ複雑さに見合う価値がない。daemon 起動失敗時に best-effort の hook が理由を出せないだけで実害は小さい)
+- crash loop 対策はクライアント側: spawn 後の接続確立を backoff 付きでリトライし (`SPAWN_RETRY_DELAYS_MS`、25ms から 3s まで 12 回、累計約 10 秒。daemon は通常数百 ms で応答するので前半を細かく刻み、後半は起動が遅い環境の保険)、全て失敗したら `throw` してエラーを呼び出し元に伝播させる。hook 側の warn-once + 沈黙のような専用状態管理は置かない(エラーは hook の `try/catch` を通じて自然に表面化するため、追加の通知ロジックを持つ複雑さに見合う価値がない。daemon 起動失敗時に best-effort の hook が理由を出せないだけで実害は小さい)
 
 ### 6. JSONL 耐久性と torn tail 回復 [提案]
 

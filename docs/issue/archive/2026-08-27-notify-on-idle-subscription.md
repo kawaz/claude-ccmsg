@@ -26,12 +26,10 @@ kawaz r151m28「idle通知に関してはhookとかと連動させてccmsg側で
 
 ## 背景
 
-案: Stop hook (ターン終了) を「セッションが idle になった」シグナルとして
-daemon に上げ、`ccmsg notify --on-idle <sid>` のような一回限り購読 op を作る。
+案: Stop hook (ターン終了) を「セッションが idle になった」シグナルとしてdaemon に上げ、`ccmsg notify --on-idle <sid>` のような一回限り購読 op を作る。
 購読者には subscribe stream (または SendMessage 経由) で 1 回だけ通知する。
 
-ネイティブ側の仕様 (one-shot、寿命付き、exit でも発火) は
-`docs/findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md` を参照。
+ネイティブ側の仕様 (one-shot、寿命付き、exit でも発火) は`docs/findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md` を参照。
 
 面越え (別 CLAUDE_CONFIG_DIR) でも効くのが ccmsg 版の存在意義。
 

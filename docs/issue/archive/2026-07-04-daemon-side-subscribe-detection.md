@@ -21,17 +21,13 @@ origin: 自リポ TODO
 
 ## 概要
 
-UserPromptSubmit hook の subscribe 稼働検出は、現在 ps による ppid chain 走査
-(プロセスツリーに `ccmsg subscribe` がいるかどうかを見る) で実装している。
+UserPromptSubmit hook の subscribe 稼働検出は、現在 ps による ppid chain 走査(プロセスツリーに `ccmsg subscribe` がいるかどうかを見る) で実装している。
 中央 daemon 型のアーキテクチャとしては、daemon 自身に問い合わせる方が本来素直:
-daemon は subscribers (各接続の identity.sid) を保持しており、live な subscribe
-接続を正確に把握している。resume 等でプロセスが別プロセス化しても、接続 close は
-即座に daemon 側へ反映される。
+daemon は subscribers (各接続の identity.sid) を保持しており、live な subscribe接続を正確に把握している。resume 等でプロセスが別プロセス化しても、接続 close は即座に daemon 側へ反映される。
 
 ## 背景
 
-現行の ps ppid chain 走査は、プロセスツリー構造に依存した間接的な検出手段であり、
-以下のリスクを持つ:
+現行の ps ppid chain 走査は、プロセスツリー構造に依存した間接的な検出手段であり、以下のリスクを持つ:
 
 - プロセスツリーの形が変わる状況 (resume で別プロセス化する等) で誤検出・取りこぼしが起こりうる
 - daemon が正確に把握している情報 (live subscribe 接続) を使わず、外部プロセスから推測している
@@ -41,10 +37,8 @@ daemon は subscribers (各接続の identity.sid) を保持しており、live 
 - 案1: `peers` 応答に per-peer `subscribed` bool を追加する
 - 案2: 専用の query op を新設する
 
-DR-0003 の追補になる規模の変更のため、plugin-scaffold 実装時点 (2026-07-04) では
-scaffolding の対象外として見送り、将来の改善候補としてここにフラグを立てておく。
-dogfood 運用の中で ps 走査の誤検出・取りこぼしが実際に観測されたら、この issue の
-優先度を上げて着手する。
+DR-0003 の追補になる規模の変更のため、plugin-scaffold 実装時点 (2026-07-04) ではscaffolding の対象外として見送り、将来の改善候補としてここにフラグを立てておく。
+dogfood 運用の中で ps 走査の誤検出・取りこぼしが実際に観測されたら、この issue の優先度を上げて着手する。
 
 ## 実例: 孤児 subscribe が 2 日間 SESSIONS idle に表示され続けた (2026-07-23)
 

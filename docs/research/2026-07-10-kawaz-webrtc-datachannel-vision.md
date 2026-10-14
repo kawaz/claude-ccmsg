@@ -1,7 +1,6 @@
 # kawaz 発言記録: WebRTC DataChannel ベースの将来構想 (2026-07-10)
 
-webui の HTTPS 化 issue (`docs/issue/2026-07-10-webui-https.md`) への裁定と同時に表明された、
-transport 層の長期的な別案。一次資料としてここに逐語で残す。
+webui の HTTPS 化 issue (`docs/issue/2026-07-10-webui-https.md`) への裁定と同時に表明された、transport 層の長期的な別案。一次資料としてここに逐語で残す。
 
 ## 逐語 (verbatim)
 

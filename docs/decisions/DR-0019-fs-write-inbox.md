@@ -6,14 +6,9 @@ Sponsor: kawaz r26 mid=1 + 続く transcript 議論
 
 ## 1. 背景
 
-kawaz が「AI に拾ってほしい雑なメモ・指示」を working copy にファイルとして置く
-**inbox 運用**を開始した (置き場 = `docs/inbox/`、kawaz 裁定 2026-07-16、ccmsg リポで
-先行運用)。AI は `jj status` 等で新規ファイルに気づいて拾い上げ (即対応 or 正式 issue 化)、
-処理後に削除する。
+kawaz が「AI に拾ってほしい雑なメモ・指示」を working copy にファイルとして置く**inbox 運用**を開始した (置き場 = `docs/inbox/`、kawaz 裁定 2026-07-16、ccmsg リポで先行運用)。AI は `jj status` 等で新規ファイルに気づいて拾い上げ (即対応 or 正式 issue 化)、処理後に削除する。
 
-現状ファイルを置くにはターミナル / エディタが要る。webui の Files ビューから新規ファイルを
-作成できれば、スマホの webui だけで「雑メモを対象リポの docs/inbox/ に落とす → セッションが
-拾う」が完結し、ccmsg が非同期指示のフル経路になる (kawaz: 「ccmsg だけで運用が回せる」)。
+現状ファイルを置くにはターミナル / エディタが要る。webui の Files ビューから新規ファイルを作成できれば、スマホの webui だけで「雑メモを対象リポの docs/inbox/ に落とす → セッションが拾う」が完結し、ccmsg が非同期指示のフル経路になる (kawaz: 「ccmsg だけで運用が回せる」)。
 
 ## 2. スコープ
 
@@ -35,8 +30,7 @@ kawaz が「AI に拾ってほしい雑なメモ・指示」を working copy に
     それ以外は `path_not_writable` エラー
   - **既存ファイルの上書き禁止**: 存在するパスへの write は `file_exists` エラー
     (inbox の意味論は「新規メモを置く」であって編集ではない)
-  - 親ディレクトリ (`docs/inbox/`) が無ければ作成する (mkdir -p 相当。inbox 未導入リポ
-    へも webui から置ける)
+  - 親ディレクトリ (`docs/inbox/`) が無ければ作成する (mkdir -p 相当。inbox 未導入リポへも webui から置ける)
 - 認可: webui (u1) からのみ。CLI 経路は既存の Write ツールがあるので不要
 
 ### 2.2 やること (Phase W2: webui UI)
@@ -62,8 +56,7 @@ fs write は fs read と安全境界が違う (誤爆・上書き事故が不可
 
 ### 3.2 DR-0018 (session launcher) との関係
 
-どちらも「webui からの能動操作」拡張。認可 (u1 のみ)・path validation の考え方を揃えるが、
-実装 Phase は独立 (依存なし)。
+どちらも「webui からの能動操作」拡張。認可 (u1 のみ)・path validation の考え方を揃えるが、実装 Phase は独立 (依存なし)。
 
 ## 4. Phase 分割
 

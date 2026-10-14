@@ -1,14 +1,11 @@
 # fork によるコンテキスト切れ救出 / 任意地点 rewind
 
-webui の fork 機能 (v0.97.0、DR 相当の調査は findings
-`2026-08-11-checkpoint-rewind.md`) を使った復旧手順。
+webui の fork 機能 (v0.97.0、DR 相当の調査は findings `2026-08-11-checkpoint-rewind.md`) を使った復旧手順。
 
 ## fork で出来ること / 失うもの
 
 - 会話履歴: **fork 地点まで完全保持** (元セッションも無傷)
-- 失うもの: チームメート/サブエージェントへの SendMessage ハンドル、
-  バックグラウンドタスク、Monitor、TODO リスト (いずれもセッション
-  プロセス内の状態)。ファイル状態は戻らない (現在のディスクのまま)
+- 失うもの: チームメート/サブエージェントへの SendMessage ハンドル、バックグラウンドタスク、Monitor、TODO リスト (いずれもセッションプロセス内の状態)。ファイル状態は戻らない (現在のディスクのまま)
 - worker の完了報告など「知識」は会話履歴に残っているので失われない
 
 ## 手順: コンテキストが尽きたセッションの救出
@@ -19,17 +16,14 @@ webui の fork 機能 (v0.97.0、DR 相当の調査は findings
 3. SessionCreator が fork テンプレート + fork 元/地点が埋まった状態で
    開くので、prompt に「pre-clear を実行して状態を保存して」等を入れて起動
 4. fork 先はコンテキストに余裕がある状態で立ち上がるので、そこで
-   pre-clear (状態ファイル書き出し) を実行 → 以後は通常の /clear 復帰
-   フローに乗る
+   pre-clear (状態ファイル書き出し) を実行 → 以後は通常の /clear 復帰フローに乗る
 
 ## 手順: fork 元との引き継ぎ (両方生きている場合)
 
-同一 workspace を共有するため、fork 直後に ccmsg で fork 元と
-認識合わせをする (実例: r116):
+同一 workspace を共有するため、fork 直後に ccmsg で fork 元と認識合わせをする (実例: r116):
 
 - どちらが主担当か決める (kawaz が話しかけている側が自然)
-- 非担当側はリポへの書き込みを控える (パス指定 commit でも @ の
-  取り合いになるため)
+- 非担当側はリポへの書き込みを控える (パス指定 commit でも @ の取り合いになるため)
 - 旧 worker への操作が必要なら fork 元に代理を依頼する
 
 ## CLI 直叩き (webui を使わない場合)
@@ -42,9 +36,7 @@ NEW_SID=$(claude -p --resume <元sid> --fork-session \
 claude --resume "$NEW_SID"
 ```
 
-`--resume-session-at` は `claude --help` に出ない非公開オプション。地点 uuid は「戻りたい
-user turn の直前の assistant レコードの uuid」。
+`--resume-session-at` は `claude --help` に出ない非公開オプション。地点 uuid は「戻りたいuser turn の直前の assistant レコードの uuid」。
 
 **`--resume-session-at` は print mode 専用**で、対話起動 (`claude --resume ...`
-に直接付ける形) では黙って無視されて先端 fork になる。上の二段を守ること
-(理由と実測は DR-0018 §3.3.1)。
+に直接付ける形) では黙って無視されて先端 fork になる。上の二段を守ること(理由と実測は DR-0018 §3.3.1)。

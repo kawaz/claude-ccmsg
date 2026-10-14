@@ -6,17 +6,13 @@ Sponsor: kawaz r26 mid=99
 
 ## 1. 背景
 
-セッションが Read/Write/Edit で触った **cwd (containment root) 外のファイル**を webui で
-見たい。自由なプロジェクト外ブラウズではなく、**セッションが実際に触ったファイルの
-フルパスリスト**に限定 (kawaz 明示)。
+セッションが Read/Write/Edit で触った **cwd (containment root) 外のファイル**を webui で見たい。自由なプロジェクト外ブラウズではなく、**セッションが実際に触ったファイルのフルパスリスト**に限定 (kawaz 明示)。
 
 ## 2. 仕様 (kawaz mid=99 の指定)
 
 - Files ツリーの「お気に入り」「プロジェクト」に続く第 3 セクション **「プロジェクト外」**
-- 内容: そのセッションの transcript から Read/Write/Edit (+ NotebookEdit) の tool call
-  file_path を抽出し、**containment root 内のものを除外**したフルパス一覧 (重複除去)
-- クリックでファイルビューアに表示 (読み出しは「触ったファイルリスト」への containment に
-  相当する認可 — § 3)
+- 内容: そのセッションの transcript から Read/Write/Edit (+ NotebookEdit) の tool call file_path を抽出し、**containment root 内のものを除外**したフルパス一覧 (重複除去)
+- クリックでファイルビューアに表示 (読み出しは「触ったファイルリスト」への containment に相当する認可 — § 3)
 - **お気に入り追加可能** (★ トグルを同セクションにも)
 - **セクション内リストごとの横スクロール**: プロジェクト外はフルパスで幅が溢れるため。
   既存ツリー (深い dir / 長名で右が隠れる既知問題) も同様にセクション単位の横スクロールを付ける
@@ -25,23 +21,14 @@ Sponsor: kawaz r26 mid=99
 
 ### 3.1 抽出 (daemon)
 
-- session_status (DR-0020) と同じ transcript fold 相乗り、または fs 系の新 op。tool call
-  (Read/Write/Edit/NotebookEdit/MultiEdit) の input.file_path / notebook_path を抽出し、
-  realpath 正規化 → containment root 外のみ返す
+- session_status (DR-0020) と同じ transcript fold 相乗り、または fs 系の新 op。tool call (Read/Write/Edit/NotebookEdit/MultiEdit) の input.file_path / notebook_path を抽出し、realpath 正規化 → containment root 外のみ返す
 - 逐次 push は session_status の既存基盤に相乗りできるなら乗る (実装時判断)
 
 ### 3.2 読み出し認可 (重要)
 
-fs_read の containment は root 配下限定のまま。プロジェクト外ファイルの読み出しは
-**「そのセッションが触ったと transcript に記録されているパス」の集合に限定**して許可する
-新しい認可面 (allowlist ベース)。任意パス読み出しには絶対に広げない。symlink escape は
-realpath で検査 (既存 fs-access の流儀)。
+fs_read の containment は root 配下限定のまま。プロジェクト外ファイルの読み出しは**「そのセッションが触ったと transcript に記録されているパス」の集合に限定**して許可する新しい認可面 (allowlist ベース)。任意パス読み出しには絶対に広げない。symlink escape はrealpath で検査 (既存 fs-access の流儀)。
 
-**正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は
-完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が
-記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が
-表示したそのファイルへのリンクが 403 になる。リクエスト時に canonicalize することで
-fold 後に symlink へ差し替えられた経路は別 realpath に解決されて弾かれる性質は保たれる。
+**正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が表示したそのファイルへのリンクが 403 になる。リクエスト時に canonicalize することでfold 後に symlink へ差し替えられた経路は別 realpath に解決されて弾かれる性質は保たれる。
 
 ### 3.3 webui
 
@@ -57,41 +44,24 @@ fold 後に symlink へ差し替えられた経路は別 realpath に解決さ�
 
 ## 4.1 Addendum: `! <cmd>` の persisted-output サイドカー (kawaz TL-Q1 = a, 2026-07-29)
 
-30KB 超の `! <cmd>` 出力を Claude Code が退避するサイドカーファイル (transcript
-の隣の `<sid>/tool-results/*.txt`) のパスも allowlist に含める。抽出元は
-transcript の `<persisted-output>` スタブ本文の `Full output saved to:` 行。
+30KB 超の `! <cmd>` 出力を Claude Code が退避するサイドカーファイル (transcriptの隣の `<sid>/tool-results/*.txt`) のパスも allowlist に含める。抽出元はtranscript の `<persisted-output>` スタブ本文の `Full output saved to:` 行。
 
-**信頼形状は § 3.1 の既存エントリと同一**: transcript 自身が名指した絶対パスを
-1 件だけ、完全一致で付与する (ディレクトリ付与・prefix 付与なし)。読み出し認可は
+**信頼形状は § 3.1 の既存エントリと同一**: transcript 自身が名指した絶対パスを1 件だけ、完全一致で付与する (ディレクトリ付与・prefix 付与なし)。読み出し認可は
 § 3.2 の `fs_read_external` をそのまま通り、realpath 再検査も同じ。
 
-スタブ判定は **`<bash-stdout>` の中身全体がスタブであること**を要求する
-(先頭・末尾 anchor)。巨大でない通常出力はそのまま `<bash-stdout>` に載るため、
-コマンド出力中に現れた断片で任意パスが allowlist に入らない。全体がスタブに
-なるよう自分で `echo` したユーザは、`! <cmd>` で直接読める範囲を自分に許可した
-だけで、権限は増えない。
+スタブ判定は **`<bash-stdout>` の中身全体がスタブであること**を要求する(先頭・末尾 anchor)。巨大でない通常出力はそのまま `<bash-stdout>` に載るため、コマンド出力中に現れた断片で任意パスが allowlist に入らない。全体がスタブになるよう自分で `echo` したユーザは、`! <cmd>` で直接読める範囲を自分に許可しただけで、権限は増えない。
 
-webui は無変更。バッシュカードの「全文を別タブで開く」リンクは元から実在プローブ
-で gate されているため、allowlist 化により自然に点灯する。
+webui は無変更。バッシュカードの「全文を別タブで開く」リンクは元から実在プローブで gate されているため、allowlist 化により自然に点灯する。
 
 ## 4.2 Addendum: file 系 attachment と由来別グループ (kawaz r99 m35)
 
-TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カード同様に
-プレビューし、そのパスから Files を開けるようにする。そのため attachment 行が
-名指す絶対パスも allowlist に加える。
+TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カード同様にプレビューし、そのパスから Files を開けるようにする。そのため attachment 行が名指す絶対パスも allowlist に加える。
 
-**信頼形状は § 3.1 / § 4.1 と同一**: transcript 自身が名指した絶対パスを 1 件、
-完全一致で付与する。対象 attachment type と path フィールドは**明示テーブル**
-(`ATTACHMENT_PATH_FIELD`) で持つ — 未知 type の path らしき field を総なめすると
-認可面が中身を見ないまま広がるため。テーブルに無い type は TL には出るが Files
-から開けないだけ。
+**信頼形状は § 3.1 / § 4.1 と同一**: transcript 自身が名指した絶対パスを 1 件、完全一致で付与する。対象 attachment type と path フィールドは**明示テーブル**
+(`ATTACHMENT_PATH_FIELD`) で持つ — 未知 type の path らしき field を総なめすると認可面が中身を見ないまま広がるため。テーブルに無い type は TL には出るが Filesから開けないだけ。
 
 `external_files` は `{ path, origin }` の配列になる。`origin` は **表示専用**
-(webui の「プロジェクト外」を `Read/Edit/Write` / `attachments` にグループ分け
-する) で、認可は origin を見ない。両方が同じパスを名指したら `tool` を採る
-(1 ファイルが 2 見出しに出ないため、到着順に依らない)。allowlist を 2 本の
-フィールドに割らないのは、消費側が片方の union を忘れると「TL に出るのに
-Files で 403」になるため。
+(webui の「プロジェクト外」を `Read/Edit/Write` / `attachments` にグループ分けする) で、認可は origin を見ない。両方が同じパスを名指したら `tool` を採る(1 ファイルが 2 見出しに出ないため、到着順に依らない)。allowlist を 2 本のフィールドに割らないのは、消費側が片方の union を忘れると「TL に出るのにFiles で 403」になるため。
 
 ## 5. 関連
 

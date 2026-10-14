@@ -26,23 +26,14 @@ daemon のセッション状態取得元を `claude agents --json` から `<conf
 
 ## 背景
 
-実測 (2026-09-06) で、`claude agents --json` の busy は `sessions/<pid>.json` の生 status
-`"shell"` を丸めたものだと判明した。persistent な Monitor (ccmsg subscribe) を張った時点で
-`shell` になり、Monitor が生きる限り変わらない (16/16 本が subscribe 貼り直し時刻の
-`statusUpdatedAt` のまま、jsonl 最終更新 14〜42 分前・CPU ≈ 0)。ccmsg 無しの 9 本は全部
-idle だった。つまり busy/idle は「いま処理中か」の指標になっておらず、ccmsg 接続の有無と
-一致してしまっている。
+実測 (2026-09-06) で、`claude agents --json` の busy は `sessions/<pid>.json` の生 status `"shell"` を丸めたものだと判明した。persistent な Monitor (ccmsg subscribe) を張った時点で`shell` になり、Monitor が生きる限り変わらない (16/16 本が subscribe 貼り直し時刻の`statusUpdatedAt` のまま、jsonl 最終更新 14〜42 分前・CPU ≈ 0)。ccmsg 無しの 9 本は全部idle だった。つまり busy/idle は「いま処理中か」の指標になっておらず、ccmsg 接続の有無と一致してしまっている。
 
 ## 受け入れ条件
 
-- [ ] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status
-      (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る
-      (subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream
-      非公開なので変化に備えたフォールバックを残す
+- [ ] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る(subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream非公開なので変化に備えたフォールバックを残す
 - [ ] SessionList の Busy / Idle 判定は `claude agents` の値 (transcript の turn 状態)
       でなく、llm-gateway から届く request/response イベント (cache ring のために
-      既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、
-      リクエスト進行中 = Busy (kawaz r278m10 の裁定)。transcript / jsonl は活動判定に
+      既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、リクエスト進行中 = Busy (kawaz r278m10 の裁定)。transcript / jsonl は活動判定に
       使わない
 - [ ] `claude agents` 由来の値は「プロセスの存在」「waiting (dialog)」「pid / cwd / name」
       にだけ使う
@@ -51,19 +42,11 @@ idle だった。つまり busy/idle は「いま処理中か」の指標にな�
 
 ## 依存
 
-活動判定 (Busy/Idle) の実装は llm-gateway 側のイベント拡張に依存する。現行の relay
-イベント (`packages/protocol/src/index.ts` の `LlmRequestInfo`) は 1 リクエスト 1 件で
-`ts` = 上流レスポンスヘッダ到着時刻のみ。「リクエスト開始」「レスポンス完了 (ストリーム
-終端)」の通知が無いため、「最終リクエストのレスポンス完了 = Idle」は gateway が
-request started / response completed を送るようになってから。それまでは ccmsg 側で
-実装しない (ヘッダ到着 + N 秒の近似は採らない)。
+活動判定 (Busy/Idle) の実装は llm-gateway 側のイベント拡張に依存する。現行の relayイベント (`packages/protocol/src/index.ts` の `LlmRequestInfo`) は 1 リクエスト 1 件で`ts` = 上流レスポンスヘッダ到着時刻のみ。「リクエスト開始」「レスポンス完了 (ストリーム終端)」の通知が無いため、「最終リクエストのレスポンス完了 = Idle」は gateway がrequest started / response completed を送るようになってから。それまでは ccmsg 側で実装しない (ヘッダ到着 + N 秒の近似は採らない)。
 
 gateway 側への起票先 (llm-gateway の docs/issue または r276 経由) は kawaz 裁定待ち。
 
-追記: kawaz r278m22 (2026-09-06) — llm-gateway 側でリングタイマー用の通知を改修中で、
-gateway 目線の Idle 通知も提供される見込み (r276 経由で連絡が来る)。Idle は状態として
-導出するが、UI での活用は当面「行のアイコン表示」に留める (セクション分け・並びには
-使わない、r278m21 の「ソート順でよく別なことはしない」と整合)。
+追記: kawaz r278m22 (2026-09-06) — llm-gateway 側でリングタイマー用の通知を改修中で、gateway 目線の Idle 通知も提供される見込み (r276 経由で連絡が来る)。Idle は状態として導出するが、UI での活用は当面「行のアイコン表示」に留める (セクション分け・並びには使わない、r278m21 の「ソート順でよく別なことはしない」と整合)。
 
 ## TODO
 

@@ -25,18 +25,13 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't
-on your shell `PATH` by default. To put it there, symlink it into a stable dir
-on `PATH`:
+The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't on your shell `PATH` by default. To put it there, symlink it into a stable dir on `PATH`:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 ```
 
-Once installed this way, the `ccmsg` launcher keeps that symlink pointed at
-the newest version on its own — every invocation from a versioned cache path
-re-points it if it's strictly newer than what the symlink currently targets
-(see [DR-0007](./docs/decisions/DR-0007-path-installation.md)).
+Once installed this way, the `ccmsg` launcher keeps that symlink pointed at the newest version on its own — every invocation from a versioned cache path re-points it if it's strictly newer than what the symlink currently targets (see [DR-0007](./docs/decisions/DR-0007-path-installation.md)).
 
 ## Web UI
 
@@ -46,12 +41,7 @@ The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human 
 
 `ccmsg say` forwards its arguments to macOS's `/usr/bin/say` unchanged, and first tells the daemon which session spoke. With several Claude Code sessions running, a spoken notification is otherwise anonymous — the web UI's Sessions list marks the session that spoke with 📣, and that session's timeline shows what was said with a 既読 (read) button that clears the marker. The daemon keeps these records and their unread state in memory only, so a daemon restart forgets them.
 
-Speech never depends on the recording: no session id, no running daemon, or a
-daemon that refuses the event all still speak. `bin/say` is a PATH shim that
-routes an ordinary `say` through this command, so every `say` on the machine —
-yours, a script's, an agent's — becomes attributable. Install it as a copy
-next to the `ccmsg` on your PATH (not a symlink: its target is a versioned
-plugin-cache dir that each update removes).
+Speech never depends on the recording: no session id, no running daemon, or a daemon that refuses the event all still speak. `bin/say` is a PATH shim that routes an ordinary `say` through this command, so every `say` on the machine — yours, a script's, an agent's — becomes attributable. Install it as a copy next to the `ccmsg` on your PATH (not a symlink: its target is a versioned plugin-cache dir that each update removes).
 
 ## Why a rewrite?
 

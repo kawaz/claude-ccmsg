@@ -21,15 +21,13 @@ origin: w-search-i18n
 
 ## 概要
 
-TL 検索スコープ (📁 OFF = 画面に出ているものだけ) の [N/M] が、thinking / items 単体の
-`<details>` を開閉しても再計算されず 1/1 のまま止まる。
+TL 検索スコープ (📁 OFF = 画面に出ているものだけ) の [N/M] が、thinking / items 単体の`<details>` を開閉しても再計算されず 1/1 のまま止まる。
 
 ## 背景
 
 w-search-i18n の実測で発見 (v0.102.1 以前から、原文表示・原文クエリでも再現)。
 📁 OFF で thinking 単体の `<details>` を閉じても M が再計算されない。
-foldRevision / foldMountRevision が fold group 単位で管理されており、thinking / items の
-details 開閉イベントを拾っていないためと見られる。
+foldRevision / foldMountRevision が fold group 単位で管理されており、thinking / items のdetails 開閉イベントを拾っていないためと見られる。
 
 修正候補:
 - 単体 details の toggle も revision に反映する

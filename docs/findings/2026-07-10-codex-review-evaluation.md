@@ -1,8 +1,7 @@
 # codex レビュー (2026-07-10) の実物検証と評価
 
 一次資料: `subagents/aa6b41b6e4178b94f.output` (context に貼付済み、要点は本文にコピー)。
-kawaz の依頼「方向性のスジ / 実装・設計の良し悪し / 考慮漏れ」に対する codex のレビュー結果を、
-実物コードと突き合わせて重大度と対応方針を確定させた記録。
+kawaz の依頼「方向性のスジ / 実装・設計の良し悪し / 考慮漏れ」に対する codex のレビュー結果を、実物コードと突き合わせて重大度と対応方針を確定させた記録。
 
 ## 判明した事実
 
@@ -29,33 +28,27 @@ codex の推測ミスや誤読はゼロ。ただし重大度と対応判断は�
      全メッセージ漏洩
   4. hello (自動で `role: "user"` に pin) 後 `{"op":"post","room":"r1","msg":"..."}` →
      u1 として peer session に **偽メッセージ注入** (受信側 AI が「kawaz の指示」と誤認する可能性)
-- **根本原因**: DR-0004 §2 の trust model「reachable == user」が Web ブラウザからの
-  cross-origin WebSocket 接続を想定していない。ネットワーク到達性で trust を判定する設計を
-  取る限り、Web の origin 越境で穴が開く
+- **根本原因**: DR-0004 §2 の trust model「reachable == user」が Web ブラウザからのcross-origin WebSocket 接続を想定していない。ネットワーク到達性で trust を判定する設計を取る限り、Web の origin 越境で穴が開く
 
 ### Major 1: u1 真正性が同 UID 内で成立していない
 
 - `cli/src/index.ts` の `--as-user` で誰でも `identity.role="user"` を作れる
 - daemon 側 hello 処理 (`server.ts:312-329`) は role を鵜呑み、UID trust のみ
-- Claude Code セッション自身も kawaz と同 UID なので、別 agent がその気になれば
-  UDS 経由で `u1` を偽装可能
-- ただし攻撃前提が「同 UID で任意のプロセスを走らせられる」= ローカル侵入済み前提なので、
-  personal スケールで受容可能。**DR に「同 UID 内は信頼」を明記する対応でよい**
+- Claude Code セッション自身も kawaz と同 UID なので、別 agent がその気になればUDS 経由で `u1` を偽装可能
+- ただし攻撃前提が「同 UID で任意のプロセスを走らせられる」= ローカル侵入済み前提なので、personal スケールで受容可能。**DR に「同 UID 内は信頼」を明記する対応でよい**
 
 ### Major 2: plain HTTP 既定のまま (webui-https close 判断の残タスク)
 
 - webui-https issue の受け入れ条件「採用方式に応じて `CCMSG_HTTP_BIND` の既定値・
   source-IP allowlist の要否を見直す」が未実施のまま resolved close
-- 私 (先ほどのセッション) が「tailscale serve で解決」を根拠に close したが、
-  実装調整 (bind を 127.0.0.1 に戻す等) が残っていた = **close 判断が甘かった**
+- 私 (先ほどのセッション) が「tailscale serve で解決」を根拠に close したが、実装調整 (bind を 127.0.0.1 に戻す等) が残っていた = **close 判断が甘かった**
 - Critical の修正と併せて実装調整すれば同時解決
 
 ### Major 3: source-IP allowlist が tailnet 認証境界の代替
 
 - `100.64.0.0/10` 全体を u1 admin として扱う = tailnet 内の他 device 全員が u1
 - kawaz が個人単独 tailnet の場合は実害なし。**shared tailnet では脆弱**
-- Critical の修正で tailnet レンジを allowlist から外せば同時解決 (kawaz は tailscale
-  serve を採用するので、tailscale serve が localhost:8642 に proxy し、daemon 側は
+- Critical の修正で tailnet レンジを allowlist から外せば同時解決 (kawaz は tailscale serve を採用するので、tailscale serve が localhost:8642 に proxy し、daemon 側は
   127.0.0.1 bind のみで足りる)
 
 ### Major 4: storage 永続化前の in-memory 更新 (順序問題)
@@ -67,17 +60,14 @@ codex の推測ミスや誤読はゼロ。ただし重大度と対応判断は�
   ...
   fs.writeSync(room.fd, line);     // ③ 永続化 (失敗しうる)
   ```
-- ③ が例外 (disk full / EIO) を投げると ①② が先行済み。次回 daemon 再起動時は
-  jsonl から再構築するので in-memory 状態は消える = **同じ mid の重複割当も起こり得る**
+- ③ が例外 (disk full / EIO) を投げると ①② が先行済み。次回 daemon 再起動時はjsonl から再構築するので in-memory 状態は消える = **同じ mid の重複割当も起こり得る**
 - 実発生率は低いが設計として正しくない
-- 修正: writeSync を先に、成功後 push/lastMid 更新に順序反転 (エラー時は throw 伝播で
-  handleRequest 内 try/catch が捕捉して sendErr する)
+- 修正: writeSync を先に、成功後 push/lastMid 更新に順序反転 (エラー時は throw 伝播でhandleRequest 内 try/catch が捕捉して sendErr する)
 
 ### Minor 1: `ln -sfn` の shell quoting 欠落
 
 - `hooks/session-start.ts:167` — `ln -sfn ${bin} ${candidate.binPath}` が unquoted
-- home に空白/metachar 含む環境 (mac の "Yoshiaki Kawazu" 系ユーザ名や、
-  日本語パス) で AI がそのままシェルに投げると壊れる
+- home に空白/metachar 含む環境 (mac の "Yoshiaki Kawazu" 系ユーザ名や、日本語パス) で AI がそのままシェルに投げると壊れる
 - 修正: `ln -sfn '${bin}' '${candidate.binPath}'` (single quote で囲む)
 
 ### Minor 2: DR-0002 の crash loop 警告仕様が未実装
@@ -93,8 +83,7 @@ codex の推測ミスや誤読はゼロ。ただし重大度と対応判断は�
 - `webui/src/client/ws.ts:58` — `pending: Array<(v: Response) => void>` に resolver を積む
 - `onClose` (:115) で pending array を flush/reject していない
 - onOpen 済み → send 直後に切断、の窓 (レア) で Composer が永久 pending
-- 修正: onClose で `pending.forEach(r => r({ ok: false, error: {code: "connection_closed",
-  msg: "..."} }))` してから `pending = []`
+- 修正: onClose で `pending.forEach(r => r({ ok: false, error: {code: "connection_closed", msg: "..."} }))` してから `pending = []`
 
 ## 実用的な示唆・対応方針
 
@@ -105,10 +94,8 @@ DR-0004 §2 の trust model を実質的に見直す。実装変更は 3 点:
 1. `DEFAULT_HTTP_BIND` を `"127.0.0.1:8642,[::1]:8642"` に戻す (tailscale serve が
    localhost に proxy する前提。kawaz の HTTPS 化裁定と整合)
 2. `DEFAULT_HTTP_ALLOW` から `100.64.0.0/10` と `fd7a:115c:a1e0::/48` を削除
-3. `fetch` に Origin 検証を追加: `null` (file://, non-browser) と、
-   `origin === "http://127.0.0.1:8642"` / `http://[::1]:8642` などの許可オリジンのみ通す。
-   tailscale serve 越しは Origin が `https://<machine>.<tailnet>.ts.net` になるので、
-   `CCMSG_HTTP_ALLOW_ORIGIN` 環境変数で明示的に足せる形にする
+3. `fetch` に Origin 検証を追加: `null` (file://, non-browser) と、`origin === "http://127.0.0.1:8642"` / `http://[::1]:8642` などの許可オリジンのみ通す。
+   tailscale serve 越しは Origin が `https://<machine>.<tailnet>.ts.net` になるので、`CCMSG_HTTP_ALLOW_ORIGIN` 環境変数で明示的に足せる形にする
 
 これで DoS + 情報漏洩 + 偽メッセージ発行の 3 経路が全部塞がる。DR-0004 追補として記録。
 

@@ -21,8 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-Phase A (v0.73.0 予定) で inline code 内の `filepath[:L1[-L2]]` / `filepath[:LINE[:COL]]` をリンク化済み
-(拡張子 or 行番号ヒューリスティックで branch 名/ディレクトリを排除、kawaz r46m55-58 の対象/対象外例をテスト固定)。
+Phase A (v0.73.0 予定) で inline code 内の `filepath[:L1[-L2]]` / `filepath[:LINE[:COL]]` をリンク化済み(拡張子 or 行番号ヒューリスティックで branch 名/ディレクトリを排除、kawaz r46m55-58 の対象/対象外例をテスト固定)。
 
 本 issue は精度を上げる Phase B/C の設計。kawaz 裁定済み事項:
 

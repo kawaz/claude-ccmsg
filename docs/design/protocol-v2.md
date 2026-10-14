@@ -1,12 +1,8 @@
 # protocol v2 設計 (規約ファーストの契約)
 
 - Status: **Draft** (統括判断で確定して進める。§9 の判断に異論があれば kawaz が直す)
-- 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
-  [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
-  DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
-- 一次資料: [protocol 棚卸し](../findings/2026-09-07-protocol-inventory.md)、
-  [daemon 棚卸し](../findings/2026-09-07-daemon-inventory.md)、
-  [webui 棚卸し](../findings/2026-09-07-webui-component-inventory.md)
+- 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、[issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
+- 一次資料: [protocol 棚卸し](../findings/2026-09-07-protocol-inventory.md)、[daemon 棚卸し](../findings/2026-09-07-daemon-inventory.md)、[webui 棚卸し](../findings/2026-09-07-webui-component-inventory.md)
 
 ## 1. v2 が解く問題 (棚卸しで確定した事実)
 
@@ -30,39 +26,25 @@
 
 ### 2.1 messaging は room を持たない (kawaz r278m63/m64)
 
-複数メンバーの会話 (room) は初期に数回使われた後は使われておらず、会話の様子は webui が
-transcript で全部見せている。よって v2 の messaging は **会話の器を持たず、sid 宛の配送に縮める**:
+複数メンバーの会話 (room) は初期に数回使われた後は使われておらず、会話の様子は webui がtranscript で全部見せている。よって v2 の messaging は **会話の器を持たず、sid 宛の配送に縮める**:
 
 - `message_send {to: sid, text}` と、受信側への配送 (返信経路の指示を含む)、`say`、`notify`
-- 会話ログの正本は transcript (Timeline)。ccmsg 側の永続ログ (room jsonl)、`mid` / `seq`、既読カーソル
-  (BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
-- 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、
-  kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
+- 会話ログの正本は transcript (Timeline)。ccmsg 側の永続ログ (room jsonl)、`mid` / `seq`、既読カーソル(BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
+- 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
   Paused / Disappeared / instance に到達不能 / 受信側の一時的な拒否 (throttled) / inbox 上限 (inbox_full)。
   送信側 (エージェント) はそれを見て待つか諦めるかを決める。
-  宛先が Paused / Disappeared の時は、**同じ repo root で今動いているセッションがあれば候補 sid を
-  添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに
-  世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
-- inbox の保持: 宛先 sid が一覧から消える (Disappeared 行を ✕ で消す / 再接続で配送し切る) まで、または
-  7 日。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との
-  対称、[findings 2026-09-08](../findings/2026-09-08-claude-code-messaging-socket.md) §6)、超えた分は古い方
-  から落として送信側に `reason: inbox_full` を返す。受信側で一時的に受け付けられなかった (rate limit /
+  宛先が Paused / Disappeared の時は、**同じ repo root で今動いているセッションがあれば候補 sid を添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
+- inbox の保持: 宛先 sid が一覧から消える (Disappeared 行を ✕ で消す / 再接続で配送し切る) まで、または7 日。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との対称、[findings 2026-09-08](../findings/2026-09-08-claude-code-messaging-socket.md) §6)、超えた分は古い方から落として送信側に `reason: inbox_full` を返す。受信側で一時的に受け付けられなかった (rate limit /
   queue full / duplicate) ものは inbox に残して再送し、応答は `reason: throttled`
 - 配送 frame の識別子 `mid` は `<instance>/<連番>` (発行 instance 内の連番)。`reply_to` はこれを指す。
   既読カーソル・`seq`・replay 窓は持たない
-- 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ
-  (`sessions/<pid>.json` の `messagingSocketPath`) に誘導できる可能性がある。daemon がその socket に
-  直接配送できれば subscribe の Monitor 経由の注入自体が不要になる (スパイクで確認中)
+- 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ(`sessions/<pid>.json` の `messagingSocketPath`) に誘導できる可能性がある。daemon がその socket に直接配送できれば subscribe の Monitor 経由の注入自体が不要になる (スパイクで確認中)
 
 v1 の room 系 op (`create_room` / `next_room` / `invite` / `leave` / `kick` / `set_title` /
-`archive_room` / `rooms` / `room_history` / `read` / `reply`) は v2 に持たない。op 表の messaging 13 op は
-この節に合わせて作り直す。
+`archive_room` / `rooms` / `room_history` / `read` / `reply`) は v2 に持たない。op 表の messaging 13 op はこの節に合わせて作り直す。
 
-- control は「daemon の内部状態を読む・操作する API」。webui が唯一の利用者ではない
-  (CLI の `ccmsg session kill` 等も同じ面)
-- mesh は control の op を封筒に包んで転送する面。control と同じ op 定義を再利用し、
-  封筒 (`to_instance` / `from_instance` / `hops`) だけを足す。mesh 固有の op は持たない
-  (転送も relay も封筒のフィールドで表す)
+- control は「daemon の内部状態を読む・操作する API」。webui が唯一の利用者ではない(CLI の `ccmsg session kill` 等も同じ面)
+- mesh は control の op を封筒に包んで転送する面。control と同じ op 定義を再利用し、封筒 (`to_instance` / `from_instance` / `hops`) だけを足す。mesh 固有の op は持たない(転送も relay も封筒のフィールドで表す)
 - 3 面は **同じ型システム・同じ封筒・同じエラー体系** を共有する (別プロトコルにしない)。
   面は「op 属性表の 1 列」であって、別々のスキーマではない
 
@@ -85,21 +67,13 @@ role 違反は `forbidden` (新設)。`bad_request` / `invalid_args` は引数�
 
 ### 3.2 能力 (capability)
 
-hello の `*_available` boolean 6 個をやめ、`capabilities: string[]` (例 `["llm_usage", "sandbox",
-"fork", "terminal"]`) にする。op 属性表の `capability` と突き合わせれば、クライアントは
-「どの op が押せるか」を表から導ける。config の有無の判定は daemon の 1 箇所 (capability 集合の
-計算) に集約され、op ハンドラ側の `<x>_not_configured` は `capability_unavailable` 1 つになる。
+hello の `*_available` boolean 6 個をやめ、`capabilities: string[]` (例 `["llm_usage", "sandbox", "fork", "terminal"]`) にする。op 属性表の `capability` と突き合わせれば、クライアントは「どの op が押せるか」を表から導ける。config の有無の判定は daemon の 1 箇所 (capability 集合の計算) に集約され、op ハンドラ側の `<x>_not_configured` は `capability_unavailable` 1 つになる。
 
 ### 3.3 観測系は snapshot + delta の 1 形
 
-peers / agents / session_errors / llm_requests / session_status / rooms の「op で全量、push で
-全量」を、**`subscribe <topic>` で snapshot を 1 回返し、以後 delta を push** の 1 形に揃える。
+peers / agents / session_errors / llm_requests / session_status / rooms の「op で全量、push で全量」を、**`subscribe <topic>` で snapshot を 1 回返し、以後 delta を push** の 1 形に揃える。
 topic = `peers` / `agents` / `session_status:<sid>` / `transcript:<sid>` / `room:<id>` …。
-one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で表現できるので、
-`peers` / `agents` / `session_status` の one-shot op は置かない (裁定 PV-Q3)。snapshot の
-frame には `snapshot: true` の印を付け、受け手が「snapshot が届いた」を判別できるようにする
-(v1 の `room_history` sentinel を topic 全体に一般化)。具体表は
-[protocol-v2-op-table.md](./protocol-v2-op-table.md)。
+one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で表現できるので、`peers` / `agents` / `session_status` の one-shot op は置かない (裁定 PV-Q3)。snapshot のframe には `snapshot: true` の印を付け、受け手が「snapshot が届いた」を判別できるようにする(v1 の `room_history` sentinel を topic 全体に一般化)。具体表は[protocol-v2-op-table.md](./protocol-v2-op-table.md)。
 
 ## 4. 型に「正本」を宣言する
 
@@ -110,61 +84,41 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 | **llm-gateway** | request / response event、usage / status / stats | 同上 `upstream: "llm-gateway"`。gateway は既に ms 統一済みなので写しは命名だけ |
 | **ホスト** | pid / path / config_dir / hyoui handle | `locality: instance-local` を型に付け、instance の外に出す時は instance id を伴う |
 
-「写す」= daemon が upstream の JSON を受けた時点で ccmsg の型に変換する (open set の string は
-そのまま通すが、単位と名前は変える)。契約に camelCase が混ざる現状 (`AgentInfo.startedAt` 等) は
-この規約で消える。
+「写す」= daemon が upstream の JSON を受けた時点で ccmsg の型に変換する (open set の string はそのまま通すが、単位と名前は変える)。契約に camelCase が混ざる現状 (`AgentInfo.startedAt` 等) はこの規約で消える。
 
 ## 5. 表記規約
 
 - **時刻は Unix ms の整数、名前は `*_at`**。ISO 文字列は wire に載せない (表示側で整形)
 - **長さは名前に単位** (`*_ms` / `*_secs`)。`_ms` を時刻に使わない (`last_activity_ms` → `last_activity_at`)
-- **識別子**: `sid` (uuid、グローバル)、`instance` (= endpoint URL、クラスタ内一意。表示名は config の
-  別名)、`mid` は `<instance>/<連番>` (配送 frame の識別子、発行 instance が採番)
-- **命名**: フィールドは snake_case、op は `<名詞>_<動詞>` (`room_create` / `session_kill`) で
-  名詞先頭に統一 (現状の `create_room` と `session_kill` の混在を解消。裁定 PV-Q4)
+- **識別子**: `sid` (uuid、グローバル)、`instance` (= endpoint URL、クラスタ内一意。表示名は config の別名)、`mid` は `<instance>/<連番>` (配送 frame の識別子、発行 instance が採番)
+- **命名**: フィールドは snake_case、op は `<名詞>_<動詞>` (`room_create` / `session_kill`) で名詞先頭に統一 (現状の `create_room` と `session_kill` の混在を解消。裁定 PV-Q4)
 - **省略の意味**: 「不明」は省略、「無い」は空配列。型ごとに doc で例外を書かない (規約で固定)。
-  唯一の例外は要求と 1:1 対応する位置配列 (`file_stat_batch.results`) の `null` で、対応を保つために
-  失敗を 1 値に潰す (理由を出さないのが存在オラクル防止でもある)
-- **前方互換**: 同一世代内では未知フィールドを拒否せず通す (§8 の「追加は許す」と一致)。既知フィールドは
-  型どおりに検査する
+  唯一の例外は要求と 1:1 対応する位置配列 (`file_stat_batch.results`) の `null` で、対応を保つために失敗を 1 値に潰す (理由を出さないのが存在オラクル防止でもある)
+- **前方互換**: 同一世代内では未知フィールドを拒否せず通す (§8 の「追加は許す」と一致)。既知フィールドは型どおりに検査する
 - webui の計測 (`client_trace`) は契約に置かない。要るなら新 webui の実装時に同一世代内の任意 op として足す
-- **wire に乗らない型は契約に置かない** (HTTP multipart の `AttachmentUploadResponse` 等は
-  HTTP API の節に分ける)、daemon の運用既定値 (`DEFAULT_*`) や paths / config-migration は
-  daemon リポへ移す
+- **wire に乗らない型は契約に置かない** (HTTP multipart の `AttachmentUploadResponse` 等はHTTP API の節に分ける)、daemon の運用既定値 (`DEFAULT_*`) や paths / config-migration はdaemon リポへ移す
 
 ## 6. instance と mesh
 
-- `instance` の識別子は endpoint URL (`wss://…/…`。ローカル単独の instance は `ws://` も可、mesh に
-  出るのは `wss://` のみ = mesh-peer-auth P2)。表示名は config の別名。`hello` の応答に自 instance と、
-  mesh で見えている instance の一覧 (`instances: [{id, host, reachable}]`) を含める
-- `role: instance` の hello に mesh-peer-auth §5.3 のフィールド (`ver` / `iss` / `aud` / `kid`) を載せる
-  (認証を別チャネルにしない)
-- session 系オブジェクト (`PeerInfo` / `AgentInfo` / `SessionSearchHit`) は
-  `instance` を持つ
-- `locality: instance-local` の op は、接続先が担当でなければ mesh で担当へ転送。到達できなければ
-  `instance_unreachable`
+- `instance` の識別子は endpoint URL (`wss://…/…`。ローカル単独の instance は `ws://` も可、mesh に出るのは `wss://` のみ = mesh-peer-auth P2)。表示名は config の別名。`hello` の応答に自 instance と、mesh で見えている instance の一覧 (`instances: [{id, host, reachable}]`) を含める
+- `role: instance` の hello に mesh-peer-auth §5.3 のフィールド (`ver` / `iss` / `aud` / `kid`) を載せる(認証を別チャネルにしない)
+- session 系オブジェクト (`PeerInfo` / `AgentInfo` / `SessionSearchHit`) は`instance` を持つ
+- `locality: instance-local` の op は、接続先が担当でなければ mesh で担当へ転送。到達できなければ`instance_unreachable`
 - room の持ち主 instance が `mid` / `seq` を発行。他 instance のメンバの post は持ち主へ転送
-- event の relay: 発生元 instance を event に付け (`instance` フィールド)、全量置換の意味論を
-  持つ topic (peers / agents) は **instance ごとの全量置換** にする (複数 instance の全量が
-  衝突しない)
+- event の relay: 発生元 instance を event に付け (`instance` フィールド)、全量置換の意味論を持つ topic (peers / agents) は **instance ごとの全量置換** にする (複数 instance の全量が衝突しない)
 - instance 間の認証は [mesh-peer-auth.md](./mesh-peer-auth.md) (Web PKI + 接続ごとの使い捨て鍵の JWS、`iss` / `aud` は endpoint URL の完全一致)。`role: instance` の hello がその手順を担う。自 instance の URL (`self`) は [mesh-self-identification.md](./mesh-self-identification.md) で起動時に確定する。instance の識別子は endpoint URL (表示名は config の別名)
 
 ## 7. 契約を実行可能にする
 
-- protocol リポは **schema (JSON Schema 相当) + TS 型 + op 属性表** を持ち、daemon / webui は
-  同じ schema で検証する (daemon の手書き `typeof` 検査を置換)
-- 実装は TypeBox: schema を TS で書き、型は `Static<>` で導出、検証は `TypeCompiler`。正本が 1 つで
-  JSON Schema をそのまま出せる (PV-Q5 の「TS を正本に schema を持つ」をこの形で満たす)
-- topic にも op と同じ属性表 (`roles` / `capability`) を持つ。`llm_requests` topic の capability は
-  `llm_events` (gateway の webhook source が設定されている時だけ有効)
+- protocol リポは **schema (JSON Schema 相当) + TS 型 + op 属性表** を持ち、daemon / webui は同じ schema で検証する (daemon の手書き `typeof` 検査を置換)
+- 実装は TypeBox: schema を TS で書き、型は `Static<>` で導出、検証は `TypeCompiler`。正本が 1 つでJSON Schema をそのまま出せる (PV-Q5 の「TS を正本に schema を持つ」をこの形で満たす)
+- topic にも op と同じ属性表 (`roles` / `capability`) を持つ。`llm_requests` topic の capability は`llm_events` (gateway の webhook source が設定されている時だけ有効)
 - `hello` / `ping` は接続先そのものへの op なので locality は cluster (転送されない)
-- テストは protocol リポに「fixture (実 wire の JSON) が schema を通る」形で置き、daemon / webui
-  の変更が契約に違反したら protocol のテストで落ちるようにする
+- テストは protocol リポに「fixture (実 wire の JSON) が schema を通る」形で置き、daemon / webuiの変更が契約に違反したら protocol のテストで落ちるようにする
 
 ## 8. 版と互換
 
-- `PROTOCOL_VERSION` は整数のまま (世代)。同一世代内の追加は任意フィールド・任意 op の追加のみ
-  許し、削除・意味変更は世代を上げる
+- `PROTOCOL_VERSION` は整数のまま (世代)。同一世代内の追加は任意フィールド・任意 op の追加のみ許し、削除・意味変更は世代を上げる
 - 世代が違う hello は拒否 (v1 と同じ)。mesh も同じ規則 (世代の違う instance とは繋がない)
 - 旧系 (v1 の daemon / webui / plugin) は凍結し、新系は別 instance として横に立てる (DR-0032 §2.2)。
   daemon が v1 と v2 を両受けする必要は無い

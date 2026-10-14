@@ -25,17 +25,13 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では
-shell の `PATH` に無い。`PATH` 上の安定パスに symlink を張って入れる:
+plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定ではshell の `PATH` に無い。`PATH` 上の安定パスに symlink を張って入れる:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 ```
 
-こうして入れた symlink は、以降 `ccmsg` launcher が実行のたびに自動で最新版へ
-追従させる — versioned cache パスからの実行で、symlink の現在の張り先より厳密に
-新しい版なら張り替える
-([DR-0007](./docs/decisions/DR-0007-path-installation.md) 参照)。
+こうして入れた symlink は、以降 `ccmsg` launcher が実行のたびに自動で最新版へ追従させる — versioned cache パスからの実行で、symlink の現在の張り先より厳密に新しい版なら張り替える([DR-0007](./docs/decisions/DR-0007-path-installation.md) 参照)。
 
 ## Web UI
 
@@ -45,13 +41,7 @@ daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間�
 
 `ccmsg say` は引数をそのまま macOS の `/usr/bin/say` に渡して発声し、その前にどのセッションが喋ったかを daemon に知らせる。Claude Code セッションを複数走らせていると音声通知は「どれが鳴らしたか」が分からないため、web UI の Sessions 一覧では喋ったセッションに 📣 が付き、そのセッションの TL で発話内容と既読ボタン (押すとマーカーが消える) を確認できる。発話の記録と未読は daemon のメモリだけに持つので、daemon を再起動すると消える。
 
-発声は記録に依存しない: session id が無くても、daemon が動いていなくても、
-daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` を
-このコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に
-置けばマシン上のすべての `say` (自分・スクリプト・エージェント) が
-どのセッションのものか分かるようになる。PATH 上の `ccmsg` と同じ dir に
-**コピー** で置く (symlink にしないのは、参照先が version 付き plugin cache dir で
-update のたびに消えるため)。
+発声は記録に依存しない: session id が無くても、daemon が動いていなくても、daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` をこのコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に置けばマシン上のすべての `say` (自分・スクリプト・エージェント) がどのセッションのものか分かるようになる。PATH 上の `ccmsg` と同じ dir に**コピー** で置く (symlink にしないのは、参照先が version 付き plugin cache dir でupdate のたびに消えるため)。
 
 ## rewrite した理由
 

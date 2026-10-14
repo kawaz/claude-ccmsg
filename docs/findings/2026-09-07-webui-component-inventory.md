@@ -10,43 +10,28 @@
 ## 判明した事実
 
 1. **全体で 37,112 行 (TSX 50 / TS 71 ファイル) + CSS 9,381 行**。上位 3 ファイル
-   (`Timeline.tsx` 4,918 / `transcript-model.ts` 2,716 / `markdown-view.tsx` 1,868) だけで
-   全体の 25%。`Timeline.tsx` は 1 ファイルで 40 個の関数コンポーネントを抱え、
-   うち `Timeline()` 本体が 1,832 行 (= ファイルの 37%)。
+   (`Timeline.tsx` 4,918 / `transcript-model.ts` 2,716 / `markdown-view.tsx` 1,868) だけで全体の 25%。`Timeline.tsx` は 1 ファイルで 40 個の関数コンポーネントを抱え、うち `Timeline()` 本体が 1,832 行 (= ファイルの 37%)。
 2. **全状態購読 (`useStoreState`) を行う component は 7 個**: `App` / `Timeline` /
    `SessionList` / `StatusPanel` / `FileViewer` / `FileTree` / `SessionSearchPanel`。
-   `createStore` は listener に selector を持たない (`useStore.ts:23-27`) ので、
-   **どの action でもこの 7 個が必ず再レンダーされる**。うち App はツリーの根なので、
-   実質「全 action で全画面が再構築される」。
+   `createStore` は listener に selector を持たない (`useStore.ts:23-27`) ので、**どの action でもこの 7 個が必ず再レンダーされる**。うち App はツリーの根なので、実質「全 action で全画面が再構築される」。
 3. **`AppState` は 39 フィールド 1 オブジェクト**。接続・能力フラグ・ドメイン一覧・
-   現在地 (locator 由来 7 フィールド)・表示設定・レイアウト (`sidebarOpen`) が同居し、
-   `reducer` の 55 case すべてが同じオブジェクトを差し替える。内訳は
-   Navigation 由来 9 / 能力フラグ 7 / 表示設定 4 / レイアウト 1 / ドメイン 18。
-4. **props で `state: AppState` を丸ごと配る箇所が 10 個**。App が根で購読し、
-   `Sidebar` / `RoomView` / `SessionView` / `UsageView` / `ServiceStatus` /
+   現在地 (locator 由来 7 フィールド)・表示設定・レイアウト (`sidebarOpen`) が同居し、`reducer` の 55 case すべてが同じオブジェクトを差し替える。内訳はNavigation 由来 9 / 能力フラグ 7 / 表示設定 4 / レイアウト 1 / ドメイン 18。
+4. **props で `state: AppState` を丸ごと配る箇所が 10 個**。App が根で購読し、`Sidebar` / `RoomView` / `SessionView` / `UsageView` / `ServiceStatus` /
    `TopbarTitle` 等へそのまま渡す。SessionView はさらに `Timeline` へ分解して渡す。
 5. **JS が viewport 幅を直接読む箇所は `Sidebar.tsx` に集中** (4 箇所の
-   `window.innerWidth`)。他は `pane-axis.ts` / `layout-mode.ts` の
-   `getComputedStyle` 方式 (設計文書 §4 が認める形) に移行済み。720px の
-   breakpoint 判定を JS が行っている箇所は残っていない。
+   `window.innerWidth`)。他は `pane-axis.ts` / `layout-mode.ts` の`getComputedStyle` 方式 (設計文書 §4 が認める形) に移行済み。720px のbreakpoint 判定を JS が行っている箇所は残っていない。
 6. **`app.css` に `!important` は 0 件**。一方 **z-index はトークンが 1 個
-   (`--z-composer`) しか無く、リテラルが 9 箇所**に散っている (設計文書 §5 の
-   「用途別トークンに集約」は未達)。
+   (`--z-composer`) しか無く、リテラルが 9 箇所**に散っている (設計文書 §5 の「用途別トークンに集約」は未達)。
 7. **参照 0 の実行時 export が 37 個**、**テストから 1 度も import されない
    client モジュールが 37 個** (うち component が 29 個)。
 8. **3 ファイルがソース中に生の NUL 文字 (`\0`) を含む** ため、`grep` が
-   バイナリ扱いして黙って結果を落とす。合成キーの区切り文字として意図的に
-   使われている (`timeline-position.ts:11` が「uuid / sid に現れない」と明記)。
+   バイナリ扱いして黙って結果を落とす。合成キーの区切り文字として意図的に使われている (`timeline-position.ts:11` が「uuid / sid に現れない」と明記)。
 
 ## 実用的な示唆
 
-- 再レンダーの支配要因は「購読の粒度」1 点。7 個の全状態購読 component のうち
-  App を外すだけで波及範囲が変わるので、設計文書 §8 の移行順 (購読層 → App 解体) は
-  観測と一致している。
-- `AppState` 39 フィールドのうち **locator 由来が 7、レイアウト由来が 1、
-  能力フラグが 8** で、ドメイン状態は残り 23。分割の第一の切れ目はこの 3 系統。
-- 「純関数を別モジュールに切り出して bun test で叩く」規約は徹底されており
-  (`*-view.ts` / `*-model.ts` が 14 個)、**TSX 側だけが肥大している**。
+- 再レンダーの支配要因は「購読の粒度」1 点。7 個の全状態購読 component のうちApp を外すだけで波及範囲が変わるので、設計文書 §8 の移行順 (購読層 → App 解体) は観測と一致している。
+- `AppState` 39 フィールドのうち **locator 由来が 7、レイアウト由来が 1、能力フラグが 8** で、ドメイン状態は残り 23。分割の第一の切れ目はこの 3 系統。
+- 「純関数を別モジュールに切り出して bun test で叩く」規約は徹底されており(`*-view.ts` / `*-model.ts` が 14 個)、**TSX 側だけが肥大している**。
   作り直しで捨てる候補と残す候補の境界は概ねこの拡張子の境界に一致する。
 - 参照 0 の export と未テスト component は、作り直し時に「移植せず落とす」
   判断の一次候補リストとして使える (§5.4 / §5.5)。
@@ -67,8 +52,7 @@
 
 ### エントリの配線 (`main.tsx`、81 行)
 
-`main.tsx` は store と ws を作って context に載せるだけでなく、**3 つの effect を
-直接ここに置いている**:
+`main.tsx` は store と ws を作って context に載せるだけでなく、**3 つの effect を直接ここに置いている**:
 
 | effect | 内容 |
 |---|---|
@@ -76,8 +60,7 @@
 | `store.subscribe` #1 | peers 集合が縮んだら該当 sid の filepath キャッシュを破棄 |
 | `store.subscribe` #2 | `pinnedSessions` が変わったら localStorage へ書き戻し |
 
-いずれも「store と別モジュールの両方を知る唯一の場所」という理由でここに置かれた
-(コメントに明記)。signal 化すると `effect()` で各モジュール側に戻せる性質のもの。
+いずれも「store と別モジュールの両方を知る唯一の場所」という理由でここに置かれた(コメントに明記)。signal 化すると `effect()` で各モジュール側に戻せる性質のもの。
 
 ### 依存の向き
 
@@ -91,9 +74,7 @@ main.tsx ─┬─ store.ts (reducer)  ←── ws.ts (protocol-event に正規
 
 ## 2. コンポーネント一覧
 
-state の読み方の凡例: **全購読** = `useStoreState(store)`、**props** = 親から
-`state: AppState` を受け取る、**部分props** = 必要な値だけ props、**ctx** = `useApp()` で
-store/ws を取るが state は購読しない。
+state の読み方の凡例: **全購読** = `useStoreState(store)`、**props** = 親から`state: AppState` を受け取る、**部分props** = 必要な値だけ props、**ctx** = `useApp()` でstore/ws を取るが state は購読しない。
 
 ### 2.1 骨格 / ルーティング
 
@@ -192,10 +173,8 @@ store/ws を取るが state は購読しない。
 `AgentSpawnFold` / `FileToolFold` / `FileReadResultView` / `AttachmentFileView` /
 `UserPromptBubble` / `PeerCcmsgLineView` / `SystemMessageRichView` / `IdlePeerRow` /
 `ApiErrorNotice` / `RawLineRow` / `ForkDivider` / `HiddenThinkingSegment` /
-`AssistantMarkdownText` …) と、
-**hook / context** (`useFoldOpen` / `useCategoryOpen` / `useCcmsgBody` /
-`TimelineAutoOpenContext` / `CcmsgRenderCtx`)、
-**モジュールスコープの状態** (`CCMSG_BODY_CACHE`、`pendingViewportTranslations`) に分かれる。
+`AssistantMarkdownText` …) と、**hook / context** (`useFoldOpen` / `useCategoryOpen` / `useCcmsgBody` /
+`TimelineAutoOpenContext` / `CcmsgRenderCtx`)、**モジュールスコープの状態** (`CCMSG_BODY_CACHE`、`pendingViewportTranslations`) に分かれる。
 
 `Timeline()` 本体が持つ hook: `useState` 43 / `useMemo` 45 / `useCallback` 15 /
 `useEffect` 41 / `useRef` 22 (ファイル全体の値、大半が `Timeline()` 内)。
@@ -221,8 +200,7 @@ store/ws を取るが state は購読しない。
 
 ### 3.2 store の外に置かれた小さな状態ストア
 
-`AppState` に入らず、モジュールスコープで状態を持つもの。**それぞれ独自の購読機構か、
-無購読 (呼び出し時読み取り) を持つ**。
+`AppState` に入らず、モジュールスコープで状態を持つもの。**それぞれ独自の購読機構か、無購読 (呼び出し時読み取り) を持つ**。
 
 | ファイル | 行 | 保持するもの | 永続化 | 購読機構 |
 |---|---|---|---|---|
@@ -239,8 +217,7 @@ store/ws を取るが state は購読しない。
 
 ### 3.3 純関数の派生層 (`*-view.ts` / `*-model.ts` / 判定モジュール)
 
-JSX を含まず bun test から直接叩ける規約で切り出されたもの。**この層は規約が
-よく守られている**。
+JSX を含まず bun test から直接叩ける規約で切り出されたもの。**この層は規約がよく守られている**。
 
 | ファイル | 行 | 責務 |
 |---|---|---|
@@ -346,8 +323,7 @@ JSX を含まず bun test から直接叩ける規約で切り出されたもの
 | 38 | `connStatus` | `ConnStatus` | 接続 / 切断 | App, Timeline |
 | 39 | `sidebarOpen` | boolean | ユーザ操作 (sessionStorage) | App, Sidebar |
 
-**内訳**: Navigation 由来 9 (#19, 24-31)、hello の能力フラグ 7 (#10-12, 14, 15, 17, 18)、
-レイアウト 1 (#39)、表示設定 4 (#20-23)、残り 18 がドメイン状態。
+**内訳**: Navigation 由来 9 (#19, 24-31)、hello の能力フラグ 7 (#10-12, 14, 15, 17, 18)、レイアウト 1 (#39)、表示設定 4 (#20-23)、残り 18 がドメイン状態。
 
 ### 4.2 「全 component が再レンダーされる」の根拠
 
@@ -358,18 +334,14 @@ useStore.ts:31-34   useStoreState(store) { const [state, setState] = useState(..
                       useEffect(() => store.subscribe(() => setState(store.getState())), [store]); }
 ```
 
-listener に selector も比較も無いので、**`dispatch` 1 回で全購読者の `setState` が
-必ず呼ばれる**。`reducer` は 55 case すべてが新しいオブジェクトを返す
-(`{...state, ...}` かヘルパ関数) ため、参照比較で弾かれることもない。
+listener に selector も比較も無いので、**`dispatch` 1 回で全購読者の `setState` が必ず呼ばれる**。`reducer` は 55 case すべてが新しいオブジェクトを返す(`{...state, ...}` かヘルパ関数) ため、参照比較で弾かれることもない。
 
 購読者は 7 個で、そのうち `App` がツリーの根。App は `Sidebar` / `SessionView` /
-`RoomView` / `UsageView` に `state` を丸ごと props で渡すので、それらとその子孫も
-props 変化で再レンダーされる。
+`RoomView` / `UsageView` に `state` を丸ごと props で渡すので、それらとその子孫もprops 変化で再レンダーされる。
 
 抑止機構は 2 つだけ:
 
-- `App.tsx:122` `memo(SessionView, skipInactiveSessionViewRender)` — 非表示の
-  SessionView だけを止める
+- `App.tsx:122` `memo(SessionView, skipInactiveSessionViewRender)` — 非表示のSessionView だけを止める
 - `Timeline.tsx:2093/2223` `memo(LineView)` / `memo(FoldGroup)` — Timeline 内の行
 
 ### 4.3 派生値を component 内で毎回組み立てている箇所
@@ -381,14 +353,12 @@ props 変化で再レンダーされる。
 | `FileViewer.tsx` | ハイライト結果、検索マッチ、markdown AST | `useMemo` 7 個 |
 | `SessionSearchPanel.tsx` | 検索結果の整形 | `useMemo` 3 個 |
 
-`useMemo` の合計は 73 個。設計文書 §4 は「`memo`/`useMemo` は signal 化で不要に
-なるものとして扱う」としており、この 73 個が移行時の見積もり対象になる。
+`useMemo` の合計は 73 個。設計文書 §4 は「`memo`/`useMemo` は signal 化で不要になるものとして扱う」としており、この 73 個が移行時の見積もり対象になる。
 
 ### 4.4 再接続時のふるまい
 
 `ws.ts` の `onOpen` が rooms / peers / agents / session_errors / llm_requests /
-status を一斉に取得して dispatch する。上記の通り 1 dispatch = 全体再レンダーなので、
-**再接続 1 回でツリー全体の再構築が 6 回連続で走る**。
+status を一斉に取得して dispatch する。上記の通り 1 dispatch = 全体再レンダーなので、**再接続 1 回でツリー全体の再構築が 6 回連続で走る**。
 
 ---
 
@@ -408,12 +378,9 @@ status を一斉に取得して dispatch する。上記の通り 1 dispatch = �
 ### 5.2 store の外にある並行状態 (§3.2 の 10 箇所)
 
 `AppState` に入らない状態が 10 箇所あり、**購読機構が 3 通りに分かれている**
-(自前 listener / コールバック注入 / 無購読)。`fold-open-store.ts` と
-`raw-view-mode.ts` はそれぞれ独自の listener セットを持ち、`useStore.ts` の
-`createStore` と合わせて **同じ形のミニ store が 3 実装**存在する。
+(自前 listener / コールバック注入 / 無購読)。`fold-open-store.ts` と`raw-view-mode.ts` はそれぞれ独自の listener セットを持ち、`useStore.ts` の`createStore` と合わせて **同じ形のミニ store が 3 実装**存在する。
 
-`main.tsx` の 2 つの `store.subscribe` も同種で、「store と別モジュールの両方を
-知る場所が他に無い」ためエントリファイルに置かれている (コメントに明記)。
+`main.tsx` の 2 つの `store.subscribe` も同種で、「store と別モジュールの両方を知る場所が他に無い」ためエントリファイルに置かれている (コメントに明記)。
 
 ### 5.3 幅・レイアウトを JS が知っている箇所
 
@@ -425,8 +392,7 @@ status を一斉に取得して dispatch する。上記の通り 1 dispatch = �
 | `Timeline.tsx:4417` | `matchMedia("(prefers-reduced-motion: reduce)")` | アクセシビリティ設定の読み取り。幅ではない |
 
 720px の breakpoint を JS が判定している箇所は**残っていない** (`pane-axis.ts` /
-`layout-mode.ts` の `getComputedStyle` 方式に移行済み)。`utils.ts:422` と
-`FilesPanes.tsx:6` / `TimelinePanes.tsx:5,66` の 720 はコメント内の言及のみ。
+`layout-mode.ts` の `getComputedStyle` 方式に移行済み)。`utils.ts:422` と`FilesPanes.tsx:6` / `TimelinePanes.tsx:5,66` の 720 はコメント内の言及のみ。
 `UsageChart.tsx:14` の `WIDTH = 720` は SVG viewBox 幅で breakpoint とは無関係。
 
 ### 5.4 参照 0 の実行時 export (37 個)
@@ -447,29 +413,16 @@ status を一斉に取得して dispatch する。上記の通り 1 dispatch = �
 | `files-view-store.ts` | `FILES_VIEW_PREFIX`, `FILES_VIEW_STALE_DAYS` |
 | その他 1 個ずつ | `in-view-search.unitMatches`, `sidebar-panes.DRAWER_DEFAULT_RATIO`, `issue-ref.roomRefUrl`, `storage.listStorageKeys`, `useNow.NOW_REFRESH_MS`, `llm-status-view.compareServices`, `utils.SID_SHORT_LEN`, `session-view-cache.SESSION_VIEW_CACHE_LIMIT`, `TimelineItem.issueRepoForRoom`, `OneOnOneComposer.keyFor`, `agent-tree-view.isErrorState`, `CatalogMdColors.MARKDOWN_ALL_SAMPLE`, `ServiceStatus.SERVICE_STATUS_ANCHOR` |
 
-> 検出方法: `grep -alrw <name> --include='*.ts*' src test` から定義ファイルを除いて
-> ヒット 0。文字列経由・動的アクセスは検出できないので、**削除前に個別確認が要る**
+> 検出方法: `grep -alrw <name> --include='*.ts*' src test` から定義ファイルを除いてヒット 0。文字列経由・動的アクセスは検出できないので、**削除前に個別確認が要る**
 > (特に `SERVICE_STATUS_ANCHOR` のようなアンカー名は CSS / URL 側から使われうる)。
 
 ### 5.5 テストが 1 度も import しないモジュール (37 個、うち component 29 個)
 
-`Timeline.tsx` (4,918) と `FileTree.tsx` (1,093) と `FileViewer.tsx` (1,426) には
-それぞれ対応するテストファイルがあるが、**以下は test ディレクトリのどこからも
-import されない**:
+`Timeline.tsx` (4,918) と `FileTree.tsx` (1,093) と `FileViewer.tsx` (1,426) にはそれぞれ対応するテストファイルがあるが、**以下は test ディレクトリのどこからもimport されない**:
 
-- 画面級: `SessionView.tsx` (407), `Sidebar.tsx` (326), `UsageView.tsx` (515),
-  `RoomView.tsx` (294), `CatalogView.tsx` (850), `AgentTreePanel.tsx` (566),
-  `SessionSearchPanel.tsx` (415), `ServiceStatus.tsx` (259), `UsageStats.tsx` (326),
-  `CatalogMdColors.tsx` (404)
-- 部品級: `SearchBar.tsx`, `TimelineItem.tsx`, `RoomList.tsx`, `RoomTitle.tsx`,
-  `MemberChip.tsx`, `PaneSplitter.tsx`, `FilesPanes.tsx`, `TimelinePanes.tsx`,
-  `CacheRing.tsx`, `ComposerAttachments.tsx`, `RoomComposerFab.tsx`,
-  `TerminalPanel.tsx`, `ConnectionStatus.tsx`, `ErrorView.tsx`,
-  `InlineFileViewer.tsx`, `ImageLightbox.tsx`, `UsageChart.tsx`,
-  `FileSearchPanel.tsx`, `avatar.tsx`
-- 配線: `context.ts`, `useCacheRing.ts`, `useNow.ts`, `useJsonStringCopy.tsx`,
-  `useDismissOnOutsidePointer.ts`, `layout-mode.ts`, `filepath-linker.tsx`,
-  `composer-upload.ts`
+- 画面級: `SessionView.tsx` (407), `Sidebar.tsx` (326), `UsageView.tsx` (515), `RoomView.tsx` (294), `CatalogView.tsx` (850), `AgentTreePanel.tsx` (566), `SessionSearchPanel.tsx` (415), `ServiceStatus.tsx` (259), `UsageStats.tsx` (326), `CatalogMdColors.tsx` (404)
+- 部品級: `SearchBar.tsx`, `TimelineItem.tsx`, `RoomList.tsx`, `RoomTitle.tsx`, `MemberChip.tsx`, `PaneSplitter.tsx`, `FilesPanes.tsx`, `TimelinePanes.tsx`, `CacheRing.tsx`, `ComposerAttachments.tsx`, `RoomComposerFab.tsx`, `TerminalPanel.tsx`, `ConnectionStatus.tsx`, `ErrorView.tsx`, `InlineFileViewer.tsx`, `ImageLightbox.tsx`, `UsageChart.tsx`, `FileSearchPanel.tsx`, `avatar.tsx`
+- 配線: `context.ts`, `useCacheRing.ts`, `useNow.ts`, `useJsonStringCopy.tsx`, `useDismissOnOutsidePointer.ts`, `layout-mode.ts`, `filepath-linker.tsx`, `composer-upload.ts`
 
 TSX に対するテストが薄いのは `docs/findings/2026-09-04-webui-render-test-feasibility.md`
 の検討対象と重なる。純関数モジュール (§3.3) 側は `test/` 72 ファイルでよく覆われている。
@@ -488,12 +441,9 @@ TSX に対するテストが薄いのは `docs/findings/2026-09-04-webui-render-
 ### 5.7 z-index とスタイルの散らばり
 
 - `app.css` の z-index トークンは **`--z-composer: 40` の 1 個だけ** (150 行目)。
-  リテラルは 9 箇所 (`z-index: 1` ×6、`2`、`5`、`100`)。設計文書 §5 の
-  「用途別トークンに集約し、リテラルを散らさない (現状 6 段)」は未達で、
-  段数はむしろ増えている。
+  リテラルは 9 箇所 (`z-index: 1` ×6、`2`、`5`、`100`)。設計文書 §5 の「用途別トークンに集約し、リテラルを散らさない (現状 6 段)」は未達で、段数はむしろ増えている。
 - `!important` は **0 件** (この疑いは実測で否定された)。
-- `@media` は 38 箇所。うち `max-width: 720px` が 4 箇所、残りは
-  `prefers-color-scheme` (8) / `pointer: coarse` (7) / `hover` (5) /
+- `@media` は 38 箇所。うち `max-width: 720px` が 4 箇所、残りは`prefers-color-scheme` (8) / `pointer: coarse` (7) / `hover` (5) /
   `prefers-reduced-motion` (6) と、**幅より入力・嗜好ベースが多い**。
 - 単一ファイル 9,381 行で、component 単位の分割は無い。
 
@@ -505,33 +455,19 @@ TSX に対するテストが薄いのは `docs/findings/2026-09-04-webui-render-
 | `components/FileTree.tsx:810` | `` `${sid}\0${rootPath}\0${selectedPath}` `` |
 | `components/FileSearchPanel.tsx:131` | `` folders.map(f => `${f.path}\0${f.name}`).join("\n") `` |
 
-`timeline-position.ts:11` のコメントが「`\0` 区切りは uuid / sid に現れない」と
-意図を説明しており、**バグではなく設計判断**。ただし副作用として `grep` /
-`file(1)` がこれらをバイナリと判定し、`grep -a` を付けないと**マッチが黙って
-0 件になる**。棚卸し・一括置換・lint の類で見落としを生む (本調査でも
-最初のスキャンでこの 3 ファイルだけ欠落した)。
+`timeline-position.ts:11` のコメントが「`\0` 区切りは uuid / sid に現れない」と意図を説明しており、**バグではなく設計判断**。ただし副作用として `grep` /
+`file(1)` がこれらをバイナリと判定し、`grep -a` を付けないと**マッチが黙って0 件になる**。棚卸し・一括置換・lint の類で見落としを生む (本調査でも最初のスキャンでこの 3 ファイルだけ欠落した)。
 
 ### 5.9 その他の観察
 
-- **モジュールスコープの無制限キャッシュ**: `setBounded` (上限付き) が使われて
-  いるのは `translate.ts` (3 箇所)、`viewer-scroll-store.ts`、`Timeline.tsx` の
-  `CCMSG_BODY_CACHE` の計 5 箇所。一方 `navigation.ts:14` の `timelinePositions`
-  と `filepath-existence-cache.ts:31-32` は上限なしの `Map`。前者は sid あたり
-  1 エントリ、後者は peer 消失時に sid 単位で破棄されるので、**現状は実害が
-  無いと見てよい** (推測ではなくコードの破棄経路を確認した)。
+- **モジュールスコープの無制限キャッシュ**: `setBounded` (上限付き) が使われているのは `translate.ts` (3 箇所)、`viewer-scroll-store.ts`、`Timeline.tsx` の`CCMSG_BODY_CACHE` の計 5 箇所。一方 `navigation.ts:14` の `timelinePositions`
+  と `filepath-existence-cache.ts:31-32` は上限なしの `Map`。前者は sid あたり1 エントリ、後者は peer 消失時に sid 単位で破棄されるので、**現状は実害が無いと見てよい** (推測ではなくコードの破棄経路を確認した)。
 - **`ImageLightbox.tsx` はモジュールスコープの state で開閉を持つ**
-  (`ImageLightboxHost` を App が 1 個置き、任意の場所から開く)。store を通らない
-  グローバル UI 状態の 11 個目。
+  (`ImageLightboxHost` を App が 1 個置き、任意の場所から開く)。store を通らないグローバル UI 状態の 11 個目。
 - **`storage.ts` に読み書き API が 3 系統ある** (`readStorage`/`writeStorage` =
-  local、`readSessionStorage`/`writeSessionStorage` = session、
-  `readLayoutStorage`/`writeLayoutStorage` = 両方に書いて session→local の順で読む)。
-  設計文書 §6 の 3 分類に対応しているが、**どのキーがどの分類かを型で強制する
-  仕組みは無く**、18 個の `ccmsg.*` キーが呼び出し側の規律だけで振り分けられている。
-- **`agent-communication-view.ts` と `inline-file-model.ts` と `locator.ts` と
-  `navigation.ts` と `timeline-auto-open.ts` と `rendered-text-search.ts` と
-  `timeline-summary.ts` にはファイル冒頭の責務コメントが無い** (他の 110 ファイルには
-  ある)。`locator.ts` / `navigation.ts` は URL 文法の中核なので、規約からの
-  抜けとして目立つ。
+  local、`readSessionStorage`/`writeSessionStorage` = session、`readLayoutStorage`/`writeLayoutStorage` = 両方に書いて session→local の順で読む)。
+  設計文書 §6 の 3 分類に対応しているが、**どのキーがどの分類かを型で強制する仕組みは無く**、18 個の `ccmsg.*` キーが呼び出し側の規律だけで振り分けられている。
+- **`agent-communication-view.ts` と `inline-file-model.ts` と `locator.ts` と`navigation.ts` と `timeline-auto-open.ts` と `rendered-text-search.ts` と`timeline-summary.ts` にはファイル冒頭の責務コメントが無い** (他の 110 ファイルにはある)。`locator.ts` / `navigation.ts` は URL 文法の中核なので、規約からの抜けとして目立つ。
 
 ---
 

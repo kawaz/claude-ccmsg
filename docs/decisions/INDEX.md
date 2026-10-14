@@ -2,8 +2,7 @@
 
 このプロジェクトの設計判断記録一覧。`DR-NNNN-<slug>.md` 形式。
 
-区分は **現行系 (v1 の daemon / webui) が今も従っているか** で分ける。「v2 での扱い」列は
-[DR-0032](./DR-0032-repo-split-protocol-first.md) §3 の振り分けで、値は次の 5 つ:
+区分は **現行系 (v1 の daemon / webui) が今も従っているか** で分ける。「v2 での扱い」列は[DR-0032](./DR-0032-repo-split-protocol-first.md) §3 の振り分けで、値は次の 5 つ:
 
 | 値 | 意味 |
 |---|---|

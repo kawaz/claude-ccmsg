@@ -74,22 +74,12 @@ repo/ws の導出も同ファイルに同乗させ、hook 内で `bump-semver vc
 
 ### 7. 追補: 申告が無い hello は daemon 側で `projects/<project>/<sid>.jsonl` を解決して採用する
 
-`validateTranscriptPath` が値を返せない hello (申告なし / 形式違反) では、daemon が
-`resolveVirtualTranscript(sid)` (= 検出済み config dir 配下の `projects/<project>/<sid>.jsonl`、
-DR-0021 の historical 解決と同一関数) を引き、見つかればその path を meta に採用する
-(`adoptTranscriptPath`)。見つからなければ従来どおり未採用 (fail-open、§2 と同じ)。
+`validateTranscriptPath` が値を返せない hello (申告なし / 形式違反) では、daemon が`resolveVirtualTranscript(sid)` (= 検出済み config dir 配下の `projects/<project>/<sid>.jsonl`、DR-0021 の historical 解決と同一関数) を引き、見つかればその path を meta に採用する(`adoptTranscriptPath`)。見つからなければ従来どおり未採用 (fail-open、§2 と同じ)。
 
-- 動機: fork / resume 起動では SessionStart hook も初回プロンプトの UserPromptSubmit hook も
-  **fork 元の sid** で発火するため、新 sid の state ファイルが誰も書かない。§6 の申告経路が
-  構造的に届かず、webui では「SESSIONS には Busy で出るが Timeline は永久に disabled」になっていた
-- 信頼境界は広がらない: client 由来の入力は sid だけ、その sid は完全 UUID 必須、採用され得る
-  file は basename が `<sid>.jsonl` のものだけ (= §2 が申告値に課す形と同一)、探索範囲は
-  `projects/` 配下の実ディレクトリのみ (symlink 除外)。申告経路より **狭い**
-- 採用層を hello にした理由: transcript_path は Timeline (`transcript_read` / live tail) だけでなく
-  `session_status_subscribe` の可否 (DR-0020 §3.1) と webui のタブ活性判定の源でもある。
-  `resolveTranscript` の allowVirtual 側で救うと read だけが通り、status も tail も UI 活性も
-  従来のまま = 症状の一部しか消えない。「接続中セッションを historical 解決で答えない」という
-  resolveTranscript の不変条件 (と、それを守るテスト) もそのまま維持できる
+- 動機: fork / resume 起動では SessionStart hook も初回プロンプトの UserPromptSubmit hook も**fork 元の sid** で発火するため、新 sid の state ファイルが誰も書かない。§6 の申告経路が構造的に届かず、webui では「SESSIONS には Busy で出るが Timeline は永久に disabled」になっていた
+- 信頼境界は広がらない: client 由来の入力は sid だけ、その sid は完全 UUID 必須、採用され得るfile は basename が `<sid>.jsonl` のものだけ (= §2 が申告値に課す形と同一)、探索範囲は`projects/` 配下の実ディレクトリのみ (symlink 除外)。申告経路より **狭い**
+- 採用層を hello にした理由: transcript_path は Timeline (`transcript_read` / live tail) だけでなく`session_status_subscribe` の可否 (DR-0020 §3.1) と webui のタブ活性判定の源でもある。
+  `resolveTranscript` の allowVirtual 側で救うと read だけが通り、status も tail も UI 活性も従来のまま = 症状の一部しか消えない。「接続中セッションを historical 解決で答えない」というresolveTranscript の不変条件 (と、それを守るテスト) もそのまま維持できる
 
 ## Alternatives considered
 

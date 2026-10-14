@@ -21,23 +21,19 @@ origin: 自リポ TODO
 
 ## 概要
 
-DR-0009 で定義された `transcript_read` は `before` (tail から遡る) のみを持ち、
-`after` (= 「この時点より新しい行だけ」を指す since 相当) パラメータを持たない。
+DR-0009 で定義された `transcript_read` は `before` (tail から遡る) のみを持ち、`after` (= 「この時点より新しい行だけ」を指す since 相当) パラメータを持たない。
 これを追加し、既存 lines との append merge に切り替えることで差分取得を可能にしたい。
 
 ## 背景
 
 TLR-Q1=b (Timeline tab 訪問時の auto-refresh) を実装する過程で判明。
-`after` が無いため、v0.30.0 の実装は「毎回全 tail を `mode:replace` で
-再取得する」経路を採用した。
+`after` が無いため、v0.30.0 の実装は「毎回全 tail を `mode:replace` で再取得する」経路を採用した。
 
 - 個人スケールでは実害なし (v0.30.0 で動作確認済み)
-- ただし transcript が大きいセッションや頻繁な revisit では、本来不要な
-  全量再送により帯域負荷がかかる
+- ただし transcript が大きいセッションや頻繁な revisit では、本来不要な全量再送により帯域負荷がかかる
 
 関連 issue: [2026-07-14-session-tl-refresh-on-revisit](../issue/archive/2026-07-14-session-tl-refresh-on-revisit.md) (resolved)
-— この issue で TLR-Q1=b の実装判断そのものは決着済み。本 issue は
-そこで先送りにした「根本改善 (プロトコル拡張)」側の受け皿。
+— この issue で TLR-Q1=b の実装判断そのものは決着済み。本 issue はそこで先送りにした「根本改善 (プロトコル拡張)」側の受け皿。
 
 ## 受け入れ条件
 

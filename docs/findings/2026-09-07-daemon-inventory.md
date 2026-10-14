@@ -1,72 +1,49 @@
 # daemon モジュール棚卸し (作り直し議論の一次資料)
 
 - 日付: 2026-09-07
-- 対象: `packages/daemon/src/` 全 52 ファイル (+ 境界確認のため `packages/cli/src/` 3 ファイル、
-  `packages/protocol/src/paths.ts`)
-- 目的: 「daemon / protocol (契約) / webui」の 3 リポ分離と規約ファーストでの作り直しを
-  議論するための現状把握。**設計案は書かない**。事実の棚卸しと、疑わしいものの根拠付き列挙まで。
-- 姉妹資料: `docs/findings/2026-09-07-webui-component-inventory.md` (webui 側)、
-  `docs/findings/2026-09-07-protocol-inventory.md` (protocol package、別 worker が並行執筆)。
+- 対象: `packages/daemon/src/` 全 52 ファイル (+ 境界確認のため `packages/cli/src/` 3 ファイル、`packages/protocol/src/paths.ts`)
+- 目的: 「daemon / protocol (契約) / webui」の 3 リポ分離と規約ファーストでの作り直しを議論するための現状把握。**設計案は書かない**。事実の棚卸しと、疑わしいものの根拠付き列挙まで。
+- 姉妹資料: `docs/findings/2026-09-07-webui-component-inventory.md` (webui 側)、`docs/findings/2026-09-07-protocol-inventory.md` (protocol package、別 worker が並行執筆)。
   protocol の型定義そのものの評価はそちらが正、本書は **daemon がそれをどう使うか** に留める。
 - 数値は 2026-09-07 時点の `wc -l` / `grep -ac` 実測 (`-a` はソース中の NUL 対策)。
 
 ## 判明した事実
 
-1. **daemon src は 19,914 行 / 52 ファイル**。うち `server.ts` 4,008 行 (20%)、
-   `session-status.ts` 2,040 行 (10%)、`fs-access.ts` 1,339 行、`session-dump.ts` 1,214 行。
+1. **daemon src は 19,914 行 / 52 ファイル**。うち `server.ts` 4,008 行 (20%)、`session-status.ts` 2,040 行 (10%)、`fs-access.ts` 1,339 行、`session-dump.ts` 1,214 行。
    上位 4 ファイルで全体の 43%。テストは 72 ファイル 31,252 行 (src の 1.57 倍)。
 2. **`server.ts` は 4 つの責務が 1 ファイルに同居している**: (a) transport 抽象 (`Conn`) と
-   UDS listener の実装、(b) wire フレームの整形 (`orderedMsgFrame` / `writeDelivered`)、
-   (c) 55 個の op ハンドラを持つ `dispatch` の巨大 switch (1,809-3,626 行 = ファイルの 45%)、
-   (d) プロセスのライフサイクル (`startDaemon` / `gracefulShutdown`)。
+   UDS listener の実装、(b) wire フレームの整形 (`orderedMsgFrame` / `writeDelivered`)、(c) 55 個の op ハンドラを持つ `dispatch` の巨大 switch (1,809-3,626 行 = ファイルの 45%)、(d) プロセスのライフサイクル (`startDaemon` / `gracefulShutdown`)。
    `Daemon` interface 1 個に **22 個のフィールド** がぶら下がる。
 3. **op ハンドラのサイズ分布は極端に偏る**。55 op のうち上位 3 個
-   (`create_room` 200 行 / `hello` 143 行 / `subscribe` 89 行) で switch 全体の 24%、
-   下位 30 op は 20 行以下。ハンドラの中身が「引数検証 + 他モジュール呼び出し + 返信」の
-   3 行に収まるものと、ドメインロジックが丸ごと埋まっているものが同じ場所に並ぶ。
+   (`create_room` 200 行 / `hello` 143 行 / `subscribe` 89 行) で switch 全体の 24%、下位 30 op は 20 行以下。ハンドラの中身が「引数検証 + 他モジュール呼び出し + 返信」の3 行に収まるものと、ドメインロジックが丸ごと埋まっているものが同じ場所に並ぶ。
 4. **role 制限 (`user` 限定) が 35 個の同一コピーとして各 case 内に散っている**。
    `if (conn.identity?.role !== "user") { sendErr(conn, ErrorCode.bad_request, "op '<name>' requires user role"); return; }`
    という完全に同型の 4 行。一方で **hello 必須の判定は `IDENTITY_OPS` という Set のデータ**
-   として dispatch の外に括り出されている (server.ts:1677-1720、43 op)。同じ「op の属性」が
-   データと分岐の 2 通りで表現されている。
+   として dispatch の外に括り出されている (server.ts:1677-1720、43 op)。同じ「op の属性」がデータと分岐の 2 通りで表現されている。
 5. **daemon がメモリに持つ状態は 22 種**、正本の所在は 4 通りに分かれる
    (メモリのみ / ファイルがマスタ / 外部プロセスがマスタ / メモリと外部の二重)。
    このうち **ファイルに書き戻されるのは `rooms` と `lastLive` の 2 つだけ**。
    残りは daemon 再起動で全消滅する設計 (sandbox grant は「再起動が失効手段」と明記)。
 6. **transcript の tail (`transcript.ts` の Watch) が 4 系統の消費者に fan-out する**:
-   wire の `transcript_subscribe` 購読者 (`subscribers`) と、内部の
-   `lineListeners` に登録する `session-status` / `session-errors` / `session-user-input`。
-   1 セッション 1 Watch を共有する構造で、Watch 側は fs.watch + 2 種のポーリング
-   (fallback 1s / backup 2s) を持つ。
+   wire の `transcript_subscribe` 購読者 (`subscribers`) と、内部の`lineListeners` に登録する `session-status` / `session-errors` / `session-user-input`。
+   1 セッション 1 Watch を共有する構造で、Watch 側は fs.watch + 2 種のポーリング(fallback 1s / backup 2s) を持つ。
 7. **タイマー / ポーリングは 8 箇所**。間隔に実測根拠が書いてあるのは transcript tail の
-   backup poll 2s (「macOS/Bun で FSEvents が数十秒遅延するのを実測」) と
-   session-kill の 1s (「claude TUI の 1 回目 SIGTERM は確認ガードを立てるだけ」) の 2 つ。
+   backup poll 2s (「macOS/Bun で FSEvents が数十秒遅延するのを実測」) とsession-kill の 1s (「claude TUI の 1 回目 SIGTERM は確認ガードを立てるだけ」) の 2 つ。
    agents poller の 5s は「real usage never needs sub-5s freshness」という宣言のみ。
 8. **参照 0 の export は 17 個**。うち実際に完全な dead code は 1 個
    (`agents.ts` の `_resetPidHyouiCacheForTests`)、残り 16 個は自ファイル内でのみ使われる
    = `export` が不要なもの (定数 8 個 / 関数 8 個)。
 9. **テストから 1 度も import されない src モジュールが 7 個**:
    `event-loop` / `fs-find` / `fs-serve` / `http` / `launcher-paths` / `run` / `session-errors`。
-   `fs-find`・`fs-serve`・`launcher-paths` は認可境界を実装しており、`session-errors` は
-   全 peer に fan-out する fold を持つ。
-10. **コメント行が 5,206 行 (src の 26%)**。DR 参照 244 箇所 (26 種の DR)、
-    `kawaz r<N> mid=<M>` のような会話由来の出典 22 箇所、`docs/issue/` 参照 4 箇所、
-    `docs/findings/` 参照 4 箇所。設計判断の記録としては密度が高い反面、
-    「なぜこの値か」を知るのに常に外部文書を辿る必要がある。
+   `fs-find`・`fs-serve`・`launcher-paths` は認可境界を実装しており、`session-errors` は全 peer に fan-out する fold を持つ。
+10. **コメント行が 5,206 行 (src の 26%)**。DR 参照 244 箇所 (26 種の DR)、`kawaz r<N> mid=<M>` のような会話由来の出典 22 箇所、`docs/issue/` 参照 4 箇所、`docs/findings/` 参照 4 箇所。設計判断の記録としては密度が高い反面、「なぜこの値か」を知るのに常に外部文書を辿る必要がある。
 
 ## 実用的な示唆
 
-- 分離の第一の切れ目は **op ハンドラの粒度差** (事実 3)。「引数検証 + 委譲」だけの op が
-  30 個ある一方、`create_room` / `hello` / `subscribe` はハンドラ自体がドメインロジックを
-  持つ。前者は規約 (protocol) から機械的に導けるが、後者は導けない。
-- **role と hello 必須が別表現になっている** (事実 4) のは、op の属性表が protocol 側に
-  無いことの現れ。webui 側の「hello の能力フラグ 7 個」(webui 棚卸し §判明した事実 3) も
-  同じ根から出ている — op の可用性がハンドラ内の分岐 6 種と hello のフラグ 6 個に
-  二重管理されている。
-- **持ち直すべき状態と捨ててよい状態の境界は明確** (事実 5)。永続化されるのは rooms と
-  last-live の 2 つだけで、残り 20 種は「再起動で消えてよい派生」と設計文書が明記している。
-- **transcript tail の fan-out (事実 6) は既に共有化されている**が、その上に載る 3 つの
-  fold (status / errors / user-input) は互いに独立した Map と `inflight` Set を持つ。
+- 分離の第一の切れ目は **op ハンドラの粒度差** (事実 3)。「引数検証 + 委譲」だけの op が30 個ある一方、`create_room` / `hello` / `subscribe` はハンドラ自体がドメインロジックを持つ。前者は規約 (protocol) から機械的に導けるが、後者は導けない。
+- **role と hello 必須が別表現になっている** (事実 4) のは、op の属性表が protocol 側に無いことの現れ。webui 側の「hello の能力フラグ 7 個」(webui 棚卸し §判明した事実 3) も同じ根から出ている — op の可用性がハンドラ内の分岐 6 種と hello のフラグ 6 個に二重管理されている。
+- **持ち直すべき状態と捨ててよい状態の境界は明確** (事実 5)。永続化されるのは rooms とlast-live の 2 つだけで、残り 20 種は「再起動で消えてよい派生」と設計文書が明記している。
+- **transcript tail の fan-out (事実 6) は既に共有化されている**が、その上に載る 3 つのfold (status / errors / user-input) は互いに独立した Map と `inflight` Set を持つ。
   同じ 1 行を 3 回 fold している。
 - 未テストの 7 モジュール (事実 9) は、作り直しで「移植前に仕様を確定させる必要がある」
   一次候補。特に認可境界を持つ 3 つ。
@@ -94,10 +71,7 @@ index.ts (7 行)  ─ `--foreground` を見て runDaemon() を呼ぶだけ
       └ server.ts:startDaemon() ─ 実体
 ```
 
-`run.ts` の存在理由はコメントに明記: 「両方の起動経路 (cli の `ccmsg daemon run` と
-daemon の直接エントリ) がここを呼ぶので配線が 1 箇所に収まり、server.ts / http.ts は
-UI 非依存のままでいられる (DR-0004 §4)」。**daemon が webui package に依存する唯一の点**が
-この 1 行 (`run.ts:9`) で、他の 51 ファイルはいずれも webui を知らない。
+`run.ts` の存在理由はコメントに明記: 「両方の起動経路 (cli の `ccmsg daemon run` とdaemon の直接エントリ) がここを呼ぶので配線が 1 箇所に収まり、server.ts / http.ts はUI 非依存のままでいられる (DR-0004 §4)」。**daemon が webui package に依存する唯一の点**がこの 1 行 (`run.ts:9`) で、他の 51 ファイルはいずれも webui を知らない。
 
 ### 起動順序 (`startDaemon`、server.ts:3734-3999)
 
@@ -131,9 +105,7 @@ UI 非依存のままでいられる (DR-0004 §4)」。**daemon が webui packa
 4. 全 room を `closeRoom` (fd を閉じ、debounce 中の fsync を確定)
 5. `releaseDaemonResources` — **順序が規約** (`daemon-shutdown.ts` の docstring):
    HTTP listener 停止 → pid 削除 → lock 解放 → **最後に UDS close**。
-   「クライアントは『UDS に繋がらない』を旧 daemon の退去完了として観測する」ため、
-   後継と競合しうる資源を全部手放した最後に UDS を閉じる。socket pathname の unlink は
-   **しない** (後継の起動時 cleanup の責務、旧側が消すと後継の新 socket を消す race)
+   「クライアントは『UDS に繋がらない』を旧 daemon の退去完了として観測する」ため、後継と競合しうる資源を全部手放した最後に UDS を閉じる。socket pathname の unlink は**しない** (後継の起動時 cleanup の責務、旧側が消すと後継の新 socket を消す race)
 6. `process.exit(0)`
 
 ### 永続化するファイル
@@ -151,9 +123,7 @@ UI 非依存のままでいられる (DR-0004 §4)」。**daemon が webui packa
 | `<data>/dumps/<sid>-<ts>.{txt,jsonl}` | `session_dump_file` op | `writeFileSync` | 人が持ち回る成果物 |
 | `$TMPDIR/claude-ccmsg-<uid>/attachment/<uuid>.<ext>` | 添付アップロード時 | `Bun.write` | cleanup は OS 任せ (DR-0015 §2.1) |
 
-`resolvePaths` は state / config / data の 3 分割 (DR-0002 §1)。分割の意図は
-paths.ts 冒頭に「失ってはいけないのは data/ だけ、手で編集してよいのは config/ だけ、を
-構造で表現する」と明記されている。
+`resolvePaths` は state / config / data の 3 分割 (DR-0002 §1)。分割の意図はpaths.ts 冒頭に「失ってはいけないのは data/ だけ、手で編集してよいのは config/ だけ、を構造で表現する」と明記されている。
 
 ---
 
@@ -181,9 +151,7 @@ paths.ts 冒頭に「失ってはいけないのは data/ だけ、手で編集�
 |---|---|---|---|---|---|
 | `storage.ts` | 502 | room 1 個 = append-only JSONL 1 本。**全 event をメモリ常駐**。room 走査、mid セレクタ、member 集合、未読 seq | `Room` ごとに events 配列 / fd / fsync タイマー | fs (append + 100ms debounce fsync)、破損行の切り詰め | server.ts のみ |
 
-storage.ts のヘッダに設計意図が明記: 「個人スケールなら有界で、read (任意 mid 範囲) と
-subscribe の since-replay (位置差分) が自明かつ正確になる。retention / compaction は
-MVP スコープ外 (DR-0001 open questions) なので無制限成長は現状許容」。
+storage.ts のヘッダに設計意図が明記: 「個人スケールなら有界で、read (任意 mid 範囲) とsubscribe の since-replay (位置差分) が自明かつ正確になる。retention / compaction はMVP スコープ外 (DR-0001 open questions) なので無制限成長は現状許容」。
 
 ### 2.3 セッションレジストリと peers
 
@@ -260,8 +228,7 @@ MVP スコープ外 (DR-0001 open questions) なので無制限成長は現状�
 ### 2.9 `server.ts` 内部の op ハンドラ (55 個)
 
 行数は次の `case` までの距離 (`dispatch` は server.ts:1809-3626)。
-「role」欄: `user` = user role 限定の明示ガードあり、`session` = session role 限定、
-`—` = 制限なし。「hello」欄: `IDENTITY_OPS` に含まれるか。
+「role」欄: `user` = user role 限定の明示ガードあり、`session` = session role 限定、`—` = 制限なし。「hello」欄: `IDENTITY_OPS` に含まれるか。
 
 | op | 行 | 行数 | role | hello | 触る状態 |
 |---|---|---|---|---|---|
@@ -322,16 +289,14 @@ MVP スコープ外 (DR-0001 open questions) なので無制限成長は現状�
 | `read` | 2640 | 11 | — | — | rooms |
 | `session_status_unsubscribe` | 3526 | 10 | user | 要 | sessionStatus |
 
-「一部 user」= role で拒否せず `allowVirtual: role === "user"` のように**挙動を変える** 3 op
-(`fs_list` / `fs_read` / `transcript_read`)。role が可否ではなく可視範囲を決めている。
+「一部 user」= role で拒否せず `allowVirtual: role === "user"` のように**挙動を変える** 3 op (`fs_list` / `fs_read` / `transcript_read`)。role が可否ではなく可視範囲を決めている。
 
 ### 2.10 daemon が push する event (`ev:`) — 12 種
 
 `agents` / `llm_requests` / `llm_status` / `net_online` / `notify` / `peers` /
 `restarting` / `room_cursors` / `session_errors` / `session_status` /
 `subscribe_superseded` / `transcript`。
-このうち `transcript` は transcript.ts が、`session_status` は session-status.ts が
-`conn.write` を直接呼んで書く (server.ts の `send` を通らない)。
+このうち `transcript` は transcript.ts が、`session_status` は session-status.ts が`conn.write` を直接呼んで書く (server.ts の `send` を通らない)。
 
 ---
 
@@ -411,18 +376,14 @@ MVP スコープ外 (DR-0001 open questions) なので無制限成長は現状�
 
 前提にしている相手の仕様:
 
-- `claude agents --json` が **JSON を stdout に出す**、`--all` フラグを受け付ける
-  (session-kill は `--all` 版を使う)
+- `claude agents --json` が **JSON を stdout に出す**、`--all` フラグを受け付ける(session-kill は `--all` 版を使う)
 - **`$HOME/.claude*` のディレクトリが CLAUDE_CONFIG_DIR の候補**である。
-  `~/.claude` が regular file の環境 (kawaz の運用) は `isDirectory()` で自然に除外される、
-  と明記
+  `~/.claude` が regular file の環境 (kawaz の運用) は `isDirectory()` で自然に除外される、と明記
 - CLI が 5s 以内に応答する (超えたら SIGKILL)。1 つの config dir の hang が他を止めない
-- 出力行に `hyoui_session_id` を紐付けるため、**pid の `ps eww -o command=` の中に
-  hyoui の env pair が現れる**
+- 出力行に `hyoui_session_id` を紐付けるため、**pid の `ps eww -o command=` の中にhyoui の env pair が現れる**
 
 `sessions/<sid>.json` (hook が書くセッション状態ファイル) は **daemon は読まない**。
-読むのは cli 側 (`packages/cli/src/index.ts:142`、`subscribe-owner.ts:41`) だけで、
-daemon はその内容を hello のフィールドとして受け取る。
+読むのは cli 側 (`packages/cli/src/index.ts:142`、`subscribe-owner.ts:41`) だけで、daemon はその内容を hello のフィールドとして受け取る。
 
 ### 4.2 LLM gateway
 
@@ -432,60 +393,43 @@ daemon はその内容を hello のフィールドとして受け取る。
 - source ごとの bearer token、token file が読めない source はルートごと 404
 - **fire-and-forget**: 構造的に読めれば 204、個々の不正 item は log して捨てる。
   「4xx で retry する producer に daemon を叩かせないため」
-- 受け口が push 型なのは「gateway が stable / unstable の 2 プロセス同時稼働で、
-  1 本の subscription ではどちらか片方しか見えないから」(llm-events.ts ヘッダ)
-- 扱う item は 2 種: LLM request event (→ `llmRequests`) と cache keepalive marker
-  (→ 該当セッションへ `ev:"notify"` で素通し)
+- 受け口が push 型なのは「gateway が stable / unstable の 2 プロセス同時稼働で、1 本の subscription ではどちらか片方しか見えないから」(llm-events.ts ヘッダ)
+- 扱う item は 2 種: LLM request event (→ `llmRequests`) と cache keepalive marker (→ 該当セッションへ `ev:"notify"` で素通し)
 
-**(b) outbound relay** (`llm-gateway.ts` 共通): `llm_usage` / `llm_stats` / `llm_status` の
-3 op が daemon から fetch する。
+**(b) outbound relay** (`llm-gateway.ts` 共通): `llm_usage` / `llm_stats` / `llm_status` の3 op が daemon から fetch する。
 - 前提: **gateway が CORS ヘッダを付けない**ので browser から直接読めない。だから daemon が代理する
 - webui に URL 自体は渡さず「設定済みか」の boolean だけ返す (hello の capability)
 - timeout は 10s / 30s / 10s、probe は 60s / — / 30s
-- `llm_status` だけ双方向: request event が 529 を報告したら daemon 側から status を
-  再取得して user role subscriber に push する
-- **verdict は gateway が持つ** (「ccmsg は語彙を正規化し描けないものを落とすが、
-  severity を再計算しない。二重判定は webui と gateway CLI を食い違わせる」)
+- `llm_status` だけ双方向: request event が 529 を報告したら daemon 側から status を再取得して user role subscriber に push する
+- **verdict は gateway が持つ** (「ccmsg は語彙を正規化し描けないものを落とすが、severity を再計算しない。二重判定は webui と gateway CLI を食い違わせる」)
 
 ### 4.3 hyoui (ターミナル多重化)
 
 - `session_rename` が唯一の利用箇所。`hyoui input` で `/rename <title>` を PTY に打ち込む
 - 前提: **`/rename` スラッシュコマンドがタイトルの唯一の writer** (API 経路が無い)
-- 前提: hyoui は `text:` のバイトを PTY にそのまま流す (エスケープ処理をしない) ので、
-  daemon 側でタイトルを検証・正規化する必要がある
-- 前提: `--namespace` を渡さないと false ENOENT が返る。namespace は `ps eww` で
-  対象プロセスの `HYOUI_NAMESPACE` から取る (推測してはいけない、と明記)
+- 前提: hyoui は `text:` のバイトを PTY にそのまま流す (エスケープ処理をしない) ので、daemon 側でタイトルを検証・正規化する必要がある
+- 前提: `--namespace` を渡さないと false ENOENT が返る。namespace は `ps eww` で対象プロセスの `HYOUI_NAMESPACE` から取る (推測してはいけない、と明記)
 - 前提: hyoui は input holder を直列化する (auto-lock)。5s timeout はこれも含む
-- `terminal_gateway_url` (config) 経由で webui の Terminal タブが
-  `<url>/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe で開く
+- `terminal_gateway_url` (config) 経由で webui の Terminal タブが`<url>/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe で開く
 
 ### 4.4 transcript jsonl の tail
 
 前提にしている相手の仕様 (transcript.ts に実測根拠つきで列挙):
 
-- Claude Code が `<projDir>/<sid>.jsonl` に **追記のみ**する。ただし truncate や
-  unlink+recreate も起こりうるので ino / birthtime / sawMissing の 3 段で同一性を判定
-- **ext4 (GitHub Actions) は解放直後の inode 番号を再利用する**ので ino だけでは足りない
-  (v0.19.0 の run で実際に落ちた)
-- **macOS/Bun の fs.watch は高負荷時に数十秒遅延しうる** (並列 `bun test` で子プロセスが
-  多数走る状況で実測)。イベントを落としはしないが遅れるので、2s の backup poll を
-  fs.watch と**併走**させる。fs.watch が使えない場合は 1s の fallback poll 単独
+- Claude Code が `<projDir>/<sid>.jsonl` に **追記のみ**する。ただし truncate やunlink+recreate も起こりうるので ino / birthtime / sawMissing の 3 段で同一性を判定
+- **ext4 (GitHub Actions) は解放直後の inode 番号を再利用する**ので ino だけでは足りない(v0.19.0 の run で実際に落ちた)
+- **macOS/Bun の fs.watch は高負荷時に数十秒遅延しうる** (並列 `bun test` で子プロセスが多数走る状況で実測)。イベントを落としはしないが遅れるので、2s の backup poll をfs.watch と**併走**させる。fs.watch が使えない場合は 1s の fallback poll 単独
 - subagent / workflow は兄弟ディレクトリ `<projDir>/<sid>/subagents/...` に置かれる (DR-0025)
 - `--fork-session` は祖先の行を uuid / timestamp ごと複製し sessionId だけ書き換える。
-  **コピー行と原本行を区別するフィールドがファイル内に無い**ので、seam は兄弟 transcript
-  との比較でしか見つけられない (fork-origin.ts、この repo の 21 transcript で検証)
+  **コピー行と原本行を区別するフィールドがファイル内に無い**ので、seam は兄弟 transcriptとの比較でしか見つけられない (fork-origin.ts、この repo の 21 transcript で検証)
 
 ### 4.5 tailscale / caddy 前提の bind と Origin 制限 (DR-0004)
 
 - bind: `CCMSG_HTTP_BIND` の `host:port` カンマ区切り。`off` で HTTP を無効化。
   1 つの bind が失敗しても他は継続する
 - source IP: `CCMSG_HTTP_ALLOW` の CIDR allowlist (自前の依存ゼロマッチャ)。
-  **空文字は「全拒否」ではなくデフォルトへのフォールバック** (「明示的な空 allowlist は
-  ロックダウンの手段として提供しない、`CCMSG_HTTP_BIND=off` を使え」)
-- Origin: 4 段階で許可される。(1) リクエスト自身の bind アドレス (常に暗黙許可)、
-  (2) `CCMSG_HTTP_ALLOW_ORIGIN` の env、(3) tailscale serve が proxy している
-  ts.net ホスト名 (起動時に `tailscale serve status --json` を読んで自動追加)、
-  (4) `<config>/allowed-origins.json` (**他の全てが落ちた時だけ**参照される。
+  **空文字は「全拒否」ではなくデフォルトへのフォールバック** (「明示的な空 allowlist はロックダウンの手段として提供しない、`CCMSG_HTTP_BIND=off` を使え」)
+- Origin: 4 段階で許可される。(1) リクエスト自身の bind アドレス (常に暗黙許可)、(2) `CCMSG_HTTP_ALLOW_ORIGIN` の env、(3) tailscale serve が proxy しているts.net ホスト名 (起動時に `tailscale serve status --json` を読んで自動追加)、(4) `<config>/allowed-origins.json` (**他の全てが落ちた時だけ**参照される。
   mtime gate なので `ccmsg origins add` が daemon 再起動なしで次のリクエストから効く)
 - (3) は起動時 async で解決し、**listener の closure が握っている Set に後から add する**。
   listener への再配線は無い (server.ts:3959-3985 のコメントに明記)
@@ -515,16 +459,10 @@ daemon はその内容を hello のフィールドとして受け取る。
 
 4,008 行が 4 責務を持つ (§判明した事実 2)。分割の切れ目が既に見えているのは:
 
-- **UDS listener の実装が `startDaemon` 関数の内部に inline されている** (server.ts:3860-3899、
-  `UdsConnState` interface と `flushPending` を関数スコープに定義)。HTTP/WS 側は
-  `http.ts` に外出しされているのに、UDS だけ startDaemon の中にいる。
+- **UDS listener の実装が `startDaemon` 関数の内部に inline されている** (server.ts:3860-3899、`UdsConnState` interface と `flushPending` を関数スコープに定義)。HTTP/WS 側は`http.ts` に外出しされているのに、UDS だけ startDaemon の中にいる。
   `Conn` 抽象があるので配置の必然性は無く、**片側だけ外に出た非対称**。
-- `flushPending` は UDS 固有の backpressure 処理 (「`socket.write()` は sendto(2) を直接
-  呼び、バッファが満杯なら short count を返す。Bun の `ws.send()` と違って残りを
-  誰も再送しない」)。この知識が startDaemon の中に埋まっている。
-- **`orderedMsgFrame`** (49 行 + 60 行のコメント) は wire フレームのフィールド順を
-  ハーネスの truncation 挙動に合わせて組み立てる関数。protocol の関心なのか
-  daemon の関心なのかが曖昧な位置にある。
+- `flushPending` は UDS 固有の backpressure 処理 (「`socket.write()` は sendto(2) を直接呼び、バッファが満杯なら short count を返す。Bun の `ws.send()` と違って残りを誰も再送しない」)。この知識が startDaemon の中に埋まっている。
+- **`orderedMsgFrame`** (49 行 + 60 行のコメント) は wire フレームのフィールド順をハーネスの truncation 挙動に合わせて組み立てる関数。protocol の関心なのかdaemon の関心なのかが曖昧な位置にある。
 
 ### 5.2 同じ概念の二重実装
 
@@ -570,8 +508,7 @@ daemon はその内容を hello のフィールドとして受け取る。
 | `transcript.ts` | `validateTranscriptPath` |
 | `virtual-sessions.ts` | `scanTranscriptCwd` |
 
-うち **timeout 定数 8 個は「テストが値を参照するため export した」形跡がある**が、
-実際にはどのテストも参照していない (`session-kill.ts` の 4 個、`llm-*` の 5 個)。
+うち **timeout 定数 8 個は「テストが値を参照するため export した」形跡がある**が、実際にはどのテストも参照していない (`session-kill.ts` の 4 個、`llm-*` の 5 個)。
 
 ### 5.4 テストの無い経路 (7 モジュール)
 
@@ -585,9 +522,7 @@ daemon はその内容を hello のフィールドとして受け取る。
 | `event-loop.ts` | 11 | `setImmediate` ラッパ (自明) |
 | `run.ts` | 11 | 合成ルート (自明) |
 
-上 5 つのうち 3 つ (`fs-find` / `fs-serve` / `launcher-paths`) が**認可境界**である点が
-最も疑わしい。いずれも「既存の認可面を再利用しているから新しい境界ではない」と
-ヘッダが主張しているが、その主張自体を検証するテストが無い。
+上 5 つのうち 3 つ (`fs-find` / `fs-serve` / `launcher-paths`) が**認可境界**である点が最も疑わしい。いずれも「既存の認可面を再利用しているから新しい境界ではない」とヘッダが主張しているが、その主張自体を検証するテストが無い。
 
 ### 5.5 タイマー / ポーリング一覧 (根拠の有無)
 
@@ -608,8 +543,7 @@ daemon はその内容を hello のフィールドとして受け取る。
 | timeout 系 | 5s × 4 (agents / ps / hyoui / agents-all)、10s / 30s (gateway) | 子プロセス / fetch の予算 | 弱 (「hung な CLI が全体を止めない」という定性理由のみ) |
 
 **8 種のタイマーのうち実測根拠が書いてあるのは 2 つ**。残りは「妥当そうな値」の域を出ない。
-一方で `sloppy-ai-patterns` 的な「本来 event-driven にできるのに poll している」箇所は
-少なく、network-watch は明示的に「タイマーではなくイベントソースにした」と書いている。
+一方で `sloppy-ai-patterns` 的な「本来 event-driven にできるのに poll している」箇所は少なく、network-watch は明示的に「タイマーではなくイベントソースにした」と書いている。
 
 ### 5.6 場当たり分岐 (「〜のため」の特例)
 
@@ -629,30 +563,22 @@ daemon はその内容を hello のフィールドとして受け取る。
 - 全体で **28 種の `ErrorCode`** を使うが、分布が極端: `invalid_args` 70 回 /
   `bad_request` 41 回 / `not_found` 31 回 / `path_forbidden` 27 回 で **169 / 231 = 73%**。
   残り 24 種は 1〜12 回。
-- **role 拒否 35 個が全て `bad_request`**。「認可の失敗」を表す専用コードが無く、
-  引数不正と同じコードで返る。`hello_required` は専用コードがあるのと非対称。
-- **`ErrorCode` を経由しない生文字列が 2 箇所**: `"internal"` (dispatch の catch-all と
-  session_rename の hyoui 失敗)。`ErrorCode` に `internal` が無いのか使っていないだけかは
-  protocol 側の棚卸しに委ねる。
+- **role 拒否 35 個が全て `bad_request`**。「認可の失敗」を表す専用コードが無く、引数不正と同じコードで返る。`hello_required` は専用コードがあるのと非対称。
+- **`ErrorCode` を経由しない生文字列が 2 箇所**: `"internal"` (dispatch の catch-all とsession_rename の hyoui 失敗)。`ErrorCode` に `internal` が無いのか使っていないだけかはprotocol 側の棚卸しに委ねる。
 - `not_found` (31) と `session_not_found` (12) / `room_not_found` (11) / `msg_not_found` (1)
   が併存する。粒度の使い分け規則は明文化されていない。
 
 ### 5.8 hello の能力フラグ増殖
 
-hello の返信は user role に対して**最大 6 個の capability フラグ**を返す
-(`terminal_gateway_url` / `llm_usage_available` / `llm_stats_available` /
-`llm_status_available` / `sandbox_available` / `fork_available`)。webui 棚卸しは
-7 個と数えている (protocol 側の `protocol` バージョンを含むか等で差が出る)。
+hello の返信は user role に対して**最大 6 個の capability フラグ**を返す(`terminal_gateway_url` / `llm_usage_available` / `llm_stats_available` /
+`llm_status_available` / `sandbox_available` / `fork_available`)。webui 棚卸しは7 個と数えている (protocol 側の `protocol` バージョンを含むか等で差が出る)。
 
 構造上の特徴 (server.ts:1913-1951、**フラグ 6 個に対しコメント 26 行**):
 
 - 6 個すべてが `newId.role === "user" && <config が設定済みか>` の同型
-- 「URL 自体は渡さない、設定済みかの boolean だけ」という判断が 3 回繰り返し説明されている
-  (「fetch するのは daemon 側だから」「usage とは独立に設定できるから」
+- 「URL 自体は渡さない、設定済みかの boolean だけ」という判断が 3 回繰り返し説明されている(「fetch するのは daemon 側だから」「usage とは独立に設定できるから」
   「client が触るのは完成 URL だけだから」)
-- **同じ config の有無が 2 箇所で判定される**: hello の capability と、対応する op
-  ハンドラ内の `<x>_not_configured` エラー。片方だけ変えると
-  「導線は出るが押すと必ずエラー」または逆になる (コメント自身がその失敗を回避理由として挙げている)
+- **同じ config の有無が 2 箇所で判定される**: hello の capability と、対応する opハンドラ内の `<x>_not_configured` エラー。片方だけ変えると「導線は出るが押すと必ずエラー」または逆になる (コメント自身がその失敗を回避理由として挙げている)
 
 ### 5.9 role による分岐の散らばり
 
@@ -668,18 +594,14 @@ daemon 全体で role を比較する箇所は **95 箇所** (`role === "…"` /
 | hello の capability | 6 | §5.8 |
 | ドメインルール | 多数 | 1on1 の `from === ADMIN_ID` 判定、`recipientId` の `ADMIN_ID` 解決、broadcast への post 制限 |
 
-**「user は webui、session は CLI」という運用上の前提が、認可 (35) と配信 (8) と
-表示整形 (2) と capability (6) に散っている**。これらは同じ role フィールドを
-別の目的で読んでおり、role を増やす / 分ける変更が 4 系統に波及する。
+**「user は webui、session は CLI」という運用上の前提が、認可 (35) と配信 (8) と表示整形 (2) と capability (6) に散っている**。これらは同じ role フィールドを別の目的で読んでおり、role を増やす / 分ける変更が 4 系統に波及する。
 
 ### 5.10 その他
 
-- **`config` は起動時 1 回しか読まない** (DR-0018 LN-Q4)。`allowed-origins.json` だけが
-  mtime gate で無再起動反映される。同じ config ディレクトリの中で 2 つの流儀が併存する。
+- **`config` は起動時 1 回しか読まない** (DR-0018 LN-Q4)。`allowed-origins.json` だけがmtime gate で無再起動反映される。同じ config ディレクトリの中で 2 つの流儀が併存する。
 - **`ccmsg-config.d.ts` を daemon が毎起動時に上書きする** (config.ts:547)。
   ユーザの config ディレクトリに daemon が書き込む唯一の生成物。
-- **`writeConfigTypesFile` が `loadConfig` より前に走る**ので、型定義の更新は
-  次回起動時の config 読み込みからしか効かない。
+- **`writeConfigTypesFile` が `loadConfig` より前に走る**ので、型定義の更新は次回起動時の config 読み込みからしか効かない。
 - `session-dump.ts` が `session-status.ts` の内部関数 (`createSessionStatusState` /
   `foldLine` / `snapshot`) を直接 import している。dump は「購読なしで 1 回だけ fold する」
   ため store を経由しない — **fold のライフサイクル管理を持つ経路と持たない経路が並存**。

@@ -21,10 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-findings `2026-08-12-blocking-io-audit-full` の「非同期化する」medium 8 件 / low 5 件のうち、
-high として個別対応済み (fsRead/fsWrite v0.100.3、snapshot 経路は
-`session-status-snapshot-sync-io`、Timeline は `timeline-crossline-incremental`) を除いた
-残りをまとめて解消する。
+findings `2026-08-12-blocking-io-audit-full` の「非同期化する」medium 8 件 / low 5 件のうち、high として個別対応済み (fsRead/fsWrite v0.100.3、snapshot 経路は`session-status-snapshot-sync-io`、Timeline は `timeline-crossline-incremental`) を除いた残りをまとめて解消する。
 
 ## 背景
 
@@ -33,8 +30,7 @@ high として個別対応済み (fsRead/fsWrite v0.100.3、snapshot 経路は
 - fsEdit/fsCreate/fsDelete に残る lstatSync/openSync sniff/unlinkSync
 - resolveContained/resolveRoot/validateRepoRoot の realpathSync 等
 
-まとめて機械的に `fs.promises` 化できるものが多い。優先度と経路は findings
-`2026-08-12-blocking-io-audit-full` の表が正本。
+まとめて機械的に `fs.promises` 化できるものが多い。優先度と経路は findings `2026-08-12-blocking-io-audit-full` の表が正本。
 
 ## 受け入れ条件
 

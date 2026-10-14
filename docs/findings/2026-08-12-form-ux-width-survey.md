@@ -2,8 +2,7 @@
 
 対象: webui のフォーム 3 系統。隔離 daemon + playwright、1280x900 / 390x844 実測 (2026-08-12, v0.99.0)。
 
-> この調査時点の実装を測った記録。ここでの提案が採られた後の URL・パネル配置の
-> 正本は [webui の URL 文法](../design/webui-url-grammar.md)。
+> この調査時点の実装を測った記録。ここでの提案が採られた後の URL・パネル配置の正本は [webui の URL 文法](../design/webui-url-grammar.md)。
 
 ## 判明した事実
 

@@ -6,8 +6,7 @@
 
 ### 1. rewind メニューに載る条件は実装上の述語で確定している
 
-`/rewind` メニューの一覧は、セッションの message 配列を述語 `K6e` で filter した結果そのもの
-(バンドル内 `...e.filter(K6e)...` が rewind メニュー component の一覧ソース)。`K6e` の実体:
+`/rewind` メニューの一覧は、セッションの message 配列を述語 `K6e` で filter した結果そのもの(バンドル内 `...e.filter(K6e)...` が rewind メニュー component の一覧ソース)。`K6e` の実体:
 
 ```js
 function K6e(e){
@@ -48,18 +47,14 @@ teammate 経路は `origin.kind:"peer"` かつ `isMeta:true` で二重に除外�
 
 ### 3. 配送経路の `origin` はコアが決めるので、plugin 側から human 化できない
 
-`origin` は配送チャネルごとにコアが分類して付与する。human に分類される外部経路は
-`client_platform` の allowlist 判定を通った bridge 経由の inbound (Slack / claude.ai 系) のみで、
-allowlist 外は `demoting unwrapped inbound message to peer origin` の warn を出して peer に降格される。
+`origin` は配送チャネルごとにコアが分類して付与する。human に分類される外部経路は`client_platform` の allowlist 判定を通った bridge 経由の inbound (Slack / claude.ai 系) のみで、allowlist 外は `demoting unwrapped inbound message to peer origin` の warn を出して peer に降格される。
 ローカル plugin / Monitor stdout からこの分類を選ぶ手段は無い。
 
 ### 4. `--resume-session-at=<uuid>` = 任意地点 rewind の native 手段 (これが本命)
 
 > **Addendum 2026-08-21 (v2.1.237 実測)**: 本節・以降の実測は v2.1.227 時点のもの。
-> v2.1.237 では `--resume-session-at` は **print mode (`-p`) 専用**になり、対話起動では
-> 黙って無視される (指定あり / なしで input tokens 完全一致、バイナリ内説明にも
-> "use with --resume in print mode" と明記)。対話で使うには print bootstrap の二段起動が
-> 必要 (DR-0018 §3.3.1 が現行の正)。
+> v2.1.237 では `--resume-session-at` は **print mode (`-p`) 専用**になり、対話起動では黙って無視される (指定あり / なしで input tokens 完全一致、バイナリ内説明にも
+> "use with --resume in print mode" と明記)。対話で使うには print bootstrap の二段起動が必要 (DR-0018 §3.3.1 が現行の正)。
 
 `claude --help` に出ない**非公開オプション**が実在する: `--resume-session-at=`, `--resume-drops-turn=`
 (`--fork-session` は help 掲載あり)。
@@ -98,25 +93,20 @@ fork で生成されたファイルは、**先祖レコードを uuid と timest
   それぞれ fork 地点から独立に伸びて 46 / 46 / 121 uuid になっている。
 - 隔離実測でも、ok1 地点で fork したファイル (15 行) は `ALPHA` を含み `BRAVO` / `CHARLIE` を含まない。
 
-したがって **「切り詰めると履歴が消える」心配は当たらない**。fork は元ファイルを読み取るだけで、
-新ファイルに切り詰め済みのコピーを作る。元は無傷のまま残る。
+したがって **「切り詰めると履歴が消える」心配は当たらない**。fork は元ファイルを読み取るだけで、新ファイルに切り詰め済みのコピーを作る。元は無傷のまま残る。
 
-なお `last-prompt` + `leafUuid` のヘッダだけを持つ手製ファイルは resume できない
-(`No conversation found with session ID: ...`)。実体のメッセージレコードが要る。
+なお `last-prompt` + `leafUuid` のヘッダだけを持つ手製ファイルは resume できない(`No conversation found with session ID: ...`)。実体のメッセージレコードが要る。
 
 ### 6. 切る位置は「戻したい user turn の 1 つ手前」
 
-`slice(0, u+1)` は **指定 uuid を含む**。実測で、CHARLIE の user レコードの uuid を渡すと
-その prompt が未応答のまま残り、モデルがまず `ok3` と答えてから次の質問に答えた (結果 `ALPHA, BRAVO, CHARLIE`)。
+`slice(0, u+1)` は **指定 uuid を含む**。実測で、CHARLIE の user レコードの uuid を渡すとその prompt が未応答のまま残り、モデルがまず `ok3` と答えてから次の質問に答えた (結果 `ALPHA, BRAVO, CHARLIE`)。
 
 「msg X の直前に戻す」なら、渡すのは **X の 1 つ前の assistant レコードの uuid**。X 自身の uuid ではない。
 
 ### 7. `--fork-session` を付けない場合は同一ファイル内で分岐する (破壊はしない)
 
-使い捨てコピーで実測: `--resume-session-at` のみ (fork なし) だと応答は正しく切り詰まる (`ALPHA, BRAVO`) が、
-新しい turn は**同じファイルに追記**され、32 行 → 41 行になった。**CHARLIE のレコードは消えずに残る**。
-つまりファイルが枝分かれした DAG になり、有効な leaf が新しい枝へ移る。非破壊だが、
-1 ファイルに複数の枝が同居するので、外部から読む側 (ccmsg webui 等) は leaf 追跡が要る。
+使い捨てコピーで実測: `--resume-session-at` のみ (fork なし) だと応答は正しく切り詰まる (`ALPHA, BRAVO`) が、新しい turn は**同じファイルに追記**され、32 行 → 41 行になった。**CHARLIE のレコードは消えずに残る**。
+つまりファイルが枝分かれした DAG になり、有効な leaf が新しい枝へ移る。非破壊だが、1 ファイルに複数の枝が同居するので、外部から読む側 (ccmsg webui 等) は leaf 追跡が要る。
 
 **webui から使うなら `--fork-session` 併用が明確に安全**。
 
@@ -124,14 +114,11 @@ fork で生成されたファイルは、**先祖レコードを uuid と timest
 
 公式仕様上、bash 由来の変更とサブエージェント (background) の編集は checkpoint に追跡されない。
 ccmsg の作業実体は大半がサブエージェント編集なので、**コード復元は元々期待できない**。
-実 fork ファイルには `file-history-snapshot` が 23 件コピーされていたので fork がコード履歴を引き継ぐ余地はあるが、
-そこは未検証 (下記)。
+実 fork ファイルには `file-history-snapshot` が 23 件コピーされていたので fork がコード履歴を引き継ぐ余地はあるが、そこは未検証 (下記)。
 
 ### 9. `--resume-session-at` の成否を決めるのはレコードの種類ではなく「生きた枝に載っているか」
 
-「どの uuid なら動くのか、ダメなパターンはあるのか」を隔離環境で実測した (v2.1.227、haiku、
-tool 使用を含む 2 turn + subagent 1 回のセッション)。判定は起動できただけでなく
-**resume 後に 1 発話が正常に返ったか**まで。
+「どの uuid なら動くのか、ダメなパターンはあるのか」を隔離環境で実測した (v2.1.227、haiku、tool 使用を含む 2 turn + subagent 1 回のセッション)。判定は起動できただけでなく**resume 後に 1 発話が正常に返ったか**まで。
 
 | 指定した uuid のレコード | 結果 |
 |---|---|
@@ -146,31 +133,21 @@ tool 使用を含む 2 turn + subagent 1 回のセッション)。判定は起�
 | subagent transcript (`subagents/agent-*.jsonl`) のレコード | ❌ 同上 |
 | 存在しない uuid | ❌ 同上 |
 
-**種類は一切関係ない。** 最有力の失敗候補だった「tool_use と tool_result の間で切る」ケースも
-普通に成功する。fork ファイルを見ると **dangling な tool_use をそのまま残したまま**次の user
-発話が続いており (合成 tool_result は挿入されていない)、それでも API 呼び出しは通っている。
+**種類は一切関係ない。** 最有力の失敗候補だった「tool_use と tool_result の間で切る」ケースも普通に成功する。fork ファイルを見ると **dangling な tool_use をそのまま残したまま**次の user発話が続いており (合成 tool_result は挿入されていない)、それでも API 呼び出しは通っている。
 
-効いているのは 1 つだけ: **`c.messages` に載っているか**。`c.messages` は
-ファイルの全行ではなく **最終行から `parentUuid` を遡って再構成した鎖**なので、
+効いているのは 1 つだけ: **`c.messages` に載っているか**。`c.messages` はファイルの全行ではなく **最終行から `parentUuid` を遡って再構成した鎖**なので、
 
-- `--fork-session` なしの resume で枝分かれしたファイル (事実 7) の**旧枝側**のレコードは、
-  ファイルに残っていて webui にも描画されるのに **resume では読み込まれない = 指定すると必ず失敗する**
+- `--fork-session` なしの resume で枝分かれしたファイル (事実 7) の**旧枝側**のレコードは、ファイルに残っていて webui にも描画されるのに **resume では読み込まれない = 指定すると必ず失敗する**
 - 別ファイルである subagent transcript のレコードも当然載らない
 
-実測手順: 使い捨てコピーに対し `--fork-session` なしで途中 resume して枝を作り
-(旧枝の末尾レコードは残存)、その旧枝の uuid を `--resume-session-at` に渡すと失敗した。
+実測手順: 使い捨てコピーに対し `--fork-session` なしで途中 resume して枝を作り(旧枝の末尾レコードは残存)、その旧枝の uuid を `--resume-session-at` に渡すと失敗した。
 一方その直前の共通祖先は成功する。
 
-なお **手で追記したレコードも同様に失敗する**。injection 実験で、`parentUuid` の鎖に
-繋がない (= 次の行の `parentUuid` を書き換えない) と `isMeta` の値に関係なく
-`No message found` になった。「isMeta だから落ちた」と誤読しかけたが、
-`isMeta:false` の対照実験も同じく落ちたので原因は鎖の断絶。実レコードでの `isMeta:true` は
-上表のとおり成功する。
+なお **手で追記したレコードも同様に失敗する**。injection 実験で、`parentUuid` の鎖に繋がない (= 次の行の `parentUuid` を書き換えない) と `isMeta` の値に関係なく`No message found` になった。「isMeta だから落ちた」と誤読しかけたが、`isMeta:false` の対照実験も同じく落ちたので原因は鎖の断絶。実レコードでの `isMeta:true` は上表のとおり成功する。
 
 #### webui への含意
 
-fork 地点として提示してよいのは **生きた鎖の上のレコードだけ**。種類で絞る必要は無い
-(assistant / thinking / tool_use / tool_result / attachment / isMeta すべて可)。
+fork 地点として提示してよいのは **生きた鎖の上のレコードだけ**。種類で絞る必要は無い(assistant / thinking / tool_use / tool_result / attachment / isMeta すべて可)。
 webui は最終行から `parentUuid` を遡って鎖を求め、そこに無い項目には fork 導線を出さない。
 
 ## 実用的な示唆
@@ -204,24 +181,18 @@ A は原理的に閉じている上、仮に開いても副作用 (通知で che
 B は native 機能で、ファイルを一切触らないので破壊性が無く、実測で期待どおり動く。
 
 **唯一の懸念は B が非公開オプションであること**。`claude --help` に出ないため、バージョン更新で挙動が変わる可能性がある。
-実装するなら起動時に 1 度だけ生存確認 (既知 uuid で dry-run し、
-`No message found with message.uuid of:` 以外のエラーが出ないか) を入れて、失敗時は機能を無効化する形が安全。
+実装するなら起動時に 1 度だけ生存確認 (既知 uuid で dry-run し、`No message found with message.uuid of:` 以外のエラーが出ないか) を入れて、失敗時は機能を無効化する形が安全。
 
 ## 検証の詳細
 
 ### 何をどう観測したか
 
-**実装の抽出**: `claude` は単一バイナリ (`~/.local/share/claude/versions/2.1.224`、265MB、bun compile) だが
-JS バンドルを内包しているので `rg -a` でバイナリを直接 grep して該当関数を復元した。
-rewind メニュー component の `e.filter(K6e)` を起点に述語を取り、
-`--fork-session` 周辺の文字列テーブルから `--resume-session-at=` / `--resume-drops-turn=` を発見して
-`resumeSessionAt` の実装ブロックまで辿った。
+**実装の抽出**: `claude` は単一バイナリ (`~/.local/share/claude/versions/2.1.224`、265MB、bun compile) だがJS バンドルを内包しているので `rg -a` でバイナリを直接 grep して該当関数を復元した。
+rewind メニュー component の `e.filter(K6e)` を起点に述語を取り、`--fork-session` 周辺の文字列テーブルから `--resume-session-at=` / `--resume-drops-turn=` を発見して`resumeSessionAt` の実装ブロックまで辿った。
 これは TUI 越しの代理観測ではなく**実装の一次情報**。
 
-**隔離実験**: `CLAUDE_CONFIG_DIR=/tmp/rewind-lab/config`、cwd `/tmp/rewind-lab/work`、
-`--safe-mode --model haiku --max-budget-usd 0.5` で plugin ロードを止めてコストを抑えた。
-ALPHA / BRAVO / CHARLIE を 1 turn ずつ覚えさせた 3 turn セッションを作り、
-どの地点まで記憶が残るかで切り詰め位置を判定した。本物のセッション・本番 daemon には触れていない。
+**隔離実験**: `CLAUDE_CONFIG_DIR=/tmp/rewind-lab/config`、cwd `/tmp/rewind-lab/work`、`--safe-mode --model haiku --max-budget-usd 0.5` で plugin ロードを止めてコストを抑えた。
+ALPHA / BRAVO / CHARLIE を 1 turn ずつ覚えさせた 3 turn セッションを作り、どの地点まで記憶が残るかで切り詰め位置を判定した。本物のセッション・本番 daemon には触れていない。
 `--fork-session` を付けない検証だけは使い捨てコピーに対して行い、元ファイルには適用していない。
 
 ### 検証マトリクス
@@ -249,13 +220,11 @@ ALPHA / BRAVO / CHARLIE を 1 turn ずつ覚えさせた 3 turn セッション�
 
 - **壊れた uuid を渡した時の claude 本体のエラー文言**は `No message found ...` のみ確認。
   それ以外の壊れ方 (uuid 形式が不正 等) は試していない。
-- **turn 途中切りが会話品質に与える影響**。API 呼び出しが通って応答が返ることは確認したが、
-  dangling tool_use を含む履歴でモデルの応答が劣化しないかは評価していない。
+- **turn 途中切りが会話品質に与える影響**。API 呼び出しが通って応答が返ることは確認したが、dangling tool_use を含む履歴でモデルの応答が劣化しないかは評価していない。
 - **対話 TUI の `/rewind` メニュー表示そのもの**は自動化できないため目視していない。
   事実 1 は実装述語からの確定であって画面確認ではない (述語はメニュー生成元なので乖離余地は無いと判断)。
 - **`--resume-drops-turn` の実挙動**。実装ブロックとエラー文言は読んだが、実際に渡して refuse させる検証はしていない。
-- **fork がコード履歴 (`file-history-snapshot`) を実用的に引き継ぐか**。実 fork ファイルに 23 件コピーされている事実は
-  確認したが、fork 先で `/rewind` のコード復元が機能するかは未確認。事実 8 のとおり ccmsg 用途では期待していないので優先度は低い。
+- **fork がコード履歴 (`file-history-snapshot`) を実用的に引き継ぐか**。実 fork ファイルに 23 件コピーされている事実は確認したが、fork 先で `/rewind` のコード復元が機能するかは未確認。事実 8 のとおり ccmsg 用途では期待していないので優先度は低い。
 - **非公開オプションの安定性**。v2.1.224 でのみ確認。過去/将来バージョンでの存在は未確認。
 
 ### 後片付け

@@ -28,8 +28,7 @@
   v1 の `*_not_configured` / `*_unavailable` はすべてこれに畳まれる
 - `instance_unreachable` — loc=L の op を担当 instance へ転送できない時。**loc=L の全 op に付く**
 
-以降の表では、この 3 つは「規則で決まる」ので errors 欄に再掲せず、
-**畳まれて消える v1 エラー**だけを `(→cap)` の形で示す。
+以降の表では、この 3 つは「規則で決まる」ので errors 欄に再掲せず、**畳まれて消える v1 エラー**だけを `(→cap)` の形で示す。
 
 ## 1. 共通 (接続・購読) — 5 op
 
@@ -53,8 +52,7 @@
 ## 2. messaging 面 — 4 op
 
 Draft §2.1 のとおり、messaging は会話の器 (room) を持たず **sid 宛の 1 対 1 配送**だけを扱う。
-エージェント (session role) に見せる語彙はこの 4 op で閉じる。CLI の `--help` と skill が
-参照する範囲もこれと同じ。
+エージェント (session role) に見せる語彙はこの 4 op で閉じる。CLI の `--help` と skill が参照する範囲もこれと同じ。
 
 | v1 | v2 | roles | hello | cap | loc | scope | errors (固有) |
 |---|---|---|---|---|---|---|---|
@@ -86,12 +84,9 @@ message_send { to: sid, text: string, reply_to?: mid }
 | `disappeared` | 宛先のセッションが消えている | `candidates` へ送り直す / 諦める |
 | `instance_unreachable` | 宛先の担当 instance に mesh で届かない | 待つ / 諦める |
 
-`reason` は **エラーではなく正常応答**。`instance_unreachable` だけは ErrorCode と同名だが、
-ここでは「配送できなかった理由」であって op は成功している (op 自体が失敗するのは
-`session_not_found` = `to` の sid が cluster のどこにも存在しない場合)。
+`reason` は **エラーではなく正常応答**。`instance_unreachable` だけは ErrorCode と同名だが、ここでは「配送できなかった理由」であって op は成功している (op 自体が失敗するのは`session_not_found` = `to` の sid が cluster のどこにも存在しない場合)。
 
-`mid` は配送 frame の同一性 (`reply_to` の指し先) のための識別子で、v1 の room 内連番ではなく
-`<instance>/<連番>` (発行 instance が採番、Draft §5)。既読カーソル・`seq`・replay 窓は持たない (Draft §2.1)。
+`mid` は配送 frame の同一性 (`reply_to` の指し先) のための識別子で、v1 の room 内連番ではなく`<instance>/<連番>` (発行 instance が採番、Draft §5)。既読カーソル・`seq`・replay 窓は持たない (Draft §2.1)。
 
 ### 2.2 受信側への配送 frame
 
@@ -101,19 +96,13 @@ message_send { to: sid, text: string, reply_to?: mid }
 { topic: "inbox", mid, from: sid, from_label, text, reply_to?, sent_at, instance }
 ```
 
-**返信経路の表し方 (提案 1 つ)**: v1 の `reply_via` (返信コマンドを組み立てた人間可読の
-文字列、DR-0017 追補) は wire に載せず、**frame の `from` sid をそのまま `message_send` の
-`to` に入れれば返信になる**という構造だけを契約に置く。文言 (「返信は
-`ccmsg message send --to <sid>`」) は CLI / skill がローカルで組み立てる。
+**返信経路の表し方 (提案 1 つ)**: v1 の `reply_via` (返信コマンドを組み立てた人間可読の文字列、DR-0017 追補) は wire に載せず、**frame の `from` sid をそのまま `message_send` の`to` に入れれば返信になる**という構造だけを契約に置く。文言 (「返信は`ccmsg message send --to <sid>`」) は CLI / skill がローカルで組み立てる。
 
-理由: v1 の `reply_via` は「room を辿って返信先を決める」ための誘導文で、room が無い v2 では
-返信先が `from` に一意に定まる。文字列を wire に載せると **daemon がクライアントの UI 文言を
-持つ**ことになり、Draft §4 の「型に正本を宣言する」に反する。
+理由: v1 の `reply_via` は「room を辿って返信先を決める」ための誘導文で、room が無い v2 では返信先が `from` に一意に定まる。文字列を wire に載せると **daemon がクライアントの UI 文言を持つ**ことになり、Draft §4 の「型に正本を宣言する」に反する。
 
 ### 2.3 inbox 系 op を置かない根拠
 
-未配送メッセージは sid 単位の inbox に溜まり、**受信側が `topic_subscribe inbox` した時点の
-snapshot として daemon が自動配送する** (Draft §2.1)。したがって:
+未配送メッセージは sid 単位の inbox に溜まり、**受信側が `topic_subscribe inbox` した時点のsnapshot として daemon が自動配送する** (Draft §2.1)。したがって:
 
 | 想定した op | 置かない理由 |
 |---|---|
@@ -125,9 +114,7 @@ snapshot として daemon が自動配送する** (Draft §2.1)。したがっ�
 
 `ccmsg say` はセッションが CLI 経由で叩く (実装: `packages/cli/src/index.ts` の say 経路)
 ため、**発話したこととその本文は呼び出し元セッションの transcript に tool 呼び出しとして残る**。
-v2 は room jsonl を持たないので、`say_post` は「今どのセッションが喋ったか」を webui へ
-push するだけで、ccmsg 側の永続ログを作らない。`say_mark_read` が操作する未読フラグは
-daemon の揮発状態 (再起動で消えてよい)。
+v2 は room jsonl を持たないので、`say_post` は「今どのセッションが喋ったか」を webui へpush するだけで、ccmsg 側の永続ログを作らない。`say_mark_read` が操作する未読フラグはdaemon の揮発状態 (再起動で消えてよい)。
 
 ## 3. control 面 — 27 op
 
@@ -145,8 +132,7 @@ daemon の揮発状態 (再起動で消えてよい)。
 
 - 全 op が loc=L (pid / 絶対パス / hyoui ハンドルに依存、棚卸し §5.6)。
   よって全 op が `instance_unreachable` を返しうる
-- `transcript_read` の `scope: role` = session role では自分の transcript だけ、
-  user role では全セッション。可否ではなく可視範囲が変わる (PV-Q7)
+- `transcript_read` の `scope: role` = session role では自分の transcript だけ、user role では全セッション。可否ではなく可視範囲が変わる (PV-Q7)
 
 ### 3.2 ファイルアクセス (9)
 
@@ -162,11 +148,9 @@ daemon の揮発状態 (再起動で消えてよい)。
 | `fs_stat_batch` | `file_stat_batch` | user | 要 | — | L | — | — |
 | `dir_tree` | `dir_tree` | user | 要 | `launcher` | L | — | (→cap: `launcher_not_configured`) |
 
-統合の根拠: v1 の `fs_read` / `fs_read_external` / `fs_read_workspace` は
-**response 型が既に `FsReadResponse` 1 つ**で共有されている (棚卸し §3.3、「意図的な統一」)。
+統合の根拠: v1 の `fs_read` / `fs_read_external` / `fs_read_workspace` は**response 型が既に `FsReadResponse` 1 つ**で共有されている (棚卸し §3.3、「意図的な統一」)。
 違いは request の認可面だけで、`fs_create` / `fs_edit` / `fs_delete` は既に `kind`
-(`contained` / `workspace` / `external`) を引数に取る (棚卸し §2.6)。読み・一覧だけが
-op 名で面を分けているのが非対称。`kind` に寄せると 5 op → 2 op (-3)。
+(`contained` / `workspace` / `external`) を引数に取る (棚卸し §2.6)。読み・一覧だけがop 名で面を分けているのが非対称。`kind` に寄せると 5 op → 2 op (-3)。
 
 ### 3.3 launcher / sandbox / 翻訳 / llm (7)
 
@@ -188,15 +172,13 @@ op 名で面を分けているのが非対称。`kind` に寄せると 5 op → 
 | — | `kv_write` | user | 要 | — | C | — | — |
 | — | `kv_delete` | user | 要 | — | C | — | — |
 
-- `kv_read {ns, key}` → `{value, updated_at}`、`kv_write {ns, key, value, updated_at?}` (省略時は daemon の
-  現在時刻)、`kv_delete {ns, key}`。`value` は JSON、`ns` / `key` は文字列
+- `kv_read {ns, key}` → `{value, updated_at}`、`kv_write {ns, key, value, updated_at?}` (省略時は daemon の現在時刻)、`kv_delete {ns, key}`。`value` は JSON、`ns` / `key` は文字列
 - 契約が約束するのは「ns 内で key が一意」だけ。instance 間のミラーは daemon の責務で、決着は `updated_at`
   の LWW。デバイス固有の値は key に端末名を含める (契約に device の概念を足さない)
 - topic `kv:<ns>` (snapshot + delta) で他端末の保存が即時に見える (§4)
 | `client_trace` | — (v2 に持たない。webui の計測は新 webui の実装時に要れば同一世代内で追加) | | | | | | |
 
-- `translate` の v1 「空配列 = 能力プローブ」(棚卸し §2.7) は capability 集合で置き換わるので、
-  空配列の特別扱いが消える
+- `translate` の v1 「空配列 = 能力プローブ」(棚卸し §2.7) は capability 集合で置き換わるので、空配列の特別扱いが消える
 - `llm_status` はここに無い。push を持つので topic 化 (§4)
 
 ## 4. topic 表 (Draft §3.3)
@@ -217,19 +199,13 @@ snapshot frame には `snapshot: true` の印が付く (PV-Q3)。
 | `llm_requests` | control | `{requests[]}` (非期限切れ全量) | 要素追加・更新 | (**v1 に op が無い**) | `llm_requests` | 要素差分 | user |
 | `llm_status` | control | `LlmStatusReport` | 全量置換 | `llm_status` | `llm_status` | 全量置換 | user |
 
-`room:<id>` と `rooms` の 2 topic は v2 に無い (room が無い)。差分の粒度が「全量置換」に
-留まる 4 topic (`peers` / `agents` / `session_status` / `session_errors` / `llm_status`) は
-v1 の push がそもそも全量置換 (棚卸し §2')。Draft §3.3 は形を揃えることが目的で、
-delta の粒度を細かくすることは要求していないので、粒度は v1 を保つ。
+`room:<id>` と `rooms` の 2 topic は v2 に無い (room が無い)。差分の粒度が「全量置換」に留まる 4 topic (`peers` / `agents` / `session_status` / `session_errors` / `llm_status`) はv1 の push がそもそも全量置換 (棚卸し §2')。Draft §3.3 は形を揃えることが目的で、delta の粒度を細かくすることは要求していないので、粒度は v1 を保つ。
 
 ### 4.1 webui が「セッションとの会話」を見る経路
 
-**`transcript:<sid>` だけ**で足りる。会話ログの正本は transcript (Draft §2.1) なので、
-webui は room 一覧・room 履歴を持たず、セッションを選んで transcript を購読する。
+**`transcript:<sid>` だけ**で足りる。会話ログの正本は transcript (Draft §2.1) なので、webui は room 一覧・room 履歴を持たず、セッションを選んで transcript を購読する。
 
-人 (u1) からセッションへの送信も **`message_send` に統一**し、webui 専用の composer op は
-置かない。webui は user role で `message_send {to: sid}` を呼び、送った内容は受信側セッションの
-transcript に (注入されたメッセージとして) 現れるので、送信の反映も同じ 1 経路で見える。
+人 (u1) からセッションへの送信も **`message_send` に統一**し、webui 専用の composer op は置かない。webui は user role で `message_send {to: sid}` を呼び、送った内容は受信側セッションのtranscript に (注入されたメッセージとして) 現れるので、送信の反映も同じ 1 経路で見える。
 
 ### 4.2 one-shot 全廃で CLI が困る箇所
 
@@ -242,8 +218,7 @@ v1 で CLI が呼んでいた観測系 op のうち v2 に残るのは `peers` �
 | 打ち切り条件 | snapshot frame の `snapshot: true` で判別して unsubscribe する |
 | delta の取りこぼし | unsubscribe 前に delta が 1 つ届くと CLI は捨てるだけ。害はない |
 
-この 3 点以外に CLI が困る箇所は無い (`session_status` / `agents` / `transcript` は
-webui 専用、棚卸し §2.8)。
+この 3 点以外に CLI が困る箇所は無い (`session_status` / `agents` / `transcript` はwebui 専用、棚卸し §2.8)。
 
 ## 5. event 表
 
@@ -265,8 +240,7 @@ webui 専用、棚卸し §2.8)。
 | `subscribe_superseded` | 据え置き (topic 外の接続イベント) | 不要 (自接続の話) | なし |
 | `net_online` | 据え置き (topic 外の接続イベント)。**v2 では union に入れる** | 要 | なし |
 
-`restarting` / `subscribe_superseded` / `net_online` の 3 つは topic ではなく
-**接続そのものの状態**なので topic 化しない。v1 で `net_online` だけが `StreamEvent`
+`restarting` / `subscribe_superseded` / `net_online` の 3 つは topic ではなく**接続そのものの状態**なので topic 化しない。v1 で `net_online` だけが `StreamEvent`
 union から漏れている (棚卸し §5.1) のは v2 で解消する。
 
 ### 5.2 storage event 10 種
@@ -281,8 +255,7 @@ union から漏れている (棚卸し §5.1) のは v2 で解消する。
 | `say` | 発話は呼び出し元セッションの transcript に tool 呼び出しとして残る (§2.4) |
 | `say_read` | 未読フラグは daemon の揮発状態 |
 
-room jsonl そのものが無くなるので、棚卸し §4.2 が指摘した「storage event の `ts` が
-ISO 文字列」問題は対象ごと消える。wire に出る時刻はすべて Draft §5 の Unix ms。
+room jsonl そのものが無くなるので、棚卸し §4.2 が指摘した「storage event の `ts` がISO 文字列」問題は対象ごと消える。wire に出る時刻はすべて Draft §5 の Unix ms。
 
 ## 6. 統合・廃止 (根拠付き)
 
@@ -291,9 +264,7 @@ ISO 文字列」問題は対象ごと消える。wire に出る時刻はすべ�
 `create_room` / `next_room` / `invite` / `leave` / `kick` / `set_title` / `archive_room` /
 `rooms` / `room_history` / `read` / `reply`
 
-根拠: 複数メンバーの会話は初期に数回使われた後は使われておらず、会話の様子は webui が
-transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送」に縮めると、
-会話の器・メンバ管理・履歴取得・既読の 4 系統がまとめて要らなくなる。
+根拠: 複数メンバーの会話は初期に数回使われた後は使われておらず、会話の様子は webui がtranscript で全部見せている。messaging を「sid 宛の 1 対 1 配送」に縮めると、会話の器・メンバ管理・履歴取得・既読の 4 系統がまとめて要らなくなる。
 `post` は宛先が room から sid になったので `message_send` に置き換わる (廃止ではなく改称)。
 
 ### 6.2 廃止 — topic 化で不要 9 op
@@ -302,10 +273,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 `session_status_unsubscribe` / `session_errors` / `transcript_subscribe` /
 `transcript_unsubscribe` / `llm_status`
 
-根拠: 棚卸し §5.2 の「同じ情報を 2 経路以上」。`session_status` は 3 経路
-(op / subscribe ack / push) で、しかも `SessionStatusResponse` と
-`SessionStatusSubscribeResponse` は**構造が完全同一** (棚卸し §3.3) — 型の重複が
-経路の重複の写しになっている。
+根拠: 棚卸し §5.2 の「同じ情報を 2 経路以上」。`session_status` は 3 経路(op / subscribe ack / push) で、しかも `SessionStatusResponse` と`SessionStatusSubscribeResponse` は**構造が完全同一** (棚卸し §3.3) — 型の重複が経路の重複の写しになっている。
 
 ### 6.3 統合 (-3)
 
@@ -315,9 +283,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | `dir_list` | `fs_list` / `fs_list_workspace` | 同上 |
 
 同型 response の残り (`PeersResponse`↔`PeersStreamEvent`、`AgentsResponse`↔
-`AgentsStreamEvent`、`SessionErrorsResponse`↔`SessionErrorsStreamEvent`、
-`LlmStatusResponse`↔`LlmStatusStreamEvent.report`、棚卸し §5.7) は **6.2 の topic 化で
-自動的に 1 つになる** (snapshot と delta が同じ型)。
+`AgentsStreamEvent`、`SessionErrorsResponse`↔`SessionErrorsStreamEvent`、`LlmStatusResponse`↔`LlmStatusStreamEvent.report`、棚卸し §5.7) は **6.2 の topic 化で自動的に 1 つになる** (snapshot と delta が同じ型)。
 
 ### 6.4 フィールドの廃止 (残骸、棚卸し §1 の残骸表 / §5.5)
 
@@ -342,8 +308,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | `room_not_found` / `not_a_member` / `msg_not_found` / `self_reply` / `reply_via_tl` / `one_on_one_requires_single_member` / `broadcast_agent_target_required` | 消滅 (room 系 op ごと廃止)。宛先不明は `session_not_found` に一本化 |
 | (なし) | `instance_unreachable` (新設)、`topic_unknown` (新設) |
 
-`ErrorBody.code` の型は `string` → `ErrorCode` union に閉じる (棚卸し §3.2 が
-「ここだけは閉じられるはずなのに開いている」と指摘、§5.1 も同じ)。
+`ErrorBody.code` の型は `string` → `ErrorCode` union に閉じる (棚卸し §3.2 が「ここだけは閉じられるはずなのに開いている」と指摘、§5.1 も同じ)。
 
 ## 7. 数値まとめ
 

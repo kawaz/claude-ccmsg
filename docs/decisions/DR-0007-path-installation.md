@@ -14,16 +14,10 @@ DR-0001 と同じ: **[kawaz]** / **[提案]** / **[保留]**。
 kawaz が人間として `ccmsg` を叩くには PATH に居てほしいが、plugin の実体は versioned な plugin cache (`~/.claude*/plugins/cache/ccmsg/ccmsg/<version>/bin/ccmsg`) にあり、update のたびにパスが変わる。kawaz 提案 [kawaz、逐語]:
 
 > SessionStart時、
-> if PATHにccmsgがない
-> if PATHに ~/.local/bin や ~/bin といった安定パスがある
-> if 安定パスの候補を提示してそこにccmsgのsymlynkを置いて良いかをユーザに確認して許可されたら
-> ln -sfn /path/to/versioned/bin/ccmsg {user_bin}/ccmsg でPATHを通す
+> if PATHにccmsgがないif PATHに ~/.local/bin や ~/bin といった安定パスがあるif 安定パスの候補を提示してそこにccmsgのsymlynkを置いて良いかをユーザに確認して許可されたらln -sfn /path/to/versioned/bin/ccmsg {user_bin}/ccmsg でPATHを通す
 >
 > 以降、ccmsg 実行時、
-> if 自身の $0 内のパスに自身のバージョンを含むか？ # hooks からプラグイン内のbin/ccmsgを実行する際はフルパスを使うはず
-> if PATH に ccmsg が存在
-> if 自身のバージョン > ccmsg --version
-> ln -sfn でsymlinkを作り直す
+> if 自身の $0 内のパスに自身のバージョンを含むか？ # hooks からプラグイン内のbin/ccmsgを実行する際はフルパスを使うはずif PATH に ccmsg が存在if 自身のバージョン > ccmsg --version ln -sfn でsymlinkを作り直す
 
 ## Decision
 

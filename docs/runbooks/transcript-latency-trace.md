@@ -5,14 +5,11 @@
 ## 適用ケース
 
 webui の Timeline が「セッションは動いているのに追従が遅い / 止まって見える」
-状態になったとき、**どの境界で時間が消えたか**を特定する。推測せずに
-`trace.jsonl` を読む。
+状態になったとき、**どの境界で時間が消えたか**を特定する。推測せずに`trace.jsonl` を読む。
 
 ## 何が記録されるか
 
-transcript の 1 行が file に書かれてからブラウザの DOM に載るまでの各境界を、
-1 本の JSONL に時刻付きで残す。相関キーは **`(sid, start, end)`** = daemon が
-wire に載せた byte 範囲。全境界の行がこの 3 つを共有するので jq で束ねられる。
+transcript の 1 行が file に書かれてからブラウザの DOM に載るまでの各境界を、1 本の JSONL に時刻付きで残す。相関キーは **`(sid, start, end)`** = daemon がwire に載せた byte 範囲。全境界の行がこの 3 つを共有するので jq で束ねられる。
 
 | kind | comp | 意味 |
 |---|---|---|
@@ -31,13 +28,9 @@ wire に載せた byte 範囲。全境界の行がこの 3 つを共有するの
 - **場所**: `<stateDir>/trace.jsonl` (通常 `~/.local/state/ccmsg/trace.jsonl`。
   `CCMSG_STATE_DIR` を設定していればそのディレクトリ)。10MB で `trace.jsonl.1`
   に 1 世代だけローテーションする
-- **daemon 側は全配信を記録**する。**ブラウザ側は間引かれる**: 受信→DOM が
-  1 秒を超えた配信は必ず記録、それ以外は 20 件に 1 件
-  (`packages/webui/src/client/trace.ts` の `SLOW_DELIVERY_MS` /
-  `HEALTHY_SAMPLE_EVERY`)。**遅い配信は取り逃さない**設計なので、
-  「遅かったのに webui の行が無い」は「タブに届いていない」を意味する
-- ブラウザ側 3 点の時刻は**タブの時計**で打つ。daemon と時計がずれている環境
-  では daemon↔webui をまたぐ差分に下駄が乗る (webui 3 点どうしの差分は無事)
+- **daemon 側は全配信を記録**する。**ブラウザ側は間引かれる**: 受信→DOM が1 秒を超えた配信は必ず記録、それ以外は 20 件に 1 件(`packages/webui/src/client/trace.ts` の `SLOW_DELIVERY_MS` /
+  `HEALTHY_SAMPLE_EVERY`)。**遅い配信は取り逃さない**設計なので、「遅かったのに webui の行が無い」は「タブに届いていない」を意味する
+- ブラウザ側 3 点の時刻は**タブの時計**で打つ。daemon と時計がずれている環境では daemon↔webui をまたぐ差分に下駄が乗る (webui 3 点どうしの差分は無事)
 - 変化を検知した時だけ記録する。無変化の poll tick は残らない
 
 ## 手順
@@ -108,8 +101,7 @@ jq -r 'select(.kind == "transcript_detect") | .source' ~/.local/state/ccmsg/trac
 
 ### 5. daemon は送ったのにブラウザの行が無い場合
 
-**個々の配信に webui の行が無いのは正常**。健全時は 20 件に 19 件が間引かれる
-ので、「webui の行が無い配信を探す」query はほぼ全件を拾ってしまい役に立たない。
+**個々の配信に webui の行が無いのは正常**。健全時は 20 件に 19 件が間引かれるので、「webui の行が無い配信を探す」query はほぼ全件を拾ってしまい役に立たない。
 見るのは **webui の行が途切れてからの経過**:
 
 ```bash
@@ -127,15 +119,10 @@ jq -s --arg sid "$sid" '
 判定:
 
 - `gap_ms` が数秒以内、`commit_end` が `wire_end` に追いついている →
-  ブラウザ側は生きている。遅延は手順 2 の境界内訳で見る
-  (最後の配信が記録対象だった場合、commit は wire より後なので `gap_ms` は
-  0 前後の負値になる。追いついている印)
-- `gap_ms` が大きく `commit_end` が `wire_end` から大きく取り残されている、
-  または `last_commit_ts` が null → **切り分けは daemon より下流**
-  (WS 切断・タブの休止・`transcript_subscribe` の消失)。20 件に 1 件は必ず
-  通るはずの報告が長時間途切れているので、間引きでは説明できない
-- 1 秒超の配信は必ず記録されるので、`elapsed_ms` が大きい webui 行があれば
-  それが遅延の実サンプル:
+  ブラウザ側は生きている。遅延は手順 2 の境界内訳で見る(最後の配信が記録対象だった場合、commit は wire より後なので `gap_ms` は0 前後の負値になる。追いついている印)
+- `gap_ms` が大きく `commit_end` が `wire_end` から大きく取り残されている、または `last_commit_ts` が null → **切り分けは daemon より下流**
+  (WS 切断・タブの休止・`transcript_subscribe` の消失)。20 件に 1 件は必ず通るはずの報告が長時間途切れているので、間引きでは説明できない
+- 1 秒超の配信は必ず記録されるので、`elapsed_ms` が大きい webui 行があればそれが遅延の実サンプル:
 
 ```bash
 jq -c 'select(.kind == "dom_commit" and .elapsed_ms > 1000)' ~/.local/state/ccmsg/trace.jsonl | tail
@@ -143,9 +130,7 @@ jq -c 'select(.kind == "dom_commit" and .elapsed_ms > 1000)' ~/.local/state/ccms
 
 ## 再現環境で試すとき
 
-本番 daemon を触らずに確認する場合は `.claude/skills/verify` の隔離 daemon 手順
-(`CCMSG_STATE_DIR` / `CCMSG_CONFIG_DIR` / `CCMSG_DATA_DIR` を temp dir に、`CCMSG_HTTP_BIND` を空き
-ポートに) を使う。`trace.jsonl` はその `CCMSG_STATE_DIR` 配下に出る。
+本番 daemon を触らずに確認する場合は `.claude/skills/verify` の隔離 daemon 手順(`CCMSG_STATE_DIR` / `CCMSG_CONFIG_DIR` / `CCMSG_DATA_DIR` を temp dir に、`CCMSG_HTTP_BIND` を空きポートに) を使う。`trace.jsonl` はその `CCMSG_STATE_DIR` 配下に出る。
 
 ## 関連
 

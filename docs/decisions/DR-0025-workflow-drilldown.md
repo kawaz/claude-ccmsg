@@ -12,26 +12,17 @@ Status タブの workflow 表示は現状トップ (名前と走行/完了) だ�
 - **フェーズ内エージェント一覧** (完了 ✓ / 作業中 / pending、モデル・トークン数付き、5/8 型の集計)
 - **エージェント選択で概要表示** (label / model / state / tokens / 最終ツール等)
 
-を提供している。エージェント実体はローカルの jsonl
-(`~/.claude-personal/projects/<proj>/<sid>/subagents/workflows/<run>/agent-*.jsonl` +
+を提供している。エージェント実体はローカルの jsonl (`~/.claude-personal/projects/<proj>/<sid>/subagents/workflows/<run>/agent-*.jsonl` +
 `agent-*.meta.json`、journal.jsonl) にあるので、daemon がこれを読めば webui でも同等 +
-**エージェントの TL 閲覧まで**掘れる (kawaz)。teammate も同様に選択で当人の TL を見たい
-(TUI の「TL 切替 + 指示」のうち、指示送信は Monitor が立っていない subagent には届かない
-ため今回スコープ外 — kawaz 明示)。
+**エージェントの TL 閲覧まで**掘れる (kawaz)。teammate も同様に選択で当人の TL を見たい(TUI の「TL 切替 + 指示」のうち、指示送信は Monitor が立っていない subagent には届かないため今回スコープ外 — kawaz 明示)。
 
 ## 2. スコープ
 
 ### 2.1 やること
 
-- **daemon**: session_status の workflow エントリを拡張 — 各 workflow の phases
-  (title / 完了数 / 総数) と agents (label / model / state / tokens / phase) を
-  transcript + workflow ディレクトリ (journal.jsonl / agent-*.meta.json) から fold
-- **daemon**: エージェント / teammate の transcript 読み出し — 仮想 session の既存機構
-  (DR-0021 SS-Q1=a) を agent jsonl のパス解決に拡張 (uuid でなく agentId 形式のため
-  別 resolver。containment は projects/ 配下限定を踏襲)
-- **webui Status タブ**: workflow を展開すると Phases + エージェント一覧 (✓/走行/pending、
-  n/m 集計)。エージェント選択で概要 + 「TL を見る」→ Timeline ビュー (仮想 session と
-  同じ transcript 表示経路)
+- **daemon**: session_status の workflow エントリを拡張 — 各 workflow の phases (title / 完了数 / 総数) と agents (label / model / state / tokens / phase) をtranscript + workflow ディレクトリ (journal.jsonl / agent-*.meta.json) から fold
+- **daemon**: エージェント / teammate の transcript 読み出し — 仮想 session の既存機構(DR-0021 SS-Q1=a) を agent jsonl のパス解決に拡張 (uuid でなく agentId 形式のため別 resolver。containment は projects/ 配下限定を踏襲)
+- **webui Status タブ**: workflow を展開すると Phases + エージェント一覧 (✓/走行/pending、n/m 集計)。エージェント選択で概要 + 「TL を見る」→ Timeline ビュー (仮想 session と同じ transcript 表示経路)
 - **webui teammate**: Teams セクションの teammate 選択で当人 TL 閲覧 (同経路)
 
 ### 2.2 やらないこと

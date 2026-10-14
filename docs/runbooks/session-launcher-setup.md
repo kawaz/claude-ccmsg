@@ -4,39 +4,25 @@
 
 ## 適用ケース
 
-webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタンを押すと
-「session launcher が未設定です」という案内が出る場合。DR-0018 の機能
-(webui から新規 Claude Code セッションを起動する) を使うための設定手順。
+webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタンを押すと「session launcher が未設定です」という案内が出る場合。DR-0018 の機能(webui から新規 Claude Code セッションを起動する) を使うための設定手順。
 
 ## 前提
 
-- daemon の設定ファイル (`<configDir>/config.ts` / `config.js` / `config.json`、
-  通常 `~/.config/ccmsg/`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を
-  設定していればそのディレクトリ) を編集できること
-- 設定変更後に daemon を再起動できること (LN-Q4 裁定: config はホット
-  リロードされない、明示的な再起動が必要)
+- daemon の設定ファイル (`<configDir>/config.ts` / `config.js` / `config.json`、通常 `~/.config/ccmsg/`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を設定していればそのディレクトリ) を編集できること
+- 設定変更後に daemon を再起動できること (LN-Q4 裁定: config はホットリロードされない、明示的な再起動が必要)
 
 ## 手順
 
 1. **設定ファイルに `session_launcher` キーを追加する**
 
    設定ファイルは 3 形式あり、**優先順は `config.ts` > `config.js` >
-   `config.json`**。複数あれば最優先の 1 つだけが読まれ、残りは無視されて
-   起動ログに 1 行 warn が出る。既存ファイルに他のキーがあればマージする、
-   無ければ新規作成する。
+   `config.json`**。複数あれば最優先の 1 つだけが読まれ、残りは無視されて起動ログに 1 行 warn が出る。既存ファイルに他のキーがあればマージする、無ければ新規作成する。
 
-   YAML は使えない (このリポの daemon 設定は JSON / JS / TS、DR-0018 §3.1 の
-   YAML 表記は設計時のスケッチ)。
+   YAML は使えない (このリポの daemon 設定は JSON / JS / TS、DR-0018 §3.1 のYAML 表記は設計時のスケッチ)。
 
-   **`<configDir>/config.ts`** — `config.js` と受け付ける形は同一 (ES module
-   の default export)。差は default export に型注釈を当てられること。daemon は `import()` (dynamic import) で読み、Bun の ESM loader がビルドなしで型を剥がして評価するので、動かすためだけなら `.js` と同じ書き方で足りる。
+   **`<configDir>/config.ts`** — `config.js` と受け付ける形は同一 (ES moduleの default export)。差は default export に型注釈を当てられること。daemon は `import()` (dynamic import) で読み、Bun の ESM loader がビルドなしで型を剥がして評価するので、動かすためだけなら `.js` と同じ書き方で足りる。
 
-   型を当てるための `<configDir>/ccmsg-config.d.ts` は **daemon が起動するたびに
-   自動生成・上書き**する (手で編集するファイルではない — ヘッダに generated
-   と書いてある)。中身は daemon が実際に読んでいる `CcmsgConfig` 型への
-   1 行の re-export で、独立生成物ではなく実装への直接参照なので daemon の
-   バージョンと乖離しない。`config.ts` から同じディレクトリの相対パスで
-   `import type` すればよい:
+   型を当てるための `<configDir>/ccmsg-config.d.ts` は **daemon が起動するたびに自動生成・上書き**する (手で編集するファイルではない — ヘッダに generatedと書いてある)。中身は daemon が実際に読んでいる `CcmsgConfig` 型への1 行の re-export で、独立生成物ではなく実装への直接参照なので daemon のバージョンと乖離しない。`config.ts` から同じディレクトリの相対パスで`import type` すればよい:
 
    ```ts
    import type { CcmsgConfig } from "./ccmsg-config.d.ts";
@@ -67,14 +53,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    } satisfies CcmsgConfig;
    ```
 
-   `: CcmsgConfig` ではなく `satisfies CcmsgConfig` を使うと、
-   command の文字列リテラル等の型を保ったまま構造チェックだけがかかる。
-   `CcmsgConfig` は手書き設定がそのまま満たせる **入力側**の型
-   (`params` はこの例のような `{ 名前: 初期値 }` の record。必須は
-   `root_dirs` と `templates`、各テンプレートは `name` / `command` / `params`) — daemon が起動時に検証・正規化した後の内部表現
-   (`ResolvedCcmsgConfig`。`params` が resolved な配列になる等) とは別物なので、
-   `CcmsgConfig` の方を使う。他ファイルへの分割は普通の相対 import で
-   できる (下記は `params` の宣言だけ別ファイルに出す例):
+   `: CcmsgConfig` ではなく `satisfies CcmsgConfig` を使うと、command の文字列リテラル等の型を保ったまま構造チェックだけがかかる。
+   `CcmsgConfig` は手書き設定がそのまま満たせる **入力側**の型(`params` はこの例のような `{ 名前: 初期値 }` の record。必須は`root_dirs` と `templates`、各テンプレートは `name` / `command` / `params`) — daemon が起動時に検証・正規化した後の内部表現(`ResolvedCcmsgConfig`。`params` が resolved な配列になる等) とは別物なので、`CcmsgConfig` の方を使う。他ファイルへの分割は普通の相対 import でできる (下記は `params` の宣言だけ別ファイルに出す例):
 
    ```ts
    // launcher.ts
@@ -97,24 +77,13 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    } satisfies CcmsgConfig;
    ```
 
-   型チェックを手元でも走らせたい場合 (エディタの補完は `.d.ts` があれば
-   daemon 未起動でも効くが、明示的な `tsc --noEmit` にはビルド設定が要る) は
-   `node:*` の型を `@types/node` ではなく `bun-types` (`"types": ["bun"]`) から
-   引く必要がある — このリポの daemon 自体がその構成 (`tsconfig.json`)。
-   型チェックをしないなら `.d.ts` の存在を無視してよく、`config.ts` は
-   `config.js` と同じ書き方のままで動く。
+   型チェックを手元でも走らせたい場合 (エディタの補完は `.d.ts` があればdaemon 未起動でも効くが、明示的な `tsc --noEmit` にはビルド設定が要る) は`node:*` の型を `@types/node` ではなく `bun-types` (`"types": ["bun"]`) から引く必要がある — このリポの daemon 自体がその構成 (`tsconfig.json`)。
+   型チェックをしないなら `.d.ts` の存在を無視してよく、`config.ts` は`config.js` と同じ書き方のままで動く。
 
-   `default export` は Promise でもよい (`export default fetchConfig()` のように
-   非同期に組み立てる、またはモジュール先頭で `await` する top-level await も可)。
-   daemon は起動時に `import()` (dynamic import) で評価するため、Promise は
-   `await` してから同じ検証にかける。reject した場合は他の壊れ方と同様に
-   daemon が起動せず、理由がエラーとして出る。関数 (`() => object`) を default
-   export にする形は受け付けない — 非同期構築が要るなら Promise を直接返す。
+   `default export` は Promise でもよい (`export default fetchConfig()` のように非同期に組み立てる、またはモジュール先頭で `await` する top-level await も可)。
+   daemon は起動時に `import()` (dynamic import) で評価するため、Promise は`await` してから同じ検証にかける。reject した場合は他の壊れ方と同様にdaemon が起動せず、理由がエラーとして出る。関数 (`() => object`) を default export にする形は受け付けない — 非同期構築が要るなら Promise を直接返す。
 
-   **`<configDir>/config.js`** — ES module の default export でオブジェクトを
-   返す (vite / eslint flat config / prettier と同じ形)。`command` が複数行
-   になる場合はテンプレートリテラルでそのまま書けるので、JSON のように改行を
-   `\n` へエスケープする必要がない。こちらを推奨:
+   **`<configDir>/config.js`** — ES module の default export でオブジェクトを返す (vite / eslint flat config / prettier と同じ形)。`command` が複数行になる場合はテンプレートリテラルでそのまま書けるので、JSON のように改行を`\n` へエスケープする必要がない。こちらを推奨:
 
    ```js
    export default {
@@ -145,19 +114,11 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    ```
 
    注意点 (`config.ts` にも同様に適用される):
-   - `export default` は**プレーンなオブジェクト、または Promise でオブジェクトに
-     解決するもの**であること (`default` が無い / オブジェクトでない /
+   - `export default` は**プレーンなオブジェクト、または Promise でオブジェクトに解決するもの**であること (`default` が無い / オブジェクトでない /
      Promise が reject した場合は daemon が起動せず、理由がエラーとして出る)
-   - **top-level `await` は使える** (daemon は起動時に dynamic import で
-     評価するため)。関数 (`() => object`) を default export にする形は
-     受け付けない
-   - シェル変数の `$CWD` / `$MODEL` はテンプレートリテラル内でもそのまま書ける
-     (JS が展開するのは `${...}` の形だけ)。`${` を含むシェル記法 (zsh の
-     modifier 展開等) を書くときは **`\${` とエスケープ**する。シェルの行継続
-     `\` も JS 側で `\\` と書く必要がある — 展開の衝突を避けたいなら
-     テンプレートリテラルをやめて通常の文字列リテラル (`'...'`) でもよい
-   - このファイルは daemon 起動時に 1 回だけ評価される (LN-Q4)。設定形式で
-     あってプラグイン機構ではないので、副作用のあるコードは書かない
+   - **top-level `await` は使える** (daemon は起動時に dynamic import で評価するため)。関数 (`() => object`) を default export にする形は受け付けない
+   - シェル変数の `$CWD` / `$MODEL` はテンプレートリテラル内でもそのまま書ける(JS が展開するのは `${...}` の形だけ)。`${` を含むシェル記法 (zsh のmodifier 展開等) を書くときは **`\${` とエスケープ**する。シェルの行継続`\` も JS 側で `\\` と書く必要がある — 展開の衝突を避けたいならテンプレートリテラルをやめて通常の文字列リテラル (`'...'`) でもよい
+   - このファイルは daemon 起動時に 1 回だけ評価される (LN-Q4)。設定形式であってプラグイン機構ではないので、副作用のあるコードは書かない
 
    **`<configDir>/config.json`** — 従来形式。JSON のみ (コメント・末尾カンマ不可):
 
@@ -188,8 +149,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    ```
 
    フィールドの意味 (詳細は `docs/decisions/DR-0018-session-launcher.md` §3.1):
-   - `root_dirs`: cwd ピッカー (CwdTree) が表示するルート一覧。`~/` プレフィクス
-     または絶対パスのみ。相対パスがあると daemon は起動しない
+   - `root_dirs`: cwd ピッカー (CwdTree) が表示するルート一覧。`~/` プレフィクスまたは絶対パスのみ。相対パスがあると daemon は起動しない
    - `shell`: `"bash"` または `"zsh"` のみ (暗黙の `sh -c` はしない、LN-Q2 裁定)。それ以外の値なら daemon は起動しない。
      上の `command` 例は `${...:t1}` (zsh の modifier 展開) を使うため `"zsh"`
      必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
@@ -214,14 +174,11 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 | `EFFORT` | effort ドロップダウン |
 | それ以外 (`SESSION_ID` / `PROMPT` / `BRANCH` など任意の名前) | テキスト入力。**値に改行が含まれていれば** textarea (高さは行数 + 2)、無ければ 1 行の input |
 
-入力欄の並び順は `CWD` / `MODEL` / `EFFORT` (宣言していれば、この順) が先頭、
-`COMMAND` があれば末尾、残りは **宣言順**。
+入力欄の並び順は `CWD` / `MODEL` / `EFFORT` (宣言していれば、この順) が先頭、`COMMAND` があれば末尾、残りは **宣言順**。
 
-- 値は **export されていないシェル変数** として渡る — command が起動する
-  プロセス (= claude セッションとその子孫) には引き継がれない
+- 値は **export されていないシェル変数** として渡る — command が起動するプロセス (= claude セッションとその子孫) には引き継がれない
 - 宣言した変数は必ず定義される (未入力なら空文字。`set -u` で落ちない)
-- 変数名はシェル識別子 (`[A-Za-z_][A-Za-z0-9_]*`) のみ。それ以外 (と
-  `__proto__` / `constructor` / `prototype`) があると daemon は起動しない
+- 変数名はシェル識別子 (`[A-Za-z_][A-Za-z0-9_]*`) のみ。それ以外 (と`__proto__` / `constructor` / `prototype`) があると daemon は起動しない
 - `CWD` の値は `root_dirs` に対して realpath で封じ込め検査される唯一の値
 
 ### 複数テンプレート (fork 等の起動形を並べる)
@@ -249,26 +206,13 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    }
 ```
 
-- 各テンプレートは `command` と `params` を自分で全部書く (継承は `shell` の
-  デフォルトのみ)
-- エントリが 1 つでも壊れていると (name が空 / 重複 / `command` や `params` が
-  無い / 知らないキーがある) daemon は起動せず、壊れた場所を全部エラーに出す
-- **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している
-  最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
-- **resume テンプレの判定は `SESSION_ID` を宣言し `RESUME_AT` を宣言しない
-  こと**: 分岐先を持たない = そのセッションを続けるしかない、という消去法で
-  選ぶ (fork テンプレも同じ `SESSION_ID` を受け取るため)。宣言している最初の
-  ものを Session Search / 前回稼働中の resume 導線が開く
-- 「+ 新規」は **どちらも宣言していない** 最初のテンプレートを開く (どちらも
-  ユーザが別の場所で選んだセッションを前提にするので、新規起動ではない)
-- `--resume-session-at` は `claude --help` に出ない非公開オプション。webui の
-  fork 導線は launcher が設定されているかだけで決まる (hello の
-  `fork_available`)
-- fork テンプレが **二段** なのは `--resume-session-at` が print mode 専用で、
-  対話起動では黙って無視されるため (DR-0018 §3.3.1)。1 段目の
-  `claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、
-  その `session_id` を 2 段目が対話で resume する。`RESUME_AT` が空なら
-  `--resume-session-at` を付けない (空文字は 1 段目のエラーになる)
+- 各テンプレートは `command` と `params` を自分で全部書く (継承は `shell` のデフォルトのみ)
+- エントリが 1 つでも壊れていると (name が空 / 重複 / `command` や `params` が無い / 知らないキーがある) daemon は起動せず、壊れた場所を全部エラーに出す
+- **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
+- **resume テンプレの判定は `SESSION_ID` を宣言し `RESUME_AT` を宣言しないこと**: 分岐先を持たない = そのセッションを続けるしかない、という消去法で選ぶ (fork テンプレも同じ `SESSION_ID` を受け取るため)。宣言している最初のものを Session Search / 前回稼働中の resume 導線が開く
+- 「+ 新規」は **どちらも宣言していない** 最初のテンプレートを開く (どちらもユーザが別の場所で選んだセッションを前提にするので、新規起動ではない)
+- `--resume-session-at` は `claude --help` に出ない非公開オプション。webui のfork 導線は launcher が設定されているかだけで決まる (hello の`fork_available`)
+- fork テンプレが **二段** なのは `--resume-session-at` が print mode 専用で、対話起動では黙って無視されるため (DR-0018 §3.3.1)。1 段目の`claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、その `session_id` を 2 段目が対話で resume する。`RESUME_AT` が空なら`--resume-session-at` を付けない (空文字は 1 段目のエラーになる)
 
 2. **daemon を再起動する**
 
@@ -276,16 +220,11 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    ccmsg daemon restart
    ```
 
-   設定は daemon 起動時に 1 度だけ読まれるので、編集を反映する手段は
-   restart しかない (`config.ts` は動的 `import()` 経由で読まれ、module
-   cache が同一プロセス内での読み直しを許さない)。接続中の webui /
+   設定は daemon 起動時に 1 度だけ読まれるので、編集を反映する手段はrestart しかない (`config.ts` は動的 `import()` 経由で読まれ、module cache が同一プロセス内での読み直しを許さない)。接続中の webui /
    `ccmsg subscribe` は自動再接続で復帰する。
 
-   期待結果: 起動ログにエラーが出ない。設定が読めない (構文エラー、知らない
-   キー、型の合わない値、絶対パスでない `root_dirs` 等) と daemon は起動せず、
-   `config: <file>: <場所>: <理由>` の行を daemon.log に残して終了する。
-   CLI から daemon を立ち上げた場合 (`ccmsg daemon restart` 等) は同じ行が
-   CLI のエラーとして出る。
+   期待結果: 起動ログにエラーが出ない。設定が読めない (構文エラー、知らないキー、型の合わない値、絶対パスでない `root_dirs` 等) と daemon は起動せず、`config: <file>: <場所>: <理由>` の行を daemon.log に残して終了する。
+   CLI から daemon を立ち上げた場合 (`ccmsg daemon restart` 等) は同じ行がCLI のエラーとして出る。
 
 3. **webui で確認する**
 

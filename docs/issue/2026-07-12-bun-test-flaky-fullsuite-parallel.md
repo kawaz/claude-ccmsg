@@ -22,8 +22,7 @@ origin: 自リポ TODO
 ## 概要
 
 `bun test` をフルスイートで並列実行したとき、稀に 1 件だけ fail するケースが観測されている。
-`test-failure-no-tampering` ルールに基づき、根拠なく「flaky」ラベルで蓋をせず、
-fail するテスト名の確定と不安定さの軸の特定を進めるための追跡 issue。
+`test-failure-no-tampering` ルールに基づき、根拠なく「flaky」ラベルで蓋をせず、fail するテスト名の確定と不安定さの軸の特定を進めるための追跡 issue。
 
 ## 背景
 
@@ -59,9 +58,7 @@ fail するテスト名の確定と不安定さの軸の特定を進めるため
 
 ## 追記: 2026-07-16 別ケースの flaky を観測
 
-v0.39.0 CI (run 29502365995, ubuntu-latest) で別の flaky を観測 —
-`packages/cli/test/reconnect.test.ts:170`「daemon 再起動を跨いで subscribe が生存し、
-跨ぎ前後の post が両方 stdout に出る」が 10154ms で fail (timeout 様)。
+v0.39.0 CI (run 29502365995, ubuntu-latest) で別の flaky を観測 — `packages/cli/test/reconnect.test.ts:170`「daemon 再起動を跨いで subscribe が生存し、跨ぎ前後の post が両方 stdout に出る」が 10154ms で fail (timeout 様)。
 webui のみの変更 (daemon/cli 無変更) なので変更起因ではなくフルスイート並列時の timing。
 単発 rerun --failed で追試中。既知の tailscale origin 系 (上記 (a)(b)) とは別ケースとして記録。
 
@@ -69,86 +66,61 @@ webui のみの変更 (daemon/cli 無変更) なので変更起因ではなく�
 
 最頻 fail である tailscale origin auto-allow について真因を実機で確定した。
 
-- `tailscale-origin.ts` の subprocess timeout 1000ms (`AbortSignal.timeout`) が、高負荷時に
-  fake-tailscale を gate 到達前に SIGKILL してしまう
+- `tailscale-origin.ts` の subprocess timeout 1000ms (`AbortSignal.timeout`) が、高負荷時にfake-tailscale を gate 到達前に SIGKILL してしまう
 - 結果として空の Set が返り、`waitForOriginAllowed` が 4000ms で fail する
 - 8 並列実行で 5/8 fail を再現。timeout を 30s に伸ばすと 8/8 pass する反証実験で機序を確認済み
 
-修正方針: `CCMSG_TAILSCALE_STATUS_TIMEOUT_MS` env の読み口を追加し、テスト側は `extraEnv` で
-10000ms に設定する。production のデフォルトは 1000ms のまま据え置き (DR-0004 の判断を維持)。
+修正方針: `CCMSG_TAILSCALE_STATUS_TIMEOUT_MS` env の読み口を追加し、テスト側は `extraEnv` で10000ms に設定する。production のデフォルトは 1000ms のまま据え置き (DR-0004 の判断を維持)。
 現在実装中。
 
-注: issue に記載した他のテストの散発 fail (hooks / reconnect 等) が同一機序かどうかは
-未調査のため、この issue はまだ close しない。
+注: issue に記載した他のテストの散発 fail (hooks / reconnect 等) が同一機序かどうかは未調査のため、この issue はまだ close しない。
 
 ## 追記: 2026-07-21 2 件目の同型根治
 
 `hooks/session-start.test.ts` の `getRepoWsFromVcs` 系 5 テスト (v0.68.3) で同型の flaky を根治。
 
-真因は共通 deadline 方式の `timeoutMs:500` が 8 並列負荷下で `sh` spawn 遅延により
-超過し、空フォールバックとなること (503-506ms fail を実測)。テスト側の保険値を
-10000ms に引き上げて対応 (timeout 機構検証テストと production のデフォルトは据置)。
+真因は共通 deadline 方式の `timeoutMs:500` が 8 並列負荷下で `sh` spawn 遅延により超過し、空フォールバックとなること (503-506ms fail を実測)。テスト側の保険値を10000ms に引き上げて対応 (timeout 機構検証テストと production のデフォルトは据置)。
 8 並列 x 8 反復で 0 fail を確認。
 
-パターン確立: 「短い固定 timeout × 高負荷」が本 issue の主な機序と判明
-(tailscale origin の件と同型)。残りの散発 fail (TranslationHelperService の
-watchdog 系 / bin/ccmsg self-update の timeout 系 / agents polling 系 /
-reconnect timeout) も同型の疑いが濃厚。次に full suite で fail を観測した際、
-同パターンで各個撃破する。
+パターン確立: 「短い固定 timeout × 高負荷」が本 issue の主な機序と判明(tailscale origin の件と同型)。残りの散発 fail (TranslationHelperService のwatchdog 系 / bin/ccmsg self-update の timeout 系 / agents polling 系 /
+reconnect timeout) も同型の疑いが濃厚。次に full suite で fail を観測した際、同パターンで各個撃破する。
 
 ## 追記: 2026-07-21 08:06 tailscale origin auto-allow の第 2 故障モードを確認
 
-push gate で tailscale origin auto-allow が再 fail。ただし v0.68.2 で根治した機序
-(`waitForOriginAllowed` 4000ms timeout) とは別モードで、`tooSoon` fetch
-(`http-transport.test.ts:641`) が 127ms で `ConnectionRefused` — daemon HTTP port へ
-接続不可。issue 当初観測 (ConnectionRefused) は実在する第 2 の故障モードだったことが
-確定 (前回調査の「ConnectionRefused は誤り」は当該再現分についてのみ正しかった)。
+push gate で tailscale origin auto-allow が再 fail。ただし v0.68.2 で根治した機序(`waitForOriginAllowed` 4000ms timeout) とは別モードで、`tooSoon` fetch (`http-transport.test.ts:641`) が 127ms で `ConnectionRefused` — daemon HTTP port へ接続不可。issue 当初観測 (ConnectionRefused) は実在する第 2 の故障モードだったことが確定 (前回調査の「ConnectionRefused は誤り」は当該再現分についてのみ正しかった)。
 
 単体 rerun green、fail 時 load 16。
 
-次回調査時の観点: `startTestDaemon` の HTTP listen ready 判定 (`waitConnectable` が
-UDS のみで HTTP port の listen を待っていない可能性)、port 払い出しと listen 完了の race。
+次回調査時の観点: `startTestDaemon` の HTTP listen ready 判定 (`waitConnectable` がUDS のみで HTTP port の listen を待っていない可能性)、port 払い出しと listen 完了の race。
 
 ## 追記: 2026-07-21 3 件目の根治 (v0.71.1) — tailscale origin auto-allow 第 2 モードの根治
 
 tailscale origin auto-allow の第 2 モード (`tooSoon` fetch の `ConnectionRefused`) を根治。
 
-真因は構造的な race: 当該テストのみ `freeTcpPort` の pre-known port を使い、
-`httpAddress()` (UDS ping = HTTP bind 完了後にしか返らない implicit wait) を
-経由しないため、UDS ready → HTTP bind 完了までの ~100ms の窓に fetch が刺さる。
-port 奪取説は失敗形態 (`ConnectionRefused` ≠ 別プロセス応答) で棄却、高負荷起因説は
-load<8 での再現で棄却。
+真因は構造的な race: 当該テストのみ `freeTcpPort` の pre-known port を使い、`httpAddress()` (UDS ping = HTTP bind 完了後にしか返らない implicit wait) を経由しないため、UDS ready → HTTP bind 完了までの ~100ms の窓に fetch が刺さる。
+port 奪取説は失敗形態 (`ConnectionRefused` ≠ 別プロセス応答) で棄却、高負荷起因説はload<8 での再現で棄却。
 
-修正: fetch 前に `waitHttpConnectable` (25ms retry / 5s 上限) を挿入。daemon full
-suite で 5 連続 0 fail を確認。これで tailscale origin の既知 2 モードは両方根治した。
+修正: fetch 前に `waitHttpConnectable` (25ms retry / 5s 上限) を挿入。daemon full suite で 5 連続 0 fail を確認。これで tailscale origin の既知 2 モードは両方根治した。
 
 残る散発 fail 候補 (いずれも「短い固定 timeout × 高負荷」同型の疑い、未調査):
-TranslationHelperService watchdog 系 / agents polling 系 / bin/ccmsg self-update
-timeout 系 / reconnect timeout。
+TranslationHelperService watchdog 系 / agents polling 系 / bin/ccmsg self-update timeout 系 / reconnect timeout。
 
 ## 追記: 2026-07-22 4-5 件目の根治 (commit 53825794)
 
 `translate-helper.test.ts` (parallel queue の deadline 800ms ギリギリ設計 +
 realHelperTest の Swift cold spawn 5000ms 不足) と `bin/ccmsg.test.ts`
-(bash launcher spawnSync が負荷下 5000ms 超過) を根治。いずれも「短い固定
-timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
+(bash launcher spawnSync が負荷下 5000ms 超過) を根治。いずれも「短い固定timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
 
-残り 2 系統 (agents polling / reconnect) は 24 並列でも再現せず — 後続改修
-での緩和 or load 16+ 限定の可能性、次に full suite fail を観測した時に
-再調査する運用とする。既知 flaky はこれで全て根治 or 再現不能となったため、
-次の安定期間を見て issue close を検討。
+残り 2 系統 (agents polling / reconnect) は 24 並列でも再現せず — 後続改修での緩和 or load 16+ 限定の可能性、次に full suite fail を観測した時に再調査する運用とする。既知 flaky はこれで全て根治 or 再現不能となったため、次の安定期間を見て issue close を検討。
 
 ## 追記: 2026-07-25 6 件目の根治 — hooks 2 ファイル (故障モードは 2 つ)
 
 `hooks/session-start.test.ts` と `hooks/user-prompt-submit.test.ts` の flaky を根治。
-2026-07-21 の追記 (2 件目) で `NORMAL_TIMEOUT_MS=10_000` を入れた後も fail が残っていた
-理由が判明した — **独立した故障モードが 2 つあり、前回はうち 1 つしか塞いでいなかった**。
+2026-07-21 の追記 (2 件目) で `NORMAL_TIMEOUT_MS=10_000` を入れた後も fail が残っていた理由が判明した — **独立した故障モードが 2 つあり、前回はうち 1 つしか塞いでいなかった**。
 
 ### モード A: `ensureSessionFile` に timeoutMs の口が無い (user-prompt-submit)
 
-`getRepoWsFromVcs` は最大 5 回 `sh` を直列 spawn する共通 deadline 方式だが、
-`ensureSessionFile` は `opts` に `bin` しか持たず、**production 既定の 1000ms が
-そのままテストに効いていた**。前回の保険値はこのファイルには届いていない。
+`getRepoWsFromVcs` は最大 5 回 `sh` を直列 spawn する共通 deadline 方式だが、`ensureSessionFile` は `opts` に `bin` しか持たず、**production 既定の 1000ms がそのままテストに効いていた**。前回の保険値はこのファイルには届いていない。
 
 実測 (fake fixture, 既定 1000ms):
 
@@ -161,8 +133,7 @@ timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
 
 ### モード B: bun の per-test 既定 timeout 5000ms (両ファイル)
 
-`NORMAL_TIMEOUT_MS` を 10s にしても、**bun 側の per-test 既定が 5000ms なので
-予算を使い切る前に bun が先に test を打ち切る**。負荷下の実測 wall clock は
+`NORMAL_TIMEOUT_MS` を 10s にしても、**bun 側の per-test 既定が 5000ms なので予算を使い切る前に bun が先に test を打ち切る**。負荷下の実測 wall clock は
 2.4-3.0s (`budget10s wall=3038ms`) で、余裕があるように見えて 8 並列では超過した。
 これが「10s 渡しているのに落ちる」の正体。
 
@@ -171,95 +142,61 @@ timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
 8 並列 x 外部 CPU 負荷 (load 127) で修正前は **8/8 fail** (`timed out after 5000ms` 7 件 +
 `ensureSessionFile` の repo undefined 7 件)。
 
-修正後: 8/8 green → load 141 で 36/36 green → `just test` フルスイート 3/3 green
-(1682 pass) → 外部負荷下フルスイート 1/1 green (201s、無負荷比 3 倍の contention)。
+修正後: 8/8 green → load 141 で 36/36 green → `just test` フルスイート 3/3 green (1682 pass) → 外部負荷下フルスイート 1/1 green (201s、無負荷比 3 倍の contention)。
 
 ### 対処 (production のタイムアウト設計は不変)
 
 - `ensureSessionFile` の `opts` に `timeoutMs?` を追加し `getRepoWsFromVcs` へ透過。
   **hook 本体は渡さないので production は 1000ms 既定のまま** (省略時は既定を使う)。
-  テストの fake は `sh` script で実バイナリより spawn が重く、テストの遅さを
-  production のレイテンシ上限の代理にしない、という趣旨
-- 両ファイルに `spawnTest` (= `test(name, fn, 30_000)`) を定義し、subprocess を
-  spawn する test だけに適用。timeout 機構自体を検証する test
-  (`timeoutMs: 300` + elapsed assert) は assert をそのまま残している
+  テストの fake は `sh` script で実バイナリより spawn が重く、テストの遅さをproduction のレイテンシ上限の代理にしない、という趣旨
+- 両ファイルに `spawnTest` (= `test(name, fn, 30_000)`) を定義し、subprocess をspawn する test だけに適用。timeout 機構自体を検証する test (`timeoutMs: 300` + elapsed assert) は assert をそのまま残している
 
-共有 deadline を getter ごとに分ける案は採らなかった: hook は起動を遅らせたくないので
-**合計上限に意味がある** (5 getter が各 1s だと最悪 5s hook が止まる)。テストの都合で
-production の設計を歪めない。
+共有 deadline を getter ごとに分ける案は採らなかった: hook は起動を遅らせたくないので**合計上限に意味がある** (5 getter が各 1s だと最悪 5s hook が止まる)。テストの都合でproduction の設計を歪めない。
 
-パターン更新: 本 issue の主機序「短い固定 timeout × 高負荷」に加えて、
-**「テスト側の予算 > テストランナーの per-test 既定」という二重 timeout の見落とし**
-が新しい型として確認された。今後 timeout 保険値を入れる時は bun の 5000ms 既定も
-同時に確認する。
+パターン更新: 本 issue の主機序「短い固定 timeout × 高負荷」に加えて、**「テスト側の予算 > テストランナーの per-test 既定」という二重 timeout の見落とし**
+が新しい型として確認された。今後 timeout 保険値を入れる時は bun の 5000ms 既定も同時に確認する。
 
 ## 追記: 2026-07-27 7 件目の根治 — macOS Gatekeeper の inode 単位評価 (機序が別系統)
 
-これまでの追記は全て「短い固定 timeout × 高負荷」だったが、今回は**別系統の機序**を
-実機で確定した。詳細は `docs/findings/2026-07-27-macos-gatekeeper-per-inode-exec-stall.md`。
+これまでの追記は全て「短い固定 timeout × 高負荷」だったが、今回は**別系統の機序**を実機で確定した。詳細は `docs/findings/2026-07-27-macos-gatekeeper-per-inode-exec-stall.md`。
 
-真因: テストが mock 実行ファイルを毎回新規作成しており、macOS は**新規 inode の初回
-exec** を syspolicyd / XProtect の評価が終わるまで同期ブロックする。高負荷時この評価が
-**100-173 秒**かかることを実測した (load 46-74)。timeout を伸ばす対処が効かないのは
-このため。キャッシュ単位は inode で、パスでも内容でもない (in-place 書き換え 8 回は
-全て 15-18ms、同一パスでの unlink→再作成は 405-726ms に戻る、で確認)。
+真因: テストが mock 実行ファイルを毎回新規作成しており、macOS は**新規 inode の初回exec** を syspolicyd / XProtect の評価が終わるまで同期ブロックする。高負荷時この評価が**100-173 秒**かかることを実測した (load 46-74)。timeout を伸ばす対処が効かないのはこのため。キャッシュ単位は inode で、パスでも内容でもない (in-place 書き換え 8 回は全て 15-18ms、同一パスでの unlink→再作成は 405-726ms に戻る、で確認)。
 
-対処: `packages/testkit/src/mock-bin.ts` の `writeMockBin` を追加し、mock をリポに
-コミットした 1 個の shim への **hardlink** にした。挙動の差分は exec されない sidecar
-に置き、shim がその shebang を読んでインタープリタへ**データファイルとして**渡す
-(この経路は評価対象外、実測 16-17ms)。mock のスクリプト本文は 1 バイトも変えていない。
+対処: `packages/testkit/src/mock-bin.ts` の `writeMockBin` を追加し、mock をリポにコミットした 1 個の shim への **hardlink** にした。挙動の差分は exec されない sidecarに置き、shim がその shebang を読んでインタープリタへ**データファイルとして**渡す(この経路は評価対象外、実測 16-17ms)。mock のスクリプト本文は 1 バイトも変えていない。
 
 対象: `hooks/session-start.test.ts` / `hooks/user-prompt-submit.test.ts` /
 `packages/daemon/test/{agents,translate-helper,http-transport}.test.ts` /
 `bin/ccmsg.test.ts` (launcher の fixture コピーも hardlink 化)。
 
 実測 (対策前後、同一テスト): 82.12s で 1 fail (`timed out after 30000ms`) →
-**1.09s で 21 pass**。フルスイートは外部負荷を足した load 72 / 144 / 175 で 3 回とも
-1862 pass / 0 fail、所要は 89.33s / 91.36s / 95.05s と **load 2.4 倍でも 7% しか
-伸びない** (= 負荷感受性が消えた)。初回 1 回だけ走る評価は `just test` の `warm.ts` で
-テストの外に追い出した (cold 実測 34.6s、warm 時は 0.1s で無出力)。
+**1.09s で 21 pass**。フルスイートは外部負荷を足した load 72 / 144 / 175 で 3 回とも1862 pass / 0 fail、所要は 89.33s / 91.36s / 95.05s と **load 2.4 倍でも 7% しか伸びない** (= 負荷感受性が消えた)。初回 1 回だけ走る評価は `just test` の `warm.ts` でテストの外に追い出した (cold 実測 34.6s、warm 時は 0.1s で無出力)。
 
-なお workspace package 追加に伴い `bun.lock` の更新が必要 (未更新だと CI の
-`bun install --frozen-lockfile` が落ちる — 実際に落ちるのを確認済み)。
+なお workspace package 追加に伴い `bun.lock` の更新が必要 (未更新だと CI の`bun install --frozen-lockfile` が落ちる — 実際に落ちるのを確認済み)。
 
-mock の等価性 (引数・exit code・stdout/stderr・env・stdin・シグナル) は
-`packages/testkit/test/mock-bin.test.ts` に恒久化。既知の差異は mock 内の `$0` が
-sidecar のパスになる点のみ (インタープリタの仕様で回避不能、現存 mock は未使用)。
+mock の等価性 (引数・exit code・stdout/stderr・env・stdin・シグナル) は`packages/testkit/test/mock-bin.test.ts` に恒久化。既知の差異は mock 内の `$0` がsidecar のパスになる点のみ (インタープリタの仕様で回避不能、現存 mock は未使用)。
 
 ## 追記: 2026-08-27 実測 — ローカル push gate での timeout 系再発と CI 新顔 flaky
 
-ローカル push gate (`just test`) で timeout 系 flaky が同日 3 回発生。従来より頻度が
-上がっている体感。
+ローカル push gate (`just test`) で timeout 系 flaky が同日 3 回発生。従来より頻度が上がっている体感。
 
 - v0.119.0 push 時に 1 回 (`timed out after 5000ms`)
 - issue commit push 時に 2 連続
-- いずれも単独 / 直後の全量再実行では 2988 pass の一発 green で、個別テスト名は
-  特定できず
+- いずれも単独 / 直後の全量再実行では 2988 pass の一発 green で、個別テスト名は特定できず
 
 CI (ubuntu-latest) で新顔の flaky を観測: `packages/daemon/test/last-live-sessions.test.ts`
 の「kill された daemon を起こし直すと、直前の接続が前回稼働中として出る」
-(v0.115.0 で追加) が `expect().toEqual` 不一致で fail、`gh run rerun --failed` で
-green (run 33045400668)。kill/再起動のタイミング依存の疑い。既知 flaky リスト
-(translate-e2e / reconnect / ws keepalive) への追加候補として記録。
+(v0.115.0 で追加) が `expect().toEqual` 不一致で fail、`gh run rerun --failed` でgreen (run 33045400668)。kill/再起動のタイミング依存の疑い。既知 flaky リスト(translate-e2e / reconnect / ws keepalive) への追加候補として記録。
 
 ## 追記: 2026-09-02 daemon restart recovery の race 根治
 
 対象は `packages/daemon/test/last-live-sessions.test.ts` の crash recovery 4 ケース。
 
-真因は fixture が `sessionHello` の直後に `TestClient.close()` で正常切断を開始し、
-その直後に `SIGKILL` していたため、daemon 側の正常切断処理と `SIGKILL` が競争していたこと。
+真因は fixture が `sessionHello` の直後に `TestClient.close()` で正常切断を開始し、その直後に `SIGKILL` していたため、daemon 側の正常切断処理と `SIGKILL` が競争していたこと。
 
-`server.ts` の `registerSession` は `maybeBroadcastPeers` を同期呼出しし、
-`persistLastLive` の `writeFileSync`+`renameSync` が完了してから hello reply を返すので、
-書き込み前 kill 仮説は棄却した。反対に `close` が先に処理されると
-`removeConn`→`detachSession`→`maybeBroadcastPeers` が snapshot を空にし、
-再起動後 `last_live` が `undefined` になる。
+`server.ts` の `registerSession` は `maybeBroadcastPeers` を同期呼出しし、`persistLastLive` の `writeFileSync`+`renameSync` が完了してから hello reply を返すので、書き込み前 kill 仮説は棄却した。反対に `close` が先に処理されると`removeConn`→`detachSession`→`maybeBroadcastPeers` が snapshot を空にし、再起動後 `last_live` が `undefined` になる。
 
-接続を閉じずに `SIGKILL` するよう crash recovery 4 ケースを修正し、ファイル冒頭と
-`crashRestart` の power cut 意図に fixture を一致させた。timeout/retry/sleep は
-追加していない。
+接続を閉じずに `SIGKILL` するよう crash recovery 4 ケースを修正し、ファイル冒頭と`crashRestart` の power cut 意図に fixture を一致させた。timeout/retry/sleep は追加していない。
 
-修正前の単体 `--rerun-each 100` は 100/100 pass でローカル低負荷では再現せず、CI 2 件と
-full suite 1 件の低頻度症状は scheduler による close/SIGKILL 到達順の差と一致。
+修正前の単体 `--rerun-each 100` は 100/100 pass でローカル低負荷では再現せず、CI 2 件とfull suite 1 件の低頻度症状は scheduler による close/SIGKILL 到達順の差と一致。
 
 status は wip のまま。

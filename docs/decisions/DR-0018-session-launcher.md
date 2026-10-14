@@ -75,45 +75,21 @@ session_launcher:
 ```
 
 - **変数渡し (LN-Q2 裁定 = 環境変数)**: daemon は文字列置換を一切しない。`CWD` / `MODEL` /
-  `EFFORT` / `PROMPT` の 4 つの環境変数をセットして shell を起動し、command はそのまま
-  `-c` に渡す。クオート安全性 (`"$CMD"` 等) は config を書く kawaz の責務 —
-  injection 面が「env 参照を quote するかどうか」に閉じ、`$(date ...)` 等の shell 展開も
-  自然に使える
-- **shell は暗黙にしない (LN-Q2 裁定)**: `sh -c` 暗黙起動ではなく、config の `shell` キーで
-  `bash` / `zsh` の組み込み 2 択から明示選択。bash は `bash -eu -o pipefail -c "$COMMAND"`
+  `EFFORT` / `PROMPT` の 4 つの環境変数をセットして shell を起動し、command はそのまま`-c` に渡す。クオート安全性 (`"$CMD"` 等) は config を書く kawaz の責務 — injection 面が「env 参照を quote するかどうか」に閉じ、`$(date ...)` 等の shell 展開も自然に使える
+- **shell は暗黙にしない (LN-Q2 裁定)**: `sh -c` 暗黙起動ではなく、config の `shell` キーで`bash` / `zsh` の組み込み 2 択から明示選択。bash は `bash -eu -o pipefail -c "$COMMAND"`
   相当、zsh は等価のエラー厳格オプションで起動 (bash/zsh は好みが分かれるため両対応)
 - **timeout_seconds**: 実行の grace period。以降は SIGTERM → 少し待って SIGKILL
 
-**Addendum 2026-07-18: `clean_env` (環境変数クリーニング)**: §3.1 の config に
-optional `clean_env: string[]` を追加。動機: daemon はある Claude セッション内の
-shell から起動されるため、daemon プロセスが元セッション由来の環境変数
-(`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `ANTHROPIC_*` 等) を保持
-しており、`session_launch` の spawn 時に `process.env` 経由で新セッションへ流れて
-動作を変えてしまう (旧 SESSION_ID の引き継ぎ、CHILD_SESSION=1 の誤設定 等)。
-要素はワイルドカードパターン: `*` はキー名内の任意文字列 (区切り概念なし)、それ以外は
-リテラル・大文字小文字区別・アンカー付き完全一致 (正規表現メタ文字は literal 扱い)。
-spawn 前に daemon env からマッチするキーを除去し、その上に launcher の
-`CWD`/`MODEL`/`EFFORT`/`PROMPT` を重ねる (= パターンがこの 4 変数を名指ししても
-launch env が勝つ)。既定 = 未指定なら空配列でクリーニングなし。配列でない値や、空・文字列でない
-要素があれば config が読めないものとして daemon は起動時に止まる (§3.3 の config 読み込み)。
+**Addendum 2026-07-18: `clean_env` (環境変数クリーニング)**: §3.1 の config にoptional `clean_env: string[]` を追加。動機: daemon はある Claude セッション内のshell から起動されるため、daemon プロセスが元セッション由来の環境変数(`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `ANTHROPIC_*` 等) を保持しており、`session_launch` の spawn 時に `process.env` 経由で新セッションへ流れて動作を変えてしまう (旧 SESSION_ID の引き継ぎ、CHILD_SESSION=1 の誤設定 等)。
+要素はワイルドカードパターン: `*` はキー名内の任意文字列 (区切り概念なし)、それ以外はリテラル・大文字小文字区別・アンカー付き完全一致 (正規表現メタ文字は literal 扱い)。
+spawn 前に daemon env からマッチするキーを除去し、その上に launcher の`CWD`/`MODEL`/`EFFORT`/`PROMPT` を重ねる (= パターンがこの 4 変数を名指ししてもlaunch env が勝つ)。既定 = 未指定なら空配列でクリーニングなし。配列でない値や、空・文字列でない要素があれば config が読めないものとして daemon は起動時に止まる (§3.3 の config 読み込み)。
 
-**Addendum 2026-07-18 (2nd): `keep_env` (クリーニング除外 allowlist)**: §3.1 の
-config に optional `keep_env: string[]` を追加。動機: 実運用の
-`clean_env: ["CLAUDE*", ...]` が **CLAUDE_CONFIG_DIR まで除去してしまい、面分離
-(config-plane isolation) に必須のこの変数を失った新セッションが起動できなかった**。
-broad な clean パターンは必要 (元セッション変数の列挙は漏れる) なので、除去の側を
-狭めるのではなく例外 allowlist を重ねる。パターン文法は clean_env と完全に同一
-(`*` = キー名内の任意文字列、それ以外リテラル・大文字小文字区別・アンカー付き完全
-一致)。**優先関係: keep_env が clean_env に勝つ** — 両方にマッチするキーは残す。
-keep_env のみにマッチするキーは元々除去されないので no-op (keep_env は保護のみで
-除去はしない)。launch の `CWD`/`MODEL`/`EFFORT`/`PROMPT` overlay は keep/clean の
-判定後に重ねるため常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正な値は clean_env と同じく
-config が読めないものとして daemon を起動時に止める。
+**Addendum 2026-07-18 (2nd): `keep_env` (クリーニング除外 allowlist)**: §3.1 のconfig に optional `keep_env: string[]` を追加。動機: 実運用の`clean_env: ["CLAUDE*", ...]` が **CLAUDE_CONFIG_DIR まで除去してしまい、面分離(config-plane isolation) に必須のこの変数を失った新セッションが起動できなかった**。
+broad な clean パターンは必要 (元セッション変数の列挙は漏れる) なので、除去の側を狭めるのではなく例外 allowlist を重ねる。パターン文法は clean_env と完全に同一(`*` = キー名内の任意文字列、それ以外リテラル・大文字小文字区別・アンカー付き完全一致)。**優先関係: keep_env が clean_env に勝つ** — 両方にマッチするキーは残す。
+keep_env のみにマッチするキーは元々除去されないので no-op (keep_env は保護のみで除去はしない)。launch の `CWD`/`MODEL`/`EFFORT`/`PROMPT` overlay は keep/clean の判定後に重ねるため常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正な値は clean_env と同じくconfig が読めないものとして daemon を起動時に止める。
 
 **Addendum 2026-07-28 (kawaz r76m15): 受け渡し変数を子プロセスへ引き継がせない**:
-LN-Q2 の env 渡しは受け渡し手段として良かったが、env である以上 `PROMPT` 等が
-**起動された claude セッションのさらに子プロセス群まで引き継がれる**。一時的な
-受け渡し変数なので望ましくない。そこで transport と template 語彙を分離する:
+LN-Q2 の env 渡しは受け渡し手段として良かったが、env である以上 `PROMPT` 等が**起動された claude セッションのさらに子プロセス群まで引き継がれる**。一時的な受け渡し変数なので望ましくない。そこで transport と template 語彙を分離する:
 
 - daemon は値を **`ccmsg_new_session_cwd` / `_model` / `_effort` / `_prompt`**
   (小文字 prefix の carrier) として env にセットして shell を起動する
@@ -122,47 +98,24 @@ LN-Q2 の env 渡しは受け渡し手段として良かったが、env であ�
   ```sh
   unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd
   ```
-  先頭の `unset -v` が 2 つの役割を持つ: daemon 自身が同名変数を export していた
-  場合の残骸を落とすことと、export 属性を外して続く代入を **非 export のシェル
-  変数**にすること
-- **config が参照する語彙 (`$CWD`/`$MODEL`/`$EFFORT`/`$PROMPT`) は不変** — 既存
-  config はそのまま動く。変わるのは「env ではなくシェル変数として届く」点だけ
+  先頭の `unset -v` が 2 つの役割を持つ: daemon 自身が同名変数を export していた場合の残骸を落とすことと、export 属性を外して続く代入を **非 export のシェル変数**にすること
+- **config が参照する語彙 (`$CWD`/`$MODEL`/`$EFFORT`/`$PROMPT`) は不変** — 既存config はそのまま動く。変わるのは「env ではなくシェル変数として届く」点だけ
 - **prologue と command は同一 shell で実行する** (nested `bash -c` にしない)。
-  非 export 変数は子 shell に渡らず、渡すには再 export が必要になって設計目的が
-  消えるため
-- prologue は固定の識別子だけで構成され、request の値を shell source に埋め込む
-  ことは一切ない (= injection 面は従来どおり config 筆者の quote 責務に閉じる)
+  非 export 変数は子 shell に渡らず、渡すには再 export が必要になって設計目的が消えるため
+- prologue は固定の識別子だけで構成され、request の値を shell source に埋め込むことは一切ない (= injection 面は従来どおり config 筆者の quote 責務に閉じる)
 
-**Addendum 2026-08-12 (kawaz r119m6): テンプレ params 宣言化 — §3.1 の
-トップレベル `command`/`default_prompt` と固定 4 変数語彙を supersede**:
-launcher がテンプレ構造なのに既定値がテンプレの外にあり、webui は「command が
-変数を使うか」の推測で入力欄を出し分けるねじれがあった。テンプレを完結した宣言に
-改める:
+**Addendum 2026-08-12 (kawaz r119m6): テンプレ params 宣言化 — §3.1 のトップレベル `command`/`default_prompt` と固定 4 変数語彙を supersede**:
+launcher がテンプレ構造なのに既定値がテンプレの外にあり、webui は「command が変数を使うか」の推測で入力欄を出し分けるねじれがあった。テンプレを完結した宣言に改める:
 
-- テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値
-  (string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言
-  された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された
-  入力欄だけを描画する (widget: CWD=picker、MODEL/EFFORT=select、それ以外は
-  値に改行があれば textarea、無ければ input。並びは CWD/MODEL/EFFORT が先頭、
-  `COMMAND` が末尾、残りは宣言順 — kawaz r259m47)
-- `CWD` のみ wire の独立フィールド (realpath 封じ込め + spawn cwd と daemon
-  自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
-- wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は
-  `params` に一本化。params はテンプレートの宣言から組み立てた strict なスキーマで読み
-  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、宣言に無い名前はスキーマの失敗になる (黙って捨てない)。`CWD` は宣言されるが params のスキーマからは除く (値は wire の `cwd` で来る) ので、params に `CWD` を入れた依頼も失敗になる。`__proto__` / `constructor` / `prototype` の名前は wire の `params` (`v.record`) を読む時点で落ち、失敗にはならない。設定の param 名でこの 3 つは禁じる。carrier は `ccmsg_new_session_param_<NAME>` に改名
-  (変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
-**Addendum 2026-09-02 (kawaz r259m19): 移行経路の撤去**: 上の supersede に
-伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの
-`default_prompt`、`params` 未宣言テンプレの変数推測) を撤去する。既定値が
-テンプレの外にあること自体が是正対象だったので、移行用の受け皿を残すと
-「入力欄が command 文字列から推測される」旧モデルが型と実装に生き続ける。
+- テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値(string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された入力欄だけを描画する (widget: CWD=picker、MODEL/EFFORT=select、それ以外は値に改行があれば textarea、無ければ input。並びは CWD/MODEL/EFFORT が先頭、`COMMAND` が末尾、残りは宣言順 — kawaz r259m47)
+- `CWD` のみ wire の独立フィールド (realpath 封じ込め + spawn cwd と daemon自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
+- wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は`params` に一本化。params はテンプレートの宣言から組み立てた strict なスキーマで読み([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、宣言に無い名前はスキーマの失敗になる (黙って捨てない)。`CWD` は宣言されるが params のスキーマからは除く (値は wire の `cwd` で来る) ので、params に `CWD` を入れた依頼も失敗になる。`__proto__` / `constructor` / `prototype` の名前は wire の `params` (`v.record`) を読む時点で落ち、失敗にはならない。設定の param 名でこの 3 つは禁じる。carrier は `ccmsg_new_session_param_<NAME>` に改名(変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
+**Addendum 2026-09-02 (kawaz r259m19): 移行経路の撤去**: 上の supersede に伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの`default_prompt`、`params` 未宣言テンプレの変数推測) を撤去する。既定値がテンプレの外にあること自体が是正対象だったので、移行用の受け皿を残すと「入力欄が command 文字列から推測される」旧モデルが型と実装に生き続ける。
 config の形は §3.1 の supersede 後の 1 つだけ:
 
 - `templates` は必須。各テンプレは `command` と `params` を自分で全部書く。
   launcher 直下から継承するのは `shell` の既定値のみ
-- `command` / `params` を欠くテンプレ、`name` が空・重複するテンプレがあれば、また
-  `templates` が空なら、config が読めないものとして daemon は起動時に止まる
-  (§3.3 の config 読み込み、`root_dirs` が空・相対パスを含む時も同じ)
+- `command` / `params` を欠くテンプレ、`name` が空・重複するテンプレがあれば、また`templates` が空なら、config が読めないものとして daemon は起動時に止まる(§3.3 の config 読み込み、`root_dirs` が空・相対パスを含む時も同じ)
 - 既定プロンプトは `params.PROMPT` の初期値として書く
 
 ### 3.2 protocol (新 op)
@@ -187,11 +140,8 @@ config の形は §3.1 の supersede 後の 1 つだけ:
 
 ### 3.3 daemon 実装
 
-- config 読み込み: 起動時 (既存 config path に統合)。config 全体を 1 つのスキーマで読み
-  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。
-  エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で、daemon.log に書かれ、
-  CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、
-  不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える
+- config 読み込み: 起動時 (既存 config path に統合)。config 全体を 1 つのスキーマで読み([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。
+  エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で、daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える
 - `dir_tree`: `readdir` を深さ制限 + dot-filter で walking
 - `session_launch` (LN-Q2 裁定反映):
   1. env に `CWD` / `MODEL` / `EFFORT` / `PROMPT` をセット (daemon は文字列置換しない)
@@ -203,36 +153,25 @@ config の形は §3.1 の supersede 後の 1 つだけ:
 
 ### 3.3.1 fork テンプレは二段起動で書く (Addendum 2026-08-21)
 
-`claude` の `--resume-session-at` は **print mode (`-p`) 専用**。対話起動に付けても
-黙って無視され (v2.1.237 バイナリ内の説明文 "use with --resume in print mode" /
-"Ignored outside print mode"、実測でも対話モードは指定あり / なしで input tokens
-完全一致)、fork 地点指定が効かず常に先端 fork になる。したがって webui の
-「ここから fork」を成立させる fork テンプレは **一段で対話 claude を起動できない**。
+`claude` の `--resume-session-at` は **print mode (`-p`) 専用**。対話起動に付けても黙って無視され (v2.1.237 バイナリ内の説明文 "use with --resume in print mode" /
+"Ignored outside print mode"、実測でも対話モードは指定あり / なしで input tokens完全一致)、fork 地点指定が効かず常に先端 fork になる。したがって webui の「ここから fork」を成立させる fork テンプレは **一段で対話 claude を起動できない**。
 
 fork テンプレは次の二段で書く:
 
 1. **切り詰め済みセッションを作る (print)**
    `claude -p --resume "$SESSION_ID" --fork-session [--resume-session-at "$RESUME_AT"]
    --output-format json '/exit'` を launcher shell の中で同期実行する。
-   `/exit` は print mode に無いので何も実行されず (実測 `num_turns: 0`,
-   `total_cost_usd: 0`, `duration_api_ms: 0` = API 呼び出しゼロ)、それでも
-   fork 済み transcript は projects ディレクトリに永続化され、stdout JSON の
-   `session_id` が新 sid になる。実測 1.2 秒で、`timeout_seconds` (既定 10) に収まる
+   `/exit` は print mode に無いので何も実行されず (実測 `num_turns: 0`, `total_cost_usd: 0`, `duration_api_ms: 0` = API 呼び出しゼロ)、それでもfork 済み transcript は projects ディレクトリに永続化され、stdout JSON の`session_id` が新 sid になる。実測 1.2 秒で、`timeout_seconds` (既定 10) に収まる
 2. **その新 sid を対話で resume する**
-   `claude --resume "$NEW_SID" --model ... --effort ... "$PROMPT"` を通常どおり
-   `hyoui run --detached` 経由で起動する。切り詰めは 1 段目で確定済みなので
-   `--fork-session` も `--resume-session-at` も不要
+   `claude --resume "$NEW_SID" --model ... --effort ... "$PROMPT"` を通常どおり`hyoui run --detached` 経由で起動する。切り詰めは 1 段目で確定済みなので`--fork-session` も `--resume-session-at` も不要
 
 制約:
 
 - `$RESUME_AT` が空のとき (= 先端 fork) は `--resume-session-at` を **付けない**。
   空文字を渡すと 1 段目が `No message found with message.uuid of:` で失敗する
 - 1 段目の非零 exit / `session_id` の抽出失敗では **launcher shell を exit 1 で止める**。
-  無指定 fork へフォールバックしない — 先端 fork は「この地点から fork」の意図と真逆で、
-  しかも成功したように見えてしまう。launcher shell は `-e` 付きで起動されるので、
-  1 段目の失敗はそのまま伝播し、stderr が webui の結果パネルに出る
-- `CLAUDE_CONFIG_DIR` は `keep_env` で launcher shell に残す (1 段目が書く transcript と
-  2 段目が読む transcript を同じ projects ディレクトリに揃えるため)
+  無指定 fork へフォールバックしない — 先端 fork は「この地点から fork」の意図と真逆で、しかも成功したように見えてしまう。launcher shell は `-e` 付きで起動されるので、1 段目の失敗はそのまま伝播し、stderr が webui の結果パネルに出る
+- `CLAUDE_CONFIG_DIR` は `keep_env` で launcher shell に残す (1 段目が書く transcript と2 段目が読む transcript を同じ projects ディレクトリに揃えるため)
 
 ### 3.4 webui 実装
 
@@ -262,11 +201,8 @@ fork テンプレは次の二段で書く:
 ## 5. 裁定記録 (kawaz 2026-07-16, r26 mid=4)
 
 - **LN-Q1 = (a)** 既存 daemon config に統合
-- **LN-Q2 = 環境変数渡し** (`CWD`/`MODEL`/`EFFORT`/`PROMPT`)。shell は暗黙にせず config の
-  `shell: bash | zsh` で組み込み 2 択から明示選択 (bash = `-eu -o pipefail -c`)。quote は
-  config 筆者責務、`$(date)` 等の shell 展開も可 — § 3.1 / 3.3 に反映済み
-- **LN-Q3 = (a)+(b) ハイブリッド** 初期一括 depth は config `dir_tree_depth` (default 2)、
-  境界以深はノード展開時に lazy fetch — § 3.2 に反映済み
+- **LN-Q2 = 環境変数渡し** (`CWD`/`MODEL`/`EFFORT`/`PROMPT`)。shell は暗黙にせず config の`shell: bash | zsh` で組み込み 2 択から明示選択 (bash = `-eu -o pipefail -c`)。quote はconfig 筆者責務、`$(date)` 等の shell 展開も可 — § 3.1 / 3.3 に反映済み
+- **LN-Q3 = (a)+(b) ハイブリッド** 初期一括 depth は config `dir_tree_depth` (default 2)、境界以深はノード展開時に lazy fetch — § 3.2 に反映済み
 - **LN-Q4 = (a)** config 変更は daemon 再起動で反映
 
 ## 6. 関連

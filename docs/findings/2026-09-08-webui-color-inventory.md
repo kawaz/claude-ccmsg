@@ -67,13 +67,11 @@
 `--md-quote-bg` (4%) / `--md-quote-rule` (28%) / `--md-hr-rule` (22%) /
 `--md-details-bg` (5%) / `--md-details-rule` (20%) / `--md-table-rule` (20%) /
 `--md-table-head-bg` (8%) / `--md-inline-code-bg` / `--md-inline-code-rule` /
-`--md-inline-code-fg` / `--md-block-code-bg`。前 7 つは `color-mix(in oklab, …)`、
-code 系 3 つは `oklch(from var(--md-surface) …)` で色相を差し替える。
+`--md-inline-code-fg` / `--md-block-code-bg`。前 7 つは `color-mix(in oklab, …)`、code 系 3 つは `oklch(from var(--md-surface) …)` で色相を差し替える。
 
 ### 定義されていないのに参照されている変数 (= fallback リテラルが実効値)
 
-`--muted` `--ok` `--err` `--fg-error` は app.css / client のどこにも定義がなく、
-**fallback の生値が常に効いている = テーマ非依存**。
+`--muted` `--ok` `--err` `--fg-error` は app.css / client のどこにも定義がなく、**fallback の生値が常に効いている = テーマ非依存**。
 
 | 参照 | 実効値 | 箇所 |
 |---|---|---|
@@ -85,10 +83,8 @@ code 系 3 つは `oklch(from var(--md-surface) …)` で色相を差し替え�
 | `var(--hover-bg, var(--border))` | `var(--border)` | `app.css:2120` `:2861` (同上) |
 
 逆に、**定義済みトークンに付いた死んだ fallback** (到達しない生値) が 12 箇所ある:
-`var(--danger, #c33)` ×3 (`:2815` `:2816` `:2856`)、`var(--warn, #ba5)` ×3
-(`:6941` `:7002` `:7016`)、`var(--accent, #48a)` (`:6944`)、`var(--bg-alt, #eef)` /
-`var(--border, #ccd)` (`:7037` `:7038`)、`var(--bg, #fff)` (`:7207`)、
-`var(--fg-muted, #888)` (`:4600`)、`var(--accent, #4a9eff)` (`:7893`)。
+`var(--danger, #c33)` ×3 (`:2815` `:2816` `:2856`)、`var(--warn, #ba5)` ×3 (`:6941` `:7002` `:7016`)、`var(--accent, #48a)` (`:6944`)、`var(--bg-alt, #eef)` /
+`var(--border, #ccd)` (`:7037` `:7038`)、`var(--bg, #fff)` (`:7207`)、`var(--fg-muted, #888)` (`:4600`)、`var(--accent, #4a9eff)` (`:7893`)。
 
 ## 実用的な示唆
 
@@ -99,17 +95,14 @@ code 系 3 つは `oklch(from var(--md-surface) …)` で色相を差し替え�
    `--shadow-*`) を作る側の作業が要る。
 2. **緑 4 種・琥珀 5 種・赤 4 種が別の場所で別の値で持たれている** (次節の重複)。
    状態色を 1 系統に寄せれば、テーマカラー + 状態色の hue 数点が入力になる。
-3. **`--muted` / `--ok` / `--err` / `--fg-error` は定義が存在しない**ので、
-   ダークテーマで `#888` `#4a8` `#c55` `#c33` がそのまま出ている。
+3. **`--muted` / `--ok` / `--err` / `--fg-error` は定義が存在しない**ので、ダークテーマで `#888` `#4a8` `#c55` `#c33` がそのまま出ている。
    自動算出の前に、この 4 つは既存トークンへ寄せるか正式に定義するかの判断が要る。
 4. **seed 由来の色が 2 つの色空間に分裂している**。`avatar.tsx` は
-   `hsl(h 65% 45%)` / `hsl(h 55% 92%)` (S/L 固定 = テーマ非依存)、
-   吹き出しは `oklch(0.96 0.03 h)` / dark `oklch(0.24 0.025 h)`。
+   `hsl(h 65% 45%)` / `hsl(h 55% 92%)` (S/L 固定 = テーマ非依存)、吹き出しは `oklch(0.96 0.03 h)` / dark `oklch(0.24 0.025 h)`。
    同じ `hueForSeed()` の出力を使いながら、明度の持ち方が別。
    算出方式に一本化するなら、この 2 つを同じ式から出すのが自然に見える。
 5. **md 装飾だけは既に「面からの距離」で算出済み** (`--md-surface` + `color-mix` /
-   `oklch(from …)`)。ここが方針のモデルケースで、`.say` / member-hue / 状態色は
-   まだ絶対値。同じ考え方を広げる余地がそのまま残っている。
+   `oklch(from …)`)。ここが方針のモデルケースで、`.say` / member-hue / 状態色はまだ絶対値。同じ考え方を広げる余地がそのまま残っている。
 
 ### トークン外の直接ハードコード (9 行)
 
@@ -196,8 +189,7 @@ grep -nEi '#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|oklab\(|color-mix\(|\b(white
 | `.say` 琥珀 (dark) | 2612, 2613, 2616 | `0.24 0.025 80` / `0.45 0.05 80` / `0.72 0.14 80` |
 | md コード導出 | 5250, 5253, 5271 | `oklch(from var(--md-surface) calc(l + --md-code-l-shift × 1 / 2.4 / 0.4) 0.06 / 0.12 / 0.025 var(--md-code-hue))` |
 
-`--member-hue` を注入している箇所: `TimelineItem.tsx:126`、`Timeline.tsx:906` `:2676`、
-`CatalogView.tsx:646` `:663`、`CatalogMdColors.tsx:168`。値は `hueForSeed()`
+`--member-hue` を注入している箇所: `TimelineItem.tsx:126`、`Timeline.tsx:906` `:2676`、`CatalogView.tsx:646` `:663`、`CatalogMdColors.tsx:168`。値は `hueForSeed()`
 (`avatar.tsx:51`、FNV-1a → mulberry32 → 0-359) の出力。
 
 ### tsx / ts 側の色
@@ -216,17 +208,12 @@ grep -nEi '#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|oklab\(|color-mix\(|\b(white
 
 ### シンタックスハイライト (Shiki)
 
-`client/highlight.ts` が `github-light` / `github-dark` の 2 テーマを読み、トークンごとに
-`--shiki-light` / `--shiki-dark` (+ `-font-style` / `-font-weight` /
-`-text-decoration`) をインライン style で吐く。`app.css:4186-4196` の `.shiki-tok` が
-`prefers-color-scheme` で light/dark を切り替える。**色数は Shiki テーマ側が持つ**ため
-webui のソースには 1 つも現れず、テーマカラーからの算出対象にもならない (外部依存)。
+`client/highlight.ts` が `github-light` / `github-dark` の 2 テーマを読み、トークンごとに`--shiki-light` / `--shiki-dark` (+ `-font-style` / `-font-weight` /
+`-text-decoration`) をインライン style で吐く。`app.css:4186-4196` の `.shiki-tok` が`prefers-color-scheme` で light/dark を切り替える。**色数は Shiki テーマ側が持つ**ためwebui のソースには 1 つも現れず、テーマカラーからの算出対象にもならない (外部依存)。
 
 ### ターミナル
 
-ターミナルは hyoui gateway への iframe embed で、ANSI パレットは webui 側に存在しない
-(`grep -i '\bansi\b' client` のヒットは `transcript-model.ts` の ANSI エスケープ
-**除去**正規表現のみ)。webui が渡す色は上表の `bg:%233b82f6` 1 つだけ。
+ターミナルは hyoui gateway への iframe embed で、ANSI パレットは webui 側に存在しない(`grep -i '\bansi\b' client` のヒットは `transcript-model.ts` の ANSI エスケープ**除去**正規表現のみ)。webui が渡す色は上表の `bg:%233b82f6` 1 つだけ。
 
 ### 意味役割での再グルーピング (所見)
 
