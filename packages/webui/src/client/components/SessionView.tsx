@@ -29,7 +29,7 @@ import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
-import { terminalAbsenceNotice } from "./session-input.ts";
+import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
@@ -153,7 +153,9 @@ export function SessionView({
   // no_terminal / ended) では、タブを出したうえで iframe の代わりに理由と次の
   // 行動を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けが
   // つかない。
-  const terminalAbsence = terminalAbsenceNotice(state.sessionStatuses.get(sid)?.input_readiness);
+  const terminalAbsence = terminalAbsenceNotice(
+    sessionInputReadiness(peer, state.sessionStatuses.get(sid)),
+  );
   const hasTerminal = !!terminalGatewayUrl && (!!hyouiSessionId || terminalAbsence !== null);
   // Timeline / Status が使えるかの単一ゲート (DR-0021 §2.4/§3.1) — 導出は
   // hasSessionTranscript を見る。agent-only 行 (peer 無し、`claude agents
@@ -203,9 +205,7 @@ export function SessionView({
   // (DR-0020 §2.1 (a) 案: 全 peer 常時 subscribe はコストに見合わないため、
   // 実装コストとのトレードオフでこちらを採用。全 peer 分の完全なバッジは
   // Phase 3 後続に持ち越す)。
-  // Terminal タブも input_readiness (端末の有無) を読むので購読する。
-  const needsStatus =
-    tab === "files" || tab === "status" || tab === "timeline" || tab === "terminal";
+  const needsStatus = tab === "files" || tab === "status" || tab === "timeline";
   // 購読が失敗した理由。daemon が jsonl を解決できない (session_not_found /
   // not_found) セッションでは snapshot が永久に来ないので、StatusPanel を
   // 「読み込み中…」のまま固まらせずここで理由を出す。購読をやり直すたびに

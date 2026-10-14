@@ -8,6 +8,7 @@ import {
   inputReadinessNotice,
   sendExcerpt,
   sessionInputNotice,
+  sessionInputReadiness,
   sessionInputSendFailure,
   shouldClearAfter,
   terminalAbsenceNotice,
@@ -213,5 +214,34 @@ describe("terminalAbsenceNotice", () => {
       expect(terminalAbsenceNotice({ kind })).toBeNull();
     }
     expect(terminalAbsenceNotice(undefined)).toBeNull();
+  });
+});
+
+describe("sessionInputReadiness", () => {
+  const peer = (input_readiness?: { kind: "ready" | "no_terminal" }) => ({
+    sid: "s",
+    repo: "",
+    ws: "",
+    cwd: "",
+    ...(input_readiness ? { input_readiness } : {}),
+  });
+  const status = { todos: [], workflows: [], background: [] };
+
+  // 何を保証するか: peers の行の判定を先に使い (status を購読していない
+  // セッションにもある)、行が無い・まだ判定が無い時は status の判定を使う。
+  test("takes the peer row first, then the status", () => {
+    expect(
+      sessionInputReadiness(peer({ kind: "ready" }), {
+        ...status,
+        input_readiness: { kind: "no_module" },
+      }),
+    ).toEqual({ kind: "ready" });
+    expect(
+      sessionInputReadiness(undefined, { ...status, input_readiness: { kind: "ended" } }),
+    ).toEqual({ kind: "ended" });
+    expect(
+      sessionInputReadiness(peer(), { ...status, input_readiness: { kind: "no_terminal" } }),
+    ).toEqual({ kind: "no_terminal" });
+    expect(sessionInputReadiness(undefined, undefined)).toBeUndefined();
   });
 });

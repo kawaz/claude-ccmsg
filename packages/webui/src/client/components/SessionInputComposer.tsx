@@ -13,7 +13,8 @@
 // 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
 // 同じ文が二重に入るのを防ぐ。別タブでの変更は storage event で映す。
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
-// daemon が session_status に載せる input_readiness の理由と対処を先に示す。
+// daemon が peers の行と session_status に載せる input_readiness の理由と対処を
+// 先に示す。
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
@@ -36,6 +37,7 @@ import {
   formatSentAt,
   inputReadinessNotice,
   sendExcerpt,
+  sessionInputReadiness,
   sessionInputNotice,
 } from "./session-input.ts";
 import {
@@ -384,7 +386,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   const failureNotice = failure ? sessionInputNotice(failure) : null;
   // 送る前から分かっている届かない理由 (daemon の input_readiness)。直近の送信が
   // 同じ理由で届かなかった時は、その注記が同じ文言を出すので重ねない。
-  const readiness = state.sessionStatuses.get(sid)?.input_readiness;
+  const readiness = sessionInputReadiness(targetPeer, state.sessionStatuses.get(sid));
   const readinessNotice =
     failure?.kind === "not_delivered" && failure.reason === readiness?.kind
       ? null

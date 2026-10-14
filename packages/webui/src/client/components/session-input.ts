@@ -4,6 +4,8 @@
 // 直接叩けるよう .ts に切り出している (composer-keydown.ts と同じ流儀)。
 import type {
   ErrorResponse,
+  PeerInfo,
+  SessionStatusSnapshot,
   SessionInputReadiness,
   SessionInputReason,
   SessionInputResponse,
@@ -77,6 +79,17 @@ const NO_TERMINAL_DETAIL =
 const ENDED_DETAIL = "セッションは終了しています。";
 const SESSION_CHANGED_DETAIL =
   "セッションが切り替わっています (/clear や /resume)。切り替わった先のセッションを開いて送ってください。";
+
+/** セッションの input_readiness。daemon は peers の行とセッションの status の
+ * 両方に載せる。peers の行は status を購読していないセッション (transcript の
+ * 無い起動直後、Terminal タブだけを開いている時) にもあるのでそれを先に見て、
+ * 行の無いセッション (終了済み) は status の方を見る。 */
+export function sessionInputReadiness(
+  peer: PeerInfo | undefined,
+  status: SessionStatusSnapshot | undefined,
+): SessionInputReadiness | undefined {
+  return peer?.input_readiness ?? status?.input_readiness;
+}
 
 /** 送る前から分かっている、人の入力が届かない理由と次の行動 (DR-0035 §5)。
  * 受け取れる (`ready`) 時と、daemon が判定を載せていない時は出すものが無い。
