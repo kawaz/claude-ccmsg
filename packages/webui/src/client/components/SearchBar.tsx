@@ -1,7 +1,7 @@
 // In-view search bar (DR-0022 §2.1) — shared UI shell for both Timeline's
 // toolbar and FileViewer's header. Owns only the editor-open/closed local
 // state; the query text/toggle values, parsed words, and match count/index
-// are all owned by the host component (Timeline.tsx / FileViewer.tsx) since
+// are all owned by the host component (timeline/useInViewSearch.ts / FileViewer.tsx) since
 // each has a different notion of "what counts as a match" (segments vs
 // lines) — this component just renders whatever it's handed.
 import { useRef, useState } from "preact/hooks";

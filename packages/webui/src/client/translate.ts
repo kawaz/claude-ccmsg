@@ -6,7 +6,7 @@ import { setBounded } from "./bounded-map.ts";
 // (https://developer.chrome.com/docs/ai/translator-api) をグローバル
 // `Translator.create(...)` 経由で使う — バンドルされた翻訳ライブラリではなく
 // ブラウザ内蔵モデルを使うので、対応していないブラウザ/OS では
-// `hasTranslatorApi()` が false を返し、Timeline.tsx はタブ自体を出さない
+// `hasTranslatorApi()` が false を返し、Timeline の訳タブ (components/timeline/translation.ts の translationTabItems) はタブ自体を出さない
 // (レイアウト変化なし、kawaz spec)。
 //
 // Design rationale: 翻訳ロジックは kawaz 提供ロジック準拠 — 段落 (\n\n) 単位
@@ -69,7 +69,8 @@ function getTranslatorStatic(): TranslatorStatic | null {
 }
 
 /** feature-detect: Chrome built-in Translator API がこの環境に存在するか。
- * Timeline.tsx はこれが false ならタブ自体を描画しない。 */
+ * components/timeline/Timeline.tsx がこれを読み、false なら translation.ts の
+ * translationTabItems がタブ自体を出さない。 */
 export function hasTranslatorApi(): boolean {
   return getTranslatorStatic() !== null;
 }

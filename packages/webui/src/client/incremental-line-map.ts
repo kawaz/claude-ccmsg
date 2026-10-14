@@ -1,7 +1,7 @@
 // Per-line derived values (parsed JSON, UTF-8 byte length) for the Timeline's
 // cached transcript, recomputed only for the lines that actually changed.
 //
-// The store hands Timeline.tsx a fresh `string[]` on every update, so a
+// The store hands the Timeline (components/timeline/useTranscriptModel.ts) a fresh `string[]` on every update, so a
 // `useMemo` keyed on that array re-derives everything from scratch: a single
 // live-tail line appended to a 3MB transcript re-parsed all 3MB. Matching the
 // new array against the previous one line by line finds the lines that are

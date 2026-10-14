@@ -32,8 +32,8 @@ import {
 
 const START = 1000;
 
-/** The reference implementation: the three passes exactly as Timeline.tsx
- * called them before this module existed. */
+/** The reference implementation: the three passes run over the whole
+ * window from scratch. */
 function fromScratch(raws: readonly string[]) {
   const perLine = raws.map(parseTranscriptLine);
   const offsets = byteOffsetsFromLengths(START, raws.map(utf8ByteLength));

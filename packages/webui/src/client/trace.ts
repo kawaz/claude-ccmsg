@@ -136,7 +136,7 @@ export function createTraceCollector(opts: TraceCollectorOptions): TraceCollecto
 
 /** The app has one WS connection and one document, so the collector is reached
  * as a module singleton rather than threaded through the component tree: the
- * receive side lives in ws.ts and the commit side in Timeline.tsx, with no
+ * receive side lives in ws.ts and the commit side in components/timeline/useLiveTailSubscription.ts, with no
  * shared owner between them. Stays null until ws.ts installs one, so nothing
  * is collected in tests or before connect. */
 let active: TraceCollector | null = null;

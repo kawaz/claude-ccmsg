@@ -241,7 +241,8 @@ describe("translateTextInBrowser", () => {
   });
 
   // No Translator API present at all: every paragraph falls back untouched
-  // (the caller — Timeline.tsx — is expected to gate this via
+  // (the caller — components/timeline/Timeline.tsx with translation.ts's
+  // translationTabItems — is expected to gate this via
   // hasTranslatorApi() and not even offer the "ja" tab, but the function
   // itself must still degrade gracefully rather than throw).
   test("no Translator API present -> translateTextInBrowser falls back to the original text", async () => {

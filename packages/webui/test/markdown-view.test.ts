@@ -1,5 +1,5 @@
 // markdown-view.ts unit tests (DR-0010): guards the mdast -> preact VNode
-// walker Timeline.tsx uses to render assistant text segments, plus the URL
+// walker components/timeline/segments.tsx uses to render assistant text segments, plus the URL
 // allowlist that keeps it from ever emitting an executable `href`.
 //
 // Test strategy: `renderMarkdownAst` takes a hand-constructed mdast `Root` —

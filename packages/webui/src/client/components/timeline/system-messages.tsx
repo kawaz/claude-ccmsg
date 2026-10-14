@@ -22,7 +22,7 @@ import { SegmentView } from "./segments.tsx";
 // システム由来 user メッセージの rich 表示 (U2 kawaz spec): transcript-model.ts's
 // parseSystemMessageFields が返す SystemMessageRich の 3 レイアウトを描画する
 // だけの純表示コンポーネント — パース自体は行わない (ロジックは transcript-
-// model.ts 側でユニットテスト可能に保つ、他の *-model.ts / Timeline.tsx の
+// model.ts 側でユニットテスト可能に保つ、他の *-model.ts と描画部品の
 // 分業と同じ)。"event" フィールドだけ等幅フォントを当てる (kawaz spec:
 // 「event 本文は monospace で」) — task-notification 以外の kind がたまたま
 // 同名フィールドを持つことは想定していないが、フィールド名一致だけで判定する

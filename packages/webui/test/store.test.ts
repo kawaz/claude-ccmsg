@@ -884,7 +884,7 @@ describe("reducer / session-errors/loaded", () => {
 describe("reducer / locator/changed (timeline view, DR-0009)", () => {
   // Bare `#t<sid>`: switches to the timeline view and creates a fresh
   // per-session tree (with an idle TimelineState) on first visit — no fetch
-  // happens here (that's Timeline.tsx's job), the reducer only records
+  // happens here (that's useTranscriptLoader's job), the reducer only records
   // what's selected, same division of labor as the session/Files form.
   test("#t<sid> switches view to 'timeline', sets currentSid, creates an idle timeline cache", () => {
     const state = dispatch(initialState(), {
@@ -1196,7 +1196,7 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
   // "load older" page leaving `end` at a stale value) must be dropped rather
   // than spliced at the wrong offset — see applyTimelineTail's doc comment.
   // The cache's lines/end/size are left exactly as they were; `needsResync`
-  // is the signal Timeline.tsx's resync effect uses to auto-recover (below),
+  // is the signal useTranscriptLoader's resync effect uses to auto-recover (below),
   // not a "更新"-button-only recovery — see the applyTimelineTail
   // "non-contiguous push sets needsResync" test for that half.
   test("non-contiguous push (gap) is dropped, cache lines/end/size unchanged", () => {
@@ -1224,7 +1224,7 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
 
   // Regression (adversarial review, store.ts major finding): a non-contiguous
   // push must not just silently drop forever — it flags `needsResync` so
-  // Timeline.tsx's resync effect can issue a background transcript_read and
+  // useTranscriptLoader's resync effect can issue a background transcript_read and
   // catch the cache back up, instead of live tail going permanently silent
   // until a manual "更新" click.
   test("non-contiguous push (gap) sets needsResync", () => {
@@ -1249,7 +1249,7 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
 
   // While needsResync is already flagged (a resync re-read is presumably
   // in flight), further non-contiguous pushes must not re-flag or otherwise
-  // touch the cache — avoids re-triggering Timeline.tsx's resync effect on
+  // touch the cache — avoids re-triggering useTranscriptLoader's resync effect on
   // every subsequent push before its own re-read lands.
   test("further pushes while needsResync is set are dropped without re-touching the cache", () => {
     const initial = loaded("sess-1", {

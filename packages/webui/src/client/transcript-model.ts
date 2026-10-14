@@ -36,7 +36,7 @@ import {
 } from "@ccmsg/protocol";
 import * as v from "valibot";
 // Pure jsonl-line -> renderable-event transform for the Timeline view
-// (DR-0009). Kept out of Timeline.tsx so the fold logic is unit-testable
+// (DR-0009). Kept out of the Timeline components (components/timeline/) so the fold logic is unit-testable
 // without preact/DOM, mirroring store.ts's reducer/effect split (DR-0005 §1).
 //
 // Each line is read once, as protocol's transcript row (DR-0038 §3). Claude
@@ -825,7 +825,7 @@ function isConsumedToolResult(line: ParsedLine): boolean {
  * bytes on disk (jsonl: the line's own content plus the `\n` transcript_read
  * strips before returning it).
  *
- * Used as Preact `key`s (Timeline.tsx) instead of the array index: an index
+ * Used as Preact `key`s (components/timeline/) instead of the array index: an index
  * key would make a "load older" prepend renumber every already-rendered
  * line, so an open `<details>` fold would jump to a *different* line after
  * the prepend. A line's absolute byte offset never changes once loaded —
@@ -840,7 +840,7 @@ export function lineByteOffsets(start: number, lines: readonly string[]): number
 const TEXT_ENCODER = new TextEncoder();
 
 /** UTF-8 size of one transcript line, without its newline. Split out (with
- * `byteOffsetsFromLengths` below) so Timeline.tsx can measure each line once
+ * `byteOffsetsFromLengths` below) so useTranscriptModel (components/timeline/) can measure each line once
  * and keep the measurement across renders — offsets shift wholesale when a
  * "load older" page moves `start`, but a line's own byte length never changes.
  */
@@ -898,7 +898,7 @@ export function rawTranscriptRows(start: number, lines: readonly string[]): RawT
 }
 
 /** `rawTranscriptRows` for a caller that already holds the two per-line
- * measurements (Timeline.tsx keeps both across renders). All three arrays are
+ * measurements (useTranscriptModel keeps both across renders). All three arrays are
  * index-aligned. */
 export function rawTranscriptRowsFrom(
   lines: readonly string[],
@@ -1028,7 +1028,7 @@ export function truncateRawLine(
  * classifies empty string as `"user-prompt"` since no exclusion pattern
  * matches) from counting as a real utterance.
  *
- * Shared by Timeline.tsx's chat-bubble styling, its "👤 N/M" user-turn nav
+ * Shared by the chat-bubble styling (components/timeline/bubbles.tsx), the "👤 N/M" user-turn nav (useUserTurnNav)
  * counter, and `isBoundaryLine` below — so a turn can't count toward one and
  * not the others: kawaz's U2 spec ties all three to the same "本物のユーザ
  * 発話 (tool_result・システム由来メッセージは除く)" definition (U2:
@@ -1056,7 +1056,7 @@ export function isUserTextTurn(line: ParsedLine): boolean {
 /** ユーザ自身が書いた文章として扱う `UserMessageKind` — 素のプロンプトと、
  * 引数付き slash command (`/clear <本文>`)。この 2 つだけが吹き出し表示 /
  * fold 境界 / 👤 nav / 検索対象の「ユーザ発話」で、残りはシステム由来として
- * fold される (Timeline.tsx の `sysKind` もこの述語を使う)。 */
+ * fold される (components/timeline/folds.tsx の LineView の `sysKind` もこの述語を使う)。 */
 export function isUserSpeechKind(kind: UserMessageKind): boolean {
   return kind === "user-prompt" || kind === "slash-command-prompt";
 }
@@ -1142,7 +1142,7 @@ export interface SearchTargets {
 
 /**
  * Whether a Segment belonging to a user-prompt or assistant `TurnLine` (never
- * a system-origin line — those are excluded by Timeline.tsx's `sysKind` check
+ * a system-origin line — those are excluded by useInViewSearch's speech-kind check (components/timeline/useInViewSearch.ts)
  * before this is ever consulted, same guard `segmentSearchText`'s callers
  * apply) counts as an in-view search unit given TL's target toggles.
  *
@@ -1188,12 +1188,7 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
  * currently-loaded user-text turn inside the Timeline's scroll container, and
  * the container's current `scrollTop`, returns how many of those turns sit at
  * or above the current scroll position — the 1-based "you're currently past
- * turn N" count behind the toolbar's "👤 N/M" indicator (Timeline.tsx).
- * Returns 0 when scrolled above every turn (or none are loaded).
- *
- * Turning DOM refs into `topOffsets` (impure, `getBoundingClientRect`) lives
- * in Timeline.tsx; this is the pure, unit-testable half of that calculation
- * per kawaz's spec ("位置算出ロジックは可能な範囲で純関数に切り出して単体テスト").
+ * turn N" count. Returns 0 when scrolled above every turn (or none are loaded).
  */
 export function scrollPositionToUserTurnIndex(topOffsets: number[], scrollTop: number): number {
   let idx = 0;
@@ -1212,7 +1207,7 @@ export interface TimelineEntry {
   line: ParsedLine;
 }
 
-/** Timeline.tsx's render unit after tools-folding (kawaz spec): either a
+/** The Timeline's render unit (components/timeline/) after tools-folding (kawaz spec): either a
  * boundary line rendered directly (a real user prompt, or the assistant's
  * next user-facing final response), or a run of everything in between
  * (thinking / tool_use / tool_result / meta lines / broken lines) collapsed
@@ -1336,7 +1331,7 @@ export function userNavTargets(groups: readonly TimelineGroup[]): UserNavTarget[
 /** Which of the three chat-bubble kinds (webui Timeline display unification
  * task, kawaz spec) a boundary line renders as — `null` for every non-boundary
  * line (folds instead). The single source of truth both `isBoundaryLine`
- * (groupTimelineLines' fold/no-fold split) and Timeline.tsx (which bubble
+ * (groupTimelineLines' fold/no-fold split) and components/timeline/Timeline.tsx (which bubble
  * component + alignment to render) key off of, so the two can never disagree
  * about which lines are boundaries. */
 export type BoundaryKind =
@@ -1423,8 +1418,8 @@ function isBoundaryLine(line: ParsedLine): boolean {
  * run with no closing boundary yet (an in-progress turn) still folds — there
  * is simply no following boundary entry after it.
  *
- * `offsets` must be the same length as `lines` (Timeline.tsx's
- * `lineByteOffsets` output) so each entry keeps its stable Preact key.
+ * `offsets` must be the same length as `lines` (the offsets
+ * components/timeline/useTranscriptModel.ts derives) so each entry keeps its stable Preact key.
  */
 export function groupTimelineLines(
   lines: readonly ParsedLine[],
@@ -1955,8 +1950,8 @@ export type CcmsgDirect =
  * DR-0027 §2.2 extends this to also cover the sender-side echo: an AI post/
  * reply's tool_result `{ok:true,room,mid}` response, and the same message
  * arriving back through the subscribe teammate-message relay, are the same
- * canonical `(room, mid)`). Shared by Timeline.tsx's bubble-list render and
- * its in-view search unit list so the two dedup identically — a message the
+ * canonical `(room, mid)`). Shared by the bubble-list render (components/timeline/Timeline.tsx) and
+ * the in-view search unit list (useInViewSearch.ts) so the two dedup identically — a message the
  * render side drops as a duplicate must never still count toward the search
  * "[N/M]" total (a ghost match with no bubble to highlight/scroll to).
  *
@@ -2134,7 +2129,7 @@ const CcmsgEventRoomLineSchema = jsonText(v.looseObject({ r: v.string() }));
  * Non-turn lines, assistant turns, and any fragment that isn't a `type:"msg"`
  * event (an `idle_notification` teammate-message body, a `task-notification`
  * `<event>` with no ccmsg activity at all, ...) all yield `[]` — the caller
- * (Timeline.tsx's chat-bubble rendering, and `isBoundaryLine` above) treats
+ * (the chat-bubble rendering in components/timeline/, and `isBoundaryLine` above) treats
  * an empty result as "render this line the ordinary way", not as an error.
  *
  * Known false-negative (accepted, not fixed here — same category as
@@ -2162,7 +2157,7 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   // 早期 return: どちらのタグも含まない (大半の user 行、システム注入行は
   // 本文が巨大になりがち) なら matchAll を 2 本走らせるまでもない — join
   // コスト自体は避けられないが、この関数は classifyBoundaryLine 経由で
-  // groups が変わるたび (load older / tail 追記 / refresh, Timeline.tsx)
+  // groups が変わるたび (load older / tail 追記 / refresh, components/timeline/useTranscriptModel.ts)
   // に呼ばれるので、軽いほど再分類コストが下がる。
   const direct = mayContainDirectDelivery(text);
   if (!direct && !text.includes("<teammate-message") && !text.includes("<event>")) return [];
@@ -2257,7 +2252,7 @@ export function pushNotificationOf(line: ParsedLine): string | null {
 // メッセージの details 展開時の本文に rich | raw のタブ切替を追加、ccmsg
 // 吹き出しの msg/raw タブと同じ UI 流儀」) ---
 //
-// 対象は Timeline.tsx の LineView が `sysKind` (= role:"user" かつ
+// 対象は components/timeline/folds.tsx の LineView が `sysKind` (= role:"user" かつ
 // userMessageKind !== "user-prompt") と判定した全 fold — task-notification /
 // peer-message / slash-command-invocation / slash-command-stdout / それ以外
 // すべて。「壊れた入力は raw fallback」(throw しない) という要件を満たすため、
@@ -2275,7 +2270,7 @@ export interface SystemMessageField {
 }
 
 /** Rich-display shape `parseSystemMessageFields` returns — `SystemMessageBody`
- * (Timeline.tsx) renders one of these three layouts. `"text"` is also the
+ * (components/timeline/system-messages.tsx) renders one of these three layouts. `"text"` is also the
  * universal fallback for a kind with no dedicated layout (system-caveat,
  * tool-retry-hint, user-interrupt-marker, unknown-meta, unknown-array,
  * skill-invocation-preamble, tool-result, and any unmatched/malformed input)
@@ -2587,7 +2582,7 @@ function parsePeerRelay(tagName: string, attrString: string, rawTagBody: string)
  * task-notification / teammate-message / system-caveat / slash-command-
  * invocation / slash-command-stdout / skill-invocation-preamble 等の details
  * 展開時の本文に rich | raw のタブ切替、デフォルト rich). Given the line's
- * `userMessageKind` (Timeline.tsx's `sysKind` — any classified kind other
+ * `userMessageKind` (LineView's `sysKind` in components/timeline/folds.tsx — any classified kind other
  * than `"user-prompt"`) and the line's raw text (joined text segments, same
  * input `extractCcmsgMessages` reads), returns one of the three
  * `SystemMessageRich` shapes. Never throws — any tag this doesn't recognize,
@@ -2603,7 +2598,7 @@ function parsePeerRelay(tagName: string, attrString: string, rawTagBody: string)
  * function's `"peer-message"` case is what the spec's "teammate-message"
  * bullet describes; `type:"msg"` ccmsg events inside it never reach here at
  * all — `classifyBoundaryLine` promotes those lines to a standalone `"ccmsg"`
- * boundary (`CcmsgBubble`) before Timeline.tsx's fold path ever runs, so the
+ * boundary (`CcmsgBubble`) before the fold path (components/timeline/folds.tsx) ever runs, so the
  * peer-message case here only ever sees the non-ccmsg bodies (idle
  * notifications, plain relayed text, ...).
  */
@@ -2897,7 +2892,7 @@ export function parseTranscriptLines(raws: string[]): ParsedLine[] {
 /**
  * The cross-line half of `parseTranscriptLines` (see its doc comment for what
  * the pairing does and why), split out so a caller that parses lines one at a
- * time — Timeline.tsx reuses the parse of every line a live-tail append left
+ * time — useTranscriptModel (components/timeline/) reuses the parse of every line a live-tail append left
  * untouched — can still apply it over the whole window. Pure: `lines` and
  * `raws` are index-aligned inputs, neither is mutated.
  */
@@ -2932,7 +2927,7 @@ export function pairQueuedTurns(
     if (match === undefined) return line;
     consumed.add(match);
     // Demoted rather than removed: the array stays index-aligned with the
-    // caller's `lineByteOffsets` output (Timeline.tsx keys every entry by its
+    // caller's `lineByteOffsets` output (the Timeline components key every entry by its
     // absolute byte offset), and the row lands on the same compact one-line
     // meta rendering every other queue-operation (`dequeue`, `remove`, ...)
     // already gets, instead of a second copy of the delivered turn.

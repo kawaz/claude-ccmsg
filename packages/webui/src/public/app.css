@@ -4408,7 +4408,7 @@ button.session-tab {
   /* 右端のフロートパネル (.tl-auto-open-float) が開いている間だけ、その幅ぶん
    * 本文を左へ詰める。重ねたままだとパネルの真下の項目が押せず fork 地点を
    * 選び直せない (issue 2026-08-16-timeline-float-panel-blocks-record-click)。
-   * 値は Timeline.tsx が実測して入れる (パネル幅は中身で変わる)。 */
+   * 値は components/timeline/useSidePanel.ts が実測して入れる (パネル幅は中身で変わる)。 */
   padding-right: var(--tl-float-reserve, 0px);
   transition: padding-right 180ms ease-out;
 }
@@ -6179,7 +6179,7 @@ button.session-tab {
 /* システムメッセージ rich|raw タブ (U2 kawaz spec: 「分類済みシステムメッ
  * セージの details 展開時の本文に rich | raw のタブ切替、ccmsg 吹き出しの
  * msg/raw タブと同じ UI 流儀」)。タブボタン自体は .tl-thinking-tabs/
- * .tl-thinking-tab を再利用する (Timeline.tsx)、以下は rich 側の中身の
+ * .tl-thinking-tab を再利用する (components/timeline/system-messages.tsx)、以下は rich 側の中身の
  * レイアウトのみを追加する。 */
 .tl-sysmsg-fields {
   margin-top: var(--space-5);
@@ -7928,7 +7928,7 @@ a.tl-attachment-file-path {
 }
 
 /* Wrapper SegmentView adds only around a currently-matching in-view-search
- * unit (Timeline.tsx, DR-0022 §3) so a DOM ref exists to scroll to —
+ * unit (components/timeline/segments.tsx, DR-0022 §3) so a DOM ref exists to scroll to —
  * `display: contents` removes it from box/flex layout entirely so it can't
  * perturb any of the various parents (.tl-line, .tl-bubble-body, ...) that
  * render a segment list. */

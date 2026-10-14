@@ -1,5 +1,5 @@
 /** @jsxImportSource preact */
-// mdast -> preact JSX renderer for assistant text segments in Timeline.tsx
+// mdast -> preact JSX renderer for assistant text segments in components/timeline/segments.tsx
 // (DR-0010). `mdast-util-from-markdown` (micromark) returns a standard mdast tree;
 // this module walks it into JSX by hand rather than through any
 // mdast-to-HTML-string stage, and never uses
@@ -267,7 +267,7 @@ export function extractTaskStates(root: Root): boolean[] {
 interface MarkdownSearchCtx {
   words: readonly SearchWord[];
   /** Called when any highlighted span in this markdown tree is clicked —
-   * the caller (Timeline.tsx) already knows which "unit" (segment) this
+   * the caller (components/timeline/segments.tsx) already knows which "unit" (segment) this
    * whole render belongs to, so a single no-arg callback per MarkdownView
    * instance is enough (DR-0022 §2.2: click only updates the index, all
    * hits within one unit resolve to that unit's position). */

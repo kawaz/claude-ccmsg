@@ -2,7 +2,7 @@
 /**
  * Shared filepath-linkifier wiring used by both the ROOM chat's message
  * bubbles (`TimelineItem.tsx`'s `MsgItem`) and the session's own transcript
- * (`Timeline.tsx`'s ThinkingSegment / assistant text). Both surfaces need
+ * (`components/timeline/segments.tsx`'s ThinkingSegment / assistant text). Both surfaces need
  * the exact same three hooks:
  *
  *   1. `useFilePathProbeEnqueue` — walk the body source once per render into

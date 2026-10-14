@@ -1,5 +1,5 @@
 // DR-0020 Phase 2/3: unit tests for the pure snapshot->display folds used by
-// StatusPanel.tsx, Timeline.tsx's mini panel, and SessionList.tsx's sidebar
+// StatusPanel.tsx, timeline/Timeline.tsx's mini panel, and SessionList.tsx's sidebar
 // badge. No store/DOM dependency — these operate on a bare
 // SessionStatusSnapshot.
 import { describe, expect, test } from "bun:test";

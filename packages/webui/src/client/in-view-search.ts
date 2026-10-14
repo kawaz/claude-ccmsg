@@ -1,7 +1,8 @@
 // In-view keyword search (DR-0022) — pure query-parsing / match-enumeration /
 // index-navigation layer, kept free of preact/DOM so it's unit-testable in
-// isolation (same split as transcript-model.ts's fold logic vs Timeline.tsx's
-// rendering). Timeline.tsx and FileViewer.tsx both consume this module: the
+// isolation (same split as transcript-model.ts's fold logic vs the
+// rendering in components/timeline/). components/timeline/useInViewSearch.ts and
+// FileViewer.tsx both consume this module: the
 // former maps it over Segment text, the latter over file lines.
 
 import {

@@ -159,7 +159,7 @@ export interface TimelineState {
   /** set when a `timeline/tail` push arrived non-contiguous with the cached
    * `end` (subscribe/read race, or a gap opened while disconnected) — see
    * applyTimelineTail's doc comment for why the push itself is still
-   * dropped. Timeline.tsx's resync effect watches this flag and issues a
+   * dropped. The resync effect in components/timeline/useTranscriptLoader.ts watches this flag and issues a
    * background transcript_read to catch the cache up; a later
    * `timeline/loaded` (which never carries this field) clears it. Absent
    * (not just `false`) in the common case so existing equality-style
@@ -967,7 +967,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
 }
 
 /** Fold `timeline/loaded` into the sid's cached TimelineState (DR-0009). Two
- * merge modes, matching the two calls Timeline.tsx makes:
+ * merge modes, matching the two calls components/timeline/useTranscriptLoader.ts makes:
  *  - "replace" (before omitted: initial load or the "更新" refresh button)
  *    discards whatever was cached and takes the response as the new tail.
  *  - "prepend" ("older を読み込む": before = current `start`) splices the
@@ -1021,7 +1021,7 @@ function applyTimelineLoaded(
  * push — without it the daemon's tail cursor and this cache's `end` diverge
  * permanently (every later push's `start` keeps tracking the daemon's
  * cursor, never this cache's stale `end` again), so live tail would go
- * silent until a manual "更新" click. Timeline.tsx's resync effect reads
+ * silent until a manual "更新" click. The resync effect in components/timeline/useTranscriptLoader.ts reads
  * `needsResync` and issues the background re-read that clears it (via the
  * next `timeline/loaded`, which constructs a fresh TimelineState with no
  * `needsResync` field at all). While a resync is already flagged, further

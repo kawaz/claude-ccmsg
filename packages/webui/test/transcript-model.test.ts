@@ -1,5 +1,5 @@
 // transcript-model unit tests (DR-0009): guards the pure jsonl-line -> render
-// event fold that Timeline.tsx's effect calls into. Line shapes below mirror
+// event fold that the Timeline's useTranscriptModel calls into. Line shapes below mirror
 // what a real Claude Code transcript jsonl contains (checked against a live
 // personal-project transcript during implementation), not a guess — but per
 // DR-0009's "jsonl フォーマットの安定性" note, the module must never assume
@@ -158,7 +158,7 @@ function metaLine(type: string): ParsedLine {
   return { kind: "meta", ts: null, type, summary: type, raw: "{}" };
 }
 
-// lineByteOffsets (DR-0009 addendum): Timeline.tsx's Preact `key`s. The whole
+// lineByteOffsets (DR-0009 addendum): the Timeline's Preact `key`s (components/timeline/). The whole
 // point is stability across a "load older" prepend — see the two-part test
 // below.
 describe("lineByteOffsets", () => {
@@ -1101,7 +1101,7 @@ describe("parseTranscriptLine / assistant turns", () => {
 // from the kuu 38095e85 transcript (2026-07-25), where the harness notice at
 // lines 1357/1361 rendered as a green user bubble because only the metadata-
 // less queued copy reached the classifier.
-// Timeline.tsx does not call parseTranscriptLines: to avoid re-parsing the
+// useTranscriptModel (components/timeline/) does not call parseTranscriptLines: to avoid re-parsing the
 // whole transcript on every live-tail append it parses lines one at a time
 // (caching the ones that did not change) and runs the cross-line pairing pass
 // separately. That split is only safe while the two spellings agree, including
@@ -1302,7 +1302,7 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
     expect(lines.map((l) => l.kind)).toEqual(["turn", "turn"]);
   });
 
-  // Index alignment is load-bearing: Timeline.tsx keys every entry by the
+  // Index alignment is load-bearing: the Timeline components key every entry by the
   // matching `lineByteOffsets` index, so a paired row is demoted to meta
   // rather than removed from the array.
   test("output stays index-aligned with the input lines", () => {
@@ -1656,9 +1656,8 @@ describe("isUserTextTurn", () => {
   });
 });
 
-// scrollPositionToUserTurnIndex (webui Timeline UI improvement, kawaz spec):
-// the pure "topOffsets + scrollTop -> index" half of the "👤 N/M" nav
-// indicator; DOM measurement (Timeline.tsx) supplies topOffsets.
+// scrollPositionToUserTurnIndex: the pure "topOffsets + scrollTop -> index"
+// calculation.
 describe("scrollPositionToUserTurnIndex", () => {
   test("no loaded user turns -> 0 regardless of scrollTop", () => {
     expect(scrollPositionToUserTurnIndex([], 0)).toBe(0);
@@ -2761,7 +2760,7 @@ describe("classifyAssistantMessage / api-error lines", () => {
 describe("isUserTextTurn / groupTimelineLines — system-origin user messages fold (U2)", () => {
   // A real, parsed system-origin line (not a hand-built fixture) so
   // userMessageKind is actually populated by classifyUserMessage, exercising
-  // the same code path Timeline.tsx sees for a live transcript.
+  // the same code path the Timeline (components/timeline/) sees for a live transcript.
   function parsedTeammateMessage(): ParsedLine {
     return parseTranscriptLine(
       jsonl(userContentRow("Another Claude session sent a message: hi from room")),
@@ -3387,7 +3386,7 @@ describe("extractCcmsgMessages", () => {
 
   // DR-0027 §2: 抽出は (r, mid, from, ts) の同定に軽量化されたので、subscribe/
   // teammate-message wrappers 由来の CcmsgMessage は mid を含む (isCcmsgMsgEventLike
-  // で拾えている限り)。Timeline.tsx が (room, mid) で ws.read → 完全版を lazy
+  // で拾えている限り)。components/timeline/ccmsg.tsx の useCcmsgBody が (room, mid) で ws.read → 完全版を lazy
   // 取得する経路のキーになる — 抽出段で mid を落とすと read-fallback が動かない。
   test("DR-0027: wrapper-parsed CcmsgMessage carries `mid` from the source event", () => {
     const msgEvent = {
@@ -3491,7 +3490,7 @@ describe("DR-0027 dedup: (room, mid) canonical key collapses duplicate extractio
 
 // classifyBoundaryLine (webui Timeline chat-bubble task, kawaz spec): the
 // single source of truth both `isBoundaryLine` (fold/no-fold split) and
-// Timeline.tsx (which bubble to render) key off of. Only the "ccmsg" branch
+// components/timeline/Timeline.tsx (which bubble to render) key off of. Only the "ccmsg" branch
 // is new here — "user-prompt"/"assistant-response" are already covered by
 // the isUserTextTurn/groupTimelineLines describe blocks above via
 // isBoundaryLine's behavior.
