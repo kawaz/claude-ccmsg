@@ -15,8 +15,6 @@ import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setBounded } from "../bounded-map.ts";
-import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-map.ts";
-import { crossLineIncrementally, emptyCrossLineCache } from "../incremental-cross-line.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import {
@@ -43,9 +41,7 @@ import {
   agentCommunicationCount,
   CACHE_KEEPALIVE_FOLD_LABEL,
   ccmsgMessageCount,
-  ccmsgRenderTargets,
   ccmsgUnitKey,
-  classifyBoundaryLine,
   extractCcmsgMessages,
   foldGroupLabel,
   foldGroupNeedsOuterFold,
@@ -54,13 +50,9 @@ import {
   isSearchableSegment,
   isUserSpeechKind,
   segmentSearchText,
-  itemRawSourceOffsets,
   isDirectFoldEntry,
   userNavTargets,
   parseSystemMessageFields,
-  parseTranscriptLine,
-  rawTranscriptRowsFrom,
-  utf8ByteLength,
   truncateRawLine,
   type AttachmentFile,
   type BashCommandOutput,
@@ -132,7 +124,6 @@ import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
-import { saySlots } from "../say-merge.ts";
 import { defaultTimelineAutoOpen, foldGroupShouldAutoOpen } from "../timeline-auto-open.ts";
 import { SearchBar } from "./SearchBar.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
@@ -148,6 +139,8 @@ import { useTimelineFolds } from "./timeline/useTimelineFolds.ts";
 import { useForkOrigin } from "./timeline/useForkOrigin.ts";
 import { useLiveTailSubscription } from "./timeline/useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./timeline/useTranscriptLoader.ts";
+import { useSayBubbles } from "./timeline/useSayBubbles.ts";
+import { useTranscriptModel, type ItemRawLookup } from "./timeline/useTranscriptModel.ts";
 
 /**
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
@@ -171,26 +164,6 @@ interface TLSearchCtx {
   notifyDisplayChange: () => void;
 }
 
-/**
- * Per-item raw JSONL lookup (kawaz r55 m89: 「個別に raw モードトグルが
- * 欲しい。そのアイテムが raw jsonl 用ビューコンポーネントとトグルされる
- * イメージ」). Keyed by the item's byte offset — the same key the rich view
- * already uses — and returning every jsonl line that item was built from
- * (`itemRawSourceOffsets`: normally the item's own line, plus the merged
- * tool_result line for a tool card). Threaded as context rather than as a
- * prop because the toggle sits on items several levels down the
- * FoldGroup/LineView chain, and every one of them would
- * otherwise have to forward it unchanged.
- *
- * The tables are rebuilt on every live-tail append, so the value changes with
- * them. Only `ItemRawRows` reads it, and that is mounted just for the items
- * toggled to jsonl — an append re-renders those, not every timeline item.
- */
-interface ItemRawLookup {
-  /** item offset -> offsets of every jsonl line the item was built from */
-  sources: ReadonlyMap<number, readonly number[]>;
-  rows: ReadonlyMap<number, RawTranscriptRow>;
-}
 const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
@@ -3277,62 +3250,8 @@ export function Timeline({
   const forkOrigin = useForkOrigin({ sid, active, agentActive });
   const loader = useTranscriptLoader({ sid, agent, active, timeline });
 
-  // Per-line derivations (JSON parse, UTF-8 size) are memoized per *line*,
-  // not per lines-array: the store hands us a new array for every live-tail
-  // push, and re-deriving the whole window meant re-parsing the entire
-  // transcript once per appended line. See incremental-line-map.ts.
-  const parseCacheRef = useRef(emptyLineMapCache<ParsedLine>());
-  const byteLengthCacheRef = useRef(emptyLineMapCache<number>());
-  const perLine = useMemo(() => {
-    parseCacheRef.current = mapLinesIncrementally(
-      parseCacheRef.current,
-      timeline.lines,
-      parseTranscriptLine,
-    );
-    return parseCacheRef.current.values;
-  }, [timeline.lines]);
-  const byteLengths = useMemo(() => {
-    byteLengthCacheRef.current = mapLinesIncrementally(
-      byteLengthCacheRef.current,
-      timeline.lines,
-      utf8ByteLength,
-    );
-    return byteLengthCacheRef.current.values;
-  }, [timeline.lines]);
-  // The passes that need the whole window (queue-operation pairing,
-  // tool_use/tool_result joining, tools folding) run over the per-line results
-  // — they read neighbouring lines, so they can't be folded into the per-line
-  // cache. They stay whole-window here too; what is incremental is the
-  // *identity* of their output, so a live-tail append leaves the FoldGroup of
-  // every untouched group holding the same `entries` array as before and
-  // Preact can skip it. See incremental-cross-line.ts.
-  //
-  // `offsets` are absolute byte offsets, one per cached line — stable Preact
-  // keys across a "load older" prepend (see transcript-model.ts's
-  // lineByteOffsets doc). `groups` is the tools folding (kawaz spec):
-  // boundary lines (user prompts / assistant user-facing final responses)
-  // stay standalone entries, everything between them collapses into one fold
-  // group — see transcript-model.ts's groupTimelineLines doc comment.
-  const crossLineCacheRef = useRef(emptyCrossLineCache());
-  const { parsed, offsets, groups } = useMemo(() => {
-    crossLineCacheRef.current = crossLineIncrementally(crossLineCacheRef.current, {
-      start: timeline.start,
-      raws: timeline.lines,
-      perLine,
-      byteLengths,
-    });
-    return crossLineCacheRef.current;
-  }, [timeline.start, timeline.lines, perLine, byteLengths]);
-  // groups.map (render 本体) が毎レンダー classifyBoundaryLine を呼び直すのを
-  // 避けるため、groups が変わった時だけ計算しメモ化する (index を groups と
-  // 揃え、entry 以外は使わないので null のまま)。
-  const boundaries = useMemo(
-    () =>
-      groups.map((g) =>
-        g.kind === "entry" && g.line.kind === "turn" ? classifyBoundaryLine(g.line) : null,
-      ),
-    [groups],
-  );
+  const { parsed, groups, boundaries, visibleCcmsgKeys, ccmsgTargets, itemRawLookup } =
+    useTranscriptModel(timeline);
   // Null whenever the seam is outside the loaded window, so paging older is
   // what makes the divider appear rather than anything here.
   const forkDividerIndex = useMemo(
@@ -3340,62 +3259,17 @@ export function Timeline({
     [groups, forkOrigin?.boundary_uuid],
   );
   const folds = useTimelineFolds(autoOpen.revision, groups);
-  // 同一 ccmsg event (room + ts + from、DR-0027 以降は room + mid) が transcript
-  // の複数箇所から抽出される場合 (queue-operation enqueue と task-notification
-  // 経由の Monitor tool_result 両方に載っているケース、kawaz r15 mid=21) の
-  // 二重表示を避ける。**どれを描画するかは分類フェーズで確定**させ、render は
-  // key の在否を読むだけにする — boundary 側 (下の groups.map) と fold-group 側
-  // (CcmsgRenderContext 経由の PeerCcmsgLineView) は別コンポーネントなので、
-  // render 中に共有 Set を mutate すると fold の開閉のような子局所 re-render で
-  // 判定が変わってしまう。
-  // --- `ccmsg say` バブルの差し込み (kawaz r244m14) ---
-  //
-  // say はセッション transcript には echo されない (喋った本人の context を
-  // 食うだけなので意図的に切ってある) ので、TL に出すには daemon がメモリに
-  // 持つ say の記録 (ev:"says"、DR-0036 §3) から時刻で合流させるしかない
-  // (say-merge.ts)。見た目は PushNotification と同じ 📣 バブル。agent TL は
-  // 別セッションの transcript を見ているので対象外 — その say はこの
-  // transcript のものではない。
-  const allSays = useStoreState(store, (s) => s.says);
-  const says = useMemo(
-    () => (agent ? [] : allSays.filter((r) => r.sid === sid)),
-    [allSays, sid, agent],
-  );
-  const saySlotsByGroup = useMemo(() => saySlots(groups, says), [groups, says]);
-  // 既読は非楽観 — 成功すると daemon が更新後の ev:"says" を全タブに送り、
-  // store がそれで置き換える。失敗を黙って捨てると「押しても何も起きない」に
-  // 見えるので、TL でも 1 行のエラーとして出して次の試行まで残す。
-  const [sayReadError, setSayReadError] = useState<string | null>(null);
-  const handleSayRead = useCallback(
-    (id: string): void => {
-      void ws
-        .sayRead(id)
-        .then((res) => {
-          setSayReadError(res.ok ? null : res.error.msg);
-        })
-        .catch(() => {
-          setSayReadError("接続エラーのため既読にできませんでした");
-        });
-    },
-    [ws],
-  );
+  const sayBubbles = useSayBubbles({ sid, agentTimeline: !!agent, groups });
+  const says = sayBubbles.says;
   const sayNodes = (slot: number) =>
-    (saySlotsByGroup[slot] ?? []).map((record) => (
-      <SayRecordBubble key={`say-${record.id}`} record={record} now={now} onRead={handleSayRead} />
+    (sayBubbles.slots[slot] ?? []).map((record) => (
+      <SayRecordBubble
+        key={`say-${record.id}`}
+        record={record}
+        now={now}
+        onRead={sayBubbles.markRead}
+      />
     ));
-
-  const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
-  // Carried over whenever the set of visible bubbles is unchanged: this rides
-  // in a context value, so a fresh Set per appended line would re-render every
-  // ccmsg bubble on the page even though nothing about them moved.
-  const visibleCcmsgKeysRef = useRef<ReadonlySet<string>>(new Set());
-  const visibleCcmsgKeys = useMemo(() => {
-    const next = new Set(ccmsgTargets.map((target) => target.key));
-    const previous = visibleCcmsgKeysRef.current;
-    if (previous.size === next.size && [...next].every((key) => previous.has(key))) return previous;
-    visibleCcmsgKeysRef.current = next;
-    return next;
-  }, [ccmsgTargets]);
 
   // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
   // top/bottom of the loaded transcript and to the previous/next user-text
@@ -3492,32 +3366,6 @@ export function Timeline({
     document.addEventListener("toggle", listener, true);
     return () => document.removeEventListener("toggle", listener, true);
   }, [searchClosedFolds, searchIsLive]);
-
-  // 展開した JSONL を raw / pretty どちらで読むか (kawaz r76 m91) は TL の
-  // state ではなく raw-view-mode.ts の永続グローバル設定 — 個々の項目を
-  // 開いた JSONL をどう読みたいかは読み手の恒常的な好みなので、ここには
-  // 持たない (searchClosedFolds と同じ posture)。
-  // 生 JSONL の行 + その絶対 byte offset。rich 側の Preact key と同じ offset
-  // 由来なので、raw の行と rich のバブルを突き合わせられる。項目ごとの
-  // jsonl トグル (rawRowByOffset、kawaz r55 m89) が「どの項目が展開される
-  // か事前に判らない」ため常に必要 (kawaz r135m28: Timeline 全体をまるごと
-  // 切り替える raw ヘッダーは削除、個別トグルのみ残す)。行テキストは
-  // `timeline.lines` を指すだけなのでコピーは発生しない。データは rich と
-  // 同じ `timeline.lines` — daemon への追加取得なし。
-  const rawRows = useMemo(
-    () => rawTranscriptRowsFrom(timeline.lines, offsets, byteLengths),
-    [timeline.lines, offsets, byteLengths],
-  );
-  const rawRowByOffset = useMemo(() => {
-    const map = new Map<number, RawTranscriptRow>();
-    for (const row of rawRows) map.set(row.offset, row);
-    return map;
-  }, [rawRows]);
-  const itemRawSources = useMemo(() => itemRawSourceOffsets(parsed, offsets), [parsed, offsets]);
-  const itemRawLookup = useMemo<ItemRawLookup>(
-    () => ({ sources: itemRawSources, rows: rawRowByOffset }),
-    [itemRawSources, rawRowByOffset],
-  );
 
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
@@ -4335,8 +4183,8 @@ export function Timeline({
                           <p class="tl-empty">(空の transcript)</p>
                         ) : (
                           <>
-                            {sayReadError !== null ? (
-                              <p class="tl-say-error">{sayReadError}</p>
+                            {sayBubbles.readError !== null ? (
+                              <p class="tl-say-error">{sayBubbles.readError}</p>
                             ) : null}
                             {groups
                               .map((group, i) => {
