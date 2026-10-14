@@ -5,6 +5,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-14 | design | open | [sidecar-should-not-resolve-its-own-pid](./2026-10-14-sidecar-should-not-resolve-its-own-pid.md) | sidecar は harness の pid を自分で探さず sid と run 識別子だけで名乗り、pid への対応付けは daemon が行う |
+| 2026-10-14 | design | open | [webui-store-subscription-selector](./2026-10-14-webui-store-subscription-selector.md) | webui の useStoreState に selector を導入し useSyncExternalStore で購読する。tearing・全購読者の再描画・memo 無効化を解消 |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
 | 2026-10-13 | design | open | [agent-guidance-for-ccmsg-addresses](./2026-10-13-agent-guidance-for-ccmsg-addresses.md) | DR-0037 の ccmsg:<sid> 宛先をエージェントが初手で知る面が peers --help しか無い。skill / hook / rules のどこに案内を置くか裁定待ち |
 | 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |
