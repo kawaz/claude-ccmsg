@@ -71,6 +71,9 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - `classic.UserPromptSubmit` は turn 実行中でも Enter の時点で起きる (2.1.291 実測: idle で Enter の約 30ms 後、`sleep 90` 実行中も Enter の数 ms 後。queue された prompt が model に届くのは tool 結果の後で、その時点では起きない)。したがって busy でも成功の報告は Enter 直後に返せる。transcript の `queued_command` 行や `session.append` は model に届いた時点で現れるので、成功判定には使わない
 - `classic.UserPromptSubmit` の `source` は型定義にあるが 2.1.291 では付かない (段階導入中)。人の入力かどうかを `source` で見分けず、fill した文との一致で判定する
 - 一定時間内に成功も失敗も返らない時、webui は「未確認」と示し、文は残したまま送信済みかもしれないことが分かるようにする (実際には届いていて報告だけが失われた場合に、人の再送で二重になるのを避ける判断材料。届いていれば TL に人の発言として現れる)
+- 届かないことが送る前から分かる理由 (module が無い、hyoui の端末が無い、セッションの id が変わった、終了した) は、daemon が `input_readiness` として peers の行と session_status に載せ、webui は入力欄の近くに原因と対処を出す。判定は送信と同じ材料 (サイドカーの socket、その harness の `HYOUI_SESSION_ID`) で行う
+- 送る前の表示と、送って同じ理由で届かなかった時の表示は同じ文言にする。入力欄は無効化せず、送る瞬間にしか分からない理由 (ダイアログ等) は送信の結果で返す
+- Terminal タブも同じ判定を使い、端末が無い (`no_terminal`) か終了した (`ended`) セッションでは iframe を出さず、その場所に同じ語彙で原因と対処を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けがつかないため
 
 ## Alternatives Considered
 
