@@ -33,7 +33,7 @@ origin: 自リポ TODO
 
 4. (済 7578f3cdfff8) `llm-stats-op` / `llm-usage-op` の固定ポート 18941 / 18921 を port 0 にする
 5. (済 17257a95fa93) `ws.test.ts` の送信フレームを index で固定している 37 箇所を、op で引く helper にする
-6. `session-input.test.ts` の readiness テストを fs.watch から poll 経路に差し替えた件 (v0.166.1 で CI 対策として入れた) は実装の都合で緩めた典型。issue `sidecar-should-not-resolve-its-own-pid` の案 A (bind 時の名乗りを契機) で fs.watch 依存ごと解消し、テストは名乗り経路で書き直す
+6. (済 bd0157df) `session-input.test.ts` の readiness テストを fs.watch から poll 経路に差し替えた件 (v0.166.1 で CI 対策として入れた) は実装の都合で緩めた典型。issue `sidecar-should-not-resolve-its-own-pid` の案 A (bind 時の名乗りを契機) で fs.watch 依存ごと解消し、テストは名乗り経路で書き直す
 
 ### 残り (7)〜(12)
 
@@ -46,5 +46,5 @@ findings を参照: 文字列 JSON assert、storedDraftChange の null 経路テ
 ## 受け入れ条件
 
 - [ ] high (1) が解消している
-- [ ] medium (6) が解消している
+- [x] medium (6) が解消している
 - [ ] (7)〜(12) が findings に沿って解消している

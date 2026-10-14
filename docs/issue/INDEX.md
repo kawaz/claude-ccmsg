@@ -6,7 +6,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 |---|---|---|---|---|
 | 2026-10-14 | design | open | [hidden-sessionview-stop-store-notifications](./2026-10-14-hidden-sessionview-stop-store-notifications.md) | 隠れている SessionView 配下の Timeline が store 変更で再描画する (612 render)。隠れている間は変更通知を止める store を配る |
 | 2026-10-14 | design | open | [webui-timeline-decomposition-and-hook-tests](./2026-10-14-webui-timeline-decomposition-and-hook-tests.md) | webui の Timeline() 1812 行を custom hook に分解し timeline/ に分割、happy-dom で hook 単位のテストを足す |
-| 2026-10-14 | design | open | [sidecar-should-not-resolve-its-own-pid](./2026-10-14-sidecar-should-not-resolve-its-own-pid.md) | sidecar は harness の pid を自分で探さず sid と run 識別子だけで名乗り、pid への対応付けは daemon が行う |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
 | 2026-10-13 | design | open | [agent-guidance-for-ccmsg-addresses](./2026-10-13-agent-guidance-for-ccmsg-addresses.md) | DR-0037 の ccmsg:<sid> 宛先をエージェントが初手で知る面が peers --help しか無い。skill / hook / rules のどこに案内を置くか裁定待ち |
 | 2026-10-13 | design | open | [tsconfig-no-unchecked-indexed-access](./2026-10-13-tsconfig-no-unchecked-indexed-access.md) | tsconfig で noUncheckedIndexedAccess が無効で、DR-0038 §5 が配列・index signature の添字アクセスでは機械的に強制されない |

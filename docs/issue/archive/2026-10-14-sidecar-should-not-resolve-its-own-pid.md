@@ -1,6 +1,6 @@
 ---
 title: sidecar は自分で harness の pid を探さず、pid への対応付けは daemon が行う
-status: open
+status: resolved
 category: design
 created: 2026-10-14T11:24:47+09:00
 last_read: 2026-10-14T16:45:52+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-14T17:38:04+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","commit/783b3689","commit/8fa9fdf3","commit/2fd46304","commit/bd0157df","commit/cb29f89f","done:sidecar は sid と run id で名乗り sidecar_hello で daemon に接続を張り続ける。daemon は agents poll から同 sid・同 config dir で startedAt が最も近い行の pid を保管し readiness は名乗りと切断で判定。module の PPID/--pid、CLI の ps 祖先探索、daemon の fs.watch と ps eww を削除。ccmsg:<sid>.<pid> は address_send が sessions/<pid>.json から引く従来経路"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -61,8 +61,8 @@ bind 時の名乗りを daemon への通知にし、input_readiness の再判定
 
 ## 受け入れ条件
 
-- [ ] sidecar の起動に pid が要らない (socket 名が sid + run 識別子で決まる)
-- [ ] daemon が sid と起動時刻から pid を引き、同じ sid の複数 run を区別できる
-- [ ] `ccmsg:<sid>.<pid>` 宛先が従来どおり解決される
-- [ ] module の pid 取得と CLI の祖先探索が消えている
-- [ ] readiness が sidecar の bind / 消滅に fs.watch を介さず追従する
+- [x] sidecar の起動に pid が要らない (socket 名が sid + run 識別子で決まる)
+- [x] daemon が sid と起動時刻から pid を引き、同じ sid の複数 run を区別できる
+- [x] `ccmsg:<sid>.<pid>` 宛先が従来どおり解決される
+- [x] module の pid 取得と CLI の祖先探索が消えている
+- [x] readiness が sidecar の bind / 消滅に fs.watch を介さず追従する
