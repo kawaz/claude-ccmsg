@@ -71,6 +71,20 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "address_send", to: 1, text: "hi" },
     ],
   },
+  peer_send: {
+    ok: { op: "peer_send", to: { cwd: "/w", name: "n", session_id: SID, pid: 7 }, text: "hi" },
+    bad: [
+      // A send to every session is not one: at least one field names somebody.
+      { op: "peer_send", to: {}, text: "hi" },
+      { op: "peer_send", to: { cwd: "/w" }, text: " \n" },
+      { op: "peer_send", to: { pid: 1.5 }, text: "hi" },
+      { op: "peer_send", to: { name: "" }, text: "hi" },
+    ],
+  },
+  peer_list: {
+    ok: { op: "peer_list", cwd: "/w", name: "n" },
+    bad: [{ op: "peer_list", cwd: 1 }],
+  },
   create_room: {
     ok: {
       op: "create_room",

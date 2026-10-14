@@ -801,8 +801,6 @@ function safeParse(schema, input, config$1) {
   };
 }
 
-var DIRECT_ADDRESS_PREFIX = "ccmsg:";
-
 function failureOf(issues) {
   const read = issues.map((issue) => ({
     path: getDotPath(issue) ?? "",
@@ -824,6 +822,65 @@ function jsonText(schema) {
 function errorText(e) {
   return e instanceof Error ? `${e.name}: ${e.message}` : `a thrown ${typeof e}`;
 }
+
+var PeerFilterEntries = {
+  cwd: optional(pipe(string(), nonEmpty("a cwd is not empty"))),
+  name: optional(pipe(string(), nonEmpty("a name is not empty")))
+};
+var PeerTargetEntries = {
+  session_id: optional(pipe(string(), nonEmpty("a session id is not empty"))),
+  ...PeerFilterEntries,
+  pid: optional(pipe(number(), safeInteger(), minValue(1)))
+};
+function namesSomebody(to) {
+  return to.session_id !== undefined || to.cwd !== undefined || to.name !== undefined || to.pid !== undefined;
+}
+var NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
+var PeerTargetSchema = pipe(object(PeerTargetEntries), check(namesSomebody, NAMES_SOMEBODY));
+var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
+var PeerSendInputSchema = object({ to: PeerTargetSchema, text: PeerTextSchema });
+var PeerSendInputTextSchema = jsonText(PeerSendInputSchema);
+var PeerListInputSchema = object(PeerFilterEntries);
+var PeerListInputTextSchema = jsonText(PeerListInputSchema);
+var PeerSendReasonSchema = picklist([
+  "self",
+  "no_module",
+  "session_changed",
+  "ended",
+  "no_peer_socket",
+  "no_status_socket",
+  "unreachable",
+  "refused"
+]);
+var PeerEntries = {
+  sid: string(),
+  name: optional(string()),
+  cwd: optional(string())
+};
+var PeerSendResultSchema = variant("outcome", [
+  object({ ...PeerEntries, outcome: literal("delivered") }),
+  object({ ...PeerEntries, outcome: literal("unconfirmed") }),
+  object({ ...PeerEntries, outcome: literal("not_delivered"), reason: PeerSendReasonSchema })
+]);
+var PeerSendResponseSchema = object({
+  ok: literal(true),
+  results: array(PeerSendResultSchema)
+});
+var PeerSendResponseTextSchema = jsonText(PeerSendResponseSchema);
+var PeerListEntrySchema = object({
+  ...PeerEntries,
+  pids: array(number()),
+  module: boolean(),
+  self: boolean()
+});
+var PeerListResponseSchema = object({
+  ok: literal(true),
+  peers: array(PeerListEntrySchema)
+});
+var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
+var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
+var SayToolInputSchema = object({ text: PeerTextSchema });
+var PeersToolInputSchema = PeerListInputSchema;
 
 var SIDECAR_REQUEST_VERSION = 1;
 var SidecarRequestIdSchema = pipe(string(), nonEmpty("an id is not empty"));
@@ -922,14 +979,62 @@ var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
 }
-var SendMessageResultSchema = variant("isDelivered", [
-  object({ isDelivered: literal(true) }),
-  object({
-    isDelivered: literal(false),
-    reason: pipe(string(), nonEmpty("a reason is not empty"))
-  })
-]);
-var SendMessageResultTextSchema = jsonText(SendMessageResultSchema);
+
+var UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
+var NOT_DELIVERED = {
+  self: "送り主自身なので送っていない",
+  no_module: "ccmsg の hooks module が動いていないセッションなので送っていない。そのセッションには ccmsg で届けられない",
+  session_changed: "その session_id はもう使われていない (/clear か /resume で別の id に移った)。peers で今の session_id を確かめて送り直す",
+  ended: "そのセッションは終了している",
+  no_peer_socket: "peer socket が見つからない。終了した直後か、peer messaging に対応しない Claude Code。peers でまだ居るか確かめる",
+  no_status_socket: "受け手の受領拒否を聞く socket を送り手側で作れず、送っていない。少し置いて一度だけ送り直し、また同じなら送るのをやめる",
+  unreachable: "peer socket に書き込めなかった。少し置いて一度だけ送り直すか、送るのをやめる",
+  refused: "受け手が受け取りを拒否した。時間を置いて送り直すか、送るのをやめる"
+};
+function spelled(session) {
+  return [
+    `session_id: ${session.sid}`,
+    ...session.name !== undefined ? [`name: ${JSON.stringify(session.name)}`] : [],
+    ...session.cwd !== undefined ? [`cwd: ${JSON.stringify(session.cwd)}`] : []
+  ].join(", ");
+}
+function sendResultText(results) {
+  if (results.length === 0) {
+    return "宛先に当たる生きているセッションが無いので、送っていない。peers で今いるセッションを確かめて送り直すか、送るのをやめる";
+  }
+  if (results.every((r) => r.outcome === "not_delivered" && r.reason === "self")) {
+    return "宛先に当たったのは送り主自身だけなので、送っていない。相手の session_id・name・cwd を peers で確かめて送り直す";
+  }
+  const delivered = results.filter((r) => r.outcome === "delivered").length;
+  const head = delivered === results.length ? `${String(results.length)} 件の宛先すべてに届いた。` : `${String(results.length)} 件の宛先のうち ${String(delivered)} 件に届いた。届いた宛先には送り直さない。`;
+  const lines = results.map((r) => {
+    switch (r.outcome) {
+      case "delivered":
+        return `- ${spelled(r)}: 届いた`;
+      case "unconfirmed":
+        return `- ${spelled(r)}: 届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`;
+      case "not_delivered":
+        return `- ${spelled(r)}: 届かなかった。${NOT_DELIVERED[r.reason]}`;
+    }
+  });
+  return [head, ...lines].join(`
+`);
+}
+function peersText(peers) {
+  const others = peers.filter((p) => !p.self);
+  if (others.length === 0)
+    return "送れる相手のセッションは無い。";
+  const lines = others.map((p) => {
+    const pids = p.pids.length > 1 ? `, pid: ${p.pids.join(" / ")}` : "";
+    const module = p.module ? "" : " (ccmsg の hooks module が動いていないので送れない)";
+    return `- ${spelled(p)}${pids}${module}`;
+  });
+  return [
+    "送れる相手のセッション (send には session_id・name・cwd をこのまま書く):",
+    ...lines
+  ].join(`
+`);
+}
 
 var SessionStartInputSchema = looseObject({
   isInteractive: optional(boolean()),
@@ -951,7 +1056,6 @@ var PromptSubmitInputSchema = looseObject({
   origin: optional(looseObject({ kind: optional(string()) }))
 });
 var PromptSubmitResultSchema = looseObject({ drop: optional(string()) });
-var SessionSendInputSchema = looseObject({ to: string(), text: string() });
 async function observe($, e, next, event, schema, observer) {
   const read = parseWith(schema, e);
   if (!read.ok)
@@ -975,6 +1079,8 @@ var HYOUI_TIMEOUT_MS = 3000;
 var ACCEPT_WAIT_MS = 3000;
 var REPLY_TIMEOUT_MS = 3000;
 var SEND_TIMEOUT_MS = 1e4;
+var PEERS_TIMEOUT_MS = 5000;
+var SAY_TIMEOUT_MS = 120000;
 var RESPAWN_MIN_MS = 500;
 var RESPAWN_MAX_MS = 30000;
 var STABLE_MS = 1e4;
@@ -1095,46 +1201,6 @@ async function sendReply($, sid, reply) {
     $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }
 }
-function sendArgv(root, sid, to) {
-  return [`${root}/bin/ccmsg`, "sidecar", "send", "--sid", sid, "--to", to, "/dev/stdin"];
-}
-var SEND_UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
-async function sendToAddress($, to, text) {
-  try {
-    return await sendThroughDaemon($, to, text);
-  } catch (e) {
-    return {
-      isDelivered: false,
-      reason: `送信の途中で失敗し、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`
-    };
-  }
-}
-async function sendThroughDaemon($, to, text) {
-  const sid = await $.session.id();
-  let run;
-  try {
-    run = await $.process.run(sendArgv($.plugin.root, sid, to), {
-      stdin: text,
-      timeoutMs: SEND_TIMEOUT_MS
-    });
-  } catch (e) {
-    $.ui.log(`ccmsg: send to ${to} failed: ${errorText(e)}`, { to: "debug" });
-    return {
-      isDelivered: false,
-      reason: `ccmsg sidecar send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`
-    };
-  }
-  const result = parseWith(SendMessageResultTextSchema, run.stdout);
-  if (result.ok)
-    return result.value;
-  const said = run.stderr.trim().split(`
-`)[0] ?? "";
-  $.ui.log(`ccmsg: send to ${to} exited ${String(run.exitCode)} without a result (${result.failure.summary}): ${run.stderr.trim()}`, { to: "debug" });
-  return {
-    isDelivered: false,
-    reason: `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${SEND_UNCONFIRMED_ADVICE}`
-  };
-}
 async function promptSend($, state, request) {
   if (request.generation !== state.generation || request.sid !== state.sid) {
     $.ui.log(`ccmsg: prompt.send ${request.id} not filled: the session changed its id`, {
@@ -1204,6 +1270,159 @@ function beginArgv(root, sid, cwd) {
   return [`${root}/bin/ccmsg`, "sidecar", "begin", "--sid", sid, "--cwd", cwd];
 }
 var BEGIN_TIMEOUT_MS = 25000;
+var TOOL_INPUT_SCHEMAS = {
+  send: {
+    type: "object",
+    properties: {
+      session_id: {
+        type: "string",
+        minLength: 1
+      },
+      cwd: {
+        type: "string",
+        minLength: 1
+      },
+      name: {
+        type: "string",
+        minLength: 1
+      },
+      pid: {
+        type: "integer",
+        minimum: 1,
+        maximum: 9007199254740991
+      },
+      text: {
+        type: "string"
+      }
+    },
+    required: [
+      "text"
+    ],
+    $schema: "http://json-schema.org/draft-07/schema#"
+  },
+  say: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string"
+      }
+    },
+    required: [
+      "text"
+    ],
+    $schema: "http://json-schema.org/draft-07/schema#"
+  },
+  peers: {
+    type: "object",
+    properties: {
+      cwd: {
+        type: "string",
+        minLength: 1
+      },
+      name: {
+        type: "string",
+        minLength: 1
+      }
+    },
+    required: [],
+    $schema: "http://json-schema.org/draft-07/schema#"
+  }
+};
+async function registerTools($) {
+  const registered = await Promise.allSettled([
+    $.tool.register({
+      name: "send",
+      description: "Send a message to other Claude Code sessions (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.send,
+      isDeferred: true
+    }),
+    $.tool.register({
+      name: "say",
+      description: "Tell the person something by voice (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.say,
+      isDeferred: true
+    }),
+    $.tool.register({
+      name: "peers",
+      description: "List the sessions send can reach (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.peers,
+      isDeferred: true
+    })
+  ]);
+  for (const outcome of registered) {
+    if (outcome.status === "rejected") {
+      $.ui.log(`ccmsg: a tool was not registered: ${errorText(outcome.reason)}`, { to: "debug" });
+    }
+  }
+}
+function peerArgv(root, command, sid) {
+  return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
+}
+function notTheInput(tool, summary) {
+  return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
+}
+async function sendTool($, e) {
+  const read = parseWith(SendToolInputSchema, e);
+  if (!read.ok)
+    return notTheInput("send", read.failure.summary);
+  const { text, ...to } = read.value;
+  let run;
+  try {
+    run = await $.process.run(peerArgv($.plugin.root, "peer-send", await $.session.id()), {
+      stdin: JSON.stringify({ to, text }),
+      timeoutMs: SEND_TIMEOUT_MS
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar peer-send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+  }
+  const answered = parseWith(PeerSendResponseTextSchema, run.stdout);
+  if (answered.ok)
+    return sendResultText(answered.value.results);
+  const said = run.stderr.trim().split(`
+`)[0] ?? "";
+  $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  if (run.exitCode === 3) {
+    return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
+  }
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${UNCONFIRMED_ADVICE}`;
+}
+async function sayTool($, e) {
+  const read = parseWith(SayToolInputSchema, e);
+  if (!read.ok)
+    return notTheInput("say", read.failure.summary);
+  try {
+    const sid = await $.session.id();
+    const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "say", read.value.text], {
+      env: { CCMSG_SID: sid },
+      timeoutMs: SAY_TIMEOUT_MS
+    });
+    if (run.exitCode === 0)
+      return "伝えた (音声と webui の \uD83D\uDCE3)";
+    return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split(`
+`)[0] ?? ""}`;
+  } catch (error) {
+    return `say を起こせなかったか ${String(SAY_TIMEOUT_MS / 1000)} 秒以内に終わらなかった: ${errorText(error)}`;
+  }
+}
+async function peersTool($, e) {
+  const read = parseWith(PeersToolInputSchema, e);
+  if (!read.ok)
+    return notTheInput("peers", read.failure.summary);
+  try {
+    const run = await $.process.run(peerArgv($.plugin.root, "peer-list", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: PEERS_TIMEOUT_MS
+    });
+    const answered = parseWith(PeerListResponseTextSchema, run.stdout);
+    if (answered.ok)
+      return peersText(answered.value.peers);
+    return `一覧を返せなかった: ${run.stderr.trim().split(`
+`)[0] ?? ""}`;
+  } catch (error) {
+    return `一覧を返せなかった: ${errorText(error)}`;
+  }
+}
 async function sessionBegin($) {
   try {
     const sid = await $.session.id();
@@ -1357,11 +1576,13 @@ async function replaceSidecar($, state) {
 function register(on) {
   const state = newState();
   on("session.start", async ($, e, next) => observe($, e, next, "session.start", SessionStartInputSchema, {
-    after: (input) => {
+    after: async (input) => {
       state.interactive = input.isInteractive !== false && input.surface !== null;
       sessionBegin($);
       startSidecar($, state);
       sessionBegan($, state);
+      if (state.interactive)
+        await registerTools($);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.end", async ($, e, next) => observe($, e, next, "session.end", SessionEndInputSchema, {
@@ -1445,21 +1666,28 @@ function register(on) {
         await putBackDraft($, restoring.text, restoring.draft);
     }
   })).catch(async (_$, e, next) => next(e));
-  on("session.send", async ($, e, next) => {
-    const read = parseWith(SessionSendInputSchema, e);
-    if (!read.ok || !read.value.to.startsWith(DIRECT_ADDRESS_PREFIX))
-      return next(e);
-    return sendToAddress($, read.value.to, read.value.text);
-  });
+  on("tool.call", { tool: "mcp__ccmsg-v1__send" }, async ($, e) => ({
+    result: await sendTool($, e)
+  })).catch(async () => ({
+    result: `ccmsg の send が途中で止まり、届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`
+  }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async ($, e) => ({
+    result: await sayTool($, e)
+  })).catch(async () => ({ result: "ccmsg の say が途中で止まった。伝わったかは分からない" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
+    result: await peersTool($, e)
+  })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));
   return state;
 }
 export {
   ACCEPT_WAIT_MS,
   BEGIN_TIMEOUT_MS,
   HYOUI_TIMEOUT_MS,
+  PEERS_TIMEOUT_MS,
   REPLY_TIMEOUT_MS,
   RESPAWN_MAX_MS,
   RESPAWN_MIN_MS,
+  SAY_TIMEOUT_MS,
   SEND_TIMEOUT_MS,
   STABLE_MS,
   answer,
@@ -1469,9 +1697,8 @@ export {
   hyouiEnterArgv,
   lineSplitter,
   newState,
+  peerArgv,
   register,
   replyArgv,
-  samePrompt,
-  sendArgv,
-  sendToAddress
+  samePrompt
 };

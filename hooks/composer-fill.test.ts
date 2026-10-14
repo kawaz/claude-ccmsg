@@ -4,11 +4,12 @@
 // refuses it, is the protocol's (packages/protocol/test/sidecar.test.ts); here
 // it is how the module answers.
 import { describe, expect, test } from "bun:test";
-import { errorText, parseWith } from "@ccmsg/protocol/parse";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as v from "valibot";
+import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
-  type SendMessageResult,
-  SendMessageResultSchema,
   type SessionFacts,
   SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
@@ -25,6 +26,7 @@ import {
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,
+  type HookArgs,
   type HookOf,
   type ModuleState,
   type ObservedEvent,
@@ -35,9 +37,10 @@ import {
   RESPAWN_MIN_MS,
   samePrompt,
   SEND_TIMEOUT_MS,
-  sendArgv,
   type SpawnChunk,
   type SpawnEnd,
+  type ToolAnswer,
+  type ToolName,
 } from "./composer-fill.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
@@ -98,8 +101,28 @@ function controlledStream() {
   };
 }
 
-/** The hooks the module registered, by event, each as the event takes it. */
-type HookTable = { [K in HookedEvent]?: HookOf[K] };
+/** What the module registered on each event, in order: the arguments after
+ * the event (the hook, and for tool.call the tool first). */
+type HookTable = { [K in HookedEvent]: HookArgs[K][] };
+/** The `.catch` handler of each registration, by event, in the same order. */
+type CatchTable = { [K in HookedEvent]: HookOf[K][] };
+
+/** A table with no registration on any event. */
+function emptyTable(): HookTable & CatchTable {
+  return {
+    "session.start": [],
+    "session.end": [],
+    "session.measure": [],
+    "command.run": [],
+    "prompt.submit": [],
+    "turn.start": [],
+    "turn.complete": [],
+    "turn.step": [],
+    "tool.call": [],
+  };
+}
+/** What a ccmsg command the module runs answers. */
+type CommandRun = { exitCode: number; stdout: string; stderr: string };
 
 interface Fake {
   $: Engine;
@@ -126,8 +149,9 @@ interface Fake {
   hooks: HookTable;
   /** The events the module hooked, in the order it hooked them. */
   registered: HookedEvent[];
-  /** The `.catch` handler of each hook, by event. */
-  catchers: HookTable;
+  catchers: CatchTable;
+  /** The tools the module registered (`$.tool.register`), in order. */
+  tools: { name: string; description: string; inputSchema: object; isDeferred: boolean }[];
   sid: { value: string };
   fills: string[];
   logs: string[];
@@ -152,12 +176,12 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
-    /** What `ccmsg sidecar send` does, given what it was run with. */
-    send?: (init: { stdin?: string; timeoutMs?: number }) => Promise<{
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-    }>;
+    /** What the ccmsg command a tool runs (`sidecar peer-send`, `sidecar
+     * peer-list`, `say`) does, given its argv and what it was run with. */
+    command?: (
+      argv: readonly string[],
+      init: { stdin?: string; timeoutMs?: number; env?: Record<string, string> },
+    ) => Promise<CommandRun>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -179,6 +203,7 @@ function fakeEngine(
   const begins: Fake["begins"] = [];
   const fills: string[] = [];
   const logs: string[] = [];
+  const tools: Fake["tools"] = [];
   const $: Engine = {
     plugin: { root: "/plugin" },
     session: {
@@ -218,9 +243,9 @@ function fakeEngine(
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
-        if (argv[1] === "sidecar" && argv[2] === "send") {
-          if (options.send === undefined) throw new Error("no ccmsg sidecar send here");
-          return options.send(init ?? {});
+        if (argv[1] === "say" || argv[2] === "peer-send" || argv[2] === "peer-list") {
+          if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
+          return options.command(argv, init ?? {});
         }
         if (argv.at(-1) === "version") {
           const version = options.version ?? "9.9.9";
@@ -233,6 +258,11 @@ function fakeEngine(
         const stream = controlledStream();
         spawns.push({ argv, stream });
         return stream.gen;
+      },
+    },
+    tool: {
+      register: async (spec) => {
+        tools.push(spec);
       },
     },
     env: { get: async (name) => env[name] },
@@ -265,12 +295,13 @@ function fakeEngine(
     envs,
     spawns,
     timers,
-    hooks: {},
+    hooks: emptyTable(),
     registered: [],
     sid,
     fills,
     logs,
-    catchers: {},
+    catchers: emptyTable(),
+    tools,
   };
   return fake;
 }
@@ -285,33 +316,33 @@ async function fire<E, R>(
   e: E,
   next: (e: E) => Promise<R>,
 ): Promise<R> {
-  const hook = fake.hooks[event];
+  const hook = fake.hooks[event][0]?.[0];
   if (hook === undefined) throw new Error(`no hook on ${event}`);
   const once = replaySafe(next);
   try {
     return await hook(fake.$, e, once);
   } catch (error) {
-    const handler = fake.catchers[event];
+    const handler = fake.catchers[event][0];
     if (handler === undefined) throw error;
     return handler(fake.$, e, once);
   }
 }
 
-/** `fire` for session.send, whose hook may settle the event itself. */
-async function fireSend<E, R>(
-  fake: Fake,
-  e: E,
-  next: (e: E) => Promise<R>,
-): Promise<R | SendMessageResult> {
-  const hook = fake.hooks["session.send"];
-  if (hook === undefined) throw new Error("no hook on session.send");
-  const once = replaySafe(next);
+/** Call the module's tool `tool` with input `e` as the engine would: the
+ * hook answers without `next`, and when it throws its `.catch` answers. */
+async function callTool<E>(fake: Fake, tool: ToolName, e: E): Promise<string> {
+  const at = fake.hooks["tool.call"].findIndex(([matcher]) => matcher.tool === tool);
+  const hook = fake.hooks["tool.call"][at]?.[1];
+  if (hook === undefined) throw new Error(`no hook on ${tool}`);
+  const next = async (): Promise<ToolAnswer> => {
+    throw new Error(`${tool} ran next`);
+  };
   try {
-    return await hook(fake.$, e, once);
+    return (await hook(fake.$, e, next)).result;
   } catch (error) {
-    const handler = fake.catchers["session.send"];
+    const handler = fake.catchers["tool.call"][at];
     if (handler === undefined) throw error;
-    return handler(fake.$, e, once);
+    return (await handler(fake.$, e, next)).result;
   }
 }
 
@@ -335,7 +366,7 @@ async function fireStep<E, Y, R>(
   chunks: readonly Y[],
   result: R,
 ): Promise<{ chunks: Y[]; result: R }> {
-  const hook = fake.hooks["turn.step"];
+  const hook = fake.hooks["turn.step"][0]?.[0];
   if (hook === undefined) throw new Error("no hook on turn.step");
   const beneath = async function* (_e: E): AsyncGenerator<Y, R> {
     for (const chunk of chunks) yield chunk;
@@ -352,7 +383,7 @@ async function fireStep<E, Y, R>(
   try {
     return await drain(hook(fake.$, e, beneath));
   } catch (error) {
-    const handler = fake.catchers["turn.step"];
+    const handler = fake.catchers["turn.step"][0];
     if (handler === undefined) throw error;
     return drain(handler(fake.$, e, beneath));
   }
@@ -393,12 +424,14 @@ async function submitComposer(fake: Fake): Promise<number> {
 }
 
 function registerOn(fake: Fake): ModuleState {
-  const on: On = (event, hook) => {
-    fake.hooks[event] = hook;
+  const on: On = (event, ...args) => {
+    const held: HookArgs[typeof event][] = fake.hooks[event];
+    held.push(args);
     fake.registered.push(event);
     return {
       catch: (handler) => {
-        fake.catchers[event] = handler;
+        const caught: HookOf[typeof event][] = fake.catchers[event];
+        caught.push(handler);
       },
     };
   };
@@ -1449,10 +1482,10 @@ describe("each hook passes the event on once", () => {
     };
     registerOn(fake);
     expect(fake.registered.length).toBeGreaterThan(0);
-    // session.send settles a SendMessage itself when it is to a ccmsg:
-    // address, and turn.step is a stream; their failures are their own tests'.
+    // The tools answer their calls themselves, and turn.step is a stream;
+    // their failures are their own tests'.
     const observed = fake.registered.flatMap((e) =>
-      e === "session.send" || e === "turn.step" ? [] : [e],
+      e === "tool.call" || e === "turn.step" ? [] : [e],
     );
     for (const event of observed) {
       logged = 0;
@@ -1465,108 +1498,150 @@ describe("each hook passes the event on once", () => {
   });
 });
 
-describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
-  const TO = "ccmsg:bbbbbbbb-2222-4333-8444-555555555555";
-  const SEND = { to: TO, text: "long\nmessage `with` $chars", summary: "s" };
-
-  function sendFake(send: NonNullable<Parameters<typeof fakeEngine>[0]>["send"]) {
-    const fake = fakeEngine({ send });
-    registerOn(fake);
-    return fake;
-  }
-  /** The reason of a send the hook settled as not delivered. */
-  function notDeliveredReason(result: object): string {
-    const read = parseWith(SendMessageResultSchema, result);
-    if (!read.ok || read.value.isDelivered)
-      throw new Error(`not a refused send: ${JSON.stringify(result)}`);
-    return read.value.reason;
-  }
-  const printed = (result: object) => async () => ({
+// The tools an agent uses ccmsg through (DR-0039 §3).
+describe("the ccmsg tools", () => {
+  const OTHER = "bbbbbbbb-2222-4333-8444-555555555555";
+  const fake0 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  /** A command that prints `value` as JSON and exits 0. */
+  const printing = (value: object) => async (): Promise<CommandRun> => ({
     exitCode: 0,
-    stdout: `${JSON.stringify(result)}\n`,
+    stdout: `${JSON.stringify(value)}\n`,
     stderr: "",
   });
 
-  test("is taken over: sent through ccmsg sidecar send, the text on standard input", async () => {
-    const fake = sendFake(printed({ isDelivered: true }));
-    const { calls, next } = countingNext({ native: true });
-    expect(await fireSend(fake, SEND, next)).toEqual({ isDelivered: true });
-    expect(calls.count).toBe(0);
-    expect(fake.runs).toEqual([sendArgv("/plugin", fake.sid.value, TO)]);
-    expect(fake.runs[0]).toEqual([
-      "/plugin/bin/ccmsg",
-      "sidecar",
-      "send",
-      "--sid",
-      fake.sid.value,
-      "--to",
-      TO,
-      "/dev/stdin",
+  function toolFake(command: NonNullable<Parameters<typeof fakeEngine>[0]>["command"]) {
+    const fake = fakeEngine({ command });
+    registerOn(fake);
+    return fake;
+  }
+
+  test("an interactive session.start registers send, say and peers, deferred", async () => {
+    const fake = toolFake(printing({}));
+    await fire(fake, "session.start", START, async () => ({}));
+    expect(fake.tools.map((t) => [t.name, t.isDeferred])).toEqual([
+      ["send", true],
+      ["say", true],
+      ["peers", true],
     ]);
-    expect(fake.stdins).toEqual([SEND.text]);
-  });
-
-  test("the budget is set, not left at $.process.run's 30 s", async () => {
-    const seen: (number | undefined)[] = [];
-    const fake = sendFake(async (init) => {
-      seen.push(init.timeoutMs);
-      return printed({ isDelivered: true })();
-    });
-    await fireSend(fake, SEND, countingNext().next);
-    expect(seen).toEqual([SEND_TIMEOUT_MS]);
-    expect(SEND_TIMEOUT_MS).toBeLessThan(30_000);
-  });
-
-  test("a send that reached nobody is settled with the command's reason", async () => {
-    const fake = sendFake(printed({ isDelivered: false, reason: "宛先が無い" }));
-    expect(await fireSend(fake, SEND, countingNext().next)).toEqual({
-      isDelivered: false,
-      reason: "宛先が無い",
+    // The model is shown the shape the handler reads: send's text required,
+    // the recipient fields beside it.
+    const send = fake.tools[0]?.inputSchema;
+    expect(send).toMatchObject({
+      type: "object",
+      required: ["text"],
+      properties: { session_id: { type: "string" }, cwd: {}, name: {}, pid: { type: "integer" } },
     });
   });
 
-  test("any other address goes on to the harness, untouched", async () => {
-    const fake = sendFake(printed({ isDelivered: true }));
-    for (const to of ["team-lead", "ccmsg", "uds:/tmp/x.sock", " ccmsg:x"]) {
-      const { calls, next } = countingNext({ native: to });
-      const e = { to, text: "hi" };
-      expect(await fireSend(fake, e, next)).toEqual({ native: to });
-      expect(calls.count).toBe(1);
+  test("a session with no composer (-p) gets no tools", async () => {
+    const fake = toolFake(printing({}));
+    await fire(
+      fake,
+      "session.start",
+      { ...START, isInteractive: false, surface: null },
+      async () => ({}),
+    );
+    expect(fake.tools).toEqual([]);
+  });
+
+  test("send hands { to, text } to ccmsg sidecar peer-send and reads each result", async () => {
+    const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
+    const fake = toolFake(async (argv, init) => {
+      seen.push({ argv, ...init });
+      return printing({
+        ok: true,
+        results: [
+          { sid: OTHER, name: "n", cwd: "/w", outcome: "delivered" },
+          { sid: "c", outcome: "not_delivered", reason: "no_module" },
+        ],
+      })();
+    });
+    const text = "long\nmessage `with` $chars";
+    const result = await callTool(fake, "mcp__ccmsg-v1__send", {
+      cwd: "/w",
+      text,
+      tool: "mcp__ccmsg-v1__send",
+      tool_use_id: "toolu_1",
+    });
+    expect(seen).toEqual([
+      {
+        argv: ["/plugin/bin/ccmsg", "sidecar", "peer-send", "--sid", fake.sid.value],
+        stdin: JSON.stringify({ to: { cwd: "/w" }, text }),
+        timeoutMs: SEND_TIMEOUT_MS,
+      },
+    ]);
+    expect(result).toContain("2 件の宛先のうち 1 件に届いた");
+    expect(result).toContain(`- session_id: ${OTHER}, name: "n", cwd: "/w": 届いた`);
+    expect(result).toContain("- session_id: c: 届かなかった。ccmsg の hooks module が動いていない");
+  });
+
+  // engine does not check the input against the schema (DR-0039 §3): the
+  // handler reads it and answers what does not read, running nothing.
+  test("an input that is not send's is answered in text, and nothing runs", async () => {
+    const fake = toolFake(printing({ ok: true, results: [] }));
+    for (const input of [{ text: 1, cwd: "/w" }, { text: "hi" }, { cwd: "/w", text: "  " }, {}]) {
+      expect(await callTool(fake, "mcp__ccmsg-v1__send", input)).toContain(
+        "send の入力が形に合わない",
+      );
     }
-    // An input that does not read is not the module's to take over either.
-    const { calls, next } = countingNext({ native: true });
-    expect(await fireSend(fake, { to: TO }, next)).toEqual({ native: true });
-    expect(calls.count).toBe(1);
     expect(fake.runs).toEqual([]);
   });
 
-  // A throwing hook would have the harness look the address up as its own
-  // agent name; every failure is a result instead, and next is never run.
-  test("a send that times out or cannot start is unconfirmed, never a throw", async () => {
-    const fake = sendFake(async () => {
-      throw new Error("$.process.run(ccmsg) aborted: still running after 10000ms");
+  // The model calls a plugin's tool as mcp__<plugin name>__<tool>, so the
+  // tools the module answers carry the name plugin.json gives.
+  test("the tools answered are named under the plugin's name", async () => {
+    const read = parseWith(
+      jsonText(v.object({ name: v.string() })),
+      fs.readFileSync(path.join(import.meta.dir, "..", ".claude-plugin", "plugin.json"), "utf8"),
+    );
+    if (!read.ok) throw new Error(read.failure.summary);
+    const fake = toolFake(printing({}));
+    const answered: string[] = fake.hooks["tool.call"].map(([matcher]) => matcher.tool);
+    expect(answered).toEqual(
+      ["send", "say", "peers"].map((tool) => `mcp__${read.value.name}__${tool}`),
+    );
+  });
+
+  test("a send that matched only the sender says so", async () => {
+    const fake = toolFake(
+      printing({
+        ok: true,
+        results: [{ sid: fake0, outcome: "not_delivered", reason: "self" }],
+      }),
+    );
+    expect(await callTool(fake, "mcp__ccmsg-v1__send", { name: "me", text: "hi" })).toContain(
+      "送り主自身だけなので、送っていない",
+    );
+  });
+
+  test("a send that matched nobody says so", async () => {
+    const fake = toolFake(printing({ ok: true, results: [] }));
+    expect(await callTool(fake, "mcp__ccmsg-v1__send", { name: "x", text: "hi" })).toContain(
+      "宛先に当たる生きているセッションが無い",
+    );
+  });
+
+  test("a send whose result cannot be told is unconfirmed; one with no daemon was not sent", async () => {
+    const thrown = toolFake(async () => {
+      throw new Error("aborted: still running after 10000ms");
     });
-    const { calls, next } = countingNext({ native: true });
-    const result = await fireSend(fake, SEND, next);
-    expect(calls.count).toBe(0);
-    expect(notDeliveredReason(result)).toContain(
-      "届いたか確かめられなかった: Error: $.process.run(ccmsg) aborted",
+    expect(await callTool(thrown, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
+      "届いたか確かめられなかった: Error: aborted",
+    );
+    const silent = toolFake(async () => ({ exitCode: 1, stdout: "", stderr: "broke\n  detail\n" }));
+    expect(await callTool(silent, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
+      "届いたか確かめられなかった: broke。",
+    );
+    const nodaemon = toolFake(async () => ({ exitCode: 3, stdout: "", stderr: "no daemon\n" }));
+    expect(await callTool(nodaemon, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
+      "daemon に繋がらず、送っていない: no daemon",
     );
   });
 
-  test("a command that prints no result is unconfirmed, with its first stderr line", async () => {
-    const fake = sendFake(async () => ({
-      exitCode: 1,
-      stdout: "",
-      stderr: "ccmsg: something broke\n  detail\n",
-    }));
-    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain(
-      "届いたか確かめられなかった: ccmsg: something broke。",
-    );
-  });
-
-  test("a failing engine, log included, still settles the send", async () => {
-    const fake = sendFake(async () => {
+  // A handler that throws (here its log) is answered by the `.catch`, never
+  // by `next`, which would only reach core's "no tool.call hook answered".
+  test("a send whose handler fails is answered by its .catch", async () => {
+    const fake = toolFake(async () => {
       throw new Error("run broke");
     });
     fake.$.ui = {
@@ -1574,22 +1649,48 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
         throw new Error("log broke");
       },
     };
-    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain(
-      "log broke",
+    expect(await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
+      "send が途中で止まり",
     );
-    fake.$.session = {
-      ...fake.$.session,
-      id: async () => {
-        throw new Error("no id");
-      },
-    };
-    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain("no id");
   });
 
-  test("the hook has no .catch: nothing would pass the address on to the harness", () => {
-    const fake = sendFake(printed({ isDelivered: true }));
-    expect(fake.registered).toContain("session.send");
-    expect(fake.catchers["session.send"]).toBeUndefined();
+  test("say runs ccmsg say as the session, the text one argument", async () => {
+    const seen: { argv: readonly string[]; env?: Record<string, string> }[] = [];
+    const fake = toolFake(async (argv, init) => {
+      seen.push({ argv, ...(init.env !== undefined ? { env: init.env } : {}) });
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    expect(await callTool(fake, "mcp__ccmsg-v1__say", { text: "終わりました 3 件" })).toContain(
+      "伝えた",
+    );
+    expect(seen).toEqual([
+      {
+        argv: ["/plugin/bin/ccmsg", "say", "終わりました 3 件"],
+        env: { CCMSG_SID: fake.sid.value },
+      },
+    ]);
+    expect(await callTool(fake, "mcp__ccmsg-v1__say", {})).toContain("say の入力が形に合わない");
+  });
+
+  test("peers lists the sessions send can reach, spelled as send takes them", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init.stdin);
+      return printing({
+        ok: true,
+        peers: [
+          { sid: fake.sid.value, pids: [1], module: true, self: true },
+          { sid: OTHER, name: "n", cwd: "/w", pids: [2, 3], module: true, self: false },
+          { sid: "c", pids: [4], module: false, self: false },
+        ],
+      })();
+    });
+    const result = await callTool(fake, "mcp__ccmsg-v1__peers", { cwd: "/w" });
+    expect(seen).toEqual([JSON.stringify({ cwd: "/w" })]);
+    expect(result.split("\n").slice(1)).toEqual([
+      `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
+      "- session_id: c (ccmsg の hooks module が動いていないので送れない)",
+    ]);
   });
 });
 

@@ -8,6 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
+import { PeerListInputSchema, PeerSendInputSchema } from "./peer-tools.ts";
 import { SessionFactsSchema, SidecarReplySchema, SidecarRunIdSchema } from "./sidecar.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 
@@ -154,6 +155,29 @@ export const AddressSendRequestSchema = v.object({
   text: v.string(),
 });
 export type AddressSendRequest = Output<typeof AddressSendRequestSchema>;
+
+/** Send a message to the sessions `to` picks out: what the `send` tool of a
+ * session's hooks module asks (session role only, DR-0039 §3).
+ *
+ * The daemon reads the live session runs afresh, keeps the sessions that
+ * match every field of `to`, and writes the envelope (`from: ccmsg:<sid>` of
+ * the asking session, no reply line) into the peer socket of each that has a
+ * hooks module. The asking session is left out; a send that matched it alone
+ * says so. It answers one result per session matched. */
+export const PeerSendRequestSchema = v.object({
+  op: v.literal("peer_send"),
+  ...PeerSendInputSchema.entries,
+});
+export type PeerSendRequest = Output<typeof PeerSendRequestSchema>;
+
+/** The sessions a send could go to, as peer_send would match them: what the
+ * `peers` tool of a session's hooks module asks (session role only,
+ * DR-0039 §3). */
+export const PeerListRequestSchema = v.object({
+  op: v.literal("peer_list"),
+  ...PeerListInputSchema.entries,
+});
+export type PeerListRequest = Output<typeof PeerListRequestSchema>;
 
 /** Session-launcher cwd tree (DR-0018 §3.2, user role only). Requested roots
  * may be configured roots or any descendants: descendant roots are required

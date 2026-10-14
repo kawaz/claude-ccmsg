@@ -221,6 +221,21 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "not_delivered", reason: "no_recipient" },
     { ok: true, outcome: "unconfirmed" },
   ],
+  peer_send: [
+    { ok: true, results: [] },
+    {
+      ok: true,
+      results: [
+        { sid: SID, name: "n", cwd: "/w", outcome: "delivered" },
+        { sid: SID, outcome: "unconfirmed" },
+        { sid: SID, outcome: "not_delivered", reason: "no_module" },
+      ],
+    },
+  ],
+  peer_list: [
+    { ok: true, peers: [] },
+    { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
+  ],
   create_room: [
     { ok: true, room: "r2", reused: false },
     { ok: true, room: "r3", reused: false, mid: 1, warning: "--members is ignored" },

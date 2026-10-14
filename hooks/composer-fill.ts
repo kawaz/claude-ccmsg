@@ -41,14 +41,13 @@
 // without a composer send them too: they have no sidecar, but the daemon
 // still shows them.
 //
-// A SendMessage to a `ccmsg:` address (DR-0037) is taken over at
-// session.send: harness SendMessage reaches only the sessions of its own
-// config home, so the module hands the message to the daemon through `ccmsg
-// sidecar send`, which delivers it to the sessions the address names in any
-// config home. The hook answers with the send's result and never throws: a
-// throwing session.send hook has the harness look the address up as an agent
-// name of its own, which hides why the message did not go. Any other
-// SendMessage goes on to the harness untouched.
+// An agent uses ccmsg through three tools the module registers at
+// session.start (DR-0039 §3): `send` (to other sessions, named by any of
+// their id, directory, name and process, in any config home), `say` (to the
+// person, by voice and in the webui) and `peers` (who `send` can reach). Each
+// is answered here without `next`: `send` and `peers` through `ccmsg sidecar
+// peer-send` / `peer-list`, `say` through `ccmsg say`, the result always a
+// text the model reads. SendMessage is left to the harness.
 //
 // A session without a composer (`-p`, the SDK) gets no sidecar. When the
 // session changes its id (/clear, /resume) the module moves on a generation:
@@ -67,8 +66,14 @@
 // each hook is a function literal, and `$` is passed only to functions
 // declared at the top of the file.
 import * as v from "valibot";
-import { DIRECT_ADDRESS_PREFIX } from "@ccmsg/protocol/address";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
+import {
+  PeerListResponseTextSchema,
+  PeerSendResponseTextSchema,
+  PeersToolInputSchema,
+  SayToolInputSchema,
+  SendToolInputSchema,
+} from "@ccmsg/protocol/peer-tools";
 import {
   type DescribeResult,
   type FailedSidecarReply,
@@ -77,8 +82,6 @@ import {
   type SessionFacts,
   type SessionFactsContext,
   type SessionFactsTurn,
-  type SendMessageResult,
-  SendMessageResultTextSchema,
   SIDECAR_OP_NAMES,
   SIDECAR_REQUEST_VERSION,
   type SidecarErrorCode,
@@ -86,6 +89,8 @@ import {
   type SidecarRequest,
   sidecarRunId,
 } from "@ccmsg/protocol/sidecar";
+import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
+import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "./tool-text.ts";
 
 /** A piece of a spawned child's output. */
 export interface SpawnChunk {
@@ -127,6 +132,14 @@ export interface Engine {
     ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
     spawn(request: { argv: readonly string[] }): AsyncGenerator<SpawnChunk, SpawnEnd>;
   };
+  tool: {
+    register(spec: {
+      name: string;
+      description: string;
+      inputSchema: object;
+      isDeferred: boolean;
+    }): Promise<void>;
+  };
   env: { get(name: string): Promise<string | undefined> };
   clock: {
     now(): Promise<number>;
@@ -146,19 +159,23 @@ export type ObservedEvent =
   | "turn.complete";
 
 /** The events this module hooks. */
-export type HookedEvent = ObservedEvent | "session.send" | "turn.step";
+export type HookedEvent = ObservedEvent | "turn.step" | "tool.call";
 
 /** A hook: generic in the event's input and in its result, so all it can do
  * with either is read the input through a schema and pass both on as
  * received. */
 export type Hook = <E, R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promise<R>;
-/** The session.send hook: it passes the event on, or settles it with a
- * result of its own instead (DR-0037 §2). */
-export type SendHook = <E, R>(
+/** What a tool of this module answers its call with: the text the model
+ * reads. */
+export interface ToolAnswer {
+  result: string;
+}
+/** A tool.call hook: it answers the call itself, without `next`. */
+export type ToolHook = <E, R>(
   $: Engine,
   e: E,
   next: (e: E) => Promise<R>,
-) => Promise<R | SendMessageResult>;
+) => Promise<R | ToolAnswer>;
 /** The turn.step hook: a streaming event, so the hook is a generator that
  * passes the stream beneath on as it comes (`yield* next(e)`). */
 export type StepHook = <E, Y, R>(
@@ -168,16 +185,25 @@ export type StepHook = <E, Y, R>(
 ) => AsyncGenerator<Y, R>;
 /** The hook each event takes. */
 export interface HookOf extends Record<ObservedEvent, Hook> {
-  "session.send": SendHook;
   "turn.step": StepHook;
+  "tool.call": ToolHook;
 }
-/** `on(event, hook)`. What it returns has one `.catch`, run in the hook's
- * place when the hook throws or overruns its budget. The engine's `next`
- * there is replay-safe: after the hook called it, it answers what that call
- * settled to and runs nothing beneath again. */
+/** The tools this module registers, as the model calls them: the plugin's
+ * name is their prefix (plugin.json). */
+export type ToolName = "mcp__ccmsg-v1__send" | "mcp__ccmsg-v1__say" | "mcp__ccmsg-v1__peers";
+type HookOnly = { [K in Exclude<HookedEvent, "tool.call">]: [hook: HookOf[K]] };
+/** What `on` takes after the event: the hook, and for tool.call first the
+ * tool it answers. */
+export interface HookArgs extends HookOnly {
+  "tool.call": [matcher: { tool: ToolName }, hook: ToolHook];
+}
+/** `on(event, hook)`, `on("tool.call", { tool }, hook)`. What it returns has
+ * one `.catch`, run in the hook's place when the hook throws or overruns its
+ * budget. The engine's `next` there is replay-safe: after the hook called it,
+ * it answers what that call settled to and runs nothing beneath again. */
 export type On = <K extends HookedEvent>(
   event: K,
-  hook: HookOf[K],
+  ...args: HookArgs[K]
 ) => { catch(handler: HookOf[K]): void };
 
 // The engine's input for each event, as far as this module reads it. The
@@ -211,7 +237,6 @@ const PromptSubmitInputSchema = v.looseObject({
 });
 /** What a prompt.submit settles on: the prompt that entered, or a `drop`. */
 const PromptSubmitResultSchema = v.looseObject({ drop: v.optional(v.string()) });
-const SessionSendInputSchema = v.looseObject({ to: v.string(), text: v.string() });
 
 /** What a hook of this module does with an event it observes: `before` runs
  * ahead of the event, `after` once the event went through, with what it
@@ -275,13 +300,18 @@ export const ACCEPT_WAIT_MS = 3_000;
  * at about 0.3 s. `ccmsg version` for describe is the same process without
  * the round trip. */
 export const REPLY_TIMEOUT_MS = 3_000;
-/** `ccmsg sidecar send` budget, for the whole SendMessage: the process, the
- * daemon resolving the address (its state files read within 1 s), and every
- * run's write (2 s) and refusal window (0.25 s), the runs in parallel — about
- * 5 s at worst, with the rest left for a daemon the command has to start. The
- * harness shows the turn as running meanwhile; past this the send is answered
- * as unconfirmed rather than hit `$.process.run`'s own 30 s, which throws. */
+/** `send` budget: the `ccmsg sidecar peer-send` process, the daemon reading
+ * the runs (within 1 s), and every run's write (2 s) and refusal window
+ * (0.25 s), the runs in parallel — about 5 s at worst, with the rest left for
+ * a daemon the command has to start. The wait is the process's, which the
+ * hook's budget does not count (DR-0039 §3); past it the send is answered as
+ * unconfirmed. */
 export const SEND_TIMEOUT_MS = 10_000;
+/** `peers` budget: the process and the daemon reading the runs. */
+export const PEERS_TIMEOUT_MS = 5_000;
+/** `say` budget: `ccmsg say` records the say and then speaks, and returns
+ * when the speech ends, so a long text takes as long as it is to say. */
+export const SAY_TIMEOUT_MS = 120_000;
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar
  * has lived STABLE_MS. */
@@ -503,69 +533,6 @@ async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar send` for one SendMessage of session `sid` to `to`. The
- * text goes on standard input, named to the command as `/dev/stdin` (see
- * `sendToAddress`). */
-export function sendArgv(root: string, sid: string, to: string): string[] {
-  return [`${root}/bin/ccmsg`, "sidecar", "send", "--sid", sid, "--to", to, "/dev/stdin"];
-}
-
-/** The text of a send whose arrival cannot be told. */
-const SEND_UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
-
-/** Send `text` to the `ccmsg:` address `to` through the daemon, and settle
- * the SendMessage with how it went. Never rejects: whatever fails is a
- * not-delivered result saying so, since a session.send hook that throws has
- * the harness send to `to` as an agent name of its own.
- *
- * The text goes on standard input rather than as an argument: a message may
- * be long, an argument is bounded in size and shown to every user by `ps`,
- * and `$.process.run` writes `stdin` once and closes it. The command takes it
- * from a file named by path, as its other users do, and `/dev/stdin` is that
- * file here. */
-export async function sendToAddress(
-  $: Engine,
-  to: string,
-  text: string,
-): Promise<SendMessageResult> {
-  try {
-    return await sendThroughDaemon($, to, text);
-  } catch (e) {
-    return {
-      isDelivered: false,
-      reason: `送信の途中で失敗し、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`,
-    };
-  }
-}
-
-async function sendThroughDaemon($: Engine, to: string, text: string): Promise<SendMessageResult> {
-  const sid = await $.session.id();
-  let run: { exitCode: number; stdout: string; stderr: string };
-  try {
-    run = await $.process.run(sendArgv($.plugin.root, sid, to), {
-      stdin: text,
-      timeoutMs: SEND_TIMEOUT_MS,
-    });
-  } catch (e) {
-    $.ui.log(`ccmsg: send to ${to} failed: ${errorText(e)}`, { to: "debug" });
-    return {
-      isDelivered: false,
-      reason: `ccmsg sidecar send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(e)}。${SEND_UNCONFIRMED_ADVICE}`,
-    };
-  }
-  const result = parseWith(SendMessageResultTextSchema, run.stdout);
-  if (result.ok) return result.value;
-  const said = run.stderr.trim().split("\n")[0] ?? "";
-  $.ui.log(
-    `ccmsg: send to ${to} exited ${String(run.exitCode)} without a result (${result.failure.summary}): ${run.stderr.trim()}`,
-    { to: "debug" },
-  );
-  return {
-    isDelivered: false,
-    reason: `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${SEND_UNCONFIRMED_ADVICE}`,
-  };
-}
-
 async function promptSend(
   $: Engine,
   state: ModuleState,
@@ -673,6 +640,118 @@ export function beginArgv(root: string, sid: string, cwd: string): string[] {
  * twice that when a running daemon of another version is replaced. The
  * daemon itself is detached, so a begin cut short leaves it starting. */
 export const BEGIN_TIMEOUT_MS = 25_000;
+
+// --- the tools (DR-0039 §3) ------------------------------------------------
+
+/** The tools' input schemas for the model, derived from the schemas their
+ * handlers read the inputs with when the module is bundled (a macro). */
+const TOOL_INPUT_SCHEMAS = toolInputSchemas();
+
+/** Register the tools. Deferred, with descriptions kept short: subagents and
+ * teammates see them too, and how to use them is the plugin's skill's to say
+ * (DR-0039 §3). A registration that fails is logged; the session goes on
+ * without that tool. */
+async function registerTools($: Engine): Promise<void> {
+  const registered = await Promise.allSettled([
+    $.tool.register({
+      name: "send",
+      description: "Send a message to other Claude Code sessions (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.send,
+      isDeferred: true,
+    }),
+    $.tool.register({
+      name: "say",
+      description: "Tell the person something by voice (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.say,
+      isDeferred: true,
+    }),
+    $.tool.register({
+      name: "peers",
+      description: "List the sessions send can reach (see the ccmsg skill).",
+      inputSchema: TOOL_INPUT_SCHEMAS.peers,
+      isDeferred: true,
+    }),
+  ]);
+  for (const outcome of registered) {
+    if (outcome.status === "rejected") {
+      $.ui.log(`ccmsg: a tool was not registered: ${errorText(outcome.reason)}`, { to: "debug" });
+    }
+  }
+}
+
+/** `ccmsg sidecar peer-send` / `peer-list` for session `sid`: the input goes
+ * on standard input, for the reason a reply does (see `sendReply`). */
+export function peerArgv(root: string, command: "peer-send" | "peer-list", sid: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
+}
+
+/** What a tool says when its input is not the tool's. */
+function notTheInput(tool: string, summary: string): string {
+  return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
+}
+
+/** The `send` tool: send the text to the sessions the input names, and say
+ * what came of it for each. Never rejects. */
+async function sendTool<E>($: Engine, e: E): Promise<string> {
+  const read = parseWith(SendToolInputSchema, e);
+  if (!read.ok) return notTheInput("send", read.failure.summary);
+  const { text, ...to } = read.value;
+  let run: { exitCode: number; stdout: string; stderr: string };
+  try {
+    run = await $.process.run(peerArgv($.plugin.root, "peer-send", await $.session.id()), {
+      stdin: JSON.stringify({ to, text }),
+      timeoutMs: SEND_TIMEOUT_MS,
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar peer-send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+  }
+  const answered = parseWith(PeerSendResponseTextSchema, run.stdout);
+  if (answered.ok) return sendResultText(answered.value.results);
+  const said = run.stderr.trim().split("\n")[0] ?? "";
+  $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  // 3: no daemon could be had, so nothing went out.
+  if (run.exitCode === 3) {
+    return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
+  }
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${UNCONFIRMED_ADVICE}`;
+}
+
+/** The `say` tool: say the text to the person through `ccmsg say`, which
+ * records it for the webui (📣) and speaks it. Never rejects. */
+async function sayTool<E>($: Engine, e: E): Promise<string> {
+  const read = parseWith(SayToolInputSchema, e);
+  if (!read.ok) return notTheInput("say", read.failure.summary);
+  try {
+    const sid = await $.session.id();
+    const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "say", read.value.text], {
+      env: { CCMSG_SID: sid },
+      timeoutMs: SAY_TIMEOUT_MS,
+    });
+    if (run.exitCode === 0) return "伝えた (音声と webui の 📣)";
+    return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split("\n")[0] ?? ""}`;
+  } catch (error) {
+    return `say を起こせなかったか ${String(SAY_TIMEOUT_MS / 1000)} 秒以内に終わらなかった: ${errorText(error)}`;
+  }
+}
+
+/** The `peers` tool: the sessions `send` can reach, spelled as it takes them.
+ * Never rejects. */
+async function peersTool<E>($: Engine, e: E): Promise<string> {
+  const read = parseWith(PeersToolInputSchema, e);
+  if (!read.ok) return notTheInput("peers", read.failure.summary);
+  try {
+    const run = await $.process.run(peerArgv($.plugin.root, "peer-list", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: PEERS_TIMEOUT_MS,
+    });
+    const answered = parseWith(PeerListResponseTextSchema, run.stdout);
+    if (answered.ok) return peersText(answered.value.peers);
+    return `一覧を返せなかった: ${run.stderr.trim().split("\n")[0] ?? ""}`;
+  } catch (error) {
+    return `一覧を返せなかった: ${errorText(error)}`;
+  }
+}
 
 /** The session began under the id it has now (its start, /clear, /resume):
  * write its state file and bring the daemon up (DR-0039 §2). Run without
@@ -896,12 +975,17 @@ export function register(on: On): ModuleState {
   // begin is idempotent, and the sidecar of the same id is kept.
   on("session.start", async ($, e, next) =>
     observe($, e, next, "session.start", SessionStartInputSchema, {
-      after: (input) => {
+      after: async (input) => {
         // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
         state.interactive = input.isInteractive !== false && input.surface !== null;
         void sessionBegin($);
         startSidecar($, state);
         void sessionBegan($, state);
+        // Awaited, so the tools are listed by the first turn. `-p` and the SDK
+        // get none: talking with other sessions from there is not a use ccmsg
+        // serves (DR-0037 §5, DR-0039 §3). Registrations outlive /clear and
+        // /resume, so this is the one place.
+        if (state.interactive) await registerTools($);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -1006,13 +1090,19 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  // No `.catch` here: the hook does not throw (sendToAddress settles every
-  // failure as a result), and a `.catch` passing the event on to `next` would
-  // send a `ccmsg:` address to the harness as an agent name (DR-0037 §4).
-  on("session.send", async ($, e, next) => {
-    const read = parseWith(SessionSendInputSchema, e);
-    if (!read.ok || !read.value.to.startsWith(DIRECT_ADDRESS_PREFIX)) return next(e);
-    return sendToAddress($, read.value.to, read.value.text);
-  });
+  // The tools answer without `next`, which would only reach core's "no
+  // tool.call hook answered". A handler settles every failure as a text; the
+  // `.catch` answers one that overran its budget the same way.
+  on("tool.call", { tool: "mcp__ccmsg-v1__send" }, async ($, e) => ({
+    result: await sendTool($, e),
+  })).catch(async () => ({
+    result: `ccmsg の send が途中で止まり、届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`,
+  }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async ($, e) => ({
+    result: await sayTool($, e),
+  })).catch(async () => ({ result: "ccmsg の say が途中で止まった。伝わったかは分からない" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
+    result: await peersTool($, e),
+  })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));
   return state;
 }

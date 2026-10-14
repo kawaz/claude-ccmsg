@@ -1,8 +1,8 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, name the run to the
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
-// carries the module's reply to the daemon; `ccmsg sidecar send` (DR-0037 §2)
-// sends a SendMessage the module took over and prints its result.
+// carries the module's reply to the daemon; `ccmsg sidecar peer-send` /
+// `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -12,7 +12,9 @@ import {
   parseWith,
   resolvePaths,
   resolveSidecarDir,
-  SendMessageResultTextSchema,
+  type PeerSendResult,
+  PeerListResponseTextSchema,
+  PeerSendResponseTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
   sidecarSocketName,
@@ -619,14 +621,14 @@ describe("keepNamed", () => {
   });
 });
 
-/** `ccmsg sidecar send` as the module's `$.process.run` runs it: the text on
- * standard input, named as `/dev/stdin`. */
-async function runSend(
-  args: string[],
+/** `ccmsg sidecar <command> --sid SID` with `stdin` on its standard input,
+ * as the module's `$.process.run` runs it. */
+async function runPeer(
+  command: "peer-send" | "peer-list",
   stdin: string,
   env: Record<string, string | undefined>,
 ): Promise<{ code: number; out: string; err: string }> {
-  const proc = Bun.spawn([process.execPath, CLI, "sidecar", "send", ...args], {
+  const proc = Bun.spawn([process.execPath, CLI, "sidecar", command, "--sid", SID], {
     env,
     stdin: new TextEncoder().encode(stdin),
     stdout: "pipe",
@@ -640,63 +642,108 @@ async function runSend(
   return { code, out, err };
 }
 
-/** The reason a printed result gives for a send that reached nobody. */
-function notDeliveredReason(out: string): string {
-  const read = parseWith(SendMessageResultTextSchema, out);
-  if (!read.ok || read.value.isDelivered) throw new Error(`not a refused send: ${out}`);
-  return read.value.reason;
+function sendResults(out: string): PeerSendResult[] {
+  const read = parseWith(PeerSendResponseTextSchema, out);
+  if (!read.ok) throw new Error(`not a peer_send reply: ${read.failure.summary}: ${out}`);
+  return [...read.value.results];
 }
 
-describe("ccmsg sidecar send", () => {
+// `send` and `peers` (DR-0039 §3): the sessions are matched against the live
+// runs of the config dirs the daemon knows, here the one the sender names.
+describe("ccmsg sidecar peer-send / peer-list", () => {
   const OTHER = "22222222-2222-4333-8444-555555555555";
+  const BARE = "33333333-2222-4333-8444-555555555555";
 
-  test("sends the text on standard input to the address, and prints that it was delivered", async () => {
+  test("sends to the sessions `to` names and prints a result for each", async () => {
     const ctx = await startShortDaemon();
-    // The recipient's state file names a running process: this test's.
-    const harness = fakeHarness(OTHER, { pid: process.pid });
+    const work = fs.realpathSync(shortBase());
+    // Two sessions in one directory, each a running process: one has a hooks
+    // module (its run is named), the other none.
+    const other = fakeHarness(OTHER, { pid: process.pid, cwd: work, name: "other" });
+    const bare = fakeHarness(BARE, { pid: process.ppid, cwd: work, configDir: other.configDir });
+    const module = await nameRunNoSpawn(
+      resolvePaths(ctx.env),
+      { role: "session", sid: OTHER, repo: "", ws: "", cwd: "" },
+      { runId: RUN, startedAt: 1 },
+    );
     try {
-      // The sender announces the config dir it runs under, which the daemon
-      // then looks for the recipient in.
-      const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: harness.configDir };
+      const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: other.configDir };
       const text = "line 1\n`not run` $HOME 'quoted' \"double\"\n";
-      const sent = await runSend(["--sid", SID, "--to", `ccmsg:${OTHER}`, "/dev/stdin"], text, env);
-      expect(sent).toEqual({ code: 0, out: '{"isDelivered":true}\n', err: "" });
-      const { attrs, body } = parseEnvelope(await harness.nextContent());
+      const sent = await runPeer("peer-send", JSON.stringify({ to: { cwd: work }, text }), env);
+      expect(sent.code).toBe(0);
+      expect(sendResults(sent.out)).toEqual([
+        { sid: OTHER, name: "other", cwd: work, outcome: "delivered" },
+        { sid: BARE, cwd: work, outcome: "not_delivered", reason: "no_module" },
+      ]);
+      const { attrs, body } = parseEnvelope(await other.nextContent());
       expect(attrs.from).toBe(`ccmsg:${SID}`);
       expect(body).toBe(text);
 
-      const missing = await runSend(
-        ["--sid", SID, "--to", "ccmsg:33333333-2222-4333-8444-555555555555", "/dev/stdin"],
-        "hi",
+      // The name and the id narrow as the cwd does; every field given must match.
+      const byName = await runPeer(
+        "peer-send",
+        JSON.stringify({ to: { name: "other", cwd: work }, text: "n" }),
         env,
       );
-      expect(missing.code).toBe(0);
-      expect(notDeliveredReason(missing.out)).toContain(
-        "ccmsg peers で今いるセッションの宛先を確かめて",
+      expect(sendResults(byName.out).map((r) => r.outcome)).toEqual(["delivered"]);
+      const mismatch = await runPeer(
+        "peer-send",
+        JSON.stringify({ to: { name: "other", session_id: BARE }, text: "n" }),
+        env,
       );
+      expect(sendResults(mismatch.out)).toEqual([]);
 
-      const unreadable = await runSend(
-        ["--sid", SID, "--to", "ccmsg:nobody", "/dev/stdin"],
-        "hi",
+      const ended = "44444444-2222-4333-8444-555555555555";
+      const gone = await runPeer(
+        "peer-send",
+        JSON.stringify({ to: { session_id: ended }, text: "n" }),
         env,
       );
-      expect(notDeliveredReason(unreadable.out)).toContain("ccmsg:path:<絶対パス> のどれでもない");
+      expect(sendResults(gone.out)).toEqual([
+        { sid: ended, outcome: "not_delivered", reason: "ended" },
+      ]);
+
+      const listed = await runPeer("peer-list", JSON.stringify({ cwd: work }), env);
+      const peers = parseWith(PeerListResponseTextSchema, listed.out);
+      if (!peers.ok) throw new Error(peers.failure.summary);
+      expect(peers.value.peers).toEqual([
+        { sid: OTHER, name: "other", cwd: work, pids: [process.pid], module: true, self: false },
+        { sid: BARE, cwd: work, pids: [process.ppid], module: false, self: false },
+      ]);
     } finally {
-      harness.dispose();
+      module?.close();
+      other.dispose();
+      bare.dispose();
       await stopTestDaemon(ctx);
     }
   });
 
-  test("arguments that do not make a send exit 2 and print no result", async () => {
+  // The sender is left out of what it matches; matching only itself says so.
+  test("a send that matches the sender alone is not sent, and says self", async () => {
+    const ctx = await startShortDaemon();
+    const self = fakeHarness(SID, { pid: process.pid, name: "me" });
+    try {
+      const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: self.configDir };
+      const run = await runPeer(
+        "peer-send",
+        JSON.stringify({ to: { name: "me" }, text: "hi" }),
+        env,
+      );
+      expect(sendResults(run.out)).toEqual([
+        { sid: SID, name: "me", outcome: "not_delivered", reason: "self" },
+      ]);
+    } finally {
+      self.dispose();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("input that names nobody, or has no text, is refused before reaching the daemon", async () => {
     const env = sidecarEnv(path.join(shortBase(), "s"));
-    for (const args of [
-      ["--sid", SID, "/dev/stdin"],
-      ["--sid", SID, "--to", `ccmsg:${OTHER}`],
-      ["--sid", SID, "--to", `ccmsg:${OTHER}`, "/dev/stdin", "extra"],
-    ]) {
-      const run = await runSend(args, "hi", env);
-      expect({ args, code: run.code, out: run.out }).toEqual({ args, code: 2, out: "" });
-      expect(run.err).toContain("usage: ccmsg sidecar send");
+    for (const stdin of ['{"to":{},"text":"hi"}', '{"to":{"cwd":"/w"},"text":"  "}', "not json"]) {
+      const run = await runPeer("peer-send", stdin, env);
+      expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
+      expect(run.err).toContain("standard input must be { to, text }");
     }
   });
 });

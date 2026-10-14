@@ -21,12 +21,14 @@ import {
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
 
 /** One live run of a session: the harness process `pid` holding session
- * `sid` under the CLAUDE_CONFIG_DIR `configDir`, working in `cwd`. */
+ * `sid` under the CLAUDE_CONFIG_DIR `configDir`, working in `cwd`, under the
+ * name the session was given. */
 export interface SessionRun {
   configDir: string;
   sid: string;
   pid: number;
   cwd?: string;
+  name?: string;
 }
 
 export type AddressSendOutcome =
@@ -163,18 +165,26 @@ async function runsIn(configDir: string, isAlive: (pid: number) => boolean): Pro
   }
   const runs = await Promise.all(
     names
-      .filter((name) => /^\d+\.json$/.test(name))
-      .map(async (name): Promise<SessionRun[]> => {
+      .filter((file) => /^\d+\.json$/.test(file))
+      .map(async (file): Promise<SessionRun[]> => {
         let text: string;
         try {
-          text = await readFile(path.join(sessionsDir, name), "utf8");
+          text = await readFile(path.join(sessionsDir, file), "utf8");
         } catch {
           return [];
         }
         const read = parseWith(ClaudeSessionFileTextSchema, text);
         if (!read.ok || !isAlive(read.value.pid)) return [];
-        const { sessionId: sid, pid, cwd } = read.value;
-        return [{ configDir, sid, pid, ...(cwd !== undefined ? { cwd } : {}) }];
+        const { sessionId: sid, pid, cwd, name } = read.value;
+        return [
+          {
+            configDir,
+            sid,
+            pid,
+            ...(cwd !== undefined ? { cwd } : {}),
+            ...(name !== undefined ? { name } : {}),
+          },
+        ];
       }),
   );
   return runs.flat();

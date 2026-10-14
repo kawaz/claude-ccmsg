@@ -96,6 +96,7 @@ export function fakeHarness(
     readAfterMs?: number;
     pid?: number;
     cwd?: string;
+    name?: string;
     configDir?: string;
   } = {},
 ): FakeHarness {
@@ -110,6 +111,7 @@ export function fakeHarness(
       pid,
       sessionId: sid,
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+      ...(opts.name !== undefined ? { name: opts.name } : {}),
       messagingSocketPath: socketPath,
       peerProtocol: opts.peerProtocol ?? 1,
     }),

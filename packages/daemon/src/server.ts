@@ -122,6 +122,7 @@ import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
+import { listPeers, type PeerDeps, sendToPeers } from "./peer-send.ts";
 import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
 import {
   callSidecar,
@@ -947,6 +948,16 @@ function clientBuildFields(
     ...(s.clientVersion ? { client_version: s.clientVersion } : {}),
     ...(s.clientProtocol !== undefined ? { protocol: s.clientProtocol } : {}),
     ...(stale ? { stale_client: stale } : {}),
+  };
+}
+
+/** Where peer_send and peer_list read the sessions they match from: the
+ * live runs of every config dir the daemon knows, read afresh. */
+function peerDeps(daemon: Daemon): PeerDeps {
+  return {
+    runs: () => liveRuns(knownConfigDirs(daemon), isProcessAlive),
+    realpath: realpathOrUndefined,
+    hasModule: (sid) => daemon.sidecarRuns.liveOf(sid).length > 0,
   };
 }
 
@@ -2191,6 +2202,53 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         },
       );
       send(conn, { ok: true, ...outcome });
+      return;
+    }
+
+    case "peer_send": {
+      // Session role only: the sender is the session whose `send` tool was
+      // called (DR-0039 §3), and becomes the envelope's from.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "peer_send is sent by a session; a person's input reaches a session through session_input",
+        );
+        return;
+      }
+      // Waits for every run's write and refusal window (DR-0034 §2), the runs
+      // in parallel; other requests on this connection run on meanwhile.
+      const results = await sendToPeers(
+        { from: id.sid, to: req.to, text: req.text },
+        {
+          ...peerDeps(daemon),
+          readiness: (sid) => readinessOf(daemon, sid),
+          issueMid: daemon.issueDirectMid,
+          deliver: (run, frame) =>
+            daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
+          log: (line) => daemon.log.info(line),
+        },
+      );
+      send(conn, { ok: true, results });
+      return;
+    }
+
+    case "peer_list": {
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "peer_list is asked by a session; a person reads peers",
+        );
+        return;
+      }
+      const filter = {
+        ...(req.cwd !== undefined ? { cwd: req.cwd } : {}),
+        ...(req.name !== undefined ? { name: req.name } : {}),
+      };
+      send(conn, { ok: true, peers: await listPeers(id.sid, filter, peerDeps(daemon)) });
       return;
     }
 

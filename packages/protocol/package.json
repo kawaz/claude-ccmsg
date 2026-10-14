@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./address": "./src/ccmsg-address.ts",
     "./parse": "./src/parse.ts",
+    "./peer-tools": "./src/peer-tools.ts",
     "./sidecar": "./src/sidecar.ts"
   },
   "dependencies": {

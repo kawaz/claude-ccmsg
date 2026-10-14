@@ -43,6 +43,7 @@ import {
   SetTitleResponseSchema,
   SubscribeAckSchema,
 } from "./response-rooms.ts";
+import { PeerListResponseSchema, PeerSendResponseSchema } from "./peer-tools.ts";
 import {
   AddressSendResponseSchema,
   AgentsResponseSchema,
@@ -108,6 +109,8 @@ export const RESPONSE_SCHEMAS = {
   reply: ReplyResponseSchema,
   message_send: MessageSendResponseSchema,
   address_send: AddressSendResponseSchema,
+  peer_send: PeerSendResponseSchema,
+  peer_list: PeerListResponseSchema,
   create_room: CreateRoomResponseSchema,
   next_room: NextRoomResponseSchema,
   say: SayResponseSchema,

@@ -24,6 +24,7 @@ export * from "./session-files.ts";
 export * from "./allowed-origins.ts";
 export * from "./workflow-run.ts";
 export * from "./sidecar.ts";
+export * from "./peer-tools.ts";
 export * from "./request.ts";
 export * from "./storage-event.ts";
 export * from "./session-status.ts";
