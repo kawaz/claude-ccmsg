@@ -25,21 +25,6 @@
 
 名前の案を出してから裁定を仰ぐ。
 
-### 👺M39-Q5: 受け手に届く封筒の `from` の綴りと、返信に使う口
-
-[DR-0039](decisions/DR-0039-all-mods-and-typed-tools.md) §3。受け手には peer 注入の封筒 (`<cross-session-message from="...">`) で届く。`from` は今 `ccmsg:<送り主の sid>` で (DR-0037 §3)、受け手の model はこれをそのまま SendMessage の `to` に書いて返信する (DR-0037 §4 の実測)。DR-0039 は `session.send` を hook しないので、その SendMessage は harness が宛先を探して失敗する (config home が違えば届く先が無い)。
-
-- 意味論: 2 つの軸がある。α は `from` に何を書くか (送り主を送信の tool の引数でそのまま名指せる形にするか。`ccmsg:` 接頭辞を利用者に課さない方針と、SendMessage の宛先に見える綴りが返信を SendMessage に誘う点の両方に関わる)。β は受け手の model を送信の tool に導く場所
-- α の候補: `ccmsg:<sid>` のまま / 送り主の sid だけ / 送り主の名前と sid
-- β の候補: 封筒の本文の返信の案内で送信の tool と送り主の指定 (`session_id` 等) を示す / それに加えて `tool.describe` で SendMessage の説明に「ccmsg の封筒への返信は送信の tool で」を足す (SendMessage は deferred で、ToolSearch の後の entry に反映される、findings 実測)
-- 統括推し: 未提示
-
-- [ ] α-a: `ccmsg:<sid>` のまま
-- [ ] α-b: 送り主の sid だけ
-- [ ] α-c: 送り主の名前と sid
-- [ ] β-a: 封筒の本文の案内だけで導く
-- [ ] β-b: 封筒の案内に加えて `tool.describe` で SendMessage の説明にも書く
-
 ## 確認待ち
 
 (なし)
