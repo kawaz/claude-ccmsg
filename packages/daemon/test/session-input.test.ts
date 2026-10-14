@@ -21,7 +21,6 @@ import {
 } from "@ccmsg/protocol";
 import * as net from "node:net";
 import {
-  type InputReadinessDeps,
   inputReadiness,
   productionInputDeps,
   readPromptSendReply,
@@ -29,15 +28,17 @@ import {
   type SessionInputDeps,
 } from "../src/session-input.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
+import type { SidecarRun } from "../src/sidecar-runs.ts";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
   spawnDaemonProc,
   stopTestDaemon,
   testConfigDir,
+  type TestClient,
   waitConnectable,
   type DaemonCtx,
 } from "./helpers.ts";
-import { mkFixture, writeMockClaude } from "./fake-claude.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RequestTextSchema = jsonText(SidecarRequestSchema);
@@ -106,15 +107,26 @@ function replyFor(
     : { id, ok: false, error: { code: behaviour.error, message: "m" } };
 }
 
-/** The pid a sidecar socket of SID is named after. */
-function pidOf(socket: string): string {
-  const pid = /\.(\d+)\.sock$/.exec(socket)?.[1];
-  if (pid === undefined) throw new Error(`not a sidecar socket: ${socket}`);
-  return pid;
+/** A live run of SID, as the daemon knows it from its sidecar's name. */
+function runOf(runId: string, extra: Partial<SidecarRun> = {}): SidecarRun {
+  return {
+    sid: SID,
+    runId,
+    startedAt: 1,
+    socket: `/sidecars/${SID}.${runId}.sock`,
+    ...extra,
+  };
 }
 
-/** Deps over a fake sidecar directory whose runs behave as `runs` says, in
- * socket-name order. Records every line written, by socket. */
+/** The run id a socket of SID is named after. */
+function runIdOf(socket: string): string {
+  const runId = /\.([0-9a-z]+)\.sock$/.exec(socket)?.[1];
+  if (runId === undefined) throw new Error(`not a sidecar socket: ${socket}`);
+  return runId;
+}
+
+/** Deps over live runs of SID that behave as `runs` says, in the order given.
+ * Records every line written, by socket. */
 function scripted(
   runs: Record<string, RunBehaviour>,
   extra: Partial<SessionInputDeps> = {},
@@ -123,13 +135,14 @@ function scripted(
   let n = 0;
   const written: { socket: string; line: SidecarRequest }[] = [];
   const deps: SessionInputDeps = {
-    sidecarDir: "/sidecars",
     replies,
     newId: () => `id${++n}`,
-    listDir: async () => Object.keys(runs).map((pid) => `${SID}.${pid}.sock`),
-    isAlive: () => true,
+    runs: {
+      liveOf: (sid) => (sid === SID ? Object.keys(runs).map((runId) => runOf(runId)) : []),
+      movedOn: () => false,
+    },
     write: async (socket, line) => {
-      const behaviour = runs[pidOf(socket)];
+      const behaviour = runs[runIdOf(socket)];
       if (behaviour === undefined) throw new Error(`no run behind ${socket}`);
       if (behaviour === "unwritten") return "not_written";
       const request = requestIn(line);
@@ -140,7 +153,6 @@ function scripted(
     },
     now: Date.now,
     deadlineMs: 5_000,
-    pidsOf: () => [],
     ...extra,
   };
   return { deps, written };
@@ -160,33 +172,20 @@ describe("sessionInput asks one run at a time", () => {
     });
   });
 
-  // After /clear the old id has no sidecar; the process it ran in serves the
-  // new id. The person is told the session changed, not to update the plugin.
-  test("no run of the id, its process serving another id: session_changed", async () => {
-    const OTHER = "99999999-2222-4333-8444-555555555555";
-    const moved = (extra: Partial<SessionInputDeps>) =>
-      scripted({}, { listDir: async () => [`${OTHER}.100.sock`], ...extra }).deps;
-    expect(await sessionInput(SID, "hi", moved({ pidsOf: () => [100] }))).toMatchObject({
+  // After /clear the old id has no sidecar; the run it was serves the new id.
+  // The person is told the session changed, not to update the plugin.
+  test("no run of the id, its run serving another id: session_changed", async () => {
+    const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "session_changed",
     });
-    // Not known to have run in that process, or that process gone: no module.
-    for (const extra of [
-      { pidsOf: () => [] },
-      { pidsOf: () => [200] },
-      { pidsOf: () => [100], isAlive: () => false },
-    ]) {
-      expect(await sessionInput(SID, "hi", moved(extra))).toMatchObject({
-        outcome: "not_delivered",
-        reason: "no_module",
-      });
-    }
   });
 
   test("a run whose session changed its id passes the text to the next", async () => {
     const { deps, written } = scripted({
-      "100": notDelivered("session_changed"),
-      "200": ACCEPTED,
+      run100: notDelivered("session_changed"),
+      run200: ACCEPTED,
     });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
     expect(written.length).toBe(2);
@@ -194,31 +193,31 @@ describe("sessionInput asks one run at a time", () => {
 
   test("a run that cannot take input passes the text to the next, under a new id", async () => {
     const { deps, written } = scripted({
-      "100": notDelivered("no_terminal"),
-      "200": ACCEPTED,
+      run100: notDelivered("no_terminal"),
+      run200: ACCEPTED,
     });
     const text = "two\nlines  ";
     expect(await sessionInput(SID, text, deps)).toMatchObject({ outcome: "accepted" });
     expect(written).toEqual([
       {
-        socket: `${SID}.100.sock`,
+        socket: `${SID}.run100.sock`,
         line: { v: 1, op: "prompt.send", id: "id1", args: { text } },
       },
       {
-        socket: `${SID}.200.sock`,
+        socket: `${SID}.run200.sock`,
         line: { v: 1, op: "prompt.send", id: "id2", args: { text } },
       },
     ]);
   });
 
   test("a run that did not take the line is passed over", async () => {
-    const { deps, written } = scripted({ "100": "unwritten", "200": ACCEPTED });
+    const { deps, written } = scripted({ run100: "unwritten", run200: ACCEPTED });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
-    expect(written.map((w) => w.socket)).toEqual([`${SID}.200.sock`]);
+    expect(written.map((w) => w.socket)).toEqual([`${SID}.run200.sock`]);
   });
 
   test("no run that takes the line: not_delivered no_module", async () => {
-    const { deps } = scripted({ "100": "unwritten", "200": "unwritten" });
+    const { deps } = scripted({ run100: "unwritten", run200: "unwritten" });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
@@ -229,7 +228,7 @@ describe("sessionInput asks one run at a time", () => {
   // next run could put the text in twice.
   for (const reason of ["dialog", "refused", "not_submitted", "enter_failed"] as const) {
     test(`${reason} stops at that run`, async () => {
-      const { deps, written } = scripted({ "100": notDelivered(reason), "200": ACCEPTED });
+      const { deps, written } = scripted({ run100: notDelivered(reason), run200: ACCEPTED });
       expect(await sessionInput(SID, "hi", deps)).toMatchObject({
         outcome: "not_delivered",
         reason,
@@ -253,7 +252,10 @@ describe("sessionInput asks one run at a time", () => {
     ],
   ] as const) {
     test(`${name} stops at that run and is unconfirmed`, async () => {
-      const { deps, written } = scripted({ "100": behaviour, "200": ACCEPTED }, { deadlineMs: 30 });
+      const { deps, written } = scripted(
+        { run100: behaviour, run200: ACCEPTED },
+        { deadlineMs: 30 },
+      );
       expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
       expect(written.length).toBe(1);
     });
@@ -261,8 +263,8 @@ describe("sessionInput asks one run at a time", () => {
 
   test("every run unable: not_delivered with the last run's reason", async () => {
     const { deps } = scripted({
-      "100": notDelivered("no_terminal"),
-      "200": notDelivered("no_composer"),
+      run100: notDelivered("no_terminal"),
+      run200: notDelivered("no_composer"),
     });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
@@ -274,7 +276,7 @@ describe("sessionInput asks one run at a time", () => {
   test("the deadline is one budget for all tries", async () => {
     let clock = 0;
     const { deps, written } = scripted(
-      { "100": notDelivered("no_terminal"), "200": ACCEPTED },
+      { run100: notDelivered("no_terminal"), run200: ACCEPTED },
       {
         now: () => clock,
         deadlineMs: 1_000,
@@ -306,11 +308,11 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
     held.add(c);
   });
   await new Promise<void>((resolve) =>
-    stalled.listen(path.join(dir, sidecarSocketName(SID, 100)), resolve),
+    stalled.listen(path.join(dir, sidecarSocketName(SID, "run100")), resolve),
   );
   let reached = 0;
   const reading = Bun.listen({
-    unix: path.join(dir, sidecarSocketName(SID, 200)),
+    unix: path.join(dir, sidecarSocketName(SID, "run200")),
     socket: {
       data: (_s, chunk) => {
         reached += chunk.length;
@@ -318,9 +320,11 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
     },
   });
   try {
+    const runs = ["run100", "run200"].map((runId) =>
+      runOf(runId, { socket: path.join(dir, sidecarSocketName(SID, runId)) }),
+    );
     const deps: SessionInputDeps = {
-      ...productionInputDeps(dir, new SidecarReplies()),
-      isAlive: () => true,
+      ...productionInputDeps(new SidecarReplies(), { liveOf: () => runs, movedOn: () => false }),
       deadlineMs: 400,
     };
     const res = await sessionInput(SID, "x".repeat(4 * 1024 * 1024), deps);
@@ -335,66 +339,47 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
   }
 });
 
-/** Readiness deps over a fake sidecar directory: `terminals` maps each run's
- * pid to its HYOUI_SESSION_ID (null for a run started outside hyoui). */
-function readinessDeps(
+/** Readiness over live runs of SID: `terminals` gives each run's
+ * HYOUI_SESSION_ID as it named it (null for a run started outside hyoui). */
+function readinessOver(
   terminals: Record<string, string | null>,
-  extra: Partial<InputReadinessDeps> = {},
-): InputReadinessDeps {
-  return {
-    sidecarDir: "/sidecars",
-    listDir: async () => Object.keys(terminals).map((pid) => `${SID}.${pid}.sock`),
-    isAlive: () => true,
-    pidsOf: () => [],
-    terminalOf: async (pid) => terminals[String(pid)] ?? null,
-    isRunning: () => true,
-    ...extra,
-  };
+  extra: { movedOn?: boolean; isRunning?: boolean } = {},
+) {
+  return inputReadiness(SID, {
+    runs: {
+      liveOf: () =>
+        Object.entries(terminals).map(([runId, hyoui]) =>
+          runOf(runId, hyoui === null ? {} : { hyouiSessionId: hyoui }),
+        ),
+      movedOn: () => extra.movedOn ?? false,
+    },
+    isRunning: () => extra.isRunning ?? true,
+  });
 }
 
 describe("inputReadiness", () => {
-  test("a run with a sidecar and a hyoui terminal: ready", async () => {
-    expect(await inputReadiness(SID, readinessDeps({ "100": "hy-1" }))).toEqual({
-      kind: "ready",
-    });
+  test("a run whose sidecar named a hyoui terminal: ready", () => {
+    expect(readinessOver({ run1: "hy-1" })).toEqual({ kind: "ready" });
   });
 
   // sessionInput moves past a run that answers no_terminal, so one run with a
   // terminal among several is enough.
-  test("ready when any run has a terminal, no_terminal when none has", async () => {
-    expect(await inputReadiness(SID, readinessDeps({ "100": null, "200": "hy-2" }))).toEqual({
-      kind: "ready",
-    });
-    expect(await inputReadiness(SID, readinessDeps({ "100": null, "200": null }))).toEqual({
-      kind: "no_terminal",
-    });
+  test("ready when any run has a terminal, no_terminal when none has", () => {
+    expect(readinessOver({ run1: null, run2: "hy-2" })).toEqual({ kind: "ready" });
+    expect(readinessOver({ run1: null, run2: null })).toEqual({ kind: "no_terminal" });
   });
 
-  test("a sidecar of a harness that is gone is no run", async () => {
-    const deps = readinessDeps({ "100": "hy-1" }, { isAlive: () => false });
-    expect(await inputReadiness(SID, deps)).toEqual({ kind: "no_module" });
+  test("no run: no_module while running, ended once not", () => {
+    expect(readinessOver({})).toEqual({ kind: "no_module" });
+    expect(readinessOver({}, { isRunning: false })).toEqual({ kind: "ended" });
   });
 
-  test("no sidecar: no_module while running, ended once not", async () => {
-    expect(await inputReadiness(SID, readinessDeps({}))).toEqual({ kind: "no_module" });
-    expect(await inputReadiness(SID, readinessDeps({}, { isRunning: () => false }))).toEqual({
-      kind: "ended",
+  // The same judgment sessionInput gives after /clear: a run that served the
+  // id now serves another.
+  test("no run of the id, its run serving another id: session_changed", () => {
+    expect(readinessOver({}, { movedOn: true, isRunning: false })).toEqual({
+      kind: "session_changed",
     });
-  });
-
-  // The same judgment sessionInput gives after /clear: the process the id ran
-  // in now binds a sidecar under another id.
-  test("no sidecar of the id, its process serving another id: session_changed", async () => {
-    const OTHER = "99999999-2222-4333-8444-555555555555";
-    const deps = readinessDeps(
-      {},
-      {
-        listDir: async () => [`${OTHER}.100.sock`],
-        pidsOf: () => [100],
-        isRunning: () => false,
-      },
-    );
-    expect(await inputReadiness(SID, deps)).toEqual({ kind: "session_changed" });
   });
 });
 
@@ -422,49 +407,37 @@ async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<
   };
 }
 
-/** A short daemon that polls `claude agents --json` as a daemon does outside
- * tests. The mock lists no session, so what registers a session stays the
- * test's own hello.
- *
- * Design rationale: the daemon re-judges input readiness when the sidecar
- * directory changes (fs.watch) and on every agents poll. Test daemons turn
- * the poll off, which leaves fs.watch as the only way to notice a sidecar
- * binding or going — and macOS's FSEvents, on CI runners in particular, can
- * deliver late or not at all. With the poll on, the test follows a sidecar
- * through both, as the daemon does in use, whatever the host's FSEvents does. */
-async function startPolledDaemon(): Promise<{ ctx: DaemonCtx; dispose(): Promise<void> }> {
-  const fixture = mkFixture();
-  fs.mkdirSync(path.join(fixture.home, ".claude-a"));
-  writeMockClaude(fixture.binDir, fixture.callLog, {});
-  const ctx = await startShortDaemon({
-    CCMSG_AGENTS_POLL: "on",
-    CCMSG_AGENTS_POLL_MS: "150",
-    HOME: fixture.home,
-    PATH: `${fixture.binDir}:${process.env.PATH ?? ""}`,
-  });
+/** A `ps` that records being run and prints nothing: the daemon has no use
+ * for it in judging readiness, and a run in a sandbox could not run it. */
+function psRecorder(base: string): { env: Record<string, string>; calls(): string } {
+  const bin = path.join(base, "bin");
+  const log = path.join(base, "ps.log");
+  fs.mkdirSync(bin, { recursive: true });
+  writeMockBin(path.join(bin, "ps"), `#!/bin/sh\necho "$*" >> "${log}"\nexit 1\n`);
   return {
-    ctx,
-    dispose: async () => {
-      await stopTestDaemon(ctx);
-      fs.rmSync(fixture.base, { recursive: true, force: true });
-    },
+    env: { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` },
+    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""),
   };
 }
 
-/** Stand in for a sidecar: listen where the daemon looks for this run, and
- * hand over each line it is written. */
-function fakeSidecar(
-  stateDir: string,
+/** Stand in for a run's sidecar: bind where the daemon writes for this run,
+ * hand over each line it is written, and name the run to the daemon on a
+ * session connection of its own (sidecar_hello), as `ccmsg sidecar` does.
+ * `leave` closes that connection — the run is gone — and resolves once the
+ * daemon has let go of it. */
+async function fakeSidecar(
+  ctx: DaemonCtx,
   sid: string,
-  pid: number,
-): { lines: AsyncGenerator<string, void>; close(): void } {
-  const dir = resolveSidecarDir(stateDir);
-  expect(dir.startsWith(stateDir)).toBe(true);
+  runId: string,
+  hyouiSessionId?: string,
+): Promise<{ lines: AsyncGenerator<string, void>; leave(): Promise<void>; close(): void }> {
+  const dir = resolveSidecarDir(ctx.stateDir);
+  expect(dir.startsWith(ctx.stateDir)).toBe(true);
   fs.mkdirSync(dir, { recursive: true });
   const queue: string[] = [];
   let wake: (() => void) | undefined;
   const server = Bun.listen({
-    unix: path.join(dir, sidecarSocketName(sid, pid)),
+    unix: path.join(dir, sidecarSocketName(sid, runId)),
     socket: {
       data: (_s, chunk) => {
         for (const line of Buffer.from(chunk).toString("utf8").split("\n")) {
@@ -484,7 +457,22 @@ function fakeSidecar(
       await new Promise<void>((resolve) => (wake = resolve));
     }
   }
-  return { lines: lines(), close: () => server.stop(true) };
+  const naming: TestClient = await connect(ctx.sock);
+  await naming.hello({ role: "session", sid });
+  await naming.requestOk({
+    op: "sidecar_hello",
+    run_id: runId,
+    started_at: Date.now(),
+    ...(hyouiSessionId !== undefined ? { hyoui_session_id: hyouiSessionId } : {}),
+  });
+  return {
+    lines: lines(),
+    leave: () => naming.end(),
+    close: () => {
+      naming.close();
+      server.stop(true);
+    },
+  };
 }
 
 /** The next request the daemon wrote to `sidecar`. */
@@ -504,7 +492,7 @@ function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar
 describe("session_input over the wire", () => {
   test("the module's accepted reply is the answer", async () => {
     const ctx = await startShortDaemon();
-    const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
@@ -528,7 +516,7 @@ describe("session_input over the wire", () => {
 
   test("a not_delivered result comes back with its reason", async () => {
     const ctx = await startShortDaemon();
-    const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
@@ -552,25 +540,82 @@ describe("session_input over the wire", () => {
     }
   });
 
-  // A socket left by a run whose harness is gone is passed over rather than
-  // written to: the pid it is named after belongs to a process that exited.
-  test("no live sidecar is not_delivered no_module", async () => {
+  // A socket still bound by a run whose sidecar's connection has closed is
+  // passed over rather than written to: the daemon writes only to runs named
+  // on a connection still open.
+  test("a run whose sidecar left is no run: not_delivered no_module", async () => {
     const ctx = await startShortDaemon();
-    const gone = Bun.spawn(["true"]);
-    await gone.exited;
-    const stale = fakeSidecar(ctx.stateDir, SID, gone.pid);
+    const left = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
+      await left.leave();
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const res = await user.request({ op: "session_input", session_id: SID, text: "hi" });
-      expect(res).toEqual({
-        ok: true,
-        outcome: "not_delivered",
-        reason: "no_module",
-      });
+      expect(res).toEqual({ ok: true, outcome: "not_delivered", reason: "no_module" });
       user.close();
     } finally {
-      stale.close();
+      left.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // A resume started twice: each run named itself with a run id of its own,
+  // and the daemon asks one, then the next when the first cannot take input.
+  test("two runs of one session are asked one after the other", async () => {
+    const ctx = await startShortDaemon();
+    const first = await fakeSidecar(ctx, SID, "run1");
+    const second = await fakeSidecar(ctx, SID, "run2", "hy-2");
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const module = await connect(ctx.sock);
+      await module.hello({ role: "session", sid: SID });
+      const toFirst = await nextRequest(first);
+      await module.request(
+        sidecarReply({
+          id: toFirst.id,
+          ok: true,
+          result: { outcome: "not_delivered", reason: "no_terminal" },
+        }),
+      );
+      const toSecond = await nextRequest(second);
+      expect(toSecond.id).not.toBe(toFirst.id);
+      await module.request(
+        sidecarReply({ id: toSecond.id, ok: true, result: { outcome: "accepted" } }),
+      );
+      expect(await reply).toEqual({ ok: true, outcome: "accepted" });
+      user.close();
+      module.close();
+    } finally {
+      first.close();
+      second.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("sidecar_hello is a session's: refused without one, and with arguments not of its shape", async () => {
+    const ctx = await startShortDaemon();
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const asUser = await user.requestError({
+        op: "sidecar_hello",
+        run_id: "run1",
+        started_at: 1,
+      });
+      expect(asUser.error.code).toBe("bad_request");
+      const session = await connect(ctx.sock);
+      await session.hello({ role: "session", sid: SID });
+      const badRun = await session.requestRefusal({
+        op: "sidecar_hello",
+        run_id: "../x",
+        started_at: 1,
+      });
+      expect(badRun.error.code).toBe("invalid_args");
+      user.close();
+      session.close();
+    } finally {
       await stopTestDaemon(ctx);
     }
   });
@@ -624,7 +669,7 @@ describe("session_input over the wire", () => {
 
   test("a reply from another session does not answer the request", async () => {
     const ctx = await startShortDaemon();
-    const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
@@ -651,17 +696,14 @@ describe("session_input over the wire", () => {
 
 describe("input_readiness on session_status", () => {
   // The snapshot says whether a person's input can reach the session before
-  // anything is sent, and a sidecar binding or going pushes the change.
-  test("follows the session's sidecars and their terminals", async () => {
-    const daemon = await startPolledDaemon();
-    const { ctx } = daemon;
+  // anything is sent, and a run named or gone pushes the change: the push
+  // follows the name and the close, with no directory watched and no poll.
+  test("follows the runs the session's sidecars name, and their terminals", async () => {
+    const base = fs.mkdtempSync("/tmp/ccmsg-si-ps-");
+    const ps = psRecorder(base);
+    const ctx = await startShortDaemon(ps.env);
     const transcript = path.join(ctx.base, `${SID}.jsonl`);
     fs.writeFileSync(transcript, "");
-    // Harness stand-ins: the daemon reads HYOUI_SESSION_ID off the process a
-    // sidecar socket is named after, as the module reads it off its own.
-    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
-    const underHyoui = Bun.spawn(["sleep", "60"], { env: { ...env, HYOUI_SESSION_ID: "hy-1" } });
-    const outsideHyoui = Bun.spawn(["sleep", "60"], { env });
     const sidecars: { close(): void }[] = [];
     try {
       const session = await connect(ctx.sock);
@@ -680,40 +722,69 @@ describe("input_readiness on session_status", () => {
       const initial = await user.requestOk({ op: "session_status_subscribe", sid: SID });
       expect(initial.input_readiness).toEqual({ kind: "no_module" });
 
-      sidecars.push(fakeSidecar(ctx.stateDir, SID, outsideHyoui.pid));
+      const outsideHyoui = await fakeSidecar(ctx, SID, "run1");
+      sidecars.push(outsideHyoui);
       const noTerminal = await user.readEventUntil(
         "session_status",
         (ev) => ev.input_readiness?.kind === "no_terminal",
       );
       expect(noTerminal.ev.sid).toBe(SID);
 
-      sidecars.push(fakeSidecar(ctx.stateDir, SID, underHyoui.pid));
+      const underHyoui = await fakeSidecar(ctx, SID, "run2", "hy-1");
+      sidecars.push(underHyoui);
       await user.readEventUntil("session_status", (ev) => ev.input_readiness?.kind === "ready");
 
-      for (const sidecar of sidecars) sidecar.close();
-      for (const pid of [outsideHyoui.pid, underHyoui.pid]) {
-        fs.rmSync(path.join(resolveSidecarDir(ctx.stateDir), sidecarSocketName(SID, pid)), {
-          force: true,
-        });
-      }
+      await underHyoui.leave();
+      await user.readEventUntil(
+        "session_status",
+        (ev) => ev.input_readiness?.kind === "no_terminal",
+      );
+      await outsideHyoui.leave();
       await user.readEventUntil("session_status", (ev) => ev.input_readiness?.kind === "no_module");
+      // Judged from what the sidecars named, not from the processes: a run in
+      // a sandbox that cannot be looked at with `ps` is judged the same.
+      expect(ps.calls()).toBe("");
       user.close();
       session.close();
     } finally {
       for (const sidecar of sidecars) sidecar.close();
-      underHyoui.kill();
-      outsideHyoui.kill();
-      await daemon.dispose();
+      await stopTestDaemon(ctx);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  // After /clear the run names itself under the new id with the run id it
+  // had, and the old id is told apart from one that never had a module.
+  test("an id whose run now serves another id: session_changed", async () => {
+    const ctx = await startShortDaemon();
+    const OTHER = "99999999-2222-4333-8444-555555555555";
+    const sidecars: { close(): void }[] = [];
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const before = await fakeSidecar(ctx, SID, "run1", "hy-1");
+      sidecars.push(before);
+      await before.leave();
+      sidecars.push(await fakeSidecar(ctx, OTHER, "run1", "hy-1"));
+      // The old id is still registered (its sidecar said hello as it), so its
+      // peer row is judged.
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.find((p) => p.sid === SID)?.input_readiness).toEqual({
+        kind: "session_changed",
+      });
+      const sent = await user.request({ op: "session_input", session_id: SID, text: "hi" });
+      expect(sent).toEqual({ ok: true, outcome: "not_delivered", reason: "session_changed" });
+      user.close();
+    } finally {
+      for (const sidecar of sidecars) sidecar.close();
+      await stopTestDaemon(ctx);
     }
   });
 
   // A peer row carries it too, for a client that follows no status of the
   // session (no transcript yet, or only its Terminal tab open).
   test("rides the peers reply and the peers push", async () => {
-    const daemon = await startPolledDaemon();
-    const { ctx } = daemon;
-    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
-    const underHyoui = Bun.spawn(["sleep", "60"], { env: { ...env, HYOUI_SESSION_ID: "hy-1" } });
+    const ctx = await startShortDaemon();
     let sidecar: { close(): void } | undefined;
     try {
       const user = await connect(ctx.sock);
@@ -725,7 +796,7 @@ describe("input_readiness on session_status", () => {
         peers.find((p) => p.sid === SID)?.input_readiness?.kind;
       await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "no_module");
 
-      sidecar = fakeSidecar(ctx.stateDir, SID, underHyoui.pid);
+      sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
       await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
       const reply = await user.requestOk({ op: "peers" });
       expect(rowOf(reply.peers)).toBe("ready");
@@ -733,8 +804,7 @@ describe("input_readiness on session_status", () => {
       session.close();
     } finally {
       sidecar?.close();
-      underHyoui.kill();
-      await daemon.dispose();
+      await stopTestDaemon(ctx);
     }
   });
 });
