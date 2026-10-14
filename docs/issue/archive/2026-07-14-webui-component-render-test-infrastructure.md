@@ -1,6 +1,6 @@
 ---
 title: webui コンポーネントの render/DOM 挙動テスト基盤の導入検討
-status: idea
+status: resolved
 category: task
 created: 2026-07-14T23:33:04+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-14T15:48:37+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
