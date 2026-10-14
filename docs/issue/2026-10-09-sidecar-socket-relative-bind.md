@@ -21,7 +21,7 @@ origin: 自リポ TODO
 
 ## 概要
 
-サイドカーの socket の置き場 (`packages/protocol/src/paths.ts` の `resolveSidecarDir` 等) は、`<stateDir>/sidecars/<sid>.<pid>.sock` の絶対パスが sun_path (macOS 104 バイト) に収まらない時、`/tmp/claude-ccmsg-<uid>/sidecars/` に退避する設計になっている (v2 の sidecarDir を移植したもの)。
+サイドカーの socket の置き場 (`packages/protocol/src/paths.ts` の `resolveSidecarDir` 等) は、`<stateDir>/sidecars/<sid>.<run id>.sock` の絶対パスが sun_path (macOS 104 バイト) に収まらない時、`/tmp/claude-ccmsg-<uid>/sidecars/` に退避する設計になっている (v2 の sidecarDir を移植したもの)。
 
 しかし sun_path の制限は bind / connect に渡すパス文字列の長さの制限で、置き場の制限ではない。そのディレクトリに cd してから相対パスで bind / connect すれば、置き場を分けずに済む。退避先を持つと置き場が 2 か所になり、daemon とサイドカーが同じ判定を共有する必要が生じる。
 
