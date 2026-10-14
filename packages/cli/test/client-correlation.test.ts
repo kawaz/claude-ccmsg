@@ -152,16 +152,19 @@ function closingPeer(): string {
 }
 
 // No close event comes again to settle a wait registered after the close.
+// "At once" is before the event loop takes its next turn: a request still
+// waiting for its reply then would wait for one that never comes.
 test("a request on a connection already closed fails at once", async () => {
   const client = await Client.connect(closingPeer());
   expect(await client.readLine()).toBeNull();
   const late = client.request({ op: "ping" });
+  const nextTurn = new Promise<string>((resolve) => setImmediate(() => resolve("still waiting")));
   const outcome = await Promise.race([
     late.then(
       () => "answered",
       (e: Error) => e.message,
     ),
-    Bun.sleep(1_000).then(() => "still waiting"),
+    nextTurn,
   ]);
   expect(outcome).toBe("connection closed before response");
 });

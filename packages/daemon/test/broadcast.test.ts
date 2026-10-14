@@ -8,6 +8,7 @@
 // mocking the storage/dispatch seam.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { jsonText, parseWith, StorageEventSchema, type StorageEvent } from "@ccmsg/protocol";
 import {
   connect,
   spawnDaemonProc,
@@ -46,6 +47,44 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * is needed. */
 async function readUntilMsg(sub: TestClient, pred: (ev: ItemOf<"msg">) => boolean = () => true) {
   return sub.readEventUntil("msg", (ev) => pred(ev));
+}
+
+const StorageEventTextSchema = jsonText(StorageEventSchema);
+
+/** The rows of a room's jsonl, each read as a storage event. */
+function roomRows(file: string): StorageEvent[] {
+  return fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => {
+      const read = parseWith(StorageEventTextSchema, line);
+      if (!read.ok) throw new Error(`not a storage event: ${read.failure.summary}: ${line}`);
+      return read.value;
+    });
+}
+
+/** Post `marker` to `room` as the user and return the room's rows once the
+ * daemon has written it. The post is answered only after its row is written,
+ * so whatever the daemon wrote before it took the post — for the requests
+ * answered earlier and for the work they set off — is in the rows returned. */
+async function rowsThrough(
+  ctx: DaemonCtx,
+  room: string,
+  file: string,
+  marker: string,
+): Promise<StorageEvent[]> {
+  const poster = await user(ctx);
+  await poster.requestOk({ op: "post", room, msg: marker });
+  poster.close();
+  const rows = roomRows(file);
+  expect(rows.some((row) => row.type === "msg" && row.msg === marker)).toBe(true);
+  return rows;
+}
+
+/** The member rows of `sid` in `rows`. */
+function memberRowsOf(rows: readonly StorageEvent[], sid: string): StorageEvent[] {
+  return rows.filter((row) => row.type === "member" && row.sid === sid);
 }
 
 describe("DR-0013 broadcast room", () => {
@@ -554,49 +593,26 @@ describe("DR-0013 broadcast room", () => {
           });
           creator.close();
           const file = `${ctx.roomsDir}/${res.room}.jsonl`;
-          const before = fs
-            .readFileSync(file, "utf8")
-            .split("\n")
-            .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
-          expect(before.length).toBe(1);
+          expect(memberRowsOf(roomRows(file), SID_A)).toHaveLength(1);
 
-          // Bounce the daemon on the same paths.
-          const c = await connect(ctx.sock);
-          await c.request({ op: "shutdown" });
-          c.close();
-          await ctx.proc.exited;
-          try {
-            fs.unlinkSync(ctx.sock);
-          } catch {}
-          const proc2 = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
-          ctx.proc = proc2;
-          await waitConnectable(ctx.sock);
-
-          // A re-hellos three restart cycles in a row (fresh daemon in-memory
-          // sessions map ⇒ isNewEntry=true, which historically walked
-          // joinAllBroadcasts and appended a NEW MemberEvent every restart
-          // cycle).
+          // A re-hellos into three fresh daemons in a row on the same paths:
+          // each one starts with an empty sessions map, so every re-hello is
+          // the first this daemon sees of SID_A.
           for (let i = 0; i < 3; i++) {
-            await session(ctx, SID_A);
-            await Bun.sleep(50);
-            const c2 = await connect(ctx.sock);
-            await c2.request({ op: "shutdown" });
-            c2.close();
+            const c = await connect(ctx.sock);
+            await c.request({ op: "shutdown" });
+            c.close();
             await ctx.proc.exited;
             try {
               fs.unlinkSync(ctx.sock);
             } catch {}
             ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
             await waitConnectable(ctx.sock);
+
+            await session(ctx, SID_A);
+            const rows = await rowsThrough(ctx, res.room, file, `after restart ${i}`);
+            expect(memberRowsOf(rows, SID_A)).toHaveLength(1);
           }
-          // Final re-hello and read
-          await session(ctx, SID_A);
-          await Bun.sleep(50);
-          const after = fs
-            .readFileSync(file, "utf8")
-            .split("\n")
-            .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
-          expect(after.length).toBe(1);
         }
       } finally {
         await stopTestDaemon(ctx);
@@ -623,35 +639,22 @@ describe("DR-0013 broadcast room", () => {
           kind: "broadcast",
         });
         const file = `${ctx.roomsDir}/${res.room}.jsonl`;
-        const initial = fs
-          .readFileSync(file, "utf8")
-          .split("\n")
-          .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
-        expect(initial.length).toBe(1);
+        expect(memberRowsOf(roomRows(file), SID_A)).toHaveLength(1);
 
         // Drive several disconnect + rehello cycles — the live shape of
-        // transient ccmsg CLI calls that hello, do work, then close.
-        a1.close();
+        // transient ccmsg CLI calls that hello, do work, then close. Each
+        // hello goes out only once the daemon has let go of the previous
+        // connection, so it is a hello after a close, not one racing it.
+        await a1.end();
         for (let i = 0; i < 4; i++) {
-          // let the daemon observe the previous close
-          await Bun.sleep(30);
           const c = await session(ctx, SID_A);
-          await Bun.sleep(10);
-          c.close();
+          await c.end();
         }
-        await Bun.sleep(50);
 
-        const after = fs
-          .readFileSync(file, "utf8")
-          .split("\n")
-          .filter((l) => l.includes('"type":"member"') && l.includes(`"sid":"${SID_A}"`));
-        const leaves = fs
-          .readFileSync(file, "utf8")
-          .split("\n")
-          .filter((l) => l.includes('"type":"leave"'));
-        expect(leaves).toEqual([]);
+        const rows = await rowsThrough(ctx, res.room, file, "after the reconnects");
+        expect(rows.filter((row) => row.type === "leave")).toEqual([]);
         // Still only ONE member row for sid=A after all the reconnect churn.
-        expect(after.length).toBe(1);
+        expect(memberRowsOf(rows, SID_A)).toHaveLength(1);
       } finally {
         await stopTestDaemon(ctx);
       }

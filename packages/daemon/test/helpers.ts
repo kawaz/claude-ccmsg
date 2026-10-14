@@ -364,6 +364,8 @@ export class TestClient {
   private lines: StreamLine[] = [];
   private waiters: Array<(l: StreamLine | null) => void> = [];
   private ended = false;
+  /** Settled once the socket has closed, from either side. */
+  private socketClosed = Promise.withResolvers<void>();
   /** Stream items that arrived while `requestRaw` was waiting for a reply. */
   private eventBacklog: StreamItem[] = [];
   private nextRequestId = 0;
@@ -441,6 +443,7 @@ export class TestClient {
   }
   onClose(): void {
     this.ended = true;
+    this.socketClosed.resolve();
     for (const waiter of this.waiters.splice(0)) waiter(null);
     for (const settle of this.pendingReplies.values()) settle(null);
     this.pendingReplies.clear();
@@ -608,5 +611,14 @@ export class TestClient {
       // already closing
     }
     this.assertFrames();
+  }
+  /** Close this side and wait for the daemon to close its side. The daemon
+   * closes a connection that has ended only after its close handler has let
+   * go of it, so whatever the daemon does on a closing connection is done when
+   * this resolves — the ordering a test needs before asserting what a close
+   * did not cause, or before a hello that has to come after the close. */
+  async end(): Promise<void> {
+    this.close();
+    await this.socketClosed.promise;
   }
 }
