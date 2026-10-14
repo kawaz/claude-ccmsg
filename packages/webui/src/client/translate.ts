@@ -187,6 +187,17 @@ const paragraphTranslations = new Map<string, string>();
 let translationRevision = 0;
 const translationListeners = new Set<() => void>();
 
+/** 訳のレジストリを読む口。`revision` は登録済みの訳が増えるたびに進み、object
+ * 自体もそのたびに差し替わる。これを useSyncExternalStore の snapshot にすると
+ * 「訳が増えた」が identity の変化として届き、これを読む計算 (useMemo) の deps
+ * にそのまま書ける。 */
+export interface TranslationLookup {
+  readonly revision: number;
+  translatedTextOf(text: string): string | null;
+}
+
+let translationLookup: TranslationLookup = { revision: translationRevision, translatedTextOf };
+
 function registerParagraphTranslation(original: string, translated: string): void {
   // 訳が原文と同一の段落 (skip 判定を通ったもの、翻訳失敗の fallback) は
   // 何も足さないので登録しない。
@@ -194,6 +205,7 @@ function registerParagraphTranslation(original: string, translated: string): voi
   if (paragraphTranslations.get(original) === translated) return;
   setBounded(paragraphTranslations, original, translated, PARAGRAPH_CACHE_MAX_ENTRIES);
   translationRevision++;
+  translationLookup = { revision: translationRevision, translatedTextOf };
   for (const listener of translationListeners) listener();
 }
 
@@ -205,9 +217,9 @@ export function subscribeTranslationRegistry(listener: () => void): () => void {
   };
 }
 
-/** 登録済みの訳が増えるたびに進むカウンタ (useSyncExternalStore の snapshot)。 */
-export function getTranslationRevision(): number {
-  return translationRevision;
+/** 現在の {@link TranslationLookup} (useSyncExternalStore の snapshot)。 */
+export function getTranslationLookup(): TranslationLookup {
+  return translationLookup;
 }
 
 /** 既に得られている訳で `text` (原文) を組み立てる。1 段落も訳が無ければ null。
@@ -349,6 +361,7 @@ export function _resetTranslatorStateForTest(): void {
   hostTextCache.clear();
   paragraphTranslations.clear();
   translationRevision = 0;
+  translationLookup = { revision: translationRevision, translatedTextOf };
   translationListeners.clear();
   pendingHostCount = 0;
   pendingListeners.clear();

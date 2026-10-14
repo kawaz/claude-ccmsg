@@ -10,7 +10,7 @@ import {
   _resetTranslatorStateForTest,
   hasCachedHostText,
   hasTranslatorApi,
-  getTranslationRevision,
+  getTranslationLookup,
   subscribeTranslationRegistry,
   translatedTextOf,
   translateTextInBrowser,
@@ -492,12 +492,12 @@ describe("translateTextOnHost", () => {
 
 // 段落訳のレジストリ: TL 検索が「原文の綴りでも訳文の綴りでも同じ thinking を
 // 数に入れる」ために、翻訳経路の成功結果をここへ溜める。Timeline は
-// translatedTextOf で unit の 2 つ目の綴りを作り、revision の変化で
+// translatedTextOf で unit の 2 つ目の綴りを作り、lookup の差し替えで
 // 訳の到着を再計算の合図として受け取る。
 describe("translation registry", () => {
   test("has nothing to offer before any translation has landed", () => {
     expect(translatedTextOf("First.\n\nSecond.")).toBe(null);
-    expect(getTranslationRevision()).toBe(0);
+    expect(getTranslationLookup().revision).toBe(0);
   });
 
   test("rebuilds a whole thinking from the paragraphs translated so far", async () => {
@@ -537,7 +537,7 @@ describe("translation registry", () => {
 
     await translateTextInBrowser("First.\n\nSecond.");
     expect(notified).toBe(2);
-    expect(getTranslationRevision()).toBe(2);
+    expect(getTranslationLookup().revision).toBe(2);
 
     // 同じ段落の再翻訳は綴りを増やさないので、再計算の合図も出さない。
     await translateTextInBrowser("First.");
@@ -546,6 +546,20 @@ describe("translation registry", () => {
     unsubscribe();
     await translateTextInBrowser("Third.");
     expect(notified).toBe(2);
-    expect(getTranslationRevision()).toBe(3);
+    expect(getTranslationLookup().revision).toBe(3);
+  });
+
+  // useSyncExternalStore の snapshot として、訳が増えた時だけ別の object になる
+  // (同じ object の間は再描画も再計算も起きない)。
+  test("hands out a new lookup only when a paragraph is newly registered", async () => {
+    installMockTranslator();
+    const before = getTranslationLookup();
+    await translateTextInBrowser("First.");
+    const after = getTranslationLookup();
+    expect(after).not.toBe(before);
+    expect(after.translatedTextOf("First.")).toBe("[ja]First.");
+
+    await translateTextInBrowser("First.");
+    expect(getTranslationLookup()).toBe(after);
   });
 });

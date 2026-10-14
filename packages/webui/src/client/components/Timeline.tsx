@@ -17,7 +17,7 @@ import type { ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protoco
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
-import { agentTimelineHref, fileHref, parseUrl, sessionHref, timelineHref } from "../locator.ts";
+import { agentTimelineHref, fileHref, sessionHref, timelineHref } from "../locator.ts";
 import { pushNavigation, rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
 import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
@@ -36,6 +36,8 @@ import {
   SayRecordBubble,
 } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
+import { useEffectEvent } from "../useEffectEvent.ts";
+import { useResettableState } from "../useKeyedState.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
@@ -103,10 +105,9 @@ import {
   isTranslationSkippedText,
   hasCachedHostText,
   hasTranslatorApi,
-  getTranslationRevision,
+  getTranslationLookup,
   subscribePendingHostTranslation,
   subscribeTranslationRegistry,
-  translatedTextOf,
   translateTextInBrowser,
   translateTextOnHost,
   type HostTranslateRequest,
@@ -190,8 +191,17 @@ interface TLSearchCtx {
  * prop because the toggle sits on items several levels down the
  * FoldGroup/LineView chain, and every one of them would
  * otherwise have to forward it unchanged.
+ *
+ * The tables are rebuilt on every live-tail append, so the value changes with
+ * them. Only `ItemRawRows` reads it, and that is mounted just for the items
+ * toggled to jsonl — an append re-renders those, not every timeline item.
  */
-const ItemRawContext = createContext<((offset: number) => RawTranscriptRow[]) | null>(null);
+interface ItemRawLookup {
+  /** item offset -> offsets of every jsonl line the item was built from */
+  sources: ReadonlyMap<number, readonly number[]>;
+  rows: ReadonlyMap<number, RawTranscriptRow>;
+}
+const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -252,12 +262,7 @@ function ItemRawToggle({
   onSelectPosition?: (uuid: string) => void;
   children: ComponentChildren;
 }) {
-  const getRows = useContext(ItemRawContext);
   const [raw, setRaw] = useState(false);
-  const rows = raw && getRows ? getRows(offset) : [];
-  // この項目の行が 1 つも整形できないなら pretty を選ばせない (押しても
-  // 全行が raw に落ちるだけ)。項目あたり数行なので毎 render の判定で足りる。
-  const anyPretty = rows.some((row) => canPrettyRawLine(row.text));
   return (
     <div
       class={`tl-item${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
@@ -283,27 +288,34 @@ function ItemRawToggle({
       >
         jsonl
       </button>
-      {raw ? (
-        rows.length === 0 ? (
-          // 対応する行が引けない = 表示の元になった行がキャッシュ外
-          // (load older 前) — rich 表示に戻す以外にできることがないので
-          // その旨だけ出す。
-          <p class="tl-empty">(この項目の元 JSONL 行は読み込み範囲外)</p>
-        ) : (
-          <>
-            <RawModeTabs
-              disabled={!anyPretty}
-              disabledReason="この項目の JSONL 行は JSON として整形できません"
-            />
-            {rows.map((row) => (
-              <RawLineRow key={row.offset} row={row} />
-            ))}
-          </>
-        )
-      ) : (
-        children
-      )}
+      {raw ? <ItemRawRows offset={offset} /> : children}
     </div>
+  );
+}
+
+/** The jsonl lines one item was built from, shown in place of the item while
+ * its `jsonl` toggle is on. */
+function ItemRawRows({ offset }: { offset: number }) {
+  const lookup = useContext(ItemRawContext);
+  const rows = (lookup?.sources.get(offset) ?? [])
+    .map((o) => lookup?.rows.get(o))
+    .filter((row): row is RawTranscriptRow => row !== undefined);
+  // 対応する行が引けない = 表示の元になった行がキャッシュ外 (load older 前)
+  // — rich 表示に戻す以外にできることがないのでその旨だけ出す。
+  if (rows.length === 0) return <p class="tl-empty">(この項目の元 JSONL 行は読み込み範囲外)</p>;
+  // この項目の行が 1 つも整形できないなら pretty を選ばせない (押しても
+  // 全行が raw に落ちるだけ)。項目あたり数行なので毎 render の判定で足りる。
+  const anyPretty = rows.some((row) => canPrettyRawLine(row.text));
+  return (
+    <>
+      <RawModeTabs
+        disabled={!anyPretty}
+        disabledReason="この項目の JSONL 行は JSON として整形できません"
+      />
+      {rows.map((row) => (
+        <RawLineRow key={row.offset} row={row} />
+      ))}
+    </>
   );
 }
 
@@ -516,9 +528,8 @@ function useCategoryOpen(
   category: "thinking" | "ccmsg" | "agent",
 ): [boolean, (open: boolean) => void] {
   const { settings, revision } = useContext(TimelineAutoOpenContext);
-  const [open, setOpen] = useState(settings[category]);
-  useEffect(() => setOpen(settings[category]), [revision]);
-  return [open, setOpen];
+  // 自動展開の設定が変わる (revision が進む) たびに、その設定の既定値へ戻す。
+  return useResettableState([revision], () => settings[category]);
 }
 
 function fileToolLineRange(segment: Extract<Segment, { kind: "file-read" }>): {
@@ -705,9 +716,10 @@ function BashUseFold({
 function AttachmentFileView({ file }: { file: AttachmentFile }) {
   const ctx = useContext(SessionFilePathCtxContext);
   useFilePathCacheTick();
+  const ctxSid = ctx?.sid;
   useEffect(() => {
-    if (ctx) enqueueFilePathProbe(ctx.sid, file.path);
-  }, [file.path, ctx?.sid]);
+    if (ctxSid !== undefined) enqueueFilePathProbe(ctxSid, file.path);
+  }, [file.path, ctxSid]);
   const stat = ctx ? getFilePathStatus(ctx.sid, file.path) : undefined;
   const href =
     ctx && stat && stat !== "pending"
@@ -746,9 +758,10 @@ function BashRunOutput({ output }: { output: BashCommandOutput }) {
   // text the user can open themselves.
   // `useFilePathCacheTick` re-renders this card when the batch answer lands.
   useFilePathCacheTick();
+  const ctxSid = ctx?.sid;
   useEffect(() => {
-    if (persistedPath && ctx) enqueueFilePathProbe(ctx.sid, persistedPath);
-  }, [persistedPath, ctx?.sid]);
+    if (persistedPath && ctxSid !== undefined) enqueueFilePathProbe(ctxSid, persistedPath);
+  }, [persistedPath, ctxSid]);
   const persistedStat =
     persistedPath && ctx ? getFilePathStatus(ctx.sid, persistedPath) : undefined;
   const persistedHref =
@@ -1297,20 +1310,22 @@ function ThinkingSegment({
     onDisplayChange,
   );
 
-  // The host route is the default comparison result when both are present: it
-  // is the dictionary-like path this feature adds, while browser remains an
-  // independently selectable comparison surface.
-  function selectDefaultTranslation() {
-    // 全段落が日本語等で翻訳 skip されるテキストは original のまま (kawaz
-    // r38 mid=54) — 訳タブを選んでも内容が原文と同一で、確認クリックの
-    // 無駄を生むだけ。
-    if (isTranslationSkippedText(text)) return;
-    if (translationAvailability.host) setTab("ja-host");
-    else if (translationAvailability.browser) setTab("ja-browser");
-  }
-
+  const hostAvailable = translationAvailability.host;
+  const browserAvailable = translationAvailability.browser;
   useEffect(() => {
     if (!foldGroupOpen || !detailsOpen || translationStartedRef.current) return;
+
+    // The host route is the default comparison result when both are present: it
+    // is the dictionary-like path this feature adds, while browser remains an
+    // independently selectable comparison surface.
+    const selectDefaultTranslation = () => {
+      // 全段落が日本語等で翻訳 skip されるテキストは original のまま (kawaz
+      // r38 mid=54) — 訳タブを選んでも内容が原文と同一で、確認クリックの
+      // 無駄を生むだけ。
+      if (isTranslationSkippedText(text)) return;
+      if (hostAvailable) setTab("ja-host");
+      else if (browserAvailable) setTab("ja-browser");
+    };
 
     const startTranslation = () => {
       if (translationStartedRef.current) return;
@@ -1320,7 +1335,7 @@ function ThinkingSegment({
 
     // Cache hits do not add daemon work, so retain the immediate display behavior
     // even when this thinking is outside the prefetch range.
-    if (translationAvailability.host && hasCachedHostText(text)) {
+    if (hostAvailable && hasCachedHostText(text)) {
       startTranslation();
       return;
     }
@@ -1352,13 +1367,7 @@ function ThinkingSegment({
       observer.disconnect();
       cancelPending?.();
     };
-  }, [
-    foldGroupOpen,
-    detailsOpen,
-    text,
-    translationAvailability.host,
-    translationAvailability.browser,
-  ]);
+  }, [foldGroupOpen, detailsOpen, text, hostAvailable, browserAvailable]);
 
   // Reconnect can replace a macOS daemon with a non-capable daemon. The WS
   // handshake clears host availability before probing the new process, so an
@@ -1700,8 +1709,8 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
 // メッセージの details 本文) から呼ばれる。raw タブは変更前と全く同じ描画
 // (segments.map + SegmentView) を保つことで、rich 側のパースが空振りしても
 // 元の情報は raw タブから必ず参照できる ("壊れた入力は raw fallback" 要件)。
-function systemMessageRawText(line: TurnLine): string {
-  return line.segments
+function systemMessageRawText(segments: readonly Segment[]): string {
+  return segments
     .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
     .map((s) => s.text)
     .join("\n");
@@ -1724,7 +1733,8 @@ function SystemMessageBody({
   // userMessageKind "tool-result") では空文字列になり、rich タブは text
   // フォールバックで空表示になるが、raw タブ側は元通り全 segment を描画する
   // ので情報は失われない。
-  const rawText = useMemo(() => systemMessageRawText(line), [line.segments]);
+  const segments = line.segments;
+  const rawText = useMemo(() => systemMessageRawText(segments), [segments]);
   const rich = useMemo(() => parseSystemMessageFields(kind, rawText), [kind, rawText]);
 
   return (
@@ -1783,9 +1793,10 @@ function SystemMessageFold({
 }) {
   const [manualOpen, setManualOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useCategoryOpen("agent");
+  const segments = line.segments;
   const rich = useMemo(
-    () => parseSystemMessageFields(kind, systemMessageRawText(line)),
-    [kind, line.segments],
+    () => parseSystemMessageFields(kind, systemMessageRawText(segments)),
+    [kind, segments],
   );
   const relays = rich.display === "peer" ? rich.relays : [];
   // A line carrying only idle notifications never becomes a fold: each is
@@ -2468,7 +2479,7 @@ function AssistantBubble({
  * Body text is rendered verbatim (no markdown): the wording is the upstream
  * CLI's — sometimes a raw JSON error payload — not authored prose. */
 function ApiErrorNotice({ line }: { line: TurnLine }) {
-  const text = systemMessageRawText(line);
+  const text = systemMessageRawText(line.segments);
   return (
     <div
       class="tl-line tl-api-error"
@@ -3194,11 +3205,8 @@ export function Timeline({
   const { store, ws } = useApp();
   const appState = useStoreState(store);
   const connStatus = appState.connStatus;
-  const currentLocator = parseUrl(location.pathname, location.search);
   const currentPosition =
-    currentLocator.view === "timeline" && currentLocator.sid === sid
-      ? (currentLocator.position ?? "head")
-      : "head";
+    appState.currentSid === sid ? (appState.timelinePosition ?? "head") : "head";
   // 位置指定 URL (`/timeline/<uuid>`) は親セッションの TL しか指せない —
   // locator の grammar 上、agent TL (`/timeline/agent/...`) の position は
   // 常に "head" で、agent ref と uuid を同時に表す形が無い (locator.ts)。
@@ -3217,16 +3225,17 @@ export function Timeline({
   // pin を張ってからユーザ自身がスクロールしたか (wheel / touch / キー)。
   // 最下部検知で pin を外してよいかの判定に使う (shouldReturnToHead)。
   const userScrolledSincePinRef = useRef(false);
+  const agentActive = !!(agent && (agent.agentId || agent.teammate));
   const selectPosition = useCallback(
     (uuid: string) => {
-      if (agent && (agent.agentId || agent.teammate)) return;
+      if (agentActive) return;
       const next = togglePosition(currentPosition, uuid);
       landedPositionRef.current = next === "head" ? null : positionLandingKey(sid, next);
       userScrolledSincePinRef.current = false;
       rememberTimelinePosition(sid, next);
       replaceNavigation(timelineHref(sid, next));
     },
-    [sid, currentPosition, agent?.agentId, agent?.teammate],
+    [sid, currentPosition, agentActive],
   );
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
@@ -3267,7 +3276,6 @@ export function Timeline({
   // itself, not on its subagents). Skip the subscribe when an agent ref is
   // active so we don't tail the wrong file (which would race back stale
   // lines and confuse the byte-cache).
-  const agentActive = !!(agent && (agent.agentId || agent.teammate));
   // agentKey identifies *which* subagent this drilldown Timeline belongs to,
   // for the per-agent auto-open storage key below — agentId is the primary
   // identity, runId/teammate are fallbacks for refs that only carry those
@@ -3350,11 +3358,12 @@ export function Timeline({
     [autoOpenSettings, autoOpenRevision],
   );
 
-  // Fold open/closed state for this session's timeline. A session switch gets a
-  // fresh store (the offsets its keys are built from mean nothing in another
-  // transcript); an auto-open settings change only drops the overrides, so
-  // every fold falls back to the new default.
-  const foldOpenStore = useMemo(() => new FoldOpenStore(), [sid]);
+  // Fold open/closed state for this session's timeline. One store per Timeline
+  // instance, and an instance shows one session (callers key it by sid): the
+  // offsets its keys are built from mean nothing in another transcript. An
+  // auto-open settings change only drops the overrides, so every fold falls
+  // back to the new default.
+  const [foldOpenStore] = useState(() => new FoldOpenStore());
   useEffect(() => foldOpenStore.reset(), [foldOpenStore, autoOpenRevision]);
   // Bumped when any fold body mounts for the first time, which is the moment
   // nav into a previously-closed fold can find the element it wants to scroll
@@ -3375,7 +3384,7 @@ export function Timeline({
     return () => {
       void subscribed.then(() => ws.transcriptUnsubscribe(sid).catch(() => {}));
     };
-  }, [active, sid, connStatus, agentActive]);
+  }, [active, sid, connStatus, agentActive, ws]);
 
   // Ask once per session where its copied fork history ends. An agent
   // transcript is never a fork of anything (only whole sessions fork), and the
@@ -3383,10 +3392,11 @@ export function Timeline({
   // the store keeping the answer (incl. `null` = no seam) is what stops this
   // from re-asking on every visit.
   const forkOrigin = appState.sessionTrees.get(sid)?.forkOrigin;
+  const forkOriginKnown = forkOrigin !== undefined;
   useEffect(() => {
     if (!active || agentActive) return;
     if (connStatus !== "connected") return;
-    if (forkOrigin !== undefined) return;
+    if (forkOriginKnown) return;
     void ws
       .forkOrigin(sid)
       .then((res) => {
@@ -3396,17 +3406,23 @@ export function Timeline({
       // A seam is decoration: a failed resolve leaves the Timeline as it was,
       // and the next visit retries.
       .catch(() => {});
-  }, [active, agentActive, sid, connStatus, forkOrigin !== undefined]);
+  }, [active, agentActive, sid, connStatus, forkOriginKnown, store, ws]);
 
   // Build the transcriptRead opts once so every call site below stays in sync.
+  // Keyed on the ref's fields rather than the object: the store hands a new
+  // AgentRef on every locator change, the same agent included.
+  const hasAgent = !!agent;
+  const agentId = agent?.agentId;
+  const agentRunId = agent?.runId;
+  const agentTeammate = agent?.teammate;
   const agentOpts = useMemo(() => {
-    if (!agent) return undefined;
+    if (!hasAgent) return undefined;
     return {
-      ...(agent.agentId ? { agent_id: agent.agentId } : {}),
-      ...(agent.runId ? { run_id: agent.runId } : {}),
-      ...(agent.teammate ? { teammate: agent.teammate } : {}),
+      ...(agentId ? { agent_id: agentId } : {}),
+      ...(agentRunId ? { run_id: agentRunId } : {}),
+      ...(agentTeammate ? { teammate: agentTeammate } : {}),
     };
-  }, [agent?.agentId, agent?.runId, agent?.teammate]);
+  }, [hasAgent, agentId, agentRunId, agentTeammate]);
 
   // Tail-load on first visit only — re-visiting a session whose Timeline is
   // already "loaded"/"error" must not refetch (mirrors FileViewer's
@@ -3430,7 +3446,7 @@ export function Timeline({
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
-  }, [active, sid, timeline.status, connStatus]);
+  }, [active, sid, timeline.status, connStatus, store, ws, agentOpts]);
 
   // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
   // review fix): applyTimelineTail (store.ts) can only detect that a
@@ -3461,7 +3477,7 @@ export function Timeline({
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
-  }, [active, sid, timeline.needsResync, connStatus]);
+  }, [active, sid, timeline.needsResync, connStatus, store, ws, agentOpts]);
 
   // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
   // 2026-07-14-session-tl-refresh-on-revisit): SessionTreeState's timeline
@@ -3478,17 +3494,16 @@ export function Timeline({
   // - Skipped when status is "idle" (initial-load effect above owns first
   //   visit) or "loading" (a fetch is already in flight; overlapping it
   //   would just collide on the same replace dispatch).
-  // - Dep list is [sid, connStatus] deliberately, NOT timeline.status: this
-  //   should fire once when Timeline mounts / the sid changes / a reconnect
-  //   lands, not on the loading→loaded flip caused by our own fetch (which
-  //   would loop). status is closed over from the render that scheduled
-  //   this effect, sufficient to gate the "no revisit needed" cases.
+  // - The arrival (Timeline mounts / becomes active / a reconnect lands) is
+  //   what fires this, NOT a timeline.status change: reacting to the
+  //   loading→loaded flip caused by our own fetch would loop. So the status
+  //   gate (and the agent opts) are read in an Effect Event, which sees the
+  //   current values without being a reason to re-run.
   // - mode: "replace" because DR-0009's transcript_read has no "after"
   //   parameter — an incremental "just what's new" is not representable in
   //   the current protocol. The response's own start/end/lines become the
   //   new cache wholesale (same shape as refresh() below).
-  useEffect(() => {
-    if (!active || connStatus !== "connected") return;
+  const revalidateOnArrival = useEffectEvent(() => {
     if (timeline.status !== "loaded" && timeline.status !== "error") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
@@ -3502,7 +3517,10 @@ export function Timeline({
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
-    // timeline.status is intentionally not in deps — see doc comment above.
+  });
+  useEffect(() => {
+    if (!active || connStatus !== "connected") return;
+    revalidateOnArrival();
   }, [active, sid, connStatus]);
 
   function loadOlder() {
@@ -3791,19 +3809,10 @@ export function Timeline({
     return map;
   }, [rawRows]);
   const itemRawSources = useMemo(() => itemRawSourceOffsets(parsed, offsets), [parsed, offsets]);
-  // Read through a ref rather than closed over, so the identity of this
-  // callback — and with it the ItemRawContext value every timeline item
-  // subscribes to — survives a live-tail append. The lookup tables it reads
-  // are rebuilt on every append, but nothing reads them until someone toggles
-  // an item to jsonl, and by then the ref holds the current pair.
-  const itemRawLookupRef = useRef({ itemRawSources, rawRowByOffset });
-  itemRawLookupRef.current = { itemRawSources, rawRowByOffset };
-  const getItemRawRows = useCallback((offset: number) => {
-    const { itemRawSources: sources, rawRowByOffset: rows } = itemRawLookupRef.current;
-    return (sources.get(offset) ?? [])
-      .map((o) => rows.get(o))
-      .filter((row): row is RawTranscriptRow => row !== undefined);
-  }, []);
+  const itemRawLookup = useMemo<ItemRawLookup>(
+    () => ({ sources: itemRawSources, rows: rawRowByOffset }),
+    [itemRawSources, rawRowByOffset],
+  );
 
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
@@ -3817,14 +3826,11 @@ export function Timeline({
   // highlight and no DOM ref to scroll to (↑/↓ would advance the number and
   // visibly do nothing) — the count side excludes exactly what the render
   // side excludes.
-  // 訳が 1 段落届くたびに進む counter。thinking の検索テキストは訳の到着で
+  // 訳が 1 段落届くたびに差し替わる読み口。thinking の検索テキストは訳の到着で
   // 増える (原文だけ -> 原文 + 訳) ので、これを searchUnits の入力にして
   // 「訳が来たら M が増える方向で再計算される」を成立させる。unit の key は
   // 訳と無関係なので、再計算しても D0 の identity は保たれる。
-  const translationRevision = useSyncExternalStore(
-    subscribeTranslationRegistry,
-    getTranslationRevision,
-  );
+  const translations = useSyncExternalStore(subscribeTranslationRegistry, getTranslationLookup);
 
   const searchUnits = useMemo(() => {
     const units: SearchUnit[] = [];
@@ -3848,7 +3854,7 @@ export function Timeline({
         // (原文クエリ・訳文クエリのどちらでも数に入る)。
         const translatable =
           seg.kind === "thinking" || (seg.kind === "text" && seg.role === "assistant");
-        const translated = translatable ? translatedTextOf(text) : null;
+        const translated = translatable ? translations.translatedTextOf(text) : null;
         units.push({
           key: `${offset}-${i}`,
           texts: translated === null ? [text] : [text, translated],
@@ -3877,7 +3883,7 @@ export function Timeline({
       }
     }
     return units;
-  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg, translationRevision]);
+  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg, translations]);
 
   // Unit key -> the line it came from, so a match inside a not-yet-mounted
   // fold can be reached: the key alone says nothing about where it lives, and
@@ -3952,18 +3958,17 @@ export function Timeline({
 
   const matchingUnitKeys = searchClosedFolds ? modelMatchingKeys : onScreenMatchingKeys;
 
-  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
   // A fresh search (query edit, mode/scope toggle flip, or session switch)
-  // always starts back at the first match.
-  // Deps deliberately omit matchingUnitKeys: the reset key is "the query/
-  // session changed", not the array's identity (which also changes on every
-  // tail append / fold-independent reparse and would reset the index far
+  // always starts back at the first match. The reset key is "the query/
+  // session changed", not the match array's identity (which also changes on
+  // every tail append / fold-independent reparse and would reset the index far
   // more often than intended).
-  useEffect(() => {
-    setSearchCurrentIndex(matchingUnitKeys.length > 0 ? 1 : 0);
-  }, [searchQueryText, searchCaseSensitive, searchRegex, searchClosedFolds, sid]);
+  const [searchCurrentIndex, setSearchCurrentIndex] = useResettableState<number>(
+    [searchQueryText, searchCaseSensitive, searchRegex, searchClosedFolds, sid],
+    () => (matchingUnitKeys.length > 0 ? 1 : 0),
+  );
   // A handed-off query can exist before the initial transcript page arrives.
-  // In that order the query-reset effect above sees zero matches; initialize
+  // In that order the query reset above sees zero matches; initialize
   // the counter when loaded content first creates a non-empty match set without
   // resetting an already-selected index on later tail updates.
   useEffect(() => {
@@ -3972,7 +3977,7 @@ export function Timeline({
       if (current <= 0) return 1;
       return Math.min(current, matchingUnitKeys.length);
     });
-  }, [matchingUnitKeys.length]);
+  }, [matchingUnitKeys.length, setSearchCurrentIndex]);
 
   // Decoration only (DR-0022 §3). This paints the CSS Custom Highlight ranges
   // over whatever is mounted and wires each unit's click-to-select; it no
@@ -3989,10 +3994,13 @@ export function Timeline({
   // (observed 2026-08-12: ↓ into a closed fold scrolled correctly with an
   // empty CSS.highlights).
   useEffect(() => {
+    // The registry Map itself is never replaced, only mutated, so the cleanup
+    // clears whatever is registered when it runs.
+    const unitElements = searchUnitRefs.current;
     const currentKey =
       searchCurrentIndex > 0 ? matchingUnitKeys[searchCurrentIndex - 1] : undefined;
     for (const unit of searchUnits) {
-      const el = searchUnitRefs.current.get(unit.key);
+      const el = unitElements.get(unit.key);
       if (!el) continue;
       if (parsedSearch.words.length === 0 || parsedSearch.hasError) {
         removeRenderedTextHighlights(el);
@@ -4010,13 +4018,14 @@ export function Timeline({
       setRenderedTextCurrent(el, unit.key === currentKey);
     }
     return () => {
-      for (const el of searchUnitRefs.current.values()) removeRenderedTextHighlights(el);
+      for (const el of unitElements.values()) removeRenderedTextHighlights(el);
     };
   }, [
     searchUnits,
     parsedSearch,
     matchingUnitKeys,
     searchCurrentIndex,
+    setSearchCurrentIndex,
     searchClosedFolds,
     foldRevision,
     foldMountRevision,
@@ -4174,7 +4183,7 @@ export function Timeline({
   // 渡さない = ハンバーガーを出さない。
   const bubbleActions = useMemo<BubbleActions | undefined>(
     () =>
-      agent && (agent.agentId || agent.teammate)
+      agentActive
         ? undefined
         : {
             sid,
@@ -4192,16 +4201,7 @@ export function Timeline({
               ),
             onSelect: selectPosition,
           },
-    [
-      sid,
-      currentPosition,
-      forkAction,
-      appState.forkAvailable,
-      store,
-      selectPosition,
-      agent?.agentId,
-      agent?.teammate,
-    ],
+    [sid, currentPosition, forkAction, appState.forkAvailable, selectPosition, agentActive],
   );
 
   useEffect(
@@ -4299,7 +4299,7 @@ export function Timeline({
   // 継がないようにリセットする — このリセットを先に走らせておくことで、下の
   // tail 検知 effect が「セッション切替による end の変化」を「tail 追記」と
   // 誤認して意図しない自動スクロールを起こさない (両 effect の実行順序は
-  // 定義順、[sid] だけに依存するこの effect が先に走る)。
+  // 定義順、sid だけに反応するこの effect が先に走る)。
   //
   // 追加 (kawaz r15 mid=7、2026-07-14): mount / sid 切替直後にも最下部へ
   // スクロールする。既存 tail-append effect は `timeline.end` の伸びに反応
@@ -4318,15 +4318,17 @@ export function Timeline({
       ),
     [],
   );
-  useEffect(() => {
+  // 反応するのは sid だけ — timeline.end / currentPosition はその時点の値を
+  // 読むだけの Effect Event に置く。end に反応すると「セッション切替検知」
+  // ではなく毎回の tail 追記でもリセットされてしまい、下の tail-append effect
+  // の appended 判定が常に false になってしまう。
+  const enterSession = useEffectEvent(() => {
     prevEndRef.current = timeline.end;
     isNearBottomRef.current = currentPosition === "head";
     if (currentPosition !== "head") return;
     return scrollToBottomSettled();
-    // 依存は [sid] のみ意図的 — timeline.end を含めると「セッション切替
-    // 検知」ではなく毎回の tail 追記でもリセットされてしまい、下の
-    // tail-append effect の appended 判定が常に false になってしまう。
-  }, [sid]);
+  });
+  useEffect(() => enterSession(), [sid]);
 
   // Timeline タブが「隠れている → 見えている」に変わった瞬間の末尾ジャンプ
   // (kawaz r76 m47)。上の [sid] effect は mount / セッション切替でしか走らず、
@@ -4340,7 +4342,7 @@ export function Timeline({
     wasVisibleRef.current = visible;
     if (!becameVisible || currentPosition !== "head") return;
     return scrollToBottomSettled();
-  }, [visible, currentPosition]);
+  }, [visible, currentPosition, scrollToBottomSettled]);
 
   // Live tail で新しい行が追記されたとき (`timeline.end` が伸びる) だけ、か
   // つユーザが最下部付近を見ているときだけ自動スクロールする (kawaz spec)。
@@ -4357,10 +4359,12 @@ export function Timeline({
     activeTraceCollector()?.noteDomCommit(sid, timeline.end);
   }, [sid, timeline.end, timeline.status]);
 
-  useEffect(() => {
-    const appended = timeline.end > prevEndRef.current;
-    const initialLoad = prevEndRef.current === 0 && timeline.end > 0;
-    prevEndRef.current = timeline.end;
+  // 反応するのは timeline.end の変化だけ。user turn 数・位置・末尾付近かは
+  // 伸びた瞬間の値を読むだけなので Effect Event に置く。
+  const followTailGrowth = useEffectEvent((end: number) => {
+    const appended = end > prevEndRef.current;
+    const initialLoad = prevEndRef.current === 0 && end > 0;
+    prevEndRef.current = end;
     // currentUserIdx を最大値に初期化 (kawaz r17 mid=54): リロード直後
     // (refresh: end が減る/等しい) と初回読み込み (initialLoad) の両方で
     // "末尾ユーザメッセージ" を選択状態にする。tail 追記 (appended) 時は
@@ -4378,7 +4382,8 @@ export function Timeline({
     // 大量行は markdown / highlight の非同期差し替えで effect 後も
     // scrollHeight が伸びるので、1 発の書き込みでは上に取り残される。
     return scrollToBottomSettled();
-  }, [timeline.end]);
+  });
+  useEffect(() => followTailGrowth(timeline.end), [timeline.end]);
 
   // pin 位置 (`/timeline/<uuid>`) への着地。**その位置を開いた / その位置へ
   // 遷移した最初の 1 回だけ**スクロールし、以降は選択装飾を出すだけ
@@ -4545,21 +4550,6 @@ export function Timeline({
     return hrefs;
   }, [sessionStatus, sid]);
 
-  if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
-    return (
-      <div class="timeline-view">
-        <p class="tl-loading">読み込み中…</p>
-      </div>
-    );
-  }
-
-  const agentLabel = agent
-    ? agent.teammate
-      ? `teammate ${agent.teammate}`
-      : agent.runId
-        ? `${agent.runId}/${agent.agentId}`
-        : `${agent.agentId}`
-    : null;
   // filepath 解決 ctx は「この pane が表示しているセッション自身」の cwd/
   // repo_root を使う (kawaz r46m62、TL は自セッションの発言表示なので発言者
   // = 自分)。peer 行がまだ届いていない (WS 接続直後などの短い間) は
@@ -4586,6 +4576,21 @@ export function Timeline({
     () => ({ now, rooms: appState.rooms, peers: appState.peers, visibleCcmsgKeys }),
     [now, appState.rooms, appState.peers, visibleCcmsgKeys],
   );
+  if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
+    return (
+      <div class="timeline-view">
+        <p class="tl-loading">読み込み中…</p>
+      </div>
+    );
+  }
+
+  const agentLabel = agent
+    ? agent.teammate
+      ? `teammate ${agent.teammate}`
+      : agent.runId
+        ? `${agent.runId}/${agent.agentId}`
+        : `${agent.agentId}`
+    : null;
   return (
     <FileToolSidContext.Provider value={sid}>
       <SessionFilePathCtxContext.Provider value={sessionFilePathCtx}>
@@ -4593,7 +4598,7 @@ export function Timeline({
           <TimelineAutoOpenContext.Provider value={autoOpenContext}>
             <FoldOpenContext.Provider value={foldOpenStore}>
               <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
-                <ItemRawContext.Provider value={getItemRawRows}>
+                <ItemRawContext.Provider value={itemRawLookup}>
                   <div
                     class="timeline-view"
                     ref={scrollRef}
