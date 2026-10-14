@@ -3,7 +3,7 @@ title: sidecar は自分で harness の pid を探さず、pid への対応付�
 status: open
 category: design
 created: 2026-10-14T11:24:47+09:00
-last_read:
+last_read: 2026-10-14T16:45:52+09:00
 open_entered: 2026-10-14T11:24:47+09:00
 wip_entered:
 blocked_entered:
