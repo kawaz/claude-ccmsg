@@ -12,6 +12,9 @@ import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useStoreState } from "../useStore.ts";
+import type { Store } from "../useStore.ts";
+import type { WsHandle } from "../ws.ts";
+import { nextRequestGeneration } from "../request-generation.ts";
 import {
   editorLineCount,
   errorMessage,
@@ -719,6 +722,55 @@ function SandboxActions({
   );
 }
 
+/** One read of `path` into the session's cached file, tagged with a fresh
+ * request generation (request-generation.ts) so the reducer drops the answer
+ * if a read of another path — or a later read of this one — started
+ * meanwhile.
+ *
+ * Three-way op selection for the path:
+ * - relative → fs_read (DR-0008 containment root)
+ * - absolute, under a workspace folder → fs_read_workspace (DR-0026
+ *   directory-prefix allowlist)
+ * - absolute, not under a workspace folder → fs_read_external (DR-0024
+ *   exact-file allowlist)
+ * Workspace check happens first because a workspace folder root can sit
+ * anywhere on the filesystem and a transcript may also have Read'd a file
+ * under that same root; in that case the workspace op is the correct
+ * affordance (directory browsing works, external_files stays as the
+ * per-file safety net when the folder isn't listed as a workspace). */
+function readFileIntoStore(
+  store: Store,
+  ws: WsHandle,
+  sid: string,
+  path: string,
+  workspaceFolders: readonly WorkspaceFolder[],
+): void {
+  const generation = nextRequestGeneration();
+  store.dispatch({ type: "fs/file-loading", sid, path, generation });
+  void (
+    isWorkspaceFilePath(path, workspaceFolders)
+      ? ws.fsReadWorkspace(sid, path)
+      : isExternalFilePath(path)
+        ? ws.fsReadExternal(sid, path)
+        : ws.fsRead(sid, path)
+  )
+    .then((res) => {
+      if (res.ok) store.dispatch({ type: "fs/file-loaded", sid, path, generation, response: res });
+      else
+        store.dispatch({
+          type: "fs/file-loaded",
+          sid,
+          path,
+          generation,
+          error: res.error.msg,
+          errorCode: res.error.code,
+        });
+    })
+    .catch((err) => {
+      store.dispatch({ type: "fs/file-loaded", sid, path, generation, error: errorMessage(err) });
+    });
+}
+
 export function FileViewer({
   sid,
   tree,
@@ -787,39 +839,7 @@ export function FileViewer({
     if (filePath === path) return;
     if (connStatus !== "connected") return;
     setLoadSeq((n) => n + 1);
-    store.dispatch({ type: "fs/file-loading", sid, path });
-    // Three-way op selection for the currently-selected path:
-    // - relative → fs_read (DR-0008 containment root)
-    // - absolute, under a workspace folder → fs_read_workspace (DR-0026
-    //   directory-prefix allowlist)
-    // - absolute, not under a workspace folder → fs_read_external (DR-0024
-    //   exact-file allowlist)
-    // Workspace check happens first because a workspace folder root can sit
-    // anywhere on the filesystem and a transcript may also have Read'd a file
-    // under that same root; in that case the workspace op is the correct
-    // affordance (directory browsing works, external_files stays as the
-    // per-file safety net when the folder isn't listed as a workspace).
-    void (
-      isWorkspaceFilePath(path, workspaceFolders)
-        ? ws.fsReadWorkspace(sid, path)
-        : isExternalFilePath(path)
-          ? ws.fsReadExternal(sid, path)
-          : ws.fsRead(sid, path)
-    )
-      .then((res) => {
-        if (res.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: res });
-        else
-          store.dispatch({
-            type: "fs/file-loaded",
-            sid,
-            path,
-            error: res.error.msg,
-            errorCode: res.error.code,
-          });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
-      });
+    readFileIntoStore(store, ws, sid, path, workspaceFolders);
   }, [sid, path, filePath, connStatus, workspaceFolders, store, ws]);
 
   // Highlighting is a separate, best-effort layer on top of the plain lines
@@ -1120,34 +1140,13 @@ export function FileViewer({
   // 持たない)、viewer が古い内容を掴んだままになりうる。↻ ボタンで明示的に
   // 現 path を再フェッチする。useEffect の deps に依らず直接叩くのは
   // 「path 不変で content だけ更新したい」意図を通すため — 通常の path 遷移
-  // 経路 (dispatch(fs/file-loading) → useEffect が fs_read) と同じ action を
-  // 手で発火する形にして、reducer/state 遷移の一貫性を保つ。
+  // 経路 (上の Effect) と同じ readFileIntoStore を手で呼ぶ形にして、
+  // reducer/state 遷移の一貫性を保つ。
   const canRefetch = path != null && connStatus === "connected";
   const handleRefetch = () => {
     if (!canRefetch) return;
     setLoadSeq((n) => n + 1);
-    store.dispatch({ type: "fs/file-loading", sid, path });
-    void (
-      isWorkspaceFilePath(path, workspaceFolders)
-        ? ws.fsReadWorkspace(sid, path)
-        : isExternalFilePath(path)
-          ? ws.fsReadExternal(sid, path)
-          : ws.fsRead(sid, path)
-    )
-      .then((r) => {
-        if (r.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: r });
-        else
-          store.dispatch({
-            type: "fs/file-loaded",
-            sid,
-            path,
-            error: r.error.msg,
-            errorCode: r.error.code,
-          });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
-      });
+    readFileIntoStore(store, ws, sid, path, workspaceFolders);
   };
   const RefetchButton = () =>
     canRefetch ? (

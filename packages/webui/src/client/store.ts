@@ -114,10 +114,14 @@ export type MissingTarget = { kind: "session" | "room"; id: string };
 
 /** Selected-file state within a SessionTreeState (DR-0008): mirrors the
  * loading/loaded/error lifecycle of a single fs_read round trip. `path` lets
- * a component tell "still loading *this* path" apart from "stale result for
- * a path we've since navigated away from" without a separate stale flag. */
+ * a component tell "this is the selected path" apart from "the file of a path
+ * we've since navigated away from, not yet re-requested". */
 export interface FileViewState {
   path: string;
+  /** The fs_read this state answers (request-generation.ts). Set by
+   * `fs/file-loading`; a `fs/file-loaded` carrying any other generation is a
+   * stale answer to an earlier request and is dropped. */
+  generation: number;
   status: "loading" | "loaded" | "error";
   /** present when status is "loaded" */
   response?: FsReadResponse;
@@ -161,6 +165,13 @@ export interface TimelineState {
    * (not just `false`) in the common case so existing equality-style
    * assertions on a fresh TimelineState are unaffected. */
   needsResync?: boolean;
+  /** The transcript_read whose answer this cache is waiting for or holds
+   * (request-generation.ts). Set by `timeline/loading` / `timeline/resyncing`;
+   * a `timeline/loaded` carrying any other generation answers a request that
+   * has since been superseded (another agent, a later refresh) and is dropped.
+   * Absent on a cache nobody has asked for yet, including one reset by an
+   * agent switch or an eviction, so every answer still in flight is stale. */
+  generation?: number;
 }
 
 /** Per-session file-browsing state (DR-0008), keyed by sid in AppState so
@@ -503,11 +514,15 @@ export type Action =
       entries?: readonly FsEntry[];
       error?: string;
     }
-  | { type: "fs/file-loading"; sid: string; path: string }
+  // `generation` pairs each answer with its request (request-generation.ts):
+  // file-loaded applies only while the cached file still waits on the same
+  // generation file-loading recorded.
+  | { type: "fs/file-loading"; sid: string; path: string; generation: number }
   | {
       type: "fs/file-loaded";
       sid: string;
       path: string;
+      generation: number;
       response?: FsReadResponse;
       error?: string;
       errorCode?: string;
@@ -528,7 +543,12 @@ export type Action =
       mtime?: string;
       size?: number;
     }
-  | { type: "timeline/loading"; sid: string }
+  // Both start a transcript_read and record its generation; `timeline/loaded`
+  // applies only with the generation recorded last (request-generation.ts).
+  // "resyncing" is the background catch-up for `needsResync`, which keeps the
+  // pane on screen instead of flipping it to "loading".
+  | { type: "timeline/loading"; sid: string; generation: number }
+  | { type: "timeline/resyncing"; sid: string; generation: number }
   | { type: "timeline/fork-origin"; sid: string; origin: ForkOrigin | null }
   | {
       type: "timeline/search-changed";
@@ -547,6 +567,7 @@ export type Action =
   | {
       type: "timeline/loaded";
       sid: string;
+      generation: number;
       mode: "replace" | "prepend";
       response?: TranscriptReadResponse;
       error?: string;
@@ -894,22 +915,14 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     const nextAgent = locator.agent ?? null;
     // DR-0025 Phase 2: agent ref switch invalidates the timeline byte-cache
     // (different underlying jsonl file). Reset the sid's TimelineState so
-    // Timeline's initial-load effect refetches with the new agent params.
+    // Timeline's initial-load effect refetches with the new agent params. The
+    // fresh state carries no generation, so a read still in flight for the
+    // previous agent is dropped when it answers.
     if (agentRefKey(state.currentAgent) !== agentRefKey(nextAgent)) {
       const tree = sessionTrees.get(locator.sid);
       if (tree) {
         sessionTrees = new Map(sessionTrees);
-        sessionTrees.set(locator.sid, {
-          ...tree,
-          timeline: {
-            status: "idle",
-            lines: [],
-            start: 0,
-            end: 0,
-            size: 0,
-            atStart: false,
-          },
-        });
+        sessionTrees.set(locator.sid, { ...tree, timeline: newTimelineState() });
       }
     }
     return {
@@ -968,6 +981,9 @@ function applyTimelineLoaded(
   state: AppState,
   action: Extract<Action, { type: "timeline/loaded" }>,
 ): AppState {
+  // Only the answer to the request recorded last: anything else was asked for
+  // a different agent, or before a refresh / eviction that superseded it.
+  if (state.sessionTrees.get(action.sid)?.timeline.generation !== action.generation) return state;
   const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
   if (action.error !== undefined) {
     sessionTrees.set(action.sid, {
@@ -987,6 +1003,7 @@ function applyTimelineLoaded(
     end: action.mode === "prepend" ? prev.end : res.end,
     size: res.size,
     atStart: res.start === 0,
+    generation: action.generation,
   };
   sessionTrees.set(action.sid, { ...tree, timeline });
   return { ...state, sessionTrees };
@@ -1188,21 +1205,30 @@ export function reducer(state: AppState, action: Action): AppState {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       sessionTrees.set(action.sid, {
         ...tree,
-        file: { path: action.path, status: "loading" },
+        file: { path: action.path, generation: action.generation, status: "loading" },
       });
       return { ...state, sessionTrees };
     }
     case "fs/file-loaded": {
+      // A read of another file (or an earlier read of this one) that answers
+      // after a newer fs/file-loading must not replace what that one fetches.
+      if (state.sessionTrees.get(action.sid)?.file?.generation !== action.generation) return state;
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       const file: FileViewState =
         action.error !== undefined
           ? {
               path: action.path,
+              generation: action.generation,
               status: "error",
               error: action.error,
               ...(action.errorCode !== undefined ? { errorCode: action.errorCode } : {}),
             }
-          : { path: action.path, status: "loaded", response: action.response };
+          : {
+              path: action.path,
+              generation: action.generation,
+              status: "loaded",
+              response: action.response,
+            };
       sessionTrees.set(action.sid, { ...tree, file });
       return { ...state, sessionTrees };
     }
@@ -1251,7 +1277,20 @@ export function reducer(state: AppState, action: Action): AppState {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       sessionTrees.set(action.sid, {
         ...tree,
-        timeline: { ...tree.timeline, status: "loading", error: undefined },
+        timeline: {
+          ...tree.timeline,
+          status: "loading",
+          error: undefined,
+          generation: action.generation,
+        },
+      });
+      return { ...state, sessionTrees };
+    }
+    case "timeline/resyncing": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      sessionTrees.set(action.sid, {
+        ...tree,
+        timeline: { ...tree.timeline, generation: action.generation },
       });
       return { ...state, sessionTrees };
     }

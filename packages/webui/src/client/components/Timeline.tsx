@@ -22,6 +22,9 @@ import { pushNavigation, rememberTimelinePosition, replaceNavigation } from "../
 import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import type { Store } from "../useStore.ts";
+import type { WsHandle } from "../ws.ts";
+import { nextRequestGeneration } from "../request-generation.ts";
 import { activeTraceCollector } from "../trace.ts";
 import { setBounded } from "../bounded-map.ts";
 import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-map.ts";
@@ -3168,6 +3171,36 @@ function ForkAction({
   );
 }
 
+/** One transcript_read for the Timeline's cache, tagged with a fresh request
+ * generation (request-generation.ts): `started` records the generation (and,
+ * for "timeline/loading", blanks the pane), and the answer is dispatched with
+ * the same generation, so the reducer drops it if another read for this sid
+ * started meanwhile (another agent, a refresh, load-older). Resolves once the
+ * answer has been dispatched, whether or not the reducer kept it. */
+function readTranscriptIntoStore(
+  store: Store,
+  ws: WsHandle,
+  sid: string,
+  read: {
+    started: "timeline/loading" | "timeline/resyncing";
+    mode: "replace" | "prepend";
+    opts: Parameters<WsHandle["transcriptRead"]>[1];
+  },
+): Promise<void> {
+  const generation = nextRequestGeneration();
+  const { mode } = read;
+  store.dispatch({ type: read.started, sid, generation });
+  return ws
+    .transcriptRead(sid, read.opts)
+    .then((res) => {
+      if (res.ok) store.dispatch({ type: "timeline/loaded", sid, generation, mode, response: res });
+      else store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: res.error.msg });
+    })
+    .catch((err) => {
+      store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: errorMessage(err) });
+    });
+}
+
 export function Timeline({
   sid,
   timeline,
@@ -3438,18 +3471,11 @@ export function Timeline({
   useEffect(() => {
     if (!active || timeline.status !== "idle") return;
     if (connStatus !== "connected") return;
-    store.dispatch({ type: "timeline/loading", sid });
-    void ws
-      .transcriptRead(sid, agentOpts)
-      .then((res) => {
-        if (res.ok)
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-        else
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
-      });
+    void readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/loading",
+      mode: "replace",
+      opts: agentOpts,
+    });
   }, [active, sid, timeline.status, connStatus, store, ws, agentOpts]);
 
   // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
@@ -3458,29 +3484,22 @@ export function Timeline({
   // fetch, so it flags `timeline.needsResync` instead of just dropping the
   // push and leaving live tail silently stuck (DR-0005 §1: side effects stay
   // out of the reducer). This effect is the side effect: a background
-  // "replace" read that catches the cache up. Deliberately does NOT dispatch
-  // `timeline/loading` first (unlike every other transcriptRead call site in
-  // this component) — flipping status to "loading" would blank the pane
-  // (Timeline's "読み込み中…" branch below) for what should be an invisible
-  // catch-up, not a user-visible reload. If the re-read's own result is
-  // already stale by the time it lands (more appends happened meanwhile),
-  // the next tail push simply re-flags needsResync and this effect fires
-  // again — self-healing, no bound on retries needed since each attempt is
-  // a normal full tail read.
+  // "replace" read that catches the cache up. Starts with `timeline/resyncing`
+  // rather than `timeline/loading` (which every other read here uses) —
+  // flipping status to "loading" would blank the pane (Timeline's
+  // "読み込み中…" branch below) for what should be an invisible catch-up, not
+  // a user-visible reload. If the re-read's own result is already stale by the
+  // time it lands (more appends happened meanwhile), the next tail push simply
+  // re-flags needsResync and this effect fires again — self-healing, no bound
+  // on retries needed since each attempt is a normal full tail read.
   useEffect(() => {
     if (!active || !timeline.needsResync) return;
     if (connStatus !== "connected") return;
-    void ws
-      .transcriptRead(sid, agentOpts)
-      .then((res) => {
-        if (res.ok)
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-        else
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
-      });
+    void readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/resyncing",
+      mode: "replace",
+      opts: agentOpts,
+    });
   }, [active, sid, timeline.needsResync, connStatus, store, ws, agentOpts]);
 
   // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
@@ -3509,18 +3528,11 @@ export function Timeline({
   //   new cache wholesale (same shape as refresh() below).
   const revalidateOnArrival = useEffectEvent(() => {
     if (timeline.status !== "loaded" && timeline.status !== "error") return;
-    store.dispatch({ type: "timeline/loading", sid });
-    void ws
-      .transcriptRead(sid, agentOpts)
-      .then((res) => {
-        if (res.ok)
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-        else
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
-      });
+    void readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/loading",
+      mode: "replace",
+      opts: agentOpts,
+    });
   });
   useEffect(() => {
     if (!active || connStatus !== "connected") return;
@@ -3529,18 +3541,11 @@ export function Timeline({
 
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
-    store.dispatch({ type: "timeline/loading", sid });
-    void ws
-      .transcriptRead(sid, { ...agentOpts, before: timeline.start })
-      .then((res) => {
-        if (res.ok)
-          store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", response: res });
-        else
-          store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", error: res.error.msg });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", error: errorMessage(err) });
-      });
+    void readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/loading",
+      mode: "prepend",
+      opts: { ...agentOpts, before: timeline.start },
+    });
   }
 
   // "更新" (refresh): re-reads the tail (before omitted) and replaces the
@@ -3551,24 +3556,18 @@ export function Timeline({
   // simplicity prioritized per the delegated spec).
   function refresh() {
     if (timeline.status === "loading") return;
-    store.dispatch({ type: "timeline/loading", sid });
-    void ws
-      .transcriptRead(sid, agentOpts)
-      .then((res) => {
-        if (res.ok)
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-        else
-          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-        // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
-        // replace で end が同値のままだと tail-append effect が発火しないため
-        // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
-        // 届く live tail への追従を継続させる)。
-        isNearBottomRef.current = true;
-        scrollToBottomSettled();
-      })
-      .catch((err) => {
-        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
-      });
+    void readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/loading",
+      mode: "replace",
+      opts: agentOpts,
+    }).then(() => {
+      // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
+      // replace で end が同値のままだと tail-append effect が発火しないため
+      // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
+      // 届く live tail への追従を継続させる)。
+      isNearBottomRef.current = true;
+      scrollToBottomSettled();
+    });
   }
 
   // Per-line derivations (JSON parse, UTF-8 size) are memoized per *line*,

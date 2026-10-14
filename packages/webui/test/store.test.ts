@@ -23,9 +23,35 @@ import {
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 import type { Locator } from "../src/client/locator.ts";
+import { nextRequestGeneration } from "../src/client/request-generation.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
+}
+
+type Answer<T extends Action["type"]> = Omit<
+  Extract<Action, { type: T }>,
+  "type" | "sid" | "generation"
+>;
+
+/** A transcript_read for `sid` asked and answered: the request the reducer
+ * records, then the answer carrying the same generation. */
+function readTranscript(state: AppState, sid: string, answer: Answer<"timeline/loaded">): AppState {
+  const generation = nextRequestGeneration();
+  const asked = dispatch(state, { type: "timeline/loading", sid, generation });
+  return dispatch(asked, { type: "timeline/loaded", sid, generation, ...answer });
+}
+
+/** An fs_read of `path` asked and answered, as readTranscript. */
+function readFile(
+  state: AppState,
+  sid: string,
+  path: string,
+  answer: Omit<Answer<"fs/file-loaded">, "path">,
+): AppState {
+  const generation = nextRequestGeneration();
+  const asked = dispatch(state, { type: "fs/file-loading", sid, path, generation });
+  return dispatch(asked, { type: "fs/file-loaded", sid, path, generation, ...answer });
 }
 
 const member: MemberEvent = {
@@ -557,6 +583,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
       type: "fs/file-loading",
       sid: "sess-1",
       path: "README.md",
+      generation: nextRequestGeneration(),
     });
     const file = state.sessionTrees.get("sess-1")?.file;
     expect(file?.status).toBe("loading");
@@ -564,15 +591,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
   });
 
   test("fs/file-loaded (success) stores the FsReadResponse and flips status to loaded", () => {
-    const loading = dispatch(initialState(), {
-      type: "fs/file-loading",
-      sid: "sess-1",
-      path: "README.md",
-    });
-    const state = dispatch(loading, {
-      type: "fs/file-loaded",
-      sid: "sess-1",
-      path: "README.md",
+    const state = readFile(initialState(), "sess-1", "README.md", {
       response: {
         ok: true,
         sid: "sess-1",
@@ -590,12 +609,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
   });
 
   test("fs/file-loaded (error) flips status to error and records the message, no stale response", () => {
-    const state = dispatch(initialState(), {
-      type: "fs/file-loaded",
-      sid: "sess-1",
-      path: "secret.env",
-      error: "path_forbidden",
-    });
+    const state = readFile(initialState(), "sess-1", "secret.env", { error: "path_forbidden" });
     const file = state.sessionTrees.get("sess-1")?.file;
     expect(file?.status).toBe("error");
     expect(file?.error).toBe("path_forbidden");
@@ -609,10 +623,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
 // position (kawaz r55 m90).
 describe("reducer / fs/file-patched", () => {
   const loaded = () =>
-    dispatch(initialState(), {
-      type: "fs/file-loaded",
-      sid: "sess-1",
-      path: "docs/QUESTIONS.md",
+    readFile(initialState(), "sess-1", "docs/QUESTIONS.md", {
       response: {
         ok: true,
         sid: "sess-1",
@@ -674,6 +685,7 @@ describe("reducer / fs/file-patched", () => {
       type: "fs/file-loading",
       sid: "sess-1",
       path: "docs/QUESTIONS.md",
+      generation: nextRequestGeneration(),
     });
     expect(
       dispatch(loading, {
@@ -915,12 +927,7 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
       end: 20,
       size: 20,
     };
-    const loaded = dispatch(visited, {
-      type: "timeline/loaded",
-      sid: "sess-1",
-      mode: "replace",
-      response: res,
-    });
+    const loaded = readTranscript(visited, "sess-1", { mode: "replace", response: res });
     const awayAndBack = dispatch(
       dispatch(loaded, {
         type: "locator/changed",
@@ -961,13 +968,15 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
 
 describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
   test("timeline/loading sets status 'loading' and clears any prior error", () => {
-    const errored = dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const errored = readTranscript(initialState(), "sess-1", {
       mode: "replace",
       error: "session_not_found",
     });
-    const loading = dispatch(errored, { type: "timeline/loading", sid: "sess-1" });
+    const loading = dispatch(errored, {
+      type: "timeline/loading",
+      sid: "sess-1",
+      generation: nextRequestGeneration(),
+    });
     const timeline = loading.sessionTrees.get("sess-1")?.timeline;
     expect(timeline?.status).toBe("loading");
     expect(timeline?.error).toBeUndefined();
@@ -985,9 +994,12 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       end: 150,
       size: 150,
     };
-    const state = dispatch(initialState(), {
+    const generation = nextRequestGeneration();
+    const asked = dispatch(initialState(), { type: "timeline/loading", sid: "sess-1", generation });
+    const state = dispatch(asked, {
       type: "timeline/loaded",
       sid: "sess-1",
+      generation,
       mode: "replace",
       response: res,
     });
@@ -999,6 +1011,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       end: 150,
       size: 150,
       atStart: false,
+      generation,
     });
   });
 
@@ -1013,12 +1026,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       end: 10,
       size: 10,
     };
-    const state = dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid: "sess-1",
-      mode: "replace",
-      response: res,
-    });
+    const state = readTranscript(initialState(), "sess-1", { mode: "replace", response: res });
     expect(state.sessionTrees.get("sess-1")?.timeline.atStart).toBe(true);
   });
 
@@ -1037,9 +1045,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       end: 200,
       size: 200,
     };
-    const afterInitial = dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const afterInitial = readTranscript(initialState(), "sess-1", {
       mode: "replace",
       response: initial,
     });
@@ -1051,12 +1057,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       end: 100,
       size: 200,
     };
-    const afterOlder = dispatch(afterInitial, {
-      type: "timeline/loaded",
-      sid: "sess-1",
-      mode: "prepend",
-      response: older,
-    });
+    const afterOlder = readTranscript(afterInitial, "sess-1", { mode: "prepend", response: older });
     const timeline = afterOlder.sessionTrees.get("sess-1")?.timeline;
     expect(timeline?.lines).toEqual(["older-1", "older-2", "tail-1", "tail-2"]);
     expect(timeline?.start).toBe(20);
@@ -1067,15 +1068,11 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
   // Prepending a page whose own `start` is 0 reaches the true beginning of
   // the transcript — atStart must flip true so the "older" button disables.
   test("timeline/loaded (prepend) reaching start:0 sets atStart true", () => {
-    const afterInitial = dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const afterInitial = readTranscript(initialState(), "sess-1", {
       mode: "replace",
       response: { ok: true, sid: "sess-1", lines: ["tail"], start: 50, end: 100, size: 100 },
     });
-    const afterOlder = dispatch(afterInitial, {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const afterOlder = readTranscript(afterInitial, "sess-1", {
       mode: "prepend",
       response: { ok: true, sid: "sess-1", lines: ["first"], start: 0, end: 50, size: 100 },
     });
@@ -1083,15 +1080,11 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
   });
 
   test("timeline/loaded (error) flips status to error and records the message, does not touch lines", () => {
-    const withLines = dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const withLines = readTranscript(initialState(), "sess-1", {
       mode: "replace",
       response: { ok: true, sid: "sess-1", lines: ["a"], start: 0, end: 5, size: 5 },
     });
-    const errored = dispatch(withLines, {
-      type: "timeline/loaded",
-      sid: "sess-1",
+    const errored = readTranscript(withLines, "sess-1", {
       mode: "replace",
       error: "session_not_found",
     });
@@ -1109,12 +1102,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
 // wrong offset.
 describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
   function loaded(sid: string, res: TranscriptReadResponse): AppState {
-    return dispatch(initialState(), {
-      type: "timeline/loaded",
-      sid,
-      mode: "replace",
-      response: res,
-    });
+    return readTranscript(initialState(), sid, { mode: "replace", response: res });
   }
 
   // Core case: a tail push whose `start` exactly matches the cache's `end`
@@ -1295,9 +1283,12 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
       size: 1050,
     });
     expect(afterGap.sessionTrees.get("sess-1")?.timeline.needsResync).toBe(true);
-    const resynced = dispatch(afterGap, {
+    const generation = nextRequestGeneration();
+    const resyncing = dispatch(afterGap, { type: "timeline/resyncing", sid: "sess-1", generation });
+    const resynced = dispatch(resyncing, {
       type: "timeline/loaded",
       sid: "sess-1",
+      generation,
       mode: "replace",
       response: { ok: true, sid: "sess-1", lines: ["a", "b"], start: 0, end: 1050, size: 1050 },
     });
@@ -1338,7 +1329,11 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
       end: 50,
       size: 50,
     });
-    const loading = dispatch(initial, { type: "timeline/loading", sid: "sess-1" });
+    const loading = dispatch(initial, {
+      type: "timeline/loading",
+      sid: "sess-1",
+      generation: nextRequestGeneration(),
+    });
     const state = dispatch(loading, {
       type: "timeline/tail",
       sid: "sess-1",
@@ -1398,9 +1393,7 @@ describe("reducer / timeline/evicted", () => {
       path: "src",
       entries: [{ name: "main.ts", type: "file" }],
     });
-    return dispatch(state, {
-      type: "timeline/loaded",
-      sid,
+    return readTranscript(state, sid, {
       mode: "replace",
       response: { ok: true, sid, lines, start: 0, end: 10, size: 10 },
     });
@@ -1420,9 +1413,7 @@ describe("reducer / timeline/evicted", () => {
 
   test("evicts only the named sessions", () => {
     let state = loadedTree("sess-1", ["a"]);
-    state = dispatch(state, {
-      type: "timeline/loaded",
-      sid: "sess-2",
+    state = readTranscript(state, "sess-2", {
       mode: "replace",
       response: { ok: true, sid: "sess-2", lines: ["b"], start: 0, end: 10, size: 10 },
     });
@@ -1443,6 +1434,236 @@ describe("reducer / timeline/evicted", () => {
       sids: ["sess-1"],
     });
     expect(twice.sessionTrees.get("sess-1")?.timeline.status).toBe("idle");
+  });
+});
+
+// Responses answer the request that was current when they were sent. A
+// response that lands after a newer request for the same slot (a switch to
+// another agent, another file, a refetch) is stale and must not overwrite what
+// the newer request is filling in, whichever order the daemon answers in.
+// Source: docs/findings/2026-10-14-webui-hooks-review-react-guidance.md (high 3, 4).
+describe("reducer / stale responses are ignored", () => {
+  const transcript = (lines: string[], end: number): TranscriptReadResponse => ({
+    ok: true,
+    sid: "sess-1",
+    lines,
+    start: 0,
+    end,
+    size: end,
+  });
+  const timelineAt = (agentId: string | null): Action => ({
+    type: "locator/changed",
+    locator:
+      agentId === null
+        ? { view: "timeline", sid: "sess-1" }
+        : { view: "timeline", sid: "sess-1", agent: { agentId } },
+    sidebar: CLOSED_SIDEBAR,
+  });
+
+  test("agent A's transcript answering after a switch to agent B does not land on B", () => {
+    let state = dispatch(initialState(), timelineAt("agent-a"));
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 1 });
+    state = dispatch(state, timelineAt("agent-b"));
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 2 });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 1,
+      mode: "replace",
+      response: transcript(["from-a"], 10),
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.status).toBe("loading");
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual([]);
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 2,
+      mode: "replace",
+      response: transcript(["from-b"], 20),
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual(["from-b"]);
+  });
+
+  test("agent A's transcript answering after B already landed does not replace B", () => {
+    let state = dispatch(initialState(), timelineAt("agent-a"));
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 1 });
+    state = dispatch(state, timelineAt("agent-b"));
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 2 });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 2,
+      mode: "replace",
+      response: transcript(["from-b"], 20),
+    });
+    const settled = state;
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 1,
+      mode: "replace",
+      response: transcript(["from-a"], 10),
+    });
+    expect(state).toBe(settled);
+  });
+
+  test("an older page answering after a newer refresh does not splice into the refreshed cache", () => {
+    let state = dispatch(initialState(), {
+      type: "timeline/loading",
+      sid: "sess-1",
+      generation: 1,
+    });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 1,
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["tail"], start: 50, end: 100, size: 100 },
+    });
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 2 });
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 3 });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 3,
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["new-tail"], start: 60, end: 120, size: 120 },
+    });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 2,
+      mode: "prepend",
+      response: { ok: true, sid: "sess-1", lines: ["older"], start: 0, end: 50, size: 100 },
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual(["new-tail"]);
+    expect(state.sessionTrees.get("sess-1")?.timeline.start).toBe(60);
+  });
+
+  test("a transcript answering after its session was evicted does not refill the cache", () => {
+    let state = dispatch(initialState(), {
+      type: "timeline/loading",
+      sid: "sess-1",
+      generation: 1,
+    });
+    state = dispatch(state, { type: "timeline/evicted", sids: ["sess-1"] });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 1,
+      mode: "replace",
+      response: transcript(["evicted"], 10),
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.status).toBe("idle");
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual([]);
+  });
+
+  // The resync re-read keeps the pane on screen (no "loading"), but it is
+  // still a request: a refresh issued after it supersedes it.
+  test("a background resync superseded by a refresh does not land", () => {
+    let state = dispatch(initialState(), {
+      type: "timeline/loading",
+      sid: "sess-1",
+      generation: 1,
+    });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 1,
+      mode: "replace",
+      response: transcript(["a"], 50),
+    });
+    state = dispatch(state, { type: "timeline/resyncing", sid: "sess-1", generation: 2 });
+    expect(state.sessionTrees.get("sess-1")?.timeline.status).toBe("loaded");
+    state = dispatch(state, { type: "timeline/loading", sid: "sess-1", generation: 3 });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 3,
+      mode: "replace",
+      response: transcript(["a", "b", "c"], 90),
+    });
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      generation: 2,
+      mode: "replace",
+      response: transcript(["a", "b"], 70),
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual(["a", "b", "c"]);
+  });
+
+  const fileResponse = (path: string, content: string) => ({
+    ok: true as const,
+    sid: "sess-1",
+    path,
+    size: content.length,
+    truncated: false,
+    binary: false,
+    content,
+    mtime: "2026-10-14T00:00:00.000Z",
+  });
+
+  test("file A answering after a switch to file B does not replace B", () => {
+    let state = dispatch(initialState(), {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 1,
+    });
+    state = dispatch(state, {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "b.md",
+      generation: 2,
+    });
+    state = dispatch(state, {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 1,
+      response: fileResponse("a.md", "A"),
+    });
+    expect(state.sessionTrees.get("sess-1")?.file?.path).toBe("b.md");
+    expect(state.sessionTrees.get("sess-1")?.file?.status).toBe("loading");
+    state = dispatch(state, {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "b.md",
+      generation: 2,
+      response: fileResponse("b.md", "B"),
+    });
+    expect(state.sessionTrees.get("sess-1")?.file?.response?.content).toBe("B");
+  });
+
+  test("an earlier read of the same file answering after a refetch does not roll it back", () => {
+    let state = dispatch(initialState(), {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 1,
+    });
+    state = dispatch(state, {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 2,
+    });
+    state = dispatch(state, {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 2,
+      response: fileResponse("a.md", "fresh"),
+    });
+    state = dispatch(state, {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "a.md",
+      generation: 1,
+      response: fileResponse("a.md", "stale"),
+    });
+    expect(state.sessionTrees.get("sess-1")?.file?.response?.content).toBe("fresh");
   });
 });
 
