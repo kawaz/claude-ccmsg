@@ -19,8 +19,8 @@ import {
   type SessionSearchResponse,
 } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
-import { useStoreState } from "../useStore.ts";
-import { selectedSid } from "../store.ts";
+import { sameJson, useStoreState } from "../useStore.ts";
+import { selectedSid, type AppState } from "../store.ts";
 import { timelineHref } from "../locator.ts";
 import { pushNavigation, replaceNavigation } from "../navigation.ts";
 import {
@@ -171,6 +171,13 @@ function SearchResultRow({
   );
 }
 
+const selectPinnedSessions = (state: AppState): AppState["pinnedSessions"] => state.pinnedSessions;
+
+/** The config dirs the running agents were found under, in first-seen order. */
+function agentConfigDirsOf(state: AppState): string[] {
+  return [...new Set(state.agents.map((a) => a.config_dir))];
+}
+
 export function SessionSearchPanel({
   onClose,
   query,
@@ -184,8 +191,9 @@ export function SessionSearchPanel({
   query: string | null;
 }) {
   const { store, ws } = useApp();
-  const state = useStoreState(store, (s) => s);
-  const currentSid = selectedSid(state);
+  const currentSid = useStoreState(store, selectedSid);
+  const pinnedSessions = useStoreState(store, selectPinnedSessions);
+  const agentConfigDirs = useStoreState(store, agentConfigDirsOf, sameJson);
   const [form, setForm] = useState<SessionSearchForm>(() =>
     query === null ? DEFAULT_SESSION_SEARCH_FORM : { ...DEFAULT_SESSION_SEARCH_FORM, query },
   );
@@ -205,17 +213,17 @@ export function SessionSearchPanel({
   );
 
   // config_dir トグルの候補 (DR-0021 §2.1: 複数検出時のみ表示) — daemon の
-  // agents 応答 (state.agents、claude agents --json ポーリング由来) が検出済
+  // agents 応答 (agentConfigDirsOf、claude agents --json ポーリング由来) が検出済
   // みの config_dir と、直近の検索結果が実際に返した config_dir の和集合。
   // 前者だけだと「今動いている agent が無い config_dir 配下の過去セッション」
   // を検索した結果が反映されない (kawaz 指示の「無理なら Phase 1 応答から」の
   // フォールバック)。
   const configDirOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const a of state.agents) set.add(a.config_dir);
+    for (const dir of agentConfigDirs) set.add(dir);
     for (const hit of result?.hits ?? []) set.add(hit.config_dir);
     return [...set].sort();
-  }, [state.agents, result]);
+  }, [agentConfigDirs, result]);
 
   function toggleConfigDir(dir: string): void {
     setForm((f) => {
@@ -239,7 +247,7 @@ export function SessionSearchPanel({
     // 実行した検索語を URL に残す (replace: 検索のたびに履歴を積むと、戻るが
     // 「パネルを閉じる」に届くまで何度も押すことになる)。
     replaceNavigation(`${location.pathname}${location.search}`, {
-      ...state.sidebar,
+      ...store.getState().sidebar,
       search: form.query,
     });
     setLoading(true);
@@ -392,7 +400,7 @@ export function SessionSearchPanel({
               <SearchResultRow
                 key={hit.sid}
                 hit={hit}
-                pinned={isSessionPinned(state.pinnedSessions, hit.cwd)}
+                pinned={isSessionPinned(pinnedSessions, hit.cwd)}
                 pinnable={hit.cwd !== null}
                 active={hit.sid === currentSid}
                 words={resultWords}

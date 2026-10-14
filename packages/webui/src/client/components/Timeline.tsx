@@ -3203,10 +3203,14 @@ export function Timeline({
   visible: boolean;
 }) {
   const { store, ws } = useApp();
-  const appState = useStoreState(store, (s) => s);
-  const connStatus = appState.connStatus;
-  const currentPosition =
-    appState.currentSid === sid ? (appState.timelinePosition ?? "head") : "head";
+  const connStatus = useStoreState(store, (s) => s.connStatus);
+  const currentPosition = useStoreState(store, (s) =>
+    s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
+  );
+  const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
+  const forkAvailable = useStoreState(store, (s) => s.forkAvailable);
+  const peers = useStoreState(store, (s) => s.peers);
+  const rooms = useStoreState(store, (s) => s.rooms);
   // 位置指定 URL (`/timeline/<uuid>`) は親セッションの TL しか指せない —
   // locator の grammar 上、agent TL (`/timeline/agent/...`) の position は
   // 常に "head" で、agent ref と uuid を同時に表す形が無い (locator.ts)。
@@ -3250,11 +3254,11 @@ export function Timeline({
   );
   const translationAvailability = useMemo<TranslationAvailability>(
     () => ({
-      host: appState.hostTranslatorAvailable,
+      host: hostTranslatorAvailable,
       browser: browserTranslatorAvailable,
       hostRequest: hostTranslateRequest,
     }),
-    [appState.hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest],
+    [hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest],
   );
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
   // 3 分おきの再描画で十分。
@@ -3391,7 +3395,7 @@ export function Timeline({
   // seam cannot move as the session appends, so there is nothing to refresh:
   // the store keeping the answer (incl. `null` = no seam) is what stops this
   // from re-asking on every visit.
-  const forkOrigin = appState.sessionTrees.get(sid)?.forkOrigin;
+  const forkOrigin = useStoreState(store, (s) => s.sessionTrees.get(sid)?.forkOrigin);
   const forkOriginKnown = forkOrigin !== undefined;
   useEffect(() => {
     if (!active || agentActive) return;
@@ -3645,7 +3649,7 @@ export function Timeline({
   // (say-merge.ts)。見た目は PushNotification と同じ 📣 バブル。agent TL は
   // 別セッションの transcript を見ているので対象外 — その say はこの
   // transcript のものではない。
-  const allSays = appState.says;
+  const allSays = useStoreState(store, (s) => s.says);
   const says = useMemo(
     () => (agent ? [] : allSays.filter((r) => r.sid === sid)),
     [allSays, sid, agent],
@@ -4189,7 +4193,7 @@ export function Timeline({
             sid,
             position: currentPosition,
             forkAction,
-            forkAvailable: appState.forkAvailable,
+            forkAvailable,
             // fork 元はこの画面に出ているセッション = 生きているので、
             // cwd/model/effort はランチャー側が live state から補える
             // (SessionCreator の forkSourceDefaults)。リンクには「どの
@@ -4201,7 +4205,7 @@ export function Timeline({
               ),
             onSelect: selectPosition,
           },
-    [sid, currentPosition, forkAction, appState.forkAvailable, selectPosition, agentActive],
+    [sid, currentPosition, forkAction, forkAvailable, selectPosition, agentActive],
   );
 
   useEffect(
@@ -4556,7 +4560,7 @@ export function Timeline({
   // undefined になり、LinkedMarkdownView がプレーンな MarkdownView に degrade
   // する — 同じ経路を ROOM 側 (filePathCtxForSender で送信者未解決時) も
   // 使っているので挙動は揃う。
-  const selfPeer = useMemo(() => appState.peers.find((p) => p.sid === sid), [appState.peers, sid]);
+  const selfPeer = useMemo(() => peers.find((p) => p.sid === sid), [peers, sid]);
   const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
     () =>
       selfPeer
@@ -4573,8 +4577,8 @@ export function Timeline({
   // a new object here re-renders every ccmsg bubble in the transcript, past
   // the memoized fold groups that would otherwise have been skipped.
   const ccmsgRenderValue = useMemo<CcmsgRenderCtxValue>(
-    () => ({ now, rooms: appState.rooms, peers: appState.peers, visibleCcmsgKeys }),
-    [now, appState.rooms, appState.peers, visibleCcmsgKeys],
+    () => ({ now, rooms, peers, visibleCcmsgKeys }),
+    [now, rooms, peers, visibleCcmsgKeys],
   );
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
     return (
@@ -4867,8 +4871,8 @@ export function Timeline({
                                               registerUserTurnRef={registerUserTurnRef}
                                               onUserTurnClick={onUserTurnClick}
                                               selected={selectedUserTurnKey === navKey}
-                                              room={appState.rooms.get(m.room)}
-                                              peers={appState.peers}
+                                              room={rooms.get(m.room)}
+                                              peers={peers}
                                             />
                                           </ItemRawToggle>
                                         );

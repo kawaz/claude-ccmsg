@@ -38,7 +38,7 @@ import {
   staleClientWarning,
 } from "../utils.ts";
 import { useApp } from "../context.ts";
-import { useStoreState } from "../useStore.ts";
+import { sameJson, useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 
@@ -423,9 +423,12 @@ export function StatusPanel({
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
 }) {
   const { store } = useApp();
-  const state = useStoreState(store, (s) => s);
-  const cwd = resolveSessionTopbar(state, sid).cwd;
-  const agent = state.agents.find((candidate) => candidate.sessionId === sid);
+  const cwd = useStoreState(store, (s) => resolveSessionTopbar(s, sid).cwd);
+  const agent = useStoreState(
+    store,
+    (s) => s.agents.find((candidate) => candidate.sessionId === sid),
+    sameJson,
+  );
   const liveState = formatAgentLiveState(agent);
   // The session's own title — what `/rename` sets — resolved through the same
   // live-agent-first rule the pinned rows use, so the tab can't disagree with
@@ -433,17 +436,22 @@ export function StatusPanel({
   // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
   // below, and repeating one of them under a "TITLE" label would read as a
   // title the session doesn't have.
-  const pinned = pinnedHitForSid(state.pinnedSessions, sid);
+  const pinned = useStoreState(store, (s) => pinnedHitForSid(s.pinnedSessions, sid));
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
   // 設定されている環境ではその端末のページへのリンクにする (Terminal タブと
   // 同じ gateway URL 源 = hello の terminal_gateway_url)。gateway 未設定なら
   // リンクにせず値をそのまま出す。
-  const terminalPageUrl = buildTerminalPageUrl(state.terminalGatewayUrl, agent?.hyoui_session_id);
+  const terminalGatewayUrl = useStoreState(store, (s) => s.terminalGatewayUrl);
+  const terminalPageUrl = buildTerminalPageUrl(terminalGatewayUrl, agent?.hyoui_session_id);
   // このセッションの ccmsg クライアント。CWD や PID と同じ「今この session が
   // 何で動いているか」の一部なので identity 表に並べる。古い client が居るとき
   // だけ警告に変わり、それ以外は版数だけを黙って出す。
-  const peer = state.peers.find((candidate) => candidate.sid === sid);
+  const peer = useStoreState(
+    store,
+    (s) => s.peers.find((candidate) => candidate.sid === sid),
+    sameJson,
+  );
   const staleClient = peer ? staleClientWarning(peer) : null;
   const clientBuild = peer ? clientBuildLabel(peer) : "—";
   if (!snapshot) {

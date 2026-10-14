@@ -3,7 +3,8 @@ import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionSearchHit } from "@ccm
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
-import { useStoreState } from "../useStore.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
+import type { AppState } from "../store.ts";
 import { setSidDragPayload } from "../dnd.ts";
 import {
   formatAgentLiveState,
@@ -851,13 +852,22 @@ function sectionClass(key: string): string {
   return SESSION_SECTION_CLASS[key] ?? "session-section";
 }
 
+function sessionListSlice(state: AppState) {
+  return {
+    agents: state.agents,
+    sessionStatuses: state.sessionStatuses,
+    sessionErrors: state.sessionErrors,
+    llmRequests: state.llmRequests,
+    pinnedSessions: state.pinnedSessions,
+    says: state.says,
+  };
+}
+
 /** Sidebar "Sessions" section (U1, developed from the DR-0008 peers list):
  * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
  * recent toggle — this component never reorders those) with the daemon's
- * `claude agents --json` poll (`state.agents`, pulled straight from the
- * store rather than threaded through as a prop, since Sidebar.tsx's own
- * props surface is out of this task's scope) so a session `claude agents`
- * can see but whose ccmsg CLI hasn't connected yet still shows up, grouped
+ * `claude agents --json` poll (`agents`, read from the store with the rest of
+ * `sessionListSlice`) so a session `claude agents` can see but whose ccmsg CLI hasn't connected yet still shows up, grouped
  * as its own "ccmsg 未起動" tail (see offlineAgentRows).
  *
  * U3 (kawaz 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション
@@ -877,7 +887,7 @@ export function SessionList({
   useTick(TICK_MS);
   const { store } = useApp();
   const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, says } =
-    useStoreState(store, (s) => s);
+    useStoreState(store, sessionListSlice, shallowEqual);
   // say の記録は daemon が ev:"says" で全件 push するので、TL を開いていない
   // セッションの未読もここで数えられる。
   const sayUnreadBy = useMemo(() => sayUnreadBySid(says), [says]);

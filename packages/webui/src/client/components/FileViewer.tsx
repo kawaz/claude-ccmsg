@@ -670,7 +670,7 @@ function SandboxActions({
   kind: "contained" | "external" | "workspace";
 }): JSX.Element | null {
   const { store, ws } = useApp();
-  const available = useStoreState(store, (s) => s).sandboxAvailable;
+  const available = useStoreState(store, (s) => s.sandboxAvailable);
   const [error, setError] = useState<string | null>(null);
   if (!available) return null;
 
@@ -744,7 +744,7 @@ export function FileViewer({
   onMemoCreated: (path: string) => void | Promise<void>;
 }) {
   const { store, ws } = useApp();
-  const connStatus = useStoreState(store, (s) => s).connStatus;
+  const connStatus = useStoreState(store, (s) => s.connStatus);
   const path = tree.selectedPath;
   const selectedLineRange = tree.selectedLineRange;
   const selectedLineRef = useRef<HTMLDivElement | null>(null);
