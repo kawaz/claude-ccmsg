@@ -370,7 +370,9 @@ function foldContextUsage(state: SessionStatusState, row: AssistantRow): boolean
  *   writes these as assistant messages ("Prompt is too long", "API Error: 500
  *   ...", "You're out of extra usage · resets 7pm", "Please run /login"), but
  *   they are the CLI reporting a stopped turn, and the session then sits doing
- *   nothing until the user intervenes.
+ *   nothing until the user intervenes. The row's `error` says how Claude Code
+ *   classified it; it is the only place the classification is written for a
+ *   session with or without a hooks module (DR-0039 §2).
  * - `"clear"` — a real, model-generated assistant row: the agent is answering
  *   again, so whatever error preceded it is over. This is what keeps the state
  *   scoped to the *latest* turn instead of latching on the first error ever
@@ -398,7 +400,14 @@ export function classifyApiErrorRow(row: AssistantRow): ApiErrorSignal | undefin
   }
   const text = errorText(row.message.content);
   if (text === "") return undefined;
-  return { kind: "error", error: { text, timestamp: row.timestamp } };
+  return {
+    kind: "error",
+    error: {
+      text,
+      timestamp: row.timestamp,
+      ...(row.error !== undefined ? { kind: row.error } : {}),
+    },
+  };
 }
 
 /** Joins an error row's text blocks. Observed rows carry exactly one, but the
@@ -1872,32 +1881,20 @@ export function contextWithFacts(
   };
 }
 
-/** The API error the hooks module says the latest main-thread turn ended
- * on, as the snapshot and the session-error list carry one. The module's
- * facts always say whether there is one, so a session with facts takes this
- * over the transcript's fold, absent included. */
-export function apiErrorOfFacts(facts: SessionFacts): SessionApiError | undefined {
-  const error = facts.api_error;
-  if (error === undefined) return undefined;
-  return { text: error.text ?? error.kind, timestamp: isoAt(error.at), kind: error.kind };
-}
-
 /** A fold's snapshot with what is not read off the transcript laid over it:
- * the hooks module's facts (contextWithFacts, apiErrorOfFacts, and whether
- * the main thread is answering a turn, which only the module says). */
+ * the hooks module's facts (contextWithFacts, and whether the main thread is
+ * answering a turn, which only the module says). */
 export function withFacts(
   data: SessionStatusSnapshot,
   facts: SessionFacts | undefined,
 ): SessionStatusSnapshot {
   if (facts === undefined) return data;
-  const { context: folded, api_error: _folded, ...rest } = data;
+  const { context: folded, ...rest } = data;
   const context = contextWithFacts(folded, facts);
-  const apiError = apiErrorOfFacts(facts);
   const turn = facts.turn;
   return {
     ...rest,
     ...(context !== undefined ? { context } : {}),
-    ...(apiError !== undefined ? { api_error: apiError } : {}),
     ...(turn !== undefined ? { turn: { state: turn.state, since: isoAt(turn.since) } } : {}),
   };
 }

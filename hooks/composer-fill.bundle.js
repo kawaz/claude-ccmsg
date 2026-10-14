@@ -807,11 +807,6 @@ var SessionFactsContextSchema = object({
   tokens: optional(pipe(number(), safeInteger(), minValue(0))),
   at: EpochMsSchema
 });
-var SessionFactsApiErrorSchema = object({
-  kind: pipe(string(), nonEmpty()),
-  text: optional(string()),
-  at: EpochMsSchema
-});
 var SessionTurnStateSchema = picklist(["responding", "idle"]);
 var SessionFactsTurnSchema = object({
   state: SessionTurnStateSchema,
@@ -822,7 +817,6 @@ var SessionFactsSchema = object({
   model: optional(pipe(string(), nonEmpty())),
   effort: optional(pipe(string(), nonEmpty())),
   context: optional(SessionFactsContextSchema),
-  api_error: optional(SessionFactsApiErrorSchema),
   turn: optional(SessionFactsTurnSchema)
 });
 var SessionFactsTextSchema = jsonText(SessionFactsSchema);
@@ -896,18 +890,8 @@ var StopInputSchema = looseObject({
   agent_id: optional(string()),
   effort: TurnEffortSchema
 });
-var StopFailureInputSchema = looseObject({
-  effort: TurnEffortSchema,
-  error: optional(string()),
-  error_details: optional(string()),
-  last_assistant_message: optional(string()),
-  agent_id: optional(string())
-});
 var TurnStartInputSchema = looseObject({ agentId: optional(string()) });
-var TurnCompleteInputSchema = looseObject({
-  reason: optional(string()),
-  agentId: optional(string())
-});
+var TurnCompleteInputSchema = looseObject({ agentId: optional(string()) });
 var UserPromptSubmitInputSchema = looseObject({ prompt: optional(string()) });
 var PromptSubmitInputSchema = looseObject({
   text: optional(string()),
@@ -968,7 +952,6 @@ function newState() {
     delay: RESPAWN_MIN_MS,
     starting: Promise.resolve(),
     facts: {},
-    failedThisTurn: false,
     factsSend: { chain: Promise.resolve(), queued: false }
   };
 }
@@ -1190,21 +1173,6 @@ async function turnState($, state, turn) {
   }
   sendFacts($, state);
 }
-function withoutApiError(facts) {
-  const { api_error: _cleared, ...rest } = facts;
-  return rest;
-}
-async function turnEnded($, state, reason) {
-  const failed = state.failedThisTurn;
-  state.failedThisTurn = false;
-  if (reason === "error" && !failed) {
-    const at = Math.floor(await $.clock.now());
-    state.facts = { ...state.facts, api_error: { kind: "unknown", at } };
-  } else if (reason === "answer" || reason === "refusal") {
-    state.facts = withoutApiError(state.facts);
-  }
-  await turnState($, state, "idle");
-}
 async function replyTo($, state, sid, generation, request) {
   const { id } = request;
   try {
@@ -1325,8 +1293,6 @@ function register(on) {
     before: (input) => {
       if (input.reason !== "clear")
         return;
-      state.facts = withoutApiError(state.facts);
-      state.failedThisTurn = false;
       if (state.sid !== undefined) {
         nextGeneration(state);
         state.sid = undefined;
@@ -1353,23 +1319,6 @@ function register(on) {
       sendFacts($, state);
     }
   })).catch(async (_$, e, next) => next(e));
-  on("classic.StopFailure", async ($, e, next) => observe($, e, next, "classic.StopFailure", StopFailureInputSchema, {
-    after: async (input) => {
-      if (input.agent_id !== undefined)
-        return;
-      turnEffort($, state, input.effort?.level);
-      const at = Math.floor(await $.clock.now());
-      const text = input.last_assistant_message ?? input.error_details;
-      const api_error = {
-        kind: input.error ?? "unknown",
-        ...text !== undefined ? { text } : {},
-        at
-      };
-      state.failedThisTurn = true;
-      state.facts = { ...state.facts, api_error };
-      sendFacts($, state);
-    }
-  })).catch(async (_$, e, next) => next(e));
   on("classic.Stop", async ($, e, next) => observe($, e, next, "classic.Stop", StopInputSchema, {
     after: (input) => {
       if (input.agent_id === undefined)
@@ -1385,7 +1334,7 @@ function register(on) {
   on("turn.complete", async ($, e, next) => observe($, e, next, "turn.complete", TurnCompleteInputSchema, {
     after: async (input) => {
       if (input.agentId === undefined)
-        await turnEnded($, state, input.reason);
+        await turnState($, state, "idle");
     }
   })).catch(async (_$, e, next) => next(e));
   on("classic.PostModelSwitch", async ($, e, next) => observe($, e, next, "classic.PostModelSwitch", PostModelSwitchInputSchema, {

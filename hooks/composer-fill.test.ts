@@ -952,10 +952,6 @@ describe("the facts the module sends of its session (session.facts)", () => {
     await fire(fake, "classic.Stop", subagent, async () => ({}));
     await settle();
     expect(fake.factsSent.length).toBe(1);
-    await fire(fake, "classic.StopFailure", { effort: { level: "max" } }, async () => ({}));
-    await untilFacts(fake, 2);
-    await settle();
-    expect(fake.factsSent.at(-1)?.facts.effort).toBe("max");
   });
 
   // A switch raises no session.measure, so the module reads both again.
@@ -983,18 +979,6 @@ describe("the facts the module sends of its session (session.facts)", () => {
     await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
     await untilFacts(fake, 2);
     expect(factsAt(fake, 1).sid).toBe("ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-  });
-
-  test("after /clear the old session's API error is not the new one's", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    await fire(fake, "classic.StopFailure", { error: "server_error" }, async () => ({}));
-    await untilFacts(fake, 1);
-    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
-    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
-    await untilFacts(fake, 2);
-    expect(factsAt(fake, 1).facts.api_error).toBeUndefined();
   });
 
   // A daemon that came up after the module asks for what it missed.
@@ -1035,54 +1019,16 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(fake.factsSent.map((f) => f.facts.context?.window)).toEqual([1_000_000, 400_000]);
   });
 
-  // Claude Code classifies the error at StopFailure, before the turn ends.
-  test("a main-thread StopFailure sends the error, its kind and its text", async () => {
+  // The API error a turn ends on is the daemon's to read off the transcript,
+  // classification included (DR-0039 §2): the module hooks no StopFailure,
+  // and a turn that ends on an error only goes idle.
+  test("the module takes no part in the API error", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    const stop = { error: "rate_limit", last_assistant_message: "API Error: 429" };
-    await fire(fake, "classic.StopFailure", stop, async () => ({}));
+    expect(new Set<string>(fake.registered).has("classic.StopFailure")).toBe(false);
+    await fire(fake, "turn.start", { text: "", turnId: "t" }, async () => ({}));
     await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
     await untilLastFacts(fake, (f) => f.turn?.state === "idle");
-    expect(lastFacts(fake).api_error).toMatchObject({
-      kind: "rate_limit",
-      text: "API Error: 429",
-    });
-  });
-
-  test("a subagent's failure and turn end leave the session's error alone", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    const stop = { error: "overloaded", agent_id: "a1" };
-    await fire(fake, "classic.StopFailure", stop, async () => ({}));
-    await fire(fake, "turn.complete", { reason: "error", agentId: "a1" }, async () => ({}));
-    await settle();
-    expect(fake.factsSent).toEqual([]);
-  });
-
-  // The turn ended on an error Claude Code raised no StopFailure for.
-  test("a turn that ends on an error without a StopFailure is an unknown error", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
-    await untilFacts(fake, 1);
-    expect(factsAt(fake, 0).facts.api_error?.kind).toBe("unknown");
-  });
-
-  // An answer is what clears the error, as a real assistant row clears the
-  // transcript's; an interrupted turn answered nothing.
-  test("an answer clears the error; an interrupted turn keeps it", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    await fire(fake, "classic.StopFailure", { error: "server_error" }, async () => ({}));
-    await fire(fake, "turn.complete", { reason: "error", turnId: "t1" }, async () => ({}));
-    await untilLastFacts(fake, (f) => f.api_error?.kind === "server_error");
-    await fire(fake, "turn.start", { text: "", turnId: "t2" }, async () => ({}));
-    await fire(fake, "turn.complete", { reason: "aborted", turnId: "t2" }, async () => ({}));
-    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
-    expect(lastFacts(fake).api_error?.kind).toBe("server_error");
-    await fire(fake, "turn.start", { text: "", turnId: "t3" }, async () => ({}));
-    await fire(fake, "turn.complete", { reason: "answer", turnId: "t3" }, async () => ({}));
-    await untilLastFacts(fake, (f) => f.api_error === undefined);
   });
 
   // The TL shows a turn running the moment it starts, not when the

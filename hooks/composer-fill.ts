@@ -23,13 +23,14 @@
 // Claude Code itself and the transcript cannot tell (`session.facts`): the
 // model as the session names it, `[1m]` kept, the effort, the context window
 // the session runs with and its fill, whether its main thread is answering a
-// turn (turn.start / turn.complete, idle from the session's start), and the
-// API error its latest main-thread turn ended on. It reads the model and the window at
-// session.start, after a model switch and after /clear, and takes the window
-// and the fill again from each session.measure; the effort comes with the end
-// of each main-thread turn (classic.Stop, classic.StopFailure), the API error
-// with classic.StopFailure and turn.complete. Each time, it sends the whole of what it knows through `ccmsg sidecar facts`,
-// which starts no daemon. A daemon that comes up later asks for them with the
+// turn (turn.start / turn.complete, idle from the session's start). It reads
+// the model and the window at session.start, after a model switch and after
+// /clear, and takes the window and the fill again from each session.measure;
+// the effort comes with the end of each main-thread turn (classic.Stop). Each
+// time, it sends the whole of what it knows through `ccmsg sidecar facts`,
+// which starts no daemon. The API error a turn ends on is not among them: the
+// daemon reads it, with Claude Code's classification, off the transcript
+// (DR-0039 §2). A daemon that comes up later asks for them with the
 // `session.facts` request when the run's sidecar names the run. Sessions
 // without a composer send them too: they have no sidecar, but the daemon
 // still shows them.
@@ -68,7 +69,6 @@ import {
   type PromptSendResult,
   readSidecarRequest,
   type SessionFacts,
-  type SessionFactsApiError,
   type SessionFactsContext,
   type SessionFactsTurn,
   type SendMessageResult,
@@ -134,7 +134,6 @@ export type ObservedEvent =
   | "classic.SessionStart"
   | "classic.PostModelSwitch"
   | "classic.Stop"
-  | "classic.StopFailure"
   | "classic.UserPromptSubmit"
   | "prompt.submit"
   | "turn.start"
@@ -192,18 +191,8 @@ const StopInputSchema = v.looseObject({
   agent_id: v.optional(v.string()),
   effort: TurnEffortSchema,
 });
-const StopFailureInputSchema = v.looseObject({
-  effort: TurnEffortSchema,
-  error: v.optional(v.string()),
-  error_details: v.optional(v.string()),
-  last_assistant_message: v.optional(v.string()),
-  agent_id: v.optional(v.string()),
-});
 const TurnStartInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
-const TurnCompleteInputSchema = v.looseObject({
-  reason: v.optional(v.string()),
-  agentId: v.optional(v.string()),
-});
+const TurnCompleteInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
 const UserPromptSubmitInputSchema = v.looseObject({ prompt: v.optional(v.string()) });
 const PromptSubmitInputSchema = v.looseObject({
   text: v.optional(v.string()),
@@ -361,12 +350,8 @@ export interface ModuleState {
     model?: string;
     effort?: string;
     context?: SessionFactsContext;
-    api_error?: SessionFactsApiError;
     turn?: SessionFactsTurn;
   };
-  /** Whether a StopFailure of the main thread came in the turn now ending:
-   * its error is the one the turn ended on. */
-  failedThisTurn: boolean;
   /** Facts are sent one at a time; `queued` is whether a send waits its turn,
    * which then sends what the module knows when it starts, so any number of
    * changes meanwhile cost one send. */
@@ -380,7 +365,6 @@ export function newState(): ModuleState {
     delay: RESPAWN_MIN_MS,
     starting: Promise.resolve(),
     facts: {},
-    failedThisTurn: false,
     factsSend: { chain: Promise.resolve(), queued: false },
   };
 }
@@ -702,29 +686,6 @@ async function turnState(
   sendFacts($, state);
 }
 
-/** The facts without an API error. */
-function withoutApiError(facts: ModuleState["facts"]): ModuleState["facts"] {
-  const { api_error: _cleared, ...rest } = facts;
-  return rest;
-}
-
-/** A main-thread turn ended. One that ended on an API error with no
- * StopFailure before it is an error of kind `unknown`; one that answered (or
- * was refused, which is the model's answer) clears the error. An interrupted
- * turn leaves it as it was: nothing answered since. */
-async function turnEnded($: Engine, state: ModuleState, reason: string | undefined): Promise<void> {
-  const failed = state.failedThisTurn;
-  state.failedThisTurn = false;
-  if (reason === "error" && !failed) {
-    const at = Math.floor(await $.clock.now());
-    state.facts = { ...state.facts, api_error: { kind: "unknown", at } };
-  } else if (reason === "answer" || reason === "refusal") {
-    state.facts = withoutApiError(state.facts);
-  }
-  // Sends the facts, the error's change with it.
-  await turnState($, state, "idle");
-}
-
 /** The reply to one request: the op's, or `internal` when anything is thrown
  * on the way, so every request is answered. */
 async function replyTo(
@@ -896,10 +857,6 @@ export function register(on: On): ModuleState {
     observe($, e, next, "session.end", SessionEndInputSchema, {
       before: (input) => {
         if (input.reason !== "clear") return;
-        // The session after /clear has answered nothing: no error of the
-        // old one's turns is its.
-        state.facts = withoutApiError(state.facts);
-        state.failedThisTurn = false;
         if (state.sid !== undefined) {
           nextGeneration(state);
           state.sid = undefined;
@@ -936,27 +893,6 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  // The API error a main-thread turn ends on, as Claude Code classified it,
-  // and its end: the transcript says the same only once the error row is
-  // written, and has no kind.
-  on("classic.StopFailure", async ($, e, next) =>
-    observe($, e, next, "classic.StopFailure", StopFailureInputSchema, {
-      after: async (input) => {
-        if (input.agent_id !== undefined) return;
-        turnEffort($, state, input.effort?.level);
-        const at = Math.floor(await $.clock.now());
-        const text = input.last_assistant_message ?? input.error_details;
-        const api_error = {
-          kind: input.error ?? "unknown",
-          ...(text !== undefined ? { text } : {}),
-          at,
-        };
-        state.failedThisTurn = true;
-        state.facts = { ...state.facts, api_error };
-        sendFacts($, state);
-      },
-    }),
-  ).catch(async (_$, e, next) => next(e));
   on("classic.Stop", async ($, e, next) =>
     observe($, e, next, "classic.Stop", StopInputSchema, {
       after: (input) => {
@@ -974,7 +910,7 @@ export function register(on: On): ModuleState {
   on("turn.complete", async ($, e, next) =>
     observe($, e, next, "turn.complete", TurnCompleteInputSchema, {
       after: async (input) => {
-        if (input.agentId === undefined) await turnEnded($, state, input.reason);
+        if (input.agentId === undefined) await turnState($, state, "idle");
       },
     }),
   ).catch(async (_$, e, next) => next(e));

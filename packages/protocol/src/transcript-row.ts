@@ -127,6 +127,11 @@ export const AssistantRowSchema = v.looseObject({
   ...TurnRowHeadEntries,
   message: AssistantMessageSchema,
   isApiErrorMessage: v.optional(v.boolean()),
+  /** How Claude Code classified the API error an `isApiErrorMessage` row
+   * reports (`server_error`, `rate_limit`, `invalid_request`, `unknown`, ...,
+   * the words of its StopFailure). An open set: Claude Code names the kinds,
+   * and some error rows carry none. */
+  error: v.optional(v.string()),
   effort: v.optional(v.string()),
 });
 export type AssistantRow = Output<typeof AssistantRowSchema>;

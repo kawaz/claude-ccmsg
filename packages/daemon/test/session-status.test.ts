@@ -2077,7 +2077,13 @@ function nameOf(file: string): string {
  * so nothing but `isApiErrorMessage` distinguishes it from a real turn. */
 function apiErrorRow(
   text: string,
-  opts: { timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean } = {},
+  opts: {
+    timestamp?: string;
+    isSidechain?: boolean;
+    isApiErrorMessage?: boolean;
+    /** The row's classification; `null` for a row that carries none. */
+    error?: string | null;
+  } = {},
 ): string {
   return line(
     assistantRow({
@@ -2094,7 +2100,7 @@ function apiErrorRow(
           cache_read_input_tokens: 0,
         },
       }),
-      error: "invalid_request",
+      ...(opts.error === null ? {} : { error: opts.error ?? "invalid_request" }),
       isApiErrorMessage: opts.isApiErrorMessage ?? true,
     }),
   );
@@ -2116,8 +2122,42 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
 
   test("観測済みのエラー文言をすべて api_error として拾う", async () => {
     for (const text of OBSERVED_TEXTS) {
-      expect((await apply([apiErrorRow(text)])).api_error).toEqual({ text, timestamp: START });
+      expect((await apply([apiErrorRow(text)])).api_error).toEqual({
+        text,
+        timestamp: START,
+        kind: "invalid_request",
+      });
     }
+  });
+
+  // 分類は行の error 欄にしか書かれない (DR-0039 §2)。module のあるセッションも
+  // ここから読むので、実 transcript に現れる語をそのまま kind に載せる。語彙は
+  // Claude Code が決める open set で、ccmsg の知らない語も落とさない。
+  test("行の error 欄を kind として載せる", async () => {
+    for (const error of [
+      "server_error",
+      "rate_limit",
+      "invalid_request",
+      "authentication_failed",
+      "model_not_found",
+      "billing_error",
+      "unknown",
+      "some_future_kind",
+    ]) {
+      expect((await apply([apiErrorRow("API Error: x", { error })])).api_error).toEqual({
+        text: "API Error: x",
+        timestamp: START,
+        kind: error,
+      });
+    }
+  });
+
+  test("error 欄の無いエラー行は kind 無しで拾う", async () => {
+    // 実 transcript に error 欄の無いエラー行がある (例: tool call の parse 失敗)。
+    const text = "The model's tool call could not be parsed (retry also failed).";
+    const result = await apply([apiErrorRow(text, { error: null })]);
+    expect(result.api_error).toEqual({ text, timestamp: START });
+    expect(result.api_error).not.toHaveProperty("kind");
   });
 
   test("エラーが無ければ api_error は snapshot に現れない", async () => {
@@ -2143,7 +2183,11 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
       apiErrorRow("API Error: Unable to connect to API (FailedToOpenSocket)"),
       apiErrorRow("Prompt is too long", { timestamp: END }),
     ]);
-    expect(result.api_error).toEqual({ text: "Prompt is too long", timestamp: END });
+    expect(result.api_error).toEqual({
+      text: "Prompt is too long",
+      timestamp: END,
+      kind: "invalid_request",
+    });
   });
 
   test("isApiErrorMessage:false の synthetic 行はエラーを立ても消しもしない", async () => {

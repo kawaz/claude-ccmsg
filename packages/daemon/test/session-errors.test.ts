@@ -27,15 +27,17 @@ function fixtureDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-session-errors-"));
 }
 
-/** Harness API-error row, shaped after a real CC 2.1.x transcript line. */
+/** Harness API-error row, shaped after a real CC 2.1.x transcript line.
+ * `error` is the row's classification, which some rows do not carry. */
 function apiErrorLine(
   text: string,
-  opts: { timestamp?: string; isSidechain?: boolean } = {},
+  opts: { timestamp?: string; isSidechain?: boolean; error?: string } = {},
 ): string {
   return `${line(
     assistantRow({
       isSidechain: opts.isSidechain ?? false,
       timestamp: opts.timestamp ?? START,
+      ...(opts.error !== undefined ? { error: opts.error } : {}),
       message: assistantMessage({
         model: "<synthetic>",
         content: [textBlock(text)],
@@ -221,12 +223,12 @@ describe("session_errors daemon op / push", () => {
   );
 });
 
-// A session whose hooks module sends facts says its API error itself
-// (DR-0035 §3): Claude Code's StopFailure classifies it, and its transcript is
-// not folded for it.
-describe("session_errors from the hooks module's facts", () => {
+// The API error is read off the transcript for every session, the one whose
+// hooks module sends facts included, and its kind is the row's `error`
+// (DR-0039 §2): the module has no way to read the classification.
+describe("session_errors of a session whose hooks module sends facts", () => {
   test(
-    "the module's error is listed with its kind, and its answer clears it",
+    "the transcript's error row is listed with its kind, and an answer clears it",
     async () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
@@ -236,22 +238,18 @@ describe("session_errors from the hooks module's facts", () => {
         const session = await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
+        await session.requestOk({ op: "session_facts", facts: { at: Date.now(), model: "m" } });
         expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
 
-        const at = Date.parse(START);
-        await session.requestOk({
-          op: "session_facts",
-          facts: { at, api_error: { kind: "rate_limit", text: "API Error: 429", at } },
-        });
+        const text = "API Error: Request rejected (429) · retry later";
+        fs.appendFileSync(file, apiErrorLine(text, { error: "rate_limit" }));
         const raised = await user.readEventUntil(
           "session_errors",
           (event) => event.errors.length > 0,
         );
-        expect(raised.ev.errors).toEqual([
-          { sid: A, text: "API Error: 429", timestamp: START, kind: "rate_limit" },
-        ]);
+        expect(raised.ev.errors).toEqual([{ sid: A, text, timestamp: START, kind: "rate_limit" }]);
 
-        await session.requestOk({ op: "session_facts", facts: { at: at + 1 } });
+        fs.appendFileSync(file, assistantLine("back"));
         await user.readEventUntil("session_errors", (event) => event.errors.length === 0);
       } finally {
         await stopTestDaemon(ctx);
@@ -262,25 +260,20 @@ describe("session_errors from the hooks module's facts", () => {
   );
 
   test(
-    "the transcript's error row of a session with facts is not listed",
+    "an API error a module still sends with its facts is not listed",
     async () => {
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
         const file = path.join(dir, `${A}.jsonl`);
-        fs.writeFileSync(file, assistantLine("hello") + apiErrorLine("Prompt is too long"));
+        fs.writeFileSync(file, assistantLine("hello"));
         const session = await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect((await user.requestOk({ op: "session_errors" })).errors).toHaveLength(1);
-
-        await session.requestOk({ op: "session_facts", facts: { at: Date.now() } });
-        await user.readEventUntil("session_errors", (event) => event.errors.length === 0);
-        // A later error row is not read either: the module says the session's.
-        fs.appendFileSync(file, apiErrorLine("API Error: 500", { timestamp: END }));
+        const at = Date.now();
         await session.requestOk({
           op: "session_facts",
-          facts: { at: Date.now(), model: "marker" },
+          facts: { at, api_error: { kind: "rate_limit", text: "API Error: 429", at } },
         });
         expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
       } finally {

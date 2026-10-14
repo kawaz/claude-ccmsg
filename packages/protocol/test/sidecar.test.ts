@@ -133,12 +133,9 @@ describe("the ops' results", () => {
       { at: 1 },
       { at: 1_791_955_713_123, model: "claude-opus-5-5[1m]" },
       { at: 2, model: "m", context: { window: 1_000_000, at: 2 } },
-      { at: 3, api_error: { kind: "rate_limit", text: "API Error: 429", at: 3 } },
       { at: 4, effort: "xhigh", context: { window: 200_000, tokens: 0, at: 4 } },
       { at: 5, turn: { state: "responding", since: 5 } },
       { at: 5, turn: { state: "idle", since: 5 } },
-      // Claude Code names the kinds: one this ccmsg does not know is kept.
-      { at: 3, api_error: { kind: "some_new_kind", at: 3 } },
     ] as const) {
       expect(parseWith(SessionFactsSchema, facts)).toEqual({ ok: true, value: facts });
     }
@@ -150,17 +147,29 @@ describe("the ops' results", () => {
       { at: 1, context: { window: 0, at: 1 } },
       { at: 1, context: { at: 1 } },
       { at: 1, context: { window: 200_000 } },
-      { at: 1, api_error: { kind: "", at: 1 } },
       { at: 1, effort: "" },
       // ccmsg names the states: one it does not know is refused.
       { at: 1, turn: { state: "busy", since: 1 } },
       { at: 1, turn: { state: "idle" } },
       { at: 1, context: { window: 1, tokens: -1, at: 1 } },
       { at: 1, context: { window: 1, tokens: 1.5, at: 1 } },
-      { at: 1, api_error: { text: "x", at: 1 } },
     ]) {
       expect(parseWith(SessionFactsSchema, facts).ok).toBe(false);
     }
+  });
+
+  // The API error is read off the transcript (DR-0039 §2). A module loaded
+  // before that still sends one with its facts: the rest of them are taken.
+  test("session.facts from a module that still says an API error: taken without it", () => {
+    const facts = {
+      at: 3,
+      model: "m",
+      api_error: { kind: "rate_limit", text: "API Error: 429", at: 3 },
+    };
+    expect(parseWith(SessionFactsSchema, facts)).toEqual({
+      ok: true,
+      value: { at: 3, model: "m" },
+    });
   });
 
   test("session.facts is asked with no arguments", () => {
