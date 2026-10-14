@@ -1,9 +1,12 @@
 // `ccmsg sidecar` (DR-0035 §3): the child a session's hooks module keeps for
-// the session's life. It binds `<sid>.<pid>.sock` and copies every request
-// line written there to its standard output, which the module reads.
+// the session's life. It binds `<sid>.<run id>.sock`, copies every request
+// line written there to its standard output, which the module reads, and names
+// the run to the daemon on a connection it keeps open, so the daemon knows the
+// run is there for exactly as long as that connection is.
 import { chmodSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
-import { sidecarSocketName } from "@ccmsg/protocol";
+import { type Identity, type Paths, sidecarSocketName } from "@ccmsg/protocol";
+import { type Client, nameRunNoSpawn, type RunName } from "./client.ts";
 
 /** Where the sidecar's lines go. An error from it is the reader having gone,
  * which ends the sidecar. */
@@ -12,8 +15,8 @@ export type Out = (line: string, done: (error?: Error | null) => void) => void;
 export interface SidecarOptions {
   readonly dir: string;
   readonly sid: string;
-  /** The harness process running the session, which names the socket. */
-  readonly pid: number;
+  /** The run (SidecarRunIdSchema), which names the socket. */
+  readonly runId: string;
   readonly out: Out;
 }
 
@@ -37,10 +40,11 @@ export interface Sidecar {
  * goes back by `ccmsg sidecar reply`.
  *
  * The path is unlinked before binding because whatever is there is this run's
- * own: the pid is the run's, so another run's socket has another name, and a
- * file under this one is a sidecar of this run that did not live to remove it. */
+ * own: the run id is the run's, so another run's socket has another name, and
+ * a file under this one is a sidecar of this run that did not live to remove
+ * it. */
 export function startSidecar(options: SidecarOptions): Sidecar {
-  const socketPath = path.join(options.dir, sidecarSocketName(options.sid, options.pid));
+  const socketPath = path.join(options.dir, sidecarSocketName(options.sid, options.runId));
   mkdirSync(options.dir, { recursive: true, mode: 0o700 });
   // Stated rather than left to the umask or to whoever made the directory:
   // what is written here reaches a session as if a person typed it.
@@ -113,49 +117,80 @@ function unlink(file: string): void {
   }
 }
 
-/** One process as `ps` states it. Named so a test can describe a tree it never
- * has to create. */
-export type AskProcess = (pid: number) => { ppid: number; command: string } | undefined;
+/** Waits between attempts to reach a daemon that is not listening: these in
+ * turn, then NAME_RETRY_MAX_MS for as long as the sidecar lives — the same as
+ * a subscribe reconnecting. */
+const NAME_RETRY_MS = [250, 500, 1000, 2000, 4000] as const;
+const NAME_RETRY_MAX_MS = 5000;
 
-/** How far up the tree the harness is looked for. The sidecar is started by
- * the harness through the launcher script, which execs; a few levels covers a
- * shell or two in between, and an unbounded walk would reach init on a
- * process that is not below a harness at all. */
-const DEPTH = 8;
-
-/** The Claude Code process this command runs under, or undefined.
- *
- * Judged by the basename of argv[0], as session_kill verifies a pid: `claude`
- * with or without a directory. */
-export function harnessPid(
-  ask: AskProcess = askPs,
-  from: number = process.ppid,
-): number | undefined {
-  let pid = from;
-  for (let step = 0; step < DEPTH; step++) {
-    if (!Number.isInteger(pid) || pid <= 1) return undefined;
-    const ancestor = ask(pid);
-    if (ancestor === undefined) return undefined;
-    const argv0 = ancestor.command.trimStart().split(/\s/, 1)[0] ?? "";
-    if (argv0.slice(argv0.lastIndexOf("/") + 1) === "claude") return pid;
-    pid = ancestor.ppid;
-  }
-  return undefined;
+export interface KeepNamedOptions {
+  readonly paths: Paths;
+  readonly identity: Identity;
+  readonly name: RunName;
+  /** Settles when the sidecar has let go of its socket: the run is named no
+   * more, and the connection naming it is closed. */
+  readonly stopped: Promise<unknown>;
+  readonly log: (line: string) => void;
+  /** Settles `ms` after it is called; the timer by default. A test holds it
+   * to start the next daemon before the next attempt, rather than wait. */
+  readonly wait?: (ms: number) => Promise<void>;
 }
 
-const askPs: AskProcess = (pid) => {
+function timer(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Keep the run named to the daemon for as long as the sidecar lives: name it
+ * to the daemon listening now, and once that connection closes (the daemon
+ * stopped, restarted, or was replaced by a newer one), to whichever daemon
+ * listens next. The daemon counts the run as live while the connection is
+ * open, so closing it is how the run's end reaches the daemon.
+ *
+ * No daemon is started: one the person stopped stays stopped, and the
+ * session's own start brings one up (SessionStart). Until one listens, each
+ * attempt is a real connect, spaced as NAME_RETRY_MS says — nothing would say
+ * when a daemon starts listening other than trying.
+ *
+ * Design rationale: retrying on a timer rather than waiting on an event. The
+ * one signal of a daemon starting to listen is its socket appearing, and a
+ * watch on the state dir is what this sidecar exists to stop depending on
+ * (FSEvents can deliver late or not at all). */
+export async function keepNamed(options: KeepNamedOptions): Promise<void> {
+  const STOPPED = Symbol("stopped");
+  const stopped = options.stopped.then((): typeof STOPPED => STOPPED);
+  let attempt = 0;
+  let client: Client | null = null;
   try {
-    const done = Bun.spawnSync(["ps", "-p", String(pid), "-o", "ppid=,command="], {
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    if (done.exitCode !== 0) return undefined;
-    const line = done.stdout.toString().trim();
-    const at = line.search(/\s/);
-    if (at <= 0) return undefined;
-    const ppid = Number(line.slice(0, at));
-    return Number.isInteger(ppid) ? { ppid, command: line.slice(at + 1).trimStart() } : undefined;
-  } catch {
-    return undefined;
+    for (;;) {
+      const naming = nameRunNoSpawn(options.paths, options.identity, options.name);
+      const named = await Promise.race([naming, stopped]);
+      if (named === STOPPED) {
+        void naming.then((late) => late?.close());
+        return;
+      }
+      if (named !== null) {
+        client = named;
+        attempt = 0;
+        options.log(`named ${options.name.runId} to ${options.paths.sock}`);
+        if ((await Promise.race([untilClosed(named), stopped])) === STOPPED) return;
+        client = null;
+        options.log(`lost ${options.paths.sock}; naming the run again once a daemon listens`);
+        continue;
+      }
+      const ms = NAME_RETRY_MS[attempt] ?? NAME_RETRY_MAX_MS;
+      attempt++;
+      if ((await Promise.race([(options.wait ?? timer)(ms), stopped])) === STOPPED) return;
+    }
+  } finally {
+    client?.close();
   }
-};
+}
+
+/** Settles when the daemon closes the connection. Nothing is pushed to a
+ * connection that only named a run but the daemon's going (`restarting`),
+ * which is read past like anything else. */
+async function untilClosed(client: Client): Promise<void> {
+  while ((await client.readLine()) !== null) {
+    // read past
+  }
+}

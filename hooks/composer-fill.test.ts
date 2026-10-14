@@ -12,6 +12,7 @@ import {
   SIDECAR_OP_NAMES,
   type SidecarReply,
   SidecarReplyTextSchema,
+  SidecarRunIdSchema,
 } from "@ccmsg/protocol/sidecar";
 import {
   ACCEPT_WAIT_MS,
@@ -19,7 +20,6 @@ import {
   type HookedEvent,
   answer,
   handlePromptSend,
-  HARNESS_PID_ARGV,
   hyouiEnterArgv,
   lineSplitter,
   type ModuleState,
@@ -95,7 +95,6 @@ interface Fake {
   composer: { text: string };
   runs: string[][];
   /** The runs that asked the harness pid. */
-  pidAsks: string[][];
   /** What each run got on standard input, by the index of the run. */
   stdins: (string | undefined)[];
   /** The env each run was given, by the index of the run. */
@@ -112,6 +111,14 @@ interface Fake {
   logs: string[];
 }
 
+/** The value given after `flag` in a sidecar's argv. */
+function flagOf(argv: readonly string[], flag: string): string {
+  const at = argv.indexOf(flag);
+  const value = at < 0 ? undefined : argv[at + 1];
+  if (value === undefined) throw new Error(`no ${flag} in ${argv.join(" ")}`);
+  return value;
+}
+
 /** An engine whose composer, environment and clock the test holds. `onEnter`
  * stands for what the terminal does with the Enter key. */
 function fakeEngine(
@@ -123,8 +130,6 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
-    /** What asking the harness pid (HARNESS_PID_ARGV) prints, or throws. */
-    harnessPid?: string | Error;
     /** What `ccmsg sidecar send` does, given what it was run with. */
     send?: (init: { stdin?: string; timeoutMs?: number }) => Promise<{
       exitCode: number;
@@ -142,7 +147,6 @@ function fakeEngine(
   let now = 0;
   const composer = { text: options.draft ?? "" };
   const runs: string[][] = [];
-  const pidAsks: string[][] = [];
   const stdins: (string | undefined)[] = [];
   const envs: (Record<string, string> | undefined)[] = [];
   const spawns: Fake["spawns"] = [];
@@ -169,14 +173,6 @@ function fakeEngine(
     },
     process: {
       run: async (argv, init) => {
-        // Asked once per load before any sidecar; kept out of `runs`, which
-        // the tests read for what a request ran.
-        if (argv.join("\0") === HARNESS_PID_ARGV.join("\0")) {
-          pidAsks.push([...argv]);
-          const printed = options.harnessPid ?? "4242\n";
-          if (printed instanceof Error) throw printed;
-          return { exitCode: 0, stdout: printed, stderr: "" };
-        }
         runs.push([...argv]);
         stdins.push(init?.stdin);
         envs.push(init?.env);
@@ -224,7 +220,6 @@ function fakeEngine(
     $,
     composer,
     runs,
-    pidAsks,
     stdins,
     envs,
     spawns,
@@ -450,8 +445,18 @@ describe("the sidecar the module keeps", () => {
     registerOn(fake);
     await fire(fake, "session.start", START, async () => ({}));
     await settle();
-    expect(fake.spawns.map((s) => s.argv)).toEqual([
-      ["/plugin/bin/ccmsg", "sidecar", "--pid", "4242", "--sid", fake.sid.value],
+    const argv = spawned(fake, 0).argv;
+    expect(argv).toEqual([
+      "/plugin/bin/ccmsg",
+      "sidecar",
+      "--sid",
+      fake.sid.value,
+      "--run",
+      flagOf(argv, "--run"),
+      "--started-at",
+      "1",
+      "--hyoui-session-id",
+      "term-1",
     ]);
     spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9",');
     spawned(fake, 0).stream.push('"args":{"text":"hello"}}\n');
@@ -467,9 +472,40 @@ describe("the sidecar the module keeps", () => {
     });
   });
 
-  // A sandboxed session cannot run `ps`, so the sidecar cannot find the
-  // harness among its ancestors; the module names it with --pid instead.
-  test("the sidecar is given the harness pid, asked once per load", async () => {
+  // The sidecar names the run to the daemon with what the module itself
+  // knows — the session's environment as `$.env.get` reads it, and when the
+  // module was loaded — and nothing it would have to ask a child for: a
+  // sandboxed session cannot run `ps`, and the daemon finds the pid itself.
+  test("the sidecar is told the run, the config dir and the terminal, and no pid", async () => {
+    const fake = fakeEngine({
+      env: { CLAUDE_CONFIG_DIR: "/h/.claude-a", HYOUI_SESSION_ID: "term-1" },
+    });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    const argv = spawned(fake, 0).argv;
+    expect(flagOf(argv, "--config-dir")).toBe("/h/.claude-a");
+    expect(flagOf(argv, "--hyoui-session-id")).toBe("term-1");
+    expect(argv).not.toContain("--pid");
+    expect(parseWith(SidecarRunIdSchema, flagOf(argv, "--run")).ok).toBe(true);
+    expect(fake.runs).toEqual([]);
+  });
+
+  test("outside hyoui and without a config dir, neither is named", async () => {
+    const fake = fakeEngine({ env: {} });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    const argv = spawned(fake, 0).argv;
+    expect(argv).not.toContain("--config-dir");
+    expect(argv).not.toContain("--hyoui-session-id");
+  });
+
+  // One run, one id, for the module's whole load: a sidecar started again
+  // and a sidecar under a new session id (/clear) name the same run, which is
+  // how the daemon tells a session that changed its id from one that never
+  // had a module.
+  test("the run id and start stay the same across sidecars and session ids", async () => {
     const fake = fakeEngine();
     registerOn(fake);
     await fire(fake, "session.start", START, async () => ({}));
@@ -478,23 +514,28 @@ describe("the sidecar the module keeps", () => {
     await settle();
     lastTimer(fake).fn();
     await settle();
-    expect(fake.spawns.map((s) => s.argv.slice(2, 4))).toEqual([
-      ["--pid", "4242"],
-      ["--pid", "4242"],
+    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await settle();
+    expect(fake.spawns.length).toBe(3);
+    const runs = fake.spawns.map((s) => [flagOf(s.argv, "--run"), flagOf(s.argv, "--started-at")]);
+    expect(new Set(runs.map((r) => r.join(" "))).size).toBe(1);
+    expect(fake.spawns.map((s) => flagOf(s.argv, "--sid"))).toEqual([
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     ]);
-    expect(fake.pidAsks).toEqual([[...HARNESS_PID_ARGV]]);
   });
 
-  test("without a pid the sidecar is started without --pid", async () => {
-    for (const harnessPid of ["", "1\n", "not a pid\n", new Error("spawn failed")]) {
-      const fake = fakeEngine({ harnessPid });
-      registerOn(fake);
-      await fire(fake, "session.start", START, async () => ({}));
-      await settle();
-      expect(fake.spawns.map((s) => s.argv)).toEqual([
-        ["/plugin/bin/ccmsg", "sidecar", "--sid", fake.sid.value],
-      ]);
-    }
+  test("another load of the module is another run", async () => {
+    const one = fakeEngine();
+    registerOn(one);
+    await fire(one, "session.start", START, async () => ({}));
+    const two = fakeEngine();
+    registerOn(two);
+    await fire(two, "session.start", START, async () => ({}));
+    await settle();
+    expect(flagOf(spawned(one, 0).argv, "--run")).not.toBe(flagOf(spawned(two, 0).argv, "--run"));
   });
 
   test("session.start and classic.SessionStart together start one sidecar", async () => {
@@ -536,7 +577,7 @@ describe("the sidecar the module keeps", () => {
     await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
     await settle();
     expect(spawned(fake, 0).stream.returned.value).toBe(true);
-    expect(fake.spawns.map((s) => s.argv.at(-1))).toEqual([
+    expect(fake.spawns.map((s) => flagOf(s.argv, "--sid"))).toEqual([
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
     ]);

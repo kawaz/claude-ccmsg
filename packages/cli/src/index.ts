@@ -18,6 +18,7 @@ import {
   parseWith,
   SessionStateFileTextSchema,
   SidecarReplyTextSchema,
+  SidecarRunIdSchema,
   SinceSeqTextSchema,
   splitSendWords,
   resolvePaths,
@@ -46,7 +47,7 @@ import {
   waitDaemonGone,
 } from "./client.ts";
 import { watchSubscribeOwner } from "./subscribe-owner.ts";
-import { harnessPid, type Sidecar, startSidecar } from "./sidecar.ts";
+import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -467,7 +468,13 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   await runSidecar(opts);
 }
 
-/** Standard input is not read: the module's spawn closes it at once, so its
+/** `ccmsg sidecar --sid <sid> --run <run id> --started-at <epoch ms>
+ * [--config-dir <dir>] [--hyoui-session-id <id>]`: bind the run's socket and
+ * keep the run named to the daemon (sidecar_hello) with what the module read
+ * of the session — its CLAUDE_CONFIG_DIR and HYOUI_SESSION_ID through
+ * `$.env.get`, and when it was loaded.
+ *
+ * Standard input is not read: the module's spawn closes it at once, so its
  * end says nothing about whether anybody still reads. What does is a write to
  * standard output failing, and the signal the harness sends the child when
  * the module goes. */
@@ -480,22 +487,32 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
     process.stderr.write(`ccmsg sidecar: --sid must be a session id (got ${sid ?? "nothing"})\n`);
     process.exit(2);
   }
-  const given = str(opts, "pid");
-  const pid = given === undefined ? harnessPid() : Number(given);
-  if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 0) {
+  const runId = str(opts, "run");
+  if (runId === undefined || !parseWith(SidecarRunIdSchema, runId).ok) {
     process.stderr.write(
-      given === undefined
-        ? "ccmsg sidecar: no claude process among the ancestors; pass --pid\n"
-        : `ccmsg sidecar: --pid must be a positive integer (got ${given})\n`,
+      `ccmsg sidecar: --run must be a run id: lowercase letters and digits (got ${runId ?? "nothing"})\n`,
     );
     process.exit(2);
   }
+  const givenStart = str(opts, "started-at");
+  const startedAt = Number(givenStart);
+  if (givenStart === undefined || !Number.isSafeInteger(startedAt) || startedAt <= 0) {
+    process.stderr.write(
+      `ccmsg sidecar: --started-at must be a time in epoch milliseconds (got ${givenStart ?? "nothing"})\n`,
+    );
+    process.exit(2);
+  }
+  const configDir = str(opts, "config-dir");
+  const hyouiSessionId = str(opts, "hyoui-session-id");
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar");
+  const paths = resolvePaths();
   let running: Sidecar;
   try {
     running = startSidecar({
-      dir: resolvePaths().sidecars,
+      dir: paths.sidecars,
       sid,
-      pid,
+      runId,
       out: (line, done) => {
         process.stdout.write(line, done);
       },
@@ -510,7 +527,20 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, stop);
   process.stdout.on("error", stop);
   process.stderr.write(`ready ${running.path}\n`);
+  const named = keepNamed({
+    paths,
+    identity,
+    name: {
+      runId,
+      startedAt,
+      ...(configDir !== undefined ? { configDir } : {}),
+      ...(hyouiSessionId !== undefined ? { hyouiSessionId } : {}),
+    },
+    stopped: running.stopped,
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
   const why = await running.stopped;
+  await named;
   process.stderr.write(`${why} ${running.path}\n`);
   process.exit(0);
 }

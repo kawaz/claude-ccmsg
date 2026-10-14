@@ -1,4 +1,5 @@
-// `ccmsg sidecar` (DR-0035 §3): bind the run's socket, copy lines to stdout,
+// `ccmsg sidecar` (DR-0035 §3): bind the run's socket, name the run to the
+// daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
 // carries the module's reply to the daemon; `ccmsg sidecar send` (DR-0037 §2)
 // sends a SendMessage the module took over and prints its result.
@@ -9,13 +10,15 @@ import { fileURLToPath } from "node:url";
 import {
   jsonText,
   parseWith,
+  resolvePaths,
   resolveSidecarDir,
   SendMessageResultTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
   sidecarSocketName,
 } from "@ccmsg/protocol";
-import { harnessPid, startSidecar, type AskProcess } from "../src/sidecar.ts";
+import { keepNamed, startSidecar } from "../src/sidecar.ts";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
   spawnDaemonProc,
@@ -37,6 +40,7 @@ function sidecarRequestOf(line: string): SidecarRequest {
   return read.value;
 }
 const SID = "11111111-2222-4333-8444-555555555555";
+const RUN = "mgq1k2x3abcd1234";
 
 /** Sidecar sockets need a directory short enough for `sun_path`, which
  * macOS's tmpdir is not. */
@@ -64,7 +68,7 @@ describe("startSidecar", () => {
     const sidecar = startSidecar({
       dir,
       sid: SID,
-      pid: 4242,
+      runId: "run4242",
       out: (line, done) => {
         lines.push(line);
         if (lines.length === 3) got.resolve();
@@ -72,7 +76,7 @@ describe("startSidecar", () => {
       },
     });
     try {
-      expect(sidecar.path).toBe(path.join(dir, `${SID}.4242.sock`));
+      expect(sidecar.path).toBe(path.join(dir, `${SID}.run4242.sock`));
       expect(fs.statSync(sidecar.path).mode & 0o777).toBe(0o600);
       expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
       await writeTo(sidecar.path, '{"a":', "1}\n", '{"b":2}\n\n');
@@ -93,7 +97,7 @@ describe("startSidecar", () => {
     const sidecar = startSidecar({
       dir,
       sid: SID,
-      pid: 4245,
+      runId: "run4245",
       out: (line, done) => {
         got.resolve(line);
         done();
@@ -119,7 +123,7 @@ describe("startSidecar", () => {
     const sidecar = startSidecar({
       dir,
       sid: SID,
-      pid: 4243,
+      runId: "run4243",
       out: (_line, done) => done(new Error("EPIPE")),
     });
     await writeTo(sidecar.path, "x\n");
@@ -131,8 +135,8 @@ describe("startSidecar", () => {
   // remove its socket.
   test("leaving keeps a socket a later sidecar bound under the same name", async () => {
     const dir = path.join(shortBase(), "sc");
-    const first = startSidecar({ dir, sid: SID, pid: 4244, out: (_l, done) => done() });
-    const second = startSidecar({ dir, sid: SID, pid: 4244, out: (_l, done) => done() });
+    const first = startSidecar({ dir, sid: SID, runId: "run4244", out: (_l, done) => done() });
+    const second = startSidecar({ dir, sid: SID, runId: "run4244", out: (_l, done) => done() });
     first.stop();
     await first.stopped;
     expect(fs.existsSync(second.path)).toBe(true);
@@ -141,32 +145,31 @@ describe("startSidecar", () => {
     expect(fs.existsSync(second.path)).toBe(false);
   });
 
-  test("a session id that is not one is refused before any path is made", () => {
+  test("a session id or run id that is not one is refused before any path is made", () => {
     expect(() =>
-      startSidecar({ dir: "/nonexistent", sid: "../x", pid: 1, out: (_l, d) => d() }),
+      startSidecar({ dir: "/nonexistent", sid: "../x", runId: RUN, out: (_l, d) => d() }),
+    ).toThrow(RangeError);
+    expect(() =>
+      startSidecar({ dir: "/nonexistent", sid: SID, runId: "../x", out: (_l, d) => d() }),
     ).toThrow(RangeError);
   });
 });
 
-describe("harnessPid", () => {
-  const tree: Record<number, { ppid: number; command: string }> = {
-    300: { ppid: 200, command: "bun run /x/packages/cli/src/index.ts sidecar" },
-    200: { ppid: 100, command: "/opt/homebrew/bin/claude --plugin-dir /x" },
-    100: { ppid: 1, command: "-zsh" },
-    50: { ppid: 1, command: "/bin/bash script" },
-  };
-  const ask: AskProcess = (pid) => tree[pid];
-
-  test("walks up to the first claude, with or without a directory", () => {
-    expect(harnessPid(ask, 300)).toBe(200);
-    expect(harnessPid(ask, 200)).toBe(200);
-  });
-
-  test("undefined outside a harness", () => {
-    expect(harnessPid(ask, 50)).toBeUndefined();
-    expect(harnessPid(ask, 999)).toBeUndefined();
-  });
-});
+/** `ccmsg sidecar` as the hooks module starts it for run RUN of SID. */
+function sidecarArgv(...extra: string[]): string[] {
+  return [
+    process.execPath,
+    CLI,
+    "sidecar",
+    "--sid",
+    SID,
+    "--run",
+    RUN,
+    "--started-at",
+    String(Date.now()),
+    ...extra,
+  ];
+}
 
 function sidecarEnv(stateDir: string): Record<string, string> {
   return {
@@ -193,13 +196,15 @@ async function readUntil(
 describe("ccmsg sidecar (process)", () => {
   test("announces ready, copies a line to stdout, leaves on SIGTERM", async () => {
     const stateDir = path.join(shortBase(), "s");
-    const proc = Bun.spawn(
-      [process.execPath, CLI, "sidecar", "--sid", SID, "--pid", String(process.pid)],
-      { env: sidecarEnv(stateDir), stdin: "ignore", stdout: "pipe", stderr: "pipe" },
-    );
+    const proc = Bun.spawn(sidecarArgv(), {
+      env: sidecarEnv(stateDir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const err = proc.stderr.getReader();
     const ready = await readUntil(err, (t) => t.includes("\n"));
-    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, process.pid));
+    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
     expect(ready).toBe(`ready ${socketPath}\n`);
     const request = '{"v":1,"op":"prompt.send","id":"1","args":{"text":"t"}}\n';
     await writeTo(socketPath, request);
@@ -218,21 +223,21 @@ describe("ccmsg sidecar (process)", () => {
       [
         "bash",
         "-c",
-        '"$0" "$1" sidecar --sid "$2" --pid "$3" | true',
+        '"$0" "$1" sidecar --sid "$2" --run "$3" --started-at 1 | true',
         process.execPath,
         CLI,
         SID,
-        String(process.pid),
+        RUN,
       ],
       { env: sidecarEnv(stateDir), stdin: "ignore", stdout: "ignore", stderr: "pipe" },
     );
     const err = proc.stderr.getReader();
     await readUntil(err, (t) => t.includes("\n"));
-    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, process.pid));
+    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
     await writeTo(socketPath, "first\n");
     await writeTo(socketPath, "second\n");
     const rest = await readUntil(err, () => false);
-    expect(rest).toBe(`reader_gone ${socketPath}\n`);
+    expect(rest).toContain(`reader_gone ${socketPath}\n`);
     await proc.exited;
     expect(fs.existsSync(socketPath)).toBe(false);
   });
@@ -250,14 +255,21 @@ describe("ccmsg sidecar (process)", () => {
     expect(out).not.toContain('"op"');
   });
 
-  test("a non-session-id --sid is refused", async () => {
-    const proc = Bun.spawn([process.execPath, CLI, "sidecar", "--sid", "nope", "--pid", "1"], {
-      env: sidecarEnv(path.join(shortBase(), "s")),
-      stdout: "pipe",
-      stderr: "pipe",
+  for (const [name, args] of [
+    ["a --sid that is not a session id", ["--sid", "nope", "--run", RUN, "--started-at", "1"]],
+    ["a --run that is not a run id", ["--sid", SID, "--run", "../x", "--started-at", "1"]],
+    ["no --run", ["--sid", SID, "--started-at", "1"]],
+    ["a --started-at that is not a time", ["--sid", SID, "--run", RUN, "--started-at", "soon"]],
+  ] as const) {
+    test(`${name} is refused`, async () => {
+      const proc = Bun.spawn([process.execPath, CLI, "sidecar", ...args], {
+        env: sidecarEnv(path.join(shortBase(), "s")),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await proc.exited).toBe(2);
     });
-    expect(await proc.exited).toBe(2);
-  });
+  }
 });
 
 /** `ccmsg sidecar reply --sid SID` with `stdin` on its standard input, as the
@@ -302,17 +314,15 @@ describe("ccmsg sidecar reply", () => {
   // sidecar copies the request out, and `sidecar reply` answers it.
   test("answers the session_input request the sidecar copied out", async () => {
     const ctx = await startShortDaemon();
-    const sidecar = Bun.spawn(
-      [process.execPath, CLI, "sidecar", "--sid", SID, "--pid", String(process.pid)],
-      {
-        env: { ...process.env, ...ctx.env },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
+      env: { ...process.env, ...ctx.env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     try {
-      await readUntil(sidecar.stderr.getReader(), (t) => t.includes("\n"));
+      // Written to only once it has named the run.
+      await readUntil(sidecar.stderr.getReader(), (t) => t.includes("named "));
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const answer = user.request({ op: "session_input", session_id: SID, text: "from the web" });
@@ -359,6 +369,150 @@ describe("ccmsg sidecar reply", () => {
       expect(await new Response(proc.stderr).text()).toContain(says);
     });
   }
+});
+
+/** A `ps` that records being run: naming the run needs none, and a sidecar
+ * in a sandbox could not run it. */
+function psRecorder(base: string): { path: string; calls(): string } {
+  const bin = path.join(base, "bin");
+  const log = path.join(base, "ps.log");
+  fs.mkdirSync(bin, { recursive: true });
+  writeMockBin(path.join(bin, "ps"), `#!/bin/sh\necho "$*" >> "${log}"\nexit 1\n`);
+  return {
+    path: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+    calls: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""),
+  };
+}
+
+/** Stop the daemon of `ctx` and wait for it to exit, keeping its directories
+ * for the next daemon. */
+async function stopKeepingDirs(ctx: DaemonCtx): Promise<void> {
+  const c = await connect(ctx.sock);
+  await c.request({ op: "shutdown" }).catch(() => undefined);
+  c.close();
+  await ctx.proc.exited;
+}
+
+describe("ccmsg sidecar names its run to the daemon", () => {
+  const rowOf = (peers: readonly { sid: string; input_readiness?: { kind: string } }[]) =>
+    peers.find((p) => p.sid === SID)?.input_readiness?.kind;
+
+  // The daemon learns of the run from the sidecar itself, and of its end from
+  // the connection closing: no directory watched, no `ps`.
+  test("named once bound, gone once it leaves, with no ps run", async () => {
+    const ctx = await startShortDaemon();
+    const ps = psRecorder(ctx.base);
+    const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
+      env: { ...process.env, ...ctx.env, PATH: ps.path },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      await user.request({ op: "subscribe" });
+      await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
+      sidecar.kill("SIGTERM");
+      expect(await sidecar.exited).toBe(0);
+      await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "no_module");
+      expect(ps.calls()).toBe("");
+      user.close();
+    } finally {
+      sidecar.kill("SIGTERM");
+      await sidecar.exited;
+      await stopTestDaemon(ctx);
+    }
+  });
+});
+
+describe("keepNamed", () => {
+  const rowOf = (peers: readonly { sid: string; input_readiness?: { kind: string } }[]) =>
+    peers.find((p) => p.sid === SID)?.input_readiness?.kind;
+  const identity = { role: "session", sid: SID, repo: "", ws: "", cwd: "" } as const;
+  const name = { runId: RUN, startedAt: 1, hyouiSessionId: "hy-1" };
+
+  // A daemon that starts after the sidecar (a restart, an upgrade) knows
+  // nothing of the run until the sidecar connects to it and names it again.
+  test("names the run, and again to the daemon that listens after the first", async () => {
+    const first = await startShortDaemon();
+    const paths = resolvePaths(first.env);
+    const stop = Promise.withResolvers<void>();
+    const asked: number[] = [];
+    const askedOnce = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const lines: string[] = [];
+    const named = keepNamed({
+      paths,
+      identity,
+      name,
+      stopped: stop.promise,
+      log: (line) => lines.push(line),
+      wait: (ms) => {
+        asked.push(ms);
+        askedOnce.resolve();
+        return gate.promise;
+      },
+    });
+    let second: DaemonCtx | undefined;
+    try {
+      const before = await connect(first.sock);
+      await before.hello({ role: "user" });
+      await before.request({ op: "subscribe" });
+      await before.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
+      before.close();
+      await stopKeepingDirs(first);
+      // No daemon listens: the next attempt waits.
+      await askedOnce.promise;
+      expect(asked).toEqual([250]);
+
+      second = { ...first, proc: spawnDaemonProc(first.stateDir, first.dataDir) };
+      await waitConnectable(first.sock);
+      gate.resolve();
+      const after = await connect(first.sock);
+      await after.hello({ role: "user" });
+      await after.request({ op: "subscribe" });
+      await after.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
+
+      // The sidecar going closes the connection: the run goes with it.
+      stop.resolve();
+      await named;
+      await after.readEventUntil("peers", (ev) => rowOf(ev.peers) === "no_module");
+      after.close();
+      expect(lines).toEqual([
+        `named ${RUN} to ${paths.sock}`,
+        `lost ${paths.sock}; naming the run again once a daemon listens`,
+        `named ${RUN} to ${paths.sock}`,
+      ]);
+    } finally {
+      stop.resolve();
+      gate.resolve();
+      await named;
+      await stopTestDaemon(second ?? first);
+    }
+  });
+
+  test("stopped while no daemon listens, it ends without naming anything", async () => {
+    const stateDir = path.join(shortBase(), "s");
+    const stop = Promise.withResolvers<void>();
+    const waiting = Promise.withResolvers<void>();
+    const lines: string[] = [];
+    const named = keepNamed({
+      paths: resolvePaths({ CCMSG_STATE_DIR: stateDir }),
+      identity,
+      name,
+      stopped: stop.promise,
+      log: (line) => lines.push(line),
+      wait: () => {
+        waiting.resolve();
+        return new Promise<void>(() => {});
+      },
+    });
+    await waiting.promise;
+    stop.resolve();
+    await named;
+    expect(lines).toEqual([]);
+  });
 });
 
 /** `ccmsg sidecar send` as the module's `$.process.run` runs it: the text on

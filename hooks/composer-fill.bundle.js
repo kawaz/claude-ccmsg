@@ -118,6 +118,22 @@ function check(requirement, message$1) {
     }
   };
 }
+function maxLength(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "max_length",
+    reference: maxLength,
+    async: false,
+    expects: `<=${requirement}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && dataset.value.length > this.requirement)
+        _addIssue(this, "length", dataset, config$1, { received: `${dataset.value.length}` });
+      return dataset;
+    }
+  };
+}
 function nonEmpty(message$1) {
   return {
     kind: "validation",
@@ -151,6 +167,22 @@ function parseJson(config$1, message$1) {
         } else
           throw error;
       }
+      return dataset;
+    }
+  };
+}
+function regex(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "regex",
+    reference: regex,
+    async: false,
+    expects: `${requirement}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && !this.requirement.test(dataset.value))
+        _addIssue(this, "format", dataset, config$1);
       return dataset;
     }
   };
@@ -707,6 +739,12 @@ function errorText(e) {
 
 var SIDECAR_REQUEST_VERSION = 1;
 var SidecarRequestIdSchema = pipe(string(), nonEmpty("an id is not empty"));
+var SIDECAR_RUN_ID_MAX = 16;
+var SidecarRunIdSchema = pipe(string(), regex(/^[0-9a-z]+$/, "a run id is lowercase letters and digits"), maxLength(SIDECAR_RUN_ID_MAX, `a run id is at most ${String(SIDECAR_RUN_ID_MAX)} characters`));
+function sidecarRunId(startedAt, random) {
+  const digits = Math.floor(random * 36 ** 8).toString(36).padStart(8, "0");
+  return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
+}
 var PromptSendArgsSchema = object({
   text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
 });
@@ -1027,34 +1065,24 @@ function answer($, state, sid, generation, line) {
     $.ui.log(`ccmsg: request ${id} not answered: ${errorText(e)}`, { to: "debug" });
   });
 }
-var HARNESS_PID_ARGV = ["/bin/sh", "-c", 'echo "$PPID"'];
-async function harnessPid($, state) {
-  if (state.harnessPid !== undefined)
-    return state.harnessPid;
-  let pid = null;
-  try {
-    const run = await $.process.run(HARNESS_PID_ARGV, { timeoutMs: 3000 });
-    const read = Number(run.stdout.trim());
-    if (run.exitCode === 0 && Number.isSafeInteger(read) && read > 1)
-      pid = read;
-    else
-      $.ui.log(`ccmsg sidecar: no harness pid from sh (${run.stderr.trim()})`, { to: "debug" });
-  } catch (e) {
-    $.ui.log(`ccmsg sidecar: no harness pid from sh: ${errorText(e)}`, { to: "debug" });
-  }
-  state.harnessPid = pid;
-  return pid;
+async function sidecarArgv($, sid, run) {
+  const configDir = await $.env.get("CLAUDE_CONFIG_DIR");
+  const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
+  return [
+    `${$.plugin.root}/bin/ccmsg`,
+    "sidecar",
+    "--sid",
+    sid,
+    "--run",
+    run.id,
+    "--started-at",
+    String(run.startedAt),
+    ...configDir ? ["--config-dir", configDir] : [],
+    ...hyouiSessionId ? ["--hyoui-session-id", hyouiSessionId] : []
+  ];
 }
-async function runSidecar($, state, sid, pid) {
-  const child = $.process.spawn({
-    argv: [
-      `${$.plugin.root}/bin/ccmsg`,
-      "sidecar",
-      ...pid === null ? [] : ["--pid", String(pid)],
-      "--sid",
-      sid
-    ]
-  });
+async function runSidecar($, state, sid, run) {
+  const child = $.process.spawn({ argv: await sidecarArgv($, sid, run) });
   const mine = { sid, child };
   state.sidecar = mine;
   const startedAt = await $.clock.now();
@@ -1099,11 +1127,15 @@ async function replaceSidecar($, state) {
   state.sid = sid;
   if (state.sidecar?.sid === sid)
     return;
+  if (state.run === undefined) {
+    const startedAt = await $.clock.now();
+    state.run = { id: sidecarRunId(startedAt, Math.random()), startedAt };
+  }
   const old = state.sidecar;
   state.sidecar = undefined;
   if (old !== undefined)
     await old.child.return(undefined);
-  runSidecar($, state, sid, await harnessPid($, state));
+  runSidecar($, state, sid, state.run);
 }
 function register(on) {
   const state = newState();
@@ -1158,7 +1190,6 @@ function register(on) {
 }
 export {
   ACCEPT_WAIT_MS,
-  HARNESS_PID_ARGV,
   HYOUI_TIMEOUT_MS,
   REPLY_TIMEOUT_MS,
   RESPAWN_MAX_MS,

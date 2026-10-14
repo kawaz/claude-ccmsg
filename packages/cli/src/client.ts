@@ -431,4 +431,53 @@ export async function reconnectSubscribeNoSpawn(
   }
 }
 
+/** What a sidecar names its run with (sidecar_hello, DR-0035 §3). */
+export interface RunName {
+  readonly runId: string;
+  readonly startedAt: number;
+  readonly configDir?: string;
+  readonly hyouiSessionId?: string;
+}
+
+/**
+ * Connect to the daemon listening now and name a run of `identity`'s session
+ * on the connection (a session hello, then sidecar_hello), **without spawning**
+ * a daemon. The run counts as live for as long as the connection returned
+ * stays open.
+ *
+ * Design rationale: the same no-spawn, no-upgrade stance as
+ * reconnectSubscribeNoSpawn, for the same reasons — a sidecar lives as long
+ * as its session and must not bring back a daemon the person stopped, nor
+ * replace one during a gradual rollout. The session's start brings the daemon
+ * up and upgrades it.
+ *
+ * Returns null when no daemon is connectable or it refuses the hello or the
+ * name; the caller tries again.
+ */
+export async function nameRunNoSpawn(
+  paths: Paths,
+  identity: Identity,
+  name: RunName,
+): Promise<Client | null> {
+  const client = await tryConnect(paths.sock);
+  if (!client) return null;
+  try {
+    const hello = await client.request(helloRequest(identity));
+    const named = hello.ok
+      ? await client.request({
+          op: "sidecar_hello",
+          run_id: name.runId,
+          started_at: name.startedAt,
+          ...(name.configDir !== undefined ? { config_dir: name.configDir } : {}),
+          ...(name.hyouiSessionId !== undefined ? { hyoui_session_id: name.hyouiSessionId } : {}),
+        })
+      : hello;
+    if (named.ok) return client;
+  } catch {
+    // dropped mid-handshake (a daemon shutting down)
+  }
+  client.close();
+  return null;
+}
+
 export { waitDaemonGone };
