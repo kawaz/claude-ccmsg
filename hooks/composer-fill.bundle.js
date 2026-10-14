@@ -812,12 +812,18 @@ var SessionFactsApiErrorSchema = object({
   text: optional(string()),
   at: EpochMsSchema
 });
+var SessionTurnStateSchema = picklist(["responding", "idle"]);
+var SessionFactsTurnSchema = object({
+  state: SessionTurnStateSchema,
+  since: EpochMsSchema
+});
 var SessionFactsSchema = object({
   at: EpochMsSchema,
   model: optional(pipe(string(), nonEmpty())),
   effort: optional(pipe(string(), nonEmpty())),
   context: optional(SessionFactsContextSchema),
-  api_error: optional(SessionFactsApiErrorSchema)
+  api_error: optional(SessionFactsApiErrorSchema),
+  turn: optional(SessionFactsTurnSchema)
 });
 var SessionFactsTextSchema = jsonText(SessionFactsSchema);
 var SessionFactsArgsSchema = NoArgsSchema;
@@ -880,7 +886,7 @@ var SessionStartInputSchema = looseObject({
   surface: optional(nullable(string()))
 });
 var SessionEndInputSchema = looseObject({ reason: optional(string()) });
-var ClassicSessionStartInputSchema = looseObject({});
+var ClassicSessionStartInputSchema = looseObject({ source: optional(string()) });
 var SessionMeasureInputSchema = looseObject({
   context: optional(looseObject({ window: optional(number()), tokens: optional(number()) }))
 });
@@ -897,6 +903,7 @@ var StopFailureInputSchema = looseObject({
   last_assistant_message: optional(string()),
   agent_id: optional(string())
 });
+var TurnStartInputSchema = looseObject({ agentId: optional(string()) });
 var TurnCompleteInputSchema = looseObject({
   reason: optional(string()),
   agentId: optional(string())
@@ -1162,7 +1169,24 @@ async function readModelAndWindow($, state) {
     state.facts = { ...state.facts, model, context: contextFacts(context, at) };
   } catch (e) {
     $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
-    return;
+  }
+  sendFacts($, state);
+}
+async function sessionBegan($, state) {
+  try {
+    const since = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, turn: { state: "idle", since } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
+  }
+  await readModelAndWindow($, state);
+}
+async function turnState($, state, turn) {
+  try {
+    const since = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, turn: { state: turn, since } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
   }
   sendFacts($, state);
 }
@@ -1176,13 +1200,10 @@ async function turnEnded($, state, reason) {
   if (reason === "error" && !failed) {
     const at = Math.floor(await $.clock.now());
     state.facts = { ...state.facts, api_error: { kind: "unknown", at } };
-    sendFacts($, state);
-    return;
-  }
-  if ((reason === "answer" || reason === "refusal") && state.facts.api_error !== undefined) {
+  } else if (reason === "answer" || reason === "refusal") {
     state.facts = withoutApiError(state.facts);
-    sendFacts($, state);
   }
+  await turnState($, state, "idle");
 }
 async function replyTo($, state, sid, generation, request) {
   const { id } = request;
@@ -1297,7 +1318,7 @@ function register(on) {
     after: (input) => {
       state.interactive = input.isInteractive !== false && input.surface !== null;
       startSidecar($, state);
-      readModelAndWindow($, state);
+      sessionBegan($, state);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.end", async ($, e, next) => observe($, e, next, "session.end", SessionEndInputSchema, {
@@ -1313,9 +1334,9 @@ function register(on) {
     }
   })).catch(async (_$, e, next) => next(e));
   on("classic.SessionStart", async ($, e, next) => observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
-    after: () => {
+    after: (input) => {
       startSidecar($, state);
-      readModelAndWindow($, state);
+      input.source === "clear" ? sessionBegan($, state) : readModelAndWindow($, state);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) => observe($, e, next, "session.measure", SessionMeasureInputSchema, {
@@ -1353,6 +1374,12 @@ function register(on) {
     after: (input) => {
       if (input.agent_id === undefined)
         turnEffort($, state, input.effort?.level);
+    }
+  })).catch(async (_$, e, next) => next(e));
+  on("turn.start", async ($, e, next) => observe($, e, next, "turn.start", TurnStartInputSchema, {
+    before: (input) => {
+      if (input.agentId === undefined)
+        turnState($, state, "responding");
     }
   })).catch(async (_$, e, next) => next(e));
   on("turn.complete", async ($, e, next) => observe($, e, next, "turn.complete", TurnCompleteInputSchema, {

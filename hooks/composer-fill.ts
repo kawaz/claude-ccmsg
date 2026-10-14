@@ -22,8 +22,9 @@
 // The module also tells the daemon what it knows of its session through
 // Claude Code itself and the transcript cannot tell (`session.facts`): the
 // model as the session names it, `[1m]` kept, the effort, the context window
-// the session runs with and its fill, and the API error its latest
-// main-thread turn ended on. It reads the model and the window at
+// the session runs with and its fill, whether its main thread is answering a
+// turn (turn.start / turn.complete, idle from the session's start), and the
+// API error its latest main-thread turn ended on. It reads the model and the window at
 // session.start, after a model switch and after /clear, and takes the window
 // and the fill again from each session.measure; the effort comes with the end
 // of each main-thread turn (classic.Stop, classic.StopFailure), the API error
@@ -69,6 +70,7 @@ import {
   type SessionFacts,
   type SessionFactsApiError,
   type SessionFactsContext,
+  type SessionFactsTurn,
   type SendMessageResult,
   SendMessageResultTextSchema,
   SIDECAR_OP_NAMES,
@@ -135,6 +137,7 @@ export type ObservedEvent =
   | "classic.StopFailure"
   | "classic.UserPromptSubmit"
   | "prompt.submit"
+  | "turn.start"
   | "turn.complete";
 
 /** The events this module hooks. */
@@ -173,7 +176,7 @@ const SessionStartInputSchema = v.looseObject({
   surface: v.optional(v.nullable(v.string())),
 });
 const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
-const ClassicSessionStartInputSchema = v.looseObject({});
+const ClassicSessionStartInputSchema = v.looseObject({ source: v.optional(v.string()) });
 const SessionMeasureInputSchema = v.looseObject({
   context: v.optional(
     v.looseObject({ window: v.optional(v.number()), tokens: v.optional(v.number()) }),
@@ -196,6 +199,7 @@ const StopFailureInputSchema = v.looseObject({
   last_assistant_message: v.optional(v.string()),
   agent_id: v.optional(v.string()),
 });
+const TurnStartInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
 const TurnCompleteInputSchema = v.looseObject({
   reason: v.optional(v.string()),
   agentId: v.optional(v.string()),
@@ -358,6 +362,7 @@ export interface ModuleState {
     effort?: string;
     context?: SessionFactsContext;
     api_error?: SessionFactsApiError;
+    turn?: SessionFactsTurn;
   };
   /** Whether a StopFailure of the main thread came in the turn now ending:
    * its error is the one the turn ended on. */
@@ -665,7 +670,34 @@ async function readModelAndWindow($: Engine, state: ModuleState): Promise<void> 
     state.facts = { ...state.facts, model, context: contextFacts(context, at) };
   } catch (e) {
     $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
-    return;
+  }
+  sendFacts($, state);
+}
+
+/** A session began (its start, or /clear): no turn is running, and the
+ * model and the window are read. Never rejects. */
+async function sessionBegan($: Engine, state: ModuleState): Promise<void> {
+  try {
+    const since = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, turn: { state: "idle", since } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
+  }
+  await readModelAndWindow($, state);
+}
+
+/** The main thread is answering a turn now, or not; the facts are sent.
+ * Never rejects. */
+async function turnState(
+  $: Engine,
+  state: ModuleState,
+  turn: SessionFactsTurn["state"],
+): Promise<void> {
+  try {
+    const since = Math.floor(await $.clock.now());
+    state.facts = { ...state.facts, turn: { state: turn, since } };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
   }
   sendFacts($, state);
 }
@@ -686,13 +718,11 @@ async function turnEnded($: Engine, state: ModuleState, reason: string | undefin
   if (reason === "error" && !failed) {
     const at = Math.floor(await $.clock.now());
     state.facts = { ...state.facts, api_error: { kind: "unknown", at } };
-    sendFacts($, state);
-    return;
-  }
-  if ((reason === "answer" || reason === "refusal") && state.facts.api_error !== undefined) {
+  } else if (reason === "answer" || reason === "refusal") {
     state.facts = withoutApiError(state.facts);
-    sendFacts($, state);
   }
+  // Sends the facts, the error's change with it.
+  await turnState($, state, "idle");
 }
 
 /** The reply to one request: the op's, or `internal` when anything is thrown
@@ -858,7 +888,7 @@ export function register(on: On): ModuleState {
         // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
         state.interactive = input.isInteractive !== false && input.surface !== null;
         startSidecar($, state);
-        void readModelAndWindow($, state);
+        void sessionBegan($, state);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -881,9 +911,11 @@ export function register(on: On): ModuleState {
     observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
       // After /clear the facts belong to the new id: session.start does not
       // run for it.
-      after: () => {
+      // SessionStart also comes after a compaction, which can be mid-turn:
+      // only /clear begins a session with no turn running.
+      after: (input) => {
         startSidecar($, state);
-        void readModelAndWindow($, state);
+        void (input.source === "clear" ? sessionBegan($, state) : readModelAndWindow($, state));
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -929,6 +961,13 @@ export function register(on: On): ModuleState {
     observe($, e, next, "classic.Stop", StopInputSchema, {
       after: (input) => {
         if (input.agent_id === undefined) turnEffort($, state, input.effort?.level);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("turn.start", async ($, e, next) =>
+    observe($, e, next, "turn.start", TurnStartInputSchema, {
+      before: (input) => {
+        if (input.agentId === undefined) void turnState($, state, "responding");
       },
     }),
   ).catch(async (_$, e, next) => next(e));

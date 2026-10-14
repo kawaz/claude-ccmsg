@@ -153,6 +153,18 @@ describe("the API error with the module's facts", () => {
   });
 });
 
+describe("the turn with the module's facts", () => {
+  test("the module's turn state rides the snapshot, its time as ISO", () => {
+    const snapshot: SessionStatusSnapshot = { todos: [], workflows: [], background: [] };
+    const since = Date.parse("2026-10-14T00:00:07.000Z");
+    expect(withFacts(snapshot, { at: since, turn: { state: "responding", since } }).turn).toEqual({
+      state: "responding",
+      since: "2026-10-14T00:00:07.000Z",
+    });
+    expect(withFacts(snapshot, { at: 1 }).turn).toBeUndefined();
+  });
+});
+
 describe("session_facts over the wire", () => {
   // The facts are no transcript line: taking them pushes the session's status
   // to whoever follows it.

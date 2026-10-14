@@ -6445,6 +6445,44 @@ a.tl-attachment-file-path {
   padding: var(--space-13);
 }
 
+/* The main thread answering a turn (TurnRespondingRow): a quiet status line
+ * at the end of the Timeline, where the answer will land. */
+.tl-turn-responding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-13);
+  color: var(--fg-muted);
+}
+
+.tl-turn-responding-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tl-turn-responding-pulse 1.4s ease-in-out infinite;
+}
+
+.tl-turn-responding-since {
+  font-size: 0.85em;
+}
+
+@keyframes tl-turn-responding-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-turn-responding-dot {
+    animation: none;
+  }
+}
+
 /* Fork seam: history above was copied from the ancestor session, below is this
  * session's own. Same labelled-hairline register as .tree-section-label, which
  * is the house form for "a break in the list" — solid and recessive, since a

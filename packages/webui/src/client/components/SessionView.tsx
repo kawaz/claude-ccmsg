@@ -280,6 +280,7 @@ export function SessionView({
             ...(res.workspace_folders ? { workspace_folders: res.workspace_folders } : {}),
             ...(res.agent_tree ? { agent_tree: res.agent_tree } : {}),
             ...(res.input_readiness ? { input_readiness: res.input_readiness } : {}),
+            ...(res.turn ? { turn: res.turn } : {}),
           },
         });
       })

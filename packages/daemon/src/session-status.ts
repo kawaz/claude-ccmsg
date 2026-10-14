@@ -1883,7 +1883,8 @@ export function apiErrorOfFacts(facts: SessionFacts): SessionApiError | undefine
 }
 
 /** A fold's snapshot with what is not read off the transcript laid over it:
- * the hooks module's facts (contextWithFacts, apiErrorOfFacts). */
+ * the hooks module's facts (contextWithFacts, apiErrorOfFacts, and whether
+ * the main thread is answering a turn, which only the module says). */
 export function withFacts(
   data: SessionStatusSnapshot,
   facts: SessionFacts | undefined,
@@ -1892,10 +1893,12 @@ export function withFacts(
   const { context: folded, api_error: _folded, ...rest } = data;
   const context = contextWithFacts(folded, facts);
   const apiError = apiErrorOfFacts(facts);
+  const turn = facts.turn;
   return {
     ...rest,
     ...(context !== undefined ? { context } : {}),
     ...(apiError !== undefined ? { api_error: apiError } : {}),
+    ...(turn !== undefined ? { turn: { state: turn.state, since: isoAt(turn.since) } } : {}),
   };
 }
 

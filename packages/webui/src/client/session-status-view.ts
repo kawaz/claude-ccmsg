@@ -146,6 +146,15 @@ export function dedupeWorkflowRunsByRunId(
   return result;
 }
 
+/** When the session's main thread started the turn it is answering now, or
+ * null when it is not answering one or nothing has said (a session without
+ * the hooks module). From the module's turn start and end (DR-0035 §3), which
+ * reach the daemon as they happen. */
+export function respondingSince(snapshot: SessionStatusSnapshot | undefined): string | null {
+  const turn = snapshot?.turn;
+  return turn?.state === "responding" ? turn.since : null;
+}
+
 /** Live state text from `claude agents --json`. Values are intentionally
  * rendered verbatim: both status and waitingFor are upstream-controlled open
  * sets, so a newer Claude CLI value must remain visible without a webui update. */

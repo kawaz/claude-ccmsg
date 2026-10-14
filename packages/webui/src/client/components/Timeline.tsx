@@ -37,13 +37,14 @@ import {
   MemberAvatar,
   SayBubble,
   SayRecordBubble,
+  TurnRespondingRow,
 } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { useScrollHold, type ScrollHold } from "../useScrollHold.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
-import { miniSummaryLines } from "../session-status-view.ts";
+import { miniSummaryLines, respondingSince } from "../session-status-view.ts";
 import {
   positionLandingKey,
   shouldLandOnPosition,
@@ -4467,6 +4468,8 @@ export function Timeline({
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
   const miniLines = sessionStatus ? miniSummaryLines(sessionStatus) : [];
+  // The session's own Timeline only: an agent's is not the main thread's turn.
+  const respondingAt = agent ? null : respondingSince(sessionStatus);
   const agentTimelineHrefs = useMemo(() => {
     const hrefs = new Map<string, string>();
     if (!sessionStatus) return hrefs;
@@ -4840,6 +4843,9 @@ export function Timeline({
                             {/* 読み込み済み window より新しい say (= 喋った turn の行が
                                 まだ jsonl に無い live のケース) は末尾に出す。 */}
                             {sayNodes(groups.length)}
+                            {respondingAt !== null ? (
+                              <TurnRespondingRow since={respondingAt} />
+                            ) : null}
                           </>
                         )}
                       </div>

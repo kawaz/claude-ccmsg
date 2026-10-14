@@ -475,10 +475,12 @@ describe("the sidecar the module keeps", () => {
       "--run",
       flagOf(argv, "--run"),
       "--started-at",
-      "1",
+      flagOf(argv, "--started-at"),
       "--hyoui-session-id",
       "term-1",
     ]);
+    // A time off the module's clock: epoch milliseconds.
+    expect(Number.isSafeInteger(Number(flagOf(argv, "--started-at")))).toBe(true);
     spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9",');
     spawned(fake, 0).stream.push('"args":{"text":"hello"}}\n');
     for (let i = 0; i < 10 && fake.runs.length < 2; i++) await settle();
@@ -856,6 +858,23 @@ async function untilFacts(fake: Fake, count: number): Promise<void> {
   expect(fake.factsSent.length).toBe(count);
 }
 
+/** The facts the latest `ccmsg sidecar facts` was given. */
+function lastFacts(fake: Fake): SessionFacts {
+  const sent = fake.factsSent.at(-1);
+  if (sent === undefined) throw new Error("no facts sent");
+  return sent.facts;
+}
+
+/** Settle until the latest facts sent satisfy `pred`. */
+async function untilLastFacts(fake: Fake, pred: (facts: SessionFacts) => boolean): Promise<void> {
+  const holds = () => {
+    const sent = fake.factsSent.at(-1);
+    return sent !== undefined && pred(sent.facts);
+  };
+  for (let i = 0; i < 20 && !holds(); i++) await settle();
+  expect(holds()).toBe(true);
+}
+
 /** The facts the `index`th `ccmsg sidecar facts` was given. */
 function factsAt(fake: Fake, index: number): { sid: string; facts: SessionFacts } {
   const sent = fake.factsSent[index];
@@ -1023,10 +1042,11 @@ describe("the facts the module sends of its session (session.facts)", () => {
     const stop = { error: "rate_limit", last_assistant_message: "API Error: 429" };
     await fire(fake, "classic.StopFailure", stop, async () => ({}));
     await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
-    await untilFacts(fake, 1);
-    await settle();
-    expect(fake.factsSent.map((f) => f.facts.api_error?.kind)).toEqual(["rate_limit"]);
-    expect(factsAt(fake, 0).facts.api_error?.text).toBe("API Error: 429");
+    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
+    expect(lastFacts(fake).api_error).toMatchObject({
+      kind: "rate_limit",
+      text: "API Error: 429",
+    });
   });
 
   test("a subagent's failure and turn end leave the session's error alone", async () => {
@@ -1055,15 +1075,52 @@ describe("the facts the module sends of its session (session.facts)", () => {
     registerOn(fake);
     await fire(fake, "classic.StopFailure", { error: "server_error" }, async () => ({}));
     await fire(fake, "turn.complete", { reason: "error", turnId: "t1" }, async () => ({}));
-    await untilFacts(fake, 1);
-    await settle();
-    const sent = fake.factsSent.length;
+    await untilLastFacts(fake, (f) => f.api_error?.kind === "server_error");
+    await fire(fake, "turn.start", { text: "", turnId: "t2" }, async () => ({}));
     await fire(fake, "turn.complete", { reason: "aborted", turnId: "t2" }, async () => ({}));
-    await settle();
-    expect(fake.factsSent.length).toBe(sent);
+    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
+    expect(lastFacts(fake).api_error?.kind).toBe("server_error");
+    await fire(fake, "turn.start", { text: "", turnId: "t3" }, async () => ({}));
     await fire(fake, "turn.complete", { reason: "answer", turnId: "t3" }, async () => ({}));
-    await untilFacts(fake, sent + 1);
-    expect(factsAt(fake, sent).facts.api_error).toBeUndefined();
+    await untilLastFacts(fake, (f) => f.api_error === undefined);
+  });
+
+  // The TL shows a turn running the moment it starts, not when the
+  // transcript's assistant row lands at its end.
+  test("a main-thread turn is responding from its start until its end", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
+    const { calls, next } = countingNext({ turnId: "t1" });
+    expect(await fire(fake, "turn.start", { text: "hi", turnId: "t1" }, next)).toEqual({
+      turnId: "t1",
+    });
+    expect(calls.count).toBe(1);
+    await untilLastFacts(fake, (f) => f.turn?.state === "responding");
+    const responding = lastFacts(fake).turn;
+    // A subagent's turn end is not the session's.
+    const subagentEnd = { reason: "answer", turnId: "s", agentId: "a1" };
+    await fire(fake, "turn.complete", subagentEnd, async () => ({}));
+    await settle();
+    expect(lastFacts(fake).turn).toEqual(responding);
+    await fire(fake, "turn.complete", { reason: "answer", turnId: "t1" }, async () => ({}));
+    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
+  });
+
+  // SessionStart also comes after a compaction, which can be mid-turn.
+  test("a compaction's SessionStart leaves a running turn running; /clear's ends it", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "turn.start", { text: "hi", turnId: "t1" }, async () => ({}));
+    await untilLastFacts(fake, (f) => f.turn?.state === "responding");
+    const compacted = { ...CLASSIC_START, source: "compact" };
+    await fire(fake, "classic.SessionStart", compacted, async () => ({}));
+    await untilLastFacts(fake, (f) => f.model !== undefined);
+    expect(lastFacts(fake).turn?.state).toBe("responding");
+    const cleared = { ...CLASSIC_START, source: "clear" };
+    await fire(fake, "classic.SessionStart", cleared, async () => ({}));
+    await untilLastFacts(fake, (f) => f.turn?.state === "idle");
   });
 
   test("a facts send that fails is logged, and the event goes on once", async () => {

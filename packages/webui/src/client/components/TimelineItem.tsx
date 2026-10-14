@@ -3,7 +3,7 @@ import type { ComponentChildren } from "preact";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
-import { formatMsgTime, memberLabel } from "../utils.ts";
+import { formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
@@ -259,6 +259,22 @@ export function SayBubble({
         <span class="say-time">{formatMsgTime(ts, now)}</span>
         {read}
       </div>
+    </div>
+  );
+}
+
+/** The session's main thread is answering a turn now, as its hooks module
+ * said the moment the turn started (DR-0035 §3). It sits at the end of the
+ * Timeline, where the answer will land: the transcript writes an answer's row
+ * only once the answer is done, so without this nothing there would show the
+ * turn running. */
+export function TurnRespondingRow({ since }: { since: string }) {
+  const at = formatClockTime(since);
+  return (
+    <div class="tl-turn-responding" role="status" title={`応答中 (${at} から)`}>
+      <span class="tl-turn-responding-dot" aria-hidden="true" />
+      <span>応答中</span>
+      <span class="tl-turn-responding-since">{at} から</span>
     </div>
   );
 }

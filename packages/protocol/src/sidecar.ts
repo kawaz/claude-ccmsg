@@ -160,10 +160,21 @@ export const SessionFactsApiErrorSchema = v.object({
 });
 export type SessionFactsApiError = Output<typeof SessionFactsApiErrorSchema>;
 
+/** Whether the session's main thread is answering a turn now, from Claude
+ * Code's own turn start and end (`turn.start` / `turn.complete`), and since
+ * when. `idle` from the session's start until its first turn. */
+export const SessionTurnStateSchema = v.picklist(["responding", "idle"]);
+export const SessionFactsTurnSchema = v.object({
+  state: SessionTurnStateSchema,
+  since: EpochMsSchema,
+});
+export type SessionFactsTurn = Output<typeof SessionFactsTurnSchema>;
+
 /** What a session's hooks module knows of its session through Claude Code
  * itself (DR-0035 §3), and the transcript cannot tell, or tells late: the
  * model as the session names it (`$.session.model()`, a launch-time `[1m]`
- * kept), the effort, the context window and its fill, and whether the latest main-thread turn ended on
+ * kept), the effort, the context window and its fill, whether its main
+ * thread is answering a turn, and whether the latest main-thread turn ended on
  * an API error (absent when it did not). The module sends the whole of it each time a part moves, so
  * the facts the daemon holds are replaced, never merged; `at` is when the
  * module put them together, and facts older than the ones held are dropped.
@@ -176,6 +187,7 @@ export const SessionFactsSchema = v.object({
   effort: v.optional(v.pipe(v.string(), v.nonEmpty())),
   context: v.optional(SessionFactsContextSchema),
   api_error: v.optional(SessionFactsApiErrorSchema),
+  turn: v.optional(SessionFactsTurnSchema),
 });
 export type SessionFacts = Output<typeof SessionFactsSchema>;
 

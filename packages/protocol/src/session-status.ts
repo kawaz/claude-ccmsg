@@ -4,6 +4,7 @@
 // `ev:"session_status"`.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
+import { SessionTurnStateSchema } from "./sidecar.ts";
 
 /** DR-0020 Phase 1: folded current status of a session's transcript. */
 export const SessionTodoSchema = v.object({
@@ -359,6 +360,14 @@ export const SessionInputReadinessSchema = v.variant("kind", [
 ]);
 export type SessionInputReadiness = Output<typeof SessionInputReadinessSchema>;
 
+/** Whether the session's main thread is answering a turn now, and since when
+ * (ISO), as its hooks module said (DR-0035 §3). */
+export const SessionTurnSchema = v.object({
+  state: SessionTurnStateSchema,
+  since: v.string(),
+});
+export type SessionTurn = Output<typeof SessionTurnSchema>;
+
 export const SessionStatusSnapshotSchema = v.object({
   todos: v.array(SessionTodoSchema),
   workflows: v.array(SessionWorkflowStatusSchema),
@@ -393,5 +402,8 @@ export const SessionStatusSnapshotSchema = v.object({
   /** Whether a person's input can reach the session (SessionInputReadiness).
    * Daemon snapshots carry it; absent only for locally constructed ones. */
   input_readiness: v.optional(SessionInputReadinessSchema),
+  /** Whether the main thread is answering a turn. Absent for a session
+   * without the hooks module, or before the module said. */
+  turn: v.optional(SessionTurnSchema),
 });
 export type SessionStatusSnapshot = Output<typeof SessionStatusSnapshotSchema>;

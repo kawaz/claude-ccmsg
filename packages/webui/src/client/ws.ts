@@ -870,6 +870,7 @@ export function createWsClient(
           ...(ev.workspace_folders ? { workspace_folders: ev.workspace_folders } : {}),
           ...(ev.agent_tree ? { agent_tree: ev.agent_tree } : {}),
           ...(ev.input_readiness ? { input_readiness: ev.input_readiness } : {}),
+          ...(ev.turn ? { turn: ev.turn } : {}),
         },
       });
       return;

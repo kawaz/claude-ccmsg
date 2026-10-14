@@ -135,9 +135,11 @@ describe("the ops' results", () => {
       { at: 2, model: "m", context: { window: 1_000_000, at: 2 } },
       { at: 3, api_error: { kind: "rate_limit", text: "API Error: 429", at: 3 } },
       { at: 4, effort: "xhigh", context: { window: 200_000, tokens: 0, at: 4 } },
+      { at: 5, turn: { state: "responding", since: 5 } },
+      { at: 5, turn: { state: "idle", since: 5 } },
       // Claude Code names the kinds: one this ccmsg does not know is kept.
       { at: 3, api_error: { kind: "some_new_kind", at: 3 } },
-    ]) {
+    ] as const) {
       expect(parseWith(SessionFactsSchema, facts)).toEqual({ ok: true, value: facts });
     }
     for (const facts of [
@@ -150,6 +152,9 @@ describe("the ops' results", () => {
       { at: 1, context: { window: 200_000 } },
       { at: 1, api_error: { kind: "", at: 1 } },
       { at: 1, effort: "" },
+      // ccmsg names the states: one it does not know is refused.
+      { at: 1, turn: { state: "busy", since: 1 } },
+      { at: 1, turn: { state: "idle" } },
       { at: 1, context: { window: 1, tokens: -1, at: 1 } },
       { at: 1, context: { window: 1, tokens: 1.5, at: 1 } },
       { at: 1, api_error: { text: "x", at: 1 } },
