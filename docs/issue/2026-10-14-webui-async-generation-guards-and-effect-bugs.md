@@ -3,7 +3,7 @@ title: webui の非同期応答の世代ガードと Effect 起因の bug 群
 status: open
 category: bug
 created: 2026-10-14T13:51:28+09:00
-last_read:
+last_read: 2026-10-14T14:51:25+09:00
 open_entered: 2026-10-14T13:51:28+09:00
 wip_entered:
 blocked_entered:
