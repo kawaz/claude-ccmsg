@@ -1,6 +1,6 @@
 ---
 title: webui の hooks lint 導入と rules-of-hooks 違反の解消
-status: open
+status: resolved
 category: bug
 created: 2026-10-14T13:50:57+09:00
 last_read: 2026-10-14T13:52:34+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-14T14:43:21+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:oxlint react plugin 有効化、rules-of-hooks / exhaustive-deps を error で導入 (warn から統括指示で引き上げ)、違反 60 件を Effect Event / key 付き state / 計算値 deps / context 値分割で 0 件に、Timeline の early return 後 useMemo 3 つを前に移動、render 中の ref 書き換えと location / navigation 読みも解消"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -34,6 +34,6 @@ react plugin を有効化し、rules-of-hooks は error、exhaustive-deps は wa
 
 ## 受け入れ条件
 
-- [ ] oxlint で react plugin が有効で、rules-of-hooks が error、exhaustive-deps が warn になっている
-- [ ] Timeline.tsx の early return 後の useMemo がなくなり、hook 数が render 間で変動しない
-- [ ] deps を欠いた effect が react.dev の作法で解消されている (exhaustive-deps の warn が 0、または理由付きの抑制のみ)
+- [x] oxlint で react plugin が有効で、rules-of-hooks と exhaustive-deps が error になっている
+- [x] Timeline.tsx の early return 後の useMemo がなくなり、hook 数が render 間で変動しない
+- [x] deps を欠いた effect が react.dev の作法で解消されている (exhaustive-deps の warn が 0、または理由付きの抑制のみ)
