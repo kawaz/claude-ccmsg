@@ -29,6 +29,7 @@ import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
+import { terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
@@ -141,15 +142,19 @@ export function SessionView({
   // `<configDir>/projects/<project>/<sid>.jsonl` (daemon の resolveTranscript
   // allowVirtual)。early return より前 = hooks 位置で要るのでここで引く。
   const peer = state.peers.find((p) => p.sid === sid);
-  // Terminal タブは agent の hyoui_session_id が解決済み かつ daemon の
-  // config.json で terminal_gateway_url が設定されているセッションでのみ
-  // 表示する (issue 2026-07-21, kawaz r46m7)。どちらか欠けていれば Terminal
-  // タブ自体を出さない (「設定していないユーザには存在しない機能」に倒す +
-  // iframe の src が組めない)。
+  // Terminal タブは daemon の config.json で terminal_gateway_url が設定されて
+  // いるセッションでのみ表示する (issue 2026-07-21, kawaz r46m7)。iframe を出す
+  // のは agent の hyoui_session_id が解決済みの時 (無いと iframe の src が組めない)。
+  // 「設定していないユーザには存在しない機能」に倒す。
   const agentForSid = sid ? state.agents.find((a) => a.sessionId === sid) : undefined;
   const hyouiSessionId = agentForSid?.hyoui_session_id;
   const terminalGatewayUrl = state.terminalGatewayUrl;
-  const hasTerminal = !!hyouiSessionId && !!terminalGatewayUrl;
+  // 端末が無いと分かっているセッション (daemon の input_readiness が
+  // no_terminal / ended) では、タブを出したうえで iframe の代わりに理由と次の
+  // 行動を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けが
+  // つかない。
+  const terminalAbsence = terminalAbsenceNotice(state.sessionStatuses.get(sid)?.input_readiness);
+  const hasTerminal = !!terminalGatewayUrl && (!!hyouiSessionId || terminalAbsence !== null);
   // Timeline / Status が使えるかの単一ゲート (DR-0021 §2.4/§3.1) — 導出は
   // hasSessionTranscript を見る。agent-only 行 (peer 無し、`claude agents
   // --json` に居る) でも jsonl は読めるので両タブとも出す。Timeline の live
@@ -198,7 +203,9 @@ export function SessionView({
   // (DR-0020 §2.1 (a) 案: 全 peer 常時 subscribe はコストに見合わないため、
   // 実装コストとのトレードオフでこちらを採用。全 peer 分の完全なバッジは
   // Phase 3 後続に持ち越す)。
-  const needsStatus = tab === "files" || tab === "status" || tab === "timeline";
+  // Terminal タブも input_readiness (端末の有無) を読むので購読する。
+  const needsStatus =
+    tab === "files" || tab === "status" || tab === "timeline" || tab === "terminal";
   // 購読が失敗した理由。daemon が jsonl を解決できない (session_not_found /
   // not_found) セッションでは snapshot が永久に来ないので、StatusPanel を
   // 「読み込み中…」のまま固まらせずここで理由を出す。購読をやり直すたびに
@@ -365,9 +372,15 @@ export function SessionView({
           )}
         </div>
       ) : null}
-      {visitedTabs.current.has("terminal") && hyouiSessionId && terminalGatewayUrl ? (
+      {visitedTabs.current.has("terminal") && hasTerminal ? (
         <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
-          <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
+          {terminalAbsence !== null || !hyouiSessionId ? (
+            <div class="terminal-pane">
+              <p id="empty-state">{terminalAbsence}</p>
+            </div>
+          ) : (
+            <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
+          )}
         </div>
       ) : null}
       {visitedTabs.current.has("status") ? (

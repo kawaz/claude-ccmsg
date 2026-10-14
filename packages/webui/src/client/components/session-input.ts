@@ -74,6 +74,7 @@ const NO_MODULE_DETAIL =
   "このセッションは入力の受け口 (ccmsg plugin の module) を持っていません。plugin を更新してセッションを起動し直してください。";
 const NO_TERMINAL_DETAIL =
   "hyoui run 経由で起動されていないため、入力を確定 (Enter) できません。hyoui run 経由で起動し直してください。";
+const ENDED_DETAIL = "セッションは終了しています。";
 const SESSION_CHANGED_DETAIL =
   "セッションが切り替わっています (/clear や /resume)。切り替わった先のセッションを開いて送ってください。";
 
@@ -93,7 +94,22 @@ export function inputReadinessNotice(readiness: SessionInputReadiness | undefine
     case "session_changed":
       return SESSION_CHANGED_DETAIL;
     case "ended":
-      return "セッションは終了しています。";
+      return ENDED_DETAIL;
+  }
+}
+
+/** Terminal タブの iframe の場所に出す、端末が無い理由と次の行動。端末が
+ * あるかもしれない時 (`ready` など、判定が端末の無さを言っていない時) は null で、
+ * iframe を出す。iframe が黒いままだと再描画待ちか端末が無いのか見分けが
+ * つかないので、無いと分かっている時は iframe を出さずにこれを出す。 */
+export function terminalAbsenceNotice(readiness: SessionInputReadiness | undefined): string | null {
+  switch (readiness?.kind) {
+    case "no_terminal":
+      return "hyoui run 経由で起動されていないため端末がありません。hyoui run 経由で起動し直してください。";
+    case "ended":
+      return ENDED_DETAIL;
+    default:
+      return null;
   }
 }
 
