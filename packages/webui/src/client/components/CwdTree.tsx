@@ -12,16 +12,13 @@
 // `filterInput` arrives as a prop instead of local state, and this component
 // no longer renders its own `<input>`. The debounce stays here since it's
 // this component's dir_tree request that the debounce protects.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useReducer, useState } from "preact/hooks";
 import type { DirTreeEntry } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { useKeyedValue } from "../useKeyedState.ts";
 import { errorMessage, lastPathSegment } from "../utils.ts";
-import {
-  attachDirTreeChildren,
-  collectPathsWithPreloadedChildren,
-  isDirTreeBoundary,
-} from "../cwd-tree.ts";
+import { nextRequestGeneration } from "../request-generation.ts";
+import { cwdTreeReducer, initialCwdTree, isDirTreeBoundary } from "../cwd-tree.ts";
 
 /** Debounce for the filter input (DR-0018 §2.2's search box): each keystroke
  * would otherwise fire a full server-side re-walk (dir-tree.ts's synchronous
@@ -33,9 +30,9 @@ interface NodeProps {
   entry: DirTreeEntry;
   depth: number;
   selected: string;
-  expanded: Set<string>;
-  expandingPaths: Set<string>;
-  lazyErrors: Map<string, string>;
+  expanded: ReadonlySet<string>;
+  expandingPaths: ReadonlySet<string>;
+  lazyErrors: ReadonlyMap<string, string>;
   onToggle: (entry: DirTreeEntry) => void;
   onSelect: (path: string) => void;
 }
@@ -129,12 +126,8 @@ export function CwdTree({
   onSelect: (path: string) => void;
 }) {
   const { ws } = useApp();
-  const [entries, setEntries] = useState<readonly DirTreeEntry[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [expandingPaths, setExpandingPaths] = useState<Set<string>>(new Set());
-  const [lazyErrors, setLazyErrors] = useState<Map<string, string>>(new Map());
+  const [tree, dispatch] = useReducer(cwdTreeReducer, undefined, initialCwdTree);
+  const { entries, loading, error, expanded, expandingPaths, lazyErrors } = tree;
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
@@ -145,89 +138,66 @@ export function CwdTree({
   // Initial bounded fetch (LN-Q3): re-runs whenever `roots` or the debounced
   // `filter` changes. A fresh fetch always replaces the whole tree — a
   // filter change can shuffle which nodes exist at all, so partial reuse of
-  // the previous expand/lazy state would show stale rows next to fresh ones.
+  // the previous expand/lazy state would show stale rows next to fresh ones
+  // (cwdTreeReducer's "fetched"). Each fetch is a new request generation, and
+  // the lazy child fetches below are asked under it: the reducer drops any
+  // answer — whole tree or one directory — asked for an earlier tree.
   // Held per content: a fresh array reference from the parent's config load
   // must not re-trigger this fetch, only an actual content change (or filter)
   // should.
   const rootList = useKeyedValue([roots.join("\n")], () => roots);
   useEffect(() => {
     if (rootList.length === 0) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
+    const generation = nextRequestGeneration();
+    dispatch({ type: "fetch-started", generation });
     void ws
       .dirTree(rootList, filter ? { filter } : {})
       .then((res) => {
-        if (cancelled) return;
-        setLoading(false);
-        if (res.ok) {
-          setEntries(res.entries);
-          // Auto-expand every node whose children came pre-loaded in this
-          // initial bounded fetch (kawaz r38 m8): configured
-          // `dir_tree_depth: 2` over a root like
-          // `~/.local/share/repos/github.com/<owner>/` returns
-          // repo → wt/ws in one round trip, so seeding `expanded` with those
-          // paths surfaces the wt/ws layer without a per-repo click. Boundary
-          // entries are excluded (see collectPathsWithPreloadedChildren) so
-          // this doesn't fan out into lazy-fetch requests behind the user's
-          // back.
-          setExpanded(collectPathsWithPreloadedChildren(res.entries));
-          setExpandingPaths(new Set());
-          setLazyErrors(new Map());
-        } else {
-          setError(res.error.msg);
-        }
+        // Auto-expand every node whose children came pre-loaded in this
+        // initial bounded fetch (kawaz r38 m8): configured
+        // `dir_tree_depth: 2` over a root like
+        // `~/.local/share/repos/github.com/<owner>/` returns
+        // repo → wt/ws in one round trip, so seeding `expanded` with those
+        // paths surfaces the wt/ws layer without a per-repo click. Boundary
+        // entries are excluded (see collectPathsWithPreloadedChildren) so
+        // this doesn't fan out into lazy-fetch requests behind the user's
+        // back.
+        if (res.ok) dispatch({ type: "fetched", generation, entries: res.entries });
+        else dispatch({ type: "fetch-failed", generation, error: res.error.msg });
       })
       .catch((err) => {
-        if (cancelled) return;
-        setLoading(false);
-        setError(errorMessage(err));
+        dispatch({ type: "fetch-failed", generation, error: errorMessage(err) });
       });
-    return () => {
-      cancelled = true;
-    };
   }, [rootList, filter, ws]);
 
   function toggle(entry: DirTreeEntry): void {
     const willExpand = !expanded.has(entry.path);
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (willExpand) next.add(entry.path);
-      else next.delete(entry.path);
-      return next;
-    });
+    dispatch({ type: "toggled", path: entry.path });
     if (!willExpand || !isDirTreeBoundary(entry)) return;
 
-    setExpandingPaths((prev) => new Set(prev).add(entry.path));
+    const { generation } = tree;
+    dispatch({ type: "children-loading", generation, path: entry.path });
     void ws
       .dirTree([entry.path], { depth: 1 })
       .then((res) => {
-        setExpandingPaths((prev) => {
-          const next = new Set(prev);
-          next.delete(entry.path);
-          return next;
-        });
         if (res.ok) {
-          setEntries((prev) =>
-            prev ? attachDirTreeChildren(prev, entry.path, res.entries) : prev,
-          );
-          setLazyErrors((prev) => {
-            if (!prev.has(entry.path)) return prev;
-            const next = new Map(prev);
-            next.delete(entry.path);
-            return next;
+          dispatch({
+            type: "children-loaded",
+            generation,
+            path: entry.path,
+            children: res.entries,
           });
         } else {
-          setLazyErrors((prev) => new Map(prev).set(entry.path, res.error.msg));
+          dispatch({ type: "children-failed", generation, path: entry.path, error: res.error.msg });
         }
       })
       .catch((err) => {
-        setExpandingPaths((prev) => {
-          const next = new Set(prev);
-          next.delete(entry.path);
-          return next;
+        dispatch({
+          type: "children-failed",
+          generation,
+          path: entry.path,
+          error: errorMessage(err),
         });
-        setLazyErrors((prev) => new Map(prev).set(entry.path, errorMessage(err)));
       });
   }
 

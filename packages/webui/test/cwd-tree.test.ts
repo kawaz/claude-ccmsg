@@ -6,7 +6,11 @@ import type { DirTreeEntry } from "@ccmsg/protocol";
 import {
   attachDirTreeChildren,
   collectPathsWithPreloadedChildren,
+  cwdTreeReducer,
+  initialCwdTree,
   isDirTreeBoundary,
+  type CwdTreeAction,
+  type CwdTreeState,
 } from "../src/client/cwd-tree.ts";
 
 describe("isDirTreeBoundary", () => {
@@ -144,5 +148,83 @@ describe("attachDirTreeChildren", () => {
     expect(next).toEqual([
       { path: "/root/alpha", is_dir: true, children: [{ path: "/root/alpha/new", is_dir: true }] },
     ]);
+  });
+});
+
+// The tree and the lazily fetched child listings below it are requests of one
+// generation (request-generation.ts): a filter change starts a new tree, and
+// any answer — whole tree or one directory's children — that was asked for the
+// previous tree is dropped instead of mixing old rows into the new one.
+// Source: docs/findings/2026-10-14-webui-hooks-review-react-guidance.md (high 6).
+describe("cwdTreeReducer", () => {
+  const boundary = (path: string): DirTreeEntry => ({ path, is_dir: true });
+  const run = (...actions: CwdTreeAction[]): CwdTreeState =>
+    actions.reduce(cwdTreeReducer, initialCwdTree());
+
+  test("a child listing asked under the previous filter does not attach to the refetched tree", () => {
+    const state = run(
+      { type: "fetch-started", generation: 1 },
+      { type: "fetched", generation: 1, entries: [boundary("/r/a")] },
+      { type: "toggled", path: "/r/a" },
+      { type: "children-loading", generation: 1, path: "/r/a" },
+      { type: "fetch-started", generation: 2 },
+      { type: "fetched", generation: 2, entries: [boundary("/r/a")] },
+      {
+        type: "children-loaded",
+        generation: 1,
+        path: "/r/a",
+        children: [boundary("/r/a/unfiltered")],
+      },
+    );
+    expect(state.entries).toEqual([boundary("/r/a")]);
+    expect(state.expandingPaths.size).toBe(0);
+  });
+
+  test("a child listing failure asked under the previous filter is not shown on the new tree", () => {
+    const state = run(
+      { type: "fetch-started", generation: 1 },
+      { type: "fetched", generation: 1, entries: [boundary("/r/a")] },
+      { type: "children-loading", generation: 1, path: "/r/a" },
+      { type: "fetch-started", generation: 2 },
+      { type: "fetched", generation: 2, entries: [boundary("/r/a")] },
+      { type: "children-failed", generation: 1, path: "/r/a", error: "denied" },
+    );
+    expect(state.lazyErrors.size).toBe(0);
+  });
+
+  test("a whole-tree answer for the previous filter does not replace the current one", () => {
+    const state = run(
+      { type: "fetch-started", generation: 1 },
+      { type: "fetch-started", generation: 2 },
+      { type: "fetched", generation: 2, entries: [boundary("/r/new")] },
+      { type: "fetched", generation: 1, entries: [boundary("/r/old")] },
+    );
+    expect(state.entries).toEqual([boundary("/r/new")]);
+    expect(state.loading).toBe(false);
+  });
+
+  test("a child listing for the current tree attaches under its directory", () => {
+    const state = run(
+      { type: "fetch-started", generation: 1 },
+      { type: "fetched", generation: 1, entries: [boundary("/r/a")] },
+      { type: "toggled", path: "/r/a" },
+      { type: "children-loading", generation: 1, path: "/r/a" },
+      { type: "children-loaded", generation: 1, path: "/r/a", children: [boundary("/r/a/b")] },
+    );
+    expect(state.entries).toEqual([{ path: "/r/a", is_dir: true, children: [boundary("/r/a/b")] }]);
+    expect(state.expanded.has("/r/a")).toBe(true);
+    expect(state.expandingPaths.size).toBe(0);
+  });
+
+  test("a fresh tree opens the directories whose children came with it", () => {
+    const state = run(
+      { type: "fetch-started", generation: 1 },
+      {
+        type: "fetched",
+        generation: 1,
+        entries: [{ path: "/r/a", is_dir: true, children: [boundary("/r/a/b")] }],
+      },
+    );
+    expect(state.expanded).toEqual(new Set(["/r/a"]));
   });
 });
