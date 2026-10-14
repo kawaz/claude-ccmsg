@@ -1,3 +1,7 @@
+# webui の .tsx は preact の JSX。bun はリポ直下の tsconfig (JSX の設定を持たない) で変換するので、ここで指定しないと `bun test` で component をマウントする test が react の JSX runtime を探して落ちる。.tsx は webui にしか無い。
+jsx = "react-jsx"
+jsxImportSource = "preact"
+
 [test]
 preload = ["./packages/testkit/src/test-env.ts"]
 # coverage は `bun test --coverage` (= `just coverage`) の時だけ計測する。
