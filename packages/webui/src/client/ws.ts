@@ -377,8 +377,9 @@ export interface WsHandle {
    * keystrokes were delivered, not that the session is now called that, so
    * callers should report "sent" rather than showing the new title as fact —
    * the real one arrives with the next agents poll. `error.code ===
-   * "terminal_unavailable"` means the session runs outside hyoui and can only
-   * be renamed by hand. Slow like sessionKill. */
+   * "terminal_unavailable"` means no run of the session named a hyoui
+   * terminal (started outside hyoui, or without the hooks module) and it can
+   * only be renamed by hand. Slow like sessionKill. */
   sessionRename(sessionId: string, title: string): Promise<ReplyOf<"session_rename">>;
   /** Put what the person wrote into a session as their own prompt (DR-0035
    * §1, user role only — SessionView's input panel). The daemon has the

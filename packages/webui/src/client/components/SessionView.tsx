@@ -183,9 +183,9 @@ export function SessionView({
   // 「設定していないユーザには存在しない機能」に倒す。
   const hyouiSessionId = agentForSid?.hyoui_session_id;
   const terminalGatewayUrl = slice.terminalGatewayUrl;
-  // 端末が無いと分かっているセッション (daemon の input_readiness が
-  // no_terminal / ended) では、タブを出したうえで iframe の代わりに理由と次の
-  // 行動を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けが
+  // 端末が無い・分からないと分かっているセッション (daemon の input_readiness が
+  // no_terminal / no_module / ended) では、タブを出したうえで iframe の代わりに
+  // 理由と次の行動を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けが
   // つかない。
   const terminalAbsence = terminalAbsenceNotice(sessionInputReadiness(peer, slice.sessionStatus));
   const hasTerminal = !!terminalGatewayUrl && (!!hyouiSessionId || terminalAbsence !== null);

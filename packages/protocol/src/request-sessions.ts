@@ -273,9 +273,9 @@ export type SessionKillRequest = Output<typeof SessionKillRequestSchema>;
  * does work is the one kawaz performs by hand today — switch to the session's
  * terminal and type `/rename <title>`. This op automates that keystroke
  * delivery through hyoui, the terminal multiplexer the sessions run under:
- * the daemon already learns each session's `HYOUI_SESSION_ID` per agents poll
- * (AgentInfo.hyoui_session_id), which is the terminal handle `hyoui input`
- * needs. A session with no known hyoui terminal is refused with
+ * the daemon already learns each session's `HYOUI_SESSION_ID` from the run its
+ * hooks module names (AgentInfo.hyoui_session_id), which is the terminal
+ * handle `hyoui input` needs. A session with no known hyoui terminal is refused with
  * `terminal_unavailable` rather than guessed at.
  *
  * **Best-effort by construction**: success means the keystrokes were handed

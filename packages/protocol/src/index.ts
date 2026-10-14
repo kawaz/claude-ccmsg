@@ -267,8 +267,8 @@ export const ErrorCode = {
   // config changed under a live connection.
   sandbox_not_configured: "sandbox_not_configured",
   // session_rename: the session exists but the daemon knows no terminal to
-  // type into (no HYOUI_SESSION_ID on its process, or the agents poll has not
-  // seen it yet). Kept apart from not_found — "this session cannot be renamed
+  // type into (no run of it named a HYOUI_SESSION_ID: no hooks module, started
+  // outside hyoui, or the agents poll has not seen it yet). Kept apart from not_found — "this session cannot be renamed
   // this way" is a standing property of how the session was started, whereas
   // not_found would suggest retrying against a session that is simply gone.
   terminal_unavailable: "terminal_unavailable",

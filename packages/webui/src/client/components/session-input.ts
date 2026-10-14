@@ -114,11 +114,15 @@ export function inputReadinessNotice(readiness: SessionInputReadiness | undefine
 /** Terminal タブの iframe の場所に出す、端末が無い理由と次の行動。端末が
  * あるかもしれない時 (`ready` など、判定が端末の無さを言っていない時) は null で、
  * iframe を出す。iframe が黒いままだと再描画待ちか端末が無いのか見分けが
- * つかないので、無いと分かっている時は iframe を出さずにこれを出す。 */
+ * つかないので、無いと分かっている時は iframe を出さずにこれを出す。端末は
+ * セッションの module が名乗るもの (DR-0035 §3) なので、module の無い
+ * セッション (`no_module`) は端末が分からず、入力欄と同じ対処を言う。 */
 export function terminalAbsenceNotice(readiness: SessionInputReadiness | undefined): string | null {
   switch (readiness?.kind) {
     case "no_terminal":
       return "hyoui run 経由で起動されていないため端末がありません。hyoui run 経由で起動し直してください。";
+    case "no_module":
+      return "ccmsg plugin の module が無いため端末が分かりません。plugin を更新してセッションを起動し直してください。";
     case "ended":
       return ENDED_DETAIL;
     default:

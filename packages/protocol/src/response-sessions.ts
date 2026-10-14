@@ -554,13 +554,12 @@ export const AgentInfoSchema = v.object({
   id: v.optional(v.string()),
   /** the CLAUDE_CONFIG_DIR this row was polled from (auto-detected ~/.claude* dirs) */
   config_dir: v.string(),
-  /** Value of the `HYOUI_SESSION_ID` environment variable on the underlying
-   *  process (looked up per-poll via `ps eww` on the pid, cached per pid).
-   *  Absent when the process doesn't set the var or when the env couldn't
-   *  be read (permission denied on other users' processes, pid gone). The
-   *  daemon deliberately reads this from the *current* process — resuming
-   *  the same claude sessionId in a new process yields a new pid and thus
-   *  the current env, not a stale start-time snapshot. */
+  /** The `HYOUI_SESSION_ID` the live run tied to this row's process named
+   *  (sidecar_hello, DR-0035 §3): the terminal its hooks module presses Enter
+   *  on. Absent when no run is tied to the process (the session has no hooks
+   *  module, or its module has not named the run yet) or the run was started
+   *  outside hyoui. Per process: resuming the same sessionId in a new process
+   *  is a new run with its own terminal. */
   hyoui_session_id: v.optional(v.string()),
 });
 export type AgentInfo = Output<typeof AgentInfoSchema>;

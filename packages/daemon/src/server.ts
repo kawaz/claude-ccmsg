@@ -145,6 +145,7 @@ import {
   type TranscriptTailStore,
 } from "./transcript.ts";
 import {
+  agentsKey,
   agentsPollEnabled,
   createAgentsPoller,
   detectConfigDirs,
@@ -316,6 +317,11 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** agentsKey() of the rows the last `ev:"agents"` push carried, terminals
+   * included (agentsWithTerminals) — lets maybeBroadcastAgents skip a push
+   * when neither the rows nor a run's terminal changed. Starts as the key of
+   * no rows, as the poller's cache does. */
+  agentsSnapshot: string;
   /** Out-of-date ccmsg clients seen per sid (PeerInfo.stale_client), including
    * the ones whose hello was refused — those never reach `sessions`, so this
    * is the only record that they tried. Keyed by the sid the refused hello
@@ -678,11 +684,49 @@ async function askSessionFacts(daemon: Daemon, run: SidecarRun): Promise<void> {
 }
 
 /** Push whether a person's input can reach each session, where it moved:
- * the peer rows and the session statuses being followed. Called when a run is
+ * the peer rows and the session statuses being followed, and the terminals
+ * the agents rows carry, which come from the same runs. Called when a run is
  * named or goes, and when a session is registered or forgotten. */
 function refreshReadiness(daemon: Daemon): void {
   maybeBroadcastPeers(daemon);
   refreshInputReadiness(daemon.sessionStatus, daemon.log);
+  const { agents, polledAt } = daemon.agentsPoller.cache;
+  maybeBroadcastAgents(daemon, agents, polledAt);
+}
+
+/** The agents poll's rows, each carrying the terminal (`hyoui_session_id`)
+ * the live run tied to its process named (sidecar_hello, DR-0035 §3). The
+ * terminal is what the session's hooks module names, read the same way the
+ * module reads it to press Enter, so a row whose process no run is tied to
+ * carries none: its session has no module (input_readiness `no_module`), or
+ * its module has not named the run yet. */
+function agentsWithTerminals(daemon: Daemon, agents: readonly AgentInfo[]): AgentInfo[] {
+  return agents.map((agent) => {
+    const terminal = daemon.sidecarRuns
+      .liveOf(agent.sessionId)
+      .find((run) => run.pid === agent.pid && run.hyouiSessionId !== undefined)?.hyouiSessionId;
+    return terminal !== undefined ? { ...agent, hyoui_session_id: terminal } : agent;
+  });
+}
+
+/** Push the agents rows (agentsWithTerminals) to every user subscriber when
+ * they differ from the last push: the poll's rows changed, or a run was
+ * named, tied to a process, or went. Nothing before the first poll, as the
+ * subscribe catch-up sends nothing then. */
+function maybeBroadcastAgents(
+  daemon: Daemon,
+  agents: readonly AgentInfo[],
+  polledAt: string | null,
+): void {
+  if (polledAt === null) return;
+  const rows = agentsWithTerminals(daemon, agents);
+  const key = agentsKey(rows);
+  if (key === daemon.agentsSnapshot) return;
+  daemon.agentsSnapshot = key;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user")
+      send(sub, { ev: "agents", agents: rows, polled_at: polledAt });
+  }
 }
 
 /** `sid`'s input readiness (session-input.ts inputReadiness), judged from the
@@ -2544,9 +2588,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       if (conn.identity?.role === "user") {
         // Catch-up for the agents list the poller already holds; later polls
-        // reach this conn through the poller's own push.
+        // and runs reach this conn through maybeBroadcastAgents.
         const { agents, polledAt } = daemon.agentsPoller.cache;
-        if (polledAt !== null) send(conn, { ev: "agents", agents, polled_at: polledAt });
+        if (polledAt !== null) {
+          send(conn, {
+            ev: "agents",
+            agents: agentsWithTerminals(daemon, agents),
+            polled_at: polledAt,
+          });
+        }
         // This conn may be the first user subscriber, which is what makes the
         // per-peer api_error and user-input watches worth holding.
         syncSessionErrors(daemon);
@@ -2761,10 +2811,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const renamed = await sessionRename(
         req.session_id,
         titleCheck.title,
-        productionRenameDeps((sid) => {
-          const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
-          return agent?.hyoui_session_id ?? null;
-        }),
+        productionRenameDeps(
+          (sid) =>
+            agentsWithTerminals(daemon, daemon.agentsPoller.cache.agents).find(
+              (agent) => agent.sessionId === sid && agent.hyoui_session_id !== undefined,
+            )?.hyoui_session_id ?? null,
+        ),
       );
       if (renamed.ok) {
         send(conn, {
@@ -2778,7 +2830,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(
           conn,
           ErrorCode.terminal_unavailable,
-          `session ${req.session_id} has no known terminal (no HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
+          `session ${req.session_id} has no known terminal (no run of it named a HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
         );
         return;
       }
@@ -3279,7 +3331,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       send(conn, {
         ok: true,
-        agents: daemon.agentsPoller.cache.agents,
+        agents: agentsWithTerminals(daemon, daemon.agentsPoller.cache.agents),
         polled_at: daemon.agentsPoller.cache.polledAt,
       });
       return;
@@ -3793,6 +3845,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    agentsSnapshot: agentsKey([]),
     staleClients: new Map(),
     llmRequests: new LlmRequestCache(),
     llmStatusRefresher: null,
@@ -3820,11 +3873,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       log,
       async (poll, polledAt) => {
         await syncSessionsFromAgents(daemon, poll);
-        for (const sub of daemon.subscribers) {
-          if (sub.identity?.role === "user") {
-            send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
-          }
-        }
+        maybeBroadcastAgents(daemon, poll.agents, polledAt);
       },
       async (poll) => {
         await resolvePendingTranscripts(daemon, poll);

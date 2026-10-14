@@ -60,104 +60,6 @@ export function detectConfigDirs(): string[] {
   return dirs;
 }
 
-/** Extract one `KEY=value` env token from a `ps eww -o command= -p <pid>`
- *  output line (macOS format: command + args followed by space-separated
- *  `KEY=VALUE` env tokens). Returns null when the key is absent, or the value
- *  contains characters that shouldn't appear (we split on spaces, so a value
- *  with an embedded space would look like the next token starts a new env
- *  entry — we defensively bail rather than return a truncated string). */
-function parsePsEnvToken(psLine: string, key: string): string | null {
-  const marker = ` ${key}=`;
-  const idx = psLine.indexOf(marker);
-  if (idx < 0) return null;
-  const rest = psLine.slice(idx + marker.length);
-  // env entries are separated by a single space; a value with no spaces ends
-  // at the next space (or end of string).
-  const end = rest.indexOf(" ");
-  const value = end < 0 ? rest : rest.slice(0, end);
-  const trimmed = value.replace(/[\r\n]+$/, "");
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-/** Extract `HYOUI_SESSION_ID` from a `ps eww` line. Exported for unit testing
- *  without spawning `ps`. */
-export function parseHyouiSessionId(psLine: string): string | null {
-  return parsePsEnvToken(psLine, "HYOUI_SESSION_ID");
-}
-
-/** Run `ps eww -o command= -p <pid>` and extract `HYOUI_SESSION_ID` from the
- *  target process's environment. Returns null on any failure (no such pid,
- *  permission denied on other users' processes, timeout, env var absent).
- *  Root/sudo is not required — macOS permits reading env for processes owned
- *  by the same uid. */
-async function readHyouiSessionIdForPid(pid: number): Promise<string | null> {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
-  try {
-    proc = Bun.spawn(["ps", "eww", "-o", "command=", "-p", String(pid)], {
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 2000,
-      killSignal: "SIGKILL",
-    });
-  } catch {
-    return null;
-  }
-  try {
-    const [code, text] = await Promise.all([
-      proc.exited,
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    if (code !== 0) return null;
-    return parseHyouiSessionId(text);
-  } catch {
-    return null;
-  }
-}
-
-/** Module-level pid → `HYOUI_SESSION_ID` cache. A pid's env doesn't change over the
- *  process's lifetime (execve resets the process image but not while the
- *  same pid keeps running for our purposes), so we only call `ps eww` once
- *  per pid. Entries for pids no longer present in the merged poll result are
- *  pruned to bound memory and to force re-lookup if the same pid number
- *  appears again for a different process later. A cached null means
- *  "looked up and the env var wasn't present" — we cache negatives so we
- *  don't re-`ps` every poll for agents that never had the var. */
-const pidHyouiCache = new Map<number, string | null>();
-
-async function augmentWithHyoui(agents: AgentInfo[]): Promise<AgentInfo[]> {
-  // 1) prune entries for pids not in the current poll
-  const seen = new Set<number>();
-  for (const a of agents) if (typeof a.pid === "number") seen.add(a.pid);
-  for (const cachedPid of pidHyouiCache.keys()) {
-    if (!seen.has(cachedPid)) pidHyouiCache.delete(cachedPid);
-  }
-  // 2) fill misses in parallel
-  const missing: number[] = [];
-  for (const pid of seen) {
-    if (!pidHyouiCache.has(pid)) missing.push(pid);
-  }
-  await Promise.all(
-    missing.map(async (pid) => {
-      pidHyouiCache.set(pid, await readHyouiSessionIdForPid(pid));
-    }),
-  );
-  // 3) annotate rows
-  return agents.map((a) => {
-    if (typeof a.pid !== "number") return a;
-    const hyouiSessionId = pidHyouiCache.get(a.pid);
-    if (!hyouiSessionId) return a;
-    return { ...a, hyoui_session_id: hyouiSessionId };
-  });
-}
-
-/** Test-only: drop cache between tests so pid reuse across fixtures doesn't
- *  leak stale env lookups from prior runs. */
-export function _resetPidHyouiCacheForTests(): void {
-  pidHyouiCache.clear();
-}
-
 /** Run `claude agents --json` with CLAUDE_CONFIG_DIR=configDir, tag every row
  *  with `config_dir`. Any failure (spawn error, non-zero exit, timeout,
  *  unparseable output) logs and returns null — one bad config dir must not
@@ -226,25 +128,22 @@ export interface AgentsPoll {
   answeredDirs: string[];
 }
 
-/** Poll every detected config dir in parallel and merge the results. Each
- *  merged row is annotated with `hyoui_session_id` when the underlying
- *  process's env exposes it (`ps eww` lookup, cached per pid). */
+/** Poll every detected config dir in parallel and merge the results. */
 export async function pollAgents(log: AgentsLog): Promise<AgentsPoll> {
   const dirs = detectConfigDirs();
   const results = await Promise.all(dirs.map((d) => pollOne(d, log)));
   const answeredDirs = dirs.filter((_, i) => results[i] !== null);
-  const agents = await augmentWithHyoui(results.flatMap((r) => r ?? []));
-  return { agents, answeredDirs };
+  return { agents: results.flatMap((r) => r ?? []), answeredDirs };
 }
 
 /** Order-independent identity for change detection: sort by a stable key
  *  before stringifying so re-poll runs that return the same rows in a
  *  different order don't look like a change (JSON.stringify is
  *  insertion-order-sensitive on arrays). */
-function stableKey(agents: AgentInfo[]): string {
+export function agentsKey(agents: readonly AgentInfo[]): string {
   const sorted = [...agents].sort((a, b) => {
-    const ka = `${a.config_dir} ${a.sessionId} ${a.pid}`;
-    const kb = `${b.config_dir} ${b.sessionId} ${b.pid}`;
+    const ka = `${a.config_dir}\0${a.sessionId}\0${a.pid}`;
+    const kb = `${b.config_dir}\0${b.sessionId}\0${b.pid}`;
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
   return JSON.stringify(sorted);
@@ -304,7 +203,7 @@ export function startAgentsPoller(
     void (async () => {
       try {
         const poll = await pollAgents(log);
-        const changed = stableKey(poll.agents) !== stableKey(poller.cache.agents);
+        const changed = agentsKey(poll.agents) !== agentsKey(poller.cache.agents);
         const polledAt = new Date().toISOString();
         // The cache moves only after onChange has pushed, so a subscriber
         // catching up from the cache in between is handed the rows the push

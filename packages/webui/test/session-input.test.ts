@@ -203,14 +203,19 @@ describe("inputReadinessNotice", () => {
 });
 
 describe("terminalAbsenceNotice", () => {
-  // 何を保証するか: 端末が無いと分かっている時 (hyoui の外で起動、終了) だけ
-  // iframe の代わりに理由と次の行動を出し、それ以外は iframe に任せる。
+  // 何を保証するか: 端末が無い・分からないと判定が言っている時 (hyoui の外で
+  // 起動、端末を名乗る module が無い、終了) だけ iframe の代わりに理由と次の
+  // 行動を出し、それ以外は iframe に任せる。端末は module が名乗る事実なので
+  // (DR-0035 §3)、module の無いセッションは入力欄と同じ原因と対処を言う。
   test("speaks only when the terminal is known to be missing", () => {
     expect(terminalAbsenceNotice({ kind: "no_terminal" })).toContain(
       "hyoui run 経由で起動し直して",
     );
+    expect(terminalAbsenceNotice({ kind: "no_module" })).toContain(
+      "plugin を更新してセッションを起動し直して",
+    );
     expect(terminalAbsenceNotice({ kind: "ended" })).toBe("セッションは終了しています。");
-    for (const kind of ["ready", "no_module", "session_changed"] as const) {
+    for (const kind of ["ready", "session_changed"] as const) {
       expect(terminalAbsenceNotice({ kind })).toBeNull();
     }
     expect(terminalAbsenceNotice(undefined)).toBeNull();

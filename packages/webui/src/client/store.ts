@@ -245,8 +245,9 @@ export interface AppState {
   hostTranslatorAvailable: boolean;
   /** Web gateway (hyoui) の base URL。hello response の
    * `terminal_gateway_url` を保持し、SessionView の Terminal タブは
-   * この値が非 null かつ agent の hyoui_session_id が解決済みの時のみ
-   * 表示する (issue 2026-07-21-webui-terminal-tab-embed)。daemon の
+   * この値が非 null で、agent の hyoui_session_id が解決済みか、端末が無い
+   * 理由を daemon の input_readiness が言っている時に表示する
+   * (issue 2026-07-21-webui-terminal-tab-embed)。daemon の
    * `<configDir>/config.json` の `terminal_gateway_url` 未設定なら null。 */
   terminalGatewayUrl: string | null;
   /** hello response の `llm_usage_available`。daemon が LLM gateway の usage

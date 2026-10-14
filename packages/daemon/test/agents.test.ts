@@ -1,6 +1,7 @@
 // agents polling (DR-0009-agents addendum): CLAUDE_CONFIG_DIR auto-detection
 // under a fake $HOME, per-dir `claude agents --json` merge, the always-on poll
-// lifecycle, the session registry derived from it (DR-0034), and the user-only
+// lifecycle, the session registry derived from it (DR-0034), the terminal each
+// row carries from the run its sidecar named (DR-0035 §3), and the user-only
 // permission gate. Each test spawns a real daemon over UDS with a mock `claude` binary on
 // PATH so no real Claude CLI or real ~/.claude* dirs are ever touched.
 import { describe, expect, test } from "bun:test";
@@ -474,6 +475,8 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
       dirA: string;
       setRows: (dir: string, rows: unknown[] | "FAIL") => void;
       cwd: string;
+      base: string;
+      binDir: string;
     }) => Promise<void>,
   ): Promise<void> {
     const { base, home, binDir } = mkFixture();
@@ -491,7 +494,7 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     try {
       const ctx = await startAgentsTestDaemon(home, binDir);
       try {
-        await body({ ctx, dirA, setRows, cwd });
+        await body({ ctx, dirA, setRows, cwd, base, binDir });
       } finally {
         await stopAgentsTestDaemon(ctx);
       }
@@ -649,6 +652,169 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
           `ccmsg:${two}.303`,
           `ccmsg:path:${cwd}`,
         ]);
+      });
+    },
+    T,
+  );
+
+  /** Name a run of `sid` to the daemon on a connection of its own, as its
+   * sidecar does (sidecar_hello); ending the connection is the run going. */
+  async function nameRun(
+    ctx: DaemonCtx,
+    sid: string,
+    runId: string,
+    hyouiSessionId?: string,
+  ): Promise<TestClient> {
+    const c = await connect(ctx.sock);
+    await c.hello({ role: "session", sid });
+    await c.requestOk({
+      op: "sidecar_hello",
+      run_id: runId,
+      started_at: Date.now(),
+      ...(hyouiSessionId !== undefined ? { hyoui_session_id: hyouiSessionId } : {}),
+    });
+    return c;
+  }
+
+  const SID_RUN = "7e000000-0000-4000-8000-000000000001";
+  /** The terminal the agents rows of `sid` carry, row by row in pid order. */
+  function terminalsOf(
+    agents: readonly { sessionId: string; pid: number; hyoui_session_id?: string }[],
+    sid: string,
+  ): { pid: number; terminal: string | undefined }[] {
+    return agents
+      .filter((a) => a.sessionId === sid)
+      .map((a) => ({ pid: a.pid, terminal: a.hyoui_session_id }))
+      .toSorted((a, b) => a.pid - b.pid);
+  }
+
+  // DR-0035 §3: the terminal is what the session's hooks module names. A row
+  // carries it from the run tied to its process, and the run's harness has
+  // to be alive for that, so the rows here name the test's own process.
+  test(
+    "行は名乗った run の端末 (hyoui_session_id) を持ち、名乗る前は持たない",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        setRows(dirA, [row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() })]);
+        const before = await u.readEventUntil("agents", (e) =>
+          e.agents.some((a) => a.sessionId === SID_RUN),
+        );
+        expect(terminalsOf(before.ev.agents, SID_RUN)).toEqual([
+          { pid: process.pid, terminal: undefined },
+        ]);
+
+        const run = await nameRun(ctx, SID_RUN, "run1", "hy-1");
+        const named = await u.readEventUntil(
+          "agents",
+          (e) => terminalsOf(e.agents, SID_RUN)[0]?.terminal !== undefined,
+        );
+        expect(terminalsOf(named.ev.agents, SID_RUN)).toEqual([
+          { pid: process.pid, terminal: "hy-1" },
+        ]);
+        const reply = await u.requestOk({ op: "agents" });
+        expect(terminalsOf(reply.agents, SID_RUN)).toEqual([
+          { pid: process.pid, terminal: "hy-1" },
+        ]);
+        // A tab that subscribes now is handed the rows with the terminal.
+        const late = await watcher(ctx);
+        const caught = await late.readEventUntil("agents");
+        expect(terminalsOf(caught.ev.agents, SID_RUN)).toEqual([
+          { pid: process.pid, terminal: "hy-1" },
+        ]);
+        run.close();
+      });
+    },
+    T,
+  );
+
+  test(
+    "名乗りが行より先でも、行が出た poll で行が端末を持つ",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        const run = await nameRun(ctx, SID_RUN, "run1", "hy-1");
+        setRows(dirA, [row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() })]);
+        const { ev } = await u.readEventUntil(
+          "agents",
+          (e) => terminalsOf(e.agents, SID_RUN)[0]?.terminal !== undefined,
+        );
+        expect(terminalsOf(ev.agents, SID_RUN)).toEqual([{ pid: process.pid, terminal: "hy-1" }]);
+        run.close();
+      });
+    },
+    T,
+  );
+
+  // A session listed in two processes: the run is tied to the one whose start
+  // is nearest its own, and only that process's row is its terminal.
+  test(
+    "同じ sid の別 process の行は、run の端末を持たない",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        const other = 999_999;
+        setRows(dirA, [
+          row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() }),
+          row(SID_RUN, cwd, { pid: other, startedAt: 1 }),
+        ]);
+        await u.readEventUntil("agents", (e) => terminalsOf(e.agents, SID_RUN).length === 2);
+        const run = await nameRun(ctx, SID_RUN, "run1", "hy-1");
+        const { ev } = await u.readEventUntil("agents", (e) =>
+          terminalsOf(e.agents, SID_RUN).some((r) => r.terminal !== undefined),
+        );
+        expect(terminalsOf(ev.agents, SID_RUN)).toEqual(
+          [
+            { pid: process.pid, terminal: "hy-1" },
+            { pid: other, terminal: undefined },
+          ].toSorted((a, b) => a.pid - b.pid),
+        );
+        run.close();
+      });
+    },
+    T,
+  );
+
+  // session_rename types into the terminal the row carries, and a session
+  // whose run went has none to type into.
+  test(
+    "run が去ると行は端末を持たず、session_rename は terminal_unavailable",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd, base, binDir }) => {
+        const hyouiLog = path.join(base, "hyoui.log");
+        fs.writeFileSync(hyouiLog, "");
+        writeMockBin(
+          path.join(binDir, "hyoui"),
+          `#!/usr/bin/env bash\nprintf '%s|' "$@" >> "${hyouiLog}"\necho >> "${hyouiLog}"\n`,
+        );
+        const u = await watcher(ctx);
+        setRows(dirA, [row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() })]);
+        const run = await nameRun(ctx, SID_RUN, "run1", "hy-1");
+        await u.readEventUntil(
+          "agents",
+          (e) => terminalsOf(e.agents, SID_RUN)[0]?.terminal !== undefined,
+        );
+        const renamed = await u.requestOk({
+          op: "session_rename",
+          session_id: SID_RUN,
+          title: "t",
+        });
+        expect(renamed).toMatchObject({ hyoui_session_id: "hy-1", title: "t" });
+        expect(fs.readFileSync(hyouiLog, "utf-8")).toBe("input|hy-1|text:/rename t|key:Enter|\n");
+
+        await run.end();
+        const { ev } = await u.readEventUntil("agents", (e) =>
+          terminalsOf(e.agents, SID_RUN).every((r) => r.terminal === undefined),
+        );
+        expect(terminalsOf(ev.agents, SID_RUN)).toEqual([
+          { pid: process.pid, terminal: undefined },
+        ]);
+        const refused = await u.requestError({
+          op: "session_rename",
+          session_id: SID_RUN,
+          title: "t",
+        });
+        expect(refused.error.code).toBe("terminal_unavailable");
       });
     },
     T,

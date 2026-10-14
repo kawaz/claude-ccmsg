@@ -12,7 +12,7 @@ import {
   type RequestOp,
   type ResponseOf,
 } from "@ccmsg/protocol";
-import { createAgentsPoller } from "../src/agents.ts";
+import { agentsKey, createAgentsPoller } from "../src/agents.ts";
 import { createMidIssuer } from "../src/direct-send.ts";
 import { createForkOriginCache } from "../src/fork-origin.ts";
 import { LlmRequestCache } from "../src/llm-events.ts";
@@ -83,6 +83,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    agentsSnapshot: agentsKey([]),
     staleClients: new Map(),
     llmRequests: new LlmRequestCache(),
     llmStatusRefresher: null,
