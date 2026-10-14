@@ -8,10 +8,19 @@
 // minimal in-memory WebSocket mock (bun's runtime has no DOM globals, so
 // WebSocket/location/localStorage are stubbed for the duration of the file).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createWsClient } from "../src/client/ws.ts";
+import {
+  createWsClient,
+  KEEPALIVE_CHECK_MS,
+  KEEPALIVE_IDLE_MS,
+  KEEPALIVE_TIMEOUT_MS,
+  RECONNECT_DELAYS_MS,
+  SESSION_INPUT_REPLY_TIMEOUT_MS,
+} from "../src/client/ws.ts";
 import { initialState, type Action } from "../src/client/store.ts";
 import { parseWith, PROTOCOL_VERSION, VERSION, type JsonObject } from "@ccmsg/protocol";
 import {
+  defined,
+  FakeClock,
   instanceOf,
   JsonObjectTextSchema,
   jsonObjectOf,
@@ -101,6 +110,18 @@ function sentBody(ws: MockWebSocket, index: number): JsonObject {
   return body;
 }
 
+/** Whether `promise` has settled once every promise job already queued has
+ * run — for asserting that a wait has not run out yet. */
+async function settledNow(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  const mark = () => {
+    settled = true;
+  };
+  void promise.then(mark, mark);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  return settled;
+}
+
 let instances: MockWebSocket[] = [];
 let storage: Record<string, string> = {};
 
@@ -164,25 +185,37 @@ afterEach(() => {
 });
 
 describe("createWsClient keepalive", () => {
-  test("an open socket that receives nothing is pinged and replaced when the ping also gets no reply", async () => {
+  test("an open socket that receives nothing is pinged and replaced when the ping also gets no reply", () => {
+    const clock = new FakeClock();
     const handle = createWsClient(
       () => {},
       () => initialState(),
-      { idleMs: 15, checkMs: 5, timeoutMs: 10 },
+      { clock },
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
+    const ops = () => ws1.sent.map((raw) => jsonObjectOf(raw).op);
 
     // The hello handshake itself is deliberately left unanswered: a silently
     // dead TCP/WebSocket can remain OPEN locally while delivering no daemon
     // frames. Keepalive must not depend on the handshake Promise settling.
-    await Bun.sleep(50);
-    expect(ws1.sent.map((raw) => jsonObjectOf(raw).op)).toContain("ping");
-    expect(instances.length).toBeGreaterThanOrEqual(2);
+    clock.advance(KEEPALIVE_IDLE_MS - 1);
+    expect(ops()).not.toContain("ping");
+
+    // Idle for the full span: pinged by the next check, and the socket stays
+    // while the ping still has time to be answered.
+    clock.advance(KEEPALIVE_CHECK_MS);
+    expect(ops()).toContain("ping");
+    expect(ws1.readyState).toBe(MockWebSocket.OPEN);
+    expect(instances).toHaveLength(1);
+
+    // The ping's own wait runs out: the socket is closed and a new one opened.
+    clock.advance(KEEPALIVE_TIMEOUT_MS);
     expect(ws1.readyState).toBe(MockWebSocket.CLOSED);
+    expect(instances).toHaveLength(2);
   });
 });
 
@@ -514,28 +547,48 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   // close() must mean "stop", including a reconnect that onClose already
-  // queued: an unexpected close schedules setTimeout(connect, 250ms), and a
-  // close() arriving in that window used to leave the timer armed — the
-  // client would silently resurrect itself (and, in tests, the leaked timer
-  // fired after this file's mocks were torn down, crashing an unrelated
-  // later test file). The 300ms real-time wait deliberately outlives the
-  // first RECONNECT_DELAYS_MS slot (250ms) so an armed timer would fire
-  // inside this test if close() failed to cancel it.
-  test("close() cancels an already-scheduled auto-reconnect", async () => {
+  // queued: an unexpected close schedules a reconnect after the first
+  // RECONNECT_DELAYS_MS slot, and a close() arriving in that window cancels
+  // it — otherwise the client would silently resurrect itself.
+  test("close() cancels an already-scheduled auto-reconnect", () => {
+    const clock = new FakeClock();
     const handle = createWsClient(
       () => {},
       () => initialState(),
+      { clock },
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
-    ws1.triggerClose(); // unexpected drop -> reconnect scheduled (250ms)
-    handle.close(); // user says stop before the timer fires
+    ws1.triggerClose(); // unexpected drop -> reconnect scheduled
+    handle.close(); // user says stop before the reconnect runs
 
-    await new Promise((r) => setTimeout(r, 300));
-    expect(instances.length).toBe(1); // no resurrected socket
+    clock.advance(Math.max(...RECONNECT_DELAYS_MS));
+    expect(instances).toHaveLength(1); // no resurrected socket
+  });
+
+  // The counterpart that keeps the test above from passing on a client that
+  // never reconnects at all.
+  test("an unexpected close reconnects after the first reconnect delay", () => {
+    const clock = new FakeClock();
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+      { clock },
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    ws1.triggerClose();
+    const firstDelay = defined(RECONNECT_DELAYS_MS[0], "the first reconnect delay");
+    clock.advance(firstDelay - 1);
+    expect(instances).toHaveLength(1);
+    clock.advance(1);
+    expect(instances).toHaveLength(2);
   });
 
   test("a request made while connecting is sent after hello when the socket opens", async () => {
@@ -988,22 +1041,28 @@ describe("createWsClient agents/ping (U1)", () => {
   // open settles with request_timeout once its own deadline passes, so the
   // input panel's lock is released; the late answer is then dropped.
   test("sessionInput settles with request_timeout when no reply comes", async () => {
+    const clock = new FakeClock();
     const handle = createWsClient(
       () => {},
       () => initialState(),
-      {},
-      { sessionInputMs: 20 },
+      { clock },
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionInput("sid-1", "hello");
     const sent = requestOf(ws1.sent[0] ?? "");
+    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
+    expect(await settledNow(req)).toBe(false);
+    clock.advance(1);
     expect(await req).toEqual({
       ok: false,
-      error: { code: "request_timeout", msg: "no reply within 20 ms" },
+      error: {
+        code: "request_timeout",
+        msg: `no reply within ${SESSION_INPUT_REPLY_TIMEOUT_MS} ms`,
+      },
     });
     // The late answer has nothing left to settle and must not throw.
     ws1.triggerMessage(
@@ -1014,42 +1073,47 @@ describe("createWsClient agents/ping (U1)", () => {
   // A reply inside the deadline wins; the deadline firing afterwards changes
   // nothing.
   test("sessionInput resolves from a reply that beats its deadline", async () => {
+    const clock = new FakeClock();
     const handle = createWsClient(
       () => {},
       () => initialState(),
-      {},
-      { sessionInputMs: 30 },
+      { clock },
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionInput("sid-1", "hello");
     const sent = requestOf(ws1.sent[0] ?? "");
+    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
     ws1.triggerMessage(
       JSON.stringify({ request_id: sent.request_id, ok: true, outcome: "accepted" }),
     );
     expect(await req).toEqual({ ok: true, outcome: "accepted" });
-    await new Promise((r) => setTimeout(r, 50));
+    // The deadline passing afterwards has nothing left to settle.
+    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS);
   });
 
   // Still queued behind a connecting socket at the deadline means it was never
   // sent: it rejects (the panel reads that as "could not send") and is not
   // written when the socket opens later.
   test("sessionInput still queued at its deadline rejects and is never written", async () => {
+    const clock = new FakeClock();
     const handle = createWsClient(
       () => {},
       () => initialState(),
-      {},
-      { sessionInputMs: 20 },
+      { clock },
     );
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     expect(ws1.readyState).toBe(MockWebSocket.CONNECTING);
 
     const req = handle.sessionInput("sid-1", "hello");
+    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
+    expect(await settledNow(req)).toBe(false);
+    clock.advance(1);
     let rejected: unknown = null;
     try {
       await req;

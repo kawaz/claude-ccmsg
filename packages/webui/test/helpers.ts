@@ -70,6 +70,57 @@ export function requestOf(line: string): Request {
   return read.request;
 }
 
+// --- time --------------------------------------------------------------------
+
+interface FakeWait {
+  readonly at: number;
+  readonly fn: () => void;
+  cancelled: boolean;
+}
+
+/** A clock the test moves by hand, for code that takes its time and its waits
+ * from a clock (`WsClock`): the time stands still, and a wait runs only when
+ * `advance` carries the time to it. */
+export class FakeClock {
+  private time = 0;
+  private waits: FakeWait[] = [];
+
+  now(): number {
+    return this.time;
+  }
+
+  after(ms: number, fn: () => void): { cancel(): void } {
+    const wait: FakeWait = { at: this.time + ms, fn, cancelled: false };
+    this.waits.push(wait);
+    return {
+      cancel: () => {
+        wait.cancelled = true;
+      },
+    };
+  }
+
+  /** Move the time `ms` forward, running each wait that falls due on the way
+   * at its own time: earliest first, and those due at once in the order they
+   * were set. A wait set by one that runs is run too if it falls due within
+   * the same `ms`. */
+  advance(ms: number): void {
+    const until = this.time + ms;
+    for (;;) {
+      this.waits = this.waits.filter((wait) => !wait.cancelled);
+      const due = this.waits.reduce<FakeWait | undefined>(
+        (first, wait) =>
+          wait.at <= until && (first === undefined || wait.at < first.at) ? wait : first,
+        undefined,
+      );
+      if (due === undefined) break;
+      this.waits = this.waits.filter((wait) => wait !== due);
+      this.time = due.at;
+      due.fn();
+    }
+    this.time = until;
+  }
+}
+
 // --- VNode trees -------------------------------------------------------------
 
 /** Whether a rendered child is an element / component node (as opposed to

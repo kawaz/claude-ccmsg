@@ -40,16 +40,17 @@ import { summarizeUserAgent } from "./utils.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
-const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
-const KEEPALIVE_IDLE_MS = 30_000;
-const KEEPALIVE_TIMEOUT_MS = 10_000;
-const KEEPALIVE_CHECK_MS = 5_000;
-
-export interface WsKeepaliveOptions {
-  idleMs?: number;
-  timeoutMs?: number;
-  checkMs?: number;
-}
+/** How long after an unexpected close each reconnect attempt waits, by
+ * attempt; attempts past the end keep the last. */
+export const RECONNECT_DELAYS_MS: readonly number[] = [
+  250, 500, 1000, 2000, 4000, 8000, 15000, 30000,
+];
+/** How long an open socket may go without a frame before it is pinged. */
+export const KEEPALIVE_IDLE_MS = 30_000;
+/** How long that ping may go unanswered before the socket is replaced. */
+export const KEEPALIVE_TIMEOUT_MS = 10_000;
+/** How often an open socket is checked for having gone idle. */
+export const KEEPALIVE_CHECK_MS = 5_000;
 
 /** How long sessionInput waits for its reply. The daemon always answers a
  * session_input within its own 12 s deadline (`unconfirmed` at worst,
@@ -59,8 +60,32 @@ export interface WsKeepaliveOptions {
  * tailnet) without making a lost answer hold the input panel much longer. */
 export const SESSION_INPUT_REPLY_TIMEOUT_MS = 15_000;
 
-export interface WsRequestTimeouts {
-  sessionInputMs?: number;
+/** The time the client reads and the waits it sets: how long a socket has
+ * been idle, when to reconnect, when a reply is overdue. The same seam as the
+ * hooks module's `Engine.clock`, read synchronously here because the client
+ * sits directly on the page's own timers. */
+export interface WsClock {
+  now(): number;
+  after(ms: number, fn: () => void): WsWait;
+}
+
+/** A wait set with `WsClock.after`; `cancel` keeps it from running. */
+export interface WsWait {
+  cancel(): void;
+}
+
+/** The page's own clock and timers. */
+export const realClock: WsClock = {
+  now: () => Date.now(),
+  after: (ms, fn) => {
+    const timer = setTimeout(fn, ms);
+    return { cancel: () => clearTimeout(timer) };
+  },
+};
+
+export interface WsClientOptions {
+  /** Where time comes from; the page's own clock unless given. */
+  clock?: WsClock;
 }
 
 /** How this page was arrived at, for the daemon log's hello line: `navigate` /
@@ -397,9 +422,9 @@ export interface WsHandle {
 export function createWsClient(
   dispatch: (action: Action) => void,
   getState: () => AppState,
-  keepalive: WsKeepaliveOptions = {},
-  timeouts: WsRequestTimeouts = {},
+  options: WsClientOptions = {},
 ): WsHandle {
+  const clock = options.clock ?? realClock;
   let ws: WebSocket | null = null;
   /** Outstanding replies, keyed by the request_id we stamped on the way out.
    * An entry lives from the request being written until its reply arrives or
@@ -425,13 +450,10 @@ export function createWsClient(
    * daemon log tell a reconnect apart from a genuine re-load. */
   let firstHello = true;
   let closedByUs = false;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  let keepaliveTimeout: ReturnType<typeof setTimeout> | null = null;
-  let lastReceivedAt = Date.now();
-  const keepaliveIdleMs = keepalive.idleMs ?? KEEPALIVE_IDLE_MS;
-  const keepaliveTimeoutMs = keepalive.timeoutMs ?? KEEPALIVE_TIMEOUT_MS;
-  const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
+  let reconnectTimer: WsWait | null = null;
+  let keepaliveTimer: WsWait | null = null;
+  let keepaliveTimeout: WsWait | null = null;
+  let lastReceivedAt = clock.now();
   let since = loadSince();
 
   function write(socket: WebSocket, req: RequestInput, settle: PendingReply): string {
@@ -454,9 +476,9 @@ export function createWsClient(
   ): Promise<ReplyOf<B["op"]>> {
     return new Promise((resolve, reject) => {
       let rid: string | null = null;
-      let timer: ReturnType<typeof setTimeout> | null = null;
+      let timer: WsWait | null = null;
       const finish = (value: ReplyOf<B["op"]>) => {
-        if (timer !== null) clearTimeout(timer);
+        timer?.cancel();
         resolve(value);
       };
       const settle: PendingReply = {
@@ -477,12 +499,12 @@ export function createWsClient(
       const queued = {
         write: writeNow,
         reject: (reason: Error) => {
-          if (timer !== null) clearTimeout(timer);
+          timer?.cancel();
           reject(reason);
         },
       };
       const expireAfter = (timeoutMs: number) => {
-        timer = setTimeout(() => {
+        timer = clock.after(timeoutMs, () => {
           timer = null;
           if (rid === null) {
             connecting = connecting.filter((q) => q !== queued);
@@ -490,7 +512,7 @@ export function createWsClient(
             return;
           }
           expire(rid, timeoutMs);
-        }, timeoutMs);
+        });
       };
       if (socket.readyState === WebSocket.CONNECTING) {
         connecting.push(queued);
@@ -880,34 +902,34 @@ export function createWsClient(
   }
 
   function stopKeepalive(): void {
-    if (keepaliveTimer !== null) {
-      clearInterval(keepaliveTimer);
-      keepaliveTimer = null;
-    }
-    if (keepaliveTimeout !== null) {
-      clearTimeout(keepaliveTimeout);
-      keepaliveTimeout = null;
-    }
+    keepaliveTimer?.cancel();
+    keepaliveTimer = null;
+    keepaliveTimeout?.cancel();
+    keepaliveTimeout = null;
   }
 
   function startKeepalive(socket: WebSocket): void {
     stopKeepalive();
-    lastReceivedAt = Date.now();
-    keepaliveTimer = setInterval(() => {
+    lastReceivedAt = clock.now();
+    const check = () => {
+      // The next check is set before this one acts, so a check that replaces
+      // the socket (connect() stops the keepalive) cancels it too.
+      keepaliveTimer = clock.after(KEEPALIVE_CHECK_MS, check);
       if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
-      if (keepaliveTimeout !== null || Date.now() - lastReceivedAt < keepaliveIdleMs) return;
+      if (keepaliveTimeout !== null || clock.now() - lastReceivedAt < KEEPALIVE_IDLE_MS) return;
 
       void send({ op: "ping" }).then(() => {
         if (socket !== ws || keepaliveTimeout === null) return;
-        clearTimeout(keepaliveTimeout);
+        keepaliveTimeout.cancel();
         keepaliveTimeout = null;
       });
-      keepaliveTimeout = setTimeout(() => {
+      keepaliveTimeout = clock.after(KEEPALIVE_TIMEOUT_MS, () => {
         if (socket !== ws) return;
         keepaliveTimeout = null;
         connect();
-      }, keepaliveTimeoutMs);
-    }, keepaliveCheckMs);
+      });
+    };
+    keepaliveTimer = clock.after(KEEPALIVE_CHECK_MS, check);
   }
 
   function onClose(): void {
@@ -919,7 +941,7 @@ export function createWsClient(
     const delay =
       RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ?? 30000;
     reconnectAttempt++;
-    reconnectTimer = setTimeout(connect, delay);
+    reconnectTimer = clock.after(delay, connect);
   }
 
   function connect(): void {
@@ -927,10 +949,8 @@ export function createWsClient(
     stopKeepalive();
     // A manual connect() supersedes any scheduled auto-reconnect; without this,
     // the pending timer would fire later and knock down the fresh socket.
-    if (reconnectTimer !== null) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
+    reconnectTimer?.cancel();
+    reconnectTimer = null;
     // Belt-and-suspenders: also flush on connect() itself, in case it's ever
     // invoked (e.g. a manual reconnect) without onClose having run first.
     rejectConnecting();
@@ -953,7 +973,7 @@ export function createWsClient(
     });
     socket.addEventListener("message", (e) => {
       if (socket !== ws) return;
-      lastReceivedAt = Date.now();
+      lastReceivedAt = clock.now();
       // The daemon writes text frames only.
       if (typeof e.data === "string") onMessage(e.data);
     });
@@ -980,10 +1000,8 @@ export function createWsClient(
       stopKeepalive();
       // Cancel a scheduled auto-reconnect too: close() means "stop", including
       // the reconnect already queued by a close event that preceded this call.
-      if (reconnectTimer !== null) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
+      reconnectTimer?.cancel();
+      reconnectTimer = null;
       ws?.close();
     },
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
@@ -1082,7 +1100,7 @@ export function createWsClient(
           session_id: sessionId,
           text,
         },
-        { timeoutMs: timeouts.sessionInputMs ?? SESSION_INPUT_REPLY_TIMEOUT_MS },
+        { timeoutMs: SESSION_INPUT_REPLY_TIMEOUT_MS },
       ),
     sessionEnv: (sessionId) =>
       send({
