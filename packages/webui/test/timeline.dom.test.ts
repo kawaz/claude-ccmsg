@@ -346,6 +346,7 @@ describe("Timeline follows the bottom", () => {
     const el = scroller(root);
     expect(el.scrollHeight).toBe(6 * ITEM_PX);
     expect(el.scrollTop).toBe(el.scrollHeight);
+    expect(userNavCount(root)).toBe("👤 3/3");
   });
 
   test("an append follows a reader who is at the bottom", async () => {

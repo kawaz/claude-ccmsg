@@ -10,7 +10,7 @@ import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, sessionHref, timelineHref } from "../locator.ts";
-import { pushNavigation, rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
+import { pushNavigation } from "../navigation.ts";
 import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -26,17 +26,10 @@ import {
   TurnRespondingRow,
 } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
-import { useEffectEvent } from "../useEffectEvent.ts";
 import { useScrollHold } from "../useScrollHold.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { miniSummaryLines, respondingSince } from "../session-status-view.ts";
-import {
-  positionLandingKey,
-  shouldLandOnPosition,
-  shouldReturnToHead,
-  togglePosition,
-} from "./timeline-position.ts";
 import {
   agentCommunicationCount,
   CACHE_KEEPALIVE_FOLD_LABEL,
@@ -49,7 +42,6 @@ import {
   isUserSpeechKind,
   segmentSearchText,
   isDirectFoldEntry,
-  userNavTargets,
   parseSystemMessageFields,
   truncateRawLine,
   type AttachmentFile,
@@ -82,7 +74,7 @@ import {
   translateTextOnHost,
   type HostTranslateRequest,
 } from "../translate.ts";
-import { loopNextIndex, loopPrevIndex, type SearchWord } from "../in-view-search.ts";
+import { type SearchWord } from "../in-view-search.ts";
 import { foldGroupKey } from "../fold-tree.ts";
 import { FoldOpenStore } from "../fold-open-store.ts";
 import {
@@ -98,7 +90,6 @@ import {
   peerChannelLabel,
   peerMessagePresentation,
 } from "../agent-communication-view.ts";
-import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
@@ -120,6 +111,9 @@ import { useTranscriptLoader } from "./timeline/useTranscriptLoader.ts";
 import { useSayBubbles } from "./timeline/useSayBubbles.ts";
 import { useTranscriptModel, type ItemRawLookup } from "./timeline/useTranscriptModel.ts";
 import { useInViewSearch, type TLSearchCtx } from "./timeline/useInViewSearch.ts";
+import { usePositionLanding, usePositionPin } from "./timeline/usePositionPin.ts";
+import { useStickToBottom } from "./timeline/useStickToBottom.ts";
+import { useUserTurnNav } from "./timeline/useUserTurnNav.ts";
 
 const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
@@ -238,12 +232,6 @@ function ItemRawRows({ offset }: { offset: number }) {
     </>
   );
 }
-
-// Live tail 自動スクロール追従 (U2 kawaz spec: 「ユーザが最下部付近を見ている
-// 時だけ自動スクロール追従、上にスクロール中は追従しない」) の「最下部付近」
-// のしきい値 (px)。ちょうど末端に張り付いていなくても数行分の余裕は追従対象
-// にする、というよくあるチャット UI の慣習値。
-const NEAR_BOTTOM_PX = 80;
 
 // 表示形式の統一 (kawaz spec 2026-07-12): fold 対象アイテム (thinking/
 // tool_use/tool_result/meta 行/システム由来 user メッセージ) は全て同一の
@@ -2889,12 +2877,6 @@ function ForkDivider({ origin }: { origin: ForkOrigin }) {
  * モバイル幅で 2 行以上に wrap するため (kawaz r35 mid=51: 固定の
  * scroll-margin-top では不足して対象がヘッダ裏に隠れた)。👤 nav の
  * ジャンプと uuid 直アクセスの着地が同じ「ヘッダ直下」に揃う唯一の定義。 */
-function topBelowToolbar(container: HTMLElement, target: HTMLElement): number {
-  const toolbar = container.querySelector<HTMLElement>(".tl-toolbar");
-  const toolbarBottom =
-    toolbar?.getBoundingClientRect().bottom ?? container.getBoundingClientRect().top;
-  return target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
-}
 
 /** dump をファイルに書き出すアクションの状態。path は daemon ホスト上の絶対
  * パスで、次にすることは「別のセッションに渡す」なので表示したまま残す。 */
@@ -3081,36 +3063,8 @@ export function Timeline({
   const forkAvailable = useStoreState(store, (s) => s.forkAvailable);
   const peers = useStoreState(store, (s) => s.peers);
   const rooms = useStoreState(store, (s) => s.rooms);
-  // 位置指定 URL (`/timeline/<uuid>`) は親セッションの TL しか指せない —
-  // locator の grammar 上、agent TL (`/timeline/agent/...`) の position は
-  // 常に "head" で、agent ref と uuid を同時に表す形が無い (locator.ts)。
-  // agent TL で位置を書き込むと agent ref が落ち、項目をクリックしただけで
-  // 親 TL へ弾き出される。表せない選択なので agent TL では行わない。
-  // 選択中のバルーンを再クリックしたら選択解除 = head に戻す (kawaz r76 m71:
-  // 「今だと msgid を外す方法が無い」)。head に戻しても**その場ではスクロール
-  // しない** — 末尾ジャンプは「Timeline タブが再表示された」時だけの挙動で、
-  // 選択解除は URL と装飾を外すだけ。
-  // 画面内のバルーンをクリックした選択では **スクロールしない** (kawaz r115 m4:
-  // 「クリックした瞬間に勝手に一番上へ寄せられると、ダブルクリックの単語選択が
-  // できないし、2 クリック目が別の場所に当たって事故る」)。着地スクロールは
-  // 「外から その位置へ来た」時 (直リンク / 戻る・進む) の挙動なので、クリック
-  // 発の遷移は着地済みとして先にマークしておき、下の着地 effect を空振りさせる。
-  const landedPositionRef = useRef<string | null>(null);
-  // pin を張ってからユーザ自身がスクロールしたか (wheel / touch / キー)。
-  // 最下部検知で pin を外してよいかの判定に使う (shouldReturnToHead)。
-  const userScrolledSincePinRef = useRef(false);
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
-  const selectPosition = useCallback(
-    (uuid: string) => {
-      if (agentActive) return;
-      const next = togglePosition(currentPosition, uuid);
-      landedPositionRef.current = next === "head" ? null : positionLandingKey(sid, next);
-      userScrolledSincePinRef.current = false;
-      rememberTimelinePosition(sid, next);
-      replaceNavigation(timelineHref(sid, next));
-    },
-    [sid, currentPosition, agentActive],
-  );
+  const pin = usePositionPin({ sid, currentPosition, agentActive });
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
   // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
@@ -3166,29 +3120,11 @@ export function Timeline({
       />
     ));
 
-  // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
-  // top/bottom of the loaded transcript and to the previous/next user-text
-  // turn, plus a live "current position" counter. ---
-
-  // Stable key of every mounted green bubble in document order. The pure
-  // model applies the same ccmsg deduplication as rendering, so the denominator
-  // and every index in this array have exactly one DOM target.
-  const userTurnKeys = useMemo(() => userNavTargets(groups).map((target) => target.key), [groups]);
-  const userTurnKeySet = useMemo(() => new Set(userTurnKeys), [userTurnKeys]);
-
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
   // search reveal, refresh, ⤓) goes through this instead of a one-off
   // scrollTop write; see useScrollHold.ts.
   const scrollHold = useScrollHold(scrollRef, tlLinesRef);
-  const userNavScrollAnimationRef = useRef<number | null>(null);
-  // nav key -> mounted DOM node for each green bubble. Entries for turns
-  // dropped by a "更新" (replace) reload are pruned below rather than leaked.
-  const userTurnRefs = useRef(new Map<string, HTMLElement>());
-  const registerUserTurnRef = useCallback((key: string, el: HTMLElement | null) => {
-    if (el) userTurnRefs.current.set(key, el);
-    else userTurnRefs.current.delete(key);
-  }, []);
 
   const inViewSearch = useInViewSearch({
     sid,
@@ -3201,25 +3137,7 @@ export function Timeline({
   });
   const searchCtx = inViewSearch.searchCtx;
 
-  // "👤 N/M" nav の N (kawaz r17 mid=54, 2026-07-15): 以前はスクロール位置から
-  // 推定していたが「変な挙動しかしないゴミ」と判定され仕様変更 — リロード /
-  // 初回読み込み時に最大値 (M) で初期化し、以降は ↑↓ ボタンで増減してユーザ
-  // が明示的にジャンプした値だけを保持する (スクロール位置とは独立)。
-  const [currentUserIdx, setCurrentUserIdx] = useState(0);
-  const [userNavActivated, setUserNavActivated] = useState(false);
-  const previousUserTurnKeysRef = useRef(userTurnKeys);
-  useEffect(() => {
-    const previousKeys = previousUserTurnKeysRef.current;
-    previousUserTurnKeysRef.current = userTurnKeys;
-    setCurrentUserIdx((current) => {
-      const reindexed = reindexStableSelection(current, previousKeys, userTurnKeys);
-      return reindexed ?? current;
-    });
-  }, [userTurnKeys]);
-  useEffect(() => {
-    setUserNavActivated(false);
-  }, [sid, agent?.agentId, agent?.runId, agent?.teammate]);
-  const selectedUserTurnKey = userNavActivated ? userTurnKeys[currentUserIdx - 1] : undefined;
+  const userNav = useUserTurnNav({ sid, agent, groups, end: timeline.end, scrollRef });
   // 側面パネルの「アクション」タブが選択中の項目に対して出せるもの。項目
   // クリックで付く位置選択 (`/timeline/<uuid>`) をそのまま入力に使う —
   // 選択モデルを 2 つ持たないのは 👤 nav に相乗りしていた時と同じ姿勢で、
@@ -3254,226 +3172,42 @@ export function Timeline({
                 `${location.pathname}${location.search}`,
                 prefillSidebarState({ kind: "fork", sessionId: sid, resumeAt }),
               ),
-            onSelect: selectPosition,
+            onSelect: pin.selectPosition,
           },
-    [sid, currentPosition, forkAction, forkAvailable, selectPosition, agentActive],
+    [sid, currentPosition, forkAction, forkAvailable, pin.selectPosition, agentActive],
   );
 
-  useEffect(
-    () => () => {
-      if (userNavScrollAnimationRef.current !== null) {
-        cancelAnimationFrame(userNavScrollAnimationRef.current);
-      }
-    },
-    [],
-  );
-
-  // Live tail 自動スクロール追従 (kawaz spec) のための「今ユーザは最下部付近
-  // を見ているか」フラグ。scroll イベント (下の rAF スロットル済み onScroll)
-  // でだけ更新する ref — レンダーごとの再計算は不要 (DOM 位置に依存する値を
-  // state に上げると余計な再レンダーを誘発するため、ref に留める)。初期値
-  // true: マウント直後 (まだ何もスクロールしていない状態) は「最下部相当」
-  // とみなし、直後に届く tail に自然に追従させる。
-  const isNearBottomRef = useRef(true);
-  const checkNearBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    isNearBottomRef.current = distance < NEAR_BOTTOM_PX;
-    if (isNearBottomRef.current) {
-      // pin 中は「ユーザが自分でスクロールして最下部に来た」時だけ head に戻す。
-      // pin 直後 (= 画面内クリックでの選択) にここを通すと、選択した瞬間に URL と
-      // 装飾が剥がされて **最下部が見えている間はメッセージを選べない** (kawaz
-      // r115 m4)。この effect は currentPosition の変化でも再実行されるので、
-      // scroll イベントが 1 度も来ていなくてもここへ来る。
-      if (currentPosition !== "head") {
-        if (!shouldReturnToHead(currentPosition, userScrolledSincePinRef.current)) return;
-        rememberTimelinePosition(sid, "head");
-        replaceNavigation(timelineHref(sid));
-        return;
-      }
-      rememberTimelinePosition(sid, "head");
-      return;
-    }
-    const viewportTop = el.getBoundingClientRect().top;
-    const visible = [...el.querySelectorAll<HTMLElement>("[data-timeline-uuid]")].find(
-      (item) => item.getBoundingClientRect().bottom > viewportTop,
-    );
-    const uuid = visible?.dataset.timelineUuid;
-    if (uuid) rememberTimelinePosition(sid, uuid);
-  }, [currentPosition, sid]);
-
-  useEffect(() => {
-    // Drop refs for turns that no longer exist post-reload (a "更新" replace
-    // swaps in an entirely new key set) so the Map doesn't accumulate
-    // detached nodes across repeated refreshes.
-    const validKeys = new Set(userTurnKeys);
-    for (const key of userTurnRefs.current.keys()) {
-      if (!validKeys.has(key)) userTurnRefs.current.delete(key);
-    }
-
-    // scroll イベント購読は自動 tail 追従の isNearBottomRef 更新用のみ (kawaz
-    // r17 mid=54 で currentUserIdx の scroll 判定は廃止された — 上の
-    // currentUserIdx 節参照)。
-    const container = scrollRef.current;
-    if (!container) return;
-    let ticking = false;
-    const onScroll = () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        checkNearBottom();
-        ticking = false;
-      });
-    };
-    // ユーザ自身のスクロール操作だけを拾う (programmatic scroll はこれらの
-    // イベントを発火しない — useScrollHold が保持を手放す判定と同じ考え方)。pin 中の
-    // 「最下部まで自分で降りてきたら head に戻す」判定に使う。
-    const onUserScrollIntent = () => {
-      userScrolledSincePinRef.current = true;
-    };
-    container.addEventListener("scroll", onScroll, { passive: true });
-    container.addEventListener("wheel", onUserScrollIntent, { passive: true });
-    container.addEventListener("touchmove", onUserScrollIntent, { passive: true });
-    container.addEventListener("keydown", onUserScrollIntent);
-    // スクロールバーのドラッグは wheel も touch も出さないので mousedown で拾う。
-    // バルーンのクリックでも発火するが、click は mousedown の後なので
-    // selectPosition のリセットが最後に効く (pin 直後は false のまま)。
-    container.addEventListener("mousedown", onUserScrollIntent);
-    checkNearBottom();
-    return () => {
-      container.removeEventListener("scroll", onScroll);
-      container.removeEventListener("wheel", onUserScrollIntent);
-      container.removeEventListener("touchmove", onUserScrollIntent);
-      container.removeEventListener("keydown", onUserScrollIntent);
-      container.removeEventListener("mousedown", onUserScrollIntent);
-    };
-  }, [userTurnKeys, checkNearBottom]);
-
-  // セッション切替時、前セッションの「どこまで読んだか (byte end)」を引き
-  // 継がないようにリセットする — このリセットを先に走らせておくことで、下の
-  // tail 検知 effect が「セッション切替による end の変化」を「tail 追記」と
-  // 誤認して意図しない自動スクロールを起こさない (両 effect の実行順序は
-  // 定義順、sid だけに反応するこの effect が先に走る)。
-  //
-  // 追加 (kawaz r15 mid=7、2026-07-14): mount / sid 切替直後にも最下部へ
-  // スクロールする。既存 tail-append effect は `timeline.end` の伸びに反応
-  // する形式なので、cache がすでに埋まった状態 (前訪問済 or 再訪 revalidate)
-  // で end が変わらないケースで scroll が発火せず「一番上のまま」になる
-  // ことがあった。末尾は保持 (useScrollHold) で取るので、mount 直後に
-  // scrollHeight が確定していなくても、内容が伸びた時点で末尾へ書き直される。
-  const prevEndRef = useRef(timeline.end);
-  // 反応するのは sid だけ — timeline.end / currentPosition はその時点の値を
-  // 読むだけの Effect Event に置く。end に反応すると「セッション切替検知」
-  // ではなく毎回の tail 追記でもリセットされてしまい、下の tail-append effect
-  // の appended 判定が常に false になってしまう。
-  const enterSession = useEffectEvent(() => {
-    prevEndRef.current = timeline.end;
-    isNearBottomRef.current = currentPosition === "head";
-    if (currentPosition !== "head") return;
-    scrollHold.toBottom();
+  // Design rationale: 宣言順に意味がある。末尾追従の hook の測り直し (scroller の
+  // 位置を測り、最下部なら位置を外す / 読書位置を覚える) は、位置への着地より
+  // 先に走らせる。着地のスクロールの後で測ると、着地した位置ではなく toolbar
+  // の裏に隠れた項目を「読んでいた位置」として覚え直してしまう。2 つの hook は
+  // 位置の状態 (pin.tracker) を戻り値で共有し、順序だけがこの宣言順に残る。
+  const stick = useStickToBottom({
+    sid,
+    end: timeline.end,
+    atHead: currentPosition === "head",
+    visible,
+    content: groups,
+    scrollRef,
+    scrollHold,
+    onScrollMeasured: pin.onScrollMeasured,
+    onUserScrollIntent: pin.onUserScrollIntent,
   });
-  useEffect(() => enterSession(), [sid]);
-
-  // Timeline タブが「隠れている → 見えている」に変わった瞬間の末尾ジャンプ
-  // (kawaz r76 m47)。上の [sid] effect は mount / セッション切替でしか走らず、
-  // タブ往復では Timeline が unmount されない (SessionView の visitedTabs が
-  // hidden のまま保持する) ため scroller の scrollTop が前回のまま残る。
-  // head 以外 (= /timeline/<uuid> 直リンクでタブが開いた場合) は下の
-  // uuid 着地 effect が担当するので、ここでは触らない。
-  const wasVisibleRef = useRef(visible);
-  useEffect(() => {
-    const becameVisible = visible && !wasVisibleRef.current;
-    wasVisibleRef.current = visible;
-    if (!becameVisible || currentPosition !== "head") return;
-    scrollHold.toBottom();
-  }, [visible, currentPosition, scrollHold]);
-
-  // Live tail で新しい行が追記されたとき (`timeline.end` が伸びる) だけ、か
-  // つユーザが最下部付近を見ているときだけ自動スクロールする (kawaz spec)。
-  // `end` は「load older」prepend では変わらない (applyTimelineLoaded) の
-  // で、この条件は自然に prepend を除外し、tail 追記 (と初回 tail ロード)
-  // だけに反応する。smooth アニメーションなし — 高頻度で届く tail 行ごとに
-  // アニメーションが重なるとかえって読みにくいため、即座にジャンプする。
-  // 反応するのは timeline.end の変化だけ。user turn 数・位置・末尾付近かは
-  // 伸びた瞬間の値を読むだけなので Effect Event に置く。
-  const followTailGrowth = useEffectEvent((end: number) => {
-    const appended = end > prevEndRef.current;
-    const initialLoad = prevEndRef.current === 0 && end > 0;
-    prevEndRef.current = end;
-    // currentUserIdx を最大値に初期化 (kawaz r17 mid=54): リロード直後
-    // (refresh: end が減る/等しい) と初回読み込み (initialLoad) の両方で
-    // "末尾ユーザメッセージ" を選択状態にする。tail 追記 (appended) 時は
-    // ユーザが今どこを読んでいるかに関係なく数値を勝手に増やさない。
-    if (initialLoad || !appended) setCurrentUserIdx(userTurnKeys.length);
-    if (!appended || currentPosition !== "head") return;
-    // 初回 tail ロード (リロード直後: mount 時の [sid] effect は空 timeline
-    // に空振りし、ここが実質の初回スクロール) は位置ガードなしで必ず末尾へ
-    // (kawaz r17 mid=34,37 — 「まだ top に居る」を「ユーザが離れた」と誤認
-    // する位置ベース判定が末尾ジャンプを殺していた)。以降の live tail 追記は
-    // 従来通り「末尾付近に居る時だけ」追従 (kawaz spec、上へ遡り中の読書を
-    // 吹っ飛ばさない)。
-    if (!initialLoad && !isNearBottomRef.current) return;
-    // 1 発の書き込みでなく保持 (useScrollHold): 初期 fetch (2MB) の大量行は
-    // markdown / highlight の非同期差し替えで effect 後も scrollHeight が
-    // 伸びるので、1 度書いただけでは上に取り残される。
-    scrollHold.toBottom();
+  usePositionLanding({
+    sid,
+    currentPosition,
+    timelineStatus: timeline.status,
+    parsed,
+    scrollRef,
+    scrollHold,
+    tracker: pin.tracker,
   });
-  useEffect(() => followTailGrowth(timeline.end), [timeline.end]);
-
-  // pin 位置 (`/timeline/<uuid>`) への着地。**その位置を開いた / その位置へ
-  // 遷移した最初の 1 回だけ**スクロールし、以降は選択装飾を出すだけ
-  // (kawaz r76 m71: 「#id 付きで URL を開いたときと同じ感覚 + 選択メッセージ
-  // に装飾を付与する程度の意味」)。この effect は tail 追記や markdown /
-  // highlight 差し替えによる `parsed` の変化でも走るので、着地済みのキーを
-  // ref に覚えて再スクロールを止める — さもないと pin したまま上を読んでいる
-  // 最中に TL が更新されるたび pin 位置へ引き戻される。着地キーの ref は
-  // selectPosition (クリック選択で先に着地済みとマークする側) と共有するため
-  // 上で宣言している。
-  useEffect(() => {
-    // head に戻った (= 選択解除 / 末尾追いつき) 時点で着地履歴を捨てる。同じ
-    // uuid を選び直したら、それは新しい遷移なので改めて着地させる。
-    if (currentPosition === "head") landedPositionRef.current = null;
-    if (timeline.status !== "loaded" || currentPosition === "head") return;
-    const target = scrollRef.current?.querySelector<HTMLElement>(
-      `[data-timeline-uuid="${CSS.escape(currentPosition)}"]`,
-    );
-    if (!target) {
-      // Still means "outside the loaded window" and nothing else: `uuid` is
-      // only ever passed to the boundary bubbles rendered below, never to the
-      // fold side, so a pin target is always mounted regardless of any fold.
-      rememberTimelinePosition(sid, "head");
-      replaceNavigation(timelineHref(sid));
-      return;
-    }
-    rememberTimelinePosition(sid, currentPosition);
-    const key = positionLandingKey(sid, currentPosition);
-    if (!shouldLandOnPosition(landedPositionRef.current, key)) return;
-    landedPositionRef.current = key;
-    // 外から来た pin (直リンク / 戻る・進む)。着地スクロールはユーザ操作では
-    // ないので、ここを起点に「自分でスクロールしたか」を数え直す。
-    userScrolledSincePinRef.current = false;
-    // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
-    // 画面中央ではなく先頭に置く。scrollIntoView({block:"center"}) では
-    // sticky toolbar を考慮できず、そもそも中央になってしまうので、👤 nav
-    // と同じ topBelowToolbar で位置を計算して container 側へ書く。
-    // 保持 (useScrollHold) なので、着地の後に上の項目が伸びても対象は
-    // toolbar 直下に留まる。この effect の再実行 (parsed の変化) は着地済み
-    // として上で抜けるので、保持を取り消さない。
-    scrollHold.toElement(target, (container, el) =>
-      container.scrollTo({ top: topBelowToolbar(container, el) }),
-    );
-  }, [sid, currentPosition, timeline.status, parsed, scrollHold]);
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
-  // replace で end が同値のままだと tail-append effect が発火しないため
-  // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
-  // 届く live tail への追従を継続させる)。
+  // replace で end が同値のままだと追記の追従が発火しないため、ここで明示的に
+  // 飛ばし、更新直後に届く live tail への追従も続けさせる。
   function refresh() {
-    void loader.refresh()?.then(() => {
-      isNearBottomRef.current = true;
-      scrollHold.toBottom();
-    });
+    void loader.refresh()?.then(stick.resumeFollowing);
   }
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
@@ -3485,79 +3219,6 @@ export function Timeline({
   function scrollToBottom() {
     scrollHold.toBottom();
   }
-
-  function scrollToUserTurn(oneBasedIdx: number) {
-    const key = userTurnKeys[oneBasedIdx - 1];
-    if (key === undefined) return;
-    const target = userTurnRefs.current.get(key);
-    const container = scrollRef.current;
-    if (!target || !container) return;
-    setUserNavActivated(true);
-    // sticky な tl-toolbar の実高さ分だけ下げた位置へスクロールする
-    // (kawaz r35 mid=51: 固定の scroll-margin-top 4rem ではモバイル幅で
-    // toolbar が 2 行以上に wrap した時に不足し、対象がヘッダ裏に隠れた)。
-    // toolbar は container 内 sticky なので offsetHeight が常に実高さ。
-    const top = topBelowToolbar(container, target);
-
-    if (userNavScrollAnimationRef.current !== null) {
-      cancelAnimationFrame(userNavScrollAnimationRef.current);
-      userNavScrollAnimationRef.current = null;
-    }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      container.scrollTo({ top });
-      return;
-    }
-
-    const startTop = container.scrollTop;
-    const distance = top - startTop;
-    const durationMs = 180;
-    let startTime: number | null = null;
-    const animate = (now: number) => {
-      startTime ??= now;
-      const progress = Math.min((now - startTime) / durationMs, 1);
-      const eased = 1 - (1 - progress) ** 3;
-      container.scrollTo({ top: startTop + distance * eased });
-      if (progress < 1) {
-        userNavScrollAnimationRef.current = requestAnimationFrame(animate);
-      } else {
-        userNavScrollAnimationRef.current = null;
-      }
-    };
-    userNavScrollAnimationRef.current = requestAnimationFrame(animate);
-  }
-
-  // kawaz r17 mid=54: state を減増してから対応要素へジャンプする単純な形
-  // (以前は scroll 位置から currentUserIdx を推定していたので 1 段目の state
-  // 更新が不要だった)。境界は 1 ≤ idx ≤ M — ループ遷移そのものは DR-0022 §2.2
-  // で search nav と共通化された in-view-search.ts の loopPrevIndex/
-  // loopNextIndex に委譲 (以前はここに手書きの if ガードがあった)。
-  function goPrevUserTurn() {
-    const next = loopPrevIndex(currentUserIdx, userTurnKeys.length);
-    if (next === 0) return;
-    setCurrentUserIdx(next);
-    scrollToUserTurn(next);
-  }
-
-  function goNextUserTurn() {
-    const next = loopNextIndex(currentUserIdx, userTurnKeys.length);
-    if (next === 0) return;
-    setCurrentUserIdx(next);
-    scrollToUserTurn(next);
-  }
-
-  // 👤 nav のクリック同期 (DR-0022 §2.2 を 👤 nav にも統一適用): クリックされた
-  // 吹き出しの offsetKey が userTurnKeys の何番目かを引いて、スクロールなしで
-  // currentUserIdx を合わせる。navKey が現在の描画対象と一致しない場合は
-  // 何もしない。
-  const onUserTurnClick = useCallback(
-    (navKey: string) => {
-      const pos = userTurnKeys.indexOf(navKey);
-      if (pos < 0) return;
-      setUserNavActivated(true);
-      setCurrentUserIdx(pos + 1);
-    },
-    [userTurnKeys],
-  );
 
   // TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張): 走行中
   // workflow + in_progress TODO の要約に加え、context 消費と活動中
@@ -3702,11 +3363,11 @@ export function Timeline({
                           <button
                             type="button"
                             class="tl-user-nav-count"
-                            disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
-                            onClick={() => scrollToUserTurn(currentUserIdx)}
+                            disabled={userNav.currentIndex <= 0 || userNav.keys.length === 0}
+                            onClick={userNav.scrollToCurrent}
                             title="現在のユーザ発言へ戻る"
                           >
-                            👤 {currentUserIdx}/{userTurnKeys.length}
+                            👤 {userNav.currentIndex}/{userNav.keys.length}
                           </button>
                           {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
                            * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
@@ -3714,16 +3375,16 @@ export function Timeline({
                            * 意味がない)。 */}
                           <button
                             type="button"
-                            disabled={userTurnKeys.length === 0}
-                            onClick={goPrevUserTurn}
+                            disabled={userNav.keys.length === 0}
+                            onClick={userNav.goPrev}
                             title="前のユーザ発言へ"
                           >
                             ↑
                           </button>
                           <button
                             type="button"
-                            disabled={userTurnKeys.length === 0}
-                            onClick={goNextUserTurn}
+                            disabled={userNav.keys.length === 0}
+                            onClick={userNav.goNext}
                             title="次のユーザ発言へ"
                           >
                             ↓
@@ -3785,18 +3446,18 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <UserPromptBubble
                                           line={line}
                                           offsetKey={offset}
                                           navKey={`user:${offset}`}
-                                          registerUserTurnRef={registerUserTurnRef}
+                                          registerUserTurnRef={userNav.registerUserTurnRef}
                                           translationAvailability={translationAvailability}
                                           now={now}
                                           searchCtx={searchCtx}
-                                          onUserTurnClick={onUserTurnClick}
-                                          selected={selectedUserTurnKey === `user:${offset}`}
+                                          onUserTurnClick={userNav.onUserTurnClick}
+                                          selected={userNav.selectedKey === `user:${offset}`}
                                         />
                                       </ItemRawToggle>
                                     );
@@ -3807,7 +3468,7 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <AssistantBubble
                                           line={line}
@@ -3826,7 +3487,7 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <ApiErrorNotice line={line} />
                                       </ItemRawToggle>
@@ -3838,7 +3499,7 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <BashRunCard
                                           command={boundary.segment.command}
@@ -3854,7 +3515,7 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <BashRunCard
                                           command={null}
@@ -3870,7 +3531,7 @@ export function Timeline({
                                         offset={offset}
                                         uuid={line.uuid}
                                         selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
+                                        onSelectPosition={pin.selectPosition}
                                       >
                                         <SayBubble
                                           label="PushNotification"
@@ -3902,7 +3563,7 @@ export function Timeline({
                                             offset={offset}
                                             uuid={line.uuid}
                                             selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={selectPosition}
+                                            onSelectPosition={pin.selectPosition}
                                           >
                                             <CcmsgBubble
                                               message={m}
@@ -3911,11 +3572,11 @@ export function Timeline({
                                               searchKey={ccmsgUnitKey(offset, j)}
                                               searchCtx={searchCtx}
                                               navKey={
-                                                userTurnKeySet.has(navKey) ? navKey : undefined
+                                                userNav.keySet.has(navKey) ? navKey : undefined
                                               }
-                                              registerUserTurnRef={registerUserTurnRef}
-                                              onUserTurnClick={onUserTurnClick}
-                                              selected={selectedUserTurnKey === navKey}
+                                              registerUserTurnRef={userNav.registerUserTurnRef}
+                                              onUserTurnClick={userNav.onUserTurnClick}
+                                              selected={userNav.selectedKey === navKey}
                                               room={rooms.get(m.room)}
                                               peers={peers}
                                             />
