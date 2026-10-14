@@ -991,6 +991,9 @@ var NOT_DELIVERED = {
   unreachable: "peer socket に書き込めなかった。少し置いて一度だけ送り直すか、送るのをやめる",
   refused: "受け手が受け取りを拒否した。時間を置いて送り直すか、送るのをやめる"
 };
+var DELIVERED = "届いた";
+var UNCONFIRMED = "届いたか確かめられなかった";
+var NOT_DELIVERED_WORD = "届かなかった";
 function spelled(session) {
   return [
     `session_id: ${session.sid}`,
@@ -1010,11 +1013,11 @@ function sendResultText(results) {
   const lines = results.map((r) => {
     switch (r.outcome) {
       case "delivered":
-        return `- ${spelled(r)}: 届いた`;
+        return `- ${spelled(r)}: ${DELIVERED}`;
       case "unconfirmed":
-        return `- ${spelled(r)}: 届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`;
+        return `- ${spelled(r)}: ${UNCONFIRMED}。${UNCONFIRMED_ADVICE}`;
       case "not_delivered":
-        return `- ${spelled(r)}: 届かなかった。${NOT_DELIVERED[r.reason]}`;
+        return `- ${spelled(r)}: ${NOT_DELIVERED_WORD}。${NOT_DELIVERED[r.reason]}`;
     }
   });
   return [head, ...lines].join(`
@@ -1042,6 +1045,7 @@ var SessionStartInputSchema = looseObject({
 });
 var SessionEndInputSchema = looseObject({ reason: optional(string()) });
 var CommandRunInputSchema = looseObject({ command: optional(string()) });
+var SessionCompactInputSchema = looseObject({});
 var SessionMeasureInputSchema = looseObject({
   context: optional(looseObject({ window: optional(number()), tokens: optional(number()) }))
 });
@@ -1104,7 +1108,7 @@ function lineSplitter(onLine) {
         onLine(part);
   };
 }
-var UNCONFIRMED = { outcome: "unconfirmed" };
+var UNCONFIRMED2 = { outcome: "unconfirmed" };
 var SESSION_CHANGED = { outcome: "not_delivered", reason: "session_changed" };
 function newState() {
   return {
@@ -1143,7 +1147,7 @@ async function handlePromptSend($, state, request) {
   if (!filled.isFilled)
     return { outcome: "not_delivered", reason: filled.refusal ?? "refused" };
   if (!await stillCurrent($, state, request)) {
-    return await putBackUnsent($, request.text, draft) ? SESSION_CHANGED : UNCONFIRMED;
+    return await putBackUnsent($, request.text, draft) ? SESSION_CHANGED : UNCONFIRMED2;
   }
   const accepted = Promise.withResolvers();
   state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
@@ -1163,7 +1167,7 @@ async function handlePromptSend($, state, request) {
   if (state.awaiting?.text === request.text)
     state.awaiting = undefined;
   if (request.generation !== state.generation)
-    return UNCONFIRMED;
+    return UNCONFIRMED2;
   if (isAccepted)
     return { outcome: "accepted" };
   if (state.restoring?.text === request.text)
@@ -1171,7 +1175,7 @@ async function handlePromptSend($, state, request) {
   if (await putBackUnsent($, request.text, draft)) {
     return { outcome: "not_delivered", reason: entered ? "not_submitted" : "enter_failed" };
   }
-  return UNCONFIRMED;
+  return UNCONFIRMED2;
 }
 async function putBackDraft($, submitted, draft) {
   const box = await $.prompt.read();
@@ -1270,6 +1274,62 @@ function beginArgv(root, sid, cwd) {
   return [`${root}/bin/ccmsg`, "sidecar", "begin", "--sid", sid, "--cwd", cwd];
 }
 var BEGIN_TIMEOUT_MS = 25000;
+var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+var GuidedRecordSchema = object({ guided: boolean(), at: number() });
+var GUIDED_PREFIX = "guided:";
+function guidedKey(sid) {
+  return `${GUIDED_PREFIX}${sid}`;
+}
+var GUIDED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+var GUIDED_TOUCH_MS = 24 * 60 * 60 * 1000;
+async function guidedRecord($, key) {
+  const read = parseWith(GuidedRecordSchema, await $.store.get(key));
+  return read.ok ? read.value : undefined;
+}
+async function guide($, state) {
+  if (state.interactive !== true)
+    return;
+  try {
+    const key = guidedKey(await $.session.id());
+    const now = Math.floor(await $.clock.now());
+    const held = await guidedRecord($, key);
+    if (held?.guided === true) {
+      if (now - held.at > GUIDED_TOUCH_MS)
+        await $.store.set(key, { guided: true, at: now });
+      return;
+    }
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: GUIDANCE }] }
+    });
+    await $.store.set(key, { guided: true, at: now });
+  } catch (e) {
+    $.ui.log(`ccmsg: guidance not added: ${errorText(e)}`, { to: "debug" });
+  }
+}
+async function unguide($) {
+  try {
+    const key = guidedKey(await $.session.id());
+    await $.store.set(key, { guided: false, at: Math.floor(await $.clock.now()) });
+  } catch (e) {
+    $.ui.log(`ccmsg: could not mark the guidance for after the compaction: ${errorText(e)}`, {
+      to: "debug"
+    });
+  }
+}
+async function sweepGuided($) {
+  try {
+    const now = Math.floor(await $.clock.now());
+    for (const key of await $.store.keys()) {
+      if (!key.startsWith(GUIDED_PREFIX))
+        continue;
+      const held = await guidedRecord($, key);
+      if (held === undefined || now - held.at > GUIDED_TTL_MS)
+        await $.store.delete(key);
+    }
+  } catch (e) {
+    $.ui.log(`ccmsg: guidance records not swept: ${errorText(e)}`, { to: "debug" });
+  }
+}
 var TOOL_INPUT_SCHEMAS = {
   send: {
     type: "object",
@@ -1581,6 +1641,7 @@ function register(on) {
       sessionBegin($);
       startSidecar($, state);
       sessionBegan($, state);
+      sweepGuided($);
       if (state.interactive)
         await registerTools($);
     }
@@ -1604,6 +1665,11 @@ function register(on) {
       } else if (input.command === "model") {
         readModelAndWindow($, state);
       }
+    }
+  })).catch(async (_$, e, next) => next(e));
+  on("session.compact", async ($, e, next) => observe($, e, next, "session.compact", SessionCompactInputSchema, {
+    after: async () => {
+      await unguide($);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) => observe($, e, next, "session.measure", SessionMeasureInputSchema, {
@@ -1644,6 +1710,9 @@ function register(on) {
     }
   })).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
+    before: async () => {
+      await guide($, state);
+    },
     after: async (input, result) => {
       if (input.origin?.kind !== "composer" || input.text === undefined)
         return;
@@ -1682,6 +1751,8 @@ function register(on) {
 export {
   ACCEPT_WAIT_MS,
   BEGIN_TIMEOUT_MS,
+  GUIDANCE,
+  GUIDED_TTL_MS,
   HYOUI_TIMEOUT_MS,
   PEERS_TIMEOUT_MS,
   REPLY_TIMEOUT_MS,

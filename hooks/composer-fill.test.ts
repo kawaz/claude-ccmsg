@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
+import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
 import {
   type DescribeResult,
   type SessionFacts,
@@ -19,6 +20,8 @@ import {
 } from "@ccmsg/protocol/sidecar";
 import {
   ACCEPT_WAIT_MS,
+  GUIDANCE,
+  GUIDED_TTL_MS,
   type Engine,
   type HookedEvent,
   answer,
@@ -113,6 +116,7 @@ function emptyTable(): HookTable & CatchTable {
     "session.start": [],
     "session.end": [],
     "session.measure": [],
+    "session.compact": [],
     "command.run": [],
     "prompt.submit": [],
     "turn.start": [],
@@ -150,6 +154,11 @@ interface Fake {
   /** The events the module hooked, in the order it hooked them. */
   registered: HookedEvent[];
   catchers: CatchTable;
+  /** The text of each row the module appended to the conversation. */
+  appended: string[];
+  /** This plugin's `$.store`, which outlives the process: a session resumed
+   * in another process is given the same one. */
+  store: Map<string, unknown>;
   /** The tools the module registered (`$.tool.register`), in order. */
   tools: { name: string; description: string; inputSchema: object; isDeferred: boolean }[];
   sid: { value: string };
@@ -182,6 +191,8 @@ function fakeEngine(
       argv: readonly string[],
       init: { stdin?: string; timeoutMs?: number; env?: Record<string, string> },
     ) => Promise<CommandRun>;
+    /** The plugin's store as an earlier process left it. */
+    store?: Map<string, unknown>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -204,6 +215,8 @@ function fakeEngine(
   const fills: string[] = [];
   const logs: string[] = [];
   const tools: Fake["tools"] = [];
+  const appended: string[] = [];
+  const store = options.store ?? new Map<string, unknown>();
   const $: Engine = {
     plugin: { root: "/plugin" },
     session: {
@@ -212,6 +225,21 @@ function fakeEngine(
       surfaces: async () => options.surfaces ?? ["terminal"],
       model: async () => session.model,
       usage: async () => ({ context: { window: session.window } }),
+      append: async ({ message }) => {
+        appended.push(message.content.map((block) => block.text).join(""));
+        return {};
+      },
+    },
+    store: {
+      // What is stored is read back as a copy, as the engine's store does.
+      get: async (key) => structuredClone(store.get(key)),
+      set: async (key, value) => {
+        store.set(key, structuredClone(value));
+      },
+      delete: async (key) => {
+        store.delete(key);
+      },
+      keys: async () => [...store.keys()],
     },
     prompt: {
       read: async () => ({ text: composer.text, cursor: composer.text.length }),
@@ -302,6 +330,8 @@ function fakeEngine(
     logs,
     catchers: emptyTable(),
     tools,
+    appended,
+    store,
   };
   return fake;
 }
@@ -1498,6 +1528,106 @@ describe("each hook passes the event on once", () => {
   });
 });
 
+// What the model is told of ccmsg before its first turn (DR-0039 §5).
+describe("the guidance", () => {
+  const prompt = (fake: Fake, text: string) =>
+    fire(fake, "prompt.submit", submitted(text), entered);
+  const started = async (options: Parameters<typeof fakeEngine>[0] = {}) => {
+    const fake = fakeEngine(options);
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    return fake;
+  };
+
+  test("goes in before the first prompt of a conversation, once", async () => {
+    const fake = await started();
+    let appendedAtNext: number | undefined;
+    await fire(fake, "prompt.submit", submitted("one"), async (e) => {
+      appendedAtNext = fake.appended.length;
+      return entered(e);
+    });
+    // In before the prompt goes in, so the prompt's request carries it.
+    expect(appendedAtNext).toBe(1);
+    await prompt(fake, "two");
+    expect(fake.appended).toEqual([GUIDANCE]);
+    expect(GUIDANCE).toContain("skill ccmsg-v1:ccmsg");
+  });
+
+  // A conversation keeps its id across processes (`--resume`, an in-session
+  // /resume): it holds the guidance already, and is not told again.
+  test("a resumed conversation is not told again, in another process or the same", async () => {
+    const first = await started();
+    await prompt(first, "one");
+    const resumed = await started({ store: first.store });
+    await prompt(resumed, "after --resume");
+    expect(resumed.appended).toEqual([]);
+    // An in-session /resume back to it, after a /clear moved on.
+    resumed.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await prompt(resumed, "after clear");
+    resumed.sid.value = first.sid.value;
+    await prompt(resumed, "after /resume");
+    expect(resumed.appended).toEqual([GUIDANCE]);
+  });
+
+  // /clear starts a conversation under a new id: it gets the guidance. A
+  // compaction summarized it away, so the next prompt adds it back.
+  test("goes in again after /clear and after a compaction", async () => {
+    const fake = await started();
+    await prompt(fake, "one");
+    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await prompt(fake, "after clear");
+    await fire(fake, "session.compact", { trigger: "auto" }, async () => ({}));
+    await prompt(fake, "after compact");
+    await prompt(fake, "next");
+    expect(fake.appended).toEqual([GUIDANCE, GUIDANCE, GUIDANCE]);
+  });
+
+  test("a session with no composer (-p) gets none", async () => {
+    const fake = await started();
+    const p = fakeEngine();
+    registerOn(p);
+    await fire(
+      p,
+      "session.start",
+      { ...START, isInteractive: false, surface: null },
+      async () => ({}),
+    );
+    await prompt(p, "one");
+    expect(p.appended).toEqual([]);
+    expect(fake.appended).toEqual([]);
+  });
+
+  test("one that cannot go in is logged, and the prompt goes in regardless", async () => {
+    const fake = fakeEngine();
+    fake.$.session = {
+      ...fake.$.session,
+      append: async () => {
+        throw new Error("refused: no conversation");
+      },
+    };
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    expect(await prompt(fake, "one")).toEqual({ text: "one" });
+    expect(fake.logs).toContain("ccmsg: guidance not added: Error: refused: no conversation");
+    // Not marked: the next prompt tries again.
+    expect([...fake.store.keys()]).toEqual([]);
+  });
+
+  // The records of sessions not used for the TTL, and those not read, go
+  // when a session starts; the others stay, other keys untouched.
+  test("a session's start sweeps the records gone stale", async () => {
+    const store = new Map<string, unknown>([
+      ["guided:old", { guided: true, at: -GUIDED_TTL_MS - 10 }],
+      ["guided:fresh", { guided: true, at: 0 }],
+      ["guided:unread", "x"],
+      ["other", { at: -GUIDED_TTL_MS - 10 }],
+    ]);
+    await started({ store });
+    for (let i = 0; i < 10 && store.has("guided:old"); i++) await settle();
+    expect([...store.keys()].sort()).toEqual(["guided:fresh", "other"]);
+  });
+});
+
 // The tools an agent uses ccmsg through (DR-0039 §3).
 describe("the ccmsg tools", () => {
   const OTHER = "bbbbbbbb-2222-4333-8444-555555555555";
@@ -1600,6 +1730,8 @@ describe("the ccmsg tools", () => {
     expect(answered).toEqual(
       ["send", "say", "peers"].map((tool) => `mcp__${read.value.name}__${tool}`),
     );
+    // A transcript's reader knows the tools by the same names.
+    expect(answered).toEqual([CCMSG_TOOLS.send, CCMSG_TOOLS.say, CCMSG_TOOLS.peers]);
   });
 
   test("a send that matched only the sender says so", async () => {

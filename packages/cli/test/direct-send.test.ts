@@ -39,6 +39,15 @@ const B = "bbbbbbbb-2222-4333-8444-555555555555";
 const NOBODY = "cccccccc-2222-4333-8444-555555555555";
 const MID = "0123456789abcdef0123456789abcdef/1";
 
+/** What a direct `post` / `reply` says on stderr, and nothing else: it is
+ * deprecated, and still sends (DR-0039 §4). */
+function deprecatedNotice(verb: "post" | "reply"): RegExp {
+  const what = verb === "post" ? "ccmsg post <sid>" : "ccmsg reply <mid>";
+  return new RegExp(
+    `^ccmsg: ${what.replace(/[<>]/g, "\\$&")} は廃止予定。[^\n]*send tool[^\n]*\n$`,
+  );
+}
+
 interface CliResult {
   out: string;
   err: string;
@@ -141,7 +150,8 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
       expect(received.attrs["ccmsg-from"]).toBe(A);
 
       const replied = await runCli(["--sid", B, ...replyArgs(received.body, "answer")], asB);
-      expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
+      expect(replied.code).toBe(0);
+      expect(replied.err).toMatch(deprecatedNotice("reply"));
       const answer = printed(CliDeliveredSchema, replied.out);
       const back = parseEnvelope(await ha.nextContent());
       expect(back.attrs["ccmsg-mid"]).toBe(answer.mid);
@@ -177,7 +187,7 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
       for (const to of ["user", "ccmsg:user"]) {
         const res = await runCli(["--sid", A, "post", to, "hi"], env);
         expect(res.code).toBe(1);
-        expect(res.err).toContain("PushNotification");
+        expect(res.err).toContain("say tool");
       }
       const notSid = await runCli(["--sid", A, "post", "someone", "hi"], env);
       expect(notSid.code).toBe(1);
@@ -286,7 +296,8 @@ describe("the reply line is one shell command whatever its words hold", () => {
       expect(line.startsWith(`Reply with: '${home}/my dir; `)).toBe(true);
 
       const ran = await runReplyLine(line, "answer", { ...asB, CCMSG_SID: B }, home);
-      expect({ code: ran.code, err: ran.err }).toEqual({ code: 0, err: "" });
+      expect(ran.code).toBe(0);
+      expect(ran.err).toMatch(deprecatedNotice("reply"));
       expect(fs.readdirSync(home).filter((name) => name.startsWith("PWNED"))).toEqual([]);
       const back = parseEnvelope(await ha.nextContent());
       expect(back.attrs["ccmsg-reply-to"]).toBe(sent.mid);
@@ -391,7 +402,8 @@ describe("message bodies", () => {
       await hold(sock, B, hb.configDir);
       for (const words of [bodyWords(4, 25_000), bodyWords(10, 99_000)]) {
         const res = await runCliLean(["--sid", A, "post", B, ...words], env);
-        expect({ code: res.code, err: res.err }).toEqual({ code: 0, err: "" });
+        expect(res.code).toBe(0);
+        expect(res.err).toMatch(deprecatedNotice("post"));
         const body = parseEnvelope(await hb.nextContent()).body;
         expect(body.slice(0, body.lastIndexOf("\n\nReply with: "))).toBe(words.join(" "));
       }
@@ -421,7 +433,8 @@ describe("message bodies", () => {
 
       const mid = defined(received.attrs["ccmsg-mid"], "ccmsg-mid");
       const replied = await runCli(["--sid", B, "reply", mid, "--to", A, "T6", "受領"], asB);
-      expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
+      expect(replied.code).toBe(0);
+      expect(replied.err).toMatch(deprecatedNotice("reply"));
       expect(parseEnvelope(await ha.nextContent()).body.startsWith("T6 受領\n\nReply with: ")).toBe(
         true,
       );
@@ -458,7 +471,8 @@ describe("message bodies", () => {
       ];
       for (const [words, text] of cases) {
         const posted = await runCli(["--sid", A, "post", B, ...words], asA);
-        expect({ words, code: posted.code, err: posted.err }).toEqual({ words, code: 0, err: "" });
+        expect({ words, code: posted.code }).toEqual({ words, code: 0 });
+        expect(posted.err).toMatch(deprecatedNotice("post"));
         const content = await hb.nextContent();
         expect(bodyOf(content)).toBe(text);
         mid = defined(parseEnvelope(content).attrs["ccmsg-mid"], "ccmsg-mid");
@@ -467,7 +481,8 @@ describe("message bodies", () => {
       }
       const words = ["--to", A, "--", "--to"];
       const replied = await runCli(["--sid", B, "reply", mid, ...words], asB);
-      expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
+      expect(replied.code).toBe(0);
+      expect(replied.err).toMatch(deprecatedNotice("reply"));
       expect(bodyOf(await ha.nextContent())).toBe("--to");
       expect(
         parseCcmsgSendCommand(`ccmsg reply ${[mid, ...words].map(shellQuote).join(" ")}`),

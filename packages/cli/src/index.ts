@@ -29,6 +29,7 @@ import {
   type ReplyOf,
   type RequestInput,
   PeerListInputTextSchema,
+  type PeerInfo,
   PeerSendInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
@@ -61,6 +62,7 @@ import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
 // --- arg parsing -----------------------------------------------------------
 
 const BOOL_FLAGS = new Set([
+  "addresses",
   "all",
   "exclude-self",
   "self",
@@ -364,6 +366,20 @@ async function runOnce(identity: Identity, req: RequestInput): Promise<never> {
 
 // --- direct send (DR-0036 §1) ---------------------------------------------
 
+/** A peers row without its `addresses`. */
+function withoutAddresses(peer: PeerInfo): Omit<PeerInfo, "addresses"> {
+  const { addresses: _addresses, ...rest } = peer;
+  return rest;
+}
+
+/** Tell whoever runs a deprecated way of sending (DR-0039 §4) what replaces
+ * it. It still runs: a session started with an earlier plugin may use it. */
+function deprecated(what: string): void {
+  process.stderr.write(
+    `ccmsg: ${what} は廃止予定。セッション間の送信は ccmsg plugin の send tool、宛先の候補は peers tool を使う (使い方は skill ccmsg-v1:ccmsg)\n`,
+  );
+}
+
 /** A room id (`r<N>`): `post` with one is a room post, with anything else a
  * direct send to a session. */
 const ROOM_ID_RE = /^r\d+$/;
@@ -375,7 +391,7 @@ function directRecipient(address: string): string {
   const sid = directAddressSid(address);
   if (sid === DIRECT_DELIVERY_USER_SENDER) {
     throw new Error(
-      "セッションから人へは送れない。人の入力は webui から届き、人に知らせるには PushNotification を使う",
+      "セッションから人へは送れない。人の入力は webui から届き、人に知らせるには ccmsg plugin の say tool を使う",
     );
   }
   if (!isSessionIdShape(sid)) {
@@ -1063,13 +1079,11 @@ async function handleDaemon(
 
 function printHelp(): void {
   process.stdout.write(`Commands:
-  post <sid> <text>                         セッションへ直送 (宛先の sid は peers で探す)
-  reply <mid> --to <sid> <text>             直送への返信 (届いた封筒の返信行どおり)
   reply <rNmN> <msg>                        room への返信用
   post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
-  peers [cwd(partial)]                      セッション一覧と SendMessage の宛先 (addresses)
+  peers [cwd(partial)]                      セッション一覧
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
@@ -1087,20 +1101,12 @@ Usage:
   ccmsg <command> [args] [options]
 
 Commands:
-  post <sid> <text>            Send a message straight to one session, no room.
-                               <sid> is a session id as "peers" lists it, or
-                               ccmsg:<sid>. Prints {"delivered":true,"mid":...};
-                               a message that did not arrive exits 1 with why,
-                               and is neither kept nor retried; one whose arrival
-                               could not be told exits 3 (resending may deliver
-                               it twice). The words after <sid> are the text,
-                               quoted or not; only an exact --to / --sid /
-                               --as-session / --help there is an option, and
-                               everything after -- is text
+  post <sid> <text>            Deprecated: a session sends to another with the
+                               ccmsg plugin's send tool
   post <room> <msg>            Post a message to a room (--to to filter delivery)
   reply <mid> --to <sid> <text>
-                               Answer a direct message: run the reply line of
-                               the envelope it arrived in as it is
+                               Deprecated: a session answers a direct message
+                               with the ccmsg plugin's send tool
   reply <rNmN> <msg>           Reply to a received room message; the daemon
                                builds targets
   create-room [<title>]        Open a room with peers (--members, --msg, --title
@@ -1129,12 +1135,9 @@ Commands:
                                live_members; archived rooms and rooms whose members
                                are all disconnected are omitted — use --all to include)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
-                               by substring match on each session's cwd. Each
-                               lists in "addresses" what to write as SendMessage's
-                               to, from any config dir: ccmsg:<sid>; one
-                               ccmsg:<sid>.<pid> per process when the session runs
-                               in several; ccmsg:path:<cwd>, every other session
-                               working there
+                               by substring match on each session's cwd.
+                               --addresses (deprecated) adds each session's
+                               ccmsg: addresses
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   say [args...]                Speak via /usr/bin/say, first telling the daemon
                                which session spoke so the webui can show it in
@@ -1231,10 +1234,8 @@ Notes:
   A 1on1 room is read-only: post, reply and next-room into it are refused;
   use a normal room instead.
   No command sends to the person: their input reaches a session from the
-  webui, and a session tells them something with PushNotification.
-  A session sends to another with SendMessage, an address from peers as its
-  to; the ccmsg hooks module delivers it, across config dirs. The answer goes
-  to the from the message arrived with.
+  webui. A session sends to another session, and tells the person something,
+  with the ccmsg plugin's tools (send / say / peers); its skill ccmsg says how.
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
@@ -1359,6 +1360,7 @@ async function main(): Promise<void> {
             "--to は room への post の配信先の指定で、セッションへの直送では使わない",
           );
         }
+        deprecated("ccmsg post <sid>");
         await runDirectSend(identity, { to, text });
       }
       const room = target;
@@ -1378,9 +1380,10 @@ async function main(): Promise<void> {
         const address = str(opts, "to");
         if (address === undefined) {
           throw new Error(
-            "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには PushNotification を使う",
+            "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには ccmsg plugin の say tool を使う",
           );
         }
+        deprecated("ccmsg reply <mid>");
         await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
       }
       const [, room, mid] = ref.match(/^(r\d+)m(\d+)$/) ?? [];
@@ -1566,23 +1569,24 @@ async function main(): Promise<void> {
     }
     case "peers": {
       // RL-Q2 (kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]` に合わせ
-      // positional 引数を cwd 部分一致 filter として実装する。現状 args[0] は
-      // silent drop されていたのを合法化。絞りは CLI 側で行う (rooms と同じく
-      // webui の op:"peers" を汚さない方針、interface-wording rule 準拠)。
+      // positional 引数を cwd 部分一致 filter として実装する。絞りは CLI 側で
+      // 行う (rooms と同じく webui の op:"peers" を汚さない方針、interface-wording
+      // rule 準拠)。各セッションの addresses (SendMessage の宛先の綴り) は
+      // --addresses の時だけ出す: 送信が send tool に置き換わり (DR-0039 §4)、
+      // 一覧そのものは人の口として残るため。
       const cwdFilter = args[0];
-      if (typeof cwdFilter !== "string" || cwdFilter === "") {
-        await runOnce(identity, { op: "peers" });
-        return;
-      }
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, identity);
+      const withAddresses = opts.addresses === true;
+      if (withAddresses) deprecated("ccmsg peers --addresses");
+      const client = await ensureDaemon(resolvePaths(), identity);
       const res = await client.request({ op: "peers" });
       client.close();
-      if (res.ok) {
-        const peers = res.peers.filter((p) => p.cwd.includes(cwdFilter));
-        process.exit(output({ ...res, peers }));
-      }
-      process.exit(output(res));
+      if (!res.ok) process.exit(output(res));
+      const peers = res.peers
+        .filter(
+          (p) => typeof cwdFilter !== "string" || cwdFilter === "" || p.cwd.includes(cwdFilter),
+        )
+        .map((p) => (withAddresses ? p : withoutAddresses(p)));
+      process.exit(output({ ...res, peers }));
       return;
     }
     case "notify": {

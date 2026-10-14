@@ -26,6 +26,9 @@
 //      exit DIRECT_SEND_UNCONFIRMED_EXIT when arrival could not be told).
 //   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`,
 //      its input read where the call is known to be one.
+//   4. sent through the hooks module's `send` tool (DR-0039 §3): a tool_use
+//      `{name: CCMSG_TOOLS.send, input:{session_id?, cwd?, name?, pid?, text}}`,
+//      paired with its tool_result, which peer-tools-text.ts reads back.
 //
 // String work over the transcript rows' schemas, importing nothing but valibot
 // and the schema files beside it, so the browser bundle and the daemon share it
@@ -34,6 +37,7 @@ import * as v from "valibot";
 import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
+import { CCMSG_TOOLS } from "./peer-tools.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
 import { isKnownContentBlock } from "./transcript-content.ts";
 import { isKnownTranscriptRow, type TranscriptRow } from "./transcript-row.ts";
@@ -504,4 +508,24 @@ export function pushNotificationText(name: string, input: JsonObject): string | 
   if (name !== "PushNotification") return null;
   const read = parseWith(PushNotificationInputSchema, input);
   return read.ok ? read.value.message : null;
+}
+
+/** The input of a `send` tool call, read for what a reader shows of it. */
+const SendCallInputSchema = v.looseObject({
+  text: v.string(),
+  session_id: v.optional(v.string()),
+});
+
+/** A `send` tool call (`name` and the input as the model wrote it): its text,
+ * and the session it named by id when it did. Null for any other tool, or a
+ * call whose input carries no text. */
+export function ccmsgSendCall(
+  name: string,
+  input: JsonObject,
+): { text: string; sessionId?: string } | null {
+  if (name !== CCMSG_TOOLS.send) return null;
+  const read = parseWith(SendCallInputSchema, input);
+  if (!read.ok) return null;
+  const { text, session_id } = read.value;
+  return session_id !== undefined ? { text, sessionId: session_id } : { text };
 }

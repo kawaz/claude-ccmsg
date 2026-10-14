@@ -68,6 +68,7 @@
 import * as v from "valibot";
 import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
+  type CcmsgToolName,
   PeerListResponseTextSchema,
   PeerSendResponseTextSchema,
   PeersToolInputSchema,
@@ -90,7 +91,7 @@ import {
   sidecarRunId,
 } from "@ccmsg/protocol/sidecar";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
-import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "./tool-text.ts";
+import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 
 /** A piece of a spawned child's output. */
 export interface SpawnChunk {
@@ -117,6 +118,17 @@ export interface Engine {
     /** The model as `/model` names it, a launch-time `[1m]` kept. */
     model(): Promise<string>;
     usage(): Promise<{ context: { window: number; tokens?: number } }>;
+    append(args: {
+      message: { type: "user"; content: readonly { type: "text"; text: string }[] };
+    }): Promise<unknown>;
+  };
+  /** This plugin's key-value store, kept on disk under the config dir across
+   * sessions, resumes and reloads. A value read back is outside data. */
+  store: {
+    get(key: string): Promise<unknown>;
+    set(key: string, value: object): Promise<void>;
+    delete(key: string): Promise<void>;
+    keys(): Promise<string[]>;
   };
   prompt: {
     read(): Promise<{ text: string; cursor: number }>;
@@ -153,6 +165,7 @@ export type ObservedEvent =
   | "session.start"
   | "session.end"
   | "session.measure"
+  | "session.compact"
   | "command.run"
   | "prompt.submit"
   | "turn.start"
@@ -190,7 +203,7 @@ export interface HookOf extends Record<ObservedEvent, Hook> {
 }
 /** The tools this module registers, as the model calls them: the plugin's
  * name is their prefix (plugin.json). */
-export type ToolName = "mcp__ccmsg-v1__send" | "mcp__ccmsg-v1__say" | "mcp__ccmsg-v1__peers";
+export type ToolName = CcmsgToolName;
 type HookOnly = { [K in Exclude<HookedEvent, "tool.call">]: [hook: HookOf[K]] };
 /** What `on` takes after the event: the hook, and for tool.call first the
  * tool it answers. */
@@ -217,6 +230,7 @@ const SessionStartInputSchema = v.looseObject({
 });
 const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
 const CommandRunInputSchema = v.looseObject({ command: v.optional(v.string()) });
+const SessionCompactInputSchema = v.looseObject({});
 const SessionMeasureInputSchema = v.looseObject({
   context: v.optional(
     v.looseObject({ window: v.optional(v.number()), tokens: v.optional(v.number()) }),
@@ -242,7 +256,7 @@ const PromptSubmitResultSchema = v.looseObject({ drop: v.optional(v.string()) })
  * ahead of the event, `after` once the event went through, with what it
  * settled on. */
 interface Observer<T, R> {
-  before?: (e: T) => void;
+  before?: (e: T) => Promise<void> | void;
   after?: (e: T, result: R) => Promise<void> | void;
 }
 
@@ -641,6 +655,94 @@ export function beginArgv(root: string, sid: string, cwd: string): string[] {
  * daemon itself is detached, so a begin cut short leaves it starting. */
 export const BEGIN_TIMEOUT_MS = 25_000;
 
+// --- the guidance (DR-0039 §5) ----------------------------------------------
+
+/** What the model is told of ccmsg before its first turn: where to read how
+ * (the plugin's skill), and nothing of the tools' use itself, which is the
+ * skill's to say. */
+export const GUIDANCE =
+  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+
+/** Whether a session's conversation holds the guidance, by session id in
+ * `$.store`: a conversation's id outlives its process (`--resume`, an in-
+ * session `/resume`), so a resumed one is not told again, and `/clear`
+ * starts one under a new id, which is. `at` is when it was last set or
+ * found, which the sweep goes by. */
+const GuidedRecordSchema = v.object({ guided: v.boolean(), at: v.number() });
+const GUIDED_PREFIX = "guided:";
+function guidedKey(sid: string): string {
+  return `${GUIDED_PREFIX}${sid}`;
+}
+/** How long a session's record outlives its last use: as long as ccmsg keeps
+ * a session's state file. A conversation resumed after that is told again. */
+export const GUIDED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** How stale a record may get before a prompt that finds it in place sets
+ * its time again: a write a day rather than one per prompt. */
+const GUIDED_TOUCH_MS = 24 * 60 * 60 * 1000;
+
+/** The session's record, or undefined when there is none (or one this
+ * module does not read, which the next write replaces). */
+async function guidedRecord(
+  $: Engine,
+  key: string,
+): Promise<Output<typeof GuidedRecordSchema> | undefined> {
+  const read = parseWith(GuidedRecordSchema, await $.store.get(key));
+  return read.ok ? read.value : undefined;
+}
+
+/** Put the guidance into the conversation unless it holds it: once per
+ * conversation, and again after a compaction, which summarizes it away. Not
+ * for a session with no composer (`-p`, the SDK), which the tools are not
+ * registered for either. Never rejects: without it the session runs as
+ * before. */
+async function guide($: Engine, state: ModuleState): Promise<void> {
+  if (state.interactive !== true) return;
+  try {
+    const key = guidedKey(await $.session.id());
+    const now = Math.floor(await $.clock.now());
+    const held = await guidedRecord($, key);
+    if (held?.guided === true) {
+      if (now - held.at > GUIDED_TOUCH_MS) await $.store.set(key, { guided: true, at: now });
+      return;
+    }
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: GUIDANCE }] },
+    });
+    await $.store.set(key, { guided: true, at: now });
+  } catch (e) {
+    $.ui.log(`ccmsg: guidance not added: ${errorText(e)}`, { to: "debug" });
+  }
+}
+
+/** A compaction summarized the guidance away: the next prompt adds it back
+ * (appended during the compaction it would land before the boundary and be
+ * dropped, DR-0039 §5). Never rejects. */
+async function unguide($: Engine): Promise<void> {
+  try {
+    const key = guidedKey(await $.session.id());
+    await $.store.set(key, { guided: false, at: Math.floor(await $.clock.now()) });
+  } catch (e) {
+    $.ui.log(`ccmsg: could not mark the guidance for after the compaction: ${errorText(e)}`, {
+      to: "debug",
+    });
+  }
+}
+
+/** Remove the records of sessions not used for GUIDED_TTL_MS, and those this
+ * module does not read. Never rejects. */
+async function sweepGuided($: Engine): Promise<void> {
+  try {
+    const now = Math.floor(await $.clock.now());
+    for (const key of await $.store.keys()) {
+      if (!key.startsWith(GUIDED_PREFIX)) continue;
+      const held = await guidedRecord($, key);
+      if (held === undefined || now - held.at > GUIDED_TTL_MS) await $.store.delete(key);
+    }
+  } catch (e) {
+    $.ui.log(`ccmsg: guidance records not swept: ${errorText(e)}`, { to: "debug" });
+  }
+}
+
 // --- the tools (DR-0039 §3) ------------------------------------------------
 
 /** The tools' input schemas for the model, derived from the schemas their
@@ -981,6 +1083,7 @@ export function register(on: On): ModuleState {
         void sessionBegin($);
         startSidecar($, state);
         void sessionBegan($, state);
+        void sweepGuided($);
         // Awaited, so the tools are listed by the first turn. `-p` and the SDK
         // get none: talking with other sessions from there is not a use ccmsg
         // serves (DR-0037 §5, DR-0039 §3). Registrations outlive /clear and
@@ -1015,6 +1118,13 @@ export function register(on: On): ModuleState {
         } else if (input.command === "model") {
           void readModelAndWindow($, state);
         }
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("session.compact", async ($, e, next) =>
+    observe($, e, next, "session.compact", SessionCompactInputSchema, {
+      after: async () => {
+        await unguide($);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -1067,6 +1177,10 @@ export function register(on: On): ModuleState {
   // their draft back then.
   on("prompt.submit", async ($, e, next) =>
     observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
+      // Before the prompt goes in, so its request carries the guidance.
+      before: async () => {
+        await guide($, state);
+      },
       after: async (input, result) => {
         if (input.origin?.kind !== "composer" || input.text === undefined) return;
         const settled = parseWith(PromptSubmitResultSchema, result);

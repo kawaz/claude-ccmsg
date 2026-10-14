@@ -11,6 +11,7 @@ import type {
 } from "@ccmsg/protocol";
 import {
   AgentMetaTextSchema,
+  ccmsgSendCall,
   classifyCcmsgSendResult,
   DIRECT_DELIVERY_USER_SENDER,
   isKnownContentBlock,
@@ -23,11 +24,13 @@ import {
   parseDirectDeliveries,
   parseWith,
   queuedCommandPrompt,
+  readSendResultText,
   RowHeadEntries,
   StorageEventSchema,
   ToolUseSchema,
   TranscriptRowSchema,
   type ContentBlock,
+  type JsonObject,
   type KnownToolUse,
   type ToolResultBlock,
   type TranscriptRow,
@@ -223,6 +226,16 @@ interface CanonicalMessage extends MsgEvent {
 interface BashUse {
   id: string;
   command: string;
+  ts: string;
+  index: number;
+}
+
+/** A call of the hooks module's `send` tool (DR-0039 §3). */
+interface SendToolUse {
+  id: string;
+  text: string;
+  sessionId?: string;
+  input: JsonObject;
   ts: string;
   index: number;
 }
@@ -571,6 +584,34 @@ function directSentEntry(
         : {}),
       tool_use_id: use.id,
       command,
+      transcript_line: use.index + 1,
+    },
+  };
+}
+
+/** A `send` tool call with its result: to the sessions the result says it
+ * reached (or may have), or the session the call named when it reached none. */
+function toolSentEntry(
+  session: string,
+  use: SendToolUse,
+  result: ToolResultBlock,
+): RawSessionDumpEntry {
+  const reading = readSendResultText(toolResultText(result));
+  const reached = reading.status === "failed" ? [] : reading.to;
+  return {
+    ts: use.ts,
+    session,
+    kind: "ccmsg-sent",
+    from: session,
+    to: reached.length > 0 ? reached : (use.sessionId ?? null),
+    text: use.text,
+    meta: {
+      source: "tool",
+      op: "send",
+      status: reading.status,
+      ...(reading.detail !== undefined ? { error: reading.detail } : {}),
+      tool_use_id: use.id,
+      input: JSON.stringify(use.input),
       transcript_line: use.index + 1,
     },
   };
@@ -950,6 +991,7 @@ export async function dumpSession(
       : new Set(resolveAgentSelector(options.agent, bundle.agents).flatMap(({ tokens }) => tokens));
   const canonical = loadCanonicalMessages(options.dataDir);
   const bashUses = new Map<string, BashUse>();
+  const sendUses = new Map<string, SendToolUse>();
   const sentEntries: RawSessionDumpEntry[] = [];
   const sentRefs = new Set<string>();
 
@@ -957,6 +999,18 @@ export async function dumpSession(
     const row = item.row;
     if (!isKnownTranscriptRow(row)) continue;
     if (row.type === "assistant") {
+      for (const block of row.message.content) {
+        if (!isKnownContentBlock(block) || block.type !== "tool_use") continue;
+        const send = ccmsgSendCall(block.name, block.input);
+        if (send === null) continue;
+        sendUses.set(block.id, {
+          id: block.id,
+          ...send,
+          input: block.input,
+          ts: item.ts,
+          index: item.index,
+        });
+      }
       for (const call of toolCalls(row.message.content)) {
         if (call.name !== "Bash") continue;
         bashUses.set(call.id, {
@@ -970,6 +1024,11 @@ export async function dumpSession(
     if (row.type !== "user") continue;
     for (const block of userBlocks(row)) {
       if (!isKnownContentBlock(block) || block.type !== "tool_result") continue;
+      const sendUse = sendUses.get(block.tool_use_id);
+      if (sendUse) {
+        sentEntries.push(toolSentEntry(session, sendUse, block));
+        continue;
+      }
       const use = bashUses.get(block.tool_use_id);
       if (!use) continue;
       const command = use.command;

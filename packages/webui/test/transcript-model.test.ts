@@ -54,10 +54,12 @@ import {
   AssistantRowSchema,
   type Attachment,
   AttachmentSchema,
+  CCMSG_TOOLS,
   type JsonObject,
   type JsonValue,
   parseWith,
   renderDirectDelivery,
+  sendResultText,
   UserRowSchema,
 } from "@ccmsg/protocol";
 import {
@@ -131,7 +133,7 @@ function assistantToolUse(name: string): ParsedLine {
     kind: "turn",
     ts: null,
     role: "assistant",
-    segments: [{ kind: "tool-use", name, input: {} }],
+    segments: [{ kind: "tool-use", toolUseId: "t", name, input: {}, result: null }],
   };
 }
 function assistantText(text: string): ParsedLine {
@@ -523,8 +525,10 @@ describe("parseTranscriptLine / assistant turns", () => {
     // に落ち、行は生きる。
     expect(legacy.kind === "turn" ? legacy.segments[0] : null).toEqual({
       kind: "tool-use",
+      toolUseId: "toolu_0001",
       name: "SendMessage",
       input: { recipient: "worker", content: "進めて", type: "message" },
+      result: null,
     });
   });
 
@@ -779,8 +783,10 @@ describe("parseTranscriptLine / assistant turns", () => {
     );
     expect(line.kind === "turn" ? line.segments[0] : null).toEqual({
       kind: "tool-use",
+      toolUseId: "tu_nopath",
       name: "Read",
       input: { file_path: 7 },
+      result: null,
     });
   });
 
@@ -1511,8 +1517,10 @@ describe("segmentSearchText", () => {
     expect(
       segmentSearchText({
         kind: "tool-use",
+        toolUseId: "t",
         name: "Read",
         input: { path: "a.ts" },
+        result: null,
       }),
     ).toBe(JSON.stringify({ path: "a.ts" }, null, 2));
     expect(segmentSearchText({ kind: "unknown-segment", type: "number", raw: 42 })).toBe(
@@ -1531,7 +1539,10 @@ describe("isSearchableSegment", () => {
 
   test("tool-use/tool-result/unknown-segment are excluded even with every toggle on", () => {
     expect(
-      isSearchableSegment({ kind: "tool-use", name: "Bash", input: { command: "ls" } }, ALL_ON),
+      isSearchableSegment(
+        { kind: "tool-use", toolUseId: "t", name: "Bash", input: { command: "ls" }, result: null },
+        ALL_ON,
+      ),
     ).toBe(false);
     expect(
       isSearchableSegment(
@@ -1759,7 +1770,7 @@ describe("groupTimelineLines", () => {
       role: "assistant",
       segments: [
         { kind: "thinking", text: "let me check" },
-        { kind: "tool-use", name: "Bash", input: {} },
+        { kind: "tool-use", toolUseId: "t", name: "Bash", input: {}, result: null },
         { kind: "text", role: "assistant", text: "done" },
       ],
     };
@@ -2831,7 +2842,9 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
       kind: "turn" as const,
       ts: null,
       role: "assistant" as const,
-      segments: [{ kind: "tool-use" as const, name: "Bash", input: {} }],
+      segments: [
+        { kind: "tool-use" as const, toolUseId: "t", name: "Bash", input: {}, result: null },
+      ],
     },
   });
 
@@ -2855,7 +2868,7 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
         role: "assistant" as const,
         segments: [
           { kind: "thinking" as const, text: "t" },
-          { kind: "tool-use" as const, name: "Bash", input: {} },
+          { kind: "tool-use" as const, toolUseId: "t", name: "Bash", input: {}, result: null },
         ],
       },
     };
@@ -4920,6 +4933,79 @@ describe("standalone ccmsg in the transcript", () => {
     expect(ccmsgDedupKey(message)).toBe("direct-in|abc/7");
   });
 
+  // The hooks module's `send` tool (DR-0039 §3): the call is the bubble, to
+  // the sessions its result says it reached.
+  const sendUse = (id: string, input: JsonObject) =>
+    jsonl(
+      assistantContentRow([{ type: "tool_use", id, name: CCMSG_TOOLS.send, input }], {
+        timestamp: "2026-09-26T07:47:00.000Z",
+      }),
+    );
+  const OTHER = "22222222-2222-4333-8444-555555555555";
+
+  test("a send tool call is a sent bubble to the sessions it reached", () => {
+    const result = sendResultText([
+      { sid: SID, name: "a", cwd: "/w", outcome: "delivered" },
+      { sid: OTHER, cwd: "/w", outcome: "delivered" },
+    ]);
+    const lines = parse([
+      sendUse("s1", { cwd: "/w", text: "こんにちは" }),
+      bashResult("s1", result),
+    ]);
+    expect(extractCcmsgMessages(lines[0])).toEqual([
+      {
+        from: "",
+        to: [SID, OTHER],
+        room: "",
+        msg: "こんにちは",
+        ts: "2026-09-26T07:47:00.000Z",
+        direct: {
+          direction: "out",
+          id: "s1",
+          verb: "send",
+          status: "sent",
+          command: JSON.stringify({ cwd: "/w", text: "こんにちは" }, null, 2),
+        },
+      },
+    ]);
+    expect(classifyBoundaryLine(lines[0])).toBeNull();
+  });
+
+  test("a send that reached some, none, or cannot tell; and one still waiting", () => {
+    const partly = sendResultText([
+      { sid: SID, outcome: "delivered" },
+      { sid: OTHER, outcome: "not_delivered", reason: "no_module" },
+    ]);
+    const none = sendResultText([]);
+    const maybe = sendResultText([{ sid: OTHER, outcome: "unconfirmed" }]);
+    const lines = parse([
+      sendUse("p1", { name: "n", text: "a" }),
+      bashResult("p1", partly),
+      sendUse("p2", { session_id: OTHER, text: "b" }),
+      bashResult("p2", none),
+      sendUse("p3", { session_id: OTHER, text: "c" }),
+      bashResult("p3", maybe),
+      sendUse("p4", { session_id: OTHER, text: "d" }),
+    ]);
+    expect(extractCcmsgMessages(lines[0])[0]).toMatchObject({
+      to: [SID],
+      direct: { verb: "send", status: "sent", error: partly },
+    });
+    expect(extractCcmsgMessages(lines[2])[0]).toMatchObject({
+      to: [OTHER],
+      direct: { status: "failed", error: none },
+    });
+    expect(extractCcmsgMessages(lines[4])[0]).toMatchObject({
+      to: [OTHER],
+      direct: { status: "unconfirmed", error: maybe },
+    });
+    expect(extractCcmsgMessages(lines[6])[0]).toMatchObject({
+      to: [OTHER],
+      msg: "d",
+      direct: { status: "pending" },
+    });
+  });
+
   test("ccmsg reply to a person with a {} result is a sent bubble", () => {
     const lines = parse([
       bashUse("t1", `ccmsg reply ${MID} 'サンプル受領。確認した'`),
@@ -5091,8 +5177,10 @@ describe("standalone ccmsg in the transcript", () => {
     expect(pushNotificationOf(line)).toBeNull();
     expect(line?.kind === "turn" ? line.segments[0] : null).toEqual({
       kind: "tool-use",
+      toolUseId: "p2",
       name: "PushNotification",
       input: { message: 3 },
+      result: null,
     });
   });
 });

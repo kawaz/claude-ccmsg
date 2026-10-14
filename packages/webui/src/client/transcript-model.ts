@@ -1,6 +1,7 @@
 import {
   type AssistantRow,
   type Attachment,
+  ccmsgSendCall,
   classifyCcmsgSendResult,
   type ContentBlock,
   DIRECT_DELIVERY_USER_SENDER,
@@ -23,6 +24,7 @@ import {
   type ParseFailure,
   parseWith,
   pushNotificationText,
+  readSendResultText,
   queuedCommandPrompt,
   ReadToolResultSchema,
   type ToolResultBlock,
@@ -93,7 +95,14 @@ export type Segment =
   // 翻訳も検索もできないため、text を持つ `thinking` とは別 variant にして
   // 各 switch に扱いを明示させる。
   | { kind: "thinking-hidden"; reason: "omitted" | "redacted" }
-  | { kind: "tool-use"; name: string; input: JsonObject }
+  | {
+      kind: "tool-use";
+      toolUseId: string;
+      name: string;
+      input: JsonObject;
+      /** The call's tool_result, once one is paired with it (withToolResults). */
+      result: { text: string; isError: boolean } | null;
+    }
   | {
       kind: "file-read";
       toolUseId: string;
@@ -338,7 +347,13 @@ function fileReadSegment(
 }
 
 function genericToolUseSegment(block: ToolUseBlock): Segment {
-  return { kind: "tool-use", name: block.name, input: block.input };
+  return {
+    kind: "tool-use",
+    toolUseId: block.id,
+    name: block.name,
+    input: block.input,
+    result: null,
+  };
 }
 
 /** The image a tool result's content carries, or `null` when it carries none:
@@ -669,6 +684,12 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
         const result = genericResults.get(segment.toolUseId) ?? null;
         if (result !== null) changed = true;
         return { ...segment, result, hasResult: result !== null };
+      }
+      if (segment.kind === "tool-use") {
+        const result = genericResults.get(segment.toolUseId) ?? null;
+        if (result === null) return segment;
+        changed = true;
+        return { ...segment, result };
       }
       if (segment.kind === "tool-result") {
         // A failed Read ("File does not exist.") has no file payload, so it
@@ -1912,15 +1933,16 @@ export interface CcmsgMessage {
  *
  * - `in`: an envelope delivered to this session; `id` is its mid
  *   (`<instance>/<n>`)
- * - `out`: this session's `ccmsg post|reply|notify` Bash call; `id` is the
- *   tool_use id, `status` what its tool_result said (`pending` until one
- *   arrives), `command` the Bash command as written */
+ * - `out`: this session's `ccmsg post|reply|notify` Bash call or `send` tool
+ *   call; `id` is the tool_use id, `status` what its tool_result said
+ *   (`pending` until one arrives), `command` the Bash command as written or
+ *   the tool's input */
 export type CcmsgDirect =
   | { direction: "in"; id: string; replyTo?: string }
   | {
       direction: "out";
       id: string;
-      verb: "post" | "reply" | "notify";
+      verb: "post" | "reply" | "notify" | "send";
       replyTo?: string;
       status: "sent" | "failed" | "unconfirmed" | "pending";
       /** The result text of a `failed` or `unconfirmed` send. */
@@ -2184,12 +2206,47 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   return results;
 }
 
-/** This session's own `ccmsg post|reply|notify` Bash calls on an assistant
- * line, as outgoing bubbles. A call answered by the room CLI's `{ok:…}` is
- * left alone: that message reaches the timeline through the room path. */
+/** This session's own `send` tool call as an outgoing bubble (DR-0039 §3):
+ * to the sessions its result says it reached (or may have), or the session
+ * it named by id until a result says. */
+function toolSend(
+  line: TurnLine,
+  segment: Extract<Segment, { kind: "tool-use" }>,
+): CcmsgMessage | null {
+  const send = ccmsgSendCall(segment.name, segment.input);
+  if (send === null) return null;
+  const reading = segment.result === null ? null : readSendResultText(segment.result.text);
+  const reached = reading === null || reading.status === "failed" ? [] : reading.to;
+  const to = reached.length > 0 ? reached : send.sessionId !== undefined ? [send.sessionId] : [];
+  return {
+    from: "",
+    ...(to.length > 0 ? { to } : {}),
+    room: "",
+    msg: send.text,
+    ts: line.ts ?? "",
+    direct: {
+      direction: "out",
+      id: segment.toolUseId,
+      verb: "send",
+      status: reading === null ? "pending" : reading.status,
+      ...(reading?.detail !== undefined ? { error: reading.detail } : {}),
+      command: JSON.stringify(segment.input, null, 2),
+    },
+  };
+}
+
+/** This session's own sends on an assistant line, as outgoing bubbles: its
+ * `ccmsg post|reply|notify` Bash calls and its `send` tool calls. A Bash call
+ * answered by the room CLI's `{ok:…}` is left alone: that message reaches the
+ * timeline through the room path. */
 function extractDirectSends(line: TurnLine): CcmsgMessage[] {
   const out: CcmsgMessage[] = [];
   for (const segment of line.segments) {
+    if (segment.kind === "tool-use") {
+      const sent = toolSend(line, segment);
+      if (sent !== null) out.push(sent);
+      continue;
+    }
     if (segment.kind !== "bash-use") continue;
     const send = parseCcmsgSendCommand(segment.command);
     if (!send) continue;

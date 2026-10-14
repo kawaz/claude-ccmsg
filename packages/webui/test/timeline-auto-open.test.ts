@@ -145,7 +145,15 @@ describe("segmentAutoOpenCategory", () => {
         background: true,
       }),
     ).toBe("A");
-    expect(segmentAutoOpenCategory({ kind: "tool-use", name: "Read", input: {} })).toBeNull();
+    expect(
+      segmentAutoOpenCategory({
+        kind: "tool-use",
+        toolUseId: "t",
+        name: "Read",
+        input: {},
+        result: null,
+      }),
+    ).toBeNull();
   });
 });
 

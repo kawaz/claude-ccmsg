@@ -8,6 +8,15 @@
 import * as v from "valibot";
 import { jsonText, type Output } from "./parse.ts";
 
+/** The tools, as the model calls them: `mcp__<plugin>__<tool>`, the plugin's
+ * name (plugin.json) the prefix. */
+export const CCMSG_TOOLS = {
+  send: "mcp__ccmsg-v1__send",
+  say: "mcp__ccmsg-v1__say",
+  peers: "mcp__ccmsg-v1__peers",
+} as const;
+export type CcmsgToolName = (typeof CCMSG_TOOLS)[keyof typeof CCMSG_TOOLS];
+
 // --- which sessions -----------------------------------------------------------
 
 /** The fields that pick sessions out, by their spelling in the session's own

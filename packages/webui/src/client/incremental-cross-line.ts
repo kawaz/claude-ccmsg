@@ -183,7 +183,13 @@ function equalSegment(a: Segment, b: Segment): boolean {
     case "thinking-hidden":
       return b.kind === "thinking-hidden" && a.reason === b.reason;
     case "tool-use":
-      return b.kind === "tool-use" && a.name === b.name && equalJsonObject(a.input, b.input);
+      return (
+        b.kind === "tool-use" &&
+        a.toolUseId === b.toolUseId &&
+        a.name === b.name &&
+        equalJsonObject(a.input, b.input) &&
+        equalNullable(a.result, b.result, equalBashResult)
+      );
     case "file-read":
       return (
         b.kind === "file-read" &&

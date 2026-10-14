@@ -11,7 +11,13 @@ import {
   type ContextAgentRecord,
   type SessionDump,
 } from "../src/session-dump.ts";
-import { renderDirectDelivery, type JsonObject, type JsonValue } from "@ccmsg/protocol";
+import {
+  CCMSG_TOOLS,
+  renderDirectDelivery,
+  sendResultText,
+  type JsonObject,
+  type JsonValue,
+} from "@ccmsg/protocol";
 import {
   assistantContentRow,
   attachmentRow,
@@ -1312,6 +1318,59 @@ describe("this plugin's direct messages in the dump", () => {
         to: peer,
         text: "見ました",
         meta: { source: "direct", op: "reply", reply_to: inMid, status: "sent" },
+      },
+    ]);
+  });
+});
+
+// The hooks module's `send` tool (DR-0039 §3): the call with its result is a
+// sent entry, to the sessions the result says it reached.
+describe("the send tool in the dump", () => {
+  test("a send tool call is a ccmsg-sent entry with source tool", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const peer = "99999999-2222-4333-8444-555555555555";
+    const lines = [
+      row("2026-10-15T09:00:00Z", "user", "start", { origin: { kind: "human" } }),
+      row("2026-10-15T09:01:00Z", "assistant", [
+        {
+          type: "tool_use",
+          id: "s1",
+          name: CCMSG_TOOLS.send,
+          input: { cwd: "/w", text: "見ました" },
+        },
+      ]),
+      row("2026-10-15T09:01:01Z", "user", [
+        {
+          type: "tool_result",
+          tool_use_id: "s1",
+          content: sendResultText([{ sid: peer, cwd: "/w", outcome: "delivered" }]),
+        },
+      ]),
+      row("2026-10-15T09:02:00Z", "assistant", [
+        {
+          type: "tool_use",
+          id: "s2",
+          name: CCMSG_TOOLS.send,
+          input: { session_id: peer, text: "再送" },
+        },
+      ]),
+      row("2026-10-15T09:02:01Z", "user", [
+        { type: "tool_result", tool_use_id: "s2", content: sendResultText([]) },
+      ]),
+    ];
+    fs.writeFileSync(transcript, lines.join("\n") + "\n");
+
+    const { entries } = await dumpSession(SID, { dataDir, configDirs: [configDir] });
+    expect(entries.filter((entry) => entry.kind === "ccmsg-sent")).toMatchObject([
+      {
+        to: [peer],
+        text: "見ました",
+        meta: { source: "tool", op: "send", status: "sent", tool_use_id: "s1" },
+      },
+      {
+        to: peer,
+        text: "再送",
+        meta: { source: "tool", op: "send", status: "failed", error: sendResultText([]) },
       },
     ]);
   });

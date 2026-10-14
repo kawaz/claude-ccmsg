@@ -94,13 +94,11 @@ async function holdSession(sock: string, sid: string): Promise<() => void> {
 }
 
 const MINIMAL_HELP = `Commands:
-  post <sid> <text>                         セッションへ直送 (宛先の sid は peers で探す)
-  reply <mid> --to <sid> <text>             直送への返信 (届いた封筒の返信行どおり)
   reply <rNmN> <msg>                        room への返信用
   post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
-  peers [cwd(partial)]                      セッション一覧と SendMessage の宛先 (addresses)
+  peers [cwd(partial)]                      セッション一覧
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
@@ -330,9 +328,14 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("--no-agent");
       expect(help.out).toContain("--agent <id|name>");
       expect(help.out).toContain("next-room <room>");
-      expect(help.out).toContain("post <sid> <text>");
-      expect(help.out).toContain("reply <mid> --to <sid> <text>");
-      expect(help.out).toContain("PushNotification");
+      // Deprecated (DR-0039 §4): still listed, as replaced by the plugin's tools.
+      expect(help.out).toMatch(/post <sid> <text> +Deprecated/);
+      expect(help.out).toMatch(/reply <mid> --to <sid> <text>\n +Deprecated/);
+      expect(help.out).toContain("ccmsg plugin's tools (send / say / peers)");
+      // Agents are not taught the ways the tools replace.
+      expect(help.out).not.toContain("PushNotification");
+      expect(help.out).not.toContain("SendMessage");
+      expect(help.out).toMatch(/--addresses \(deprecated\)/);
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("stop <session-id>");
       expect(help.out).toContain("Command Options:");
@@ -762,6 +765,32 @@ describe("ccmsg CLI end-to-end", () => {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
       fs.rmSync(path.dirname(transcriptFile), { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // peers は人の口として残る。各セッションの addresses (SendMessage の宛先の
+  // 綴り) は送信が send tool に置き換わったので --addresses の時だけ出し、
+  // その時だけ廃止予定を案内する (DR-0039 §4)。
+  test("peers は addresses を出さず黙る。--addresses の時だけ出して案内する", async () => {
+    const { env, cleanup } = makeEnv();
+    const asSession = { ...env, CCMSG_SID: "50000003-0000-4000-8000-000000000000" };
+    try {
+      const plain = await runCli(["peers"], asSession);
+      expect(plain.err).toBe("");
+      const rows = served("peers", plain.out).peers;
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((p) => p.addresses === undefined)).toBe(true);
+
+      const listed = await runCli(["peers", "--addresses"], asSession);
+      expect(listed.err).toMatch(/^ccmsg: ccmsg peers --addresses は廃止予定。/);
+      const me = defined(
+        served("peers", listed.out).peers.find((p) => p.sid === asSession.CCMSG_SID),
+        "me",
+      );
+      expect(me.addresses).toContain(`ccmsg:${asSession.CCMSG_SID}`);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
     }
   }, 30000);
 
