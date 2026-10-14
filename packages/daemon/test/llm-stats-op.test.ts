@@ -8,8 +8,6 @@ import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
 import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
 
-const GATEWAY_PORT = 18941;
-
 /** Every `days` the gateway was actually asked for, newest last. Recorded on
  * the server rather than echoed in the body because the daemon normalizes the
  * document and drops fields outside the protocol shape — the observation has
@@ -19,7 +17,8 @@ const received: (string | null)[] = [];
 /** Routes: /stats answers a one-day document, anything else 404s — the
  * failure a mistyped `llm_stats_url` produces in practice. */
 const gateway = Bun.serve({
-  port: GATEWAY_PORT,
+  hostname: "127.0.0.1",
+  port: 0,
   fetch(req) {
     const url = new URL(req.url);
     if (url.pathname !== "/stats") return new Response("no such endpoint", { status: 404 });
@@ -38,12 +37,13 @@ const gateway = Bun.serve({
 afterAll(() => {
   void gateway.stop(true);
 });
+const GATEWAY = `http://127.0.0.1:${gateway.port}`;
 
 function daemonWith(llmStatsUrl?: string): Daemon {
   return stubDaemon({ config: llmStatsUrl ? { llm_stats_url: llmStatsUrl } : {} });
 }
 
-const URL_OK = `http://127.0.0.1:${GATEWAY_PORT}/stats`;
+const URL_OK = `${GATEWAY}/stats`;
 const USER: Conn["identity"] = { role: "user" };
 const SESSION: Conn["identity"] = {
   role: "session",
@@ -108,7 +108,7 @@ describe("llm_stats op", () => {
   });
 
   test("a failing gateway settles the request as an error event", async () => {
-    const reply = await requestError(daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`), USER, {
+    const reply = await requestError(daemonWith(`${GATEWAY}/typo`), USER, {
       op: "llm_stats",
       request_id: "q5",
       days: 7,

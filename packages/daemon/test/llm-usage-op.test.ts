@@ -7,7 +7,6 @@ import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
 import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
 
-const GATEWAY_PORT = 18921;
 const USAGE_BODY = {
   generated_at: 1785450000000,
   credentials: [
@@ -33,7 +32,8 @@ const received: (string | null)[] = [];
  * a mistyped `llm_usage_url` produces in practice). Like the real gateway,
  * `limits` are served only to a probe. */
 const gateway = Bun.serve({
-  port: GATEWAY_PORT,
+  hostname: "127.0.0.1",
+  port: 0,
   fetch(req) {
     const url = new URL(req.url);
     if (url.pathname !== "/usage") return new Response("no such endpoint", { status: 404 });
@@ -56,6 +56,7 @@ const gateway = Bun.serve({
 afterAll(() => {
   void gateway.stop(true);
 });
+const GATEWAY = `http://127.0.0.1:${gateway.port}`;
 
 function daemonWith(llmUsageUrl?: string): Daemon {
   return stubDaemon({ config: llmUsageUrl ? { llm_usage_url: llmUsageUrl } : {} });
@@ -72,7 +73,7 @@ const SESSION: Conn["identity"] = {
 
 describe("llm_usage op", () => {
   test("delivers the gateway document as the reply", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestOk(daemon, USER, { op: "llm_usage", request_id: "q1" });
     expect(reply.ok).toBe(true);
     expect(reply.generated_at).toBe(1785450000000);
@@ -85,7 +86,7 @@ describe("llm_usage op", () => {
   // The gateway is reachable but the path is wrong: the failure has to reach
   // the client as an error reply, not as a hang.
   test("a failing gateway settles the request as an error reply", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`);
+    const daemon = daemonWith(`${GATEWAY}/typo`);
     const reply = await requestError(daemon, USER, { op: "llm_usage", request_id: "q2" });
     expect(reply.ok).toBe(false);
     expect(reply.error.code).toBe(ErrorCode.llm_usage_unavailable);
@@ -102,7 +103,7 @@ describe("llm_usage op", () => {
   // Only a probe response carries limits, so the flag has to reach the
   // gateway — and must not be sent when the client did not ask for one.
   test("passes a refresh through to the gateway and surfaces its limits", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestOk(daemon, USER, {
       op: "llm_usage",
       request_id: "r1",
@@ -116,7 +117,7 @@ describe("llm_usage op", () => {
   });
 
   test("a request without the flag reads the cache and gets no limits", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestOk(daemon, USER, { op: "llm_usage", request_id: "r2" });
     expect(received.at(-1)).toBeNull();
     expect(reply.credentials[1].limits).toBeUndefined();
@@ -125,7 +126,7 @@ describe("llm_usage op", () => {
   // Anything other than an explicit `true` is a plain read: a probe spends
   // upstream rate limit, so it must never happen by accident.
   test("a non-true refresh value does not trigger a probe", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     for (const refresh of ["true", 1, null]) {
       await requestRefusal(daemon, USER, { op: "llm_usage", request_id: "r3", refresh });
       expect(received.at(-1)).toBeNull();
@@ -133,14 +134,14 @@ describe("llm_usage op", () => {
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestError(daemon, SESSION, { op: "llm_usage", request_id: "q4" });
     expect(reply.ok).toBe(false);
     expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 
   test("refuses a request with no request_id (every op needs one to be answered)", async () => {
-    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestRefusal(daemon, USER, { op: "llm_usage" });
     expect(reply.ok).toBe(false);
     expect(reply.error.code).toBe(ErrorCode.bad_request);
