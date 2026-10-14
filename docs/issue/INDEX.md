@@ -44,4 +44,3 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
-| 2026-10-14 | design | wip | [webui-timeline-decomposition-and-hook-tests](./2026-10-14-webui-timeline-decomposition-and-hook-tests.md) | webui の Timeline() 1812 行を custom hook に分解し timeline/ に分割、happy-dom で hook 単位のテストを足す |
