@@ -37,6 +37,19 @@ worker unify-ccmsg-address の `just test` 1 回目が 3985 pass / 1 fail / 1 er
 
 共通点: 1 回目だけ落ちる。今回は daemon 側の変更が無い状態で起きたので、変更起因ではない。
 
+## 4 回目の発生 (2026-10-15、DR-0039 段 2 の worker)
+
+`just test` の 1 回目で `packages/daemon/test/translate-e2e.test.ts` の "daemon translate replies with a real en→ja mixed-text result" が 5000ms で timeout (5026.62ms)。直前に Unhandled error between tests "connection closed before response" (test/helpers.ts:520 replyLine ← requestOk ← translate-e2e.test.ts:25)。3 回目と同じ test・同じ形。
+
+- 1 回目: 4188 pass / 1 fail [142.23s]
+- 直後の 2 回目の `just test`: 4189 pass / 0 fail [130.38s]
+- その後の `just coverage`: 0 fail
+- 環境: macOS、bun 1.4.2
+- 変更: hooks module・CLI・daemon の hello (classic hook の全廃)。translate の経路には触れていない
+- ログ: worker の一時ディレクトリの just-test-s2-1.log (worker 終了後に消える)
+
+共通点: 1 回目だけ落ちる、落ちた回は 10 s ほど遅い。3 回目・4 回目とも translate-e2e の同一 test で、translate の経路に無関係な変更中に起きたため変更起因ではない。
+
 ## 受け入れ条件
 
 - [ ] timeout 再発時にログを取得し、test 名と並走プロセスを記録する
