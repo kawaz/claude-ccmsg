@@ -25,7 +25,7 @@ import { useApp } from "../context.ts";
 import { sameJson, shallowEqual, useStoreState } from "../useStore.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
-import { Timeline } from "./Timeline.tsx";
+import { Timeline } from "./timeline/Timeline.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";

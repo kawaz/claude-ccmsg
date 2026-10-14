@@ -10,7 +10,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import { Timeline } from "../src/client/components/Timeline.tsx";
+import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { timelineHref } from "../src/client/locator.ts";

@@ -16,7 +16,7 @@ import { paneRatioFromPointer, parsePaneRatio } from "../utils.ts";
 import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
-import { Timeline } from "./Timeline.tsx";
+import { Timeline } from "./timeline/Timeline.tsx";
 import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
 // Files タブの ccmsg.sessionPaneRatio とは別に持つ — Timeline 側の split を Files
