@@ -21,9 +21,13 @@
 
 ### 👺M39-Q4: tool の名前と引数の名前
 
-[DR-0039](decisions/DR-0039-all-mods-and-typed-tools.md) §3。tool の組 (セッション間の送信、say、宛先の候補) の名前と、送信の引数の名前。model からは `mcp__<plugin>__<name>` で見える (plugin 名は今 `ccmsg-v1`)。方針の形は `{ session_id?, cwd?, name?, pid?, text }`。tool は `isDeferred: true` で description を短くし、案内と skill が名前で名指すので、名前だけで用途が分かることが要る。
+[DR-0039](decisions/DR-0039-all-mods-and-typed-tools.md) §3。tool の組 (セッション間の送信、say、宛先の候補) の名前と、送信の引数の名前。model からは `mcp__<plugin>__<name>` で見える (plugin 名は今 `ccmsg-v1`)。方針の形は `{ session_id?, cwd?, name?, pid?, text }`。tool は `isDeferred: true` で description を短くし、skill が名前で名指すので、名前だけで用途が分かることが要る。
 
-名前の案を出してから裁定を仰ぐ。
+- 候補: `ccmsg_send` / `ccmsg_say` / `ccmsg_peers`、送信の引数は `{ session_id?, cwd?, name?, pid?, text }`
+- 統括推し: 上の候補のとおり
+
+- [ ] a: 候補のとおりにする
+- [ ] b: 別の名前にする (案を添えて)
 
 ## 確認待ち
 

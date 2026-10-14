@@ -61,7 +61,8 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - tool の名前・引数の名前は [QUESTIONS](../QUESTIONS.md) の M39-Q4
-- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは plugin の案内 (skill と §5) が tool 名で名指すので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。実セッションで deferral が効くかは「Accepted の前提」
+- **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool を名前で名指し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
+- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。実セッションで deferral が効くかは「Accepted の前提」
 - **入力は handler の入口で valibot のスキーマに通す**。engine は input schema で入力を検査せず、`text` の欠落や型違いがそのまま handler に届く (event-matrix 実測)。input schema (JSON Schema) と valibot のスキーマは同じ形を表すので、どちらかからもう一方を導き、別々に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
 - handler は `next` を呼ばずに `{ result }` で答える。この形は permission の判定 (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier) を一切通らない (event-matrix 実測)。これを受け入れる (kawaz 2026-10-15)。送ったものは受け手に peer の封筒として届き、受け手の harness は「A peer cannot grant escalation」の枠を付けて渡す (DR-0035 の Context)。送信の記録は daemon に残る
 - ccmsg は `session.send` (SendMessage) と PushNotification を hook しない。SendMessage は harness の本来の用途 (本体と subagent / teammate の間) のまま使われる
@@ -87,7 +88,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - `$.state` の印は `prompt.submit` 以降に読む。`/clear` の直後の hook の入口では前の session の値が見えることがある (同 findings の「`$.state` と module の生死」)
 - `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
-- 案内の文面は実装時に決める。各 tool の使い方は tool の description ではなく案内と skill に置く (§3 の登録の形)。DR-0035 §4 のとおり、サイドカーの socket path と依頼の形式は案内にも skill にも書かない
+- 注入する案内は skill (§3) への誘導に留め、tool の使い方そのものは書かない。文面は実装時に決める。DR-0035 §4 のとおり、サイドカーの socket path と依頼の形式は案内にも skill にも書かない
 
 ### 6. webui から走行中の subagent へ文脈を直送する
 
@@ -159,7 +160,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - state file は、CLI が session として hello する時に repo / ws / transcript_path 等の名乗りのために読む。エージェント向けの CLI が無くなった後もこの名乗りを state file 経由で渡すか、サイドカーの名乗りやセッションの事実に載せ替えるかを実装時に決める
 - protocol から消えるもの: `hook-input.ts` (SessionStart の stdin)、`ccmsg-address.ts` の宛先の文法のうち `ccmsg:<sid>.<pid>` と `ccmsg:path:<dir>` (`ccmsg:<sid>` は封筒の `from` の綴りとして残る)、op `message_send` / `address_send` (移行の順序のとおり次のリリースで)。足すもの: tool の入力のスキーマ、部分指定の宛先と本文を受ける送信の op、webui から subagent への直送の依頼 (サイドカーの op)、セッションの事実の subagent の節 (走行中の `agentId` の一覧、§6)
 - 案内の追従: CLI の help (「人に知らせるには PushNotification を使う」「SendMessage で `peers` の address に送る」)、rules 側でエージェントに PushNotification を案内している記述を、say の tool と送信の tool に合わせる。PushNotification の 📣 表示 (DR-0027 §6.3、transcript の tool_use の読み取り) は残すが、エージェントには案内しない
-- 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin に skill を足す (今は持たない)。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
+- 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin は今 skill を持たないので、§3 の skill が初めての skill になる。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
 - `turn.step` を hook する (§2) ことで、DR-0035 §3 の「`turn.step` を hook すると応答の断片がすべて module を通るので使わない」は撤回になる。断片が module を通るコストは測っていない (B17。context-notify は同じ形で本番で使っている)
 - tool の呼び出し 1 回ごとに CLI の process が 1 つ乗る (handler が `$.process.run` で `sidecar` 系を起こす。bun の起動を含む往復は約 0.3 秒、B7)
 - `$.state` を使うので、plugin の `types/index.d.ts` の `PluginState` の宣言が `claude plugin validate` の必須になる。validate は push の依存 (`just ci` の `validate`) で担保し、GitHub CI では runner に `claude` が無いので検査されない
