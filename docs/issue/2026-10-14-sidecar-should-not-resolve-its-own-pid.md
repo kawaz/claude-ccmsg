@@ -31,6 +31,22 @@ kawaz 2026-10-14: sid と起動時刻があれば daemon は `claude agents --js
 - pid への対応付けは daemon が自分の持つ情報で行う。対象は同じ sid の複数 run の区別と、`ccmsg:<sid>.<pid>` 宛先
 - module 側の pid 取得 (`/bin/sh -c echo $PPID` と `--pid` の受け渡し) と、CLI の祖先探索を消す
 
+## 設計案 (kawaz 2026-10-14)
+
+mods が確実に知れるのは次の 4 つ。pid はこの中に無い。
+
+- sid (`$.session.id()`)
+- 環境変数
+- module 読み込み時刻 (≒ run の開始)
+- cwd
+
+これを使った名乗りと対応付け:
+
+- sidecar は sid + 起動時刻 (または乱数の run id) で名乗る。socket 名もそれにする
+- daemon は `claude agents --json` (pid / cwd / startedAt / sessionId / name) の同 sid の行から、startedAt が最も近いものを選んで pid を引き、保管する。cwd は照合の確認用
+- 同 sid の複数 run は startedAt で区別できる
+- pid への対応付けは daemon の責務。sidecar は自分の pid を知らなくてよい
+
 ## 受け入れ条件
 
 - [ ] sidecar の起動に pid が要らない (socket 名が sid + run 識別子で決まる)
