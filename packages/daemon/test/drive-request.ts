@@ -90,6 +90,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     runPids: new RunPids(),
+    sidecarWatch: null,
     ...fields,
   };
 }

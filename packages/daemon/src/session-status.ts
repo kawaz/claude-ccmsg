@@ -40,6 +40,7 @@ import {
   type SessionApiError,
   type SessionBackgroundStatus,
   type SessionContextUsage,
+  type SessionInputReadiness,
   type SessionStatusSnapshot,
   type SessionTeammate,
   type SessionTodo,
@@ -1741,6 +1742,9 @@ interface LiveSessionStatus {
    * its own offset to the scanned size first, so these are strictly the bytes
    * after the scanned window and fold in order once the scan lands. */
   pendingLines: string[];
+  /** The input readiness the last snapshot of this fold carried, so
+   * refreshInputReadiness pushes only when it changed. */
+  inputReadiness?: SessionInputReadiness["kind"];
 }
 
 /** Fold everything the tail delivered during a scan, then forget it. */
@@ -1757,7 +1761,13 @@ function drainPendingLines(live: LiveSessionStatus): void {
  * rather than inside it: it builds a detached state and swaps it in on
  * completion, so the previous fold — a coherent view of an earlier moment —
  * stays readable meanwhile instead of a half-filled one. */
-function startRefold(sid: string, live: LiveSessionStatus, size: number, log: TailLog): void {
+function startRefold(
+  store: SessionStatusStore,
+  sid: string,
+  live: LiveSessionStatus,
+  size: number,
+  log: TailLog,
+): void {
   live.scanGen += 1;
   const gen = live.scanGen;
   live.pendingLines = [];
@@ -1776,7 +1786,7 @@ function startRefold(sid: string, live: LiveSessionStatus, size: number, log: Ta
     live.state = state;
     live.ready = undefined;
     drainPendingLines(live);
-    pushSnapshot(sid, live, log);
+    pushSnapshot(store, sid, live, log);
   })().catch((e: unknown) => {
     // Only the publish half can land here (the scan has its own catch); leave
     // `ready` cleared so readers aren't stuck waiting on a fold that failed.
@@ -1787,16 +1797,75 @@ function startRefold(sid: string, live: LiveSessionStatus, size: number, log: Ta
 
 export interface SessionStatusStore {
   sessions: Map<string, LiveSessionStatus>;
+  /** Whether a person's input can reach a session now, carried on every
+   * snapshot as `input_readiness`. Not read off the transcript: it depends on
+   * the session's sidecars and processes (session-input.ts inputReadiness).
+   * Absent where nothing can tell (tests of the fold alone). */
+  inputReadiness?: (sid: string) => Promise<SessionInputReadiness>;
 }
 
-export function createSessionStatusStore(): SessionStatusStore {
-  return { sessions: new Map() };
+export function createSessionStatusStore(
+  inputReadiness?: (sid: string) => Promise<SessionInputReadiness>,
+): SessionStatusStore {
+  return { sessions: new Map(), ...(inputReadiness ? { inputReadiness } : {}) };
+}
+
+/** The snapshot of a fold with the session's input readiness beside it. A
+ * `live` fold remembers the readiness it published, for
+ * refreshInputReadiness. */
+async function fullSnapshot(
+  store: SessionStatusStore,
+  sid: string,
+  state: SessionStatusState,
+  sidDir: string | undefined,
+  cwd: string | undefined,
+  live?: LiveSessionStatus,
+): Promise<SessionStatusSnapshot> {
+  const [data, readiness] = await Promise.all([
+    snapshot(state, sidDir, cwd),
+    store.inputReadiness?.(sid),
+  ]);
+  if (readiness === undefined) return data;
+  if (live) live.inputReadiness = readiness.kind;
+  return { ...data, input_readiness: readiness };
+}
+
+function liveSnapshot(
+  store: SessionStatusStore,
+  sid: string,
+  live: LiveSessionStatus,
+): Promise<SessionStatusSnapshot> {
+  return fullSnapshot(store, sid, live.state, live.sidDir, live.cwd, live);
 }
 
 /** The push of `sid`'s current fold, as one line for every subscriber. */
-async function statusEventLine(sid: string, live: LiveSessionStatus): Promise<string> {
-  const data = await snapshot(live.state, live.sidDir, live.cwd);
+async function statusEventLine(
+  store: SessionStatusStore,
+  sid: string,
+  live: LiveSessionStatus,
+): Promise<string> {
+  const data = await liveSnapshot(store, sid, live);
   return wireLine({ ev: "session_status", sid, ...data });
+}
+
+/** Push the followed sessions whose input readiness moved since their last
+ * snapshot. Called on what can move it without a transcript line: a sidecar
+ * bound or gone, a session registered or forgotten, a poll of the running
+ * sessions (which also notices a harness that died). */
+export function refreshInputReadiness(store: SessionStatusStore, log?: TailLog): void {
+  const readinessOf = store.inputReadiness;
+  if (readinessOf === undefined) return;
+  for (const [sid, live] of store.sessions) {
+    if (live.statusConns.size === 0) continue;
+    void readinessOf(sid).then(
+      (readiness) => {
+        if (store.sessions.get(sid) === live && readiness.kind !== live.inputReadiness) {
+          pushSnapshot(store, sid, live, log);
+        }
+      },
+      (e: unknown) => log?.error(`input readiness failed sid=${sid}: ${String(e)}`),
+    );
+  }
 }
 
 /** Publish the current fold to every subscriber of `sid`.
@@ -1809,14 +1878,19 @@ async function statusEventLine(sid: string, live: LiveSessionStatus): Promise<st
  * its own snapshot, nothing is coalesced into a window or made to wait on
  * another session (DR-0029). A push that lands after a later fold simply
  * publishes the newer state, which is what a subscriber wants anyway. */
-function pushSnapshot(sid: string, live: LiveSessionStatus, log?: TailLog): void {
+function pushSnapshot(
+  store: SessionStatusStore,
+  sid: string,
+  live: LiveSessionStatus,
+  log?: TailLog,
+): void {
   live.pushChain = live.pushChain.then(async () => {
     // The session may have been dropped (unsubscribe, re-hello onto another
     // file) while this push waited its turn; publishing then would describe a
     // fold nobody is following.
     if (live.statusConns.size === 0) return;
     try {
-      const line = await statusEventLine(sid, live);
+      const line = await statusEventLine(store, sid, live);
       for (const conn of live.statusConns) conn.write(line);
     } catch (e: unknown) {
       // One unreadable snapshot must not break the chain for later pushes, and
@@ -1857,7 +1931,7 @@ export async function getSessionStatus(
     if (store.sessions.get(sid) !== live) {
       return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
     }
-    return { ok: true, data: await snapshot(live.state, live.sidDir, live.cwd) };
+    return { ok: true, data: await liveSnapshot(store, sid, live) };
   }
   const state = createSessionStatusState(root);
   try {
@@ -1865,7 +1939,10 @@ export async function getSessionStatus(
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }
-  return { ok: true, data: await snapshot(state, deriveSidDir(resolved.file), cwd) };
+  return {
+    ok: true,
+    data: await fullSnapshot(store, sid, state, deriveSidDir(resolved.file), cwd),
+  };
 }
 
 export async function subscribeSessionStatus(
@@ -1894,7 +1971,7 @@ export async function subscribeSessionStatus(
     if (store.sessions.get(sid) !== existing) {
       return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
     }
-    return { ok: true, data: await snapshot(existing.state, existing.sidDir, existing.cwd) };
+    return { ok: true, data: await liveSnapshot(store, sid, existing) };
   }
   const carriedConns = new Set<TailConn>([conn]);
   if (existing) {
@@ -1927,7 +2004,7 @@ export async function subscribeSessionStatus(
         // checkNow): the folded state describes bytes that no longer exist.
         // Refold the replacement file from scratch — the Watch's own lastEnd
         // is already payload.size, so subsequent growth resumes incrementally.
-        startRefold(sid, live, payload.size, log);
+        startRefold(store, sid, live, payload.size, log);
         return;
       }
       if (live.ready) {
@@ -1941,7 +2018,7 @@ export async function subscribeSessionStatus(
       for (const line of payload.lines) {
         if (isSessionStatusCandidate(line) && foldLine(live.state, line)) changed = true;
       }
-      if (changed) pushSnapshot(sid, live, log);
+      if (changed) pushSnapshot(store, sid, live, log);
     },
   };
   // `resolved.file` is only consulted when the sid has no connected session
@@ -1988,10 +2065,10 @@ export async function subscribeSessionStatus(
     // push they would keep rendering it until the new file happens to change.
     // (Only the old conns — the newly-subscribing conn gets the snapshot in
     // its op response.)
-    const line = await statusEventLine(sid, live);
+    const line = await statusEventLine(store, sid, live);
     for (const c of existing.statusConns) c.write(line);
   }
-  return { ok: true, data: await snapshot(live.state, live.sidDir, live.cwd) };
+  return { ok: true, data: await liveSnapshot(store, sid, live) };
 }
 
 export function unsubscribeSessionStatus(

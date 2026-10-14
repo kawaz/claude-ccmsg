@@ -8,6 +8,7 @@ import {
   type Parsed,
   jsonText,
   parseWith,
+  PROTOCOL_VERSION,
   type PromptSendResult,
   type RequestInput,
   resolveSidecarDir,
@@ -20,6 +21,8 @@ import {
 } from "@ccmsg/protocol";
 import * as net from "node:net";
 import {
+  type InputReadinessDeps,
+  inputReadiness,
   productionInputDeps,
   readPromptSendReply,
   sessionInput,
@@ -331,6 +334,69 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
   }
 });
 
+/** Readiness deps over a fake sidecar directory: `terminals` maps each run's
+ * pid to its HYOUI_SESSION_ID (null for a run started outside hyoui). */
+function readinessDeps(
+  terminals: Record<string, string | null>,
+  extra: Partial<InputReadinessDeps> = {},
+): InputReadinessDeps {
+  return {
+    sidecarDir: "/sidecars",
+    listDir: async () => Object.keys(terminals).map((pid) => `${SID}.${pid}.sock`),
+    isAlive: () => true,
+    pidsOf: () => [],
+    terminalOf: async (pid) => terminals[String(pid)] ?? null,
+    isRunning: () => true,
+    ...extra,
+  };
+}
+
+describe("inputReadiness", () => {
+  test("a run with a sidecar and a hyoui terminal: ready", async () => {
+    expect(await inputReadiness(SID, readinessDeps({ "100": "hy-1" }))).toEqual({
+      kind: "ready",
+    });
+  });
+
+  // sessionInput moves past a run that answers no_terminal, so one run with a
+  // terminal among several is enough.
+  test("ready when any run has a terminal, no_terminal when none has", async () => {
+    expect(await inputReadiness(SID, readinessDeps({ "100": null, "200": "hy-2" }))).toEqual({
+      kind: "ready",
+    });
+    expect(await inputReadiness(SID, readinessDeps({ "100": null, "200": null }))).toEqual({
+      kind: "no_terminal",
+    });
+  });
+
+  test("a sidecar of a harness that is gone is no run", async () => {
+    const deps = readinessDeps({ "100": "hy-1" }, { isAlive: () => false });
+    expect(await inputReadiness(SID, deps)).toEqual({ kind: "no_module" });
+  });
+
+  test("no sidecar: no_module while running, ended once not", async () => {
+    expect(await inputReadiness(SID, readinessDeps({}))).toEqual({ kind: "no_module" });
+    expect(await inputReadiness(SID, readinessDeps({}, { isRunning: () => false }))).toEqual({
+      kind: "ended",
+    });
+  });
+
+  // The same judgment sessionInput gives after /clear: the process the id ran
+  // in now binds a sidecar under another id.
+  test("no sidecar of the id, its process serving another id: session_changed", async () => {
+    const OTHER = "99999999-2222-4333-8444-555555555555";
+    const deps = readinessDeps(
+      {},
+      {
+        listDir: async () => [`${OTHER}.100.sock`],
+        pidsOf: () => [100],
+        isRunning: () => false,
+      },
+    );
+    expect(await inputReadiness(SID, deps)).toEqual({ kind: "session_changed" });
+  });
+});
+
 /** A daemon whose state dir is short enough for the sidecar sockets to live
  * under it (macOS's tmpdir is not), so the test reads the same path the
  * daemon derives. */
@@ -548,6 +614,64 @@ describe("session_input over the wire", () => {
       await reply;
     } finally {
       sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+});
+
+describe("input_readiness on session_status", () => {
+  // The snapshot says whether a person's input can reach the session before
+  // anything is sent, and a sidecar binding or going pushes the change.
+  test("follows the session's sidecars and their terminals", async () => {
+    const ctx = await startShortDaemon();
+    const transcript = path.join(ctx.base, `${SID}.jsonl`);
+    fs.writeFileSync(transcript, "");
+    // Harness stand-ins: the daemon reads HYOUI_SESSION_ID off the process a
+    // sidecar socket is named after, as the module reads it off its own.
+    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+    const underHyoui = Bun.spawn(["sleep", "60"], { env: { ...env, HYOUI_SESSION_ID: "hy-1" } });
+    const outsideHyoui = Bun.spawn(["sleep", "60"], { env });
+    const sidecars: { close(): void }[] = [];
+    try {
+      const session = await connect(ctx.sock);
+      await session.requestOk({
+        op: "hello",
+        role: "session",
+        protocol: PROTOCOL_VERSION,
+        sid: SID,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+        transcript_path: transcript,
+      });
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const initial = await user.requestOk({ op: "session_status_subscribe", sid: SID });
+      expect(initial.input_readiness).toEqual({ kind: "no_module" });
+
+      sidecars.push(fakeSidecar(ctx.stateDir, SID, outsideHyoui.pid));
+      const noTerminal = await user.readEventUntil(
+        "session_status",
+        (ev) => ev.input_readiness?.kind === "no_terminal",
+      );
+      expect(noTerminal.ev.sid).toBe(SID);
+
+      sidecars.push(fakeSidecar(ctx.stateDir, SID, underHyoui.pid));
+      await user.readEventUntil("session_status", (ev) => ev.input_readiness?.kind === "ready");
+
+      for (const sidecar of sidecars) sidecar.close();
+      for (const pid of [outsideHyoui.pid, underHyoui.pid]) {
+        fs.rmSync(path.join(resolveSidecarDir(ctx.stateDir), sidecarSocketName(SID, pid)), {
+          force: true,
+        });
+      }
+      await user.readEventUntil("session_status", (ev) => ev.input_readiness?.kind === "no_module");
+      user.close();
+      session.close();
+    } finally {
+      for (const sidecar of sidecars) sidecar.close();
+      underHyoui.kill();
+      outsideHyoui.kill();
       await stopTestDaemon(ctx);
     }
   });

@@ -316,6 +316,31 @@ export const WorkspaceFolderSchema = v.object({
 });
 export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
 
+/** Whether a person's input (session_input, DR-0035) can reach the session
+ * now, judged before anything is sent from what the send itself depends on.
+ * One variant per reason, so a client says why and what to do next:
+ *
+ * - `ready`: a live run has a hooks module (its sidecar is bound) and a hyoui
+ *   terminal to press Enter on
+ * - `no_module`: no live run of the session has a sidecar — the session was
+ *   started with a plugin without the hooks module
+ * - `no_terminal`: runs have a sidecar, but none was started under hyoui, so
+ *   the module has no terminal to send Enter to
+ * - `session_changed`: the process the session ran in now serves another
+ *   session id (/clear, /resume)
+ * - `ended`: the session is no longer running
+ *
+ * A send can still fail for what only the moment of sending shows (a dialog
+ * open, the text not submitted); those reasons come back on session_input. */
+export const SessionInputReadinessSchema = v.variant("kind", [
+  v.object({ kind: v.literal("ready") }),
+  v.object({ kind: v.literal("no_module") }),
+  v.object({ kind: v.literal("no_terminal") }),
+  v.object({ kind: v.literal("session_changed") }),
+  v.object({ kind: v.literal("ended") }),
+]);
+export type SessionInputReadiness = Output<typeof SessionInputReadinessSchema>;
+
 export const SessionStatusSnapshotSchema = v.object({
   todos: v.array(SessionTodoSchema),
   workflows: v.array(SessionWorkflowStatusSchema),
@@ -347,5 +372,8 @@ export const SessionStatusSnapshotSchema = v.object({
    * API-error row — the session is stopped waiting for the user, not working.
    * Absent for a healthy session (see SessionApiError for the exact rule). */
   api_error: v.optional(SessionApiErrorSchema),
+  /** Whether a person's input can reach the session (SessionInputReadiness).
+   * Daemon snapshots carry it; absent only for locally constructed ones. */
+  input_readiness: v.optional(SessionInputReadinessSchema),
 });
 export type SessionStatusSnapshot = Output<typeof SessionStatusSnapshotSchema>;

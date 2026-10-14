@@ -6,19 +6,25 @@
 // module fills its own composer and presses Enter on its own terminal. The
 // request and its reply go through sidecar-call.ts; what this file owns is
 // which run is asked, what a reply means for the person, and the deadline.
-import type {
-  Parsed,
-  PromptSendResult,
-  SessionInputModuleReason,
-  SessionInputReason,
-  SidecarReplyOf,
+import { readdir } from "node:fs/promises";
+import * as path from "node:path";
+import {
+  type Parsed,
+  type PromptSendResult,
+  type SessionInputModuleReason,
+  type SessionInputReadiness,
+  type SessionInputReason,
+  type SidecarReplyOf,
+  sidecarSocketPid,
 } from "@ccmsg/protocol";
 import {
   callSidecar,
+  isProcessAlive,
   liveSidecars,
   productionSidecarDeps,
   runMovedOn,
   type SidecarDeps,
+  type SidecarDirDeps,
   type SidecarReplies,
 } from "./sidecar-call.ts";
 
@@ -118,13 +124,67 @@ export async function sessionInput(
     unable = read.reason;
   }
   if (unable !== undefined) return { outcome: "not_delivered", reason: unable, tries };
-  // No module of `sid` took it. When the process `sid` ran in now serves
-  // another id, the session changed (/clear, /resume) rather than lacks a
-  // module, and the person is told so instead of to update the plugin.
-  if (await runMovedOn(sid, deps.pidsOf(sid), deps)) {
-    return { outcome: "not_delivered", reason: "session_changed", tries };
+  return { outcome: "not_delivered", reason: await withoutModule(sid, deps), tries };
+}
+
+/** Why no module of `sid` can take the input when none of its runs has one.
+ * When the process `sid` ran in now serves another id, the session changed
+ * (/clear, /resume) rather than lacks a module, and the person is told so
+ * instead of to update the plugin. */
+async function withoutModule(
+  sid: string,
+  deps: SidecarDirDeps & Pick<SessionInputDeps, "pidsOf">,
+): Promise<"session_changed" | "no_module"> {
+  return (await runMovedOn(sid, deps.pidsOf(sid), deps)) ? "session_changed" : "no_module";
+}
+
+export interface InputReadinessDeps extends SidecarDirDeps {
+  /** The harness pids `sid` has been seen running under (RunPids). */
+  pidsOf(sid: string): readonly number[];
+  /** `HYOUI_SESSION_ID` in a harness process's environment, or null without
+   * one. The module reads the same variable of the same process
+   * (`$.env.get`) to find the terminal it sends Enter to, and answers
+   * `no_terminal` without it. */
+  terminalOf(pid: number): Promise<string | null>;
+  /** Whether the daemon still counts `sid` among the running sessions. */
+  isRunning(sid: string): boolean;
+}
+
+/** Whether a person's input can reach `sid` now (SessionInputReadiness), from
+ * what sessionInput depends on: the live runs' sidecars, and for each run the
+ * terminal its module would press Enter on. Ready when one run has both, as
+ * sessionInput moves past runs that answer `no_terminal` to the next. */
+export async function inputReadiness(
+  sid: string,
+  deps: InputReadinessDeps,
+): Promise<SessionInputReadiness> {
+  const sockets = await liveSidecars(sid, deps);
+  if (sockets.length > 0) {
+    for (const socket of sockets) {
+      const pid = sidecarSocketPid(path.basename(socket), sid);
+      if (pid !== undefined && (await deps.terminalOf(pid)) !== null) return { kind: "ready" };
+    }
+    return { kind: "no_terminal" };
   }
-  return { outcome: "not_delivered", reason: "no_module", tries };
+  const reason = await withoutModule(sid, deps);
+  if (reason === "session_changed") return { kind: "session_changed" };
+  return deps.isRunning(sid) ? { kind: "no_module" } : { kind: "ended" };
+}
+
+export function productionReadinessDeps(
+  sidecarDir: string,
+  pidsOf: (sid: string) => readonly number[],
+  terminalOf: (pid: number) => Promise<string | null>,
+  isRunning: (sid: string) => boolean,
+): InputReadinessDeps {
+  return {
+    sidecarDir,
+    listDir: (dir) => readdir(dir),
+    isAlive: isProcessAlive,
+    pidsOf,
+    terminalOf,
+    isRunning,
+  };
 }
 
 export function productionInputDeps(

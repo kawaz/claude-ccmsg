@@ -106,6 +106,7 @@ import {
 import {
   createSessionStatusStore,
   getSessionStatus,
+  refreshInputReadiness,
   sessionStatusUnsubscribeAll,
   stopAllSessionStatus,
   subscribeSessionStatus,
@@ -118,7 +119,12 @@ import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
-import { productionInputDeps, sessionInput } from "./session-input.ts";
+import {
+  inputReadiness,
+  productionInputDeps,
+  productionReadinessDeps,
+  sessionInput,
+} from "./session-input.ts";
 import { isProcessAlive, RunPids, SidecarReplies } from "./sidecar-call.ts";
 import {
   adoptTranscriptPath,
@@ -135,6 +141,7 @@ import {
   agentsPollEnabled,
   createAgentsPoller,
   detectConfigDirs,
+  hyouiSessionIdForPid,
   startAgentsPoller,
   stopAgentsPoller,
   type AgentsPoll,
@@ -339,6 +346,10 @@ export interface Daemon {
    * (sidecar-call.ts), so session_input can tell a session that changed its
    * id from one with no module. */
   runPids: RunPids;
+  /** Watch on the sidecar directory: a sidecar bound or gone moves the input
+   * readiness of the sessions being followed (refreshInputReadiness). Null
+   * where the directory could not be watched. */
+  sidecarWatch: fs.FSWatcher | null;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -591,7 +602,10 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // this sid is already a member of every broadcast room from its earlier
   // registration, and the auto-populate contract talks about session lifecycle
   // ("hello 到達 = 新規 session"), not per-connection re-hellos.
-  if (isNewEntry) joinAllBroadcasts(daemon, id.sid);
+  if (isNewEntry) {
+    joinAllBroadcasts(daemon, id.sid);
+    refreshInputReadiness(daemon.sessionStatus, daemon.log);
+  }
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
@@ -613,6 +627,7 @@ function forgetSession(daemon: Daemon, sid: string): void {
   // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
   // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
   leaveAllBroadcasts(daemon, sid);
+  refreshInputReadiness(daemon.sessionStatus, daemon.log);
 }
 
 /** Bring the session registry in line with the harness's register of live
@@ -3439,6 +3454,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
 // --- lifecycle -------------------------------------------------------------
 
+/** Call `onChange` whenever a sidecar binds or goes in `dir`. The directory is
+ * made here (as the sidecar itself would, 0700) so the watch holds from the
+ * start rather than from the first sidecar. */
+function watchSidecarDir(dir: string, log: Logger, onChange: () => void): fs.FSWatcher | null {
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return fs.watch(dir, { persistent: false }, onChange);
+  } catch (e) {
+    log.warn(`sidecar dir ${dir} is not watched: ${String(e)}`);
+    return null;
+  }
+}
+
 function buildDedupIndex(rooms: Map<string, Room>): Map<string, string> {
   const index = new Map<string, string>();
   const createdAt = new Map<string, number>();
@@ -3463,6 +3491,7 @@ async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> 
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
   stopAllUserInputs(daemon.sessionUserInputs, daemon.transcriptTail);
   daemon.networkWatch?.stop();
+  daemon.sidecarWatch?.close();
   daemon.llmStatusRefresher?.stop();
   stopAllTailWatches(daemon.transcriptTail);
   daemon.peerInjector.close();
@@ -3616,7 +3645,17 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
-    sessionStatus: createSessionStatusStore(),
+    sessionStatus: createSessionStatusStore((sid) =>
+      inputReadiness(
+        sid,
+        productionReadinessDeps(
+          paths.sidecars,
+          (pidSid) => daemon.runPids.pidsOf(pidSid),
+          hyouiSessionIdForPid,
+          (runningSid) => daemon.sessions.has(runningSid),
+        ),
+      ),
+    ),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
@@ -3637,6 +3676,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     runPids: new RunPids(),
+    sidecarWatch: null,
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
@@ -3649,6 +3689,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       async (poll, polledAt) => {
         daemon.runPids.record(poll.agents);
         await syncSessionsFromAgents(daemon, poll);
+        refreshInputReadiness(daemon.sessionStatus, daemon.log);
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role === "user") {
             send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
@@ -3658,6 +3699,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       (poll) => resolvePendingTranscripts(daemon, poll),
     );
   }
+
+  daemon.sidecarWatch = watchSidecarDir(paths.sidecars, daemon.log, () =>
+    refreshInputReadiness(daemon.sessionStatus, daemon.log),
+  );
 
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
   // daemons, which would otherwise each carry a `route -n monitor` child and

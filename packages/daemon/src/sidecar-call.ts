@@ -98,8 +98,12 @@ export interface SidecarDeps {
   now(): number;
 }
 
+/** What finding a session's runs reads: the sidecar directory and the
+ * process table. */
+export type SidecarDirDeps = Pick<SidecarDeps, "sidecarDir" | "listDir" | "isAlive">;
+
 /** The sockets of the live runs of `sid`, in a stable order. */
-export async function liveSidecars(sid: string, deps: SidecarDeps): Promise<string[]> {
+export async function liveSidecars(sid: string, deps: SidecarDirDeps): Promise<string[]> {
   let names: string[];
   try {
     names = await deps.listDir(deps.sidecarDir);
@@ -121,7 +125,7 @@ export async function liveSidecars(sid: string, deps: SidecarDeps): Promise<stri
 export async function runMovedOn(
   sid: string,
   pids: readonly number[],
-  deps: SidecarDeps,
+  deps: SidecarDirDeps,
 ): Promise<boolean> {
   if (pids.length === 0) return false;
   let names: string[];

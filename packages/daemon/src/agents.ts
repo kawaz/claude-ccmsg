@@ -152,6 +152,18 @@ async function augmentWithHyoui(agents: AgentInfo[]): Promise<AgentInfo[]> {
   });
 }
 
+/** `HYOUI_SESSION_ID` of one process, through the same per-pid cache as the
+ *  poll — for a harness pid known from elsewhere than the poll (a sidecar's
+ *  socket name). An entry for a pid the next poll does not list is dropped
+ *  by that poll and read again on the next call. */
+export async function hyouiSessionIdForPid(pid: number): Promise<string | null> {
+  const cached = pidHyouiCache.get(pid);
+  if (cached !== undefined) return cached;
+  const read = await readHyouiSessionIdForPid(pid);
+  pidHyouiCache.set(pid, read);
+  return read;
+}
+
 /** Test-only: drop cache between tests so pid reuse across fixtures doesn't
  *  leak stale env lookups from prior runs. */
 export function _resetPidHyouiCacheForTests(): void {
