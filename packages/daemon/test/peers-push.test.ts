@@ -49,13 +49,15 @@ async function userConn(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
-/** Read ev:"peers" until `sid`'s row carries its input readiness. A new sid
- * is pushed twice: once as it registers, and once more when the daemon has
- * judged whether a person's input can reach it (PeerInfo.input_readiness). */
-async function readinessPushed(u: TestClient, sid: string) {
-  return u.readEventUntil(
-    "peers",
-    (ev) => ev.peers.find((p) => p.sid === sid)?.input_readiness !== undefined,
+/** Read ev:"peers" until every row of `sids` carries its input readiness. A
+ * new sid is pushed twice: once as it registers, and once more when the
+ * daemon has judged whether a person's input can reach it
+ * (PeerInfo.input_readiness). The judgment lands after the hello's reply, so
+ * a client subscribing after a hello may still receive that second push; a
+ * test asserting no push follows something has to read past it first. */
+async function readinessPushed(u: TestClient, ...sids: string[]) {
+  return u.readEventUntil("peers", (ev) =>
+    sids.every((sid) => ev.peers.find((p) => p.sid === sid)?.input_readiness !== undefined),
   );
 }
 
@@ -94,10 +96,11 @@ describe("ev:peers push", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const a = await sessionHello(ctx, SID_A);
-        const m = await sessionHello(ctx, SID_M); // marker poster, connected before u subscribes
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
+        const a = await sessionHello(ctx, SID_A);
+        const m = await sessionHello(ctx, SID_M); // marker poster
+        await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
         a.close();
         await postMarkerVia(m, "marker");
         const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
@@ -207,13 +210,14 @@ describe("ev:peers push", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
+        const u = await userConn(ctx);
+        await u.request({ op: "subscribe" });
         const a1 = await sessionHello(ctx, SID_A);
         // second conn re-hellos the same sid, identical metadata (latest-hello-wins
         // path, entry reused) — this itself is a no-op push per the test above.
         const a2 = await sessionHello(ctx, SID_A);
-        const m = await sessionHello(ctx, SID_M); // marker poster, connected before u subscribes
-        const u = await userConn(ctx);
-        await u.request({ op: "subscribe" });
+        const m = await sessionHello(ctx, SID_M); // marker poster
+        await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
 
         a1.close(); // one of two conns for sid A closes; A stays registered via a2
         await postMarkerVia(m, "marker");
