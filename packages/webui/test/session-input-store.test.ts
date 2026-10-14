@@ -25,6 +25,7 @@ import {
   saveDraft,
   sendSessionInput,
   SENDS_STORAGE_PREFIX,
+  storedDraftChange,
   subscribeSessionInput,
   unconfirmedSends,
 } from "../src/client/components/session-input-store.ts";
@@ -39,6 +40,8 @@ class MemStorage {
   private data = new Map<string, string>();
   /** Keys whose writes fail, as a full storage's do (quota). */
   failingWrites = new Set<string>();
+  /** setItem / removeItem calls so far. */
+  writes = 0;
   get length(): number {
     return this.data.size;
   }
@@ -49,10 +52,12 @@ class MemStorage {
     return this.data.get(k) ?? null;
   }
   setItem(k: string, v: string): void {
+    this.writes += 1;
     if (this.failingWrites.has(k)) throw new Error("QuotaExceededError");
     this.data.set(k, v);
   }
   removeItem(k: string): void {
+    this.writes += 1;
     this.data.delete(k);
   }
   clear(): void {
@@ -388,6 +393,48 @@ describe("saveDraft writes only on a change", () => {
     saveDraft("sid-empty", "x");
     saveDraft("sid-empty", "");
     expect(loadDraft("sid-empty")).toBeNull();
+  });
+});
+
+describe("a draft another tab wrote (DR-0035 §5)", () => {
+  // 何を保証するか: 入力欄に映す下書きを読むだけで、保存領域に書かない。
+  // 映したタブが保存し直すと、その保存は入力しているタブの次の保存より後に
+  // 走りうり、古い文が storage event で入力しているタブへ戻る (片方のタブで
+  // 打っているだけで文字が消えて戻る)。
+  test("reading the draft to show writes nothing", () => {
+    saveDraft("sid-tab", "from the other tab", []);
+    let before = storage.writes;
+    expect(storedDraftChange("sid-tab", { text: "" })?.text).toBe("from the other tab");
+    expect(storage.writes).toBe(before);
+    clearDraft("sid-tab");
+    before = storage.writes;
+    expect(storedDraftChange("sid-tab", { text: "shown" })).toEqual({ text: "" });
+    expect(storage.writes).toBe(before);
+  });
+
+  // 何を保証するか: 入力欄が既に映している中身なら何も返さない (入力中の
+  // state を作り直さない)。
+  test("nothing to show when the input already shows the draft", () => {
+    saveDraft("sid-tab", "same", []);
+    expect(storedDraftChange("sid-tab", { text: "same", attachments: [] })).toBeNull();
+    expect(storedDraftChange("sid-other", { text: "" })).toBeNull();
+  });
+
+  // 何を保証するか: 片方のタブだけで打つ間、もう片方が遅れて映しても (背景
+  // タブで render が遅れる)、保存領域は打っているタブの最新の文のまま。
+  test("a tab that only shows the other tab's typing never moves the draft back", () => {
+    let shown = "";
+    const show = () => {
+      shown = storedDraftChange("sid-tab", { text: shown })?.text ?? shown;
+    };
+    saveDraft("sid-tab", "a", []);
+    saveDraft("sid-tab", "ab", []);
+    show();
+    saveDraft("sid-tab", "abc", []);
+    expect(loadDraft("sid-tab")?.text).toBe("abc");
+    show();
+    expect(shown).toBe("abc");
+    expect(loadDraft("sid-tab")?.text).toBe("abc");
   });
 });
 

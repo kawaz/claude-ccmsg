@@ -11,7 +11,8 @@
 // 送った文と同じ時だけ。届かなかった・送れなかった時は理由と次の行動を、
 // `unconfirmed` は送信ごとに「送信済みかもしれない」と示し、どちらも下書きを
 // 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
-// 同じ文が二重に入るのを防ぐ。別タブでの変更は storage event で映す。
+// 同じ文が二重に入るのを防ぐ。下書きは人の編集 (入力・添付の追加と削除) の
+// handler で保存し、別タブでの変更は storage event で映すだけで保存しない。
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
 // daemon が peers の行と session_status に載せる input_readiness の理由と対処を
 // 先に示す。
@@ -54,9 +55,9 @@ import {
   saveDraft,
   sendSessionInput,
   sendsKey,
+  storedDraftChange,
   subscribeSessionInput,
   unconfirmedSends,
-  type InputContent,
 } from "./session-input-store.ts";
 import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
@@ -65,18 +66,33 @@ import { CacheRing } from "./CacheRing.tsx";
 
 export function SessionInputComposer({ sid, state }: { sid: string; state: AppState }) {
   const { ws } = useApp();
-  // 下書きは初期化の時に同期で読む。開いた後に effect で戻すと、戻す前の空の
-  // text を保存の effect が先に見て下書きを消してしまう。SessionView は sid
-  // ごとの instance なので sid は変わらない。
-  const [text, setText] = useState(() => loadDraft(sid)?.text ?? "");
+  // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
+  // sid は変わらない。
+  const [initialDraft] = useState(() => loadDraft(sid));
+  const [text, setText] = useState(initialDraft?.text ?? "");
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => [
-    ...(loadDraft(sid)?.attachments ?? []),
+    ...(initialDraft?.attachments ?? []),
   ]);
   const [sends, setSends] = useState(() => loadSends(sid));
   const [sending, setSending] = useState(() => isSending(sid));
   const [failure, setFailure] = useState(() => lastFailure(sid));
-  const contentRef = useRef({ text, attachments });
-  contentRef.current = { text, attachments };
+  // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
+  // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
+  const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
+    text,
+    attachments,
+  });
+
+  // 人の編集: 入力欄を変えて下書きを保存する。
+  const edit = useCallback(
+    (next: { text: string; attachments: ComposerAttachment[] }) => {
+      contentRef.current = next;
+      setText(next.text);
+      setAttachments(next.attachments);
+      saveDraft(sid, next.text, next.attachments);
+    },
+    [sid],
+  );
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
   const { open, openPanel, closePanel, panelRef } = useFabPopup(sending);
@@ -122,49 +138,48 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     // even when the underlying set didn't change).
   }, [state.peers.length]);
 
-  // 保存領域から読み直す。送信の結果 (この部品が unmount 中に届いたものも)、
-  // 別タブでの下書きの書き換えや記録の変化をここで映す。下書きは中身が違う時
-  // だけ置き換え、入力中の state を無駄に作り直さない。
-  const refresh = useCallback(() => {
+  // 保存されている下書きを入力欄に映す (別タブでの書き換え、このページの送信の
+  // 結果で消えた下書き)。保存はしない: 映した値を保存し直すと、入力している
+  // タブへ古い文が storage event で戻る。中身が違う時だけ置き換え、入力中の
+  // state を無駄に作り直さない。
+  const restoreDraft = useCallback(() => {
+    const draft = storedDraftChange(sid, contentRef.current);
+    if (draft === null) return;
+    const next = { text: draft.text, attachments: [...(draft.attachments ?? [])] };
+    contentRef.current = next;
+    setText(next.text);
+    setAttachments(next.attachments);
+  }, [sid]);
+
+  // 送信の記録と直近の結果を映す (この部品が unmount 中に届いた結果、別タブの
+  // 記録の変化も)。
+  const refreshSends = useCallback(() => {
     setSends(loadSends(sid));
     setSending(isSending(sid));
     setFailure(lastFailure(sid));
-    const draft: InputContent = loadDraft(sid) ?? { text: "" };
-    if (!sameContent(draft, contentRef.current)) {
-      setText(draft.text);
-      setAttachments([...(draft.attachments ?? [])]);
-    }
   }, [sid]);
 
   useEffect(() => {
     const off = subscribeSessionInput((changed) => {
-      if (changed === sid) refresh();
+      if (changed !== sid) return;
+      refreshSends();
+      restoreDraft();
     });
     const onStorage = (e: StorageEvent) => {
-      if (
-        e.key === null ||
-        e.key === draftKey(sid) ||
-        e.key === draftAttachmentsKey(sid) ||
-        e.key === sendsKey(sid)
-      ) {
-        refresh();
+      if (e.key === null || e.key === sendsKey(sid)) refreshSends();
+      if (e.key === null || e.key === draftKey(sid) || e.key === draftAttachmentsKey(sid)) {
+        restoreDraft();
       }
     };
     window.addEventListener("storage", onStorage);
     // 初回 render から購読までの間に起きた変化を拾う。
-    refresh();
+    refreshSends();
+    restoreDraft();
     return () => {
       off();
       window.removeEventListener("storage", onStorage);
     };
-  }, [sid, refresh]);
-
-  // 書いた文と upload 済みの添付を保存する。空の本文は下書きを消す。保存済みと
-  // 同じ中身なら saveDraft は書かないので、refresh で映した別タブの下書きを
-  // タブ同士で書き戻し合うことはない。
-  useEffect(() => {
-    saveDraft(sid, text, attachments);
-  }, [sid, text, attachments]);
+  }, [sid, refreshSends, restoreDraft]);
 
   // open 時に textarea へ自動フォーカス + 前回離脱時のカーソル位置を復元。
   // 位置の保存は textarea の onBlur (close 前に必ず発火)。draft 復元 effect の
@@ -210,83 +225,81 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
       // 複数ファイル同時添付では同一 tick の連続呼び出しが同じ caret を掴み、
       // 後発 placeholder が前に割り込んで逆順になる。直前挿入の直後位置を
       // microtask 寿命の ref で共有する (Composer と同型)。
-      const caret = pendingCaretRef.current ?? (el ? el.selectionStart : text.length);
+      const current = contentRef.current;
+      const caret = pendingCaretRef.current ?? (el ? el.selectionStart : current.text.length);
       // 本文中の [FILE<N>] の max も跨いで採番: draft 復元で本文だけ戻り添付が
       // 欠けた場合に、attachments 配列だけ見た採番は番号を再利用して送信時
       // substitute が新旧 placeholder を同じ path に潰してしまう。
-      const textFloor = maxPlaceholderNumber(text);
-      let assignedN = 0;
-      setAttachments((prev) => {
-        const n = Math.max(nextAttachmentNumber(prev), textFloor + 1);
-        assignedN = n;
-        return [...prev, { n, name: file.name || "upload", status: "uploading", progress: 0 }];
+      const n = Math.max(
+        nextAttachmentNumber(current.attachments),
+        maxPlaceholderNumber(current.text) + 1,
+      );
+      const at = Math.min(caret, current.text.length);
+      const inserted = insertPlaceholder(current.text, at, n);
+      const nextCaret = at + (inserted.length - current.text.length);
+      pendingCaretRef.current = nextCaret;
+      queueMicrotask(() => {
+        pendingCaretRef.current = null;
       });
-      setText((current) => {
-        const n = assignedN || nextAttachmentNumber(attachments) || 1;
-        const at = Math.min(caret, current.length);
-        const inserted = insertPlaceholder(current, at, n);
-        const nextCaret = at + (inserted.length - current.length);
-        pendingCaretRef.current = nextCaret;
-        queueMicrotask(() => {
-          pendingCaretRef.current = null;
+      // 表示上の caret も placeholder の直後に復元する (末尾へ飛ぶのを防ぐ)。
+      // DOM 反映後でないと setSelectionRange が効かないので、上の [text]
+      // effect に委ねる。
+      restoreCaretRef.current = nextCaret;
+      edit({
+        text: inserted,
+        attachments: [
+          ...current.attachments,
+          { n, name: file.name || "upload", status: "uploading", progress: 0 },
+        ],
+      });
+      // upload の進み具合と結果をこの添付に反映する。done になった添付は下書き
+      // に保存される (upload 中・error の添付は saveDraft が保存しない)。
+      const update = (change: (a: ComposerAttachment) => ComposerAttachment) => {
+        const latest = contentRef.current;
+        edit({
+          text: latest.text,
+          attachments: latest.attachments.map((a) => (a.n === n ? change(a) : a)),
         });
-        // 表示上の caret も placeholder の直後に復元する (末尾へ飛ぶのを防ぐ)。
-        // DOM 反映後でないと setSelectionRange が効かないので、上の [text]
-        // effect に委ねる。
-        restoreCaretRef.current = nextCaret;
-        return inserted;
-      });
-      const n = assignedN;
+      };
       void (async () => {
         try {
           const meta = await uploadAttachment(file, (percent) => {
-            setAttachments((prev) =>
-              prev.map((a) => (a.n === n ? { ...a, progress: percent } : a)),
-            );
+            update((a) => ({ ...a, progress: percent }));
           });
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.n === n
-                ? {
-                    ...a,
-                    status: "done",
-                    progress: 100,
-                    uuid: meta.uuid,
-                    ext: meta.ext,
-                    size: meta.size,
-                    mime: meta.mime,
-                    path: meta.path,
-                    name: meta.name,
-                  }
-                : a,
-            ),
-          );
+          update((a) => ({
+            ...a,
+            status: "done",
+            progress: 100,
+            uuid: meta.uuid,
+            ext: meta.ext,
+            size: meta.size,
+            mime: meta.mime,
+            path: meta.path,
+            name: meta.name,
+          }));
         } catch (err) {
-          setAttachments((prev) =>
-            prev.map((a) =>
-              a.n === n
-                ? {
-                    ...a,
-                    status: "error",
-                    errorMsg: err instanceof Error ? err.message : String(err),
-                  }
-                : a,
-            ),
-          );
+          update((a) => ({
+            ...a,
+            status: "error",
+            errorMsg: err instanceof Error ? err.message : String(err),
+          }));
         }
       })();
     },
-    [text, attachments],
+    [edit],
   );
 
   const removeAttachment = useCallback(
     (n: number) => {
       // 送信中は送る添付を変えさせない (× は disabled だが、ここでも止める)。
       if (isSending(sid)) return;
-      setAttachments((prev) => prev.filter((a) => a.n !== n));
-      setText((current) => removePlaceholder(current, n));
+      const current = contentRef.current;
+      edit({
+        text: removePlaceholder(current.text, n),
+        attachments: current.attachments.filter((a) => a.n !== n),
+      });
     },
-    [sid],
+    [sid, edit],
   );
 
   // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、
@@ -466,7 +479,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
           value={text}
           onInput={(e) => {
             const value = e.currentTarget.value;
-            setText(value);
+            edit({ text: value, attachments: contentRef.current.attachments });
             // 文を全部消したら、届かなかった理由の注記も対象を失う。未確認の
             // 送信の注記は送った文に付いているので消さない。
             if (value.trim() === "") clearLastFailure(sid);

@@ -266,6 +266,15 @@ export function saveDraft(
   writeDraft(sid, { text, updatedAt: new Date().toISOString(), attachments: stored });
 }
 
+/** 保存されている下書きが入力欄の中身 `current` と違う時、入力欄に映す中身
+ * (下書きが無ければ空)。同じなら null。下書きを保存しない: 別タブの書き込みを
+ * 映したタブが保存し直すと、遅れて走った保存が古い文を書き戻し、入力している
+ * タブの文を storage event 越しに巻き戻す (DR-0035 §5)。 */
+export function storedDraftChange(sid: string, current: InputContent): InputContent | null {
+  const draft: InputContent = loadDraft(sid) ?? { text: "" };
+  return sameContent(draft, current) ? null : draft;
+}
+
 export function clearDraft(sid: string): void {
   removeStorage(draftKey(sid));
   removeStorage(draftAttachmentsKey(sid));
