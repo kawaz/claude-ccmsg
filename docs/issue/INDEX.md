@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-14 | bug | open | [sidecar-hello-ghost-peer-after-harness-death](./2026-10-14-sidecar-hello-ghost-peer-after-harness-death.md) | sidecar が hello して名乗る形で、daemon 再起動で last_activity_at が更新される副作用と、harness 死亡後に幽霊 peer が残るおそれ |
 | 2026-10-14 | design | open | [hidden-sessionview-stop-store-notifications](./2026-10-14-hidden-sessionview-stop-store-notifications.md) | 隠れている SessionView 配下の Timeline が store 変更で再描画する (612 render)。隠れている間は変更通知を止める store を配る |
 | 2026-10-14 | design | open | [webui-timeline-decomposition-and-hook-tests](./2026-10-14-webui-timeline-decomposition-and-hook-tests.md) | webui の Timeline() 1812 行を custom hook に分解し timeline/ に分割、happy-dom で hook 単位のテストを足す |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
