@@ -7,7 +7,11 @@
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
-import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
+import {
+  SessionErrorEntrySchema,
+  SessionInputReadinessSchema,
+  SessionStatusSnapshotSchema,
+} from "./session-status.ts";
 import { SessionInputModuleReasonSchema } from "./sidecar.ts";
 import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 
@@ -144,6 +148,12 @@ export const PeerInfoSchema = v.object({
    * forever, its hello is refused every time, and nothing in the UI moves.
    * Cleared by any hello from that sid the daemon accepts. */
   stale_client: v.optional(StaleClientInfoSchema),
+  /** Whether a person's input can reach this session now
+   * (SessionInputReadiness), on the `peers` reply and the `ev:"peers"` push
+   * alike, so a client knows it for a session it follows no status of (one
+   * with no transcript yet, or seen only on its Terminal tab). Absent until
+   * the daemon has judged it once. */
+  input_readiness: v.optional(SessionInputReadinessSchema),
 });
 export type PeerInfo = Output<typeof PeerInfoSchema>;
 

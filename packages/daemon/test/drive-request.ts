@@ -25,6 +25,7 @@ import { createSessionStatusStore } from "../src/session-status.ts";
 import { createSessionUserInputStore } from "../src/session-user-input.ts";
 import { createSessionWakeState } from "../src/session-wake.ts";
 import { createSayLog } from "../src/say-log.ts";
+import { ReadinessBoard } from "../src/session-input.ts";
 import { RunPids, SidecarReplies } from "../src/sidecar-call.ts";
 import { TraceWriter } from "../src/trace.ts";
 import { createTranscriptTailStore } from "../src/transcript.ts";
@@ -91,6 +92,11 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     sidecarReplies: new SidecarReplies(),
     runPids: new RunPids(),
     sidecarWatch: null,
+    readiness: new ReadinessBoard(
+      async () => ({ kind: "no_module" }),
+      () => {},
+      () => {},
+    ),
     ...fields,
   };
 }

@@ -198,3 +198,60 @@ export function productionInputDeps(
     pidsOf,
   };
 }
+
+/** The input readiness of every session the daemon counts as running, for
+ * the peers list: a peer row is built synchronously, so readiness is judged
+ * ahead of it and kept here. A refresh judges every session again and calls
+ * `onChange` when any answer moved; refreshes run one at a time, and one
+ * asked for meanwhile runs once more after the current one. */
+export class ReadinessBoard {
+  readonly #by = new Map<string, SessionInputReadiness>();
+  #running = false;
+  #again = false;
+
+  readonly #readinessOf: (sid: string) => Promise<SessionInputReadiness>;
+  readonly #onChange: () => void;
+  readonly #onError: (e: unknown) => void;
+
+  constructor(
+    readinessOf: (sid: string) => Promise<SessionInputReadiness>,
+    onChange: () => void,
+    onError: (e: unknown) => void,
+  ) {
+    this.#readinessOf = readinessOf;
+    this.#onChange = onChange;
+    this.#onError = onError;
+  }
+
+  get(sid: string): SessionInputReadiness | undefined {
+    return this.#by.get(sid);
+  }
+
+  refresh(sids: () => Iterable<string>): void {
+    if (this.#running) {
+      this.#again = true;
+      return;
+    }
+    this.#running = true;
+    void (async () => {
+      try {
+        do {
+          this.#again = false;
+          const judged = await Promise.all(
+            [...sids()].map(async (sid) => [sid, await this.#readinessOf(sid)] as const),
+          );
+          const changed =
+            judged.length !== this.#by.size ||
+            judged.some(([sid, r]) => this.#by.get(sid)?.kind !== r.kind);
+          this.#by.clear();
+          for (const [sid, r] of judged) this.#by.set(sid, r);
+          if (changed) this.#onChange();
+        } while (this.#again);
+      } catch (e) {
+        this.#onError(e);
+      } finally {
+        this.#running = false;
+      }
+    })();
+  }
+}

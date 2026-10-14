@@ -675,4 +675,34 @@ describe("input_readiness on session_status", () => {
       await stopTestDaemon(ctx);
     }
   });
+
+  // A peer row carries it too, for a client that follows no status of the
+  // session (no transcript yet, or only its Terminal tab open).
+  test("rides the peers reply and the peers push", async () => {
+    const ctx = await startShortDaemon();
+    const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
+    const underHyoui = Bun.spawn(["sleep", "60"], { env: { ...env, HYOUI_SESSION_ID: "hy-1" } });
+    let sidecar: { close(): void } | undefined;
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      await user.request({ op: "subscribe" });
+      const session = await connect(ctx.sock);
+      await session.hello({ role: "session", sid: SID, cwd: "/tmp" });
+      const rowOf = (peers: readonly { sid: string; input_readiness?: { kind: string } }[]) =>
+        peers.find((p) => p.sid === SID)?.input_readiness?.kind;
+      await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "no_module");
+
+      sidecar = fakeSidecar(ctx.stateDir, SID, underHyoui.pid);
+      await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "ready");
+      const reply = await user.requestOk({ op: "peers" });
+      expect(rowOf(reply.peers)).toBe("ready");
+      user.close();
+      session.close();
+    } finally {
+      sidecar?.close();
+      underHyoui.kill();
+      await stopTestDaemon(ctx);
+    }
+  });
 });

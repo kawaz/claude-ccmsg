@@ -123,6 +123,7 @@ import {
   inputReadiness,
   productionInputDeps,
   productionReadinessDeps,
+  ReadinessBoard,
   sessionInput,
 } from "./session-input.ts";
 import { isProcessAlive, RunPids, SidecarReplies } from "./sidecar-call.ts";
@@ -350,6 +351,9 @@ export interface Daemon {
    * readiness of the sessions being followed (refreshInputReadiness). Null
    * where the directory could not be watched. */
   sidecarWatch: fs.FSWatcher | null;
+  /** Input readiness of the registered sessions, for the peer rows
+   * (PeerInfo.input_readiness). */
+  readiness: ReadinessBoard;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -604,7 +608,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // ("hello 到達 = 新規 session"), not per-connection re-hellos.
   if (isNewEntry) {
     joinAllBroadcasts(daemon, id.sid);
-    refreshInputReadiness(daemon.sessionStatus, daemon.log);
+    refreshReadiness(daemon);
   }
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
@@ -627,6 +631,14 @@ function forgetSession(daemon: Daemon, sid: string): void {
   // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
   // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
   leaveAllBroadcasts(daemon, sid);
+  refreshReadiness(daemon);
+}
+
+/** Judge again whether a person's input can reach each session, for the
+ * peer rows and for the session statuses being followed; each pushes what
+ * moved. */
+function refreshReadiness(daemon: Daemon): void {
+  daemon.readiness.refresh(() => daemon.sessions.keys());
   refreshInputReadiness(daemon.sessionStatus, daemon.log);
 }
 
@@ -813,7 +825,14 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
     ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
     ...withUserInput(daemon, s.meta.sid),
     ...clientBuildFields(daemon, s),
+    ...withReadiness(daemon, s.meta.sid),
   }));
+}
+
+/** `input_readiness` for one sid, omitted until the daemon has judged it. */
+function withReadiness(daemon: Daemon, sid: string): Pick<PeerInfo, "input_readiness"> {
+  const readiness = daemon.readiness.get(sid);
+  return readiness ? { input_readiness: readiness } : {};
 }
 
 /** The build half of a peer row: what its latest hello announced, plus the
@@ -884,6 +903,7 @@ function peersCompareKey(daemon: Daemon): string {
       return {
         ...s.meta,
         connected_at: s.connectedAt,
+        ...withReadiness(daemon, s.meta.sid),
         ...build,
         ...(stale ? { stale_client: { version: stale.version, protocol: stale.protocol } } : {}),
       };
@@ -3624,6 +3644,16 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   }
   const config = loaded.config;
   const trace = new TraceWriter(paths.trace);
+  const readinessOf = (sid: string) =>
+    inputReadiness(
+      sid,
+      productionReadinessDeps(
+        paths.sidecars,
+        (pidSid) => daemon.runPids.pidsOf(pidSid),
+        hyouiSessionIdForPid,
+        (runningSid) => daemon.sessions.has(runningSid),
+      ),
+    );
   const daemon: Daemon = {
     paths,
     config,
@@ -3645,17 +3675,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
-    sessionStatus: createSessionStatusStore((sid) =>
-      inputReadiness(
-        sid,
-        productionReadinessDeps(
-          paths.sidecars,
-          (pidSid) => daemon.runPids.pidsOf(pidSid),
-          hyouiSessionIdForPid,
-          (runningSid) => daemon.sessions.has(runningSid),
-        ),
-      ),
-    ),
+    sessionStatus: createSessionStatusStore(readinessOf),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
@@ -3677,6 +3697,11 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     sidecarReplies: new SidecarReplies(),
     runPids: new RunPids(),
     sidecarWatch: null,
+    readiness: new ReadinessBoard(
+      readinessOf,
+      () => maybeBroadcastPeers(daemon),
+      (e) => log.error(`input readiness failed: ${String(e)}`),
+    ),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
@@ -3689,7 +3714,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       async (poll, polledAt) => {
         daemon.runPids.record(poll.agents);
         await syncSessionsFromAgents(daemon, poll);
-        refreshInputReadiness(daemon.sessionStatus, daemon.log);
+        refreshReadiness(daemon);
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role === "user") {
             send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
@@ -3700,9 +3725,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     );
   }
 
-  daemon.sidecarWatch = watchSidecarDir(paths.sidecars, daemon.log, () =>
-    refreshInputReadiness(daemon.sessionStatus, daemon.log),
-  );
+  daemon.sidecarWatch = watchSidecarDir(paths.sidecars, daemon.log, () => refreshReadiness(daemon));
 
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
   // daemons, which would otherwise each carry a `route -n monitor` child and

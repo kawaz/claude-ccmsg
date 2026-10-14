@@ -49,6 +49,16 @@ async function userConn(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
+/** Read ev:"peers" until `sid`'s row carries its input readiness. A new sid
+ * is pushed twice: once as it registers, and once more when the daemon has
+ * judged whether a person's input can reach it (PeerInfo.input_readiness). */
+async function readinessPushed(u: TestClient, sid: string) {
+  return u.readEventUntil(
+    "peers",
+    (ev) => ev.peers.find((p) => p.sid === sid)?.input_readiness !== undefined,
+  );
+}
+
 /** Post a distinguishable marker msg via an ALREADY-connected session (never a
  *  fresh hello — a new hello is itself a peers-changing event and would
  *  contaminate the "no ev:'peers' arrived" tests below). Used to prove no
@@ -136,9 +146,9 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const m = await sessionHello(ctx, SID_M); // marker poster, connected up front
-        await u.readEventUntil("peers"); // drain M's own registration push
+        await readinessPushed(u, SID_M); // drain M's own registration pushes
         const a = await sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp" });
-        await u.readEventUntil("peers"); // drain A's registration push
+        await readinessPushed(u, SID_A); // drain A's registration pushes
 
         // identical re-hello on the same conn — must not push again.
         await a.request({
@@ -170,7 +180,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = await sessionHello(ctx, SID_A, { repo: "r1", ws: "w", cwd: "/tmp" });
-        await u.readEventUntil("peers"); // first push (new sid)
+        await readinessPushed(u, SID_A); // the new sid's pushes
 
         await a.request({
           op: "hello",
@@ -226,7 +236,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = await sessionHello(ctx, SID_A);
-        await u.readEventUntil("peers"); // A's registration push
+        await readinessPushed(u, SID_A); // A's registration pushes
 
         // same conn, re-hello as a different sid
         await a.request({
@@ -302,7 +312,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
-        const { ev } = await u.readEventUntil("peers");
+        const { ev } = await readinessPushed(u, SID_A);
         const pushed = defined(
           ev.peers.find((p) => p.sid === SID_A),
           "pushed",
