@@ -21,10 +21,13 @@ import {
   type Engine,
   type HookedEvent,
   answer,
+  beginArgv,
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,
+  type HookOf,
   type ModuleState,
+  type ObservedEvent,
   type On,
   type QueuedSend,
   register,
@@ -33,15 +36,23 @@ import {
   samePrompt,
   SEND_TIMEOUT_MS,
   sendArgv,
-  type SendHook,
   type SpawnChunk,
   type SpawnEnd,
 } from "./composer-fill.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
-const CLASSIC_START = {
-  session_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-};
+/** A command.run as the engine raises it for `/<command>`. */
+function command(name: string) {
+  return { command: name, args: "", origin: { kind: "composer" } };
+}
+/** A prompt.submit of `text` from the person's Enter. */
+function submitted(text: string) {
+  return { text, wait: false, origin: { kind: "composer" } };
+}
+/** What a prompt.submit's `next` settles on when the prompt entered. */
+async function entered(e: { text: string }) {
+  return { text: e.text };
+}
 
 interface Timer {
   ms: number;
@@ -87,21 +98,23 @@ function controlledStream() {
   };
 }
 
-/** The hooks the module registered, by event. Each is held as the widest
- * hook (one that may settle the event itself, as session.send's does); every
- * pass-through hook is one. */
-type HookTable = Partial<Record<HookedEvent, SendHook>>;
+/** The hooks the module registered, by event, each as the event takes it. */
+type HookTable = { [K in HookedEvent]?: HookOf[K] };
 
 interface Fake {
   $: Engine;
   composer: { text: string };
   /** What the session says of itself through `$.session`. */
-  session: { model: string; window: number };
+  session: { model: string; window: number; root: string };
   /** The facts each `ccmsg sidecar facts` was given, with the sid it named,
    * in order. Kept apart from `runs`: they go with every session event, and
    * what a test of the other commands runs is told without them. */
   factsSent: { sid: string; facts: SessionFacts }[];
-  /** The commands the module ran other than `ccmsg sidecar facts`. */
+  /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
+   * named, in order. Kept apart from `runs` as the facts are. */
+  begins: { sid: string; cwd: string }[];
+  /** The commands the module ran other than `ccmsg sidecar facts` and
+   * `ccmsg sidecar begin`. */
   runs: string[][];
   /** The runs that asked the harness pid. */
   /** What each run got on standard input, by the index of the run. */
@@ -161,14 +174,16 @@ function fakeEngine(
   const spawns: Fake["spawns"] = [];
   const timers: Timer[] = [];
   const sid = { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" };
-  const session = { model: "claude-opus-5-5[1m]", window: 1_000_000 };
+  const session = { model: "claude-opus-5-5[1m]", window: 1_000_000, root: "/w" };
   const factsSent: Fake["factsSent"] = [];
+  const begins: Fake["begins"] = [];
   const fills: string[] = [];
   const logs: string[] = [];
   const $: Engine = {
     plugin: { root: "/plugin" },
     session: {
       id: async () => sid.value,
+      root: async () => session.root,
       surfaces: async () => options.surfaces ?? ["terminal"],
       model: async () => session.model,
       usage: async () => ({ context: { window: session.window } }),
@@ -190,6 +205,10 @@ function fakeEngine(
           const read = parseWith(SessionFactsTextSchema, init?.stdin ?? "");
           if (!read.ok) throw new Error(`facts not readable: ${read.failure.summary}`);
           factsSent.push({ sid: flagOf(argv, "--sid"), facts: read.value });
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (argv[1] === "sidecar" && argv[2] === "begin") {
+          begins.push({ sid: flagOf(argv, "--sid"), cwd: flagOf(argv, "--cwd") });
           return { exitCode: 0, stdout: "", stderr: "" };
         }
         runs.push([...argv]);
@@ -240,6 +259,7 @@ function fakeEngine(
     composer,
     session,
     factsSent,
+    begins,
     runs,
     stdins,
     envs,
@@ -261,23 +281,80 @@ function fakeEngine(
  * again (the engine's `Caught`). */
 async function fire<E, R>(
   fake: Fake,
-  event: HookedEvent,
+  event: ObservedEvent,
   e: E,
   next: (e: E) => Promise<R>,
-): Promise<R | SendMessageResult> {
+): Promise<R> {
   const hook = fake.hooks[event];
   if (hook === undefined) throw new Error(`no hook on ${event}`);
-  let called: Promise<R> | undefined;
-  const once = (input: E): Promise<R> => {
-    called ??= next(input);
-    return called;
-  };
+  const once = replaySafe(next);
   try {
     return await hook(fake.$, e, once);
   } catch (error) {
     const handler = fake.catchers[event];
     if (handler === undefined) throw error;
     return handler(fake.$, e, once);
+  }
+}
+
+/** `fire` for session.send, whose hook may settle the event itself. */
+async function fireSend<E, R>(
+  fake: Fake,
+  e: E,
+  next: (e: E) => Promise<R>,
+): Promise<R | SendMessageResult> {
+  const hook = fake.hooks["session.send"];
+  if (hook === undefined) throw new Error("no hook on session.send");
+  const once = replaySafe(next);
+  try {
+    return await hook(fake.$, e, once);
+  } catch (error) {
+    const handler = fake.catchers["session.send"];
+    if (handler === undefined) throw error;
+    return handler(fake.$, e, once);
+  }
+}
+
+/** A `next` that runs what is beneath once and answers that call's result
+ * to every later call. */
+function replaySafe<E, R>(next: (e: E) => Promise<R>): (e: E) => Promise<R> {
+  let called: Promise<R> | undefined;
+  return (input) => {
+    called ??= next(input);
+    return called;
+  };
+}
+
+/** Run the module's turn.step hook over a request whose stream beneath yields
+ * `chunks` and ends on `result`, and take what the hook passed on. A hook
+ * that throws before passing anything on is replaced by its `.catch`, as the
+ * engine does. */
+async function fireStep<E, Y, R>(
+  fake: Fake,
+  e: E,
+  chunks: readonly Y[],
+  result: R,
+): Promise<{ chunks: Y[]; result: R }> {
+  const hook = fake.hooks["turn.step"];
+  if (hook === undefined) throw new Error("no hook on turn.step");
+  const beneath = async function* (_e: E): AsyncGenerator<Y, R> {
+    for (const chunk of chunks) yield chunk;
+    return result;
+  };
+  const drain = async (stream: AsyncGenerator<Y, R>) => {
+    const passed: Y[] = [];
+    for (;;) {
+      const step = await stream.next();
+      if (step.done === true) return { chunks: passed, result: step.value };
+      passed.push(step.value);
+    }
+  };
+  try {
+    return await drain(hook(fake.$, e, beneath));
+  } catch (error) {
+    const handler = fake.catchers["turn.step"];
+    if (handler === undefined) throw error;
+    return drain(handler(fake.$, e, beneath));
   }
 }
 
@@ -304,20 +381,19 @@ function stdinReply(fake: Fake, index: number): SidecarReply {
 }
 
 /** What the harness does on Enter with text in the composer: prompt.submit
- * through the module's hook (the composer clears beneath it), then
- * classic.UserPromptSubmit. */
+ * through the module's hook, the prompt entering beneath it (the composer
+ * clears). */
 async function submitComposer(fake: Fake): Promise<number> {
   const text = fake.composer.text;
-  await fire(fake, "prompt.submit", { text, origin: { kind: "composer" } }, async () => {
+  await fire(fake, "prompt.submit", submitted(text), async (e) => {
     fake.composer.text = "";
-    return {};
+    return entered(e);
   });
-  await fire(fake, "classic.UserPromptSubmit", { prompt: text }, async () => ({}));
   return 0;
 }
 
 function registerOn(fake: Fake): ModuleState {
-  const on: On = (event: HookedEvent, hook: SendHook) => {
+  const on: On = (event, hook) => {
     fake.hooks[event] = hook;
     fake.registered.push(event);
     return {
@@ -431,8 +507,8 @@ describe("handlePromptSend", () => {
     expect(fake.composer.text).toBe("keep");
   });
 
-  // The composer moved on without UserPromptSubmit: nothing decisive to say.
-  test("submitted without UserPromptSubmit: unconfirmed", async () => {
+  // The composer moved on with no submit of the text: nothing decisive to say.
+  test("the composer emptied with no submit of the text: unconfirmed", async () => {
     const fake = fakeEngine({
       onEnter: async (f) => {
         f.composer.text = "";
@@ -443,6 +519,56 @@ describe("handlePromptSend", () => {
     const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
     await expireAcceptWait(fake);
     expect(await report).toEqual({ outcome: "unconfirmed" });
+  });
+
+  // The submit went through beneath the module's hook: the prompt entered the
+  // session, or was queued behind the running turn (typed while busy, with
+  // the running turn's id), DR-0039 §2.
+  test("accepted while a turn runs: the submit was queued behind it", async () => {
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        await fire(f, "prompt.submit", { ...submitted(f.composer.text), turnId: "t1" }, entered);
+        f.composer.text = "";
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    expect(await handlePromptSend(fake.$, state, queued(fake, state, "x"))).toEqual({
+      outcome: "accepted",
+    });
+  });
+
+  // A submit that settles on a drop did not enter; the text stays in the
+  // composer and is taken back out.
+  test("a dropped submit is not acceptance: not_submitted, the draft goes back", async () => {
+    const fake = fakeEngine({
+      draft: "keep",
+      onEnter: async (f) => {
+        await fire(f, "prompt.submit", submitted(f.composer.text), async () => ({ drop: "no" }));
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
+    await expireAcceptWait(fake);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "not_submitted" });
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  // The same text arriving from elsewhere (a peer's message, a plugin) is not
+  // the person's Enter on the filled composer.
+  test("a submit of the same text not from the composer is not acceptance", async () => {
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        const peer = { ...submitted(f.composer.text), origin: { kind: "peer" } };
+        await fire(f, "prompt.submit", peer, entered);
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
+    await expireAcceptWait(fake);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "not_submitted" });
   });
 
   test("a prompt.submit of other text does not put the draft back", async () => {
@@ -457,6 +583,87 @@ describe("handlePromptSend", () => {
     );
     expect(fake.fills).toEqual([]);
     expect(state.restoring).toEqual({ text: "mine", draft: "draft" });
+  });
+});
+
+// The session's state file and the daemon come from `ccmsg sidecar begin`,
+// run when the session starts and when it changes its id (DR-0039 §2).
+describe("ccmsg sidecar begin", () => {
+  test("session.start begins the session under its id, in its project root", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    fake.session.root = "/project";
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    expect(fake.begins).toEqual([{ sid: fake.sid.value, cwd: "/project" }]);
+    expect(beginArgv("/p", "s", "/w")).toEqual([
+      "/p/bin/ccmsg",
+      "sidecar",
+      "begin",
+      "--sid",
+      "s",
+      "--cwd",
+      "/w",
+    ]);
+  });
+
+  // A session with no composer still has a state file and a daemon, as the
+  // daemon shows it; it only has no sidecar.
+  test("a session with no composer begins too", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", { ...START, isInteractive: false, surface: null }, () =>
+      Promise.resolve({}),
+    );
+    await settle();
+    expect(fake.begins.length).toBe(1);
+    expect(fake.spawns).toEqual([]);
+  });
+
+  for (const name of ["clear", "resume"]) {
+    test(`/${name} begins the session under its new id`, async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      await fire(fake, "session.start", START, async () => ({}));
+      await fire(fake, "command.run", command(name), async () => {
+        fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        return {};
+      });
+      await settle();
+      expect(fake.begins.map((b) => b.sid)).toEqual([
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      ]);
+    });
+  }
+
+  test("other commands begin nothing", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    for (const name of ["model", "compact", "help"]) {
+      await fire(fake, "command.run", command(name), async () => ({}));
+    }
+    await settle();
+    expect(fake.begins).toEqual([]);
+  });
+
+  // Not awaited by the hook, so a begin that fails is only logged.
+  test("a begin that fails is logged, and session.start settles regardless", async () => {
+    const fake = fakeEngine();
+    const process = fake.$.process;
+    fake.$.process = {
+      ...process,
+      run: async (argv, init) => {
+        if (argv[2] === "begin") return { exitCode: 1, stdout: "", stderr: "no daemon\n" };
+        return process.run(argv, init);
+      },
+    };
+    registerOn(fake);
+    expect(await fire(fake, "session.start", START, async () => ({ cwd: "/w" }))).toEqual({
+      cwd: "/w",
+    });
+    await settle();
+    expect(fake.logs).toContain("ccmsg: begin exited 1: no daemon");
   });
 });
 
@@ -538,7 +745,7 @@ describe("the sidecar the module keeps", () => {
     lastTimer(fake).fn();
     await settle();
     fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await fire(fake, "command.run", command("clear"), async () => ({}));
     await settle();
     expect(fake.spawns.length).toBe(3);
     const runs = fake.spawns.map((s) => [flagOf(s.argv, "--run"), flagOf(s.argv, "--started-at")]);
@@ -561,12 +768,14 @@ describe("the sidecar the module keeps", () => {
     expect(flagOf(spawned(one, 0).argv, "--run")).not.toBe(flagOf(spawned(two, 0).argv, "--run"));
   });
 
-  test("session.start and classic.SessionStart together start one sidecar", async () => {
+  // session.start runs again on a reload of the session's modules; under the
+  // same id the sidecar it has is kept.
+  test("session.start twice under one id keeps one sidecar", async () => {
     const fake = fakeEngine();
     registerOn(fake);
     await Promise.all([
       fire(fake, "session.start", START, async () => ({})),
-      fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({})),
+      fire(fake, "session.start", START, async () => ({})),
     ]);
     await settle();
     expect(fake.spawns.length).toBe(1);
@@ -591,21 +800,37 @@ describe("the sidecar the module keeps", () => {
     expect(lastTimer(fake).ms).toBe(RESPAWN_MIN_MS * 2);
   });
 
-  test("a new session id (/clear) replaces the sidecar", async () => {
+  // command.run settles after the session moved to its new id (DR-0039 §2).
+  for (const name of ["clear", "resume"]) {
+    test(`a new session id (/${name}) replaces the sidecar`, async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      await fire(fake, "session.start", START, async () => ({}));
+      await settle();
+      await fire(fake, "command.run", command(name), async () => {
+        fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        return {};
+      });
+      await settle();
+      expect(spawned(fake, 0).stream.returned.value).toBe(true);
+      expect(fake.spawns.map((s) => flagOf(s.argv, "--sid"))).toEqual([
+        "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      ]);
+      // The replaced sidecar's end is not answered with a respawn.
+      expect(fake.timers).toEqual([]);
+    });
+  }
+
+  test("another command keeps the sidecar", async () => {
     const fake = fakeEngine();
     registerOn(fake);
     await fire(fake, "session.start", START, async () => ({}));
     await settle();
-    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await fire(fake, "command.run", command("compact"), async () => ({}));
     await settle();
-    expect(spawned(fake, 0).stream.returned.value).toBe(true);
-    expect(fake.spawns.map((s) => flagOf(s.argv, "--sid"))).toEqual([
-      "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-    ]);
-    // The replaced sidecar's end is not answered with a respawn.
-    expect(fake.timers).toEqual([]);
+    expect(fake.spawns.length).toBe(1);
+    expect(spawned(fake, 0).stream.returned.value).toBe(false);
   });
 });
 
@@ -618,18 +843,18 @@ describe("sessions without a composer get no sidecar", () => {
       const fake = fakeEngine();
       registerOn(fake);
       await fire(fake, "session.start", e, async () => ({}));
-      await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+      await fire(fake, "command.run", command("clear"), async () => ({}));
       await settle();
       expect(fake.spawns).toEqual([]);
     });
   }
 
-  // After a reload the first event may be classic.SessionStart: the session
-  // itself is asked whether it draws anywhere.
-  test("classic.SessionStart first, in a session that draws nowhere", async () => {
+  // After a reload the first event may be a command.run: the session itself
+  // is asked whether it draws anywhere.
+  test("/clear first, in a session that draws nowhere", async () => {
     const fake = fakeEngine({ surfaces: [] });
     registerOn(fake);
-    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await fire(fake, "command.run", command("clear"), async () => ({}));
     await settle();
     expect(fake.spawns).toEqual([]);
   });
@@ -940,46 +1165,72 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(factsAt(fake, 1).facts.context).not.toHaveProperty("tokens");
   });
 
-  // No `$` call answers the effort: a main-thread turn's end carries it.
-  test("the effort comes with a main-thread turn's end, and is sent when it moves", async () => {
+  // No `$` call answers the effort: each main-thread request names it, before
+  // any of its answer.
+  test("the effort comes with a main-thread request, and is sent when it moves", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    await fire(fake, "classic.Stop", { effort: { level: "high" } }, async () => ({}));
+    const step = { turnId: "t", index: 0, model: "m", messageCount: 1 };
+    const passed = await fireStep(fake, { ...step, effort: "high" }, ["a", "b"], { done: 1 });
+    // The request's stream goes on as it came.
+    expect(passed).toEqual({ chunks: ["a", "b"], result: { done: 1 } });
     await untilFacts(fake, 1);
     expect(factsAt(fake, 0).facts.effort).toBe("high");
-    await fire(fake, "classic.Stop", { effort: { level: "high" } }, async () => ({}));
-    const subagent = { agent_id: "a1", effort: { level: "low" } };
-    await fire(fake, "classic.Stop", subagent, async () => ({}));
+    await fireStep(fake, { ...step, effort: "high" }, [], {});
+    await fireStep(fake, { ...step, effort: "low", agentId: "a1" }, [], {});
+    // A model without effort names none.
+    await fireStep(fake, step, [], {});
     await settle();
     expect(fake.factsSent.length).toBe(1);
+    await fireStep(fake, { ...step, effort: 32_000 }, [], {});
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.effort).toBe("32000");
   });
 
-  // A switch raises no session.measure, so the module reads both again.
-  test("a model switch sends the new model and its window", async () => {
+  test("a turn.step hook that fails passes the request's stream on", async () => {
+    const fake = fakeEngine();
+    fake.$.ui = {
+      log: () => {
+        throw new Error("log broke");
+      },
+    };
+    registerOn(fake);
+    // Not an event: logging that is what throws.
+    expect(await fireStep(fake, "not an event", ["a"], { done: 1 })).toEqual({
+      chunks: ["a"],
+      result: { done: 1 },
+    });
+  });
+
+  // /model raises no session.measure, so the module reads both again.
+  test("/model sends the new model and its window", async () => {
     const fake = fakeEngine();
     registerOn(fake);
     await fire(fake, "session.start", START, async () => ({}));
     await untilFacts(fake, 1);
     fake.session.model = "claude-haiku-4-5-20251001";
     fake.session.window = 200_000;
-    await fire(fake, "classic.PostModelSwitch", { to_model: "x" }, async () => ({}));
+    await fire(fake, "command.run", command("model"), async () => ({}));
     await untilFacts(fake, 2);
     expect(factsAt(fake, 1).facts.model).toBe("claude-haiku-4-5-20251001");
     expect(factsAt(fake, 1).facts.context?.window).toBe(200_000);
   });
 
-  // /clear raises classic.SessionStart under the new id and no session.start.
-  test("after /clear the facts go under the new id", async () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    await fire(fake, "session.start", START, async () => ({}));
-    await untilFacts(fake, 1);
-    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
-    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
-    await untilFacts(fake, 2);
-    expect(factsAt(fake, 1).sid).toBe("ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-  });
+  // /clear and /resume raise no session.start: the command's end is when the
+  // session has its new id.
+  for (const name of ["clear", "resume"]) {
+    test(`after /${name} the facts go under the new id`, async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      await fire(fake, "session.start", START, async () => ({}));
+      await untilFacts(fake, 1);
+      await fire(fake, "session.end", { reason: name }, async () => ({}));
+      fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+      await fire(fake, "command.run", command(name), async () => ({}));
+      await untilFacts(fake, 2);
+      expect(factsAt(fake, 1).sid).toBe("ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    });
+  }
 
   // A daemon that came up after the module asks for what it missed.
   test("the session.facts request is answered with the facts as they are", async () => {
@@ -1019,13 +1270,14 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(fake.factsSent.map((f) => f.facts.context?.window)).toEqual([1_000_000, 400_000]);
   });
 
-  // The API error a turn ends on is the daemon's to read off the transcript,
-  // classification included (DR-0039 §2): the module hooks no StopFailure,
-  // and a turn that ends on an error only goes idle.
-  test("the module takes no part in the API error", async () => {
+  // The module is the plugin's one tie to Claude Code and hooks no classic
+  // event (DR-0039 §1). The API error a turn ends on is the daemon's to read
+  // off the transcript, classification included (§2): a turn that ends on an
+  // error only goes idle.
+  test("the module hooks no classic event, and takes no part in the API error", async () => {
     const fake = fakeEngine();
     registerOn(fake);
-    expect(new Set<string>(fake.registered).has("classic.StopFailure")).toBe(false);
+    expect(fake.registered.filter((e) => e.startsWith("classic."))).toEqual([]);
     await fire(fake, "turn.start", { text: "", turnId: "t" }, async () => ({}));
     await fire(fake, "turn.complete", { reason: "error", turnId: "t" }, async () => ({}));
     await untilLastFacts(fake, (f) => f.turn?.state === "idle");
@@ -1054,18 +1306,16 @@ describe("the facts the module sends of its session (session.facts)", () => {
     await untilLastFacts(fake, (f) => f.turn?.state === "idle");
   });
 
-  // SessionStart also comes after a compaction, which can be mid-turn.
-  test("a compaction's SessionStart leaves a running turn running; /clear's ends it", async () => {
+  // A compaction can run mid-turn; /clear begins a session with no turn.
+  test("/compact leaves a running turn running; /clear ends it", async () => {
     const fake = fakeEngine();
     registerOn(fake);
     await fire(fake, "turn.start", { text: "hi", turnId: "t1" }, async () => ({}));
     await untilLastFacts(fake, (f) => f.turn?.state === "responding");
-    const compacted = { ...CLASSIC_START, source: "compact" };
-    await fire(fake, "classic.SessionStart", compacted, async () => ({}));
-    await untilLastFacts(fake, (f) => f.model !== undefined);
+    await fire(fake, "command.run", command("compact"), async () => ({}));
+    await settle();
     expect(lastFacts(fake).turn?.state).toBe("responding");
-    const cleared = { ...CLASSIC_START, source: "clear" };
-    await fire(fake, "classic.SessionStart", cleared, async () => ({}));
+    await fire(fake, "command.run", command("clear"), async () => ({}));
     await untilLastFacts(fake, (f) => f.turn?.state === "idle");
   });
 
@@ -1138,7 +1388,7 @@ describe("each hook passes the event on once", () => {
     ).toBe(true);
   });
 
-  test("a failure before next is logged and the event goes on once", async () => {
+  test("a failure in accepting the prompt is logged and the event goes on once", async () => {
     const fake = fakeEngine();
     const state = registerOn(fake);
     state.awaiting = {
@@ -1147,10 +1397,13 @@ describe("each hook passes the event on once", () => {
         throw new Error("accept broke");
       },
     };
-    const { calls, next } = countingNext();
-    await fire(fake, "classic.UserPromptSubmit", { prompt: "x" }, next);
-    expect(calls.count).toBe(1);
-    expect(fake.logs.some((l) => l.includes("failed before the event: Error: accept broke"))).toBe(
+    let calls = 0;
+    await fire(fake, "prompt.submit", submitted("x"), async (e) => {
+      calls += 1;
+      return entered(e);
+    });
+    expect(calls).toBe(1);
+    expect(fake.logs.some((l) => l.includes("failed after the event: Error: accept broke"))).toBe(
       true,
     );
   });
@@ -1168,8 +1421,9 @@ describe("each hook passes the event on once", () => {
     for (const event of [
       "session.start",
       "session.end",
-      "classic.SessionStart",
-      "classic.UserPromptSubmit",
+      "command.run",
+      "turn.start",
+      "turn.complete",
       "prompt.submit",
     ] as const) {
       count = 0;
@@ -1196,8 +1450,11 @@ describe("each hook passes the event on once", () => {
     registerOn(fake);
     expect(fake.registered.length).toBeGreaterThan(0);
     // session.send settles a SendMessage itself when it is to a ccmsg:
-    // address; its failures are its own tests'.
-    for (const event of fake.registered.filter((e) => e !== "session.send")) {
+    // address, and turn.step is a stream; their failures are their own tests'.
+    const observed = fake.registered.flatMap((e) =>
+      e === "session.send" || e === "turn.step" ? [] : [e],
+    );
+    for (const event of observed) {
       logged = 0;
       const { calls, next } = countingNext({ passed: event });
       // No hook reads this input; logging that is what throws.
@@ -1233,7 +1490,7 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
   test("is taken over: sent through ccmsg sidecar send, the text on standard input", async () => {
     const fake = sendFake(printed({ isDelivered: true }));
     const { calls, next } = countingNext({ native: true });
-    expect(await fire(fake, "session.send", SEND, next)).toEqual({ isDelivered: true });
+    expect(await fireSend(fake, SEND, next)).toEqual({ isDelivered: true });
     expect(calls.count).toBe(0);
     expect(fake.runs).toEqual([sendArgv("/plugin", fake.sid.value, TO)]);
     expect(fake.runs[0]).toEqual([
@@ -1255,14 +1512,14 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
       seen.push(init.timeoutMs);
       return printed({ isDelivered: true })();
     });
-    await fire(fake, "session.send", SEND, countingNext().next);
+    await fireSend(fake, SEND, countingNext().next);
     expect(seen).toEqual([SEND_TIMEOUT_MS]);
     expect(SEND_TIMEOUT_MS).toBeLessThan(30_000);
   });
 
   test("a send that reached nobody is settled with the command's reason", async () => {
     const fake = sendFake(printed({ isDelivered: false, reason: "宛先が無い" }));
-    expect(await fire(fake, "session.send", SEND, countingNext().next)).toEqual({
+    expect(await fireSend(fake, SEND, countingNext().next)).toEqual({
       isDelivered: false,
       reason: "宛先が無い",
     });
@@ -1273,12 +1530,12 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
     for (const to of ["team-lead", "ccmsg", "uds:/tmp/x.sock", " ccmsg:x"]) {
       const { calls, next } = countingNext({ native: to });
       const e = { to, text: "hi" };
-      expect(await fire(fake, "session.send", e, next)).toEqual({ native: to });
+      expect(await fireSend(fake, e, next)).toEqual({ native: to });
       expect(calls.count).toBe(1);
     }
     // An input that does not read is not the module's to take over either.
     const { calls, next } = countingNext({ native: true });
-    expect(await fire(fake, "session.send", { to: TO }, next)).toEqual({ native: true });
+    expect(await fireSend(fake, { to: TO }, next)).toEqual({ native: true });
     expect(calls.count).toBe(1);
     expect(fake.runs).toEqual([]);
   });
@@ -1290,7 +1547,7 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
       throw new Error("$.process.run(ccmsg) aborted: still running after 10000ms");
     });
     const { calls, next } = countingNext({ native: true });
-    const result = await fire(fake, "session.send", SEND, next);
+    const result = await fireSend(fake, SEND, next);
     expect(calls.count).toBe(0);
     expect(notDeliveredReason(result)).toContain(
       "届いたか確かめられなかった: Error: $.process.run(ccmsg) aborted",
@@ -1303,9 +1560,9 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
       stdout: "",
       stderr: "ccmsg: something broke\n  detail\n",
     }));
-    expect(
-      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
-    ).toContain("届いたか確かめられなかった: ccmsg: something broke。");
+    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain(
+      "届いたか確かめられなかった: ccmsg: something broke。",
+    );
   });
 
   test("a failing engine, log included, still settles the send", async () => {
@@ -1317,18 +1574,16 @@ describe("a SendMessage to a ccmsg: address (DR-0037)", () => {
         throw new Error("log broke");
       },
     };
-    expect(
-      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
-    ).toContain("log broke");
+    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain(
+      "log broke",
+    );
     fake.$.session = {
       ...fake.$.session,
       id: async () => {
         throw new Error("no id");
       },
     };
-    expect(
-      notDeliveredReason(await fire(fake, "session.send", SEND, countingNext().next)),
-    ).toContain("no id");
+    expect(notDeliveredReason(await fireSend(fake, SEND, countingNext().next))).toContain("no id");
   });
 
   test("the hook has no .catch: nothing would pass the address on to the harness", () => {
@@ -1345,12 +1600,10 @@ describe("putting the draft back", () => {
     const fake = fakeEngine({
       draft: "old draft",
       onEnter: async (f) => {
-        const text = f.composer.text;
-        await fire(f, "prompt.submit", { text, origin: { kind: "composer" } }, async () => {
+        await fire(f, "prompt.submit", submitted(f.composer.text), async (e) => {
           f.composer.text = "typed meanwhile";
-          return {};
+          return entered(e);
         });
-        await fire(f, "classic.UserPromptSubmit", { prompt: text }, async () => ({}));
         return 0;
       },
     });
@@ -1372,8 +1625,9 @@ describe("pure helpers", () => {
     expect(replyArgv("/p", "s")).toEqual(["/p/bin/ccmsg", "sidecar", "reply", "--sid", "s"]);
   });
 
-  // As measured: the harness hands UserPromptSubmit the prompt with trailing
-  // whitespace dropped, and nothing else changed.
+  // As measured for UserPromptSubmit: the harness hands on the prompt with
+  // trailing whitespace dropped, and nothing else changed. prompt.submit's
+  // text is held to the same allowance.
   test("samePrompt allows only trailing whitespace dropped by the harness", () => {
     expect(samePrompt("a b\n", "a b\n")).toBe(true);
     expect(samePrompt("a b", "a b\n")).toBe(true);

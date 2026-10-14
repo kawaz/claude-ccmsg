@@ -3,7 +3,7 @@
 > 🇯🇵 [README-ja.md](./README-ja.md)
 
 Central daemon behind the ccmsg web UI.
-The plugin's only job is to keep the daemon running: its SessionStart hook starts the daemon if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses rooms, sessions, and transcripts, and injects posts from the web UI directly into Claude Code sessions. Messaging between sessions is handled by [kawaz/ccmsg](https://github.com/kawaz/ccmsg).
+The plugin's only job is to keep the daemon running: its hooks module starts the daemon when a session starts, if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses rooms, sessions, and transcripts, and injects posts from the web UI directly into Claude Code sessions. Messaging between sessions is handled by [kawaz/ccmsg](https://github.com/kawaz/ccmsg).
 
 ## Status
 

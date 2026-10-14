@@ -632,6 +632,62 @@ function string(message$1) {
     }
   });
 }
+function _subIssues(datasets) {
+  let issues;
+  if (datasets)
+    for (const dataset of datasets)
+      if (issues)
+        for (const issue of dataset.issues)
+          issues.push(issue);
+      else
+        issues = dataset.issues;
+  return issues;
+}
+function union(options, message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "union",
+    reference: union,
+    expects: /* @__PURE__ */ _joinExpects(options.map((option) => option.expects), "|"),
+    async: false,
+    options,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      let validDataset;
+      let typedDatasets;
+      let untypedDatasets;
+      for (const schema of this.options) {
+        const optionDataset = schema["~run"]({ value: dataset.value }, config$1);
+        if (optionDataset.typed)
+          if (optionDataset.issues)
+            if (typedDatasets)
+              typedDatasets.push(optionDataset);
+            else
+              typedDatasets = [optionDataset];
+          else {
+            validDataset = optionDataset;
+            break;
+          }
+        else if (untypedDatasets)
+          untypedDatasets.push(optionDataset);
+        else
+          untypedDatasets = [optionDataset];
+      }
+      if (validDataset)
+        return validDataset;
+      if (typedDatasets) {
+        if (typedDatasets.length === 1)
+          return typedDatasets[0];
+        _addIssue(this, "type", dataset, config$1, { issues: /* @__PURE__ */ _subIssues(typedDatasets) });
+        dataset.typed = true;
+      } else if (untypedDatasets?.length === 1)
+        return untypedDatasets[0];
+      else
+        _addIssue(this, "type", dataset, config$1, { issues: /* @__PURE__ */ _subIssues(untypedDatasets) });
+      return dataset;
+    }
+  });
+}
 function unknown() {
   return _standardSchema({
     kind: "schema",
@@ -880,23 +936,21 @@ var SessionStartInputSchema = looseObject({
   surface: optional(nullable(string()))
 });
 var SessionEndInputSchema = looseObject({ reason: optional(string()) });
-var ClassicSessionStartInputSchema = looseObject({ source: optional(string()) });
+var CommandRunInputSchema = looseObject({ command: optional(string()) });
 var SessionMeasureInputSchema = looseObject({
   context: optional(looseObject({ window: optional(number()), tokens: optional(number()) }))
 });
-var PostModelSwitchInputSchema = looseObject({});
-var TurnEffortSchema = optional(looseObject({ level: optional(string()) }));
-var StopInputSchema = looseObject({
-  agent_id: optional(string()),
-  effort: TurnEffortSchema
+var TurnStepInputSchema = looseObject({
+  agentId: optional(string()),
+  effort: optional(union([string(), number()]))
 });
 var TurnStartInputSchema = looseObject({ agentId: optional(string()) });
 var TurnCompleteInputSchema = looseObject({ agentId: optional(string()) });
-var UserPromptSubmitInputSchema = looseObject({ prompt: optional(string()) });
 var PromptSubmitInputSchema = looseObject({
   text: optional(string()),
   origin: optional(looseObject({ kind: optional(string()) }))
 });
+var PromptSubmitResultSchema = looseObject({ drop: optional(string()) });
 var SessionSendInputSchema = looseObject({ to: string(), text: string() });
 async function observe($, e, next, event, schema, observer) {
   const read = parseWith(schema, e);
@@ -913,7 +967,8 @@ async function observe($, e, next, event, schema, observer) {
   };
   await run("before", observer.before);
   const result = await next(e);
-  await run("after", observer.after);
+  const after = observer.after;
+  await run("after", after && ((input) => after(input, result)));
   return result;
 }
 var HYOUI_TIMEOUT_MS = 3000;
@@ -1138,11 +1193,30 @@ function contextFacts(context, at) {
     at
   };
 }
-function turnEffort($, state, level) {
+function requestEffort($, state, effort) {
+  const level = typeof effort === "number" ? String(effort) : effort;
   if (level === undefined || level === "" || level === state.facts.effort)
     return;
   state.facts = { ...state.facts, effort: level };
   sendFacts($, state);
+}
+function beginArgv(root, sid, cwd) {
+  return [`${root}/bin/ccmsg`, "sidecar", "begin", "--sid", sid, "--cwd", cwd];
+}
+var BEGIN_TIMEOUT_MS = 25000;
+async function sessionBegin($) {
+  try {
+    const sid = await $.session.id();
+    const cwd = await $.session.root();
+    const done = await $.process.run(beginArgv($.plugin.root, sid, cwd), {
+      timeoutMs: BEGIN_TIMEOUT_MS
+    });
+    if (done.exitCode !== 0) {
+      $.ui.log(`ccmsg: begin exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+    }
+  } catch (e) {
+    $.ui.log(`ccmsg: begin failed: ${errorText(e)}`, { to: "debug" });
+  }
 }
 async function readModelAndWindow($, state) {
   try {
@@ -1285,13 +1359,14 @@ function register(on) {
   on("session.start", async ($, e, next) => observe($, e, next, "session.start", SessionStartInputSchema, {
     after: (input) => {
       state.interactive = input.isInteractive !== false && input.surface !== null;
+      sessionBegin($);
       startSidecar($, state);
       sessionBegan($, state);
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.end", async ($, e, next) => observe($, e, next, "session.end", SessionEndInputSchema, {
     before: (input) => {
-      if (input.reason !== "clear")
+      if (input.reason !== "clear" && input.reason !== "resume")
         return;
       if (state.sid !== undefined) {
         nextGeneration(state);
@@ -1299,10 +1374,15 @@ function register(on) {
       }
     }
   })).catch(async (_$, e, next) => next(e));
-  on("classic.SessionStart", async ($, e, next) => observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
+  on("command.run", async ($, e, next) => observe($, e, next, "command.run", CommandRunInputSchema, {
     after: (input) => {
-      startSidecar($, state);
-      input.source === "clear" ? sessionBegan($, state) : readModelAndWindow($, state);
+      if (input.command === "clear" || input.command === "resume") {
+        sessionBegin($);
+        startSidecar($, state);
+        sessionBegan($, state);
+      } else if (input.command === "model") {
+        readModelAndWindow($, state);
+      }
     }
   })).catch(async (_$, e, next) => next(e));
   on("session.measure", async ($, e, next) => observe($, e, next, "session.measure", SessionMeasureInputSchema, {
@@ -1319,12 +1399,17 @@ function register(on) {
       sendFacts($, state);
     }
   })).catch(async (_$, e, next) => next(e));
-  on("classic.Stop", async ($, e, next) => observe($, e, next, "classic.Stop", StopInputSchema, {
-    after: (input) => {
-      if (input.agent_id === undefined)
-        turnEffort($, state, input.effort?.level);
+  on("turn.step", async function* ($, e, next) {
+    const read = parseWith(TurnStepInputSchema, e);
+    if (!read.ok) {
+      $.ui.log(`ccmsg: turn.step not read: ${read.failure.summary}`, { to: "debug" });
+    } else if (read.value.agentId === undefined) {
+      requestEffort($, state, read.value.effort);
     }
-  })).catch(async (_$, e, next) => next(e));
+    return yield* next(e);
+  }).catch(async function* (_$, e, next) {
+    return yield* next(e);
+  });
   on("turn.start", async ($, e, next) => observe($, e, next, "turn.start", TurnStartInputSchema, {
     before: (input) => {
       if (input.agentId === undefined)
@@ -1337,30 +1422,24 @@ function register(on) {
         await turnState($, state, "idle");
     }
   })).catch(async (_$, e, next) => next(e));
-  on("classic.PostModelSwitch", async ($, e, next) => observe($, e, next, "classic.PostModelSwitch", PostModelSwitchInputSchema, {
-    after: () => {
-      readModelAndWindow($, state);
-    }
-  })).catch(async (_$, e, next) => next(e));
-  on("classic.UserPromptSubmit", async ($, e, next) => observe($, e, next, "classic.UserPromptSubmit", UserPromptSubmitInputSchema, {
-    before: (input) => {
-      const awaiting = state.awaiting;
-      if (awaiting === undefined)
-        return;
-      if (input.prompt !== undefined && samePrompt(input.prompt, awaiting.text)) {
-        state.awaiting = undefined;
-        awaiting.accept();
-        return;
-      }
-      $.ui.log(`ccmsg: UserPromptSubmit ${JSON.stringify(input.prompt ?? null)} is not the filled ${JSON.stringify(awaiting.text)}`, { to: "debug" });
-    }
-  })).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
-    after: async (input) => {
-      const restoring = state.restoring;
-      if (restoring === undefined || input.origin?.kind !== "composer" || input.text === undefined || !samePrompt(input.text, restoring.text)) {
+    after: async (input, result) => {
+      if (input.origin?.kind !== "composer" || input.text === undefined)
         return;
+      const settled = parseWith(PromptSubmitResultSchema, result);
+      const entered = settled.ok && settled.value.drop === undefined;
+      const awaiting = state.awaiting;
+      if (awaiting !== undefined) {
+        if (entered && samePrompt(input.text, awaiting.text)) {
+          state.awaiting = undefined;
+          awaiting.accept();
+        } else {
+          $.ui.log(`ccmsg: prompt.submit ${JSON.stringify(input.text)} ${entered ? "is not" : "dropped, not"} the filled ${JSON.stringify(awaiting.text)}`, { to: "debug" });
+        }
       }
+      const restoring = state.restoring;
+      if (!entered || restoring === undefined || !samePrompt(input.text, restoring.text))
+        return;
       state.restoring = undefined;
       if (restoring.draft !== "")
         await putBackDraft($, restoring.text, restoring.draft);
@@ -1376,6 +1455,7 @@ function register(on) {
 }
 export {
   ACCEPT_WAIT_MS,
+  BEGIN_TIMEOUT_MS,
   HYOUI_TIMEOUT_MS,
   REPLY_TIMEOUT_MS,
   RESPAWN_MAX_MS,
@@ -1383,6 +1463,7 @@ export {
   SEND_TIMEOUT_MS,
   STABLE_MS,
   answer,
+  beginArgv,
   factsArgv,
   handlePromptSend,
   hyouiEnterArgv,

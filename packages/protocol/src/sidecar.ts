@@ -88,10 +88,11 @@ export const SessionInputModuleReasonSchema = v.picklist([
 ]);
 export type SessionInputModuleReason = Output<typeof SessionInputModuleReasonSchema>;
 
-/** What a `prompt.send` that ran says. `accepted` means the harness raised
- * `UserPromptSubmit` for the filled text: the prompt is in the session, idle
- * or busy. `unconfirmed` is the module not knowing: Enter went out but no
- * `UserPromptSubmit` came and the composer no longer holds the text, or the
+/** What a `prompt.send` that ran says. `accepted` means the harness's
+ * `prompt.submit` of the filled text from the composer went through: the
+ * prompt is in the session, or queued behind the running turn. `unconfirmed`
+ * is the module not knowing: Enter went out but no such submit came and the
+ * composer no longer holds the text, or the
  * session changed its id (/clear, /resume) after Enter, or after the fill with
  * the composer no longer holding the text. */
 export const PromptSendResultSchema = v.variant("outcome", [

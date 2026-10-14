@@ -147,7 +147,7 @@ function timer(ms: number): Promise<void> {
  * open, so closing it is how the run's end reaches the daemon.
  *
  * No daemon is started: one the person stopped stays stopped, and the
- * session's own start brings one up (SessionStart). Until one listens, each
+ * session's own start brings one up (`sidecar begin`). Until one listens, each
  * attempt is a real connect, spaced as NAME_RETRY_MS says — nothing would say
  * when a daemon starts listening other than trying.
  *

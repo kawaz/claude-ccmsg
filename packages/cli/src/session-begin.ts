@@ -1,27 +1,14 @@
-#!/usr/bin/env bun
-/**
- * SessionStart hook.
- *
- * Two jobs, and no output (nothing enters the session's context):
- *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
- *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity and the
- *       daemon's transcript resolution to pick up at hello time.
- *   (b) Bring the daemon up (`daemon start`, detached) so the web UI is live and
- *       can inject its posts into this session.
- *
- * Failure here never blocks the turn: parse errors and ensure failures exit 0 quietly.
- */
-import { spawn } from "node:child_process";
+// `ccmsg sidecar begin`: what a session's start (and a change of its id, on
+// /clear or /resume) leaves for the CLI and the daemon. The hooks module runs
+// it from `session.start` and from `command.run` (DR-0039 §2):
+//   (a) a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
+//       cwd/repo/ws/repo_root/branch, which every CLI hello of the session
+//       reads to name it;
+//   (b) the daemon, brought up if none is running, so the web UI is live and
+//       can put its posts into the session.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import {
-  parseWith,
-  resolvePaths,
-  SessionStartInputTextSchema,
-  sessionProjectDir,
-  type SessionStateFile,
-} from "@ccmsg/protocol";
-import { armHookDeadline, exitHook } from "./deadline.ts";
+import type { SessionStateFile } from "@ccmsg/protocol";
 
 /** Raw VCS facts `getRepoWsFromVcs` reads via `bump-semver vcs get <key>`, and
  *  the input to the pure `deriveWs`/`deriveRepoRoot` below. Empty string means
@@ -106,9 +93,11 @@ export interface VcsRepoWsOptions {
  *  `proc.kill()` on the loser bounds the *caller's* wait regardless of
  *  whether the killed subprocess actually exits.
  *
- *  Bounding the caller's wait is not the same as bounding the hook, though, and
- *  both loose ends here were costing the hook wall time long after this
- *  function returned (see deadline.ts for the measurements):
+ *  Bounding the caller's wait is not the same as bounding the process, though,
+ *  and both loose ends here were costing wall time long after this function
+ *  returned (measured: a lookup that answered in 87ms left the process alive
+ *  until 1003ms on the uncleared timer, and a stand-in that ignores SIGTERM
+ *  kept it alive until 8328ms on the abandoned read):
  *
  *  - the losing timer has to be cleared, or it holds the event loop until the
  *    full `remainingMs` even when the subprocess answered immediately;
@@ -164,7 +153,7 @@ async function raceExit(
  *  deadline across every call, so a slow first call leaves less budget for
  *  the rest rather than each call getting its own fresh 1000ms) all collapse
  *  to `{ repo: "", ws: "", repoRoot: "", branch: "" }` — this must never
- *  throw or delay the hook's turn over a "?" fallback.
+ *  throw or hold the session's start up over a "?" fallback.
  *
  *  `repository` failing on its own (no forge remote configured, ambiguous
  *  remote selection — bump-semver exit 3/4) degrades only `repo` to "",
@@ -217,40 +206,19 @@ export function resolveBumpSemverBin(): string {
   return process.env.CCMSG_BUMP_SEMVER_BIN ?? "bump-semver";
 }
 
-/** Where the session is working, from the sources that cannot drift (DR-0003
- *  §3 「所在の正本」): `CLAUDE_PROJECT_DIR`, and — only for SessionStart, which
- *  fires before the session has run anything — the event-time cwd it is handed,
- *  which is still where the session was put rather than where a Bash tool has
- *  since gone. Callers that are not SessionStart pass no event cwd and get the
- *  environment's answer alone.
- *
- *  `undefined` when neither says so: a session whose location nobody can name
- *  leaves the daemon holding what it registered earlier, which beats
- *  overwriting it with a passing directory. */
-export function sessionLocation(
-  eventCwd?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  return sessionProjectDir(env) ?? (eventCwd !== "" ? eventCwd : undefined);
-}
-
-// --- session state file (transcript_path/cwd/repo/ws handoff to the CLI) ---
+// --- session state file (cwd/repo/ws handoff to the CLI) ---
 //
-// Identity-related fields the CLI's resolveIdentity wants (transcript_path/
-// repo/ws) ride through this file, so no command the AI runs needs an env
-// prefix for them.
+// Identity-related fields the CLI's resolveIdentity wants (repo/ws/cwd) ride
+// through this file, so no command the AI runs needs an env prefix for them.
 
-/** Absolute path of the per-session state file. packages/cli/src/index.ts computes
- *  this same path independently (a shared protocol-level helper was considered but
- *  deferred to keep this change's footprint to hooks/ + the CLI's own file — see
- *  the delegation report for the tradeoff). */
+/** Absolute path of the per-session state file. */
 export function sessionFilePath(stateDir: string, sid: string): string {
   return path.join(stateDir, "sessions", `${sid}.json`);
 }
 
 /** Best-effort write (mkdir -p + overwrite); failures (unwritable stateDir, races,
  *  ...) are swallowed — the state file is an enrichment for hello, never a hard
- *  dependency for the hook or the CLI to function. */
+ *  dependency for the session or the CLI to function. */
 export function writeSessionFile(stateDir: string, sid: string, data: SessionStateFile): void {
   try {
     const file = sessionFilePath(stateDir, sid);
@@ -263,12 +231,12 @@ export function writeSessionFile(stateDir: string, sid: string, data: SessionSta
 
 const SESSION_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
-/** Best-effort GC for `<stateDir>/sessions/*.json`: a session ends when the Claude
- *  Code process exits, which fires no hook — nothing else ever removes these, so
- *  left unchecked they'd accumulate forever (one file per sid, forever). Age is
- *  judged by mtime (last SessionStart write), not by whether the
- *  session is still alive, so a stale entry survives at most ~30 days past its
- *  last hook fire. Missing sessions/ dir, unreadable dir, or a single file's
+/** Best-effort GC for `<stateDir>/sessions/*.json`: nothing removes a
+ *  session's file when the session ends (a process that dies says nothing), so
+ *  left unchecked they'd accumulate forever (one file per sid). Age is judged
+ *  by mtime (the last `sidecar begin` write), not by whether the session is
+ *  still alive, so a stale entry survives at most ~30 days past its last
+ *  begin. Missing sessions/ dir, unreadable dir, or a single file's
  *  stat/unlink failing are all swallowed — this must never be the thing that
  *  breaks a session start. */
 export function pruneOldSessionFiles(stateDir: string, now: number = Date.now()): void {
@@ -287,69 +255,4 @@ export function pruneOldSessionFiles(stateDir: string, now: number = Date.now())
       // best-effort per-file
     }
   }
-}
-
-/** Absolute path to the launcher, robust to a missing CLAUDE_PLUGIN_ROOT (a
- *  dev checkout runs the hook straight from `hooks/`). */
-function resolveBin(): string {
-  return path.join(
-    process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, ".."),
-    "bin",
-    "ccmsg",
-  );
-}
-
-async function main(): Promise<void> {
-  const read = parseWith(SessionStartInputTextSchema, await Bun.stdin.text());
-  // Input that does not read: nothing to do, stay silent.
-  if (!read.ok) process.exit(0);
-  const input = read.value;
-
-  const bin = resolveBin();
-  const stateDir = resolvePaths().stateDir;
-
-  // (a) Write this session's state file (transcript_path/cwd/repo/ws) for the CLI
-  // to pick up at hello time (see the module header). Always overwrite: this is
-  // the fresh, authoritative source per session start, e.g. a `/cd` or
-  // `claude --resume` should refresh it.
-  if (input.session_id) {
-    const stationed = sessionLocation(input.cwd);
-    const { repo, ws, repoRoot, branch } = stationed
-      ? await getRepoWsFromVcs(stationed, { bin: resolveBumpSemverBin() })
-      : { repo: "", ws: "", repoRoot: "", branch: "" };
-    writeSessionFile(stateDir, input.session_id, {
-      ...(input.transcript_path ? { transcript_path: input.transcript_path } : {}),
-      ...(stationed ? { cwd: stationed } : {}),
-      ...(repo ? { repo } : {}),
-      ...(ws ? { ws } : {}),
-      ...(repoRoot ? { repo_root: repoRoot } : {}),
-      ...(branch ? { branch } : {}),
-      updated_at: new Date().toISOString(),
-    });
-  }
-  pruneOldSessionFiles(stateDir);
-
-  // (b) Detached so the daemon's spawn/upgrade wait never counts against this
-  // hook's deadline; `daemon start` is idempotent.
-  try {
-    spawn(bin, ["daemon", "start"], { detached: true, stdio: "ignore" }).unref();
-  } catch {
-    // best-effort; every CLI command still brings the daemon up on first use
-  }
-
-  await exitHook();
-}
-
-/** Wall-clock cap for this hook (see deadline.ts). Fires once per session, so
- *  it leaves the VCS lookup its full 1000ms budget; still far below what
- *  Claude Code would otherwise allow. */
-const SESSION_START_DEADLINE_MS = 3000;
-
-if (import.meta.main) {
-  armHookDeadline(SESSION_START_DEADLINE_MS);
-  main().catch((e) => {
-    // A hook must never break the turn (exit 0).
-    process.stderr.write(`[ccmsg session-start] ${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(0);
-  });
 }

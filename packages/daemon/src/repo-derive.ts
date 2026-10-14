@@ -1,17 +1,16 @@
 // Deriving `repo`/`ws` from a session's cwd, for hellos that announce neither.
 //
-// The announced values ride the hook-written session state file, which a
-// fork/resume launch never gets (the same structural hole adoptTranscriptPath
-// covers for transcript_path) — such sessions showed up in the webui's SESSIONS
-// list with empty repo/ws columns. This module reproduces what the hook's
-// `bump-semver vcs get` calls would have reported, from the on-disk layout
-// alone:
+// The announced values ride the session state file `ccmsg sidecar begin`
+// writes, which a session without it never gets — such sessions showed up in
+// the webui's SESSIONS list with empty repo/ws columns. This module
+// reproduces what begin's `bump-semver vcs get` calls would have reported,
+// from the on-disk layout alone:
 //
 //   - `repo` = the origin remote URL's `owner/repo` slug (bump-semver's
 //     `vcs get repository`, DR-0041), read out of the backing git config;
 //   - `ws`   = the jj workspace / git linked-worktree directory name, falling
 //     back to the checked-out branch when there is no workspace layer
-//     (bump-semver's `worktree-name` else `current-branch`, per the hook's
+//     (bump-semver's `worktree-name` else `current-branch`, per the CLI's
 //     deriveWs).
 //
 // Design rationale: no subprocess. The hook can afford `bump-semver` because it

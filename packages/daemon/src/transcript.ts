@@ -64,17 +64,14 @@ export function validateTranscriptPath(
  * Hello-time adoption: the announced path when it validates, otherwise the
  * session's own `<configDir>/projects/<project>/<sid>.jsonl` looked up on disk.
  *
- * The fallback exists because the announcement channel has a structural hole:
- * transcript_path travels through the hook-written session state file, and a
- * fork/resume launch fires SessionStart (and the launch prompt's
- * UserPromptSubmit) under the *origin* sid — so the new sid's state file is
- * never written and its hello carries no transcript_path at all. Such a
- * session showed up in the webui as Busy with a permanently disabled Timeline.
+ * The lookup is how a session's transcript is found: nothing tells the hooks
+ * module the transcript's path (DR-0039 Consequences), so a session's hello
+ * announces none unless the CCMSG_TRANSCRIPT_PATH override does.
  *
  * Trust-wise this is narrower than the announced path, not wider: nothing here
  * comes from the client except the sid, the sid must be a complete UUID, and
  * the only file that can be adopted is the one whose basename is `<sid>.jsonl`
- * below a detected config dir's `projects/` — the same shape
+ * below a config dir's `projects/` — the same shape
  * {@link validateTranscriptPath} pins the announced path to. Not found (the
  * transcript has not been created yet, or lives outside the scanned dirs)
  * degrades exactly like a rejected announcement: undefined, hello still fine.

@@ -532,9 +532,8 @@ interface ClientBuild {
 function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuild): void {
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
-  // exception (DR-0009 addendum): unlike repo/ws/cwd, it arrives via the
-  // hook-supplied session state file (session-start.ts)
-  // or, when that never got written, adoptTranscriptPath's disk lookup — and a
+  // exception (DR-0009 addendum): unlike repo/ws/cwd, it is adoptTranscriptPath's
+  // disk lookup (or the CCMSG_TRANSCRIPT_PATH override) — and a
   // re-subscribe after the stream died is a
   // common, legitimate path that omits it (e.g. a
   // `CCMSG_SID=<sid> ccmsg subscribe` typed without the transcript prefix). A
@@ -544,7 +543,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // transcript.
   //
   // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
-  // repo/ws/cwd (the hook-written session state file, read fresh by the CLI's
+  // repo/ws/cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
   // resolveIdentity), so all five move as one: a hello either states where the
   // session is or says nothing about it.
   //
@@ -1889,11 +1888,23 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           );
           return;
         }
+        // The config dir is not validated beyond "absolute path, canonically
+        // spelled": the value is compared with another session's announcement
+        // and searched for this sid's own `projects/<project>/<sid>.jsonl`, the
+        // shape an announced transcript_path is pinned to as well, and a
+        // session that lies about it can at most mislabel its own view of who
+        // is natively reachable.
+        const configDir = normalizeConfigDir(req.config_dir);
         // Announced-and-validated path, else the session's own
-        // projects/<sid>.jsonl found on disk — a fork/resume launch never gets
-        // a state file written under its new sid, so its hello announces
-        // nothing (see adoptTranscriptPath).
-        const transcriptPath = await adoptTranscriptPath(req.sid, req.transcript_path);
+        // projects/<sid>.jsonl found on disk, under the config dir the session
+        // names as well as the detected ones: a session's hello names no
+        // transcript (nothing tells the hooks module its path, DR-0039
+        // Consequences), and its config dir need not be one of `~/.claude*`.
+        const transcriptPath = await adoptTranscriptPath(
+          req.sid,
+          req.transcript_path,
+          configDir !== undefined ? [configDir, ...detectConfigDirs()] : undefined,
+        );
         // A session names its own cwd, so the spelling is whatever its shell
         // had (`/tmp/x` where the real directory is `/private/tmp/x`).
         // `repo_root` is realpath'd by validateRepoRoot before adoption, and
@@ -1910,15 +1921,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         const cwd = req.cwd ? await realpathOrSelf(req.cwd) : "";
         const repoRoot = await validateRepoRoot(cwd, req.repo_root);
         // Announced repo/ws always win; the cwd derivation only fills what the
-        // session could not tell us. A fork/resume launch gets no hook-written
-        // state file (same hole adoptTranscriptPath covers), so it announces
-        // neither; without the derivation its session-list columns stay blank.
+        // session could not tell us. A session whose state file was never
+        // written announces neither; without the derivation its session-list
+        // columns stay blank.
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
-        // Not validated beyond "absolute path, canonically spelled": the value
-        // is only ever compared with another session's announcement, never
-        // opened, and a session that lies about it can at most mislabel its
-        // own view of who is natively reachable.
-        const configDir = normalizeConfigDir(req.config_dir);
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
         const derived =

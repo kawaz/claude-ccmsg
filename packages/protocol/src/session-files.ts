@@ -6,9 +6,9 @@
 //   whether its session still owns the process, the daemon to deliver into
 //   the session. The file is Claude Code's, so the schema lists the fields
 //   ccmsg reads and lets the rest through.
-// - `<ccmsg state dir>/sessions/<sid>.json` is ccmsg's own: the SessionStart
-//   hook writes what it found out about the session, and the CLI reads it to
-//   introduce the session to the daemon.
+// - `<ccmsg state dir>/sessions/<sid>.json` is ccmsg's own: `ccmsg sidecar
+//   begin` writes what it found out about the session, and the CLI reads it
+//   to introduce the session to the daemon.
 import * as v from "valibot";
 import { jsonText, type Output } from "./parse.ts";
 
@@ -31,11 +31,10 @@ export type ClaudeSessionFile = Output<typeof ClaudeSessionFileSchema>;
 /** A `sessions/<pid>.json` file's text. */
 export const ClaudeSessionFileTextSchema = jsonText(ClaudeSessionFileSchema);
 
-/** What the SessionStart hook writes to `<state dir>/sessions/<sid>.json`.
- * Everything but `updated_at` may be undiscoverable (no cwd on stdin, no VCS
- * facts, no transcript path announced) without that being an error. */
+/** What `ccmsg sidecar begin` writes to `<state dir>/sessions/<sid>.json`
+ * (DR-0039 §2). Everything but `updated_at` may be undiscoverable (no VCS
+ * facts) without that being an error. */
 export const SessionStateFileSchema = v.object({
-  transcript_path: v.optional(v.string()),
   cwd: v.optional(v.string()),
   repo: v.optional(v.string()),
   ws: v.optional(v.string()),

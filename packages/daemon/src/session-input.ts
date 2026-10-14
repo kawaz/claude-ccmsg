@@ -26,7 +26,7 @@ import type { SidecarRuns } from "./sidecar-runs.ts";
 /** The longest a session_input takes to answer, every run it tries included.
  *
  * One try on the module's side is at most a `hyoui input` (3 s), the wait for
- * UserPromptSubmit (3 s) and the reply process (3 s) — 9 s — plus the fill and
+ * the filled text's prompt.submit (3 s) and the reply process (3 s) — 9 s — plus the fill and
  * the write, which take milliseconds. The rest of the 12 s leaves room for a
  * second run after a first that answered at once that it cannot take input
  * (no_composer / no_terminal, which needs no Enter and so comes back within a

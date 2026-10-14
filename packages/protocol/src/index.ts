@@ -21,7 +21,6 @@ export * from "./transcript-tool-result.ts";
 export * from "./agent-meta.ts";
 export * from "./claude-agents.ts";
 export * from "./session-files.ts";
-export * from "./hook-input.ts";
 export * from "./allowed-origins.ts";
 export * from "./workflow-run.ts";
 export * from "./sidecar.ts";
@@ -124,16 +123,16 @@ export interface SessionIdentity {
   repo: string;
   ws: string;
   /** absolute path the session is working in, from the fixed sources alone
-   * (DR-0003 §3 「所在の正本」): `CCMSG_CWD`, the hook-written session state
-   * file, `CLAUDE_PROJECT_DIR`. Empty means the caller could not name it, and
+   * (DR-0003 §3 「所在の正本」): `CCMSG_CWD`, the session state file
+   * `sidecar begin` writes, `CLAUDE_PROJECT_DIR`. Empty means the caller could not name it, and
    * the daemon then keeps the location it registered earlier instead of
    * blanking it — `repo`/`ws`/`repo_root`/`branch` move with it as one group. */
   cwd: string;
   /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
-   * Sourced by the CLI's resolveIdentity from the SessionStart hook
-   * hooks' session state file (`<stateDir>/sessions/<sid>.json`), or from
-   * CCMSG_TRANSCRIPT_PATH as an override; the daemon validates it at hello time
-   * and it is the ONLY file transcript_read serves for this sid. */
+   * Announced only through the CCMSG_TRANSCRIPT_PATH override; the daemon
+   * otherwise finds the session's own `projects/<project>/<sid>.jsonl` at
+   * hello time. Validated there, and it is the ONLY file transcript_read
+   * serves for this sid. */
   transcript_path?: string;
   /** absolute path of the repository container holding ALL of this repo's
    * workspaces/worktrees (DR-0008 addendum). When announced and accepted by

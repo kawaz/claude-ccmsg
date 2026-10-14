@@ -1,17 +1,3 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|clear|compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.ts\" #ccmsg",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  },
   "modules": ["./composer-fill.bundle.js"]
 }

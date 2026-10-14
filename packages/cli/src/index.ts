@@ -49,6 +49,13 @@ import {
   waitDaemonGone,
 } from "./client.ts";
 import { watchSubscribeOwner } from "./subscribe-owner.ts";
+import {
+  getRepoWsFromVcs,
+  pruneOldSessionFiles,
+  resolveBumpSemverBin,
+  sessionFilePath,
+  writeSessionFile,
+} from "./session-begin.ts";
 import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
 
 // --- arg parsing -----------------------------------------------------------
@@ -178,14 +185,9 @@ function parseReadArgs(args: string[], usage: string): { room: string; mids: str
 
 // --- identity --------------------------------------------------------------
 
-/** Mirrors hooks/session-start.ts's sessionFilePath. */
-function sessionFilePath(stateDir: string, sid: string): string {
-  return path.join(stateDir, "sessions", `${sid}.json`);
-}
-
-/** Best-effort read of the hook-written session state file. Missing file,
- *  unreadable, or not of the state file's shape all resolve to undefined —
- *  this is an optional enrichment (repo/ws/transcript_path for a richer hello),
+/** Best-effort read of the session state file `sidecar begin` writes. Missing
+ *  file, unreadable, or not of the state file's shape all resolve to undefined —
+ *  this is an optional enrichment (repo/ws/cwd for a richer hello),
  *  never a hard requirement for `hello` to succeed. */
 function readSessionFile(stateDir: string, sid: string): SessionStateFile | undefined {
   let text: string;
@@ -240,25 +242,24 @@ function resolveSessionIdentity(
     );
   }
   if (sid) {
-    // CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS env vars are an override knob
-    // (manual invocation, tests) — when present they win over whatever the
-    // SessionStart hook wrote to the session file. Absent,
-    // fall back to the file; absent there too, degrade to "" / no
-    // transcript_path exactly like a session with no hook-derived metadata at
-    // all always has.
+    // CCMSG_REPO/CCMSG_WS env vars are an override knob (manual invocation,
+    // tests) — when present they win over what `sidecar begin` wrote to the
+    // session file. Absent, fall back to the file; absent there too, degrade
+    // to "".
     const stored = readSessionFile(resolvePaths().stateDir, sid);
-    const transcriptPathCandidate =
-      strField(process.env.CCMSG_TRANSCRIPT_PATH) ?? strField(stored?.transcript_path);
-    // Only announce transcript_path if the file it names still exists — the
-    // session file is written once at hook time and read here, possibly much
-    // later; the transcript could have been rotated/removed meanwhile, and the
-    // daemon (DR-0009) only checks path *shape*, not existence.
+    // The transcript path is announced only through the override knob: no
+    // writer of the state file knows it (the hooks module has no `$` that
+    // says it), and without one the daemon finds the session's transcript
+    // under its config dir (DR-0039 Consequences). Announced only if the file
+    // it names exists — the daemon (DR-0009) checks path *shape*, not
+    // existence.
+    const transcriptPathCandidate = strField(process.env.CCMSG_TRANSCRIPT_PATH);
     const transcriptPath =
       transcriptPathCandidate !== undefined && fs.existsSync(transcriptPathCandidate)
         ? transcriptPathCandidate
         : undefined;
     // CCMSG_REPO_ROOT is the same override-knob pattern as CCMSG_REPO/CCMSG_WS
-    // (manual invocation, tests) — env wins over the hook-written session file.
+    // (manual invocation, tests) — env wins over the session file.
     // No existence/shape check here (unlike transcript_path's fs.existsSync):
     // the daemon's hello-time validation (DR-0008 addendum) is the actual trust
     // boundary (absolute + realpath-resolvable + strict ancestor of cwd + not
@@ -266,7 +267,7 @@ function resolveSessionIdentity(
     const repoRoot = strField(process.env.CCMSG_REPO_ROOT) ?? strField(stored?.repo_root);
     // CCMSG_BRANCH is the same override-knob pattern as CCMSG_REPO/CCMSG_WS/
     // CCMSG_REPO_ROOT (manual invocation, tests) — env wins over the
-    // hook-written session file. Optional like repo_root (branch may be
+    // session file. Optional like repo_root (branch may be
     // unknown/detached), not defaulted to "" like repo/ws.
     const branch = strField(process.env.CCMSG_BRANCH) ?? strField(stored?.branch);
     // The config dir of THIS process is the session's own: the CLI runs as a
@@ -276,8 +277,8 @@ function resolveSessionIdentity(
     // so the flag still works for the common single-config-dir setup.
     const configDir = strField(process.env.CLAUDE_CONFIG_DIR) ?? path.join(os.homedir(), ".claude");
     // Where the session is, from the fixed sources alone (DR-0003 §3
-    // 「所在の正本」): the CCMSG_CWD override knob, then the hook-written state
-    // file (SessionStart's cwd, taken before the session ran anything), then
+    // 「所在の正本」): the CCMSG_CWD override knob, then the state file (the
+    // session's project root as the hooks module read it), then
     // CLAUDE_PROJECT_DIR for a session whose state file never got written.
     // `process.cwd()` is deliberately not among them: this CLI runs as a child
     // of whichever Bash tool invocation called it, so its working directory is
@@ -445,11 +446,12 @@ the SendMessage messages it takes over go to the daemon. Not for direct use.
 `;
 
 /** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
- * §3) and `ccmsg sidecar send` (DR-0037 §2). All are the hooks module's: it
- * starts the first for its session's life, runs the second to answer a
- * request the first copied to it, the third to hand the daemon what it knows
- * of its session, and the fourth to send a SendMessage to a `ccmsg:` address.
- * The help says no more than that on purpose (DR-0035 §4). */
+ * §3), `ccmsg sidecar send` (DR-0037 §2) and `ccmsg sidecar begin` (DR-0039
+ * §2). All are the hooks module's: it starts the first for its session's
+ * life, runs the second to answer a request the first copied to it, the third
+ * to hand the daemon what it knows of its session, the fourth to send a
+ * SendMessage to a `ccmsg:` address, and the fifth when the session starts or
+ * changes its id. The help says no more than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -466,6 +468,10 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   }
   if (positionals[0] === "facts") {
     await runSidecarFacts(opts);
+    return;
+  }
+  if (positionals[0] === "begin") {
+    await runSidecarBegin(opts);
     return;
   }
   if (positionals.length > 0) {
@@ -588,6 +594,44 @@ async function runSidecarFacts(opts: Record<string, string | boolean>): Promise<
   if (identity === null) refuseWriteWithoutSid("sidecar facts");
   if (!(await sendFactsNoSpawn(resolvePaths(), identity, read.value))) {
     process.stderr.write("ccmsg sidecar facts: no daemon took the facts; dropped\n");
+  }
+  process.exit(0);
+}
+
+/** `ccmsg sidecar begin --sid <sid> --cwd <dir>`: the session `<sid>` began
+ * (its start, or the id it has after /clear or /resume) in `<dir>`, its
+ * project root. Writes the session's state file, which every CLI hello of the
+ * session reads to name it, and brings the daemon up if none is running.
+ * The module runs it without waiting on it, so the daemon's start does not
+ * hold the session up. */
+async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar begin --sid <sid> --cwd <dir>";
+  const sid = str(opts, "sid");
+  const cwd = str(opts, "cwd");
+  if (sid === undefined || !isSessionIdShape(sid) || cwd === undefined || !path.isAbsolute(cwd)) {
+    process.stderr.write(
+      `ccmsg sidecar begin: --sid must be a session id and --cwd an absolute path\n  usage: ${usage}\n`,
+    );
+    process.exit(2);
+  }
+  const paths = resolvePaths();
+  const { repo, ws, repoRoot, branch } = await getRepoWsFromVcs(cwd, {
+    bin: resolveBumpSemverBin(),
+  });
+  writeSessionFile(paths.stateDir, sid, {
+    cwd,
+    ...(repo ? { repo } : {}),
+    ...(ws ? { ws } : {}),
+    ...(repoRoot ? { repo_root: repoRoot } : {}),
+    ...(branch ? { branch } : {}),
+    updated_at: new Date().toISOString(),
+  });
+  pruneOldSessionFiles(paths.stateDir);
+  try {
+    (await ensureDaemon(paths, { role: "user" })).close();
+  } catch (e) {
+    process.stderr.write(`ccmsg sidecar begin: the daemon did not come up: ${errorText(e)}\n`);
+    process.exit(1);
   }
   process.exit(0);
 }
@@ -1243,13 +1287,15 @@ Environment Variables:
   CCMSG_BRANCH                 Current branch/bookmark of the session's checkout,
                                sent in hello (informational, webui session list)
   CCMSG_TRANSCRIPT_PATH        This session's Claude Code transcript jsonl path,
-                               sent in hello (set by the SessionStart hook,
-                               DR-0009); adopted only if the daemon accepts it
+                               sent in hello (DR-0009); adopted only if the
+                               daemon accepts it. Unset, the daemon finds the
+                               transcript under the session's config dir
   CCMSG_REPO_ROOT              Absolute path of this repo's workspace/worktree
-                               container, sent in hello (set by the SessionStart
-                               hook, DR-0008 addendum); adopted only if the
-                               daemon accepts it (widens fs_list/fs_read to
-                               sibling workspaces instead of just cwd)
+                               container, sent in hello (DR-0008 addendum;
+                               the session's state file carries it otherwise);
+                               adopted only if the daemon accepts it (widens
+                               fs_list/fs_read to sibling workspaces instead of
+                               just cwd)
   CCMSG_SAY_BIN                say: speech binary to exec instead of /usr/bin/say
                                (test hook — exercise the path without audio)
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)

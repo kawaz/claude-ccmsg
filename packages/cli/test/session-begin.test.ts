@@ -1,22 +1,20 @@
-// DR-0007 §1 の PATH install 候補検出ロジック。ここでは detectPathInstallCandidate
-// の分岐輪郭のみを検証する (hook 本体の stdout 組み立ては手動実行で確認済み — 別途
-// journal/報告を参照)。実ファイルシステムに対して動くため、テストごとに一時 dir を
-// 作って PATH/HOME/stateDir を注入する。
+// `ccmsg sidecar begin` の部品: VCS の事実から repo/ws/repo_root を導くこと、
+// session state file の書き込みと古いものの掃除 (DR-0039 §2)。実ファイルシステムに
+// 対して動くため、テストごとに一時 dir を作って PATH/HOME/stateDir を注入する。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { JsonObjectSchema, jsonText, parseWith, type JsonObject } from "@ccmsg/protocol";
-import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   deriveRepoRoot,
   deriveWs,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
   sessionFilePath,
-  sessionLocation,
   writeSessionFile,
-} from "./session-start.ts";
+} from "../src/session-begin.ts";
 
 // deriveWs: `bump-semver vcs get` の実測結果 (root / worktree-name /
 // current-branch) から ws だけを組み立てる純関数。repo はもう path 由来では
@@ -159,7 +157,7 @@ describe("getRepoWsFromVcs", () => {
     return writeMockBin(path.join(dir, "fake-bump-semver"), script);
   }
 
-  // バイナリ不在 (ENOENT) は黙って空フォールバックする (= hook の起動を壊さない)。
+  // バイナリ不在 (ENOENT) は黙って空フォールバックする (= セッションの開始を壊さない)。
   spawnTest("バイナリが存在しなければ空フォールバックになる", async () => {
     const got = await getRepoWsFromVcs(dir, {
       bin: "/nonexistent/path/definitely-not-bump-semver",
@@ -279,7 +277,7 @@ esac
   });
 
   // タイムアウト: バイナリが応答を返さず固まった場合、timeoutMs を超えたら
-  // 空フォールバックで打ち切る (hook の起動を体感で遅くしないための上限)。
+  // 空フォールバックで打ち切る (begin を遅くしないための上限)。
   // `exec sleep 10` (`sh -c 'sleep 10'` ではなく) で fake script プロセス自体を
   // sleep に置き換える: raceExit の kill 対象は fake script の直接子である
   // sleep そのものになるため、シェルの孫プロセスが stdout パイプを握ったまま
@@ -297,29 +295,6 @@ esac
   });
 });
 
-describe("sessionLocation", () => {
-  test("CLAUDE_PROJECT_DIR が event の cwd より優先される", () => {
-    expect(sessionLocation("/drifted", { CLAUDE_PROJECT_DIR: "/project" })).toBe("/project");
-  });
-
-  test("CLAUDE_PROJECT_DIR が無ければ event の cwd を使う", () => {
-    expect(sessionLocation("/stationed", {})).toBe("/stationed");
-  });
-
-  test("相対パス・空の CLAUDE_PROJECT_DIR は所在として採らない", () => {
-    expect(sessionLocation("/stationed", { CLAUDE_PROJECT_DIR: "rel/dir" })).toBe("/stationed");
-    expect(sessionLocation("/stationed", { CLAUDE_PROJECT_DIR: "" })).toBe("/stationed");
-  });
-
-  test("event の cwd を渡さない呼び出し側 (SessionStart 以外) は env だけが答える", () => {
-    expect(sessionLocation(undefined, { CLAUDE_PROJECT_DIR: "/project" })).toBe("/project");
-    expect(sessionLocation(undefined, {})).toBeUndefined();
-    expect(sessionLocation("", {})).toBeUndefined();
-  });
-});
-
-// sessionFilePath: <stateDir>/sessions/<sid>.json という固定規則。CLI 側
-// (packages/cli/src/index.ts) が独立に同じ規則で計算する対応先。
 describe("sessionFilePath", () => {
   test("stateDir 配下の sessions/<sid>.json を返す", () => {
     expect(sessionFilePath("/state", "sess-123")).toBe(
@@ -354,7 +329,6 @@ describe("writeSessionFile", () => {
   // sessions/ ディレクトリが存在しなくても mkdir -p して書き込める。
   test("sessions/ ディレクトリが無くても作成して書き込む", () => {
     writeSessionFile(dir, "sess-1", {
-      transcript_path: "/home/u/.claude/proj/sess-1.jsonl",
       cwd: "/some/cwd",
       repo: "claude-ccmsg",
       ws: "main",
@@ -362,7 +336,6 @@ describe("writeSessionFile", () => {
     });
     const written = writtenObject(sessionFilePath(dir, "sess-1"));
     expect(written).toEqual({
-      transcript_path: "/home/u/.claude/proj/sess-1.jsonl",
       cwd: "/some/cwd",
       repo: "claude-ccmsg",
       ws: "main",
@@ -371,7 +344,7 @@ describe("writeSessionFile", () => {
   });
 
   // repo_root (DR-0008 addendum) も他フィールドと同じく素通しで書ける
-  // (worktree-name 非空の場合のみ main() が渡す値、フィールド自体は optional)。
+  // (worktree-name 非空の場合のみ begin が渡す値、フィールド自体は optional)。
   test("repo_root が渡されれば書き込まれる", () => {
     writeSessionFile(dir, "sess-1", {
       cwd: "/repo/main",
@@ -390,7 +363,7 @@ describe("writeSessionFile", () => {
     });
   });
 
-  // 既存ファイルは上書きされる (SessionStart は毎回「最新」を書く仕様)。
+  // 既存ファイルは上書きされる (begin は毎回「最新」を書く仕様)。
   test("既存ファイルは上書きされる", () => {
     writeSessionFile(dir, "sess-1", { updated_at: "2026-07-11T00:00:00.000Z" });
     writeSessionFile(dir, "sess-1", { repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });

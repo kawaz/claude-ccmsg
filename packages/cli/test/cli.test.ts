@@ -5,7 +5,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROTOCOL_VERSION, type ResponseOf, VERSION } from "@ccmsg/protocol";
+import {
+  parseWith,
+  PROTOCOL_VERSION,
+  type ResponseOf,
+  SessionStateFileTextSchema,
+  VERSION,
+} from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
@@ -202,6 +208,56 @@ describe("ccmsg CLI end-to-end", () => {
       expect(s1.running).toBe(true);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: hooks module がセッションの開始 (と /clear・/resume で id が
+  // 変わった時) に走らせる `sidecar begin` が、そのセッションの state file を書き、
+  // daemon が無ければ起こす (DR-0039 §2)。2 回目は同じ daemon のまま (冪等、
+  // hot reload でも走るため)。
+  test("sidecar begin は state file を書き、daemon が無ければ起こす", async () => {
+    const { env, cleanup } = makeEnv();
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-begin-")));
+    const sid = "50000002-0000-4000-8000-000000000000";
+    try {
+      const begin = await runCli(["sidecar", "begin", "--sid", sid, "--cwd", cwd], env);
+      expect(begin.code).toBe(0);
+      const file = path.join(env.CCMSG_STATE_DIR, "sessions", `${sid}.json`);
+      const stored = parseWith(SessionStateFileTextSchema, fs.readFileSync(file, "utf8"));
+      if (!stored.ok) throw new Error(stored.failure.summary);
+      // VCS の外なので repo/ws は無く、所在だけが書かれる。
+      expect(stored.value.cwd).toBe(cwd);
+      expect(stored.value.repo).toBeUndefined();
+      const status = printed(CliStatusSchema, (await runCli(["status"], env)).out);
+      expect(status.running).toBe(true);
+
+      expect((await runCli(["sidecar", "begin", "--sid", sid, "--cwd", cwd], env)).code).toBe(0);
+      const again = printed(CliStatusSchema, (await runCli(["status"], env)).out);
+      expect(again.pid).toBe(status.pid);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  test("sidecar begin は session id と絶対パスの cwd が無ければ何もせず exit 2", async () => {
+    const { env, cleanup } = makeEnv();
+    const sid = "50000002-0000-4000-8000-000000000000";
+    try {
+      for (const args of [
+        ["--sid", sid],
+        ["--sid", sid, "--cwd", "relative/dir"],
+        ["--sid", "not-a-sid", "--cwd", os.tmpdir()],
+      ]) {
+        const run = await runCli(["sidecar", "begin", ...args], env);
+        expect(run.code).toBe(2);
+        expect(run.err).toContain("usage: ccmsg sidecar begin");
+      }
+      expect(fs.existsSync(path.join(env.CCMSG_STATE_DIR, "sessions"))).toBe(false);
+      expect(fs.existsSync(path.join(env.CCMSG_STATE_DIR, "daemon.sock"))).toBe(false);
+    } finally {
       cleanup();
     }
   }, 30000);
@@ -676,8 +732,7 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 
   // DR-0009: resolveIdentity picks up CCMSG_TRANSCRIPT_PATH from the process env
-  // (the SessionStart hook's suggested prefix, see hooks/session-start.ts) and
-  // sends it in hello; the daemon's own validation (transcript.test.ts) is what
+  // (the override knob) and sends it in hello; the daemon's own validation (transcript.test.ts) is what
   // decides whether it's actually adopted — here we just confirm a valid one
   // round-trips end to end into `peers`.
   test("CCMSG_TRANSCRIPT_PATH env はセッションの transcript_path として peers に現れる", async () => {
@@ -736,23 +791,24 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // session state file (hooks/session-start.ts が書く <stateDir>/sessions/<sid>.json)
-  // 経由の transcript_path/repo/ws が env 未設定時に peers へ反映される
-  // (2026-07-11 kawaz 裁定: env 埋め込みから state file 経由に切替)。
-  test("session state file の transcript_path/repo/ws が env 未設定なら peers に現れる", async () => {
+  // session state file (`ccmsg sidecar begin` が書く <stateDir>/sessions/<sid>.json)
+  // 経由の repo/ws が env 未設定時に peers へ反映される (2026-07-11 kawaz 裁定:
+  // env 埋め込みから state file 経由に切替)。transcript は state file に無く、
+  // daemon がセッションの名乗る config dir の projects/ から探す (DR-0039
+  // Consequences。config dir は ~/.claude* に限らない)。
+  test("session state file の repo/ws と、config dir 配下の transcript が peers に現れる", async () => {
     const { env, cleanup } = makeEnv();
-    const transcriptFile = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-sf-")),
-      "50000001-0000-4000-8000-000000000000.jsonl",
-    );
+    const configDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-cd-")));
+    const projectDir = path.join(configDir, "projects", "-tmp-project");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const transcriptFile = path.join(projectDir, "50000001-0000-4000-8000-000000000000.jsonl");
     fs.writeFileSync(transcriptFile, "");
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionsDir, "50000001-0000-4000-8000-000000000000.json"),
       JSON.stringify({
-        transcript_path: transcriptFile,
-        // 所在 (cwd/repo/ws/repo_root/branch) は 1 組で動くので、hook が書く形に
+        // 所在 (cwd/repo/ws/repo_root/branch) は 1 組で動くので、begin が書く形に
         // 合わせて cwd も入れる。cwd を名乗らない hello は repo/ws も述べない
         // (DR-0003 §3 「所在の正本」)。
         cwd: os.tmpdir(),
@@ -764,8 +820,13 @@ describe("ccmsg CLI end-to-end", () => {
     try {
       const peers = served(
         "peers",
-        (await runCli(["peers"], { ...env, CCMSG_SID: "50000001-0000-4000-8000-000000000000" }))
-          .out,
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "50000001-0000-4000-8000-000000000000",
+            CLAUDE_CONFIG_DIR: configDir,
+          })
+        ).out,
       );
       const me = defined(
         peers.peers.find((p) => p.sid === "50000001-0000-4000-8000-000000000000"),
@@ -777,7 +838,7 @@ describe("ccmsg CLI end-to-end", () => {
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
-      fs.rmSync(path.dirname(transcriptFile), { recursive: true, force: true });
+      fs.rmSync(configDir, { recursive: true, force: true });
     }
   }, 30000);
 
@@ -911,7 +972,7 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // session state file の repo_root (DR-0008 addendum, hooks/session-start.ts
+  // session state file の repo_root (DR-0008 addendum, `ccmsg sidecar begin`
   // が worktree-name 非空のときだけ書く) が hello に載り、daemon の受理判定
   // (絶対 + realpath 可 + cwd の strict ancestor + not "/"/$HOME) を通れば
   // peers に現れる。ここでは daemon 側の受理条件を満たすよう、実在する
@@ -1715,7 +1776,7 @@ describe("hello が名乗る所在", () => {
     const stationed = mk("stationed");
     const project = mk("project");
     const override = mk("override");
-    // state file は SessionStart hook が書くもの。ここでは hook を回す代わりに
+    // state file は `ccmsg sidecar begin` が書くもの。ここでは begin を回す代わりに
     // 同じ形を直接置く (protocol の SessionStateFile)。
     fs.mkdirSync(path.join(env.CCMSG_STATE_DIR, "sessions"), { recursive: true });
     fs.writeFileSync(

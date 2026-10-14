@@ -1,6 +1,11 @@
 // Hooks module (Claude Mods, DR-0035): puts what a person wrote in the web UI
 // into this session as their own prompt.
 //
+// The module is the plugin's one tie to Claude Code (DR-0039 §1): it hooks
+// no classic event. When the session starts, and when it changes its id
+// (/clear, /resume), it runs `ccmsg sidecar begin`, which writes the
+// session's state file and brings the daemon up if none is running.
+//
 // At session.start it starts `ccmsg sidecar`, which binds this run's socket,
 // names the run to the daemon, and copies each line the daemon writes there to
 // its standard output. The run is named by what the module knows of itself —
@@ -15,8 +20,9 @@
 // `prompt.send` puts a person's text in: the module keeps the person's
 // half-typed draft, fills the composer with the text, and presses Enter on its
 // own terminal through hyoui, so the harness takes the prompt exactly as if it
-// had been typed. The prompt counts as accepted when classic.UserPromptSubmit
-// fires for that text. The draft is filled back right after the submit.
+// had been typed. The prompt counts as accepted when the prompt.submit of that
+// text from the composer goes through (its `next` settles on anything but a
+// drop). The draft is filled back right after the submit.
 // `describe` says which ops the module has.
 //
 // The module also tells the daemon what it knows of its session through
@@ -24,10 +30,10 @@
 // model as the session names it, `[1m]` kept, the effort, the context window
 // the session runs with and its fill, whether its main thread is answering a
 // turn (turn.start / turn.complete, idle from the session's start). It reads
-// the model and the window at session.start, after a model switch and after
-// /clear, and takes the window and the fill again from each session.measure;
-// the effort comes with the end of each main-thread turn (classic.Stop). Each
-// time, it sends the whole of what it knows through `ccmsg sidecar facts`,
+// the model and the window at session.start, after /model, /clear and
+// /resume (command.run), and takes the window and the fill again from each
+// session.measure; the effort comes with each main-thread request
+// (turn.step). Each time, it sends the whole of what it knows through `ccmsg sidecar facts`,
 // which starts no daemon. The API error a turn ends on is not among them: the
 // daemon reads it, with Claude Code's classification, off the transcript
 // (DR-0039 §2). A daemon that comes up later asks for them with the
@@ -99,6 +105,9 @@ export interface Engine {
   plugin: { root: string };
   session: {
     id(): Promise<string>;
+    /** The session's project root, absolute: where it started, or where `/cd`
+     * took it; a shell `cd` does not move it. */
+    root(): Promise<string>;
     surfaces(): Promise<readonly string[]>;
     /** The model as `/model` names it, a launch-time `[1m]` kept. */
     model(): Promise<string>;
@@ -131,16 +140,13 @@ export type ObservedEvent =
   | "session.start"
   | "session.end"
   | "session.measure"
-  | "classic.SessionStart"
-  | "classic.PostModelSwitch"
-  | "classic.Stop"
-  | "classic.UserPromptSubmit"
+  | "command.run"
   | "prompt.submit"
   | "turn.start"
   | "turn.complete";
 
 /** The events this module hooks. */
-export type HookedEvent = ObservedEvent | "session.send";
+export type HookedEvent = ObservedEvent | "session.send" | "turn.step";
 
 /** A hook: generic in the event's input and in its result, so all it can do
  * with either is read the input through a schema and pass both on as
@@ -153,17 +159,26 @@ export type SendHook = <E, R>(
   e: E,
   next: (e: E) => Promise<R>,
 ) => Promise<R | SendMessageResult>;
-/** What `on(...)` returns: one `.catch`, run in the hook's place when the
- * hook throws or overruns its budget. The engine's `next` there is
- * replay-safe: after the hook called it, it answers what that call settled
- * to and runs nothing beneath again. */
-export interface Registration {
-  catch(handler: Hook): void;
+/** The turn.step hook: a streaming event, so the hook is a generator that
+ * passes the stream beneath on as it comes (`yield* next(e)`). */
+export type StepHook = <E, Y, R>(
+  $: Engine,
+  e: E,
+  next: (e: E) => AsyncGenerator<Y, R>,
+) => AsyncGenerator<Y, R>;
+/** The hook each event takes. */
+export interface HookOf extends Record<ObservedEvent, Hook> {
+  "session.send": SendHook;
+  "turn.step": StepHook;
 }
-export interface On {
-  (event: "session.send", hook: SendHook): Registration;
-  (event: ObservedEvent, hook: Hook): Registration;
-}
+/** `on(event, hook)`. What it returns has one `.catch`, run in the hook's
+ * place when the hook throws or overruns its budget. The engine's `next`
+ * there is replay-safe: after the hook called it, it answers what that call
+ * settled to and runs nothing beneath again. */
+export type On = <K extends HookedEvent>(
+  event: K,
+  hook: HookOf[K],
+) => { catch(handler: HookOf[K]): void };
 
 // The engine's input for each event, as far as this module reads it. The
 // engine is another program, and its inputs change between its versions, so
@@ -175,36 +190,35 @@ const SessionStartInputSchema = v.looseObject({
   surface: v.optional(v.nullable(v.string())),
 });
 const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
-const ClassicSessionStartInputSchema = v.looseObject({ source: v.optional(v.string()) });
+const CommandRunInputSchema = v.looseObject({ command: v.optional(v.string()) });
 const SessionMeasureInputSchema = v.looseObject({
   context: v.optional(
     v.looseObject({ window: v.optional(v.number()), tokens: v.optional(v.number()) }),
   ),
 });
-const PostModelSwitchInputSchema = v.looseObject({});
-// A classic hook's input names the subagent it fired in (`agent_id`); the
-// engine's turn events name it `agentId`. Absent on the main thread. A classic
-// hook of a turn carries the turn's effort (`effort.level`) on a model that
-// takes one.
-const TurnEffortSchema = v.optional(v.looseObject({ level: v.optional(v.string()) }));
-const StopInputSchema = v.looseObject({
-  agent_id: v.optional(v.string()),
-  effort: TurnEffortSchema,
+// The engine's turn events name the subagent whose loop they belong to
+// (`agentId`), absent on the main thread. A request carries the effort it
+// asks for (a level, or a number), absent for a model without effort.
+const TurnStepInputSchema = v.looseObject({
+  agentId: v.optional(v.string()),
+  effort: v.optional(v.union([v.string(), v.number()])),
 });
 const TurnStartInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
 const TurnCompleteInputSchema = v.looseObject({ agentId: v.optional(v.string()) });
-const UserPromptSubmitInputSchema = v.looseObject({ prompt: v.optional(v.string()) });
 const PromptSubmitInputSchema = v.looseObject({
   text: v.optional(v.string()),
   origin: v.optional(v.looseObject({ kind: v.optional(v.string()) })),
 });
+/** What a prompt.submit settles on: the prompt that entered, or a `drop`. */
+const PromptSubmitResultSchema = v.looseObject({ drop: v.optional(v.string()) });
 const SessionSendInputSchema = v.looseObject({ to: v.string(), text: v.string() });
 
 /** What a hook of this module does with an event it observes: `before` runs
- * ahead of the event, `after` once the event went through. */
-interface Observer<T> {
+ * ahead of the event, `after` once the event went through, with what it
+ * settled on. */
+interface Observer<T, R> {
   before?: (e: T) => void;
-  after?: (e: T) => Promise<void> | void;
+  after?: (e: T, result: R) => Promise<void> | void;
 }
 
 /** The body of a hook that observes `event`: pass it on exactly once, as
@@ -225,7 +239,7 @@ async function observe<E, R, S extends v.GenericSchema>(
   next: (e: E) => Promise<R>,
   event: ObservedEvent,
   schema: S,
-  observer: Observer<Output<S>>,
+  observer: Observer<Output<S>, R>,
 ): Promise<R> {
   const read = parseWith(schema, e);
   if (!read.ok) $.ui.log(`ccmsg: ${event} not read: ${read.failure.summary}`, { to: "debug" });
@@ -242,7 +256,8 @@ async function observe<E, R, S extends v.GenericSchema>(
   };
   await run("before", observer.before);
   const result = await next(e);
-  await run("after", observer.after);
+  const after = observer.after;
+  await run("after", after && ((input) => after(input, result)));
   return result;
 }
 
@@ -252,8 +267,9 @@ async function observe<E, R, S extends v.GenericSchema>(
  * quick answer. Enter itself takes tens of milliseconds; the margin
  * is hyoui's own lock when another client is mid-input. */
 export const HYOUI_TIMEOUT_MS = 3_000;
-/** How long after Enter UserPromptSubmit may take. Measured at about 30 ms
- * idle and a few ms busy; the margin is for a loaded machine. */
+/** How long after Enter the prompt.submit of the filled text may take to go
+ * through. Measured at 9 to 15 ms for a prompt typed while a tool runs
+ * (DR-0039 §2); the margin is for a loaded machine. */
 export const ACCEPT_WAIT_MS = 3_000;
 /** A reply is one `ccmsg` process and one round trip to the daemon, measured
  * at about 0.3 s. `ccmsg version` for describe is the same process without
@@ -303,7 +319,8 @@ export function hyouiEnterArgv(hyouiSessionId: string): string[] {
  * whitespace from a prompt before raising UserPromptSubmit (measured on
  * 2.1.293 with a trailing newline, spaces, a tab and an ideographic space,
  * the set `trimEnd` removes); leading whitespace, blank lines inside and tabs
- * inside reach it as filled. That one change is allowed for, nothing else. */
+ * inside reach it as filled. prompt.submit's text is held to the same
+ * allowance, nothing more. */
 export function samePrompt(submitted: string, filled: string): boolean {
   return submitted === filled || submitted === filled.trimEnd();
 }
@@ -323,7 +340,7 @@ const SESSION_CHANGED: PromptSendResult = { outcome: "not_delivered", reason: "s
 
 /** The module's state for one load. */
 export interface ModuleState {
-  /** The text whose UserPromptSubmit is awaited, and who to tell. */
+  /** The text whose submit from the composer is awaited, and who to tell. */
   awaiting?: { text: string; accept: () => void };
   /** The text whose submit puts the draft back, and the draft. */
   restoring?: { text: string; draft: string };
@@ -337,8 +354,8 @@ export interface ModuleState {
   queue: Promise<void>;
   sidecar?: { sid: string; child: AsyncGenerator<SpawnChunk, SpawnEnd> };
   delay: number;
-  /** Sidecar starts run one at a time, so session.start and
-   * classic.SessionStart arriving together cannot each start one. */
+  /** Sidecar starts run one at a time, so a session.start and a command.run
+   * arriving together cannot each start one. */
   starting: Promise<void>;
   /** This run, as every sidecar of this load names it: drawn when the first
    * sidecar starts, which is about when the harness started, and kept across
@@ -636,12 +653,43 @@ function contextFacts(
   };
 }
 
-/** Take the effort a main-thread turn ran at, and send the facts when it
- * moved. */
-function turnEffort($: Engine, state: ModuleState, level: string | undefined): void {
+/** Take the effort a main-thread request asks for, and send the facts when
+ * it moved. A number (an effort given as a budget rather than a level) is
+ * carried as its digits. */
+function requestEffort($: Engine, state: ModuleState, effort: string | number | undefined): void {
+  const level = typeof effort === "number" ? String(effort) : effort;
   if (level === undefined || level === "" || level === state.facts.effort) return;
   state.facts = { ...state.facts, effort: level };
   sendFacts($, state);
+}
+
+/** `ccmsg sidecar begin` for session `sid` working in `cwd`. */
+export function beginArgv(root: string, sid: string, cwd: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", "begin", "--sid", sid, "--cwd", cwd];
+}
+
+/** `ccmsg sidecar begin` budget: the VCS lookup (1 s at most) and the daemon's
+ * start, whose wait for the new daemon to listen is about 10 s at most and
+ * twice that when a running daemon of another version is replaced. The
+ * daemon itself is detached, so a begin cut short leaves it starting. */
+export const BEGIN_TIMEOUT_MS = 25_000;
+
+/** The session began under the id it has now (its start, /clear, /resume):
+ * write its state file and bring the daemon up (DR-0039 §2). Run without
+ * being awaited, so neither holds the session up; never rejects. */
+async function sessionBegin($: Engine): Promise<void> {
+  try {
+    const sid = await $.session.id();
+    const cwd = await $.session.root();
+    const done = await $.process.run(beginArgv($.plugin.root, sid, cwd), {
+      timeoutMs: BEGIN_TIMEOUT_MS,
+    });
+    if (done.exitCode !== 0) {
+      $.ui.log(`ccmsg: begin exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+    }
+  } catch (e) {
+    $.ui.log(`ccmsg: begin failed: ${errorText(e)}`, { to: "debug" });
+  }
 }
 
 /** Read the model and the context window off the session, and send the
@@ -820,8 +868,8 @@ function startSidecar($: Engine, state: ModuleState): void {
  * changed its id (/clear, /resume) is written to under the new one, and the
  * old sidecar would never be asked again. */
 async function replaceSidecar($: Engine, state: ModuleState): Promise<void> {
-  // classic.SessionStart can be the first to arrive after a reload; whether
-  // the session draws a composer is then asked of the session itself.
+  // A command.run can be the first to arrive after a reload; whether the
+  // session draws a composer is then asked of the session itself.
   state.interactive ??= (await $.session.surfaces()).length > 0;
   if (!state.interactive) return;
   const sid = await $.session.id();
@@ -843,20 +891,26 @@ export function register(on: On): ModuleState {
   // Every hook here observes the event and passes it on once (`observe`). The
   // `.catch` covers what is left, `next` failing or the budget running out:
   // the engine's `next` there runs nothing beneath twice.
+  //
+  // session.start also runs on a hot reload, with the session as it was:
+  // begin is idempotent, and the sidecar of the same id is kept.
   on("session.start", async ($, e, next) =>
     observe($, e, next, "session.start", SessionStartInputSchema, {
       after: (input) => {
         // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
         state.interactive = input.isInteractive !== false && input.surface !== null;
+        void sessionBegin($);
         startSidecar($, state);
         void sessionBegan($, state);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
+  // The old id's requests go no further from here: the session after /clear
+  // or /resume is another.
   on("session.end", async ($, e, next) =>
     observe($, e, next, "session.end", SessionEndInputSchema, {
       before: (input) => {
-        if (input.reason !== "clear") return;
+        if (input.reason !== "clear" && input.reason !== "resume") return;
         if (state.sid !== undefined) {
           nextGeneration(state);
           state.sid = undefined;
@@ -864,20 +918,23 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  on("classic.SessionStart", async ($, e, next) =>
-    observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
-      // After /clear the facts belong to the new id: session.start does not
-      // run for it.
-      // SessionStart also comes after a compaction, which can be mid-turn:
-      // only /clear begins a session with no turn running.
+  // /clear and /resume start no session.start: once the command went
+  // through, the session's id is the new one (DR-0039 §2). /model raises no
+  // session.measure, so the model and the window are read again after it.
+  on("command.run", async ($, e, next) =>
+    observe($, e, next, "command.run", CommandRunInputSchema, {
       after: (input) => {
-        startSidecar($, state);
-        void (input.source === "clear" ? sessionBegan($, state) : readModelAndWindow($, state));
+        if (input.command === "clear" || input.command === "resume") {
+          void sessionBegin($);
+          startSidecar($, state);
+          void sessionBegan($, state);
+        } else if (input.command === "model") {
+          void readModelAndWindow($, state);
+        }
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  // session.measure says the window each main-thread turn; a model switch
-  // raises none, so the window is read again after one.
+  // session.measure says the window each main-thread turn.
   on("session.measure", async ($, e, next) =>
     observe($, e, next, "session.measure", SessionMeasureInputSchema, {
       after: async (input) => {
@@ -893,13 +950,19 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  on("classic.Stop", async ($, e, next) =>
-    observe($, e, next, "classic.Stop", StopInputSchema, {
-      after: (input) => {
-        if (input.agent_id === undefined) turnEffort($, state, input.effort?.level);
-      },
-    }),
-  ).catch(async (_$, e, next) => next(e));
+  // The effort is known when the request is made, before any of its answer;
+  // a subagent's request is not the session's.
+  on("turn.step", async function* ($, e, next) {
+    const read = parseWith(TurnStepInputSchema, e);
+    if (!read.ok) {
+      $.ui.log(`ccmsg: turn.step not read: ${read.failure.summary}`, { to: "debug" });
+    } else if (read.value.agentId === undefined) {
+      requestEffort($, state, read.value.effort);
+    }
+    return yield* next(e);
+  }).catch(async function* (_$, e, next) {
+    return yield* next(e);
+  });
   on("turn.start", async ($, e, next) =>
     observe($, e, next, "turn.start", TurnStartInputSchema, {
       before: (input) => {
@@ -914,43 +977,30 @@ export function register(on: On): ModuleState {
       },
     }),
   ).catch(async (_$, e, next) => next(e));
-  on("classic.PostModelSwitch", async ($, e, next) =>
-    observe($, e, next, "classic.PostModelSwitch", PostModelSwitchInputSchema, {
-      after: () => {
-        void readModelAndWindow($, state);
-      },
-    }),
-  ).catch(async (_$, e, next) => next(e));
-  on("classic.UserPromptSubmit", async ($, e, next) =>
-    observe($, e, next, "classic.UserPromptSubmit", UserPromptSubmitInputSchema, {
-      before: (input) => {
-        const awaiting = state.awaiting;
-        if (awaiting === undefined) return;
-        if (input.prompt !== undefined && samePrompt(input.prompt, awaiting.text)) {
-          state.awaiting = undefined;
-          awaiting.accept();
-          return;
-        }
-        $.ui.log(
-          `ccmsg: UserPromptSubmit ${JSON.stringify(input.prompt ?? null)} is not the filled ${JSON.stringify(awaiting.text)}`,
-          { to: "debug" },
-        );
-      },
-    }),
-  ).catch(async (_$, e, next) => next(e));
+  // A filled prompt is accepted once its submit from the composer went
+  // through: `next` settles when the prompt entered the session or was queued
+  // behind the running turn, on a drop when it did not enter. The person gets
+  // their draft back then.
   on("prompt.submit", async ($, e, next) =>
     observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
-      // The prompt is in by now: the person gets their draft back.
-      after: async (input) => {
-        const restoring = state.restoring;
-        if (
-          restoring === undefined ||
-          input.origin?.kind !== "composer" ||
-          input.text === undefined ||
-          !samePrompt(input.text, restoring.text)
-        ) {
-          return;
+      after: async (input, result) => {
+        if (input.origin?.kind !== "composer" || input.text === undefined) return;
+        const settled = parseWith(PromptSubmitResultSchema, result);
+        const entered = settled.ok && settled.value.drop === undefined;
+        const awaiting = state.awaiting;
+        if (awaiting !== undefined) {
+          if (entered && samePrompt(input.text, awaiting.text)) {
+            state.awaiting = undefined;
+            awaiting.accept();
+          } else {
+            $.ui.log(
+              `ccmsg: prompt.submit ${JSON.stringify(input.text)} ${entered ? "is not" : "dropped, not"} the filled ${JSON.stringify(awaiting.text)}`,
+              { to: "debug" },
+            );
+          }
         }
+        const restoring = state.restoring;
+        if (!entered || restoring === undefined || !samePrompt(input.text, restoring.text)) return;
         state.restoring = undefined;
         if (restoring.draft !== "") await putBackDraft($, restoring.text, restoring.draft);
       },

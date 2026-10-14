@@ -47,12 +47,6 @@
 
 hooks module は実行時に import できないので、このファイルは valibot と `parse.ts` 以外を import せず、bundle して使う。
 
-#### hook の stdin
-
-| ファイル | 何の形か | 誰が読むか |
-|---|---|---|
-| `hook-input.ts` | Claude Code が SessionStart hook に渡す stdin (`SessionStartInputSchema` / `SessionStartInputTextSchema`) | hooks (`session-start.ts`) |
-
 #### Claude Code 由来のファイル・コマンド出力
 
 どれも Claude Code の形で、ccmsg は使う field だけを定義する。
@@ -75,10 +69,10 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
 | `storage-event.ts` | room の jsonl の 1 行 (`StorageEventSchema`、`type` の variant: member / leave / msg / next / prev / title / archive / kind / say / say_read)。同じ event が wire では配送 event として流れる | daemon (CLI・webui は配送 event として) |
-| `session-files.ts` | SessionStart hook が書く `<state dir>/sessions/<sid>.json` (`SessionStateFileSchema`) | CLI |
+| `session-files.ts` | `ccmsg sidecar begin` が書く `<state dir>/sessions/<sid>.json` (`SessionStateFileSchema`) | CLI |
 | `allowed-origins.ts` | `<config dir>/allowed-origins.json` | CLI (`ccmsg origins`)、daemon |
 | `attachment-upload.ts` | `POST /attachment` の返事 (multipart HTTP で、wire の返事ではない) | webui |
-| `paths.ts` | state / config / data の各ディレクトリの解決 (`resolvePaths` 等) と、サイドカー socket の名前 (`<sid>.<run id>.sock`) の組み立て | CLI、daemon、hooks (`session-start.ts`) |
+| `paths.ts` | state / config / data の各ディレクトリの解決 (`resolvePaths` 等) と、サイドカー socket の名前 (`<sid>.<run id>.sock`) の組み立て | CLI、daemon |
 
 #### その他
 
