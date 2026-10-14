@@ -4,10 +4,9 @@
 //
 // The daemon neither resolves the session's terminal nor sends Enter: the
 // module fills its own composer and presses Enter on its own terminal. The
-// request and its reply go through sidecar-call.ts; what this file owns is
-// which run is asked, what a reply means for the person, and the deadline.
-import { readdir } from "node:fs/promises";
-import * as path from "node:path";
+// runs come from what their sidecars named (sidecar-runs.ts), and the request
+// and its reply go through sidecar-call.ts; what this file owns is which run
+// is asked, what a reply means for the person, and the deadline.
 import {
   type Parsed,
   type PromptSendResult,
@@ -15,18 +14,14 @@ import {
   type SessionInputReadiness,
   type SessionInputReason,
   type SidecarReplyOf,
-  sidecarSocketPid,
 } from "@ccmsg/protocol";
 import {
   callSidecar,
-  isProcessAlive,
-  liveSidecars,
   productionSidecarDeps,
-  runMovedOn,
   type SidecarDeps,
-  type SidecarDirDeps,
   type SidecarReplies,
 } from "./sidecar-call.ts";
+import type { SidecarRuns } from "./sidecar-runs.ts";
 
 /** The longest a session_input takes to answer, every run it tries included.
  *
@@ -45,10 +40,12 @@ export type SessionInputOutcome =
   | { outcome: "not_delivered"; reason: SessionInputReason }
   | { outcome: "unconfirmed" };
 
+/** The runs of each session, as session_input and readiness read them. */
+export type SessionRunsView = Pick<SidecarRuns, "liveOf" | "movedOn">;
+
 export interface SessionInputDeps extends SidecarDeps {
   deadlineMs: number;
-  /** The harness pids `sid` has been seen running under (RunPids). */
-  pidsOf(sid: string): readonly number[];
+  runs: SessionRunsView;
 }
 
 /** A `prompt.send` reply as the person's outcome. An op that failed
@@ -94,7 +91,7 @@ export async function sessionInput(
   const until = deps.now() + deps.deadlineMs;
   const tries: SessionInputTry[] = [];
   let unable: SessionInputModuleReason | undefined;
-  for (const socket of await liveSidecars(sid, deps)) {
+  for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
     const call = await callSidecar(socket, sid, "prompt.send", { text }, remaining, deps);
@@ -124,134 +121,47 @@ export async function sessionInput(
     unable = read.reason;
   }
   if (unable !== undefined) return { outcome: "not_delivered", reason: unable, tries };
-  return { outcome: "not_delivered", reason: await withoutModule(sid, deps), tries };
+  return { outcome: "not_delivered", reason: withoutModule(sid, deps.runs), tries };
 }
 
 /** Why no module of `sid` can take the input when none of its runs has one.
- * When the process `sid` ran in now serves another id, the session changed
- * (/clear, /resume) rather than lacks a module, and the person is told so
- * instead of to update the plugin. */
-async function withoutModule(
-  sid: string,
-  deps: SidecarDirDeps & Pick<SessionInputDeps, "pidsOf">,
-): Promise<"session_changed" | "no_module"> {
-  return (await runMovedOn(sid, deps.pidsOf(sid), deps)) ? "session_changed" : "no_module";
+ * When the run `sid` was now serves another id, the session changed (/clear,
+ * /resume) rather than lacks a module, and the person is told so instead of
+ * to update the plugin. */
+function withoutModule(sid: string, runs: SessionRunsView): "session_changed" | "no_module" {
+  return runs.movedOn(sid) ? "session_changed" : "no_module";
 }
 
-export interface InputReadinessDeps extends SidecarDirDeps {
-  /** The harness pids `sid` has been seen running under (RunPids). */
-  pidsOf(sid: string): readonly number[];
-  /** `HYOUI_SESSION_ID` in a harness process's environment, or null without
-   * one. The module reads the same variable of the same process
-   * (`$.env.get`) to find the terminal it sends Enter to, and answers
-   * `no_terminal` without it. */
-  terminalOf(pid: number): Promise<string | null>;
+export interface InputReadinessDeps {
+  runs: SessionRunsView;
   /** Whether the daemon still counts `sid` among the running sessions. */
   isRunning(sid: string): boolean;
 }
 
 /** Whether a person's input can reach `sid` now (SessionInputReadiness), from
- * what sessionInput depends on: the live runs' sidecars, and for each run the
- * terminal its module would press Enter on. Ready when one run has both, as
- * sessionInput moves past runs that answer `no_terminal` to the next. */
-export async function inputReadiness(
-  sid: string,
-  deps: InputReadinessDeps,
-): Promise<SessionInputReadiness> {
-  const sockets = await liveSidecars(sid, deps);
-  if (sockets.length > 0) {
-    for (const socket of sockets) {
-      const pid = sidecarSocketPid(path.basename(socket), sid);
-      if (pid !== undefined && (await deps.terminalOf(pid)) !== null) return { kind: "ready" };
-    }
-    return { kind: "no_terminal" };
+ * what sessionInput depends on: the live runs, and for each the terminal its
+ * module would press Enter on, as its sidecar named it (the module reads the
+ * same HYOUI_SESSION_ID through `$.env.get` and answers `no_terminal`
+ * without one). Ready when one run has a terminal, as sessionInput moves past
+ * runs that answer `no_terminal` to the next. */
+export function inputReadiness(sid: string, deps: InputReadinessDeps): SessionInputReadiness {
+  const runs = deps.runs.liveOf(sid);
+  if (runs.length > 0) {
+    return runs.some((run) => run.hyouiSessionId !== undefined)
+      ? { kind: "ready" }
+      : { kind: "no_terminal" };
   }
-  const reason = await withoutModule(sid, deps);
-  if (reason === "session_changed") return { kind: "session_changed" };
+  if (withoutModule(sid, deps.runs) === "session_changed") return { kind: "session_changed" };
   return deps.isRunning(sid) ? { kind: "no_module" } : { kind: "ended" };
 }
 
-export function productionReadinessDeps(
-  sidecarDir: string,
-  pidsOf: (sid: string) => readonly number[],
-  terminalOf: (pid: number) => Promise<string | null>,
-  isRunning: (sid: string) => boolean,
-): InputReadinessDeps {
-  return {
-    sidecarDir,
-    listDir: (dir) => readdir(dir),
-    isAlive: isProcessAlive,
-    pidsOf,
-    terminalOf,
-    isRunning,
-  };
-}
-
 export function productionInputDeps(
-  sidecarDir: string,
   replies: SidecarReplies,
-  pidsOf: (sid: string) => readonly number[] = () => [],
+  runs: SessionRunsView,
 ): SessionInputDeps {
   return {
-    ...productionSidecarDeps(sidecarDir, replies),
+    ...productionSidecarDeps(replies),
     deadlineMs: SESSION_INPUT_DEADLINE_MS,
-    pidsOf,
+    runs,
   };
-}
-
-/** The input readiness of every session the daemon counts as running, for
- * the peers list: a peer row is built synchronously, so readiness is judged
- * ahead of it and kept here. A refresh judges every session again and calls
- * `onChange` when any answer moved; refreshes run one at a time, and one
- * asked for meanwhile runs once more after the current one. */
-export class ReadinessBoard {
-  readonly #by = new Map<string, SessionInputReadiness>();
-  #running = false;
-  #again = false;
-
-  readonly #readinessOf: (sid: string) => Promise<SessionInputReadiness>;
-  readonly #onChange: () => void;
-  readonly #onError: (e: unknown) => void;
-
-  constructor(
-    readinessOf: (sid: string) => Promise<SessionInputReadiness>,
-    onChange: () => void,
-    onError: (e: unknown) => void,
-  ) {
-    this.#readinessOf = readinessOf;
-    this.#onChange = onChange;
-    this.#onError = onError;
-  }
-
-  get(sid: string): SessionInputReadiness | undefined {
-    return this.#by.get(sid);
-  }
-
-  refresh(sids: () => Iterable<string>): void {
-    if (this.#running) {
-      this.#again = true;
-      return;
-    }
-    this.#running = true;
-    void (async () => {
-      try {
-        do {
-          this.#again = false;
-          const judged = await Promise.all(
-            [...sids()].map(async (sid) => [sid, await this.#readinessOf(sid)] as const),
-          );
-          const changed =
-            judged.length !== this.#by.size ||
-            judged.some(([sid, r]) => this.#by.get(sid)?.kind !== r.kind);
-          this.#by.clear();
-          for (const [sid, r] of judged) this.#by.set(sid, r);
-          if (changed) this.#onChange();
-        } while (this.#again);
-      } catch (e) {
-        this.#onError(e);
-      } finally {
-        this.#running = false;
-      }
-    })();
-  }
 }

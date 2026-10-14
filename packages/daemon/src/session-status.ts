@@ -1799,13 +1799,13 @@ export interface SessionStatusStore {
   sessions: Map<string, LiveSessionStatus>;
   /** Whether a person's input can reach a session now, carried on every
    * snapshot as `input_readiness`. Not read off the transcript: it depends on
-   * the session's sidecars and processes (session-input.ts inputReadiness).
+   * the runs the session's sidecars named (session-input.ts inputReadiness).
    * Absent where nothing can tell (tests of the fold alone). */
-  inputReadiness?: (sid: string) => Promise<SessionInputReadiness>;
+  inputReadiness?: (sid: string) => SessionInputReadiness;
 }
 
 export function createSessionStatusStore(
-  inputReadiness?: (sid: string) => Promise<SessionInputReadiness>,
+  inputReadiness?: (sid: string) => SessionInputReadiness,
 ): SessionStatusStore {
   return { sessions: new Map(), ...(inputReadiness ? { inputReadiness } : {}) };
 }
@@ -1821,10 +1821,8 @@ async function fullSnapshot(
   cwd: string | undefined,
   live?: LiveSessionStatus,
 ): Promise<SessionStatusSnapshot> {
-  const [data, readiness] = await Promise.all([
-    snapshot(state, sidDir, cwd),
-    store.inputReadiness?.(sid),
-  ]);
+  const data = await snapshot(state, sidDir, cwd);
+  const readiness = store.inputReadiness?.(sid);
   if (readiness === undefined) return data;
   if (live) live.inputReadiness = readiness.kind;
   return { ...data, input_readiness: readiness };
@@ -1849,22 +1847,15 @@ async function statusEventLine(
 }
 
 /** Push the followed sessions whose input readiness moved since their last
- * snapshot. Called on what can move it without a transcript line: a sidecar
- * bound or gone, a session registered or forgotten, a poll of the running
- * sessions (which also notices a harness that died). */
+ * snapshot. Called on what can move it without a transcript line: a run named
+ * or gone, a session registered or forgotten, a poll that found a run's
+ * harness gone. */
 export function refreshInputReadiness(store: SessionStatusStore, log?: TailLog): void {
   const readinessOf = store.inputReadiness;
   if (readinessOf === undefined) return;
   for (const [sid, live] of store.sessions) {
     if (live.statusConns.size === 0) continue;
-    void readinessOf(sid).then(
-      (readiness) => {
-        if (store.sessions.get(sid) === live && readiness.kind !== live.inputReadiness) {
-          pushSnapshot(store, sid, live, log);
-        }
-      },
-      (e: unknown) => log?.error(`input readiness failed sid=${sid}: ${String(e)}`),
-    );
+    if (readinessOf(sid).kind !== live.inputReadiness) pushSnapshot(store, sid, live, log);
   }
 }
 

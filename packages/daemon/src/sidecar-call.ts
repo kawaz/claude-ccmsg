@@ -3,16 +3,13 @@
 //
 // The daemon writes one SidecarRequest line to a run's sidecar socket; the
 // sidecar copies it to the module, which answers with `ccmsg sidecar reply`,
-// arriving here as sidecar_reply. What this file owns is finding the live
-// runs of a session, writing a request, and matching a reply to the request it
-// names. What an op's result means belongs to whoever asked for the op
-// (session-input.ts for prompt.send).
+// arriving here as sidecar_reply. What this file owns is writing a request and
+// matching a reply to the request it names; which runs a session has is
+// sidecar-runs.ts's. What an op's result means belongs to whoever asked for
+// the op (session-input.ts for prompt.send).
 import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
-import * as path from "node:path";
 import {
   type Parsed,
-  parseSidecarSocketName,
   parseWith,
   SIDECAR_OPS,
   SIDECAR_REQUEST_VERSION,
@@ -20,7 +17,6 @@ import {
   type SidecarOp,
   type SidecarReply,
   type SidecarReplyOf,
-  sidecarSocketPid,
 } from "@ccmsg/protocol";
 import { type WriteOutcome, writeSocket } from "./peer-inject.ts";
 
@@ -82,99 +78,13 @@ export class SidecarReplies {
   }
 }
 
-/** Injectable effects, so a test can stand in for the filesystem, the process
- * table and the clock. */
+/** Injectable effects, so a test can stand in for the sockets and the
+ * clock. */
 export interface SidecarDeps {
-  sidecarDir: string;
   replies: SidecarReplies;
   newId(): string;
-  listDir(dir: string): Promise<string[]>;
-  /** Whether the harness process a socket is named after still runs. A
-   * sidecar can outlive its harness by one write (it notices only when its
-   * output fails), so a socket of a gone run is skipped instead of taking a
-   * request nobody will answer. */
-  isAlive(pid: number): boolean;
   write(socketPath: string, line: string, ms: number): Promise<WriteOutcome>;
   now(): number;
-}
-
-/** What finding a session's runs reads: the sidecar directory and the
- * process table. */
-export type SidecarDirDeps = Pick<SidecarDeps, "sidecarDir" | "listDir" | "isAlive">;
-
-/** The sockets of the live runs of `sid`, in a stable order. */
-export async function liveSidecars(sid: string, deps: SidecarDirDeps): Promise<string[]> {
-  let names: string[];
-  try {
-    names = await deps.listDir(deps.sidecarDir);
-  } catch {
-    return [];
-  }
-  const sockets: string[] = [];
-  for (const name of names.toSorted()) {
-    const pid = sidecarSocketPid(name, sid);
-    if (pid !== undefined && deps.isAlive(pid)) sockets.push(path.join(deps.sidecarDir, name));
-  }
-  return sockets;
-}
-
-/** Whether a run of `sid` now serves another session id: a socket of one of
- * `pids` (the harness pids `sid` has run under) is bound under an id other
- * than `sid`, by a harness still running. That is a run that changed its id
- * (/clear, /resume) — its module replaced its sidecar under the new id. */
-export async function runMovedOn(
-  sid: string,
-  pids: readonly number[],
-  deps: SidecarDirDeps,
-): Promise<boolean> {
-  if (pids.length === 0) return false;
-  let names: string[];
-  try {
-    names = await deps.listDir(deps.sidecarDir);
-  } catch {
-    return false;
-  }
-  return names.some((name) => {
-    const socket = parseSidecarSocketName(name);
-    return (
-      socket !== undefined &&
-      socket.sid !== sid &&
-      pids.includes(socket.pid) &&
-      deps.isAlive(socket.pid)
-    );
-  });
-}
-
-/** The harness pids each session id has been seen running under, kept past
- * the poll that last listed them. A run that changes its id (/clear,
- * /resume) is listed under the new id from then on, so which process the old
- * id ran in is known only from before; runMovedOn needs it to tell a person
- * writing to the old id that the session changed rather than that no module
- * is there. An entry goes once none of its processes runs any more. */
-export class RunPids {
-  readonly #pids = new Map<string, Set<number>>();
-
-  /** Take one poll's rows, and drop entries whose processes all ended. */
-  record(
-    rows: readonly { sessionId?: string; pid?: number }[],
-    isAlive: (pid: number) => boolean = isProcessAlive,
-  ): void {
-    for (const row of rows) {
-      if (typeof row.sessionId !== "string" || row.sessionId === "") continue;
-      if (typeof row.pid !== "number" || !Number.isSafeInteger(row.pid) || row.pid <= 1) continue;
-      const known = this.#pids.get(row.sessionId) ?? new Set<number>();
-      known.add(row.pid);
-      this.#pids.set(row.sessionId, known);
-    }
-    for (const [sid, pids] of this.#pids) {
-      for (const pid of pids) if (!isAlive(pid)) pids.delete(pid);
-      if (pids.size === 0) this.#pids.delete(sid);
-    }
-  }
-
-  pidsOf(sid: string): number[] {
-    return [...(this.#pids.get(sid) ?? [])];
-  }
 }
 
 /** What became of one request of `Op`. `not_written`: the sidecar has none of
@@ -241,13 +151,10 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-export function productionSidecarDeps(sidecarDir: string, replies: SidecarReplies): SidecarDeps {
+export function productionSidecarDeps(replies: SidecarReplies): SidecarDeps {
   return {
-    sidecarDir,
     replies,
     newId: randomUUID,
-    listDir: (dir) => readdir(dir),
-    isAlive: isProcessAlive,
     write: (socketPath, line, ms) => writeSocket(socketPath, line, ms),
     now: Date.now,
   };

@@ -42,6 +42,7 @@ import {
   type StreamEvent,
   type RoomKind,
   type SessionIdentity,
+  type SessionInputReadiness,
   type StaleClientInfo,
   type JsonValue,
   parseWith,
@@ -119,14 +120,9 @@ import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
-import {
-  inputReadiness,
-  productionInputDeps,
-  productionReadinessDeps,
-  ReadinessBoard,
-  sessionInput,
-} from "./session-input.ts";
-import { isProcessAlive, RunPids, SidecarReplies } from "./sidecar-call.ts";
+import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
+import { isProcessAlive, SidecarReplies } from "./sidecar-call.ts";
+import { type AgentRow, SidecarRuns } from "./sidecar-runs.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -142,7 +138,6 @@ import {
   agentsPollEnabled,
   createAgentsPoller,
   detectConfigDirs,
-  hyouiSessionIdForPid,
   startAgentsPoller,
   stopAgentsPoller,
   type AgentsPoll,
@@ -343,17 +338,13 @@ export interface Daemon {
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
-  /** The harness pids each session id has run under, from the agents poll
-   * (sidecar-call.ts), so session_input can tell a session that changed its
-   * id from one with no module. */
-  runPids: RunPids;
-  /** Watch on the sidecar directory: a sidecar bound or gone moves the input
-   * readiness of the sessions being followed (refreshInputReadiness). Null
-   * where the directory could not be watched. */
-  sidecarWatch: fs.FSWatcher | null;
-  /** Input readiness of the registered sessions, for the peer rows
-   * (PeerInfo.input_readiness). */
-  readiness: ReadinessBoard;
+  /** The live runs of each session, as their sidecars named them on
+   * connections still open (sidecar-runs.ts, sidecar_hello): where
+   * session_input writes, and what input readiness is judged from. */
+  sidecarRuns: SidecarRuns;
+  /** When the agents poll last finished a round: the next round began after
+   * this, which is what lets it say a run named before it has no process. */
+  agentsRoundAt: number;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -608,7 +599,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // ("hello 到達 = 新規 session"), not per-connection re-hellos.
   if (isNewEntry) {
     joinAllBroadcasts(daemon, id.sid);
-    refreshReadiness(daemon);
+    refreshInputReadiness(daemon.sessionStatus, daemon.log);
   }
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
@@ -634,12 +625,31 @@ function forgetSession(daemon: Daemon, sid: string): void {
   refreshReadiness(daemon);
 }
 
-/** Judge again whether a person's input can reach each session, for the
- * peer rows and for the session statuses being followed; each pushes what
- * moved. */
+/** Push whether a person's input can reach each session, where it moved:
+ * the peer rows and the session statuses being followed. Called when a run is
+ * named or goes, and when a session is registered or forgotten. */
 function refreshReadiness(daemon: Daemon): void {
-  daemon.readiness.refresh(() => daemon.sessions.keys());
+  maybeBroadcastPeers(daemon);
   refreshInputReadiness(daemon.sessionStatus, daemon.log);
+}
+
+/** `sid`'s input readiness (session-input.ts inputReadiness), judged from the
+ * runs its sidecars named. */
+function readinessOf(daemon: Daemon, sid: string): SessionInputReadiness {
+  return inputReadiness(sid, {
+    runs: daemon.sidecarRuns,
+    isRunning: (running) => daemon.sessions.has(running),
+  });
+}
+
+/** The agents poll's rows, as a run is tied to its process by them. */
+function agentRows(agents: readonly AgentInfo[]): AgentRow[] {
+  return agents.map((agent) => ({
+    sessionId: agent.sessionId,
+    pid: agent.pid,
+    startedAt: agent.startedAt,
+    configDir: normalizeConfigDir(agent.config_dir) ?? agent.config_dir,
+  }));
 }
 
 /** Bring the session registry in line with the harness's register of live
@@ -719,6 +729,8 @@ async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Prom
 export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
+  // A sidecar's connection closing is its run going.
+  if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   // The departing conn may have been the last user-role subscriber, in which
   // case syncSessionErrors drops every watch (see its doc comment).
   syncSessionErrors(daemon);
@@ -829,10 +841,9 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
   }));
 }
 
-/** `input_readiness` for one sid, omitted until the daemon has judged it. */
+/** `input_readiness` for one sid. */
 function withReadiness(daemon: Daemon, sid: string): Pick<PeerInfo, "input_readiness"> {
-  const readiness = daemon.readiness.get(sid);
-  return readiness ? { input_readiness: readiness } : {};
+  return { input_readiness: readinessOf(daemon, sid) };
 }
 
 /** The build half of a peer row: what its latest hello announced, plus the
@@ -1614,6 +1625,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "session_rename",
   "session_input",
   "sidecar_reply",
+  "sidecar_hello",
   "session_launcher_config",
   "leave",
   "invite",
@@ -2717,9 +2729,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const { tries, ...outcome } = await sessionInput(
         req.session_id,
         req.text,
-        productionInputDeps(daemon.paths.sidecars, daemon.sidecarReplies, (sid) =>
-          daemon.runPids.pidsOf(sid),
-        ),
+        productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
       );
       daemon.log.info(
         `session-input -> ${req.session_id}: ${outcome.outcome}` +
@@ -2753,6 +2763,36 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       send(conn, { ok: true });
+      return;
+    }
+
+    case "sidecar_hello": {
+      // The namer is a run of the session: its sidecar hellos as that session
+      // on a connection of its own, and the run is live until it closes
+      // (removeConn).
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'sidecar_hello' requires session role");
+        return;
+      }
+      const configDir = normalizeConfigDir(req.config_dir);
+      const run = daemon.sidecarRuns.announce(
+        conn,
+        {
+          sid: conn.identity.sid,
+          runId: req.run_id,
+          startedAt: req.started_at,
+          ...(configDir !== undefined ? { configDir } : {}),
+          ...(req.hyoui_session_id !== undefined ? { hyouiSessionId: req.hyoui_session_id } : {}),
+        },
+        agentRows(daemon.agentsPoller.cache.agents),
+      );
+      daemon.log.info(
+        `sidecar ${run.sid}.${run.runId} named` +
+          (run.pid !== undefined ? ` pid=${String(run.pid)}` : "") +
+          (run.hyouiSessionId !== undefined ? " terminal" : " no terminal"),
+      );
+      send(conn, { ok: true });
+      refreshReadiness(daemon);
       return;
     }
 
@@ -3474,19 +3514,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
 // --- lifecycle -------------------------------------------------------------
 
-/** Call `onChange` whenever a sidecar binds or goes in `dir`. The directory is
- * made here (as the sidecar itself would, 0700) so the watch holds from the
- * start rather than from the first sidecar. */
-function watchSidecarDir(dir: string, log: Logger, onChange: () => void): fs.FSWatcher | null {
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    return fs.watch(dir, { persistent: false }, onChange);
-  } catch (e) {
-    log.warn(`sidecar dir ${dir} is not watched: ${String(e)}`);
-    return null;
-  }
-}
-
 function buildDedupIndex(rooms: Map<string, Room>): Map<string, string> {
   const index = new Map<string, string>();
   const createdAt = new Map<string, number>();
@@ -3511,7 +3538,6 @@ async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> 
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
   stopAllUserInputs(daemon.sessionUserInputs, daemon.transcriptTail);
   daemon.networkWatch?.stop();
-  daemon.sidecarWatch?.close();
   daemon.llmStatusRefresher?.stop();
   stopAllTailWatches(daemon.transcriptTail);
   daemon.peerInjector.close();
@@ -3644,16 +3670,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   }
   const config = loaded.config;
   const trace = new TraceWriter(paths.trace);
-  const readinessOf = (sid: string) =>
-    inputReadiness(
-      sid,
-      productionReadinessDeps(
-        paths.sidecars,
-        (pidSid) => daemon.runPids.pidsOf(pidSid),
-        hyouiSessionIdForPid,
-        (runningSid) => daemon.sessions.has(runningSid),
-      ),
-    );
   const daemon: Daemon = {
     paths,
     config,
@@ -3675,7 +3691,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
-    sessionStatus: createSessionStatusStore(readinessOf),
+    sessionStatus: createSessionStatusStore((sid) => readinessOf(daemon, sid)),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
@@ -3695,13 +3711,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
-    runPids: new RunPids(),
-    sidecarWatch: null,
-    readiness: new ReadinessBoard(
-      readinessOf,
-      () => maybeBroadcastPeers(daemon),
-      (e) => log.error(`input readiness failed: ${String(e)}`),
-    ),
+    sidecarRuns: new SidecarRuns({
+      sidecarDir: paths.sidecars,
+      isAlive: isProcessAlive,
+      now: Date.now,
+    }),
+    agentsRoundAt: Date.now(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
@@ -3712,7 +3727,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       daemon.agentsPoller,
       log,
       async (poll, polledAt) => {
-        daemon.runPids.record(poll.agents);
         await syncSessionsFromAgents(daemon, poll);
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role === "user") {
@@ -3722,16 +3736,29 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       },
       async (poll) => {
         await resolvePendingTranscripts(daemon, poll);
-        // On every poll, not only when the rows change: a sidecar binding or
-        // going leaves the rows as they were, and the sidecar dir's fs.watch
-        // can deliver late or not at all (macOS FSEvents), so the poll is
-        // what bounds how long a readiness stays stale.
-        refreshReadiness(daemon);
+        // Every round, not only when the rows change: a run named since the
+        // last round may find its process in rows that did not change, and a
+        // harness that died leaves a run whose sidecar is still connected.
+        const begunAfter = daemon.agentsRoundAt;
+        daemon.agentsRoundAt = Date.now();
+        const round = {
+          agents: agentRows(poll.agents),
+          answeredDirs: poll.answeredDirs.map((dir) => normalizeConfigDir(dir) ?? dir),
+        };
+        const { found, dropped } = daemon.sidecarRuns.reconcile(round, begunAfter);
+        for (const run of found) {
+          daemon.log.info(`sidecar ${run.sid}.${run.runId} is pid=${String(run.pid)}`);
+        }
+        for (const run of dropped) {
+          daemon.log.info(
+            `sidecar ${run.sid}.${run.runId} dropped: its harness is gone` +
+              (run.pid !== undefined ? ` (pid=${String(run.pid)})` : " (not listed)"),
+          );
+        }
+        if (found.length > 0 || dropped.length > 0) refreshReadiness(daemon);
       },
     );
   }
-
-  daemon.sidecarWatch = watchSidecarDir(paths.sidecars, daemon.log, () => refreshReadiness(daemon));
 
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
   // daemons, which would otherwise each carry a `route -n monitor` child and

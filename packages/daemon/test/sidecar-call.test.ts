@@ -3,14 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
 import { jsonText, parseWith, type SidecarRequest, SidecarRequestSchema } from "@ccmsg/protocol";
-import {
-  callSidecar,
-  liveSidecars,
-  RunPids,
-  runMovedOn,
-  SidecarReplies,
-  type SidecarDeps,
-} from "../src/sidecar-call.ts";
+import { callSidecar, SidecarReplies, type SidecarDeps } from "../src/sidecar-call.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const OTHER = "99999999-2222-4333-8444-555555555555";
@@ -56,45 +49,13 @@ describe("SidecarReplies", () => {
 
 function deps(extra: Partial<SidecarDeps> = {}): SidecarDeps {
   return {
-    sidecarDir: "/sidecars",
     replies: new SidecarReplies(),
     newId: () => "id1",
-    listDir: async () => [],
-    isAlive: () => true,
     write: async () => "written",
     now: Date.now,
     ...extra,
   };
 }
-
-describe("liveSidecars", () => {
-  test("takes the session's sockets of live harness pids only, in name order", async () => {
-    const d = deps({
-      listDir: async () => [
-        `${SID}.200.sock`,
-        `${SID}.100.sock`,
-        `${SID}.300.sock`,
-        `${OTHER}.100.sock`,
-        `${SID}.abc.sock`,
-        `${SID}.100.sock.tmp`,
-      ],
-      isAlive: (pid) => pid !== 300,
-    });
-    expect(await liveSidecars(SID, d)).toEqual([
-      `/sidecars/${SID}.100.sock`,
-      `/sidecars/${SID}.200.sock`,
-    ]);
-  });
-
-  test("a missing directory is no sidecar", async () => {
-    const d = deps({
-      listDir: async () => {
-        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-      },
-    });
-    expect(await liveSidecars(SID, d)).toEqual([]);
-  });
-});
 
 const RequestTextSchema = jsonText(SidecarRequestSchema);
 
@@ -195,38 +156,5 @@ describe("callSidecar", () => {
       write: "uncertain",
       reply: { ok: true, value: { id: "id1", ok: true, result } },
     });
-  });
-});
-
-describe("RunPids", () => {
-  test("keeps an id's pids past the poll that last listed it, until they end", () => {
-    const runs = new RunPids();
-    const alive = new Set([100, 200]);
-    runs.record([{ sessionId: SID, pid: 100 }], (pid) => alive.has(pid));
-    // /clear: the process is listed under the new id from now on.
-    runs.record([{ sessionId: OTHER, pid: 100 }], (pid) => alive.has(pid));
-    expect(runs.pidsOf(SID)).toEqual([100]);
-    expect(runs.pidsOf(OTHER)).toEqual([100]);
-    alive.delete(100);
-    runs.record([], (pid) => alive.has(pid));
-    expect(runs.pidsOf(SID)).toEqual([]);
-    expect(runs.pidsOf(OTHER)).toEqual([]);
-  });
-
-  test("rows without a usable id or pid are skipped", () => {
-    const runs = new RunPids();
-    runs.record([{ sessionId: "", pid: 5 }, { sessionId: SID, pid: 1 }, { pid: 7 }], () => true);
-    expect(runs.pidsOf(SID)).toEqual([]);
-  });
-});
-
-describe("runMovedOn", () => {
-  test("a live process of the id bound under another id", async () => {
-    const d = deps({ listDir: async () => [`${OTHER}.100.sock`, `${SID}.abc.sock`, "junk"] });
-    expect(await runMovedOn(SID, [100], d)).toBe(true);
-    expect(await runMovedOn(SID, [200], d)).toBe(false);
-    expect(await runMovedOn(SID, [], d)).toBe(false);
-    expect(await runMovedOn(OTHER, [100], d)).toBe(false);
-    expect(await runMovedOn(SID, [100], { ...d, isAlive: () => false })).toBe(false);
   });
 });
