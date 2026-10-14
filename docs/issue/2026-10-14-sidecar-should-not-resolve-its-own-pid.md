@@ -48,9 +48,21 @@ mods が確実に知れるのは次の 4 つ。pid はこの中に無い。
 - 名乗りに `CLAUDE_CONFIG_DIR` (`$.env.get`) も含める。daemon は複数の config dir を扱うので、これがあれば照合のために全 config dir の `claude agents --json` を見て回らず、その 1 つだけを引けばよい
 - pid への対応付けは daemon の責務。sidecar は自分の pid を知らなくてよい
 
+### 名乗りを daemon への通知にする (kawaz 2026-10-14)
+
+bind 時の名乗りを daemon への通知にし、input_readiness の再判定の契機にもする (sidecar dir の fs.watch 依存を消す)。名乗りに `HYOUI_SESSION_ID` を添えれば、daemon が `ps eww` で harness の環境変数を読む処理も消せる。
+
+背景: v0.166.0 の CI (macOS) で sidecar dir の fs.watch (FSEvents) が 5 秒以内に届かず readiness の test が落ちた。暫定として readiness を agents poll の毎回で判定し直す形にした (遅れは poll 間隔まで)。名乗りが入れば poll は backstop に下がる。
+
+決めること:
+
+- sidecar が去る時の契機 (接続を張り続けて切断で知る / fs.watch と poll に残す)
+- daemon 再起動時の再名乗り
+
 ## 受け入れ条件
 
 - [ ] sidecar の起動に pid が要らない (socket 名が sid + run 識別子で決まる)
 - [ ] daemon が sid と起動時刻から pid を引き、同じ sid の複数 run を区別できる
 - [ ] `ccmsg:<sid>.<pid>` 宛先が従来どおり解決される
 - [ ] module の pid 取得と CLI の祖先探索が消えている
+- [ ] readiness が sidecar の bind / 消滅に fs.watch を介さず追従する
