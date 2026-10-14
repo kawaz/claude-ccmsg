@@ -52,11 +52,6 @@ import {
   togglePosition,
 } from "./timeline-position.ts";
 import {
-  shouldCloseSidePanel,
-  sidePanelReserveWidth,
-  TL_SIDE_PANEL_MIN_CONTENT_PX,
-} from "./timeline-side-panel.ts";
-import {
   agentCommunicationCount,
   CACHE_KEEPALIVE_FOLD_LABEL,
   ccmsgMessageCount,
@@ -130,7 +125,7 @@ import {
   type SearchWord,
 } from "../in-view-search.ts";
 import { readStorage, writeStorage } from "../storage.ts";
-import { foldGroupKey, foldPathsByOffset } from "../fold-tree.ts";
+import { foldGroupKey } from "../fold-tree.ts";
 import { FoldOpenStore } from "../fold-open-store.ts";
 import {
   canPrettyRawLine,
@@ -150,19 +145,18 @@ import { forkActionState, liveChain, type ForkActionState } from "../fork-point.
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
 import { saySlots } from "../say-merge.ts";
-import {
-  defaultTimelineAutoOpen,
-  foldGroupShouldAutoOpen,
-  parseTimelineAutoOpenSettings,
-  timelineAutoOpenStorageKey,
-  toggleTimelineAutoOpen,
-  type TimelineAutoOpenSettings,
-} from "../timeline-auto-open.ts";
+import { defaultTimelineAutoOpen, foldGroupShouldAutoOpen } from "../timeline-auto-open.ts";
 import { SearchBar } from "./SearchBar.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "./InlineFileViewer.tsx";
 import { Tabs } from "./Tabs.tsx";
+import {
+  useAutoOpenSettings,
+  type TimelineAutoOpenContextValue,
+} from "./timeline/useAutoOpenSettings.ts";
+import { useSidePanel } from "./timeline/useSidePanel.ts";
+import { useTimelineFolds } from "./timeline/useTimelineFolds.ts";
 
 /**
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
@@ -457,11 +451,6 @@ const FileToolSidContext = createContext("");
  * before this DR). The `LinkedMarkdownView` at each MarkdownView call site
  * consumes this via useContext. */
 const SessionFilePathCtxContext = createContext<FilePathResolveCtx | undefined>(undefined);
-
-interface TimelineAutoOpenContextValue {
-  settings: TimelineAutoOpenSettings;
-  revision: number;
-}
 
 const TimelineAutoOpenContext = createContext<TimelineAutoOpenContextValue>({
   settings: defaultTimelineAutoOpen(false),
@@ -3334,102 +3323,12 @@ export function Timeline({
   // active so we don't tail the wrong file (which would race back stale
   // lines and confuse the byte-cache).
   // agentKey identifies *which* subagent this drilldown Timeline belongs to,
-  // for the per-agent auto-open storage key below — agentId is the primary
-  // identity, runId/teammate are fallbacks for refs that only carry those
-  // (mirrors the `...(agent.teammate ? { teammate: ... } : {})` subscribe
-  // payload a few lines down, which prefers the same fields).
+  // for the per-agent auto-open storage key — agentId is the primary
+  // identity, runId/teammate are fallbacks for refs that only carry those.
   const agentKey = agent?.agentId ?? agent?.runId ?? agent?.teammate;
-  const [autoOpenSettings, setAutoOpenSettings] = useState(() =>
-    parseTimelineAutoOpenSettings(
-      readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
-      agentActive,
-    ),
-  );
-  const [autoOpenRevision, setAutoOpenRevision] = useState(0);
-  const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
-  // パネル外 click で自動収納 (kawaz r38 mid=66)。useFabPopup と同じ理由で
-  // click イベント (tap 完了) のみ — mousedown/touchstart はスクロール目的の
-  // タッチでも閉じてしまう。open 中だけ listener を張る。項目リストへの
-  // click だけは畳まない (判断は shouldCloseSidePanel)。
-  const autoOpenFloatRef = useRef<HTMLDivElement | null>(null);
+  const autoOpen = useAutoOpenSettings({ sid, agentKey, agentActive });
   const tlLinesRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!autoOpenPanelOpen) return;
-    const onClick = (e: MouseEvent) => {
-      if (!(e.target instanceof Node)) return;
-      if (shouldCloseSidePanel(e.target, autoOpenFloatRef.current, tlLinesRef.current)) {
-        setAutoOpenPanelOpen(false);
-      }
-    };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, [autoOpenPanelOpen]);
-  // 開いている間だけ TL の列を右に詰めて、パネルの真下に隠れて押せない項目を
-  // 無くす (issue 2026-08-16-timeline-float-panel-blocks-record-click)。パネル
-  // 幅は中身 (fork の説明文 / dump の出力先パス) で変わるので実測して渡す。
-  const [floatReserve, setFloatReserve] = useState(0);
-  useEffect(() => {
-    const float = autoOpenFloatRef.current;
-    const column = float?.parentElement;
-    if (!float || !column) return;
-    const measure = () => {
-      setFloatReserve(
-        sidePanelReserveWidth(
-          autoOpenPanelOpen,
-          float.getBoundingClientRect().width,
-          column.getBoundingClientRect().width,
-          TL_SIDE_PANEL_MIN_CONTENT_PX,
-        ),
-      );
-    };
-    measure();
-    // padding-right は column の border-box 幅も float の幅も変えないので、
-    // この observe が自分自身を再発火させるループにはならない。
-    const observer = new ResizeObserver(measure);
-    observer.observe(float);
-    observer.observe(column);
-    return () => observer.disconnect();
-  }, [autoOpenPanelOpen]);
-  useEffect(() => {
-    setAutoOpenSettings(
-      parseTimelineAutoOpenSettings(
-        readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
-        agentActive,
-      ),
-    );
-    setAutoOpenRevision((revision) => revision + 1);
-  }, [sid, agentKey, agentActive]);
-  const toggleAutoOpen = useCallback(
-    (key: keyof TimelineAutoOpenSettings) => {
-      setAutoOpenSettings((current) => {
-        const next = toggleTimelineAutoOpen(current, key);
-        writeStorage(timelineAutoOpenStorageKey(sid, agentKey), JSON.stringify(next));
-        return next;
-      });
-      setAutoOpenRevision((revision) => revision + 1);
-    },
-    [sid, agentKey],
-  );
-  const autoOpenContext = useMemo<TimelineAutoOpenContextValue>(
-    () => ({ settings: autoOpenSettings, revision: autoOpenRevision }),
-    [autoOpenSettings, autoOpenRevision],
-  );
-
-  // Fold open/closed state for this session's timeline. One store per Timeline
-  // instance, and an instance shows one session (callers key it by sid): the
-  // offsets its keys are built from mean nothing in another transcript. An
-  // auto-open settings change only drops the overrides, so every fold falls
-  // back to the new default.
-  const [foldOpenStore] = useState(() => new FoldOpenStore());
-  useEffect(() => foldOpenStore.reset(), [foldOpenStore, autoOpenRevision]);
-  // Bumped when any fold body mounts for the first time, which is the moment
-  // nav into a previously-closed fold can find the element it wants to scroll
-  // to. See the pin-landing and search-reveal effects below.
-  const [foldMountRevision, setFoldMountRevision] = useState(0);
-  useEffect(
-    () => foldOpenStore.subscribeMounted(() => setFoldMountRevision((n) => n + 1)),
-    [foldOpenStore],
-  );
+  const sidePanel = useSidePanel(tlLinesRef);
   useEffect(() => {
     if (!active || agentActive) return;
     if (connStatus !== "connected") return;
@@ -3652,6 +3551,7 @@ export function Timeline({
     () => forkDividerGroupIndex(groups, forkOrigin?.boundary_uuid),
     [groups, forkOrigin?.boundary_uuid],
   );
+  const folds = useTimelineFolds(autoOpen.revision, groups);
   // 同一 ccmsg event (room + ts + from、DR-0027 以降は room + mid) が transcript
   // の複数箇所から抽出される場合 (queue-operation enqueue と task-notification
   // 経由の Monitor tool_result 両方に載っているケース、kawaz r15 mid=21) の
@@ -3697,16 +3597,6 @@ export function Timeline({
     ));
 
   const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
-  // Which folds enclose each line, so that nav can open them by key. Only the
-  // fold side has entries here; a boundary bubble is always mounted.
-  const foldPaths = useMemo(() => foldPathsByOffset(groups), [groups]);
-  const openFoldsAt = useCallback(
-    (offset: number | undefined) => {
-      if (offset === undefined) return;
-      for (const key of foldPaths.get(offset) ?? []) foldOpenStore.set(key, true);
-    },
-    [foldPaths, foldOpenStore],
-  );
   // Carried over whenever the set of visible bubbles is unchanged: this rides
   // in a context value, so a fresh Set per appended line would re-render every
   // ccmsg bubble on the page even though nothing about them moved.
@@ -3979,7 +3869,7 @@ export function Timeline({
     parsedSearch,
     searchClosedFolds,
     foldRevision,
-    foldMountRevision,
+    folds.mountRevision,
     displayRevision,
   ]);
 
@@ -4014,7 +3904,7 @@ export function Timeline({
   // ranges catch up on their own: rendered-text-search re-collects on every
   // `toggle` event.
   //
-  // foldMountRevision is what carries "a unit that did not exist a moment ago
+  // folds.mountRevision is what carries "a unit that did not exist a moment ago
   // does now". With 📁 on, foldRevision is deliberately not armed, so opening a
   // fold on the way to a match used to change nothing here — and now that the
   // fold's body arrives with that open, the match would land in view unpainted
@@ -4055,7 +3945,7 @@ export function Timeline({
     setSearchCurrentIndex,
     searchClosedFolds,
     foldRevision,
-    foldMountRevision,
+    folds.mountRevision,
     displayRevision,
   ]);
 
@@ -4070,7 +3960,7 @@ export function Timeline({
     if (!el) return;
     setPendingSearchReveal(null);
     revealAndScroll(el, scrollHold);
-  }, [pendingSearchReveal, foldMountRevision, scrollHold]);
+  }, [pendingSearchReveal, folds.mountRevision, scrollHold]);
 
   function scrollToSearchMatch(oneBasedIdx: number) {
     const key = matchingUnitKeys[oneBasedIdx - 1];
@@ -4080,7 +3970,7 @@ export function Timeline({
       revealAndScroll(el, scrollHold);
       return;
     }
-    openFoldsAt(searchUnitOffsets.get(key));
+    folds.openFoldsAt(searchUnitOffsets.get(key));
     setPendingSearchReveal(key);
   }
 
@@ -4548,14 +4438,14 @@ export function Timeline({
     <FileToolSidContext.Provider value={sid}>
       <SessionFilePathCtxContext.Provider value={sessionFilePathCtx}>
         <AgentTimelineHrefsContext.Provider value={agentTimelineHrefs}>
-          <TimelineAutoOpenContext.Provider value={autoOpenContext}>
-            <FoldOpenContext.Provider value={foldOpenStore}>
+          <TimelineAutoOpenContext.Provider value={autoOpen.context}>
+            <FoldOpenContext.Provider value={folds.store}>
               <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
                 <ItemRawContext.Provider value={itemRawLookup}>
                   <div
                     class="timeline-view"
                     ref={scrollRef}
-                    style={{ "--tl-float-reserve": `${floatReserve}px` }}
+                    style={{ "--tl-float-reserve": `${sidePanel.reserve}px` }}
                   >
                     {agentLabel ? (
                       <div class="tl-agent-header">
@@ -4851,17 +4741,17 @@ export function Timeline({
                       </div>
                     )}
                     <div
-                      ref={autoOpenFloatRef}
-                      class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
+                      ref={sidePanel.panelRef}
+                      class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}
                     >
                       <button
                         type="button"
                         class="tl-auto-open-handle"
-                        aria-label={autoOpenPanelOpen ? "パネルを閉じる" : "パネルを開く"}
-                        aria-expanded={autoOpenPanelOpen}
-                        onClick={() => setAutoOpenPanelOpen((open) => !open)}
+                        aria-label={sidePanel.open ? "パネルを閉じる" : "パネルを開く"}
+                        aria-expanded={sidePanel.open}
+                        onClick={sidePanel.toggle}
                       >
-                        {autoOpenPanelOpen ? "›" : "‹"}
+                        {sidePanel.open ? "›" : "‹"}
                       </button>
                       <div class="tl-float-body">
                         <fieldset
@@ -4882,10 +4772,10 @@ export function Timeline({
                               >
                                 <input
                                   type="checkbox"
-                                  checked={fixed ? true : autoOpenSettings[settingKey]}
+                                  checked={fixed ? true : autoOpen.settings[settingKey]}
                                   disabled={fixed}
                                   onChange={() => {
-                                    if (!fixed) toggleAutoOpen(settingKey);
+                                    if (!fixed) autoOpen.toggle(settingKey);
                                   }}
                                 />
                                 {category}
@@ -4896,8 +4786,8 @@ export function Timeline({
                           <label title="C/T/A を含む外側の fold を自動オープン">
                             <input
                               type="checkbox"
-                              checked={autoOpenSettings.items}
-                              onChange={() => toggleAutoOpen("items")}
+                              checked={autoOpen.settings.items}
+                              onChange={() => autoOpen.toggle("items")}
                             />
                             N items
                           </label>
