@@ -135,11 +135,14 @@ export type DescribeResult = Output<typeof DescribeResultSchema>;
 const EpochMsSchema = v.pipe(v.number(), v.safeInteger(), v.minValue(1));
 
 /** The session's context window as Claude Code itself uses it
- * (`$.session.usage().context`): `window` is the window of the model the
- * session runs now, environment overrides included. `at` is when the module
- * read it. */
+ * (`$.session.usage().context`, `session.measure`): `window` is the window of
+ * the model the session runs now, environment overrides included; `tokens`
+ * the input the last response of the live window was answered over (absent
+ * before the first response and right after a compaction). `at` is when the
+ * module read them. */
 export const SessionFactsContextSchema = v.object({
   window: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+  tokens: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(0))),
   at: EpochMsSchema,
 });
 export type SessionFactsContext = Output<typeof SessionFactsContextSchema>;
@@ -160,7 +163,7 @@ export type SessionFactsApiError = Output<typeof SessionFactsApiErrorSchema>;
 /** What a session's hooks module knows of its session through Claude Code
  * itself (DR-0035 §3), and the transcript cannot tell, or tells late: the
  * model as the session names it (`$.session.model()`, a launch-time `[1m]`
- * kept), the context window, and whether the latest main-thread turn ended on
+ * kept), the effort, the context window and its fill, and whether the latest main-thread turn ended on
  * an API error (absent when it did not). The module sends the whole of it each time a part moves, so
  * the facts the daemon holds are replaced, never merged; `at` is when the
  * module put them together, and facts older than the ones held are dropped.
@@ -168,6 +171,9 @@ export type SessionFactsApiError = Output<typeof SessionFactsApiErrorSchema>;
 export const SessionFactsSchema = v.object({
   at: EpochMsSchema,
   model: v.optional(v.pipe(v.string(), v.nonEmpty())),
+  /** The effort the latest main-thread turn ran at (`low` ... `max`, as
+   * Claude Code names it), known from the first turn's end. */
+  effort: v.optional(v.pipe(v.string(), v.nonEmpty())),
   context: v.optional(SessionFactsContextSchema),
   api_error: v.optional(SessionFactsApiErrorSchema),
 });

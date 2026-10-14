@@ -1821,10 +1821,37 @@ function isoAt(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+/** The fill to show, and when it was observed: the newer of the
+ * transcript's and the module's. Both are the input the last response of the
+ * live window was answered over; the module's comes once per main-thread
+ * turn (session.measure), the transcript's with each assistant row, so in a
+ * long run of tool calls the transcript's is the newer one. */
+function newerFill(
+  context: SessionContextUsage | undefined,
+  facts: SessionFacts,
+): { tokens: number; timestamp: string } | undefined {
+  const measured = facts.context;
+  const folded = context?.tokens !== undefined ? context.tokens : undefined;
+  // A row timestamp that does not parse is no newer than the module's.
+  const foldedIsNewer =
+    folded !== undefined &&
+    context !== undefined &&
+    measured !== undefined &&
+    Date.parse(context.timestamp) > measured.at;
+  if (measured?.tokens !== undefined && !foldedIsNewer) {
+    return { tokens: measured.tokens, timestamp: isoAt(measured.at) };
+  }
+  if (folded !== undefined && context !== undefined) {
+    return { tokens: folded, timestamp: context.timestamp };
+  }
+  return undefined;
+}
+
 /** The context as the transcript's fold has it, with what the hooks module
- * said laid over it: the window is only ever the module's, and the model the
- * module read (`[1m]` kept) names it over the transcript's. Without facts the
- * fold stands as it is. */
+ * said laid over it: the window is only ever the module's; the model the
+ * module read (`[1m]` kept) and the effort it saw name it over the
+ * transcript's; the fill is the newer of the two (newerFill). Without facts
+ * the fold stands as it is. */
 export function contextWithFacts(
   context: SessionContextUsage | undefined,
   facts: SessionFacts | undefined,
@@ -1833,12 +1860,14 @@ export function contextWithFacts(
   const model = facts.model ?? context?.model;
   if (model === undefined) return context;
   const window = facts.context?.window;
-  const timestamp = context?.timestamp ?? isoAt(facts.context?.at ?? facts.at);
+  const effort = facts.effort ?? context?.effort;
+  const fill = newerFill(context, facts);
+  const timestamp = fill?.timestamp ?? context?.timestamp ?? isoAt(facts.context?.at ?? facts.at);
   return {
-    ...(context?.tokens !== undefined ? { tokens: context.tokens } : {}),
+    ...(fill !== undefined ? { tokens: fill.tokens } : {}),
     ...(window !== undefined ? { window } : {}),
     model,
-    ...(context?.effort !== undefined ? { effort: context.effort } : {}),
+    ...(effort !== undefined ? { effort } : {}),
     timestamp,
   };
 }

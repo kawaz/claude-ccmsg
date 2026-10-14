@@ -82,6 +82,30 @@ describe("the context with the module's facts laid over the transcript's", () =>
     });
   });
 
+  // Both fills are the input of the last response; the module's comes at the
+  // end of each main-thread turn, the transcript's with each assistant row.
+  test("the fill is the newer of the module's and the transcript's", () => {
+    const measuredLater: SessionFacts = {
+      ...FACTS,
+      context: { window: 1_000_000, tokens: 150_000, at: Date.parse("2026-10-14T00:00:05.000Z") },
+    };
+    expect(contextWithFacts(FOLDED, measuredLater)).toMatchObject({
+      tokens: 150_000,
+      timestamp: "2026-10-14T00:00:05.000Z",
+    });
+    // A long run of tool calls: rows after the last measure are newer.
+    const rowLater = { ...FOLDED, timestamp: "2026-10-14T00:00:09.000Z" };
+    expect(contextWithFacts(rowLater, measuredLater)).toMatchObject({
+      tokens: 120_000,
+      timestamp: "2026-10-14T00:00:09.000Z",
+    });
+  });
+
+  test("the module's effort over the transcript's", () => {
+    expect(contextWithFacts(FOLDED, { ...FACTS, effort: "xhigh" })?.effort).toBe("xhigh");
+    expect(contextWithFacts(undefined, { ...FACTS, effort: "low" })?.effort).toBe("low");
+  });
+
   test("facts that know nothing yet add nothing", () => {
     expect(contextWithFacts(undefined, { at: 1 })).toBeUndefined();
   });

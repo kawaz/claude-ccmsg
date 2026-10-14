@@ -21,11 +21,13 @@
 //
 // The module also tells the daemon what it knows of its session through
 // Claude Code itself and the transcript cannot tell (`session.facts`): the
-// model as the session names it, `[1m]` kept, the context window the
-// session runs with, and the API error its latest main-thread turn ended on.
-// It reads the model and the window at session.start, after a model switch and
-// after /clear, and takes the window again from each session.measure; the API
-// error comes with classic.StopFailure and turn.complete. Each time, it sends the whole of what it knows through `ccmsg sidecar facts`,
+// model as the session names it, `[1m]` kept, the effort, the context window
+// the session runs with and its fill, and the API error its latest
+// main-thread turn ended on. It reads the model and the window at
+// session.start, after a model switch and after /clear, and takes the window
+// and the fill again from each session.measure; the effort comes with the end
+// of each main-thread turn (classic.Stop, classic.StopFailure), the API error
+// with classic.StopFailure and turn.complete. Each time, it sends the whole of what it knows through `ccmsg sidecar facts`,
 // which starts no daemon. A daemon that comes up later asks for them with the
 // `session.facts` request when the run's sidecar names the run. Sessions
 // without a composer send them too: they have no sidecar, but the daemon
@@ -98,7 +100,7 @@ export interface Engine {
     surfaces(): Promise<readonly string[]>;
     /** The model as `/model` names it, a launch-time `[1m]` kept. */
     model(): Promise<string>;
-    usage(): Promise<{ context: { window: number } }>;
+    usage(): Promise<{ context: { window: number; tokens?: number } }>;
   };
   prompt: {
     read(): Promise<{ text: string; cursor: number }>;
@@ -129,6 +131,7 @@ export type ObservedEvent =
   | "session.measure"
   | "classic.SessionStart"
   | "classic.PostModelSwitch"
+  | "classic.Stop"
   | "classic.StopFailure"
   | "classic.UserPromptSubmit"
   | "prompt.submit"
@@ -172,12 +175,22 @@ const SessionStartInputSchema = v.looseObject({
 const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
 const ClassicSessionStartInputSchema = v.looseObject({});
 const SessionMeasureInputSchema = v.looseObject({
-  context: v.optional(v.looseObject({ window: v.optional(v.number()) })),
+  context: v.optional(
+    v.looseObject({ window: v.optional(v.number()), tokens: v.optional(v.number()) }),
+  ),
 });
 const PostModelSwitchInputSchema = v.looseObject({});
 // A classic hook's input names the subagent it fired in (`agent_id`); the
-// engine's turn events name it `agentId`. Absent on the main thread.
+// engine's turn events name it `agentId`. Absent on the main thread. A classic
+// hook of a turn carries the turn's effort (`effort.level`) on a model that
+// takes one.
+const TurnEffortSchema = v.optional(v.looseObject({ level: v.optional(v.string()) }));
+const StopInputSchema = v.looseObject({
+  agent_id: v.optional(v.string()),
+  effort: TurnEffortSchema,
+});
 const StopFailureInputSchema = v.looseObject({
+  effort: TurnEffortSchema,
   error: v.optional(v.string()),
   error_details: v.optional(v.string()),
   last_assistant_message: v.optional(v.string()),
@@ -340,7 +353,12 @@ export interface ModuleState {
   run?: { id: string; startedAt: number };
   /** What the module knows of the session through Claude Code (session.facts):
    * each part once it has been read. */
-  facts: { model?: string; context?: SessionFactsContext; api_error?: SessionFactsApiError };
+  facts: {
+    model?: string;
+    effort?: string;
+    context?: SessionFactsContext;
+    api_error?: SessionFactsApiError;
+  };
   /** Whether a StopFailure of the main thread came in the turn now ending:
    * its error is the one the turn ended on. */
   failedThisTurn: boolean;
@@ -615,6 +633,28 @@ function sendFacts($: Engine, state: ModuleState): void {
     });
 }
 
+/** The window and the fill as the facts carry them: a fill Claude Code does
+ * not report (before the first response, right after a compaction) is left
+ * out. */
+function contextFacts(
+  context: { window: number; tokens?: number },
+  at: number,
+): SessionFactsContext {
+  return {
+    window: context.window,
+    ...(context.tokens !== undefined ? { tokens: context.tokens } : {}),
+    at,
+  };
+}
+
+/** Take the effort a main-thread turn ran at, and send the facts when it
+ * moved. */
+function turnEffort($: Engine, state: ModuleState, level: string | undefined): void {
+  if (level === undefined || level === "" || level === state.facts.effort) return;
+  state.facts = { ...state.facts, effort: level };
+  sendFacts($, state);
+}
+
 /** Read the model and the context window off the session, and send the
  * facts. Never rejects. */
 async function readModelAndWindow($: Engine, state: ModuleState): Promise<void> {
@@ -622,7 +662,7 @@ async function readModelAndWindow($: Engine, state: ModuleState): Promise<void> 
     const model = await $.session.model();
     const { context } = await $.session.usage();
     const at = Math.floor(await $.clock.now());
-    state.facts = { ...state.facts, model, context: { window: context.window, at } };
+    state.facts = { ...state.facts, model, context: contextFacts(context, at) };
   } catch (e) {
     $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
     return;
@@ -632,10 +672,8 @@ async function readModelAndWindow($: Engine, state: ModuleState): Promise<void> 
 
 /** The facts without an API error. */
 function withoutApiError(facts: ModuleState["facts"]): ModuleState["facts"] {
-  return {
-    ...(facts.model !== undefined ? { model: facts.model } : {}),
-    ...(facts.context !== undefined ? { context: facts.context } : {}),
-  };
+  const { api_error: _cleared, ...rest } = facts;
+  return rest;
 }
 
 /** A main-thread turn ended. One that ended on an API error with no
@@ -827,7 +865,12 @@ export function register(on: On): ModuleState {
   on("session.end", async ($, e, next) =>
     observe($, e, next, "session.end", SessionEndInputSchema, {
       before: (input) => {
-        if (input.reason === "clear" && state.sid !== undefined) {
+        if (input.reason !== "clear") return;
+        // The session after /clear has answered nothing: no error of the
+        // old one's turns is its.
+        state.facts = withoutApiError(state.facts);
+        state.failedThisTurn = false;
+        if (state.sid !== undefined) {
           nextGeneration(state);
           state.sid = undefined;
         }
@@ -852,7 +895,11 @@ export function register(on: On): ModuleState {
         const window = input.context?.window;
         if (window === undefined) return;
         const at = Math.floor(await $.clock.now());
-        state.facts = { ...state.facts, context: { window, at } };
+        const tokens = input.context?.tokens;
+        state.facts = {
+          ...state.facts,
+          context: contextFacts({ window, ...(tokens !== undefined ? { tokens } : {}) }, at),
+        };
         sendFacts($, state);
       },
     }),
@@ -864,6 +911,7 @@ export function register(on: On): ModuleState {
     observe($, e, next, "classic.StopFailure", StopFailureInputSchema, {
       after: async (input) => {
         if (input.agent_id !== undefined) return;
+        turnEffort($, state, input.effort?.level);
         const at = Math.floor(await $.clock.now());
         const text = input.last_assistant_message ?? input.error_details;
         const api_error = {
@@ -874,6 +922,13 @@ export function register(on: On): ModuleState {
         state.failedThisTurn = true;
         state.facts = { ...state.facts, api_error };
         sendFacts($, state);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("classic.Stop", async ($, e, next) =>
+    observe($, e, next, "classic.Stop", StopInputSchema, {
+      after: (input) => {
+        if (input.agent_id === undefined) turnEffort($, state, input.effort?.level);
       },
     }),
   ).catch(async (_$, e, next) => next(e));

@@ -907,6 +907,38 @@ describe("the facts the module sends of its session (session.facts)", () => {
     expect(factsAt(fake, 1).facts.context?.window).toBe(300_000);
   });
 
+  // The fill comes with each measure; before the first response there is
+  // none, and the facts say none rather than zero.
+  test("session.measure sends the fill it says, and none when it says none", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const measure = { context: { window: 1_000_000, tokens: 42_000 } };
+    await fire(fake, "session.measure", measure, async () => ({}));
+    await untilFacts(fake, 1);
+    expect(factsAt(fake, 0).facts.context?.tokens).toBe(42_000);
+    await fire(fake, "session.measure", { context: { window: 1_000_000 } }, async () => ({}));
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.context).not.toHaveProperty("tokens");
+  });
+
+  // No `$` call answers the effort: a main-thread turn's end carries it.
+  test("the effort comes with a main-thread turn's end, and is sent when it moves", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "classic.Stop", { effort: { level: "high" } }, async () => ({}));
+    await untilFacts(fake, 1);
+    expect(factsAt(fake, 0).facts.effort).toBe("high");
+    await fire(fake, "classic.Stop", { effort: { level: "high" } }, async () => ({}));
+    const subagent = { agent_id: "a1", effort: { level: "low" } };
+    await fire(fake, "classic.Stop", subagent, async () => ({}));
+    await settle();
+    expect(fake.factsSent.length).toBe(1);
+    await fire(fake, "classic.StopFailure", { effort: { level: "max" } }, async () => ({}));
+    await untilFacts(fake, 2);
+    await settle();
+    expect(fake.factsSent.at(-1)?.facts.effort).toBe("max");
+  });
+
   // A switch raises no session.measure, so the module reads both again.
   test("a model switch sends the new model and its window", async () => {
     const fake = fakeEngine();
@@ -932,6 +964,18 @@ describe("the facts the module sends of its session (session.facts)", () => {
     await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
     await untilFacts(fake, 2);
     expect(factsAt(fake, 1).sid).toBe("ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+  });
+
+  test("after /clear the old session's API error is not the new one's", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "classic.StopFailure", { error: "server_error" }, async () => ({}));
+    await untilFacts(fake, 1);
+    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
+    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await fire(fake, "classic.SessionStart", CLASSIC_START, async () => ({}));
+    await untilFacts(fake, 2);
+    expect(factsAt(fake, 1).facts.api_error).toBeUndefined();
   });
 
   // A daemon that came up after the module asks for what it missed.

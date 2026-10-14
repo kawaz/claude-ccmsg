@@ -804,6 +804,7 @@ var DescribeResultSchema = object({
 var EpochMsSchema = pipe(number(), safeInteger(), minValue(1));
 var SessionFactsContextSchema = object({
   window: pipe(number(), safeInteger(), minValue(1)),
+  tokens: optional(pipe(number(), safeInteger(), minValue(0))),
   at: EpochMsSchema
 });
 var SessionFactsApiErrorSchema = object({
@@ -814,6 +815,7 @@ var SessionFactsApiErrorSchema = object({
 var SessionFactsSchema = object({
   at: EpochMsSchema,
   model: optional(pipe(string(), nonEmpty())),
+  effort: optional(pipe(string(), nonEmpty())),
   context: optional(SessionFactsContextSchema),
   api_error: optional(SessionFactsApiErrorSchema)
 });
@@ -880,10 +882,16 @@ var SessionStartInputSchema = looseObject({
 var SessionEndInputSchema = looseObject({ reason: optional(string()) });
 var ClassicSessionStartInputSchema = looseObject({});
 var SessionMeasureInputSchema = looseObject({
-  context: optional(looseObject({ window: optional(number()) }))
+  context: optional(looseObject({ window: optional(number()), tokens: optional(number()) }))
 });
 var PostModelSwitchInputSchema = looseObject({});
+var TurnEffortSchema = optional(looseObject({ level: optional(string()) }));
+var StopInputSchema = looseObject({
+  agent_id: optional(string()),
+  effort: TurnEffortSchema
+});
 var StopFailureInputSchema = looseObject({
+  effort: TurnEffortSchema,
   error: optional(string()),
   error_details: optional(string()),
   last_assistant_message: optional(string()),
@@ -1133,12 +1141,25 @@ function sendFacts($, state) {
     $.ui.log(`ccmsg: facts not sent: ${errorText(e)}`, { to: "debug" });
   });
 }
+function contextFacts(context, at) {
+  return {
+    window: context.window,
+    ...context.tokens !== undefined ? { tokens: context.tokens } : {},
+    at
+  };
+}
+function turnEffort($, state, level) {
+  if (level === undefined || level === "" || level === state.facts.effort)
+    return;
+  state.facts = { ...state.facts, effort: level };
+  sendFacts($, state);
+}
 async function readModelAndWindow($, state) {
   try {
     const model = await $.session.model();
     const { context } = await $.session.usage();
     const at = Math.floor(await $.clock.now());
-    state.facts = { ...state.facts, model, context: { window: context.window, at } };
+    state.facts = { ...state.facts, model, context: contextFacts(context, at) };
   } catch (e) {
     $.ui.log(`ccmsg: could not read the model and the window: ${errorText(e)}`, { to: "debug" });
     return;
@@ -1146,10 +1167,8 @@ async function readModelAndWindow($, state) {
   sendFacts($, state);
 }
 function withoutApiError(facts) {
-  return {
-    ...facts.model !== undefined ? { model: facts.model } : {},
-    ...facts.context !== undefined ? { context: facts.context } : {}
-  };
+  const { api_error: _cleared, ...rest } = facts;
+  return rest;
 }
 async function turnEnded($, state, reason) {
   const failed = state.failedThisTurn;
@@ -1283,7 +1302,11 @@ function register(on) {
   })).catch(async (_$, e, next) => next(e));
   on("session.end", async ($, e, next) => observe($, e, next, "session.end", SessionEndInputSchema, {
     before: (input) => {
-      if (input.reason === "clear" && state.sid !== undefined) {
+      if (input.reason !== "clear")
+        return;
+      state.facts = withoutApiError(state.facts);
+      state.failedThisTurn = false;
+      if (state.sid !== undefined) {
         nextGeneration(state);
         state.sid = undefined;
       }
@@ -1301,7 +1324,11 @@ function register(on) {
       if (window === undefined)
         return;
       const at = Math.floor(await $.clock.now());
-      state.facts = { ...state.facts, context: { window, at } };
+      const tokens = input.context?.tokens;
+      state.facts = {
+        ...state.facts,
+        context: contextFacts({ window, ...tokens !== undefined ? { tokens } : {} }, at)
+      };
       sendFacts($, state);
     }
   })).catch(async (_$, e, next) => next(e));
@@ -1309,6 +1336,7 @@ function register(on) {
     after: async (input) => {
       if (input.agent_id !== undefined)
         return;
+      turnEffort($, state, input.effort?.level);
       const at = Math.floor(await $.clock.now());
       const text = input.last_assistant_message ?? input.error_details;
       const api_error = {
@@ -1319,6 +1347,12 @@ function register(on) {
       state.failedThisTurn = true;
       state.facts = { ...state.facts, api_error };
       sendFacts($, state);
+    }
+  })).catch(async (_$, e, next) => next(e));
+  on("classic.Stop", async ($, e, next) => observe($, e, next, "classic.Stop", StopInputSchema, {
+    after: (input) => {
+      if (input.agent_id === undefined)
+        turnEffort($, state, input.effort?.level);
     }
   })).catch(async (_$, e, next) => next(e));
   on("turn.complete", async ($, e, next) => observe($, e, next, "turn.complete", TurnCompleteInputSchema, {

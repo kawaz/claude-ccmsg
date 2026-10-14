@@ -134,6 +134,7 @@ describe("the ops' results", () => {
       { at: 1_791_955_713_123, model: "claude-opus-5-5[1m]" },
       { at: 2, model: "m", context: { window: 1_000_000, at: 2 } },
       { at: 3, api_error: { kind: "rate_limit", text: "API Error: 429", at: 3 } },
+      { at: 4, effort: "xhigh", context: { window: 200_000, tokens: 0, at: 4 } },
       // Claude Code names the kinds: one this ccmsg does not know is kept.
       { at: 3, api_error: { kind: "some_new_kind", at: 3 } },
     ]) {
@@ -148,6 +149,9 @@ describe("the ops' results", () => {
       { at: 1, context: { at: 1 } },
       { at: 1, context: { window: 200_000 } },
       { at: 1, api_error: { kind: "", at: 1 } },
+      { at: 1, effort: "" },
+      { at: 1, context: { window: 1, tokens: -1, at: 1 } },
+      { at: 1, context: { window: 1, tokens: 1.5, at: 1 } },
       { at: 1, api_error: { text: "x", at: 1 } },
     ]) {
       expect(parseWith(SessionFactsSchema, facts).ok).toBe(false);
