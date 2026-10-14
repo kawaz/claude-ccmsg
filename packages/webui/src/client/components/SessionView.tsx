@@ -22,6 +22,7 @@ import { hasSessionTranscript } from "../utils.ts";
 import { hitFromLive, isSessionPinned, pinnedHitForSid } from "../pinned-sessions.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
+import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
@@ -108,10 +109,24 @@ export function SessionView({
 }) {
   const { store, ws } = useApp();
   const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
-  const visitedTabs = useRef(new Set<SessionTab>());
+  // Tabs opened at least once stay mounted (hidden) so switching back keeps
+  // their scroll and local state. It remembers earlier renders' tabs, so it is
+  // state, brought up to date during render: setting it here re-runs this
+  // render before anything is committed.
+  const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<SessionTab>>(() => new Set([tab]));
+  if (!visitedTabs.has(tab)) setVisitedTabs(new Set([...visitedTabs, tab]));
   const rootRef = useRef<HTMLElement>(null);
   const scrollPositions = useRef(new Map<HTMLElement, { top: number; left: number }>());
-  visitedTabs.current.add(tab);
+
+  // This view unmounts only when App's LRU drops the session (App.tsx). Its
+  // cached transcript is then released: `SessionTreeState.timeline` is the
+  // largest thing the store holds per session (megabytes for a long one) and
+  // has no other release path, so keeping it would grow the store by a full
+  // transcript for every session ever opened. Nothing is lost — Timeline's
+  // revisit effect re-reads the tail on every arrival anyway. The rest of the
+  // tree (dir listings, expanded set, selected path) is reused on revisit and
+  // stays.
+  useEffect(() => () => store.dispatch({ type: "timeline/evicted", sids: [sid] }), [store, sid]);
 
   useEffect(() => {
     if (!active) return;
@@ -261,7 +276,7 @@ export function SessionView({
       void subscribed.then(() => ws.sessionStatusUnsubscribe(sid).catch(() => {}));
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [active, sid, needsStatus, hasTranscript, statusSource, state.connStatus]);
+  }, [active, sid, needsStatus, hasTranscript, statusSource, state.connStatus, store, ws]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -278,13 +293,15 @@ export function SessionView({
     if (saved) replaceNavigation(fileHref(sid, saved.path));
   }, [active, sid, tab, selectedPath]);
 
-  // 保存 record の mount-time sweep (session-input-store.ts の下書き sweep と同じ
-  // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
-  // (空) は比較対象がないので待つ — 以降の peers 増減では再実行しない
-  // (mount あたり 1 回で十分、再訪時にまた走る)。
+  // 保存 record の sweep (session-input-store.ts の下書き sweep と同じ 2 規則:
+  // peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前 (空) は比較
+  // 対象がないので待ち、以降は peers の件数が変わるたびに掃除し直す。反応する
+  // のは件数だけで、その時点の state は Effect Event で読む。
+  const sweepStaleFilesViews = useEffectEvent(() => cleanupStaleFilesViews(state));
+  const peerCount = state.peers.length;
   useEffect(() => {
-    if (state.peers.length > 0) cleanupStaleFilesViews(state);
-  }, [state.peers.length]);
+    if (peerCount > 0) sweepStaleFilesViews();
+  }, [peerCount]);
 
   const sessionStatus = state.sessionStatuses.get(sid);
 
@@ -325,7 +342,7 @@ export function SessionView({
           </button>
         ) : null}
       </div>
-      {visitedTabs.current.has("files") ? (
+      {visitedTabs.has("files") ? (
         <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
           <FilesPanes
             sid={sid}
@@ -336,7 +353,7 @@ export function SessionView({
           />
         </div>
       ) : null}
-      {visitedTabs.current.has("timeline") ? (
+      {visitedTabs.has("timeline") ? (
         <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
           {hasTranscript ? (
             (() => {
@@ -357,6 +374,7 @@ export function SessionView({
                 />
               ) : (
                 <Timeline
+                  key={sid}
                   sid={sid}
                   timeline={tree.timeline}
                   search={tree.timelineSearch}
@@ -372,7 +390,7 @@ export function SessionView({
           )}
         </div>
       ) : null}
-      {visitedTabs.current.has("terminal") && hasTerminal ? (
+      {visitedTabs.has("terminal") && hasTerminal ? (
         <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
           {terminalAbsence !== null || !hyouiSessionId ? (
             <div class="terminal-pane">
@@ -383,7 +401,7 @@ export function SessionView({
           )}
         </div>
       ) : null}
-      {visitedTabs.current.has("status") ? (
+      {visitedTabs.has("status") ? (
         <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
           {hasTranscript && !statusError ? (
             <StatusPanel
@@ -399,7 +417,7 @@ export function SessionView({
           )}
         </div>
       ) : null}
-      {visitedTabs.current.has("rooms") ? (
+      {visitedTabs.has("rooms") ? (
         <div class="session-tab-panel" hidden={tab !== "rooms"} data-session-tab="rooms">
           <SessionRooms sid={sid} state={state} />
         </div>

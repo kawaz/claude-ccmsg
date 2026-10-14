@@ -16,16 +16,16 @@ import { CatalogView } from "./CatalogView.tsx";
 import { parseUrl, usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { reloadButtonTitle } from "../version-guard.ts";
-import { useEffect, useRef } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
 import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
 import { nextSidebarSnapLeft, opensOnMain } from "../sidebar-panes.ts";
 import {
-  evictedSessionViewSids,
   skipInactiveSessionViewRender,
   touchSessionViewCache,
   type CachedSessionView,
 } from "../session-view-cache.ts";
+import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
  * SESSION (repo ▸ ws) / ROOM (title) を出す (kawaz r17 mid=1、2026-07-14):
@@ -127,12 +127,8 @@ export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
   const versionMismatch = state.versionMismatch;
-  const sessionViewsRef = useRef<CachedSessionView[]>([]);
-  // Sids the LRU dropped since the last commit, queued for the effect below.
-  // The eviction is discovered here (render) but dispatched there, because a
-  // dispatch during render would re-enter the store while Preact is building
-  // this tree.
-  const evictedSidsRef = useRef<string[]>([]);
+  const canGoBack = useCanGoBack();
+  const canGoForward = useCanGoForward();
   const layoutRef = useRef<HTMLDivElement>(null);
   const initialSnapRef = useRef(false);
   // ラベルにだけ使う (押した瞬間の判定は下で読み直す)。
@@ -143,27 +139,20 @@ export function App() {
     (state.view === "session" || state.view === "timeline")
       ? state.currentSid
       : null;
+  // The session views kept mounted (most recently shown last). It remembers
+  // the views shown on earlier renders, so it is state, brought up to date
+  // during render: setting it here re-runs this render before anything is
+  // committed. A view the LRU drops unmounts, and SessionView releases its
+  // cached transcript on the way out.
+  const [sessionViews, setSessionViews] = useState<readonly CachedSessionView[]>([]);
   if (visibleSessionSid !== null) {
-    const previous = sessionViewsRef.current;
-    sessionViewsRef.current = touchSessionViewCache(previous, {
+    const touched = touchSessionViewCache(sessionViews, {
       sid: visibleSessionSid,
       tab: state.currentTab ?? "files",
       agent: state.currentAgent,
     });
-    const evicted = evictedSessionViewSids(previous, sessionViewsRef.current);
-    if (evicted.length > 0) evictedSidsRef.current.push(...evicted);
+    if (touched !== sessionViews) setSessionViews(touched);
   }
-  useEffect(() => {
-    const queued = evictedSidsRef.current;
-    if (queued.length === 0) return;
-    evictedSidsRef.current = [];
-    // A sid can be evicted and then re-visited before this effect runs (fast
-    // A→B→C→D→A navigation); dropping its transcript at that point would
-    // throw away a Timeline that is mounted and current.
-    const mounted = new Set(sessionViewsRef.current.map((view) => view.sid));
-    const sids = queued.filter((sid) => !mounted.has(sid));
-    if (sids.length > 0) store.dispatch({ type: "timeline/evicted", sids });
-  });
   // サイドバーの在り / 無しはその窓の中だけの状態 (storage.ts の表)。
   useEffect(() => {
     writeSessionStorage(SIDEBAR_OPEN_KEY, String(state.sidebarOpen));
@@ -264,7 +253,7 @@ export function App() {
             type="button"
             aria-label="back"
             title="戻る"
-            disabled={!window.navigation.canGoBack}
+            disabled={!canGoBack}
             onClick={() => void window.navigation.back()}
           >
             &#8592;
@@ -274,7 +263,7 @@ export function App() {
             type="button"
             aria-label="forward"
             title="進む"
-            disabled={!window.navigation.canGoForward}
+            disabled={!canGoForward}
             onClick={() => void window.navigation.forward()}
           >
             &#8594;
@@ -307,7 +296,7 @@ export function App() {
          * 自分の右端に立てる (Sidebar.tsx)。本文と横に並びきるか、本文が
          * 幅いっぱいを占めて横スクロールで行き来するかは app.css が決める。 */}
         <Sidebar state={state} />
-        {sessionViewsRef.current.map((view) => (
+        {sessionViews.map((view) => (
           <CachedSessionViewComponent
             key={view.sid}
             state={state}

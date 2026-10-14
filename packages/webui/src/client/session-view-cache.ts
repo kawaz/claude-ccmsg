@@ -16,33 +16,26 @@ export function skipInactiveSessionViewRender(wasActive: boolean, isActive: bool
   return !wasActive && !isActive;
 }
 
-/** Sids that `touchSessionViewCache` dropped from the cache — the sessions
- * whose SessionView (and therefore whose Timeline subscription) is about to be
- * unmounted for good.
- *
- * Their `SessionTreeState.timeline` is the largest thing the store holds per
- * session (the whole cached transcript, megabytes for a long session) and it
- * has no other release path, so without this the store grows by one full
- * transcript for every distinct session the user ever opens. Keeping it bought
- * nothing anyway: Timeline's revisit effect re-reads the tail with
- * `mode:"replace"` on every arrival, so the cached lines are discarded on the
- * next visit regardless. The rest of the tree (loaded dir listings, expanded
- * set, selected path) IS reused on revisit and stays. */
-export function evictedSessionViewSids(
-  previous: readonly CachedSessionView[],
-  next: readonly CachedSessionView[],
-): string[] {
-  if (previous.length === 0) return [];
-  const kept = new Set(next.map((entry) => entry.sid));
-  return previous.filter((entry) => !kept.has(entry.sid)).map((entry) => entry.sid);
-}
-
+/** The cache after `current` is shown: moved (or added) to the most recently
+ * used end, the least recently used dropped past `limit`. Hands back `cache`
+ * itself when `current` already is its most recent entry, so a caller holding
+ * the cache in state can tell "nothing changed" by identity. */
 export function touchSessionViewCache(
   cache: readonly CachedSessionView[],
   current: CachedSessionView,
   limit: number = SESSION_VIEW_CACHE_LIMIT,
-): CachedSessionView[] {
-  if (limit < 1) return [];
+): readonly CachedSessionView[] {
+  if (limit < 1) return cache.length === 0 ? cache : [];
+  const last = cache.at(-1);
+  if (
+    cache.length <= limit &&
+    last !== undefined &&
+    last.sid === current.sid &&
+    last.tab === current.tab &&
+    last.agent === current.agent
+  ) {
+    return cache;
+  }
   const next = cache.filter((entry) => entry.sid !== current.sid);
   next.push(current);
   return next.slice(-limit);

@@ -84,6 +84,7 @@ export function TimelinePanes({
       <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <Timeline
+          key={sid}
           sid={sid}
           timeline={timeline}
           search={search}

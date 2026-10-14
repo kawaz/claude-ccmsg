@@ -22,6 +22,7 @@ import {
 } from "../src/client/store.ts";
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
+import type { Locator } from "../src/client/locator.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
@@ -864,6 +865,37 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
     expect(tree).toBeDefined();
     expect(tree?.timeline.status).toBe("idle");
     expect(tree?.timeline.lines).toEqual([]);
+  });
+
+  // The position is the URL's (`/timeline/<uuid>`, or the tail when absent),
+  // and stops being one the moment the URL leaves the Timeline — the Timeline
+  // reads "head" then, the same as it would from the location itself.
+  test("records the selected position while the URL is a Timeline, and null otherwise", () => {
+    const pinned = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1", position: "u-7" },
+      sidebar: CLOSED_SIDEBAR,
+    });
+    expect(pinned.timelinePosition).toBe("u-7");
+
+    const tail = dispatch(pinned, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1" },
+      sidebar: CLOSED_SIDEBAR,
+    });
+    expect(tail.timelinePosition).toBe("head");
+
+    const leaving: Locator[] = [
+      { view: "session", sid: "sess-1", path: null },
+      { view: "room", room: "r1", mid: null },
+      { view: "usage", tab: "quota" },
+      { view: "catalog" },
+      { view: "unknown", pathname: "/nope" },
+    ];
+    for (const locator of leaving) {
+      const state = dispatch(pinned, { type: "locator/changed", locator, sidebar: CLOSED_SIDEBAR });
+      expect(state.timelinePosition).toBeNull();
+    }
   });
 
   // Revisiting a session's timeline (e.g. Files -> Timeline -> Files ->

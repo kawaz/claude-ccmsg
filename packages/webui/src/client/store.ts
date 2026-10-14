@@ -319,6 +319,11 @@ export interface AppState {
    * only while the URL is `#t<sid>:<ref>`; a plain `#t<sid>` or any
    * non-timeline view leaves this null. */
   currentAgent: AgentRef | null;
+  /** Position the timeline locator selects for `currentSid` (`/timeline/<uuid>`),
+   * `"head"` for the tail. null whenever the URL is not a Timeline — the same
+   * reading `parseUrl` gives of the location, held here so the Timeline gets
+   * it from the store's one URL→state path rather than re-parsing the URL. */
+  timelinePosition: string | null;
   sessionTrees: Map<string, SessionTreeState>;
   /** Folded status snapshot (DR-0020 Phase 1/2), keyed by sid. Populated by
    * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
@@ -416,6 +421,7 @@ export function initialState(): AppState {
     currentMid: null,
     currentSid: null,
     currentAgent: null,
+    timelinePosition: null,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
     sessionErrors: new Map(),
@@ -829,7 +835,7 @@ function agentRefKey(agent: AgentRef | null | undefined): string {
 
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "unknown") {
-    return { ...state, unknownPath: locator.pathname };
+    return { ...state, unknownPath: locator.pathname, timelinePosition: null };
   }
   if (locator.view === "session-root") return state;
   if (locator.view === "catalog") {
@@ -843,6 +849,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       unknownPath: null,
       missingTarget: null,
       currentAgent: null,
+      timelinePosition: null,
       mentionTo: new Set(),
     };
   }
@@ -861,6 +868,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       unknownPath: null,
       missingTarget: null,
       currentAgent: null,
+      timelinePosition: null,
       mentionTo: new Set(),
     };
   }
@@ -874,6 +882,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentRoomId: locator.room,
       currentMid: locator.mid,
       currentAgent: null,
+      timelinePosition: null,
       mentionTo: new Set(),
     };
   }
@@ -911,6 +920,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentSid: locator.sid,
       currentAgent: nextAgent,
+      timelinePosition: locator.position ?? "head",
       sessionTrees,
       mentionTo: new Set(),
     };
@@ -936,6 +946,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     missingTarget: null,
     currentSid: locator.sid,
     currentAgent: null,
+    timelinePosition: null,
     sessionTrees,
     mentionTo: new Set(),
   };

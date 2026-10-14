@@ -11,7 +11,7 @@
 // あちらは pointerdown/up + 移動量閾値で判定するタッチ耐性 dismiss、
 // こちらは click 単発判定 — 各所のコメントに残る意図的な選択で、
 // イベントモデル自体が異なるため統合しない。
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 
 export interface FabPopup {
   open: boolean;
@@ -56,8 +56,12 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
   // useCallback deps 連鎖を毎 render 無効化してしまう。ref 経由で最新を
   // 参照し、closePanel は安定 identity を保つ (抽出前の handleClose /
   // closePanel が useCallback([]) 安定だった性質の維持)。
+  // 写すのは commit 後 (render 中に ref を書かない)。読むのは handler と
+  // effect だけなので、常に commit 済みの最新が見える。
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useLayoutEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   const openPanel = useCallback(() => {
     setOpen(true);
