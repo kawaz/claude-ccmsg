@@ -53,7 +53,7 @@
 | [DR-0036](./DR-0036-retire-rooms-for-p2p.md) | Accepted (🟡 一部実装) | 据え置き | room を廃止し、セッション間メッセージを sid 宛の直送 (v2 の契約の封筒・mid・返信行) にする — DR-0001 §3-§6 / 0003 / 0011 / 0012 / 0013 / 0016 / 0017 の room 前提部分を置き換える予定 |
 | [DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) | Accepted (✅ 実装済み) | 据え置き | エージェント間のメッセージは SendMessage に乗せ、`ccmsg:<sid>` / `ccmsg:path:<dir>` 宛を hooks module が横取りして peer 注入で届ける (config home をまたぐ)。DR-0036 §1 の CLI 直送を消すかは未決 |
 | [DR-0038](./DR-0038-json-is-parsed-by-schema.md) | Accepted (✅ 実装済み) | 据え置き | データの形は valibot のスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す。`as` (`as const` 以外)・`any`・非 null の主張は使わず lint で検査する |
-| [DR-0039](./DR-0039-all-mods-and-typed-tools.md) | Accepted (⬜ 未実装) | 据え置き | classic hook (command hook の SessionStart と module の `classic.*`) を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口 (セッション間の送信・say・宛先の候補) を `$.tool.register` の typed tool にする。CLI は人の口と module の transport に縮め、module の無いセッションは no_module の 1 状態でフォールバックを持たない。実装時に DR-0037 を置き換える |
+| [DR-0039](./DR-0039-all-mods-and-typed-tools.md) | Accepted (🟡 部分実装) | 据え置き | classic hook (command hook の SessionStart と module の `classic.*`) を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口 (セッション間の送信・say・宛先の候補) を `$.tool.register` の typed tool にする。CLI は人の口と module の transport に縮め、module の無いセッションは no_module の 1 状態でフォールバックを持たない。実装時に DR-0037 を置き換える |
 
 ## Superseded (一部)
 

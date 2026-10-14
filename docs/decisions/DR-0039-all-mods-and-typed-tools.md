@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — ⬜ 未実装
+- Status: Accepted (2026-10-15) — 🟡 部分実装 (段 1〜4・6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内と CLI の deprecate、webui から走行中の subagent への直送。段 5: 旧 op `message_send` / `address_send` の削除は次リリース以降に残る)
 - Date: 2026-10-15
 
 ## Context
@@ -137,6 +137,9 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - 実物の `ccmsg daemon start` を `$.process.run` で呼んだ時の所要 (daemon の応答を待つ分。最初の `session.start` は await される)
 - retry が有効 (既定) な時の API error の行と event の並び (probe は `CLAUDE_CODE_MAX_RETRIES=0`)
 - transcript の API error の行の `error` 欄の語彙が `classic.StopFailure` の分類と同じか
+- teammate のループへの `agentId` 付きの `$.session.append` (§6 の一覧には teammate も入れている)
+- §6 の直送の、foreground の `Agent` の子・応答の stream の途中・`-p` の子への到達
+- `prompt.submit` の `text` の末尾空白の扱い (受け付けの照合は `classic.UserPromptSubmit` で測った許容を流用している)
 
 ## Alternatives Considered
 
