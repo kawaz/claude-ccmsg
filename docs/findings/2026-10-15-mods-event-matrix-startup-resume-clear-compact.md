@@ -473,7 +473,7 @@ exec env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color LANG=ja_J
   CLAUDE_CONFIG_DIR=$LAB/config MODS_LAB_DIR=$LAB/log TMPDIR=$LAB/tmp \
   XDG_CACHE_HOME=$LAB/xdg/cache XDG_STATE_HOME=$LAB/xdg/state XDG_DATA_HOME=$LAB/xdg/data XDG_CONFIG_HOME=$LAB/xdg/config \
   DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1 DISABLE_ERROR_REPORTING=1 \
-  ANTHROPIC_BASE_URL=http://127.0.0.1:$(cat $LAB/fakeapi/port) ANTHROPIC_API_KEY=sk-ant-api03-lab-dummy-key-not-a-secret-0000000000 \
+  ANTHROPIC_BASE_URL=http://127.0.0.1:$(cat $LAB/fakeapi/port) ANTHROPIC_API_KEY=lab-dummy-key \
   claude --plugin-dir $LAB/mod --debug --model claude-haiku-5-5 "$@"
 ```
 
