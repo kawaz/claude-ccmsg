@@ -1183,22 +1183,6 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
   }
 }
 
-/**
- * Given the vertical pixel offsets (ascending, top-to-bottom) of every
- * currently-loaded user-text turn inside the Timeline's scroll container, and
- * the container's current `scrollTop`, returns how many of those turns sit at
- * or above the current scroll position — the 1-based "you're currently past
- * turn N" count. Returns 0 when scrolled above every turn (or none are loaded).
- */
-export function scrollPositionToUserTurnIndex(topOffsets: number[], scrollTop: number): number {
-  let idx = 0;
-  for (const top of topOffsets) {
-    if (top > scrollTop) break;
-    idx++;
-  }
-  return idx;
-}
-
 /** One cached line paired with its stable Preact key (see `lineByteOffsets`
  * doc comment) — the unit `groupTimelineLines` operates on and emits inside
  * a fold group. */

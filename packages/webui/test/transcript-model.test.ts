@@ -41,7 +41,6 @@ import {
   truncateRawLine,
   RAW_LINE_PREVIEW_LIMIT,
   resolveFileToolResults,
-  scrollPositionToUserTurnIndex,
   segmentSearchText,
   userNavTargets,
   pushNotificationOf,
@@ -1653,39 +1652,6 @@ describe("isUserTextTurn", () => {
   test("broken line -> false", () => {
     const line: ParsedLine = parseTranscriptLine("{not json");
     expect(isUserTextTurn(line)).toBe(false);
-  });
-});
-
-// scrollPositionToUserTurnIndex: the pure "topOffsets + scrollTop -> index"
-// calculation.
-describe("scrollPositionToUserTurnIndex", () => {
-  test("no loaded user turns -> 0 regardless of scrollTop", () => {
-    expect(scrollPositionToUserTurnIndex([], 0)).toBe(0);
-    expect(scrollPositionToUserTurnIndex([], 9999)).toBe(0);
-  });
-
-  test("scrolled above the first turn -> 0", () => {
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 50)).toBe(0);
-  });
-
-  // "at or above" is inclusive of an exact match — scrolled exactly to a
-  // turn's top counts that turn as reached.
-  test("scrollTop exactly at a turn's offset counts that turn", () => {
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 100)).toBe(1);
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 300)).toBe(2);
-  });
-
-  test("scrollTop strictly between two offsets counts only the earlier one", () => {
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 299)).toBe(1);
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 301)).toBe(2);
-  });
-
-  test("scrolled past the last turn -> full count", () => {
-    expect(scrollPositionToUserTurnIndex([100, 300, 500], 9999)).toBe(3);
-  });
-
-  test("single loaded turn, scrolled to it -> 1", () => {
-    expect(scrollPositionToUserTurnIndex([200], 200)).toBe(1);
   });
 });
 
