@@ -65,7 +65,7 @@ export interface TLSearchCtx {
 // (DR-0022 §4): a match living inside a collapsed fold must actually
 // become visible when navigated to, not silently scroll to a hidden
 // element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
-// (Timeline.tsx), walking outward through nested folds.
+// (folds.tsx), walking outward through nested folds.
 // Opens a closed <details> in a way that survives the imminent re-render.
 // FoldGroup/ThinkingSegment both render a *controlled*
 // `<details open={state}>` synced via onToggle. The browser fires `toggle`
