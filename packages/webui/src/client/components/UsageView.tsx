@@ -28,6 +28,7 @@ import {
 } from "../llm-usage-view.ts";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
 import { parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { flagText, readStorage, writeStorage } from "../storage.ts";
@@ -327,8 +328,25 @@ function CredentialRow({
   );
 }
 
-function QuotaSection({ state }: { state: AppState }) {
+const selectLlmUsageProbes = (state: AppState): AppState["llmUsageProbes"] => state.llmUsageProbes;
+
+/** Which sections this daemon can fill and which one the URL selects. */
+function usageScreen(state: AppState) {
+  return {
+    llmUsageAvailable: state.llmUsageAvailable,
+    llmStatsAvailable: state.llmStatsAvailable,
+    llmStatusAvailable: state.llmStatusAvailable,
+    usageTab: state.usageTab,
+    usagePeriod: state.usagePeriod,
+    usageDays: state.usageDays,
+  };
+}
+
+type UsageScreen = ReturnType<typeof usageScreen>;
+
+function QuotaSection() {
   const { ws, store } = useApp();
+  const probes = useStoreState(store, selectLlmUsageProbes);
   const [usage, setUsage] = useState<LlmUsageResponse | null>(null);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -451,7 +469,7 @@ function QuotaSection({ state }: { state: AppState }) {
             <CredentialRow
               key={credential.name}
               credential={credential}
-              retained={state.llmUsageProbes.get(credential.name)}
+              retained={probes.get(credential.name)}
               reset={reset}
               now={now}
             />
@@ -466,17 +484,17 @@ function QuotaSection({ state }: { state: AppState }) {
  * what has been spent — so they are tabs rather than two sections of one long
  * page. Each tab appears only when its own endpoint is configured: an operator
  * who set up one of the two sees one tab, not a heading over an error. */
-function UsageTabs({ state }: { state: AppState }) {
+function UsageTabs({ screen }: { screen: UsageScreen }) {
   const tabs: Array<{ tab: "quota" | "stats" | "catalog"; label: string; href: string }> = [
-    ...(state.llmUsageAvailable
+    ...(screen.llmUsageAvailable
       ? [{ tab: "quota" as const, label: "クオータ", href: usageHref() }]
       : []),
-    ...(state.llmStatsAvailable
+    ...(screen.llmStatsAvailable
       ? [
           {
             tab: "stats" as const,
             label: "使用量",
-            href: usageStatsHref(state.usagePeriod, state.usageDays),
+            href: usageStatsHref(screen.usagePeriod, screen.usageDays),
           },
         ]
       : []),
@@ -494,10 +512,10 @@ function UsageTabs({ state }: { state: AppState }) {
           key={entry.tab}
           type="button"
           aria-current={
-            entry.tab !== "catalog" && state.usageTab === entry.tab ? "page" : undefined
+            entry.tab !== "catalog" && screen.usageTab === entry.tab ? "page" : undefined
           }
           onClick={() => {
-            if (entry.tab === "catalog" || state.usageTab !== entry.tab) {
+            if (entry.tab === "catalog" || screen.usageTab !== entry.tab) {
               pushNavigation(entry.href);
             }
           }}
@@ -509,24 +527,26 @@ function UsageTabs({ state }: { state: AppState }) {
   );
 }
 
-export function UsageView({ state }: { state: AppState }) {
+export function UsageView() {
+  const { store } = useApp();
+  const screen = useStoreState(store, usageScreen, shallowEqual);
   // The URL can name a tab whose endpoint is not configured (a bookmark that
   // outlived a config change), so what is shown falls back to whichever tab
   // this daemon can actually fill.
   const showStats =
-    state.llmStatsAvailable && (state.usageTab === "stats" || !state.llmUsageAvailable);
+    screen.llmStatsAvailable && (screen.usageTab === "stats" || !screen.llmUsageAvailable);
   return (
     <main id="usage-view">
       {/* Above the tabs, and outside them: whether the provider is up changes
        * how both tabs below read, and it is the first thing asked when the
        * numbers stop moving. */}
-      {state.llmStatusAvailable ? <ServiceStatus state={state} /> : null}
-      <UsageTabs state={state} />
+      {screen.llmStatusAvailable ? <ServiceStatus /> : null}
+      <UsageTabs screen={screen} />
       {showStats ? (
-        <UsageStats period={state.usagePeriod} days={state.usageDays} />
-      ) : state.llmUsageAvailable ? (
-        <QuotaSection state={state} />
-      ) : state.llmStatusAvailable ? null : (
+        <UsageStats period={screen.usagePeriod} days={screen.usageDays} />
+      ) : screen.llmUsageAvailable ? (
+        <QuotaSection />
+      ) : screen.llmStatusAvailable ? null : (
         <p class="usage-empty">この daemon には LLM gateway が設定されていません。</p>
       )}
     </main>

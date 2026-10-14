@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
-import type { AppState } from "../store.ts";
+import { sameJson, useStoreState } from "../useStore.ts";
 import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
 import {
@@ -67,8 +67,8 @@ import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../use
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
 
-export function SessionInputComposer({ sid, state }: { sid: string; state: AppState }) {
-  const { ws } = useApp();
+export function SessionInputComposer({ sid }: { sid: string }) {
+  const { ws, store } = useApp();
   // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
   // sid は変わらない。
   const [initialDraft] = useState(() => loadDraft(sid));
@@ -109,7 +109,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // 消える。緑は会話が作った窓、黄は合図で延命している分 (llm-cache-view.ts)。
   // 宛先が sid で一意に決まる入力欄だからこそ「今送るとキャッシュに乗るか」を
   // 送信 UI そのものに出せる。
-  const cacheRequest = state.llmRequests.get(sid);
+  const cacheRequest = useStoreState(store, (s) => s.llmRequests.get(sid), sameJson);
   const cacheRing = useCacheRing(cacheRequest ?? null);
   const pendingCaretRef = useRef<number | null>(null);
   // placeholder 挿入直後に復元すべき caret 位置: controlled textarea は value が
@@ -119,10 +119,12 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル: repo → ws → cwd 末尾 → sid8。
-  const targetPeer = state.peers.find((p) => p.sid === sid);
+  const targetPeer = useStoreState(store, (s) => s.peers.find((p) => p.sid === sid), sameJson);
   // ccmsg 未起動セッション (peers に居ない) でも `claude agents` に居れば
   // プロセスは生きている。ラベルは agents 行の cwd 末尾に fallback。
-  const targetAgent = targetPeer ? undefined : state.agents.find((a) => a.sessionId === sid);
+  const agent = useStoreState(store, (s) => s.agents.find((a) => a.sessionId === sid), sameJson);
+  const targetAgent = targetPeer ? undefined : agent;
+  const sessionStatus = useStoreState(store, (s) => s.sessionStatuses.get(sid));
   const targetLabel =
     targetPeer?.repo ||
     targetPeer?.ws ||
@@ -134,8 +136,8 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // whenever the number of peers changes — not on every action, and not on a
   // peers push that only replaces the array with the same set. The rest of
   // `state` is read at that moment, so it lives in an Effect Event.
-  const sweepStaleInputs = useEffectEvent(() => cleanupStaleSessionInputs(state));
-  const peerCount = state.peers.length;
+  const sweepStaleInputs = useEffectEvent(() => cleanupStaleSessionInputs(store.getState()));
+  const peerCount = useStoreState(store, (s) => s.peers.length);
   useEffect(() => {
     if (peerCount > 0) sweepStaleInputs();
   }, [peerCount]);
@@ -402,7 +404,7 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   const failureNotice = failure ? sessionInputNotice(failure) : null;
   // 送る前から分かっている届かない理由 (daemon の input_readiness)。直近の送信が
   // 同じ理由で届かなかった時は、その注記が同じ文言を出すので重ねない。
-  const readiness = sessionInputReadiness(targetPeer, state.sessionStatuses.get(sid));
+  const readiness = sessionInputReadiness(targetPeer, sessionStatus);
   const readinessNotice =
     failure?.kind === "not_delivered" && failure.reason === readiness?.kind
       ? null

@@ -9,6 +9,12 @@ import {
   splitRoomsByLiveness,
 } from "../utils.ts";
 import { Fold } from "./Fold.tsx";
+import { useApp } from "../context.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
+
+function roomListSlice(state: AppState) {
+  return { rooms: state.rooms, peers: state.peers, currentRoomId: selectedRoomId(state) };
+}
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
@@ -55,7 +61,9 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
  * group, not duplicated — `splitRoomsByArchived` runs first, then
  * `splitRoomsByKind` only sees what's left, then broadcast は `flat` から
  * kind で更に切り出す。 */
-export function RoomList({ state }: { state: AppState }) {
+export function RoomList() {
+  const { store } = useApp();
+  const state = useStoreState(store, roomListSlice, shallowEqual);
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
   const { flat, oneOnOne } = splitRoomsByKind(active);
   const broadcast = flat.filter((r) => r.kind === "broadcast");
@@ -66,7 +74,7 @@ export function RoomList({ state }: { state: AppState }) {
     flat.filter((r) => r.kind !== "broadcast"),
     state.peers,
   );
-  const currentRoomId = selectedRoomId(state);
+  const currentRoomId = state.currentRoomId;
   return (
     <>
       {broadcast.length > 0 && (

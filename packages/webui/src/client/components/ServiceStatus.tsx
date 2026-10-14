@@ -8,7 +8,7 @@
 // Folding them into one word would lose exactly the case this exists for: a
 // provider still reporting "operational" while every route here gets 529.
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
-import type { ErrorResponse, LlmStatusIncident } from "@ccmsg/protocol";
+import type { ErrorResponse, LlmStatusIncident, LlmStatusReport } from "@ccmsg/protocol";
 import {
   countsSummary,
   formatStatusAge,
@@ -20,6 +20,7 @@ import {
   type ServiceRow,
 } from "../llm-status-view.ts";
 import { useApp } from "../context.ts";
+import { useStoreState } from "../useStore.ts";
 import type { AppState } from "../store.ts";
 
 /** Anchor the header badge links to (gateway DR-0021 §5). */
@@ -136,12 +137,15 @@ function ServiceRowView({ row }: { row: ServiceRow }) {
   );
 }
 
+const selectLlmStatus = (state: AppState): LlmStatusReport | null => state.llmStatus;
+
 /** The strip itself. Reads the report the store already holds — put there by
  * the fetch this client made when it connected, or by the daemon's push after
  * a 529 — and re-reads it on open so a screen the user came back to is not
  * showing a report from before they left. */
-export function ServiceStatus({ state }: { state: AppState }) {
+export function ServiceStatus() {
   const { ws, store } = useApp();
+  const report = useStoreState(store, selectLlmStatus);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -189,7 +193,6 @@ export function ServiceStatus({ state }: { state: AppState }) {
     }
   };
 
-  const report = state.llmStatus;
   const rows = report ? serviceRows(report, now) : [];
   const overall = report?.overall.severity ?? "unknown";
   return (
@@ -242,8 +245,9 @@ export function ServiceStatus({ state }: { state: AppState }) {
  * an upstream outage explains what every screen is doing, not just this one.
  * Silent while things are fine, and silent about "unknown" — a badge that is
  * always lit is one nobody reads. */
-export function ServiceStatusBadge({ state }: { state: AppState }) {
-  const badge = headerBadge(state.llmStatus);
+export function ServiceStatusBadge() {
+  const { store } = useApp();
+  const badge = headerBadge(useStoreState(store, selectLlmStatus));
   if (!badge) return null;
   return (
     <a

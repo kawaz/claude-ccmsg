@@ -3,6 +3,7 @@ import { ADMIN_ID } from "../store.ts";
 import type { AppState } from "../store.ts";
 import { anchorId } from "../locator.ts";
 import { useApp } from "../context.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
 import { hasSidDragPayload, parseSidDragPayload } from "../dnd.ts";
 import { MemberChip } from "./MemberChip.tsx";
 import { TimelineItem } from "./TimelineItem.tsx";
@@ -17,9 +18,19 @@ import { memberLabel } from "../utils.ts";
 // not a failure, just feedback that the drop didn't need to do anything.
 const INVITE_ALREADY_NOTICE_MS = 3000;
 
-export function RoomView({ state }: { state: AppState }) {
+function roomViewSlice(state: AppState) {
+  return {
+    room: state.currentRoomId ? state.rooms.get(state.currentRoomId) : undefined,
+    currentMid: state.currentMid,
+    mentionTo: state.mentionTo,
+    peers: state.peers,
+  };
+}
+
+export function RoomView() {
   const { ws, store } = useApp();
-  const room = state.currentRoomId ? state.rooms.get(state.currentRoomId) : undefined;
+  const state = useStoreState(store, roomViewSlice, shallowEqual);
+  const room = state.room;
   const roomId = room?.id;
   const roomHistory = room?.history;
   const mid = state.currentMid;

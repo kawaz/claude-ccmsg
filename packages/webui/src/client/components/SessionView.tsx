@@ -5,7 +5,7 @@
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
   fileHref,
@@ -22,6 +22,7 @@ import { hasSessionTranscript } from "../utils.ts";
 import { hitFromLive, isSessionPinned, pinnedHitForSid } from "../pinned-sessions.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
+import { sameJson, shallowEqual, useStoreState } from "../useStore.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
@@ -86,29 +87,49 @@ const EMPTY_TREE: SessionTreeState = {
   timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
 };
 
-function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): SessionSearchHit {
-  const stored = pinnedHitForSid(state.pinnedSessions, sid) ?? tree.searchHit;
+function pinCandidate(
+  pinnedSessions: AppState["pinnedSessions"],
+  sid: string,
+  tree: SessionTreeState,
+  peer: PeerInfo | undefined,
+  agent: AgentInfo | undefined,
+): SessionSearchHit {
+  const stored = pinnedHitForSid(pinnedSessions, sid) ?? tree.searchHit;
   if (stored) return stored;
-  const peer = state.peers.find((item) => item.sid === sid);
-  const agent = state.agents.find((item) => item.sessionId === sid);
   return hitFromLive(sid, peer, agent);
 }
 
 export function SessionView({
-  state,
   sid,
   tab,
   agent,
   active,
 }: {
-  state: AppState;
   sid: string;
   tab: SessionTab;
   agent: AgentRef | null;
   active: boolean;
 }) {
   const { store, ws } = useApp();
-  const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
+  const slice = useStoreState(
+    store,
+    (s) => ({
+      tree: s.sessionTrees.get(sid) ?? EMPTY_TREE,
+      sessionStatus: s.sessionStatuses.get(sid),
+      pinnedSessions: s.pinnedSessions,
+      terminalGatewayUrl: s.terminalGatewayUrl,
+      connStatus: s.connStatus,
+      peerCount: s.peers.length,
+    }),
+    shallowEqual,
+  );
+  const peer = useStoreState(store, (s) => s.peers.find((p) => p.sid === sid), sameJson);
+  const agentForSid = useStoreState(
+    store,
+    (s) => (sid ? s.agents.find((a) => a.sessionId === sid) : undefined),
+    sameJson,
+  );
+  const tree = slice.tree;
   // Tabs opened at least once stay mounted (hidden) so switching back keeps
   // their scroll and local state. It remembers earlier renders' tabs, so it is
   // state, brought up to date during render: setting it here re-runs this
@@ -156,21 +177,17 @@ export function SessionView({
   // 接続中セッションが申告した transcript_path、無ければ sid から解決した
   // `<configDir>/projects/<project>/<sid>.jsonl` (daemon の resolveTranscript
   // allowVirtual)。early return より前 = hooks 位置で要るのでここで引く。
-  const peer = state.peers.find((p) => p.sid === sid);
   // Terminal タブは daemon の config.json で terminal_gateway_url が設定されて
   // いるセッションでのみ表示する (issue 2026-07-21, kawaz r46m7)。iframe を出す
   // のは agent の hyoui_session_id が解決済みの時 (無いと iframe の src が組めない)。
   // 「設定していないユーザには存在しない機能」に倒す。
-  const agentForSid = sid ? state.agents.find((a) => a.sessionId === sid) : undefined;
   const hyouiSessionId = agentForSid?.hyoui_session_id;
-  const terminalGatewayUrl = state.terminalGatewayUrl;
+  const terminalGatewayUrl = slice.terminalGatewayUrl;
   // 端末が無いと分かっているセッション (daemon の input_readiness が
   // no_terminal / ended) では、タブを出したうえで iframe の代わりに理由と次の
   // 行動を出す。黒いままの iframe では再描画待ちか端末が無いのか見分けが
   // つかない。
-  const terminalAbsence = terminalAbsenceNotice(
-    sessionInputReadiness(peer, state.sessionStatuses.get(sid)),
-  );
+  const terminalAbsence = terminalAbsenceNotice(sessionInputReadiness(peer, slice.sessionStatus));
   const hasTerminal = !!terminalGatewayUrl && (!!hyouiSessionId || terminalAbsence !== null);
   // Timeline / Status が使えるかの単一ゲート (DR-0021 §2.4/§3.1) — 導出は
   // hasSessionTranscript を見る。agent-only 行 (peer 無し、`claude agents
@@ -181,16 +198,16 @@ export function SessionView({
   // 5s の agents poll と peers push がこの component を再描画し、通常の
   // subscribe 経路に切り替わる。
   const storedHit = sid
-    ? (pinnedHitForSid(state.pinnedSessions, sid) ?? tree.searchHit)
+    ? (pinnedHitForSid(slice.pinnedSessions, sid) ?? tree.searchHit)
     : undefined;
   const hasTranscript = hasSessionTranscript(peer, storedHit?.file, !!agentForSid);
   // The pin button acts on this session's directory (DR-0021 §2.4): the live
   // peer's cwd when connected, else whatever record the session left. No cwd
   // means nothing to pin, so the button is not shown.
-  const candidate = pinCandidate(state, sid, tree);
+  const candidate = pinCandidate(slice.pinnedSessions, sid, tree, peer, agentForSid);
   const pinCwd = peer?.cwd ?? candidate.cwd;
   const pinHit = { ...candidate, cwd: pinCwd };
-  const pinned = isSessionPinned(state.pinnedSessions, pinCwd);
+  const pinned = isSessionPinned(slice.pinnedSessions, pinCwd);
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
@@ -228,7 +245,7 @@ export function SessionView({
   const [statusError, setStatusError] = useState<string | null>(null);
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
-    if (state.connStatus !== "connected") return;
+    if (slice.connStatus !== "connected") return;
     setStatusError(null);
     // Cancellation guard (same pattern as Timeline's scroll effect): without
     // it, a tab/session switch that tears this effect down BEFORE the
@@ -276,7 +293,7 @@ export function SessionView({
       void subscribed.then(() => ws.sessionStatusUnsubscribe(sid).catch(() => {}));
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [active, sid, needsStatus, hasTranscript, statusSource, state.connStatus, store, ws]);
+  }, [active, sid, needsStatus, hasTranscript, statusSource, slice.connStatus, store, ws]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -286,7 +303,7 @@ export function SessionView({
   // 「path なし → 復元後」の中間状態を history に残さないため — back で
   // 直前の画面に戻れる挙動を維持する)。viewMode の復元は FileViewer 側
   // (path 一致時のみ) が担う。
-  const selectedPath = state.sessionTrees.get(sid)?.selectedPath ?? null;
+  const selectedPath = slice.tree.selectedPath;
   useEffect(() => {
     if (!active || tab !== "files" || selectedPath !== null) return;
     const saved = loadFilesView(sid);
@@ -297,13 +314,13 @@ export function SessionView({
   // peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前 (空) は比較
   // 対象がないので待ち、以降は peers の件数が変わるたびに掃除し直す。反応する
   // のは件数だけで、その時点の state は Effect Event で読む。
-  const sweepStaleFilesViews = useEffectEvent(() => cleanupStaleFilesViews(state));
-  const peerCount = state.peers.length;
+  const sweepStaleFilesViews = useEffectEvent(() => cleanupStaleFilesViews(store.getState()));
+  const peerCount = slice.peerCount;
   useEffect(() => {
     if (peerCount > 0) sweepStaleFilesViews();
   }, [peerCount]);
 
-  const sessionStatus = state.sessionStatuses.get(sid);
+  const sessionStatus = slice.sessionStatus;
 
   return (
     <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
@@ -419,7 +436,7 @@ export function SessionView({
       ) : null}
       {visitedTabs.has("rooms") ? (
         <div class="session-tab-panel" hidden={tab !== "rooms"} data-session-tab="rooms">
-          <SessionRooms sid={sid} state={state} />
+          <SessionRooms sid={sid} />
         </div>
       ) : null}
       {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
@@ -432,7 +449,7 @@ export function SessionView({
        * 動いている)。入力はセッションの hooks module が受けるので、subscribe
        * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
        * セッション) は宛先が存在しないのでガードのまま。 */}
-      {peer || agentForSid ? <SessionInputComposer sid={sid} state={state} /> : null}
+      {peer || agentForSid ? <SessionInputComposer sid={sid} /> : null}
     </main>
   );
 }

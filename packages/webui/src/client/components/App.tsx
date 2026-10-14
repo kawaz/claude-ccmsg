@@ -1,5 +1,5 @@
 import { memo } from "preact/compat";
-import { useStoreState } from "../useStore.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import { SIDEBAR_OPEN_KEY, type AppState, type MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
@@ -20,11 +20,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
 import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
 import { nextSidebarSnapLeft, opensOnMain } from "../sidebar-panes.ts";
-import {
-  skipInactiveSessionViewRender,
-  touchSessionViewCache,
-  type CachedSessionView,
-} from "../session-view-cache.ts";
+import { touchSessionViewCache, type CachedSessionView } from "../session-view-cache.ts";
 import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
@@ -32,7 +28,33 @@ import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
  * スマホでは topbar が常に最前面に見えるため、固定 "ccmsg" だと他リポの
  * セッションを見ながら「ccmsg リポにいる」と勘違いして会話する事故の温床
  * になる。何も選択していない初期状態だけアプリ名を出す。 */
-function TopbarTitle({ state }: { state: AppState }) {
+function TopbarTitle() {
+  const { store } = useApp();
+  const title = useStoreState(store, topbarTitle, shallowEqual);
+  if (title.kind === "session") {
+    return (
+      <h1 class="topbar-title">
+        <Avatar seed={title.sid} size={18} />
+        <span class="topbar-title-text">{title.label}</span>
+      </h1>
+    );
+  }
+  if (title.kind === "room") {
+    return (
+      <h1 class="topbar-title">
+        <span class="topbar-title-text">{title.label}</span>
+      </h1>
+    );
+  }
+  return <h1 class="topbar-title">{title.label}</h1>;
+}
+
+type TopbarTitleModel =
+  | { kind: "plain"; label: string }
+  | { kind: "room"; label: string }
+  | { kind: "session"; sid: string; label: string };
+
+function topbarTitle(state: AppState): TopbarTitleModel {
   // Names only the sections the daemon can actually fill: with one endpoint
   // configured, a title promising both would advertise a section that is not
   // on the screen.
@@ -42,10 +64,10 @@ function TopbarTitle({ state }: { state: AppState }) {
       ...(state.llmStatsAvailable ? ["使用量"] : []),
       ...(state.llmUsageAvailable || state.llmStatsAvailable ? [] : ["upstream"]),
     ];
-    return <h1 class="topbar-title">{parts.length > 0 ? parts.join(" / ") : "クオータ"}</h1>;
+    return { kind: "plain", label: parts.length > 0 ? parts.join(" / ") : "クオータ" };
   }
   if (state.view === "catalog") {
-    return <h1 class="topbar-title">コンポーネントカタログ</h1>;
+    return { kind: "plain", label: "コンポーネントカタログ" };
   }
   if (state.view === "session" || state.view === "timeline") {
     const sid = state.currentSid;
@@ -60,22 +82,32 @@ function TopbarTitle({ state }: { state: AppState }) {
         repo && ws
           ? `${repo} ▸ ${ws}`
           : repo || ws || lastPathSegment(cwd ?? "") || sid.slice(0, 8);
-      return (
-        <h1 class="topbar-title">
-          <Avatar seed={sid} size={18} />
-          <span class="topbar-title-text">{label}</span>
-        </h1>
-      );
+      return { kind: "session", sid, label };
     }
   } else if (state.currentRoomId !== null) {
     const room = state.rooms.get(state.currentRoomId);
-    return (
-      <h1 class="topbar-title">
-        <span class="topbar-title-text">{room?.title || state.currentRoomId}</span>
-      </h1>
-    );
+    return { kind: "room", label: room?.title || state.currentRoomId };
   }
-  return <h1 class="topbar-title">ccmsg</h1>;
+  return { kind: "plain", label: "ccmsg" };
+}
+
+/** What the app frame itself draws: the header controls, which screen fills
+ * the content area, and the footer. Each screen reads its own slice. */
+function appFrame(state: AppState) {
+  return {
+    view: state.view,
+    currentSid: state.currentSid,
+    currentTab: state.currentTab,
+    currentAgent: state.currentAgent,
+    missingTarget: state.missingTarget,
+    unknownPath: state.unknownPath,
+    sidebarOpen: state.sidebarOpen,
+    connStatus: state.connStatus,
+    usageAvailable: state.llmUsageAvailable || state.llmStatsAvailable || state.llmStatusAvailable,
+    versionMismatch: state.versionMismatch,
+    daemonInfo: state.daemonInfo,
+    documentTitle: documentTitleFor(state),
+  };
 }
 
 /** Shown in the content area, with the sidebar left mounted beside it — the
@@ -119,14 +151,15 @@ function MissingTargetView({
   );
 }
 
-const CachedSessionViewComponent = memo(SessionView, (previous, next) =>
-  skipInactiveSessionViewRender(previous.active, next.active),
-);
+// Re-rendering App (a navigation, a header field) leaves a kept-mounted
+// session view's props as they were, so the memo skips it; each view renders
+// on its own store slices.
+const CachedSessionViewComponent = memo(SessionView);
 
 export function App() {
   const { store } = useApp();
-  const state = useStoreState(store, (s) => s);
-  const versionMismatch = state.versionMismatch;
+  const frame = useStoreState(store, appFrame, shallowEqual);
+  const versionMismatch = frame.versionMismatch;
   const canGoBack = useCanGoBack();
   const canGoForward = useCanGoForward();
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -134,10 +167,10 @@ export function App() {
   // ラベルにだけ使う (押した瞬間の判定は下で読み直す)。
   const layoutScrolls = useLayoutScrollsX(layoutRef);
   const visibleSessionSid =
-    state.missingTarget === null &&
-    state.unknownPath === null &&
-    (state.view === "session" || state.view === "timeline")
-      ? state.currentSid
+    frame.missingTarget === null &&
+    frame.unknownPath === null &&
+    (frame.view === "session" || frame.view === "timeline")
+      ? frame.currentSid
       : null;
   // The session views kept mounted (most recently shown last). It remembers
   // the views shown on earlier renders, so it is state, brought up to date
@@ -148,15 +181,15 @@ export function App() {
   if (visibleSessionSid !== null) {
     const touched = touchSessionViewCache(sessionViews, {
       sid: visibleSessionSid,
-      tab: state.currentTab ?? "files",
-      agent: state.currentAgent,
+      tab: frame.currentTab ?? "files",
+      agent: frame.currentAgent,
     });
     if (touched !== sessionViews) setSessionViews(touched);
   }
   // サイドバーの在り / 無しはその窓の中だけの状態 (storage.ts の表)。
   useEffect(() => {
-    writeSessionStorage(SIDEBAR_OPEN_KEY, String(state.sidebarOpen));
-  }, [state.sidebarOpen]);
+    writeSessionStorage(SIDEBAR_OPEN_KEY, String(frame.sidebarOpen));
+  }, [frame.sidebarOpen]);
   // 横スクロールで行き来する幅では、開いた直後にどちら側を見せるかを決める
   // (sidebar-panes.ts の opensOnMain)。1 度きり — 以後の位置は指と
   // ハンバーガーのもので、遷移のたびに引き戻すと操作を奪う。
@@ -174,8 +207,8 @@ export function App() {
   // several sessions in separate tabs otherwise leaves every tab reading the
   // fixed "ccmsg" title, indistinguishable until clicked.
   useEffect(() => {
-    document.title = documentTitleFor(state);
-  }, [state]);
+    document.title = frame.documentTitle;
+  }, [frame.documentTitle]);
 
   return (
     <div id="app">
@@ -195,11 +228,11 @@ export function App() {
           aria-label="menu"
           // 「押された状態」を持つのは消す / 出すの時だけ。切り替えの時は
           // 押しっぱなしの状態が無い。
-          aria-pressed={layoutScrolls ? undefined : state.sidebarOpen}
+          aria-pressed={layoutScrolls ? undefined : frame.sidebarOpen}
           title={
             layoutScrolls
               ? "サイドバーと本文を行き来する"
-              : state.sidebarOpen
+              : frame.sidebarOpen
                 ? "サイドバーを隠す"
                 : "サイドバーを出す"
           }
@@ -215,17 +248,13 @@ export function App() {
               });
               return;
             }
-            store.dispatch({ type: "sidebar/set", open: !state.sidebarOpen });
+            store.dispatch({ type: "sidebar/set", open: !frame.sidebarOpen });
           }}
         >
           &#9776;
         </button>
-        {state.unknownPath !== null ? (
-          <h1 class="topbar-title">ccmsg</h1>
-        ) : (
-          <TopbarTitle state={state} />
-        )}
-        <ConnectionStatus status={state.connStatus} />
+        {frame.unknownPath !== null ? <h1 class="topbar-title">ccmsg</h1> : <TopbarTitle />}
+        <ConnectionStatus status={frame.connStatus} />
         {/* Host-wide, so it lives in the global header rather than in any
          * session's tabs. Shown only when the daemon has a usage gateway
          * configured — without one the screen could only ever show an error,
@@ -234,14 +263,14 @@ export function App() {
         {/* Beside the usage entry rather than inside it: the badge says
          * something is wrong upstream, which is worth seeing on every screen,
          * and the entry beside it is where the detail lives. */}
-        <ServiceStatusBadge state={state} />
-        {state.llmUsageAvailable || state.llmStatsAvailable || state.llmStatusAvailable ? (
+        <ServiceStatusBadge />
+        {frame.usageAvailable ? (
           <button
             id="app-usage"
             type="button"
             aria-label="usage"
             title="クオータ / 使用量"
-            aria-current={state.view === "usage" ? "page" : undefined}
+            aria-current={frame.view === "usage" ? "page" : undefined}
             onClick={() => pushNavigation(usageHref())}
           >
             &#9203;
@@ -295,35 +324,34 @@ export function App() {
         {/* サイドバーは一覧もフォームも自分の中に持ち、幅を変える splitter も
          * 自分の右端に立てる (Sidebar.tsx)。本文と横に並びきるか、本文が
          * 幅いっぱいを占めて横スクロールで行き来するかは app.css が決める。 */}
-        <Sidebar state={state} />
+        <Sidebar />
         {sessionViews.map((view) => (
           <CachedSessionViewComponent
             key={view.sid}
-            state={state}
             sid={view.sid}
             tab={view.tab}
             agent={view.agent}
             active={visibleSessionSid === view.sid}
           />
         ))}
-        {state.missingTarget !== null ? (
+        {frame.missingTarget !== null ? (
           <MissingTargetView
-            target={state.missingTarget}
+            target={frame.missingTarget}
             onDismiss={() => store.dispatch({ type: "navigation/missing", target: null })}
           />
-        ) : state.unknownPath !== null ? (
-          <UnknownPathView pathname={state.unknownPath} />
-        ) : state.view === "usage" ? (
-          <UsageView state={state} />
-        ) : state.view === "catalog" ? (
+        ) : frame.unknownPath !== null ? (
+          <UnknownPathView pathname={frame.unknownPath} />
+        ) : frame.view === "usage" ? (
+          <UsageView />
+        ) : frame.view === "catalog" ? (
           <CatalogView />
-        ) : state.view === "room" ? (
-          <RoomView state={state} />
+        ) : frame.view === "room" ? (
+          <RoomView />
         ) : null}
       </div>
       <footer id="app-footer">
-        {state.daemonInfo ? (
-          <span title={state.daemonInfo.exe ?? undefined}>daemon v{state.daemonInfo.version}</span>
+        {frame.daemonInfo ? (
+          <span title={frame.daemonInfo.exe ?? undefined}>daemon v{frame.daemonInfo.version}</span>
         ) : null}
       </footer>
       <ImageLightboxHost />

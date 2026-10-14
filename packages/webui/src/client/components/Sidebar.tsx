@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { writeStorage } from "../storage.ts";
 import { RoomCreator } from "./RoomCreator.tsx";
@@ -122,6 +123,16 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
   );
 }
 
+function sidebarSlice(state: AppState) {
+  return {
+    peers: state.peers,
+    peerSortKey: state.peerSortKey,
+    sidebar: state.sidebar,
+    sidebarOpen: state.sidebarOpen,
+    currentSid: selectedSid(state),
+  };
+}
+
 /** サイドバーの SESSIONS / ROOMS セクションと、そこから開く 3 つのフォーム
  * パネル (新規セッション / Session Search / 新規 Room) のトグル。
  *
@@ -160,18 +171,19 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
  * どちらでも同じ。RoomCreator が他の 2 つと同じ場所に出るのも同じ理由で
  * (kawaz r259 m53)、メンバのチェックボックスを一覧と見比べながら選ぶ価値は
  * 変わらない。その並び順が依存するソートキーは `state.peerSortKey`。 */
-export function Sidebar({ state }: { state: AppState }) {
+export function Sidebar() {
   const { store } = useApp();
-  const sortKey = state.peerSortKey;
-  const panel = state.sidebar.panel;
+  const slice = useStoreState(store, sidebarSlice, shallowEqual);
+  const sortKey = slice.peerSortKey;
+  const panel = slice.sidebar.panel;
   const togglePanel = (kind: SidebarPanelKind) =>
-    pushSidebarState(toggleSidebarPanel(state.sidebar, kind));
+    pushSidebarState(toggleSidebarPanel(slice.sidebar, kind));
   const closePanel = () => pushSidebarState(CLOSED_SIDEBAR);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
   // sortPeers's doc comment in utils.ts and SessionList.tsx's tick).
-  const sortedPeers = useMemo(() => sortPeers(state.peers, sortKey), [state.peers, sortKey]);
+  const sortedPeers = useMemo(() => sortPeers(slice.peers, sortKey), [slice.peers, sortKey]);
   // 2 段の寸法。どれもサイドバーの中だけの値なので、他のペインと同じく
   // px 直値 + localStorage 永続でここが抱える (どの値がどの軸のものかは
   // sidebar-panes.ts の表)。CSS 変数として置き、どれを使うかは app.css が
@@ -208,7 +220,7 @@ export function Sidebar({ state }: { state: AppState }) {
       // 消すのは display だけで要素は残す。unmount すると書きかけのフォームと
       // 一覧のスクロール位置が消えるが、消す目的は画面共有で見せないことなので、
       // 戻したときに続きから使えないと用を成さない。
-      class={[panel !== null ? "with-form" : null, state.sidebarOpen ? null : "off"]
+      class={[panel !== null ? "with-form" : null, slice.sidebarOpen ? null : "off"]
         .filter(Boolean)
         .join(" ")}
       style={{
@@ -244,7 +256,7 @@ export function Sidebar({ state }: { state: AppState }) {
               />{" "}
               <PeersRefreshButton />
             </h2>
-            <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
+            <SessionList peers={sortedPeers} currentSid={slice.currentSid} />
           </section>
           {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は参照頻度が低い */}
           <section id="rooms-panel">
@@ -255,7 +267,7 @@ export function Sidebar({ state }: { state: AppState }) {
                 onToggle={() => togglePanel("room-creator")}
               />
             </h2>
-            <RoomList state={state} />
+            <RoomList />
           </section>
         </div>
         {panel !== null ? (
@@ -286,11 +298,11 @@ export function Sidebar({ state }: { state: AppState }) {
               {panel === "session-creator" ? (
                 <SessionCreator
                   onClose={closePanel}
-                  template={state.sidebar.template}
-                  params={state.sidebar.params}
+                  template={slice.sidebar.template}
+                  params={slice.sidebar.params}
                 />
               ) : panel === "session-search" ? (
-                <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
+                <SessionSearchPanel onClose={closePanel} query={slice.sidebar.search} />
               ) : (
                 <RoomCreator peers={sortedPeers} onClose={closePanel} />
               )}

@@ -11,6 +11,7 @@
 import { useRef, useState } from "preact/hooks";
 import type { AppState, RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { shallowEqual, useStoreState } from "../useStore.ts";
 import { roomHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { relTime, splitRoomsByArchived } from "../utils.ts";
@@ -166,7 +167,13 @@ function NewRoomForm({ sid }: { sid: string }) {
   );
 }
 
-export function SessionRooms({ sid, state }: { sid: string; state: AppState }) {
+function sessionRoomsSlice(state: AppState) {
+  return { rooms: state.rooms, peers: state.peers };
+}
+
+export function SessionRooms({ sid }: { sid: string }) {
+  const { store } = useApp();
+  const state = useStoreState(store, sessionRoomsSlice, shallowEqual);
   const own = roomsForSession(state.rooms, sid);
   const relatedSids = sameCwdSids(state.peers, sid);
   const related = roomsForSids(state.rooms, relatedSids, own);
