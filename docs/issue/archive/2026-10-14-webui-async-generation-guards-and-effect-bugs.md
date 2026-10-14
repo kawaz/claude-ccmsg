@@ -1,6 +1,6 @@
 ---
 title: webui の非同期応答の世代ガードと Effect 起因の bug 群
-status: open
+status: resolved
 category: bug
 created: 2026-10-14T13:51:28+09:00
 last_read: 2026-10-14T14:51:25+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-14T15:46:32+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:commit rmxwsplw/pwynwunn/qxrtmyus/wxtukrll/zlwoxmnq/osmzstrs/ruvtvnvy で解消。(3)(4)(6) は request-generation.ts の nextRequestGeneration を共通に使い、照合は reducer (store / cwdTreeReducer) で行う"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -46,6 +46,6 @@ webui client の第三者レビュー (findings 参照) で、Effect の使い�
 
 ## 受け入れ条件
 
-- [ ] (1)〜(6) がそれぞれ再現手順で再現しなくなっている
-- [ ] (3)(4)(6) が共通の世代ガード helper を使っている
-- [ ] medium 3 件が反映されている
+- [x] (1)〜(6) がそれぞれ再現手順で再現しなくなっている
+- [x] (3)(4)(6) が共通の世代ガード helper を使っている
+- [x] medium 3 件が反映されている
