@@ -881,6 +881,213 @@ export function register(on: any): void {
 - `-p` の子、teammate、workflow の agent
 - peer socket からの配送を契機にした append (今回の契機は `$.clock.after` の timer)
 
+## DR-0039 の前提の probe
+
+DR-0039 (Proposed) の「Accepted の前提 (probe)」の表の行を、同じ隔離環境・代役の API で確かめた (`isDeferred` の行は実セッションの debug log が要るので対象外)。対話 1 本 (`--permission-mode default --settings '{"autoCompactEnabled":true}'`、`CLAUDE_CODE_MAX_RETRIES=0`) の中で順に行い、途中で probe mod を 1 度 hot reload した (`fail2` の追加)。probe mod `mods-dr39` の source は下。
+
+### 結果
+
+| 確かめること | 結果 | サンプル |
+|---|---|---|
+| `command.run (clear)` の `next(e)` の後で `$.session.id()` が新しい id を返す | **成り立つ**。after で読んだ id は `classic.SessionStart (clear)` の新 id と一致し、前の id とは違った | 2/2 |
+| セッション内の `/resume` で `session.end (resume)` と `command.run (resume)` の after が起き、新しい id が読める | **成り立つ**。`/resume <sid>` で `command.run (resume)` → `classic.SessionEnd` → `session.end (reason: 'resume'、旧 id)` → `classic.SessionStart (source: 'resume'、再開した id)` → `command.run` の after で `$.session.id()` が再開した id。`session.start` は起きない | 2/2 |
+| busy 中の Enter で `prompt.submit` の `next(e)` が Enter の時点で resolve する | **成り立つ** (tool の実行中の Enter について)。`prompt.submit` は Enter の時点で起き、`next(e)` は 9〜15 ms で resolve し、`classic.UserPromptSubmit` も同じ時点で起きた。queue された prompt は別の turn にならず、実行中の turn の次の request で、tool_result と同じ user message に `The user sent a new message while you were working: ...` の形で入った | 2/2 |
+| `$.process.run` で `daemon start` を呼び、detached の daemon を待たずに返る | **成り立つ** (代役のスクリプトで)。CLI と同じ形 (stdio ignore、`detached: true`、`unref()`) で子を起こしてすぐ終わるスクリプトに対し、`$.process.run` は 25〜26 ms で返り、子は turn の後も生きていた。実物の `ccmsg daemon start` (daemon が応答するまで待つ) は走らせていない | 2/2 (子の生存の確認は 1) |
+| `/clear` とセッション内の `/resume` の後に `$.tool.register` の登録が残る | **成り立つ**。`command.run` の after の `$.tool.list()` に登録した 4 つが残り、次の request の `tools` に載り、呼ぶと handler が答えた | `/clear` 2/2、`/resume` 2/2 |
+| `/model` での切替が `config.set` (key `model`) か `command.run` (`model`) を通る | **`command.run (model)` は常に通る**。picker (既定として保存)、picker (`s` でこの session だけ)、引数付き (`/model <id>`) の全部で起き、after は `classic.PostModelSwitch` の後に resolve した。`config.set` (`key: 'model'`、`origin: composer`) は既定として保存する時だけ起き、picker の「この session だけ」では起きない | `command.run` 4/4 (うち切替あり 2)、`config.set` 3/4 |
+| tool の handler が `{ isError: true, result }` を返した時に model に error として届く | **成り立たない**。`{ isError: true, result }` も `{ isError: true, result, text }` も、tool_result は `is_error` 無しで content が `result` の文字列になった (`text` は使われない)。engine 自身のエラー (下の「no tool.call hook answered」) は `is_error: true` で届く | 3/3 (2 つの形) |
+| API error の行が `$.session.append` の hook を通り、分類と表示文が読める。`turn.complete (reason: 'error')` との順序 | **表示文は読める、分類は読めない**。API error の行は door `response` (`message.type: 'assistant'`、`origin: { kind: 'model', model: '<synthetic>' }`) で通り、`content` に画面と同じ表示文 (例: `API Error: 529 Overloaded-probe. ...`、`API Error: Request rejected (429) · ...`) がある。分類 (transcript の `error` / `apiErrorStatus`) は `e` に無い。順序は `session.append (response)` → `classic.StopFailure` (`error`: 529・500 は `server_error`、400 は `unknown`、429 は `rate_limit`) → `turn.complete` (`{ answer: '', durationMs, isAborted: false, turnId, reason: 'error' }`、分類も表示文も無い) → `session.append (notice)` | 529 / 500 / 400 / 429 の各 1、加えて 500 の 3 |
+| `tool.call` の handler が待てる上限 | **`$.process.run` の待ちは予算に数えられない**。15 秒・40 秒 (`timeoutMs` を 70 秒に) とも待ち切って答えた。**`$.clock.sleep` は数えられ**、12 秒・15 秒とも 10 秒で `tool.call hook skipped: ran past its 10s budget` になり、hook が無いものとして core に落ち、許可ダイアログが出る (Yes で `no tool.call hook answered` のエラー結果 (`is_error: true`)、No で turn が中断)。handler の待ち中に人が Esc を押すと、`$.process.run` は `HooksError: ... $.process.run(sleep) aborted` で即 reject し、子 (sleep) は kill され、`next.signal.aborted` は true、`turn.complete` は `reason: 'aborted'` | process 15 秒・40 秒 各 1、clock 2/2、Esc 2/2 |
+| 自動 compact の後に、§5 の I で案内が足し直される | **成り立つが 1 turn 遅れる**。自動 compact はその turn の `turn.start` の後に起きるので、`session.compact` の after で印を立てても、その turn の request (compaction の直後) には案内が無い。次の `prompt.submit` で足され、次の turn の request から載る | 2/2 |
+
+### 補足
+
+- `/model` の picker で「この session だけ」を選ぶと「Switch model? Your next response will be slower and use more tokens」の確認が出て、確認の後に `classic.PostModelSwitch` (`source: 'picker'`) が起きた。引数付きでは確認無しで `source: 'command'`
+- 予算超過の hook には debug log に `hook overran: mods-dr39: still running 5000ms after its budget ran out; ignores its signal (tool.call)` も出た
+- 自動 compact の観測では、代役が返す `usage.input_tokens` を 990000 にした応答の直後の turn で compact が起きた。compact 済みの turn では代役を 1000 に戻した
+
+### probe mod (`mods-dr39`)
+
+`plugin.json` は `{ "name": "mods-dr39", "version": "0.1.0", "description": "Probe: the preconditions of DR-0039." }`、`hooks/hooks.json` は `{ "modules": ["./register.ts"] }`、`types/index.d.ts`:
+
+```ts
+export type Dr39Pending = boolean
+declare module 'claude-code' {
+  interface PluginState {
+    'mods-dr39': { pendingCompact: Dr39Pending }
+  }
+}
+```
+
+`hooks/register.ts` (`BIN` は下の代役スクリプトのパス):
+
+```ts
+// Probe for the preconditions of DR-0039. Logs to $MODS_LAB_DIR/dr39-<inst>.jsonl.
+//   *                 every event name; `e` (clipped) for the events listed in KEY
+//   command.run       after next: $.session.id() and this plugin's tools in $.tool.list()
+//   prompt.submit     time of entry and of next(e) resolving; MARK-I append when $.state pendingCompact
+//   session.compact   after next: pendingCompact = true
+//   tools: wait {seconds, how: 'process'|'clock'}, fail ({ isError, result }), fail2 ({ isError, result, text }), spawnd (runs the daemon-start stand-in)
+
+const INST = Math.random().toString(36).slice(2, 8)
+const BIN = '$LAB/bin/fake-daemon-start.ts'
+let seq = 0
+let buf: unknown[] = []
+let dir: string | undefined
+let timer: (() => void) | undefined
+
+const KEY = new Set(['command.run', 'config.set', 'session.end', 'session.start', 'classic.SessionStart', 'classic.SessionEnd',
+  'prompt.submit', 'classic.UserPromptSubmit', 'turn.start', 'turn.complete', 'session.append', 'classic.StopFailure',
+  'session.compact', 'classic.PreModelSwitch', 'classic.PostModelSwitch', 'classic.Notification'])
+
+function clip(v: unknown, n = 900): unknown {
+  try {
+    const s = JSON.stringify(v)
+    if (s === undefined) return String(v)
+    return s.length > n ? s.slice(0, n) + '...<clipped>' : JSON.parse(s)
+  } catch (err) {
+    return `<unserializable: ${String(err)}>`
+  }
+}
+
+function log(entry: Record<string, unknown>): void {
+  seq += 1
+  buf.push({ inst: INST, n: seq, t: Date.now(), ...entry })
+}
+
+async function flush($: any): Promise<void> {
+  if (dir === undefined || buf.length === 0) return
+  const lines = buf; buf = []
+  const path = `${dir}/dr39-${INST}.jsonl`
+  let prev = ''
+  try { prev = await $.fs.read(path) } catch { prev = '' }
+  await $.fs.write(path, prev + lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+}
+
+async function mine($: any): Promise<unknown> {
+  try {
+    const all = await $.tool.list()
+    return (all as any[]).map((t: any) => t.name ?? t).filter((n: string) => String(n).includes('mods-dr39'))
+  } catch (err) { return `<threw: ${String(err)}>` }
+}
+
+export function register(on: any): void {
+  on('*', ($: any, e: any, next: any) => {
+    const ev = String(next.event)
+    if (ev !== 'ui.render' && ev !== 'agent.offer' && !ev.startsWith('fs.') && !ev.startsWith('env.') && !ev.startsWith('telemetry')) {
+      const entry: Record<string, unknown> = { ev, by: next.origin }
+      if (KEY.has(ev)) entry.e = clip(e)
+      log(entry)
+    }
+    return next(e)
+  })
+
+  on('session.start', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (timer === undefined) {
+      dir = (await $.env.get('MODS_LAB_DIR')) ?? `${$.plugin.root}/log`
+      timer = $.clock.every(500, () => { void flush($) })
+    }
+    const specs = [
+      { name: 'wait', description: 'Wait (probe).', inputSchema: { type: 'object', properties: { seconds: { type: 'number' }, how: { type: 'string' } } }, isDeferred: false },
+      { name: 'fail', description: 'Fail (probe).', inputSchema: { type: 'object', properties: {} }, isDeferred: false },
+      { name: 'fail2', description: 'Fail with text (probe).', inputSchema: { type: 'object', properties: {} }, isDeferred: false },
+      { name: 'spawnd', description: 'Run the daemon-start stand-in (probe).', inputSchema: { type: 'object', properties: {} }, isDeferred: false },
+    ]
+    for (const spec of specs) {
+      try { await $.tool.register(spec) } catch (err) { log({ ev: '#tool.register', name: spec.name, err: String(err) }) }
+    }
+    log({ ev: '#registered', tools: await mine($) })
+    return r
+  })
+
+  on('command.run', async ($: any, e: any, next: any) => {
+    let before: unknown
+    try { before = await $.session.id() } catch (err) { before = String(err) }
+    const r = await next(e)
+    let after: unknown
+    try { after = await $.session.id() } catch (err) { after = String(err) }
+    log({ ev: '#command.run.after', command: e.command, args: e.args, sidBefore: before, sidAfter: after, tools: await mine($), r: clip(r, 300) })
+    return r
+  })
+
+  on('prompt.submit', async ($: any, e: any, next: any) => {
+    const t0 = Date.now()
+    const pending = await $.state.get({ plugin: 'mods-dr39', key: 'pendingCompact' })
+    if (pending.value === true) {
+      let res: unknown
+      try { res = clip(await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: `MARK-I after compaction inst=${INST}` }] } }), 200) } catch (err) { res = String(err) }
+      await $.state.set({ plugin: 'mods-dr39', key: 'pendingCompact' }, false)
+      log({ ev: '#inject.I', res })
+    }
+    const r = await next(e)
+    log({ ev: '#prompt.submit.resolved', text: String(e.text).slice(0, 40), origin: e.origin?.kind, enteredAt: t0, resolvedAfterMs: Date.now() - t0, r: clip(r, 300) })
+    return r
+  })
+
+  on('session.compact', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    await $.state.set({ plugin: 'mods-dr39', key: 'pendingCompact' }, true)
+    log({ ev: '#pendingCompact', trigger: e.trigger })
+    return r
+  })
+
+  on('tool.call', { tool: 'mcp__mods-dr39__wait' }, async ($: any, e: any, next: any) => {
+    const t0 = Date.now()
+    const seconds = Number(e.seconds ?? 15)
+    log({ ev: '#wait.start', seconds, how: e.how })
+    let out: unknown
+    try {
+      if (e.how === 'clock') { await $.clock.sleep(seconds * 1000); out = 'slept' }
+      else out = clip(await $.process.run(['sleep', String(seconds)], { timeoutMs: (seconds + 30) * 1000 }), 300)
+    } catch (err) { out = `<threw: ${String(err)}>` }
+    log({ ev: '#wait.end', seconds, how: e.how, elapsedMs: Date.now() - t0, out, aborted: next.signal?.aborted ?? null })
+    return { result: `WAITED ${seconds}s via ${e.how} in ${Date.now() - t0}ms` }
+  })
+
+  on('tool.call', { tool: 'mcp__mods-dr39__fail' }, async () => ({ isError: true, result: 'FAIL-TEXT the probe reports a failure' }))
+
+  on('tool.call', { tool: 'mcp__mods-dr39__fail2' }, async () => ({ isError: true, result: 'FAIL2-RESULT', text: 'FAIL2-TEXT' }))
+
+  on('tool.call', { tool: 'mcp__mods-dr39__spawnd' }, async ($: any) => {
+    const t0 = Date.now()
+    let out: unknown
+    try { out = clip(await $.process.run(['bun', BIN], { timeoutMs: 30000 }), 400) } catch (err) { out = `<threw: ${String(err)}>` }
+    log({ ev: '#spawnd', elapsedMs: Date.now() - t0, out })
+    return { result: `SPAWND ${JSON.stringify(out)} in ${Date.now() - t0}ms` }
+  })
+
+  on('session.end', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    await flush($)
+    return r
+  })
+}
+```
+
+`daemon start` の代役 (`$LAB/bin/fake-daemon-start.ts`。CLI の `spawnDaemon` と同じ spawn の形):
+
+```ts
+const proc = Bun.spawn(["sleep", "40"], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+proc.unref();
+console.log(JSON.stringify({ started: true, pid: proc.pid }));
+process.exit(0);
+```
+
+代役の API には台本の行 `{"error":{"status","type","message"}}` を足した (その request に `{ type: 'error', error: { type, message } }` を `status` で返す)。
+
+```ts
+if (scripted?.error) return Response.json({ type: "error", error: { type: scripted.error.type, message: scripted.error.message } }, { status: scripted.error.status, headers: { "request-id": `req_fake_${n}` } });
+```
+
+### 未観測 (DR-0039 の前提)
+
+- busy 中の Enter のうち、model が tool を呼ばずに応答を stream している最中の Enter (今回は tool の実行中だけ)。queue された prompt が別の turn になるか、同じ turn に入るか
+- 実物の `ccmsg daemon start` を `$.process.run` で呼んだ時の所要時間 (daemon の応答を待つ分)
+- picker で既定として保存しつつ別のモデルに切り替えた時の `config.set` と `classic.PostModelSwitch` の順 (切替ありの観測は「この session だけ」の picker と引数付きの 2 回)
+- retry が有効 (既定) な時の API error の event の並び (今回は `CLAUDE_CODE_MAX_RETRIES=0`)
+- 手動 compact の `/compact` で I の足し直しが次の turn に載ることは前の節で 1 回、自動 compact はこの節で 2 回
+
 ## リファレンス (claude-mods) への反映候補
 
 - `events` の「意味論の注意」: `/clear` の列に `command.run` の resolve の位置 (`classic.SessionStart (clear)` の dispatch の後) を足す。compact の列 (`command.run → session.compact → classic.PreCompact → classic.SessionStart (compact) → classic.PostCompact → session.compact と command.run の resolve`) と、自動 compact が `turn.start` の後・その turn の request の前に起きることを足す。根拠: 本 findings の「event 列」
@@ -897,3 +1104,7 @@ export function register(on: any): void {
 - `practices` の「skill と tool の分担」の `isDeferred`: `ANTHROPIC_BASE_URL` が first-party でない時は `ENABLE_TOOL_SEARCH` を設定しない限り ToolSearch が無効で、`isDeferred: true` の tool も全文で載る (debug の文言付き)。未ロードの deferred tool を名前で直接呼んでも、plugin の tool なら handler に届いた
 - `capabilities` の `tool.describe` の行: 「session 内で cache」の実例として、hot reload で登録し直した tool の説明は main thread の request では変わらず、以後に起こした subagent の request には新しい説明が載る。engine の deferred tool (SendMessage) の書き換えは、ToolSearch で読み込まれた後の entry に反映される
 - `dollar-api` の `session` の `append` / `practices` の「main と subagent の見分け」: `agentId` 付きの append は走行中の子の次の request に、直前の tool_result と同じ user message の後ろの text block として載り、main には載らない。終わった子・存在しない id は `refused: no running loop is <agentId>` で reject される (黙って捨てられない)。`turn.*` の `agentId`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` は同じ値
+- `events` の「意味論の注意」: セッション内の `/resume` は `command.run (resume)` → `classic.SessionEnd` → `session.end (reason: resume)` → `classic.SessionStart (source: resume)` で `session.start` は起きず、`command.run` の after では `$.session.id()` が再開した id を返す。`/clear` の after も新しい id を返す。busy 中 (tool の実行中) の Enter は `prompt.submit` と `classic.UserPromptSubmit` がその時点で起き、`next(e)` は数 ms で resolve し、prompt は実行中の turn の次の request に `The user sent a new message while you were working` として入る。`/model` は常に `command.run (model)` を通り (after は `classic.PostModelSwitch` の後)、`config.set (model)` は既定として保存する時だけ
+- `capabilities` の `tool.call` の行: plugin が返す `{ isError: true, result }` は model には `is_error` 無しの tool_result として届く (`text` も使われない)。`session.append` の行: API error の行は door `response`、`origin: { kind: model, model: <synthetic> }` で表示文だけを持ち、分類は `classic.StopFailure` の `error` にしか無い。`turn.complete (reason: error)` の `e` は分類も表示文も持たない
+- `dollar-api` の「制限」の予算: `$.process.run` の待ちは数えられず 40 秒でも通り、`$.clock.sleep` は数えられ 10 秒で hook が skip されて core に落ちる (許可ダイアログ → `no tool.call hook answered`)。人の Esc で `$.process.run` は `aborted` で reject し子は kill される (実測で「未検証」を埋められる)
+- `practices` の「model に文脈を足す」: 自動 compact は turn の途中 (`turn.start` の後) に起きるので、`session.compact` の after で立てた印での足し直しは次の turn からになる
