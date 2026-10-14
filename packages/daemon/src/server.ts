@@ -3714,14 +3714,20 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       async (poll, polledAt) => {
         daemon.runPids.record(poll.agents);
         await syncSessionsFromAgents(daemon, poll);
-        refreshReadiness(daemon);
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role === "user") {
             send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
           }
         }
       },
-      (poll) => resolvePendingTranscripts(daemon, poll),
+      async (poll) => {
+        await resolvePendingTranscripts(daemon, poll);
+        // On every poll, not only when the rows change: a sidecar binding or
+        // going leaves the rows as they were, and the sidecar dir's fs.watch
+        // can deliver late or not at all (macOS FSEvents), so the poll is
+        // what bounds how long a readiness stays stale.
+        refreshReadiness(daemon);
+      },
     );
   }
 

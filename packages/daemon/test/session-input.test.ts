@@ -37,6 +37,7 @@ import {
   waitConnectable,
   type DaemonCtx,
 } from "./helpers.ts";
+import { mkFixture, writeMockClaude } from "./fake-claude.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RequestTextSchema = jsonText(SidecarRequestSchema);
@@ -400,13 +401,13 @@ describe("inputReadiness", () => {
 /** A daemon whose state dir is short enough for the sidecar sockets to live
  * under it (macOS's tmpdir is not), so the test reads the same path the
  * daemon derives. */
-async function startShortDaemon(): Promise<DaemonCtx> {
+async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
   const base = fs.mkdtempSync("/tmp/ccmsg-si-");
   const stateDir = path.join(base, "s");
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
-  const proc = spawnDaemonProc(stateDir, dataDir);
+  const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
   return {
@@ -417,7 +418,36 @@ async function startShortDaemon(): Promise<DaemonCtx> {
     roomsDir: path.join(dataDir, "rooms"),
     sock,
     proc,
-    env: {},
+    env: extraEnv,
+  };
+}
+
+/** A short daemon that polls `claude agents --json` as a daemon does outside
+ * tests. The mock lists no session, so what registers a session stays the
+ * test's own hello.
+ *
+ * Design rationale: the daemon re-judges input readiness when the sidecar
+ * directory changes (fs.watch) and on every agents poll. Test daemons turn
+ * the poll off, which leaves fs.watch as the only way to notice a sidecar
+ * binding or going — and macOS's FSEvents, on CI runners in particular, can
+ * deliver late or not at all. With the poll on, the test follows a sidecar
+ * through both, as the daemon does in use, whatever the host's FSEvents does. */
+async function startPolledDaemon(): Promise<{ ctx: DaemonCtx; dispose(): Promise<void> }> {
+  const fixture = mkFixture();
+  fs.mkdirSync(path.join(fixture.home, ".claude-a"));
+  writeMockClaude(fixture.binDir, fixture.callLog, {});
+  const ctx = await startShortDaemon({
+    CCMSG_AGENTS_POLL: "on",
+    CCMSG_AGENTS_POLL_MS: "150",
+    HOME: fixture.home,
+    PATH: `${fixture.binDir}:${process.env.PATH ?? ""}`,
+  });
+  return {
+    ctx,
+    dispose: async () => {
+      await stopTestDaemon(ctx);
+      fs.rmSync(fixture.base, { recursive: true, force: true });
+    },
   };
 }
 
@@ -623,7 +653,8 @@ describe("input_readiness on session_status", () => {
   // The snapshot says whether a person's input can reach the session before
   // anything is sent, and a sidecar binding or going pushes the change.
   test("follows the session's sidecars and their terminals", async () => {
-    const ctx = await startShortDaemon();
+    const daemon = await startPolledDaemon();
+    const { ctx } = daemon;
     const transcript = path.join(ctx.base, `${SID}.jsonl`);
     fs.writeFileSync(transcript, "");
     // Harness stand-ins: the daemon reads HYOUI_SESSION_ID off the process a
@@ -672,14 +703,15 @@ describe("input_readiness on session_status", () => {
       for (const sidecar of sidecars) sidecar.close();
       underHyoui.kill();
       outsideHyoui.kill();
-      await stopTestDaemon(ctx);
+      await daemon.dispose();
     }
   });
 
   // A peer row carries it too, for a client that follows no status of the
   // session (no transcript yet, or only its Terminal tab open).
   test("rides the peers reply and the peers push", async () => {
-    const ctx = await startShortDaemon();
+    const daemon = await startPolledDaemon();
+    const { ctx } = daemon;
     const env = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
     const underHyoui = Bun.spawn(["sleep", "60"], { env: { ...env, HYOUI_SESSION_ID: "hy-1" } });
     let sidecar: { close(): void } | undefined;
@@ -702,7 +734,7 @@ describe("input_readiness on session_status", () => {
     } finally {
       sidecar?.close();
       underHyoui.kill();
-      await stopTestDaemon(ctx);
+      await daemon.dispose();
     }
   });
 });
