@@ -1085,9 +1085,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "session-errors/loaded":
       return {
         ...state,
-        sessionErrors: new Map(
-          action.errors.map((e) => [e.sid, { text: e.text, timestamp: e.timestamp }]),
-        ),
+        sessionErrors: new Map(action.errors.map(({ sid, ...error }) => [sid, error])),
       };
     case "says/loaded":
       return { ...state, says: action.says };

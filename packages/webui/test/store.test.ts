@@ -831,6 +831,27 @@ describe("reducer / session-errors/loaded", () => {
     });
   });
 
+  // A session whose hooks module sends facts has its error classified by
+  // Claude Code (DR-0035 §3); the sidebar's hover shows the kind.
+  test("the kind of a module's error is kept", () => {
+    const state = dispatch(initialState(), {
+      type: "session-errors/loaded",
+      errors: [
+        {
+          sid: "s1",
+          text: "API Error: 429",
+          timestamp: "2026-10-14T00:00:00Z",
+          kind: "rate_limit",
+        },
+      ],
+    });
+    expect(state.sessionErrors.get("s1")).toEqual({
+      text: "API Error: 429",
+      timestamp: "2026-10-14T00:00:00Z",
+      kind: "rate_limit",
+    });
+  });
+
   // The daemon always sends the full list, so a session that recovered simply
   // stops appearing — replacing (not merging) is what makes it drop out.
   test("a later list replaces the map wholesale, so a recovered session drops out", () => {
