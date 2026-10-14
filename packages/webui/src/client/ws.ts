@@ -847,6 +847,7 @@ export function createWsClient(
           external_files: ev.external_files ?? [],
           ...(ev.workspace_folders ? { workspace_folders: ev.workspace_folders } : {}),
           ...(ev.agent_tree ? { agent_tree: ev.agent_tree } : {}),
+          ...(ev.input_readiness ? { input_readiness: ev.input_readiness } : {}),
         },
       });
       return;

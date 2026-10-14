@@ -12,6 +12,8 @@
 // `unconfirmed` は送信ごとに「送信済みかもしれない」と示し、どちらも下書きを
 // 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
 // 同じ文が二重に入るのを防ぐ。別タブでの変更は storage event で映す。
+// 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
+// daemon が session_status に載せる input_readiness の理由と対処を先に示す。
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
@@ -30,7 +32,12 @@ import {
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
-import { formatSentAt, sendExcerpt, sessionInputNotice } from "./session-input.ts";
+import {
+  formatSentAt,
+  inputReadinessNotice,
+  sendExcerpt,
+  sessionInputNotice,
+} from "./session-input.ts";
 import {
   cleanupStaleSessionInputs,
   clearLastFailure,
@@ -375,6 +382,13 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // 直近の送信が届かなかった・送れなかった時の注記と、未確認の送信ごとの注記を
   // 並べて出す (失敗の注記が未確認の警告を隠さない)。
   const failureNotice = failure ? sessionInputNotice(failure) : null;
+  // 送る前から分かっている届かない理由 (daemon の input_readiness)。直近の送信が
+  // 同じ理由で届かなかった時は、その注記が同じ文言を出すので重ねない。
+  const readiness = state.sessionStatuses.get(sid)?.input_readiness;
+  const readinessNotice =
+    failure?.kind === "not_delivered" && failure.reason === readiness?.kind
+      ? null
+      : inputReadinessNotice(readiness);
   const unconfirmed = unconfirmedSends(sends);
   const unconfirmedNotice = sessionInputNotice({ kind: "unconfirmed" });
   const uploading = hasPendingUpload(attachments);
@@ -486,6 +500,11 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
         <p class="session-input-status" role="status">
           セッションに渡しています。受け取ったかの確認を待っています...
         </p>
+      ) : null}
+      {readinessNotice ? (
+        <div class="session-input-notice session-input-notice-warn" role="status">
+          <p class="session-input-notice-detail">{readinessNotice}</p>
+        </div>
       ) : null}
       {failureNotice ? (
         <div class={`session-input-notice session-input-notice-${failureNotice.tone}`} role="alert">

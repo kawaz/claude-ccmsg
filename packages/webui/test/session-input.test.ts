@@ -5,6 +5,7 @@ import type { SessionInputReason } from "@ccmsg/protocol";
 import {
   classifySessionInputReply,
   formatSentAt,
+  inputReadinessNotice,
   sendExcerpt,
   sessionInputNotice,
   sessionInputSendFailure,
@@ -164,5 +165,28 @@ describe("sendExcerpt", () => {
     expect(sendExcerpt("あ".repeat(50))).toBe(`${"あ".repeat(40)}…`);
     // 絵文字 (複数の code point からなる書記素) を途中で切らない。
     expect(sendExcerpt("👨‍👩‍👧".repeat(41))).toBe(`${"👨‍👩‍👧".repeat(40)}…`);
+  });
+});
+
+describe("inputReadinessNotice", () => {
+  // 何を保証するか: 受け取れる時と判定が無い時は何も出さない (入力欄の近くに
+  // 出すのは届かないと分かっている時だけ)。
+  test("says nothing when ready or unknown", () => {
+    expect(inputReadinessNotice({ kind: "ready" })).toBeNull();
+    expect(inputReadinessNotice(undefined)).toBeNull();
+  });
+
+  test("names the cause and the next step", () => {
+    expect(inputReadinessNotice({ kind: "no_module" })).toContain(
+      "plugin を更新してセッションを起動し直して",
+    );
+    expect(inputReadinessNotice({ kind: "no_terminal" })).toContain("hyoui run 経由で起動し直して");
+    expect(inputReadinessNotice({ kind: "session_changed" })).toContain(
+      "切り替わった先のセッションを開いて送って",
+    );
+  });
+
+  test("says the session ended", () => {
+    expect(inputReadinessNotice({ kind: "ended" })).toBe("セッションは終了しています。");
   });
 });

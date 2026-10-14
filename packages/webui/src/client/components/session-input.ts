@@ -2,7 +2,12 @@
 // 振る舞いと人に見せる文言に落とす pure な層。SessionInputComposer はこの
 // 結果だけを見て「文を消す / 残す」と表示を決める。JSX を通さず bun test から
 // 直接叩けるよう .ts に切り出している (composer-keydown.ts と同じ流儀)。
-import type { ErrorResponse, SessionInputReason, SessionInputResponse } from "@ccmsg/protocol";
+import type {
+  ErrorResponse,
+  SessionInputReadiness,
+  SessionInputReason,
+  SessionInputResponse,
+} from "@ccmsg/protocol";
 
 /** 1 回の送信がどう終わったか。
  *
@@ -60,6 +65,34 @@ export function sessionInputSendFailure(): SessionInputOutcome {
  * 時だけ消す。 */
 export function shouldClearAfter(outcome: SessionInputOutcome): boolean {
   return outcome.kind === "accepted";
+}
+
+/** 送る前から分かる理由 (daemon の input_readiness) の文言。 */
+const NO_MODULE_DETAIL =
+  "このセッションは入力の受け口 (ccmsg plugin の module) を持っていません。plugin を更新してセッションを起動し直してください。";
+const NO_TERMINAL_DETAIL =
+  "hyoui run 経由で起動されていないため、入力を確定 (Enter) できません。hyoui run 経由で起動し直してください。";
+const SESSION_CHANGED_DETAIL =
+  "セッションが切り替わっています (/clear や /resume)。切り替わった先のセッションを開いて送ってください。";
+
+/** 送る前から分かっている、人の入力が届かない理由と次の行動 (DR-0035 §5)。
+ * 受け取れる (`ready`) 時と、daemon が判定を載せていない時は出すものが無い。
+ * 入力欄は無効化しない: 判定は送る瞬間の状態とずれうるので、送信は止めず、
+ * 送った結果は届かなかった理由として返る。 */
+export function inputReadinessNotice(readiness: SessionInputReadiness | undefined): string | null {
+  switch (readiness?.kind) {
+    case undefined:
+    case "ready":
+      return null;
+    case "no_module":
+      return NO_MODULE_DETAIL;
+    case "no_terminal":
+      return NO_TERMINAL_DETAIL;
+    case "session_changed":
+      return SESSION_CHANGED_DETAIL;
+    case "ended":
+      return "セッションは終了しています。";
+  }
 }
 
 /** 届かなかった理由ごとの、何が起きたかと次の行動。人がその場で直せるもの
