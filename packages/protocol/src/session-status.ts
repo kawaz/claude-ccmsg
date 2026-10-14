@@ -365,6 +365,17 @@ export const SessionTurnSchema = v.object({
 });
 export type SessionTurn = Output<typeof SessionTurnSchema>;
 
+/** A subagent of the session running a turn now, as its hooks module said
+ * (DR-0039 §6): `since` is when that turn started (ISO), absent when the
+ * module did not see it start. */
+export const SessionSubagentSchema = v.object({
+  id: v.string(),
+  description: v.optional(v.string()),
+  type: v.optional(v.string()),
+  since: v.optional(v.string()),
+});
+export type SessionSubagent = Output<typeof SessionSubagentSchema>;
+
 export const SessionStatusSnapshotSchema = v.object({
   todos: v.array(SessionTodoSchema),
   workflows: v.array(SessionWorkflowStatusSchema),
@@ -402,5 +413,9 @@ export const SessionStatusSnapshotSchema = v.object({
   /** Whether the main thread is answering a turn. Absent for a session
    * without the hooks module, or before the module said. */
   turn: v.optional(SessionTurnSchema),
+  /** The subagents running a turn now, which a person can add a message to
+   * (agent_input). Absent for a session without the hooks module, or before
+   * the module said. */
+  subagents: v.optional(v.array(SessionSubagentSchema)),
 });
 export type SessionStatusSnapshot = Output<typeof SessionStatusSnapshotSchema>;

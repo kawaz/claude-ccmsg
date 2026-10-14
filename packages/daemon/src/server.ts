@@ -123,6 +123,7 @@ import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
 import { listPeers, type PeerDeps, sendToPeers } from "./peer-send.ts";
+import { AGENT_INPUT_DEADLINE_MS, agentInput } from "./agent-input.ts";
 import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
 import {
   callSidecar,
@@ -2896,6 +2897,28 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       );
       daemon.log.info(
         `session-input -> ${req.session_id}: ${outcome.outcome}` +
+          (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
+          ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
+      );
+      send(conn, { ok: true, ...outcome });
+      return;
+    }
+
+    case "agent_input": {
+      // user role only, as session_input: what it adds is recorded as the
+      // person's, through the webui (DR-0039 §6).
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'agent_input' requires user role");
+        return;
+      }
+      const { tries, ...outcome } = await agentInput(req.session_id, req.agent_id, req.text, {
+        ...productionSidecarDeps(daemon.sidecarReplies),
+        deadlineMs: AGENT_INPUT_DEADLINE_MS,
+        runs: daemon.sidecarRuns,
+        isRunning: (sid) => daemon.sessions.has(sid),
+      });
+      daemon.log.info(
+        `agent-input -> ${req.session_id} ${req.agent_id}: ${outcome.outcome}` +
           (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );

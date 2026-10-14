@@ -59,6 +59,9 @@ export const KEEPALIVE_CHECK_MS = 5_000;
  * the daemon's event loop running late and the transport (a phone over the
  * tailnet) without making a lost answer hold the input panel much longer. */
 export const SESSION_INPUT_REPLY_TIMEOUT_MS = 15_000;
+/** How long agentInput waits for its reply: the daemon's AGENT_INPUT_DEADLINE_MS
+ * (5 s) and the same margin as SESSION_INPUT_REPLY_TIMEOUT_MS. */
+export const AGENT_INPUT_REPLY_TIMEOUT_MS = 8_000;
 
 /** The time the client reads and the waits it sets: how long a socket has
  * been idle, when to reconnect, when a reply is overdue. The same seam as the
@@ -390,6 +393,7 @@ export interface WsHandle {
    * means the request was written but its answer was lost: the text may be in
    * the session. */
   sessionInput(sessionId: string, text: string): Promise<ReplyOf<"session_input">>;
+  agentInput(sessionId: string, agentId: string, text: string): Promise<ReplyOf<"agent_input">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -872,6 +876,7 @@ export function createWsClient(
           ...(ev.agent_tree ? { agent_tree: ev.agent_tree } : {}),
           ...(ev.input_readiness ? { input_readiness: ev.input_readiness } : {}),
           ...(ev.turn ? { turn: ev.turn } : {}),
+          ...(ev.subagents ? { subagents: ev.subagents } : {}),
         },
       });
       return;
@@ -1103,6 +1108,11 @@ export function createWsClient(
           text,
         },
         { timeoutMs: SESSION_INPUT_REPLY_TIMEOUT_MS },
+      ),
+    agentInput: (sessionId, agentId, text) =>
+      send(
+        { op: "agent_input", session_id: sessionId, agent_id: agentId, text },
+        { timeoutMs: AGENT_INPUT_REPLY_TIMEOUT_MS },
       ),
     sessionEnv: (sessionId) =>
       send({

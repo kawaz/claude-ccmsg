@@ -10,6 +10,7 @@ import {
   SessionFactsSchema,
   SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
+  AgentAppendResultSchema,
   SIDECAR_OPS,
   SidecarReplySchema,
   sidecarRunId,
@@ -136,6 +137,14 @@ describe("the ops' results", () => {
       { at: 4, effort: "xhigh", context: { window: 200_000, tokens: 0, at: 4 } },
       { at: 5, turn: { state: "responding", since: 5 } },
       { at: 5, turn: { state: "idle", since: 5 } },
+      { at: 6, subagents: [] },
+      {
+        at: 6,
+        subagents: [
+          { id: "a1", since: 6 },
+          { id: "a2", description: "d", type: "Explore", since: 6 },
+        ],
+      },
     ] as const) {
       expect(parseWith(SessionFactsSchema, facts)).toEqual({ ok: true, value: facts });
     }
@@ -153,6 +162,8 @@ describe("the ops' results", () => {
       { at: 1, turn: { state: "idle" } },
       { at: 1, context: { window: 1, tokens: -1, at: 1 } },
       { at: 1, context: { window: 1, tokens: 1.5, at: 1 } },
+      { at: 1, subagents: [{ id: "", since: 1 }] },
+      { at: 1, subagents: [{ id: "a1", since: 0 }] },
     ]) {
       expect(parseWith(SessionFactsSchema, facts).ok).toBe(false);
     }
@@ -170,6 +181,35 @@ describe("the ops' results", () => {
       ok: true,
       value: { at: 3, model: "m" },
     });
+  });
+
+  // agent.append (DR-0039 §6): an agent id and a text that is not only
+  // whitespace; its result says appended or why not.
+  test("agent.append: an agent id and a text, appended or why not", () => {
+    const request = {
+      v: 1,
+      op: "agent.append",
+      id: "g",
+      args: { agentId: "a1", text: "hi" },
+    } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    for (const args of [
+      { agentId: "", text: "hi" },
+      { agentId: "a1", text: "  " },
+      { text: "hi" },
+    ]) {
+      expect(readSidecarRequest(line({ ...request, args })).ok).toBe(false);
+    }
+    for (const result of [
+      { outcome: "appended" },
+      { outcome: "not_delivered", reason: "not_running" },
+      { outcome: "not_delivered", reason: "refused" },
+    ]) {
+      expect(parseWith(AgentAppendResultSchema, result).ok).toBe(true);
+    }
+    expect(parseWith(AgentAppendResultSchema, { outcome: "not_delivered", reason: "x" }).ok).toBe(
+      false,
+    );
   });
 
   test("session.facts is asked with no arguments", () => {

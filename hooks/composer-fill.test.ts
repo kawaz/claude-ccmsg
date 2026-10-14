@@ -20,6 +20,7 @@ import {
 } from "@ccmsg/protocol/sidecar";
 import {
   ACCEPT_WAIT_MS,
+  agentMessage,
   GUIDANCE,
   GUIDED_TTL_MS,
   type Engine,
@@ -154,8 +155,14 @@ interface Fake {
   /** The events the module hooked, in the order it hooked them. */
   registered: HookedEvent[];
   catchers: CatchTable;
-  /** The text of each row the module appended to the conversation. */
+  /** The text of each row the module appended to the main conversation. */
   appended: string[];
+  /** Each row the module appended to a subagent's conversation. */
+  agentAppends: { agentId: string; text: string }[];
+  /** The session's subagents as `$.agent.list()` says; a running one's
+   * conversation takes an append, any other id is refused as Claude Code
+   * refuses it. */
+  agents: { id: string; description: string; type: string; status: string }[];
   /** This plugin's `$.store`, which outlives the process: a session resumed
    * in another process is given the same one. */
   store: Map<string, unknown>;
@@ -216,6 +223,8 @@ function fakeEngine(
   const logs: string[] = [];
   const tools: Fake["tools"] = [];
   const appended: string[] = [];
+  const agentAppends: Fake["agentAppends"] = [];
+  const agents: Fake["agents"] = [];
   const store = options.store ?? new Map<string, unknown>();
   const $: Engine = {
     plugin: { root: "/plugin" },
@@ -225,11 +234,20 @@ function fakeEngine(
       surfaces: async () => options.surfaces ?? ["terminal"],
       model: async () => session.model,
       usage: async () => ({ context: { window: session.window } }),
-      append: async ({ message }) => {
-        appended.push(message.content.map((block) => block.text).join(""));
+      append: async ({ message, agentId }) => {
+        const text = message.content.map((block) => block.text).join("");
+        if (agentId === undefined) {
+          appended.push(text);
+          return {};
+        }
+        if (!agents.some((a) => a.id === agentId && a.status === "running")) {
+          throw new Error(`HooksError: $.session.append: refused: no running loop is ${agentId}`);
+        }
+        agentAppends.push({ agentId, text });
         return {};
       },
     },
+    agent: { list: async () => agents.map((a) => ({ ...a })) },
     store: {
       // What is stored is read back as a copy, as the engine's store does.
       get: async (key) => structuredClone(store.get(key)),
@@ -331,6 +349,8 @@ function fakeEngine(
     catchers: emptyTable(),
     tools,
     appended,
+    agentAppends,
+    agents,
     store,
   };
   return fake;
@@ -1112,7 +1132,7 @@ describe("requests the module answers without running prompt.send", () => {
     const reply = await replyTo(fake, '{"v":1,"op":"describe","id":"d1","args":{}}');
     const result: DescribeResult = {
       v: [1],
-      ops: ["describe", "prompt.send", "session.facts"],
+      ops: ["describe", "prompt.send", "session.facts", "agent.append"],
       version: "1.2.3",
     };
     expect(reply).toEqual({ id: "d1", ok: true, result });
@@ -1525,6 +1545,113 @@ describe("each hook passes the event on once", () => {
       expect(calls.count).toBe(1);
       expect(logged).toBe(1);
     }
+  });
+});
+
+// The subagents a person can add a message to from the web UI (DR-0039 §6).
+describe("the subagents", () => {
+  /** The subagents in `facts`, each saying whether its turn's start is known
+   * rather than when (the fake's clock is a counter). */
+  const withStart = (facts: SessionFacts) =>
+    (facts.subagents ?? []).map(({ since, ...agent }) => ({
+      ...agent,
+      started: since !== undefined,
+    }));
+  const A = "a1b2c3d4e5f6a7b8c";
+  const B = "b9b8b7b6b5b4b3b2a";
+
+  test("a subagent is in the facts from its turn's start to its end, with what list() says", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilLastFacts(fake, (f) => f.subagents !== undefined);
+    expect(lastFacts(fake).subagents).toEqual([]);
+    fake.agents.push({ id: A, description: "調査", type: "Explore", status: "running" });
+    await fire(fake, "turn.start", { text: "go", turnId: "s1", agentId: A }, async () => ({}));
+    await untilLastFacts(fake, (f) => (f.subagents ?? []).length === 1);
+    expect(withStart(lastFacts(fake))).toEqual([
+      { id: A, description: "調査", type: "Explore", started: true },
+    ]);
+    // A teammate's loop, which list() may not describe yet, is listed bare.
+    await fire(fake, "turn.start", { text: "", turnId: "s2", agentId: B }, async () => ({}));
+    await untilLastFacts(fake, (f) => (f.subagents ?? []).length === 2);
+    await fire(
+      fake,
+      "turn.complete",
+      { reason: "answer", turnId: "s1", agentId: A },
+      async () => ({}),
+    );
+    await untilLastFacts(fake, (f) => (f.subagents ?? []).length === 1);
+    expect(withStart(lastFacts(fake))).toEqual([{ id: B, started: true }]);
+    // The main thread's turns leave them alone.
+    expect(lastFacts(fake).turn?.state).toBe("idle");
+  });
+
+  // Loaded while a subagent runs (a reload), or after /clear: the module has
+  // seen no turn start, so it reads who runs off list(), without a start.
+  test("at a start and after /clear the running ones are read off list(), without a start", async () => {
+    const fake = fakeEngine();
+    fake.agents.push(
+      { id: A, description: "d", type: "general-purpose", status: "running" },
+      { id: B, description: "done", type: "Explore", status: "completed" },
+    );
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await untilLastFacts(fake, (f) => f.subagents !== undefined);
+    expect(lastFacts(fake).subagents).toEqual([
+      { id: A, description: "d", type: "general-purpose" },
+    ]);
+  });
+
+  test("agent.append adds the text, marked as the person's, to the running subagent only", async () => {
+    const fake = fakeEngine();
+    fake.agents.push({ id: A, description: "d", type: "t", status: "running" });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    // Each request on the sidecar, and the reply the module sent for it.
+    const append = async (agentId: string, text: string) => {
+      const isReply = (argv: string[]) => argv[2] === "reply";
+      const before = fake.runs.filter(isReply).length;
+      spawned(fake, 0).stream.push(
+        `${JSON.stringify({ v: 1, op: "agent.append", id: "g1", args: { agentId, text } })}\n`,
+      );
+      for (let i = 0; i < 20 && fake.runs.filter(isReply).length === before; i++) await settle();
+      return stdinReply(fake, fake.runs.findLastIndex(isReply));
+    };
+    expect(await append(A, "その方針で")).toEqual({
+      id: "g1",
+      ok: true,
+      result: { outcome: "appended" },
+    });
+    expect(fake.agentAppends).toEqual([{ agentId: A, text: agentMessage("その方針で") }]);
+    expect(agentMessage("x")).toBe("ユーザから (webui 経由):\nx");
+    expect(fake.appended).toEqual([]);
+    expect(await append(B, "x")).toEqual({
+      id: "g1",
+      ok: true,
+      result: { outcome: "not_delivered", reason: "not_running" },
+    });
+  });
+
+  test("an append refused for another reason says refused", async () => {
+    const fake = fakeEngine();
+    fake.$.session = {
+      ...fake.$.session,
+      append: async () => {
+        throw new Error("denied by a hook above");
+      },
+    };
+    registerOn(fake);
+    const reply = await replyTo(
+      fake,
+      JSON.stringify({ v: 1, op: "agent.append", id: "g2", args: { agentId: A, text: "x" } }),
+    );
+    expect(reply).toEqual({
+      id: "g2",
+      ok: true,
+      result: { outcome: "not_delivered", reason: "refused" },
+    });
   });
 });
 

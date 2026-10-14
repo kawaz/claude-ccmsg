@@ -76,12 +76,14 @@ import {
   SendToolInputSchema,
 } from "@ccmsg/protocol/peer-tools";
 import {
+  type AgentAppendResult,
   type DescribeResult,
   type FailedSidecarReply,
   type PromptSendResult,
   readSidecarRequest,
   type SessionFacts,
   type SessionFactsContext,
+  type SessionFactsSubagent,
   type SessionFactsTurn,
   SIDECAR_OP_NAMES,
   SIDECAR_REQUEST_VERSION,
@@ -120,7 +122,14 @@ export interface Engine {
     usage(): Promise<{ context: { window: number; tokens?: number } }>;
     append(args: {
       message: { type: "user"; content: readonly { type: "text"; text: string }[] };
+      /** The running subagent whose conversation the row joins; absent for
+       * the main one. */
+      agentId?: string;
     }): Promise<unknown>;
+  };
+  agent: {
+    /** The session's subagents and teammates, `status` where each loop stands. */
+    list(): Promise<readonly { id: string; description: string; type: string; status: string }[]>;
   };
   /** This plugin's key-value store, kept on disk under the config dir across
    * sessions, resumes and reloads. A value read back is outside data. */
@@ -337,7 +346,8 @@ export const STABLE_MS = 10_000;
 export type Reply =
   | SidecarReplyOf<"describe">
   | SidecarReplyOf<"prompt.send">
-  | SidecarReplyOf<"session.facts">;
+  | SidecarReplyOf<"session.facts">
+  | SidecarReplyOf<"agent.append">;
 
 /** A prompt.send, as the module queues it: under which session id and which
  * generation of it the line arrived. */
@@ -412,6 +422,7 @@ export interface ModuleState {
     effort?: string;
     context?: SessionFactsContext;
     turn?: SessionFactsTurn;
+    subagents?: SessionFactsSubagent[];
   };
   /** Facts are sent one at a time; `queued` is whether a send waits its turn,
    * which then sends what the module knows when it starts, so any number of
@@ -896,7 +907,91 @@ async function sessionBegan($: Engine, state: ModuleState): Promise<void> {
   } catch (e) {
     $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
   }
+  await readSubagents($, state);
   await readModelAndWindow($, state);
+}
+
+// --- the subagents (DR-0039 §6) --------------------------------------------
+
+/** Read the subagents running now off the session (`$.agent.list()`): what
+ * the module knows when it has seen none start (it was loaded meanwhile, or
+ * the session changed its id). When their turns started is not known, so it
+ * is left out. Sends nothing; never rejects. */
+async function readSubagents($: Engine, state: ModuleState): Promise<void> {
+  try {
+    const running = (await $.agent.list()).filter((agent) => agent.status === "running");
+    state.facts = {
+      ...state.facts,
+      subagents: running.map((agent) => subagentFacts(agent.id, agent)),
+    };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the subagents: ${errorText(e)}`, { to: "debug" });
+  }
+}
+
+function subagentFacts(
+  id: string,
+  agent: { description: string; type: string } | undefined,
+  since?: number,
+): SessionFactsSubagent {
+  return {
+    id,
+    ...(agent !== undefined && agent.description !== "" ? { description: agent.description } : {}),
+    ...(agent !== undefined && agent.type !== "" ? { type: agent.type } : {}),
+    ...(since !== undefined ? { since } : {}),
+  };
+}
+
+/** A subagent's loop started a turn: it is running, and a message can be
+ * added to its conversation until the turn ends. Never rejects. */
+async function subagentStarted($: Engine, state: ModuleState, id: string): Promise<void> {
+  try {
+    const since = Math.floor(await $.clock.now());
+    const agent = (await $.agent.list()).find((a) => a.id === id);
+    const others = (state.facts.subagents ?? []).filter((a) => a.id !== id);
+    state.facts = { ...state.facts, subagents: [...others, subagentFacts(id, agent, since)] };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not take the subagent ${id}: ${errorText(e)}`, { to: "debug" });
+  }
+  sendFacts($, state);
+}
+
+/** A subagent's turn ended: nothing can be added to its conversation now. */
+function subagentEnded($: Engine, state: ModuleState, id: string): void {
+  const held = state.facts.subagents;
+  if (held === undefined || !held.some((a) => a.id === id)) return;
+  state.facts = { ...state.facts, subagents: held.filter((a) => a.id !== id) };
+  sendFacts($, state);
+}
+
+/** What a subagent reads of a person's message: marked as the person's,
+ * through the web UI, so the model takes it as a word from outside its task,
+ * not a tool's output. */
+export function agentMessage(text: string): string {
+  return `ユーザから (webui 経由):\n${text}`;
+}
+
+/** agent.append: add the person's text to the running subagent's
+ * conversation. Claude Code refuses an id no loop runs under with
+ * "no running loop is <id>". */
+async function appendToAgent(
+  $: Engine,
+  args: { agentId: string; text: string },
+): Promise<AgentAppendResult> {
+  try {
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: agentMessage(args.text) }] },
+      agentId: args.agentId,
+    });
+    return { outcome: "appended" };
+  } catch (e) {
+    const why = errorText(e);
+    $.ui.log(`ccmsg: agent.append to ${args.agentId} refused: ${why}`, { to: "debug" });
+    return {
+      outcome: "not_delivered",
+      reason: why.includes("no running loop") ? "not_running" : "refused",
+    };
+  }
 }
 
 /** The main thread is answering a turn now, or not; the facts are sent.
@@ -942,6 +1037,8 @@ async function replyTo(
       }
       case "session.facts":
         return { id, ok: true, result: await currentFacts($, state) };
+      case "agent.append":
+        return { id, ok: true, result: await appendToAgent($, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -1161,6 +1258,7 @@ export function register(on: On): ModuleState {
     observe($, e, next, "turn.start", TurnStartInputSchema, {
       before: (input) => {
         if (input.agentId === undefined) void turnState($, state, "responding");
+        else void subagentStarted($, state, input.agentId);
       },
     }),
   ).catch(async (_$, e, next) => next(e));
@@ -1168,6 +1266,7 @@ export function register(on: On): ModuleState {
     observe($, e, next, "turn.complete", TurnCompleteInputSchema, {
       after: async (input) => {
         if (input.agentId === undefined) await turnState($, state, "idle");
+        else subagentEnded($, state, input.agentId);
       },
     }),
   ).catch(async (_$, e, next) => next(e));

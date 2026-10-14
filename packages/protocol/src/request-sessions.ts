@@ -9,7 +9,12 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, PeerSendInputSchema } from "./peer-tools.ts";
-import { SessionFactsSchema, SidecarReplySchema, SidecarRunIdSchema } from "./sidecar.ts";
+import {
+  AgentAppendArgsSchema,
+  SessionFactsSchema,
+  SidecarReplySchema,
+  SidecarRunIdSchema,
+} from "./sidecar.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 
 /** A Claude Code session id as a request names one. Its shape (a lowercase
@@ -358,6 +363,19 @@ export const SessionInputRequestSchema = v.object({
   ),
 });
 export type SessionInputRequest = Output<typeof SessionInputRequestSchema>;
+
+/** Add what a person wrote to the conversation of a running subagent of a
+ * session (user role only, DR-0039 §6). The daemon hands it to a run's hooks
+ * module as an `agent.append` request; the subagent's next request carries
+ * it, the session's main thread does not. Context, not a prompt: it grants
+ * nothing. */
+export const AgentInputRequestSchema = v.object({
+  op: v.literal("agent_input"),
+  session_id: SessionIdSchema,
+  agent_id: AgentAppendArgsSchema.entries.agentId,
+  text: AgentAppendArgsSchema.entries.text,
+});
+export type AgentInputRequest = Output<typeof AgentInputRequestSchema>;
 
 /** Hand the daemon a session's hooks module's SidecarReply (session role,
  * DR-0035 §1). Taken only from the session the request was written to, and

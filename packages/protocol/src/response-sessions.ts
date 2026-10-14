@@ -12,7 +12,7 @@ import {
   SessionInputReadinessSchema,
   SessionStatusSnapshotSchema,
 } from "./session-status.ts";
-import { SessionInputModuleReasonSchema } from "./sidecar.ts";
+import { AgentAppendReasonSchema, SessionInputModuleReasonSchema } from "./sidecar.ts";
 import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 
 export const HelloResponseSchema = v.object({
@@ -411,6 +411,31 @@ export const SessionInputResponseSchema = v.variant("outcome", [
   v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
 ]);
 export type SessionInputResponse = Output<typeof SessionInputResponseSchema>;
+
+/** Why an agent_input did not reach the subagent (DR-0039 §6): the module's
+ * AgentAppendReason, or as for session_input, `no_module` (no run's module
+ * took the request), `session_changed` (/clear, /resume) or `ended`. */
+export const AgentInputReasonSchema = v.picklist([
+  ...AgentAppendReasonSchema.options,
+  "no_module",
+  "session_changed",
+  "ended",
+]);
+export type AgentInputReason = Output<typeof AgentInputReasonSchema>;
+
+/** Payload of a completed agent_input: `appended` (the subagent's next
+ * request carries it), `not_delivered` for `reason`, or `unconfirmed` (a
+ * sidecar took the request but no answer came in time). */
+export const AgentInputResponseSchema = v.variant("outcome", [
+  v.object({ ok: v.literal(true), outcome: v.literal("appended") }),
+  v.object({
+    ok: v.literal(true),
+    outcome: v.literal("not_delivered"),
+    reason: AgentInputReasonSchema,
+  }),
+  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
+]);
+export type AgentInputResponse = Output<typeof AgentInputResponseSchema>;
 
 /** Payload of a sidecar_reply the daemon was waiting for. */
 export const SidecarReplyResponseSchema = v.object({

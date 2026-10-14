@@ -71,6 +71,14 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "address_send", to: 1, text: "hi" },
     ],
   },
+  agent_input: {
+    ok: { op: "agent_input", session_id: SID, agent_id: "a1b2c3", text: "hi" },
+    bad: [
+      { op: "agent_input", session_id: SID, agent_id: "", text: "hi" },
+      { op: "agent_input", session_id: SID, agent_id: "a1", text: " \n" },
+      { op: "agent_input", session_id: SID, text: "hi" },
+    ],
+  },
   peer_send: {
     ok: { op: "peer_send", to: { cwd: "/w", name: "n", session_id: SID, pid: 7 }, text: "hi" },
     bad: [

@@ -46,6 +46,7 @@ import {
 import { PeerListResponseSchema, PeerSendResponseSchema } from "./peer-tools.ts";
 import {
   AddressSendResponseSchema,
+  AgentInputResponseSchema,
   AgentsResponseSchema,
   DirTreeResponseSchema,
   ForkOriginResponseSchema,
@@ -109,6 +110,7 @@ export const RESPONSE_SCHEMAS = {
   reply: ReplyResponseSchema,
   message_send: MessageSendResponseSchema,
   address_send: AddressSendResponseSchema,
+  agent_input: AgentInputResponseSchema,
   peer_send: PeerSendResponseSchema,
   peer_list: PeerListResponseSchema,
   create_room: CreateRoomResponseSchema,

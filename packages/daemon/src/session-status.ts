@@ -1882,8 +1882,9 @@ export function contextWithFacts(
 }
 
 /** A fold's snapshot with what is not read off the transcript laid over it:
- * the hooks module's facts (contextWithFacts, and whether the main thread is
- * answering a turn, which only the module says). */
+ * the hooks module's facts (contextWithFacts, whether the main thread is
+ * answering a turn, and the subagents running one, which only the module
+ * says). */
 export function withFacts(
   data: SessionStatusSnapshot,
   facts: SessionFacts | undefined,
@@ -1892,10 +1893,15 @@ export function withFacts(
   const { context: folded, ...rest } = data;
   const context = contextWithFacts(folded, facts);
   const turn = facts.turn;
+  const subagents = facts.subagents?.map(({ since, ...agent }) => ({
+    ...agent,
+    ...(since !== undefined ? { since: isoAt(since) } : {}),
+  }));
   return {
     ...rest,
     ...(context !== undefined ? { context } : {}),
     ...(turn !== undefined ? { turn: { state: turn.state, since: isoAt(turn.since) } } : {}),
+    ...(subagents !== undefined ? { subagents } : {}),
   };
 }
 

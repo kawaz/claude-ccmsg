@@ -221,6 +221,12 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "not_delivered", reason: "no_recipient" },
     { ok: true, outcome: "unconfirmed" },
   ],
+  agent_input: [
+    { ok: true, outcome: "appended" },
+    { ok: true, outcome: "not_delivered", reason: "not_running" },
+    { ok: true, outcome: "not_delivered", reason: "session_changed" },
+    { ok: true, outcome: "unconfirmed" },
+  ],
   peer_send: [
     { ok: true, results: [] },
     {

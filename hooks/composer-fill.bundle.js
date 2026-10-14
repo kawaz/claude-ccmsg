@@ -925,24 +925,42 @@ var SessionFactsTurnSchema = object({
   state: SessionTurnStateSchema,
   since: EpochMsSchema
 });
+var SessionFactsSubagentSchema = object({
+  id: pipe(string(), nonEmpty()),
+  description: optional(string()),
+  type: optional(string()),
+  since: optional(EpochMsSchema)
+});
 var SessionFactsSchema = object({
   at: EpochMsSchema,
   model: optional(pipe(string(), nonEmpty())),
   effort: optional(pipe(string(), nonEmpty())),
   context: optional(SessionFactsContextSchema),
-  turn: optional(SessionFactsTurnSchema)
+  turn: optional(SessionFactsTurnSchema),
+  subagents: optional(array(SessionFactsSubagentSchema))
 });
 var SessionFactsTextSchema = jsonText(SessionFactsSchema);
 var SessionFactsArgsSchema = NoArgsSchema;
+var AgentAppendArgsSchema = object({
+  agentId: pipe(string(), nonEmpty("an agent id is not empty")),
+  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
+});
+var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
+var AgentAppendResultSchema = variant("outcome", [
+  object({ outcome: literal("appended") }),
+  object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
+]);
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
-  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema }
+  "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
+  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema }
 };
 var SIDECAR_OP_NAMES = [
   "describe",
   "prompt.send",
-  "session.facts"
+  "session.facts",
+  "agent.append"
 ];
 function requestSchema(op, args) {
   return object({
@@ -955,7 +973,8 @@ function requestSchema(op, args) {
 var SidecarRequestSchema = variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
-  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args)
+  requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
+  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -1515,7 +1534,65 @@ async function sessionBegan($, state) {
   } catch (e) {
     $.ui.log(`ccmsg: could not read the clock: ${errorText(e)}`, { to: "debug" });
   }
+  await readSubagents($, state);
   await readModelAndWindow($, state);
+}
+async function readSubagents($, state) {
+  try {
+    const running = (await $.agent.list()).filter((agent) => agent.status === "running");
+    state.facts = {
+      ...state.facts,
+      subagents: running.map((agent) => subagentFacts(agent.id, agent))
+    };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not read the subagents: ${errorText(e)}`, { to: "debug" });
+  }
+}
+function subagentFacts(id, agent, since) {
+  return {
+    id,
+    ...agent !== undefined && agent.description !== "" ? { description: agent.description } : {},
+    ...agent !== undefined && agent.type !== "" ? { type: agent.type } : {},
+    ...since !== undefined ? { since } : {}
+  };
+}
+async function subagentStarted($, state, id) {
+  try {
+    const since = Math.floor(await $.clock.now());
+    const agent = (await $.agent.list()).find((a) => a.id === id);
+    const others = (state.facts.subagents ?? []).filter((a) => a.id !== id);
+    state.facts = { ...state.facts, subagents: [...others, subagentFacts(id, agent, since)] };
+  } catch (e) {
+    $.ui.log(`ccmsg: could not take the subagent ${id}: ${errorText(e)}`, { to: "debug" });
+  }
+  sendFacts($, state);
+}
+function subagentEnded($, state, id) {
+  const held = state.facts.subagents;
+  if (held === undefined || !held.some((a) => a.id === id))
+    return;
+  state.facts = { ...state.facts, subagents: held.filter((a) => a.id !== id) };
+  sendFacts($, state);
+}
+function agentMessage(text) {
+  return `ユーザから (webui 経由):
+${text}`;
+}
+async function appendToAgent($, args) {
+  try {
+    await $.session.append({
+      message: { type: "user", content: [{ type: "text", text: agentMessage(args.text) }] },
+      agentId: args.agentId
+    });
+    return { outcome: "appended" };
+  } catch (e) {
+    const why = errorText(e);
+    $.ui.log(`ccmsg: agent.append to ${args.agentId} refused: ${why}`, { to: "debug" });
+    return {
+      outcome: "not_delivered",
+      reason: why.includes("no running loop") ? "not_running" : "refused"
+    };
+  }
 }
 async function turnState($, state, turn) {
   try {
@@ -1544,6 +1621,8 @@ async function replyTo($, state, sid, generation, request) {
       }
       case "session.facts":
         return { id, ok: true, result: await currentFacts($, state) };
+      case "agent.append":
+        return { id, ok: true, result: await appendToAgent($, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -1701,12 +1780,16 @@ function register(on) {
     before: (input) => {
       if (input.agentId === undefined)
         turnState($, state, "responding");
+      else
+        subagentStarted($, state, input.agentId);
     }
   })).catch(async (_$, e, next) => next(e));
   on("turn.complete", async ($, e, next) => observe($, e, next, "turn.complete", TurnCompleteInputSchema, {
     after: async (input) => {
       if (input.agentId === undefined)
         await turnState($, state, "idle");
+      else
+        subagentEnded($, state, input.agentId);
     }
   })).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
@@ -1761,6 +1844,7 @@ export {
   SAY_TIMEOUT_MS,
   SEND_TIMEOUT_MS,
   STABLE_MS,
+  agentMessage,
   answer,
   beginArgv,
   factsArgv,

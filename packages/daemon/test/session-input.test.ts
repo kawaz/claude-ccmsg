@@ -28,6 +28,7 @@ import {
   type SessionInputDeps,
 } from "../src/session-input.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
+import { agentInput } from "../src/agent-input.ts";
 import type { SidecarRun } from "../src/sidecar-runs.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
@@ -162,6 +163,54 @@ const notDelivered = (reason: string): RunBehaviour => ({
   result: { outcome: "not_delivered", reason },
 });
 const ACCEPTED: RunBehaviour = { result: { outcome: "accepted" } };
+
+// agent_input (DR-0039 §6): the same runs are asked to agent.append; a run
+// whose loops do not include the subagent passes it to the next.
+describe("agentInput", () => {
+  const APPENDED: RunBehaviour = { result: { outcome: "appended" } };
+  const agentDeps = (runs: Record<string, RunBehaviour>, isRunning = true) => {
+    const { deps, written } = scripted(runs);
+    return { deps: { ...deps, isRunning: () => isRunning }, written };
+  };
+
+  test("appended by the run the subagent runs in, the next tried after not_running", async () => {
+    const { deps, written } = agentDeps({ run100: notDelivered("not_running"), run200: APPENDED });
+    expect(await agentInput(SID, "a1", "hi", deps)).toMatchObject({ outcome: "appended" });
+    expect(written.map((w) => w.line)).toEqual([
+      { v: 1, op: "agent.append", id: "id1", args: { agentId: "a1", text: "hi" } },
+      { v: 1, op: "agent.append", id: "id2", args: { agentId: "a1", text: "hi" } },
+    ]);
+  });
+
+  test("not running in any run: not_running; a refusal stops at that run", async () => {
+    expect(
+      await agentInput(SID, "a1", "hi", agentDeps({ run100: notDelivered("not_running") }).deps),
+    ).toMatchObject({ outcome: "not_delivered", reason: "not_running" });
+    const { deps, written } = agentDeps({ run100: notDelivered("refused"), run200: APPENDED });
+    expect(await agentInput(SID, "a1", "hi", deps)).toMatchObject({
+      outcome: "not_delivered",
+      reason: "refused",
+    });
+    expect(written.length).toBe(1);
+  });
+
+  test("no module, a changed session, an ended one; and a run that does not answer", async () => {
+    expect(await agentInput(SID, "a1", "hi", agentDeps({}).deps)).toMatchObject({
+      reason: "no_module",
+    });
+    expect(await agentInput(SID, "a1", "hi", agentDeps({}, false).deps)).toMatchObject({
+      reason: "ended",
+    });
+    const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
+    expect(await agentInput(SID, "a1", "hi", { ...deps, isRunning: () => true })).toMatchObject({
+      reason: "session_changed",
+    });
+    const silent = agentDeps({ run100: "silent" }).deps;
+    expect(await agentInput(SID, "a1", "hi", { ...silent, deadlineMs: 50 })).toMatchObject({
+      outcome: "unconfirmed",
+    });
+  });
+});
 
 describe("sessionInput asks one run at a time", () => {
   test("no live run: not_delivered no_module", async () => {

@@ -2025,6 +2025,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
           },
         ],
         external_files: [{ path: "/external/shared.md", origin: "tool" }],
+        subagents: [{ id: "a1", type: "Explore", since: "2026-07-17T00:00:00.000Z" }],
       }),
     );
 
@@ -2057,6 +2058,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
             },
           ],
           external_files: [{ path: "/external/shared.md", origin: "tool" }],
+          subagents: [{ id: "a1", type: "Explore", since: "2026-07-17T00:00:00.000Z" }],
         },
       },
     ]);

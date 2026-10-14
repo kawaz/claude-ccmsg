@@ -158,6 +158,26 @@ describe("the turn with the module's facts", () => {
   });
 });
 
+// The subagents running a turn (DR-0039 §6) ride the snapshot as the module
+// said them, their start as ISO; one whose start the module did not see has
+// none.
+describe("the subagents with the module's facts", () => {
+  test("ride the snapshot, their start as ISO", () => {
+    const snapshot: SessionStatusSnapshot = { todos: [], workflows: [], background: [] };
+    const since = Date.parse("2026-10-15T00:00:09.000Z");
+    expect(
+      withFacts(snapshot, {
+        at: since,
+        subagents: [{ id: "a1", description: "d", type: "Explore", since }, { id: "a2" }],
+      }).subagents,
+    ).toEqual([
+      { id: "a1", description: "d", type: "Explore", since: "2026-10-15T00:00:09.000Z" },
+      { id: "a2" },
+    ]);
+    expect(withFacts(snapshot, { at: 1 }).subagents).toBeUndefined();
+  });
+});
+
 describe("session_facts over the wire", () => {
   // The facts are no transcript line: taking them pushes the session's status
   // to whoever follows it.

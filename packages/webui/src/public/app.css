@@ -7454,6 +7454,25 @@ a.tl-attachment-file-path {
   color: var(--fg-muted);
 }
 
+/* Status: input to a running subagent (DR-0039 §6) */
+.subagent-input-note,
+.subagent-input-result {
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+.subagent-input-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 4em;
+  margin: var(--space-7) 0 0;
+  font: inherit;
+}
+.subagent-input-send {
+  margin: var(--space-7) 0 0;
+}
+
 /* --- TL floating controls / bottom mini panel (DR-0020 §2.1) --- */
 
 /* 右端中央のつまみを常設し、パネルだけを画面外へ収納する。fixed のため

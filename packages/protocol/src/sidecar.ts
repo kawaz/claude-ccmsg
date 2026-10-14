@@ -158,6 +158,20 @@ export const SessionFactsTurnSchema = v.object({
 });
 export type SessionFactsTurn = Output<typeof SessionFactsTurnSchema>;
 
+/** A subagent or teammate of the session whose loop is running a turn now
+ * (between its `turn.start` and `turn.complete`), which is when a message can
+ * be added to its conversation (DR-0039 §6): its id (`agentId`), the task's
+ * description and the agent type as `$.agent.list()` gives them, and when
+ * the turn started — absent when the module did not see it start (one
+ * already running when the module was loaded). */
+export const SessionFactsSubagentSchema = v.object({
+  id: v.pipe(v.string(), v.nonEmpty()),
+  description: v.optional(v.string()),
+  type: v.optional(v.string()),
+  since: v.optional(EpochMsSchema),
+});
+export type SessionFactsSubagent = Output<typeof SessionFactsSubagentSchema>;
+
 /** What a session's hooks module knows of its session through Claude Code
  * itself (DR-0035 §3), and the transcript cannot tell, or tells late: the
  * model as the session names it (`$.session.model()`, a launch-time `[1m]`
@@ -175,6 +189,9 @@ export const SessionFactsSchema = v.object({
   effort: v.optional(v.pipe(v.string(), v.nonEmpty())),
   context: v.optional(SessionFactsContextSchema),
   turn: v.optional(SessionFactsTurnSchema),
+  /** The subagents running a turn now, in no particular order; absent until
+   * the module has read them. */
+  subagents: v.optional(v.array(SessionFactsSubagentSchema)),
 });
 export type SessionFacts = Output<typeof SessionFactsSchema>;
 
@@ -188,6 +205,35 @@ export const SessionFactsTextSchema = jsonText(SessionFactsSchema);
  * arguments. */
 export const SessionFactsArgsSchema = NoArgsSchema;
 
+// --- agent.append ----------------------------------------------------------
+
+/** `agent.append` (DR-0039 §6): add what a person wrote in the web UI to the
+ * conversation of the session's subagent `agentId` while its loop runs, as
+ * context its next request carries; the module marks it as the person's,
+ * through the web UI. `text` must hold something other than whitespace. */
+export const AgentAppendArgsSchema = v.object({
+  agentId: v.pipe(v.string(), v.nonEmpty("an agent id is not empty")),
+  text: v.pipe(
+    v.string(),
+    v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
+  ),
+});
+export type AgentAppendArgs = Output<typeof AgentAppendArgsSchema>;
+
+/** Why an agent.append was not added.
+ *
+ * - `not_running`: no loop of that id runs now (the subagent ended, or there
+ *   is no such id; Claude Code does not tell the two apart)
+ * - `refused`: the append was refused for another reason (a hook above) */
+export const AgentAppendReasonSchema = v.picklist(["not_running", "refused"]);
+export type AgentAppendReason = Output<typeof AgentAppendReasonSchema>;
+
+export const AgentAppendResultSchema = v.variant("outcome", [
+  v.object({ outcome: v.literal("appended") }),
+  v.object({ outcome: v.literal("not_delivered"), reason: AgentAppendReasonSchema }),
+]);
+export type AgentAppendResult = Output<typeof AgentAppendResultSchema>;
+
 // --- the ops ---------------------------------------------------------------
 
 /** Each op's arguments and result. */
@@ -195,6 +241,7 @@ export const SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
+  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
@@ -205,6 +252,7 @@ export const SIDECAR_OP_NAMES = [
   "describe",
   "prompt.send",
   "session.facts",
+  "agent.append",
 ] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
@@ -239,6 +287,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
+  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;
