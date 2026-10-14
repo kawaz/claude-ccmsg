@@ -219,6 +219,17 @@ function BucketRow({ bucket, widest }: { bucket: BucketTotal; widest: number }) 
 export function UsageStats({ period, days }: { period: StatsPeriod; days: number | null }) {
   // Shadowing the global `window` here would be a trap for the next reader.
   const fetchDays = days ?? periodDays(period);
+  // A span change is a different document, so everything derived from the old
+  // one (the fetched stats, an error about it, the model selection) starts
+  // over with it. Keying does that in the same render as the span change;
+  // clearing it in an Effect would first paint the old aggregate under the new
+  // selector. A selected model that is no longer in the new window would
+  // otherwise filter everything out and leave a blank screen with no way
+  // back, since its legend entry is gone too.
+  return <StatsWindow key={`${period}/${fetchDays}`} period={period} fetchDays={fetchDays} />;
+}
+
+function StatsWindow({ period, fetchDays }: { period: StatsPeriod; fetchDays: number }) {
   const { ws } = useApp();
   const [stats, setStats] = useState<LlmStatsResponse | null>(null);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
@@ -228,9 +239,6 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
 
   useEffect(() => {
     let cancelled = false;
-    // A span change replaces the whole document; keeping the old one on screen
-    // under the new selector would misreport what is shown.
-    setStats(null);
     async function load(): Promise<void> {
       try {
         const res = await ws.llmStats(fetchDays);
@@ -252,11 +260,6 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
       clearInterval(id);
     };
   }, [ws, fetchDays]);
-
-  // A model that is no longer in the window (the span changed under the
-  // selection) would otherwise filter everything out and leave a blank screen
-  // with no way back, since its legend entry is gone too.
-  useEffect(() => setSelected(new Set()), [period]);
 
   // The legend is derived from the unfiltered window so every entry stays
   // visible and toggleable, and so colours do not move when the filter cuts
