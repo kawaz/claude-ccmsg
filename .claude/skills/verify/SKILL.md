@@ -25,10 +25,12 @@ CCMSG_HTTP_BIND=127.0.0.1:18642 \
 
 Use a different port when `18642` is occupied. The daemon scans the normal detected Claude config dirs while its own runtime, configuration, and data stay isolated.
 
-## Never use a real session id
+## Never deliver into a session kawaz is using
 
-The isolated daemon still delivers to real sessions: peer injection resolves the target by session id against the real Claude config dirs and writes straight into that session's harness socket, regardless of the daemon's own state dir. A `hello` with `role: "session"` that names a live session's sid, a room whose member is a live sid, or a `post` / `address_send` to a live sid, lands in that real session's conversation.
+The isolated daemon still delivers to real sessions: peer injection resolves the target by session id against the real Claude config dirs and writes straight into that session's harness socket, regardless of the daemon's own state dir. A `hello` with `role: "session"` that names a live session's sid, a room whose member is a live sid, or a `post` / `address_send` to a live sid, lands in that session's conversation.
 
-- Every sid you make up for a fake session must be freshly generated (`crypto.randomUUID()`), never copied from `ccmsg peers`, `sessions/*.json`, or a transcript path.
-- Do not create rooms or post to rooms in /verify. Room browsing is read-only; verify it with a room jsonl copied into the isolated data dir.
-- To exercise delivery, run the receiving side yourself (a fake harness socket in the temp base), never a live session.
+Delivering into a real Claude Code session is fine when that session exists for the test. It is never fine to deliver into a session kawaz is working in.
+
+- When a flow needs a receiving session (delivery, `ccmsg:` addresses, rooms, input readiness), start one for the test: a throwaway jj workspace (`jj workspace add <temp base>/ws-<name>`) or any directory under the temp base, launched with `--name "ccmsg-verify-<topic>"` so it is recognisable in `ccmsg peers`, hyoui, and the webui sidebar. Use that session's sid. Stop it when done and forget the workspace.
+- Never copy a sid from `ccmsg peers`, `sessions/*.json`, or a transcript path into a `hello`, a room member list, or a `post` / `address_send`. A sid you did not just create for this verify run is someone's live conversation.
+- A fake harness socket in the temp base (no Claude at all) is also acceptable for the receiving side when a full session is not needed.
