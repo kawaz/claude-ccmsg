@@ -783,7 +783,7 @@ export function FileTree({
     // no workspaceFolders arg is needed here — the DR-0026 branch only fires
     // for absolute workspace-folder paths, not for the session's own root.
     void loadDir(store, ws, sid, rootPath);
-  }, [sid, rootPath, rootEntries, rootError, connStatus]);
+  }, [sid, rootPath, rootEntries, rootError, connStatus, store, ws]);
 
   // Reveal the selected file (kawaz r76 m85): open every ancestor directory of
   // `selectedPath` and fetch the listings the newly-opened nodes need, so a
@@ -818,7 +818,7 @@ export function FileTree({
       if (tree.dirs.has(path) || tree.dirErrors.has(path)) continue;
       void loadDir(store, ws, sid, path, workspaceFolders);
     }
-  }, [sid, rootPath, selectedPath, workspaceFolders, connStatus, tree]);
+  }, [sid, rootPath, selectedPath, workspaceFolders, connStatus, tree, store, ws]);
 
   // Scroll the revealed row into the tree pane. Waits for every ancestor
   // listing above to resolve rather than scrolling as soon as the row mounts:

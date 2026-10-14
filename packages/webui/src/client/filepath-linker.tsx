@@ -110,16 +110,26 @@ export function useFilePathProbeEnqueue(
   source: string | undefined,
   ctx: FilePathResolveCtx | undefined,
 ): void {
+  // Keyed on the fields the resolution reads, not on the ctx object: callers
+  // rebuild it whenever the peer row is replaced, the same anchors included.
+  const sid = ctx?.sid;
+  const cwd = ctx?.cwd;
+  const repoRoot = ctx?.repoRoot;
   useEffect(() => {
-    if (!ctx || !source) return;
+    if (sid === undefined || !source) return;
+    const anchors: FilePathResolveCtx = {
+      sid,
+      ...(cwd !== undefined ? { cwd } : {}),
+      ...(repoRoot !== undefined ? { repoRoot } : {}),
+    };
     for (const token of [...extractInlineCodeTokens(source), ...extractStrongTokens(source)]) {
       const ref = parseFilePathRef(token);
       if (!ref) continue;
-      const abs = refToAbsolutePath(ref, ctx);
+      const abs = refToAbsolutePath(ref, anchors);
       if (!abs) continue;
-      enqueueFilePathProbe(ctx.sid, abs);
+      enqueueFilePathProbe(sid, abs);
     }
-  }, [source, ctx?.sid, ctx?.cwd, ctx?.repoRoot]);
+  }, [source, sid, cwd, repoRoot]);
 }
 
 /** Subscribe to cache updates so a batch response triggers a re-render;

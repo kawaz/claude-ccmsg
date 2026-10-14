@@ -10,6 +10,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { useResettableState } from "../useKeyedState.ts";
 import { useStoreState } from "../useStore.ts";
 import {
   editorLineCount,
@@ -750,14 +751,22 @@ export function FileViewer({
   const jsonCopy = useJsonStringCopy();
   const file = tree.file;
   const res = file?.response;
+  // The effects below react to these values, not to the objects carrying
+  // them: the store replaces `tree` / `file` on unrelated updates.
+  const selectedStart = selectedLineRange?.start;
+  const selectedEnd = selectedLineRange?.end;
+  const hasLineRange = selectedStart !== undefined;
+  const content = res?.content;
+  const binary = res?.binary;
+  const filePath = file?.path;
 
   useEffect(() => {
-    if (!selectedLineRange || !res || res.binary) return;
+    if (!hasLineRange || content === undefined || binary) return;
     const frame = requestAnimationFrame(() =>
       selectedLineRef.current?.scrollIntoView({ block: "center" }),
     );
     return () => cancelAnimationFrame(frame);
-  }, [path, selectedLineRange?.start, selectedLineRange?.end, res?.content, res?.binary]);
+  }, [path, hasLineRange, selectedStart, selectedEnd, content, binary]);
 
   // Fetch whenever the locator points at a path this session hasn't already
   // loaded/attempted. Keyed by `file?.path` (not just presence of `file`) so
@@ -775,7 +784,7 @@ export function FileViewer({
 
   useEffect(() => {
     if (!path) return;
-    if (file && file.path === path) return;
+    if (filePath === path) return;
     if (connStatus !== "connected") return;
     setLoadSeq((n) => n + 1);
     store.dispatch({ type: "fs/file-loading", sid, path });
@@ -811,7 +820,7 @@ export function FileViewer({
       .catch((err) => {
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
       });
-  }, [sid, path, file?.path, connStatus, workspaceFolders]);
+  }, [sid, path, filePath, connStatus, workspaceFolders, store, ws]);
 
   // Highlighting is a separate, best-effort layer on top of the plain lines
   // rendered below: `tokenize()` is async, so this starts as `null` (plain
@@ -903,14 +912,13 @@ export function FileViewer({
     // 行範囲付きで開かれたら記憶より code を優先する (指定行は code ビューに
     // しか存在しない)。記憶自体は書き換えない — resolveMarkdownViewModePersist
     // 参照。
-    const hasLineRange = selectedLineRange !== null;
     const restored = resolveMarkdownViewMode(saved, path, hasLineRange);
     setViewMode(restored);
     saveFilesView(sid, {
       path,
       viewMode: resolveMarkdownViewModePersist(saved, path, restored, hasLineRange),
     });
-  }, [sid, path, selectedLineRange?.start, selectedLineRange?.end]);
+  }, [sid, path, hasLineRange, selectedStart, selectedEnd]);
   // viewMode のユーザ操作は state 更新と同時に record へ書く (effect 監視
   // でなく操作起点 — 復元由来の setViewMode と書き込みが交錯しないように)。
   // toggle は markdown ファイルでしか render されない (markdownEligible 判定、
@@ -963,7 +971,7 @@ export function FileViewer({
       restoredRef.current = false;
     }
     if (restoredRef.current) return;
-    const target = resolveViewerScrollTop(readViewerScroll(key), path, selectedLineRange !== null);
+    const target = resolveViewerScrollTop(readViewerScroll(key), path, hasLineRange);
     if (target === null) return;
     restoredRef.current = true;
     // `.viewer-preview` は scroll-behavior: smooth。復元は移動ではなく初期
@@ -985,25 +993,17 @@ export function FileViewer({
       observer.disconnect();
       for (const type of events) el.removeEventListener(type, release);
     };
-  }, [
-    path,
-    file?.path,
-    file?.status,
-    res?.content,
-    viewMode,
-    selectedLineRange?.start,
-    selectedLineRange?.end,
-  ]);
+  }, [path, filePath, file?.status, content, viewMode, hasLineRange, selectedStart, selectedEnd]);
   useEffect(() => {
-    if (!highlightEligible || !res || !lang || !path) return;
+    if (!highlightEligible || content === undefined || !lang || !path) return;
     let cancelled = false;
-    void tokenizeLines(res.content, lang).then((lines) => {
+    void tokenizeLines(content, lang).then((lines) => {
       if (!cancelled) setHighlighted({ path, lines });
     });
     return () => {
       cancelled = true;
     };
-  }, [highlightEligible, res?.content, lang, path]);
+  }, [highlightEligible, content, lang, path]);
 
   // In-view search (DR-0022 Phase 1): plain content lines (not highlighted
   // spans — see the "showPreview"/render block below for why search
@@ -1011,8 +1011,8 @@ export function FileViewer({
   // early so this and the hooks below can run unconditionally before the
   // early-return guards further down (rules-of-hooks).
   const searchLines = useMemo(
-    () => (res && !res.binary ? splitLines(res.content) : []),
-    [res?.content, res?.binary],
+    () => (content !== undefined && !binary ? splitLines(content) : []),
+    [content, binary],
   );
   const [searchQueryText, setSearchQueryText] = useState("");
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
@@ -1026,31 +1026,33 @@ export function FileViewer({
   // filter, in document order — this is the "M" in "[N/M]" and the order
   // ↑/↓ nav walks (DR-0022 §2.2).
   const [matchingLineIndices, setMatchingLineIndices] = useState<number[]>([]);
-  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
   // A fresh search (new query text, toggle flip, or file switch) always
   // starts back at the first match — there is no meaningful "keep the old
-  // position" once the match set itself has changed.
-  // Deps deliberately omit matchingLineIndices: the reset key is "the query
-  // changed", not the array's identity.
-  useEffect(() => {
-    setSearchCurrentIndex(matchingLineIndices.length > 0 ? 1 : 0);
-  }, [searchQueryText, searchCaseSensitive, searchRegex, path]);
+  // position" once the match set itself has changed. The reset key is "the
+  // query changed", not the match array's identity.
+  const [searchCurrentIndex, setSearchCurrentIndex] = useResettableState<number>(
+    [searchQueryText, searchCaseSensitive, searchRegex, path],
+    () => (matchingLineIndices.length > 0 ? 1 : 0),
+  );
   useEffect(() => {
     setSearchCurrentIndex((current) => {
       if (matchingLineIndices.length === 0) return 0;
       if (current <= 0) return 1;
       return Math.min(current, matchingLineIndices.length);
     });
-  }, [matchingLineIndices.length]);
+  }, [matchingLineIndices.length, setSearchCurrentIndex]);
   const searchLineRefs = useRef(new Map<number, HTMLDivElement>());
   const registerSearchLineRef = useCallback((i: number, el: HTMLDivElement | null) => {
     if (el) searchLineRefs.current.set(i, el);
     else searchLineRefs.current.delete(i);
   }, []);
   useEffect(() => {
+    // The registry Map itself is never replaced, only mutated, so the cleanup
+    // clears whatever is registered when it runs.
+    const lineElements = searchLineRefs.current;
     const matched: number[] = [];
     for (let i = 0; i < searchLines.length; i += 1) {
-      const container = searchLineRefs.current.get(i);
+      const container = lineElements.get(i);
       const line = container?.matches(".viewer-preview")
         ? container
         : container?.querySelector<HTMLElement>(".viewer-text");
@@ -1066,7 +1068,7 @@ export function FileViewer({
       if (isMatch) matched.push(i);
     }
     const currentLine = searchCurrentIndex > 0 ? matched[searchCurrentIndex - 1] : undefined;
-    for (const [i, container] of searchLineRefs.current) {
+    for (const [i, container] of lineElements) {
       const text = container.matches(".viewer-preview")
         ? container
         : container.querySelector<HTMLElement>(".viewer-text");
@@ -1078,14 +1080,21 @@ export function FileViewer({
         : matched,
     );
     return () => {
-      for (const line of searchLineRefs.current.values()) {
+      for (const line of lineElements.values()) {
         const text = line.matches(".viewer-preview")
           ? line
           : line.querySelector<HTMLElement>(".viewer-text");
         if (text) removeRenderedTextHighlights(text);
       }
     };
-  }, [searchLines, parsedSearch, matchingLineIndices, highlighted, searchCurrentIndex]);
+  }, [
+    searchLines,
+    parsedSearch,
+    matchingLineIndices,
+    highlighted,
+    searchCurrentIndex,
+    setSearchCurrentIndex,
+  ]);
   function scrollToMatch(oneBasedIdx: number) {
     const lineIdx = matchingLineIndices[oneBasedIdx - 1];
     if (lineIdx === undefined) return;

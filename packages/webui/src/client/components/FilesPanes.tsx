@@ -94,17 +94,14 @@ export function FilesPanes({
       : canonicalViewerPath(selectedPath, peer?.repo_root ?? peer?.cwd, workspaceFolders);
   // Replace rather than push: the absolute spelling is the same destination,
   // so it should not cost a back-button step.
+  const selectedLineRange = tree.selectedLineRange;
+  const selectedFrom = tree.selectedFrom;
   useEffect(() => {
     if (canonicalPath === null || canonicalPath === selectedPath) return;
     replaceNavigation(
-      fileHref(
-        sid,
-        canonicalPath,
-        tree.selectedLineRange ?? undefined,
-        tree.selectedFrom ?? undefined,
-      ),
+      fileHref(sid, canonicalPath, selectedLineRange ?? undefined, selectedFrom ?? undefined),
     );
-  }, [sid, selectedPath, canonicalPath]);
+  }, [sid, selectedPath, canonicalPath, selectedLineRange, selectedFrom]);
   // Panes read the canonical spelling immediately, so the doomed external read
   // never fires while the URL replacement is still in flight.
   const paneTree = canonicalPath === selectedPath ? tree : { ...tree, selectedPath: canonicalPath };

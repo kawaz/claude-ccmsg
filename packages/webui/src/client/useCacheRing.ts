@@ -1,7 +1,7 @@
 // Ring CSS for a session's prompt-cache window, held stable for the life of
 // one sweep.
 //
-// The memo is the point, not an optimization: the ring's start position is a
+// Holding it is the point, not an optimization: the ring's start position is a
 // negative animation-delay, which the browser resolves against the moment the
 // animation began. Recomputing it on an unrelated re-render (a peers push, a
 // keystroke) would hand the same running animation a new, larger offset and
@@ -13,13 +13,13 @@
 // colour and span partway through a kept-alive cache, with no new event to
 // notice it by, so the phase has to be recomputed each render and compared.
 // It is pure arithmetic over numbers the caller already holds.
-import { useMemo } from "preact/hooks";
 import {
   cacheRingPhase,
   cacheRingProps,
   type CacheRingProps,
   type CacheWindow,
 } from "./llm-cache-view.ts";
+import { useKeyedValue } from "./useKeyedState.ts";
 
 /** Ring CSS for the window a session's latest request describes, or null when
  * there is none to draw. `window` may be rebuilt every render — only the
@@ -28,11 +28,10 @@ export function useCacheRing(window: CacheWindow | null): CacheRingProps | null 
   const now = Date.now();
   const span = window === null ? null : cacheRingPhase(window, now);
   const phase = span === null ? "" : `${span.phase}:${span.start}:${span.end}`;
-  return useMemo(
-    () => (window === null ? null : cacheRingProps(window, Date.now())),
-    // The sweep identifies itself: two windows producing the same span produce
-    // the same ring, and `window` is deliberately not a dependency (a fresh
-    // object every render would defeat the memo outright).
-    [phase],
+  // The sweep identifies itself: two windows producing the same span produce
+  // the same ring, so the ring is built once per phase from that render's
+  // window.
+  return useKeyedValue([phase], () =>
+    window === null ? null : cacheRingProps(window, Date.now()),
   );
 }

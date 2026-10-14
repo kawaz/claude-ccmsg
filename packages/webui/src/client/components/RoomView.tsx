@@ -20,6 +20,8 @@ const INVITE_ALREADY_NOTICE_MS = 3000;
 export function RoomView({ state }: { state: AppState }) {
   const { ws, store } = useApp();
   const room = state.currentRoomId ? state.rooms.get(state.currentRoomId) : undefined;
+  const roomId = room?.id;
+  const roomHistory = room?.history;
   const mid = state.currentMid;
   const [dragOver, setDragOver] = useState(false);
   // Invite-drop feedback. "already": soft notice, auto-dismisses (see
@@ -39,9 +41,9 @@ export function RoomView({ state }: { state: AppState }) {
   // room/mid pair changes, not on every timeline update, so it doesn't fight
   // manual scrolling while new messages stream in.
   useEffect(() => {
-    if (!room || mid === null) return;
-    document.getElementById(anchorId(room.id, mid))?.scrollIntoView({ block: "center" });
-  }, [room?.id, mid]);
+    if (roomId === undefined || mid === null) return;
+    document.getElementById(anchorId(roomId, mid))?.scrollIntoView({ block: "center" });
+  }, [roomId, mid]);
 
   // 末尾に居た時だけ新着で末尾追随する (kawaz 2026-07-13、timeline-autoscroll.ts)。
   // 判定は「毎 scroll イベントで末尾判定を Ref に記録」→「timeline (event 配列)
@@ -64,7 +66,7 @@ export function RoomView({ state }: { state: AppState }) {
   const stickToBottomRef = useRef(true);
   useEffect(() => {
     stickToBottomRef.current = true;
-  }, [room?.id]);
+  }, [roomId]);
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -78,7 +80,7 @@ export function RoomView({ state }: { state: AppState }) {
   // 伸びるケースを取り零す (kawaz r17 mid=26) ので、少し間隔を空けて
   // 数回書く (ユーザが先に手動スクロールして末尾から離れたら中断)。
   useEffect(() => {
-    if (!room) return;
+    if (roomId === undefined) return;
     const ids = [0, 60, 300].map((ms) =>
       setTimeout(() => {
         const el = scrollerRef.current;
@@ -86,7 +88,7 @@ export function RoomView({ state }: { state: AppState }) {
       }, ms),
     );
     return () => ids.forEach(clearTimeout);
-  }, [room?.id]);
+  }, [roomId]);
 
   // Opening a room is what fetches its history: subscribe only carries room
   // metadata now (kawaz r99 m12), so an unopened room's `timeline` is empty by
@@ -94,8 +96,8 @@ export function RoomView({ state }: { state: AppState }) {
   // already covered, and "error" stays put rather than retrying in a loop
   // (a reconnect or a room switch back is the retry).
   useEffect(() => {
-    const id = room?.id;
-    if (!id || room.history !== "idle") return;
+    const id = roomId;
+    if (!id || roomHistory !== "idle") return;
     store.dispatch({ type: "room-history/loading", room: id });
     void ws
       .roomHistory(id)
@@ -111,12 +113,12 @@ export function RoomView({ state }: { state: AppState }) {
       .catch(() => {
         store.dispatch({ type: "room-history/loaded", room: id, error: "disconnected" });
       });
-  }, [room?.id, room?.history]);
+  }, [roomId, roomHistory, store, ws]);
 
   // Switching rooms discards any leftover invite notice from the previous one.
   useEffect(() => {
     setNotice(null);
-  }, [room?.id]);
+  }, [roomId]);
 
   useEffect(() => {
     if (!notice || notice.kind !== "already") return;

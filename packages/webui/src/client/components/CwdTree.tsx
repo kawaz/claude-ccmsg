@@ -15,6 +15,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { DirTreeEntry } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
+import { useKeyedValue } from "../useKeyedState.ts";
 import { errorMessage, lastPathSegment } from "../utils.ts";
 import {
   attachDirTreeChildren,
@@ -145,14 +146,17 @@ export function CwdTree({
   // `filter` changes. A fresh fetch always replaces the whole tree — a
   // filter change can shuffle which nodes exist at all, so partial reuse of
   // the previous expand/lazy state would show stale rows next to fresh ones.
-  const rootsKey = roots.join("\n");
+  // Held per content: a fresh array reference from the parent's config load
+  // must not re-trigger this fetch, only an actual content change (or filter)
+  // should.
+  const rootList = useKeyedValue([roots.join("\n")], () => roots);
   useEffect(() => {
-    if (roots.length === 0) return;
+    if (rootList.length === 0) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     void ws
-      .dirTree(roots, filter ? { filter } : {})
+      .dirTree(rootList, filter ? { filter } : {})
       .then((res) => {
         if (cancelled) return;
         setLoading(false);
@@ -182,10 +186,7 @@ export function CwdTree({
     return () => {
       cancelled = true;
     };
-    // `rootsKey` (roots.join) stands in for `roots` itself as the dep — a
-    // fresh array reference from the parent's config load must not re-trigger
-    // this fetch, only an actual content change (or filter) should.
-  }, [rootsKey, filter]);
+  }, [rootList, filter, ws]);
 
   function toggle(entry: DirTreeEntry): void {
     const willExpand = !expanded.has(entry.path);

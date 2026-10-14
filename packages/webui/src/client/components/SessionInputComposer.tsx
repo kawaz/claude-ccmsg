@@ -19,6 +19,7 @@
 // 先に示す。
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
+import { useEffectEvent } from "../useEffectEvent.ts";
 import type { AppState } from "../store.ts";
 import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
@@ -128,17 +129,16 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     lastPathSegment(targetPeer?.cwd ?? targetAgent?.cwd ?? "") ||
     sid.slice(0, 8);
 
-  // Mount-time cleanup — depends on peers.length so the sweep waits for the
-  // peers list to hydrate (empty on the very first render before ws.ts's
-  // onOpen finishes the handshake). A later peers push doesn't re-run it —
-  // one sweep per component instance is enough; navigating away and back
-  // remounts and re-sweeps.
+  // Stale-draft sweep. Waits for the peers list to hydrate (empty on the very
+  // first render before ws.ts's onOpen finishes the handshake) and sweeps again
+  // whenever the number of peers changes — not on every action, and not on a
+  // peers push that only replaces the array with the same set. The rest of
+  // `state` is read at that moment, so it lives in an Effect Event.
+  const sweepStaleInputs = useEffectEvent(() => cleanupStaleSessionInputs(state));
+  const peerCount = state.peers.length;
   useEffect(() => {
-    if (state.peers.length > 0) cleanupStaleSessionInputs(state);
-    // We deliberately do NOT depend on `state` itself (would re-run on every
-    // action) or on `state.peers` array identity (recreated by peers/loaded
-    // even when the underlying set didn't change).
-  }, [state.peers.length]);
+    if (peerCount > 0) sweepStaleInputs();
+  }, [peerCount]);
 
   // 保存されている下書きを入力欄に映す。保存はしない: 映した値を保存し直すと、
   // 入力しているタブへ古い文が storage event で戻る。null (映すものが無い) の

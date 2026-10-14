@@ -28,6 +28,7 @@
 //     (window listener は capture 中の event 経路にも入るが、element 経由の
 //     方が capture の意味が明確)。
 import { useCallback, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffectEvent } from "./useEffectEvent.ts";
 
 export const DRAG_THRESHOLD_PX = 5;
 
@@ -124,8 +125,12 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
   const elRef = useRef<HTMLElement | null>(null);
   // handleFilter は inline 関数で渡されうる。ref 経由で最新参照して
   // onPointerDown の identity は安定させる (useFabPopup の onCloseRef と同型)。
+  // 写すのは commit 後 (render 中に ref を書かない)。読むのは pointer の
+  // handler だけなので、常に commit 済みの最新が見える。
   const handleFilterRef = useRef(handleFilter);
-  handleFilterRef.current = handleFilter;
+  useLayoutEffect(() => {
+    handleFilterRef.current = handleFilter;
+  });
 
   const setElement = useCallback((el: HTMLElement | null) => {
     elRef.current = el;
@@ -307,36 +312,34 @@ export function useFabPanelPositionLink(
     return { w: r.width, h: r.height };
   };
 
+  const setFabElement = fabDrag.setElement;
+  const setPanelElement = panelDrag.setElement;
   const onFabRef = useCallback(
     (el: HTMLElement | null) => {
       fabElRef.current = el;
-      fabDrag.setElement(el);
+      setFabElement(el);
       const s = measure(el);
       if (s) fabSizeRef.current = s;
     },
-    [fabDrag.setElement],
+    [setFabElement],
   );
 
   const onPanelRef = useCallback(
     (el: HTMLElement | null) => {
       panelElRef.current = el;
-      panelDrag.setElement(el);
+      setPanelElement(el);
       const s = measure(el);
       if (s) panelSizeRef.current = s;
     },
-    [panelDrag.setElement],
+    [setPanelElement],
   );
 
-  // open 遷移時に位置同期。deps は [open] のみ — fabDrag/panelDrag object は
-  // 毎 render で identity が変わる (useDraggable が新規 object を返す) が、
-  // ここでは transition 時点の closure で捉えた値だけ使えれば十分。
-  // stable な setPosition / 現在の position は closure 経由で最新を参照。
-  useLayoutEffect(() => {
-    const prev = prevOpenRef.current;
-    prevOpenRef.current = open;
-    if (open === prev) return;
+  // open 遷移時に位置同期。反応するのは open の変化だけで、その時点の
+  // fabDrag / panelDrag の位置を読む部分は Effect Event に置く (両 object は
+  // useDraggable が毎 render 作り直すので、反応させると毎 render 走る)。
+  const alignOnToggle = useEffectEvent((opened: boolean) => {
     const vp = getViewport();
-    if (open) {
+    if (opened) {
       // Opening: パネルが just mount / just show — 再測定してから同期。
       const s = measure(panelElRef.current);
       if (s) panelSizeRef.current = s;
@@ -369,6 +372,12 @@ export function useFabPanelPositionLink(
         );
       }
     }
+  });
+  useLayoutEffect(() => {
+    const prev = prevOpenRef.current;
+    prevOpenRef.current = open;
+    if (open === prev) return;
+    alignOnToggle(open);
   }, [open]);
 
   return { onFabRef, onPanelRef };

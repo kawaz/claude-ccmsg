@@ -32,6 +32,7 @@ import { splitTextForIssueRefs } from "./issue-ref.ts";
 import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
+import { useKeyedValue } from "./useKeyedState.ts";
 
 /** `location.origin`, or `null` where there is no `location` (unit tests
  * render `renderMarkdownAst` outside a DOM). Kept as a tiny wrapper rather
@@ -1845,13 +1846,15 @@ export function MarkdownView({
    * characters are still rendered verbatim, an href is merely attached. */
   issueRepo?: string;
 }) {
-  const search =
-    highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
+  const search = useMemo(
+    () => (highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined),
+    [highlightWords, onMatchClick],
+  );
   // One store per document: section keys are positions in *this* source, so a
   // different source has to start from the default (everything open) rather
   // than inherit a previous document's collapsed positions.
   const sectionFold = foldSections && !restricted;
-  const sectionStore = useMemo(() => new FoldOpenStore(), [source, sectionFold]);
+  const sectionStore = useKeyedValue([source, sectionFold], () => new FoldOpenStore());
   return useMemo(() => {
     if (restricted) return renderRestrictedMarkdown(source, issueRepo);
     const parsed = parseMarkdownDocument(source);
@@ -1911,8 +1914,7 @@ export function MarkdownView({
     );
   }, [
     source,
-    highlightWords,
-    onMatchClick,
+    search,
     tableOfContents,
     filePathLinker,
     pathLinker,
