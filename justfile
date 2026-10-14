@@ -71,6 +71,16 @@ lint:
     just --fmt --check --unstable
     bun x oxlint
     bun x oxfmt --check
+    just docs-lint
+
+# docs の機械検査 (Jev は呼ばない)。指摘が 1 件でもあれば失敗
+[private]
+[script]
+docs-lint:
+    command -v docs-lint >/dev/null || { echo "docs-lint: not installed, skipped" >&2; exit 0; }
+    out=$(docs-lint --machine-only . 2>/dev/null)
+    hits=$(printf '%s' "$out" | jq '[.machine.checks[]] | add')
+    if [ "$hits" != "0" ]; then printf '%s' "$out" | jq '.machine.checks | with_entries(select(.value > 0)), .machine.aggregates'; exit 1; fi
 
 # 型チェック (monorepo 全体を tsc --noEmit。webui の client (preact/TSX, DOM lib)
 # はルート tsconfig の除外先なので packages/webui/tsconfig.json で別途チェック)
