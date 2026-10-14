@@ -31,6 +31,6 @@ The isolated daemon still delivers to real sessions: peer injection resolves the
 
 Delivering into a real Claude Code session is fine when that session exists for the test. It is never fine to deliver into a session kawaz is working in.
 
-- When a flow needs a receiving session (delivery, `ccmsg:` addresses, rooms, input readiness), start one for the test: a throwaway jj workspace (`jj workspace add <temp base>/ws-<name>`) or any directory under the temp base, launched with `--name "ccmsg-verify-<topic>"` so it is recognisable in `ccmsg peers`, hyoui, and the webui sidebar. Use that session's sid. Stop it when done and forget the workspace.
+- When a flow needs a receiving session (delivery, `ccmsg:` addresses, rooms, input readiness), start one for the test: a throwaway jj workspace (`jj workspace add <temp base>/ws-<name>`) or any directory under the temp base, launched with `--name "🤖ccmsg-verify-<topic>"` (the 🤖 prefix marks it as a bot-run test session) so it is recognisable in `ccmsg peers`, hyoui, and the webui sidebar. Use that session's sid. Stop it when done and forget the workspace.
 - Never copy a sid from `ccmsg peers`, `sessions/*.json`, or a transcript path into a `hello`, a room member list, or a `post` / `address_send`. A sid you did not just create for this verify run is someone's live conversation.
 - A fake harness socket in the temp base (no Claude at all) is also acceptable for the receiving side when a full session is not needed.
