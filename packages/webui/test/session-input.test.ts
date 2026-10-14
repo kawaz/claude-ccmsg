@@ -20,6 +20,7 @@ const ALL_REASONS: SessionInputReason[] = [
   "no_terminal",
   "not_submitted",
   "enter_failed",
+  "session_changed",
   "no_module",
 ];
 
@@ -113,10 +114,9 @@ describe("sessionInputNotice", () => {
     const detail = (reason: SessionInputReason) =>
       defined(sessionInputNotice({ kind: "not_delivered", reason }), "the notice").detail;
     expect(detail("dialog")).toContain("ダイアログを閉じてから送り直して");
-    expect(detail("no_terminal")).toContain("hyoui で起動したセッションだけ");
-    expect(detail("no_terminal")).toContain("端末から直接入力して");
-    expect(detail("no_module")).toContain("セッションが終了していないか");
-    expect(detail("no_module")).toContain("ccmsg plugin を更新してからセッションを起動し直して");
+    expect(detail("no_terminal")).toContain("hyoui run 経由で起動し直して");
+    expect(detail("no_module")).toContain("plugin を更新してセッションを起動し直して");
+    expect(detail("session_changed")).toContain("切り替わった先のセッションを開いて送って");
     expect(detail("no_composer")).toContain("対話モードで起動したセッションに送って");
     expect(detail("refused")).toContain("送り直して");
     expect(detail("refused")).toContain("他の plugin を確認して");
@@ -184,6 +184,15 @@ describe("inputReadinessNotice", () => {
     expect(inputReadinessNotice({ kind: "session_changed" })).toContain(
       "切り替わった先のセッションを開いて送って",
     );
+  });
+
+  // 何を保証するか: 送る前に出す 1 行と、送って同じ理由で届かなかった時の
+  // 注記が同じ文言 (同じ原因と対処) になる。
+  test("speaks the words the failed send would", () => {
+    for (const kind of ["no_module", "no_terminal", "session_changed"] as const) {
+      const sent = sessionInputNotice({ kind: "not_delivered", reason: kind });
+      expect(inputReadinessNotice({ kind })).toBe(defined(sent, "the notice").detail);
+    }
   });
 
   test("says the session ended", () => {

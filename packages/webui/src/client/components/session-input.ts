@@ -67,7 +67,9 @@ export function shouldClearAfter(outcome: SessionInputOutcome): boolean {
   return outcome.kind === "accepted";
 }
 
-/** 送る前から分かる理由 (daemon の input_readiness) の文言。 */
+/** 送る前から分かる理由 (daemon の input_readiness) と、送った後に返る同じ
+ * 理由 (session_input の reason) で共有する文言。入力欄の近くに先に出す 1 行と、
+ * 届かなかった時の注記が同じ言葉で同じ対処を示す。 */
 const NO_MODULE_DETAIL =
   "このセッションは入力の受け口 (ccmsg plugin の module) を持っていません。plugin を更新してセッションを起動し直してください。";
 const NO_TERMINAL_DETAIL =
@@ -105,16 +107,13 @@ const REASON_DETAIL: Record<SessionInputReason, string> = {
     "このセッションは入力欄の無い起動 (-p など) のため、人の入力を受け付けません。対話モードで起動したセッションに送ってください。",
   refused:
     "セッション側で入力が拒否されました。セッションの画面で入力できる状態か確かめてから送り直してください。続く場合は、セッションに入っている他の plugin を確認してください (入力欄への書き込みを止める hook があります)。",
-  no_terminal:
-    "このセッションには webui から入力を届ける端末がありません。webui から送れるのは hyoui で起動したセッションだけです。このセッションへは端末から直接入力してください。",
+  no_terminal: NO_TERMINAL_DETAIL,
   not_submitted:
     "入力した文が送信されませんでした (セッションの入力欄は元に戻してあります)。セッションの画面を確かめてから送り直してください。",
   enter_failed:
     "セッションの端末に送信の操作を届けられませんでした (入力欄は元に戻してあります)。セッションの端末 (Terminal タブなど) が動いているか確かめてから送り直してください。",
-  session_changed:
-    "セッションが切り替わった (/clear や /resume) ため、入力欄に入れずに止めました。届いていません。送り直してください。",
-  no_module:
-    "セッション側に入力の受け口がありません。セッションが終了していないか確かめてください。動いている場合は、ccmsg plugin を更新してからセッションを起動し直してください (古い plugin のままでは受け取れません)。",
+  session_changed: SESSION_CHANGED_DETAIL,
+  no_module: NO_MODULE_DETAIL,
 };
 
 export interface SessionInputNotice {
