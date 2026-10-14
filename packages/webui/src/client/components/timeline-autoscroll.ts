@@ -13,7 +13,8 @@
  *   判定する pure function。境界条件を単体テストしたいので pure に切り出す。
  * - **RoomView.tsx**: `onScroll` で `isAtBottom` を毎回 Ref に記録 →
  *   `useLayoutEffect` (`[room.timeline]` 依存) が paint 前に発火し、Ref が
- *   `true` だった時のみ `scrollTop = scrollHeight` を書く。
+ *   `true` だった時のみ末尾を保持する (useScrollHold.ts。後から伸びても末尾に
+ *   留まり、ユーザが自分でスクロールした時点で手放す)。
  *
  * append 前の状態を捉える経路は「append の直前に判定を走らせる」ではなく
  * 「scroll のたびに Ref に最新の in-view 状態をキャッシュしておく」。前者は

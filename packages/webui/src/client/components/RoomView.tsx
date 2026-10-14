@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ADMIN_ID } from "../store.ts";
-import type { AppState } from "../store.ts";
+import type { AppState, RoomState } from "../store.ts";
+import type { PeerInfo } from "@ccmsg/protocol";
 import { anchorId } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
@@ -12,6 +13,7 @@ import { RoomReadOnlyNote } from "./RoomReadOnlyNote.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
 import { useNow } from "../useNow.ts";
+import { useScrollHold } from "../useScrollHold.ts";
 import { memberLabel } from "../utils.ts";
 
 // DR-0011 §1-4: "already a member" is a soft notice, auto-dismissed — it's
@@ -28,12 +30,47 @@ function roomViewSlice(state: AppState) {
 }
 
 export function RoomView() {
-  const { ws, store } = useApp();
+  const { store } = useApp();
   const state = useStoreState(store, roomViewSlice, shallowEqual);
   const room = state.room;
-  const roomId = room?.id;
-  const roomHistory = room?.history;
-  const mid = state.currentMid;
+  if (!room) {
+    return (
+      <main id="room-view">
+        <p id="empty-state">room を選んでください</p>
+      </main>
+    );
+  }
+  // room ごとに作り直す。送信下書き (Composer の text / 添付)、招待の通知、
+  // 末尾追従とアンカー着地はどれも「この room の」状態で、次の room へ持ち越すと
+  // 書きかけが別の room へ送られる (送信先は新しい room.id になる)。同じ room の
+  // 中で popup を閉じても下書きが残るのは、Composer がこの room を開いている間
+  // mount され続けるから (RoomComposerFab)。
+  return (
+    <OpenRoom
+      key={room.id}
+      room={room}
+      mid={state.currentMid}
+      mentionTo={state.mentionTo}
+      peers={state.peers}
+    />
+  );
+}
+
+function OpenRoom({
+  room,
+  mid,
+  mentionTo,
+  peers,
+}: {
+  room: RoomState;
+  /** message anchor requested by the URL locator (`#room-mNN`), if any. */
+  mid: number | null;
+  mentionTo: Set<string>;
+  peers: readonly PeerInfo[];
+}) {
+  const { ws, store } = useApp();
+  const roomId = room.id;
+  const roomHistory = room.history;
   const [dragOver, setDragOver] = useState(false);
   // Invite-drop feedback. "already": soft notice, auto-dismisses (see
   // INVITE_ALREADY_NOTICE_MS below). "error": daemon rejection (unknown /
@@ -48,58 +85,51 @@ export function RoomView() {
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30)。
   const now = useNow();
 
-  // `#room-mNN` anchor scroll (DR-0004 §5): only fires when the locator's
-  // room/mid pair changes, not on every timeline update, so it doesn't fight
-  // manual scrolling while new messages stream in.
-  useEffect(() => {
-    if (roomId === undefined || mid === null) return;
-    document.getElementById(anchorId(roomId, mid))?.scrollIntoView({ block: "center" });
-  }, [roomId, mid]);
-
   // 末尾に居た時だけ新着で末尾追随する (kawaz 2026-07-13、timeline-autoscroll.ts)。
-  // 判定は「毎 scroll イベントで末尾判定を Ref に記録」→「timeline (event 配列)
-  // が更新されて再 render された paint 前の useLayoutEffect で Ref を見て
-  // scrollTop = scrollHeight を書く」の 2 段。Store の event append は状態更新を
-  // 経て commit に載るので、useLayoutEffect 内で読める scrollHeight は
-  // 「新 event を含めた後の DOM 高さ」であり、そこへ飛ばせば結果として最新
-  // TimelineItem が可視領域に入る。
+  // 「末尾に居るか」は scroll イベントごとに Ref へ記録し、timeline (event 配列)
+  // が更新された commit の paint 前 (useLayoutEffect) にそれを見て末尾を保持
+  // (useScrollHold) する。保持なので、新着の画像・フォントが後から高さを変えても
+  // 末尾に留まり、ユーザが自分でスクロールした時点で手放される。
   //
   // ref/onScroll は **scroll コンテナである main#room-view** に付ける
-  // (overflow-y: auto は #room-view 側、app.css)。v0.33.2 まで中身の
-  // .timeline (overflow なし) に付いていたため、scrollTop 代入は無視され
-  // scroll イベントも発火せず、追従も room 切替時の末尾ジャンプも一切効いて
-  // いなかった (kawaz r17 mid=26 の実観測の root cause)。
+  // (overflow-y: auto は #room-view 側、app.css)。中身の .timeline は overflow
+  // を持たないので、そこへの scrollTop 代入は無視され scroll イベントも出ない。
   //
-  // 初期値 true = 「新規 room 入り = 末尾扱い」。room を切り替えた瞬間の 1 回
-  // 目の effect で末尾へ飛ばして最新から見せる意図。room.id 変更時にも true に
-  // 戻す (前 room で上へ遡っていた状態を持ち越さない)。
+  // room に入った時は末尾から見せる (初期値 true)。ただし直リンクでメッセージを
+  // 指して入った時はその着地が優先なので、末尾扱いにしない。
   const scrollerRef = useRef<HTMLElement>(null);
-  const stickToBottomRef = useRef(true);
-  useEffect(() => {
-    stickToBottomRef.current = true;
-  }, [roomId]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const scrollHold = useScrollHold(scrollerRef, contentRef);
+  const stickToBottomRef = useRef(mid === null);
   useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [room?.timeline]);
-  // room 切替 (id 変化) 直後にも確実に末尾へ (kawaz r15 mid=7、2026-07-14)。
-  // 上の useLayoutEffect は `room?.timeline` (配列参照) 変化に依存するが、
-  // 同じ room 再訪で timeline 参照が変わらないケースや、cache の hydrate
-  // タイミング次第で mount 直後の render では scrollHeight が確定して
-  // いないことがある。0ms 1 発では画像 load / フォント適用で後から高さが
-  // 伸びるケースを取り零す (kawaz r17 mid=26) ので、少し間隔を空けて
-  // 数回書く (ユーザが先に手動スクロールして末尾から離れたら中断)。
+    if (stickToBottomRef.current) scrollHold.toBottom();
+  }, [room.timeline, scrollHold]);
+
+  // `#room-mNN` 直リンクの着地 (DR-0004 §5)。対象メッセージが描画された時に
+  // 1 度だけ寄せる。履歴を取りに行く前 (history "idle") や届く前は対象が DOM に
+  // 無いので、「対象が room に在るか」と履歴の status を依存にして、履歴の到着で
+  // 在るに変わった時に着地する。着地済みの mid は覚えておき、新着や再描画で引き戻さない
+  // (読み進める手動スクロールと競合しない)。着地後に上の内容が伸びても対象が
+  // 中央に留まるよう保持で寄せる。
+  const targetPresent = mid !== null && room.msgs.has(mid);
+  const landedMidRef = useRef<number | null>(null);
   useEffect(() => {
-    if (roomId === undefined) return;
-    const ids = [0, 60, 300].map((ms) =>
-      setTimeout(() => {
-        const el = scrollerRef.current;
-        if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-      }, ms),
-    );
-    return () => ids.forEach(clearTimeout);
-  }, [roomId]);
+    if (mid === null || landedMidRef.current === mid) return;
+    if (!targetPresent) {
+      // 履歴が揃っても無い mid (誤った直リンク) には着地先が無いので、room に
+      // 入った時と同じく末尾から見せる。
+      if (roomHistory !== "loaded") return;
+      landedMidRef.current = mid;
+      stickToBottomRef.current = true;
+      scrollHold.toBottom();
+      return;
+    }
+    const target = document.getElementById(anchorId(roomId, mid));
+    if (!target) return;
+    landedMidRef.current = mid;
+    stickToBottomRef.current = false;
+    scrollHold.toElement(target, (_scroller, el) => el.scrollIntoView({ block: "center" }));
+  }, [roomId, mid, targetPresent, roomHistory, scrollHold]);
 
   // Opening a room is what fetches its history: subscribe only carries room
   // metadata now (kawaz r99 m12), so an unopened room's `timeline` is empty by
@@ -107,8 +137,8 @@ export function RoomView() {
   // already covered, and "error" stays put rather than retrying in a loop
   // (a reconnect or a room switch back is the retry).
   useEffect(() => {
+    if (roomHistory !== "idle") return;
     const id = roomId;
-    if (!id || roomHistory !== "idle") return;
     store.dispatch({ type: "room-history/loading", room: id });
     void ws
       .roomHistory(id)
@@ -126,24 +156,11 @@ export function RoomView() {
       });
   }, [roomId, roomHistory, store, ws]);
 
-  // Switching rooms discards any leftover invite notice from the previous one.
-  useEffect(() => {
-    setNotice(null);
-  }, [roomId]);
-
   useEffect(() => {
     if (!notice || notice.kind !== "already") return;
     const id = setTimeout(() => setNotice(null), INVITE_ALREADY_NOTICE_MS);
     return () => clearTimeout(id);
   }, [notice]);
-
-  if (!room) {
-    return (
-      <main id="room-view">
-        <p id="empty-state">room を選んでください</p>
-      </main>
-    );
-  }
 
   const activeMembers = room.memberOrder
     .map((id) => room.membersById.get(id))
@@ -210,6 +227,9 @@ export function RoomView() {
         // 末尾判定を Ref に記録。次の timeline 更新時に useLayoutEffect が
         // これを見て「末尾に居たなら追随、離れていたなら放置」を決める。
         stickToBottomRef.current = isAtBottom(e.currentTarget);
+        // 自分で末尾まで戻ってきたら、また末尾を保持する (新着を待たずに、
+        // 末尾の画像が後から伸びても末尾に留まる)。
+        if (stickToBottomRef.current) scrollHold.toBottom();
       }}
     >
       <header class="room-header">
@@ -230,8 +250,8 @@ export function RoomView() {
           <MemberChip
             id={ADMIN_ID}
             room={room}
-            selected={state.mentionTo.has(ADMIN_ID)}
-            peers={state.peers}
+            selected={mentionTo.has(ADMIN_ID)}
+            peers={peers}
             onSelect={toggleMention}
             onKick={confirmKick}
           />
@@ -240,8 +260,8 @@ export function RoomView() {
               key={m.id}
               id={m.id}
               room={room}
-              selected={state.mentionTo.has(m.id)}
-              peers={state.peers}
+              selected={mentionTo.has(m.id)}
+              peers={peers}
               onSelect={toggleMention}
               onKick={confirmKick}
             />
@@ -255,6 +275,7 @@ export function RoomView() {
         <RoomReadOnlyNote room={room} />
       </header>
       <div
+        ref={contentRef}
         class={dragOver ? "timeline timeline-drop-active" : "timeline"}
         onDragOver={(e) => {
           if (!e.dataTransfer || !hasSidDragPayload(e.dataTransfer)) return;
@@ -273,7 +294,7 @@ export function RoomView() {
         onDrop={(e) => void handleDrop(e)}
       >
         {room.timeline.map((ev, i) => (
-          <TimelineItem key={i} event={ev} room={room} peers={state.peers} now={now} />
+          <TimelineItem key={i} event={ev} room={room} peers={peers} now={now} />
         ))}
       </div>
       {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer
@@ -282,7 +303,7 @@ export function RoomView() {
        *  Composer にそのまま委譲される。1on1 room は読み取り専用 (DR-0035 §2、
        *  daemon も post を拒否する) なので Composer を出さず、代わりに
        *  header の RoomReadOnlyNote がセッション画面の入力欄を示す。 */}
-      {room.kind !== "1on1" && <RoomComposerFab room={room} mentionTo={state.mentionTo} />}
+      {room.kind !== "1on1" && <RoomComposerFab room={room} mentionTo={mentionTo} />}
     </main>
   );
 }
