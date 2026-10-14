@@ -734,6 +734,153 @@ function sseToolUse(model: string, name: string, input: unknown): string {
 - `/clear` と resume の後に登録が残るか (`session.start` は resume では起き `/clear` では起きないので、`/clear` の後に tool が残るかは要確認)
 - handler の戻り値に `isError` や画像を含める形
 
+## `agentId` 付きの `$.session.append` で走行中の subagent に文脈を入れる
+
+走行中の subagent (Agent tool で起こした子) の会話に、外の契機で 1 行足せるかの観測。環境は上と同じ (対話、`--permission-mode default --allowedTools Agent`、`ENABLE_TOOL_SEARCH=true`)。probe mod `mods-agent` が tool `wait` (`mcp__mods-agent__wait`) を登録し、代役の台本で子に `wait` を 2〜3 回呼ばせて tool ループを作った。`wait` の handler は 1500 ms 待ってから答え、その間の 300 ms 後に `$.clock.after` の timer (handler とは別の dispatch) から `$.session.append({ message: { type: 'user', ... }, agentId: <子の id> })` で `MARK-SUB-<k>` を足す。子の `turn.complete` の 1000 ms 後には、終わった子の id と、存在しない id (`a0000000000000000`) にも append した。子は 2 本 (A: `wait` 2 回、B: `wait` 3 回) を同じ session で順に起こした。
+
+### 結論
+
+- **(a) 届く**。走行中の子に `agentId` 付きで append すると、`{ message, uuid }` が返り (5/5)、**子の次の request** で、直前の tool_result と同じ user message の中の、tool_result の直後の text block として載る (5/5)。role は `user` (返り値の message は `isMeta: true`)。system の message ではない
+- **(b) main には載らない**。同じ時間帯の main の request (8 件) のどれにも `MARK-SUB-*` は無かった
+- **(c) 終わった子と存在しない id は拒否される**。`HooksError: $.session.append: refused: no running loop is <agentId>` で reject される (終わった子 2/2、存在しない id 2/2)。黙って捨てられることはなく、文言では終わった子と存在しない id を区別できない。終わった子は `$.agent.list()` に `status: 'completed'` で残っていた
+- **(d) 同じもの**。子の `turn.start` の `e.agentId`、`turn.complete` の `e.agentId`、`$.agent.list()` の `id`、子が呼んだ tool の `tool.call` の `e.agentId` はすべて一致した (2/2)。前節の観測では、`Agent` tool の結果 (`{ isAsync: true, status: 'async_launched', agentId }`) の `agentId` も子の `tool.call` の `e.agentId` と一致した
+
+### 観測
+
+| 子 | append (走行中) | 結果 | 子の次の request での位置 | main の request |
+|---|---|---|---|---|
+| A (`aa3dff…`) | `MARK-SUB-1` (1 回目の `wait` の最中) | `{ message, uuid }` | `m[3] user: [tool_result(wait 1 回目)] [MARK-SUB-1]` | 無し |
+| A | `MARK-SUB-2` (2 回目の `wait` の最中) | 同 | `m[6] user: [tool_result(wait 2 回目)] [MARK-SUB-2]` | 無し |
+| B (`aff26b…`) | `MARK-SUB-4` / `5` / `6` (各 `wait` の最中) | 同 | それぞれ対応する tool_result の直後 (`m[3]` / `m[6]` / `m[9]`) | 無し |
+
+| 終わった後の append | 結果 |
+|---|---|
+| A の id (`turn.complete` の 1 秒後、`status: completed`) | `refused: no running loop is aa3dff7390e59d994` |
+| B の id (同) | `refused: no running loop is aff26b5a0984111d4` |
+| 存在しない id (2 回) | `refused: no running loop is a0000000000000000` |
+
+`$.agent.list()` の値 (B の `turn.start` の時点): `[{ id: 'aa3dff7390e59d994', description: 'probe sub A', type: 'claude', status: 'completed' }, { id: 'aff26b5a0984111d4', description: 'probe sub B', type: 'claude', status: 'running' }]`。
+
+注: probe の `wait` は結果の文字列にも印を入れていた (`waited (MARK-SUB-1 ...)`) ので、request の中の印は tool_result の中と、その後ろの独立した text block の 2 か所に出る。append の到達は後者の独立した block で判定した。
+
+### probe mod (`mods-agent`)
+
+`plugin.json` は `{ "name": "mods-agent", "version": "0.1.0", "description": "Probe: $.session.append with agentId into a running subagent." }`、`hooks/hooks.json` は `{ "modules": ["./register.ts"] }`。代役の台本は `{"for":"main","tool_use":{"name":"Agent","input":{"description":"probe sub A","prompt":"SUBTASK-A loop on wait","subagent_type":"claude"}}}` → `{"for":"sub","tool_use":{"name":"mcp__mods-agent__wait","input":{}}}` ×2 → `{"for":"sub","text":"SUB-A-DONE"}` → `{"for":"main","text":"DONE-A"}` (B は `wait` を 3 回)。
+
+```ts
+// Probe for $.session.append({ ..., agentId }) into a subagent's conversation.
+//   tool `wait` (mcp__mods-agent__wait): while a subagent runs it, a timer 300 ms later (a separate dispatch)
+//     appends MARK-SUB-<k> with that agentId, and the handler returns after 1500 ms
+//   turn.start / turn.complete with agentId: log it and $.agent.list()
+//   1000 ms after a subagent's turn.complete: append MARK-DONE-<k> with its agentId, and MARK-BOGUS-<k>
+//     with an agentId that never existed; log what each returned or threw
+// Logs to $MODS_LAB_DIR/agent-<inst>.jsonl.
+
+const INST = Math.random().toString(36).slice(2, 8)
+let seq = 0
+let k = 0
+let buf: unknown[] = []
+let dir: string | undefined
+let timer: (() => void) | undefined
+
+function clip(v: unknown, n = 700): unknown {
+  try {
+    const s = JSON.stringify(v)
+    if (s === undefined) return String(v)
+    return s.length > n ? s.slice(0, n) + '...<clipped>' : JSON.parse(s)
+  } catch (err) {
+    return `<unserializable: ${String(err)}>`
+  }
+}
+
+function log(entry: Record<string, unknown>): void {
+  seq += 1
+  buf.push({ inst: INST, n: seq, t: Date.now(), ...entry })
+}
+
+async function flush($: any): Promise<void> {
+  if (dir === undefined || buf.length === 0) return
+  const lines = buf; buf = []
+  const path = `${dir}/agent-${INST}.jsonl`
+  let prev = ''
+  try { prev = await $.fs.read(path) } catch { prev = '' }
+  await $.fs.write(path, prev + lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+}
+
+async function appendTo($: any, agentId: string, text: string): Promise<unknown> {
+  try {
+    return clip(await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] }, agentId }))
+  } catch (err) {
+    return `<threw: ${String(err)}>`
+  }
+}
+
+async function agents($: any): Promise<unknown> {
+  try { return clip(await $.agent.list(), 900) } catch (err) { return `<threw: ${String(err)}>` }
+}
+
+export function register(on: any): void {
+  on('session.start', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (timer === undefined) {
+      dir = (await $.env.get('MODS_LAB_DIR')) ?? `${$.plugin.root}/log`
+      timer = $.clock.every(500, () => { void flush($) })
+    }
+    try {
+      await $.tool.register({ name: 'wait', description: 'Wait a moment (probe).', inputSchema: { type: 'object', properties: {} }, isDeferred: false })
+    } catch (err) { log({ ev: '#tool.register', err: String(err) }) }
+    return r
+  })
+
+  on('tool.call', { tool: 'mcp__mods-agent__wait' }, async ($: any, e: any) => {
+    const agentId = e.agentId
+    k += 1
+    const mark = `MARK-SUB-${k} inst=${INST} to=${agentId ?? 'main'}`
+    log({ ev: '#wait.start', agentId: agentId ?? null, mark })
+    if (agentId !== undefined) {
+      $.clock.after(300, () => { void (async () => { log({ ev: '#append', kind: 'running', agentId, mark, res: await appendTo($, agentId, mark) }) })() })
+    }
+    await $.clock.sleep(1500)
+    log({ ev: '#wait.end', agentId: agentId ?? null })
+    return { result: `waited (${mark})` }
+  })
+
+  on('turn.start', async ($: any, e: any, next: any) => {
+    if (e.agentId !== undefined) log({ ev: 'turn.start', agentId: e.agentId, list: await agents($) })
+    return next(e)
+  })
+
+  on('turn.complete', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    if (e.agentId !== undefined) {
+      const agentId = e.agentId
+      log({ ev: 'turn.complete', agentId, reason: e.reason, list: await agents($) })
+      $.clock.after(1000, () => {
+        void (async () => {
+          k += 1
+          log({ ev: '#append', kind: 'finished', agentId, list: await agents($), res: await appendTo($, agentId, `MARK-DONE-${k} inst=${INST} to=${agentId}`) })
+          log({ ev: '#append', kind: 'bogus', agentId: 'a0000000000000000', res: await appendTo($, 'a0000000000000000', `MARK-BOGUS-${k} inst=${INST}`) })
+        })()
+      })
+    }
+    return r
+  })
+
+  on('session.end', async ($: any, e: any, next: any) => {
+    const r = await next(e)
+    await flush($)
+    return r
+  })
+}
+```
+
+### 未観測 (`agentId` 付き append)
+
+- 子の request が stream の途中の時の append の位置 (今回は子が tool を実行している間だけ)
+- 子が foreground (同期) の `Agent` で起きた時 (今回は 2 本とも background 起動)
+- `-p` の子、teammate、workflow の agent
+- peer socket からの配送を契機にした append (今回の契機は `$.clock.after` の timer)
+
 ## リファレンス (claude-mods) への反映候補
 
 - `events` の「意味論の注意」: `/clear` の列に `command.run` の resolve の位置 (`classic.SessionStart (clear)` の dispatch の後) を足す。compact の列 (`command.run → session.compact → classic.PreCompact → classic.SessionStart (compact) → classic.PostCompact → session.compact と command.run の resolve`) と、自動 compact が `turn.start` の後・その turn の request の前に起きることを足す。根拠: 本 findings の「event 列」
@@ -749,3 +896,4 @@ function sseToolUse(model: string, name: string, input: unknown): string {
 - `dollar-api` の `tool` / `practices` の「skill と tool の分担」: `$.tool.register` の tool の入力は engine が input schema で検査しない (handler に違反した入力がそのまま届く) ので handler の入口で parse すること、`tool.call` で `next` を呼ばずに答えると permission の判定 (`tool.check`・PreToolUse・ダイアログ・classifier) を一切通らないこと、`next(e)` を呼ぶと判定を通った後に `no tool.call hook answered` のエラー結果が返ること、handler の `$.session.id()` は subagent からの呼び出しでも親の id であること
 - `practices` の「skill と tool の分担」の `isDeferred`: `ANTHROPIC_BASE_URL` が first-party でない時は `ENABLE_TOOL_SEARCH` を設定しない限り ToolSearch が無効で、`isDeferred: true` の tool も全文で載る (debug の文言付き)。未ロードの deferred tool を名前で直接呼んでも、plugin の tool なら handler に届いた
 - `capabilities` の `tool.describe` の行: 「session 内で cache」の実例として、hot reload で登録し直した tool の説明は main thread の request では変わらず、以後に起こした subagent の request には新しい説明が載る。engine の deferred tool (SendMessage) の書き換えは、ToolSearch で読み込まれた後の entry に反映される
+- `dollar-api` の `session` の `append` / `practices` の「main と subagent の見分け」: `agentId` 付きの append は走行中の子の次の request に、直前の tool_result と同じ user message の後ろの text block として載り、main には載らない。終わった子・存在しない id は `refused: no running loop is <agentId>` で reject される (黙って捨てられない)。`turn.*` の `agentId`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` は同じ値
