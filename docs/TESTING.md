@@ -33,7 +33,9 @@
 ## webui
 
 - component / hook は DOM 基盤 (happy-dom) でマウントし、effect の配線まで含めて検証する。pure 関数に切り出してテストするのは補助で、マウントでの検証の代わりにはしない。
-- DOM 基盤は導入前。導入と Timeline の分解は [webui Timeline.tsx の分解と hook 単位のテスト基盤](issue/2026-10-14-webui-timeline-decomposition-and-hook-tests.md) と [webui コンポーネントの render/DOM 挙動テスト基盤](issue/2026-07-14-webui-component-render-test-infrastructure.md) で扱う。
+- DOM を使う test file は冒頭で `withDom()` (`packages/webui/test/dom.ts`) を 1 度呼ぶ。そのファイルの間だけ happy-dom の window / document が globalThis に載り、終わると元に戻る。マウントは preact の `render` を `act` (`preact/test-utils`) で包み、effect まで流してから DOM と render 回数を見る (例: `use-store-state.dom.test.ts`)。
+- 配線の正しさは happy-dom でマウントして確かめ、見た目と実ブラウザでの振る舞いは playwright (`/verify`) で確かめる。
+- Timeline の分解と hook 単位のテストは [webui Timeline.tsx の分解と hook 単位のテスト基盤](issue/2026-10-14-webui-timeline-decomposition-and-hook-tests.md) で扱う。
 
 ## 名前と記述
 
