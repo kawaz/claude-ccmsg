@@ -4,6 +4,7 @@
 // read, and nothing a test did not ask for. Each takes the fields to set over
 // the defaults, of any kind, so a test of a broken row builds it the same way.
 import type { JsonObject, JsonValue } from "../src/json-value.ts";
+import type { MemberEvent, MsgEvent, StorageEvent } from "../src/storage-event.ts";
 
 export const ROW_SESSION_ID = "11111111-2222-4333-8444-555555555555";
 export const ROW_CWD = "/work/repo";
@@ -143,4 +144,34 @@ export function toolUseBlock(name: string, input: JsonObject, id = "toolu_0001")
 
 export function toolResultBlock(content: JsonValue, fields: JsonObject = {}): JsonObject {
   return { type: "tool_result", tool_use_id: "toolu_0001", content, ...fields };
+}
+
+// Room log rows (`<data dir>/rooms/r<N>.jsonl`, DR-0036 §2), typed as the
+// storage events the room reader reads them as.
+
+export function memberRow(id: string, sid: string, fields: Partial<MemberEvent> = {}): MemberEvent {
+  return {
+    type: "member",
+    id,
+    sid,
+    repo: "",
+    ws: "",
+    cwd: "",
+    joined_at: ROW_TIMESTAMP,
+    ...fields,
+  };
+}
+
+export function msgRow(
+  mid: number,
+  from: string,
+  msg: string,
+  fields: Partial<MsgEvent> = {},
+): MsgEvent {
+  return { type: "msg", mid, from, ts: ROW_TIMESTAMP, msg, ...fields };
+}
+
+/** Room log rows as the file holds them: one line each, every line ended. */
+export function roomLog(events: readonly StorageEvent[]): string {
+  return events.map((event) => `${line(event)}\n`).join("");
 }

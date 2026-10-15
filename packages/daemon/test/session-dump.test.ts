@@ -22,9 +22,12 @@ import {
   assistantContentRow,
   attachmentRow,
   line,
+  memberRow,
   queueOperationRow,
+  roomLog,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
+import { createRoomReader } from "../src/room-reader.ts";
 import { defined, jsonObjectOf } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -769,6 +772,34 @@ describe("dumpSession", () => {
         ],
       },
     ]);
+  });
+
+  // The daemon hands its own room reader to the dump so the parses it holds
+  // are reused; the dump then reads the rooms through it, not from
+  // <dataDir>/rooms.
+  test("reads the room logs through the reader it is given", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    fs.writeFileSync(
+      transcript,
+      `${line(userContentRow("hello", { timestamp: "2026-07-20T00:00:00Z" }))}\n`,
+    );
+    fs.writeFileSync(path.join(dataDir, "rooms", "r1.jsonl"), roomLog([memberRow("a1", SID)]));
+    const given = path.join(path.dirname(dataDir), "given-rooms");
+    fs.mkdirSync(given);
+    fs.writeFileSync(
+      path.join(given, "r2.jsonl"),
+      roomLog([
+        memberRow("a1", SID),
+        { type: "title", title: "given", ts: "2026-07-20T00:00:01Z" },
+      ]),
+    );
+
+    const { context } = await dumpSession(SID, {
+      dataDir,
+      configDirs: [configDir],
+      rooms: createRoomReader(given),
+    });
+    expect(context.rooms.map((room) => [room.room, room.title])).toEqual([["r2", "given"]]);
   });
 
   test("emits thinking blocks as their own kind (kawaz r38 mid=40)", async () => {

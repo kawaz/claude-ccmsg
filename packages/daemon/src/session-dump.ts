@@ -26,7 +26,6 @@ import {
   queuedCommandPrompt,
   readSendResultText,
   RowHeadEntries,
-  StorageEventSchema,
   ToolUseSchema,
   TranscriptRowSchema,
   type ContentBlock,
@@ -37,6 +36,7 @@ import {
   type UserRow,
 } from "@ccmsg/protocol";
 import { AGENT_ID_RE } from "./agent-transcripts.ts";
+import { createRoomReader, type RoomLog, type RoomReader, roomSummary } from "./room-reader.ts";
 import { createSessionStatusState, foldRow, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
@@ -99,7 +99,7 @@ export interface SessionContextRoom {
   title?: string;
   kind: RoomKind;
   last_mid: number;
-  members: MemberEvent[];
+  members: readonly MemberEvent[];
 }
 
 export interface SessionContextBackground {
@@ -172,6 +172,9 @@ export interface SessionDumpOptions {
   /** Inclusive upper bound, in the same two forms as `since`. */
   until?: string;
   dataDir: string;
+  /** The room logs. A reader of `<dataDir>/rooms` when absent; the daemon
+   * passes its own so the parses it already holds are reused. */
+  rooms?: RoomReader;
   configDirs?: readonly string[];
   /** Drop assistant thinking blocks. Recovering a session needs the conclusions
    * that already reached the transcript; thinking is bulk. Journal generation
@@ -376,33 +379,12 @@ function parseTranscript(file: string): DumpRow[] {
   return rows;
 }
 
-/** One line of a room's log. */
-const StorageEventLineSchema = jsonText(StorageEventSchema);
-
-function loadCanonicalMessages(dataDir: string): Map<string, CanonicalMessage> {
+/** Every msg of the room logs, by `<room>|<mid>`. */
+function canonicalMessages(logs: readonly RoomLog[]): Map<string, CanonicalMessage> {
   const messages = new Map<string, CanonicalMessage>();
-  const roomsDir = path.join(dataDir, "rooms");
-  let files: fs.Dirent[];
-  try {
-    files = fs.readdirSync(roomsDir, { withFileTypes: true });
-  } catch {
-    return messages;
-  }
-  for (const file of files) {
-    if (!file.isFile() || !/^r\d+\.jsonl$/.test(file.name)) continue;
-    const room = file.name.slice(0, -".jsonl".length);
-    let raw: string;
-    try {
-      raw = fs.readFileSync(path.join(roomsDir, file.name), "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of raw.split("\n")) {
-      if (line.trim() === "") continue;
-      const read = parseWith(StorageEventLineSchema, line);
-      if (!read.ok) continue;
-      const event = read.value;
-      if (event.type === "msg") messages.set(`${room}|${event.mid}`, { ...event, room });
+  for (const log of logs) {
+    for (const event of log.events) {
+      if (event.type === "msg") messages.set(`${log.id}|${event.mid}`, { ...event, room: log.id });
     }
   }
   return messages;
@@ -847,49 +829,21 @@ function entryAgentTokens(entry: RawSessionDumpEntry): string[] {
   return values.filter((value): value is string => typeof value === "string" && value !== "");
 }
 
-function loadContextRooms(dataDir: string, session: string): SessionContextRoom[] {
-  const roomsDir = path.join(dataDir, "rooms");
-  let files: fs.Dirent[];
-  try {
-    files = fs.readdirSync(roomsDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  const rooms: SessionContextRoom[] = [];
-  for (const file of files) {
-    if (!file.isFile() || !/^r\d+\.jsonl$/.test(file.name)) continue;
-    const present = new Map<string, MemberEvent>();
-    let title: string | undefined;
-    let kind: RoomKind = "normal";
-    let lastMid = 0;
-    let raw: string;
-    try {
-      raw = fs.readFileSync(path.join(roomsDir, file.name), "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of raw.split("\n")) {
-      if (line.trim() === "") continue;
-      const read = parseWith(StorageEventLineSchema, line);
-      if (!read.ok) continue;
-      const event = read.value;
-      if (event.type === "member") present.set(event.id, event);
-      else if (event.type === "leave") present.delete(event.id);
-      else if (event.type === "title") title = event.title;
-      else if (event.type === "kind") kind = event.kind;
-      else if (event.type === "msg" && event.mid > lastMid) lastMid = event.mid;
-    }
-    const members = [...present.values()];
-    if (!members.some((member) => member.sid === session)) continue;
-    rooms.push({
-      room: file.name.slice(0, -".jsonl".length),
-      ...(title ? { title } : {}),
-      kind,
-      last_mid: lastMid,
-      members,
-    });
-  }
-  return rooms.sort((a, b) => Number(a.room.slice(1)) - Number(b.room.slice(1)));
+/** The rooms `session` is a present member of, in room number order. */
+function contextRooms(logs: readonly RoomLog[], session: string): SessionContextRoom[] {
+  return logs.flatMap((log) => {
+    const summary = roomSummary(log);
+    if (!summary.members.some((member) => member.sid === session)) return [];
+    return [
+      {
+        room: summary.id,
+        ...(summary.title ? { title: summary.title } : {}),
+        kind: summary.kind ?? "normal",
+        last_mid: summary.last_mid,
+        members: summary.members,
+      },
+    ];
+  });
 }
 
 interface SessionStatusBundle {
@@ -914,9 +868,8 @@ async function loadStatusBundle(transcriptFile: string): Promise<SessionStatusBu
 }
 
 function loadSessionContext(
-  session: string,
   transcriptFile: string,
-  dataDir: string,
+  rooms: SessionContextRoom[],
   noAgent: boolean,
   bundle: SessionStatusBundle,
   /** Tokens naming the agents the dumped entries actually involve. Agents
@@ -955,7 +908,7 @@ function loadSessionContext(
         started_at: task.started_at,
       })),
     schedules: loadContextSchedules(transcriptFile, notificationStates),
-    rooms: loadContextRooms(dataDir, session),
+    rooms,
     ...(status.api_error ? { api_error: status.api_error } : {}),
   };
 }
@@ -989,7 +942,10 @@ export async function dumpSession(
     options.agent === undefined
       ? undefined
       : new Set(resolveAgentSelector(options.agent, bundle.agents).flatMap(({ tokens }) => tokens));
-  const canonical = loadCanonicalMessages(options.dataDir);
+  const roomLogs = await (
+    options.rooms ?? createRoomReader(path.join(options.dataDir, "rooms"))
+  ).list();
+  const canonical = canonicalMessages(roomLogs);
   const bashUses = new Map<string, BashUse>();
   const sendUses = new Map<string, SendToolUse>();
   const sentEntries: RawSessionDumpEntry[] = [];
@@ -1231,9 +1187,8 @@ export async function dumpSession(
   const rangeTokens = new Set<string>(selectedTokens ?? []);
   for (const entry of filtered) for (const token of entryAgentTokens(entry)) rangeTokens.add(token);
   const context = loadSessionContext(
-    session,
     file,
-    options.dataDir,
+    contextRooms(roomLogs, session),
     options.noAgent === true,
     bundle,
     rangeTokens,
