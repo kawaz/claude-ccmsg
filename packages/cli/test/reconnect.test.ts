@@ -47,6 +47,9 @@ interface TestEnv {
   cleanup: () => void;
 }
 
+/** The session the tests' notifies come from: a write names its sender. */
+const SENDER = "5c000000-0000-4000-8000-000000000000";
+
 function makeEnv(): TestEnv {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-rc-"));
   const stateDir = path.join(base, "s");
@@ -65,6 +68,11 @@ function makeEnv(): TestEnv {
       // ensure-daemon の spawn 経路は bun test 下では argv[1] を test runner に
       // 誤認するため、DAEMON_ENTRY を明示指定する (client.ts の Design rationale 参照)。
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
+      // The session the CLI acts as is fixed here, never inherited: a test run
+      // inside a Claude Code session would otherwise act as that session, and
+      // one outside any session (CI) as none. Each write names its sender.
+      CCMSG_SID: "",
+      CLAUDE_CODE_SESSION_ID: "",
     },
     sock: path.join(stateDir, "daemon.sock"),
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
@@ -140,7 +148,8 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         for (let i = 0; i < 200; i++) {
           const res = served(
             "notify",
-            (await runCli(["--sid", SUB, "notify", "--text", text], env)).out,
+            (await runCli(["--as-session", SENDER, "--sid", SUB, "notify", "--text", text], env))
+              .out,
           );
           if (res.delivered === 1) return;
           await sleep(25);

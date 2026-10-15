@@ -34,6 +34,9 @@ async function runCli(
   return { out, err, code };
 }
 
+/** The session the tests' notifies come from: a write names its sender. */
+const SENDER = "5c000000-0000-4000-8000-000000000000";
+
 function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-dup-"));
   const stateDir = path.join(base, "s");
@@ -48,6 +51,11 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
       CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
+      // The session the CLI acts as is fixed here, never inherited: a test run
+      // inside a Claude Code session would otherwise act as that session, and
+      // one outside any session (CI) as none. Each write names its sender.
+      CCMSG_SID: "",
+      CLAUDE_CODE_SESSION_ID: "",
     },
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
   };
@@ -137,7 +145,15 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
         "notify",
         (
           await runCli(
-            ["--sid", "5b000000-0000-4000-8000-000000000000", "notify", "--text", "after"],
+            [
+              "--as-session",
+              SENDER,
+              "--sid",
+              "5b000000-0000-4000-8000-000000000000",
+              "notify",
+              "--text",
+              "after",
+            ],
             env,
           )
         ).out,

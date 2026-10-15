@@ -49,6 +49,9 @@ interface TestEnv {
   cleanup: () => void;
 }
 
+/** The session the tests' notifies come from: a write names its sender. */
+const SENDER = "5c000000-0000-4000-8000-000000000000";
+
 function makeEnv(): TestEnv {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-restart-"));
   const stateDir = path.join(base, "s");
@@ -66,6 +69,11 @@ function makeEnv(): TestEnv {
       CCMSG_HTTP_BIND: "off",
       CCMSG_NETWORK_WATCH: "off",
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
+      // The session the CLI acts as is fixed here, never inherited: a test run
+      // inside a Claude Code session would otherwise act as that session, and
+      // one outside any session (CI) as none. Each write names its sender.
+      CCMSG_SID: "",
+      CLAUDE_CODE_SESSION_ID: "",
     },
     sock: path.join(stateDir, "daemon.sock"),
     configDir,
@@ -178,7 +186,8 @@ describe("ccmsg daemon restart", () => {
         for (let i = 0; ; i++) {
           const res = served(
             "notify",
-            (await runCli(["--sid", SUB, "notify", "--text", text], env)).out,
+            (await runCli(["--as-session", SENDER, "--sid", SUB, "notify", "--text", text], env))
+              .out,
           );
           if (res.delivered === 1) break;
           if (i >= 200) throw new Error(`notify "${text}" never reached the subscribe`);
