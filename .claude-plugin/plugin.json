@@ -1,7 +1,7 @@
 {
   "name": "ccmsg-v1",
   "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
-  "version": "0.177.1",
+  "version": "0.177.2",
   "author": {
     "name": "kawaz"
   },
