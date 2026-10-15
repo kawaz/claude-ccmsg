@@ -26,12 +26,7 @@
 | [DR-0008](./DR-0008-workspace-file-access.md) | Accepted | 契約に吸収 | Workspace file access (fs_list / fs_read op) — control 面 |
 | [DR-0009](./DR-0009-session-transcript-access.md) | Accepted | 契約に吸収 | Session transcript access (transcript_read op) — control 面 |
 | [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | webui へ移管 | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker) |
-| [DR-0011](./DR-0011-to-delivery-filter.md) | Accepted | 置き換わる予定 | `to` を mention から配信フィルタへ変更 + drag & drop invite — v2 は sid 宛の 1 対 1 配送 (protocol-v2 §2.1) |
-| [DR-0012](./DR-0012-room-archive-and-kick.md) | Accepted | 置き換わる予定 | room アーカイブ (表示整理フラグ) + 強制 leave (kick、admin 専用) — room 廃止に伴う |
-| [DR-0013](./DR-0013-broadcast-room.md) | Accepted | 置き換わる予定 | broadcast room (auto-populated session broadcast) — room 廃止に伴う |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) — 移送可否は [webui-rebuild-checklist](../design/webui-rebuild-checklist.md) の未決 3 件 |
-| [DR-0016](./DR-0016-storage-event-seq.md) | Accepted | 置き換わる予定 | StorageEvent 横断の per-room 連番 `seq` — v2 は `mid` / `seq` を持たない (protocol-v2 §2.1) |
-| [DR-0017](./DR-0017-reply-command.md) | Accepted | 契約に吸収 | `ccmsg reply` (daemon 仲介の返信) + `reply_via` 実行指示 — 返信経路の指示は messaging 面へ |
 | [DR-0018](./DR-0018-session-launcher.md) | Accepted | webui へ移管 | Session Launcher (webui からの新規セッション起動 UI、Phase 分割) |
 | [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | 契約に吸収 + webui へ移管 | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) — op は control 面、UI は webui リポ |
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | webui へ移管 | Status タブ (workflow / background / TODO の可視化、transcript fold) |
@@ -49,7 +44,7 @@
 | [DR-0032](./DR-0032-repo-split-protocol-first.md) | Accepted | 据え置き (v2 の起点) | リポ分離と規約ファーストの作り直し (daemon / protocol / webui) |
 | [DR-0033](./DR-0033-webui-color-system.md) | Proposed | webui へ移管 | webui カラーシステム (少数の入力から全色を導出する 3 層構造 + テーマエディタ) |
 | [DR-0034](./DR-0034-peer-socket-injection.md) | Accepted / 実装済 | 置き換わる予定 | v1 daemon による room msg の peer messaging socket 直接注入 — v2 の配送経路は protocol-v2 が別途定める |
-| [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (✅ 実装済み) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を作らず既存の 1on1 room を読み取り専用にする — v2 の DR-0016 §2.2 / §5 の方式で、Enter は module が自分の端末に送る |
+| [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (✅ 実装済み) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を作らず既存の 1on1 room を読み取り専用にする — v2 (kawaz/ccmsg) と同じ方式で、Enter は module が自分の端末に送る |
 | [DR-0036](./DR-0036-retire-rooms-for-p2p.md) | Accepted (✅ 実装済み) | 据え置き | room を廃止し、セッション間メッセージを sid 宛の直送 (v2 の契約の封筒・mid・返信行) にする。既存の room のログは webui で読み取り専用で閲覧する — DR-0001 §3-§6 / 0003 / 0011 / 0012 / 0013 / 0016 / 0017 の room 前提部分を置き換える |
 | [DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) | Accepted (✅ 実装済み) | 据え置き | エージェント間のメッセージは SendMessage に乗せ、`ccmsg:<sid>` / `ccmsg:path:<dir>` 宛を hooks module が横取りして peer 注入で届ける (config home をまたぐ)。DR-0036 §1 の CLI 直送を消すかは未決 |
 | [DR-0038](./DR-0038-json-is-parsed-by-schema.md) | Accepted (✅ 実装済み) | 据え置き | データの形は valibot のスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す。`as` (`as const` 以外)・`any`・非 null の主張は使わず lint で検査する |
@@ -63,8 +58,7 @@
 |---|---|---|---|
 | [DR-0004](./DR-0004-webui-architecture.md) | §4 実装方式 → [DR-0005](./DR-0005-webui-frontend-architecture.md) / §5 locator → [webui-url-grammar](../design/webui-url-grammar.md) | 置き換わる予定 | webui architecture (HTTP/WS transport + UI) — origin 制限は DR-0032 §2.1 の「許可 origin の設定」へ。§4「protocol 拡張はしない」は面の分離 (protocol-v2 §2) が引き取る |
 | [DR-0005](./DR-0005-webui-frontend-architecture.md) | §1 action/reducer・§3 配信形態 → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.1 | webui へ移管 | webui frontend architecture (workspace 化を見込んだ器) |
-| [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | reply_via 部 → [DR-0017](./DR-0017-reply-command.md) / 1on1 room の作成・書き込み → [DR-0035](./DR-0035-user-input-via-composer-fill.md) §2 | 置き換わる予定 | 1on1 room + msg 応答経路 hint (reply_via) — 残るのは `kind: "1on1"` の定義 (既存の room の読み取り専用の閲覧)。room の廃止 (DR-0036) で archive へ |
 
 ## Archived
 
-該当なし。`decisions/archive/` は未作成。
+後続の DR に置き換えられた DR は [archive/INDEX.md](./archive/INDEX.md)。

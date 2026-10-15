@@ -1,10 +1,10 @@
 # DR-0014: 1on1 room + msg 応答経路 hint (`reply_via`)
 
-- **Status**: Accepted (2026-07-14)。一部が置き換え済み: §2.4-2.5 の routing hint は [DR-0017](./DR-0017-reply-command.md) の `reply_via` 実行指示 + `ccmsg reply` に、1on1 room の作成 (§2.2 の webui による自動作成、`create_room --kind 1on1`) と 1on1 room への post / reply / next_room と返信の分岐は [DR-0035](./DR-0035-user-input-via-composer-fill.md) §2 に置き換わった (既存の 1on1 room は読み取り専用)。現行仕様として残るのは `kind: "1on1"` という room の種類の定義 (u1 + 単一 session、§2.1) で、`say` の記録先として使われている
+- **Status**: Superseded by [DR-0035](../DR-0035-user-input-via-composer-fill.md) §2 / [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2
 - **Date**: 2026-07-14
-- **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1/aN namespace、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0013](./DR-0013-broadcast-room.md) の broadcast room を前提とする
+- **前提**: [DR-0001](../DR-0001-central-daemon-architecture.md) の room model、[DR-0003](../DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](../DR-0006-id-scheme-v2.md) の u1/aN namespace、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0013](./DR-0013-broadcast-room.md) の broadcast room を前提とする
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
-- **補足**: セッションへの msg 配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer-inject に一本化されており、本 DR の subscribe stream 上の msg フレームに関する記述 (reply_via / msg_via / echo 等) は DR-0034 に置き換えられている。返信指示は封筒の返信行が担う
+- **補足**: セッションへの msg 配送は [DR-0034](../DR-0034-peer-socket-injection.md) の peer-inject に一本化されており、本 DR の subscribe stream 上の msg フレームに関する記述 (reply_via / msg_via / echo 等) は DR-0034 に置き換えられている。返信指示は封筒の返信行が担う
 
 ## 1. Context / 動機
 

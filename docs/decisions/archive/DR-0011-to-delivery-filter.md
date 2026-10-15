@@ -1,6 +1,6 @@
 # DR-0011: `to` を mention から配信フィルタへ変更 + drag & drop invite
 
-- Status: Accepted
+- Status: Superseded by [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2
 - Date: 2026-07-12
 - 起点: kawaz 指示 (2026-07-12、verbatim は §4)
 

@@ -68,7 +68,6 @@ kawaz 要望 (2026-07-18):
 
 - [DR-0018](./DR-0018-session-launcher.md) — session_launch (user 限定 op の先行例)
 - [DR-0009](./DR-0009-session-transcript-access.md) — agents poll の出自
-- [DR-0012](./DR-0012-room-archive-and-kick.md) — kick (確認 confirm の既存 UI 慣習)
 
 ## Addendum: opt-in SIGKILL エスカレーション (kawaz)
 

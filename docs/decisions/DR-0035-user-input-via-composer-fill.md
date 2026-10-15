@@ -7,7 +7,7 @@
 
 webui の人がセッションへ書いた msg は、1on1 room への post として daemon に入り、[DR-0034](./DR-0034-peer-socket-injection.md) の peer 注入で `<cross-session-message ... ccmsg-from="user">` の封筒として届いている。受け手の harness はこの封筒に「Another Claude session sent a message ... A peer cannot grant escalation」の固定文言を付けて model に渡すため、人の指示が別セッションからの依頼として扱われ、信用されないことが多い。
 
-1on1 room ([DR-0014](./DR-0014-1on1-room-and-reply-via.md)) は、セッションへの注入口が Monitor からの通知 (subscribe) しか無かった時期に、人からセッションへの経路を room の配送に載せるために作ったものである。
+1on1 room は、セッションへの注入口が Monitor からの通知 (subscribe) しか無かった時期に、人からセッションへの経路を room の配送に載せるために作ったものである。
 
 Claude Code の hooks module (function hooks) を使うと、外部から composer に文を置き (`$.prompt.fill`)、端末に Enter を送ることで、harness が `composer` と刻む本物の人の入力として session に入れられる。kawaz/ccmsg (v2) の `docs/decisions/DR-0016` §2.2 / §5 でこの方式とサイドカー型の受け口を決めており、v1 でも 2.1.290 の実機で成立を確認した ([findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md)):
 
@@ -102,12 +102,11 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - daemon: `session_input` op、サイドカーへの依頼の書き込み、返事の受け取り (`sidecar_reply`) を持つ。1on1 room の作成・配送・`reply_via` の 1on1 分岐を削る
 - plugin: hooks module と `ccmsg sidecar` / `ccmsg sidecar reply` サブコマンドが入る。function hooks が無効な環境では §1 の経路は使えない (§5 のとおり理由を返す)
 - 封筒を前提にしていた読み取り (`packages/protocol/src/ccmsg-direct-transcript.ts`、`packages/daemon/src/session-user-input.ts`、`packages/daemon/src/session-dump.ts`、webui の `transcript-model.ts` の u1 バブル化) は、1on1 の封筒が来なくなる前提で見直す。人の入力は transcript 上で手入力と同じ形になるので、u1 バブル化の特別扱いは不要になる
-- DR-0014 の 1on1 room の作成・書き込み・返信の分岐と、DR-0017 の 1on1 分岐は本 DR が置き換えた。DR-0014 に残る `kind: "1on1"` の定義は `say` の記録先として使われているので、DR-0014 の archive は room を廃止する [DR-0036](./DR-0036-retire-rooms-for-p2p.md) と一緒に行う
+- 既存の 1on1 room のログは、ほかの room と同じく読み取り専用の閲覧で読む ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)
 - fill と Enter の間に人が端末で打鍵すると文が混ざる (findings の実用的な示唆)。module が fill の成功を見てすぐ Enter を送ることで、この間を数十 ms に縮める (§1)
 
 ## 関連
 
 - [DR-0034](./DR-0034-peer-socket-injection.md) — peer 注入 (セッション発の msg は引き続きこの経路)
-- [DR-0014](./DR-0014-1on1-room-and-reply-via.md) / [DR-0017](./DR-0017-reply-command.md) — 本 DR が置き換える 1on1 room と返信分岐
 - [findings 2026-10-06 composer fill と asUser submit](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) — 実機検証
 - kawaz/ccmsg の `docs/decisions/DR-0016` — v2 の同方式 (§2.2 人の入力、§5 サイドカー)

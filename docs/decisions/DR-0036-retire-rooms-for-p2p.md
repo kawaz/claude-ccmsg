@@ -5,7 +5,7 @@
 
 ## Context
 
-v1 の daemon は room を中心に組まれている。会話の単位が room で、room jsonl が唯一の永続状態であり ([DR-0001](./DR-0001-central-daemon-architecture.md) §3-§6、[DR-0003](./DR-0003-wire-protocol.md))、宛先は room member と `to` の配信フィルタで決まる ([DR-0011](./DR-0011-to-delivery-filter.md))。broadcast room ([DR-0013](./DR-0013-broadcast-room.md))、archive / kick ([DR-0012](./DR-0012-room-archive-and-kick.md))、per-room の `seq` ([DR-0016](./DR-0016-storage-event-seq.md))、room log から宛先を組み立てる `ccmsg reply rNmM` ([DR-0017](./DR-0017-reply-command.md)) も room の上にある。セッションへの配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer 注入で、room member ごとに封筒を書いている。
+v1 の daemon は room を中心に組まれている。会話の単位が room で、room jsonl が唯一の永続状態であり ([DR-0001](./DR-0001-central-daemon-architecture.md) §3-§6、[DR-0003](./DR-0003-wire-protocol.md))、宛先は room member と `to` の配信フィルタで決まる。broadcast room、archive / kick、per-room の `seq`、room log から宛先を組み立てる `ccmsg reply rNmM` も room の上にある。セッションへの配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer 注入で、room member ごとに封筒を書いている。
 
 kawaz 2026-10-06: 「room は廃止する予定。1on1 同様に。複数セッションで見える部屋というアイデアは面白かったが、実際に使ったのは初期に 3、4 回程度で、エージェント間メッセージは基本 p2p で良いという結論になった。room を作った理由は、複数セッションが絡む会話を僕が個別セッションに対して行うと、セッション同士が僕との直接会話を他セッションに無駄にリレーすることが多々あったからだが、それはセッション間メッセージを行う際の注意点として ccmsg で規約を作ったことで起きなくなった」。
 
@@ -50,7 +50,7 @@ v2 (kawaz/ccmsg と契約 kawaz/ccmsg-protocol) は room を持たず、sid 宛�
 
 - 触る範囲は広い: protocol の room 系の型と op、daemon の `storage.ts` 全体と `server.ts` の room 系、CLI の room 系サブコマンド、webui の room 画面群と URL (`/r/<id>`、`docs/design/webui-url-grammar.md`)、room に言及するテスト 55 本、README
 - `packages/protocol/src/ccmsg-direct-transcript.ts` の `classifyCcmsgSendResult` は、v1 CLI の `{"ok":…}` 応答を「room CLI の応答」として TL と dump から捨てている。直送の送り口の応答が同じ形だと消えるので、応答の形か判定を変える
-- DR-0001 §3-§6、DR-0003 §2 / §4-§6、DR-0011、DR-0012、DR-0013、DR-0016、DR-0017 の room log 前提の部分、DR-0027 §1-§4 は本 DR が Accepted になった時点で置き換わる。DR-0034 は宛先が room member から sid 1 つになる
+- DR-0001 §3-§6、DR-0003 §2 / §4-§6 の room log 前提の部分 (`to` の配信フィルタ、broadcast room、archive / kick、per-room の `seq`、room の返信を含む)、DR-0027 §1-§4 は本 DR で置き換わる。DR-0034 は宛先が room member から sid 1 つになる
 - v1 の plugin は SKILL を持たず、SessionStart hook も何も出力しない。agent が直送の使い方を知る手段は封筒の返信行と CLI の help になる。相手の探し方 (`ccmsg peers`) をどこで案内するかは実装時に決める
 
 ## 関連

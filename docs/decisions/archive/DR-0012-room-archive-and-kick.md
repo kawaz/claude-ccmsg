@@ -1,6 +1,6 @@
 # DR-0012: room アーカイブ + 強制 leave (kick)
 
-- Status: Accepted
+- Status: Superseded by [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2
 - Date: 2026-07-12
 - 起点: kawaz 指示 (2026-07-12、verbatim は §3)
 

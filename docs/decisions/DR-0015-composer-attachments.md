@@ -141,5 +141,5 @@ kawaz が新機能を発案 (verbatim §7):
 
 1. 本 DR を kawaz 確認のうえ Accepted へ
 2. 実装: daemon HTTP endpoint (POST/GET) → protocol 型追加 → webui Composer 拡張 → SKILL 追記 の順で 1 バッチ
-3. 1on1 実装 (DR-0014 バッチ) の完了後、または並行で
+3. 1on1 実装のバッチの完了後、または並行で
 4. v0.28.0 想定 (additive feature、minor bump)

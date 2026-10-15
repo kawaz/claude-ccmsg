@@ -1,6 +1,6 @@
 # DR-0001: Central daemon + room messaging architecture
 
-- **Status**: Accepted (2026-07-03)
+- **Status**: Accepted (2026-07-03)。§3〜§6 の room の作成・追記・配送は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2 で置き換わった (room のログは読み取り専用で、webui で閲覧する)
 - **Date**: 2026-07-03
 - **Author**: kawaz (整理: AI agent)
 - **Origin**: rewrite from [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p)
@@ -43,6 +43,8 @@ p2p 方式の cmux-msg で複数セッション会話 (die / grapheme.mbt / time
 
 ### 3. Room model [kawaz]
 
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の room の作成・追記・配送は無い。残るのは既存の room のログを webui で読むことだけ。
+
 kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
 - **room = 会話単位**。複数セッション議論は room に寄せる
@@ -56,6 +58,8 @@ kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
 ### 4. Event log = room ごとに 1 JSONL (これが唯一の永続状態) [kawaz]
 
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の room の作成・追記・配送は無い。残るのは既存の room のログを webui で読むことだけ。
+
 - 各 room = 1 つの append-only JSONL ファイル。各行 = 1 イベント。過去の行は書き換えない
 - イベント型: `member` / `leave` / `msg` / `next` / `prev` / (title 等の見た目イベントも可)
 - `msg` 行: `{type:"msg", mid, from, to?, ts, msg}`。**mid は room 内追記順の連番で daemon が採番**
@@ -64,12 +68,16 @@ kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
 ### 5. 配送 = 本文込み push、`to` = mention [kawaz]
 
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の room の作成・追記・配送は無い。残るのは既存の room のログを webui で読むことだけ。
+
 - **subscribe 通知には本文を展開済みで載せる**。「どうせ通知受けたら read で全文読むんだから最初から展開済みで受信した方がコンテキスト得」(一次資料 §1)。AI の 1 read = 1 ターンなので、notify-then-pull はターン浪費になる
 - **room 内メッセージは全メンバーに本文配送**。`to` は可視性フィルタではなく **アテンション (mention) 指定** (2026-07-03 決定、一次資料 §5)
 - **echo back なし**: 自分の post は自分に通知されない
 - **room 外への共有は明示 read**: room 非メンバーに見せたい時は mid 範囲を指定して読ませる (「Cにmid10-15辺り読んでとか言えば良い」)。fetch はメンバー限定にしない (同 UID 内 trust の BBS モデル)
 
 ### 6. 既読管理レス (BBS モデル) [kawaz]
+
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の room の作成・追記・配送は無い。残るのは既存の room のログを webui で読むことだけ。
 
 - **server 側の既読 cursor を持たない**。「各エージェントは読んだ mid 把握してるし。昔の BBS を覗いてるイメージで各自好きに読んだり読み飛ばしたりでよさそ」(一次資料 §5)
 - 各エージェントは自分の会話コンテキストが既読状態そのもの。subscribe 再接続時はクライアントが since-mid を渡して差分を受ける。mid が連番なので抜けの検出も fetch での遡りもクライアント側で自明にできる

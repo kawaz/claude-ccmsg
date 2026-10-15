@@ -1,6 +1,6 @@
 # DR-0003: Wire protocol & room semantics
 
-- **Status**: Accepted (2026-07-03)
+- **Status**: Accepted (2026-07-03)。§4・§5 の room の開設・配送は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2 で置き換わり、§2 の storage event は既存の room のログの形として、§6 の `read` / `rooms` は webui の読み取り専用の閲覧として残る
 - **Date**: 2026-07-03
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model を実装可能な粒度に確定する。一次資料は DR-0001 と同じ
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
@@ -31,7 +31,7 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 
 - フィールド名は `type` を採用 [kawaz 2026-07-03]。`t` は `ts` と紛れやすいため。**`id` = room 内参加者 id** (型付き文字列 `u1` / `a1`…、名前空間と採番は [DR-0006](./DR-0006-id-scheme-v2.md)) であり、Unix の UID とは別物 (threat model 等で Unix 側を指す時は「UID (Unix)」と書き分ける)
 - `u1` は **User (kawaz) の予約 id** [kawaz]。member 行は不要で **全 room に暗黙に存在** する — user はどの room にも post / read できる [提案]
-- `from` / `to` は member id を指す。`to` は省略可 (全員宛) / 単一 / **配列で複数指定可** [保留→本 DR で確定]。`to` の配信上の意味は [DR-0011](./DR-0011-to-delivery-filter.md) (配信フィルタ) が正本
+- `from` / `to` は member id を指す。`to` は省略可 (全員宛) / 単一 / **配列で複数指定可** [保留→本 DR で確定]。`to` は msg を宛てた member を記録する
 - `mid` は msg 行のみの room 内連番 (daemon 採番)。イベント全体の順序はファイルの行順が正
 - `next` / `prev` は **スレッドリンク** [kawaz]: 会話が長くなったら適度に次スレ (新 room) に分割する。daemon が旧 room に `next`、新 room に `prev` を対で書き、ユーザ UI でもリンクを辿れる。移行は強制ではなく **旧スレもそのまま使える**
 
@@ -39,15 +39,17 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 
 - 接続直後に `{op:"hello", role:"session", sid, repo, ws, cwd}` または `{op:"hello", role:"user"}` を送る
 - **CLI の sid 自動判定順** [kawaz 2026-07-12 裁定]: `--as-session <sid>` > `CCMSG_SID` > `CLAUDE_CODE_SESSION_ID` > (無ければ null)
-- **write 系 op (`post` / `create_room` / `next_room` / `leave` / `notify`) は identity 無しなら CLI が error 終了**する [kawaz 2026-07-12]。sid の無い CLI が u1 (User) 名義で書けると、受信側の「`from: "u1"` = ユーザ発言」判定が狂う。u1 発行経路は webui backend の `role: "user"` hello 一本に絞る
+- **write 系 op (`post` / `reply` / `notify`) は identity 無しなら CLI が error 終了**する [kawaz 2026-07-12]。sid の無い CLI が u1 (User) 名義で書けると、受信側の「`from: "u1"` = ユーザ発言」判定が狂う。u1 発行経路は webui backend の `role: "user"` hello 一本に絞る
 - **subscribe だけは identity 無しでも許容**し、CLI は stderr に警告を出しつつ `role: "user"` で hello する。kawaz が素のターミナルから u1 として観測する経路
-- daemon 側: `IDENTITY_OPS` (post/create_room/next_room/…/subscribe/notify) が hello 必須ゲート、`role: "user"` hello は webui backend の合法経路として受理する。CLI 経由の u1 化を塞ぐ責任は CLI 側にある (指示側 client のポリシーであって、wire protocol の禁則ではない)
-- **所在の正本** [kawaz 2026-09-15、`docs/issue/2026-09-15-room-member-cwd-takes-bash-temporary-cwd.md`]: hello が名乗る `cwd` (と一緒に動く `repo` / `ws` / `repo_root` / `branch`) の出所は **固定値 3 つに限る** — (1) `CCMSG_CWD` の明示指定、(2) `CLAUDE_PROJECT_DIR` (ハーネスがセッション起動時に固定する)、(3) SessionStart hook の event cwd (セッションが何も実行する前の値なので、まだ「置かれた場所」を指す)。`process.cwd()` は出所にしない: CLI は Bash ツールの子プロセスとして走るので、その作業ディレクトリは直前の `cd` が行った先であり、それを名乗ると room の member イベントや `peers` 上でセッションが一時ディレクトリへ「引っ越して」しまう。SessionStart 以外の hook (UserPromptSubmit 等) も同じ理由で所在を名乗らない
+- daemon 側: `IDENTITY_OPS` (message_send/…/subscribe/notify) が hello 必須ゲート、`role: "user"` hello は webui backend の合法経路として受理する。CLI 経由の u1 化を塞ぐ責任は CLI 側にある (指示側 client のポリシーであって、wire protocol の禁則ではない)
+- **所在の正本** [kawaz 2026-09-15、`docs/issue/2026-09-15-room-member-cwd-takes-bash-temporary-cwd.md`]: hello が名乗る `cwd` (と一緒に動く `repo` / `ws` / `repo_root` / `branch`) の出所は **固定値 3 つに限る** — (1) `CCMSG_CWD` の明示指定、(2) `CLAUDE_PROJECT_DIR` (ハーネスがセッション起動時に固定する)、(3) SessionStart hook の event cwd (セッションが何も実行する前の値なので、まだ「置かれた場所」を指す)。`process.cwd()` は出所にしない: CLI は Bash ツールの子プロセスとして走るので、その作業ディレクトリは直前の `cd` が行った先であり、それを名乗ると `peers` 上でセッションが一時ディレクトリへ「引っ越して」しまう。SessionStart 以外の hook (UserPromptSubmit 等) も同じ理由で所在を名乗らない
 - 所在を名乗れない hello は `cwd` を空で送り、**daemon は登録済みの所在を保持する** (5 フィールドは 1 組で動く)。空でない `cwd` を名乗る hello は 5 フィールドを丸ごと置き換える (組の内側では preserve-on-omit をしない — workspace 層の無い checkout へ移ったセッションが古い `repo_root` を持ち続けると fs-access の containment が広がったままになる)
 - hello は世代ごとのスキーマの union で読む。別の世代の hello にだけ「世代が違う」と答え、それが sid を名乗る session の hello ならその sid に stale の印を付ける。`request_id` と `op` (文字列) が読めた依頼のうち、知らない op と field の型違いは、`request_id` を付けて `invalid_args` で返す。`request_id` か `op` が読めない行は id の無い `bad_request` で返す ([DR-0029](./DR-0029-async-io-principle.md)「相関できない失敗」、[DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)
 - daemon は connection → identity を保持し、**post の `from` は daemon が刻印** する (DR-0001 [提案]、自称 `from` を書かせない)。自称 sid の真正性検証はしない (同 UID trust、DR-0001 §5)
 
 ### 4. Room 開設と重複排除 [kawaz 2026-07-03 + 詳細確定]
+
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の op は無い (`peers` を除く)。残るのは既存の room のログを webui で読むことだけ。
 
 - `{op:"peers"}`: hello 済みで接続中の session 一覧 (sid / repo / ws / cwd)。room 開設時の相手解決に使う [提案]
 - `{op:"create_room", members:[sid,…], msg?, title?}`: **daemon が room ID を発行** し、指定 member 全員 (の接続) に開設 event を配る [kawaz]
@@ -58,15 +60,19 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 
 ### 5. subscribe と配送 [kawaz]
 
+> room は読み取り専用で ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)、この節の room の配送は無い。subscribe は notify / net_online と webui 向けの push だけを流す。
+
 - `{op:"subscribe", since?: {"<room-id>": <mid>, …}}` — このコネクションを常駐 stream 化する
 - 配送は **本文込み・room 全メンバー宛**。event 行には `"r": "<room-id>"` を付与して flatten する
 - **自分の post は本文なしの軽量エコー**として配信する (session role の subscriber)。`msg` を落として `msg_via` (= `ccmsg read r<N>m<M>` 参照) に差し替え、`echo: true` を付け、`reply_via` は付けない。`seq` は残す (CLI の cursor がエコー済み post を追い越せる)。storage は不変で、変換は配信時のみ (`reply_via` と同じ流儀)。live deliver / cursor replay / recent-replay / 新 room snapshot の全経路に一様に適用する。user role (webui) 向けは全文を配る — 自分の送信は composer 側で描画済みで、かつ observation surface として全文が要る
   - 目的は 2 つを同時に満たすこと: AI が自分の post を開封して「自分のでした」と報告する無駄を作らない (`echo: true` が「開封不要」の機械判定になる) / **session log にルーム発言の記録が残る** (webui の TL が自 post を daemon 原本から復元できる)
 - **join 時初期配信**: room に入れられたら、開設/join event + 現 member 状態 + **直近 N=50 msg** を配る。それより前は `read` で遡る (kawaz「全部または直近N件、その前が気になるなら遡れば良い」)。N は AI セッションの context cost を抑える上限で、user role には全件を配る
-- **since 指定 replay**: 各 room の cursor より後の行を全て配る。cursor の座標は [DR-0016](./DR-0016-storage-event-seq.md) の `seq` (全 event 型横断)。連番なので抜け検出・再取得はクライアント側で自明にできる (BBS モデル、DR-0001 §6)
+- **since 指定 replay**: 各 room の cursor より後の行を全て配る。cursor の座標は全 event 型横断の `seq`。連番なので抜け検出・再取得はクライアント側で自明にできる (BBS モデル、DR-0001 §6)
 - user (u1) が subscribe した場合は **全 room の event** を受ける (kawaz UI 用) [提案]
 
 ### 6. read / rooms (補完コマンド) [kawaz]
+
+> `read` / `rooms` と、room の全 event を返す `room_history` は、既存の room のログを要求のたびに読み、webui (user role) だけに答える ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)。
 
 - `{op:"read", room, mids:"10-15" | [10,11,15]}`: mid 指定の取得。**非メンバーからも可** (同 UID trust の BBS モデル。「C に mid10-15 辺り読んでと言えば良い」)
 - `{op:"rooms"}`: room 一覧 (id / title / members / last_mid / last_ts)
@@ -86,7 +92,7 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 - **write 系 identity 無しを warning にとどめて post を通す**: 不採用 [kawaz 2026-07-12、`docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md`]。stderr 警告では Monitor 経由の AI サイドカー・agent は気付けず、実際に誤配信が起きた。hard error にして「気付かせる」ほうが安全
 - **自分の post を一切配信しない (echo back なし)**: 不採用 [kawaz 2026-07-29、`docs/issue/2026-07-29-self-ccmsg-post-bubbles-missing`]。開封の無駄は消えるが、session log にルーム発言の記録が残らず、webui の TL が Bash tool result のパターンマッチで復元する hack を要した。本文なしエコー (§5) が両方を満たす
 - **self-notify を self room (1 人 room) で表現**: 不採用。シグナル用途に永続 log は過剰で、自 post のエコー規則 (§5) とも噛み合わない
-- **`to` を可視性フィルタにする**: 不採用 [kawaz 2026-07-03]。storage / `read` からは隠さない (DR-0001 §5)。配信の絞り込みは DR-0011
+- **`to` を可視性フィルタにする**: 不採用 [kawaz 2026-07-03]。storage / `read` からは隠さない (DR-0001 §5)
 - **room 状態 (open / moved / left) による重複排除**: 不採用 [kawaz 2026-07-03]。leave しない限り同じ相手との新 room が作れなくなり、次スレ運用と噛み合わない。時間 window + `next_room` の明示経路の方が柔軟
 - **`move` (引越し) 語彙**: 不採用 [kawaz 2026-07-03]。room が daemon 発行になった時点で「専用部屋からの引越し」ではなく「次スレ/前スレのリンク」がモデルとして素直。`next` / `prev` の対リンクに置き換え
 - **binary frame (msgpack 等)**: 不採用。jsonl は jq / 目視で dogfood 効率が高い

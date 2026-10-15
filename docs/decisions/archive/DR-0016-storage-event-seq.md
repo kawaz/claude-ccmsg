@@ -1,8 +1,8 @@
 # DR-0016: StorageEvent 横断の per-room 連番 `seq` (subscribe 再接続 cursor の全 event 型拡張)
 
-- **Status**: Accepted (2026-07-15、SEQ-Q1=a 裁定)
+- **Status**: Superseded by [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2
 - **Date**: 2026-07-15
-- **前提**: [DR-0003](./DR-0003-wire-protocol.md) §5 の BBS delta model (since cursor)。起点 issue: `docs/issue/2026-07-15-subscribe-reconnect-nonmsg-redelivery.md`
+- **前提**: [DR-0003](../DR-0003-wire-protocol.md) §5 の BBS delta model (since cursor)。起点 issue: `docs/issue/2026-07-15-subscribe-reconnect-nonmsg-redelivery.md`
 
 ## 1. Context / 動機
 
@@ -43,7 +43,7 @@ subscribe の再接続 cursor (`since`) は per-room の「最後に受信した
   (「seq <= since_seq の最後の event の直後」から replay)、無ければ従来のsince (mid cursor) にフォールバック
 - `sendBacklog` の cursor 優先順位: 同一 room に有効な since_seq があればseq cursor、無ければ (未指定 or §2.5 で無効) since (mid) cursor、両方無ければ join snapshot。両 cursor を送る client は存在しない (旧 clientは since のみ、新 client は since_seq のみ) ので優先順位が効くのは防御的ケースだけ
 - 既存 `since` (mid) は**旧 client 互換のためサーバ側処理を残す**
-  (v2 では削除。互換経路を持たないため — [DR-0032](./DR-0032-repo-split-protocol-first.md) §3)
+  (v2 では削除。互換経路を持たないため — [DR-0032](../DR-0032-repo-split-protocol-first.md) §3)
 - cursor 値の流用は双方向とも禁止:
   - mid 値を since_seq に渡す (旧 cursor の流用) — seq >= mid が常に成り立つため過小申告になり、既読 event の重複再配信を再生産する (安全側だが本 DR が潰す症状そのもの)
   - seq 値を since (mid) として旧 daemon に渡す — 過大申告になり未読 msg を**取りこぼす**。新 client が旧 daemon に対して since を一切送らない(§4 の new-client × old-daemon が full replay になる) のはこれを避けるため
@@ -57,7 +57,7 @@ subscribe の再接続 cursor (`since`) は per-room の「最後に受信した
 
 ### 2.5 since_seq の入力検証 (daemon 側)
 
-- `since_seq` / `since` は request のスキーマで読み、room ごとの値が **有限の非負 number でなければ依頼ごと型の失敗として拒否**する([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6: 型に合わない入力はエラーで弾いて終わり、cursor 無しに読み替えない)。
+- `since_seq` / `since` は request のスキーマで読み、room ごとの値が **有限の非負 number でなければ依頼ごと型の失敗として拒否**する([DR-0038](../DR-0038-json-is-parsed-by-schema.md) §6: 型に合わない入力はエラーで弾いて終わり、cursor 無しに読み替えない)。
   負値・NaN・Infinity・非 number が対象
 - 巨大値 (lastSeq 超) は「全て配信済み」として replay ゼロ — cursor 走査は既存 sendBacklog と同じ O(room.events) の単一 pass で、DoS ベクタにならない
 

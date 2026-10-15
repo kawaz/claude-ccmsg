@@ -1,8 +1,8 @@
 # DR-0013: broadcast room (auto-populated session broadcast)
 
-- **Status**: Accepted (2026-07-14)
+- **Status**: Superseded by [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2
 - **Date**: 2026-07-13
-- **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1 予約参加、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0012](./DR-0012-room-archive-and-kick.md) の archive/kick を前提とする
+- **前提**: [DR-0001](../DR-0001-central-daemon-architecture.md) の room model、[DR-0003](../DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](../DR-0006-id-scheme-v2.md) の u1 予約参加、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0012](./DR-0012-room-archive-and-kick.md) の archive/kick を前提とする
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
 
 ## 1. Context / 動機

@@ -3,7 +3,7 @@
 > 🇬🇧 [README.md](./README.md)
 
 ccmsg web UI を支える中央デーモン。
-この plugin の役目は daemon を起こしておくことだけで、SessionStart hook は daemon が落ちていれば起動し、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間がセッション・transcript と、過去の room の読み取り専用のログを閲覧する)、web UI からの入力を Claude Code セッションの入力欄に入れて送る (そこで打ったのと同じ入力になる)。セッション間のメッセージ配送は [kawaz/ccmsg](https://github.com/kawaz/ccmsg) が担う。
+この plugin の役目は daemon を起こしておくことだけで、hooks module はセッションの開始時に daemon が落ちていれば起動し、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間がセッション・transcript と、過去の room の読み取り専用のログを閲覧する)、web UI からの入力を Claude Code セッションの入力欄に入れて送る (そこで打ったのと同じ入力になる)。セッション同士は plugin の `send` tool で送り合い、daemon がそのメッセージを受け手のセッションへ直接届ける (`peer_send`、[DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3)。
 
 ## Status
 
