@@ -91,15 +91,18 @@ typecheck: lint
 # テスト (bun test で全 package の *.test.ts を実行)
 # warm は macOS の Gatekeeper 評価 (inode 単位、初回 exec 時に同期ブロック) を
 # テストの外で先に済ませるための前処理。詳細は packages/testkit/src/mock-bin.ts
+# セッションの環境変数 (CLAUDE_CODE_* / CCMSG_*) は外して走らせる。Claude Code の
+# セッション内から回すと CLI がその sid を自分の identity として継承し、CI (どの
+# セッションでもない) と結果が変わるため。
 test: lint typecheck
     bun packages/testkit/src/warm.ts
-    bun test
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test
 
 # テスト + カバレッジ計測 (要約を表示し coverage/lcov.info を出力、package 別下限を検査)。
 # 計測の設定 (除外パターン等) は bunfig.toml の [test]
 coverage: lint typecheck
     bun packages/testkit/src/warm.ts
-    bun test --coverage
+    env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CCMSG_SID bun test --coverage
     @just _coverage-check
 
 # coverage/lcov.info を package 別に合計し coverage-thresholds と比べる。
