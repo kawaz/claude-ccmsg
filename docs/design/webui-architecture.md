@@ -57,12 +57,11 @@ Timeline / Files / Status / 検索 / usage) に育ったため、層の境界が
 | 接続 | `connStatus`, `daemonInfo`, `versionMismatch` | hello / 切断 |
 | 能力 | `capabilities` = {translator, terminalGatewayUrl, llmUsage, llmStats, llmStatus, sandbox, fork} | hello 直後の 1 回 |
 | セッション一覧 | `peers`, `agents`, `sessionErrors`, `llmRequests`, `pinnedSessions` | それぞれ別の push / ポーリング |
-| room | `rooms` (Map<id, RoomState>) | msg / member push |
+| room (読み取り専用) | `rooms` (Map<id, RoomState>)、`roomList` | 一覧の取得 (`rooms`) / room のログの取得 (`room_history`) |
 | 現在地 | `locator` = {view, sid, roomId, tab, mid, agent, unknownPath, missingTarget} | Navigation |
 | サイドバー | `sidebar` (= `sb.*` の URL 状態) | Navigation |
 | セッション別 | `sessionTrees` (Map<sid, tree>)、`sessionStatuses` (Map<sid, status>) | transcript / status 購読 |
 | 表示設定 | `peerSortKey`, `usageTab`, `usagePeriod`, `usageDays` | ユーザ操作 (永続) |
-| 入力補助 | `mentionTo` | ユーザ操作 |
 | レイアウト | `sidebarOpen`, 各ペイン幅 | ユーザ操作 (永続、§6) |
 
 規約:

@@ -20,7 +20,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | path | 画面 |
 |---|---|
 | `/` | ルーム未選択 |
-| `/r/<room>` | ルーム |
+| `/r/<room>` | ルームのログ (読み取り専用、DR-0036 §2) |
 | `/r/<room>/m<mid>` | ルームの特定メッセージへアンカー |
 | `/s/<sid>` | セッションの最後に見ていた画面へリダイレクト |
 | `/s/<sid>/files` | Files タブ |
@@ -28,7 +28,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `/s/<sid>/timeline/agent/tm/<name>` | teammate の TL |
 | `/s/<sid>/timeline/agent/sub/<agentId>` | サブエージェントの TL |
 | `/s/<sid>/timeline/agent/wf/<runId>/<agentId>` | workflow 内エージェントの TL |
-| `/s/<sid>/terminal` · `/status` · `/rooms` | 各タブ |
+| `/s/<sid>/terminal` · `/status` | 各タブ |
 | `/usage` | LLM クオータ |
 | `/usage/stats/<period>` | 使用量 (`daily` / `weekly` / `monthly`) |
 | `/catalog` | コンポーネントカタログ |
@@ -46,11 +46,11 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 
 ## `sb.*` (サイドバーのフォームパネル)
 
-新規セッション / Session Search / 新規 Room の 3 つ。**メインペインの中身を置き換えない**ので path には載せない — `/s/<sid>/timeline` を開いたまま横で使うものであり、「どこを見ているか」とは別の軸になる。逆に言えば「どのセッションを見ながら、どのフォームを何の値で開いているか」が 1 本の URL に収まる。
+新規セッション / Session Search の 2 つ。**メインペインの中身を置き換えない**ので path には載せない — `/s/<sid>/timeline` を開いたまま横で使うものであり、「どこを見ているか」とは別の軸になる。逆に言えば「どのセッションを見ながら、どのフォームを何の値で開いているか」が 1 本の URL に収まる。
 
 | キー | 値 | 意味 |
 |---|---|---|
-| `sb.panel` | `new` / `search` / `room` | どのパネルが開いているか (3 つは排他) |
+| `sb.panel` | `new` / `search` | どのパネルが開いているか (2 つは排他) |
 | `sb.template` | テンプレ名 | ランチャーのテンプレを名指しで固定 |
 | `sb.<PARAM>` | 任意の文字列 | ランチャー params の初期値。名前は**大文字** |
 | `sb.search` | 検索語 | Session Search の検索語 |
@@ -75,8 +75,8 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 /r/<room>?sb.panel=search&sb.search=deploy
   ルームを見ながら "deploy" で過去セッションを検索
 
-/s/<sid>/files?path=src/a.ts&sb.panel=room
-  ファイルを見ながら新規 Room を作る (2 つの query は互いに無関係)
+/s/<sid>/files?path=src/a.ts&sb.panel=search
+  ファイルを見ながら過去セッションを検索する (2 つの query は互いに無関係)
 ```
 
 ### URL に載せないもの

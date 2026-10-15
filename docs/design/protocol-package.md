@@ -26,16 +26,16 @@
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
 | `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest`、別世代の hello を見分ける `isOtherGenerationHello` | daemon |
-| `request-rooms.ts` | room の依頼: `post` `reply` `create_room` `next_room` `set_title` `archive_room` `kick` `subscribe` `read` `room_history` `rooms` `leave` `invite` | daemon |
-| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `peers` `notify` `say` `say_read` `message_send` `address_send` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
+| `request-rooms.ts` | room のログを読む依頼 (room は読み取り専用、[DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) §2): `read` `room_history` `rooms` | daemon |
+| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say` `say_read` `message_send` `address_send` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` | daemon |
 | `response.ts` | 返事。`RESPONSE_SCHEMAS` (op → その op の成功の返事のスキーマ)、`ErrorResponseSchema` (`ok: false`)、`ResponseOf<Op>` / `ReplyOf<Op>` | CLI、webui (`frame.ts` 経由) |
 | `response-rooms.ts` / `response-sessions.ts` / `response-files.ts` / `response-transcripts.ts` / `response-host.ts` | 上の依頼ファイルと同じ話題分けの、op ごとの成功の返事 | CLI、webui |
 | `session-status.ts` | daemon が transcript と周辺のファイルから畳み、hooks module の事実を重ねたセッションの状態 (`SessionStatusSnapshotSchema`、TODO・workflow・background・context 使用量・agent tree・外部ファイル・API エラー)。`session_status` 系の返事と `ev: "session_status"` の push の中身 | webui (daemon が組み立てる) |
-| `stream-event.ts` | 依頼なしに daemon が送る行。daemon 自身の push (`ev` の variant、`PushStreamEventSchema`) と、配送された storage event (`type` の variant に room の `r` を足した `DeliveredEventSchema`) の 2 系統。型 `StreamEvent` はその和 | CLI、webui |
-| `frame.ts` | daemon が書いた 1 行を読む `readDaemonFrame`。push・配送 event・返事のどれかを判別し、返事は op を知る依頼側が `reply(op)` でその op のスキーマで読む (行は op を名乗らないため) | CLI、webui |
+| `stream-event.ts` | 依頼なしに daemon が subscribe した接続へ送る push (`ev` の variant、`StreamEventSchema`) | CLI、webui |
+| `frame.ts` | daemon が書いた 1 行を読む `readDaemonFrame`。push と返事のどちらかを判別し、返事は op を知る依頼側が `reply(op)` でその op のスキーマで読む (行は op を名乗らないため) | CLI、webui |
 
 依頼の op と返事の対応は `RESPONSE_SCHEMAS` が正本。同じ形を返す op は同じスキーマを指す (`fs_read_external` / `fs_read_workspace` → `fs_read` の返事、`fs_list_workspace` → `fs_list` の返事、`session_status_subscribe` → `session_status` の返事)。
 
@@ -68,7 +68,7 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
-| `storage-event.ts` | room の jsonl の 1 行 (`StorageEventSchema`、`type` の variant: member / leave / msg / next / prev / title / archive / kind / say / say_read)。同じ event が wire では配送 event として流れる | daemon (CLI・webui は配送 event として) |
+| `storage-event.ts` | room の jsonl の 1 行 (`StorageEventSchema`、`type` の variant: member / leave / msg / next / prev / title / archive / kind / say / say_read)。room のログは読み取り専用で、同じ event が `room_history` の返事に入る | daemon、webui (`room_history` の返事として) |
 | `session-files.ts` | `ccmsg sidecar begin` が書く `<state dir>/sessions/<sid>.json` (`SessionStateFileSchema`) | CLI |
 | `allowed-origins.ts` | `<config dir>/allowed-origins.json` | CLI (`ccmsg origins`)、daemon |
 | `attachment-upload.ts` | `POST /attachment` の返事 (multipart HTTP で、wire の返事ではない) | webui |
@@ -108,13 +108,11 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 
 ### id の語彙
 
-wire と storage の `from` / `to` / member の `id` は、人か agent かを接頭辞で分ける ([DR-0006](../decisions/DR-0006-id-scheme-v2.md))。Unix の UID ではない。
+room のログ (`StorageEvent`) の `from` / `to` / member の `id` は、人か agent かを接頭辞で分ける ([DR-0006](../decisions/DR-0006-id-scheme-v2.md))。Unix の UID ではない。room は読み取り専用で ([DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) §2)、この語彙はログと、過去の transcript に残る room のメッセージを読むためにある。
 
 - `u1` (`ADMIN_ID`): User (kawaz)。admin で、全 room に member 行なしで暗黙に居る
 - `u2` 以降: guest (room ごとの member 行に `role: "guest"`)
-- `a1`, `a2`, …: room の agent member。room に入った順に振る
-
-room は [DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) で廃止され、room の jsonl は読み取り専用の閲覧に要る分だけに縮む予定。
+- `a1`, `a2`, …: room の agent member。room に入った順
 
 ## 制約 / 前提
 

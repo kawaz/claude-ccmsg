@@ -3,7 +3,7 @@
 > 🇯🇵 [README-ja.md](./README-ja.md)
 
 Central daemon behind the ccmsg web UI.
-The plugin's only job is to keep the daemon running: its hooks module starts the daemon when a session starts, if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses rooms, sessions, and transcripts, and injects posts from the web UI directly into Claude Code sessions. Messaging between sessions is handled by [kawaz/ccmsg](https://github.com/kawaz/ccmsg).
+The plugin's only job is to keep the daemon running: its hooks module starts the daemon when a session starts, if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses sessions, transcripts, and the read-only logs of past rooms, and types into a Claude Code session: the input is put into the session's own prompt box, as if typed there. Messaging between sessions is handled by [kawaz/ccmsg](https://github.com/kawaz/ccmsg).
 
 ## Status
 
@@ -35,7 +35,7 @@ Once installed this way, the `ccmsg` launcher keeps that symlink pointed at the 
 
 ## Web UI
 
-The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human user: browse rooms, sessions, files, and transcripts, and post as `u1` = User). Binding is loopback-only and browser access is gated by an `Origin` check: loopback origins pass by default, a `tailscale serve` front for this port is detected and allowed automatically (zero config for remote/phone access over your tailnet), and other reverse-proxy origins can be added with `CCMSG_HTTP_ALLOW_ORIGIN` (comma-separated). A source-IP allowlist (`CCMSG_HTTP_ALLOW`, default loopback) remains as defense in depth, and `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) overrides the bind. URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position, `/#s<sid>` = session files, `/#t<sid>` = session timeline). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
+The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human user: browse sessions, files, transcripts, and the read-only logs of past rooms, and type into a session). Binding is loopback-only and browser access is gated by an `Origin` check: loopback origins pass by default, a `tailscale serve` front for this port is detected and allowed automatically (zero config for remote/phone access over your tailnet), and other reverse-proxy origins can be added with `CCMSG_HTTP_ALLOW_ORIGIN` (comma-separated). A source-IP allowlist (`CCMSG_HTTP_ALLOW`, default loopback) remains as defense in depth, and `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) overrides the bind. Paths are locators (`/r/<room>` = a room log, `/r/<room>/m<mid>` = a message in it, `/s/<sid>/files` / `/s/<sid>/timeline/…` / `/s/<sid>/status` = a session); see [webui-url-grammar](./docs/design/webui-url-grammar.md) and [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
 
 ## Speaking with `say`
 
@@ -43,26 +43,14 @@ The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human 
 
 Speech never depends on the recording: no session id, no running daemon, or a daemon that refuses the event all still speak. `bin/say` is a PATH shim that routes an ordinary `say` through this command, so every `say` on the machine — yours, a script's, an agent's — becomes attributable. Install it as a copy next to the `ccmsg` on your PATH (not a symlink: its target is a versioned plugin-cache dir that each update removes).
 
-## Why a rewrite?
-
-The p2p approach in `cmux-msg` worked for 1:1 messaging but exposed five structural problems during multi-session dogfooding:
-
-1. **Cross-explosion** — adding a 4th or 5th peer multiplies pair-wise sends.
-2. **Repeated instructions** — same prompt to N peers means N copy-pastes for the user and N duplicated actions from peers.
-3. **AI-to-AI noise** — peers waste context comparing notes about a third peer.
-4. **Mail-bloat** — `msg/send/reply` framing pushes models toward formal long messages.
-5. **User-mixing overhead** — the human user can only target one peer at a time, while AIs gossip about what the user said.
-
-Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses its cause because history is shared, and the `to` delivery filter (DR-0011) now scopes noisy exchanges away from uninvolved peers on top of short-message culture. (4) is a hypothesis that the `post` short-message framing reduces bloat. (5) is addressed by the user posting directly — via CLI in the MVP, web UI later.
-
 ## Architecture (see [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
 
 - **Single host** — laptop or workstation, no federation. Mobile access via tailscale over LAN.
-- **Central daemon** (bun) — the only writer. Issues room IDs, serializes and deduplicates concurrent room creation, and assigns per-room monotonic message IDs (`mid`).
-- **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / thread-links `next`/`prev` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-seq cursor (`seq` = per-room sequence spanning every event type, DR-0016).
-- **Delivery** — `to`-less messages are pushed to all room members. A `to`-bearing message is delivered only to the listed member(s), the sender, and the admin User (`u1`, always exempt) — a delivery filter, not just an attention marker (DR-0011). Storage stays unfiltered: any member can `read` a message they weren't delivered, a skipped `mid` is a deliberate pull signal. No echo back of your own posts.
+- **Central daemon** (bun) — keeps the registry of live sessions, delivers messages between sessions, puts the person's web UI input into a session, and serves the web UI.
+- **Storage** — the daemon keeps no message state of its own: a message lives in the transcripts of the sessions that sent and received it, and `ccmsg say` records are held in memory only. The room logs (`<data dir>/rooms/r<N>.jsonl`) are read-only: the web UI shows them, and nothing writes to them ([DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §2).
+- **Delivery** — a session sends to another session with the plugin's `send` tool; the daemon writes the message straight into the recipient's peer messaging socket and tells the sender whether it arrived, holding nothing for a later attempt ([DR-0034](./docs/decisions/DR-0034-peer-socket-injection.md), [DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §1, [DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3). The person's input from the web UI is filled into the session's prompt box and submitted ([DR-0035](./docs/decisions/DR-0035-user-input-via-composer-fill.md)).
 - **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. The web UI uses WebSocket (`/ws`) speaking the same protocol: the security layer is identity pinning to the User role, gated by loopback-only binds, a source-IP allowlist (loopback, `CCMSG_HTTP_ALLOW`) and browser `Origin` validation (loopback origins by default, extras via `CCMSG_HTTP_ALLOW_ORIGIN`, e.g. for tailscale serve).
-- **Clients** — a standalone `ccmsg` binary that writes messages directly into a Claude Code session's peer messaging socket (no resident process needed), a `subscribe` command for non-Claude-Code consumers, a user-facing CLI (the human is reserved member `u1` of every room), and a web UI. Every client silently health-checks and auto-starts the daemon.
+- **Clients** — the plugin's hooks module (its `send` / `say` / `peers` tools, and the sidecar that takes the person's input), a user-facing CLI (`peers`, `dump`, `status`, `daemon`, `stop`, …), a `subscribe` command that streams a session's notifications, and the web UI. The CLI health-checks and auto-starts the daemon.
 
 ## Repository layout
 

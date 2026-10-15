@@ -96,3 +96,17 @@
 ## webui の下限の見直し (2026-10-14、v0.168.0)
 
 happy-dom のマウントテスト (use-store-state / file-tree-favorites / room-view-draft) を足した結果、それまで計測対象に入っていなかった component (ErrorView / SearchBar / FileSearchPanel / CodeBlock / CopyButton / ImageLightbox / avatar / ComposerAttachments / FileViewer 等) が import されて分母に入り、webui の計測対象が 77 → 101 ファイル、lines が 81.65 → 72.04% になった。テストが減ったのではなく分母が増えた。下限を 70 / 79 に置き直す。マウントテストが増えるほど分母が先に増えるので、webui の下限は当面「下がったら上げ直す」でなく「分母の変化を見て置き直す」運用。
+
+## room の書き込みを削った後の下限 (2026-10-15)
+
+DR-0036 §2 で room の書き込み・配送 (daemon の `storage.ts` と server.ts の room 系、webui の room の操作 UI) を削り、読み手 (`room-reader.ts`) と閲覧のテストを足した後の実測 (`just coverage`):
+
+| package | lines % (前 → 後) | functions % (前 → 後) | 下限 (前 → 後) |
+|---|---|---|---|
+| protocol | 99.71 → 99.73 | 99.22 → 99.22 | 97 / 98 (据え置き) |
+| daemon | 60.69 → 64.37 | 78.13 → 81.13 | 58 / 75 → 62 / 79 |
+| cli | 89.17 → 89.82 | 86.75 → 86.75 | 84 / 85 → 87 / 85 |
+| webui | 77.03 → 77.47 | 82.17 → 83.87 | 74 / 80 → 75 / 81 |
+| hooks | 92.22 → 92.22 | 95.30 → 95.30 | 80 / 85 (据え置き) |
+
+daemon の上がり幅の大半は、子プロセスの daemon 経由でしか通らなかった room 系のコードが分母から消えたことによる。下限は実測から 2 を引いて切り捨てた値にし、実測 − 2 が今の下限を下回る値 (protocol / cli の functions) は据え置いた。

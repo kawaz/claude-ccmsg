@@ -3,7 +3,7 @@
 > 🇬🇧 [README.md](./README.md)
 
 ccmsg web UI を支える中央デーモン。
-この plugin の役目は daemon を起こしておくことだけで、SessionStart hook は daemon が落ちていれば起動し、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間が room・セッション・transcript を閲覧する)、web UI からの投稿を Claude Code セッションへ直接注入する。セッション間のメッセージ配送は [kawaz/ccmsg](https://github.com/kawaz/ccmsg) が担う。
+この plugin の役目は daemon を起こしておくことだけで、SessionStart hook は daemon が落ちていれば起動し、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間がセッション・transcript と、過去の room の読み取り専用のログを閲覧する)、web UI からの入力を Claude Code セッションの入力欄に入れて送る (そこで打ったのと同じ入力になる)。セッション間のメッセージ配送は [kawaz/ccmsg](https://github.com/kawaz/ccmsg) が担う。
 
 ## Status
 
@@ -35,7 +35,7 @@ ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 
 ## Web UI
 
-daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。room・セッション・ファイル・transcript の閲覧と `u1` = User としての投稿)。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。URL fragment はロケータ記法 (`/#rXXXX` = room、`/#rXXXX-mNN` = メッセージ位置、`/#s<sid>` = セッションファイル、`/#t<sid>` = タイムライン)。詳細は [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
+daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。セッション・ファイル・transcript と過去の room の読み取り専用のログの閲覧、セッションへの入力)。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。path はロケータ (`/r/<room>` = room のログ、`/r/<room>/m<mid>` = その中のメッセージ、`/s/<sid>/files` / `/s/<sid>/timeline/…` / `/s/<sid>/status` = セッション)。詳細は [webui-url-grammar](./docs/design/webui-url-grammar.md) と [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
 
 ## `say` での発声
 
@@ -43,26 +43,14 @@ daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間�
 
 発声は記録に依存しない: session id が無くても、daemon が動いていなくても、daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` をこのコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に置けばマシン上のすべての `say` (自分・スクリプト・エージェント) がどのセッションのものか分かるようになる。PATH 上の `ccmsg` と同じ dir に**コピー** で置く (symlink にしないのは、参照先が version 付き plugin cache dir でupdate のたびに消えるため)。
 
-## rewrite した理由
-
-p2p 方式の `cmux-msg` は 1:1 では機能していたが、複数セッション dogfood で 5 つの構造的問題が露呈した:
-
-1. **クロス爆発** — 4-5 peer に増えると pair-wise send が組合せ爆発
-2. **同一指示の負担** — 同じ依頼を N peer にコピペ + N peer が同じ行動
-3. **AI 間の無駄会話** — 別 peer についての伝聞を peer 同士で擦り合わせ
-4. **メール調社交辞令** — `msg/send/reply` の語感が形式ばった長文を誘発
-5. **kawaz 混入コスト** — kawaz は 1 peer ずつしか発信できず、その間に AI が「kawaz がこう言ってた」と転送し合う
-
-room は (1)(2) を構造的に解決する (1 post が全員に届く)。(3) は履歴共有で伝聞の原因が消え、さらに `to` 配信フィルタ (DR-0011) が無関係な peer への配信自体を絞る (短文文化と併せて)。(4) は `post` の短文記法で誘因を減らす仮説。(5) は kawaz 自身が直接 post することで解消する — MVP では CLI、後に web UI。
-
 ## アーキテクチャ (詳細は [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
 
 - **Single host** — laptop or workstation 単独で完結、federation なし。mobile アクセスは tailscale 経由の LAN 内アクセス扱い
-- **中央デーモン** (bun) — 唯一の writer。room ID の発行、同時 room 開設の直列化・重複排除、room 内単調な `mid` の採番を行う
-- **ストレージ** — room ごとに 1 つの append-only `jsonl` (`member` / `leave` / `msg` / 次スレリンク `next`/`prev` / … イベント) が**唯一の永続状態**。server 側の既読 cursor は持たない — BBS モデル: 読者が自分の位置を把握し、再接続時に since-mid を渡す
-- **配送** — `to` なしの msg は room 全メンバーに**本文込みで push** する。`to` を付けると配信対象は列挙メンバー + 送信者自身 + admin User (`u1`、常時配信の例外) に絞られる (可視性フィルタ、DR-0011)。ストレージ自体は絞らない — 配信されなかった member も `read` で任意に読める (mid の飛びが「読みに行けば読める」シグナル)。自分の post の echo back なし
+- **中央デーモン** (bun) — 動いているセッションの一覧を持ち、セッション間のメッセージを届け、web UI からの人の入力をセッションに入れ、web UI を配信する
+- **ストレージ** — daemon はメッセージの状態を持たない: メッセージは送り手と受け手のセッションの transcript に残り、`ccmsg say` の記録はメモリだけに持つ。room のログ (`<data dir>/rooms/r<N>.jsonl`) は読み取り専用で、web UI が表示し、何も書き込まない ([DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §2)
+- **配送** — セッションは plugin の `send` tool で別のセッションに送り、daemon は受け手の peer messaging socket に直接書き込んで、届いたかを送り手に返す。後で送り直すために預かることはしない ([DR-0034](./docs/decisions/DR-0034-peer-socket-injection.md)、[DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §1、[DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3)。web UI からの人の入力はセッションの入力欄に入れて送る ([DR-0035](./docs/decisions/DR-0035-user-input-via-composer-fill.md))
 - **トランスポート** — ローカルクライアントは UNIX Domain Socket (`0600` + UID check)。webui は WebSocket (`/ws`) で同一プロトコル: セキュリティ層 = role を User に固定する identity pinning、接続元は loopback 限定 bind + source-IP allowlist (loopback、`CCMSG_HTTP_ALLOW`) + ブラウザ `Origin` 検証 (既定は loopback origin のみ、tailscale serve 等の追加は `CCMSG_HTTP_ALLOW_ORIGIN`) で審査
-- **クライアント** — Claude Code セッションの peer messaging socket に直接書き込む単体の `ccmsg` バイナリ (常駐不要)、Claude Code 以外の受け手向けの `subscribe` コマンド、kawaz が直接叩くユーザ CLI (人間は全 room の予約メンバー `u1`)、web UI。全クライアントが daemon を静寂にヘルスチェック + 自動起動する
+- **クライアント** — plugin の hooks module (`send` / `say` / `peers` の tool と、人の入力を受けるサイドカー)、kawaz が直接叩くユーザ CLI (`peers`・`dump`・`status`・`daemon`・`stop` など)、セッションの通知を流す `subscribe` コマンド、web UI。CLI は daemon をヘルスチェックし、落ちていれば起動する
 
 ## ディレクトリ構成
 
