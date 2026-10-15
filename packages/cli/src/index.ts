@@ -317,14 +317,6 @@ function output<R extends { readonly ok?: boolean }>(res: R): number {
     process.stderr.write(line);
     return 1;
   }
-  // DR-0013 §2.9: daemon が付けた non-fatal warning (現状は broadcast の
-  // --members 無視) は stderr に別行で流す。stdout の JSON にも `warning` は
-  // 残しているので、pipeline consumer は JSON 側だけを見ていれば従来通り動く
-  // — stderr 側は kawaz や AI が対話中に「その --members は意味がなかった」と
-  // 気付くための誘導。
-  if ("warning" in res && typeof res.warning === "string" && res.warning !== "") {
-    process.stderr.write(`ccmsg: ${res.warning}\n`);
-  }
   process.stdout.write(line);
   return 0;
 }

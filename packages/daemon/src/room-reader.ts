@@ -12,6 +12,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  errorText,
   jsonText,
   parseWith,
   StorageEventSchema,
@@ -43,24 +44,34 @@ export interface RoomReader {
  * time on; the logs no longer grow in number, since nothing creates a room. */
 const CACHED_LOGS = 4096;
 
-const ROOM_ID_RE = /^r\d+$/;
-const ROOM_FILE_RE = /^(r\d+)\.jsonl$/;
+/** `r<N>` as the daemon numbered rooms: no leading zero, so one number names
+ * one file. */
+const ROOM_ID_RE = /^r[1-9]\d*$/;
+const ROOM_FILE_RE = /^(r[1-9]\d*)\.jsonl$/;
 
 /** One line of a room's file. */
 const StorageEventLineSchema = jsonText(StorageEventSchema);
 
 /** Read the logs under `roomsDir`. `warn` hears of a line that does not read
- * (once per change of the file, since a parse is reused until then). */
+ * (once per change of the file, since a parse is reused until then), and of
+ * a log that cannot be read at all (a directory, no permission), which is
+ * left out as if absent rather than failing every other room with it. */
 export function createRoomReader(
   roomsDir: string,
   warn: (line: string) => void = () => {},
 ): RoomReader {
   const cache = createMtimeCache<readonly StorageEvent[]>(CACHED_LOGS);
   const load = async (id: string): Promise<RoomLog | undefined> => {
-    const events = await cache.get(path.join(roomsDir, `${id}.jsonl`), async () =>
-      parseLog(id, await fs.promises.readFile(path.join(roomsDir, `${id}.jsonl`), "utf8"), warn),
-    );
-    return events === undefined ? undefined : { id, events };
+    const file = path.join(roomsDir, `${id}.jsonl`);
+    try {
+      const events = await cache.get(file, async () =>
+        parseLog(id, await fs.promises.readFile(file, "utf8"), warn),
+      );
+      return events === undefined ? undefined : { id, events };
+    } catch (e) {
+      warn(`room ${id}: log unreadable, left out (${errorText(e)})`);
+      return undefined;
+    }
   };
   return {
     async list() {

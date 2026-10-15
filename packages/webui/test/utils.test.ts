@@ -260,7 +260,7 @@ describe("memberLabel", () => {
   });
 });
 
-// --- DR-0012: room archive folding + member connectivity --- //
+// --- room archive folding + member connectivity --- //
 
 function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
   return {

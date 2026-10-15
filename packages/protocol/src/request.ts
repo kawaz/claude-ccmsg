@@ -177,10 +177,14 @@ const OP_REQUEST_SCHEMAS = [
 /** Every request shape, before the correlation envelope, told apart by `op`
  * (and a hello by its generation). Use `Request` (the wire form) unless you
  * specifically mean "the body a caller composes". */
-export const RequestBodySchema = v.variant("op", [
-  AnyGenerationHelloRequestSchema,
-  ...OP_REQUEST_SCHEMAS,
-]);
+export const RequestBodySchema = v.variant(
+  "op",
+  [AnyGenerationHelloRequestSchema, ...OP_REQUEST_SCHEMAS],
+  // Names the op rather than listing every op this daemon serves: the list is
+  // long enough to be clipped from the refusal, and the sender needs to know
+  // which op was not served.
+  (issue) => `unknown op: ${String(issue.input)}`,
+);
 export type RequestBody = Output<typeof RequestBodySchema>;
 
 /** A request on the wire: one of the bodies above plus its correlation id.

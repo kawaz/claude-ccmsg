@@ -176,7 +176,7 @@ describe("reducer / room-history/loaded folds the whole log", () => {
     expect(room?.timeline).toHaveLength(1);
   });
 
-  // title / archive / kind are last-wins (DR-0012 / DR-0013), and each keeps
+  // title / archive / kind are last-wins, and each keeps
   // its line in the timeline.
   test("title, archive and kind take the log's last value", () => {
     const room = log([

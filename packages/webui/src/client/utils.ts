@@ -116,8 +116,8 @@ export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
 
 /** Splits an already-sorted room list (see `activeRoomsSorted`) into
  * non-archived / archived buckets, each keeping the input's relative order
- * (DR-0012: RoomList shows non-archived rooms as before, archived ones
- * folded into a bottom "アーカイブ (N)" `<details>`). A plain `.filter()`
+ * (RoomList folds the archived ones into a bottom "アーカイブ (N)"
+ * `<details>`). A plain `.filter()`
  * twice would work too, but doing it in one pass keeps the "which bucket"
  * decision (`archived === true`) in exactly one place. */
 export function splitRoomsByArchived(rooms: RoomState[]): {

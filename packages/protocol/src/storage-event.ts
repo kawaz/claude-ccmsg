@@ -1,7 +1,7 @@
 // Storage events (room jsonl lines), as schemas (DR-0038). Rooms are
 // read-only (DR-0036 §2): the logs are what is left on disk, and nothing
 // appends to them. File line order is the source of truth for ordering; `mid`
-// (msg only) is a per-room sequence. `seq` (DR-0016) is a separate per-room
+// (msg only) is a per-room sequence. `seq` is a separate per-room
 // sequence spanning all event types; rows written before it carry none.
 //
 // The same events travel the wire in the `room_history` reply.
@@ -20,7 +20,7 @@ export const MemberEventSchema = v.object({
   joined_at: v.string(),
   /** guest role marker; absent = regular member (agent, or admin's implicit row is absent entirely). */
   role: v.optional(v.picklist(["admin", "guest"])),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type MemberEvent = Output<typeof MemberEventSchema>;
@@ -29,7 +29,7 @@ export const LeaveEventSchema = v.object({
   type: v.literal("leave"),
   id: v.string(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type LeaveEvent = Output<typeof LeaveEventSchema>;
@@ -38,14 +38,14 @@ export const MsgEventSchema = v.object({
   type: v.literal("msg"),
   mid: v.number(),
   from: v.string(),
-  /** The member ids the msg was addressed to (DR-0011). Absent = every
+  /** The member ids the msg was addressed to. Absent = every
    * member. */
   to: v.optional(v.array(v.string())),
   ts: v.string(),
   msg: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
-  /** The msg this one replied to, as "r<N>m<M>" (DR-0017 §2.2). */
+  /** The msg this one replied to, as "r<N>m<M>". */
   reply_to: v.optional(v.string()),
 });
 export type MsgEvent = Output<typeof MsgEventSchema>;
@@ -54,7 +54,7 @@ export const NextEventSchema = v.object({
   type: v.literal("next"),
   room: v.string(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type NextEvent = Output<typeof NextEventSchema>;
@@ -63,7 +63,7 @@ export const PrevEventSchema = v.object({
   type: v.literal("prev"),
   room: v.string(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type PrevEvent = Output<typeof PrevEventSchema>;
@@ -72,29 +72,29 @@ export const TitleEventSchema = v.object({
   type: v.literal("title"),
   title: v.string(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type TitleEvent = Output<typeof TitleEventSchema>;
 
-/** Room archive toggle (DR-0012): a display-organization flag. The log's
+/** Room archive toggle: a display-organization flag. The log's
  * last archive event wins (same rule as title). */
 export const ArchiveEventSchema = v.object({
   type: v.literal("archive"),
   archived: v.boolean(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type ArchiveEvent = Output<typeof ArchiveEventSchema>;
 
-/** Room kind marker (DR-0013 broadcast / DR-0014 1on1). A normal room
+/** Room kind marker (broadcast / 1on1). A normal room
  * carries no `kind` event; `"normal"` is its absence. */
 export const KindEventSchema = v.object({
   type: v.literal("kind"),
   kind: v.picklist(["broadcast", "1on1"]),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type KindEvent = Output<typeof KindEventSchema>;
@@ -108,7 +108,7 @@ export const SayEventSchema = v.object({
   /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces. */
   text: v.string(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type SayEvent = Output<typeof SayEventSchema>;
@@ -120,7 +120,7 @@ export const SayReadEventSchema = v.object({
   /** `seq` of the SayEvent this acks. */
   ref: v.number(),
   ts: v.string(),
-  /** per-room sequence number (DR-0016), see the file banner. */
+  /** per-room sequence number, see the file banner. */
   seq: SeqSchema,
 });
 export type SayReadEvent = Output<typeof SayReadEventSchema>;
@@ -140,7 +140,7 @@ export const StorageEventSchema = v.variant("type", [
 ]);
 export type StorageEvent = Output<typeof StorageEventSchema>;
 
-/** Room kind (DR-0013 broadcast / DR-0014 1on1): `"normal"`, a broadcast
+/** Room kind: `"normal"`, a broadcast
  * room that every session joined, or a 1on1 room between the person and one
  * session. */
 export const RoomKindSchema = v.picklist(["normal", "broadcast", "1on1"]);

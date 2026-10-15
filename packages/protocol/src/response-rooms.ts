@@ -39,9 +39,9 @@ export const RoomSummarySchema = v.object({
   last_mid: v.number(),
   /** ts of the log's last event; null for an empty log */
   last_ts: v.nullable(v.string()),
-  /** archived flag (DR-0012), last archive event wins; absent = not archived */
+  /** archived flag last archive event wins; absent = not archived */
   archived: v.optional(v.boolean()),
-  /** room kind (DR-0013 broadcast / DR-0014 1on1); absent = "normal" */
+  /** room kind (broadcast / 1on1); absent = "normal" */
   kind: v.optional(RoomKindSchema),
 });
 export type RoomSummary = Output<typeof RoomSummarySchema>;

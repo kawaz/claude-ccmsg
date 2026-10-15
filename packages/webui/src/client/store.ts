@@ -92,9 +92,9 @@ export interface RoomState {
   timeline: StorageEvent[];
   lastMid: number;
   lastTs: string | null;
-  /** archived flag (DR-0012), last archive event wins. */
+  /** archived flag, last archive event wins. */
   archived?: boolean;
-  /** room kind (DR-0013 broadcast / DR-0014 1on1). */
+  /** room kind (broadcast / 1on1). */
   kind: RoomKind;
   /** Whether this room's log has been fetched (`room_history`): "idle" until
    * the room is opened, "missing" when the daemon has no such room. */

@@ -9,7 +9,7 @@ import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
 import { LinkedMarkdownView } from "../filepath-linker.tsx";
 
-/** DR-0012 (U1 icon addendum): a member's avatar shown next to its label
+/** A member's avatar shown next to its label
  * in msg-meta. Used both for the message sender (`from`) and for each
  * mention target in `to` — kawaz 2026-07-13 requested the same avatar
  * treatment on the `→ X, Y, Z` mention list so it reads symmetrically with

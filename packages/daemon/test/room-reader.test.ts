@@ -262,7 +262,7 @@ describe("createRoomReader", () => {
     const dir = roomsDir({ "foo.jsonl": roomLog([MEMBER]), "r1.jsonl": roomLog([MEMBER]) });
     fs.writeFileSync(path.join(path.dirname(dir), "x.jsonl"), roomLog([MEMBER]));
     const reader = createRoomReader(dir);
-    for (const id of ["../x", "foo", "r1/../r1", "r1.jsonl", "R1", "r", ""]) {
+    for (const id of ["../x", "foo", "r1/../r1", "r1.jsonl", "R1", "r", "", "r01", "r0"]) {
       expect({ id, room: await reader.room(id) }).toEqual({ id, room: undefined });
     }
     expect(await reader.room("r404")).toBeUndefined();
@@ -276,6 +276,7 @@ describe("createRoomReader", () => {
       "foo.jsonl": roomLog([MEMBER]),
       "r3.json": roomLog([MEMBER]),
       "r4.jsonl.torn-1": roomLog([MEMBER]),
+      "r01.jsonl": roomLog([MEMBER]),
       "notes.txt": "x",
     });
     expect(await createRoomReader(dir).list()).toEqual([
@@ -283,6 +284,23 @@ describe("createRoomReader", () => {
       { id: "r2", events: [MSG1] },
       { id: "r10", events: [MSG2] },
     ]);
+  });
+
+  // One log that cannot be read (here a directory named like one) is left out
+  // and warned of; it does not take the other rooms down with it.
+  test("a log that cannot be read is left out of the list and warned of", async () => {
+    const dir = roomsDir({ "r1.jsonl": roomLog([MSG1]), "r3.jsonl": roomLog([MSG2]) });
+    fs.mkdirSync(path.join(dir, "r2.jsonl"));
+    const warned: string[] = [];
+    const reader = createRoomReader(dir, (line) => warned.push(line));
+
+    expect(await reader.list()).toEqual([
+      { id: "r1", events: [MSG1] },
+      { id: "r3", events: [MSG2] },
+    ]);
+    expect(await reader.room("r2")).toBeUndefined();
+    expect(warned.length).toBeGreaterThan(0);
+    expect(warned.every((line) => line.startsWith("room r2: log unreadable"))).toBe(true);
   });
 
   test("no rooms dir is no rooms", async () => {

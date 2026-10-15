@@ -406,7 +406,7 @@ describe("readRequest: a line that is not a request is a failure", () => {
       expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
         kind: "invalid_request",
         frame: { op: value.op, request_id: "q1" },
-        failure: { issues: [{ path: "op" }] },
+        failure: { issues: [{ path: "op", message: `unknown op: ${value.op}` }] },
       });
     });
   }

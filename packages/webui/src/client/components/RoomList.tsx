@@ -13,7 +13,7 @@ function roomListSlice(state: AppState) {
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
-  // DR-0013: broadcast rooms carry a small text badge at the left of the row
+  // Broadcast rooms carry a small text badge at the left of the row
   // title, so ellipsis clips the title tail (not the badge) when the sidebar
   // is narrow. Text-based (not an emoji glyph) so screen readers pronounce it.
   return (
@@ -21,7 +21,7 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
       <a href={roomHref(room.id)}>
         <span class="room-title">
           {room.kind === "broadcast" && (
-            <span class="room-kind-badge" title="broadcast room (DR-0013)">
+            <span class="room-kind-badge" title="broadcast room">
               BC
             </span>
           )}
@@ -35,9 +35,17 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   );
 }
 
-function RoomRows({ rooms, currentRoomId }: { rooms: RoomState[]; currentRoomId: string | null }) {
+function RoomRows({
+  id,
+  rooms,
+  currentRoomId,
+}: {
+  id?: string;
+  rooms: RoomState[];
+  currentRoomId: string | null;
+}) {
   return (
-    <ul>
+    <ul id={id}>
       {rooms.map((room) => (
         <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
       ))}
@@ -81,7 +89,9 @@ export function RoomList() {
       {state.roomList === "loaded" && state.rooms.size === 0 ? (
         <p class="room-list-status">room はありません</p>
       ) : null}
-      {flat.length > 0 && <RoomRows rooms={flat} currentRoomId={state.currentRoomId} />}
+      {flat.length > 0 && (
+        <RoomRows id="room-list" rooms={flat} currentRoomId={state.currentRoomId} />
+      )}
       {oneOnOne.length > 0 && (
         <Fold id="room-list-1on1" summary={`1on1 (${oneOnOne.length})`}>
           <RoomRows rooms={oneOnOne} currentRoomId={state.currentRoomId} />

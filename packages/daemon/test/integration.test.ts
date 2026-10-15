@@ -207,12 +207,11 @@ describe("error handling & boundaries", () => {
         for (const c of [u, s]) {
           for (const write of writes) {
             const refusal = await c.requestRefusal(write);
-            // the refusal names the op as what does not read
-            expect({
-              op: write.op,
-              code: refusal.error.code,
-              field: refusal.error.msg.slice(0, 4),
-            }).toEqual({ op: write.op, code: "invalid_args", field: "op: " });
+            // the refusal names the op that is not served
+            expect({ code: refusal.error.code, msg: refusal.error.msg }).toEqual({
+              code: "invalid_args",
+              msg: `op: unknown op: ${write.op}`,
+            });
           }
         }
         expect(fs.existsSync(ctx.roomsDir)).toBe(false);
