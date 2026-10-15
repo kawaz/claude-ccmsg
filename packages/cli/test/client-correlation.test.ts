@@ -78,15 +78,15 @@ test("a reply is paired by request_id, not by arrival order", async () => {
     const [first, second] = held;
     if (first === undefined || second === undefined) return [];
     return [
-      { ok: true, room: "r2", request_id: second.request_id },
-      { ok: true, room: "r1", request_id: first.request_id },
+      { ok: true, room: "r2", events: [], request_id: second.request_id },
+      { ok: true, room: "r1", events: [], request_id: first.request_id },
     ];
   });
   const client = await Client.connect(sock);
-  const a = client.request({ op: "leave", room: "r1" });
-  const b = client.request({ op: "leave", room: "r2" });
-  expect(await a).toEqual({ ok: true, room: "r1" });
-  expect(await b).toEqual({ ok: true, room: "r2" });
+  const a = client.request({ op: "room_history", room: "r1" });
+  const b = client.request({ op: "room_history", room: "r2" });
+  expect(await a).toEqual({ ok: true, room: "r1", events: [] });
+  expect(await b).toEqual({ ok: true, room: "r2", events: [] });
   client.close();
 });
 
@@ -119,12 +119,12 @@ test("a hello reply with no request_id and no protocol is read, so a pre-correla
 test("a reply that is not its op's answer fails the request", async () => {
   const sock = await fakeDaemon((req) => [{ ok: true, request_id: req.request_id }]);
   const client = await Client.connect(sock);
-  const failure = await client.request({ op: "leave", room: "r1" }).then(
+  const failure = await client.request({ op: "room_history", room: "r1" }).then(
     () => "answered",
     (e: Error) => e.message,
   );
   expect(failure).toBe(
-    'the daemon\'s reply to leave is not its answer: room: Invalid key: Expected "room" but received undefined',
+    'the daemon\'s reply to room_history is not its answer: room: Invalid key: Expected "room" but received undefined; events: Invalid key: Expected "events" but received undefined',
   );
   client.close();
 });
@@ -185,9 +185,9 @@ test("large requests arrive whole, in the order written", async () => {
         while ((at = buf.indexOf("\n")) >= 0) {
           const req = requestOf(buf.slice(0, at));
           buf = buf.slice(at + 1);
-          if (req.op !== "post") throw new Error(`expected a post, got ${req.op}`);
+          if (req.op !== "say") throw new Error(`expected a say, got ${req.op}`);
           socket.write(
-            `${JSON.stringify({ ok: true, room: String(req.msg.length), mid: 1, request_id: req.request_id })}\n`,
+            `${JSON.stringify({ ok: true, id: String(req.text.length), request_id: req.request_id })}\n`,
           );
         }
       },
@@ -203,9 +203,9 @@ test("large requests arrive whole, in the order written", async () => {
   const client = await Client.connect(sock);
   const sizes = [1_000_000, 300_000, 10];
   const answers = await Promise.all(
-    sizes.map((size) => client.request({ op: "post", room: "r1", msg: "y".repeat(size) })),
+    sizes.map((size) => client.request({ op: "say", text: "y".repeat(size) })),
   );
-  expect(answers.map((a) => (a.ok ? a.room : a.error.msg))).toEqual(sizes.map(String));
+  expect(answers.map((a) => (a.ok ? a.id : a.error.msg))).toEqual(sizes.map(String));
   client.close();
 });
 

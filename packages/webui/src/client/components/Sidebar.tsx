@@ -5,7 +5,6 @@ import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { writeStorage } from "../storage.ts";
-import { RoomCreator } from "./RoomCreator.tsx";
 import { RoomList } from "./RoomList.tsx";
 import {
   CLOSED_SIDEBAR,
@@ -104,25 +103,6 @@ function CreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () =
   );
 }
 
-/** ROOMS section "+ 新規" affordance (issue 2026-07-17-rooms-sidebar-new-
- * button.md), the room-creation counterpart to CreatorToggleButton above —
- * same chromeless toggle-button family, symmetric with SESSIONS's "+ 新規"
- * per the issue's stated goal. Always rendered (no session-launcher-style
- * probe gate — create_room has no server-side "unconfigured" state). */
-function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return (
-    <button
-      id="room-creator-toggle"
-      type="button"
-      title={open ? "新規 Room を閉じる" : "新規 Room を作成"}
-      aria-pressed={open}
-      onClick={onToggle}
-    >
-      {"+⁠New"}
-    </button>
-  );
-}
-
 function sidebarSlice(state: AppState) {
   return {
     peers: state.peers,
@@ -133,27 +113,26 @@ function sidebarSlice(state: AppState) {
   };
 }
 
-/** サイドバーの SESSIONS / ROOMS セクションと、そこから開く 3 つのフォーム
- * パネル (新規セッション / Session Search / 新規 Room) のトグル。
+/** サイドバーの SESSIONS / ROOMS セクションと、そこから開く 2 つのフォーム
+ * パネル (新規セッション / Session Search) のトグル。
  *
- * **3 つは 1 本の排他トグル**: `state.sidebar.panel` が高々 1 つを持つ
- * (`null` = どれも開いていない)。セクションをまたいで排他なのは、ROOMS の
- * 「+ 新規」を押したら SESSIONS のフォームが閉じるのが自然だからで、単一の
- * 値がそれを構造として保証する (3 つの boolean だと互いを知る必要が出る)。
+ * **2 つは 1 本の排他トグル**: `state.sidebar.panel` が高々 1 つを持つ
+ * (`null` = どれも開いていない)。単一の値がそれを構造として保証する
+ * (boolean を並べると互いを知る必要が出る)。
  *
  * **状態の正本は URL** (kawaz r259 m47-m53)。トグルは
- * `pushSidebarState(toggleSidebarPanel(...))` で `?sb.panel=new|search|room`
+ * `pushSidebarState(toggleSidebarPanel(...))` で `?sb.panel=new|search`
  * を書き換える遷移で、store の `sidebar` はそれを読み直した結果でしかない。
  * これで「今どのセッションを見ながら、どのフォームを何の値で開いているか」
  * が丸ごと 1 本の URL になり、リロード・戻る・リンク共有のどれでも同じ画面に
  * なる。文法は sidebar-url.ts、表は docs/design/webui-url-grammar.md。
  *
- * path 側に載せないのは、この 3 つがメインペインの中身を置き換えないから:
+ * path 側に載せないのは、この 2 つがメインペインの中身を置き換えないから:
  * `/s/<sid>/timeline` を開いたまま横で使うものなので、「どこを見ているか」を
  * 名乗る path とは別の名前空間 (`sb.`) に属する。
  *
- * **3 つともサイドバーの中に描く** (kawaz r273 m35): フォームは一覧に対する
- * 操作 (セッションを起動する / 探す / ルームを作る) なので、一覧を管理する
+ * **2 つともサイドバーの中に描く** (kawaz r273 m35): フォームは一覧に対する
+ * 操作 (セッションを起動する / 探す) なので、一覧を管理する
  * このコンポーネントの責務に属する。幅が splitter で自由に動かせる今、これを
  * main ペイン側に出す理由は無い — フォームの表示欠け
  * (docs/findings/2026-08-12-form-ux-width-survey.md) は「サイドバーの外へ
@@ -168,9 +147,7 @@ function sidebarSlice(state: AppState) {
  *   スプリッターを下げる。
  *
  * 軸を決めるのは app.css の `flex-direction` だけで、DOM も mount するものも
- * どちらでも同じ。RoomCreator が他の 2 つと同じ場所に出るのも同じ理由で
- * (kawaz r259 m53)、メンバのチェックボックスを一覧と見比べながら選ぶ価値は
- * 変わらない。その並び順が依存するソートキーは `state.peerSortKey`。 */
+ * どちらでも同じ。 */
 export function Sidebar() {
   const { store } = useApp();
   const slice = useStoreState(store, sidebarSlice, shallowEqual);
@@ -258,15 +235,9 @@ export function Sidebar() {
             </h2>
             <SessionList peers={sortedPeers} currentSid={slice.currentSid} />
           </section>
-          {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は参照頻度が低い */}
+          {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は過去の
+           * 読み取り専用のログで参照頻度が低いので、畳んでおき開いた時に読む */}
           <section id="rooms-panel">
-            <h2>
-              Rooms{" "}
-              <RoomCreatorToggleButton
-                open={panel === "room-creator"}
-                onToggle={() => togglePanel("room-creator")}
-              />
-            </h2>
             <RoomList />
           </section>
         </div>
@@ -301,10 +272,8 @@ export function Sidebar() {
                   template={slice.sidebar.template}
                   params={slice.sidebar.params}
                 />
-              ) : panel === "session-search" ? (
-                <SessionSearchPanel onClose={closePanel} query={slice.sidebar.search} />
               ) : (
-                <RoomCreator peers={sortedPeers} onClose={closePanel} />
+                <SessionSearchPanel onClose={closePanel} query={slice.sidebar.search} />
               )}
             </aside>
           </>

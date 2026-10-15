@@ -5,7 +5,6 @@ import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
 import type { AppState } from "../store.ts";
-import { setSidDragPayload } from "../dnd.ts";
 import {
   formatAgentLiveState,
   formatSessionModelEffort,
@@ -517,21 +516,7 @@ function SessionRowItem({
       title={titleParts.join("\n")}
       onClick={selectSessionOnRowClick(row.sid)}
     >
-      <div
-        class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}
-        // DR-0011 §1-4: drag onto a room's chat area to invite this session.
-        // Only meaningful for a connected (ccmsg-started) row — invite needs
-        // the sid to be in the daemon's live connection registry, which an
-        // agents-only row (row.connected === false, "ccmsg 未起動") never is.
-        draggable={row.connected}
-        onDragStart={
-          row.connected
-            ? (e) => {
-                if (e.dataTransfer) setSidDragPayload(e.dataTransfer, row.sid);
-              }
-            : undefined
-        }
-      >
+      <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
         <a
           // Session rows always enter through the session root so the router can
           // restore that sid's recent tab/path. With no recent record the root

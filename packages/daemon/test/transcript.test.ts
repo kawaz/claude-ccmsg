@@ -15,6 +15,7 @@ import {
   type TestClient,
   defined,
   isKind,
+  sayMarker,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -963,8 +964,8 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u = await userHello(ctx);
-        // Room-level subscribe too (distinct from transcript_subscribe): the
-        // marker msg used below to gate "did a transcript event sneak in"
+        // The push subscribe too (distinct from transcript_subscribe): the
+        // marker say used below to gate "did a transcript event sneak in"
         // arrives only to daemon.subscribers, so without this the marker
         // itself would never reach `u` and the test would hang instead of
         // proving anything.
@@ -981,12 +982,10 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
         fs.appendFileSync(file, "L1\n");
         // Drive a distinguishable event through the SAME connection's stream (a
-        // msg from a fresh session in a fresh room) and confirm no "transcript"
-        // event snuck in among the events collected while waiting for it.
+        // say from a fresh session) and confirm no "transcript" event snuck in
+        // among the events collected while waiting for it.
         const s2 = await sessionHello(ctx, SID_B);
-        const created = await s2.requestOk({ op: "create_room", members: [] });
-        await s2.request({ op: "post", room: created.room, msg: "marker" });
-        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
+        const seen = await sayMarker(s2, u, "marker");
         expect(seen.some(isKind("transcript"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);

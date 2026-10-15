@@ -35,7 +35,7 @@ describe("createWebuiApp", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     const body = await res.text();
-    expect(body).toContain("ccmsg.since");
+    expect(body).toContain("ccmsg.recent.");
     expect(body).toContain("navigate");
 
     const missing = await app.fetch(new Request("http://localhost/assets/app.deadbeefdeadbeef.js"));
@@ -138,7 +138,6 @@ describe("isUnknownAppPath", () => {
       "/s/s1/timeline/agent/sub/a1",
       "/s/s1/terminal",
       "/s/s1/status",
-      "/s/s1/rooms",
       "/r/r1",
       "/r/r1/m42",
     ]) {
@@ -147,7 +146,13 @@ describe("isUnknownAppPath", () => {
   });
 
   test("non-app and malformed paths are unknown", () => {
-    for (const path of ["/fixtures/a.json", "/does-not-exist", "/s/s1/nope", "/r/r1/nope"]) {
+    for (const path of [
+      "/fixtures/a.json",
+      "/does-not-exist",
+      "/s/s1/nope",
+      "/s/s1/rooms",
+      "/r/r1/nope",
+    ]) {
       expect(isUnknownAppPath(path)).toBe(true);
     }
   });

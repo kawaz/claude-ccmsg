@@ -1,7 +1,7 @@
 // セッションの所在 (DR-0003 §3 「所在の正本」): 所在を名乗れない hello は cwd を
-// 空で送り、daemon は登録済みの所在を保持する。post や peers のような、Bash ツール
-// が cd した先で走るコマンドの hello が member イベントや peers の cwd を一時
-// ディレクトリへ動かさないための規則。
+// 空で送り、daemon は登録済みの所在を保持する。peers のような、Bash ツールが cd
+// した先で走るコマンドの hello が peers の cwd を一時ディレクトリへ動かさないため
+// の規則。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -12,7 +12,6 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
-  jsonObjectOf,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -72,7 +71,7 @@ describe("session location", () => {
           repo_root: repoRoot,
           branch: "main",
         });
-        // 別ディレクトリで走った post 相当: 所在の出所を持たないので何も名乗らない。
+        // 別ディレクトリで走ったコマンド相当: 所在の出所を持たないので何も名乗らない。
         const drifted = await hello(ctx, A, {});
         try {
           const peer = await peerOf(drifted, A);
@@ -81,21 +80,6 @@ describe("session location", () => {
           expect(peer?.ws).toBe("main");
           expect(peer?.repo_root).toBe(repoRoot);
           expect(peer?.branch).toBe("main");
-
-          // room の member イベントも同じ登録済み所在から書かれる (本 issue の
-          // 実際の観測点)。
-          const room = await drifted.requestOk({
-            op: "create_room",
-            members: [A],
-            title: "t",
-          });
-          const jsonl = fs.readFileSync(path.join(ctx.roomsDir, `${room.room}.jsonl`), "utf8");
-          const member = jsonl
-            .split("\n")
-            .filter((l) => l !== "")
-            .map(jsonObjectOf)
-            .find((ev) => ev.type === "member" && ev.sid === A);
-          expect(member?.cwd).toBe(stationed);
         } finally {
           registered.close();
           drifted.close();

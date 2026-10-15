@@ -29,19 +29,9 @@ import {
   TranslateResponseSchema,
 } from "./response-host.ts";
 import {
-  ArchiveRoomResponseSchema,
-  CreateRoomResponseSchema,
-  InviteResponseSchema,
-  KickResponseSchema,
-  LeaveResponseSchema,
-  NextRoomResponseSchema,
-  PostResponseSchema,
   ReadResponseSchema,
-  ReplyResponseSchema,
   RoomHistoryResponseSchema,
   RoomsResponseSchema,
-  SetTitleResponseSchema,
-  SubscribeAckSchema,
 } from "./response-rooms.ts";
 import { PeerListResponseSchema, PeerSendResponseSchema } from "./peer-tools.ts";
 import {
@@ -71,6 +61,7 @@ import {
   SidecarHelloResponseSchema,
   SessionFactsResponseSchema,
   SidecarReplyResponseSchema,
+  SubscribeAckSchema,
 } from "./response-sessions.ts";
 import {
   ClientTraceResponseSchema,
@@ -106,20 +97,13 @@ export type ErrorResponse = Output<typeof ErrorResponseSchema>;
  * session_status). */
 export const RESPONSE_SCHEMAS = {
   hello: HelloResponseSchema,
-  post: PostResponseSchema,
-  reply: ReplyResponseSchema,
   message_send: MessageSendResponseSchema,
   address_send: AddressSendResponseSchema,
   agent_input: AgentInputResponseSchema,
   peer_send: PeerSendResponseSchema,
   peer_list: PeerListResponseSchema,
-  create_room: CreateRoomResponseSchema,
-  next_room: NextRoomResponseSchema,
   say: SayResponseSchema,
   say_read: SayReadResponseSchema,
-  set_title: SetTitleResponseSchema,
-  archive_room: ArchiveRoomResponseSchema,
-  kick: KickResponseSchema,
   subscribe: SubscribeAckSchema,
   read: ReadResponseSchema,
   room_history: RoomHistoryResponseSchema,
@@ -167,8 +151,6 @@ export const RESPONSE_SCHEMAS = {
   ping: PingResponseSchema,
   translate: TranslateResponseSchema,
   shutdown: ShutdownResponseSchema,
-  leave: LeaveResponseSchema,
-  invite: InviteResponseSchema,
 } as const satisfies { readonly [Op in RequestOp]: v.GenericSchema };
 
 /** The success reply to a request of `Op`, without the correlation envelope. */

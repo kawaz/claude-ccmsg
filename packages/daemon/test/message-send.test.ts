@@ -1,11 +1,10 @@
 // message_send (DR-0036 §1): a session sends to another session's peer
-// messaging socket without a room, and is told whether it arrived. A fake
+// messaging socket, and is told whether it arrived. A fake
 // harness (peer-harness.ts) stands in for the recipient.
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PROTOCOL_VERSION, type RequestInput } from "@ccmsg/protocol";
-import { PeerInjector } from "../src/peer-inject.ts";
 import { parseDirectDeliveries } from "@ccmsg/protocol";
 import { createMidIssuer } from "../src/direct-send.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
@@ -56,7 +55,7 @@ describe("createMidIssuer", () => {
 
 describe("message_send", () => {
   test(
-    "delivers the v2-shaped envelope without a room, and the reply line's command reaches the sender",
+    "delivers the v2-shaped envelope, and the reply line's command reaches the sender",
     async () => {
       const ctx = await daemon();
       const ha = harness(A);
@@ -102,9 +101,6 @@ describe("message_send", () => {
       expect(back.body).toBe(
         `answer\n\nReply with: ${LAUNCHER} reply ${replied.mid} --to ${B} <text>`,
       );
-
-      const rooms = await a.requestOk({ op: "rooms" });
-      expect(rooms.rooms).toEqual([]);
     },
     T,
   );
@@ -228,17 +224,6 @@ describe("message_send", () => {
         outcome: "not_delivered",
         reason: "no_status_socket",
       });
-      // A room message is not written either; its outcome is unavailable.
-      const injector = new PeerInjector();
-      cleanups.push(() => injector.close());
-      expect(
-        await injector.send(hb.configDir, B, {
-          mid: "r1m1",
-          from: "user",
-          fromLabel: "user",
-          text: "x",
-        }),
-      ).toBe("unavailable");
       expect(hb.frames).toEqual([]);
     },
     T,

@@ -22,7 +22,6 @@ import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 function hydratedState(): AppState {
   return {
     ...initialState(),
-    roomsLoaded: true,
     peersLoaded: true,
     agentsLoaded: true,
   };
@@ -101,11 +100,19 @@ describe("Navigation API routing decisions", () => {
     // The kind travels with the id: the view needs it to say *what* is missing,
     // which a pre-rendered sentence could not be taken apart to recover.
     expect(missingTarget(ready, files("missing"))).toEqual({ kind: "session", id: "missing" });
-    expect(missingTarget(ready, { view: "room", room: "missing", mid: null })).toEqual({
-      kind: "room",
-      id: "missing",
-    });
     expect(missingTarget(stateWithSession(), files("s1"))).toBeNull();
+  });
+
+  // A room is known to be missing only once the daemon answered its log's
+  // fetch with room_not_found: there is no room list to check against first.
+  test("a room is missing once its log's fetch said so", () => {
+    const room = { view: "room", room: "r9", mid: null } as const;
+    const fetching = reducer(initialState(), { type: "room-history/loading", room: "r9" });
+    expect(missingTarget(fetching, room)).toBeNull();
+    const failed = reducer(fetching, { type: "room-history/failed", room: "r9", missing: false });
+    expect(missingTarget(failed, room)).toBeNull();
+    const gone = reducer(fetching, { type: "room-history/failed", room: "r9", missing: true });
+    expect(missingTarget(gone, room)).toEqual({ kind: "room", id: "r9" });
   });
 
   test("a successful session locator clears a previous blocked-navigation error", () => {
@@ -129,10 +136,23 @@ describe("Navigation API routing decisions", () => {
     expect(
       initialLocatorReady({ ...state, peersLoaded: true, agentsLoaded: true }, files("s1")),
     ).toBe(true);
-    expect(initialLocatorReady(state, { view: "room", room: "r1", mid: null })).toBe(false);
+    const room = { view: "room", room: "r1", mid: null } as const;
+    expect(initialLocatorReady(state, room)).toBe(false);
+    const loading = reducer(state, { type: "room-history/loading", room: "r1" });
+    expect(initialLocatorReady(loading, room)).toBe(false);
     expect(
-      initialLocatorReady({ ...state, roomsLoaded: true }, { view: "room", room: "r1", mid: null }),
+      initialLocatorReady(
+        reducer(loading, { type: "room-history/loaded", room: "r1", events: [] }),
+        room,
+      ),
     ).toBe(true);
+    expect(
+      initialLocatorReady(
+        reducer(loading, { type: "room-history/failed", room: "r1", missing: true }),
+        room,
+      ),
+    ).toBe(true);
+    expect(initialLocatorReady(state, { view: "room", room: null, mid: null })).toBe(true);
   });
 });
 
@@ -265,9 +285,9 @@ describe("navigationTarget", () => {
   });
 
   test("ページ固有の query を持つ遷移先でも引き継ぐ (両者は混ざらない)", () => {
-    const url = navigationTarget("/usage/stats/daily?days=7", "?sb.panel=room");
+    const url = navigationTarget("/usage/stats/daily?days=7", "?sb.panel=search");
     expect(new URL(url, "http://x").searchParams.get("days")).toBe("7");
-    expect(parseSidebarUrl(new URL(url, "http://x").search).panel).toBe("room-creator");
+    expect(parseSidebarUrl(new URL(url, "http://x").search).panel).toBe("session-search");
   });
 
   // パネルを変える側は明示する。「閉じる」と「触らない」が同じ引数にならない

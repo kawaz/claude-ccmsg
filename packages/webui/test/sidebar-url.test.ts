@@ -15,7 +15,6 @@ describe("parseSidebarUrl", () => {
   test("sb.panel の語彙が開いている panel を決める", () => {
     expect(parseSidebarUrl("?sb.panel=new").panel).toBe("session-creator");
     expect(parseSidebarUrl("?sb.panel=search").panel).toBe("session-search");
-    expect(parseSidebarUrl("?sb.panel=room").panel).toBe("room-creator");
   });
 
   // 未知の語彙は「そんな panel は無い」= 閉じている。将来 panel が増えた URL を
@@ -84,7 +83,7 @@ describe("withSidebarState / round-trip", () => {
     expect(withSidebarState("/usage/stats/daily?days=7&sb.panel=new", CLOSED_SIDEBAR)).toBe(
       "/usage/stats/daily?days=7",
     );
-    expect(withSidebarState("/r/room-1?sb.panel=room", CLOSED_SIDEBAR)).toBe("/r/room-1");
+    expect(withSidebarState("/r/room-1?sb.panel=search", CLOSED_SIDEBAR)).toBe("/r/room-1");
   });
 
   // 同じ状態が常に同じ文字列になる (params は名前順)。
@@ -103,9 +102,8 @@ describe("toggleSidebarPanel", () => {
     expect(toggleSidebarPanel(search, "session-search")).toEqual(CLOSED_SIDEBAR);
   });
 
-  // ROOMS / SESSIONS のどちらの toggle でも、開いていた別 panel は閉じる。
-  test("別の panel を押すと入れ替わる (section をまたいでも排他)", () => {
-    expect(toggleSidebarPanel(search, "room-creator").panel).toBe("room-creator");
+  test("別の panel を押すと入れ替わる (排他)", () => {
+    expect(toggleSidebarPanel(search, "session-creator").panel).toBe("session-creator");
   });
 
   // 本命の regression: fork で開いた launcher を閉じて「+ 新規」で開き直しても

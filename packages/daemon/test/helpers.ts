@@ -16,11 +16,9 @@ import {
   readDaemonFrame,
   RESPONSE_SCHEMAS,
   type DaemonFrame,
-  type DeliveredEvent,
   type ErrorResponse,
   type JsonObject,
   type JsonValue,
-  type PushStreamEvent,
   type ReplyOf,
   type Request,
   type RequestInput,
@@ -205,30 +203,44 @@ export async function connect(sock: string): Promise<TestClient> {
 }
 
 /** What a line of the readable stream is, read with the wire's schemas: a
- * push or delivered event, or a reply no in-flight `request` claimed (read as
- * the answer to the op of the request it names, with that `request_id`). */
+ * push, or a reply no in-flight `request` claimed (read as the answer to the
+ * op of the request it names, with that `request_id`). */
 export type StreamItem = StreamEvent | WireReply;
 
-/** What names a stream item's kind: a delivered event's `type`, a push's
- * `ev`, or `"reply"` for a reply. */
-export type StreamKind = DeliveredEvent["type"] | PushStreamEvent["ev"] | "reply";
+/** What names a stream item's kind: a push's `ev`, or `"reply"` for a reply. */
+export type StreamKind = StreamEvent["ev"] | "reply";
 
 /** The stream items of one kind. */
 export type ItemOf<K extends StreamKind> =
-  | Extract<DeliveredEvent, { readonly type: K }>
-  | Extract<PushStreamEvent, { readonly ev: K }>
+  | Extract<StreamEvent, { readonly ev: K }>
   | (K extends "reply" ? WireReply : never);
 
-/** The kind a stream item is of: only a reply has `ok`, only a push `ev`. */
+/** The kind a stream item is of: only a reply has `ok`. */
 export function kindOf(item: StreamItem): StreamKind {
-  if ("ok" in item) return "reply";
-  return "ev" in item ? item.ev : item.type;
+  return "ok" in item ? "reply" : item.ev;
 }
 
 /** Whether a stream item is of `kind`: for picking one kind out of what a
  * test has seen. */
 export function isKind<K extends StreamKind>(kind: K): (item: StreamItem) => item is ItemOf<K> {
   return (item): item is ItemOf<K> => kindOf(item) === kind;
+}
+
+/** Order a user-role subscriber's stream past this moment, for asserting what
+ * did not arrive before it: `poster`, a session already connected (a fresh
+ * hello is itself a peers push), records a say, which the daemon pushes to
+ * every user-role subscriber as `ev:"says"` before answering it. Resolves with
+ * every item `reader` saw up to and including that push. */
+export async function sayMarker(
+  poster: TestClient,
+  reader: TestClient,
+  text: string,
+): Promise<StreamItem[]> {
+  await poster.requestOk({ op: "say", text });
+  const { seen } = await reader.readEventUntil("says", (ev) =>
+    ev.says.some((say) => say.text === text),
+  );
+  return seen;
 }
 
 /** `value`, which the test needs to be there: a lookup that found nothing
@@ -238,12 +250,6 @@ export function isKind<K extends StreamKind>(kind: K): (item: StreamItem) => ite
 export function defined<T>(value: T | null | undefined, what: string): T {
   if (value === undefined || value === null) throw new Error(`expected ${what}, found none`);
   return value;
-}
-
-/** Whether a stream item is a delivered storage event: neither a reply
- * (`ok`) nor a push (`ev`). */
-export function isDelivered(item: StreamItem): item is DeliveredEvent {
-  return !("ok" in item) && !("ev" in item);
 }
 
 const JsonObjectTextSchema = jsonText(JsonObjectSchema);
@@ -317,8 +323,8 @@ export function readStreamItem(
     : { ok: false, problem: `as the answer to ${op}: fields outside its schema` };
 }
 
-/** A line a daemon wrote to a subscriber unasked (a push or a delivered
- * event), read as a stream item; a line outside the wire's schemas is an
+/** A line a daemon wrote to a subscriber unasked (a push), read as a stream
+ * item; a line outside the wire's schemas is an
  * error thrown. */
 export function streamItemOf(line: string): StreamItem {
   const read = readStreamItem(line, readDaemonFrame(line), undefined);

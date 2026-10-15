@@ -1,14 +1,14 @@
-// サイドバーのフォームパネル (新規セッション / セッション検索 / 新規 Room) の
+// サイドバーのフォームパネル (新規セッション / セッション検索) の
 // 状態を URL に載せるための文法 (kawaz r259 m47-m53)。
 //
 // path はメインペインの中身だけを名指しする (`/r/<id>`、`/s/<sid>/<tab>`、
-// `/usage` …)。この 3 つのパネルは `/s/<sid>/*` を開いたまま横に並べて使う
+// `/usage` …)。この 2 つのパネルは `/s/<sid>/*` を開いたまま横に並べて使う
 // もので、開いていること自体はメインペインの中身を変えない — だから path
 // ではなく `sb.` 接頭辞付きの query に載せる。逆に言えば「どのセッションを
 // 見ているか」と「どのフォームを開いているか」は 1 本の URL に同居でき、
 // その URL を貼れば相手の画面も同じ組み合わせになる。
 //
-// - `sb.panel=new|search|room` — どれが開いているか。3 つは排他なので単一値。
+// - `sb.panel=new|search` — どれが開いているか。2 つは排他なので単一値。
 //   これが無ければ他の `sb.*` は一切見ない (パネルが閉じている URL に、
 //   効かないフォーム値だけが残るのを避ける)。
 // - `sb.template=<name>` — ランチャーのテンプレ名。省略時は宣言済みパラメータ
@@ -24,21 +24,19 @@
 import { parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 
-/** 開けるフォームパネル。3 つは排他 (`SidebarUrlState.panel` が単一値)。 */
-export type SidebarPanelKind = "session-creator" | "session-search" | "room-creator";
+/** 開けるフォームパネル。2 つは排他 (`SidebarUrlState.panel` が単一値)。 */
+export type SidebarPanelKind = "session-creator" | "session-search";
 
 /** `sb.panel` の語彙と内部 kind の対応。URL 側を短くしているのは、手で打つ /
- * 貼る対象だから (`new` / `search` / `room` は画面上のボタンの呼び名でもある)。 */
+ * 貼る対象だから (`new` / `search` は画面上のボタンの呼び名でもある)。 */
 const PANEL_BY_TOKEN: Readonly<Record<string, SidebarPanelKind>> = {
   new: "session-creator",
   search: "session-search",
-  room: "room-creator",
 };
 
 const TOKEN_BY_PANEL: Readonly<Record<SidebarPanelKind, string>> = {
   "session-creator": "new",
   "session-search": "search",
-  "room-creator": "room",
 };
 
 const PREFIX = "sb.";
@@ -146,8 +144,7 @@ export function toggleSidebarPanel(
   return { panel: kind, template: null, params: {}, search: null };
 }
 
-/** SESSIONS のソート順。一覧と RoomCreator のメンバ欄が同じ順で並ぶよう
- * 共有し、localStorage に永続する。URL には載せない — 「今どう並べて見て
+/** SESSIONS のソート順。localStorage に永続する。URL には載せない — 「今どう並べて見て
  * いるか」は貼って共有する類の状態ではない。 */
 export const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 

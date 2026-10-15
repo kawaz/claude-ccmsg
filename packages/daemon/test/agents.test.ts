@@ -19,7 +19,7 @@ import {
   type ItemOf,
   type TestClient,
   isKind,
-  jsonObjectOf,
+  sayMarker,
 } from "./helpers.ts";
 
 const T = 15000;
@@ -301,14 +301,11 @@ describe("agents polling: lifecycle", () => {
           expect(callCount(callLog)).toBeGreaterThan(1);
 
           // Drive a distinguishable event through the same subscribe stream (a
-          // msg from a fresh session in a fresh room) and confirm no "agents"
-          // event snuck in among the events collected while waiting for it —
-          // proves the unchanged poll result was suppressed, not just unlucky
-          // timing.
+          // say from a fresh session) and confirm no "agents" event snuck in
+          // among the events collected while waiting for it — proves the
+          // unchanged poll result was suppressed, not just unlucky timing.
           const s = await sessionConn(ctx, SID_S);
-          const created = await s.requestOk({ op: "create_room", members: [] });
-          await s.request({ op: "post", room: created.room, msg: "marker" });
-          const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
+          const seen = await sayMarker(s, u, "marker");
           expect(seen.some(isKind("agents"))).toBe(false);
         } finally {
           await stopAgentsTestDaemon(ctx);
@@ -539,30 +536,15 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
   );
 
   test(
-    "agents から消えた sid は peers から消え、broadcast room に leave が書かれる",
+    "agents から消えた sid は peers から消える",
     async () => {
       await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
         const u = await watcher(ctx);
         setRows(dirA, [row("sA", cwd), row("sB", cwd)]);
         await u.readEventUntil("peers", (e) => hasPeer("sA")(e) && hasPeer("sB")(e));
-        const created = await u.requestOk({
-          op: "create_room",
-          members: [],
-          kind: "broadcast",
-        });
-        const rooms = await u.requestOk({ op: "rooms" });
-        const room = rooms.rooms.find((r) => r.id === created.room);
-        const aId = room?.members.find((m) => m.sid === "sA")?.id;
-        expect(aId).toBeDefined();
         setRows(dirA, [row("sB", cwd)]);
         const { ev } = await u.readEventUntil("peers", lacksPeer("sA"));
         expect(ev.peers.map((p) => p.sid)).toEqual(["sB"]);
-        const lines = fs
-          .readFileSync(path.join(ctx.roomsDir, `${created.room}.jsonl`), "utf-8")
-          .split("\n")
-          .filter((l) => l.trim() !== "")
-          .map(jsonObjectOf);
-        expect(lines.some((l) => l.type === "leave" && l.id === aId)).toBe(true);
       });
     },
     T,

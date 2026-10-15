@@ -31,6 +31,7 @@ import {
   type DaemonCtx,
   type TestClient,
   isKind,
+  sayMarker,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -2328,9 +2329,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "plain" }] } })}\n`,
         );
         const peer = await sessionHello(ctx, SID_B);
-        const room = await peer.requestOk({ op: "create_room", members: [] });
-        await peer.request({ op: "post", room: room.room, msg: "marker" });
-        const { seen } = await user.readEventUntil("msg", (event) => event.msg === "marker");
+        const seen = await sayMarker(peer, user, "marker");
         expect(seen.some(isKind("session_status"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);

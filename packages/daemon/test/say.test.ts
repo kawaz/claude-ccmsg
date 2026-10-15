@@ -6,13 +6,12 @@
 //   - 記録は ev:"says" (全件) で user role にだけ届く。subscribe 時にも全件
 //     (空でも) 届き、session の subscribe には一切流さない (kawaz 「セッション
 //     への echo は不要、コンテキストの無駄」)
-//   - 既存の 1on1 room が持つ say / say_read の行も session には遡って渡さない
 //   - say_read が記録の read を立て、全タブに更新後の全件を送る
 //   - role gate: say は session 限定、say_read は user 限定
 //   - 再起動で記録 (未読含む) が消える
 //
-// 実 daemon を UDS 越しに叩く (one-on-one.test.ts と同じ harness): 配信経路の
-// 抑制ルールは単体テストでは踏めないので、出荷する線の上で確かめる。
+// 実 daemon を UDS 越しに叩く: 配信経路の抑制ルールは単体テストでは踏めない
+// ので、出荷する線の上で確かめる。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import type { SayRecord } from "@ccmsg/protocol";
@@ -30,7 +29,6 @@ import {
 const SID_SAY_1 = "5a900000-0000-4000-8000-000000000001";
 const SID_SAY_2 = "5a900000-0000-4000-8000-000000000002";
 const SID_SAY_3 = "5a900000-0000-4000-8000-000000000003";
-const SID_SAY_4 = "5a900000-0000-4000-8000-000000000004";
 const SID_SAY_5 = "5a900000-0000-4000-8000-000000000005";
 const SID_SAY_6 = "5a900000-0000-4000-8000-000000000006";
 const SID_SAY_7 = "5a900000-0000-4000-8000-000000000007";
@@ -186,42 +184,6 @@ describe("say op", () => {
         await speaker.request({ op: "ping" });
         const speakerEvents = await speaker.pendingEvents();
         expect(speakerEvents.filter(isKind("says"))).toEqual([]);
-        u.close();
-        speaker.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  // 何を保証するか: 既存の 1on1 room が持つ say / say_read の行も、後から
-  // subscribe / room_history でさかのぼった session には渡らない。user には
-  // room の本文として渡る (読み取り専用の閲覧)。
-  test(
-    "never replays an existing 1on1 room's say rows into a session's backlog or room_history",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        await restart(ctx, { id: "r1", events: oneOnOneWithSay(SID_SAY_4) });
-        const speaker = await session(ctx, SID_SAY_4);
-
-        // 話者は room の member なので room_history を引ける。それでも say は無い。
-        await speaker.request({ op: "subscribe", backlog: true });
-        await speaker.request({ op: "room_history", room: "r1" });
-        const events = await speaker.pendingEvents();
-        expect(events.filter(isKind("say"))).toEqual([]);
-        expect(events.filter(isKind("say_read"))).toEqual([]);
-        // member イベントは通常どおり見えている = 抑制が say に限定されている。
-        expect(events.some(isKind("member"))).toBe(true);
-
-        const u = await user(ctx);
-        await u.request({ op: "subscribe", backlog: true });
-        // subscribe replies before writing its snapshot, so order the stream
-        // with a round trip before asserting on what did (not) arrive.
-        await u.request({ op: "ping" });
-        const userEvents = await u.pendingEvents();
-        expect(userEvents.filter(isKind("say")).map((e) => e.text)).toEqual(["old say"]);
         u.close();
         speaker.close();
       } finally {

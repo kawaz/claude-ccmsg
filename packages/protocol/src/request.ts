@@ -26,19 +26,9 @@ import {
 } from "./request-sessions.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 import {
-  ArchiveRoomRequestSchema,
-  CreateRoomRequestSchema,
-  InviteRequestSchema,
-  KickRequestSchema,
-  LeaveRequestSchema,
-  NextRoomRequestSchema,
-  PostRequestSchema,
   ReadRequestSchema,
-  ReplyRequestSchema,
   RoomHistoryRequestSchema,
   RoomsRequestSchema,
-  SetTitleRequestSchema,
-  SubscribeRequestSchema,
 } from "./request-rooms.ts";
 import {
   AddressSendRequestSchema,
@@ -68,6 +58,7 @@ import {
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,
   SidecarReplyRequestSchema,
+  SubscribeRequestSchema,
 } from "./request-sessions.ts";
 import {
   FsCreateRequestSchema,
@@ -127,19 +118,12 @@ export type RequestEnvelope = Output<typeof RequestEnvelopeSchema>;
 
 /** Every op's request but hello's, which comes in a shape per generation. */
 const OP_REQUEST_SCHEMAS = [
-  PostRequestSchema,
-  ReplyRequestSchema,
   MessageSendRequestSchema,
   AddressSendRequestSchema,
   PeerSendRequestSchema,
   PeerListRequestSchema,
-  CreateRoomRequestSchema,
-  NextRoomRequestSchema,
   SayRequestSchema,
   SayReadRequestSchema,
-  SetTitleRequestSchema,
-  ArchiveRoomRequestSchema,
-  KickRequestSchema,
   SubscribeRequestSchema,
   ReadRequestSchema,
   RoomHistoryRequestSchema,
@@ -188,8 +172,6 @@ const OP_REQUEST_SCHEMAS = [
   PingRequestSchema,
   TranslateRequestSchema,
   ShutdownRequestSchema,
-  LeaveRequestSchema,
-  InviteRequestSchema,
 ] as const;
 
 /** Every request shape, before the correlation envelope, told apart by `op`

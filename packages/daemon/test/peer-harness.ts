@@ -1,7 +1,7 @@
 // A fake Claude Code harness for observing peer-inject delivery: the
 // `sessions/<pid>.json` state file and the `<pid>.<hex>.key` beside it in a
 // temp config dir, and a UDS bound under /tmp that records the frames it is
-// sent. A session that says hello with this `config_dir` receives room
+// sent. A session that says hello with this `config_dir` receives direct
 // messages on `nextUser()`.
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -17,11 +17,6 @@ export const PEER_TOKEN = "tok-abc";
 /** The launcher a test daemon names in the envelope's reply line: `bin/ccmsg`
  * of this working copy (resolveLauncher from packages/daemon/src). */
 export const LAUNCHER = fileURLToPath(new URL("../../../bin/ccmsg", import.meta.url));
-
-/** The reply line a recipient of `<room>m<mid>` is told to answer with. */
-export function replyWith(mid: string): string {
-  return `Reply with: ${LAUNCHER} reply ${mid} <text>`;
-}
 
 /** Splits an envelope into its attributes and its inner text (the message
  * body, followed by the reply line when there is one). */

@@ -1,28 +1,21 @@
+import type { JSX } from "preact";
 import type { AppState, RoomState } from "../store.ts";
 import { selectedRoomId } from "../store.ts";
 import { roomHref } from "../locator.ts";
-import {
-  activeRoomsSorted,
-  relTime,
-  splitRoomsByArchived,
-  splitRoomsByKind,
-  splitRoomsByLiveness,
-} from "../utils.ts";
+import { activeRoomsSorted, relTime, splitRoomsByArchived, splitRoomsByKind } from "../utils.ts";
 import { Fold } from "./Fold.tsx";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
 
 function roomListSlice(state: AppState) {
-  return { rooms: state.rooms, peers: state.peers, currentRoomId: selectedRoomId(state) };
+  return { rooms: state.rooms, roomList: state.roomList, currentRoomId: selectedRoomId(state) };
 }
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
-  // DR-0013: broadcast rooms carry a small text badge in the row title. The
-  // badge sits at the left so ellipsis clips the title tail (not the badge)
-  // when the sidebar is narrow; a background color via `.room-kind-badge`
-  // makes it read as a chip in both light and dark themes without invasive
-  // markup. Text-based (not an emoji glyph) so screen readers pronounce it.
+  // DR-0013: broadcast rooms carry a small text badge at the left of the row
+  // title, so ellipsis clips the title tail (not the badge) when the sidebar
+  // is narrow. Text-based (not an emoji glyph) so screen readers pronounce it.
   return (
     <li key={room.id} class={active ? "active" : undefined}>
       <a href={roomHref(room.id)}>
@@ -42,84 +35,63 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   );
 }
 
-/** Room list layout (top → bottom):
- * 1. Flat `#room-list` at top — broadcast rooms only (kawaz r55m30:
- *    broadcast は常にセクション群の一番上、折り畳まないで直置き)。
- * 2. `<Fold id="room-list-normal" open>` "Active (N)" — 生存中の参加
- *    エージェントが 2 名以上いる通常 room (非アーカイブ・非1on1・非
- *    broadcast)。デフォルト open で今までの見え方を維持しつつユーザが畳める
- *    ようにする (kawaz r55m30)。セクション名は ROOMS 直下で「ルーム」と
- *    名乗っても情報がないため Active に (kawaz r76m51)。
- * 3. `<Fold id="room-list-inactive">` "Inactive (N)" (default-closed,
- *    kawaz r76m51) — 生存中の参加エージェントが 0〜1 名の通常 room。
- * 4. `<Fold id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
- * 5. `<Fold id="room-list-archived">` "アーカイブ (N)" (default-closed,
- *    DR-0012)。
- * Rooms in any `<Fold>` stay reachable (click through like any other
- * room). Each `<Fold>` (と broadcast の flat `<ul>`) は自グループが空
- * のとき丸ごと省略される。An archived 1on1 room lands in the アーカイブ
- * group, not duplicated — `splitRoomsByArchived` runs first, then
- * `splitRoomsByKind` only sees what's left, then broadcast は `flat` から
- * kind で更に切り出す。 */
+function RoomRows({ rooms, currentRoomId }: { rooms: RoomState[]; currentRoomId: string | null }) {
+  return (
+    <ul>
+      {rooms.map((room) => (
+        <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
+      ))}
+    </ul>
+  );
+}
+
+/** The past rooms, read-only (DR-0036 §2), folded away until opened: opening
+ * the fold is what fetches the list (`rooms`), since the logs no longer
+ * change and nothing has to be kept current. Inside, the rooms go newest
+ * first, with 1on1 rooms and archived rooms in their own folds (an archived
+ * 1on1 room lands under アーカイブ — `splitRoomsByArchived` runs first). */
 export function RoomList() {
-  const { store } = useApp();
+  const { store, ws } = useApp();
   const state = useStoreState(store, roomListSlice, shallowEqual);
+  const onToggle = (e: JSX.TargetedEvent<HTMLDetailsElement, Event>): void => {
+    if (!e.currentTarget.open || store.getState().roomList !== "idle") return;
+    store.dispatch({ type: "rooms/loading" });
+    void ws
+      .rooms()
+      .then((res) => {
+        store.dispatch(
+          res.ok ? { type: "rooms/loaded", rooms: res.rooms } : { type: "rooms/failed" },
+        );
+      })
+      .catch(() => store.dispatch({ type: "rooms/failed" }));
+  };
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
   const { flat, oneOnOne } = splitRoomsByKind(active);
-  const broadcast = flat.filter((r) => r.kind === "broadcast");
-  // broadcast は liveness で振り分けない — 常にセクション群の一番上に直置き
-  // する枠 (kawaz r55m30) なので、参加者が減った瞬間に Inactive へ沈むと
-  // 「いつもそこにある」性質が壊れる。
-  const { active: normal, inactive } = splitRoomsByLiveness(
-    flat.filter((r) => r.kind !== "broadcast"),
-    state.peers,
-  );
-  const currentRoomId = state.currentRoomId;
   return (
-    <>
-      {broadcast.length > 0 && (
-        <ul id="room-list">
-          {broadcast.map((room) => (
-            <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-          ))}
-        </ul>
-      )}
-      {normal.length > 0 && (
-        <Fold id="room-list-normal" open summary={`Active (${normal.length})`}>
-          <ul>
-            {normal.map((room) => (
-              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-            ))}
-          </ul>
-        </Fold>
-      )}
-      {inactive.length > 0 && (
-        <Fold id="room-list-inactive" summary={`Inactive (${inactive.length})`}>
-          <ul>
-            {inactive.map((room) => (
-              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-            ))}
-          </ul>
-        </Fold>
-      )}
+    <Fold
+      id="room-list-fold"
+      summary="Rooms (読み取り専用)"
+      summaryClass="room-list-summary"
+      onToggle={onToggle}
+    >
+      {state.roomList === "loading" ? <p class="room-list-status">読み込み中…</p> : null}
+      {state.roomList === "error" ? (
+        <p class="room-list-status">room の一覧を読み込めませんでした</p>
+      ) : null}
+      {state.roomList === "loaded" && state.rooms.size === 0 ? (
+        <p class="room-list-status">room はありません</p>
+      ) : null}
+      {flat.length > 0 && <RoomRows rooms={flat} currentRoomId={state.currentRoomId} />}
       {oneOnOne.length > 0 && (
         <Fold id="room-list-1on1" summary={`1on1 (${oneOnOne.length})`}>
-          <ul>
-            {oneOnOne.map((room) => (
-              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-            ))}
-          </ul>
+          <RoomRows rooms={oneOnOne} currentRoomId={state.currentRoomId} />
         </Fold>
       )}
       {archived.length > 0 && (
         <Fold id="room-list-archived" summary={`アーカイブ (${archived.length})`}>
-          <ul>
-            {archived.map((room) => (
-              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-            ))}
-          </ul>
+          <RoomRows rooms={archived} currentRoomId={state.currentRoomId} />
         </Fold>
       )}
-    </>
+    </Fold>
   );
 }

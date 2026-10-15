@@ -209,8 +209,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       fork_available: true,
     },
   ],
-  post: [{ ok: true, room: "r1", mid: 3 }],
-  reply: [{ ok: true, room: "r1", mid: 4, to: ["a1", "a2"] }],
   message_send: [
     { ok: true, outcome: "delivered", mid: "i1/1" },
     { ok: true, outcome: "not_delivered", reason: "no_peer_socket" },
@@ -242,20 +240,8 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [] },
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
   ],
-  create_room: [
-    { ok: true, room: "r2", reused: false },
-    { ok: true, room: "r3", reused: false, mid: 1, warning: "--members is ignored" },
-    { ok: true, room: "r2", reused: true, mid: 2 },
-  ],
-  next_room: [
-    { ok: true, room: "r4" },
-    { ok: true, room: "r5", mid: 1 },
-  ],
   say: [{ ok: true, id: "0f0f/1" }],
   say_read: [{ ok: true, id: "0f0f/1" }],
-  set_title: [{ ok: true, room: "r1", title: "t" }],
-  archive_room: [{ ok: true, room: "r1", archived: true }],
-  kick: [{ ok: true, room: "r1", id: "a2" }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {
@@ -267,7 +253,19 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ],
     },
   ],
-  room_history: [{ ok: true, room: "r1" }],
+  room_history: [
+    { ok: true, room: "r1", events: [] },
+    {
+      ok: true,
+      room: "r1",
+      events: [
+        { type: "title", title: "t", ts: "t", seq: 1 },
+        MEMBER,
+        { type: "msg", mid: 1, from: "a1", ts: "t", msg: "hi", seq: 3 },
+        { type: "leave", id: "a1", ts: "t", seq: 4 },
+      ],
+    },
+  ],
   rooms: [
     {
       ok: true,
@@ -276,7 +274,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           id: "r1",
           title: "t",
           members: [MEMBER, { ...MEMBER, id: "u2", role: "guest" }],
-          live_members: 1,
           last_mid: 2,
           last_ts: "2026-10-09T00:00:00.000Z",
           archived: true,
@@ -570,7 +567,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       version: "0.157.0",
       uptime: 1.5,
       pid: 2,
-      rooms: 3,
       clients: 4,
       exe: "/bin/bun",
       script: "/p/run.ts",
@@ -589,8 +585,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   shutdown: [{ ok: true, stopping: true }],
-  leave: [{ ok: true, room: "r1" }],
-  invite: [{ ok: true, room: "r1", id: "a3", already: false }],
 };
 
 describe("RESPONSE_SCHEMAS", () => {
@@ -610,9 +604,10 @@ describe("RESPONSE_SCHEMAS", () => {
   }
 
   test("the correlation envelope is not part of an op's reply", () => {
-    expect(
-      parseWith(RESPONSE_SCHEMAS.post, { ok: true, room: "r1", mid: 1, request_id: "q1" }),
-    ).toEqual({ ok: true, value: { ok: true, room: "r1", mid: 1 } });
+    expect(parseWith(RESPONSE_SCHEMAS.say, { ok: true, id: "0f0f/1", request_id: "q1" })).toEqual({
+      ok: true,
+      value: { ok: true, id: "0f0f/1" },
+    });
   });
 });
 
@@ -624,13 +619,16 @@ describe("a reply that is not the op's", () => {
   };
 
   test("a field of another type names the field", () => {
-    expect(failure("post", { ok: true, room: "r1", mid: "3" })).toStartWith("mid: ");
+    expect(failure("read", { ok: true, room: 1, msgs: [] })).toStartWith("room: ");
     expect(failure("ping", { ...SAMPLES.ping[0], network: "flaky" })).toStartWith("network: ");
-    expect(failure("reply", { ok: true, room: "r1", mid: 1 })).toStartWith("to: ");
+    expect(failure("room_history", { ok: true, room: "r1" })).toStartWith("events: ");
+    expect(
+      failure("room_history", { ok: true, room: "r1", events: [{ type: "link", ts: "t" }] }),
+    ).toStartWith("events.0");
   });
 
   test("an ErrorResponse is not a success reply", () => {
-    expect(failure("post", { ok: false, error: { code: "room_not_found", msg: "m" } })).toContain(
+    expect(failure("read", { ok: false, error: { code: "room_not_found", msg: "m" } })).toContain(
       "ok",
     );
   });
@@ -662,7 +660,7 @@ describe("ErrorResponseSchema", () => {
   test("reads the error a daemon sends for any op", () => {
     const error: ErrorResponse = {
       ok: false,
-      error: { code: "invalid_args", msg: "op 'post': room: ..." },
+      error: { code: "invalid_args", msg: "op 'read': room: ..." },
     };
     expect(parseWith(ErrorResponseSchema, wire(error))).toEqual({ ok: true, value: error });
   });

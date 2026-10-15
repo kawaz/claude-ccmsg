@@ -5,7 +5,7 @@
 //      (= 二重通知の解消をエージェントの規律に頼らない、kawaz r90m3 裁定)。
 //   2. 終了する側は理由が読める文言を stderr に出す (stdout は Monitor 用の
 //      イベント wire なので汚さない)。
-//   3. 収束後、room イベントは新しい subscribe に届く。
+//   3. 収束後、そのセッション宛ての notify は新しい subscribe にだけ届く。
 //
 // 手法は reconnect.test.ts と同型 (実バイナリを subprocess で起動し、実 daemon
 // を相手にする)。
@@ -77,10 +77,10 @@ interface LineReader {
   read(): Promise<{ value?: Uint8Array; done: boolean }>;
   releaseLock(): void;
 }
-async function waitForLeaveLine(
+async function waitForNotifyLine(
   reader: LineReader,
   accum: { buf: string; lines: string[] },
-  room: string,
+  text: string,
 ): Promise<void> {
   const dec = new TextDecoder();
   for (;;) {
@@ -92,7 +92,7 @@ async function waitForLeaveLine(
       accum.lines.push(line);
       try {
         const ev = jsonObjectLine(line);
-        if (ev?.type === "leave" && ev.r === room) return;
+        if (ev?.ev === "notify" && ev.text === text) return;
       } catch {
         // 非 JSON 行は無視 (現契約では発生しない)
       }
@@ -106,24 +106,6 @@ async function waitForLeaveLine(
 describe("ccmsg subscribe: 同一 sid の二重起動", () => {
   test("後発の subscribe が残り、先発は理由を stderr に出して exit 0 する", async () => {
     const { env, cleanup } = makeEnv();
-    const created = served(
-      "create_room",
-      (
-        await runCli(
-          [
-            "--sid",
-            "c0000000-0000-4000-8000-000000000000",
-            "create-room",
-            "--members",
-            "50000001-0000-4000-8000-000000000000,5b000000-0000-4000-8000-000000000000",
-            "--exclude-self",
-          ],
-          env,
-        )
-      ).out,
-    );
-    expect(created.ok).toBe(true);
-    const room = created.room;
 
     const first = spawnSubscribe(env, "5b000000-0000-4000-8000-000000000000");
     let second: ReturnType<typeof spawnSubscribe> | null = null;
@@ -150,13 +132,18 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
       const firstOut = await new Response(first.stdout).text();
       expect(firstOut).not.toContain("subscribe_superseded");
 
-      // 収束後の配信 (S1 の leave) は後発が受け取る。
-      const left = served(
-        "leave",
-        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
+      // 収束後の配信 (SUB 宛ての notify) は後発だけが受け取る。
+      const notified = served(
+        "notify",
+        (
+          await runCli(
+            ["--sid", "5b000000-0000-4000-8000-000000000000", "notify", "--text", "after"],
+            env,
+          )
+        ).out,
       );
-      expect(left.ok).toBe(true);
-      await waitForLeaveLine(secondReader, secondAccum, room);
+      expect(notified.delivered).toBe(1);
+      await waitForNotifyLine(secondReader, secondAccum, "after");
       expect(second.exitCode).toBeNull();
       secondReader.releaseLock();
     } finally {

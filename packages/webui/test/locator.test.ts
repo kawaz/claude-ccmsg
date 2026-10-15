@@ -7,7 +7,6 @@ import {
   parseUrl,
   roomHref,
   sessionHref,
-  sessionRoomsHref,
   statusHref,
   terminalHref,
   timelineHref,
@@ -141,7 +140,6 @@ describe("real-path locators", () => {
     for (const [href, tab] of [
       [terminalHref("s1"), "terminal"],
       [statusHref("s1"), "status"],
-      [sessionRoomsHref("s1"), "rooms"],
     ] as const) {
       expect(parseUrl(href)).toEqual({ view: "session", tab, sid: "s1", path: null });
     }

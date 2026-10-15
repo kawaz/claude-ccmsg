@@ -1,4 +1,4 @@
-// Delivery of a message (a room message, or a direct one, DR-0036) straight
+// Delivery of a direct message (DR-0036 §1) straight
 // into a Claude Code session through the harness's own peer messaging socket,
 // so the receiving session needs no `ccmsg subscribe` running to hear it.
 //
@@ -15,8 +15,6 @@ import { chmod, readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { ClaudeSessionFileTextSchema, jsonText, parseWith, type Output } from "@ccmsg/protocol";
 import * as v from "valibot";
-
-export type InjectOutcome = "delivered" | "unavailable" | "refused" | "unconfirmed";
 
 /** What one delivery came to, with why for a message that did not arrive.
  *
@@ -73,41 +71,6 @@ const PeerStatusFrameTextSchema = jsonText(
     dropped_msg_ids: v.optional(v.array(v.string())),
   }),
 );
-
-/** One message as the receiving model reads it. */
-export interface InjectMessage {
-  /** `<room>m<mid>`, e.g. `r353m1`. */
-  mid: string;
-  /** `"user"` for a person, the sender's session id otherwise. */
-  from: string;
-  fromLabel: string;
-  text: string;
-  /** The instruction line under the body, or nothing when no answer is wanted. */
-  replyLine?: string;
-}
-
-export const ENVELOPE_TAG = "cross-session-message";
-
-function escapeAttribute(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-}
-
-/** The body is not escaped: what the model reads is these characters. */
-export function renderEnvelope(m: InjectMessage): string {
-  const attributes = [
-    `from="ccmsg"`,
-    `from-name="${escapeAttribute(m.fromLabel)}"`,
-    `from-mode="prompting"`,
-    `ccmsg-mid="${escapeAttribute(m.mid)}"`,
-    `ccmsg-from="${escapeAttribute(m.from)}"`,
-  ];
-  const body = m.replyLine === undefined ? m.text : `${m.text}\n\n${m.replyLine}`;
-  return `<${ENVELOPE_TAG} ${attributes.join(" ")}>\n${body}\n</${ENVELOPE_TAG}>`;
-}
 
 /** `session_id` rides along because the harness drops a frame whose id is not
  * its own: a state file read just before its pid was reused yields a message
@@ -250,13 +213,6 @@ export class PeerInjector {
     this.#writeMs = options.writeMs ?? INJECT_WRITE_MS;
     this.#statusMs = options.statusMs ?? INJECT_STATUS_MS;
     this.#scanMs = options.scanMs ?? INJECT_SCAN_MS;
-  }
-
-  /** A room message, in the room envelope. `configDir` is the
-   * CLAUDE_CONFIG_DIR the target session runs under. */
-  async send(configDir: string, sid: string, m: InjectMessage): Promise<InjectOutcome> {
-    const result = await this.deliver(configDir, sid, { mid: m.mid, content: renderEnvelope(m) });
-    return result.outcome;
   }
 
   /** Any envelope, already rendered, answered with why when it did not

@@ -42,10 +42,7 @@ export class FakeTranscriptWs {
   readonly handle: WsHandle;
 
   constructor(store: Store) {
-    const base = createWsClient(
-      (action) => store.dispatch(action),
-      () => store.getState(),
-    );
+    const base = createWsClient((action) => store.dispatch(action));
     this.handle = {
       ...base,
       transcriptRead: (sid, opts) => {

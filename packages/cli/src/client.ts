@@ -406,7 +406,6 @@ export async function connectIfRunning(paths: Paths): Promise<Client | null> {
 export async function reconnectSubscribeNoSpawn(
   paths: Paths,
   identity: Identity,
-  since: Readonly<Record<string, number>>,
 ): Promise<Client | null> {
   const client = await tryConnect(paths.sock);
   if (!client) return null;
@@ -416,10 +415,7 @@ export async function reconnectSubscribeNoSpawn(
       client.close();
       return null;
     }
-    const ack = await client.request({
-      op: "subscribe",
-      ...(Object.keys(since).length > 0 ? { since_seq: since } : {}),
-    });
+    const ack = await client.request({ op: "subscribe" });
     if (ack.ok === false) {
       client.close();
       return null;

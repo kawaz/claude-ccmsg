@@ -158,10 +158,10 @@ describe("peers timestamps", () => {
         const admin = await adminConn(ctx);
         await c.request({ op: "subscribe" });
         const afterSubscribe = await getPeer(admin, A);
-        // admin から room に post して A 宛の push イベントを飛ばす — A 自身は
-        // リクエストを送っていないので last_activity_at は動かないはず
-        await admin.request({ op: "create_room", members: [A], msg: "hi" });
-        await new Promise((res) => setTimeout(res, 30));
+        // admin から A 宛の notify を飛ばし、A の stream に届いたのを見てから
+        // 読む — A 自身はリクエストを送っていないので last_activity_at は動かないはず
+        await admin.requestOk({ op: "notify", sid: A, text: "hi" });
+        await c.readEventUntil("notify");
         const afterPush = await getPeer(admin, A);
         expect(afterPush.last_activity_at).toBe(afterSubscribe.last_activity_at);
       } finally {

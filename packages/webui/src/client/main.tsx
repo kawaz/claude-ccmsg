@@ -15,10 +15,7 @@ import {
 } from "./filepath-existence-cache.ts";
 
 const store = createStore(initialState());
-const ws = createWsClient(
-  (action) => store.dispatch(action),
-  () => store.getState(),
-);
+const ws = createWsClient((action) => store.dispatch(action));
 
 setupNavigation(store, ws);
 ws.connect();

@@ -19,7 +19,7 @@ import {
   type StreamItem,
   type StreamKind,
 } from "./helpers.ts";
-import { fakeHarness, parseEnvelope, sessionWithConfig } from "./peer-harness.ts";
+import { memberRow, msgRow, roomLog } from "../../protocol/test/transcript-rows.ts";
 import { tryAcquireLock } from "../src/flock.ts";
 import {
   PROTOCOL_VERSION,
@@ -326,50 +326,38 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
-    "WS round trip: hello -> rooms -> subscribe -> post delivers the msg, same shape as UDS",
+    "WS round trip: hello -> rooms -> subscribe -> a push arrives, same shape as UDS",
     async () => {
       const ctx = await startHttpDaemon();
       try {
-        // room creation is a session-side op (webui MVP has no room-creation UI, DR-0004 §6);
-        // set one up over UDS first, the way an AI session normally would.
-        const owner = await connect(ctx.sock);
-        await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        const created = await owner.requestOk({
-          op: "create_room",
-          members: [],
-        });
-        expect(created.ok).toBe(true);
+        fs.mkdirSync(ctx.roomsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(ctx.roomsDir, "r1.jsonl"),
+          roomLog([memberRow("a1", S), msgRow(1, "a1", "left on disk")]),
+        );
 
         const ws = await connectWs(ctx);
         const helloRes = await ws.hello({ role: "user" });
         expect(helloRes.ok).toBe(true);
 
         const rooms = await ws.requestOk({ op: "rooms" });
-        expect(rooms.rooms.some((r) => r.id === created.room)).toBe(true);
+        expect(rooms.rooms.map((r) => [r.id, r.last_mid])).toEqual([["r1", 1]]);
 
-        // `backlog: true` mirrors the real webui client (packages/webui/src/client/ws.ts),
-        // which always opts into the join snapshot — the daemon's bare default
-        // (issue 2026-07-17-subscribe-no-backlog-default) sends only a `room_cursors`
-        // summary for a room with no since/since_seq cursor.
-        const sub = await ws.requestOk({
-          op: "subscribe",
-          backlog: true,
-        });
+        const sub = await ws.requestOk({ op: "subscribe" });
         expect(sub.subscribed).toBe(true);
-        // the ack is followed by the room's join-snapshot backlog (here: the one member
-        // event from create_room) before any request/response can resume on this
-        // connection — drain it first, same as UDS subscribers must.
-        await ws.readEvent("member");
 
-        const posted = await ws.requestOk({
-          op: "post",
-          room: created.room,
-          msg: "hello from ws",
+        // a session's say is pushed to every user-role subscriber, this WS one included
+        const speaker = await connect(ctx.sock);
+        await speaker.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
+        const said = await speaker.requestOk({ op: "say", text: "hello from uds" });
+        const { ev } = await ws.readEventUntil("says", (e) => e.says.some((r) => r.id === said.id));
+        expect(ev.says.find((r) => r.id === said.id)).toMatchObject({
+          sid: S,
+          text: "hello from uds",
         });
-        expect(posted.mid).toBe(1);
 
         ws.close();
-        owner.close();
+        speaker.close();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -378,17 +366,10 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
-    'identity pinning: a hello claiming role:session over WS is repinned to user (post.from === "u1")',
+    "identity pinning: a hello claiming role:session over WS is repinned to user",
     async () => {
       const ctx = await startHttpDaemon();
       try {
-        const owner = await connect(ctx.sock);
-        await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        const created = await owner.requestOk({
-          op: "create_room",
-          members: [],
-        });
-
         const ws = await connectWs(ctx);
         // claim to be a session; DR-0004 §2 says the daemon must ignore this and pin to user
         const helloRes = await ws.hello({
@@ -397,22 +378,14 @@ describe("HTTP/WS transport (DR-0004)", () => {
         });
         expect(helloRes.ok).toBe(true);
 
-        const posted = await ws.requestOk({
-          op: "post",
-          room: created.room,
-          msg: "am I pinned?",
+        // served as the user: a user-role op answers, a session-role op is refused
+        expect((await ws.requestOk({ op: "rooms" })).rooms).toEqual([]);
+        expect(await ws.request({ op: "say", text: "am I pinned?" })).toEqual({
+          ok: false,
+          error: { code: "bad_request", msg: "op 'say' requires session role" },
         });
-        expect(posted.ok).toBe(true);
-
-        const read = await ws.requestOk({
-          op: "read",
-          room: created.room,
-          mids: [posted.mid],
-        });
-        expect(read.msgs[0]?.from).toBe("u1"); // ADMIN_ID, not a session member id
 
         ws.close();
-        owner.close();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -421,38 +394,31 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
-    "cross-transport delivery: a UDS session and a WS user share live delivery in the same room",
+    "cross-transport delivery: a UDS session and a WS user reach each other's streams",
     async () => {
       const ctx = await startHttpDaemon();
-      const harness = fakeHarness(S);
       try {
-        const udsSession = await sessionWithConfig(ctx, S, harness.configDir);
-        const created = await udsSession.requestOk({
-          op: "create_room",
-          members: [],
-        });
-        const room = created.room;
+        const udsSession = await connect(ctx.sock);
+        await udsSession.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
+        await udsSession.request({ op: "subscribe" });
 
         const wsUser = await connectWs(ctx);
         await wsUser.hello({ role: "user" });
         await wsUser.request({ op: "subscribe" });
 
-        // UDS session posts -> WS user (id "u1", sees every room per DR-0003 §5) receives it live
-        await udsSession.request({ op: "post", room, msg: "from uds" });
-        const { ev: fromUds } = await wsUser.readEventUntil("msg", (e) => e.msg === "from uds");
-        expect(fromUds.r).toBe(room);
+        // UDS session says -> the WS user receives it live
+        await udsSession.requestOk({ op: "say", text: "from uds" });
+        await wsUser.readEventUntil("says", (e) => e.says.some((r) => r.text === "from uds"));
 
-        // WS user posts -> the UDS session receives it through its peer socket
-        const posted = await wsUser.requestOk({ op: "post", room, msg: "from ws" });
-        const { attrs, body } = parseEnvelope(await harness.nextContent());
-        expect(attrs["ccmsg-mid"]).toBe(`${room}m${posted.mid}`);
-        expect(attrs["ccmsg-from"]).toBe("user"); // the WS poster, pinned to user
-        expect(body).toStartWith("from ws\n");
+        // WS user notifies -> the UDS session receives it, stamped as the user's
+        const sent = await wsUser.requestOk({ op: "notify", sid: S, text: "from ws" });
+        expect(sent.delivered).toBe(1);
+        const { ev } = await udsSession.readEventUntil("notify");
+        expect(ev).toMatchObject({ text: "from ws", from: { role: "user" } });
 
         udsSession.close();
         wsUser.close();
       } finally {
-        harness.dispose();
         await stopTestDaemon(ctx);
       }
     },

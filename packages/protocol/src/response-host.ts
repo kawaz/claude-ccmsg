@@ -15,7 +15,6 @@ export const PingResponseSchema = v.object({
   version: v.string(),
   uptime: v.number(),
   pid: v.number(),
-  rooms: v.number(),
   clients: v.number(),
   /** provenance of the running daemon: the bun executable and the entry
    * script path (Bun.main). The entry script tells which face's plugin cache

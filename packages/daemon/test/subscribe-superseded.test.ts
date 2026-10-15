@@ -9,6 +9,7 @@ import {
   startTestDaemon,
   stopTestDaemon,
   type DaemonCtx,
+  isKind,
   type TestClient,
 } from "./helpers.ts";
 
@@ -48,16 +49,16 @@ describe("subscribe: duplicate session subscribe", () => {
         expect(superseded.ev.sid).toBe(SID_B);
 
         // 配信は新しい方だけに届く (= 二重通知が消えている)。session の
-        // subscribe stream に流れる room イベント (新 room の member snapshot) で見る。
-        const created = await a.requestOk({ op: "create_room", members: [SID_B] });
-        const delivered = await newSub.readEventUntil("member", (ev) => ev?.r === created.room);
-        expect(delivered.ev.r).toBe(created.room);
+        // subscribe stream に流れる notify で見る。
+        const sent = await a.requestOk({ op: "notify", sid: SID_B, text: "wake" });
+        expect(sent.delivered).toBe(1);
+        const delivered = await newSub.readEventUntil("notify");
+        expect(delivered.ev.text).toBe("wake");
 
-        // 古い conn は superseded 以降なにも push されない (room 作成の snapshot
-        // も含め subscriber 集合から外れている)。「届かないこと」は待ち時間で
-        // なく往復で確かめる: 配信が漏れていればこの request の応答より先に
-        // その行が stream に積まれている。
-        const roundTrip = await oldSub.request({ op: "rooms" });
+        // 古い conn は superseded 以降なにも push されない (subscriber 集合から
+        // 外れている)。「届かないこと」は待ち時間でなく往復で確かめる: 配信が
+        // 漏れていればこの request の応答より先にその行が stream に積まれている。
+        const roundTrip = await oldSub.request({ op: "ping" });
         expect(roundTrip.ok).toBe(true);
         expect(await oldSub.pendingEvents()).toEqual([]);
       } finally {
@@ -82,12 +83,13 @@ describe("subscribe: duplicate session subscribe", () => {
         await s.request({ op: "subscribe" });
 
         const a = await session(ctx, SID_Z);
-        const created = await a.requestOk({ op: "create_room", members: [SID_A] });
-        await a.request({ op: "post", room: created.room, msg: "hi" });
+        await a.requestOk({ op: "say", text: "hi" });
 
         for (const u of [u1, u2]) {
-          const got = await u.readEventUntil("msg");
-          expect(got.ev.msg).toBe("hi");
+          const got = await u.readEventUntil("says", (ev) =>
+            ev.says.some((say) => say.text === "hi"),
+          );
+          expect(got.seen.some(isKind("subscribe_superseded"))).toBe(false);
         }
       } finally {
         await stopTestDaemon(ctx);

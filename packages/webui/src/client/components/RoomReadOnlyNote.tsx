@@ -2,27 +2,23 @@
 import type { RoomState } from "../store.ts";
 import { sessionHref } from "../locator.ts";
 
-/** A 1on1 room keeps says and past messages to read, and takes no new message
- * (DR-0035 §2, the daemon refuses post / reply / next_room on it). RoomView
- * shows this line in place of the composer; it names where the person writes
- * to the session instead — the session's own input box — and links there when
- * the room's one present member is known. Renders nothing for any other kind. */
+/** Rooms are read-only (DR-0036 §2): the view shows a past conversation and
+ * takes no new message. RoomView shows this line under the header. For a
+ * 1on1 room with one present member it names where the person writes to
+ * that session instead — the session's own input box — and links there. */
 export function RoomReadOnlyNote({ room }: { room: RoomState }) {
-  if (room.kind !== "1on1") return null;
   const present = room.memberOrder
     .map((id) => room.membersById.get(id))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && !m.left);
   const [only, ...others] = present;
-  const target = "セッション画面の入力欄";
   return (
     <p class="room-readonly-note">
-      この 1on1 room は読み取り専用です。セッションへの入力は
-      {only !== undefined && others.length === 0 ? (
-        <a href={sessionHref(only.sid)}>{target}</a>
-      ) : (
-        target
-      )}
-      から。
+      この room は読み取り専用です。
+      {room.kind === "1on1" && only !== undefined && others.length === 0 ? (
+        <>
+          セッションへの入力は<a href={sessionHref(only.sid)}>セッション画面の入力欄</a>から。
+        </>
+      ) : null}
     </p>
   );
 }

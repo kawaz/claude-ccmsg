@@ -58,7 +58,7 @@ describe("daemon process-group detachment", () => {
       // CLI 呼び出し自体を新規 process group (leader = このプロセス自身) として
       // 起動する — hyoui が張る「セッションのプロセス群」の代役。この呼び出しが
       // ensureDaemon 経由で daemon を spawn する。
-      const cli = Bun.spawn([process.execPath, CLI, "rooms"], {
+      const cli = Bun.spawn([process.execPath, CLI, "peers"], {
         env,
         stdout: "ignore",
         stderr: "ignore",

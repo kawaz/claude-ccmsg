@@ -12,8 +12,8 @@
 // (translate / session_launch / session_search) are ordinary requests whose
 // reply simply takes seconds to come back.
 // Every frame is read once, by the wire's frame schema (readDaemonFrame): a
-// push or a delivered storage event, a reply (read as the answer to the op of
-// the request it names), or a line no schema reads, which is dropped.
+// push, a reply (read as the answer to the op of the request it names), or a
+// line no schema reads, which is dropped.
 import type {
   DaemonFrame,
   ErrorResponse,
@@ -23,23 +23,14 @@ import type {
   SessionDumpFileRequest,
   SessionLaunchRequest,
   SessionSearchRequest,
-  SinceSeq,
   StreamEvent,
 } from "@ccmsg/protocol";
-import {
-  parseWith,
-  PROTOCOL_VERSION,
-  readDaemonFrame,
-  SinceSeqTextSchema,
-  VERSION,
-} from "@ccmsg/protocol";
-import type { Action, AppState } from "./store.ts";
-import { readStorage, writeStorage } from "./storage.ts";
+import { PROTOCOL_VERSION, readDaemonFrame, VERSION } from "@ccmsg/protocol";
+import type { Action } from "./store.ts";
 import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { summarizeUserAgent } from "./utils.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
-const SINCE_KEY = "ccmsg.since_seq";
 /** How long after an unexpected close each reconnect attempt waits, by
  * attempt; attempts past the end keep the last. */
 export const RECONNECT_DELAYS_MS: readonly number[] = [
@@ -100,21 +91,6 @@ function navigationType(): string | undefined {
   return typeof entry.type === "string" && entry.type !== "" ? entry.type : undefined;
 }
 
-/** The stored cursor, or none when nothing is stored or what is stored is
- * not one: a reconnect then resyncs in full, which is still correct. */
-function loadSince(): SinceSeq {
-  const raw = readStorage(SINCE_KEY);
-  if (!raw) return {};
-  const read = parseWith(SinceSeqTextSchema, raw);
-  return read.ok ? read.value : {};
-}
-
-function saveSince(since: SinceSeq): void {
-  // storage unavailable (private mode, quota) — since-tracking degrades to
-  // full resync on reconnect, which is still correct, just more backlog.
-  writeStorage(SINCE_KEY, JSON.stringify(since));
-}
-
 type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
 
 /** A request waiting for its reply: `reply` reads the reply's frame as the
@@ -140,52 +116,19 @@ function invalidReply(op: string, failure: ParseFailure): ErrorResponse {
 export interface WsHandle {
   connect(): void;
   close(): void;
-  post(room: string, msg: string, to?: string[]): Promise<ReplyOf<"post">>;
-  /** Rename a room (set_title); the new title reaches all clients (incl. this
-   * one) via the broadcast title event on the subscribe stream, not this
-   * response — callers don't need to dispatch anything themselves. */
-  setTitle(room: string, title: string): Promise<ReplyOf<"set_title">>;
-  /** Toggle a room's archived flag (DR-0012 archive_room). The new flag
-   * reaches all clients (incl. this one) via the broadcast archive event on
-   * the subscribe stream, not this response — same non-optimistic-update
-   * convention as setTitle above. */
-  archiveRoom(room: string, archived: boolean): Promise<ReplyOf<"archive_room">>;
-  /** Force-remove a member from a room (DR-0012 kick, admin User only). The
-   * removal reaches all clients via the broadcast leave event on the
-   * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
-   * this response. */
-  kick(room: string, id: string): Promise<ReplyOf<"kick">>;
   /** Ack one say record as read (kawaz r244 m5-m6): the 既読 button on a
    * 📣 bubble. `id` is the SayRecord's id. Non-optimistic — the daemon pushes
    * the updated `ev:"says"` set to every tab and the store takes it from
    * there, so every open tab converges on the same badge. */
   sayRead(id: string): Promise<ReplyOf<"say_read">>;
-  /** Create a room whose initial members (besides the always-implicit
-   * User/u1) are `members` (U3: SessionView's "+ 新規 Room" passes a single
-   * sid; the sidebar ROOMS "+ 新規" (RoomCreator.tsx) passes an explicit
-   * multi-select since it has no session context to imply one from). `title`
-   * omitted lets the daemon default it, same as any other create_room call. */
-  createRoom(
-    members: string[],
-    title?: string,
-    kind?: "broadcast",
-  ): Promise<ReplyOf<"create_room">>;
   peers(): Promise<ReplyOf<"peers">>;
+  /** The msgs of a room log by mid (`read`): the Timeline's full text of a
+   * room message a past transcript shows. */
   read(room: string, mids: string | number[]): Promise<ReplyOf<"read">>;
-  /** Fetch one room's history (`op:"room_history"`). The events themselves come
-   * back on the subscribe stream and fold into the store like any other
-   * delivered event; this promise resolves once they have all arrived, which is
-   * what RoomView's fetch effect flips the room's `history` flag on. Subscribe
-   * no longer carries every room's backlog, so this is how an opened room gets
-   * painted. */
+  /** A summary of every room log (`rooms`), for the sidebar's room list. */
+  rooms(): Promise<ReplyOf<"rooms">>;
+  /** Every event of one room log (`room_history`), for the room view. */
   roomHistory(room: string): Promise<ReplyOf<"room_history">>;
-  /** Add a connected session to an existing room (DR-0011 §1-4: SessionList's
-   * drag-a-session-row-onto-the-chat gesture, handled in RoomView's drop
-   * zone). Success reaches this room's member list via the broadcast member
-   * event on the subscribe stream (same as any other member join), not this
-   * response — the caller only needs `already` to decide whether to show a
-   * soft "already a member" notice. */
-  invite(room: string, sid: string): Promise<ReplyOf<"invite">>;
   /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
   fsList(sid: string, path?: string): Promise<ReplyOf<"fs_list">>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
@@ -426,7 +369,6 @@ export interface WsHandle {
 
 export function createWsClient(
   dispatch: (action: Action) => void,
-  getState: () => AppState,
   options: WsClientOptions = {},
 ): WsHandle {
   const clock = options.clock ?? realClock;
@@ -459,7 +401,6 @@ export function createWsClient(
   let keepaliveTimer: WsWait | null = null;
   let keepaliveTimeout: WsWait | null = null;
   let lastReceivedAt = clock.now();
-  let since = loadSince();
 
   function write(socket: WebSocket, req: RequestInput, settle: PendingReply): string {
     const rid = `q${++nextRequestId}`;
@@ -573,29 +514,6 @@ export function createWsClient(
     // connection's answer before probing this hello so stale host tabs cannot
     // survive a reconnect to a different/non-macOS daemon.
     dispatch({ type: "translator/availability", host: false });
-    // Snapshot store emptiness BEFORE the handshake runs — the `op:"rooms"`
-    // reply below dispatches rooms/loaded, which repopulates state.rooms from
-    // whatever the daemon knows, and any getState() read after that point
-    // sees a non-empty map even on a fresh page reload. Reload has to be
-    // distinguished from in-page reconnect right here, at t0.
-    //
-    // Page reload starts from a fresh empty store — the localStorage-carried
-    // `since_seq` cursor is stale in the sense that "we've seen up to seq N" no
-    // longer holds against an empty scrollback. Omit `since_seq` so nothing is
-    // silently skipped once history is fetched. In-page reconnects still send
-    // `since_seq` — the store retained its state across the disconnect, so BBS
-    // delta replay is the correct/cheap thing (packages/cli's reconnect.test.ts
-    // contract for daemon-restart transparency).
-    //
-    // Neither branch sets `backlog: true` (kawaz r99 m12: "ws の接続時に全ルームの
-    // メッセージ履歴を全部送り付けてる… 最低限ルームの参加者情報とかタイトルだけで
-    // 十分。その ROOM を開いたときに取れば良い"). A reload with N rooms used to pull
-    // every room's entire log through the socket before anything painted. Room
-    // metadata for the sidebar comes from the `op:"rooms"` reply above; a room's
-    // events are fetched by RoomView with `op:"room_history"` when it's opened.
-    // Rooms covered by `since_seq` still get their delta replay, so a room already
-    // painted before an in-page reconnect stays caught up.
-    const spaHasState = getState().rooms.size > 0;
     const navType = firstHello ? navigationType() : undefined;
     const ua = globalThis.navigator?.userAgent;
     firstHello = false;
@@ -688,18 +606,7 @@ export function createWsClient(
           available: hello.fork_available === true,
         });
       }
-      const rooms = await send({ op: "rooms" });
-      if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
-      // Rooms this connection has no cursor for get no delta replay below, so
-      // any events the store still holds for them end at an unknown gap (an
-      // in-page reconnect that outlasted the daemon's recent-replay window).
-      // Reset them to "idle" — the metadata from the `op:"rooms"` reply above
-      // survives, and the history is refetched if and when the room is opened.
-      // Must run before `subscribe`, so the replay that follows lands in rooms
-      // whose status already reflects this connection.
-      const stale = [...getState().rooms.keys()].filter((id) => since[id] === undefined);
-      if (stale.length > 0) dispatch({ type: "rooms/history-reset", rooms: stale });
-      await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
+      await send({ op: "subscribe" });
       const peers = await send({ op: "peers" });
       if (peers.ok) {
         dispatch({ type: "peers/loaded", peers: peers.peers });
@@ -757,22 +664,17 @@ export function createWsClient(
   }
 
   function onStreamEvent(streamEv: StreamEvent): void {
-    if ("ev" in streamEv && streamEv.ev === "restarting") {
+    if (streamEv.ev === "restarting") {
       dispatch({ type: "conn/status", status: "restarting" });
       return;
     }
-    if ("ev" in streamEv && streamEv.ev === "notify") return; // not surfaced in the UI (yet)
-    // Per-room `last_mid` summary for the rooms this subscribe replayed nothing
-    // for — which, since the webui stopped asking for `backlog`, is most of
-    // them. Ignored: the same numbers already came from the `op:"rooms"` reply
-    // in onOpen, and a room's events are fetched on open (`op:"room_history"`).
-    if ("ev" in streamEv && streamEv.ev === "room_cursors") return;
+    if (streamEv.ev === "notify") return; // not surfaced in the UI (yet)
     // U1: live push whenever the daemon's merged `claude agents --json` poll
     // result changes (only emitted while >=1 user-role subscriber is
     // connected) — folds straight into the same agents/loaded action the
     // one-shot op:"agents" reply in onOpen uses, so the reducer has exactly
     // one code path for "replace the agents list".
-    if ("ev" in streamEv && streamEv.ev === "agents") {
+    if (streamEv.ev === "agents") {
       dispatch({
         type: "agents/loaded",
         agents: streamEv.agents,
@@ -785,7 +687,7 @@ export function createWsClient(
     // same session-errors/loaded action the one-shot op:"session_errors" reply
     // in onOpen uses — one reducer path for "replace the error set", same
     // pattern as ev:"agents" above.
-    if ("ev" in streamEv && streamEv.ev === "session_errors") {
+    if (streamEv.ev === "session_errors") {
       dispatch({
         type: "session-errors/loaded",
         errors: streamEv.errors,
@@ -798,7 +700,7 @@ export function createWsClient(
     // so the reducer has exactly one code path for "replace the peers list"
     // (same pattern as ev:"agents" above; issue
     // 2026-07-12-peers-live-update-protocol).
-    if ("ev" in streamEv && streamEv.ev === "peers") {
+    if (streamEv.ev === "peers") {
       dispatch({ type: "peers/loaded", peers: streamEv.peers });
       return;
     }
@@ -806,7 +708,7 @@ export function createWsClient(
     // the full set, both on connect and after every say or ack. Replacing
     // rather than merging is what drops the old daemon's says after a
     // restart. Same "replace the set" shape as ev:"peers" above.
-    if ("ev" in streamEv && streamEv.ev === "says") {
+    if (streamEv.ev === "says") {
       dispatch({ type: "says/loaded", says: streamEv.says });
       return;
     }
@@ -814,7 +716,7 @@ export function createWsClient(
     // event stream — the full non-expired set, both on connect (catch-up for
     // windows that opened before this tab existed) and on every new request.
     // One reducer path for "replace the set", same shape as ev:"peers" above.
-    if ("ev" in streamEv && streamEv.ev === "llm_requests") {
+    if (streamEv.ev === "llm_requests") {
       dispatch({
         type: "llm-requests/loaded",
         requests: streamEv.requests,
@@ -825,7 +727,7 @@ export function createWsClient(
     // the daemon an upstream returned 529 (gateway DR-0021 §6). Same "replace
     // the whole thing" shape as ev:"llm_requests" above — the report always
     // covers every configured service.
-    if ("ev" in streamEv && streamEv.ev === "llm_status") {
+    if (streamEv.ev === "llm_status") {
       dispatch({
         type: "llm-status/loaded",
         report: streamEv.report,
@@ -837,7 +739,7 @@ export function createWsClient(
     // reducer's applyTimelineTail, which is the one place that decides
     // whether this batch is contiguous with what's cached (see its doc
     // comment) — this layer just relays the wire shape verbatim.
-    if ("ev" in streamEv && streamEv.ev === "transcript") {
+    if (streamEv.ev === "transcript") {
       // trace: arrival, then the reducer's return — the pair isolates "the tab
       // got it late" from "the tab got it on time and the store was slow".
       const trace = activeTraceCollector();
@@ -860,7 +762,7 @@ export function createWsClient(
     // "replace this sid's snapshot" code path (same pattern as
     // ev:"transcript" above, minus contiguity bookkeeping since this is
     // always a full recomputed snapshot, not an append).
-    if ("ev" in streamEv && streamEv.ev === "session_status") {
+    if (streamEv.ev === "session_status") {
       const ev = streamEv;
       dispatch({
         type: "session-status/loaded",
@@ -881,17 +783,6 @@ export function createWsClient(
       });
       return;
     }
-    if ("ev" in streamEv) return;
-    const delivered = streamEv;
-    // Cursor advances on every StorageEvent delivery that carries a seq
-    // (DR-0016 §2.4: all event types, not just msg) — ephemeral stream events
-    // (notify/restarting/agents/peers/transcript) are handled above and never
-    // reach here.
-    if (delivered.seq !== undefined) {
-      since = { ...since, [delivered.r]: Math.max(since[delivered.r] ?? 0, delivered.seq) };
-      saveSince(since);
-    }
-    dispatch({ type: "protocol-event", event: delivered });
   }
 
   // Settles every in-flight send() with a synthetic error response instead of
@@ -1011,22 +902,11 @@ export function createWsClient(
       reconnectTimer = null;
       ws?.close();
     },
-    post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
-    setTitle: (room, title) => send({ op: "set_title", room, title }),
-    archiveRoom: (room, archived) => send({ op: "archive_room", room, archived }),
-    kick: (room, id) => send({ op: "kick", room, id }),
     sayRead: (id) => send({ op: "say_read", id }),
-    createRoom: (members, title, kind) =>
-      send({
-        op: "create_room",
-        members,
-        ...(title ? { title } : {}),
-        ...(kind ? { kind } : {}),
-      }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
+    rooms: () => send({ op: "rooms" }),
     roomHistory: (room) => send({ op: "room_history", room }),
-    invite: (room, sid) => send({ op: "invite", room, sid }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
     fsReadExternal: (sid, path) => send({ op: "fs_read_external", sid, path }),

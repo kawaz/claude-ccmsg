@@ -1,7 +1,6 @@
 // `ccmsg say` records (DR-0036 §3): which session made the speakers talk, and
 // whether the person watching has acked it. Held in memory only and pushed to
-// the webui as `ev:"says"` (stream-event.ts SayRecord); nothing here touches
-// room storage.
+// the webui as `ev:"says"` (stream-event.ts SayRecord).
 import type { SayRecord } from "@ccmsg/protocol";
 
 /** How many records the daemon keeps. The oldest goes first once a new say

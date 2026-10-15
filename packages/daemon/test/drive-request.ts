@@ -18,6 +18,7 @@ import { createForkOriginCache } from "../src/fork-origin.ts";
 import { LlmRequestCache } from "../src/llm-events.ts";
 import { Logger } from "../src/log.ts";
 import { PeerInjector } from "../src/peer-inject.ts";
+import { createRoomReader } from "../src/room-reader.ts";
 import { createSandboxGrants } from "../src/sandbox.ts";
 import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
 import { createSessionErrorsStore } from "../src/session-errors.ts";
@@ -56,8 +57,7 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     config: {},
     version: VERSION,
     startTime: Date.now(),
-    rooms: new Map(),
-    dedupIndex: new Map(),
+    rooms: createRoomReader(paths.roomsDir),
     connections: new Set(),
     sessions: new Map(),
     subscribers: new Set(),
@@ -66,7 +66,6 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     server: null,
     httpListeners: [],
     httpAllow: [],
-    dedupWindowMs: 0,
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),

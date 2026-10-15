@@ -19,7 +19,6 @@ import {
   SessionStateFileTextSchema,
   SidecarReplyTextSchema,
   SidecarRunIdSchema,
-  SinceSeqTextSchema,
   splitSendWords,
   resolvePaths,
   sessionProjectDir,
@@ -63,8 +62,6 @@ import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
 
 const BOOL_FLAGS = new Set([
   "addresses",
-  "all",
-  "exclude-self",
   "self",
   "foreground",
   "no-thinking",
@@ -78,11 +75,11 @@ const BOOL_FLAGS = new Set([
 /** Write ops require a session identity; without one the CLI refuses to run
  * rather than silently posting as u1 (the User admin), which would forge
  * user-authored msgs (see docs/decisions/DR-0003 §3, docs/issue/2026-07-12-
- * prevent-u1-masquerade-on-missing-sid.md). read/rooms/peers/status stay
- * available identity-less because they only observe. subscribe also stays
+ * prevent-u1-masquerade-on-missing-sid.md). peers/status stay available
+ * identity-less because they only observe. subscribe also stays
  * available (with a stderr warning) so kawaz can observe as u1 until the
  * webui is up. */
-const WRITE_OPS = new Set(["post", "reply", "create-room", "next-room", "leave", "notify"]);
+const WRITE_OPS = new Set(["post", "reply", "notify"]);
 
 interface Parsed {
   positionals: string[];
@@ -158,31 +155,9 @@ function str(opts: Record<string, string | boolean>, key: string): string | unde
   return typeof v === "string" ? v : undefined;
 }
 
-function parseIdList(s: string | undefined): string[] | undefined {
-  if (s === undefined) return undefined;
-  const out = s
-    .split(",")
-    .map((t) => t.trim())
-    .filter((t) => t !== "");
-  return out.length > 0 ? out : undefined;
-}
-
 function requireArg(v: string | undefined, name: string, usage: string): string {
   if (v === undefined || v === "") throw new Error(`missing <${name}>\n  usage: ${usage}`);
   return v;
-}
-
-function parseReadArgs(args: string[], usage: string): { room: string; mids: string } {
-  const [, room, mids] = args[0]?.match(/^(r\d+)m(\d+(?:,m\d+)*)$/) ?? [];
-  if (room !== undefined && mids !== undefined) {
-    if (args[1] !== undefined)
-      throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
-    return { room, mids: mids.replaceAll(",m", ",") };
-  }
-  return {
-    room: requireArg(args[0], "room", usage),
-    mids: requireArg(args[1], "mids", usage),
-  };
 }
 
 // --- identity --------------------------------------------------------------
@@ -215,7 +190,7 @@ function strField(v: string | undefined): string | undefined {
  * msgs when a Monitor subprocess inherited an env without CCMSG_SID (DR-0003
  * §3 revision, docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
  * Callers of write ops turn this null into a hard error; observe-only ops
- * (subscribe/read/rooms/peers/status) treat null as user role (with a stderr
+ * (subscribe/peers/status) treat null as user role (with a stderr
  * warning for subscribe). */
 function resolveSessionIdentity(
   opts: Record<string, string | boolean>,
@@ -285,7 +260,7 @@ function resolveSessionIdentity(
     // `process.cwd()` is deliberately not among them: this CLI runs as a child
     // of whichever Bash tool invocation called it, so its working directory is
     // wherever that tool last `cd`'d to — announcing it would move the session
-    // there for everyone reading `peers` or a room's member events. Empty means
+    // there for everyone reading `peers`. Empty means
     // "not stated" and leaves the daemon holding what it registered before.
     const cwd =
       strField(process.env.CCMSG_CWD) ?? strField(stored?.cwd) ?? sessionProjectDir() ?? "";
@@ -305,7 +280,7 @@ function resolveSessionIdentity(
 }
 
 /** stderr message + exit code for write ops invoked without a sid. Centralized
- * so post/create-room/next-room/leave/notify all reject the same way, and the
+ * so post/reply/notify all reject the same way, and the
  * message names every env var and flag a caller might expect to work. */
 function refuseWriteWithoutSid(cmd: string): never {
   process.stderr.write(
@@ -380,9 +355,13 @@ function deprecated(what: string): void {
   );
 }
 
-/** A room id (`r<N>`): `post` with one is a room post, with anything else a
- * direct send to a session. */
+/** A room id (`r<N>`) and a room msg (`r<N>m<M>`): what `post` and `reply`
+ * named in a room (DR-0036 §2). Rooms are read-only, and an agent holding
+ * one from a room envelope it received is told where sending went. */
 const ROOM_ID_RE = /^r\d+$/;
+const ROOM_MID_RE = /^r\d+m\d+$/;
+const ROOM_RETIRED =
+  "room には書き込めない (room は読み取り専用で、webui で過去の会話を読めるだけ)。セッション間の送信は ccmsg plugin の send tool、宛先の候補は peers tool を使う (使い方は skill ccmsg-v1:ccmsg)";
 
 /** The sid a recipient argument names: a bare sid or the `ccmsg:<sid>` address.
  * The person is no recipient (DR-0036 §3), so `user` is refused with where
@@ -811,28 +790,11 @@ async function runSay(args: string[]): Promise<never> {
   process.exit(await proc.exited);
 }
 
-async function runSubscribe(
-  identity: Identity,
-  opts: Record<string, string | boolean>,
-): Promise<never> {
+async function runSubscribe(identity: Identity): Promise<never> {
   // The "subscribing as u1" stderr warning is emitted by main() before this
   // (see warnSubscribingAsUser) so the branch stays out of the hot path once
   // the connection is up. stdout is pure jsonl for the downstream Monitor.
   const paths = resolvePaths();
-  const sinceStr = str(opts, "since");
-  const sinceRead = sinceStr ? parseWith(SinceSeqTextSchema, sinceStr) : undefined;
-  if (sinceRead !== undefined && !sinceRead.ok) {
-    process.stderr.write(
-      `ccmsg subscribe: --since must be a JSON object of room id to seq (${sinceRead.failure.summary})\n`,
-    );
-    process.exit(2);
-  }
-  const initialSince = sinceRead?.value;
-  // sinceMap は「stdout に出した event の per-room 最大 seq」(DR-0016 §2.4)。
-  // 再接続時に daemon へ since_seq として渡し、backlog を「未受信ぶんだけ」に絞る
-  // (BBS delta model, DR-0003 §5)。ユーザ指定の --since を初期値として seed し、
-  // 以降は受信した event 毎に更新する。
-  const sinceMap: Record<string, number> = { ...initialSince };
   // Claude Code keeps one sessions/<pid>.json registry row for the current
   // conversation and rewrites its sessionId on /clear. Watch that row so this
   // sidecar cannot keep announcing the old sid after its owner moved on. The
@@ -855,10 +817,7 @@ async function runSubscribe(
     return result;
   };
   let client: Client = await ensureDaemon(paths, identity);
-  const ack = await client.request({
-    op: "subscribe",
-    ...(initialSince ? { since_seq: initialSince } : {}),
-  });
+  const ack = await client.request({ op: "subscribe" });
   if (!ack.ok) process.exit(output(ack));
   // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
   // Monitor 相当のセッション寿命プロセスなので、上限に達したら fixed 5s で
@@ -871,15 +830,10 @@ async function runSubscribe(
       const next = await raceOwner(client.readLine());
       if (next === null) break; // socket closed → 再接続へ
       const { line, frame } = next;
-      // 1 行を 1 回 frame のスキーマで読み、2 つの副作用を掛ける:
-      //   (a) 接続制御イベント (`restarting` / `room_cursors`) は stdout に流さない。
-      //       前者は透過再接続の内部信号、後者は接続ごとの初期 snapshot であり、
-      //       Monitor へ通知して AI の応答を発生させる対象ではない。
-      //   (b) seq を持つ全 StorageEvent 配信で sinceMap を更新し、再接続
-      //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
-      //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
-      //       ので自然に対象外。
-      // スキーマで読めない行は stdout に流さず、stderr に理由を残して捨てる。
+      // 1 行を 1 回 frame のスキーマで読む。透過再接続の内部信号
+      // (`restarting`) は Monitor へ通知して AI の応答を発生させる対象ではない
+      // ので stdout に流さない。スキーマで読めない行は stdout に流さず、stderr
+      // に理由を残して捨てる。
       if (frame.kind === "invalid") {
         process.stderr.write(
           `ccmsg subscribe: dropped a line the daemon wrote outside the wire's schema (${frame.failure.summary})\n`,
@@ -888,23 +842,19 @@ async function runSubscribe(
       }
       if (frame.kind === "event") {
         const ev = frame.event;
-        if ("ev" in ev) {
-          if (ev.ev === "subscribe_superseded") {
-            // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
-            // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
-            // 契約なので、古いこちらは再接続せず正常終了する。
-            process.stderr.write(
-              "ccmsg subscribe: a newer subscribe started for this session " +
-                "(duplicate detected). Exiting this older one so messages are not " +
-                "delivered twice; the newer subscribe now receives them.\n",
-            );
-            ownerWatch?.close();
-            process.exit(0);
-          }
-          if (ev.ev === "restarting" || ev.ev === "room_cursors") continue;
-        } else if (ev.seq !== undefined && ev.seq > (sinceMap[ev.r] ?? 0)) {
-          sinceMap[ev.r] = ev.seq;
+        if (ev.ev === "subscribe_superseded") {
+          // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
+          // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
+          // 契約なので、古いこちらは再接続せず正常終了する。
+          process.stderr.write(
+            "ccmsg subscribe: a newer subscribe started for this session " +
+              "(duplicate detected). Exiting this older one so messages are not " +
+              "delivered twice; the newer subscribe now receives them.\n",
+          );
+          ownerWatch?.close();
+          process.exit(0);
         }
+        if (ev.ev === "restarting") continue;
       }
       process.stdout.write(`${line}\n`);
     }
@@ -916,7 +866,7 @@ async function runSubscribe(
     // 意図的な判断で、その時はセッションが張り直す (例: DR-0029 追補の request_id
     // 必須化)。
     for (;;) {
-      const c = await raceOwner(reconnectSubscribeNoSpawn(paths, identity, sinceMap));
+      const c = await raceOwner(reconnectSubscribeNoSpawn(paths, identity));
       if (c !== null) {
         client = c;
         attempt = 0;
@@ -958,7 +908,7 @@ async function runStatus(): Promise<never> {
  * `ensureDaemon`'s existing spawn path, same one every other command uses) only
  * when nothing is listening yet, then reports the same shape as `status`. Uses
  * the `{role: "user"}` fallback identity (no session context exists at this
- * entry point, same as `status`/`read`/`rooms`/`peers`). */
+ * entry point, same as `status`/`peers`). */
 async function runDaemonStart(): Promise<never> {
   const paths = resolvePaths();
   const existing = await connectIfRunning(paths);
@@ -1079,12 +1029,8 @@ async function handleDaemon(
 
 function printHelp(): void {
   process.stdout.write(`Commands:
-  reply <rNmN> <msg>                        room への返信用
-  post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
-  read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
-  create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
@@ -1103,24 +1049,12 @@ Usage:
 Commands:
   post <sid> <text>            Deprecated: a session sends to another with the
                                ccmsg plugin's send tool
-  post <room> <msg>            Post a message to a room (--to to filter delivery)
   reply <mid> --to <sid> <text>
                                Deprecated: a session answers a direct message
                                with the ccmsg plugin's send tool
-  reply <rNmN> <msg>           Reply to a received room message; the daemon
-                               builds targets
-  create-room [<title>]        Open a room with peers (--members, --msg, --title
-                               or positional <title>; --title wins when both given,
-                               --exclude-self to keep the caller out of the room,
-                               --kind broadcast for a session-broadcast room)
-  next-room <room>             Spawn the next thread of a room (--msg, --title)
-  subscribe                    Stream live room events (membership, notify, ...)
-                               as jsonl to stdout. Room messages are not on this
-                               stream; a session receives them directly. Startup
-                               and reconnect are silent; the bare default replays
-                               no backlog
-  read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
-  read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
+  subscribe                    Stream the session's notifications (notify,
+                               net_online) as jsonl to stdout. Startup and
+                               reconnect are silent
   dump <session-id>            Export session handoff context (todos, agents, rooms) +
                                conversation entries as compact jsonl (default) or readable
                                text (--format text). --since/--until accept a
@@ -1130,10 +1064,6 @@ Commands:
                                --no-thinking / --no-agent trim further. --out writes the
                                jsonl to a file and prints only its path (bare --out
                                auto-names it under <data>/dumps/)
-  leave <room>                 Leave a room
-  rooms                        List active rooms (id / title / members / last_mid /
-                               live_members; archived rooms and rooms whose members
-                               are all disconnected are omitted — use --all to include)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd.
                                --addresses (deprecated) adds each session's
@@ -1175,21 +1105,8 @@ Commands:
                                Live "subscribe" clients reattach on their own
 
 Command Options:
-  --to <ids>                   post <room>: deliver only to these agent member id(s) +
-                               sender, comma-separated (e.g. a2,a3); User delivery stays
-                               implicit. reply <mid>: the session the answer goes to
-  --members <sids>             create-room: participant sids, comma-separated
-                               (do NOT pass 'u1' — the User admin is always implicit)
-  --exclude-self               create-room: don't auto-add the caller session as a
-                               member (observer/setup use case; default is include)
-  --kind <kind>                create-room: 'normal' (default) or 'broadcast'
-                               (broadcast: auto-populated session room, --members ignored)
-  --msg <text>                 create-room / next-room: initial message
-  --title <text>               create-room / next-room: room title
-  --all                        rooms: include archived and all-disconnected rooms
-                               (default: only rooms with a connected member)
-  --since <value>              subscribe: per-room last-seen seq JSON, e.g. '{"r7":7}';
-                               dump: inclusive lower bound — an ISO 8601 timestamp with
+  --to <sid>                   reply <mid>: the session the answer goes to
+  --since <value>              dump: inclusive lower bound — an ISO 8601 timestamp with
                                timezone, or a transcript record uuid. A uuid cuts at that
                                record itself, so records sharing its timestamp are not
                                dragged in (the webui shows each record's uuid)
@@ -1225,14 +1142,14 @@ Global Options:
   --version                    Print the ccmsg version and exit
 
 Notes:
-  Write ops (post, reply, create-room, next-room, leave, notify) require a session
+  Write ops (post, reply, notify) require a session
   identity (CCMSG_SID / CLAUDE_CODE_SESSION_ID / --as-session). Without one the
   CLI exits with a non-zero status rather than posting as the User (u1). The
   User admin identity is issued by the webui backend only; the CLI cannot act
   as u1 for write ops. subscribe still runs without a sid (with a stderr
   warning), giving kawaz a plain-terminal observation path until the webui.
-  A 1on1 room is read-only: post, reply and next-room into it are refused;
-  use a normal room instead.
+  Rooms are read-only: the webui shows the past rooms, and no command writes
+  to one.
   No command sends to the person: their input reaches a session from the
   webui. A session sends to another session, and tells the person something,
   with the ccmsg plugin's tools (send / say / peers); its skill ccmsg says how.
@@ -1241,7 +1158,8 @@ Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_CONFIG_DIR             Override config dir (config.ts, config.js, or
                                config.json, allowed-origins.json)
-  CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl, dumps/*.jsonl)
+  CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl read-only,
+                               dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
                                CLAUDE_CODE_SESSION_ID is normally already set
                                inside a Claude Code session; CCMSG_SID is an
@@ -1263,7 +1181,6 @@ Environment Variables:
                                just cwd)
   CCMSG_SAY_BIN                say: speech binary to exec instead of /usr/bin/say
                                (test hook — exercise the path without audio)
-  CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
                                "off" to disable)
@@ -1341,135 +1258,44 @@ async function main(): Promise<void> {
   // masquerade bug (docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
   if (sessionIdentity === null && WRITE_OPS.has(cmd)) refuseWriteWithoutSid(cmd);
   // Observe ops fall back to user role. hello is required by the daemon for
-  // subscribe/notify anyway (IDENTITY_OPS in server.ts); read/rooms/peers/status
-  // don't need identity but hello with role=user is harmless and uniform.
+  // subscribe/notify anyway (IDENTITY_OPS in server.ts); peers/status don't
+  // need identity but hello with role=user is harmless and uniform.
   const identity: Identity = sessionIdentity ?? { role: "user" };
 
   switch (cmd) {
     case "post": {
-      const usage = "ccmsg post <sid> <text>  |  ccmsg post <room> <msg> [--to <ids>]";
-      const target = requireArg(args[0], "sid|room", usage);
+      const usage = "ccmsg post <sid> <text>";
+      const target = requireArg(args[0], "sid", usage);
+      if (ROOM_ID_RE.test(target)) throw new Error(ROOM_RETIRED);
+      const to = directRecipient(target);
       // The body: every word after the target, joined by one space
       // (parseSendArgs), as the timeline shows it.
-      const body = args[1];
-      if (!ROOM_ID_RE.test(target)) {
-        const to = directRecipient(target);
-        const text = requireArg(body, "text", usage);
-        if (opts.to !== undefined) {
-          throw new Error(
-            "--to は room への post の配信先の指定で、セッションへの直送では使わない",
-          );
-        }
-        deprecated("ccmsg post <sid>");
-        await runDirectSend(identity, { to, text });
+      const text = requireArg(args[1], "text", usage);
+      if (opts.to !== undefined) {
+        throw new Error("--to は reply <mid> の宛先の指定で、post では使わない");
       }
-      const room = target;
-      const msg = requireArg(body, "msg", usage);
-      const to = parseIdList(str(opts, "to"));
-      await runOnce(identity, { op: "post", room, msg, ...(to ? { to } : {}) });
+      deprecated("ccmsg post <sid>");
+      await runDirectSend(identity, { to, text });
       return;
     }
     case "reply": {
-      // DR-0017 §2.1: 返信先 msg (rNmN) を指すだけで、宛先 (to) は daemon が
-      // 元 msg から構成する — 受信 event の reply_via が指す target を渡す。
-      const usage =
-        "ccmsg reply <mid> --to <sid> <text>  |  ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
+      const usage = "ccmsg reply <mid> --to <sid> <text>";
       const ref = requireArg(args[0], "mid", usage);
-      const msg = requireArg(args[1], "msg", usage);
-      if (isDirectMid(ref)) {
-        const address = str(opts, "to");
-        if (address === undefined) {
-          throw new Error(
-            "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには ccmsg plugin の say tool を使う",
-          );
-        }
-        deprecated("ccmsg reply <mid>");
-        await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
-      }
-      const [, room, mid] = ref.match(/^(r\d+)m(\d+)$/) ?? [];
-      if (room === undefined || mid === undefined) {
-        process.stderr.write(
-          `invalid reply target "${ref}" — expected <instance id>/<n> (a direct message, with --to) or r<N>m<M> (a room message, e.g. r17m16)\nusage: ${usage}\n`,
+      if (ROOM_MID_RE.test(ref)) throw new Error(ROOM_RETIRED);
+      if (!isDirectMid(ref)) {
+        throw new Error(
+          `返信先 "${ref}" は届いた封筒の mid (<instance id>/<n>) で書く\n  usage: ${usage}`,
         );
-        process.exit(1);
       }
-      await runOnce(identity, { op: "reply", room, mid: Number(mid), msg });
-      return;
-    }
-    case "create-room": {
-      const membersStr = str(opts, "members");
-      const members = membersStr
-        ? membersStr
-            .split(",")
-            .map((s) => s.trim())
-            .filter((s) => s !== "")
-        : [];
-      // u1 is the reserved User admin id, implicitly a member of every room
-      // (DR-0006 §2) — passing it via --members would try to register u1 as a
-      // regular sid entry, both nonsensical and error-prone. Reject up front
-      // so the caller notices, rather than silently letting the daemon create
-      // a room with a bogus "u1" member row.
-      if (members.includes("u1")) {
-        process.stderr.write(
-          "ccmsg create-room: u1 is always implicitly a member of every room; " +
-            "do not pass it via --members.\n",
+      const msg = requireArg(args[1], "text", usage);
+      const address = str(opts, "to");
+      if (address === undefined) {
+        throw new Error(
+          "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには ccmsg plugin の say tool を使う",
         );
-        process.exit(1);
       }
-      // --exclude-self opt-out: default is include (session caller is added to
-      // the room they create). The rare observe-without-join case (session
-      // watching a room they set up between other peers) uses --exclude-self.
-      const excludeSelf = opts["exclude-self"] === true;
-      // DR-0013 broadcast: --kind で room の性格を切替える。指定なしは "normal"。
-      // 値検証は CLI 側で先に (typo で silently normal room が立つのは意図と
-      // 乖離するので早めに落とす)。
-      const kindRaw = str(opts, "kind");
-      if (kindRaw !== undefined && kindRaw !== "normal" && kindRaw !== "broadcast") {
-        process.stderr.write(
-          `ccmsg create-room: --kind must be 'normal' or 'broadcast' (got '${kindRaw}')\n`,
-        );
-        process.exit(1);
-      }
-      const kindPayload = kindRaw === "broadcast" ? { kind: "broadcast" as const } : {};
-      // RL-Q2 (kawaz r26 mid=104、裁定=a): 最小 help の
-      //   `create-room --members <sid[,sid...]> <title>`
-      // に合わせ、positional <title> を受理する。--title 併用時は明示 flag が
-      // 勝つ (positional は help 由来の shorthand 扱い、明示指定を優先)。
-      // 現状 args[0] は silent drop されていたが、それを合法化する変更。
-      const explicitTitle = str(opts, "title");
-      const positionalTitle = args[0];
-      const finalTitle =
-        explicitTitle !== undefined
-          ? explicitTitle
-          : typeof positionalTitle === "string" && positionalTitle !== ""
-            ? positionalTitle
-            : undefined;
-      await runOnce(identity, {
-        op: "create_room",
-        members,
-        ...(excludeSelf ? { include_self: false } : {}),
-        ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
-        ...(finalTitle !== undefined ? { title: finalTitle } : {}),
-        ...kindPayload,
-      });
-      return;
-    }
-    case "next-room": {
-      const usage = "ccmsg next-room <room> [--msg <text>] [--title <text>]";
-      const room = requireArg(args[0], "room", usage);
-      await runOnce(identity, {
-        op: "next_room",
-        room,
-        ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
-        ...(str(opts, "title") ? { title: str(opts, "title") } : {}),
-      });
-      return;
-    }
-    case "read": {
-      const usage =
-        "ccmsg read <rNmN[,mN...]> | ccmsg read <room> <mids>   (e.g. ccmsg read r7m10,m11)";
-      const { room, mids } = parseReadArgs(args, usage);
-      await runOnce(identity, { op: "read", room, mids });
+      deprecated("ccmsg reply <mid>");
+      await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
       return;
     }
     case "dump": {
@@ -1517,60 +1343,10 @@ async function main(): Promise<void> {
       }
       return;
     }
-    case "leave": {
-      const usage = "ccmsg leave <room>";
-      const room = requireArg(args[0], "room", usage);
-      await runOnce(identity, { op: "leave", room });
-      return;
-    }
-    case "rooms": {
-      // デフォルトは「今この場で話せる room」だけ (kawaz r17 mid=23、
-      // 2026-07-15 に archive 除外、r?? で無人 room 除外を追加):
-      // AI セッションが rooms を叩くたびに、archive 済み room と、誰も
-      // 接続していない古い room (誰も archive しないまま溜まる 1on1 が
-      // 主) が全件 context に乗るのは無駄で、探す効率も落ちる。全件は
-      // --all でオプトイン。絞りは CLI 側で行う — webui の op:"rooms"
-      // (全件 + 表示側で折り畳み) に影響させないため。
-      if (opts.all) {
-        await runOnce(identity, { op: "rooms" });
-        return;
-      }
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, identity);
-      const res = await client.request({ op: "rooms" });
-      client.close();
-      if (res.ok) {
-        const live = res.rooms.filter((r) => !r.archived);
-        const archivedOmitted = res.rooms.length - live.length;
-        // live_members === 0 = present member の誰一人 session を繋いでいない
-        // room。post しても読む相手が居ないので既定では隠す。`undefined` は
-        // フィールドを持たない古い daemon なので「不明」= 絞らない側に倒す
-        // (0 と同一視すると全 room が消える)。
-        const rooms = live.filter((r) => r.live_members === undefined || r.live_members > 0);
-        const inactiveOmitted = live.length - rooms.length;
-        // *_omitted で「絞られている」ことを機械可読に示す (0 件なら省略)。
-        // 「見えない = 存在しない」と誤認して create-room で重複を作る事故を
-        // 防ぐ ([[interface-wording]] の空状態原則)。
-        process.exit(
-          output({
-            ...res,
-            rooms,
-            ...(archivedOmitted > 0 ? { archived_omitted: archivedOmitted } : {}),
-            // inactive = 接続中メンバー 0 (room 自体は生きている、archive
-            // でもない)。話しかけたい相手が居るなら --all で拾って post
-            // できる。
-            ...(inactiveOmitted > 0 ? { inactive_omitted: inactiveOmitted } : {}),
-            ...(archivedOmitted > 0 || inactiveOmitted > 0 ? { hint: "--all で全件表示" } : {}),
-          }),
-        );
-      }
-      process.exit(output(res));
-      return;
-    }
     case "peers": {
       // RL-Q2 (kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]` に合わせ
       // positional 引数を cwd 部分一致 filter として実装する。絞りは CLI 側で
-      // 行う (rooms と同じく webui の op:"peers" を汚さない方針、interface-wording
+      // 行う (webui の op:"peers" を汚さない方針、interface-wording
       // rule 準拠)。各セッションの addresses (SendMessage の宛先の綴り) は
       // --addresses の時だけ出す: 送信が send tool に置き換わり (DR-0039 §4)、
       // 一覧そのものは人の口として残るため。
@@ -1601,7 +1377,7 @@ async function main(): Promise<void> {
     }
     case "subscribe": {
       if (sessionIdentity === null) warnSubscribingAsUser();
-      await runSubscribe(identity, opts);
+      await runSubscribe(identity);
       return;
     }
     case "status": {

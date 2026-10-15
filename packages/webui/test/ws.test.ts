@@ -16,7 +16,7 @@ import {
   RECONNECT_DELAYS_MS,
   SESSION_INPUT_REPLY_TIMEOUT_MS,
 } from "../src/client/ws.ts";
-import { initialState, type Action } from "../src/client/store.ts";
+import type { Action } from "../src/client/store.ts";
 import {
   parseWith,
   PROTOCOL_VERSION,
@@ -113,7 +113,7 @@ class MockWebSocket {
   }
 
   // U1: fires the "open" listener connect() registers, so a test can drive
-  // createWsClient's actual onOpen handshake (hello -> rooms -> subscribe ->
+  // createWsClient's actual onOpen handshake (hello -> subscribe ->
   // peers -> agents -> ping) instead of only exercising the standalone
   // send()-wrapper methods (agents()/ping()/peers()/...) directly.
   triggerOpen(): void {
@@ -242,11 +242,7 @@ afterEach(() => {
 describe("createWsClient keepalive", () => {
   test("an open socket that receives nothing is pinged and replaced when the ping also gets no reply", () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -277,15 +273,12 @@ describe("createWsClient keepalive", () => {
 describe("createWsClient pending queue on close/reconnect", () => {
   test("onClose settles in-flight requests instead of hanging their Promise forever", async () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     expect(ws1).toBeDefined();
-    // Skip the onOpen hello/rooms/subscribe/peers handshake chain (not the
+    // Skip the onOpen hello/subscribe/peers handshake chain (not the
     // concern of this test); just mark the socket open enough for send() to
     // accept a request.
     ws1.readyState = MockWebSocket.OPEN;
@@ -305,10 +298,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("connect() clears stale pending entries so a fresh reply after reconnect isn't mis-delivered to them", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -340,10 +330,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // actually passed one (fsList's root call omits it — daemon treats absent
   // as root — rather than send an empty string, keeping the request minimal).
   test("fsList sends {op:'fs_list', sid} without path when path is omitted (root)", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -358,10 +345,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("fsList sends {op:'fs_list', sid, path} when a subdirectory path is given", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -376,10 +360,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("fsRead sends {op:'fs_read', sid, path} and resolves the file response", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -412,10 +393,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   test("fsReadExternal sends the exact DR-0024 absolute allowlist path", async () => {
     // No path rewriting or root joining occurs client-side; the daemon owns all
     // exact-match/realpath authorization for the absolute path.
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -448,10 +426,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // when the caller actually passed them, mirroring fsList's "omit path when
   // absent" minimal-request convention above.
   test("transcriptRead sends {op:'transcript_read', sid} without before/max_bytes when opts is omitted", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -476,10 +451,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("transcriptRead sends {op:'transcript_read', sid, before} when paging older", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -494,10 +466,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("transcriptRead sends max_bytes only when explicitly passed", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -515,10 +484,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // U2 live-tail addendum (DR-0009): transcript_subscribe/unsubscribe wire
   // shape, mirroring the transcriptRead coverage above.
   test("transcriptSubscribe sends {op:'transcript_subscribe', sid} and resolves size", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -537,10 +503,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("transcriptUnsubscribe sends {op:'transcript_unsubscribe', sid}", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -566,10 +529,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // socket up front — these tests drive the old socket directly (bypassing
   // that close) to prove the guard, not just the close, is what stops it.
   test("stale socket's delayed message does not settle the new socket's pending request", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -607,11 +567,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // it — otherwise the client would silently resurrect itself.
   test("close() cancels an already-scheduled auto-reconnect", () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -628,11 +584,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // never reconnects at all.
   test("an unexpected close reconnects after the first reconnect delay", () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -647,10 +599,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("a request made while connecting is sent after hello when the socket opens", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -685,10 +634,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   });
 
   test("a request made while connecting rejects if that socket closes", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -706,164 +652,53 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(instanceOf(caught, Error, "the rejection").message).toBe("ws connection closed");
   });
 
-  // DR-0012: archive_room wire shape (RoomView's header toggle button).
-  test("archiveRoom sends {op:'archive_room', room, archived} and resolves the new flag", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+  // The room logs are read-only (DR-0036 §2): the list and one log are the
+  // two reads the room views make.
+  test("rooms sends {op:'rooms'} and resolves the summaries", async () => {
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.archiveRoom("room-1", true);
-    expect(sentBody(ws1, "archive_room")).toEqual({
-      op: "archive_room",
-      room: "room-1",
-      archived: true,
-    });
-
-    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", archived: true }));
-    const res = await req;
-    expect(res.ok).toBe(true);
-    if (res.ok) expect(res.archived).toBe(true);
-  });
-
-  // Un-archiving sends archived:false explicitly (not omitted) — the daemon
-  // needs the toggle's target value, not just "some change happened".
-  test("archiveRoom(room, false) sends archived:false explicitly", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-
-    void handle.archiveRoom("room-1", false);
-    expect(sentBody(ws1, "archive_room")).toEqual({
-      op: "archive_room",
-      room: "room-1",
-      archived: false,
-    });
-  });
-
-  // DR-0012: kick wire shape (MemberChip's ✕ button, admin User only).
-  test("kick sends {op:'kick', room, id} and resolves the removed id", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-
-    const req = handle.kick("room-1", "a2");
-    expect(sentBody(ws1, "kick")).toEqual({ op: "kick", room: "room-1", id: "a2" });
-
-    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "a2" }));
-    const res = await req;
-    expect(res.ok).toBe(true);
-    if (res.ok) expect(res.id).toBe("a2");
-  });
-
-  test("kick resolves the daemon's error response verbatim (e.g. not admin)", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-
-    const req = handle.kick("room-1", "a2");
+    const req = handle.rooms();
+    expect(sentBody(ws1, "rooms")).toEqual({ op: "rooms" });
     ws1.triggerMessage(
       JSON.stringify({
-        ok: false,
-        error: { code: "invalid_args", msg: "kick is admin-only" },
+        ok: true,
+        rooms: [{ id: "r1", members: [], last_mid: 2, last_ts: "2026-10-01T00:00:00.000Z" }],
       }),
     );
     const res = await req;
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error.code).toBe("invalid_args");
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.rooms.map((r) => r.id)).toEqual(["r1"]);
   });
 
-  // DR-0011 §1-4: invite wire shape (SessionList drag -> RoomView drop).
-  test("invite sends {op:'invite', room, sid} and resolves id/already", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+  test("roomHistory sends {op:'room_history', room} and resolves the log's events", async () => {
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.invite("room-1", "sess-2");
-    expect(sentBody(ws1, "invite")).toEqual({
-      op: "invite",
-      room: "room-1",
-      sid: "sess-2",
-    });
-
-    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: false }));
+    const req = handle.roomHistory("r1");
+    expect(sentBody(ws1, "room_history")).toEqual({ op: "room_history", room: "r1" });
+    const msg = {
+      type: "msg" as const,
+      mid: 1,
+      from: "a1",
+      ts: "2026-10-01T00:00:00.000Z",
+      msg: "hi",
+    };
+    ws1.triggerMessage(JSON.stringify({ ok: true, room: "r1", events: [msg] }));
     const res = await req;
     expect(res.ok).toBe(true);
-    if (res.ok) {
-      expect(res.id).toBe("m2");
-      expect(res.already).toBe(false);
-    }
-  });
-
-  test("invite resolves already:true without error when the sid is already a member", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-
-    const req = handle.invite("room-1", "sess-2");
-    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: true }));
-    const res = await req;
-    expect(res.ok).toBe(true);
-    if (res.ok) expect(res.already).toBe(true);
-  });
-
-  test("invite resolves the daemon's error response verbatim (e.g. unknown/disconnected sid)", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-
-    const req = handle.invite("room-1", "sess-ghost");
-    ws1.triggerMessage(
-      JSON.stringify({
-        ok: false,
-        error: { code: "not_found", msg: "session not connected: sess-ghost" },
-      }),
-    );
-    const res = await req;
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error.code).toBe("not_found");
+    if (res.ok) expect(res.events).toEqual([msg]);
   });
 
   test("stale socket's delayed close does not re-trigger disconnect/reconnect for the new connection", async () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -891,10 +726,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
 // op:"agents"/op:"ping" fetch (mirrors the peers() coverage above).
 describe("createWsClient agents/ping (U1)", () => {
   test("agents sends {op:'agents'} and resolves the agents list", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -925,10 +757,7 @@ describe("createWsClient agents/ping (U1)", () => {
   });
 
   test("ping sends {op:'ping'} and resolves exe/script/version", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -944,7 +773,6 @@ describe("createWsClient agents/ping (U1)", () => {
         version: "0.19.0",
         uptime: 10,
         pid: 999,
-        rooms: 0,
         clients: 1,
         exe: "/usr/local/bin/bun",
         script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
@@ -963,10 +791,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // The wire request carries a client-generated request_id and the Promise
   // settles from the correlated reply — order/per-item failures preserved.
   test("translate sends the texts batch with a request_id and resolves from the reply", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1004,10 +829,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // session_rename is a slow op like translate; its reply pairs by
   // request_id the same way.
   test("sessionRename sends the title with a request_id and resolves from the reply", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1041,10 +863,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // DR-0035 §1: the input panel sends the text verbatim as session_input (no
   // room is created or posted to) and the daemon's answer pairs by request_id.
   test("sessionInput sends session_input with the text and resolves from the reply", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1075,10 +894,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // connection_closed — the panel reads that as "maybe delivered", not as a
   // failure, so this must not hang or reject.
   test("sessionInput written before a close settles with connection_closed", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1099,11 +915,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // input panel's lock is released; the late answer is then dropped.
   test("sessionInput settles with request_timeout when no reply comes", async () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -1131,11 +943,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // nothing.
   test("sessionInput resolves from a reply that beats its deadline", async () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -1157,11 +965,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // written when the socket opens later.
   test("sessionInput still queued at its deadline rejects and is never written", async () => {
     const clock = new FakeClock();
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-      { clock },
-    );
+    const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
     handle.connect();
     const ws1 = defined(instances[0], "the first socket");
@@ -1186,10 +990,7 @@ describe("createWsClient agents/ping (U1)", () => {
 
   // The failure path the row's editor renders inline.
   test("sessionRename surfaces a terminal_unavailable reply as an error", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1214,10 +1015,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // translate is in flight, a later op's reply must pair with that later op,
   // so nothing is held back and nothing is mis-paired.
   test("a later op's reply resolves while a translate is still outstanding", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1238,7 +1036,6 @@ describe("createWsClient agents/ping (U1)", () => {
         version: "0",
         uptime: 0,
         pid: 1,
-        rooms: 0,
         clients: 1,
         exe: "",
         script: "",
@@ -1270,10 +1067,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // answers each as its helper batch finishes) and must pair strictly by
   // request_id, not arrival order.
   test("concurrent translates pair replies by request_id, not arrival order", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1319,10 +1113,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // with connection_closed instead of leaving the Promise (and a Map entry)
   // behind forever.
   test("close settles an unanswered translate with connection_closed", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1341,10 +1132,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // Synchronous validation failure (e.g. invalid_args): the reply IS the
   // error, and the Promise settles from it like any other reply.
   test("a validation-error reply settles a slow op directly", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1371,7 +1159,6 @@ describe("createWsClient agents/ping (U1)", () => {
         version: "0",
         uptime: 0,
         pid: 1,
-        rooms: 0,
         clients: 1,
         exe: "",
         script: "",
@@ -1388,10 +1175,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // untouched (same convention as fsList/transcriptRead's option-object
   // callers), and the Promise resolves from the correlated result event.
   test("sessionSearch sends {op:'session_search', ...params} and resolves hits from the reply", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1443,7 +1227,7 @@ describe("createWsClient agents/ping (U1)", () => {
     }
   });
 
-  // The onOpen handshake (hello, rooms, subscribe, peers, agents,
+  // The onOpen handshake (hello, subscribe, peers, agents,
   // session_errors, ping, translate capability) dispatches the initial
   // daemon-backed state once the socket answers each request — this drives the
   // whole handshake through a live-ish mock instead of calling the ops
@@ -1451,10 +1235,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // show up in the unit tests above, which call agents()/ping() standalone).
   test("onOpen handshake dispatches daemon state and host translation availability", async () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1474,8 +1255,6 @@ describe("createWsClient agents/ping (U1)", () => {
     const tick = () => Promise.resolve().then(() => Promise.resolve());
 
     ws1.replyTo("hello", { ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION });
-    await tick();
-    ws1.replyTo("rooms", { ok: true, rooms: [] });
     await tick();
     ws1.replyTo("subscribe", { ok: true, subscribed: true });
     await tick();
@@ -1514,7 +1293,6 @@ describe("createWsClient agents/ping (U1)", () => {
       version: "0.19.0",
       uptime: 1,
       pid: 1,
-      rooms: 0,
       clients: 1,
       exe: "/usr/local/bin/bun",
       script: "entry.ts",
@@ -1551,24 +1329,11 @@ describe("createWsClient agents/ping (U1)", () => {
       expect(daemonAction.exe).toBe("/usr/local/bin/bun");
   });
 
-  // kawaz 2026-07-14 webui reload bug: after a page reload the SPA store is
-  // fresh empty, but the `since_seq` cursor persisted in localStorage still
-  // points at "we've seen up to seq N". Forwarding it makes the daemon replay
-  // only events after N, so every RoomView opened with an empty scrollback
-  // (past history never delivered). Reload is distinguished from an in-page
-  // reconnect by state emptiness: a fresh store means we need the full
-  // backlog; a store with rooms means BBS delta replay is correct/cheap
-  // (mirrors the cli reconnect.test.ts contract for daemon-restart
-  // transparency, which relies on `since_seq` on reconnect).
-  test("onOpen omits `since_seq` from subscribe when the store has no rooms (fresh reload)", async () => {
-    const actions: Action[] = [];
-    // Persisted cursor from a pre-reload session — must be ignored while the
-    // store is empty.
-    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+  // Subscribe carries no room traffic and the room list is read only when the
+  // sidebar's room fold is opened (DR-0036 §2), so the handshake goes straight
+  // from hello to a bare subscribe, and never asks for the rooms.
+  test("onOpen subscribes with no cursor and does not read the room list", async () => {
+    const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1578,165 +1343,14 @@ describe("createWsClient agents/ping (U1)", () => {
     const tick = () => Promise.resolve().then(() => Promise.resolve());
     ws1.replyTo("hello", { ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION });
     await tick();
-    ws1.replyTo("rooms", { ok: true, rooms: [] });
-    await tick();
 
-    // 3rd request is subscribe — must not carry `since_seq` since the store is empty,
-    // and must not ask for `backlog` at all: room history is fetched per room when
-    // one is opened (`op:"room_history"`), not pushed for every room at connect
-    // time (kawaz r99 m12).
-    const subscribeReq = sentBody(ws1, "subscribe");
-    expect(subscribeReq).toEqual({ op: "subscribe" });
-  });
-
-  // Regression guard for the snapshot-order bug: onOpen's own `rooms` reply
-  // dispatches rooms/loaded, so any getState() read *after* that point sees a
-  // non-empty rooms map even on a fresh reload. The fresh/reload distinction
-  // has to be captured at t0 (before hello runs), not right before subscribe;
-  // otherwise the reload would look like a reconnect and `since_seq` would be
-  // sent — exactly the bug this file's fresh-reload test aims to prevent.
-  test("onOpen decides `since_seq` at handshake start, not after `rooms` repopulates the store", async () => {
-    const actions: Action[] = [];
-    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
-    // Wire dispatch into a real store so the `rooms` reply below actually
-    // repopulates `state.rooms` (mirroring runtime), and read spaHasState
-    // through that store.
-    const { createStore } = await import("../src/client/useStore.ts");
-    const store = createStore(initialState());
-    const handle = createWsClient(
-      (a) => {
-        actions.push(a);
-        store.dispatch(a);
-      },
-      () => store.getState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-    ws1.triggerOpen();
-
-    const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.replyTo("hello", { ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION });
-    await tick();
-    // Server replies with a non-empty rooms list — rooms/loaded will fill
-    // state.rooms *before* the subscribe request is composed.
-    ws1.replyTo("rooms", {
-      ok: true,
-      rooms: [{ id: "r1", members: [], last_mid: 5, last_ts: null }],
-    });
-    await tick();
-
-    const subscribeReq = sentBody(ws1, "subscribe");
-    // Must be the fresh-reload shape (no `since_seq`), because the store was empty
-    // at handshake start even though rooms/loaded has since filled it.
-    expect(subscribeReq).toEqual({ op: "subscribe" });
-    // Sanity: state really did get repopulated by rooms/loaded — a getState()
-    // read at this point would see a non-empty map, confirming the snapshot
-    // must have happened earlier.
-    expect(store.getState().rooms.size).toBe(1);
-  });
-
-  test("onOpen sends `since_seq` on subscribe when the store retained rooms (in-page reconnect)", async () => {
-    const actions: Action[] = [];
-    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
-    // A non-empty rooms map simulates an in-page reconnect: the SPA disconnected
-    // (transient network drop, daemon restart) but the store wasn't wiped.
-    const stateWithRoom = {
-      ...initialState(),
-      rooms: new Map([
-        [
-          "r1",
-          {
-            id: "r1",
-            title: undefined,
-            membersById: new Map(),
-            memberOrder: [],
-            msgs: new Map(),
-            timeline: [],
-            lastMid: 5,
-            lastTs: null,
-            kind: "normal" as const,
-            history: "loaded" as const,
-          },
-        ],
-      ]),
-    };
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => stateWithRoom,
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-    ws1.triggerOpen();
-
-    const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.replyTo("hello", { ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION });
-    await tick();
-    ws1.replyTo("rooms", { ok: true, rooms: [] });
-    await tick();
-
-    const subscribeReq = sentBody(ws1, "subscribe");
-    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
-  });
-
-  test("onOpen resets the history of rooms this connection has no cursor for", async () => {
-    // Subscribe replays nothing for a cursorless room, so whatever events the
-    // store still holds for it end at an unknown gap. Those rooms go back to
-    // "idle" (refetched when opened); a room the cursor covers keeps its
-    // events and takes the delta replay.
-    const actions: Action[] = [];
-    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
-    const room = (id: string) => ({
-      id,
-      title: undefined,
-      membersById: new Map(),
-      memberOrder: [],
-      msgs: new Map(),
-      timeline: [],
-      lastMid: 5,
-      lastTs: null,
-      kind: "normal" as const,
-      history: "loaded" as const,
-    });
-    const stateWithRooms = {
-      ...initialState(),
-      rooms: new Map([
-        ["r1", room("r1")],
-        ["r2", room("r2")],
-      ]),
-    };
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => stateWithRooms,
-    );
-    openHandles.push(handle);
-    handle.connect();
-    const ws1 = instances[0];
-    ws1.readyState = MockWebSocket.OPEN;
-    ws1.triggerOpen();
-
-    const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.replyTo("hello", { ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION });
-    await tick();
-    ws1.replyTo("rooms", { ok: true, rooms: [] });
-    await tick();
-
-    const reset = actions.filter((a) => a.type === "rooms/history-reset");
-    expect(reset).toEqual([{ type: "rooms/history-reset", rooms: ["r2"] }]);
-    // ...and it was dispatched before subscribe went out, so the replay that
-    // follows lands in rooms whose status already reflects this connection.
-    expect(sentBody(ws1, "subscribe")).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
+    expect(sentBody(ws1, "subscribe")).toEqual({ op: "subscribe" });
+    expect(ws1.sent.map((raw) => jsonObjectOf(raw).op)).not.toContain("rooms");
   });
 
   test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1782,10 +1396,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // peers/loaded action the one-shot op:"peers" reply in onOpen uses.
   test("ev:'peers' push dispatches peers/loaded (live update, no request needed)", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1826,10 +1437,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // op:"session_errors" reply in onOpen uses.
   test("ev:'session_errors' push dispatches session-errors/loaded", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1867,10 +1475,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // the reducer, otherwise a cleared error would leave the sidebar red forever.
   test("ev:'session_errors' with an empty list still dispatches (clears the set)", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1887,10 +1492,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // daemon's unread 📣 would stay on the sidebar.
   test("ev:'says' push dispatches says/loaded, an empty set included", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1913,10 +1515,7 @@ describe("createWsClient agents/ping (U1)", () => {
 describe("createWsClient transcript live-tail push (U2)", () => {
   test("ev:'transcript' push dispatches timeline/tail with the wire fields verbatim", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1950,10 +1549,7 @@ describe("createWsClient transcript live-tail push (U2)", () => {
   // all reach the dispatched action, not just the first.
   test("ev:'transcript' push with multiple lines carries all of them", () => {
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -1987,10 +1583,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
   test("ev:'session_status' push dispatches session-status/loaded with the snapshot fields", () => {
     // Full snapshot relay must not drop newly-added optional fields at the WebSocket boundary.
     const actions: Action[] = [];
-    const handle = createWsClient(
-      (a) => actions.push(a),
-      () => initialState(),
-    );
+    const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
@@ -2072,7 +1665,7 @@ describe("createWsClient daemon version guard", () => {
   /** hello だけ返して onOpen の version 判定を通す (以降の handshake の
    *  応答は判定に関与しないので返さない)。 */
   async function helloWith(version: string, dispatch: (a: Action) => void): Promise<void> {
-    const handle = createWsClient(dispatch, () => initialState());
+    const handle = createWsClient(dispatch);
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[instances.length - 1];

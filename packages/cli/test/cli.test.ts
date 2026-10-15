@@ -5,13 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  parseWith,
-  PROTOCOL_VERSION,
-  type ResponseOf,
-  SessionStateFileTextSchema,
-  VERSION,
-} from "@ccmsg/protocol";
+import { parseWith, type ResponseOf, SessionStateFileTextSchema, VERSION } from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
@@ -21,7 +15,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
-import { CliRoomsSchema, CliStatusSchema, printed, served } from "./cli-output.ts";
+import { CliStatusSchema, printed, served } from "./cli-output.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -66,40 +60,9 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   };
 }
 
-/** Open a session connection so the daemon knows `sid` (`rooms`'
- * `live_members`, and hence what `ccmsg rooms` shows by default). Resolves
- * once the daemon has replied to the hello — the session is registered by
- * then. Returns a closer. */
-async function holdSession(sock: string, sid: string): Promise<() => void> {
-  return await new Promise<() => void>((resolve, reject) => {
-    void Bun.connect({
-      unix: sock,
-      socket: {
-        open(s) {
-          s.write(
-            `${JSON.stringify({ op: "hello", role: "session", sid, protocol: PROTOCOL_VERSION, request_id: "hold" })}\n`,
-          );
-        },
-        data(s) {
-          resolve(() => {
-            s.end();
-          });
-        },
-        error(_s, e) {
-          reject(e);
-        },
-      },
-    });
-  });
-}
-
 const MINIMAL_HELP = `Commands:
-  reply <rNmN> <msg>                        room への返信用
-  post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
-  read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
-  create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
@@ -116,54 +79,11 @@ describe("ccmsg CLI end-to-end", () => {
       const s0 = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(s0.running).toBe(false);
 
-      // first real command auto-spawns the daemon (ensure-daemon). Identity = session S1.
-      const created = served(
-        "create_room",
-        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "create-room"], env)).out,
-      );
-      expect(created.ok).toBe(true);
-      const room = created.room;
-
-      // session identity was applied: the room's sole member is S1 (id "a1").
-      // `--all` because S1 only ever connected for the one-shot create-room —
-      // the default listing hides a room nobody is connected to, which is a
-      // separate behaviour with its own test.
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      expect(rooms.rooms.length).toBe(1);
-      expect(rooms.rooms[0]?.members[0]).toMatchObject({
-        id: "a1",
-        sid: "50000001-0000-4000-8000-000000000000",
-      });
-
-      // post + read round trip
-      const posted = served(
-        "post",
-        (
-          await runCli(
-            ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "hello"],
-            env,
-          )
-        ).out,
-      );
-      expect(posted.mid).toBe(1);
-      const read = served("read", (await runCli(["read", `${room}m1`], env)).out);
-      expect(read.msgs[0]?.msg).toBe("hello");
-      const readLegacy = served("read", (await runCli(["read", room, "1"], env)).out);
-      expect(readLegacy.msgs[0]?.msg).toBe("hello");
-      const posted2 = served(
-        "post",
-        (
-          await runCli(
-            ["--sid", "50000001-0000-4000-8000-000000000000", "post", room, "world"],
-            env,
-          )
-        ).out,
-      );
-      const readMany = served(
-        "read",
-        (await runCli(["read", `${room}m${posted.mid},m${posted2.mid}`], env)).out,
-      );
-      expect(readMany.msgs.map((m) => m.msg)).toEqual(["hello", "world"]);
+      // first real command auto-spawns the daemon (ensure-daemon). Identity = session S1,
+      // which the round trip registers: peers lists it.
+      const S1 = "50000001-0000-4000-8000-000000000000";
+      const listed = served("peers", (await runCli(["--sid", S1, "peers"], env)).out);
+      expect(listed.peers.some((p) => p.sid === S1)).toBe(true);
 
       // status now reports the live daemon at our version
       const s1 = printed(CliStatusSchema, (await runCli(["status"], env)).out);
@@ -261,38 +181,8 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 
   // 何を保証するか (default help のレール): 引数なしと通常の --help は
-  // 指定された 6 コマンド + --help-full だけを byte-for-byte 表示する。隠した
+  // 指定されたコマンド + --help-full だけを byte-for-byte 表示する。隠した
   // コマンド・オプション・環境変数が混ざれば完全一致で検出する。
-  // A room post and reply read their body as direct sends do: unquoted
-  // words joined, --words kept, -- dropped (splitSendWords).
-  test("room post and reply bodies keep --words and drop --", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const S1 = "50000001-0000-4000-8000-000000000000";
-      const S2 = "50000002-0000-4000-8000-000000000000";
-      const { room } = served(
-        "create_room",
-        (await runCli(["--sid", S1, "create-room", "--members", S2], env)).out,
-      );
-      const posted = served(
-        "post",
-        (await runCli(["--sid", S1, "post", room, "a", "--foo", "b"], env)).out,
-      );
-      const replied = served(
-        "reply",
-        (await runCli(["--sid", S2, "reply", `${room}m${posted.mid}`, "--", "--to", "x"], env)).out,
-      );
-      const read = served(
-        "read",
-        (await runCli(["read", `${room}m${posted.mid},m${replied.mid}`], env)).out,
-      );
-      expect(read.msgs.map((m) => m.msg)).toEqual(["a --foo b", "--to x"]);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  });
-
   test("default help shows only the minimal command rail", async () => {
     const { env, cleanup } = makeEnv();
     try {
@@ -319,15 +209,13 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.code).toBe(0);
       expect(help.err).toBe("");
       expect(help.out).toContain("Usage:");
-      expect(help.out).toContain("read <rNmN[,mN...]");
-      expect(help.out).toContain("read <room> <mids>");
       expect(help.out).toContain("dump <session-id>");
       expect(help.out).toContain("--until <timestamp|uuid>");
       expect(help.out).toContain("--format <format>");
       expect(help.out).toContain("--no-thinking");
       expect(help.out).toContain("--no-agent");
       expect(help.out).toContain("--agent <id|name>");
-      expect(help.out).toContain("next-room <room>");
+      expect(help.out).toContain("Rooms are read-only");
       // Deprecated (DR-0039 §4): still listed, as replaced by the plugin's tools.
       expect(help.out).toMatch(/post <sid> <text> +Deprecated/);
       expect(help.out).toMatch(/reply <mid> --to <sid> <text>\n +Deprecated/);
@@ -464,103 +352,8 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // 何を保証するか (DR-0003 §3 revision): create-room は呼び出し元 session を
-  // members の先頭に自動 include する。指示から「呼び出し元 sid を毎回書かせる」
-  // 冗長さを消し、S1 が S2 と 1:1 room を張る時に `--members S2` だけで済む。
-  test("create-room は呼び出し元 session を members 先頭に自動 include する", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      // `--all`: 一度きりの create-room で繋いだ S1/S2 はもう切断済みで、
-      // 既定の一覧は接続中メンバーが居ない room を隠す (別テストで検証)。
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      // 順序は S1 (呼び出し元、a1) → S2 (a2)
-      expect(rooms.rooms[0]?.members.map((m) => m.sid)).toEqual([
-        "50000001-0000-4000-8000-000000000000",
-        "50000002-0000-4000-8000-000000000000",
-      ]);
-      expect(rooms.rooms[0]?.members.map((m) => m.id)).toEqual(["a1", "a2"]);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか: --exclude-self を渡すと呼び出し元は自動 include されない
-  // (観測用途 room のセットアップ経路)。protocol の include_self:false 経路を
-  // 経由することを確認する。
-  test("create-room --exclude-self は呼び出し元を自動 include しない", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-              "--exclude-self",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      expect(rooms.rooms[0]?.members.map((m) => m.sid)).toEqual([
-        "50000002-0000-4000-8000-000000000000",
-      ]);
-      expect(rooms.rooms[0]?.members[0]?.id).toBe("a1");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか: u1 は暗黙参加 (DR-0006 §2) なので、--members に "u1" を
-  // 書くのは仕様上の誤り。CLI が daemon に投げる前に reject して「u1 という
-  // 名の sid で room が作られる」誤動作を防ぐ。
-  test("create-room --members に u1 が含まれると reject される", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const res = await runCli(
-        [
-          "--sid",
-          "50000001-0000-4000-8000-000000000000",
-          "create-room",
-          "--members",
-          "50000002-0000-4000-8000-000000000000,u1",
-        ],
-        env,
-      );
-      expect(res.code).not.toBe(0);
-      expect(res.err).toContain("u1 is always implicitly a member");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
   // 何を保証するか (docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md):
-  // write 系 5 op は session identity が取れなければ error で exit 非零。
+  // write 系 op は session identity が取れなければ error で exit 非零。
   // 旧挙動 (identity 無しで u1 名義に暗黙 fallback して post) を明示的に禁止
   // する回帰 test。stderr のエラーメッセージには sid の env 名も明示される。
   test("write 系 op は identity 無しで exit 非零 + stderr にエラーメッセージ", async () => {
@@ -574,11 +367,10 @@ describe("ccmsg CLI end-to-end", () => {
         CLAUDE_CODE_SESSION_ID: "",
         CLAUDE_SESSION_ID: "",
       };
+      const S2 = "50000002-0000-4000-8000-000000000000";
       const cases: [string, string[]][] = [
-        ["post", ["post", "r1", "hi"]],
-        ["create-room", ["create-room", "--members", "50000002-0000-4000-8000-000000000000"]],
-        ["next-room", ["next-room", "r1"]],
-        ["leave", ["leave", "r1"]],
+        ["post", ["post", S2, "hi"]],
+        ["reply", ["reply", "0123456789abcdef0123456789abcdef/1", "--to", S2, "hi"]],
         ["notify", ["notify", "--self", "--text", "hi"]],
       ];
       for (const [name, args] of cases) {
@@ -607,25 +399,21 @@ describe("ccmsg CLI end-to-end", () => {
   test("CLAUDE_CODE_SESSION_ID から sid を自動採用する", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      // CLAUDE_CODE_SESSION_ID だけで post が成功 (write op が identity ありと
+      // CLAUDE_CODE_SESSION_ID だけで notify が成功 (write op が identity ありと
       // 判定される)。
-      const createdRes = await runCli(
-        ["create-room", "--members", "9ee00000-0000-4000-8000-000000000000"],
-        {
-          ...env,
-          CLAUDE_CODE_SESSION_ID: "50000001-0000-4000-8000-000000000000",
-          CCMSG_SID: "",
-          CLAUDE_SESSION_ID: "",
-        },
+      const notified = await runCli(["notify", "--self", "--text", "hi"], {
+        ...env,
+        CLAUDE_CODE_SESSION_ID: "50000001-0000-4000-8000-000000000000",
+        CCMSG_SID: "",
+        CLAUDE_SESSION_ID: "",
+      });
+      expect(served("notify", notified.out).ok).toBe(true);
+      // 呼び出し元 sid = S1 として hello した: peers に S1 が居る
+      const listed = served(
+        "peers",
+        (await runCli(["peers"], { ...env, CCMSG_SID: "", CLAUDE_CODE_SESSION_ID: "" })).out,
       );
-      const created = served("create_room", createdRes.out);
-      expect(created.ok).toBe(true);
-      // 呼び出し元 sid = S1 が member に入っている
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      expect(rooms.rooms[0]?.members.map((m) => m.sid)).toEqual([
-        "50000001-0000-4000-8000-000000000000",
-        "9ee00000-0000-4000-8000-000000000000",
-      ]);
+      expect(listed.peers.some((p) => p.sid === "50000001-0000-4000-8000-000000000000")).toBe(true);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -637,15 +425,12 @@ describe("ccmsg CLI end-to-end", () => {
   test("旧 CLAUDE_SESSION_ID env は sid として拾わない (write op は error)", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = await runCli(
-        ["create-room", "--members", "9ee00000-0000-4000-8000-000000000000"],
-        {
-          ...env,
-          CCMSG_SID: "",
-          CLAUDE_CODE_SESSION_ID: "",
-          CLAUDE_SESSION_ID: "SHOULD_BE_IGNORED",
-        },
-      );
+      const res = await runCli(["notify", "--self", "--text", "hi"], {
+        ...env,
+        CCMSG_SID: "",
+        CLAUDE_CODE_SESSION_ID: "",
+        CLAUDE_SESSION_ID: "SHOULD_BE_IGNORED",
+      });
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("requires a session identity");
     } finally {
@@ -681,53 +466,6 @@ describe("ccmsg CLI end-to-end", () => {
       expect(errText).toContain("subscribing as the User (u1)");
       expect(errText).toContain("CCMSG_SID");
       expect(errText).toContain("CLAUDE_CODE_SESSION_ID");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  test("leave: a member session leaves a room and disappears from its member list", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      // S1 creates a room with S2 as a peer member
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      const room = created.room;
-
-      // register S2 as a resolvable session so its member row exists (create-room adds it eagerly)
-      const before = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      expect(before.rooms[0]?.members.map((m) => m.sid)).toEqual([
-        "50000001-0000-4000-8000-000000000000",
-        "50000002-0000-4000-8000-000000000000",
-      ]);
-
-      // S2 leaves: the room's present-member list must drop S2 but keep S1
-      const left = served(
-        "leave",
-        (await runCli(["--sid", "50000002-0000-4000-8000-000000000000", "leave", room], env)).out,
-      );
-      expect(left.ok).toBe(true);
-      expect(left.room).toBe(room);
-
-      const after = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      expect(after.rooms[0]?.members.map((m) => m.sid)).toEqual([
-        "50000001-0000-4000-8000-000000000000",
-      ]);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -1178,120 +916,6 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 });
 
-describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
-  // 何を保証するか (§4.3 + §2.1): `--kind broadcast` を渡すと broadcast room が
-  // 開設され、rooms 出力に kind:"broadcast" が返る (通常 room は kind 省略)。
-  // 呼び出し元 sid の member 保持は long-running session 前提なので (CLI 単発は
-  // exit 時に auto-leave が走る = §2.2)、ここでは検証せず daemon 側 test に譲る。
-  test("--kind broadcast は broadcast room を開設し rooms に kind が現れる", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            ["--sid", "50000001-0000-4000-8000-000000000000", "create-room", "--kind", "broadcast"],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      // `--all`: broadcast room の member は接続中 session から自動populate
-      // されるので、既定の一覧に載るかは「この瞬間どの session が繋がって
-      // いるか」次第になる。ここで見たいのは kind の露出なので固定する。
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      const room = defined(
-        rooms.rooms.find((r) => r.id === created.room),
-        "room",
-      );
-      expect(room.kind).toBe("broadcast");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか (§2.9 「明示 `--members` は 無視 + stderr warning で受理」):
-  // --members を broadcast と一緒に渡すと reject にはならず、無視 + JSON の
-  // warning フィールド + stderr の 1 行 (CLI の output() が echo する)。
-  test("--kind broadcast + --members は無視 + stderr に warning が echo される", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const res = await runCli(
-        [
-          "--sid",
-          "50000001-0000-4000-8000-000000000000",
-          "create-room",
-          "--kind",
-          "broadcast",
-          "--members",
-          "50000002-0000-4000-8000-000000000000,50000003-0000-4000-8000-000000000000",
-        ],
-        env,
-      );
-      expect(res.code).toBe(0); // 非致命的 warning、exit は 0
-      const created = served("create_room", res.out);
-      expect(created.ok).toBe(true);
-      expect(created.warning).toBe(
-        "--members is ignored for broadcast rooms (members are auto-populated)",
-      );
-      expect(res.err).toContain("--members is ignored for broadcast rooms");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか: `--kind` の値検証は CLI 側で早期に落とす (typo で "boadcast"
-  // 等が silently normal room を立てる回帰を防ぐ)。daemon には接続しない。
-  test("--kind に不正値を渡すと exit 非零 + stderr に案内", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const res = await runCli(
-        ["--sid", "50000001-0000-4000-8000-000000000000", "create-room", "--kind", "boadcast"], // typo
-        env,
-      );
-      expect(res.code).not.toBe(0);
-      expect(res.err).toContain("--kind must be 'normal' or 'broadcast'");
-      expect(res.out).toBe("");
-      // daemon には接続しないこと (前段で早期 reject)
-      const st = printed(CliStatusSchema, (await runCli(["status"], env)).out);
-      expect(st.running).toBe(false);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか (DR-0035 §2): create-room では 1on1 room を作らない。
-  // `--kind 1on1` は不正値と同じく CLI 側で落とし、daemon には接続しない。
-  test("--kind 1on1 は exit 非零で拒否される", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const res = await runCli(
-        [
-          "--sid",
-          "50000001-0000-4000-8000-000000000000",
-          "create-room",
-          "--kind",
-          "1on1",
-          "--members",
-          "50000002-0000-4000-8000-000000000000",
-        ],
-        env,
-      );
-      expect(res.code).not.toBe(0);
-      expect(res.err).toContain("--kind must be 'normal' or 'broadcast' (got '1on1')");
-      expect(res.out).toBe("");
-      const st = printed(CliStatusSchema, (await runCli(["status"], env)).out);
-      expect(st.running).toBe(false);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-});
-
 describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   // 何を保証するか: 人間が PATH の ccmsg の版を確認する手段。daemon には触らない
   // (DR-0007 §3 の通り、自己更新の判定にはこの経路を使わない — ここは CLI 衛生のみ)。
@@ -1327,7 +951,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   test("--version は他の positional より優先される", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const res = await runCli(["rooms", "--version"], env);
+      const res = await runCli(["peers", "--version"], env);
       expect(res.code).toBe(0);
       expect(res.out).toBe(`${VERSION}\n`);
     } finally {
@@ -1335,78 +959,9 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     }
   });
 
-  // rooms のデフォルトは active のみ (kawaz r17 mid=23、2026-07-15): AI
-  // セッションが rooms を叩くたびに archive 済み全件が context に乗るのは
-  // 無駄。--all で全件のオプトイン。絞った時は archived_omitted で「見えて
-  // いない room がある」ことを機械可読に示す — 「見えない = 存在しない」と
-  // 誤認して重複 room を作る事故の予防。
-  // 何を保証するか (DR-0017 §2.1-2.2 e2e): reply <rNmN> <msg> が rNmN を
-  // パースして op:"reply" に写り、daemon 構成の to (元 from + u1) で届き、
-  // storage に reply_to が残る。CLI 層の positional 慣習 (post と同型) の
-  // 回帰 guard。
-  test("reply <rNmN> <msg> が daemon 構成の宛先で返信を投稿する", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-            ],
-            env,
-          )
-        ).out,
-      );
-      const posted = served(
-        "post",
-        (
-          await runCli(
-            ["--sid", "50000001-0000-4000-8000-000000000000", "post", created.room, "question"],
-            env,
-          )
-        ).out,
-      );
-
-      const replied = served(
-        "reply",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000002-0000-4000-8000-000000000000",
-              "reply",
-              `${created.room}m${posted.mid}`,
-              "answer",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(replied.ok).toBe(true);
-      // to = 元 from (S1 = a1)。返信者 S2 (a2) は含まれず、u1 は implicit 配信のため to に載らない
-      expect(replied.to).toEqual(["a1"]);
-
-      const read = served(
-        "read",
-        (await runCli(["read", created.room, String(replied.mid)], env)).out,
-      );
-      expect(read.msgs[0]?.msg).toBe("answer");
-      expect(read.msgs[0]?.reply_to).toBe(`${created.room}m${posted.mid}`);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか (DR-0017 §2.1 の引数検証): rNmN 形でない参照は daemon に
-  // 投げる前に usage error で弾く (typo が room_not_found のような遠い error
-  // になって原因を探させない)。
-  test("reply の rNmN パース失敗は usage error で exit 非零", async () => {
+  // 何を保証するか: 届いた封筒の mid の形でない返信先は daemon に投げる前に
+  // usage error で弾く (typo が遠い error になって原因を探させない)。
+  test("reply の返信先が mid の形でなければ usage error で exit 非零", async () => {
     const { env, cleanup } = makeEnv();
     try {
       const res = await runCli(
@@ -1414,228 +969,50 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         env,
       );
       expect(res.code).not.toBe(0);
-      expect(res.err).toContain("r<N>m<M>");
+      expect(res.err).toContain("<instance id>/<n>");
+      expect(res.err).toContain("usage: ccmsg reply <mid> --to <sid> <text>");
     } finally {
       cleanup();
     }
   }, 30000);
 
-  test("rooms は archived を省き --all で全件 (省略数は archived_omitted で申告)", async () => {
-    const { env, sock, cleanup } = (() => {
-      const made = makeEnv();
-      return { ...made, sock: path.join(made.env.CCMSG_STATE_DIR, "daemon.sock") };
-    })();
-    try {
-      // member set を変えて 2 room 作る (同一 set は create-room の dedup で
-      // 同じ room が返るため、S2 入りで区別する)。
-      const r1 = served(
-        "create_room",
-        (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "create-room"], env)).out,
-      );
-      const r2 = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-            ],
-            env,
-          )
-        ).out,
-      );
-      // CLI に archive コマンドは無い (webui 専用操作) ので、daemon socket に
-      // 直接 archive_room を送って r1 を archive 状態にする。
-      await new Promise<void>((resolve, reject) => {
-        const chunks: string[] = [];
-        let replies = 0;
-        void Bun.connect({
-          unix: sock,
-          socket: {
-            open(s) {
-              s.write(
-                `${JSON.stringify({ op: "hello", role: "user", protocol: PROTOCOL_VERSION, request_id: "h" })}\n`,
-              );
-              s.write(
-                `${JSON.stringify({ op: "archive_room", room: r1.room, archived: true, request_id: "a" })}\n`,
-              );
-            },
-            data(s, chunk) {
-              chunks.push(new TextDecoder().decode(chunk));
-              replies = chunks.join("").split("\n").filter(Boolean).length;
-              if (replies >= 2) {
-                s.end();
-                resolve();
-              }
-            },
-            error(_s, e) {
-              reject(e);
-            },
-          },
-        });
-      });
-
-      // S1 を繋いだままにして、r1 / r2 の両方が「接続中メンバー有り」に
-      // なるようにする。そうしないと無人フィルタ (別テスト) も同時に効いて
-      // しまい、ここで見たい archive フィルタ単体の効果が分からなくなる。
-      const releaseS1 = await holdSession(sock, "50000001-0000-4000-8000-000000000000");
-      try {
-        // デフォルト: active の r2 だけ + archived_omitted=1
-        const dflt = printed(CliRoomsSchema, (await runCli(["rooms"], env)).out);
-        expect(dflt.rooms.map((r) => r.id)).toEqual([r2.room]);
-        expect(dflt.archived_omitted).toBe(1);
-        expect(dflt.inactive_omitted).toBeUndefined();
-
-        // --all: 両方見える (archived room には archived:true が付く)
-        const all = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-        expect(all.rooms.map((r) => r.id).sort()).toEqual([r1.room, r2.room].sort());
-        expect(all.rooms.find((r) => r.id === r1.room)?.archived).toBe(true);
-        expect(all.archived_omitted).toBeUndefined();
-      } finally {
-        releaseS1();
-      }
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか: 誰も archive しないまま残った古い room (1on1 が主) が
-  // `ccmsg rooms` の既定出力に溜まり続け、AI セッションの context を無駄に
-  // 食う問題への対処。archive フラグではなく「present member の誰かが今
-  // 接続しているか」(RoomSummary.live_members) で絞るので、room データは
-  // 一切書き換わらず、相手が繋ぎ直せば黙って既定出力へ戻る。
-  test("rooms は接続中メンバーが居ない room を省き --all で全件 (省略数は inactive_omitted で申告)", async () => {
-    const { env, sock, cleanup } = (() => {
-      const made = makeEnv();
-      return { ...made, sock: path.join(made.env.CCMSG_STATE_DIR, "daemon.sock") };
-    })();
-    try {
-      // S1 の room と S3 の room。member set が違うので create-room の dedup
-      // では 1 つにならない。daemon を再起動すると、どのセッションも daemon に
-      // とって未知になり、再び hello した S1 の room だけが live になる。
-      const attended = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-            ],
-            env,
-          )
-        ).out,
-      );
-      const deserted = served(
-        "create_room",
-        (
-          await runCli(
-            ["--sid", "50000003-0000-4000-8000-000000000000", "create-room", "--members", "S4"],
-            env,
-          )
-        ).out,
-      );
-      await runCli(["daemon", "stop"], env);
-      await runCli(["rooms", "--all"], env);
-
-      const releaseS1 = await holdSession(sock, "50000001-0000-4000-8000-000000000000");
-      try {
-        const dflt = printed(CliRoomsSchema, (await runCli(["rooms"], env)).out);
-        expect(dflt.rooms.map((r) => r.id)).toEqual([attended.room]);
-        // 4 人の member 宣言があっても、daemon が知っているのは S1 だけ。
-        expect(dflt.rooms[0]?.live_members).toBe(1);
-        expect(dflt.inactive_omitted).toBe(1);
-        expect(dflt.archived_omitted).toBeUndefined();
-        expect(dflt.hint).toBe("--all で全件表示");
-
-        const all = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-        expect(all.rooms.map((r) => r.id).sort()).toEqual([attended.room, deserted.room].sort());
-        expect(all.rooms.find((r) => r.id === deserted.room)?.live_members).toBe(0);
-        expect(all.inactive_omitted).toBeUndefined();
-        expect(all.hint).toBeUndefined();
-      } finally {
-        releaseS1();
-      }
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか (RL-Q2 kawaz r26 mid=104、裁定=a): minimal help の
-  //   `create-room --members <sid[,sid...]> <title>`
-  // に合わせ、positional <title> を room title として受理する。現状 args[0]
-  // は silent drop だったため、CLI 呼び出し実態 (help に沿って書いた kawaz が
-  // title を渡したつもりで無視される) と help 文面が齟齬していたのを合わせる。
-  test("create-room の positional <title> が room title として反映される", async () => {
+  // 何を保証するか (DR-0036 §2): room は読み取り専用。room を宛先にした post と
+  // room の msg への reply は daemon に触れる前に断られ、送信の行き先 (plugin の
+  // send tool) を案内する。room envelope を覚えているエージェントへの道案内。
+  test("post rN / reply rNmM は room に書き込めないと断られ、exit 非零", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-              "positional-title",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      const r = defined(
-        rooms.rooms.find((x) => x.id === created.room),
-        "r",
-      );
-      expect(r.title).toBe("positional-title");
+      const S1 = "50000001-0000-4000-8000-000000000000";
+      for (const args of [
+        ["post", "r1", "hi"],
+        ["reply", "r1m2", "hi"],
+      ]) {
+        const res = await runCli(["--sid", S1, ...args], env);
+        expect({ args, code: res.code, out: res.out }).toEqual({ args, code: 1, out: "" });
+        expect(res.err).toContain("room には書き込めない");
+        expect(res.err).toContain("send tool");
+      }
+      // 断りは daemon に接続する前に出る: daemon は起動していない
+      const st = printed(CliStatusSchema, (await runCli(["status"], env)).out);
+      expect(st.running).toBe(false);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
     }
   }, 30000);
 
-  // 何を保証するか (RL-Q2 の precedence 側): positional <title> と --title の
-  // 両方が渡された場合、明示 flag (= --title) が勝つ。positional は help 由来の
-  // shorthand で明示指定を上書きしないことを固定する。
-  test("create-room で --title と positional 両方指定時は --title 優先", async () => {
+  // 何を保証するか (DR-0036 §2): room を作る・読む・抜けるサブコマンドは無い。
+  // 他の知らないコマンドと同じく unknown command として exit 非零になる。
+  test("room のサブコマンドは unknown command になる", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const created = served(
-        "create_room",
-        (
-          await runCli(
-            [
-              "--sid",
-              "50000001-0000-4000-8000-000000000000",
-              "create-room",
-              "--members",
-              "50000002-0000-4000-8000-000000000000",
-              "positional-title",
-              "--title",
-              "explicit-title",
-            ],
-            env,
-          )
-        ).out,
-      );
-      expect(created.ok).toBe(true);
-      const rooms = printed(CliRoomsSchema, (await runCli(["rooms", "--all"], env)).out);
-      const r = defined(
-        rooms.rooms.find((x) => x.id === created.room),
-        "r",
-      );
-      expect(r.title).toBe("explicit-title");
+      const S1 = "50000001-0000-4000-8000-000000000000";
+      for (const cmd of ["create-room", "next-room", "leave", "read", "rooms"]) {
+        const res = await runCli(["--sid", S1, cmd, "r1"], env);
+        expect({ cmd, code: res.code }).toEqual({ cmd, code: 1 });
+        expect(res.err).toBe(`ccmsg: unknown command '${cmd}'\n\n`);
+        expect(res.out).toBe(MINIMAL_HELP);
+      }
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -1645,7 +1022,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   // 何を保証するか (RL-Q2 kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]`
   // に合わせ、positional 引数を cwd 部分一致 filter として実装する。無指定時は
   // 全 peer が返ることを別 case で確認 (現状の非回帰)。フィルタの絞りは CLI 側
-  // 完結 (webui の op:"peers" を汚さない、rooms と同型の方針)。
+  // 完結 (webui の op:"peers" を汚さない)。
   test("peers の positional 引数が cwd 部分一致で絞る", async () => {
     const { env, cleanup } = makeEnv();
     // peers を叩く side は user role で走らせる。親環境の CLAUDE_CODE_SESSION_ID

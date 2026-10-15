@@ -174,8 +174,9 @@ function sessionExists(state: AppState, sid: string): boolean {
 
 export function missingTarget(state: AppState, locator: Locator): MissingTarget | null {
   if (locator.view === "room" && locator.room) {
-    if (!state.roomsLoaded) return null;
-    if (!state.rooms.has(locator.room)) return { kind: "room", id: locator.room };
+    if (state.rooms.get(locator.room)?.history === "missing") {
+      return { kind: "room", id: locator.room };
+    }
   }
   const sid = locatorSid(locator);
   if (sid) {
@@ -212,7 +213,15 @@ export function initialLocatorReady(state: AppState, locator: Locator): boolean 
   // nothing has arrived". /usage and /catalog name no session and no room, so
   // there is nothing to wait for and nothing missingTarget could ever report.
   if (locator.view === "usage" || locator.view === "catalog") return true;
-  return locator.view === "room" ? state.roomsLoaded : state.peersLoaded && state.agentsLoaded;
+  if (locator.view === "room") return locator.room === null || roomSettled(state, locator.room);
+  return state.peersLoaded && state.agentsLoaded;
+}
+
+/** Whether the room view's fetch of `room`'s log has answered: a room is
+ * known to be missing only once the daemon said so (`room_history`). */
+function roomSettled(state: AppState, room: string): boolean {
+  const history = state.rooms.get(room)?.history;
+  return history === "loaded" || history === "missing" || history === "error";
 }
 
 export async function resolveSessionRootTarget(

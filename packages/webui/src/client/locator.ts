@@ -7,7 +7,7 @@ export interface AgentRef {
   teammate?: string;
 }
 
-export type SessionTab = "files" | "timeline" | "terminal" | "status" | "rooms";
+export type SessionTab = "files" | "timeline" | "terminal" | "status";
 
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
@@ -107,7 +107,7 @@ export function parseUrl(pathname: string, search = ""): Locator {
       ...(from ? { from } : {}),
     });
   }
-  if ((tab === "terminal" || tab === "status" || tab === "rooms") && segments.length === 3) {
+  if ((tab === "terminal" || tab === "status") && segments.length === 3) {
     return sessionLocator(sid, tab);
   }
   if (tab !== "timeline" || segments.length < 4) {
@@ -238,10 +238,6 @@ export function terminalHref(sid: string): string {
 
 export function statusHref(sid: string): string {
   return `${sidBase(sid)}/status`;
-}
-
-export function sessionRoomsHref(sid: string): string {
-  return `${sidBase(sid)}/rooms`;
 }
 
 export function agentTimelineHref(sid: string, ref: AgentRef): string {

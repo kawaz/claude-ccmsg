@@ -4,11 +4,11 @@
 // making the reducer pure is that its contract is testable this way.
 import { describe, expect, test } from "bun:test";
 import type {
-  DeliveredEvent,
   MemberEvent,
   RoomSummary,
   SayRecord,
   SessionSearchHit,
+  StorageEvent,
   TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import {
@@ -65,9 +65,8 @@ const member: MemberEvent = {
 };
 
 describe("reducer / rooms/loaded", () => {
-  // "rooms" op response seeds rooms + their member rosters in one shot
-  // (initial page load / reconnect resync), independent of the live event
-  // stream that follows via subscribe.
+  // The `rooms` reply seeds every room's metadata and present members in one
+  // shot, when the sidebar's room fold is first opened.
   test("creates rooms with members from RoomSummary[]", () => {
     const summaries: RoomSummary[] = [
       {
@@ -76,16 +75,46 @@ describe("reducer / rooms/loaded", () => {
         members: [member],
         last_mid: 3,
         last_ts: "2026-07-09T00:01:00.000Z",
+        archived: true,
+        kind: "broadcast",
       },
     ];
     const state = dispatch(initialState(), { type: "rooms/loaded", rooms: summaries });
     const room = state.rooms.get("r1");
-    expect(room).toBeDefined();
     expect(room?.title).toBe("hello");
     expect(room?.lastMid).toBe(3);
+    expect(room?.lastTs).toBe("2026-07-09T00:01:00.000Z");
+    expect(room?.archived).toBe(true);
+    expect(room?.kind).toBe("broadcast");
     expect(room?.membersById.get("a1")?.repo).toBe("kawaz/claude-ccmsg");
     expect(room?.membersById.get("a1")?.left).toBe(false);
     expect(room?.memberOrder).toEqual(["a1"]);
+    expect(room?.history).toBe("idle");
+    expect(state.roomList).toBe("loaded");
+  });
+
+  test("an absent kind is a normal room", () => {
+    const state = dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [], last_mid: 0, last_ts: null }],
+    });
+    expect(state.rooms.get("r1")?.kind).toBe("normal");
+  });
+
+  // A room already opened was folded from its whole log, which knows
+  // everything a summary says; the summary must not overwrite it (it would
+  // drop the left members the log keeps).
+  test("leaves a room whose log is already loaded as the log folded it", () => {
+    const opened = dispatch(initialState(), {
+      type: "room-history/loaded",
+      room: "r1",
+      events: [member, { type: "leave", id: "a1", ts: "2026-07-09T00:02:00.000Z" }],
+    });
+    const listed = dispatch(opened, {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", title: "other", members: [], last_mid: 0, last_ts: null }],
+    });
+    expect(listed.rooms.get("r1")).toBe(opened.rooms.get("r1"));
   });
 
   test("does not mutate the previous state (reducer purity)", () => {
@@ -96,229 +125,97 @@ describe("reducer / rooms/loaded", () => {
     expect(after.rooms.size).toBe(1);
     expect(after).not.toBe(before);
   });
-});
 
-describe("reducer / protocol-event msg", () => {
-  // msg 追記: 輪郭 — 新規 mid は timeline + msgs 両方に、既知 mid (post 直後の
-  // optimistic echo と subscribe backlog の重複配信) は timeline に二重追加され
-  // ない (dedup by mid, DR-0003 §5 backlog replay と整合)。
-  test("appends a new message to timeline and msgs", () => {
-    const ev: DeliveredEvent = {
-      type: "msg",
-      mid: 1,
-      from: ADMIN_ID,
-      ts: "2026-07-09T00:00:00.000Z",
-      msg: "hi",
-      r: "r1",
-    };
-    const state = dispatch(initialState(), { type: "protocol-event", event: ev });
-    const room = state.rooms.get("r1");
-    expect(room?.msgs.get(1)?.msg).toBe("hi");
-    expect(room?.timeline).toHaveLength(1);
-    expect(room?.lastMid).toBe(1);
-    expect(room?.lastTs).toBe(ev.ts);
-  });
-
-  test("ignores a duplicate mid (already-known message replayed)", () => {
-    const ev: DeliveredEvent = {
-      type: "msg",
-      mid: 1,
-      from: ADMIN_ID,
-      ts: "2026-07-09T00:00:00.000Z",
-      msg: "hi",
-      r: "r1",
-    };
-    const once = dispatch(initialState(), { type: "protocol-event", event: ev });
-    const twice = dispatch(once, { type: "protocol-event", event: ev });
-    expect(twice.rooms.get("r1")?.timeline).toHaveLength(1);
-  });
-
-  test("lastMid tracks the max seen mid even out of order", () => {
-    const first = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "msg", mid: 5, from: ADMIN_ID, ts: "t1", msg: "a", r: "r1" },
-    });
-    const second = dispatch(first, {
-      type: "protocol-event",
-      event: { type: "msg", mid: 2, from: ADMIN_ID, ts: "t2", msg: "b", r: "r1" },
-    });
-    expect(second.rooms.get("r1")?.lastMid).toBe(5);
+  test("rooms/loading and rooms/failed move only the list's status", () => {
+    const loading = dispatch(initialState(), { type: "rooms/loading" });
+    expect(loading.roomList).toBe("loading");
+    const failed = dispatch(loading, { type: "rooms/failed" });
+    expect(failed.roomList).toBe("error");
+    expect(failed.rooms.size).toBe(0);
   });
 });
 
-describe("reducer / protocol-event member & leave", () => {
-  test("member event adds to membersById and memberOrder, in-order timeline entry", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { ...member, r: "r1" },
-    });
+describe("reducer / room-history/loaded folds the whole log", () => {
+  const log = (events: StorageEvent[]): AppState =>
+    dispatch(initialState(), { type: "room-history/loaded", room: "r1", events });
+
+  test("msgs go to the timeline and msgs by mid; lastMid and lastTs follow the log", () => {
+    const state = log([
+      member,
+      { type: "msg", mid: 5, from: ADMIN_ID, ts: "t1", msg: "a" },
+      { type: "msg", mid: 2, from: "a1", ts: "t2", msg: "b" },
+    ]);
     const room = state.rooms.get("r1");
-    expect(room?.membersById.get("a1")?.left).toBe(false);
-    expect(room?.memberOrder).toEqual(["a1"]);
-    expect(room?.timeline).toHaveLength(1);
+    expect(room?.history).toBe("loaded");
+    expect(room?.msgs.get(5)?.msg).toBe("a");
+    expect(room?.msgs.get(2)?.msg).toBe("b");
+    expect(room?.timeline.map((ev) => ev.type)).toEqual(["member", "msg", "msg"]);
+    expect(room?.lastMid).toBe(5);
+    expect(room?.lastTs).toBe("t2");
   });
 
-  test("leave event flips left=true without removing the member (history preserved)", () => {
-    const joined = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { ...member, r: "r1" },
-    });
-    const left = dispatch(joined, {
-      type: "protocol-event",
-      event: { type: "leave", id: "a1", ts: "2026-07-09T00:02:00.000Z", r: "r1" },
-    });
-    const room = left.rooms.get("r1");
+  // A log can hold the same msg twice (two daemons appended to one file); the
+  // view shows it once.
+  test("a mid seen twice keeps its first line", () => {
+    const first = { type: "msg" as const, mid: 1, from: ADMIN_ID, ts: "t1", msg: "first" };
+    const room = log([first, { ...first, ts: "t2", msg: "again" }]).rooms.get("r1");
+    expect(room?.timeline).toEqual([first]);
+    expect(room?.msgs.get(1)).toEqual(first);
+  });
+
+  test("leave flips left without removing the member (history preserved)", () => {
+    const room = log([member, { type: "leave", id: "a1", ts: "t2" }]).rooms.get("r1");
     expect(room?.membersById.get("a1")?.left).toBe(true);
-    expect(room?.memberOrder).toEqual(["a1"]); // still listed, just marked left
+    expect(room?.memberOrder).toEqual(["a1"]);
     expect(room?.timeline).toHaveLength(2);
   });
 
-  test("leave for an unknown id is a no-op on membersById but still recorded in timeline", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "leave", id: "a99", ts: "t", r: "r1" },
-    });
-    expect(state.rooms.get("r1")?.membersById.has("a99")).toBe(false);
-    expect(state.rooms.get("r1")?.timeline).toHaveLength(1);
-  });
-});
-
-describe("reducer / protocol-event title, next, prev", () => {
-  test("title event updates room.title and appends to timeline", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "title", title: "renamed", ts: "t", r: "r1" },
-    });
-    expect(state.rooms.get("r1")?.title).toBe("renamed");
-    expect(state.rooms.get("r1")?.timeline).toHaveLength(1);
-  });
-
-  test("next/prev events only append to timeline (no other room-state change)", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "next", room: "r2", ts: "t", r: "r1" },
-    });
-    const room = state.rooms.get("r1");
-    expect(room?.timeline).toHaveLength(1);
-    expect(room?.lastMid).toBe(0);
-  });
-});
-
-// DR-0012: room archive flag. Mirrors the title event tests above ("last
-// event wins", store folds the broadcast in) since ArchiveEvent follows the
-// exact same last-wins convention as TitleEvent.
-describe("reducer / protocol-event archive (DR-0012)", () => {
-  test("archive event sets room.archived and appends to timeline", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "archive", archived: true, ts: "t", r: "r1" },
-    });
-    const room = state.rooms.get("r1");
-    expect(room?.archived).toBe(true);
+  test("a leave for an unknown id changes no member but keeps its line", () => {
+    const room = log([{ type: "leave", id: "a99", ts: "t" }]).rooms.get("r1");
+    expect(room?.membersById.has("a99")).toBe(false);
     expect(room?.timeline).toHaveLength(1);
   });
 
-  // Last event wins (same rule as title, DR-0012 §1): a later archived:false
-  // flips the room back, it doesn't merge/OR with the earlier true.
-  test("a later archive:false event un-archives the room", () => {
-    const archived = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "archive", archived: true, ts: "t1", r: "r1" },
-    });
-    const unarchived = dispatch(archived, {
-      type: "protocol-event",
-      event: { type: "archive", archived: false, ts: "t2", r: "r1" },
-    });
-    expect(unarchived.rooms.get("r1")?.archived).toBe(false);
-    expect(unarchived.rooms.get("r1")?.timeline).toHaveLength(2);
-  });
-});
-
-describe("reducer / rooms/loaded carries archived (DR-0012)", () => {
-  test("a RoomSummary with archived:true seeds room.archived", () => {
-    const summaries: RoomSummary[] = [
-      { id: "r1", members: [], last_mid: 0, last_ts: null, archived: true },
-    ];
-    const state = dispatch(initialState(), { type: "rooms/loaded", rooms: summaries });
-    expect(state.rooms.get("r1")?.archived).toBe(true);
-  });
-
-  // absent `archived` (older daemon, or a room that was never toggled) must
-  // not force the field to false and shadow a value already folded in from
-  // a prior rooms/loaded or protocol-event — same "if defined" merge as
-  // summary.title's `if (summary.title) ...` guard just above in the reducer.
-  test("a RoomSummary with no archived field leaves an already-known archived flag untouched", () => {
-    const withArchive = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "archive", archived: true, ts: "t", r: "r1" },
-    });
-    const reloaded = dispatch(withArchive, {
-      type: "rooms/loaded",
-      rooms: [{ id: "r1", members: [], last_mid: 0, last_ts: null }],
-    });
-    expect(reloaded.rooms.get("r1")?.archived).toBe(true);
-  });
-});
-
-describe("reducer / broadcast kind (DR-0013)", () => {
-  // 何を保証するか (§4.4 + store.ts の applyProtocolEvent "kind" 分岐):
-  // KindEvent が subscribe stream から届いたら room.kind が反映され、UI 側の
-  // Composer variant / RoomList のバッジ判定が動く。timeline にも event が
-  // 積まれるのは他 display-metadata event (archive / title) と同じ扱い。
-  test("kind event sets room.kind to broadcast and appends to timeline", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "kind", kind: "broadcast", ts: "t", r: "r1" },
-    });
-    const room = state.rooms.get("r1");
+  // title / archive / kind are last-wins (DR-0012 / DR-0013), and each keeps
+  // its line in the timeline.
+  test("title, archive and kind take the log's last value", () => {
+    const room = log([
+      { type: "title", title: "first", ts: "t1" },
+      { type: "kind", kind: "broadcast", ts: "t2" },
+      { type: "archive", archived: true, ts: "t3" },
+      { type: "title", title: "renamed", ts: "t4" },
+      { type: "archive", archived: false, ts: "t5" },
+    ]).rooms.get("r1");
+    expect(room?.title).toBe("renamed");
+    expect(room?.archived).toBe(false);
     expect(room?.kind).toBe("broadcast");
-    expect(room?.timeline).toHaveLength(1);
+    expect(room?.timeline).toHaveLength(5);
   });
 
-  // 何を保証するか (§2.1 rooms 応答経由の初期反映): op:"rooms" 応答に
-  // kind:"broadcast" が含まれていれば applyRoomsLoaded で room.kind が
-  // "broadcast" になる。webui の初期 paint (ws.ts の onOpen 内の rooms fetch)
-  // でここが動かないと reload 直後は kind バッジが出ない。
-  test("rooms/loaded seeds room.kind from RoomSummary.kind", () => {
-    const summaries: RoomSummary[] = [
-      { id: "r1", members: [], last_mid: 0, last_ts: null, kind: "broadcast" },
-    ];
-    const state = dispatch(initialState(), { type: "rooms/loaded", rooms: summaries });
-    expect(state.rooms.get("r1")?.kind).toBe("broadcast");
+  test("next / prev are lines that change no other room state", () => {
+    const room = log([
+      { type: "prev", room: "r0", ts: "t1" },
+      { type: "next", room: "r2", ts: "t2" },
+    ]).rooms.get("r1");
+    expect(room?.timeline).toHaveLength(2);
+    expect(room?.lastMid).toBe(0);
+    expect(room?.kind).toBe("normal");
   });
 
-  // 何を保証するか: kind が省略された RoomSummary は "normal" が既に入って
-  // いれば触らない — archive/title 同型の "if defined" merge。broadcast だと
-  // 分かった room が rooms/loaded の再取得で normal 扱いに戻る回帰を防ぐ。
-  test("rooms/loaded with no kind field leaves an already-known kind untouched", () => {
-    const withKind = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { type: "kind", kind: "broadcast", ts: "t", r: "r1" },
-    });
-    const reloaded = dispatch(withKind, {
-      type: "rooms/loaded",
-      rooms: [{ id: "r1", members: [], last_mid: 0, last_ts: null }],
-    });
-    expect(reloaded.rooms.get("r1")?.kind).toBe("broadcast");
-  });
-
-  // 新規 room (create_room から subscribe stream で流れてくる初回 event 群) は
-  // kind → member → msg の順で届く。newRoom の default が "normal" なので、
-  // kind event が来る前に room が構築されていても kind 反映で上書きされる
-  // 経路 (KindEvent が member より先着) を単に確認する。
-  test("newRoom defaults to kind:'normal'", () => {
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: {
-        type: "msg",
-        mid: 1,
-        from: "u1",
-        ts: "t",
-        msg: "hi",
-        r: "r1",
-      },
-    });
-    expect(state.rooms.get("r1")?.kind).toBe("normal");
+  // A 1on1 room's say rows show as bubbles; the ack is state, not
+  // conversation, so it adds no line. The daemon's own says stay apart.
+  test("a 1on1 room's say joins its timeline, its say_read adds no line, says stay apart", () => {
+    const say: StorageEvent = {
+      type: "say",
+      sid: "sid-abcdefgh",
+      text: "hi",
+      ts: "2026-08-31T00:00:00.000Z",
+      seq: 7,
+    };
+    const state = log([say, { type: "say_read", ref: 7, ts: "2026-08-31T00:00:01.000Z", seq: 8 }]);
+    expect(state.rooms.get("r1")?.timeline).toEqual([say]);
+    expect(state.rooms.get("r1")?.lastTs).toBe("2026-08-31T00:00:01.000Z");
+    expect(state.says).toEqual([]);
   });
 });
 
@@ -342,32 +239,6 @@ describe("reducer / says (kawaz r244 m5-m6, DR-0036 §3)", () => {
     state = dispatch(state, { type: "says/loaded", says: [record("i/1", true)] });
     expect(state.says).toEqual([record("i/1", true)]);
     state = dispatch(state, { type: "says/loaded", says: [] });
-    expect(state.says).toEqual([]);
-  });
-
-  // 輪郭: 既存の 1on1 room が持つ say 行は、painted な room の timeline に
-  // bubble として積まれ、say_read 行は timeline に行を足さない (既読は状態で
-  // あって会話ではない)。room の say は daemon の記録 (says) に入らない。
-  test("an existing 1on1 room's say rows join its timeline and stay out of says", () => {
-    let state = dispatch(initialState(), {
-      type: "rooms/loaded",
-      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null }],
-    });
-    state = dispatch(state, { type: "room-history/loaded", room: "r1" });
-    const say: DeliveredEvent = {
-      type: "say",
-      r: "r1",
-      sid: "sid-abcdefgh",
-      text: "hi",
-      ts: "2026-08-31T00:00:00.000Z",
-      seq: 7,
-    };
-    state = dispatch(state, { type: "protocol-event", event: say });
-    state = dispatch(state, {
-      type: "protocol-event",
-      event: { type: "say_read", r: "r1", ref: 7, ts: "2026-08-31T00:00:01.000Z", seq: 8 },
-    });
-    expect(state.rooms.get("r1")?.timeline).toEqual([say]);
     expect(state.says).toEqual([]);
   });
 });
@@ -394,9 +265,8 @@ describe("reducer / translator availability (DR-0023)", () => {
 });
 
 describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
-  test("sets currentRoomId + currentMid and resets mentionTo", () => {
-    const withMention = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
-    const state = dispatch(withMention, {
+  test("sets currentRoomId + currentMid", () => {
+    const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: 4 },
       sidebar: CLOSED_SIDEBAR,
@@ -404,7 +274,6 @@ describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
     expect(state.view).toBe("room");
     expect(state.currentRoomId).toBe("r1");
     expect(state.currentMid).toBe(4);
-    expect(state.mentionTo.size).toBe(0);
   });
 
   test("room-only locator (#rXXXX, no message anchor) leaves currentMid null", () => {
@@ -695,15 +564,6 @@ describe("reducer / fs/file-patched", () => {
         content: "- [x] a\n",
       }),
     ).toBe(loading);
-  });
-});
-
-describe("reducer / mention/toggle", () => {
-  test("toggles an id in and out of mentionTo", () => {
-    const added = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
-    expect(added.mentionTo.has("a1")).toBe(true);
-    const removed = dispatch(added, { type: "mention/toggle", id: "a1" });
-    expect(removed.mentionTo.has("a1")).toBe(false);
   });
 });
 
@@ -2177,87 +2037,53 @@ describe("reducer / room history fetch state", () => {
     expect(listed().rooms.get("r1")?.history).toBe("idle");
   });
 
-  test("an unfetched room takes an event's metadata but not the event itself", () => {
-    // The daemon's recent-replay pushes the last few minutes of msgs to a
-    // subscriber with no cursor. Appending one to an empty timeline would put
-    // it ahead of the older msgs a later room_history fetch delivers.
-    const state = dispatch(listed(), {
-      type: "protocol-event",
-      event: { type: "msg", mid: 3, from: ADMIN_ID, ts: "t3", msg: "recent", r: "r1" },
-    });
-    const room = state.rooms.get("r1");
-    expect(room?.timeline).toEqual([]);
-    expect(room?.msgs.size).toBe(0);
-    // ...but the sidebar's ordering/badge inputs still move.
-    expect(room?.lastMid).toBe(3);
-    expect(room?.lastTs).toBe("t3");
-  });
-
-  test("a title event on an unfetched room still renames it", () => {
-    const state = dispatch(listed(), {
-      type: "protocol-event",
-      event: { type: "title", title: "renamed", ts: "t4", r: "r1" },
-    });
-    expect(state.rooms.get("r1")?.title).toBe("renamed");
-    expect(state.rooms.get("r1")?.timeline).toEqual([]);
-  });
-
-  test("events fold normally once the fetch is in flight and after it lands", () => {
-    // "loading" already folds: the fetched snapshot's own events arrive between
-    // the request and its reply.
+  test("loading, then the log replaces the room with its fold", () => {
     const loading = dispatch(listed(), { type: "room-history/loading", room: "r1" });
-    const withSnapshot = dispatch(loading, {
-      type: "protocol-event",
-      event: { type: "msg", mid: 1, from: ADMIN_ID, ts: "t1", msg: "old", r: "r1" },
+    expect(loading.rooms.get("r1")?.history).toBe("loading");
+    const loaded = dispatch(loading, {
+      type: "room-history/loaded",
+      room: "r1",
+      events: [{ type: "msg", mid: 1, from: ADMIN_ID, ts: "t1", msg: "old" }],
     });
-    expect(withSnapshot.rooms.get("r1")?.timeline).toHaveLength(1);
+    const room = loaded.rooms.get("r1");
+    expect(room?.history).toBe("loaded");
+    expect(room?.timeline).toHaveLength(1);
+    expect(room?.lastMid).toBe(1);
+  });
 
-    const loaded = dispatch(withSnapshot, { type: "room-history/loaded", room: "r1" });
-    expect(loaded.rooms.get("r1")?.history).toBe("loaded");
-    const live = dispatch(loaded, {
-      type: "protocol-event",
-      event: { type: "msg", mid: 2, from: ADMIN_ID, ts: "t2", msg: "new", r: "r1" },
-    });
-    expect(live.rooms.get("r1")?.timeline).toHaveLength(2);
+  test("a room never listed can be fetched directly (a link to it)", () => {
+    const loading = dispatch(initialState(), { type: "room-history/loading", room: "r9" });
+    expect(loading.rooms.get("r9")?.history).toBe("loading");
   });
 
   test("a failed fetch is recorded as an error, not as loaded", () => {
     const state = dispatch(dispatch(listed(), { type: "room-history/loading", room: "r1" }), {
-      type: "room-history/loaded",
+      type: "room-history/failed",
       room: "r1",
-      error: "disconnected",
+      missing: false,
     });
     expect(state.rooms.get("r1")?.history).toBe("error");
+    expect(state.missingTarget).toBeNull();
   });
 
-  test("a room the store has never seen folds its introductory snapshot as-is", () => {
-    // create_room / invite deliver the new room's whole snapshot unprompted —
-    // that IS its history, so there is nothing to fetch.
-    const state = dispatch(initialState(), {
-      type: "protocol-event",
-      event: { ...member, r: "r-new" },
+  // The room on screen turned out not to exist: the view shows the 404 a gone
+  // session gets. A room fetched while another view is on screen does not.
+  test("room_not_found for the room on screen is the room's 404", () => {
+    const onScreen = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "room", room: "r9", mid: null },
+      sidebar: CLOSED_SIDEBAR,
     });
-    const room = state.rooms.get("r-new");
-    expect(room?.history).toBe("loaded");
-    expect(room?.timeline).toHaveLength(1);
-  });
+    const gone = dispatch(onScreen, { type: "room-history/failed", room: "r9", missing: true });
+    expect(gone.rooms.get("r9")?.history).toBe("missing");
+    expect(gone.missingTarget).toEqual({ kind: "room", id: "r9" });
 
-  test("rooms/history-reset drops the named rooms' events, keeping their metadata", () => {
-    const loaded = dispatch(dispatch(listed(), { type: "room-history/loading", room: "r1" }), {
-      type: "room-history/loaded",
-      room: "r1",
+    const elsewhere = dispatch(initialState(), {
+      type: "room-history/failed",
+      room: "r9",
+      missing: true,
     });
-    const painted = dispatch(loaded, {
-      type: "protocol-event",
-      event: { type: "msg", mid: 1, from: ADMIN_ID, ts: "t1", msg: "old", r: "r1" },
-    });
-    const reset = dispatch(painted, { type: "rooms/history-reset", rooms: ["r1"] });
-    const room = reset.rooms.get("r1");
-    expect(room?.history).toBe("idle");
-    expect(room?.timeline).toEqual([]);
-    expect(room?.msgs.size).toBe(0);
-    // metadata the `op:"rooms"` reply owns survives, so the sidebar row stays put
-    expect(room?.lastMid).toBe(2);
+    expect(elsewhere.missingTarget).toBeNull();
   });
 });
 
@@ -2433,7 +2259,7 @@ describe("locator/changed の sb.* 反映", () => {
 
   test("sb.panel が開いている panel を決める", () => {
     expect(at("?sb.panel=search").sidebar.panel).toBe("session-search");
-    expect(at("?sb.panel=room").sidebar.panel).toBe("room-creator");
+    expect(at("?sb.panel=new").sidebar.panel).toBe("session-creator");
     expect(at("").sidebar.panel).toBeNull();
   });
 

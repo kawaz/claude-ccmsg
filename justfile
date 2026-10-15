@@ -29,7 +29,7 @@ version-files := ".claude-plugin/plugin.json .claude-plugin/marketplace.json pac
 # (LH/LF・FNH/FNF) と比べ、どれかを下回ったら `just coverage` を落とす。
 # 値の根拠は docs/findings/2026-10-14-test-coverage-baseline.md
 
-coverage-thresholds := "protocol:97:98 daemon:58:75 cli:84:85 webui:74:80 hooks:80:85"
+coverage-thresholds := "protocol:97:98 daemon:62:79 cli:87:85 webui:75:81 hooks:80:85"
 
 # ---------- default ----------
 
@@ -195,14 +195,15 @@ _local-plugin-reload:
 # push 直後に最新 plugin cache 実体で daemon へ 1 回接触し、newer-wins upgrade を
 # 即時発動させる (issue 2026-07-12-post-release-daemon-upgrade-lag 案 (a))。
 # これが無いと新バージョン client の初接触まで旧 daemon (旧 webui bundle) が
-# 配信され続ける。接触は read-only の rooms op で行う。
+# 配信され続ける。接触は読むだけの peers で行う (daemon の版を比べて入れ替える
+# のは daemon を起こす経路 (ensureDaemon) を通るコマンドだけで、status は通らない)。
 [private]
 [script]
 _local-daemon-upgrade:
     cache_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/ccmsg-v1/ccmsg-v1"
     latest=$(ls "$cache_dir" | sort -V | tail -1)
     [ -x "$cache_dir/$latest/bin/ccmsg" ] || exit 0
-    "$cache_dir/$latest/bin/ccmsg" rooms > /dev/null 2>&1 || true
+    "$cache_dir/$latest/bin/ccmsg" peers > /dev/null 2>&1 || true
     echo "[local-daemon-upgrade] contacted daemon with v$latest client (newer-wins)"
 
 # 翻訳ペア (NAME-ja.md / NAME.md) の整合性チェック

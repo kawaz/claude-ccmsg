@@ -1,7 +1,7 @@
 // Central store for the webui client (DR-0005 §1): typed AppState, a typed
-// Action union, and a pure reducer. WS-delivered protocol events are folded in
-// through the same `protocol-event` action as UI-originated actions (mention
-// toggle, locator change, ...) so there is exactly one state-transition path.
+// Action union, and a pure reducer. WS replies and pushes are folded in
+// through the same actions as UI-originated ones (locator change, ...) so
+// there is exactly one state-transition path.
 // Effects (WS connect/reconnect, hello/subscribe handshake, localStorage, and
 // DR-0008 fs_list/fs_read calls) live in ws.ts / the FileTree & FileViewer
 // components and dispatch actions here; nothing in this file touches the
@@ -9,12 +9,12 @@
 import {
   ADMIN_ID,
   type AgentInfo,
-  type DeliveredEvent,
   type FsEntry,
   type FsReadResponse,
   type LlmRequestInfo,
   type LlmStatusReport,
   type MemberEvent,
+  type MsgEvent,
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
@@ -24,6 +24,7 @@ import {
   type ForkOrigin,
   type SessionSearchHit,
   type SessionStatusSnapshot,
+  type StorageEvent,
   type TranscriptReadResponse,
   parseWith,
 } from "@ccmsg/protocol";
@@ -79,30 +80,25 @@ export interface MemberInfo extends MemberEvent {
   left: boolean;
 }
 
+/** One room log, read-only (DR-0036 §2). The room list fills the metadata
+ * from the `rooms` reply; opening the room fetches its log (`room_history`)
+ * and refolds everything from the events. */
 export interface RoomState {
   id: string;
   title?: string;
   membersById: Map<string, MemberInfo>;
   memberOrder: string[];
-  msgs: Map<number, DeliveredEvent & { type: "msg" }>;
-  timeline: DeliveredEvent[];
+  msgs: Map<number, MsgEvent>;
+  timeline: StorageEvent[];
   lastMid: number;
   lastTs: string | null;
-  /** archived flag (DR-0012), last archive event wins; absent/false = not
-   * archived. Mirrors RoomSummary.archived / ArchiveEvent — a display-
-   * organization flag only, no lifecycle effect on the room itself. */
+  /** archived flag (DR-0012), last archive event wins. */
   archived?: boolean;
-  /** room kind (DR-0013). "broadcast" opens the broadcast Composer variant
-   * (hint + broadcast-target picker) and paints the sidebar row with a
-   * broadcast badge. Absent = "normal" (default at construction below). */
+  /** room kind (DR-0013 broadcast / DR-0014 1on1). */
   kind: RoomKind;
-  /** Whether this room's history has been fetched (`op:"room_history"`).
-   * `rooms/loaded` gives every room its metadata (title, members, last_mid) but
-   * no events, so a room stays "idle" until the user opens it — that's what
-   * keeps a reload from pulling every room's whole log. "loaded" is what stops
-   * RoomView from re-fetching (and duplicating non-msg events in `timeline`,
-   * which has no id to dedup on the way `msgs` does). */
-  history: "idle" | "loading" | "loaded" | "error";
+  /** Whether this room's log has been fetched (`room_history`): "idle" until
+   * the room is opened, "missing" when the daemon has no such room. */
+  history: "idle" | "loading" | "loaded" | "error" | "missing";
 }
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
@@ -226,7 +222,10 @@ export interface DaemonInfo {
 
 export interface AppState {
   rooms: Map<string, RoomState>;
-  roomsLoaded: boolean;
+  /** Whether the room list has been fetched (`rooms`). Fetched when the
+   * sidebar's room list is first opened, not on connect: the logs no longer
+   * change, so nothing has to be kept current. */
+  roomList: "idle" | "loading" | "loaded" | "error";
   peers: readonly PeerInfo[];
   peersLoaded: boolean;
   /** `claude agents --json` rows, merged with `peers` by sessionId in the
@@ -285,8 +284,8 @@ export interface AppState {
    * 押した先の起動フォームが「未設定」しか返せない — sandboxAvailable と
    * 同じ姿勢)。 */
   forkAvailable: boolean;
-  /** 開いているフォームパネル (新規セッション / セッション検索 / 新規 Room)
-   * と、そのフォームに渡された初期値。3 つは排他 (sidebar-url.ts)。
+  /** 開いているフォームパネル (新規セッション / セッション検索) と、その
+   * フォームに渡された初期値。2 つは排他 (sidebar-url.ts)。
    *
    * URL の `sb.*` から導出した値で、ここが書き変わる経路は
    * `locator/changed` だけ = URL が正本 (kawaz r259 m47-m53)。パネルの開閉
@@ -296,9 +295,8 @@ export interface AppState {
    * store に置くのは、この値が URL から降ってくるため — locator を読む
    * のは App で、パネルを描くのは Sidebar。 */
   sidebar: SidebarUrlState;
-  /** SESSIONS 一覧の並び順。RoomCreator のメンバ欄も同じ順で並ぶので、
-   * 両者が読める場所として store が持つ。URL には載せない — 見る順序は
-   * 貼って共有する状態ではない。 */
+  /** SESSIONS 一覧の並び順。URL には載せない — 見る順序は貼って共有する
+   * 状態ではない。 */
   peerSortKey: PeerSortKey;
   /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
@@ -391,8 +389,6 @@ export interface AppState {
    * pins may not have a transcript, so SessionView uses the stored file only
    * as transcript capability evidence rather than treating every pin as one. */
   pinnedSessions: Map<string, SessionSearchHit>;
-  /** mention targets staged for the composer of the current room. */
-  mentionTo: Set<string>;
   connStatus: ConnStatus;
   /** サイドバーが在るか。既定は「在る」で、ハンバーガーが唯一の切り替え口
    * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたい時に消す)。
@@ -404,7 +400,7 @@ export interface AppState {
 export function initialState(): AppState {
   return {
     rooms: new Map(),
-    roomsLoaded: false,
+    roomList: "idle",
     peers: [],
     peersLoaded: false,
     agents: [],
@@ -440,7 +436,6 @@ export function initialState(): AppState {
     llmRequests: new Map(),
     says: [],
     pinnedSessions: new Map(),
-    mentionTo: new Set(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
   };
@@ -448,17 +443,14 @@ export function initialState(): AppState {
 
 export type Action =
   | { type: "conn/status"; status: ConnStatus }
+  | { type: "rooms/loading" }
   | { type: "rooms/loaded"; rooms: readonly RoomSummary[] }
-  // One room's `op:"room_history"` round trip (RoomView opens a room). The
-  // snapshot events themselves arrive as ordinary delivered events and fold in
-  // through applyProtocolEvent; these two only move the room's `history` flag.
-  // Reconnect-time invalidation: a room this connection holds no `since_seq`
-  // cursor for gets no delta replay, so whatever events the store still has for
-  // it are a snapshot from a dead socket with an unknown gap at the end.
-  // Dropping them back to "idle" makes the next open refetch.
-  | { type: "rooms/history-reset"; rooms: string[] }
+  | { type: "rooms/failed" }
+  // One room's `room_history` round trip (RoomView opens a room). `missing`
+  // is the daemon having no such room.
   | { type: "room-history/loading"; room: string }
-  | { type: "room-history/loaded"; room: string; error?: string }
+  | { type: "room-history/loaded"; room: string; events: readonly StorageEvent[] }
+  | { type: "room-history/failed"; room: string; missing: boolean }
   | { type: "peers/loaded"; peers: readonly PeerInfo[] }
   // Both the one-shot `op:"agents"` reply (initial paint) and the pushed
   // `ev:"agents"` stream event (subsequent changes) fold in here — the
@@ -494,12 +486,10 @@ export type Action =
   | { type: "fork/availability"; available: boolean }
   | { type: "peers/sort-key"; key: PeerSortKey }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
-  | { type: "protocol-event"; event: DeliveredEvent }
   // path と `sb.*` は 1 つの URL の別々の名前空間で、遷移のたびに両方が
   // 届く (navigation.ts の apply)。フォームパネルはこの経路でしか開かない。
   | { type: "locator/changed"; locator: Locator; sidebar: SidebarUrlState }
   | { type: "navigation/missing"; target: MissingTarget | null }
-  | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean }
   | { type: "fs/dir-toggled"; sid: string; path: string }
   // Additive-only counterpart of fs/dir-toggled: opens every listed path and
@@ -606,11 +596,10 @@ export type Action =
   | { type: "session-status/cleared"; sid: string }
   // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
   // once at startup from main.tsx after reading localStorage — never
-  // dispatched again afterward (unlike rooms/loaded, which can legitimately
-  // re-fire on reconnect). Every action keys on the hit's cwd (pinKey); a hit
-  // with no cwd cannot be pinned and leaves the state unchanged. "toggled" is
-  // the pin buttons' action; "removed" is the sidebar Pinned section's unpin,
-  // by pin key.
+  // dispatched again afterward. Every action keys on the hit's cwd (pinKey);
+  // a hit with no cwd cannot be pinned and leaves the state unchanged.
+  // "toggled" is the pin buttons' action; "removed" is the sidebar Pinned
+  // section's unpin, by pin key.
   | { type: "pinned/hydrated"; hits: SessionSearchHit[] }
   | { type: "pinned/added"; hit: SessionSearchHit }
   | { type: "pinned/removed"; key: string }
@@ -656,14 +645,6 @@ function newRoom(id: string): RoomState {
   };
 }
 
-/** Copy-on-write room lookup: returns [room, roomsMapWithThatRoom]. */
-function withRoom(rooms: Map<string, RoomState>, id: string): [RoomState, Map<string, RoomState>] {
-  const existing = rooms.get(id) ?? newRoom(id);
-  const next = new Map(rooms);
-  next.set(id, existing);
-  return [existing, next];
-}
-
 function newTimelineState(): TimelineState {
   return {
     status: "idle",
@@ -689,7 +670,7 @@ function newSessionTree(): SessionTreeState {
   };
 }
 
-/** Copy-on-write session-tree lookup, mirrors withRoom above. */
+/** Copy-on-write session-tree lookup: returns [tree, treesMapWithThatTree]. */
 function withSessionTree(
   trees: Map<string, SessionTreeState>,
   sid: string,
@@ -700,147 +681,75 @@ function withSessionTree(
   return [existing, next];
 }
 
-function upsertMember(room: RoomState, m: MemberEvent): RoomState {
-  const membersById = new Map(room.membersById);
-  const memberOrder = membersById.has(m.id) ? room.memberOrder : [...room.memberOrder, m.id];
-  membersById.set(m.id, { ...m, left: membersById.get(m.id)?.left ?? false });
-  return { ...room, membersById, memberOrder };
-}
-
 function applyRoomsLoaded(state: AppState, summaries: readonly RoomSummary[]): AppState {
-  let rooms = state.rooms;
-  for (const summary of summaries) {
-    let room: RoomState;
-    [room, rooms] = withRoom(rooms, summary.id);
-    if (summary.title) room = { ...room, title: summary.title };
-    if (summary.archived !== undefined) room = { ...room, archived: summary.archived };
-    // DR-0013: broadcast kind reaches the initial paint via the `op:"rooms"`
-    // reply — subsequent creates come through the KindEvent path in
-    // applyProtocolEvent below. Absent = "normal", already the newRoom default.
-    if (summary.kind !== undefined) room = { ...room, kind: summary.kind };
-    room = {
-      ...room,
-      lastMid: summary.last_mid ?? room.lastMid,
-      lastTs: summary.last_ts ?? room.lastTs,
-    };
-    for (const m of summary.members) room = upsertMember(room, m);
-    rooms = new Map(rooms);
-    rooms.set(summary.id, room);
-  }
-  return { ...state, rooms };
-}
-
-/** Drop the named rooms' fetched events, keeping the metadata the `op:"rooms"`
- * reply owns (title, members, last_mid — the sidebar keeps painting). Back at
- * "idle", a room refetches its history the next time it is opened. */
-function forgetRoomHistories(state: AppState, roomIds: string[]): AppState {
-  if (roomIds.length === 0) return state;
   const rooms = new Map(state.rooms);
-  for (const id of roomIds) {
-    const room = rooms.get(id);
-    if (!room) continue;
-    rooms.set(id, { ...room, timeline: [], msgs: new Map(), history: "idle" });
+  for (const summary of summaries) {
+    const room = rooms.get(summary.id) ?? newRoom(summary.id);
+    // A room whose log is already open was folded from the log itself, which
+    // says everything the summary does.
+    if (room.history === "loaded") continue;
+    const membersById = new Map(summary.members.map((m) => [m.id, { ...m, left: false }]));
+    rooms.set(summary.id, {
+      ...room,
+      title: summary.title,
+      membersById,
+      memberOrder: summary.members.map((m) => m.id),
+      lastMid: summary.last_mid,
+      lastTs: summary.last_ts,
+      archived: summary.archived,
+      kind: summary.kind ?? "normal",
+    });
   }
-  return { ...state, rooms };
+  return { ...state, rooms, roomList: "loaded" };
 }
 
 function setRoomHistory(state: AppState, roomId: string, history: RoomState["history"]): AppState {
-  const [room, rooms] = withRoom(state.rooms, roomId);
-  rooms.set(roomId, { ...room, history });
+  const rooms = new Map(state.rooms);
+  rooms.set(roomId, { ...(rooms.get(roomId) ?? newRoom(roomId)), history });
   return { ...state, rooms };
 }
 
-/** Fold one delivered protocol event (subscribe backlog/live, DR-0003) into room state.
- * Every branch also refreshes `lastTs` from its own event's timestamp (member's
- * `joined_at`, everything else's `ts`) to match daemon storage.ts's `lastTs()`, which
- * takes the last *any* event's ts, not just msg — otherwise a live-subscribed client's
- * room-list order (e.g. after an archive toggle) would only match a post-reload refetch
- * once a msg happened to land afterward.
- *
- * A known room whose history hasn't been fetched yet takes the metadata half
- * only: members, title, archived, kind, lastMid, lastTs all update (the sidebar
- * row has to stay live), but nothing is appended to `timeline`/`msgs`. Such a
- * room is a sidebar entry built from the `op:"rooms"` reply, and the events
- * reaching it arrive out of order relative to history it doesn't have yet — the
- * daemon's recent-replay window pushes the last few minutes of msgs on
- * subscribe, which would otherwise sit in `timeline` *before* the older msgs a
- * later `op:"room_history"` appends. Dropping them costs nothing: the fetch
- * that runs when the room is opened includes them. */
-function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
-  const roomId = ev.r;
-  // A room the store has never seen is one the daemon just introduced — a fresh
-  // create_room, or an invite that added this client — and it introduces it by
-  // delivering the room's whole snapshot. That IS the history, so the room is
-  // born "loaded" and folds events normally; only a room already known (and
-  // therefore already listed without its events) waits for an explicit fetch.
-  const known = state.rooms.has(roomId);
-  let [room, rooms] = withRoom(state.rooms, roomId);
-  if (!known) room = { ...room, history: "loaded" };
-  // "loading" counts as painted: the history snapshot's own events arrive
-  // between the request and its reply, so waiting for "loaded" would drop the
-  // very events being fetched. The only other events that can land in that
-  // window are live ones the daemon delivered after the request left the client
-  // and before it handled it; a msg among them dedups by mid below, and a
-  // duplicated member/title line in `timeline` is the accepted cost of not
-  // buffering a whole second event queue for a sub-millisecond race.
-  const painted = room.history === "loading" || room.history === "loaded";
-  const withEvent = (r: RoomState, appended: DeliveredEvent): RoomState =>
-    painted ? { ...r, timeline: [...r.timeline, appended] } : r;
-  switch (ev.type) {
-    case "member":
-      room = upsertMember(room, ev);
-      room = { ...withEvent(room, ev), lastTs: ev.joined_at };
-      break;
-    case "leave": {
-      const membersById = new Map(room.membersById);
-      const m = membersById.get(ev.id);
-      if (m) membersById.set(ev.id, { ...m, left: true });
-      room = { ...withEvent({ ...room, membersById }, ev), lastTs: ev.ts };
-      break;
-    }
-    case "msg":
-      if (painted && !room.msgs.has(ev.mid)) {
-        const msgs = new Map(room.msgs);
-        msgs.set(ev.mid, ev);
-        room = { ...room, msgs, timeline: [...room.timeline, ev] };
+/** A room as its log says it is. Every event refreshes `lastTs` from its own
+ * timestamp (member's `joined_at`, everything else's `ts`), as the daemon's
+ * room summary does. A `say_read` is state, not conversation, so it has no
+ * line in the timeline; a msg seen twice keeps its first line. */
+export function foldRoomLog(id: string, events: readonly StorageEvent[]): RoomState {
+  const room: RoomState = { ...newRoom(id), history: "loaded" };
+  const membersById = new Map<string, MemberInfo>();
+  const msgs = new Map<number, MsgEvent>();
+  const timeline: StorageEvent[] = [];
+  for (const ev of events) {
+    room.lastTs = ev.type === "member" ? ev.joined_at : ev.ts;
+    switch (ev.type) {
+      case "member":
+        if (!membersById.has(ev.id)) room.memberOrder.push(ev.id);
+        membersById.set(ev.id, { ...ev, left: false });
+        break;
+      case "leave": {
+        const m = membersById.get(ev.id);
+        if (m) membersById.set(ev.id, { ...m, left: true });
+        break;
       }
-      room = { ...room, lastMid: Math.max(room.lastMid, ev.mid), lastTs: ev.ts };
-      break;
-    case "title":
-      room = { ...withEvent(room, ev), title: ev.title, lastTs: ev.ts };
-      break;
-    case "archive":
-      room = { ...withEvent(room, ev), archived: ev.archived, lastTs: ev.ts };
-      break;
-    case "kind":
-      // DR-0013: KindEvent lands in a fresh broadcast room's initial snapshot
-      // (deliverNewRoom → sendBacklog); folding it into room.kind keeps the
-      // sidebar badge and Composer variant live even without an intervening
-      // `op:"rooms"` refresh. lastTs bumped like the other display-metadata
-      // events so the room-list order matches storage.ts's lastTs() at the
-      // moment the new broadcast lands.
-      room = { ...room, kind: ev.kind, timeline: [...room.timeline, ev], lastTs: ev.ts };
-      break;
-    case "say":
-      // A say an existing 1on1 room holds: shown in that room's timeline as
-      // it was recorded, with no read state (unread tracking is the daemon's
-      // say records, `says` above).
-      room = { ...withEvent(room, ev), lastTs: ev.ts };
-      break;
-    case "say_read":
-      // The ack is state, not conversation: no line of its own.
-      room = { ...room, lastTs: ev.ts };
-      break;
-    case "next":
-    case "prev":
-      room = { ...room, timeline: [...room.timeline, ev], lastTs: ev.ts };
-      break;
-    default:
-      return state;
+      case "msg":
+        room.lastMid = Math.max(room.lastMid, ev.mid);
+        if (msgs.has(ev.mid)) continue;
+        msgs.set(ev.mid, ev);
+        break;
+      case "title":
+        room.title = ev.title;
+        break;
+      case "archive":
+        room.archived = ev.archived;
+        break;
+      case "kind":
+        room.kind = ev.kind;
+        break;
+      case "say_read":
+        continue;
+    }
+    timeline.push(ev);
   }
-  rooms = new Map(rooms);
-  rooms.set(roomId, room);
-  return { ...state, rooms };
+  return { ...room, membersById, msgs, timeline };
 }
 
 /** Fold a URL-locator change (DR-0008: `#rXXXX[-mNN]` or `#s<sid>[:<path>]`;
@@ -872,7 +781,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       timelinePosition: null,
-      mentionTo: new Set(),
     };
   }
   if (locator.view === "usage") {
@@ -891,7 +799,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       timelinePosition: null,
-      mentionTo: new Set(),
     };
   }
   if (locator.view === "room") {
@@ -905,7 +812,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentMid: locator.mid,
       currentAgent: null,
       timelinePosition: null,
-      mentionTo: new Set(),
     };
   }
   if (locator.view === "timeline") {
@@ -936,7 +842,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: nextAgent,
       timelinePosition: locator.position ?? "head",
       sessionTrees,
-      mentionTo: new Set(),
     };
   }
   let [tree, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
@@ -962,7 +867,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     currentAgent: null,
     timelinePosition: null,
     sessionTrees,
-    mentionTo: new Set(),
   };
 }
 
@@ -1054,14 +958,27 @@ export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "conn/status":
       return { ...state, connStatus: action.status };
-    case "rooms/history-reset":
-      return forgetRoomHistories(state, action.rooms);
+    case "rooms/loading":
+      return { ...state, roomList: "loading" };
     case "rooms/loaded":
-      return { ...applyRoomsLoaded(state, action.rooms), roomsLoaded: true };
+      return applyRoomsLoaded(state, action.rooms);
+    case "rooms/failed":
+      return { ...state, roomList: "error" };
     case "room-history/loading":
       return setRoomHistory(state, action.room, "loading");
-    case "room-history/loaded":
-      return setRoomHistory(state, action.room, action.error !== undefined ? "error" : "loaded");
+    case "room-history/loaded": {
+      const rooms = new Map(state.rooms);
+      rooms.set(action.room, foldRoomLog(action.room, action.events));
+      return { ...state, rooms };
+    }
+    case "room-history/failed": {
+      const next = setRoomHistory(state, action.room, action.missing ? "missing" : "error");
+      // The room on screen turned out not to exist: the same 404 a URL
+      // naming a gone session gets (navigation.ts missingTarget).
+      return action.missing && state.view === "room" && state.currentRoomId === action.room
+        ? { ...next, missingTarget: { kind: "room", id: action.room } }
+        : next;
+    }
     case "peers/loaded":
       return {
         ...state,
@@ -1148,8 +1065,6 @@ export function reducer(state: AppState, action: Action): AppState {
       for (const [name, record] of action.records) llmUsageProbes.set(name, record);
       return { ...state, llmUsageProbes };
     }
-    case "protocol-event":
-      return applyProtocolEvent(state, action.event);
     case "locator/changed": {
       const next = applyLocatorChanged(state, action.locator);
       return {
@@ -1161,12 +1076,6 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "navigation/missing":
       return { ...state, missingTarget: action.target };
-    case "mention/toggle": {
-      const mentionTo = new Set(state.mentionTo);
-      if (mentionTo.has(action.id)) mentionTo.delete(action.id);
-      else mentionTo.add(action.id);
-      return { ...state, mentionTo };
-    }
     case "fs/dir-toggled": {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       const expanded = new Set(tree.expanded);

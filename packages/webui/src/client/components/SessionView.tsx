@@ -1,7 +1,7 @@
 // Top-level "session" screen (DR-0008 Files pane, DR-0009 Timeline pane,
 // DR-0020 Status tab). Selected via the `#s<sid>[:<path>]` (Files) or
 // `#t<sid>` (Timeline) locator (App.tsx routes here instead of RoomView when
-// state.view is "session" or "timeline"). Files/Timeline/Rooms/Status all
+// state.view is "session" or "timeline"). Files/Timeline/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
@@ -10,7 +10,6 @@ import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from ".
 import {
   fileHref,
   filesHref,
-  sessionRoomsHref,
   statusHref,
   terminalHref,
   timelineHref,
@@ -27,7 +26,6 @@ import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./timeline/Timeline.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
-import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
@@ -71,7 +69,6 @@ function sessionTabItems(
         ]
       : []),
     { id: "status", label: "Status", href: statusHref(sid) },
-    { id: "rooms", label: "Rooms", href: sessionRoomsHref(sid) },
   ];
 }
 
@@ -220,7 +217,7 @@ export function SessionView({
 
   // Status データ購読 (DR-0020 Phase 2/3, DR-0024): Status/Timeline に加え
   // Files タブも external_files を要るため、この 3 タブのどれかが開いている間
-  // subscribe する。Rooms に切り替わる/セッションが変わる/unmount のいずれかで
+  // subscribe する。Terminal に切り替わる/セッションが変わる/unmount のいずれかで
   // unsubscribe + キャッシュ破棄する。ひとつの effect が 3 タブの需要を兼ねる
   // — タブ別に effect を分けると、同じ (sid) への
   // subscribe が daemon 側で Set 的に重複排除される一方 unsubscribe は
@@ -334,7 +331,7 @@ export function SessionView({
          * change the shape of the row between sessions.
          *
          * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
-         * Timeline (similar views adjacent, "Rooms の隣は変"), Rooms last.
+         * Timeline (similar views adjacent).
          *
          * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
          * open (= state.currentAgent set) — navigating to `statusHref(sid)`
@@ -437,13 +434,8 @@ export function SessionView({
           )}
         </div>
       ) : null}
-      {visitedTabs.has("rooms") ? (
-        <div class="session-tab-panel" hidden={tab !== "rooms"} data-session-tab="rooms">
-          <SessionRooms sid={sid} />
-        </div>
-      ) : null}
       {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
-       * (files/timeline/status/rooms/terminal) によらず常時表示する —
+       * (files/timeline/status/terminal) によらず常時表示する —
        * position:fixed の floating FAB なので裏のタブコンテンツと干渉しない。
        * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
        * attachments state も保たれる (draft は localStorage にも保存)。

@@ -5,7 +5,7 @@
 //      編集後の設定が反映される (= 稼働中 daemon に設定変更を届ける手段が
 //      成立している。設定は起動時 1 回読み (DR-0018 LN-Q4) なので、restart
 //      でしか反映されない)。
-//   2. restart を跨いで subscribe が生存し、跨ぎ後の room イベントを受け取る (= 意図的
+//   2. restart を跨いで subscribe が生存し、跨ぎ後の notify を受け取る (= 意図的
 //      な `daemon stop` と違い、restart は接続中クライアントを切り捨てない)。
 //   3. daemon が居ない状態の restart は起動として成功する (restarted:false,
 //      started:true) — 「現行設定の daemon が動いている状態にする」が要求。
@@ -156,12 +156,13 @@ describe("ccmsg daemon restart", () => {
 
   test("restart を跨いで subscribe が生存する", async () => {
     const { env, cleanup } = makeEnv();
+    const SUB = "5b000000-0000-4000-8000-000000000000";
     try {
       const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
         env: {
           ...process.env,
           ...env,
-          CCMSG_SID: "5b000000-0000-4000-8000-000000000000",
+          CCMSG_SID: SUB,
           CLAUDE_CODE_SESSION_ID: "",
           CLAUDE_SESSION_ID: "",
         },
@@ -171,63 +172,32 @@ describe("ccmsg daemon restart", () => {
       const reader = sub.stdout.getReader();
       const accum: { buf: string; lines: string[] } = { buf: "", lines: [] };
 
-      try {
-        // hello 完了の観測: peers に SUB が現れるまで。
-        for (let i = 0; i < 100; i++) {
-          const peers = served("peers", (await runCli(["peers"], env)).out);
-          if (peers.peers.some((p) => p.sid === "5b000000-0000-4000-8000-000000000000")) break;
+      /** SUB 宛ての notify を、subscribe が受けられる状態になるまで (配信先が
+       * 1 つになるまで) 送り直し、stdout に現れるのを待つ。 */
+      const notifyArrives = async (text: string): Promise<void> => {
+        for (let i = 0; ; i++) {
+          const res = served(
+            "notify",
+            (await runCli(["--sid", SUB, "notify", "--text", text], env)).out,
+          );
+          if (res.delivered === 1) break;
+          if (i >= 200) throw new Error(`notify "${text}" never reached the subscribe`);
           await sleep(25);
         }
-
-        // subscribe 中に room を作ると SUB に member snapshot (seq 付き) が届き、
-        // 再接続の since_seq cursor がこの room を含む。跨ぎ後の leave は、再接続が
-        // leave より先でも後でも (live / delta replay のどちらかで) 届く。
-        const created = served(
-          "create_room",
-          (
-            await runCli(
-              [
-                "--sid",
-                "c0000000-0000-4000-8000-000000000000",
-                "create-room",
-                "--members",
-                "50000001-0000-4000-8000-000000000000,5b000000-0000-4000-8000-000000000000",
-                "--exclude-self",
-              ],
-              env,
-            )
-          ).out,
-        );
-        expect(created.ok).toBe(true);
-        const room = created.room;
         await waitForLine(reader, accum, (l) => {
-          try {
-            const ev = jsonObjectLine(l);
-            return ev?.type === "member" && ev.r === room;
-          } catch {
-            return false;
-          }
+          const ev = jsonObjectLine(l);
+          return ev?.ev === "notify" && ev.text === text;
         });
+      };
+
+      try {
+        await notifyArrives("before");
 
         const restarted = printed(CliStatusSchema, (await runCli(["daemon", "restart"], env)).out);
         expect(restarted.restarted).toBe(true);
 
-        // 跨ぎ後の room イベント (S1 の leave) が subscribe に届く = 自動再接続が
-        // 成立している。
-        const left = served(
-          "leave",
-          (await runCli(["--sid", "50000001-0000-4000-8000-000000000000", "leave", room], env)).out,
-        );
-        expect(left.ok).toBe(true);
-        const line = await waitForLine(reader, accum, (l) => {
-          try {
-            const ev = jsonObjectLine(l);
-            return ev?.type === "leave" && ev.r === room;
-          } catch {
-            return false;
-          }
-        });
-        expect(jsonObjectLine(line)?.r).toBe(room);
+        // 跨ぎ後の notify が subscribe に届く = 自動再接続が成立している。
+        await notifyArrives("after");
         expect(sub.exitCode).toBeNull();
       } finally {
         reader.releaseLock();

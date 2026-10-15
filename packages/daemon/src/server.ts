@@ -4,11 +4,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
 import {
-  ADMIN_ID,
-  DEFAULT_DEDUP_WINDOW_MS,
   DEFAULT_HTTP_ALLOW,
   DEFAULT_HTTP_BIND,
-  DEFAULT_JOIN_BACKLOG,
   ErrorCode,
   LLM_STATS_DAYS_MAX,
   LLM_STATS_DAYS_MIN,
@@ -20,13 +17,8 @@ import {
   resolvePaths,
   sessionAddresses,
   type AgentInfo,
-  type ArchiveEvent,
   type Identity,
-  type KindEvent,
-  type LeaveEvent,
   type LlmStatusReport,
-  type MemberEvent,
-  type MsgEvent,
   type PingResponse,
   type NotifyFrom,
   type Paths,
@@ -34,21 +26,17 @@ import {
   type HelloRequest,
   type OtherGenerationHelloRequest,
   type RequestOp,
-  type DeliveredEvent,
   type NotifyStreamEvent,
   type ResponseBody,
   type RestartingStreamEvent,
   type ServedRequest,
   type StreamEvent,
-  type RoomKind,
   type SessionIdentity,
   type SessionFacts,
   type SessionInputReadiness,
   type StaleClientInfo,
   type JsonValue,
   parseWith,
-  type StorageEvent,
-  type TitleEvent,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
@@ -118,7 +106,7 @@ import {
 } from "./session-status.ts";
 import { deriveRepoWs } from "./repo-derive.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
-import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
+import { PeerInjector, resolveLauncher } from "./peer-inject.ts";
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
@@ -177,19 +165,7 @@ import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
 import { createOriginsFile } from "./origins-file.ts";
 import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
 import { createTranslateService, type TranslateService } from "./translate-helper.ts";
-import {
-  appendEvent,
-  closeRoom,
-  compareIds,
-  lastTs,
-  memberIdBySid,
-  nextAgentMemberId,
-  parseMidSelector,
-  presentMembers,
-  readMsgs,
-  scanRooms,
-  type Room,
-} from "./storage.ts";
+import { createRoomReader, readMsgs, type RoomReader, roomSummary } from "./room-reader.ts";
 
 /**
  * A connection abstracted over its transport. UDS and HTTP/WS conns both boil down
@@ -255,9 +231,9 @@ export interface Daemon {
   config: ResolvedCcmsgConfig;
   version: string;
   startTime: number;
-  rooms: Map<string, Room>;
-  /** dedupKey -> room id (dedup-eligible rooms only, latest createdAt wins). */
-  dedupIndex: Map<string, string>;
+  /** The room logs left on disk, read on request (room-reader.ts,
+   * DR-0036 §2). */
+  rooms: RoomReader;
   connections: Set<Conn>;
   sessions: Map<string, SessionEntry>;
   subscribers: Set<Conn>;
@@ -267,7 +243,6 @@ export interface Daemon {
   httpListeners: HttpListener[];
   /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
   httpAllow: string[];
-  dedupWindowMs: number;
   shuttingDown: boolean;
   /** `claude agents --json` merged poll state (DR-0009-agents addendum). */
   agentsPoller: AgentsPoller;
@@ -342,8 +317,8 @@ export interface Daemon {
    * source whose token could not be read simply isn't here — and its route
    * 404s. */
   webhooks: Map<string, WebhookSource>;
-  /** Room and direct messages handed to a session through its peer
-   * messaging socket (peer-inject.ts). */
+  /** Direct messages handed to a session through its peer messaging socket
+   * (peer-inject.ts). */
   peerInjector: PeerInjector;
   /** Absolute launcher path the injected envelope's reply line names. */
   launcher: string;
@@ -408,118 +383,7 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
-/** A 1on1 room is read-only (DR-0035 §2): it keeps the says recorded into it
- * and its past messages, and takes no new message from anyone. The person
- * reaches a session through session_input, so post / reply / next_room are
- * refused for every role. */
-function refuseOneOnOneWrite(conn: Conn, room: Room, op: string): boolean {
-  if (room.kind !== "1on1") return false;
-  sendErr(
-    conn,
-    ErrorCode.invalid_args,
-    `${room.id} is a read-only 1on1 room and takes no ${op}; use a normal room instead`,
-  );
-  return true;
-}
-
-/** Recent-replay window for the bare-default subscribe path.
- * A user-role subscriber that didn't set a `since_seq`/`backlog` cursor for a
- * room still receives msgs posted within the last N ms that would have been
- * live-delivered had it been connected — with `replay: true` marking them as
- * catch-up. 3 min default: short enough that a stale room's history is not
- * mistaken for live traffic. Env override exists purely for tests
- * (production keeps the default). */
-function readRecentReplayMsEnv(): number {
-  const raw = process.env.CCMSG_RECENT_REPLAY_MS;
-  if (raw === undefined || raw === "") return 3 * 60 * 1000;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 3 * 60 * 1000;
-  return n;
-}
-const RECENT_REPLAY_WINDOW_MS = readRecentReplayMsEnv();
-
-/** Wire order for `msg` events: `msg` (the body) is placed last, after every
- * other field, so a consumer that truncates a long line cuts inside the body
- * instead of silently dropping the trailing fields. `JSON.stringify` key order
- * follows insertion order, so this rebuilds the object explicitly rather than
- * spreading `ev`. Storage (`rooms/*.jsonl`, the `MsgEvent` type) keeps its own
- * field order. */
-function orderedMsgFrame(ev: MsgEvent, roomId: string, replay: boolean): DeliveredEvent {
-  return {
-    type: ev.type,
-    r: roomId,
-    mid: ev.mid,
-    from: ev.from,
-    ...(ev.seq !== undefined ? { seq: ev.seq } : {}),
-    ...(ev.to !== undefined ? { to: ev.to } : {}),
-    ...(ev.reply_to !== undefined ? { reply_to: ev.reply_to } : {}),
-    ...(replay ? { replay: true as const } : {}),
-    ts: ev.ts,
-    msg: ev.msg,
-  };
-}
-
-/** Room messages reach a session through peer-inject (`injectToSessions`), so a
- * subscribe stream carries `msg` events only for user-role subscribers (the
- * webui renders rooms from them). An explicit `room_history` request still
- * returns msgs to any caller. */
-function streamsMsgs(conn: Conn): boolean {
-  return conn.identity?.role === "user";
-}
-
-function writeDelivered(conn: Conn, room: Room, ev: StorageEvent, replay = false): void {
-  if (ev.type === "msg") {
-    send(conn, orderedMsgFrame(ev, room.id, replay));
-    return;
-  }
-  send(conn, { ...ev, r: room.id });
-}
-
 // --- identity / registry ---------------------------------------------------
-
-/**
- * DR-0013 §2.2 auto-populate: append a MemberEvent to every broadcast room
- * this sid is not already a member of. Called from the "new session entry
- * appeared" side of registerSession — a re-hello that only updates metadata
- * (repo/ws/branch) must not append duplicate member rows, and never for the
- * admin User (u1 is implicit in every room, DR-0006 §2). The auto-populate
- * event is DELIBERATELY not deliver()-ed to subscribers (§2.3 asks for the
- * append-to-jsonl side but skips the stream); appendEvent alone gives us that.
- */
-function joinAllBroadcasts(daemon: Daemon, sid: string): void {
-  const entry = daemon.sessions.get(sid);
-  if (!entry) return;
-  for (const room of daemon.rooms.values()) {
-    if (room.kind !== "broadcast") continue;
-    if (memberIdBySid(room).has(sid)) continue;
-    const ev: MemberEvent = {
-      type: "member",
-      id: nextAgentMemberId(room),
-      sid,
-      repo: entry.meta.repo,
-      ws: entry.meta.ws,
-      cwd: entry.meta.cwd,
-      joined_at: nowIso(),
-    };
-    appendEvent(room, ev);
-  }
-}
-
-/**
- * DR-0013 §2.2 auto-populate: append a LeaveEvent to every broadcast room
- * this sid was a member of. Called only when the session entry itself is
- * forgotten (forgetSession); a connection closing is not a session leaving.
- * Same "storage only, not delivered" treatment as the join side (§2.3).
- */
-function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
-  for (const room of daemon.rooms.values()) {
-    if (room.kind !== "broadcast") continue;
-    const memberId = memberIdBySid(room).get(sid);
-    if (memberId === undefined) continue;
-    const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
-    appendEvent(room, ev);
-  }
-}
 
 /** What the hello announced about the ccmsg build behind it. Passed alongside
  * the identity rather than folded into it: it describes the *client process*,
@@ -610,15 +474,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // connection's answer as if it were this one's.
   entry.clientVersion = client.version;
   entry.clientProtocol = client.protocol;
-  // DR-0013 §2.2 auto-populate: first hello for this sid → add it to every
-  // broadcast room. A re-hello (isNewEntry === false) is deliberately a no-op:
-  // this sid is already a member of every broadcast room from its earlier
-  // registration, and the auto-populate contract talks about session lifecycle
-  // ("hello 到達 = 新規 session"), not per-connection re-hellos.
-  if (isNewEntry) {
-    joinAllBroadcasts(daemon, id.sid);
-    refreshInputReadiness(daemon.sessionStatus, daemon.log);
-  }
+  if (isNewEntry) refreshInputReadiness(daemon.sessionStatus, daemon.log);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
@@ -638,9 +494,6 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
   daemon.sessionFacts.forget(sid);
-  // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
-  // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
-  leaveAllBroadcasts(daemon, sid);
   refreshReadiness(daemon);
 }
 
@@ -1320,257 +1173,7 @@ export function wakeStalledSessions(daemon: Daemon): void {
   }
 }
 
-/** id the connection posts as in this room: "u1" for the admin user, member id for a session, null if a session that isn't a member. */
-function resolveFrom(conn: Conn, room: Room): string | null {
-  const id = conn.identity;
-  if (!id) return null;
-  if (id.role === "user") return ADMIN_ID;
-  return memberIdBySid(room).get(id.sid) ?? null;
-}
-
-function subscriberSeesRoom(conn: Conn, room: Room): boolean {
-  const id = conn.identity;
-  if (!id) return false;
-  if (id.role === "user") return true; // admin (u1) sees every room (DR-0003 §5)
-  return memberIdBySid(room).has(id.sid);
-}
-
-/**
- * DR-0011 §1: `to`-delivery filter for a single msg event, applied to both live
- * `deliver` and since-replay/backlog. A `to`-less msg is visible to anyone who
- * already passed `subscriberSeesRoom` (unchanged, full-room behavior). A
- * `to`-bearing msg additionally requires the subscriber to be: the admin User
- * (u1, exempt — the webui is an observation surface, no agent-style context
- * cost), the msg's own sender (resolved to their member id), or a member id
- * listed in `to`. This does NOT gate storage/`read`/`rooms` — those stay
- * unfiltered so a skipped mid is a deliberate pull signal, not a hidden one.
- */
-function msgVisibleTo(sub: Conn, room: Room, ev: MsgEvent): boolean {
-  if (!ev.to) return true;
-  const id = sub.identity;
-  if (!id) return false;
-  if (id.role === "user") return true; // admin exempt
-  const memberId = memberIdBySid(room).get(id.sid);
-  if (memberId === undefined) return false;
-  if (memberId === ev.from) return true; // sender always counts as a recipient of their own msg
-  return ev.to.includes(memberId);
-}
-
-function normalizeTo(to: string | readonly string[] | undefined): string[] | undefined {
-  if (to === undefined) return undefined;
-  const arr = typeof to === "string" ? [to] : to;
-  const ids = arr.filter((s) => s.length > 0);
-  return ids.length > 0 ? ids : undefined;
-}
-
-// --- delivery --------------------------------------------------------------
-
-interface Author {
-  role: "user" | "session";
-  sid?: string;
-}
-
-function authorOf(conn: Conn): Author {
-  const id = conn.identity;
-  if (id && id.role === "session") return { role: "session", sid: id.sid };
-  return { role: "user" };
-}
-
-function isAuthorSub(sub: Conn, author: Author): boolean {
-  const id = sub.identity;
-  if (!id) return false;
-  if (author.role === "user") return id.role === "user";
-  return id.role === "session" && id.sid === author.sid;
-}
-
-/** DR-0013 §2.3: broadcast room の member / leave イベントは jsonl には残るが
- * subscribe stream には配信しない (通常 room は現状通り配信)。auto-populate で
- * session が increments/decrements するたびに他 broadcast member の agent
- * コンテキストが「A が join した / A が leave した」で埋まるのを避けるため。
- * kind / title / archive / msg / next / prev はいずれも通常 room と同じく配信。 */
-function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
-  return room.kind === "broadcast" && (ev.type === "member" || ev.type === "leave");
-}
-
-/** The `say` / `say_read` rows of an existing 1on1 room are for the webui
- * only [kawaz]. A session's own speech is something it already knows about,
- * and the read-ack is a User-side gesture — delivering either into a
- * session-role subscribe stream would spend agent context to tell an agent
- * what it did. Applied on every delivery path (since/backlog replay,
- * room_history) so a reconnecting agent doesn't collect them retroactively. */
-function isSuppressedForSubscriber(conn: Conn, room: Room, ev: StorageEvent): boolean {
-  if (isSuppressedForBroadcastStream(room, ev)) return true;
-  return (ev.type === "say" || ev.type === "say_read") && conn.identity?.role !== "user";
-}
-
-/**
- * Live-deliver a single event to all subscribers that see the room.
- * The echo rule (DR-0003 §5) applies to `msg` only: the author's own post never
- * comes back to them (the webui renders its own send optimistically). Sessions
- * receive `msg` through peer-inject, never through this loop (`writeDelivered`).
- * Membership/link/title events go to everyone incl. the actor
- * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
- */
-function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
-  if (ev.type === "msg") injectToSessions(daemon, room, ev, author);
-  for (const sub of daemon.subscribers) {
-    if (!subscriberSeesRoom(sub, room)) continue;
-    if (isSuppressedForSubscriber(sub, room, ev)) continue;
-    if (ev.type === "msg") {
-      if (!streamsMsgs(sub) || isAuthorSub(sub, author)) continue;
-      if (!msgVisibleTo(sub, room, ev)) continue;
-    }
-    writeDelivered(sub, room, ev);
-  }
-}
-
-/** Hand a room message to every recipient session through its peer messaging
- * socket (peer-inject.ts). The outcome is only
- * logged.
- *
- * Recipients are the room's member sessions other than the author, narrowed
- * by `to` exactly as msgVisibleTo narrows subscribers. A session that never
- * announced a CLAUDE_CONFIG_DIR has no state file to look in and is skipped. */
-function injectToSessions(daemon: Daemon, room: Room, ev: MsgEvent, author: Author): void {
-  const members = memberIdBySid(room);
-  const fromSid =
-    ev.from === ADMIN_ID ? undefined : [...members].find(([, id]) => id === ev.from)?.[0];
-  for (const [sid, memberId] of members) {
-    if (author.role === "session" && author.sid === sid) continue;
-    if (memberId === ev.from) continue;
-    if (ev.to && !ev.to.includes(memberId)) continue;
-    const configDir = daemon.sessions.get(sid)?.configDir;
-    if (configDir === undefined) continue;
-    const message = injectMessage(daemon, room, ev, fromSid);
-    daemon.peerInjector.send(configDir, sid, message).then(
-      (outcome) => daemon.log.info(`peer-inject ${message.mid} -> ${sid}: ${outcome}`),
-      (e: unknown) => daemon.log.warn(`peer-inject ${message.mid} -> ${sid}: ${String(e)}`),
-    );
-  }
-}
-
-/** DR-0017 addendum: the envelope's reply line tells the receiving session
- * exactly how to respond — the `ccmsg reply` command for this msg, or none for
- * an archived room. It is computed at delivery time because archive is
- * room-state dependent. */
-function injectMessage(
-  daemon: Daemon,
-  room: Room,
-  ev: MsgEvent,
-  fromSid: string | undefined,
-): InjectMessage {
-  const mid = `${room.id}m${ev.mid}`;
-  const replyLine = room.archived
-    ? undefined
-    : `Reply with: ${daemon.launcher} reply ${mid} <text>`;
-  return {
-    mid,
-    from: ev.from === ADMIN_ID || fromSid === undefined ? "user" : fromSid,
-    fromLabel: ev.from === ADMIN_ID ? "user" : ev.from,
-    text: ev.msg,
-    ...(replyLine !== undefined ? { replyLine } : {}),
-  };
-}
-
-/**
- * Initial/backlog delivery of a room to one subscriber.
- * - with sinceSeq: positional delta anchored on `seq`, which spans EVERY
- *   event type (DR-0016) — takes priority over sinceMid when both are
- *   supplied. A `since_seq` value that is not a finite non-negative number
- *   never reaches here: the request schema refuses it.
- * - else with sinceMid: positional delta — everything after the msg with that mid
- *   (BBS replay, msg-only cursor, old-client compat).
- * - without either: present member state + title/link events + the last N=50 msgs
- *   (join snapshot); a user-role subscriber's conn gets every msg instead of just
- *   the last 50 (the cap only protects an agent session's context budget).
- * suppressAuthorId drops the author's own just-posted msg from their snapshot
- * (echo rule).
- * All paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
- * offline member reconnecting via since-replay must not see a `to` msg that excluded
- * them any more than a live subscriber would.
- * `includeMsgs` is false for a subscribe-stream delivery to a non-user
- * subscriber (`streamsMsgs`).
- */
-function sendBacklog(
-  conn: Conn,
-  room: Room,
-  sinceMid?: number,
-  suppressAuthorId?: string,
-  sinceSeq?: number,
-  includeMsgs = true,
-): void {
-  if (sinceSeq !== undefined) {
-    // Anchoring on "last event with seq <= sinceSeq" is correct at both ends:
-    // a caught-up client (sinceSeq >= room.lastSeq) gets nothing, a client
-    // whose cursor predates the room's start gets everything. Every event in
-    // room.events carries a seq by this point (loadRoom backfills legacy rows,
-    // appendEvent stamps new ones — DR-0016 §2.1/§2.2), so this is a plain
-    // positional scan, not a search over possibly-undefined values.
-    let start = 0;
-    for (const [i, ev] of room.events.entries()) {
-      if (ev.seq !== undefined && ev.seq <= sinceSeq) start = i + 1;
-    }
-    for (const [i, ev] of room.events.entries()) {
-      if (i < start) continue;
-      // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
-      if (isSuppressedForSubscriber(conn, room, ev)) continue;
-      if (ev.type === "msg") {
-        if (!includeMsgs || !msgVisibleTo(conn, room, ev)) continue;
-      }
-      writeDelivered(conn, room, ev);
-    }
-    return;
-  }
-  if (sinceMid !== undefined) {
-    // resume just after the last msg the client has already seen. Anchoring on
-    // "last msg with mid <= sinceMid" is correct at both ends: a caught-up client
-    // (sinceMid >= lastMid) gets nothing, a client missing the start (sinceMid <
-    // firstMid) gets everything. Non-msg events after that anchor are included.
-    let start = 0;
-    for (const [i, ev] of room.events.entries()) {
-      if (ev.type === "msg" && ev.mid <= sinceMid) start = i + 1;
-    }
-    for (const [i, ev] of room.events.entries()) {
-      if (i < start) continue;
-      // DR-0013 §2.3: broadcast room の member/leave は since replay でも配信しない。
-      // live deliver と since replay の両輪でスキップして、遅れて再接続した member
-      // の subscribe stream にも noise を復元させない。
-      if (isSuppressedForSubscriber(conn, room, ev)) continue;
-      if (ev.type === "msg") {
-        if (!includeMsgs || !msgVisibleTo(conn, room, ev)) continue;
-      }
-      writeDelivered(conn, room, ev);
-    }
-    return;
-  }
-
-  const presentIds = new Set(presentMembers(room).map((m) => m.id));
-  const msgEvents = room.events.filter((e): e is MsgEvent => e.type === "msg");
-  // user role has no context budget to protect [kawaz] — only session
-  // (agent) subscribers keep the DEFAULT_JOIN_BACKLOG=50 cap that exists to bound
-  // an agent's context cost. subscribe requires hello (IDENTITY_OPS), so
-  // conn.identity is always set here.
-  const capped =
-    conn.identity?.role === "user" ? msgEvents : msgEvents.slice(-DEFAULT_JOIN_BACKLOG);
-  const recent = new Set(capped);
-  for (const ev of room.events) {
-    if (ev.type === "leave") continue;
-    if (ev.type === "member" && !presentIds.has(ev.id)) continue;
-    // DR-0013 §2.3: broadcast room の member は snapshot 経路でも配信しない
-    // (webui は rooms 応答で member 一覧を取得する契約)。leave は上の一律 continue
-    // で既に落ちているので追加の broadcast チェック不要。
-    if (room.kind === "broadcast" && ev.type === "member") continue;
-    // say / say_read はこの snapshot 経路 (room_history / backlog:true) でも
-    // session role には出さない — 遡って渡しても agent には使い道がない。
-    if (isSuppressedForSubscriber(conn, room, ev)) continue;
-    if (ev.type === "msg") {
-      if (!includeMsgs || !recent.has(ev)) continue;
-      if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
-      if (!msgVisibleTo(conn, room, ev)) continue;
-    }
-    writeDelivered(conn, room, ev);
-  }
-}
+// --- subscribe -----------------------------------------------------------
 
 /** A session may only have one live subscribe stream: two of them turn every
  * delivery into a duplicate notification for the same AI. The newest subscribe
@@ -1591,112 +1194,6 @@ function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
   }
 }
 
-/** Deliver a brand-new room's snapshot to every subscriber that sees it. */
-function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: string | null): void {
-  for (const ev of room.events) {
-    if (ev.type === "msg") injectToSessions(daemon, room, ev, author);
-  }
-  for (const sub of daemon.subscribers) {
-    if (!subscriberSeesRoom(sub, room)) continue;
-    const suppress = isAuthorSub(sub, author) && authorId !== null ? authorId : undefined;
-    sendBacklog(sub, room, undefined, suppress, undefined, streamsMsgs(sub));
-  }
-}
-
-/** Append a LeaveEvent for `memberId` and broadcast it to every subscriber that sees
- *  the room. Recipients are captured before membership shrinks so a leaving/kicked
- *  member's own subscribed connection still gets the confirmation. Shared by
- *  voluntary `leave` and admin-only `kick` (DR-0012) — both produce the identical
- *  storage event, only the actor/authorization differs. */
-function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): void {
-  const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
-  const recipients = [...daemon.subscribers].filter((s) => subscriberSeesRoom(s, room));
-  const stored = appendEvent(room, ev);
-  // membership shrank below the sid set that seeded room.dedupKey (invite's
-  // mirror image, see the identical comment on the `invite` case below): a
-  // same-sid create_room within the dedup window must no longer fold into
-  // this room, otherwise the fold's resolveFrom(leaver, room) comes back
-  // null, the msg silently fails to append, and the caller still gets back
-  // `{ok:true, reused:true}` with no mid — a swallowed post disguised as
-  // success.
-  room.dedupEligible = false;
-  for (const r of recipients) writeDelivered(r, room, stored);
-}
-
-// --- room creation ---------------------------------------------------------
-
-// Room ids are opaque, daemon-issued, unique strings — the `rN` shape here is a free
-// generation choice (DR-0006 §3), NOT a wire contract. Clients (and the daemon's own
-// lookup / filename mapping) treat ids as opaque. Never parse structure out of a room
-// id. The next number is derived from the highest `rN` already on disk/in-memory, so
-// numbering survives a daemon restart without colliding with existing rooms.
-//
-// The webui's locator (packages/webui/src/client/locator.ts) splits hash-fragment
-// routing between room and session views on the leading literal "r" vs "s" — that
-// disambiguation relies on room ids always starting with "r". If this id format ever
-// changes, check that invariant test too.
-function generateRoomId(daemon: Daemon): string {
-  let n = 1;
-  for (const id of daemon.rooms.keys()) {
-    const m = /^r(\d+)$/.exec(id);
-    if (m) {
-      const v = Number(m[1]);
-      if (v >= n) n = v + 1;
-    }
-  }
-  let id = `r${n}`;
-  while (daemon.rooms.has(id)) id = `r${++n}`;
-  return id;
-}
-
-function createRoom(
-  daemon: Daemon,
-  orderedSids: string[],
-  dedupEligible: boolean,
-  kind: RoomKind = "normal",
-): Room {
-  const id = generateRoomId(daemon);
-  const room: Room = {
-    id,
-    file: `${daemon.paths.roomsDir}/${id}.jsonl`,
-    events: [],
-    lastMid: 0,
-    lastSeq: 0,
-    createdAt: Date.now(),
-    // broadcast rooms are always dedup-exempt regardless of the caller's request
-    // — multiple broadcasts with the same member set (dev / debug / ...) are
-    // explicitly allowed (DR-0013 §2.1)
-    // and would otherwise fold into the same room.
-    dedupEligible: kind === "broadcast" ? false : dedupEligible,
-    dedupKey: [...new Set(orderedSids)].sort().join(","),
-    archived: false,
-    kind,
-    next: [],
-    prev: [],
-    fd: null,
-    fsyncTimer: null,
-  };
-  daemon.rooms.set(id, room);
-  return room;
-}
-
-function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
-  let seq = 1;
-  for (const sid of orderedSids) {
-    const meta = daemon.sessions.get(sid)?.meta;
-    const ev: MemberEvent = {
-      type: "member",
-      id: `a${seq++}`,
-      sid,
-      repo: meta?.repo ?? "",
-      ws: meta?.ws ?? "",
-      cwd: meta?.cwd ?? "",
-      joined_at: nowIso(),
-    };
-    appendEvent(room, ev);
-  }
-}
-
 // --- request dispatch ------------------------------------------------------
 
 // fs_list/fs_read/fs_read_external/fs_write/transcript_read require hello too
@@ -1707,18 +1204,14 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 // uniform "must identify first" rule rather than special-casing these as the
 // sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
-  "post",
   "message_send",
   "address_send",
   "say",
   "say_read",
-  "create_room",
-  "next_room",
-  "set_title",
-  "archive_room",
-  "kick",
   "subscribe",
+  "rooms",
   "room_history",
+  "read",
   "notify",
   "dir_tree",
   "session_launch",
@@ -1729,8 +1222,6 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "sidecar_hello",
   "session_facts",
   "session_launcher_config",
-  "leave",
-  "invite",
   "fs_list",
   "fs_read",
   "fs_read_external",
@@ -1761,9 +1252,6 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
  * The margin absorbs future points without letting a client append unbounded
  * lines to trace.jsonl. */
 const CLIENT_TRACE_MAX_POINTS = 8;
-
-/** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
-const SET_TITLE_MAX_LEN = 200;
 
 /** How a transport reads a hello: the hello as the client sent it, or what
  * the transport makes of it (the WebSocket pins every hello to the user role,
@@ -2006,7 +1494,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         version: daemon.version,
         uptime: (Date.now() - daemon.startTime) / 1000,
         pid: process.pid,
-        rooms: daemon.rooms.size,
         clients: daemon.connections.size,
         // provenance (DR-0009-agents addendum): which bun executable and entry
         // script this running daemon actually is, so version skew across faces
@@ -2017,121 +1504,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         httpAllow: daemon.httpAllow,
         network: networkState(daemon),
       });
-      return;
-    }
-
-    case "post": {
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      const from = resolveFrom(conn, room);
-      if (from === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      if (refuseOneOnOneWrite(conn, room, "post")) return;
-      const to = normalizeTo(req.to);
-      // DR-0013 §2.4: broadcast room では role:"session" (agent) からの post は
-      // `to` に "u1" (ADMIN_ID) を含めることが必須。「u1 に届かない agent の
-      // broadcast 発話」を意味論として封じる (broadcast の目的は kawaz への
-      // 集約通信なので、u1 抜きの agent 発話は broadcast context の外側)。
-      // u1 (User) 発の post は制約なし — 既存の to semantics (省略=全員 /
-      // 単一 / 複数 mention) がそのまま働く (§2.5)。u1 の実装位置は
-      // conn.identity.role === "user"、ADMIN_ID 決定は resolveFrom を経由。
-      if (room.kind === "broadcast" && conn.identity?.role === "session") {
-        if (!to || !to.includes(ADMIN_ID)) {
-          sendErr(
-            conn,
-            ErrorCode.broadcast_agent_target_required,
-            `broadcast room post from an agent must include '${ADMIN_ID}' in to`,
-          );
-          return;
-        }
-      }
-      if (to) {
-        // `to` is a delivery filter now (DR-0011 §1): an unresolvable id silently
-        // drops the msg into a black hole (delivered to nobody but the sender/u1),
-        // with no error and no observable signal to the poster. Reject typos/stale
-        // ids up front instead — present member ids (memberIdBySid) plus the
-        // always-exempt admin (ADMIN_ID) are the only valid delivery targets.
-        const known = new Set(memberIdBySid(room).values());
-        known.add(ADMIN_ID);
-        const unknown = to.filter((t) => !known.has(t));
-        if (unknown.length > 0) {
-          sendErr(conn, ErrorCode.invalid_args, `to: unknown member id(s): ${unknown.join(", ")}`);
-          return;
-        }
-      }
-      const mid = room.lastMid + 1;
-      const ev: MsgEvent = {
-        type: "msg",
-        mid,
-        from,
-        ...(to ? { to } : {}),
-        ts: nowIso(),
-        msg: req.msg,
-      };
-      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
-      send(conn, { ok: true, room: room.id, mid });
-      return;
-    }
-
-    case "reply": {
-      // DR-0017 §2.2: reply to an existing msg — the daemon computes the
-      // delivery targets so the replier never assembles a `to` list itself
-      // (the misassembled-to failure mode is the whole reason this op exists).
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      const from = resolveFrom(conn, room);
-      if (from === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      if (refuseOneOnOneWrite(conn, room, "reply")) return;
-      const target = room.events.find((e): e is MsgEvent => e.type === "msg" && e.mid === req.mid);
-      if (!target) {
-        sendErr(conn, ErrorCode.msg_not_found, `no msg m${req.mid} in ${req.room}`);
-        return;
-      }
-      if (target.from === from) {
-        sendErr(
-          conn,
-          ErrorCode.self_reply,
-          `m${req.mid} is your own msg — reply targets someone else's`,
-        );
-        return;
-      }
-      // Targets = original author + everyone the original msg addressed,
-      // minus the replier. u1 is intentionally NOT force-added here: the User
-      // is an always-exempt delivery target (see deliver()'s admin fanout),
-      // and this reply op runs *between agents* on kawaz's screen — surfacing
-      // u1 in every agent-to-agent reply's `to` list is noise on a channel
-      // where "u1 sees everything" is already the invariant. The broadcast
-      // room's agent-post u1-target constraint (§2.4) is enforced in `post`,
-      // not here, and is still satisfied by construction for the cases reply
-      // covers: replies to a u1-authored msg have target.from == u1, and
-      // replies to an agent post in a broadcast room inherit u1 from
-      // target.to (§2.4 required it there). Sorted for a stable wire shape.
-      const parts = new Set<string>([target.from, ...(target.to ?? [])]);
-      parts.delete(from);
-      const to = [...parts].sort(compareIds);
-      const mid = room.lastMid + 1;
-      const ev: MsgEvent = {
-        type: "msg",
-        mid,
-        from,
-        to,
-        ts: nowIso(),
-        msg: req.msg,
-        reply_to: `${room.id}m${req.mid}`,
-      };
-      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
-      send(conn, { ok: true, room: room.id, mid, to });
       return;
     }
 
@@ -2253,210 +1625,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "create_room": {
-      const explicitMembers = req.members;
-      // A 1on1 room is not opened through create_room (DR-0035 §2): the
-      // person reaches a session through session_input. The request schema
-      // refuses that kind, so `kind` is one create_room opens.
-      const kind: RoomKind = req.kind ?? "normal";
-
-      if (kind === "broadcast") {
-        // DR-0013 §2.2 broadcast rooms auto-populate from the live session
-        // registry; the caller's `members` list is irrelevant and (§2.9) folded
-        // to a non-fatal warning rather than an error. The warning is echoed
-        // by the CLI to stderr (index.ts) so a habitual `--members` on a
-        // broadcast create still visibly nags. `include_self` is likewise
-        // ignored — the caller's own sid enters through the normal
-        // auto-populate scan just like every other active session.
-        const warning =
-          explicitMembers.length > 0
-            ? "--members is ignored for broadcast rooms (members are auto-populated)"
-            : undefined;
-        const room = createRoom(daemon, [], false, "broadcast");
-        // KindEvent is written FIRST so a mid-creation crash between here and
-        // the member snapshot below still recovers the room as broadcast on
-        // daemon restart (storage.ts computeDerived reads events in order).
-        // If it came last, a partial file could resurface as "normal" and
-        // then start dedup-folding future broadcast creates into it.
-        appendEvent(room, { type: "kind", kind: "broadcast", ts: nowIso() } satisfies KindEvent);
-        if (req.title)
-          appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
-        // Snapshot every currently-connected session as initial members (§2.2
-        // 「broadcast room 作成時に既に active な session も同一契機で自動 join」).
-        // Sorting by sid keeps the a1/a2/... assignment deterministic across
-        // daemon restarts / test runs so a downstream that reads member.id
-        // sees a stable order.
-        const activeMetas = [...daemon.sessions.values()]
-          .map((s) => s.meta)
-          .sort((a, b) => (a.sid < b.sid ? -1 : a.sid > b.sid ? 1 : 0));
-        let seq = 1;
-        for (const meta of activeMetas) {
-          const sid = meta.sid;
-          appendEvent(room, {
-            type: "member",
-            id: `a${seq++}`,
-            sid,
-            repo: meta.repo,
-            ws: meta.ws,
-            cwd: meta.cwd,
-            joined_at: nowIso(),
-          } satisfies MemberEvent);
-        }
-        // Initial msg is treated as a normal post from the caller (§2.10:
-        // the §2.4 agent-must-target-u1 rule DELIBERATELY does not apply to
-        // create_room's own initial msg — u1's own opening line has no
-        // "must be addressed to u1" self-reference to enforce, and forbidding
-        // a session caller's opener would just push kawaz to a two-step
-        // create + post workflow with no meaningful gain).
-        let mid: number | undefined;
-        let authorId: string | null = null;
-        if (req.msg) {
-          authorId = resolveFrom(conn, room);
-          if (authorId !== null) {
-            mid = room.lastMid + 1;
-            appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
-          }
-        }
-        // Broadcast rooms are dedup-exempt (see createRoom's kind === broadcast
-        // branch); we deliberately do NOT populate dedupIndex.
-        deliverNewRoom(daemon, room, authorOf(conn), authorId);
-        send(conn, {
-          ok: true,
-          room: room.id,
-          reused: false,
-          ...(mid !== undefined ? { mid } : {}),
-          ...(warning ? { warning } : {}),
-        });
-        return;
-      }
-
-      const ordered: string[] = [];
-      const id = conn.identity;
-      if (id === null) {
-        sendErr(conn, ErrorCode.hello_required, "op 'create_room' requires hello first");
-        return;
-      }
-      // Auto-prepend caller sid unless include_self=false (CLI --exclude-self,
-      // for an observer session that watches a room without participating).
-      // User-role callers (webui backend) never auto-include either way — u1 is
-      // implicit in every room already (DR-0006 §2).
-      const includeSelf = req.include_self !== false;
-      if (id.role === "session" && includeSelf) ordered.push(id.sid);
-      for (const sid of explicitMembers) if (!ordered.includes(sid)) ordered.push(sid);
-      if (ordered.length === 0) {
-        sendErr(conn, ErrorCode.invalid_args, "create_room needs at least one member");
-        return;
-      }
-      const key = [...new Set(ordered)].sort().join(",");
-      const existingId = daemon.dedupIndex.get(key);
-      const existing = existingId ? daemon.rooms.get(existingId) : undefined;
-      if (
-        existing &&
-        existing.dedupEligible &&
-        Date.now() - existing.createdAt < daemon.dedupWindowMs
-      ) {
-        // dedup: fold the late create's initial msg into the existing room (DR-0003 §4)
-        let mid: number | undefined;
-        if (req.msg) {
-          const from = resolveFrom(conn, existing);
-          if (from !== null) {
-            mid = existing.lastMid + 1;
-            const ev: MsgEvent = { type: "msg", mid, from, ts: nowIso(), msg: req.msg };
-            deliver(daemon, existing, appendEvent(existing, ev), authorOf(conn));
-          }
-        }
-        send(conn, {
-          ok: true,
-          room: existing.id,
-          reused: true,
-          ...(mid !== undefined ? { mid } : {}),
-        });
-        return;
-      }
-
-      const room = createRoom(daemon, ordered, true);
-      writeMembers(daemon, room, ordered);
-      if (req.title)
-        appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
-      let mid: number | undefined;
-      let authorId: string | null = null;
-      if (req.msg) {
-        authorId = resolveFrom(conn, room);
-        if (authorId !== null) {
-          mid = room.lastMid + 1;
-          appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
-        }
-      }
-      daemon.dedupIndex.set(room.dedupKey, room.id);
-      deliverNewRoom(daemon, room, authorOf(conn), authorId);
-      send(conn, { ok: true, room: room.id, reused: false, ...(mid !== undefined ? { mid } : {}) });
-      return;
-    }
-
-    case "next_room": {
-      const old = daemon.rooms.get(req.room);
-      if (!old) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      if (resolveFrom(conn, old) === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      if (refuseOneOnOneWrite(conn, old, "next_room")) return;
-      const inherited = presentMembers(old);
-      const room = createRoom(
-        daemon,
-        inherited.map((m) => m.sid),
-        false,
-        // DR-0013 §2.8 next_room inherits kind: broadcast の次スレは
-        // broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
-        // 適用され、以降の hello/disconnect が新 room も拾う)。normal は
-        // そのまま normal。1on1 は上で拒否済み。
-        old.kind,
-      );
-      // KindEvent must be written BEFORE members / prev so a mid-creation crash
-      // still recovers the next-room's kind on daemon restart (same rationale
-      // as create_room's non-`"normal"` branches above).
-      if (old.kind !== "normal")
-        appendEvent(room, { type: "kind", kind: old.kind, ts: nowIso() } satisfies KindEvent);
-      // Renumber per namespace, preserving each member's u/a namespace and relative
-      // join order. Guests (u2+) stay guests; agents (a-namespace) stay agents.
-      let aSeq = 1;
-      let uSeq = 2; // u1 is the implicit admin, never present in `inherited`
-      for (const m of inherited) {
-        const isGuest = m.id.startsWith("u");
-        appendEvent(room, {
-          type: "member",
-          id: isGuest ? `u${uSeq++}` : `a${aSeq++}`,
-          sid: m.sid,
-          repo: m.repo,
-          ws: m.ws,
-          cwd: m.cwd,
-          joined_at: nowIso(),
-          ...(isGuest ? { role: "guest" as const } : {}),
-        } satisfies MemberEvent);
-      }
-      appendEvent(room, { type: "prev", room: old.id, ts: nowIso() });
-      const nextEv = appendEvent(old, { type: "next", room: room.id, ts: nowIso() });
-      if (req.title)
-        appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
-      let mid: number | undefined;
-      let authorId: string | null = null;
-      if (req.msg) {
-        authorId = resolveFrom(conn, room);
-        if (authorId !== null) {
-          mid = room.lastMid + 1;
-          appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
-        }
-      }
-      // old room subscribers see the `next` link live; new room subscribers get its snapshot
-      deliver(daemon, old, nextEv, authorOf(conn));
-      deliverNewRoom(daemon, room, authorOf(conn), authorId);
-      send(conn, { ok: true, room: room.id, ...(mid !== undefined ? { mid } : {}) });
-      return;
-    }
-
     case "say": {
       // `ccmsg say` は say の実行そのものは CLI が必ず行う。ここは「どの
       // セッションが喋ったか」を webui が答えられるようにするための記録だけを
@@ -2494,137 +1662,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "set_title": {
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      // same authorization as post: admin User (implicit member of every room) or a
-      // resolvable member session. Non-member sessions are refused.
-      if (resolveFrom(conn, room) === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      const title = req.title.trim();
-      if (title === "") {
-        sendErr(conn, ErrorCode.invalid_args, "set_title requires a non-empty title");
-        return;
-      }
-      if (title.length > SET_TITLE_MAX_LEN) {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          `title must be ${SET_TITLE_MAX_LEN} characters or fewer`,
-        );
-        return;
-      }
-      const ev: TitleEvent = { type: "title", title, ts: nowIso() };
-      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
-      send(conn, { ok: true, room: room.id, title });
-      return;
-    }
-
-    case "archive_room": {
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      // same authorization as set_title: admin User (implicit member of every room)
-      // or a resolvable member session.
-      if (resolveFrom(conn, room) === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      const archived = req.archived;
-      if (room.archived === archived) {
-        // toggle already at the requested value: skip the redundant append/broadcast
-        // (DR-0012 — archive is a display flag, re-asserting the same state is a no-op).
-        send(conn, { ok: true, room: room.id, archived });
-        return;
-      }
-      const ev: ArchiveEvent = { type: "archive", archived, ts: nowIso() };
-      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
-      send(conn, { ok: true, room: room.id, archived });
-      return;
-    }
-
-    case "kick": {
-      // admin User only (DR-0012): a room's agents must not be able to evict each
-      // other. Unlike member-scoped ops (post/set_title/leave), a session caller here
-      // gets a straight permission rejection rather than not_a_member — same pattern
-      // as the other user-role-only ops below (agents/transcript_subscribe).
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'kick' requires user role");
-        return;
-      }
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      const targetId = req.id;
-      // ADMIN_ID (u1) has no member row (implicit member, DR-0006) so it's never in
-      // presentIds — self-kick is naturally invalid_args, no separate guard needed.
-      const presentIds = new Set(presentMembers(room).map((m) => m.id));
-      if (targetId === "" || !presentIds.has(targetId)) {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          `not a member of ${req.room}: ${targetId || "(missing id)"}`,
-        );
-        return;
-      }
-      appendLeaveAndBroadcast(daemon, room, targetId);
-      send(conn, { ok: true, room: room.id, id: targetId });
-      return;
-    }
-
     case "subscribe": {
       conn.subscribed = true;
       daemon.subscribers.add(conn);
       send(conn, { ok: true, subscribed: true });
       supersedeOlderSessionSubscribers(daemon, conn);
-      // handler runs to completion synchronously, so no live event interleaves the snapshot.
-      // Default (no `since`/`since_seq` entry for a room, and no `backlog: true`) is
-      // NO backlog at all — a fresh sidecar connect doesn't want its context flooded
-      // with history it can't act on (issue 2026-07-17-subscribe-no-backlog-default).
-      // Rooms without a replay instead go into `cursors` below and surface on the wire
-      // as one `room_cursors` summary event. The CLI drops that connection snapshot
-      // from stdout; other protocol consumers may use it. `backlog: true` (the webui's
-      // every subscribe call, since it paints room history from the backlog) restores
-      // the old unconditional snapshot for rooms `since`/`since_seq` doesn't cover.
-      const cursors: Array<{ room: string; last_mid: number }> = [];
-      for (const room of daemon.rooms.values()) {
-        if (!subscriberSeesRoom(conn, room)) continue;
-        const sinceMid = req.since?.[room.id];
-        const sinceSeq = req.since_seq?.[room.id];
-        // A room the caller named in since/since_seq means "I have a cursor
-        // for this room"; any other room falls to the no-cursor default.
-        const hasCursor = sinceMid !== undefined || sinceSeq !== undefined;
-        if (!hasCursor && req.backlog !== true) {
-          // Recent-replay: for this room the subscriber gets no history via
-          // sendBacklog, but msgs from the last RECENT_REPLAY_WINDOW_MS that
-          // pass the same live-delivery filter (msgVisibleTo, broadcast-stream
-          // suppression) are surfaced with a `replay: true` marker (user role
-          // only, see streamsMsgs).
-          if (RECENT_REPLAY_WINDOW_MS > 0 && streamsMsgs(conn)) {
-            const cutoff = Date.now() - RECENT_REPLAY_WINDOW_MS;
-            for (const ev of room.events) {
-              if (ev.type !== "msg") continue;
-              if (isSuppressedForBroadcastStream(room, ev)) continue;
-              if (Date.parse(ev.ts) < cutoff) continue;
-              if (!msgVisibleTo(conn, room, ev)) continue;
-              writeDelivered(conn, room, ev, true);
-            }
-          }
-          cursors.push({ room: room.id, last_mid: room.lastMid });
-          continue;
-        }
-        sendBacklog(conn, room, sinceMid, undefined, sinceSeq, streamsMsgs(conn));
-      }
-      if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       if (conn.identity?.role === "user") {
         // Catch-up for the agents list the poller already holds; later polls
         // and runs reach this conn through maybeBroadcastAgents.
@@ -2651,57 +1693,43 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
+    // The room logs are the webui's to read (DR-0036 §3), so the three ops
+    // that read them answer the user role only.
     case "read": {
-      const room = daemon.rooms.get(req.room);
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'read' requires user role");
+        return;
+      }
+      const room = await daemon.rooms.room(req.room);
       if (!room) {
         sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
         return;
       }
-      const msgs = readMsgs(room, parseMidSelector(req.mids));
-      send(conn, { ok: true, room: room.id, msgs });
+      send(conn, { ok: true, room: room.id, msgs: readMsgs(room, req.mids) });
       return;
     }
 
     case "room_history": {
-      const room = daemon.rooms.get(req.room);
-      // A room the caller can't see is reported as absent rather than as a
-      // permission failure: room ids are opaque, and "exists but not yours"
-      // would leak that an id is live.
-      if (!room || !subscriberSeesRoom(conn, room)) {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'room_history' requires user role");
+        return;
+      }
+      const room = await daemon.rooms.room(req.room);
+      if (!room) {
         sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
         return;
       }
-      // Same no-cursor join snapshot the `backlog: true` subscribe path builds,
-      // for this one room. The reply goes last so the client can treat it as
-      // the "snapshot complete" sentinel (frames on one connection keep order).
-      sendBacklog(conn, room);
-      send(conn, { ok: true, room: room.id });
+      send(conn, { ok: true, room: room.id, events: [...room.events] });
       return;
     }
 
     case "rooms": {
-      // Sids with at least one open connection — the same liveness the `peers`
-      // op reports, computed once here instead of per room. `live_members`
-      // (see RoomSummary) lets a client tell an inhabited room from a dormant
-      // one without fetching `peers` and intersecting it with each member list.
-      const liveSids = new Set([...daemon.sessions.values()].map((s) => s.meta.sid));
-      const rooms = [...daemon.rooms.values()].map((r) => {
-        const members = presentMembers(r);
-        return {
-          id: r.id,
-          ...(r.title ? { title: r.title } : {}),
-          members,
-          live_members: members.filter((m) => m.id !== ADMIN_ID && liveSids.has(m.sid)).length,
-          last_mid: r.lastMid,
-          last_ts: lastTs(r),
-          ...(r.archived ? { archived: true } : {}),
-          // DR-0013 broadcast / DR-0014 1on1: surface non-`"normal"` kind so
-          // CLI can badge and webui can pick the right Composer variant and
-          // group 1on1 rooms. "normal" is the absence of the field.
-          ...(r.kind !== "normal" ? { kind: r.kind } : {}),
-        };
-      });
-      send(conn, { ok: true, rooms });
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'rooms' requires user role");
+        return;
+      }
+      const rooms = await daemon.rooms.list();
+      send(conn, { ok: true, rooms: rooms.map(roomSummary) });
       return;
     }
 
@@ -3069,6 +2097,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // nothing here is client-named.
       const dump = await dumpSession(req.sid, {
         dataDir: daemon.paths.dataDir,
+        rooms: daemon.rooms,
         transcriptFile: dumpTarget.file,
         ...(req.since !== undefined ? { since: req.since } : {}),
         ...(req.until !== undefined ? { until: req.until } : {}),
@@ -3621,82 +2650,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "leave": {
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      const memberId = resolveFrom(conn, room);
-      if (memberId === null || memberId === ADMIN_ID) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      appendLeaveAndBroadcast(daemon, room, memberId);
-      send(conn, { ok: true, room: room.id });
-      return;
-    }
-
-    case "invite": {
-      const room = daemon.rooms.get(req.room);
-      if (!room) {
-        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
-        return;
-      }
-      // same authorization as set_title: admin User or a resolvable member session.
-      if (resolveFrom(conn, room) === null) {
-        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
-        return;
-      }
-      const targetSid = req.sid;
-      // the invite target must be a currently connected session — same live registry
-      // create_room's `members` reads from, not an arbitrary historical sid.
-      const targetEntry = daemon.sessions.get(targetSid);
-      if (!targetEntry) {
-        sendErr(conn, ErrorCode.session_not_found, `no connected session: ${targetSid}`);
-        return;
-      }
-      const existingId = memberIdBySid(room).get(targetSid);
-      if (existingId !== undefined) {
-        send(conn, { ok: true, room: room.id, id: existingId, already: true });
-        return;
-      }
-      const id = nextAgentMemberId(room);
-      const ev: MemberEvent = {
-        type: "member",
-        id,
-        sid: targetSid,
-        repo: targetEntry.meta.repo,
-        ws: targetEntry.meta.ws,
-        cwd: targetEntry.meta.cwd,
-        joined_at: nowIso(),
-      };
-      const stored = appendEvent(room, ev);
-      // invite changes membership outside the create_room([...]) sid set that seeded
-      // room.dedupKey, so a same-sid create_room within the dedup window (DR-0003 §4)
-      // must no longer fold into this room — same treatment as next_room's `prev` link
-      // (storage.ts appendEvent), applied here since a plain "member" event can't be
-      // distinguished from an initial create_room member by type alone.
-      room.dedupEligible = false;
-      // the invited target, if already subscribed, gets the room snapshot (title,
-      // member list; no msgs, which reach a session only through peer-inject) just
-      // like a brand-new create_room/next_room member (deliverNewRoom) — this is
-      // genuinely new context to them, not an incremental update. Existing members
-      // only need the single MemberEvent line.
-      const targetSub = [...daemon.subscribers].find(
-        (s) => s.identity?.role === "session" && s.identity.sid === targetSid,
-      );
-      if (targetSub)
-        sendBacklog(targetSub, room, undefined, undefined, undefined, streamsMsgs(targetSub));
-      for (const sub of daemon.subscribers) {
-        if (sub === targetSub) continue; // already covered by their snapshot above
-        if (!subscriberSeesRoom(sub, room)) continue;
-        writeDelivered(sub, room, stored);
-      }
-      send(conn, { ok: true, room: room.id, id, already: false });
-      return;
-    }
-
     case "shutdown": {
       send(conn, { ok: true, stopping: true });
       void gracefulShutdown(daemon, req.reason);
@@ -3714,20 +2667,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 }
 
 // --- lifecycle -------------------------------------------------------------
-
-function buildDedupIndex(rooms: Map<string, Room>): Map<string, string> {
-  const index = new Map<string, string>();
-  const createdAt = new Map<string, number>();
-  for (const room of rooms.values()) {
-    if (!room.dedupEligible || room.dedupKey === "") continue;
-    const cur = createdAt.get(room.dedupKey);
-    if (cur === undefined || room.createdAt > cur) {
-      index.set(room.dedupKey, room.id);
-      createdAt.set(room.dedupKey, room.createdAt);
-    }
-  }
-  return index;
-}
 
 async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> {
   if (daemon.shuttingDown) return;
@@ -3747,8 +2686,6 @@ async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> 
   // tearing down either transport so both sides can receive the restarting frame.
   const ev: RestartingStreamEvent = { ev: "restarting", ...(reason ? { reason } : {}) };
   for (const conn of daemon.connections) send(conn, ev);
-
-  for (const room of daemon.rooms.values()) closeRoom(room);
 
   // UDS disappearance is the sole boundary clients use to conclude that this
   // daemon has yielded. Release every resource that can block its successor
@@ -3823,7 +2760,6 @@ function resolveHttpAllowOrigin(): Set<string> {
 export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const paths = resolvePaths();
   fs.mkdirSync(paths.stateDir, { recursive: true });
-  fs.mkdirSync(paths.roomsDir, { recursive: true });
   const log = new Logger(paths.log, !!opts.foreground);
 
   const lock = tryAcquireLock(paths.lock);
@@ -3856,7 +2792,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     .map((s) => s.trim())
     .filter((s) => s !== "");
 
-  const rooms = scanRooms(paths.roomsDir, log);
   migrateLegacyConfigFiles(paths, log);
   writeConfigTypesFile(paths.configDir, VERSION, log);
   const loaded = await loadConfig(paths, log);
@@ -3876,8 +2811,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     config,
     version: VERSION,
     startTime: Date.now(),
-    rooms,
-    dedupIndex: buildDedupIndex(rooms),
+    rooms: createRoomReader(paths.roomsDir, (line) => log.warn(line)),
     connections: new Set(),
     sessions: new Map(),
     subscribers: new Set(),
@@ -3886,7 +2820,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     server: null,
     httpListeners: [],
     httpAllow,
-    dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
@@ -3985,7 +2918,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     decoder: TextDecoder;
     buffer: string;
     /** Bytes not yet accepted by the kernel due to backpressure (DR-0008: fs_read
-     *  responses can be hundreds of KB, well past the point tiny room/post replies
+     *  responses can be hundreds of KB, well past the point tiny replies
      *  ever hit). `socket.write()` uses sendto(2) directly and returns a short
      *  count instead of blocking/queueing when the socket buffer is full — unlike
      *  Bun's higher-level `ws.send()` on the HTTP/WS side, nothing retries the
@@ -4071,9 +3004,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.server = server;
 
   fs.chmodSync(paths.sock, 0o600);
-  log.info(
-    `listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`,
-  );
+  log.info(`listening on ${paths.sock} (v${VERSION})`);
 
   const httpAllowOrigin = resolveHttpAllowOrigin();
   // Persisted extra origins (`ccmsg origins add`, origins-file.ts) — read
@@ -4121,13 +3052,4 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   process.on("SIGTERM", () => void gracefulShutdown(daemon, "signal"));
   process.on("SIGINT", () => void gracefulShutdown(daemon, "signal"));
-}
-
-function resolveDedupWindow(): number {
-  const raw = process.env.CCMSG_DEDUP_WINDOW_MS;
-  if (raw) {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return n;
-  }
-  return DEFAULT_DEDUP_WINDOW_MS;
 }

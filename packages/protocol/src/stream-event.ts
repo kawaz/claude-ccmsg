@@ -1,14 +1,6 @@
-// What the daemon pushes to a connection unasked (daemon -> client), as
-// schemas (DR-0038). Two families share the stream, told apart by which key
-// names the kind:
-//
-// - a push of the daemon's own (`ev`): ephemeral, never persisted
-// - a delivered storage event (`type`): a room's event, with the room it
-//   belongs to (`r`)
-//
-// A valibot variant cannot hold a variant on another key, so each family is
-// its own schema; a reader picks one by whether the frame has `ev`
-// (frame.ts). `StreamEvent` is the type of either.
+// What the daemon pushes to a subscribed connection unasked (daemon ->
+// client), as schemas (DR-0038): ephemeral, never persisted, told apart by
+// `ev`.
 //
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
@@ -17,64 +9,6 @@ import type { Output } from "./parse.ts";
 import { LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
-import {
-  ArchiveEventSchema,
-  KindEventSchema,
-  LeaveEventSchema,
-  MemberEventSchema,
-  MsgEventSchema,
-  NextEventSchema,
-  PrevEventSchema,
-  SayEventSchema,
-  SayReadEventSchema,
-  TitleEventSchema,
-} from "./storage-event.ts";
-
-// --- delivered storage events -------------------------------------------------
-
-/** What a storage event carries on the stream beside its own fields. */
-const DeliveredEntries = {
-  /** The room the event belongs to. */
-  r: v.string(),
-  /** `true` marks a msg emitted as a **recent-replay** at `subscribe` time:
-   * the bare-default subscribe (no `since`/`since_seq` cursor for the room and
-   * no `backlog: true`) additionally surfaces msgs from the last few minutes
-   * that would have been live-delivered had the subscriber been present
-   * (window default 3 min, `CCMSG_RECENT_REPLAY_MS` for tests). Never present
-   * on live-delivered msgs or the since/backlog replay paths. */
-  replay: v.optional(v.literal(true)),
-};
-
-/** The schema of a storage event as delivered: its fields and the above. */
-type DeliveredSchemaOf<E extends v.ObjectEntries> = v.ObjectSchema<
-  E & typeof DeliveredEntries,
-  undefined
->;
-
-function delivered<E extends v.ObjectEntries>(
-  schema: v.ObjectSchema<E, undefined>,
-): DeliveredSchemaOf<E> {
-  return v.object({ ...schema.entries, ...DeliveredEntries });
-}
-
-/** A storage event as delivered over a subscribe stream: flattened with room
- * id. `msg` events go only to user-role subscribers (the webui); a session
- * receives room messages through peer-inject instead. */
-export const DeliveredEventSchema = v.variant("type", [
-  delivered(MemberEventSchema),
-  delivered(LeaveEventSchema),
-  delivered(MsgEventSchema),
-  delivered(NextEventSchema),
-  delivered(PrevEventSchema),
-  delivered(TitleEventSchema),
-  delivered(ArchiveEventSchema),
-  delivered(KindEventSchema),
-  delivered(SayEventSchema),
-  delivered(SayReadEventSchema),
-]);
-export type DeliveredEvent = Output<typeof DeliveredEventSchema>;
-
-// --- the daemon's own pushes --------------------------------------------------
 
 /** Who a notify came from, daemon-stamped from the connection identity
  * (DR-0003 §7). The receiver uses this to tell a self-notify (own session —
@@ -149,20 +83,6 @@ export const SubscribeSupersededStreamEventSchema = v.object({
   sid: v.string(),
 });
 export type SubscribeSupersededStreamEvent = Output<typeof SubscribeSupersededStreamEventSchema>;
-
-/** Emitted once at `subscribe` time for every visible room that did NOT get a
- * backlog/delta replay (no `since`/`since_seq` entry for it and the request
- * didn't set `backlog: true` — issue 2026-07-17-subscribe-no-backlog-default).
- * Lets protocol consumers inspect each room's current cursor without re-flooding
- * its history. The CLI subscribe stream intentionally drops this connection
- * snapshot from stdout; other consumers may use it for their own catch-up policy.
- * Omitted entirely when every visible room got a replay instead (empty list never
- * sent). */
-export const RoomCursorsStreamEventSchema = v.object({
-  ev: v.literal("room_cursors"),
-  rooms: v.array(v.object({ room: v.string(), last_mid: v.number() })),
-});
-export type RoomCursorsStreamEvent = Output<typeof RoomCursorsStreamEventSchema>;
 
 /** Push update of the `claude agents --json` poll result (user-role subscribers
  * only). Emitted when the merged agent list changes; the daemon polls only
@@ -345,13 +265,12 @@ export const LlmStatusStreamEventSchema = v.object({
 });
 export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 
-/** Every push of the daemon's own, told apart by `ev`. */
-export const PushStreamEventSchema = v.variant("ev", [
+/** Every push, told apart by `ev`. */
+export const StreamEventSchema = v.variant("ev", [
   NotifyStreamEventSchema,
   SaysStreamEventSchema,
   RestartingStreamEventSchema,
   SubscribeSupersededStreamEventSchema,
-  RoomCursorsStreamEventSchema,
   AgentsStreamEventSchema,
   PeersStreamEventSchema,
   TranscriptStreamEventSchema,
@@ -361,7 +280,4 @@ export const PushStreamEventSchema = v.variant("ev", [
   LlmRequestsStreamEventSchema,
   LlmStatusStreamEventSchema,
 ]);
-export type PushStreamEvent = Output<typeof PushStreamEventSchema>;
-
-/** Anything the daemon pushes: a delivered storage event or a push of its own. */
-export type StreamEvent = DeliveredEvent | PushStreamEvent;
+export type StreamEvent = Output<typeof StreamEventSchema>;

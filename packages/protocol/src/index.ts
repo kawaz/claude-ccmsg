@@ -35,14 +35,9 @@ export * from "./frame.ts";
 export * from "./attachment-upload.ts";
 import type { LlmRequestInfo } from "./stream-event.ts";
 
-/** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
+/** The id the room logs give the User (kawaz), admin role: an implicit
+ * member of every room, with no member row. */
 export const ADMIN_ID = "u1";
-
-/** Default initial-delivery cap on join (DR-0003 §5, N=50). */
-export const DEFAULT_JOIN_BACKLOG = 50;
-
-/** Default dedup window for create_room (DR-0003 §4, minute-order). */
-export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
 
 /** Default HTTP/WS bind for `/ws` (DR-0004 §3).
  *  `CCMSG_HTTP_BIND=off` disables it. Loopback only — a browser's Same-Origin
@@ -211,7 +206,6 @@ export const ErrorCode = {
   bad_request: "bad_request",
   hello_required: "hello_required",
   room_not_found: "room_not_found",
-  not_a_member: "not_a_member",
   invalid_args: "invalid_args",
   // Workspace file access (DR-0008)
   session_not_found: "session_not_found",
@@ -229,14 +223,6 @@ export const ErrorCode = {
   // Session launcher (DR-0018): no valid session_launcher configuration means
   // both directory browsing and launch remain closed.
   launcher_not_configured: "launcher_not_configured",
-  // Broadcast room (DR-0013 §2.4): agent post to a broadcast room must include
-  // "u1" in `to`. "u1 に届かない agent 発話" を broadcast の意味論で禁じるため。
-  broadcast_agent_target_required: "broadcast_agent_target_required",
-  // reply (DR-0017 §2.2): the mid the reply points at doesn't exist in the room.
-  msg_not_found: "msg_not_found",
-  // reply (DR-0017 §2.2): replying to your own msg is meaningless — the
-  // constructed target list would collapse to just u1 + yourself.
-  self_reply: "self_reply",
   // DR-0023 host translation: the daemon is not running on macOS, the helper
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",

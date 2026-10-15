@@ -163,6 +163,12 @@ export const PeersResponseSchema = v.object({
 });
 export type PeersResponse = Output<typeof PeersResponseSchema>;
 
+export const SubscribeAckSchema = v.object({
+  ok: v.literal(true),
+  subscribed: v.literal(true),
+});
+export type SubscribeAck = Output<typeof SubscribeAckSchema>;
+
 export const NotifyResponseSchema = v.object({
   ok: v.literal(true),
   delivered: v.number(),

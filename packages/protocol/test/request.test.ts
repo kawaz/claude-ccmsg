@@ -42,21 +42,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "hello", role: "user", protocol: "1" },
     ],
   },
-  post: {
-    ok: { op: "post", room: "r1", msg: "hi", to: ["a1", "u1"] },
-    bad: [
-      { op: "post", room: "r1" },
-      { op: "post", room: "r1", msg: 7 },
-      { op: "post", room: "r1", msg: "m", to: [1] },
-    ],
-  },
-  reply: {
-    ok: { op: "reply", room: "r1", mid: 3, msg: "re" },
-    bad: [
-      { op: "reply", room: "r1", mid: "3", msg: "re" },
-      { op: "reply", room: "r1", mid: 3 },
-    ],
-  },
   message_send: {
     ok: { op: "message_send", to: SID, text: "hi", reply_to: "abc/1" },
     bad: [
@@ -93,25 +78,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "peer_list", cwd: "/w", name: "n" },
     bad: [{ op: "peer_list", cwd: 1 }],
   },
-  create_room: {
-    ok: {
-      op: "create_room",
-      members: [SID],
-      msg: "m",
-      title: "t",
-      include_self: false,
-      kind: "broadcast",
-    },
-    bad: [
-      { op: "create_room" },
-      { op: "create_room", members: [SID], kind: "1on1" },
-      { op: "create_room", members: [1] },
-    ],
-  },
-  next_room: {
-    ok: { op: "next_room", room: "r1", msg: "m", title: "t" },
-    bad: [{ op: "next_room" }, { op: "next_room", room: "r1", title: 1 }],
-  },
   say: {
     ok: { op: "say", text: "hello" },
     bad: [{ op: "say" }, { op: "say", text: ["hello"] }],
@@ -120,37 +86,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "say_read", id: "0f0f/1" },
     bad: [{ op: "say_read" }, { op: "say_read", id: 1 }],
   },
-  set_title: {
-    ok: { op: "set_title", room: "r1", title: " t " },
-    bad: [
-      { op: "set_title", room: "r1" },
-      { op: "set_title", room: "r1", title: null },
-    ],
-  },
-  archive_room: {
-    ok: { op: "archive_room", room: "r1", archived: true },
-    bad: [
-      { op: "archive_room", room: "r1" },
-      { op: "archive_room", room: "r1", archived: "yes" },
-    ],
-  },
-  kick: {
-    ok: { op: "kick", room: "r1", id: "a2" },
-    bad: [
-      { op: "kick", room: "r1" },
-      { op: "kick", room: "r1", id: 2 },
-    ],
-  },
-  subscribe: {
-    ok: { op: "subscribe", since: { r1: 3 }, since_seq: { r1: 9 }, backlog: true },
-    bad: [
-      { op: "subscribe", since_seq: 5 },
-      { op: "subscribe", backlog: "yes" },
-      { op: "subscribe", since: { r1: "x" } },
-      { op: "subscribe", since: { r1: null } },
-      { op: "subscribe", since_seq: { r1: -5 } },
-    ],
-  },
+  subscribe: { ok: { op: "subscribe" }, bad: [] },
   read: {
     ok: { op: "read", room: "r1", mids: [1, 2] },
     bad: [
@@ -403,17 +339,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "shutdown", reason: "test" },
     bad: [{ op: "shutdown", reason: 1 }],
   },
-  leave: {
-    ok: { op: "leave", room: "r1" },
-    bad: [{ op: "leave" }],
-  },
-  invite: {
-    ok: { op: "invite", room: "r1", sid: SID },
-    bad: [
-      { op: "invite", room: "r1", sid: "" },
-      { op: "invite", room: "r1" },
-    ],
-  },
 };
 
 /** A line read as a request: the typed request, or the failure of whichever
@@ -465,6 +390,27 @@ describe("readRequest: a line that is not a request is a failure", () => {
     });
   }
 
+  // Rooms are read-only (DR-0036 §2): no op writes one.
+  for (const value of [
+    { op: "post", room: "r1", msg: "hi" },
+    { op: "reply", room: "r1", mid: 3, msg: "re" },
+    { op: "create_room", members: [SID] },
+    { op: "next_room", room: "r1" },
+    { op: "set_title", room: "r1", title: "t" },
+    { op: "archive_room", room: "r1", archived: true },
+    { op: "kick", room: "r1", id: "a2" },
+    { op: "leave", room: "r1" },
+    { op: "invite", room: "r1", sid: SID },
+  ]) {
+    test(`no op writes a room: ${value.op}`, () => {
+      expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
+        kind: "invalid_request",
+        frame: { op: value.op, request_id: "q1" },
+        failure: { issues: [{ path: "op" }] },
+      });
+    });
+  }
+
   test("a request id that is missing or empty", () => {
     expect(readLine(line({ op: "ping" })).ok).toBe(false);
     expect(read({ op: "ping" }, "").ok).toBe(false);
@@ -511,29 +457,13 @@ describe("readRequest: the frame and the request are read in turn", () => {
 });
 
 describe("readRequest: the forms beside each op's type", () => {
-  test("create_room says where a 1on1 room comes from", () => {
-    expect(refusal(read({ op: "create_room", members: [SID], kind: "1on1" }))).toBe(
-      "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
-    );
-  });
-
-  // JSON text can spell a number past the finite range; it is not a seq.
-  test("a since_seq cursor past the finite range is refused", () => {
-    expect(readLine('{"op":"subscribe","request_id":"q1","since_seq":{"r3":1e999}}').ok).toBe(
-      false,
-    );
-  });
-
-  // A mid is a position like a seq: a negative one is refused under the
-  // request's id, not read as "no cursor".
-  test("a since cursor that is not a mid is refused under the request's id", () => {
+  // A field the op does not name is left out rather than refused (request.ts):
+  // the replay cursors a client of another generation sends with subscribe
+  // ask for nothing (DR-0036 §2).
+  test("subscribe leaves out the room replay fields", () => {
     expect(
-      readRequest(line({ op: "subscribe", request_id: "q1", since: { r1: -1 } })),
-    ).toMatchObject({
-      kind: "invalid_request",
-      frame: { op: "subscribe", request_id: "q1" },
-      failure: { issues: [{ path: "since.r1" }] },
-    });
+      read({ op: "subscribe", since: { r1: 3 }, since_seq: { r1: 9 }, backlog: true }),
+    ).toEqual({ ok: true, value: { op: "subscribe", request_id: "q1" } });
   });
 
   test("session_launch reads params as names with text values", () => {

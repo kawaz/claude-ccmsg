@@ -11,7 +11,6 @@ import {
   RESPONSE_SCHEMAS,
   type RequestOp,
   type ResponseOf,
-  RoomsResponseSchema,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { servedReply } from "../../daemon/test/helpers.ts";
@@ -37,15 +36,6 @@ export function served<Op extends RequestOp>(op: Op, out: string): ResponseOf<Op
   printed(RESPONSE_SCHEMAS[op], out);
   return reply;
 }
-
-/** What `rooms` prints: the daemon's rooms reply as the CLI narrowed it, with
- * how many rooms it left out and why. */
-export const CliRoomsSchema = v.object({
-  ...RoomsResponseSchema.entries,
-  archived_omitted: v.optional(v.number()),
-  inactive_omitted: v.optional(v.number()),
-  hint: v.optional(v.string()),
-});
 
 /** What `status` and `daemon start|stop` print: whether a daemon runs and,
  * when one does, its ping answer (`daemon stop` says only that it stopped

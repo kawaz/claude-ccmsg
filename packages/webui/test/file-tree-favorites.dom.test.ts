@@ -85,10 +85,7 @@ function filesStore(): Store {
 
 function panes(store: Store, peer: PeerInfo | undefined): ComponentChild {
   const tree: SessionTreeState = defined(store.getState().sessionTrees.get(SID), "session tree");
-  const ws = createWsClient(
-    (action) => store.dispatch(action),
-    () => store.getState(),
-  );
+  const ws = createWsClient((action) => store.dispatch(action));
   return h(
     AppContext.Provider,
     { value: { store, ws } },

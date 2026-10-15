@@ -172,9 +172,9 @@ export function agentsPollEnabled(): boolean {
 
 /**
  * Start polling for the daemon's whole lifetime. The poll is the source of
- * the session registry (DR-0034), and delivering a room message to a member
- * needs that registry whether or not a webui is watching — so unlike a
- * display-only feed it cannot wait for a viewer.
+ * the session registry (DR-0034), and delivering a direct message needs that
+ * registry whether or not a webui is watching — so unlike a display-only feed
+ * it cannot wait for a viewer.
  *
  * `onChange` fires only when the merged rows differ from the previous poll
  * (order-independent compare), and is awaited before the next poll may start,

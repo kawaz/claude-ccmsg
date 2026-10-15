@@ -2059,152 +2059,6 @@ a {
   color: var(--accent);
 }
 
-/* issue 2026-07-17-rooms-sidebar-new-button.md: Sidebar's ROOMS "+ 新規"
- * toggle — same chromeless-icon-button family as #session-creator-toggle
- * above. */
-#room-creator-toggle {
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  line-height: 1;
-}
-
-#room-creator-toggle[aria-pressed="true"] {
-  color: var(--accent);
-}
-
-/* issue 2026-07-17-rooms-sidebar-new-button.md: RoomCreator.tsx, swapped in
- * for RoomList inside #rooms-panel while the "+ 新規" toggle is on
- * (Sidebar.tsx) — same panel shape/chrome conventions as
- * #session-creator-panel above. */
-#room-creator-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.room-creator-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.room-creator-header h3 {
-  margin: 0;
-  font-size: var(--font-size-lg);
-}
-
-.room-creator-close {
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--font-size-lg);
-  line-height: 1;
-}
-
-.room-creator-close:hover {
-  color: var(--fg);
-}
-
-.room-creator-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-9);
-}
-
-.room-creator-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.room-creator-label {
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.room-creator-field input[type="text"] {
-  width: 100%;
-  font: inherit;
-  font-size: var(--font-size-md);
-  padding: var(--space-5) var(--space-8);
-  border-radius: 0.35rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.room-creator-members {
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  padding: var(--space-7) var(--space-8);
-  margin: 0;
-}
-
-.room-creator-member-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 12rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.room-creator-member {
-  display: flex;
-  align-items: center;
-  gap: var(--space-7);
-  font-size: var(--font-size-md);
-  cursor: pointer;
-}
-
-.room-creator-member-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.room-creator-member-sid {
-  color: var(--fg-muted);
-  font-size: var(--font-size-xs);
-}
-
-.room-creator-empty {
-  font-size: var(--font-size-md);
-  color: var(--fg-muted);
-  margin: 0;
-}
-
-.room-creator-submit {
-  align-self: flex-start;
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: none;
-  border-radius: 0.4rem;
-  padding: var(--space-5) var(--space-11);
-  font-size: var(--font-size-md);
-  cursor: pointer;
-}
-
-.room-creator-submit:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.room-creator-error {
-  color: var(--danger);
-  font-size: var(--font-size-md);
-  margin: 0;
-}
-
 /* DR-0018 §2.2: CwdTree.tsx, embedded inside .session-creator-field's cwd
  * row. Reuses FileTree's .tree-row/.tree-caret/.tree-loading/.tree-error
  * geometry (same indentation/caret/row look) under its own cwd-tree-prefixed
@@ -2348,45 +2202,6 @@ a {
   margin: 0 0 var(--space-7);
 }
 
-.room-title-edit-btn {
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--font-size-lg);
-  padding: 0 var(--space-3) var(--space-7);
-  line-height: 1;
-}
-
-.room-title-edit-btn:hover {
-  color: var(--fg);
-}
-
-.room-title-edit {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-6);
-  margin-bottom: var(--space-7);
-}
-
-.room-title-edit input {
-  font: inherit;
-  font-size: var(--font-size-3xl);
-  font-weight: 600;
-  width: 100%;
-  max-width: 24rem;
-  padding: var(--space-3) var(--space-7);
-  border-radius: 0.3rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-/* iPad 等 Shift+Enter が打てない環境向けの明示ボタン (kawaz 2026-07-12)。
- * 確定系は Composer の送信ボタンと同じ accent トーン、キャンセル系は
- * new-room-btn と同じニュートラルなボーダートーンに揃える。 */
-.room-title-save-btn,
 .new-room-confirm-btn {
   background: var(--accent);
   color: var(--accent-fg);
@@ -2397,7 +2212,6 @@ a {
   cursor: pointer;
 }
 
-.room-title-cancel-btn,
 .new-room-cancel-btn {
   background: none;
   border: 1px solid var(--border);
@@ -2408,42 +2222,52 @@ a {
   cursor: pointer;
 }
 
-.room-title-cancel-btn:hover,
 .new-room-cancel-btn:hover {
   color: var(--fg);
   border-color: var(--fg-muted);
 }
 
-.room-title-save-btn:disabled,
 .new-room-confirm-btn:disabled,
-.room-title-cancel-btn:disabled,
 .new-room-cancel-btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.room-title-edit-error {
-  display: block;
-  width: 100%;
-  margin-top: var(--space-3);
-  font-size: var(--font-size-lg);
-  color: var(--danger);
-}
-
-/* DR-0011 §1-4: invite-drop feedback shown under the member chips. */
-.room-invite-error,
-.room-invite-notice {
-  display: block;
-  margin-top: var(--space-5);
-  font-size: var(--font-size-lg);
-}
-
-.room-invite-error {
-  color: var(--danger);
-}
-
-.room-invite-notice {
+/* Room header's archived marker, beside the title. Same pill shape as
+ * .room-kind-badge, muted tone since it states a state, not a kind. */
+.room-archived-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  align-self: center;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  background: var(--bg-alt);
   color: var(--fg-muted);
+  border: 1px solid var(--border);
+}
+
+/* One-line loading / failure notes: in RoomView's timeline (history fetch)
+ * and in the sidebar room list. */
+.room-history-status,
+.room-list-status {
+  margin: var(--space-5) 0;
+  font-size: var(--font-size-lg);
+  color: var(--fg-muted);
+}
+
+/* The sidebar's Rooms fold heading: reads like the Sessions section's h2
+ * (see `#sidebar h2`), with the disclosure marker kept. */
+.room-list-summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  margin: var(--space-13) 0 var(--space-4);
 }
 
 /* DR-0035 §2: a 1on1 room is read-only; this line replaces its composer and
@@ -2454,9 +2278,8 @@ a {
   color: var(--fg-muted);
 }
 
-/* DR-0012: wraps RoomTitle + the archive toggle button on one line, title
- * taking the remaining width (RoomTitle's own inner flex handles its own
- * name/edit-button layout; this is one level up). */
+/* Room header's top line: the title takes the remaining width, with the
+ * archived badge beside it. */
 .room-header-top {
   display: flex;
   align-items: flex-start;
@@ -2467,46 +2290,6 @@ a {
   flex: 1;
   min-width: 0;
 }
-
-.room-archive-toggle {
-  flex-shrink: 0;
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  padding: var(--space-2) var(--space-8);
-  line-height: 1.6;
-}
-
-.room-archive-toggle:hover {
-  color: var(--fg);
-  border-color: var(--fg-muted);
-}
-
-.room-archive-toggle:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* RoomTitle が編集モードの間、アーカイブ toggle を隠す — 編集中は入力欄の
- * すぐ隣という押しやすい位置にアーカイブボタンが来てしまい、誤クリックしや
- * すい (kawaz 2026-07-12)。RoomTitle が編集モードで返す DOM のルート要素の
- * class (.room-title-edit) を CSS 側で検知するだけで済むため、編集状態を
- * RoomView へ持ち上げる (state のリフトアップ) を避けられる。 */
-.room-header-top:has(.room-title-edit) .room-archive-toggle {
-  display: none;
-}
-
-/* DR-0011 §1-4: highlight the message list while a Sessions-list row is
- * dragged over it, accepting the drop as an invite. */
-.timeline-drop-active {
-  outline: 2px dashed var(--accent);
-  outline-offset: -2px;
-  border-radius: 0.4rem;
-}
-
 .member-chips {
   display: flex;
   flex-wrap: wrap;
@@ -2521,7 +2304,6 @@ a {
   border-radius: 999px;
   padding: var(--space-2) var(--space-9);
   font-size: var(--font-size-sm);
-  cursor: pointer;
   /* avatar と名前の間隔 (Avatar 自身の margin は廃止 — AvatarLabel 導入に
    * 伴い、間隔は常にコンテナの gap で管理する方針、kawaz 2026-07-15)。 */
   display: inline-flex;
@@ -2533,23 +2315,16 @@ a {
   font-weight: 600;
 }
 
-.chip-selected {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
-}
-
 /* DR-0012: member chip whose session isn't in the live `peers` roster
  * (disconnected, distinct from `left` — see MemberChip.tsx / isMemberConnected
  * doc comment). Grey + strikethrough per kawaz spec ("非アクティブなセッション
- * は打ち消し線やグレー表示"), kept subtle (opacity, not a border/bg change) so
- * it doesn't compete with .chip-selected's accent highlight when both apply. */
+ * は打ち消し線やグレー表示"), kept subtle (opacity, not a border/bg change). */
 .chip-offline {
   opacity: 0.55;
   text-decoration: line-through;
 }
 
-/* Wraps a member's <button class="chip"> + its adjacent kick "✕" button so
+/* Wraps a member's <span class="chip"> + its adjacent timeline link so
  * they lay out as one inline unit inside .member-chips' flex-wrap row. */
 .chip-wrap {
   display: inline-flex;
@@ -2557,43 +2332,10 @@ a {
   gap: var(--space-1);
 }
 
-/* DR-0012 kick button (admin User only, see MemberChip.tsx — never rendered
- * for ADMIN_ID itself). Hidden until the chip pair is hovered/focused so it
- * doesn't visually compete with every chip's label at rest; opacity (not
- * display:none) keeps it keyboard-focusable without a hover. */
-.chip-kick {
-  opacity: 0;
-  background: none;
-  border: none;
-  color: var(--danger);
-  cursor: pointer;
-  font-size: var(--font-size-xs);
-  line-height: 1;
-  padding: var(--space-2) var(--space-4);
-  border-radius: 999px;
-}
-
-.chip-wrap:hover .chip-kick,
-.chip-kick:focus-visible {
-  opacity: 1;
-}
-
-/* Touch devices have no hover, so the above rule never fires — the ✕ would
- * stay invisible while its hit area remains live (silent-tap risk, guarded
- * only by the confirm() dialog). Show it always where hover isn't available. */
-@media (hover: none) {
-  .chip-kick {
-    opacity: 1;
-  }
-}
-
-.chip-kick:hover {
-  background: var(--bg-alt);
-}
-
-/* Timeline jump link for connected members (MemberChip.tsx) — same
- * hover-reveal treatment as .chip-kick so chips stay quiet at rest, and the
- * same @media (hover: none) always-on fallback for touch devices. */
+/* Timeline jump link for connected members (MemberChip.tsx) — hidden
+ * until the chip pair is hovered/focused so chips stay quiet at rest (opacity,
+ * not display:none, keeps it keyboard-focusable), with an @media (hover: none)
+ * always-on fallback for touch devices. */
 .chip-timeline-link {
   opacity: 0;
   font-size: var(--font-size-2xs);
@@ -3152,57 +2894,6 @@ button.session-tab {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
-}
-
-#session-rooms {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: var(--space-11) var(--space-13);
-}
-
-.session-rooms-section {
-  margin-bottom: var(--space-14);
-}
-
-.session-rooms-section h3 {
-  margin: 0 0 var(--space-7);
-  font-size: var(--font-size-lg);
-  color: var(--fg-muted);
-}
-
-.session-rooms-list {
-  list-style: none;
-  margin: 0 0 var(--space-8);
-  padding: 0;
-}
-
-.session-rooms-list li a {
-  display: block;
-  padding: var(--space-7) var(--space-8);
-  border-radius: 0.4rem;
-  text-decoration: none;
-  color: var(--fg);
-}
-
-.session-rooms-list li a:hover {
-  background: var(--bg-alt);
-}
-
-/* SessionRooms tab のアーカイブ節 (kawaz r15 mid=14、2026-07-14)。sidebar
- * RoomList と同じ「アーカイブ (N)」の折り畳み <details> 見出し慣習を踏襲。 */
-.session-rooms-archived {
-  margin-top: var(--space-8);
-  font-size: var(--font-size-lg);
-}
-.session-rooms-archived summary {
-  cursor: pointer;
-  padding: var(--space-5) var(--space-8);
-  color: var(--fg-muted);
-  list-style: none;
-}
-.session-rooms-archived summary::-webkit-details-marker {
-  display: none;
 }
 
 /* アーカイブ済み room 行の淡色化 (kawaz r15 mid=14): 折り畳みで隠すだけ
@@ -6673,12 +6364,9 @@ a.tl-attachment-file-path {
   display: none;
 }
 
-/* SessionView のセッション宛の入力欄 (DR-0035) + UNIF-Q1=b の RoomView
- * floating composer 共通スタイル。position:fixed で bottom-right pin、
- * SessionView と RoomView は App.tsx で排他表示なので同座標でも被らない。
- * 位置・寸法値は :root の --composer-fab-* 変数 1 箇所で管理。 */
-.session-input-fab,
-.room-composer-fab {
+/* SessionView のセッション宛の入力欄 (DR-0035) の FAB。position:fixed で
+ * bottom-right pin。位置・寸法値は :root の --composer-fab-* 変数 1 箇所で管理。 */
+.session-input-fab {
   position: fixed;
   /* viewport-fit=cover (index.html) で viewport が画面の端まで広がるので、
    * 端に貼り付く要素は safe-area を自分で避ける — 避けないとホーム
@@ -6705,8 +6393,7 @@ a.tl-attachment-file-path {
   -webkit-user-select: none;
 }
 
-.session-input-fab:hover,
-.room-composer-fab:hover {
+.session-input-fab:hover {
   filter: brightness(1.05);
 }
 
@@ -6803,42 +6490,6 @@ a.tl-attachment-file-path {
   -webkit-user-select: text;
 }
 
-/* UNIF-Q1=b: RoomView 通常/broadcast の Composer をセッション入力欄と同じ floating
- * popup に統一 (kawaz r15 mid=1/mid=3、2026-07-14)。panel は常時 mount
- * (display 切替) で内包 Composer の text/attachments state を close 中も
- * 維持する — kawaz 明示指定: 入力途中で外部タップされても書きかけは残す
- * (再度 fab タップで復元、attachment upload 進行中も維持)。
- * `.room-composer-panel-hidden` = 非表示、fab クリックで表示に切替。 */
-.room-composer-panel {
-  position: fixed;
-  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
-  bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
-  width: var(--composer-panel-width);
-  max-height: calc(100vh - 6rem);
-  overflow-y: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  padding: var(--space-9);
-  z-index: var(--z-composer);
-}
-
-.room-composer-panel-hidden {
-  display: none;
-}
-
-/* panel 内に埋め込まれた Composer は inline sticky (`.composer` の
- * `position: sticky; bottom: 0; margin-top; padding-top; border-top`) が
- * 無意味 — popup の中は独立レイアウトなので打ち消す。 */
-.room-composer-panel .composer {
-  position: static;
-  border-top: none;
-  padding-top: 0;
-  margin-top: 0;
-  background: transparent;
-}
-
 .session-input-panel-header {
   display: flex;
   justify-content: space-between;
@@ -6848,19 +6499,6 @@ a.tl-attachment-file-path {
   /* kawaz r46 mid=46,47: パネルのドラッグハンドル面。FAB と同じく
    * touch-action: none が無いと touch drag が pan に奪われて掴めない。
    * user-select は長押しのテキスト選択抑止。cursor で掴める場所を示す。 */
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: grab;
-}
-
-/* RoomComposerFab のパネルヘッダ (kawaz r55 mid=70)。セッション入力欄と違って宛先
- * ラベルを持たないので ✕ ボタンだけを右端に置く。ドラッグハンドル面としても
- * 機能させるため touch-action / user-select は セッション入力欄のヘッダと同じ扱い。 */
-.room-composer-panel-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -7413,9 +7051,9 @@ a.tl-attachment-file-path {
 
 /* Visually quarantined at the very bottom of the Status tab: a --danger
  * separator + extra top gap so it never reads as part of the operational
- * sections above. Button follows the .chip-kick tone (danger fg, restrained
- * chrome) but stays always-visible — hover-reveal would hide the one control
- * this zone exists for. */
+ * sections above. Button uses a danger fg with restrained chrome and stays
+ * always-visible — hover-reveal would hide the one control this zone exists
+ * for. */
 .status-kill-zone {
   margin-top: var(--space-16);
   padding-top: var(--space-9);
@@ -7953,14 +7591,6 @@ a.tl-attachment-file-path {
  * render a segment list. */
 .tl-search-unit {
   display: contents;
-}
-
-.room-creator-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-5);
-  margin-right: var(--space-11);
-  font-size: var(--font-size-lg);
 }
 
 /* r46 m3: セッションツリーパネル (Sidebar 下段 section)。ノードは 1 行 =

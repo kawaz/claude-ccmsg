@@ -1,5 +1,5 @@
-// message_send (DR-0036 §1): a message from one session straight to another,
-// without a room. The envelope is written into the recipient's peer messaging
+// message_send (DR-0036 §1): a message from one session straight to another.
+// The envelope is written into the recipient's peer messaging
 // socket (peer-inject.ts) and the sender is told whether it arrived; nothing is
 // held for a later attempt (DR-0036 §3).
 import { randomBytes } from "node:crypto";

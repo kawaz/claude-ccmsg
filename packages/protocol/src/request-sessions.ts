@@ -92,6 +92,14 @@ export const PeersRequestSchema = v.object({
 });
 export type PeersRequest = Output<typeof PeersRequestSchema>;
 
+/** Turn this connection into a stream of the daemon's pushes: notify and
+ * net_online for a session, and the webui's pushes (peers, agents, says, …)
+ * for the user role (stream-event.ts). */
+export const SubscribeRequestSchema = v.object({
+  op: v.literal("subscribe"),
+});
+export type SubscribeRequest = Output<typeof SubscribeRequestSchema>;
+
 export const NotifyRequestSchema = v.object({
   op: v.literal("notify"),
   /** target session sid; absent = self. */

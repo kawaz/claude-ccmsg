@@ -418,56 +418,15 @@ const CATALOG_PEERS: PeerInfo[] = [
   },
 ];
 
-/** Both of a chip's actions are injected, so the specimens hand it handlers
- * that do nothing: clicking one here mentions nobody and kicks nobody. That is
- * the point of the split — a catalog whose chips could kick a real member
- * would be a hazard to open. */
-const NO_OP = (): void => {};
-
 function ChipSection() {
   return (
-    <>
-      <Specimen name="<MemberChip />" note="接続中 / 未接続 / User (u1)">
-        <div class="catalog-row">
-          <MemberChip
-            id="a1"
-            room={CATALOG_ROOM}
-            selected={false}
-            peers={CATALOG_PEERS}
-            onSelect={NO_OP}
-            onKick={NO_OP}
-          />
-          <MemberChip
-            id="a2"
-            room={CATALOG_ROOM}
-            selected={false}
-            peers={CATALOG_PEERS}
-            onSelect={NO_OP}
-            onKick={NO_OP}
-          />
-          <MemberChip
-            id={ADMIN_ID}
-            room={CATALOG_ROOM}
-            selected={false}
-            peers={CATALOG_PEERS}
-            onSelect={NO_OP}
-            onKick={NO_OP}
-          />
-        </div>
-      </Specimen>
-      <Specimen name="selected" note="メンション先に選ばれている状態">
-        <div class="catalog-row">
-          <MemberChip
-            id="a1"
-            room={CATALOG_ROOM}
-            selected
-            peers={CATALOG_PEERS}
-            onSelect={NO_OP}
-            onKick={NO_OP}
-          />
-        </div>
-      </Specimen>
-    </>
+    <Specimen name="<MemberChip />" note="接続中 / 未接続 / User (u1)">
+      <div class="catalog-row">
+        <MemberChip id="a1" room={CATALOG_ROOM} peers={CATALOG_PEERS} />
+        <MemberChip id="a2" room={CATALOG_ROOM} peers={CATALOG_PEERS} />
+        <MemberChip id={ADMIN_ID} room={CATALOG_ROOM} peers={CATALOG_PEERS} />
+      </div>
+    </Specimen>
   );
 }
 

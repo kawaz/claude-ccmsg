@@ -1,9 +1,8 @@
 // Reading one line the daemon wrote to a client (DR-0038).
 //
-// A line is a push of the daemon's own (`ev`), a delivered storage event
-// (`type`) or a reply to a request (`ok`): one schema, the union of the three,
-// reads it. A line that is none of them is a failure, and nothing more is read
-// from it.
+// A line is a push (`ev`) or a reply to a request (`ok`): one schema, the
+// union of the two, reads it. A line that is neither is a failure, and nothing
+// more is read from it.
 //
 // What a reply holds depends on the op it answers, and the line does not name
 // the op: only the asker knows it, by the reply's `request_id`. So the frame
@@ -13,7 +12,7 @@ import * as v from "valibot";
 import { JsonTextSchema, type ParseFailure, type Parsed, parseWith } from "./parse.ts";
 import type { RequestOp } from "./request.ts";
 import { ErrorResponseSchema, RESPONSE_SCHEMAS, type ReplyOf } from "./response.ts";
-import { DeliveredEventSchema, PushStreamEventSchema, type StreamEvent } from "./stream-event.ts";
+import { StreamEventSchema, type StreamEvent } from "./stream-event.ts";
 
 /** One line from the daemon, as a client reads it.
  *
@@ -22,8 +21,8 @@ import { DeliveredEventSchema, PushStreamEventSchema, type StreamEvent } from ".
  *   daemon could not read). `reply(op)` reads it as the answer to a
  *   request of `op`: the op's success reply or an ErrorResponse, without the
  *   envelope
- * - `event`: a push or a delivered storage event
- * - `invalid`: the line is not JSON, or none of the three */
+ * - `event`: a push
+ * - `invalid`: the line is not JSON, or neither of the two */
 export type DaemonFrame =
   | {
       readonly kind: "reply";
@@ -40,11 +39,7 @@ const ReplyEnvelopeSchema = v.object({
 });
 
 /** Every kind of line the daemon writes. */
-const DaemonLineSchema = v.union([
-  PushStreamEventSchema,
-  DeliveredEventSchema,
-  ReplyEnvelopeSchema,
-]);
+const DaemonLineSchema = v.union([StreamEventSchema, ReplyEnvelopeSchema]);
 
 /** Read one line the daemon wrote. */
 export function readDaemonFrame(line: string): DaemonFrame {

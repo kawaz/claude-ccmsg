@@ -15,7 +15,7 @@ import {
   type DaemonCtx,
   type TestClient,
   isKind,
-  type StreamItem,
+  sayMarker,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -109,11 +109,9 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   return c;
 }
 
-/** Connect a session that exists only to post a marker msg (peers-push.test.ts's
- * pattern): the room is created BY the poster so it is a member of it. The
- * reader is a user-role subscriber — the only role whose stream carries msgs —
- * and never the poster itself, whose own post does not come back to it. */
-async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, string]> {
+/** Connect a session that exists only to say a marker (helpers.ts
+ * sayMarker); the reader is a user-role subscriber. */
+async function markerSession(ctx: Ctx): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
@@ -124,20 +122,7 @@ async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, 
     ws: "w",
     cwd: "/tmp",
   });
-  const { room } = await c.requestOk({ op: "create_room", members });
-  return [c, room];
-}
-
-/** Post the marker and return every event `reader` saw before it — the events
- * that must not include an llm_requests push. */
-async function seenBeforeMarker(
-  poster: TestClient,
-  reader: TestClient,
-  room: string,
-): Promise<StreamItem[]> {
-  await poster.request({ op: "post", room, msg: "marker" });
-  const { seen } = await reader.readEventUntil("msg", (e) => e.msg === "marker");
-  return seen;
+  return c;
 }
 
 describe("webhook → ev:llm_requests", () => {
@@ -331,7 +316,7 @@ describe("webhook → ev:llm_requests", () => {
         // side has it, a session-side copy would already be on the socket.
         // A round trip on the session connection then orders its stream past it.
         await u.readEventUntil("llm_requests");
-        await s.request({ op: "rooms" });
+        await s.request({ op: "ping" });
         const seen = await s.pendingEvents();
         expect(seen.some(isKind("llm_requests"))).toBe(false);
         u.close();
@@ -356,8 +341,8 @@ describe("webhook → ev:llm_requests", () => {
             "wrong-token",
           ),
         ).toBe(401);
-        const [marker, room] = await markerSession(ctx, []);
-        const seen = await seenBeforeMarker(marker, u, room);
+        const marker = await markerSession(ctx);
+        const seen = await sayMarker(marker, u, "marker");
         expect(seen.some(isKind("llm_requests"))).toBe(false);
         marker.close();
         u.close();

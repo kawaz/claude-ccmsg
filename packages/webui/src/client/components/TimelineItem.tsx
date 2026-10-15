@@ -1,4 +1,4 @@
-import type { DeliveredEvent, PeerInfo, SayRecord } from "@ccmsg/protocol";
+import type { MsgEvent, PeerInfo, SayRecord, StorageEvent } from "@ccmsg/protocol";
 import type { ComponentChildren } from "preact";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
@@ -14,7 +14,7 @@ import { LinkedMarkdownView } from "../filepath-linker.tsx";
  * mention target in `to` — kawaz 2026-07-13 requested the same avatar
  * treatment on the `→ X, Y, Z` mention list so it reads symmetrically with
  * the sender. `room.membersById` keeps a member's row after they leave
- * (`left: true`, see store.ts's applyProtocolEvent "leave" case — the row is
+ * (`left: true`, see store.ts's foldRoomLog "leave" case — the row is
  * flipped, never deleted), so this resolves a sid for messages / mentions
  * involving members who have since left the room, not just currently-active
  * ones. ADMIN_ID gets the fixed UserAvatar (seed-independent, same
@@ -101,7 +101,7 @@ function MsgItem({
   peers,
   now,
 }: {
-  event: Extract<DeliveredEvent, { type: "msg" }>;
+  event: MsgEvent;
   room: RoomState;
   peers: readonly PeerInfo[];
   now: number;
@@ -285,7 +285,7 @@ export function TimelineItem({
   peers,
   now,
 }: {
-  event: DeliveredEvent;
+  event: StorageEvent;
   room: RoomState;
   peers: readonly PeerInfo[];
   now: number;

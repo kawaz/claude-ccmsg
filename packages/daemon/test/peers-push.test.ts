@@ -14,6 +14,7 @@ import {
   type TestClient,
   defined,
   isKind,
+  sayMarker,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -61,17 +62,6 @@ async function readinessPushed(u: TestClient, ...sids: string[]) {
   );
 }
 
-/** Post a distinguishable marker msg via an ALREADY-connected session (never a
- *  fresh hello — a new hello is itself a peers-changing event and would
- *  contaminate the "no ev:'peers' arrived" tests below). Used to prove no
- *  ev:"peers" snuck in by collecting every event up to the marker and asserting
- *  none of them was ev:"peers", rather than a blind timeout sleep. The reader
- *  is a user-role subscriber (admin sees every room, and its stream carries msg). */
-async function postMarkerVia(poster: TestClient, text: string): Promise<void> {
-  const room = (await poster.requestOk({ op: "create_room", members: [] })).room;
-  await poster.request({ op: "post", room, msg: text });
-}
-
 describe("ev:peers push", () => {
   test(
     "新規 sid の hello で user-role subscriber に ev:peers が届く",
@@ -101,9 +91,8 @@ describe("ev:peers push", () => {
         const a = await sessionHello(ctx, SID_A);
         const m = await sessionHello(ctx, SID_M); // marker poster
         await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
-        a.close();
-        await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
+        await a.end();
+        const seen = await sayMarker(m, u, "marker");
         expect(seen.some(isKind("peers"))).toBe(false);
         const res = await u.requestOk({ op: "peers" });
         expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
@@ -129,7 +118,7 @@ describe("ev:peers push", () => {
         // one synchronous loop); a round trip on S then orders its stream past it.
         const b = await sessionHello(ctx, SID_B);
         await u.readEventUntil("peers", (e) => e.peers.some((p) => p.sid === SID_B));
-        await s.request({ op: "rooms" });
+        await s.request({ op: "ping" });
         const seen = await s.pendingEvents();
         expect(seen.some(isKind("peers"))).toBe(false);
         b.close();
@@ -163,8 +152,7 @@ describe("ev:peers push", () => {
           ws: "w",
           cwd: "/tmp",
         });
-        await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
+        const seen = await sayMarker(m, u, "marker");
         expect(seen.some(isKind("peers"))).toBe(false);
         a.close();
         m.close();
@@ -219,9 +207,8 @@ describe("ev:peers push", () => {
         const m = await sessionHello(ctx, SID_M); // marker poster
         await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
 
-        a1.close(); // one of two conns for sid A closes; A stays registered via a2
-        await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
+        await a1.end(); // one of two conns for sid A closes; A stays registered via a2
+        const seen = await sayMarker(m, u, "marker");
         expect(seen.some(isKind("peers"))).toBe(false);
         a2.close();
         m.close();

@@ -12,7 +12,7 @@
  * failed than left holding the reply open. */
 export const HYOUI_TIMEOUT_MS = 5000;
 
-/** Title clamp, matching the room `set_title` cap: a session title shows up
+/** Title clamp: a session title shows up
  * in the Sessions list's first line, where anything longer is unreadable
  * regardless of what the TUI would accept. */
 export const RENAME_TITLE_MAX_LEN = 200;
