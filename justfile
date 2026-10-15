@@ -181,12 +181,13 @@ ensure-clean: lint
 check-versions:
     @bump-semver get {{ version-files }} --no-hint >/dev/null
 
-# push 成功直後の local 反映: 現セッションの marketplace + plugin を update する。
-# ccmsg が未 install の環境 (skeleton 段階等) では skip 扱いにする (- prefix)。
+# push 成功直後の local 反映: 全 config dir (~/.claude*/) の marketplace + plugin を
+# update する。全面を回す claude-plugin-update.sh (dotfiles) が PATH に無い環境では
+# 現セッションの config dir だけ update する。ccmsg が未 install の環境 (skeleton
+# 段階等) では skip 扱いにする (- prefix)。
 [private]
 _local-plugin-reload:
-    -claude plugin marketplace update ccmsg-v1
-    -claude plugin update ccmsg-v1@ccmsg-v1
+    -@if command -v claude-plugin-update.sh >/dev/null; then claude-plugin-update.sh; else claude plugin marketplace update ccmsg-v1 && claude plugin update ccmsg-v1@ccmsg-v1; fi
     -@just _local-daemon-upgrade
     @echo ""
     @echo "[hint] /reload-plugins to apply in this session without restart"
@@ -198,7 +199,7 @@ _local-plugin-reload:
 [private]
 [script]
 _local-daemon-upgrade:
-    cache_dir="$HOME/.claude-personal/plugins/cache/ccmsg-v1/ccmsg-v1"
+    cache_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/ccmsg-v1/ccmsg-v1"
     latest=$(ls "$cache_dir" | sort -V | tail -1)
     [ -x "$cache_dir/$latest/bin/ccmsg" ] || exit 0
     "$cache_dir/$latest/bin/ccmsg" rooms > /dev/null 2>&1 || true
