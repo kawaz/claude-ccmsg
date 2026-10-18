@@ -37,6 +37,13 @@ webui (v1) で SessionView の Terminal タブが表示されない。調査の�
 
 参考: daemon 側 `packages/daemon/src/config.ts` の loadConfig / readJsConfig、webui 側 `packages/webui/src/client/components/SessionView.tsx` の hasTerminal。
 
+## 現状 (2026-10-18)
+
+- 前提の変化: 読めない config では daemon が起動時に止まる (DR-0038 §6 系の変更、DR-0018 §3.3)。隔離 dir で壊れた config.ts を置いて `ccmsg peers` を実行すると daemon は exit 1 で起動せず、CLI が daemon.log の理由を表示する。冒頭の「設定が空のまま動いて Terminal タブ等が消える」状態はもう起きない。daemon が動かないので webui は配信されず、status / snapshot に失敗を載せる先が無い。
+- 残っていた実害の修正: 理由が「AggregateError: N errors building <path>」だけで場所が出なかったので、構文エラーを 1 件ずつ `config: <path>:<行>:<桁>: could not be loaded (<内容>)` で出すようにした (commit: fix(daemon): 読めない config.ts / config.js の理由に、構文エラーを 1 件ずつ行と桁つきで出すようにした)。
+- 未決: 「config が読めなくても daemon を起動して失敗を webui に見せる」形にするかは DR-0038 の「起動時に止める」を覆す判断になるので、統括の判断待ち。
+- 受け入れ条件 1 つ目 (本番 config.ts のタイポ修正) はユーザの本番設定なので ccmsg 側の作業ではない。
+
 ## 受け入れ条件
 
 - [ ] 本番 config.ts のタイポを修正し、Terminal タブおよび config 由来の各導線が復旧する
