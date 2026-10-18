@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-18 | bug | open | [send-message-served-dir-test-flaky-macos-ci](./2026-10-18-send-message-served-dir-test-flaky-macos-ci.md) | served dir への send_message のテストが macOS CI で確率的に no_peer_socket になる |
 | 2026-10-18 | design | open | [translate-queue-cancel](./2026-10-18-translate-queue-cancel.md) | daemon の翻訳は helper に直列送信で、詰まった request が watchdog 期限 (最大 240 s) まで後続を止め、webui から取り消せない |
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
