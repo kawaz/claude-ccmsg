@@ -3,7 +3,7 @@ title: peer-inject の同一セッション宛て連続 post の到着順が非�
 status: open
 category: bug
 created: 2026-09-28T14:36:12+09:00
-last_read:
+last_read: 2026-10-18T16:31:35+09:00
 open_entered: 2026-09-28T14:36:12+09:00
 wip_entered:
 blocked_entered:
