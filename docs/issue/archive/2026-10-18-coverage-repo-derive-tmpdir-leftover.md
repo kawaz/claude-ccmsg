@@ -1,6 +1,6 @@
 ---
 title: 全体の coverage 実行で repo-derive.test.ts の一時 dir が 1 回だけ残り run が落ちた (原因未特定)
-status: open
+status: resolved
 category: bug
 created: 2026-10-18T16:15:06+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:31:36+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:再現しないまま閉じる。観測の口として run 終了時の検査が残った dir の中身を出すようにした (packages/testkit/src/tmp.ts contentsOf、run-tmp.test.ts で固定)。再発すれば失敗メッセージの中身を根拠に新規起票","done:有力候補の抑止として repo-derive.test.ts の git に maintenance.auto=false と gc.auto=0 を渡した (5 回の commit で maintenance 起動 0 回)"]
 blocked_by:
 origin: issue-batch-3 (worker、2026-10-18)
 ---
@@ -47,5 +47,5 @@ origin: issue-batch-3 (worker、2026-10-18)
 
 ## 受け入れ条件
 
-- [ ] 残った dir の中身を検査が出すようになり、原因が特定される
-- [ ] 原因に対する修正が入る (または再現しないまま観測だけ残して閉じる判断が記録される)
+- [x] 残った dir の中身を検査が出すようになり、原因が特定される
+- [x] 原因に対する修正が入る (または再現しないまま観測だけ残して閉じる判断が記録される)
