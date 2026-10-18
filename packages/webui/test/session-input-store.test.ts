@@ -239,7 +239,7 @@ describe("cleanupStaleSessionInputs (purge rules)", () => {
   });
 });
 
-describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
+describe("draft attachments round-trip", () => {
   // 何を保証するか: upload 完了 (done) の添付メタが draft に保存・復元される。
   // 以前は text のみ保存で、close→reopen 後の送信で [FILE<N>] placeholder が
   // substitute 対象を失いリテラルのまま届いていた (実事故)。
@@ -420,6 +420,19 @@ describe("a draft another tab wrote (DR-0035 §5)", () => {
     }
     const oldValue = typeInOtherTab("abcd");
     expect(otherTabDraft(sid, { text: "abc!" }, oldValue)).toBeNull();
+  });
+
+  // 何を保証するか: 入力欄が保存済みの下書きをすでに映していれば、映し直す
+  // 中身は無い (null)。入力欄の state を作り直さないので、入力中の欄が別タブの
+  // storage event で書き換わらない。下書きが無ければ映すのは空で、空の入力欄
+  // には何もしない。
+  test("nothing to show when the input already shows the draft", () => {
+    typeInOtherTab("shown");
+    expect(storedDraftChange(sid, { text: "shown" })).toBeNull();
+    expect(storedDraftChange(sid, { text: "other" })?.text).toBe("shown");
+    clearDraft(sid);
+    expect(storedDraftChange(sid, { text: "" })).toBeNull();
+    expect(storedDraftChange(sid, { text: "left over" })).toEqual({ text: "" });
   });
 
   // 何を保証するか: 映すことでは保存領域に書かない。映したタブが保存し直すと、

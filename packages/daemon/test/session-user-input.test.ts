@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   parseWith,
@@ -21,24 +20,18 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import {
-  connect,
-  startTestDaemon,
-  stopTestDaemon,
-  type DaemonCtx,
-  type TestClient,
+  startInProcessDaemon,
+  stopInProcessDaemon,
+  sessionConn,
+  userConn,
+  fixtureDir,
 } from "./helpers.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
-const T = 20_000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const T1 = "2026-08-31T10:00:00.000Z";
 const T2 = "2026-08-31T10:05:00.000Z";
 const T3 = "2026-08-31T10:09:00.000Z";
-
-function fixtureDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-session-user-input-"));
-}
 
 /** A prompt the human typed, shaped after a real CC 2.1.x transcript row:
  * `promptSource:"typed"` with `origin:{kind:"human"}`. */
@@ -114,27 +107,6 @@ function rowOf(fields: JsonObject): TranscriptRow {
   return row(line(fields));
 }
 
-async function sessionHello(ctx: DaemonCtx, sid: string, file: string): Promise<TestClient> {
-  const client = await connect(ctx.sock);
-  await client.request({
-    op: "hello",
-    protocol: PROTOCOL_VERSION,
-    role: "session",
-    sid,
-    repo: "r",
-    ws: "w",
-    cwd: "/tmp",
-    transcript_path: file,
-  });
-  return client;
-}
-
-async function userHello(ctx: DaemonCtx): Promise<TestClient> {
-  const client = await connect(ctx.sock);
-  await client.hello({ role: "user" });
-  return client;
-}
-
 function inputAt(peers: readonly PeerInfo[], sid: string): string | undefined {
   return peers.find((p) => p.sid === sid)?.last_user_input_at;
 }
@@ -142,7 +114,7 @@ function inputAt(peers: readonly PeerInfo[], sid: string): string | undefined {
 describe("classifyUserInputRow", () => {
   // The two counted kinds (kawaz 2026-08-31: 通常のプロンプト + ccmsg の
   // from:"u1")。判定は wire field で行い、prefix カタログには依存しない。
-  // kawaz r244m18: 引数付き slash command (/clear に次タスクの本文を渡した形)
+  // 引数付き slash command (/clear に次タスクの本文を渡した形)
   // はユーザが書いたテキストなので数える。素の command (args 空/無し) は数えない。
   test("引数付き slash command はユーザ入力", () => {
     const command = userContentRow(
@@ -321,113 +293,91 @@ describe("isUserInputCandidate", () => {
 });
 
 describe("last_user_input_at on peers", () => {
-  test(
-    "接続中セッションの transcript から最終ユーザ入力時刻が peers に載る",
-    async () => {
-      const ctx = await startTestDaemon();
-      const dir = fixtureDir();
-      try {
-        const file = path.join(dir, `${A}.jsonl`);
-        // 最後の行はアシスタント発話 = ユーザ入力より後。ソートキーは
-        // 「最後のユーザ入力」であって「最後の行」ではない。
-        fs.writeFileSync(
-          file,
-          typedPromptLine("やって", T1) + assistantLine(T2) + assistantLine(T3),
-        );
-        await sessionHello(ctx, A, file);
-        const user = await userHello(ctx);
-        await user.request({ op: "subscribe" });
+  test("接続中セッションの transcript から最終ユーザ入力時刻が peers に載る", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-user-input");
+    try {
+      const file = path.join(dir, `${A}.jsonl`);
+      // 最後の行はアシスタント発話 = ユーザ入力より後。ソートキーは
+      // 「最後のユーザ入力」であって「最後の行」ではない。
+      fs.writeFileSync(file, typedPromptLine("やって", T1) + assistantLine(T2) + assistantLine(T3));
+      await sessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
 
-        const res = await user.requestOk({ op: "peers" });
-        expect(inputAt(res.peers, A)).toBe(T1);
-      } finally {
-        await stopTestDaemon(ctx);
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+      const res = await user.requestOk({ op: "peers" });
+      expect(inputAt(res.peers, A)).toBe(T1);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-  test(
-    'ccmsg の from:"u1" 着信もユーザ入力として時刻を進める',
-    async () => {
-      const ctx = await startTestDaemon();
-      const dir = fixtureDir();
-      try {
-        const file = path.join(dir, `${A}.jsonl`);
-        fs.writeFileSync(file, typedPromptLine("やって", T1));
-        await sessionHello(ctx, A, file);
-        const user = await userHello(ctx);
-        await user.request({ op: "subscribe" });
-        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
+  test('ccmsg の from:"u1" 着信もユーザ入力として時刻を進める', async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-user-input");
+    try {
+      const file = path.join(dir, `${A}.jsonl`);
+      fs.writeFileSync(file, typedPromptLine("やって", T1));
+      await sessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
+      expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
-        // tail 駆動 (ポーリングではない): 届いた瞬間に ev:"peers" が飛ぶ。
-        fs.appendFileSync(file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
-        const pushed = await user.readEventUntil(
-          "peers",
-          (event) => inputAt(event.peers, A) === T2,
-        );
-        expect(inputAt(pushed.ev.peers, A)).toBe(T2);
-      } finally {
-        await stopTestDaemon(ctx);
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+      // tail 駆動 (ポーリングではない): 届いた瞬間に ev:"peers" が飛ぶ。
+      fs.appendFileSync(file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
+      const pushed = await user.readEventUntil("peers", (event) => inputAt(event.peers, A) === T2);
+      expect(inputAt(pushed.ev.peers, A)).toBe(T2);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-  test(
-    "エージェントだけが喋り続けても時刻は動かない",
-    async () => {
-      // last_activity_at との違いの核心。走り続けているセッションが
-      // 一覧の先頭に居座らないための性質。
-      const ctx = await startTestDaemon();
-      const dir = fixtureDir();
-      try {
-        const file = path.join(dir, `${A}.jsonl`);
-        fs.writeFileSync(file, typedPromptLine("やって", T1));
-        await sessionHello(ctx, A, file);
-        const user = await userHello(ctx);
-        await user.request({ op: "subscribe" });
-        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
+  test("エージェントだけが喋り続けても時刻は動かない", async () => {
+    // last_activity_at との違いの核心。走り続けているセッションが
+    // 一覧の先頭に居座らないための性質。
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-user-input");
+    try {
+      const file = path.join(dir, `${A}.jsonl`);
+      fs.writeFileSync(file, typedPromptLine("やって", T1));
+      await sessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
+      expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
-        fs.appendFileSync(
-          file,
-          assistantLine(T2) + teammateRelayLine(T2) + ccmsgDeliveryLine("a3", "できました", T3),
-        );
-        // 変化が無いことの確認なので、push を待つのではなく往復 1 回で確定させる。
-        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
-      } finally {
-        await stopTestDaemon(ctx);
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+      fs.appendFileSync(
+        file,
+        assistantLine(T2) + teammateRelayLine(T2) + ccmsgDeliveryLine("a3", "できました", T3),
+      );
+      // 変化が無いことの確認なので、push を待つのではなく往復 1 回で確定させる。
+      expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-  test(
-    "transcript が読めないセッションは値を持たない (0 ではなく無し)",
-    async () => {
-      const ctx = await startTestDaemon();
-      const dir = fixtureDir();
-      try {
-        const withPrompt = path.join(dir, `${A}.jsonl`);
-        const empty = path.join(dir, `${B}.jsonl`);
-        fs.writeFileSync(withPrompt, typedPromptLine("やって", T1));
-        fs.writeFileSync(empty, assistantLine(T2));
-        await sessionHello(ctx, A, withPrompt);
-        await sessionHello(ctx, B, empty);
-        const user = await userHello(ctx);
-        await user.request({ op: "subscribe" });
+  test("transcript が読めないセッションは値を持たない (0 ではなく無し)", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-user-input");
+    try {
+      const withPrompt = path.join(dir, `${A}.jsonl`);
+      const empty = path.join(dir, `${B}.jsonl`);
+      fs.writeFileSync(withPrompt, typedPromptLine("やって", T1));
+      fs.writeFileSync(empty, assistantLine(T2));
+      await sessionConn(ctx, A, { transcript_path: withPrompt });
+      await sessionConn(ctx, B, { transcript_path: empty });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
 
-        const res = await user.requestOk({ op: "peers" });
-        expect(inputAt(res.peers, A)).toBe(T1);
-        expect(inputAt(res.peers, B)).toBeUndefined();
-      } finally {
-        await stopTestDaemon(ctx);
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+      const res = await user.requestOk({ op: "peers" });
+      expect(inputAt(res.peers, A)).toBe(T1);
+      expect(inputAt(res.peers, B)).toBeUndefined();
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

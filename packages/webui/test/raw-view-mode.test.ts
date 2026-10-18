@@ -1,4 +1,4 @@
-// raw JSONL 表示の pretty モード (kawaz r76 m91) の model 単体テスト:
+// raw JSONL 表示の pretty モードの model 単体テスト:
 // 整形結果・失敗の 2 理由 (壊れた行 / 上限超過)・永続値の解決。
 import { describe, expect, test } from "bun:test";
 import {

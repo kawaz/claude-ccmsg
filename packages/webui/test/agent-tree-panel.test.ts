@@ -27,7 +27,7 @@ function node(over: Partial<AgentTreeNode> & Pick<AgentTreeNode, "agent_id">): A
 }
 
 describe("agentNodeHref (workflow member の TL リンク)", () => {
-  // kawaz r76 m66 で報告された不具合の再現: workflow 配下の agent へ
+  // workflow 配下の agent へ
   // `agent/sub/<id>` を張ると、transcript は
   // `subagents/workflows/<runId>/agent-<id>.jsonl` にあるため daemon が
   // 解決できず "agent transcript not found" になる。
@@ -61,7 +61,7 @@ describe("agentNodeHref (workflow member の TL リンク)", () => {
 });
 
 describe("dotProps (state → dot 色語彙の正規化)", () => {
-  // 同じく r76 m66: workflow drilldown の state 語彙 (running/done/…) は
+  // 同じく workflow drilldown の state 語彙 (running/done/…) は
   // CSS の status-teammate-dot-* に無く、正規化前は全部が未定義 class に
   // なって running と done が同じ見た目だった。
   test("running と done が別の class になる", () => {
@@ -123,7 +123,7 @@ describe("isRunLive (run 行 dot と live/完了 振り分けの共有判定)", 
   });
 });
 
-// kawaz r99 m34: 「ワークスペースの一部がエラーしてても、フォルド全て開くまで
+// 「ワークスペースの一部がエラーしてても、フォルド全て開くまで
 // 分からない」。error は最下層 member 行にしか出ていなかったので、祖先行
 // (phase / run / セクション) に伝播させる集計を純関数として検証する。
 describe("error の祖先伝播 (畳んだ行から異常が分かる)", () => {

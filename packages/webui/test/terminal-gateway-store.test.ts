@@ -1,6 +1,6 @@
 // Terminal タブ (issue 2026-07-21-webui-terminal-tab-embed) の embed URL
 // 組み立てを固定する。gateway URL は daemon config.json → hello response
-// 経由で AppState に載る (旧 localStorage 方式は r46m7 で撤去)。ここでは
+// 経由で AppState に載る。ここでは
 // 純関数の URL 組み立てだけを検証し、AppState 反映は ws.ts のハンドシェイク
 // テスト側で見る。
 import { describe, expect, test } from "bun:test";

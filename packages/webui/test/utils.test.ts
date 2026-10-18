@@ -181,7 +181,7 @@ function roomWithMember(m: MemberEvent): RoomState {
   };
 }
 
-describe("sayUnreadBySid (kawaz r244 m5-m6)", () => {
+describe("sayUnreadBySid", () => {
   const record = (id: string, sid: string, read: boolean): SayRecord => ({
     id,
     sid,
@@ -348,7 +348,7 @@ describe("isMemberConnected", () => {
 });
 
 describe("treeRootPath", () => {
-  // kawaz r55 m97: the tree browses from the session's own cwd, expressed in
+  // the tree browses from the session's own cwd, expressed in
   // the containment-root-relative space fs_list/fs_read/fs_find path keys use.
   // Under a jj worktree layout that is the workspace directory name, so the
   // tree opens on the session's own files instead of a `main/` node wrapping
@@ -923,7 +923,7 @@ describe("resolveSessionTopbar", () => {
   // DR-0021 pinned/virtual: a session with no live peer still keeps its
   // SessionSearchHit in state.pinnedSessions — before this helper the topbar
   // fell straight through to `sid.slice(0,8)` and lost the worktree name for
-  // pinned rows entirely (kawaz r38 mid=9).
+  // pinned rows entirely.
   test("falls back to a pinned session's SessionSearchHit when no peer is connected", () => {
     const state: AppState = {
       ...initialState(),
@@ -988,7 +988,7 @@ describe("documentTitleFor", () => {
     expect(documentTitleFor(initialState())).toBe("ccmsg");
   });
 
-  // Identifying label leads, app name trails (kawaz r99 mid=39) — a browser
+  // Identifying label leads, app name trails — a browser
   // tab only shows the leading characters, so the session identity has to
   // come first to tell tabs apart at a glance.
   test("puts '<repo> ▸ <ws>' before the app name for a selected session", () => {
@@ -1539,7 +1539,7 @@ describe("external file view helpers (DR-0024)", () => {
     ).toEqual(["/a.md", "/z.md"]);
   });
 
-  // kawaz r99 m35: プロジェクト外セクションは由来別に 2 グループへ分かれる。
+  // プロジェクト外セクションは由来別に 2 グループへ分かれる。
   test("由来別グループ: tool / attachment に分かれ、各グループ内はパス順", () => {
     expect(
       groupExternalFiles([
@@ -1627,7 +1627,7 @@ describe("workspace file view helpers (DR-0026)", () => {
 });
 
 describe("canonicalViewerPath", () => {
-  // kawaz r99 m8: opening a project file by its full path answered 403 — the
+  // opening a project file by its full path answered 403 — the
   // absolute spelling routed to fs_read_external, whose DR-0024 allowlist only
   // holds files the session actually read. Rebasing it to the root-relative
   // form is what makes "open by full path" reach fs_read from any context.

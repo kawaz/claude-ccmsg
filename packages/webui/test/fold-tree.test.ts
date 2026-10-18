@@ -87,7 +87,7 @@ describe("foldPathsByOffset", () => {
   });
 
   test("every entry of a fold group needs only that group's outer fold", () => {
-    // 2 段目のサブグループは廃止 (kawaz r151 m38): fold を開けば thinking も
+    // 2 段目のサブグループは廃止: fold を開けば thinking も
     // tool 群も等しく 1 行ずつ現れるので、どの entry も outer 1 段で届く。
     const raws = [
       userPrompt("q"),

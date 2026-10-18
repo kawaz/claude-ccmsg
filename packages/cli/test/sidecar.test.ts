@@ -30,6 +30,7 @@ import {
   testConfigDir,
   waitConnectable,
   type DaemonCtx,
+  userConn,
 } from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
 
@@ -327,8 +328,7 @@ describe("ccmsg sidecar reply", () => {
     try {
       // Written to only once it has named the run.
       await readUntil(sidecar.stderr.getReader(), (t) => t.includes("named "));
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const answer = user.request({ op: "user_prompt", session_id: SID, text: "from the web" });
       // The daemon asks the run for its facts when it is named; the
       // user_prompt's request is the prompt.send.
@@ -406,8 +406,7 @@ describe("ccmsg sidecar facts", () => {
       const proc = runFacts(FACTS, ctx.env);
       expect(await proc.exited).toBe(0);
       expect(await new Response(proc.stderr).text()).toBe("");
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const status = await user.requestError({ op: "session_status", sid: SID });
       // No transcript for this session, but the facts registered it.
       expect(status.error.code).toBe("not_found");
@@ -468,8 +467,7 @@ describe("ccmsg sidecar names its run to the daemon", () => {
   test("named once bound, gone once it leaves, with no ps run", async () => {
     const ctx = await startShortDaemon();
     const ps = psRecorder(ctx.base);
-    const user = await connect(ctx.sock);
-    await user.hello({ role: "user" });
+    const user = await userConn(ctx);
     await user.request({ op: "subscribe" });
     const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
       env: { ...process.env, ...ctx.env, PATH: ps.path },
@@ -524,8 +522,7 @@ describe("keepNamed", () => {
     let named: Promise<void> | undefined;
     let second: DaemonCtx | undefined;
     try {
-      const before = await connect(first.sock);
-      await before.hello({ role: "user" });
+      const before = await userConn(first);
       await before.request({ op: "subscribe" });
       named = keepNamed({
         paths,
@@ -551,8 +548,7 @@ describe("keepNamed", () => {
 
       second = { ...first, proc: spawnDaemonProc(first.stateDir, first.dataDir) };
       await waitConnectable(first.sock);
-      const after = await connect(first.sock);
-      await after.hello({ role: "user" });
+      const after = await userConn(first);
       await after.request({ op: "subscribe" });
       // A daemon that takes a run named now is not enough: once a probe run of
       // another session, named the way keepNamed names, shows as ready, this

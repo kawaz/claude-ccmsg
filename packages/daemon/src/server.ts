@@ -337,6 +337,80 @@ export interface Daemon {
   /** When the agents poll last finished a round: the next round began after
    * this, which is what lets it say a run named before it has no process. */
   agentsRoundAt: number;
+  /** Ends the host once a graceful shutdown (the `shutdown` op, a signal) has
+   * released everything: the daemon process exits. */
+  exit: () => void;
+}
+
+/** What the host of a daemon hands it: where it keeps its files, the
+ * configuration read at startup, and the resources the host holds for it. */
+export interface DaemonHost {
+  paths: Paths;
+  config: ResolvedCcmsgConfig;
+  log: Logger;
+  lock: LockHandle;
+  /** raw CCMSG_HTTP_ALLOW entries in effect, for status/ping display. */
+  httpAllow: string[];
+  exit: () => void;
+}
+
+/** A daemon's state before anything listens, polls or watches: what
+ * startDaemon starts its transports and background work on. */
+export function createDaemon(host: DaemonHost): Daemon {
+  const { paths, config, log } = host;
+  const trace = new TraceWriter(paths.trace);
+  const daemon: Daemon = {
+    paths,
+    config,
+    version: VERSION,
+    startTime: Date.now(),
+    rooms: createRoomReader(paths.roomsDir, (line) => log.warn(line)),
+    connections: new Set(),
+    sessions: new Map(),
+    subscribers: new Set(),
+    log,
+    lock: host.lock,
+    server: null,
+    httpListeners: [],
+    httpAllow: host.httpAllow,
+    shuttingDown: false,
+    agentsPoller: createAgentsPoller(),
+    agentsSeen: new Map(),
+    transcriptTail: createTranscriptTailStore(trace),
+    trace,
+    sessionStatus: createSessionStatusStore({
+      inputReadiness: (sid) => readinessOf(daemon, sid),
+      facts: (sid) => daemon.sessionFacts.get(sid),
+    }),
+    sessionErrors: createSessionErrorsStore(),
+    sessionUserInputs: createSessionUserInputStore(),
+    sessionErrorsSnapshot: "",
+    networkWatch: null,
+    sessionWake: createSessionWakeState(),
+    sandboxGrants: createSandboxGrants(),
+    sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
+    forkOrigins: createForkOriginCache(),
+    translator: createTranslateService(),
+    peersSnapshot: "",
+    agentsSnapshot: agentsKey([]),
+    staleClients: new Map(),
+    llmRequests: new LlmRequestCache(),
+    llmStatusRefresher: null,
+    webhooks: new Map(),
+    peerInjector: new PeerInjector(),
+    issueDirectMid: createMidIssuer(),
+    says: createSayLog(createMidIssuer()),
+    sidecarReplies: new SidecarReplies(),
+    sessionFacts: new SessionFactsStore(),
+    sidecarRuns: new SidecarRuns({
+      sidecarDir: paths.sidecars,
+      isAlive: isProcessAlive,
+      now: Date.now,
+    }),
+    agentsRoundAt: Date.now(),
+    exit: host.exit,
+  };
+  return daemon;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -2567,7 +2641,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
     case "shutdown": {
       send(conn, { ok: true, stopping: true });
-      void gracefulShutdown(daemon, req.reason);
+      void shutdownDaemon(daemon, req.reason);
       return;
     }
 
@@ -2583,7 +2657,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
 // --- lifecycle -------------------------------------------------------------
 
-async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> {
+/** Stop everything the daemon runs, tell every connection, release what can
+ * block a successor, then end the host (`daemon.exit`). */
+export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<void> {
   if (daemon.shuttingDown) return;
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
@@ -2627,7 +2703,7 @@ async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> 
       }
     },
   });
-  process.exit(0);
+  daemon.exit();
 }
 
 export interface StartOptions {
@@ -2670,6 +2746,96 @@ function resolveHttpAllowOrigin(): Set<string> {
       .map((s) => s.trim())
       .filter((s) => s !== ""),
   );
+}
+
+interface UdsConnState {
+  conn: Conn;
+  decoder: TextDecoder;
+  buffer: string;
+  /** Bytes not yet accepted by the kernel due to backpressure (DR-0008: fs_read
+   *  responses can be hundreds of KB, well past the point tiny replies
+   *  ever hit). `socket.write()` uses sendto(2) directly and returns a short
+   *  count instead of blocking/queueing when the socket buffer is full — unlike
+   *  Bun's higher-level `ws.send()` on the HTTP/WS side, nothing retries the
+   *  remainder for us. `flushPending` below is that retry, driven by both the
+   *  writer and the socket's own `drain` event. */
+  pending: Buffer[];
+}
+
+function flushPending(socket: Bun.Socket<UdsConnState>): void {
+  const state = socket.data;
+  for (let chunk = state.pending[0]; chunk !== undefined; chunk = state.pending[0]) {
+    let n: number;
+    try {
+      n = socket.write(chunk);
+    } catch {
+      // socket closing mid-flush; drop the rest, delivery is best-effort
+      state.pending.length = 0;
+      return;
+    }
+    if (n < 0) {
+      // socket closed/shutting down (Bun: write() returns -1)
+      state.pending.length = 0;
+      return;
+    }
+    if (n === chunk.length) {
+      state.pending.shift();
+      continue;
+    }
+    // partial write: keep the unsent remainder at the front of the queue and
+    // wait for the next `drain` event rather than busy-retrying here.
+    state.pending[0] = chunk.subarray(n);
+    break;
+  }
+  try {
+    socket.flush();
+  } catch {
+    // socket may be closing; delivery is best-effort
+  }
+}
+
+/** Accept the wire on the daemon's UNIX socket (`paths.sock`): each
+ * connection's lines go to handleRequest, its writes back are queued past
+ * backpressure, and its close removes it from the daemon. */
+export function listenUds(daemon: Daemon): Listener {
+  return Bun.listen<UdsConnState>({
+    unix: daemon.paths.sock,
+    socket: {
+      open(socket) {
+        const conn: Conn = {
+          write(line) {
+            const state = socket.data;
+            state.pending.push(Buffer.from(line, "utf-8"));
+            flushPending(socket);
+          },
+          identity: null,
+          subscribed: false,
+        };
+        socket.data = { conn, decoder: new TextDecoder(), buffer: "", pending: [] };
+        daemon.connections.add(conn);
+      },
+      drain(socket) {
+        flushPending(socket);
+      },
+      data(socket, chunk) {
+        const state = socket.data;
+        state.buffer += state.decoder.decode(chunk, { stream: true });
+        let idx: number;
+        while ((idx = state.buffer.indexOf("\n")) >= 0) {
+          const rawLine = state.buffer.slice(0, idx);
+          state.buffer = state.buffer.slice(idx + 1);
+          if (rawLine.trim() !== "") handleRequest(daemon, state.conn, rawLine);
+        }
+      },
+      close(socket) {
+        const state = socket.data;
+        if (state) removeConn(daemon, state.conn);
+      },
+      error(_socket, err) {
+        daemon.log.error(`socket error: ${String(err)}`);
+      },
+    },
+  });
 }
 
 export async function startDaemon(opts: StartOptions = {}): Promise<void> {
@@ -2719,58 +2885,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     lock.release();
     process.exit(1);
   }
-  const config = loaded.config;
-  const trace = new TraceWriter(paths.trace);
-  const daemon: Daemon = {
+  const daemon = createDaemon({
     paths,
-    config,
-    version: VERSION,
-    startTime: Date.now(),
-    rooms: createRoomReader(paths.roomsDir, (line) => log.warn(line)),
-    connections: new Set(),
-    sessions: new Map(),
-    subscribers: new Set(),
+    config: loaded.config,
     log,
     lock,
-    server: null,
-    httpListeners: [],
     httpAllow,
-    shuttingDown: false,
-    agentsPoller: createAgentsPoller(),
-    agentsSeen: new Map(),
-    transcriptTail: createTranscriptTailStore(trace),
-    trace,
-    sessionStatus: createSessionStatusStore({
-      inputReadiness: (sid) => readinessOf(daemon, sid),
-      facts: (sid) => daemon.sessionFacts.get(sid),
-    }),
-    sessionErrors: createSessionErrorsStore(),
-    sessionUserInputs: createSessionUserInputStore(),
-    sessionErrorsSnapshot: "",
-    networkWatch: null,
-    sessionWake: createSessionWakeState(),
-    sandboxGrants: createSandboxGrants(),
-    sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
-    forkOrigins: createForkOriginCache(),
-    translator: createTranslateService(),
-    peersSnapshot: "",
-    agentsSnapshot: agentsKey([]),
-    staleClients: new Map(),
-    llmRequests: new LlmRequestCache(),
-    llmStatusRefresher: null,
-    webhooks: new Map(),
-    peerInjector: new PeerInjector(),
-    issueDirectMid: createMidIssuer(),
-    says: createSayLog(createMidIssuer()),
-    sidecarReplies: new SidecarReplies(),
-    sessionFacts: new SessionFactsStore(),
-    sidecarRuns: new SidecarRuns({
-      sidecarDir: paths.sidecars,
-      isAlive: isProcessAlive,
-      now: Date.now,
-    }),
-    agentsRoundAt: Date.now(),
-  };
+    exit: () => process.exit(0),
+  });
 
   daemon.webhooks = buildWebhookSources(daemon, log);
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
@@ -2827,95 +2949,11 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     if (daemon.networkWatch.enabled) syncSessionErrors(daemon);
   }
 
-  interface UdsConnState {
-    conn: Conn;
-    decoder: TextDecoder;
-    buffer: string;
-    /** Bytes not yet accepted by the kernel due to backpressure (DR-0008: fs_read
-     *  responses can be hundreds of KB, well past the point tiny replies
-     *  ever hit). `socket.write()` uses sendto(2) directly and returns a short
-     *  count instead of blocking/queueing when the socket buffer is full — unlike
-     *  Bun's higher-level `ws.send()` on the HTTP/WS side, nothing retries the
-     *  remainder for us. `flushPending` below is that retry, driven by both the
-     *  writer and the socket's own `drain` event. */
-    pending: Buffer[];
-  }
-
-  function flushPending(socket: Bun.Socket<UdsConnState>): void {
-    const state = socket.data;
-    for (let chunk = state.pending[0]; chunk !== undefined; chunk = state.pending[0]) {
-      let n: number;
-      try {
-        n = socket.write(chunk);
-      } catch {
-        // socket closing mid-flush; drop the rest, delivery is best-effort
-        state.pending.length = 0;
-        return;
-      }
-      if (n < 0) {
-        // socket closed/shutting down (Bun: write() returns -1)
-        state.pending.length = 0;
-        return;
-      }
-      if (n === chunk.length) {
-        state.pending.shift();
-        continue;
-      }
-      // partial write: keep the unsent remainder at the front of the queue and
-      // wait for the next `drain` event rather than busy-retrying here.
-      state.pending[0] = chunk.subarray(n);
-      break;
-    }
-    try {
-      socket.flush();
-    } catch {
-      // socket may be closing; delivery is best-effort
-    }
-  }
-
   // The pid file must exist by the time the socket accepts: a client that
   // connects and then reads the pid (the upgrade test does exactly this) would
   // otherwise race the write below listen().
   fs.writeFileSync(paths.pid, `${process.pid}\n`);
-  const server = Bun.listen<UdsConnState>({
-    unix: paths.sock,
-    socket: {
-      open(socket) {
-        const conn: Conn = {
-          write(line) {
-            const state = socket.data;
-            state.pending.push(Buffer.from(line, "utf-8"));
-            flushPending(socket);
-          },
-          identity: null,
-          subscribed: false,
-        };
-        socket.data = { conn, decoder: new TextDecoder(), buffer: "", pending: [] };
-        daemon.connections.add(conn);
-      },
-      drain(socket) {
-        flushPending(socket);
-      },
-      data(socket, chunk) {
-        const state = socket.data;
-        state.buffer += state.decoder.decode(chunk, { stream: true });
-        let idx: number;
-        while ((idx = state.buffer.indexOf("\n")) >= 0) {
-          const rawLine = state.buffer.slice(0, idx);
-          state.buffer = state.buffer.slice(idx + 1);
-          if (rawLine.trim() !== "") handleRequest(daemon, state.conn, rawLine);
-        }
-      },
-      close(socket) {
-        const state = socket.data;
-        if (state) removeConn(daemon, state.conn);
-      },
-      error(_socket, err) {
-        daemon.log.error(`socket error: ${String(err)}`);
-      },
-    },
-  });
-  daemon.server = server;
+  daemon.server = listenUds(daemon);
 
   fs.chmodSync(paths.sock, 0o600);
   log.info(`listening on ${paths.sock} (v${VERSION})`);
@@ -2964,6 +3002,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     });
   }
 
-  process.on("SIGTERM", () => void gracefulShutdown(daemon, "signal"));
-  process.on("SIGINT", () => void gracefulShutdown(daemon, "signal"));
+  process.on("SIGTERM", () => void shutdownDaemon(daemon, "signal"));
+  process.on("SIGINT", () => void shutdownDaemon(daemon, "signal"));
 }

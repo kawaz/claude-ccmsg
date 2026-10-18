@@ -10,7 +10,6 @@ import { describe, expect, test } from "bun:test";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
-const T = 30000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
 /** A transcript big enough that its cold `session_status` scan takes long
@@ -94,85 +93,77 @@ describe("request correlation", () => {
     });
   });
 
-  test(
-    "a slow op does not hold back a later one on the same connection",
-    async () => {
-      await withDaemon(async (ctx) => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
-        try {
-          const file = path.join(dir, `${A}.jsonl`);
-          writeLargeTranscript(file);
-          const session = await connect(ctx.sock);
-          await session.request({
-            op: "hello",
-            protocol: PROTOCOL_VERSION,
-            role: "session",
-            sid: A,
-            repo: "r",
-            ws: "w",
-            cwd: "/tmp",
-            transcript_path: file,
-          });
+  test("a slow op does not hold back a later one on the same connection", async () => {
+    await withDaemon(async (ctx) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
+      try {
+        const file = path.join(dir, `${A}.jsonl`);
+        writeLargeTranscript(file);
+        const session = await connect(ctx.sock);
+        await session.request({
+          op: "hello",
+          protocol: PROTOCOL_VERSION,
+          role: "session",
+          sid: A,
+          repo: "r",
+          ws: "w",
+          cwd: "/tmp",
+          transcript_path: file,
+        });
 
-          const c = await connect(ctx.sock);
-          await c.hello({ role: "user" });
-          // The cold scan first, the cheap op immediately behind it on the same
-          // socket. Under the removed FIFO the ping could only be answered
-          // after the scan finished.
-          c.write({ op: "session_status", sid: A, request_id: "slow" });
-          c.write({ op: "ping", request_id: "fast" });
+        const c = await connect(ctx.sock);
+        await c.hello({ role: "user" });
+        // The cold scan first, the cheap op immediately behind it on the same
+        // socket. Under the removed FIFO the ping could only be answered
+        // after the scan finished.
+        c.write({ op: "session_status", sid: A, request_id: "slow" });
+        c.write({ op: "ping", request_id: "fast" });
 
-          const first = await c.readEvent();
-          const second = await c.readEvent();
-          expect(first).toMatchObject({ ok: true, pong: true, request_id: "fast" });
-          expect(second).toMatchObject({ ok: true, sid: A, request_id: "slow" });
+        const first = await c.readEvent();
+        const second = await c.readEvent();
+        expect(first).toMatchObject({ ok: true, pong: true, request_id: "fast" });
+        expect(second).toMatchObject({ ok: true, sid: A, request_id: "slow" });
 
-          session.close();
-          c.close();
-        } finally {
-          fs.rmSync(dir, { recursive: true, force: true });
-        }
-      });
-    },
-    T,
-  );
+        session.close();
+        c.close();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 
-  test(
-    "replies that come back out of order still settle their own caller",
-    async () => {
-      await withDaemon(async (ctx) => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
-        try {
-          const file = path.join(dir, `${A}.jsonl`);
-          writeLargeTranscript(file);
-          const session = await connect(ctx.sock);
-          await session.request({
-            op: "hello",
-            protocol: PROTOCOL_VERSION,
-            role: "session",
-            sid: A,
-            repo: "r",
-            ws: "w",
-            cwd: "/tmp",
-            transcript_path: file,
-          });
+  test("replies that come back out of order still settle their own caller", async () => {
+    await withDaemon(async (ctx) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-correlation-"));
+      try {
+        const file = path.join(dir, `${A}.jsonl`);
+        writeLargeTranscript(file);
+        const session = await connect(ctx.sock);
+        await session.request({
+          op: "hello",
+          protocol: PROTOCOL_VERSION,
+          role: "session",
+          sid: A,
+          repo: "r",
+          ws: "w",
+          cwd: "/tmp",
+          transcript_path: file,
+        });
 
-          const c = await connect(ctx.sock);
-          await c.hello({ role: "user" });
-          // Both in flight at once, the slow one sent first: each Promise gets
-          // its own answer, not whichever reply happens to arrive first.
-          const slow = c.requestOk({ op: "session_status", sid: A });
-          const fast = c.requestOk({ op: "ping" });
-          expect(await fast).toMatchObject({ ok: true, pong: true });
-          expect(await slow).toMatchObject({ ok: true, sid: A });
+        const c = await connect(ctx.sock);
+        await c.hello({ role: "user" });
+        // Both in flight at once, the slow one sent first: each Promise gets
+        // its own answer, not whichever reply happens to arrive first.
+        const slow = c.requestOk({ op: "session_status", sid: A });
+        const fast = c.requestOk({ op: "ping" });
+        expect(await fast).toMatchObject({ ok: true, pong: true });
+        expect(await slow).toMatchObject({ ok: true, sid: A });
 
-          session.close();
-          c.close();
-        } finally {
-          fs.rmSync(dir, { recursive: true, force: true });
-        }
-      });
-    },
-    T,
-  );
+        session.close();
+        c.close();
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

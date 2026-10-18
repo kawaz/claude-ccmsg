@@ -6,32 +6,13 @@ import * as path from "node:path";
 import {
   readDaemonFrame,
   resolvePaths,
-  VERSION,
   type ErrorResponse,
   type Request,
   type RequestOp,
   type ResponseOf,
 } from "@ccmsg/protocol";
-import { agentsKey, createAgentsPoller } from "../src/agents.ts";
-import { createMidIssuer } from "../src/mid-issuer.ts";
-import { createForkOriginCache } from "../src/fork-origin.ts";
-import { LlmRequestCache } from "../src/llm-events.ts";
 import { Logger } from "../src/log.ts";
-import { PeerInjector } from "../src/peer-inject.ts";
-import { createRoomReader } from "../src/room-reader.ts";
-import { createSandboxGrants } from "../src/sandbox.ts";
-import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
-import { createSessionErrorsStore } from "../src/session-errors.ts";
-import { SessionFactsStore } from "../src/session-facts.ts";
-import { createSessionStatusStore } from "../src/session-status.ts";
-import { createSessionUserInputStore } from "../src/session-user-input.ts";
-import { createSessionWakeState } from "../src/session-wake.ts";
-import { createSayLog } from "../src/say-log.ts";
-import { SidecarReplies } from "../src/sidecar-call.ts";
-import { SidecarRuns } from "../src/sidecar-runs.ts";
-import { TraceWriter } from "../src/trace.ts";
-import { createTranscriptTailStore } from "../src/transcript.ts";
-import { createTranslateService } from "../src/translate-helper.ts";
+import { createDaemon, handleRequest, type Conn, type Daemon } from "../src/server.ts";
 import { readStreamItem, refusedReply, servedReply, type StreamItem } from "./helpers.ts";
 
 /** A Logger that writes nothing: the op tests read what a request is
@@ -50,56 +31,20 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     CCMSG_CONFIG_DIR: path.join(base, "c"),
     CCMSG_DATA_DIR: path.join(base, "d"),
   });
-  const trace = new TraceWriter(paths.trace);
-  const sessionFacts = fields.sessionFacts ?? new SessionFactsStore();
-  return {
+  const daemon = createDaemon({
     paths,
     config: {},
-    version: VERSION,
-    startTime: Date.now(),
-    rooms: createRoomReader(paths.roomsDir),
-    connections: new Set(),
-    sessions: new Map(),
-    subscribers: new Set(),
     log: new SilentLogger(paths.log),
     lock: { fd: -1, release() {} },
-    server: null,
-    httpListeners: [],
     httpAllow: [],
-    shuttingDown: false,
-    agentsPoller: createAgentsPoller(),
-    agentsSeen: new Map(),
-    transcriptTail: createTranscriptTailStore(trace),
-    trace,
-    sessionStatus: createSessionStatusStore({ facts: (sid) => sessionFacts.get(sid) }),
-    sessionErrors: createSessionErrorsStore(),
-    sessionUserInputs: createSessionUserInputStore(),
-    sessionErrorsSnapshot: "",
-    networkWatch: null,
-    sessionWake: createSessionWakeState(),
-    sandboxGrants: createSandboxGrants(),
-    sandboxOrigin: null,
-    forkOrigins: createForkOriginCache(),
-    translator: createTranslateService(),
-    peersSnapshot: "",
-    agentsSnapshot: agentsKey([]),
-    staleClients: new Map(),
-    llmRequests: new LlmRequestCache(),
-    llmStatusRefresher: null,
-    webhooks: new Map(),
-    peerInjector: new PeerInjector(),
-    issueDirectMid: createMidIssuer(),
-    says: createSayLog(createMidIssuer()),
-    sidecarReplies: new SidecarReplies(),
-    sessionFacts,
-    sidecarRuns: new SidecarRuns({
-      sidecarDir: paths.sidecars,
-      isAlive: () => true,
-      now: Date.now,
-    }),
-    agentsRoundAt: Date.now(),
-    ...fields,
-  };
+    exit() {
+      throw new Error("a stub daemon has no host to end");
+    },
+  });
+  // Assigned onto the daemon rather than spread into a copy: the daemon's own
+  // closures (the status store reading `daemon.sessionFacts`) see what the
+  // test put in.
+  return Object.assign(daemon, fields);
 }
 
 /** A line the daemon wrote back: as it came, and what it reads as. */

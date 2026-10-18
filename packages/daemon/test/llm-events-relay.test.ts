@@ -16,10 +16,10 @@ import {
   type TestClient,
   isKind,
   sayMarker,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
-const T = 15000;
 // Ids that say hello as a session must be session-id shaped (lowercase UUID).
 const SID_MARK = "3a4c0000-0000-4000-8000-000000000001";
 const SID_S9 = "59000000-0000-4000-8000-000000000009";
@@ -48,8 +48,7 @@ async function startWebhookDaemon(options: { configured?: boolean } = {}): Promi
   const proc = spawnDaemonProc(stateDir, dataDir, { CCMSG_HTTP_BIND: "127.0.0.1:0" });
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  const c = await connect(sock);
-  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+  const c = await userConn({ sock });
   const pong = await c.requestOk({ op: "ping" });
   c.close();
   return {
@@ -103,8 +102,7 @@ async function postEvents(
 }
 
 async function userSubscriber(ctx: Ctx): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+  const c = await userConn(ctx);
   await c.request({ op: "subscribe" });
   return c;
 }
@@ -112,263 +110,209 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
 /** Connect a session that exists only to say a marker (helpers.ts
  * sayMarker); the reader is a user-role subscriber. */
 async function markerSession(ctx: Ctx): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.request({
-    op: "hello",
-    role: "session",
-    protocol: PROTOCOL_VERSION,
-    sid: SID_MARK,
-    repo: "r",
-    ws: "w",
-    cwd: "/tmp",
-  });
+  const c = await sessionConn(ctx, SID_MARK);
   return c;
 }
 
 describe("webhook → ev:llm_requests", () => {
-  test(
-    "a posted event reaches a user-role subscriber",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const ts = Date.now();
-        const status = await postEvents(ctx, {
+  test("a posted event reaches a user-role subscriber", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now();
+      const status = await postEvents(ctx, {
+        ts,
+        session_id: "S1",
+        prefix: "484eda9c",
+        model: "claude-fable-5",
+        status: 200,
+      });
+      expect(status).toBe(204);
+      const { ev } = await u.readEventUntil("llm_requests");
+      expect(ev.requests).toEqual([
+        {
           ts,
           session_id: "S1",
           prefix: "484eda9c",
+          main: true,
           model: "claude-fable-5",
           status: 200,
-        });
-        expect(status).toBe(204);
-        const { ev } = await u.readEventUntil("llm_requests");
-        expect(ev.requests).toEqual([
-          {
-            ts,
-            session_id: "S1",
-            prefix: "484eda9c",
-            main: true,
-            model: "claude-fable-5",
-            status: 200,
-          },
-        ]);
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+        },
+      ]);
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a batch is folded and pushed as one snapshot",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const ts = Date.now();
-        expect(
-          await postEvents(ctx, [
-            { ts, session_id: "S2", prefix: "484eda9c" },
-            { ts, session_id: "S3", prefix: "aa11bb22" },
-          ]),
-        ).toBe(204);
-        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
-        expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S2", "S3"]);
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a batch is folded and pushed as one snapshot", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now();
+      expect(
+        await postEvents(ctx, [
+          { ts, session_id: "S2", prefix: "484eda9c" },
+          { ts, session_id: "S3", prefix: "aa11bb22" },
+        ]),
+      ).toBe(204);
+      const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
+      expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S2", "S3"]);
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a redelivered event does not move the window",
-    async () => {
-      // Both gateway processes may report the same call; neither knows about
-      // the other, so the daemon has to absorb the duplicate.
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const ts = Date.now() - 100_000;
-        await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
-        await u.readEventUntil("llm_requests");
-        await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
-        // The duplicate is dropped by the cache, so its ts is unchanged. Anchor
-        // on a later, genuinely new event to prove the assertion isn't just
-        // reading the first push again.
-        await postEvents(ctx, { ts: ts + 50_000, session_id: "S5", prefix: "aa11bb22" });
-        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
-        expect(ev.requests.find((r) => r.session_id === "S4")?.ts).toBe(ts);
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a redelivered event does not move the window", async () => {
+    // Both gateway processes may report the same call; neither knows about
+    // the other, so the daemon has to absorb the duplicate.
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now() - 100_000;
+      await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
+      await u.readEventUntil("llm_requests");
+      await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
+      // The duplicate is dropped by the cache, so its ts is unchanged. Anchor
+      // on a later, genuinely new event to prove the assertion isn't just
+      // reading the first push again.
+      await postEvents(ctx, { ts: ts + 50_000, session_id: "S5", prefix: "aa11bb22" });
+      const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
+      expect(ev.requests.find((r) => r.session_id === "S4")?.ts).toBe(ts);
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "unusable events are dropped without failing the delivery",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const ts = Date.now();
-        // session_id: null is the gateway's own shape for a client that sent
-        // no session header — the most common event ccmsg cannot place.
-        expect(
-          await postEvents(ctx, [
-            { ts, session_id: null, prefix: "484eda9c" },
-            { ts, session_id: "S6", prefix: "484eda9c" },
-            { nonsense: true },
-          ]),
-        ).toBe(204);
-        const { ev } = await u.readEventUntil("llm_requests");
-        expect(ev.requests).toHaveLength(1);
-        expect(ev.requests[0]?.session_id).toBe("S6");
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("unusable events are dropped without failing the delivery", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now();
+      // session_id: null is the gateway's own shape for a client that sent
+      // no session header — the most common event ccmsg cannot place.
+      expect(
+        await postEvents(ctx, [
+          { ts, session_id: null, prefix: "484eda9c" },
+          { ts, session_id: "S6", prefix: "484eda9c" },
+          { nonsense: true },
+        ]),
+      ).toBe(204);
+      const { ev } = await u.readEventUntil("llm_requests");
+      expect(ev.requests).toHaveLength(1);
+      expect(ev.requests[0]?.session_id).toBe("S6");
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a subagent's request arrives as a separate, non-main series",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const mainTs = Date.now() - 240_000;
-        await postEvents(ctx, { ts: mainTs, session_id: "S7", prefix: "484eda9c" });
-        await u.readEventUntil("llm_requests");
-        // Same session id, different system prompt: a subagent. The session's
-        // own window must survive it untouched — that is what keeps the ring
-        // counting down while a subagent chatters.
-        const subTs = Date.now();
-        await postEvents(ctx, { ts: subTs, session_id: "S7", prefix: "9c31aa02" });
-        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
-        expect(ev.requests.find((r) => r.main)).toEqual({
-          ts: mainTs,
-          session_id: "S7",
-          prefix: "484eda9c",
-          main: true,
-        });
-        expect(ev.requests.find((r) => !r.main)?.prefix).toBe("9c31aa02");
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a subagent's request arrives as a separate, non-main series", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const mainTs = Date.now() - 240_000;
+      await postEvents(ctx, { ts: mainTs, session_id: "S7", prefix: "484eda9c" });
+      await u.readEventUntil("llm_requests");
+      // Same session id, different system prompt: a subagent. The session's
+      // own window must survive it untouched — that is what keeps the ring
+      // counting down while a subagent chatters.
+      const subTs = Date.now();
+      await postEvents(ctx, { ts: subTs, session_id: "S7", prefix: "9c31aa02" });
+      const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
+      expect(ev.requests.find((r) => r.main)).toEqual({
+        ts: mainTs,
+        session_id: "S7",
+        prefix: "484eda9c",
+        main: true,
+      });
+      expect(ev.requests.find((r) => !r.main)?.prefix).toBe("9c31aa02");
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a later subscriber gets the window that opened before it connected",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const first = await userSubscriber(ctx);
-        const ts = Date.now();
-        await postEvents(ctx, { ts, session_id: "S8", prefix: "484eda9c" });
-        await first.readEventUntil("llm_requests");
-        first.close();
+  test("a later subscriber gets the window that opened before it connected", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const first = await userSubscriber(ctx);
+      const ts = Date.now();
+      await postEvents(ctx, { ts, session_id: "S8", prefix: "484eda9c" });
+      await first.readEventUntil("llm_requests");
+      first.close();
 
-        // The reload case: a brand-new connection subscribing mid-window.
-        const second = await userSubscriber(ctx);
-        const { ev } = await second.readEventUntil("llm_requests");
-        expect(ev.requests).toEqual([{ ts, session_id: "S8", prefix: "484eda9c", main: true }]);
-        second.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+      // The reload case: a brand-new connection subscribing mid-window.
+      const second = await userSubscriber(ctx);
+      const { ev } = await second.readEventUntil("llm_requests");
+      expect(ev.requests).toEqual([{ ts, session_id: "S8", prefix: "484eda9c", main: true }]);
+      second.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "session-role subscribers never receive it (webui-only, like ev:peers)",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const s = await connect(ctx.sock);
-        await s.request({
-          op: "hello",
-          protocol: PROTOCOL_VERSION,
-          role: "session",
-          sid: SID_S9,
-          repo: "r",
-          ws: "w",
-          cwd: "/tmp",
-        });
-        await s.request({ op: "subscribe" });
+  test("session-role subscribers never receive it (webui-only, like ev:peers)", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const s = await sessionConn(ctx, SID_S9);
+      await s.request({ op: "subscribe" });
+      await postEvents(ctx, {
+        ts: Date.now(),
+        session_id: SID_S9,
+        prefix: "484eda9c",
+      });
+      // The user connection receiving the push is the ordering anchor: the
+      // daemon writes both sends in one synchronous loop, so once the user
+      // side has it, a session-side copy would already be on the socket.
+      // A round trip on the session connection then orders its stream past it.
+      await u.readEventUntil("llm_requests");
+      await s.request({ op: "ping" });
+      const seen = await s.pendingEvents();
+      expect(seen.some(isKind("llm_requests"))).toBe(false);
+      u.close();
+      s.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
+
+  test("a bad token is rejected and nothing reaches the WS", async () => {
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      expect(
+        await postEvents(
+          ctx,
+          { ts: Date.now(), session_id: "SA", prefix: "484eda9c" },
+          "wrong-token",
+        ),
+      ).toBe(401);
+      const marker = await markerSession(ctx);
+      const seen = await sayMarker(marker, u, "marker");
+      expect(seen.some(isKind("llm_requests"))).toBe(false);
+      marker.close();
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
+
+  test("with no webhooks configured the endpoint does not exist", async () => {
+    const ctx = await startWebhookDaemon({ configured: false });
+    try {
+      expect(
         await postEvents(ctx, {
           ts: Date.now(),
-          session_id: SID_S9,
+          session_id: "SB",
           prefix: "484eda9c",
-        });
-        // The user connection receiving the push is the ordering anchor: the
-        // daemon writes both sends in one synchronous loop, so once the user
-        // side has it, a session-side copy would already be on the socket.
-        // A round trip on the session connection then orders its stream past it.
-        await u.readEventUntil("llm_requests");
-        await s.request({ op: "ping" });
-        const seen = await s.pendingEvents();
-        expect(seen.some(isKind("llm_requests"))).toBe(false);
-        u.close();
-        s.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "a bad token is rejected and nothing reaches the WS",
-    async () => {
-      const ctx = await startWebhookDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        expect(
-          await postEvents(
-            ctx,
-            { ts: Date.now(), session_id: "SA", prefix: "484eda9c" },
-            "wrong-token",
-          ),
-        ).toBe(401);
-        const marker = await markerSession(ctx);
-        const seen = await sayMarker(marker, u, "marker");
-        expect(seen.some(isKind("llm_requests"))).toBe(false);
-        marker.close();
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "with no webhooks configured the endpoint does not exist",
-    async () => {
-      const ctx = await startWebhookDaemon({ configured: false });
-      try {
-        expect(
-          await postEvents(ctx, {
-            ts: Date.now(),
-            session_id: "SB",
-            prefix: "484eda9c",
-          }),
-        ).toBe(404);
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+        }),
+      ).toBe(404);
+    } finally {
+      await stop(ctx);
+    }
+  });
 });

@@ -1,13 +1,12 @@
 // CopyButton.tsx のラベル。同じボタンが 2 つの場所 (StatusPanel のメタ情報と
 // SESSIONS の行) に出るので、どちらの文字を出すかは 1 箇所で決まっている。
-// 成功時も ✓ を重ねるだけでラベルは place を持ち続ける (kawaz r259 m4) ため、
+// 成功時も ✓ を重ねるだけでラベルは place を持ち続けるため、
 // ここが実質ボタンの幅を決める。
 import { describe, expect, test } from "bun:test";
 import { copyButtonLabel } from "../src/client/components/CopyButton.tsx";
 
 describe("copyButtonLabel", () => {
-  // SESSIONS の行では sid の表示幅が主役なので、3 文字のラベルは記号に譲る
-  // (kawaz r273 m29)。
+  // SESSIONS の行では sid の表示幅が主役なので、3 文字のラベルは記号に譲る。
   test("狭い行 (compact) は 1 文字の記号", () => {
     const label = copyButtonLabel(true);
     // 1 コード単位 = BMP の記号。絵文字 (サロゲートペア) を選ぶと 2 になる。

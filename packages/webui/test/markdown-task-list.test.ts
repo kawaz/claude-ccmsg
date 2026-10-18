@@ -392,7 +392,7 @@ describe("resolveTaskLine", () => {
 // Where a failed write's message is shown. The renderer numbers checkboxes by
 // document-order ordinal, so pointing a message at the right row means naming
 // the ordinal the item occupies *now* — the click's own ordinal can be stale
-// by the time the write comes back (kawaz r55 m125).
+// by the time the write comes back.
 describe("locateTaskOrdinal", () => {
   test("re-derives the ordinal after items are inserted above", () => {
     const source = "- [ ] a\n- [ ] b\n";

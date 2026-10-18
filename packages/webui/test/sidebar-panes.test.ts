@@ -93,7 +93,7 @@ describe("loadDrawerWidth / saveDrawerWidth", () => {
 });
 
 describe("clampSidebarListHeight / loadSidebarListHeight", () => {
-  // kawaz r273 m26: 縦積みはフォームが上・一覧が下。一覧は「今どの
+  // 縦積みはフォームが上・一覧が下。一覧は「今どの
   // セッションを見ているか」が分かる行数だけ残す。実測 (390x844) で一覧の
   // 上端から 1 行目までが 75px、行ピッチが 59px。
   test("既定は行が 2〜3 本見える高さ", () => {

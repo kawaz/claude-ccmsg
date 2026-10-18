@@ -1,5 +1,5 @@
-// Files タブ表示状態 (選択ファイル + viewMode) の per-sid 永続化ヘルパ
-// (kawaz r17 mid=5)。1on1 draft (session-input-store.test.ts) と同じ
+// Files タブ表示状態 (選択ファイル + viewMode) の per-sid 永続化ヘルパ。
+// 1on1 draft (session-input-store.test.ts) と同じ
 // 保存・削除ルールを踏襲していることをテストで固定する: round-trip、
 // 壊れた record の拒否、mount-time sweep の 2 規則 (peers 不在 / 10 日超
 // 非アクティブ)、誤爆防止 (無関係 key と fresh record を残す)。
@@ -73,12 +73,11 @@ describe("filesView save/load round-trip", () => {
   });
 });
 
-describe("resolveMarkdownViewMode / …Persist (r26 mid=112 の A→B→A 復元)", () => {
-  // 何を保証するか (真因の再発防止): 初版は「saved.path === 現 path 一致時
-  // のみ preview 復元」だったため、markdown A(preview) → 別ファイル B → A
-  // で戻ると B 選択時に record が {B, code} で上書きされ A では復元できない。
-  // r26 mid=112 以降は saved.viewMode を per-sid の markdown モードとして扱い、
-  // markdown ファイルを開くたびに saved.viewMode を復元する。
+describe("resolveMarkdownViewMode / …Persist (A→B→A 復元)", () => {
+  // 何を保証するか: saved.viewMode は per-sid の markdown モードで、markdown
+  // ファイルを開くたびに path が一致しなくても復元する。path 一致を条件に
+  // すると、markdown A(preview) → 別ファイル B → A と戻った時に、B 選択時に
+  // record が {B, code} で上書きされて A で preview に戻らない。
   test("markdown file restores saved viewMode regardless of path mismatch", () => {
     const saved = { path: "docs/OTHER.md", viewMode: "preview" as const, updatedAt: "t" };
     expect(resolveMarkdownViewMode(saved, "docs/QUESTIONS.md")).toBe("preview");
@@ -221,7 +220,7 @@ describe("cleanupStaleFilesViews (1on1 draft と同じ 2 規則の sweep)", () =
   // 何を保証するか (規則 b): peer は居るが 10 日超非アクティブ
   // (last_activity_at 基準) の record は削除される。10 日は 1on1 draft の
   // CLEANUP_STALE_DAYS と同じ運用判断 (kawaz「入力フォームと同じ保存と
-  // 削除ルールで良い」r17 mid=5)。
+  // 削除ルールで良い」)。
   test("removes records for peers inactive beyond the stale window", () => {
     const now = Date.now();
     const staleTs = new Date(now - FILES_VIEW_STALE_MS - 1000).toISOString();

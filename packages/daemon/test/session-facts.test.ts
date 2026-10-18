@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { PROTOCOL_VERSION, type SessionFacts, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { SessionFactsStore } from "../src/session-facts.ts";
 import { contextWithFacts, withFacts } from "../src/session-status.ts";
-import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon, userConn } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
@@ -195,8 +195,7 @@ describe("session_facts over the wire", () => {
         cwd: "/tmp",
         transcript_path: transcript,
       });
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const initial = await user.requestOk({ op: "session_status_subscribe", sid: SID });
       expect(initial.context).toBeUndefined();
 
@@ -231,8 +230,7 @@ describe("session_facts over the wire", () => {
   test("only a session says facts of itself", async () => {
     const ctx = await startTestDaemon();
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const refused = await user.requestError({ op: "session_facts", facts: { at: 1 } });
       expect(refused.error.msg).toContain("requires session role");
       user.close();

@@ -2,7 +2,7 @@
 //
 // 何を保証するか:
 //   1. 後から張った subscribe が生き残り、先に張っていた方は自分で exit 0 する
-//      (= 二重通知の解消をエージェントの規律に頼らない、kawaz r90m3 裁定)。
+//      (= 二重通知の解消をエージェントの規律に頼らない)。
 //   2. 終了する側は理由が読める文言を stderr に出す (stdout は Monitor 用の
 //      イベント wire なので汚さない)。
 //   3. 収束後、そのセッション宛ての notify は新しい subscribe にだけ届く。
@@ -15,24 +15,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { jsonObjectLine, served } from "./cli-output.ts";
+import { runCli, CLI } from "./run-cli.ts";
 
-const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
-
-async function runCli(
-  args: string[],
-  env: Record<string, string>,
-): Promise<{ out: string; err: string; code: number }> {
-  const proc = Bun.spawn([process.execPath, CLI, ...args], {
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const out = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  return { out, err, code };
-}
 
 /** The session the tests' notifies come from: a write names its sender. */
 const SENDER = "5c000000-0000-4000-8000-000000000000";

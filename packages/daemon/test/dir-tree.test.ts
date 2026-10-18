@@ -192,7 +192,7 @@ describe("dirTree", () => {
     expect(names(result.data.entries[0]?.children ?? [])).toEqual(["foo-project"]);
   });
 
-  // Multi-token filters (kawaz r46m31) require every whitespace-separated
+  // Multi-token filters require every whitespace-separated
   // token to appear in the root-relative path (AND), not just one of them.
   test("a multi-token filter requires all tokens to match (AND)", async () => {
     fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });

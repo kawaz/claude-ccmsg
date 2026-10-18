@@ -118,7 +118,7 @@ describe("miniSummaryLines", () => {
   });
 
   // todo は Status タブの TodoRow と同じ "#{id} {subject}" 表記で出す
-  // (kawaz r135m44: 両者を突き合わせられるように)。
+  // (両者を突き合わせられるように)。
   test("running workflow before in_progress todo, todo prefixed with its id", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
@@ -132,7 +132,7 @@ describe("miniSummaryLines", () => {
     ]);
   });
 
-  // kawaz r135m44: 走行中のものは件数によらず全件出す (残数への畳み込みなし)。
+  // 走行中のものは件数によらず全件出す (残数への畳み込みなし)。
   test("every running workflow and in_progress todo is listed, however many", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [

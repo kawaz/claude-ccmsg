@@ -38,8 +38,6 @@ import {
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
 const OLD_VERSION = "0.0.0-old-for-test";
-const T = 15000;
-
 interface Env {
   base: string;
   stateDir: string;
@@ -128,245 +126,225 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     await cleanup(env);
   });
 
-  test(
-    "旧 version daemon が新 version client の接続で自動 upgrade される",
-    async () => {
-      // 「本テストが検出すべき仕様」: version.ts の実 VERSION と一致しない override
-      // でなければ mismatch 経路を通らないので、事前に等しくないことを assert。
-      expect(OLD_VERSION).not.toBe(VERSION);
+  test("旧 version daemon が新 version client の接続で自動 upgrade される", async () => {
+    // 「本テストが検出すべき仕様」: version.ts の実 VERSION と一致しない override
+    // でなければ mismatch 経路を通らないので、事前に等しくないことを assert。
+    expect(OLD_VERSION).not.toBe(VERSION);
 
-      // 旧 version の daemon を先に立てる (subprocess の env に override を注入)。
-      const oldProc = spawnDaemonProc(env.stateDir, env.dataDir, {
-        CCMSG_VERSION_OVERRIDE: OLD_VERSION,
-      });
-      await waitConnectable(env.sock);
-      const oldPid = readPid(env.pidFile);
-      expect(oldPid).not.toBeNull();
+    // 旧 version の daemon を先に立てる (subprocess の env に override を注入)。
+    const oldProc = spawnDaemonProc(env.stateDir, env.dataDir, {
+      CCMSG_VERSION_OVERRIDE: OLD_VERSION,
+    });
+    await waitConnectable(env.sock);
+    const oldPid = readPid(env.pidFile);
+    expect(oldPid).not.toBeNull();
 
-      // 新 version 側の client として ensureDaemon を呼ぶ。
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, {
-        role: "session",
-        sid: "5a000001-0000-4000-8000-000000000000",
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-      });
+    // 新 version 側の client として ensureDaemon を呼ぶ。
+    const paths = resolvePaths();
+    const client = await ensureDaemon(paths, {
+      role: "session",
+      sid: "5a000001-0000-4000-8000-000000000000",
+      repo: "r",
+      ws: "w",
+      cwd: "/tmp",
+    });
 
-      // ensureDaemon が完了した時点で、繋がっている daemon の version は現行 VERSION
-      // でなければならない (= mismatch を検知 → shutdown → respawn が完走した証拠)。
-      // ping で version を確認するのが自然 (hello の応答値は ensureDaemon 内部で消費済み)。
-      const pong = await client.request({
-        op: "ping",
-      });
-      if (!pong.ok) throw new Error(pong.error.msg);
-      expect(pong.version).toBe(VERSION);
+    // ensureDaemon が完了した時点で、繋がっている daemon の version は現行 VERSION
+    // でなければならない (= mismatch を検知 → shutdown → respawn が完走した証拠)。
+    // ping で version を確認するのが自然 (hello の応答値は ensureDaemon 内部で消費済み)。
+    const pong = await client.request({
+      op: "ping",
+    });
+    if (!pong.ok) throw new Error(pong.error.msg);
+    expect(pong.version).toBe(VERSION);
 
-      // 旧 daemon プロセスが実際に exit していること (= graceful shutdown が届いた)。
-      await oldProc.exited;
-      expect(oldProc.exitCode).toBe(0);
+    // 旧 daemon プロセスが実際に exit していること (= graceful shutdown が届いた)。
+    await oldProc.exited;
+    expect(oldProc.exitCode).toBe(0);
 
-      // 新 daemon の PID は旧 PID と別 (= 同一プロセスが version を持ち替えたのではなく
-      // 本当に「差し替わった」ことの直接的証拠)。
-      const newPid = readPid(env.pidFile);
-      expect(newPid).not.toBeNull();
-      if (newPid === null) throw new Error("no pid file after the replacement");
-      expect(newPid).not.toBe(oldPid);
-      expect(pong.pid).toBe(newPid);
+    // 新 daemon の PID は旧 PID と別 (= 同一プロセスが version を持ち替えたのではなく
+    // 本当に「差し替わった」ことの直接的証拠)。
+    const newPid = readPid(env.pidFile);
+    expect(newPid).not.toBeNull();
+    if (newPid === null) throw new Error("no pid file after the replacement");
+    expect(newPid).not.toBe(oldPid);
+    expect(pong.pid).toBe(newPid);
 
-      client.close();
-    },
-    T,
-  );
+    client.close();
+  });
 
-  test(
-    "hello 応答に protocol も request_id も無い旧 daemon も、hello を読んで入れ替える",
-    async () => {
-      // 「何を保証するか」: wire の世代 (protocol) を名乗らない daemon の hello 応答は
-      // 世代 UNANNOUNCED_PROTOCOL_VERSION の応答として読める。読めなければ
-      // ensureDaemon は version の比較に届かず、旧 daemon を入れ替えられない。
-      // そういう daemon の実バイナリは無いので、hello にその形で答え、shutdown で
-      // 居なくなる UDS の相手で代える。
-      const shutdownReasons: Array<string | undefined> = [];
-      const oldDaemon = Bun.listen<undefined>({
-        unix: env.sock,
-        socket: {
-          data(socket, chunk) {
-            for (const line of new TextDecoder().decode(chunk).split("\n")) {
-              if (line.trim() === "") continue;
-              const read = readRequest(line);
-              if (read.kind !== "request") continue;
-              if (read.request.op === "hello") {
-                socket.write(`${JSON.stringify({ ok: true, version: OLD_VERSION })}\n`);
-              } else if (read.request.op === "shutdown") {
-                shutdownReasons.push(read.request.reason);
-                oldDaemon.stop(true);
-                fs.rmSync(env.sock, { force: true });
-              }
+  test("hello 応答に protocol も request_id も無い旧 daemon も、hello を読んで入れ替える", async () => {
+    // 「何を保証するか」: wire の世代 (protocol) を名乗らない daemon の hello 応答は
+    // 世代 UNANNOUNCED_PROTOCOL_VERSION の応答として読める。読めなければ
+    // ensureDaemon は version の比較に届かず、旧 daemon を入れ替えられない。
+    // そういう daemon の実バイナリは無いので、hello にその形で答え、shutdown で
+    // 居なくなる UDS の相手で代える。
+    const shutdownReasons: Array<string | undefined> = [];
+    const oldDaemon = Bun.listen<undefined>({
+      unix: env.sock,
+      socket: {
+        data(socket, chunk) {
+          for (const line of new TextDecoder().decode(chunk).split("\n")) {
+            if (line.trim() === "") continue;
+            const read = readRequest(line);
+            if (read.kind !== "request") continue;
+            if (read.request.op === "hello") {
+              socket.write(`${JSON.stringify({ ok: true, version: OLD_VERSION })}\n`);
+            } else if (read.request.op === "shutdown") {
+              shutdownReasons.push(read.request.reason);
+              oldDaemon.stop(true);
+              fs.rmSync(env.sock, { force: true });
             }
-          },
-          open() {},
-          close() {},
-          error() {},
+          }
         },
-      });
+        open() {},
+        close() {},
+        error() {},
+      },
+    });
 
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, {
-        role: "session",
-        sid: "5a000005-0000-4000-8000-000000000000",
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-      });
+    const paths = resolvePaths();
+    const client = await ensureDaemon(paths, {
+      role: "session",
+      sid: "5a000005-0000-4000-8000-000000000000",
+      repo: "r",
+      ws: "w",
+      cwd: "/tmp",
+    });
 
-      expect(shutdownReasons).toEqual(["upgrade"]);
-      const pong = await client.request({ op: "ping" });
-      if (!pong.ok) throw new Error(pong.error.msg);
-      expect(pong.version).toBe(VERSION);
-      client.close();
-    },
-    T,
-  );
+    expect(shutdownReasons).toEqual(["upgrade"]);
+    const pong = await client.request({ op: "ping" });
+    if (!pong.ok) throw new Error(pong.error.msg);
+    expect(pong.version).toBe(VERSION);
+    client.close();
+  });
 
-  test(
-    "shutdown 時に接続中クライアントへ restarting 通知が broadcast される",
-    async () => {
-      // 「何を保証するか」: DR-0002 §4 の restarting 通知は sidecar 自動再接続の起点。
-      // これが飛ばなければ sidecar は shutdown を検知できず、上流仕様に穴が空く。
+  test("shutdown 時に接続中クライアントへ restarting 通知が broadcast される", async () => {
+    // 「何を保証するか」: DR-0002 §4 の restarting 通知は sidecar 自動再接続の起点。
+    // これが飛ばなければ sidecar は shutdown を検知できず、上流仕様に穴が空く。
 
-      const oldProc = spawnDaemonProc(env.stateDir, env.dataDir, {
-        CCMSG_VERSION_OVERRIDE: OLD_VERSION,
-      });
-      await waitConnectable(env.sock);
+    const oldProc = spawnDaemonProc(env.stateDir, env.dataDir, {
+      CCMSG_VERSION_OVERRIDE: OLD_VERSION,
+    });
+    await waitConnectable(env.sock);
 
-      // 事前に user role で接続 + subscribe しておく (= 「接続中の他クライアント」役)。
-      const watcher: TestClient = await connect(env.sock);
-      const helloRes = await watcher.hello({ role: "user" });
-      expect(helloRes.ok).toBe(true);
-      // subscribe しなくても gracefulShutdown は connections 全部に flush するが、
-      // 実運用の sidecar は subscribe 済み前提なのでその条件を再現する。
-      await watcher.request({ op: "subscribe" });
+    // 事前に user role で接続 + subscribe しておく (= 「接続中の他クライアント」役)。
+    const watcher: TestClient = await connect(env.sock);
+    const helloRes = await watcher.hello({ role: "user" });
+    expect(helloRes.ok).toBe(true);
+    // subscribe しなくても gracefulShutdown は connections 全部に flush するが、
+    // 実運用の sidecar は subscribe 済み前提なのでその条件を再現する。
+    await watcher.request({ op: "subscribe" });
 
-      // 別スレッドで restarting event を待つ。ensureDaemon 完了より先に来ることも
-      // 後になることもあるので Promise で並行に受ける。
-      const restartingSeen = watcher.readEventUntil("restarting");
+    // 別スレッドで restarting event を待つ。ensureDaemon 完了より先に来ることも
+    // 後になることもあるので Promise で並行に受ける。
+    const restartingSeen = watcher.readEventUntil("restarting");
 
-      // ensureDaemon で upgrade を発動。
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, {
-        role: "session",
-        sid: "5a000002-0000-4000-8000-000000000000",
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-      });
+    // ensureDaemon で upgrade を発動。
+    const paths = resolvePaths();
+    const client = await ensureDaemon(paths, {
+      role: "session",
+      sid: "5a000002-0000-4000-8000-000000000000",
+      repo: "r",
+      ws: "w",
+      cwd: "/tmp",
+    });
 
-      const { ev } = await restartingSeen;
-      // 通知 shape: {ev:"restarting", reason:"upgrade"}。reason は shutdown 送信時の
-      // reason (= client.ts が "upgrade" 固定で送っている) をそのまま乗せる契約。
-      expect(ev.ev).toBe("restarting");
-      expect(ev.reason).toBe("upgrade");
+    const { ev } = await restartingSeen;
+    // 通知 shape: {ev:"restarting", reason:"upgrade"}。reason は shutdown 送信時の
+    // reason (= client.ts が "upgrade" 固定で送っている) をそのまま乗せる契約。
+    expect(ev.ev).toBe("restarting");
+    expect(ev.reason).toBe("upgrade");
 
-      await oldProc.exited;
-      watcher.close();
-      client.close();
-    },
-    T,
-  );
+    await oldProc.exited;
+    watcher.close();
+    client.close();
+  });
 
-  test(
-    "version 一致時は daemon を再起動しない (誤爆しない側の輪郭)",
-    async () => {
-      // 「何を保証するか」: 毎ターン hook の常時 ensure が「不必要な再起動を起こさない」
-      // ことは DR-0002 §2 の軽量静寂チェック要件そのもの。ここが壊れると全 hook 呼び出し
-      // ごとに daemon が生死を繰り返す最悪パターンに陥る。
+  test("version 一致時は daemon を再起動しない (誤爆しない側の輪郭)", async () => {
+    // 「何を保証するか」: 毎ターン hook の常時 ensure が「不必要な再起動を起こさない」
+    // ことは DR-0002 §2 の軽量静寂チェック要件そのもの。ここが壊れると全 hook 呼び出し
+    // ごとに daemon が生死を繰り返す最悪パターンに陥る。
 
-      // override なしで daemon を起動 (= 現行 VERSION を名乗る)。
-      const proc = spawnDaemonProc(env.stateDir, env.dataDir);
-      await waitConnectable(env.sock);
-      const pidBefore = readPid(env.pidFile);
-      expect(pidBefore).not.toBeNull();
-      if (pidBefore === null) throw new Error("no pid file for the running daemon");
+    // override なしで daemon を起動 (= 現行 VERSION を名乗る)。
+    const proc = spawnDaemonProc(env.stateDir, env.dataDir);
+    await waitConnectable(env.sock);
+    const pidBefore = readPid(env.pidFile);
+    expect(pidBefore).not.toBeNull();
+    if (pidBefore === null) throw new Error("no pid file for the running daemon");
 
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, {
-        role: "session",
-        sid: "5a000003-0000-4000-8000-000000000000",
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-      });
+    const paths = resolvePaths();
+    const client = await ensureDaemon(paths, {
+      role: "session",
+      sid: "5a000003-0000-4000-8000-000000000000",
+      repo: "r",
+      ws: "w",
+      cwd: "/tmp",
+    });
 
-      // version 一致経路: ping の pid が起動時の PID と同一 = 同一プロセス継続。
-      const pong = await client.request({
-        op: "ping",
-      });
-      if (!pong.ok) throw new Error(pong.error.msg);
-      expect(pong.version).toBe(VERSION);
-      expect(pong.pid).toBe(pidBefore);
+    // version 一致経路: ping の pid が起動時の PID と同一 = 同一プロセス継続。
+    const pong = await client.request({
+      op: "ping",
+    });
+    if (!pong.ok) throw new Error(pong.error.msg);
+    expect(pong.version).toBe(VERSION);
+    expect(pong.pid).toBe(pidBefore);
 
-      // proc がまだ生きている (= 再起動していない) ことを別経路でも確認: exited は
-      // subprocess が終了したときに解決される Promise なので、Promise.race で
-      // 短時間タイムアウトさせて「まだ生きている」を実測する。
-      const stillAliveMarker = Symbol("alive");
-      const raceResult = await Promise.race([
-        proc.exited.then(() => "exited" as const),
-        new Promise<typeof stillAliveMarker>((res) => setTimeout(() => res(stillAliveMarker), 100)),
-      ]);
-      expect(raceResult).toBe(stillAliveMarker);
+    // proc がまだ生きている (= 再起動していない) ことを別経路でも確認: exited は
+    // subprocess が終了したときに解決される Promise なので、Promise.race で
+    // 短時間タイムアウトさせて「まだ生きている」を実測する。
+    const stillAliveMarker = Symbol("alive");
+    const raceResult = await Promise.race([
+      proc.exited.then(() => "exited" as const),
+      new Promise<typeof stillAliveMarker>((res) => setTimeout(() => res(stillAliveMarker), 100)),
+    ]);
+    expect(raceResult).toBe(stillAliveMarker);
 
-      client.close();
-    },
-    T,
-  );
+    client.close();
+  });
 
-  test(
-    "daemon が新しい (client が古い) 場合は再起動しない (newer-wins ポリシー)",
-    async () => {
-      // 「何を保証するか」: gradual rollout 中に旧 client が新 daemon へ接続しても、
-      // 旧 client 側が「version 不一致」を理由に新 daemon を降格させてはいけない
-      // (docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md)。
-      // ここでは「daemon の方が client より新しい」を、実 VERSION より大きい
-      // synthetic override ("99.0.0") を daemon に名乗らせることで再現する
-      // (client 側はテストプロセスの実 VERSION のままで固定、それより確実に新しい
-      // 数字を daemon 側に与えれば compareVersions(VERSION, hello.version) < 0 になる)。
-      const FUTURE_VERSION = "99.0.0";
-      const proc = spawnDaemonProc(env.stateDir, env.dataDir, {
-        CCMSG_VERSION_OVERRIDE: FUTURE_VERSION,
-      });
-      await waitConnectable(env.sock);
-      const pidBefore = readPid(env.pidFile);
-      expect(pidBefore).not.toBeNull();
-      if (pidBefore === null) throw new Error("no pid file for the running daemon");
+  test("daemon が新しい (client が古い) 場合は再起動しない (newer-wins ポリシー)", async () => {
+    // 「何を保証するか」: gradual rollout 中に旧 client が新 daemon へ接続しても、
+    // 旧 client 側が「version 不一致」を理由に新 daemon を降格させてはいけない
+    // (docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md)。
+    // ここでは「daemon の方が client より新しい」を、実 VERSION より大きい
+    // synthetic override ("99.0.0") を daemon に名乗らせることで再現する
+    // (client 側はテストプロセスの実 VERSION のままで固定、それより確実に新しい
+    // 数字を daemon 側に与えれば compareVersions(VERSION, hello.version) < 0 になる)。
+    const FUTURE_VERSION = "99.0.0";
+    const proc = spawnDaemonProc(env.stateDir, env.dataDir, {
+      CCMSG_VERSION_OVERRIDE: FUTURE_VERSION,
+    });
+    await waitConnectable(env.sock);
+    const pidBefore = readPid(env.pidFile);
+    expect(pidBefore).not.toBeNull();
+    if (pidBefore === null) throw new Error("no pid file for the running daemon");
 
-      const paths = resolvePaths();
-      const client = await ensureDaemon(paths, {
-        role: "session",
-        sid: "5a000004-0000-4000-8000-000000000000",
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-      });
+    const paths = resolvePaths();
+    const client = await ensureDaemon(paths, {
+      role: "session",
+      sid: "5a000004-0000-4000-8000-000000000000",
+      repo: "r",
+      ws: "w",
+      cwd: "/tmp",
+    });
 
-      // daemon はそのまま (= 降格されず FUTURE_VERSION を名乗り続け、pid も不変)。
-      const pong = await client.request({
-        op: "ping",
-      });
-      if (!pong.ok) throw new Error(pong.error.msg);
-      expect(pong.version).toBe(FUTURE_VERSION);
-      expect(pong.pid).toBe(pidBefore);
+    // daemon はそのまま (= 降格されず FUTURE_VERSION を名乗り続け、pid も不変)。
+    const pong = await client.request({
+      op: "ping",
+    });
+    if (!pong.ok) throw new Error(pong.error.msg);
+    expect(pong.version).toBe(FUTURE_VERSION);
+    expect(pong.pid).toBe(pidBefore);
 
-      // proc がまだ生きていることも別経路で確認 (version 一致テストと同じ手法)。
-      const stillAliveMarker = Symbol("alive");
-      const raceResult = await Promise.race([
-        proc.exited.then(() => "exited" as const),
-        new Promise<typeof stillAliveMarker>((res) => setTimeout(() => res(stillAliveMarker), 100)),
-      ]);
-      expect(raceResult).toBe(stillAliveMarker);
+    // proc がまだ生きていることも別経路で確認 (version 一致テストと同じ手法)。
+    const stillAliveMarker = Symbol("alive");
+    const raceResult = await Promise.race([
+      proc.exited.then(() => "exited" as const),
+      new Promise<typeof stillAliveMarker>((res) => setTimeout(() => res(stillAliveMarker), 100)),
+    ]);
+    expect(raceResult).toBe(stillAliveMarker);
 
-      client.close();
-    },
-    T,
-  );
+    client.close();
+  });
 });

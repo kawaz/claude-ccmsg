@@ -1,4 +1,4 @@
-// issue-ref.ts unit tests (kawaz r259 m1 / m45): the reference recognizer that
+// issue-ref.ts unit tests: the reference recognizer that
 // markdown-view turns into GitHub issue links. Split from the renderer tests
 // because the interesting part here is the token boundary — which shapes are a
 // reference and which are an id / a heading run — and how a written repo name
@@ -142,7 +142,7 @@ describe("issueRefUrl", () => {
   });
 });
 
-describe("room message references (kawaz r259m56)", () => {
+describe("room message references", () => {
   test("rNmM and #rNmM link to the message in the app, without a repo", () => {
     const pieces = splitTextForIssueRefs("see r259m55 and #r12m3.", undefined);
     expect(pieces.filter((p) => p.href)).toEqual([

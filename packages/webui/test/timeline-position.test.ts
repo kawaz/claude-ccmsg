@@ -6,7 +6,7 @@ import {
   togglePosition,
 } from "../src/client/components/timeline-position.ts";
 
-describe("shouldLandOnPosition (kawaz r76 m71: pin 位置への着地は遷移時の 1 回だけ)", () => {
+describe("shouldLandOnPosition (pin 位置への着地は遷移時の 1 回だけ)", () => {
   // pin 付き URL を開いた直後 / 別の位置へ遷移した直後は着地する。ここが
   // false になると `/timeline/<uuid>` 直リンクが「開いても目的の位置に居ない」
   // ただのハイライトになってしまう。
@@ -43,7 +43,7 @@ describe("shouldLandOnPosition (kawaz r76 m71: pin 位置への着地は遷移�
   });
 });
 
-describe("shouldReturnToHead (kawaz r115 m4: 最下部が見えていても選択できる)", () => {
+describe("shouldReturnToHead (最下部が見えていても選択できる)", () => {
   // 本 feature の存在理由。/head 表示中に画面内のバルーンをクリックすると、
   // pin が立った直後に「最下部付近だ」と検知されて head へ戻され、実質
   // 選択できなかった。pin 直後 (= ユーザはまだスクロールしていない) は戻さない。
@@ -64,7 +64,7 @@ describe("shouldReturnToHead (kawaz r115 m4: 最下部が見えていても選�
   });
 });
 
-describe("togglePosition (kawaz r76 m71: 選択中バルーンの再クリックで選択解除)", () => {
+describe("togglePosition (選択中バルーンの再クリックで選択解除)", () => {
   // 未選択 / 別 msg 選択中のクリックは、そのバルーンを選択する (従来挙動)。
   test("選択されていない uuid をクリックしたら選択する", () => {
     expect(togglePosition("head", "u-1")).toBe("u-1");

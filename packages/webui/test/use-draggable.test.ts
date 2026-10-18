@@ -38,7 +38,7 @@ describe("clampPosition", () => {
     });
   });
 
-  test("visual viewport offset (vx/vy) 対応: 可視領域内に clamp (r46m52)", () => {
+  test("visual viewport offset (vx/vy) 対応: 可視領域内に clamp", () => {
     // iOS でキーボードが出ている想定: layout viewport = 400x800、visual
     // viewport は下 300px が隠れて 400x500、offset は (0, 0) から
     // 変わらないケース。可視領域は y=[0, 500]。
@@ -63,7 +63,7 @@ describe("clampPosition", () => {
   });
 
   test("vx/vy 省略時は 0 (従来挙動を維持)", () => {
-    // r46m51 以前と同じ振る舞い: vx/vy 未指定なら 0 起点で clamp。
+    // vx/vy 未指定なら 0 起点で clamp。
     expect(clampPosition({ x: -10, y: -20, w: 40, h: 40, vw: 800, vh: 600 })).toEqual({
       x: 0,
       y: 0,
@@ -71,7 +71,7 @@ describe("clampPosition", () => {
   });
 });
 
-describe("alignBottomRight (FAB ↔ panel 位置連動、r46m51)", () => {
+describe("alignBottomRight (FAB ↔ panel 位置連動)", () => {
   const viewport = { vw: 1000, vh: 800 };
 
   test("FAB → panel: bottom-right 角を揃える (パネルは大きいので左上に伸びる)", () => {

@@ -17,6 +17,8 @@ import {
   startTestDaemon,
   stopTestDaemon,
   type TestClient,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
 import {
   fakeHarness as spawnHarness,
@@ -189,8 +191,7 @@ describe("send_message through the daemon", () => {
   /** Name a run of `sid` to the daemon, as its sidecar does: the session then
    * has a hooks module, and is sent to. */
   async function withModule(ctx: DaemonCtx, sid: string): Promise<void> {
-    const c = await connect(ctx.sock);
-    await c.hello({ role: "session", sid });
+    const c = await sessionConn(ctx, sid);
     await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
     cleanups.push(() => c.close());
   }
@@ -368,8 +369,7 @@ describe("send_message through the daemon", () => {
     async () => {
       const ctx = await daemon();
       const a = await sessionWithConfig(ctx, SENDER);
-      const u = await connect(ctx.sock);
-      await u.hello({ role: "user" });
+      const u = await userConn(ctx);
       const to = { session_id: PEER };
       expect((await u.requestError({ op: "send_message", to, text: "hi" })).error.code).toBe(
         "invalid_args",

@@ -152,8 +152,8 @@ describe("hasPendingUpload", () => {
 
 describe("extractTransferFiles", () => {
   // paste / drop の DataTransfer items から file を全部拾う。DR-0015 §2.5 の
-  // clipboard 画像経路が起点、kawaz r17 mid=51 で「Finder コピーの paste」
-  // 「Finder からの drag & drop」に拡張 = mime 不問で kind:"file" を全部。
+  // clipboard 画像経路に加えて「Finder コピーの paste」と
+  // 「Finder からの drag & drop」も拾う = mime 不問で kind:"file" を全部。
   function fakeItem(kind: string, type: string, file: File | null) {
     return { kind, type, getAsFile: () => file };
   }
@@ -187,7 +187,7 @@ describe("extractTransferFiles", () => {
 });
 
 describe("maxPlaceholderNumber", () => {
-  // 何を保証するか (kawaz r17 mid=33 の実事故対策): 採番は attachments 配列
+  // 何を保証するか (kawaz の実事故対策): 採番は attachments 配列
   // だけでなく本文中の [FILE<N>] とも衝突してはいけない。1on1 の draft 復元は
   // text ([FILE1] 入り) を戻すが attachments は空リセットするため、本文側の
   // max を採番の下限に使う (Composer/SessionInputComposer の beginUpload)。

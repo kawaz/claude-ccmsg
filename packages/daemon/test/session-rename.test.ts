@@ -6,7 +6,7 @@ import {
   validateRenameTitle,
   type SessionRenameDeps,
 } from "../src/session-rename.ts";
-import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import { startInProcessDaemon, stopInProcessDaemon, sessionConn, userConn } from "./helpers.ts";
 
 /** Deps that record what was run instead of spawning hyoui. `hyoui` is the
  * terminal handle to hand back for any session id (null = "no terminal"). */
@@ -127,10 +127,13 @@ describe("session_rename over the wire", () => {
   // signalling it, so the same user-role gate as session_kill applies — and
   // it applies before any validation or spawning.
   test("session role is refused with bad_request", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "session", sid: "a9e47000-0000-4000-8000-000000000001" });
+      const c = await sessionConn(ctx, "a9e47000-0000-4000-8000-000000000001", {
+        repo: "",
+        ws: "",
+        cwd: "",
+      });
       const res = await c.requestError({
         op: "session_rename",
         session_id: "sid-victim",
@@ -140,17 +143,16 @@ describe("session_rename over the wire", () => {
       expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 
   // A bad title costs nothing to reject, so it is refused before the delivery
   // attempt is ever made.
   test("a title with a newline is refused synchronously with invalid_args", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const res = await c.requestError({
         op: "session_rename",
         session_id: "00000000-0000-0000-0000-000000000000",
@@ -161,15 +163,14 @@ describe("session_rename over the wire", () => {
       expect(res.error.msg).toContain("control characters");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 
   test("an empty title is refused with invalid_args", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const res = await c.requestError({
         op: "session_rename",
         session_id: "00000000-0000-0000-0000-000000000000",
@@ -179,15 +180,14 @@ describe("session_rename over the wire", () => {
       expect(res.error.code).toBe("invalid_args");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 
   test("missing request_id is refused with bad_request", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const res = await c.requestRaw({
         op: "session_rename",
         session_id: "sid-x",
@@ -197,7 +197,7 @@ describe("session_rename over the wire", () => {
       expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 
@@ -205,10 +205,9 @@ describe("session_rename over the wire", () => {
   // ack arrives on the positional slot, then the outcome event says there is
   // no terminal. Nothing is spawned, so this stays fast and hermetic.
   test("user role with an unknown session is answered terminal_unavailable", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const reply = await c.requestError({
         op: "session_rename",
         session_id: "00000000-0000-0000-0000-000000000000",
@@ -218,7 +217,7 @@ describe("session_rename over the wire", () => {
       expect(reply.error?.code).toBe("terminal_unavailable");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   }, 30000);
 });

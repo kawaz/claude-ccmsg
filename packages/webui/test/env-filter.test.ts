@@ -1,4 +1,4 @@
-// Status tab ENV panel query semantics (kawaz r55m132): whitespace-separated
+// Status tab ENV panel query semantics: whitespace-separated
 // AND terms matched against name and value alike, plus the colon→newline
 // display split. No DOM — these are the pure folds behind the panel.
 import { describe, expect, test } from "bun:test";
@@ -89,7 +89,7 @@ describe("filterEnvRows", () => {
   });
 });
 
-describe("isSensitiveEnvName (kawaz r55m134)", () => {
+describe("isSensitiveEnvName", () => {
   test("代表的な機微パターンを名前から検出する", () => {
     for (const name of [
       "GITHUB_TOKEN",

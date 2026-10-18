@@ -1012,7 +1012,7 @@ describe("createWsClient agents/ping (U1)", () => {
     if (!res.ok) expect(res.error.code).toBe("terminal_unavailable");
   });
 
-  // THE regression correlated replies fix (kawaz r26 mid=108): while a slow
+  // THE regression correlated replies fix: while a slow
   // translate is in flight, a later op's reply must pair with that later op,
   // so nothing is held back and nothing is mis-paired.
   test("a later op's reply resolves while a translate is still outstanding", async () => {

@@ -8,15 +8,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { parseWith } from "@ccmsg/protocol";
 import { CodeWorkspaceTextSchema, discoverWorkspaceFolders } from "../src/workspace-folders.ts";
+import { fixtureDir } from "./helpers.ts";
 
 /** A workspace file's text as read, or undefined when it does not read. */
 function parseJsonc(source: string) {
   const read = parseWith(CodeWorkspaceTextSchema, source);
   return read.ok ? read.value : undefined;
-}
-
-function mkfixture(): string {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-ws-")));
 }
 
 let cleanup: string[] = [];
@@ -100,7 +97,7 @@ describe("discoverWorkspaceFolders", () => {
   test("returns [] when cwd has no `.code-workspace` file", async () => {
     // Absence must be silent (no error, empty allowlist) — the daemon uses this
     // exact shape to suppress the workspace_folders field on the wire.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(path.join(cwd, "README.md"), "hi");
     expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
@@ -111,7 +108,7 @@ describe("discoverWorkspaceFolders", () => {
     // itself; a subdir-authored one would resolve differently. Kawaz's kuu
     // workspace uses `..` to reach sibling repos, so this must not silently
     // treat paths as cwd-relative.
-    const parent = mkfixture();
+    const parent = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(parent);
     const cwd = path.join(parent, "main");
     const sibling = path.join(parent, "sibling", "main");
@@ -137,7 +134,7 @@ describe("discoverWorkspaceFolders", () => {
     // If the workspace lists a symlinked path, the resolved entry should be
     // the target's realpath — otherwise the daemon's later realpath check
     // would treat any client-side reference through the symlink as an escape.
-    const parent = mkfixture();
+    const parent = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(parent);
     const cwd = path.join(parent, "cwd");
     const target = path.join(parent, "real-target");
@@ -157,7 +154,7 @@ describe("discoverWorkspaceFolders", () => {
     // A stale workspace entry (e.g. removed worktree) must not become an
     // allowlist grant for a directory that could later be recreated with
     // different contents.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(
       path.join(cwd, "x.code-workspace"),
@@ -172,7 +169,7 @@ describe("discoverWorkspaceFolders", () => {
   test("skips folder entries that point at a non-directory", async () => {
     // The allowlist is about directories the client can browse; a file listed
     // in `folders[]` must be dropped rather than admitted as a browsable root.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(path.join(cwd, "not-a-dir"), "hi");
     fs.writeFileSync(
@@ -186,7 +183,7 @@ describe("discoverWorkspaceFolders", () => {
   test("deduplicates folders that resolve to the same realpath", async () => {
     // Two workspace files (or two folders in one workspace file) referring to
     // the same directory should show once — the DR promises no duplicates.
-    const parent = mkfixture();
+    const parent = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(parent);
     const cwd = path.join(parent, "cwd");
     fs.mkdirSync(cwd);
@@ -208,7 +205,7 @@ describe("discoverWorkspaceFolders", () => {
   test("falls back to the folder basename when `name` is absent", async () => {
     // Matches VS Code's own default (folder root's basename in the sidebar) —
     // an empty `name` field must not surface as an empty display name.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(
       path.join(cwd, "n.code-workspace"),
@@ -222,7 +219,7 @@ describe("discoverWorkspaceFolders", () => {
     // DR-0026 §2 says "cwd 直下" — a workspace file nested under `sub/` must
     // not contribute folders. Otherwise a rogue workspace file deep in a
     // dependency tree could widen the allowlist.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     const nested = path.join(cwd, "sub");
     fs.mkdirSync(nested);
@@ -236,7 +233,7 @@ describe("discoverWorkspaceFolders", () => {
   test("malformed workspace file yields no folders (does not throw)", async () => {
     // Broken JSON must not take out the whole discovery pass — later files
     // in the same cwd still get their chance.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(path.join(cwd, "bad.code-workspace"), "{ this is not json");
     fs.writeFileSync(
@@ -250,7 +247,7 @@ describe("discoverWorkspaceFolders", () => {
   test("rejects the shape `{}` (no folders array) without throwing", async () => {
     // A workspace file that doesn't declare `folders[]` at all contributes
     // nothing, same as an entirely missing file.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(
       path.join(cwd, "empty.code-workspace"),
@@ -266,7 +263,7 @@ describe("discoverWorkspaceFolders", () => {
     // validateRepoRoot's repo_root widening: reject `/`, `$HOME` itself, and
     // any ancestor of `$HOME`; normal repo checkouts (descendants of `$HOME`)
     // are unaffected — this very fixture (under tmpdir) must survive.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     fs.writeFileSync(
       path.join(cwd, "evil.code-workspace"),
@@ -286,7 +283,7 @@ describe("discoverWorkspaceFolders", () => {
     // The parsed folder list is memoized per workspace file, so an edit that
     // adds a folder must be visible on the very next snapshot — kawaz edits
     // these by hand while sessions are live.
-    const parent = mkfixture();
+    const parent = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(parent);
     const cwd = path.join(parent, "main");
     const sibling = path.join(parent, "sibling");
@@ -312,7 +309,7 @@ describe("discoverWorkspaceFolders", () => {
     // The directory listing is memoized on cwd's mtime, which moves when an
     // entry appears — a repo that gains its first `.code-workspace` mid-session
     // must not stay invisible until the daemon restarts.
-    const cwd = mkfixture();
+    const cwd = fs.realpathSync(fixtureDir("ws"));
     cleanup.push(cwd);
     expect(await discoverWorkspaceFolders(cwd)).toEqual([]);
 

@@ -10,9 +10,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   connect,
-  startTestDaemon,
-  stopTestDaemon,
-  type DaemonCtx,
+  startInProcessDaemon,
+  stopInProcessDaemon,
+  type InProcessDaemon,
   type TestClient,
   defined,
 } from "./helpers.ts";
@@ -142,7 +142,7 @@ const A = "aaaaaaaa-0000-4000-8000-000000000001";
 /** Session hello over a real daemon (same UDS fixture pattern as
  *  branch.test.ts), announcing only what each case is about. */
 async function sessionHello(
-  ctx: DaemonCtx,
+  ctx: InProcessDaemon,
   sid: string,
   fields: { cwd: string; repo?: string; ws?: string },
 ): Promise<TestClient> {
@@ -154,7 +154,7 @@ async function sessionHello(
 describe("hello の repo/ws フォールバック", () => {
   test("申告が無ければ cwd から導出した値が peers に載る", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: root });
       const peers = await c.requestOk({ op: "peers" });
@@ -164,13 +164,13 @@ describe("hello の repo/ws フォールバック", () => {
       );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   }, 15000);
 
   test("申告があればそちらが勝つ (導出はフォールバックのみ)", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: root, repo: "declared/repo", ws: "declared" });
       const peers = await c.requestOk({ op: "peers" });
@@ -180,14 +180,14 @@ describe("hello の repo/ws フォールバック", () => {
       );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   }, 15000);
 
   test("VCS 配下でない cwd でも hello は成功する (fail-open)", async () => {
     const plain = path.join(dir, "plain-cwd");
     fs.mkdirSync(plain);
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: plain });
       const peers = await c.requestOk({ op: "peers" });
@@ -198,7 +198,7 @@ describe("hello の repo/ws フォールバック", () => {
       expect(me.repo ?? "").toBe("");
       expect(me.ws ?? "").toBe("");
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   }, 15000);
 });

@@ -1,5 +1,5 @@
 // Parser + resolver contract for `filepath[:LINE[:COL]]` / `filepath[:L1-L2]`
-// tokens (kawaz r46 mid=55). Two independent responsibilities are covered
+// tokens. Two independent responsibilities are covered
 // separately:
 //   - parseFilePathRef: token -> {path, line?, end?} or null (shape rules)
 //   - refToAbsolutePath / hrefFromStatEntry: (ref, sender ctx) -> fileHref URL
@@ -42,7 +42,7 @@ describe("looksLikePath", () => {
   });
 });
 
-describe("looksLikeFile — file vs directory heuristic (kawaz r46 m56)", () => {
+describe("looksLikeFile — file vs directory heuristic", () => {
   test("accepts common extensions", () => {
     expect(looksLikeFile("docs/x.md")).toBe(true);
     expect(looksLikeFile("index.ejs")).toBe(true);
@@ -72,7 +72,7 @@ describe("parseFilePathRef — suffix shapes", () => {
   test("no suffix, file-shaped extension -> qualifies", () => {
     expect(parseFilePathRef("packages/foo/bar.ts")).toEqual({ path: "packages/foo/bar.ts" });
   });
-  test("no suffix, no extension -> null (kawaz r46 m56: dir path stays plain)", () => {
+  test("no suffix, no extension -> null (dir path stays plain)", () => {
     // Even though this passes looksLikePath (absolute), it lacks both an
     // extension and line info, so parseFilePathRef refuses it.
     expect(
@@ -82,7 +82,7 @@ describe("parseFilePathRef — suffix shapes", () => {
     ).toBeNull();
     expect(parseFilePathRef("docs/decision-records/2632")).toBeNull();
   });
-  test("branch-name shape -> null (kawaz r46 m56: `fix/…-back-button`)", () => {
+  test("branch-name shape -> null (`fix/…-back-button`)", () => {
     // Branch names look path-shaped (`/` present) but aren't files. The
     // trailing segment has no file-shaped extension (dashy word), so the
     // "extension OR line info" gate rejects it.
@@ -146,7 +146,7 @@ describe("refToAbsolutePath (Phase B/C: cache-key form for daemon probe)", () =>
     expect(refToAbsolutePath({ path: "../a.ts" }, CTX)).toBe("/repo/a.ts");
   });
   test("bare relative anchors at cwd, same as `./`", () => {
-    // kawaz r55 m93: bare paths used to anchor at repo_root, on the premise
+    // bare paths used to anchor at repo_root, on the premise
     // that senders cite monorepo-root-relative paths. They don't — a process
     // citing a file it is working on writes it cwd-relative. Under the jj
     // worktree layout (cwd `<repo>/<ws>`, repo_root `<repo>`) the old rule
@@ -222,7 +222,7 @@ describe("extractInlineCodeTokens", () => {
   });
 });
 
-// kawaz r119 m15: bold runs feed the same probe queue as inline code, so a
+// bold runs feed the same probe queue as inline code, so a
 // `**docs/x.md**` written by an agent is confirmed and linked like its
 // backtick-quoted twin. Prose emphasis lands here too; it is `parseFilePathRef`
 // + the daemon probe (not this scan) that decline it.
@@ -246,7 +246,7 @@ describe("extractStrongTokens", () => {
   });
 });
 
-// Preview-side resolve anchor (kawaz r55 m116/m117). A relative markdown link
+// Preview-side resolve anchor. A relative markdown link
 // inside a previewed file anchors at *that file's* directory, not the session
 // cwd — the markdown convention, so the same link text resolves the same way
 // here as it does on GitHub or in an editor. Message bodies keep the cwd
@@ -290,7 +290,7 @@ describe("previewFilePathCtx", () => {
   });
 
   // The document's own viewer path rides along so a 404 downstream can re-read
-  // a failed link against the other convention (kawaz r55 m152).
+  // a failed link against the other convention.
   test("the ctx carries the previewed document's own path", () => {
     expect(previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)?.docPath).toBe("docs/QUESTIONS.md");
   });
@@ -351,7 +351,7 @@ describe("previewFilePathCtx (worktree layout: document below the containment ro
   });
 });
 
-// The reading of a leading `/` (kawaz r76 m11). The viewer reaches files
+// The reading of a leading `/`. The viewer reaches files
 // outside the session's tree (DR-0008), so an absolute target has to name the
 // file it literally spells — that reading is unambiguously correct, whereas the
 // root-relative one is a convention the author only might have meant. A
@@ -443,7 +443,7 @@ describe("containmentRootOf", () => {
   });
 });
 
-// The regression kawaz hit (r76 m93): a markdown link naming an in-project file
+// The regression kawaz hit: a markdown link naming an in-project file
 // by its *absolute* path 403'd. `fs_read` addresses contained files
 // root-relatively and refuses absolute strings, so an unconverted absolute
 // target routed to fs_read_external, whose DR-0024 allowlist only holds files
@@ -487,7 +487,7 @@ describe("markdown link target -> viewer path (message-body ctx)", () => {
   });
 });
 
-// The 404's "did you mean" (kawaz r55 m152/m153). This runs only after a link
+// The 404's "did you mean". This runs only after a link
 // has already failed, and that ordering is the whole point: the failed path is
 // by construction the document's directory plus what the author typed, so
 // stripping that directory reverse-engineers the original text. One candidate,
@@ -511,7 +511,7 @@ describe("alternateLinkReading", () => {
     );
   });
 
-  // kawaz r76 m45 (C22e): with DR-0008's repo_root widening, viewer paths are
+  // (C22e): with DR-0008's repo_root widening, viewer paths are
   // relative to the *container* of sibling worktrees, so the document is
   // `main/docs/QUESTIONS.md` and the failed target keeps the `main/` prefix.
   // The recovered text has to be read against the working copy the author was
@@ -573,7 +573,7 @@ describe("alternateLinkReading", () => {
   });
 });
 
-// Which failures earn a second reading (kawaz r76 m45, C22b). The recovery used
+// Which failures earn a second reading (C22b). The recovery used
 // to run on `not_found` alone, which silently excluded every absolute target:
 // those go through the DR-0024 exact-file allowlist, so a `/docs/x.md` written
 // with root-relative intent comes back "path not allowed" rather than "not

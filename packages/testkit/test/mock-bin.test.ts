@@ -100,7 +100,8 @@ for await (const line of lines) {
     );
 
     const stdin = JSON.stringify({ id: "r1", texts: ["a", "b"] }) + "\n";
-    expect((await run(bin, [], { stdin })).stdout.trim()).toBe('{"id":"r1","count":2}');
+    const answer: unknown = JSON.parse((await run(bin, [], { stdin })).stdout);
+    expect(answer).toEqual({ id: "r1", count: 2 });
   });
 
   // getRepoWsFromVcs kills a mock that does not answer in time, and asserts it was

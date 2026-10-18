@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+
 import { parseWith, type ResponseOf, SessionStateFileTextSchema, VERSION } from "@ccmsg/protocol";
 import {
   assistantContentRow,
@@ -16,31 +16,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import { defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
 import { CliStatusSchema, printed, served } from "./cli-output.ts";
-
-const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
-
-interface CliResult {
-  out: string;
-  err: string;
-  code: number;
-}
-
-async function runCli(
-  args: string[],
-  env: Record<string, string>,
-  cwd?: string,
-): Promise<CliResult> {
-  const proc = Bun.spawn([process.execPath, CLI, ...args], {
-    env: { ...process.env, ...env },
-    ...(cwd ? { cwd } : {}),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const out = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  return { out, err, code };
-}
+import { runCli, CLI } from "./run-cli.ts";
 
 function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-"));
@@ -312,12 +288,16 @@ describe("ccmsg CLI end-to-end", () => {
       const text = await runCli(["dump", sid, "--format", "text"], env);
       expect(text.code).toBe(0);
       expect(text.out).toContain(`Session: ${sid}`);
-      expect(text.out).toContain('Session context:\n{\n  "note":');
-      expect(text.out).toContain('  "background": [],');
-      expect(text.out).toContain('  "schedules": [],');
-      // todos render as one compact line each rather than pretty-printed JSON
-      // (kawaz r76m50: the JSON form spent several lines per task).
-      expect(text.out).not.toContain('"todos"');
+      // The context is one pretty-printed JSON object under its heading,
+      // closed by a "}" at the start of a line.
+      const contextText = /\nSession context:\n(\{\n[\s\S]*?\n\})\n/.exec(text.out)?.[1];
+      const textContext = jsonObjectOf(defined(contextText, "the text dump's session context"));
+      expect(textContext).toHaveProperty("note");
+      expect(textContext["background"]).toEqual([]);
+      expect(textContext["schedules"]).toEqual([]);
+      // todos render as one compact line each rather than inside the context
+      // JSON (the JSON form spent several lines per task).
+      expect(textContext).not.toHaveProperty("todos");
       expect(text.out).toContain("Todos (1):\n  [pending] #1 ship dump options");
       expect(text.out).toContain("[+0ms user user→self]\nhello");
       expect(text.out).toContain("[+1000ms assistant self→user]\nline 1\nline 2");
@@ -995,7 +975,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     }
   }, 30000);
 
-  // 何を保証するか (RL-Q2 kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]`
+  // 何を保証するか: help `peers [cwd(partial)]`
   // に合わせ、positional 引数を cwd 部分一致 filter として実装する。無指定時は
   // 全 peer が返ることを別 case で確認 (現状の非回帰)。フィルタの絞りは CLI 側
   // 完結 (webui の op:"peers" を汚さない)。

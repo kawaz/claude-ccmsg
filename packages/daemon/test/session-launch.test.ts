@@ -410,7 +410,7 @@ describe("session launch validation", () => {
     });
   });
 
-  // The whole point of the carrier + prologue design (kawaz r76m15): the launch
+  // The whole point of the carrier + prologue design: the launch
   // values are a transport detail, so neither the template names nor the
   // carriers may survive into the process tree the command starts — a claude
   // session must not hand $PROMPT down to every command it later runs. `env`

@@ -18,6 +18,8 @@ import {
   type ItemOf,
   type StreamItem,
   type StreamKind,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
 import { memberRow, msgRow, roomLog } from "../../protocol/test/transcript-rows.ts";
 import { tryAcquireLock } from "../src/flock.ts";
@@ -29,7 +31,6 @@ import {
   type ResponseOf,
 } from "@ccmsg/protocol";
 
-const T = 15000;
 const S = "50000000-0000-4000-8000-000000000001";
 
 /** Minimal WS counterpart of helpers.ts's TestClient: the same typed
@@ -176,8 +177,7 @@ async function startHttpDaemon(extraEnv: Record<string, string> = {}): Promise<D
 
 /** ping over UDS to read back the ephemeral HTTP bind address chosen by the daemon. */
 async function httpAddress(ctx: DaemonCtx): Promise<string> {
-  const c = await connect(ctx.sock);
-  await c.hello({ role: "user" });
+  const c = await userConn(ctx);
   const pong = await c.requestOk({ op: "ping" });
   c.close();
   expect(pong.http.length).toBe(1);
@@ -290,436 +290,370 @@ async function waitUdsGone(sock: string, timeoutMs = 5000): Promise<void> {
 }
 
 describe("HTTP/WS transport (DR-0004)", () => {
-  test(
-    "CCMSG_HTTP_BIND=off: no HTTP listener, status reports empty http[]",
-    async () => {
-      // this is the test-suite default (helpers.ts spawnDaemonProc/startTestDaemon inject
-      // CCMSG_HTTP_BIND=off) — asserting it explicitly here documents the contract.
-      const ctx = await startTestDaemon();
-      try {
-        const c = await connect(ctx.sock);
-        await c.hello({ role: "user" });
-        const pong = await c.requestOk({ op: "ping" });
-        expect(pong.http).toEqual([]);
-        c.close();
-      } finally {
-        await stopTestDaemon(ctx);
+  test("CCMSG_HTTP_BIND=off: no HTTP listener, status reports empty http[]", async () => {
+    // this is the test-suite default (helpers.ts spawnDaemonProc/startTestDaemon inject
+    // CCMSG_HTTP_BIND=off) — asserting it explicitly here documents the contract.
+    const ctx = await startTestDaemon();
+    try {
+      const c = await userConn(ctx);
+      const pong = await c.requestOk({ op: "ping" });
+      expect(pong.http).toEqual([]);
+      c.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("CCMSG_HTTP_BIND=127.0.0.1:0 binds an ephemeral port and status reports the real address", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      // resolved to a concrete port, not the literal "0" we configured
+      expect(addr).toMatch(/^127\.0\.0\.1:\d+$/);
+      expect(addr.endsWith(":0")).toBe(false);
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("WS round trip: hello -> rooms -> subscribe -> a push arrives, same shape as UDS", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      fs.mkdirSync(ctx.roomsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(ctx.roomsDir, "r1.jsonl"),
+        roomLog([memberRow("a1", S), msgRow(1, "a1", "left on disk")]),
+      );
+
+      const ws = await connectWs(ctx);
+      const helloRes = await ws.hello({ role: "user" });
+      expect(helloRes.ok).toBe(true);
+
+      const rooms = await ws.requestOk({ op: "rooms" });
+      expect(rooms.rooms.map((r) => [r.id, r.last_mid])).toEqual([["r1", 1]]);
+
+      const sub = await ws.requestOk({ op: "subscribe" });
+      expect(sub.subscribed).toBe(true);
+
+      // a session's say is pushed to every user-role subscriber, this WS one included
+      const speaker = await sessionConn(ctx, S);
+      const said = await speaker.requestOk({ op: "say", text: "hello from uds" });
+      const { ev } = await ws.readEventUntil("says", (e) => e.says.some((r) => r.id === said.id));
+      expect(ev.says.find((r) => r.id === said.id)).toMatchObject({
+        sid: S,
+        text: "hello from uds",
+      });
+
+      ws.close();
+      speaker.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("identity pinning: a hello claiming role:session over WS is repinned to user", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const ws = await connectWs(ctx);
+      // claim to be a session; DR-0004 §2 says the daemon must ignore this and pin to user
+      const helloRes = await ws.hello({
+        role: "session",
+        sid: "browser-pretending-to-be-a-session",
+      });
+      expect(helloRes.ok).toBe(true);
+
+      // served as the user: a user-role op answers, a session-role op is refused
+      expect((await ws.requestOk({ op: "rooms" })).rooms).toEqual([]);
+      expect(await ws.request({ op: "say", text: "am I pinned?" })).toEqual({
+        ok: false,
+        error: { code: "bad_request", msg: "op 'say' requires session role" },
+      });
+
+      ws.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("cross-transport delivery: a UDS session and a WS user reach each other's streams", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const udsSession = await sessionConn(ctx, S);
+      await udsSession.request({ op: "subscribe" });
+
+      const wsUser = await connectWs(ctx);
+      await wsUser.hello({ role: "user" });
+      await wsUser.request({ op: "subscribe" });
+
+      // UDS session says -> the WS user receives it live
+      await udsSession.requestOk({ op: "say", text: "from uds" });
+      await wsUser.readEventUntil("says", (e) => e.says.some((r) => r.text === "from uds"));
+
+      // WS user notifies -> the UDS session receives it, stamped as the user's
+      const sent = await wsUser.requestOk({ op: "notify", sid: S, text: "from ws" });
+      expect(sent.delivered).toBe(1);
+      const { ev } = await udsSession.readEventUntil("notify");
+      expect(ev).toMatchObject({ text: "from ws", from: { role: "user" } });
+
+      udsSession.close();
+      wsUser.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("permessage-deflate: a client offering it gets the extension and compressed frames; one that doesn't gets plain frames", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const hello = JSON.stringify({
+        op: "hello",
+        role: "user",
+        protocol: PROTOCOL_VERSION,
+        request_id: "d1",
+      });
+      for (const offerDeflate of [true, false]) {
+        const got = await firstWsFrame(addr, offerDeflate, `${hello}\n`);
+        if (offerDeflate) expect(got.extensions).toContain("permessage-deflate");
+        else expect(got.extensions).toBeNull();
+        expect(got.compressed).toBe(offerDeflate);
+        const reply = got.text.split("\n").find((l) => l.includes('"d1"'));
+        if (reply === undefined) throw new Error(`no hello reply in ${got.text}`);
+        servedReply("hello", reply);
       }
-    },
-    T,
-  );
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-  test(
-    "CCMSG_HTTP_BIND=127.0.0.1:0 binds an ephemeral port and status reports the real address",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const addr = await httpAddress(ctx);
-        // resolved to a concrete port, not the literal "0" we configured
-        expect(addr).toMatch(/^127\.0\.0\.1:\d+$/);
-        expect(addr.endsWith(":0")).toBe(false);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("CCMSG_HTTP_ALLOW restricted to a non-loopback range: loopback gets 403 for both plain HTTP and the WS upgrade path", async () => {
+    // DR-0004 §3 addendum: allowlist gates fetch() itself, so it must cover the
+    // WS upgrade too (upgrade happens inside fetch(), not a separate handler).
+    const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW: "100.64.0.0/10" });
+    try {
+      const addr = await httpAddress(ctx);
 
-  test(
-    "WS round trip: hello -> rooms -> subscribe -> a push arrives, same shape as UDS",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        fs.mkdirSync(ctx.roomsDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(ctx.roomsDir, "r1.jsonl"),
-          roomLog([memberRow("a1", S), msgRow(1, "a1", "left on disk")]),
-        );
+      const res = await fetch(`http://${addr}/`);
+      expect(res.status).toBe(403);
 
-        const ws = await connectWs(ctx);
-        const helloRes = await ws.hello({ role: "user" });
-        expect(helloRes.ok).toBe(true);
+      const ws = new WebSocket(`ws://${addr}/ws`);
+      const outcome = await new Promise<"open" | "rejected">((resolve) => {
+        ws.addEventListener("open", () => resolve("open"));
+        ws.addEventListener("error", () => resolve("rejected"));
+        ws.addEventListener("close", () => resolve("rejected"));
+      });
+      expect(outcome).toBe("rejected");
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        const rooms = await ws.requestOk({ op: "rooms" });
-        expect(rooms.rooms.map((r) => [r.id, r.last_mid])).toEqual([["r1", 1]]);
+  test("default CCMSG_HTTP_ALLOW (loopback only, 2026-07-10 trust-model addendum): loopback connections are not blocked, and ping reports the active allowlist", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const c = await userConn(ctx);
+      const pong = await c.requestOk({ op: "ping" });
+      // tailscale CGNAT/ULA ranges removed from the default: source-IP alone can't
+      // distinguish "this daemon's own webui" from "any browser tab kawaz has open"
+      // on a device he owns via tailscale (docs/issue/2026-07-10-webui-transport-
+      // trust-model-security-critical.md). The Origin check (see below) is the
+      // actual trust boundary for browser clients now.
+      expect(pong.httpAllow).toEqual(["127.0.0.0/8", "::1"]);
+      c.close();
 
-        const sub = await ws.requestOk({ op: "subscribe" });
-        expect(sub.subscribed).toBe(true);
+      const addr = await httpAddress(ctx);
+      const res = await fetch(`http://${addr}/`);
+      expect(res.status).not.toBe(403); // no fallback wired in tests -> 404, but never 403
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        // a session's say is pushed to every user-role subscriber, this WS one included
-        const speaker = await connect(ctx.sock);
-        await speaker.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        const said = await speaker.requestOk({ op: "say", text: "hello from uds" });
-        const { ev } = await ws.readEventUntil("says", (e) => e.says.some((r) => r.id === said.id));
-        expect(ev.says.find((r) => r.id === said.id)).toMatchObject({
-          sid: S,
-          text: "hello from uds",
-        });
+  test("Origin check: matching self-origin passes, a forged evil origin gets 403 (both plain HTTP and the WS upgrade path)", async () => {
+    // DR-0004 trust-model addendum: source IP alone can't tell this daemon's own
+    // webui apart from any other page a browser has open (both connect from
+    // 127.0.0.1). Origin is the only signal that can.
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
 
-        ws.close();
-        speaker.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      // self-origin (what the daemon's own webui would send) passes.
+      const okRes = await fetch(`http://${addr}/`, { headers: { Origin: `http://${addr}` } });
+      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
 
-  test(
-    "identity pinning: a hello claiming role:session over WS is repinned to user",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const ws = await connectWs(ctx);
-        // claim to be a session; DR-0004 §2 says the daemon must ignore this and pin to user
-        const helloRes = await ws.hello({
-          role: "session",
-          sid: "browser-pretending-to-be-a-session",
-        });
-        expect(helloRes.ok).toBe(true);
+      // an unrelated page's origin is rejected, plain HTTP...
+      const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
+      expect(evilRes.status).toBe(403);
 
-        // served as the user: a user-role op answers, a session-role op is refused
-        expect((await ws.requestOk({ op: "rooms" })).rooms).toEqual([]);
-        expect(await ws.request({ op: "say", text: "am I pinned?" })).toEqual({
-          ok: false,
-          error: { code: "bad_request", msg: "op 'say' requires session role" },
-        });
+      // ...and the WS upgrade path (fetch() is where upgrade happens, same gate).
+      // Bun's WebSocket accepts a non-standard `headers` option (real browsers don't
+      // let page JS set Origin); this simulates the forgeable request a raw client
+      // (or a browser's sandboxed-iframe null-origin trick) could send.
+      const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: "http://evil.com" } });
+      const outcome = await new Promise<"open" | "rejected">((resolve) => {
+        ws.addEventListener("open", () => resolve("open"));
+        ws.addEventListener("error", () => resolve("rejected"));
+        ws.addEventListener("close", () => resolve("rejected"));
+      });
+      expect(outcome).toBe("rejected");
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        ws.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("Origin check: a missing Origin header passes (non-browser client, e.g. this daemon's own test WebSocket/fetch clients)", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      // plain fetch() from Bun doesn't send an Origin header by itself (verified:
+      // req.headers.get("Origin") === null on the server side for this exact call).
+      const res = await fetch(`http://${addr}/`);
+      expect(res.status).not.toBe(403);
 
-  test(
-    "cross-transport delivery: a UDS session and a WS user reach each other's streams",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const udsSession = await connect(ctx.sock);
-        await udsSession.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        await udsSession.request({ op: "subscribe" });
+      // same for the WS upgrade path: every round-trip test above already relies on
+      // this (WsTestClient never sets Origin), this just asserts it explicitly.
+      const ws = await connectWs(ctx);
+      const helloRes = await ws.hello({ role: "user" });
+      expect(helloRes.ok).toBe(true);
+      ws.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        const wsUser = await connectWs(ctx);
-        await wsUser.hello({ role: "user" });
-        await wsUser.request({ op: "subscribe" });
+  test("Origin check: localhost is accepted as an alias of a loopback bind (2026-07-10 loopback-aliasing addendum)", async () => {
+    // startHttpDaemon binds 127.0.0.1:<ephemeral>. Opening the webui via
+    // http://localhost:<port> instead of the literal bind address is an
+    // equally legitimate way to reach this same daemon and must not 403.
+    const ctx = await startHttpDaemon();
+    try {
+      const addr = await httpAddress(ctx);
+      const port = addr.split(":").pop();
 
-        // UDS session says -> the WS user receives it live
-        await udsSession.requestOk({ op: "say", text: "from uds" });
-        await wsUser.readEventUntil("says", (e) => e.says.some((r) => r.text === "from uds"));
+      const okRes = await fetch(`http://${addr}/`, {
+        headers: { Origin: `http://localhost:${port}` },
+      });
+      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
 
-        // WS user notifies -> the UDS session receives it, stamped as the user's
-        const sent = await wsUser.requestOk({ op: "notify", sid: S, text: "from ws" });
-        expect(sent.delivered).toBe(1);
-        const { ev } = await udsSession.readEventUntil("notify");
-        expect(ev).toMatchObject({ text: "from ws", from: { role: "user" } });
+      const ws = new WebSocket(`ws://${addr}/ws`, {
+        headers: { Origin: `http://localhost:${port}` },
+      });
+      const outcome = await new Promise<"open" | "rejected">((resolve) => {
+        ws.addEventListener("open", () => resolve("open"));
+        ws.addEventListener("error", () => resolve("rejected"));
+        ws.addEventListener("close", () => resolve("rejected"));
+      });
+      expect(outcome).toBe("open");
+      ws.close();
 
-        udsSession.close();
-        wsUser.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      // The aliasing is same-port only: a different port on localhost is still 403.
+      const wrongPortRes = await fetch(`http://${addr}/`, {
+        headers: { Origin: `http://localhost:${Number(port) + 1}` },
+      });
+      expect(wrongPortRes.status).toBe(403);
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-  test(
-    "permessage-deflate: a client offering it gets the extension and compressed frames; one that doesn't gets plain frames",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const addr = await httpAddress(ctx);
-        const hello = JSON.stringify({
-          op: "hello",
-          role: "user",
-          protocol: PROTOCOL_VERSION,
-          request_id: "d1",
-        });
-        for (const offerDeflate of [true, false]) {
-          const got = await firstWsFrame(addr, offerDeflate, `${hello}\n`);
-          if (offerDeflate) expect(got.extensions).toContain("permessage-deflate");
-          else expect(got.extensions).toBeNull();
-          expect(got.compressed).toBe(offerDeflate);
-          const reply = got.text.split("\n").find((l) => l.includes('"d1"'));
-          if (reply === undefined) throw new Error(`no hello reply in ${got.text}`);
-          servedReply("hello", reply);
-        }
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("Origin check: localhost aliasing also holds on an IPv6 [::1] bind (Bun reports srv.hostname in bracket notation)", async () => {
+    // The default bind is "127.0.0.1:8642,[::1]:8642" and `localhost` may resolve
+    // to ::1, landing the browser on the IPv6 listener. Bun's srv.hostname for that
+    // listener is the bracketed literal "[::1]", so loopback detection must accept
+    // bracket notation too — otherwise localhost aliasing works on the v4 listener
+    // but 403s on the v6 one, an inconsistency invisible until the OS happens to
+    // prefer ::1 for localhost.
+    const ctx = await startHttpDaemon({ CCMSG_HTTP_BIND: "[::1]:0" });
+    try {
+      const addr = await httpAddress(ctx);
+      const port = addr.split(":").pop();
 
-  test(
-    "CCMSG_HTTP_ALLOW restricted to a non-loopback range: loopback gets 403 for both plain HTTP and the WS upgrade path",
-    async () => {
-      // DR-0004 §3 addendum: allowlist gates fetch() itself, so it must cover the
-      // WS upgrade too (upgrade happens inside fetch(), not a separate handler).
-      const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW: "100.64.0.0/10" });
-      try {
-        const addr = await httpAddress(ctx);
+      const okRes = await fetch(`http://${addr}/`, {
+        headers: { Origin: `http://localhost:${port}` },
+      });
+      expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
 
-        const res = await fetch(`http://${addr}/`);
-        expect(res.status).toBe(403);
+      // Cross-origin from an arbitrary site is still rejected on this listener.
+      const evilRes = await fetch(`http://${addr}/`, {
+        headers: { Origin: "https://evil.example" },
+      });
+      expect(evilRes.status).toBe(403);
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        const ws = new WebSocket(`ws://${addr}/ws`);
-        const outcome = await new Promise<"open" | "rejected">((resolve) => {
-          ws.addEventListener("open", () => resolve("open"));
-          ws.addEventListener("error", () => resolve("rejected"));
-          ws.addEventListener("close", () => resolve("rejected"));
-        });
-        expect(outcome).toBe("rejected");
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("CCMSG_HTTP_ALLOW_ORIGIN: an explicitly configured extra origin (e.g. a tailscale serve HTTPS front) passes", async () => {
+    const extraOrigin = "https://my-machine.tailnet-name.ts.net";
+    const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW_ORIGIN: extraOrigin });
+    try {
+      const addr = await httpAddress(ctx);
 
-  test(
-    "default CCMSG_HTTP_ALLOW (loopback only, 2026-07-10 trust-model addendum): loopback connections are not blocked, and ping reports the active allowlist",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const c = await connect(ctx.sock);
-        await c.hello({ role: "user" });
-        const pong = await c.requestOk({ op: "ping" });
-        // tailscale CGNAT/ULA ranges removed from the default: source-IP alone can't
-        // distinguish "this daemon's own webui" from "any browser tab kawaz has open"
-        // on a device he owns via tailscale (docs/issue/2026-07-10-webui-transport-
-        // trust-model-security-critical.md). The Origin check (see below) is the
-        // actual trust boundary for browser clients now.
-        expect(pong.httpAllow).toEqual(["127.0.0.0/8", "::1"]);
-        c.close();
+      const okRes = await fetch(`http://${addr}/`, { headers: { Origin: extraOrigin } });
+      expect(okRes.status).not.toBe(403);
 
-        const addr = await httpAddress(ctx);
-        const res = await fetch(`http://${addr}/`);
-        expect(res.status).not.toBe(403); // no fallback wired in tests -> 404, but never 403
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      // an origin NOT in the extra list is still rejected even with the env var set.
+      const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
+      expect(evilRes.status).toBe(403);
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-  test(
-    "Origin check: matching self-origin passes, a forged evil origin gets 403 (both plain HTTP and the WS upgrade path)",
-    async () => {
-      // DR-0004 trust-model addendum: source IP alone can't tell this daemon's own
-      // webui apart from any other page a browser has open (both connect from
-      // 127.0.0.1). Origin is the only signal that can.
-      const ctx = await startHttpDaemon();
-      try {
-        const addr = await httpAddress(ctx);
+  test("HTTP port is released before the UDS marks graceful shutdown complete", async () => {
+    // A replacement daemon treats UDS connection refusal as permission to start.
+    // Therefore the predecessor must release its HTTP listen socket before closing
+    // UDS, even while an active WebSocket connection still exists.
+    const ctx = await startHttpDaemon();
+    let replacement: ReturnType<typeof Bun.serve> | undefined;
+    let replacementLock: ReturnType<typeof tryAcquireLock> = null;
+    try {
+      const addr = await httpAddress(ctx);
+      const port = Number(addr.slice(addr.lastIndexOf(":") + 1));
+      const ws = await connectWs(ctx);
+      await ws.hello({ role: "user" });
 
-        // self-origin (what the daemon's own webui would send) passes.
-        const okRes = await fetch(`http://${addr}/`, { headers: { Origin: `http://${addr}` } });
-        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+      const uds = await userConn(ctx);
+      await uds.request({ op: "shutdown", reason: "upgrade" });
+      uds.close();
 
-        // an unrelated page's origin is rejected, plain HTTP...
-        const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
-        expect(evilRes.status).toBe(403);
+      await waitUdsGone(ctx.sock);
+      replacement = Bun.serve({
+        hostname: "127.0.0.1",
+        port,
+        fetch: () => new Response("replacement"),
+      });
+      replacementLock = tryAcquireLock(path.join(ctx.stateDir, "daemon.lock"));
+      expect(replacement.port).toBe(port);
+      expect(replacementLock).not.toBeNull();
+      ws.close();
+    } finally {
+      replacementLock?.release();
+      await replacement?.stop(true);
+      await stopTestDaemon(ctx);
+    }
+  });
 
-        // ...and the WS upgrade path (fetch() is where upgrade happens, same gate).
-        // Bun's WebSocket accepts a non-standard `headers` option (real browsers don't
-        // let page JS set Origin); this simulates the forgeable request a raw client
-        // (or a browser's sandboxed-iframe null-origin trick) could send.
-        const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: "http://evil.com" } });
-        const outcome = await new Promise<"open" | "rejected">((resolve) => {
-          ws.addEventListener("open", () => resolve("open"));
-          ws.addEventListener("error", () => resolve("rejected"));
-          ws.addEventListener("close", () => resolve("rejected"));
-        });
-        expect(outcome).toBe("rejected");
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("graceful shutdown delivers a restarting event to WS subscribers too", async () => {
+    const ctx = await startHttpDaemon();
+    try {
+      const ws = await connectWs(ctx);
+      await ws.hello({ role: "user" });
+      await ws.request({ op: "subscribe" });
 
-  test(
-    "Origin check: a missing Origin header passes (non-browser client, e.g. this daemon's own test WebSocket/fetch clients)",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const addr = await httpAddress(ctx);
-        // plain fetch() from Bun doesn't send an Origin header by itself (verified:
-        // req.headers.get("Origin") === null on the server side for this exact call).
-        const res = await fetch(`http://${addr}/`);
-        expect(res.status).not.toBe(403);
+      const uds = await userConn(ctx);
+      await uds.request({ op: "shutdown" }); // triggers gracefulShutdown() in the daemon process
+      uds.close();
 
-        // same for the WS upgrade path: every round-trip test above already relies on
-        // this (WsTestClient never sets Origin), this just asserts it explicitly.
-        const ws = await connectWs(ctx);
-        const helloRes = await ws.hello({ role: "user" });
-        expect(helloRes.ok).toBe(true);
-        ws.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "Origin check: localhost is accepted as an alias of a loopback bind (2026-07-10 loopback-aliasing addendum)",
-    async () => {
-      // startHttpDaemon binds 127.0.0.1:<ephemeral>. Opening the webui via
-      // http://localhost:<port> instead of the literal bind address is an
-      // equally legitimate way to reach this same daemon and must not 403.
-      const ctx = await startHttpDaemon();
-      try {
-        const addr = await httpAddress(ctx);
-        const port = addr.split(":").pop();
-
-        const okRes = await fetch(`http://${addr}/`, {
-          headers: { Origin: `http://localhost:${port}` },
-        });
-        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
-
-        const ws = new WebSocket(`ws://${addr}/ws`, {
-          headers: { Origin: `http://localhost:${port}` },
-        });
-        const outcome = await new Promise<"open" | "rejected">((resolve) => {
-          ws.addEventListener("open", () => resolve("open"));
-          ws.addEventListener("error", () => resolve("rejected"));
-          ws.addEventListener("close", () => resolve("rejected"));
-        });
-        expect(outcome).toBe("open");
-        ws.close();
-
-        // The aliasing is same-port only: a different port on localhost is still 403.
-        const wrongPortRes = await fetch(`http://${addr}/`, {
-          headers: { Origin: `http://localhost:${Number(port) + 1}` },
-        });
-        expect(wrongPortRes.status).toBe(403);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "Origin check: localhost aliasing also holds on an IPv6 [::1] bind (Bun reports srv.hostname in bracket notation)",
-    async () => {
-      // The default bind is "127.0.0.1:8642,[::1]:8642" and `localhost` may resolve
-      // to ::1, landing the browser on the IPv6 listener. Bun's srv.hostname for that
-      // listener is the bracketed literal "[::1]", so loopback detection must accept
-      // bracket notation too — otherwise localhost aliasing works on the v4 listener
-      // but 403s on the v6 one, an inconsistency invisible until the OS happens to
-      // prefer ::1 for localhost.
-      const ctx = await startHttpDaemon({ CCMSG_HTTP_BIND: "[::1]:0" });
-      try {
-        const addr = await httpAddress(ctx);
-        const port = addr.split(":").pop();
-
-        const okRes = await fetch(`http://${addr}/`, {
-          headers: { Origin: `http://localhost:${port}` },
-        });
-        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
-
-        // Cross-origin from an arbitrary site is still rejected on this listener.
-        const evilRes = await fetch(`http://${addr}/`, {
-          headers: { Origin: "https://evil.example" },
-        });
-        expect(evilRes.status).toBe(403);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "CCMSG_HTTP_ALLOW_ORIGIN: an explicitly configured extra origin (e.g. a tailscale serve HTTPS front) passes",
-    async () => {
-      const extraOrigin = "https://my-machine.tailnet-name.ts.net";
-      const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW_ORIGIN: extraOrigin });
-      try {
-        const addr = await httpAddress(ctx);
-
-        const okRes = await fetch(`http://${addr}/`, { headers: { Origin: extraOrigin } });
-        expect(okRes.status).not.toBe(403);
-
-        // an origin NOT in the extra list is still rejected even with the env var set.
-        const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
-        expect(evilRes.status).toBe(403);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "HTTP port is released before the UDS marks graceful shutdown complete",
-    async () => {
-      // A replacement daemon treats UDS connection refusal as permission to start.
-      // Therefore the predecessor must release its HTTP listen socket before closing
-      // UDS, even while an active WebSocket connection still exists.
-      const ctx = await startHttpDaemon();
-      let replacement: ReturnType<typeof Bun.serve> | undefined;
-      let replacementLock: ReturnType<typeof tryAcquireLock> = null;
-      try {
-        const addr = await httpAddress(ctx);
-        const port = Number(addr.slice(addr.lastIndexOf(":") + 1));
-        const ws = await connectWs(ctx);
-        await ws.hello({ role: "user" });
-
-        const uds = await connect(ctx.sock);
-        await uds.hello({ role: "user" });
-        await uds.request({ op: "shutdown", reason: "upgrade" });
-        uds.close();
-
-        await waitUdsGone(ctx.sock);
-        replacement = Bun.serve({
-          hostname: "127.0.0.1",
-          port,
-          fetch: () => new Response("replacement"),
-        });
-        replacementLock = tryAcquireLock(path.join(ctx.stateDir, "daemon.lock"));
-        expect(replacement.port).toBe(port);
-        expect(replacementLock).not.toBeNull();
-        ws.close();
-      } finally {
-        replacementLock?.release();
-        await replacement?.stop(true);
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "graceful shutdown delivers a restarting event to WS subscribers too",
-    async () => {
-      const ctx = await startHttpDaemon();
-      try {
-        const ws = await connectWs(ctx);
-        await ws.hello({ role: "user" });
-        await ws.request({ op: "subscribe" });
-
-        const uds = await connect(ctx.sock);
-        await uds.hello({ role: "user" });
-        await uds.request({ op: "shutdown" }); // triggers gracefulShutdown() in the daemon process
-        uds.close();
-
-        const { ev } = await ws.readEventUntil("restarting");
-        expect(ev.ev).toBe("restarting");
-        ws.close();
-      } finally {
-        // the daemon already exited via shutdown; stopTestDaemon tolerates that (falls
-        // back to proc.kill(), which is a no-op on an already-dead process)
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      const { ev } = await ws.readEventUntil("restarting");
+      expect(ev.ev).toBe("restarting");
+      ws.close();
+    } finally {
+      // the daemon already exited via shutdown; stopTestDaemon tolerates that (falls
+      // back to proc.kill(), which is a no-op on an already-dead process)
+      await stopTestDaemon(ctx);
+    }
+  });
 });
 
 // tailscale serve origin auto-allow (docs/issue/2026-07-11-tailscale-serve-origin-auto-
@@ -824,90 +758,82 @@ async function waitForOriginAllowed(addr: string, origin: string, timeoutMs = 40
 }
 
 describe("tailscale serve origin auto-allow (docs/issue/2026-07-11)", () => {
-  test(
-    "tailscale binary absent (CCMSG_TAILSCALE_BIN points nowhere): daemon still starts promptly and serves requests",
-    async () => {
-      const start = Date.now();
+  test("tailscale binary absent (CCMSG_TAILSCALE_BIN points nowhere): daemon still starts promptly and serves requests", async () => {
+    const start = Date.now();
+    const ctx = await startTestDaemon({
+      CCMSG_HTTP_BIND: "127.0.0.1:0",
+      CCMSG_TAILSCALE_BIN: "/nonexistent/path/definitely-not-a-tailscale-binary",
+    });
+    try {
+      // startTestDaemon already waited for the UDS socket via waitConnectable; the
+      // absent-binary lookup must not have delayed that (it's fired off with `void`,
+      // never awaited by daemon startup) — bounding total elapsed time here catches a
+      // regression where it accidentally becomes synchronous/blocking.
+      expect(Date.now() - start).toBeLessThan(5000);
+      const c = await connect(ctx.sock);
+      const pong = await c.requestOk({ op: "ping" });
+      expect(pong.ok).toBe(true);
+      c.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("fake tailscale reports a serve config fronting this daemon's bind port: that ts.net origin's WS connects without CCMSG_HTTP_ALLOW_ORIGIN", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fake-ts-"));
+    try {
+      const port = await freeTcpPort();
+      const hostname = "fake-machine.tail1234.ts.net";
+      const gatePath = path.join(dir, "gate");
+      const bin = writeFakeTailscale(dir, hostname, port, gatePath);
       const ctx = await startTestDaemon({
-        CCMSG_HTTP_BIND: "127.0.0.1:0",
-        CCMSG_TAILSCALE_BIN: "/nonexistent/path/definitely-not-a-tailscale-binary",
+        CCMSG_HTTP_BIND: `127.0.0.1:${port}`,
+        CCMSG_TAILSCALE_BIN: bin,
+        // fake-tailscale gates on a file write from this test; under a loaded CI
+        // runner the default 1000ms subprocess timeout can fire before the gate
+        // opens, killing the subprocess and leaving origins empty (flaky).
+        CCMSG_TAILSCALE_STATUS_TIMEOUT_MS: "10000",
       });
       try {
-        // startTestDaemon already waited for the UDS socket via waitConnectable; the
-        // absent-binary lookup must not have delayed that (it's fired off with `void`,
-        // never awaited by daemon startup) — bounding total elapsed time here catches a
-        // regression where it accidentally becomes synchronous/blocking.
-        expect(Date.now() - start).toBeLessThan(5000);
-        const c = await connect(ctx.sock);
-        const pong = await c.requestOk({ op: "ping" });
-        expect(pong.ok).toBe(true);
-        c.close();
+        const origin = `https://${hostname}`;
+        const addr = `127.0.0.1:${port}`;
+
+        // startTestDaemon only awaits the UDS socket; this test constructs `addr` from
+        // a pre-allocated port rather than asking the daemon via httpAddress(), so we
+        // don't inherit that helper's implicit HTTP-ready wait. Do it explicitly here
+        // — otherwise the tooSoon fetch below can hit ECONNREFUSED under full-suite
+        // parallel load (see waitHttpConnectable doc).
+        await waitHttpConnectable(addr);
+
+        // before auto-allow lands, the origin is not yet trusted (proves the WS
+        // success below is actually caused by the auto-allow, not some pre-existing
+        // implicit allow).
+        const tooSoon = await fetch(`http://${addr}/`, { headers: { Origin: origin } });
+        expect(tooSoon.status).toBe(403);
+
+        // Open the gate: the fake answers, the daemon folds the origin in.
+        fs.writeFileSync(gatePath, "");
+        await waitForOriginAllowed(addr, origin);
+
+        const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: origin } });
+        const outcome = await new Promise<"open" | "rejected">((resolve) => {
+          ws.addEventListener("open", () => resolve("open"));
+          ws.addEventListener("error", () => resolve("rejected"));
+          ws.addEventListener("close", () => resolve("rejected"));
+        });
+        expect(outcome).toBe("open");
+        ws.close();
+
+        // an origin NOT reported by (fake) tailscale is still rejected.
+        const evilRes = await fetch(`http://${addr}/`, {
+          headers: { Origin: "https://evil.example" },
+        });
+        expect(evilRes.status).toBe(403);
       } finally {
         await stopTestDaemon(ctx);
       }
-    },
-    T,
-  );
-
-  test(
-    "fake tailscale reports a serve config fronting this daemon's bind port: that ts.net origin's WS connects without CCMSG_HTTP_ALLOW_ORIGIN",
-    async () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fake-ts-"));
-      try {
-        const port = await freeTcpPort();
-        const hostname = "fake-machine.tail1234.ts.net";
-        const gatePath = path.join(dir, "gate");
-        const bin = writeFakeTailscale(dir, hostname, port, gatePath);
-        const ctx = await startTestDaemon({
-          CCMSG_HTTP_BIND: `127.0.0.1:${port}`,
-          CCMSG_TAILSCALE_BIN: bin,
-          // fake-tailscale gates on a file write from this test; under a loaded CI
-          // runner the default 1000ms subprocess timeout can fire before the gate
-          // opens, killing the subprocess and leaving origins empty (flaky).
-          CCMSG_TAILSCALE_STATUS_TIMEOUT_MS: "10000",
-        });
-        try {
-          const origin = `https://${hostname}`;
-          const addr = `127.0.0.1:${port}`;
-
-          // startTestDaemon only awaits the UDS socket; this test constructs `addr` from
-          // a pre-allocated port rather than asking the daemon via httpAddress(), so we
-          // don't inherit that helper's implicit HTTP-ready wait. Do it explicitly here
-          // — otherwise the tooSoon fetch below can hit ECONNREFUSED under full-suite
-          // parallel load (see waitHttpConnectable doc).
-          await waitHttpConnectable(addr);
-
-          // before auto-allow lands, the origin is not yet trusted (proves the WS
-          // success below is actually caused by the auto-allow, not some pre-existing
-          // implicit allow).
-          const tooSoon = await fetch(`http://${addr}/`, { headers: { Origin: origin } });
-          expect(tooSoon.status).toBe(403);
-
-          // Open the gate: the fake answers, the daemon folds the origin in.
-          fs.writeFileSync(gatePath, "");
-          await waitForOriginAllowed(addr, origin);
-
-          const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: origin } });
-          const outcome = await new Promise<"open" | "rejected">((resolve) => {
-            ws.addEventListener("open", () => resolve("open"));
-            ws.addEventListener("error", () => resolve("rejected"));
-            ws.addEventListener("close", () => resolve("rejected"));
-          });
-          expect(outcome).toBe("open");
-          ws.close();
-
-          // an origin NOT reported by (fake) tailscale is still rejected.
-          const evilRes = await fetch(`http://${addr}/`, {
-            headers: { Origin: "https://evil.example" },
-          });
-          expect(evilRes.status).toBe(403);
-        } finally {
-          await stopTestDaemon(ctx);
-        }
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

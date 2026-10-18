@@ -39,6 +39,8 @@ import {
   type TestClient,
   waitConnectable,
   type DaemonCtx,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -547,13 +549,11 @@ describe("user_prompt over the wire", () => {
     const ctx = await startShortDaemon();
     const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi there" });
       const line = await nextRequest(sidecar);
       expect(line).toEqual({ v: 1, op: "prompt.send", id: line.id, args: { text: "hi there" } });
-      const module = await connect(ctx.sock);
-      await module.hello({ role: "session", sid: SID });
+      const module = await sessionConn(ctx, SID);
       const taken = await module.request(
         sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
       );
@@ -571,12 +571,10 @@ describe("user_prompt over the wire", () => {
     const ctx = await startShortDaemon();
     const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       const line = await nextRequest(sidecar);
-      const module = await connect(ctx.sock);
-      await module.hello({ role: "session", sid: SID });
+      const module = await sessionConn(ctx, SID);
       await module.request(
         sidecarReply({
           id: line.id,
@@ -601,8 +599,7 @@ describe("user_prompt over the wire", () => {
     const left = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
       await left.leave();
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const res = await user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       expect(res).toEqual({ ok: true, outcome: "not_delivered", reason: "no_module" });
       user.close();
@@ -619,11 +616,9 @@ describe("user_prompt over the wire", () => {
     const first = await fakeSidecar(ctx, SID, "run1");
     const second = await fakeSidecar(ctx, SID, "run2", "hy-2");
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi" });
-      const module = await connect(ctx.sock);
-      await module.hello({ role: "session", sid: SID });
+      const module = await sessionConn(ctx, SID);
       const toFirst = await nextRequest(first);
       await module.request(
         sidecarReply({
@@ -650,16 +645,14 @@ describe("user_prompt over the wire", () => {
   test("sidecar_hello is a session's: refused without one, and with arguments not of its shape", async () => {
     const ctx = await startShortDaemon();
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const asUser = await user.requestError({
         op: "sidecar_hello",
         run_id: "run1",
         started_at: 1,
       });
       expect(asUser.error.code).toBe("bad_request");
-      const session = await connect(ctx.sock);
-      await session.hello({ role: "session", sid: SID });
+      const session = await sessionConn(ctx, SID);
       const badRun = await session.requestRefusal({
         op: "sidecar_hello",
         run_id: "../x",
@@ -676,8 +669,7 @@ describe("user_prompt over the wire", () => {
   test("refusals: role, arguments, and replies nobody waits for", async () => {
     const ctx = await startShortDaemon();
     try {
-      const session = await connect(ctx.sock);
-      await session.hello({ role: "session", sid: SID });
+      const session = await sessionConn(ctx, SID);
       const asSession = await session.requestError({
         op: "user_prompt",
         session_id: SID,
@@ -685,8 +677,7 @@ describe("user_prompt over the wire", () => {
       });
       expect(asSession.error.code).toBe("bad_request");
 
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const blank = await user.requestError({
         op: "user_prompt",
         session_id: SID,
@@ -743,15 +734,17 @@ describe("user_prompt over the wire", () => {
     const ctx = await startShortDaemon();
     const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       // Left waiting: the connection closes before the daemon would answer it.
       const reply = user
         .request({ op: "user_prompt", session_id: SID, text: "hi" })
         .catch(() => undefined);
       const line = await nextRequest(sidecar);
-      const other = await connect(ctx.sock);
-      await other.hello({ role: "session", sid: "99999999-2222-4333-8444-555555555555" });
+      const other = await sessionConn(ctx, "99999999-2222-4333-8444-555555555555", {
+        repo: "",
+        ws: "",
+        cwd: "",
+      });
       const res = await other.requestError(
         sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
       );
@@ -785,8 +778,7 @@ describe("session.facts asked of a run that names itself", () => {
         cwd: "/tmp",
         transcript_path: transcript,
       });
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       await user.requestOk({ op: "session_status_subscribe", sid: SID });
       const named = await fakeSidecar(ctx, SID, "run1", "hy-1");
       sidecar = named;
@@ -824,19 +816,8 @@ describe("input_readiness on session_status", () => {
     fs.writeFileSync(transcript, "");
     const sidecars: { close(): void }[] = [];
     try {
-      const session = await connect(ctx.sock);
-      await session.requestOk({
-        op: "hello",
-        role: "session",
-        protocol: PROTOCOL_VERSION,
-        sid: SID,
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-        transcript_path: transcript,
-      });
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const session = await sessionConn(ctx, SID, { transcript_path: transcript });
+      const user = await userConn(ctx);
       const initial = await user.requestOk({ op: "session_status_subscribe", sid: SID });
       expect(initial.input_readiness).toEqual({ kind: "no_module" });
 
@@ -878,8 +859,7 @@ describe("input_readiness on session_status", () => {
     const OTHER = "99999999-2222-4333-8444-555555555555";
     const sidecars: { close(): void }[] = [];
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       const before = await fakeSidecar(ctx, SID, "run1", "hy-1");
       sidecars.push(before);
       await before.leave();
@@ -905,11 +885,9 @@ describe("input_readiness on session_status", () => {
     const ctx = await startShortDaemon();
     let sidecar: { close(): void } | undefined;
     try {
-      const user = await connect(ctx.sock);
-      await user.hello({ role: "user" });
+      const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
-      const session = await connect(ctx.sock);
-      await session.hello({ role: "session", sid: SID, cwd: "/tmp" });
+      const session = await sessionConn(ctx, SID);
       const rowOf = (peers: readonly { sid: string; input_readiness?: { kind: string } }[]) =>
         peers.find((p) => p.sid === SID)?.input_readiness?.kind;
       await user.readEventUntil("peers", (ev) => rowOf(ev.peers) === "no_module");

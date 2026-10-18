@@ -29,7 +29,7 @@ version-files := ".claude-plugin/plugin.json .claude-plugin/marketplace.json pac
 # (LH/LF・FNH/FNF) と比べ、どれかを下回ったら `just coverage` を落とす。
 # 値の根拠は docs/findings/2026-10-14-test-coverage-baseline.md
 
-coverage-thresholds := "protocol:97:98 daemon:62:79 cli:87:85 webui:75:81 hooks:80:85"
+coverage-thresholds := "protocol:97:98 daemon:80:87 cli:87:85 webui:72:79 hooks:80:85"
 
 # ---------- default ----------
 

@@ -1,4 +1,4 @@
-// session_env contract (kawaz r55m133): the env comes from the SESSION's own
+// session_env contract: the env comes from the SESSION's own
 // pid, resolved and pid-reuse-verified by the exact same path session_kill
 // uses. These tests pin the two platform parsers (macOS `ps eww` is a lossy
 // space-separated format, Linux /proc environ is not) and the resolve →

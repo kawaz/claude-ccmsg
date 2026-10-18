@@ -363,7 +363,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     ]);
   });
 
-  // kawaz r55m83: プレースホルダ風の `<確認項目>` が autolink 化してブラケット
+  // プレースホルダ風の `<確認項目>` が autolink 化してブラケット
   // ごと消えていた。ASCII タグ名形状 (`<div>`) だけを守っていた旧実装の穴で、
   // 非 ASCII やバージョン番号のように「scheme でも email でもない」中身は
   // すべてテキストのまま出す。
@@ -378,7 +378,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
 
 // A `#` run that isn't a valid ATX heading opener made the dependency parser
 // drop the whole block, so an assistant turn opening with `#1 …` rendered as an
-// empty bubble (kawaz r99m7: 「からっぽの紫色のバルーン」). CommonMark treats
+// empty bubble (「からっぽの紫色のバルーン」). CommonMark treats
 // those lines as paragraph text, which is what these pin.
 describe("parseMarkdownSource / non-heading hash runs", () => {
   function renderSource(source: string): VNode {
@@ -522,7 +522,7 @@ describe("renderMarkdownAst / structural coverage", () => {
     expect(flattenText(vnode)).toBe("x = 1");
   });
 
-  // kawaz r119 m15: a bold run naming a real file linkifies exactly like an
+  // a bold run naming a real file linkifies exactly like an
   // inline-code path — same linker, so the same "shape + daemon-confirmed"
   // gate. The <strong> stays inside the <a> so the text still reads as
   // emphasis when the link is declined or the reader ignores it.
@@ -956,7 +956,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
   });
 });
 
-// kawaz r55 m12: user-authored messages are rendered through a restricted
+// user-authored messages are rendered through a restricted
 // pipeline where only inline code / fenced code blocks / blockquotes are
 // interpreted as markdown, so the composer's `#123` text or `<R G B>` don't
 // disappear into an H1 or an autolink.
@@ -969,7 +969,7 @@ describe("renderRestrictedMarkdown", () => {
     expect(flattenText(vnode)).toBe(src);
   });
 
-  test("#N becomes an issue link when the repo is known, text still verbatim (kawaz r259m55)", () => {
+  test("#N becomes an issue link when the repo is known, text still verbatim", () => {
     const src = "#12 と owner/other#3#issuecomment-9 の件、`#4` は code";
     const vnode = renderRestrictedMarkdown(src, "owner/repo");
     // Characters untouched (the backticks are the code span's own markup).
@@ -1051,7 +1051,7 @@ describe("renderRestrictedMarkdown", () => {
     expect(collect(vnode, (n) => n.type === "code")).toHaveLength(0);
   });
 
-  // kawaz r55 m16: user msgs carry composer attachments as
+  // user msgs carry composer attachments as
   // `[FILE<N>:name](path)` markdown links; the restricted tokenizer must
   // keep them live so a sent u1 bubble still shows the attachment.
   test("[FILE:name](attachment path) renders inline <img> for image mimes", () => {
@@ -1109,7 +1109,7 @@ describe("renderRestrictedMarkdown", () => {
   });
 });
 
-// `<details>` folding (kawaz r55 m77). The renderer maps exactly two HTML tags
+// `<details>` folding. The renderer maps exactly two HTML tags
 // onto real elements; everything else stays literal text, so these tests
 // pin both halves — the shapes that must fold, and the near-misses that must
 // not. Sources go through `parseMarkdownDocument` (parse + fold) because the
@@ -1350,7 +1350,7 @@ describe("renderMarkdownAst / task lists", () => {
 
   // A write that fails has to be visible where the user is looking: at the
   // checkbox that just sprang back, not in a banner at the top of a document
-  // they have scrolled down (kawaz r55 m125).
+  // they have scrolled down.
   describe("per-item write failures", () => {
     const withErrors = (
       errors: Map<number, { message: string; seq: number }>,
@@ -1445,7 +1445,7 @@ describe("renderMarkdownAst / task lists", () => {
   });
 });
 
-// Renderer half of the link classification (kawaz r55 m116/m117). The pure
+// Renderer half of the link classification. The pure
 // URL decisions live in markdown-link.test.ts; what is pinned here is the
 // *output shape* each decision produces — specifically that a path target
 // never becomes an `<a href>` unless a resolver confirmed it, since an
@@ -1478,7 +1478,7 @@ describe("renderMarkdownAst / markdown links to files", () => {
   });
 
   // A resolver reports null when it cannot form an absolute path at all (no
-  // anchor in its ctx). Existence is no longer consulted (kawaz r55 m129), so
+  // anchor in its ctx). Existence is no longer consulted, so
   // this is the only remaining null — and it must still fail closed rather
   // than fall through to an origin-relative <a>.
   test("a resolver returning null renders inert rather than an origin-relative link", () => {
@@ -1675,7 +1675,7 @@ describe("parseMarkdownSource / empty table header cells", () => {
     return out;
   }
 
-  // kawaz r99m41: a comparison table whose first column holds row labels starts
+  // a comparison table whose first column holds row labels starts
   // with an empty header cell, and the whole block rendered as raw pipe text.
   test("comparison table with an empty leading header cell parses as a table", () => {
     const [table, ...rest] = tableNodes(
@@ -1696,7 +1696,7 @@ describe("parseMarkdownSource / empty table header cells", () => {
 
   // GFM allows an empty or whitespace-only header cell at any column index,
   // with or without padding spaces, and inside a blockquote — the usual shape
-  // of a comparison table whose first column holds row labels (kawaz r99m41).
+  // of a comparison table whose first column holds row labels.
   test("every measured empty-header-cell shape parses as a table with the cell empty", () => {
     const cases: [string, string, string[][]][] = [
       [
@@ -2026,7 +2026,7 @@ function describeStrongLinkTests(): void {
   });
 }
 
-// Section folding (kawaz r151 m41). `foldMarkdownSections` is the whole of
+// Section folding. `foldMarkdownSections` is the whole of
 // the structural decision — what a "section" contains, how deep it nests, and
 // which key identifies it — so it is pinned here against hand-built trees,
 // away from the DOM the fold's open/closed state needs.
@@ -2217,7 +2217,7 @@ describe("renderMarkdownAst with sections", () => {
   });
 });
 
-// kawaz r259 m1: `#NNN` in prose links to the sender's repo issue. The
+// `#NNN` in prose links to the sender's repo issue. The
 // exclusions that matter are structural (code spans / fenced blocks are
 // separate mdast node types, link children are marked while walking), so they
 // are pinned here through the real parser rather than against the recognizer,

@@ -219,7 +219,7 @@ describe("reducer / room-history/loaded folds the whole log", () => {
   });
 });
 
-describe("reducer / says (kawaz r244 m5-m6, DR-0036 §3)", () => {
+describe("reducer / says (DR-0036 §3)", () => {
   const record = (id: string, read: boolean): SayRecord => ({
     id,
     sid: "sid-abcdefgh",
@@ -319,7 +319,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
   // The `?from=` hint is the document a markdown link was followed from, and
   // the FileViewer's "did you mean" recovery is the only thing that reads it —
   // which means a break in this hop is invisible until a link 404s and the
-  // suggestion silently fails to appear (kawaz r76 m45). Pin the hop.
+  // suggestion silently fails to appear. Pin the hop.
   test("the source-document hint reaches the tree, and clears when absent", () => {
     const followed = dispatch(initialState(), {
       type: "locator/changed",
@@ -489,7 +489,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
 // The preview's task-list toggle writes the flipped source back into the
 // cached response instead of refetching, so the view updates without the
 // loading→loaded cycle that would remount the preview and lose scroll
-// position (kawaz r55 m90).
+// position.
 describe("reducer / fs/file-patched", () => {
   const loaded = () =>
     readFile(initialState(), "sess-1", "docs/QUESTIONS.md", {
@@ -583,7 +583,7 @@ describe("reducer / peers/loaded and sidebar/set", () => {
   });
 });
 
-// サイドバーは「在る / 無い」だけで、遷移では動かない (kawaz r273 m42)。
+// サイドバーは「在る / 無い」だけで、遷移では動かない。
 // 押し出し方式では本文がサイドバーに隠れないので、セッションを選んだから
 // 引っ込める、という理由が無くなった。
 describe("reducer / locator/changed (サイドバーは遷移で動かない)", () => {
@@ -2022,7 +2022,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   });
 });
 
-// Subscribe stopped carrying every room's history (kawaz r99 m12), so the
+// Subscribe stopped carrying every room's history, so the
 // store now distinguishes "a room I know of" from "a room I have the events
 // for". These tests pin both halves: what a listed-but-unfetched room does with
 // events that reach it, and what marks it fetched.

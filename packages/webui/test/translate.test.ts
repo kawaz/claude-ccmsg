@@ -150,7 +150,7 @@ describe("translateTextInBrowser", () => {
     expect(calls.sort()).toEqual(["English text.", "More English."]);
   });
 
-  // kawaz r135m21: 日本語の短い引用が混ざっただけの英文段落は「既に日本語」
+  // 日本語の短い引用が混ざっただけの英文段落は「既に日本語」
   // ではない。日本語文字と英数文字の比率で判定し、僅かな日本語は翻訳に回す。
   test("a mostly-English paragraph quoting a little Japanese is still translated", async () => {
     const { calls } = installMockTranslator();

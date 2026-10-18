@@ -10,36 +10,15 @@
 // 同一パターン (real daemon over UDS) は branch.test.ts / transcript.test.ts を踏襲。
 import { describe, expect, test } from "bun:test";
 import {
-  connect,
-  startTestDaemon,
-  stopTestDaemon,
-  type DaemonCtx,
+  startInProcessDaemon,
+  stopInProcessDaemon,
   type TestClient,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
-const T = 15000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
-
-async function sessionHello(ctx: DaemonCtx, sid: string): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.request({
-    op: "hello",
-    role: "session",
-    protocol: PROTOCOL_VERSION,
-    sid,
-    repo: "r",
-    ws: "w",
-    cwd: "/tmp",
-  });
-  return c;
-}
-
-async function adminConn(ctx: DaemonCtx): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-  return c;
-}
 
 interface PeerLite {
   sid: string;
@@ -55,119 +34,99 @@ async function getPeer(admin: TestClient, sid: string): Promise<PeerLite> {
 }
 
 describe("peers timestamps", () => {
-  test(
-    "hello 直後は connected_at と last_activity_at が両方載る",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        await sessionHello(ctx, A);
-        const admin = await adminConn(ctx);
-        const me = await getPeer(admin, A);
-        expect(me.connected_at).toBeDefined();
-        expect(() => new Date(me.connected_at ?? "").toISOString()).not.toThrow();
-        // hello 自体も post-dispatch 更新の対象なので、最初の照会時点で
-        // last_activity_at も既に載っているはず
-        expect(me.last_activity_at).toBeDefined();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("hello 直後は connected_at と last_activity_at が両方載る", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      const me = await getPeer(admin, A);
+      expect(me.connected_at).toBeDefined();
+      expect(() => new Date(me.connected_at ?? "").toISOString()).not.toThrow();
+      // hello 自体も post-dispatch 更新の対象なので、最初の照会時点で
+      // last_activity_at も既に載っているはず
+      expect(me.last_activity_at).toBeDefined();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 
-  test(
-    "セッション側のリクエストのたびに last_activity_at が進む (connected_at は不変)",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const c = await sessionHello(ctx, A);
-        const admin = await adminConn(ctx);
-        const first = await getPeer(admin, A);
-        await new Promise((res) => setTimeout(res, 10));
-        await c.request({ op: "ping" });
-        const second = await getPeer(admin, A);
-        expect(Date.parse(second.last_activity_at ?? "")).toBeGreaterThan(
-          Date.parse(first.last_activity_at ?? ""),
-        );
-        expect(second.connected_at).toBe(first.connected_at);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("セッション側のリクエストのたびに last_activity_at が進む (connected_at は不変)", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const c = await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      const first = await getPeer(admin, A);
+      await new Promise((res) => setTimeout(res, 10));
+      await c.request({ op: "ping" });
+      const second = await getPeer(admin, A);
+      expect(Date.parse(second.last_activity_at ?? "")).toBeGreaterThan(
+        Date.parse(first.last_activity_at ?? ""),
+      );
+      expect(second.connected_at).toBe(first.connected_at);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 
-  test(
-    "同じ conn を保ったまま再 hello しても connected_at は変わらない",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const c = await sessionHello(ctx, A);
-        const admin = await adminConn(ctx);
-        const first = await getPeer(admin, A);
-        await new Promise((res) => setTimeout(res, 10));
-        // 2 回目の hello (repo/ws/cwd の再宣言、latest-hello-wins パス) は
-        // registerSession の既存 entry パスを通る — connectedAt を持つ entry
-        // はそのまま、上書きされない
-        await c.request({
-          op: "hello",
-          protocol: PROTOCOL_VERSION,
-          role: "session",
-          sid: A,
-          repo: "r2",
-          ws: "w",
-          cwd: "/tmp",
-        });
-        const second = await getPeer(admin, A);
-        expect(second.connected_at).toBe(first.connected_at);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("同じ conn を保ったまま再 hello しても connected_at は変わらない", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const c = await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      const first = await getPeer(admin, A);
+      await new Promise((res) => setTimeout(res, 10));
+      // 2 回目の hello (repo/ws/cwd の再宣言、latest-hello-wins パス) は
+      // registerSession の既存 entry パスを通る — connectedAt を持つ entry
+      // はそのまま、上書きされない
+      await c.request({
+        op: "hello",
+        protocol: PROTOCOL_VERSION,
+        role: "session",
+        sid: A,
+        repo: "r2",
+        ws: "w",
+        cwd: "/tmp",
+      });
+      const second = await getPeer(admin, A);
+      expect(second.connected_at).toBe(first.connected_at);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 
-  test(
-    "conn が切れた後に別 conn で hello し直しても connected_at は変わらない",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const c1 = await sessionHello(ctx, A);
-        const admin = await adminConn(ctx);
-        const first = await getPeer(admin, A);
-        c1.close();
-        await new Promise((res) => setTimeout(res, 50));
-        await new Promise((res) => setTimeout(res, 10));
-        const c2 = await sessionHello(ctx, A);
-        const second = await getPeer(admin, A);
-        expect(second.connected_at).toBe(first.connected_at);
-        c2.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("conn が切れた後に別 conn で hello し直しても connected_at は変わらない", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const c1 = await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      const first = await getPeer(admin, A);
+      c1.close();
+      await new Promise((res) => setTimeout(res, 50));
+      await new Promise((res) => setTimeout(res, 10));
+      const c2 = await sessionConn(ctx, A);
+      const second = await getPeer(admin, A);
+      expect(second.connected_at).toBe(first.connected_at);
+      c2.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 
-  test(
-    "subscribe のぶら下がり (push のみ) は last_activity_at を進めない — 明示リクエストのみが進める",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const c = await sessionHello(ctx, A);
-        const admin = await adminConn(ctx);
-        await c.request({ op: "subscribe" });
-        const afterSubscribe = await getPeer(admin, A);
-        // admin から A 宛の notify を飛ばし、A の stream に届いたのを見てから
-        // 読む — A 自身はリクエストを送っていないので last_activity_at は動かないはず
-        await admin.requestOk({ op: "notify", sid: A, text: "hi" });
-        await c.readEventUntil("notify");
-        const afterPush = await getPeer(admin, A);
-        expect(afterPush.last_activity_at).toBe(afterSubscribe.last_activity_at);
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("subscribe のぶら下がり (push のみ) は last_activity_at を進めない — 明示リクエストのみが進める", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const c = await sessionConn(ctx, A);
+      const admin = await userConn(ctx);
+      await c.request({ op: "subscribe" });
+      const afterSubscribe = await getPeer(admin, A);
+      // admin から A 宛の notify を飛ばし、A の stream に届いたのを見てから
+      // 読む — A 自身はリクエストを送っていないので last_activity_at は動かないはず
+      await admin.requestOk({ op: "notify", sid: A, text: "hi" });
+      await c.readEventUntil("notify");
+      const afterPush = await getPeer(admin, A);
+      expect(afterPush.last_activity_at).toBe(afterSubscribe.last_activity_at);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
 });

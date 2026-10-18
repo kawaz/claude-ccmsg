@@ -110,3 +110,17 @@ DR-0036 §2 で room の書き込み・配送 (daemon の `storage.ts` と serve
 | hooks | 92.22 → 92.22 | 95.30 → 95.30 | 80 / 85 (据え置き) |
 
 daemon の上がり幅の大半は、子プロセスの daemon 経由でしか通らなかった room 系のコードが分母から消えたことによる。下限は実測から 2 を引いて切り捨てた値にし、実測 − 2 が今の下限を下回る値 (protocol / cli の functions) は据え置いた。
+
+## 同じプロセスの daemon と SessionView のマウントテストを足した後の下限 (2026-10-18)
+
+wire 越しに op を確かめるテスト (fs-access / fs-find / transcript / session-status 等 13 ファイル) を、子プロセスの daemon から同じプロセスに立てた daemon (`startInProcessDaemon`) に移し、webui に SessionView をマウントするテストを足した後の実測 (`just coverage`):
+
+| package | lines % (前 → 後) | functions % (前 → 後) | 下限 (前 → 後) |
+|---|---|---|---|
+| protocol | 99.72 → 99.72 | 99.18 → 99.18 | 97 / 98 (据え置き) |
+| daemon | 64.79 → 82.00 | 81.67 → 89.70 | 62 / 79 → 80 / 87 |
+| cli | 89.82 → 89.82 | 86.75 → 86.75 | 87 / 85 (据え置き) |
+| webui | 77.47 → 74.18 | 83.87 → 81.19 | 75 / 81 → 72 / 79 |
+| hooks | 92.27 → 92.27 | 95.30 → 95.30 | 80 / 85 (据え置き) |
+
+daemon の上がり幅は、同じプロセスの daemon を通る `server.ts` の op の処理が計測に入ったことによる (子プロセスの daemon は計測されない)。webui は SessionView の import で StatusPanel / Timeline / FilesPanes 等が分母に入り、lines が 15856 → 17515 行に増えた (通った行も 12284 → 12993 に増えている)。webui は上の「分母の変化を見て置き直す」運用に従って実測 − 2 に置き直した。

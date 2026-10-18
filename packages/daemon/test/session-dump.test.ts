@@ -796,7 +796,7 @@ describe("dumpSession", () => {
     expect(context.rooms.map((room) => [room.room, room.title])).toEqual([["r2", "given"]]);
   });
 
-  test("emits thinking blocks as their own kind (kawaz r38 mid=40)", async () => {
+  test("emits thinking blocks as their own kind", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       transcript,

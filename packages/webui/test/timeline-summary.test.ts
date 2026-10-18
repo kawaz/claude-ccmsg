@@ -35,7 +35,7 @@ describe("foldSummaryView", () => {
     });
 
     // Agent spawn は SendMessage / peer-message と同型の agent decoration
-    // (prefix "Agent" + direction "outbound") を持つ (kawaz r46m15: 「送信で
+    // (prefix "Agent" + direction "outbound") を持つ (「送信で
     // SendMessage と同じ → を使うべき」)。TL リンクや model chip は閉サマリ
     // に出さず、カード側に寄せる。
     const spawn = {

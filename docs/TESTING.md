@@ -16,16 +16,18 @@
 ## 構造
 
 - daemon との通信は `packages/daemon/test/helpers.ts` の `TestClient` を通す。daemon が書いた行は wire スキーマで読み (`readStreamItem`)、スキーマ外のフィールドは失敗にする。
+- hello 済みの接続は同じ helpers.ts の `sessionConn` / `userConn` で作る。テストごとに connect と hello を書き直さない。fixture のディレクトリは `fixtureDir`、CLI の実行は `packages/cli/test/run-cli.ts` の `runCli`。
 - JSON を文字列のまま assert しない。行はスキーマか `jsonObjectOf` で読んでから比較する。
 - transcript / room の行は `packages/protocol/test/transcript-rows.ts` のビルダーで作る。テストごとに行の形を手書きしない。
 - 送信されたフレームは op で引く。何番目か・何件目かで固定しない。
-- 1 テスト 1 daemon (子プロセス起動) は統合テストにだけ使う。op の挙動は in-process (`packages/daemon/test/drive-request.ts` の `stubDaemon`) で書く。
+- daemon の子プロセス起動 (`startTestDaemon`) は、プロセスとして確かめるテストにだけ使う (環境変数で切り替わる振る舞い、lock / pid / 再起動、HTTP、agents poll)。wire 越しに確かめる op (hello した接続の状態が要るもの) は同じプロセスに立てた daemon (`startInProcessDaemon`) に UDS で繋ぐ。1 つの op の応答だけを見るテストは `packages/daemon/test/drive-request.ts` の `stubDaemon` で `handleRequest` を直接叩く。どちらも本番と同じ `createDaemon` で daemon を組む。
 
 ## 決定性
 
 - 「起きないこと」は sleep で待って主張しない。marker の round-trip (`readEventUntil` 等) で順序づけた後に、溜まったイベントやファイルを読んで主張する。
 - 時間に依存するコードは clock を注入する (`hooks/composer-fill.ts` の `Engine.clock` と同型)。テストは実時間を待たない。実時間の待ちは外部プロセスの観測だけに使い、deadline 付きの retry にする。
 - ポートは `0` で取る。固定ポートを書かない。
+- timeout は preload (`packages/testkit/src/test-env.ts`) の `setDefaultTimeout` で全テストに 1 つ。bun は bunfig.toml の `[test]` の `timeout` を読まない。個別に長くするテストは理由をコメントに書く。
 - 一時ディレクトリは `mkdtemp` で作り、テストの後で消す。
 - テストが起動する daemon の `CCMSG_*` は全部テスト側で固定し、開発者の shell から継承しない。
 - グローバル (`WebSocket` 等) の差し替えは `packages/webui/test/helpers.ts` の `stubGlobal` で行い、`afterEach` で戻す。bun test は全ファイルを 1 プロセスで走らせるので、戻し忘れは別ファイルのテストを壊す。

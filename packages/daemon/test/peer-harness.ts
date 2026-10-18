@@ -211,7 +211,7 @@ export function fakeHarness(
 /** A session-role connection whose hello names `configDir` as its
  * CLAUDE_CONFIG_DIR, so peer-inject can find its harness. */
 export async function sessionWithConfig(
-  ctx: DaemonCtx,
+  ctx: Pick<DaemonCtx, "sock">,
   sid: string,
   configDir?: string,
 ): Promise<TestClient> {

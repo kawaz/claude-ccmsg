@@ -17,10 +17,10 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
+  sessionConn,
+  userConn,
 } from "./helpers.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
-const T = 20000;
 const TOKEN = "test-webhook-token";
 const SID = "ca000000-0000-4000-8000-000000000001";
 const MARKER = "[llm-gateway cache keepalive nonce=n1]";
@@ -46,8 +46,7 @@ async function startKeepaliveDaemon(): Promise<Ctx> {
   const proc = spawnDaemonProc(stateDir, dataDir, { CCMSG_HTTP_BIND: "127.0.0.1:0" });
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  const c = await connect(sock);
-  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+  const c = await userConn({ sock });
   const pong = await c.requestOk({ op: "ping" });
   c.close();
   return {
@@ -109,15 +108,13 @@ async function postEvents(ctx: Ctx, payload: unknown): Promise<number> {
 
 /** A subscribed session — the stream a keepalive marker is delivered on. */
 async function sessionSubscriber(ctx: Ctx, sid = SID): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.hello({ role: "session", sid, repo: "r", ws: "w", cwd: "/tmp" });
+  const c = await sessionConn(ctx, sid);
   await c.request({ op: "subscribe" });
   return c;
 }
 
 async function userSubscriber(ctx: Ctx): Promise<TestClient> {
-  const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+  const c = await userConn(ctx);
   await c.request({ op: "subscribe" });
   return c;
 }
@@ -127,93 +124,76 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
  * arrived *before* this notify was one the daemon deliberately did not send.
  * Proves absence without waiting out a clock. */
 async function anchor(ctx: Ctx, sid: string, text: string): Promise<void> {
-  const u = await connect(ctx.sock);
-  await u.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+  const u = await userConn(ctx);
   await u.request({ op: "notify", sid, text });
   u.close();
 }
 
 describe("webhook cache_keepalive → session notify", () => {
-  test(
-    "an idle session gets the marker verbatim on its subscribe stream",
-    async () => {
-      const ctx = await startKeepaliveDaemon();
-      try {
-        const s = await sessionSubscriber(ctx);
-        expect(await postEvents(ctx, keepalivePayload())).toBe(204);
-        const { ev } = await s.readEventUntil("notify");
-        // Verbatim: the gateway matches this exact string back on the request
-        // it is waiting for, and a decorated one would also risk truncation.
-        expect(ev.text).toBe(MARKER);
-        expect(ev.from).toEqual({ role: "gateway" });
-        s.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("an idle session gets the marker verbatim on its subscribe stream", async () => {
+    const ctx = await startKeepaliveDaemon();
+    try {
+      const s = await sessionSubscriber(ctx);
+      expect(await postEvents(ctx, keepalivePayload())).toBe(204);
+      const { ev } = await s.readEventUntil("notify");
+      // Verbatim: the gateway matches this exact string back on the request
+      // it is waiting for, and a decorated one would also risk truncation.
+      expect(ev.text).toBe(MARKER);
+      expect(ev.from).toEqual({ role: "gateway" });
+      s.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a marker past its deadline is never delivered",
-    async () => {
-      const ctx = await startKeepaliveDaemon();
-      try {
-        const s = await sessionSubscriber(ctx);
-        expect(await postEvents(ctx, keepalivePayload({ deadline: Date.now() - 1000 }))).toBe(204);
-        await anchor(ctx, SID, "anchor");
-        const { ev, seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
-        expect(ev.text).toBe("anchor");
-        expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
-        s.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a marker past its deadline is never delivered", async () => {
+    const ctx = await startKeepaliveDaemon();
+    try {
+      const s = await sessionSubscriber(ctx);
+      expect(await postEvents(ctx, keepalivePayload({ deadline: Date.now() - 1000 }))).toBe(204);
+      await anchor(ctx, SID, "anchor");
+      const { ev, seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
+      expect(ev.text).toBe("anchor");
+      expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
+      s.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a marker for a session that is not subscribed goes nowhere",
-    async () => {
-      const ctx = await startKeepaliveDaemon();
-      try {
-        const s = await sessionSubscriber(ctx);
-        expect(await postEvents(ctx, keepalivePayload({ session_id: "NOBODY" }))).toBe(204);
-        await anchor(ctx, SID, "anchor");
-        const { seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
-        expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
-        s.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a marker for a session that is not subscribed goes nowhere", async () => {
+    const ctx = await startKeepaliveDaemon();
+    try {
+      const s = await sessionSubscriber(ctx);
+      expect(await postEvents(ctx, keepalivePayload({ session_id: "NOBODY" }))).toBe(204);
+      await anchor(ctx, SID, "anchor");
+      const { seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
+      expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
+      s.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 
-  test(
-    "a keepalive item is not folded into the prompt-cache ring",
-    async () => {
-      // It carries a session_id and a ts of its own, which the request-event
-      // parser would accept — restarting a countdown off a marker that has not
-      // been sent upstream yet.
-      const ctx = await startKeepaliveDaemon();
-      try {
-        const u = await userSubscriber(ctx);
-        const ts = Date.now();
-        expect(
-          await postEvents(ctx, [
-            keepalivePayload(),
-            { ts, session_id: "OTHER", prefix: "aa11bb22" },
-          ]),
-        ).toBe(204);
-        const { ev } = await u.readEventUntil("llm_requests");
-        expect(ev.requests.map((r) => r.session_id)).toEqual(["OTHER"]);
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
+  test("a keepalive item is not folded into the prompt-cache ring", async () => {
+    // It carries a session_id and a ts of its own, which the request-event
+    // parser would accept — restarting a countdown off a marker that has not
+    // been sent upstream yet.
+    const ctx = await startKeepaliveDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now();
+      expect(
+        await postEvents(ctx, [
+          keepalivePayload(),
+          { ts, session_id: "OTHER", prefix: "aa11bb22" },
+        ]),
+      ).toBe(204);
+      const { ev } = await u.readEventUntil("llm_requests");
+      expect(ev.requests.map((r) => r.session_id)).toEqual(["OTHER"]);
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
 });

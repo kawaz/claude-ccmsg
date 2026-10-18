@@ -20,27 +20,9 @@ import { fileURLToPath } from "node:url";
 import { connect } from "../../daemon/test/helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { CliStatusSchema, jsonObjectLine, printed, served } from "./cli-output.ts";
+import { runCli, CLI } from "./run-cli.ts";
 
-const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
-
-interface CliResult {
-  out: string;
-  err: string;
-  code: number;
-}
-
-async function runCli(args: string[], env: Record<string, string>): Promise<CliResult> {
-  const proc = Bun.spawn([process.execPath, CLI, ...args], {
-    env: { ...process.env, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const out = await new Response(proc.stdout).text();
-  const err = await new Response(proc.stderr).text();
-  const code = await proc.exited;
-  return { out, err, code };
-}
 
 interface TestEnv {
   env: Record<string, string>;

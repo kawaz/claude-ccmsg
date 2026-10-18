@@ -6,7 +6,14 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx, isKind } from "./helpers.ts";
+import {
+  connect,
+  startTestDaemon,
+  stopTestDaemon,
+  type DaemonCtx,
+  isKind,
+  userConn,
+} from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 import {
   assistantMessage,
@@ -15,7 +22,6 @@ import {
   textBlock,
 } from "../../protocol/test/transcript-rows.ts";
 
-const T = 20_000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const ERR_TS = "2026-08-12T03:00:00.000Z";
@@ -82,8 +88,7 @@ async function startFixture(): Promise<Fixture> {
     CCMSG_NETWORK_WATCH_FILE: linkFile,
     CCMSG_NETWORK_WATCH_DEBOUNCE_MS: String(DEBOUNCE_MS),
   });
-  const observer = await connect(ctx.sock);
-  await observer.hello({ role: "user" });
+  const observer = await userConn(ctx);
   // The seam signals ctx.proc directly, so a daemon that lives in some other
   // process would silently never see a transition. Fail on that here instead.
   const hello = await observer.requestOk({ op: "ping" });
@@ -130,76 +135,72 @@ async function waitFor(what: string, ready: () => Promise<boolean>): Promise<voi
 }
 
 describe("network online wake", () => {
-  test(
-    "回線復帰で API エラー停止中のセッションだけが 1 回起こされる",
-    async () => {
-      const f = await startFixture();
-      const stuck = path.join(f.dir, `${A}.jsonl`);
-      const healthy = path.join(f.dir, `${B}.jsonl`);
-      fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("API Error: 503"));
-      fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
-      const a = await connect(f.ctx.sock);
-      const b = await connect(f.ctx.sock);
-      try {
-        await a.request({
-          op: "hello",
-          protocol: PROTOCOL_VERSION,
-          role: "session",
-          sid: A,
-          repo: "r",
-          ws: "w",
-          cwd: "/tmp",
-          transcript_path: stuck,
-        });
-        await b.request({
-          op: "hello",
-          protocol: PROTOCOL_VERSION,
-          role: "session",
-          sid: B,
-          repo: "r",
-          ws: "w",
-          cwd: "/tmp",
-          transcript_path: healthy,
-        });
-        await a.request({ op: "subscribe" });
-        await b.request({ op: "subscribe" });
+  test("回線復帰で API エラー停止中のセッションだけが 1 回起こされる", async () => {
+    const f = await startFixture();
+    const stuck = path.join(f.dir, `${A}.jsonl`);
+    const healthy = path.join(f.dir, `${B}.jsonl`);
+    fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("API Error: 503"));
+    fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
+    const a = await connect(f.ctx.sock);
+    const b = await connect(f.ctx.sock);
+    try {
+      await a.request({
+        op: "hello",
+        protocol: PROTOCOL_VERSION,
+        role: "session",
+        sid: A,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+        transcript_path: stuck,
+      });
+      await b.request({
+        op: "hello",
+        protocol: PROTOCOL_VERSION,
+        role: "session",
+        sid: B,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+        transcript_path: healthy,
+      });
+      await a.request({ op: "subscribe" });
+      await b.request({ op: "subscribe" });
 
-        // The wake reads the api-error fold, which is built asynchronously from
-        // the transcript. Recovering before it lands would be a race the
-        // feature loses silently, so wait until the daemon reports the stall.
-        await f.waitStall(A, ERR_TS);
-        await f.setLink("online");
+      // The wake reads the api-error fold, which is built asynchronously from
+      // the transcript. Recovering before it lands would be a race the
+      // feature loses silently, so wait until the daemon reports the stall.
+      await f.waitStall(A, ERR_TS);
+      await f.setLink("online");
 
-        const woken = await a.readEventUntil("net_online");
-        expect(woken.ev.error_ts).toBe(ERR_TS);
-        expect(woken.ev.text).toContain("API error");
+      const woken = await a.readEventUntil("net_online");
+      expect(woken.ev.error_ts).toBe(ERR_TS);
+      expect(woken.ev.text).toContain("API error");
 
-        // A second recovery must not re-poke the same stall. Rather than
-        // waiting on the absence of an event, drive a cycle that produces
-        // nothing, then a *new* stall whose wake is observable: any duplicate
-        // for the old stall would have to arrive before it.
-        await f.setLink("offline");
-        await f.setLink("online");
-        const NEW_TS = "2026-08-12T04:00:00.000Z";
-        fs.appendFileSync(stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
-        await f.waitStall(A, NEW_TS);
-        await f.setLink("offline");
-        await f.setLink("online");
-        const second = await a.readEventUntil("net_online", (ev) => ev.error_ts === NEW_TS);
-        expect(second.seen.filter(isKind("net_online"))).toHaveLength(1);
+      // A second recovery must not re-poke the same stall. Rather than
+      // waiting on the absence of an event, drive a cycle that produces
+      // nothing, then a *new* stall whose wake is observable: any duplicate
+      // for the old stall would have to arrive before it.
+      await f.setLink("offline");
+      await f.setLink("online");
+      const NEW_TS = "2026-08-12T04:00:00.000Z";
+      fs.appendFileSync(stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
+      await f.waitStall(A, NEW_TS);
+      await f.setLink("offline");
+      await f.setLink("online");
+      const second = await a.readEventUntil("net_online", (ev) => ev.error_ts === NEW_TS);
+      expect(second.seen.filter(isKind("net_online"))).toHaveLength(1);
 
-        // B never stopped, so the wake was never addressed to it — checked
-        // after A's second wake, which orders B's stream past both recoveries.
-        await b.request({ op: "ping" });
-        expect(await b.pendingEvents()).toEqual([]);
-      } finally {
-        f.close();
-        a.close();
-        b.close();
-        await stopTestDaemon(f.ctx);
-        fs.rmSync(f.dir, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
+      // B never stopped, so the wake was never addressed to it — checked
+      // after A's second wake, which orders B's stream past both recoveries.
+      await b.request({ op: "ping" });
+      expect(await b.pendingEvents()).toEqual([]);
+    } finally {
+      f.close();
+      a.close();
+      b.close();
+      await stopTestDaemon(f.ctx);
+      fs.rmSync(f.dir, { recursive: true, force: true });
+    }
+  });
 });

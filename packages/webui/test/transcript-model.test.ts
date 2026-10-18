@@ -199,7 +199,7 @@ describe("lineByteOffsets", () => {
   });
 });
 
-// rawTranscriptRows (r55m68): Timeline の raw 表示のモデル。rich 表示が
+// rawTranscriptRows: Timeline の raw 表示のモデル。rich 表示が
 // 集約 (複数行 -> 1 fold) や分解 (1 行 -> 複数 ccmsg バブル) をするのに対し、
 // raw は「キャッシュ済みの行が 1 行ずつ、ファイル順に、原文のまま」を保証
 // する — それが raw 表示の存在理由なので、その 1:1 性をテストで固定する。
@@ -244,7 +244,7 @@ describe("rawTranscriptRows", () => {
   });
 });
 
-// itemRawSourceOffsets (r55 m89): 項目ごとの jsonl トグルが「この項目は
+// itemRawSourceOffsets: 項目ごとの jsonl トグルが「この項目は
 // どの行から作られたか」を引く対応表。rich 表示は 1 行 = 1 項目とは限らない
 // (tool_use + tool_result で 2 行 -> 1 カード、1 行 -> 複数 ccmsg バブル) の
 // で、その 3 通りの輪郭を固定する。
@@ -261,7 +261,7 @@ describe("itemRawSourceOffsets", () => {
     );
   });
 
-  // kawaz r55 m69 の要件「両方の行を見せる」: tool_use のカードに畳み込まれた
+  // 要件「両方の行を見せる」: tool_use のカードに畳み込まれた
   // tool_result 行は groupTimelineLines が表示から落とすので、tool_use 側の
   // 項目が両方の行を引けないと生 JSONL に到達する手段が無くなる。
   test("カードに畳まれた tool_result は tool_use 側の項目に両方の行として付く", () => {
@@ -281,7 +281,7 @@ describe("itemRawSourceOffsets", () => {
     expect(sources.has(50)).toBe(false);
   });
 
-  // kawaz r76 m87: `! <cmd>` のカードは jsonl トグルが入力行しか出さず、畳まれた
+  // `! <cmd>` のカードは jsonl トグルが入力行しか出さず、畳まれた
   // 出力行が webui から到達できなかった。tool_use ペアと同じ扱いになることを固定する
   // (相関 id が無いので所有者は隣接 = 直前の行)。
   test("カードに畳まれた `! <cmd>` の出力行も入力行側の項目に両方の行として付く", () => {
@@ -339,7 +339,7 @@ describe("itemRawSourceOffsets", () => {
   });
 });
 
-// truncateRawLine (r55m68): 貼り付け画像等で 1 行が数 MB の base64 になる
+// truncateRawLine: 貼り付け画像等で 1 行が数 MB の base64 になる
 // ケースがあり、全行を全長描画すると raw 切替の瞬間にレイアウトが固まる。
 describe("truncateRawLine", () => {
   test("limit 以下はそのまま (truncated=false)", () => {
@@ -612,7 +612,7 @@ describe("parseTranscriptLine / assistant turns", () => {
   // mime + 表示寸法だけが載る (実測 2026-07-30、ローカルの session corpus で
   // Read 結果 254 件中 15 件)。text 前提のままだと結果なし扱いになり、カードが
   // 「(空のファイル)」+「範囲外」を出したうえに、300KB の base64 が独立した
-  // tool_result fold として TL に並ぶ (kawaz r76 m90 の報告)。
+  // tool_result fold として TL に並ぶ (kawaz の報告)。
   test("画像 Read の結果は image として Read カードに畳まれる", () => {
     const use = parseTranscriptLine(
       jsonl(
@@ -1528,7 +1528,7 @@ describe("segmentSearchText", () => {
   });
 });
 
-// isSearchableSegment (kawaz r26 mid=97 spec): the TL search-target
+// isSearchableSegment (kawaz spec): the TL search-target
 // checkboxes (👤/🤖/💬) must never let a tool_use/tool_result/unknown-segment
 // through regardless of toggle state — the bug report was TL search matching
 // a Bash tool_use's raw command JSON.
@@ -1581,7 +1581,7 @@ describe("isSearchableSegment", () => {
   });
 });
 
-// ccmsgDedupKey (kawaz r15 mid=21 dedup, extended by r26 mid=97 search unit
+// ccmsgDedupKey (kawaz dedup, extended by search unit
 // list): must be shared verbatim between render-side dedup and search-side
 // dedup so the two never disagree about which ccmsg messages exist.
 describe("ccmsgDedupKey", () => {
@@ -1919,7 +1919,7 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("slash-command-invocation");
     });
 
-    describe("引数付き slash command (kawaz r244m18)", () => {
+    describe("引数付き slash command", () => {
       // 実レコード形 (kawaz 提供): /clear に次タスクの本文をそのまま渡した形。
       // 配管ではなくユーザが書いた文章なので、TL では通常のユーザ発話として
       // 扱う (fold に沈めない)。
@@ -2117,7 +2117,7 @@ describe("classifyUserMessage", () => {
     });
 
     // SendMessage relay は banner なしの <agent-message ...> 直開始形もある
-    // (kawaz r17 mid=38 の実観測 — user-prompt に落ちて緑のユーザ発話として
+    // (kawaz の実観測 — user-prompt に落ちて緑のユーザ発話として
     // 表示されていた)。teammate-message も同系 wrapper として防御的に拾う。
     // slash command は isMeta なしで届く transcript もある (kawaz r20 の
     // 実観測 — /reload-plugins が緑のユーザ発話で表示)。タグ prefix は人間の
@@ -2141,7 +2141,7 @@ describe("classifyUserMessage", () => {
     });
 
     // TUI で workflow を pause → resume した時にハーネスが注入する定型メッセージ
-    // (kawaz r46 mid=14、本セッションの transcript ff82a8e6-... で 2 件実観測)。
+    // (本セッションの transcript ff82a8e6-... で 2 件実観測)。
     // 実データでは promptSource:"typed" / origin.kind:"human" / isMeta なしで
     // 通常のタイプ入力と wire レベルで区別できないため、文字列 prefix 判定に頼る。
     test("'Resume the paused workflow by calling: Workflow({' prefix -> workflow-resume", () => {
@@ -2379,7 +2379,7 @@ describe("classifyUserMessage", () => {
   // 通常セッションの最初の user 行も `parentUuid: null` になりうるが、
   // `isSidechain` は false なので人の発言として残る。plain text spawn /
   // <teammate-message> wrapper 付き spawn の両方を同じ kind に落として
-  // 「親からの指示」と分かる fold 表示に載せる (kawaz r46m28 2026-07-21)。
+  // 「親からの指示」と分かる fold 表示に載せる (kawaz 2026-07-21)。
   describe("agent spawn prompt (isSidechain && parentUuid === null) — report category F", () => {
     // subagent 転写の先頭 user 行の実物に近い形 (キー構成は実 transcript に
     // 合わせ、値は無害なものに置き換えている)。
@@ -2754,7 +2754,7 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
 
   // Agent spawn prompt (isSidechain + parentUuid:null) も system-origin と同じく
   // boundary 化させず fold に落とす — SystemMessageFold 経由で「spawn prompt
-  // (親からの指示)」として表示される (green user bubble にはしない、kawaz r46m28)。
+  // (親からの指示)」として表示される (green user bubble にはしない)。
   test("agent spawn prompt (isSidechain + parentUuid:null) -> isUserTextTurn false, folds into surrounding group", () => {
     const spawnLine = parseTranscriptLine(
       jsonl(userContentRow("spawned task: investigate X", { isSidechain: true, parentUuid: null })),
@@ -2822,7 +2822,7 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
   });
 });
 
-// fold group の中身の分類 (kawaz r151 m38 で 2 段目グルーピングを廃止): 開けば
+// fold group の中身の分類 (kawaz で 2 段目グルーピングを廃止): 開けば
 // 全 entry が 1 行ずつ並ぶので、残る判断は「閉じた summary が何と名指すか」
 // — thinking / ccmsg / agent 通信は自分のカテゴリ名で、それ以外は「N items」。
 describe("isDirectFoldEntry / foldGroupLabel", () => {
@@ -2855,7 +2855,7 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
     expect(foldGroupLabel(entries)).toBe("2 thinking + 3 items");
   });
 
-  // 何を保証するか (kawaz r17 mid=49 の実観測): thinking と tool_use が
+  // 何を保証するか (kawaz の実観測): thinking と tool_use が
   // 同一 turn 行に混在するケースは thinking 側 — items に数えると summary が
   // thinking の在処を示せなくなる。
   test("a mixed thinking+tool turn counts as thinking, not items", () => {
@@ -2935,10 +2935,10 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
     expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 
-  // 何を保証するか (kawaz r76 m49 の実データ形状): subscribe 通知で届く
+  // 何を保証するか (kawaz の実データ形状): subscribe 通知で届く
   // peer 発のルームメッセージ (`<task-notification>` に `<event>` の jsonl が
   // 載る形) は summary で ccmsg として名指される — thinking と同じ扱い。
-  // classifyBoundaryLine 側は r55 m14 どおり null (u1 発を含まないので
+  // classifyBoundaryLine 側は null (u1 発を含まないので
   // トップレベルの主役バブルにはしない) のままであることも同時に固定する。
   test("a peer-sent ccmsg room message is named as ccmsg, not counted as an item", () => {
     const event = {
@@ -3037,7 +3037,7 @@ describe("foldGroupNeedsOuterFold", () => {
     );
 
   // 単独の plain item を「1 items」fold で包むと、開く手間だけが増えて
-  // 得るものがない (kawaz r38 mid=44)。entry 自身が tool カードの fold を
+  // 得るものがない。entry 自身が tool カードの fold を
   // 持っているので、そのまま timeline に出す。
   test("a lone plain item is hoisted instead of getting a fold", () => {
     expect(foldGroupNeedsOuterFold([bash(10)])).toBe(false);
@@ -3092,7 +3092,7 @@ describe("extractCcmsgMessages", () => {
   });
 
   // Monitor 通知の <event> は長い msg を「...(truncated)」で切ることがあり、
-  // その行は JSON として壊れる (kawaz r17 mid=43 の実観測 — bubble にならず
+  // その行は JSON として壊れる (kawaz の実観測 — bubble にならず
   // 生 JSON の fold 表示になっていた)。field 順は daemon の stringify 順で
   // 固定なので、切れていても from/ts/r/msg 冒頭を復元して「途中まで +
   // 切り詰め注記」の bubble にする。
@@ -3429,7 +3429,7 @@ describe("extractCcmsgMessages", () => {
 
 // ccmsgDedupKey が (room, mid) canonical キーを返すので、同じ msg が別経路で
 // 2 度抽出されても (自 post の軽量エコーと、同じ行に載った完全 event 等)
-// 1 件に collapse される (kawaz r15 mid=21 dedup の拡張、DR-0027 §2.2)。
+// 1 件に collapse される (kawaz dedup の拡張、DR-0027 §2.2)。
 describe("DR-0027 dedup: (room, mid) canonical key collapses duplicate extractions", () => {
   test("ccmsgDedupKey uses `${room}|m${mid}` when mid is present", () => {
     const m: CcmsgMessage = {
@@ -3652,7 +3652,7 @@ describe("userNavTargets", () => {
 });
 
 describe("classifyBoundaryLine", () => {
-  // u1 (ADMIN) 発 ccmsg は本物のユーザ発話と同格に扱う (r55 m14) — boundary。
+  // u1 (ADMIN) 発 ccmsg は本物のユーザ発話と同格に扱う — boundary。
   test("a system-origin line carrying a u1-sent ccmsg -> {kind:'ccmsg', messages:[...]}", () => {
     const msgEvent = {
       type: "msg",
@@ -3675,7 +3675,7 @@ describe("classifyBoundaryLine", () => {
     });
   });
 
-  // r55 m14: peer 発 (u1 以外) ccmsg は boundary にせず fold group 内で
+  // peer 発 (u1 以外) ccmsg は boundary にせず fold group 内で
   // thinking/agent と同格の direct 要素として描画する。
   test("a system-origin line carrying a peer-sent ccmsg -> null (folds)", () => {
     const msgEvent = {
@@ -3789,7 +3789,7 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
     ["lowercased token", "llmgw-keepalive-n1"],
   ];
   // 1 行のままなら、囲み (backtick 等) や前後の語があっても指示への応答と
-  // 見なす (gateway r261m28: モデルがトークンを装飾する可能性)。
+  // 見なす (モデルがトークンを装飾する可能性)。
   const wrappedReplies: [string, string][] = [
     ["backtick-wrapped", "`LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3`"],
     ["trailing space", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 "],
@@ -3848,7 +3848,7 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
     expect(groups[0].kind === "fold" ? groups[0].entries : []).toHaveLength(2);
   });
 
-  // kawaz r259 m60/m61: fold 内で他の item と同じ「▶ 時刻 ラベル」の 1 行に
+  // fold 内で他の item と同じ「▶ 時刻 ラベル」の 1 行に
   // なるよう、Timeline の LineView が `isCacheKeepaliveReplyLine` を見て
   // このラベルの fold を描く。トークン本体は開いてから見せるので summary
   // には出さない。
@@ -4258,9 +4258,9 @@ describe("parseSystemMessageFields", () => {
     });
   });
 
-  // spawn-prompt: agent 転写の先頭 user 行 (kawaz r46m28)。実質は親から届いた
+  // spawn-prompt: agent 転写の先頭 user 行。実質は親から届いた
   // agent message なので、wrapper の有無に関わらず peer 表示 = AgentCard に
-  // 載せる (kawaz r55m155)。wrapper 付きは from/summary を wire から取り、
+  // 載せる。wrapper 付きは from/summary を wire から取り、
   // plain text は送り主が wire に無いので「親」を当てる。
   describe("spawn-prompt", () => {
     test("<teammate-message> wrapper (team-lead spawn) -> peer display with from + body", () => {
@@ -4273,9 +4273,8 @@ describe("parseSystemMessageFields", () => {
     });
 
     test("plain text (bare Agent tool spawn) -> peer display で本文を保ったまま送り主は「親」", () => {
-      // r55m155 以前は text 表示に落ちて素の <pre> になっていた。実データでは
-      // 73 件中 39 件がこの plain 形だったので、ここが揃わないと「spawn prompt
-      // だけ見た目が違う」状態が過半で残る。
+      // 実データでは 73 件中 39 件がこの plain 形なので、ここが揃わないと
+      // 「spawn prompt だけ見た目が違う」状態が過半で残る。
       const raw = "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...";
       expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({
         display: "peer",
@@ -4458,7 +4457,7 @@ describe("parseSystemMessageFields", () => {
     });
   });
 
-  // kawaz r76 m84: `! <cmd>` の出力が実体参照のまま表示されていた。ハーネスは
+  // `! <cmd>` の出力が実体参照のまま表示されていた。ハーネスは
   // bash-stdout/stderr の本文に入れる時だけ `&` `<` `>` をエスケープする
   // (CC 2.1.220 実測: payload `PROBE <a> &amp; & "q" 's' &lt; -> a<b>c &#65;` が
   // `PROBE &lt;a&gt; &amp;amp; &amp; "q" 's' &amp;lt; -&gt; a&lt;b&gt;c &amp;#65;`
@@ -4566,7 +4565,7 @@ describe("parseSystemMessageFields", () => {
       expect(kept).toBe(other);
     });
 
-    // kawaz r76m20: 「それ自体は確実にユーザが入力したもの」なので、他のシステム由来
+    // 「それ自体は確実にユーザが入力したもの」なので、他のシステム由来
     // メッセージのように fold へ沈めず、ユーザ側の流れに standalone で出す。
     test("a `! <cmd>` run is a boundary (stands alone) rather than folding away", () => {
       const [merged] = resolveToolResults([invocation, output]);
@@ -4699,7 +4698,7 @@ describe("attachmentDetail", () => {
     expect(detail.fields).toEqual([]);
   });
 
-  // kawaz r99 m35: file 系 attachment は Read カードと同じプレビューを出す。
+  // file 系 attachment は Read カードと同じプレビューを出す。
   // snippet は行番号付きなので、番号を剥がして startLine に移す (剥がさないと
   // ビューアの行番号と本文中の番号が二重に出る)。
   test("edited_text_file -> 行番号付き snippet を本文 + startLine に分解する", () => {

@@ -14,7 +14,6 @@ import {
   type TestClient,
 } from "./helpers.ts";
 
-const T = 15000;
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 
@@ -58,68 +57,60 @@ describe("session location", () => {
     stationed = fs.realpathSync(stationed);
   }
 
-  test(
-    "cwd を空で名乗る hello は登録済みの所在を保つ",
-    async () => {
-      await setup();
+  test("cwd を空で名乗る hello は登録済みの所在を保つ", async () => {
+    await setup();
+    try {
+      // SessionStart 由来の所在を持つ hello (subscribe 相当)。
+      const registered = await hello(ctx, A, {
+        cwd: stationed,
+        repo: "kawaz/repo",
+        ws: "main",
+        repo_root: repoRoot,
+        branch: "main",
+      });
+      // 別ディレクトリで走ったコマンド相当: 所在の出所を持たないので何も名乗らない。
+      const drifted = await hello(ctx, A, {});
       try {
-        // SessionStart 由来の所在を持つ hello (subscribe 相当)。
-        const registered = await hello(ctx, A, {
-          cwd: stationed,
-          repo: "kawaz/repo",
-          ws: "main",
-          repo_root: repoRoot,
-          branch: "main",
-        });
-        // 別ディレクトリで走ったコマンド相当: 所在の出所を持たないので何も名乗らない。
-        const drifted = await hello(ctx, A, {});
-        try {
-          const peer = await peerOf(drifted, A);
-          expect(peer?.cwd).toBe(stationed);
-          expect(peer?.repo).toBe("kawaz/repo");
-          expect(peer?.ws).toBe("main");
-          expect(peer?.repo_root).toBe(repoRoot);
-          expect(peer?.branch).toBe("main");
-        } finally {
-          registered.close();
-          drifted.close();
-        }
+        const peer = await peerOf(drifted, A);
+        expect(peer?.cwd).toBe(stationed);
+        expect(peer?.repo).toBe("kawaz/repo");
+        expect(peer?.ws).toBe("main");
+        expect(peer?.repo_root).toBe(repoRoot);
+        expect(peer?.branch).toBe("main");
       } finally {
-        await stopTestDaemon(ctx);
+        registered.close();
+        drifted.close();
       }
-    },
-    T,
-  );
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
-  test(
-    "所在を名乗る hello は 5 フィールドを丸ごと置き換える",
-    async () => {
-      await setup();
+  test("所在を名乗る hello は 5 フィールドを丸ごと置き換える", async () => {
+    await setup();
+    try {
+      const first = await hello(ctx, B, {
+        cwd: stationed,
+        repo: "kawaz/repo",
+        ws: "main",
+        repo_root: repoRoot,
+        branch: "main",
+      });
+      // workspace 層の無い checkout へ移ったセッション: repo_root / branch を
+      // 名乗らない hello はそれらを捨てる (古い containment root を持ち続けない)。
+      const moved = await hello(ctx, B, { cwd: repoRoot, repo: "kawaz/other", ws: "" });
       try {
-        const first = await hello(ctx, B, {
-          cwd: stationed,
-          repo: "kawaz/repo",
-          ws: "main",
-          repo_root: repoRoot,
-          branch: "main",
-        });
-        // workspace 層の無い checkout へ移ったセッション: repo_root / branch を
-        // 名乗らない hello はそれらを捨てる (古い containment root を持ち続けない)。
-        const moved = await hello(ctx, B, { cwd: repoRoot, repo: "kawaz/other", ws: "" });
-        try {
-          const peer = await peerOf(moved, B);
-          expect(peer?.cwd).toBe(repoRoot);
-          expect(peer?.repo).toBe("kawaz/other");
-          expect(peer?.repo_root).toBeUndefined();
-          expect(peer?.branch).toBeUndefined();
-        } finally {
-          first.close();
-          moved.close();
-        }
+        const peer = await peerOf(moved, B);
+        expect(peer?.cwd).toBe(repoRoot);
+        expect(peer?.repo).toBe("kawaz/other");
+        expect(peer?.repo_root).toBeUndefined();
+        expect(peer?.branch).toBeUndefined();
       } finally {
-        await stopTestDaemon(ctx);
+        first.close();
+        moved.close();
       }
-    },
-    T,
-  );
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 });

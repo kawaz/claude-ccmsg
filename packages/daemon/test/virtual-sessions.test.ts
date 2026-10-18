@@ -10,7 +10,7 @@ import {
   resolveVirtualRoot,
   resolveVirtualTranscript,
 } from "../src/virtual-sessions.ts";
-import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import { startTestDaemon, stopTestDaemon, sessionConn, userConn } from "./helpers.ts";
 import {
   assistantContentRow,
   line,
@@ -19,7 +19,6 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 
-const T = 15000;
 const roots: string[] = [];
 const emptySessions = new Map();
 
@@ -248,134 +247,117 @@ describe("hello-time transcript adoption", () => {
   // Guarantees the end-to-end effect the webui gates Timeline on: a connected
   // session that announced no transcript_path is published in `peers` with the
   // derived path, so Timeline is enabled and transcript_read serves it.
-  test(
-    "a session hello without transcript_path is published with the derived path",
-    async () => {
-      const home = fixtureRoot();
-      const config = path.join(home, ".claude");
-      fs.mkdirSync(config);
-      const cwd = path.join(fixtureRoot(), "project");
-      fs.mkdirSync(cwd);
-      const file = transcript(config, sid(), cwd);
+  test("a session hello without transcript_path is published with the derived path", async () => {
+    const home = fixtureRoot();
+    const config = path.join(home, ".claude");
+    fs.mkdirSync(config);
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    const file = transcript(config, sid(), cwd);
 
-      const ctx = await startTestDaemon({ HOME: home });
-      try {
-        const session = await connect(ctx.sock);
-        await session.hello({ role: "session", sid: sid(), cwd });
-        const user = await connect(ctx.sock);
-        await user.hello({ role: "user" });
+    const ctx = await startTestDaemon({ HOME: home });
+    try {
+      const session = await sessionConn(ctx, sid(), { cwd, repo: "", ws: "" });
+      const user = await userConn(ctx);
 
-        const peers = await user.requestOk({ op: "peers" });
-        expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
 
-        const read = await user.requestOk({
-          op: "transcript_read",
-          sid: sid(),
-        });
-        expect(read.ok).toBe(true);
-        expect(read.lines).toHaveLength(1);
-        session.close();
-        user.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      const read = await user.requestOk({
+        op: "transcript_read",
+        sid: sid(),
+      });
+      expect(read.ok).toBe(true);
+      expect(read.lines).toHaveLength(1);
+      session.close();
+      user.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 
   // Guarantees Status is not gated on a live ccmsg connection: a sid nothing is
   // connected as still folds from its jsonl on disk, and the tail keeps pushing
   // as that file grows.
-  test(
-    "session_status_subscribe folds and tails a sid with no connected session",
-    async () => {
-      const home = fixtureRoot();
-      const config = path.join(home, ".claude");
-      fs.mkdirSync(config);
-      const cwd = path.join(fixtureRoot(), "project");
-      fs.mkdirSync(cwd);
-      const file = transcript(config, sid(), cwd, [
-        assistantContentRow(
-          [
-            toolUseBlock(
-              "TaskCreate",
-              { subject: "First task", description: "desc", activeForm: "Working" },
-              "tc1",
-            ),
-          ],
-          { timestamp: "2026-07-16T00:00:01.000Z", cwd },
-        ),
-        userContentRow([toolResultBlock("ok", { tool_use_id: "tc1" })], {
-          timestamp: "2026-07-16T00:00:02.000Z",
-          cwd,
-          toolUseResult: { task: { id: "1", subject: "First task" } },
-        }),
-      ]);
+  test("session_status_subscribe folds and tails a sid with no connected session", async () => {
+    const home = fixtureRoot();
+    const config = path.join(home, ".claude");
+    fs.mkdirSync(config);
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    const file = transcript(config, sid(), cwd, [
+      assistantContentRow(
+        [
+          toolUseBlock(
+            "TaskCreate",
+            { subject: "First task", description: "desc", activeForm: "Working" },
+            "tc1",
+          ),
+        ],
+        { timestamp: "2026-07-16T00:00:01.000Z", cwd },
+      ),
+      userContentRow([toolResultBlock("ok", { tool_use_id: "tc1" })], {
+        timestamp: "2026-07-16T00:00:02.000Z",
+        cwd,
+        toolUseResult: { task: { id: "1", subject: "First task" } },
+      }),
+    ]);
 
-      const ctx = await startTestDaemon({ HOME: home });
-      try {
-        const user = await connect(ctx.sock);
-        await user.hello({ role: "user" });
-        const initial = await user.requestOk({ op: "session_status_subscribe", sid: sid() });
-        expect(initial.ok).toBe(true);
-        expect(initial.todos).toHaveLength(1);
-        expect(initial.todos[0]?.status).toBe("pending");
+    const ctx = await startTestDaemon({ HOME: home });
+    try {
+      const user = await userConn(ctx);
+      const initial = await user.requestOk({ op: "session_status_subscribe", sid: sid() });
+      expect(initial.ok).toBe(true);
+      expect(initial.todos).toHaveLength(1);
+      expect(initial.todos[0]?.status).toBe("pending");
 
-        fs.appendFileSync(
-          file,
-          [
-            assistantContentRow(
-              [toolUseBlock("TaskUpdate", { taskId: "1", status: "completed" }, "tu1")],
-              { timestamp: "2026-07-16T00:00:03.000Z", cwd },
-            ),
-            userContentRow([toolResultBlock("ok", { tool_use_id: "tu1" })], {
-              timestamp: "2026-07-16T00:00:04.000Z",
-              cwd,
-              toolUseResult: {
-                success: true,
-                taskId: "1",
-                updatedFields: ["status"],
-                statusChange: { from: "pending", to: "completed" },
-              },
-            }),
-          ]
-            .map((row) => `${line(row)}\n`)
-            .join(""),
-        );
-        const { ev } = await user.readEventUntil("session_status");
-        expect(ev.todos[0]?.status).toBe("completed");
-        user.close();
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+      fs.appendFileSync(
+        file,
+        [
+          assistantContentRow(
+            [toolUseBlock("TaskUpdate", { taskId: "1", status: "completed" }, "tu1")],
+            { timestamp: "2026-07-16T00:00:03.000Z", cwd },
+          ),
+          userContentRow([toolResultBlock("ok", { tool_use_id: "tu1" })], {
+            timestamp: "2026-07-16T00:00:04.000Z",
+            cwd,
+            toolUseResult: {
+              success: true,
+              taskId: "1",
+              updatedFields: ["status"],
+              statusChange: { from: "pending", to: "completed" },
+            },
+          }),
+        ]
+          .map((row) => `${line(row)}\n`)
+          .join(""),
+      );
+      const { ev } = await user.readEventUntil("session_status");
+      expect(ev.todos[0]?.status).toBe("completed");
+      user.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 });
 
 describe("session_search wire authorization", () => {
   // Guarantees historical search is a human webui surface: a session identity
   // is rejected before any config-directory scan is attempted.
-  test(
-    "session role cannot call session_search",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const client = await connect(ctx.sock);
-        await client.hello({
-          role: "session",
-          sid: "aaaaaaaa-0000-4000-8000-000000000001",
-          cwd: "/tmp",
-        });
-        const response = await client.requestError({
-          op: "session_search",
-        });
-        expect(response.ok).toBe(false);
-        expect(response.error.code).toBe("bad_request");
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
+  test("session role cannot call session_search", async () => {
+    const ctx = await startTestDaemon();
+    try {
+      const client = await sessionConn(ctx, "aaaaaaaa-0000-4000-8000-000000000001", {
+        repo: "",
+        ws: "",
+      });
+      const response = await client.requestError({
+        op: "session_search",
+      });
+      expect(response.ok).toBe(false);
+      expect(response.error.code).toBe("bad_request");
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 });

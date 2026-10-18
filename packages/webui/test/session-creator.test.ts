@@ -315,7 +315,7 @@ describe("paramWidget", () => {
     expect(paramWidget(p("EFFORT"), "")).toBe("effort");
   });
 
-  // kawaz r259 m47: PROMPT is not special — how much room a value needs is a
+  // PROMPT is not special — how much room a value needs is a
   // property of the value, not of the name it was given.
   test("everything else is sized by whether the value has newlines", () => {
     expect(paramWidget(p("PROMPT"), "one line")).toBe("text");
@@ -343,7 +343,7 @@ describe("orderedParams", () => {
   const names = (params: LauncherParam[]): string[] =>
     orderedParams(params).map((param) => param.name);
 
-  // kawaz r259 m47: cwd/model/effort first in that order, COMMAND last,
+  // cwd/model/effort first in that order, COMMAND last,
   // everything else in the order the config declared it.
   test("cwd/model/effort go first in that order, whatever the declaration order", () => {
     expect(
@@ -407,7 +407,7 @@ describe("forkSourceDefaults", () => {
     expect(forkSourceDefaults({ cwd: "   " }, ROOTS)).toEqual({});
   });
 
-  test("seeds TITLE from the source session's name (kawaz r259m62)", () => {
+  test("seeds TITLE from the source session's name", () => {
     expect(forkSourceDefaults({ title: "my session" }, ROOTS)).toEqual({ TITLE: "my session" });
     expect(forkSourceDefaults({ title: "   " }, ROOTS)).toEqual({});
   });
@@ -482,7 +482,7 @@ describe("forkTemplate / initialTemplate", () => {
   test("without a prefill the first plain (non-fork) recipe is chosen", () => {
     expect(initialTemplate([PLAIN, FORK], null)?.name).toBe("default");
     // Config order must not decide it: "+ 新規" asked for a new session, so a
-    // fork recipe listed first is skipped rather than opened (kawaz r119 m1).
+    // fork recipe listed first is skipped rather than opened.
     expect(initialTemplate([FORK, PLAIN], null)?.name).toBe("default");
     expect(plainTemplate([FORK, PLAIN])?.name).toBe("default");
   });
@@ -599,7 +599,7 @@ describe("selectSessionCreatorTemplate", () => {
     expect(selectSessionCreatorTemplate(start, [PLAIN], "nope")).toBe(start);
   });
 
-  // kawaz r259 m43: both recipes take the session under one name, so
+  // both recipes take the session under one name, so
   // reconsidering resume ↔ fork for the same session costs nothing — the
   // ordinary same-name rule carries it, with no notion of aliases anywhere.
   test("the session id follows a resume → fork switch", () => {

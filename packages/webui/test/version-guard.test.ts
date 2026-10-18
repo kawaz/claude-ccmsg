@@ -17,7 +17,7 @@ describe("reactToDaemonVersion", () => {
     expect(reactToDaemonVersion(BUNDLE, BUNDLE)).toBe("match" satisfies VersionGuardOutcome);
   });
 
-  // 画面を捨てる判断は常にユーザ (kawaz r273m81)。入力中・操作中にページが
+  // 画面を捨てる判断は常にユーザ。入力中・操作中にページが
   // 消えるのがそもそもの不具合なので、不一致でも "manual" に落ちるのが要。
   test("daemon が新しければ手動リロード待ちになる", () => {
     expect(reactToDaemonVersion("0.137.0", BUNDLE)).toBe("manual");
@@ -73,8 +73,8 @@ describe("reactToHandshakeVersion", () => {
   });
 });
 
-// 不一致の知らせは topbar のリロードボタンの title に載る (kawaz r273 m27:
-// 専用のボックスを増やさない)。読み直す瞬間はユーザが決めるので、文言は
+// 不一致の知らせは topbar のリロードボタンの title に載る (専用のボックスを
+// 増やさない)。読み直す瞬間はユーザが決めるので、文言は
 // 「押さなければ古いまま」を伝える。
 describe("reloadButtonTitle", () => {
   test("不一致なしなら、ただのリロードボタン", () => {

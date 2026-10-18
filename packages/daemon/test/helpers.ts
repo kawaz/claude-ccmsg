@@ -1,4 +1,5 @@
-// Test harness: spawn a real daemon in a temp dir and talk to it over UDS.
+// Test harness: start a daemon in a temp dir (spawned, or hosted in this
+// process) and talk to it over UDS.
 // No blind sleeps — daemon readiness is confirmed by retrying the actual connect.
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -17,6 +18,7 @@ import {
   RESPONSE_SCHEMAS,
   type DaemonFrame,
   type ErrorResponse,
+  type HelloRequest,
   type JsonObject,
   type JsonValue,
   type ReplyOf,
@@ -27,7 +29,11 @@ import {
   type ResponseOf,
   type Response as WireReply,
   type StreamEvent,
+  resolvePaths,
 } from "@ccmsg/protocol";
+import { loadConfig } from "../src/config.ts";
+import { Logger } from "../src/log.ts";
+import { createDaemon, listenUds, shutdownDaemon, type Daemon } from "../src/server.ts";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -156,6 +162,92 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
     fs.rmSync(base, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** A new empty directory under the OS temp dir (`ccmsg-<name>-*`), for a
+ * test's fixture files. The test removes it. */
+export function fixtureDir(name: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `ccmsg-${name}-`));
+}
+
+/** What a session hello says besides who it is: a test names the fields its
+ * case is about, and the rest are placeholders. */
+export type SessionHelloFields = Partial<Omit<HelloRequest, "op" | "role" | "protocol" | "sid">>;
+
+/** A connection that said hello as session `sid`. Fields the test leaves out
+ * are `repo: "r"`, `ws: "w"`, `cwd: "/tmp"`; a refused hello fails the test. */
+export async function sessionConn(
+  ctx: { sock: string },
+  sid: string,
+  fields: SessionHelloFields = {},
+): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.requestOk({
+    op: "hello",
+    protocol: PROTOCOL_VERSION,
+    role: "session",
+    sid,
+    repo: "r",
+    ws: "w",
+    cwd: "/tmp",
+    ...fields,
+  });
+  return c;
+}
+
+/** A connection that said hello as the user. */
+export async function userConn(ctx: { sock: string }): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.hello({ role: "user" });
+  return c;
+}
+
+/** A daemon hosted in this test process: the same daemon state and UNIX
+ * socket listener a spawned daemon runs, so its clients go through the wire
+ * (hello, identity, replies read by TestClient) without a process start. It
+ * runs no agents poll, network watch, HTTP or webhooks, and has no
+ * environment of its own (startTestDaemon's `extraEnv`): a test that needs
+ * those, or the daemon's process lifecycle (lock, pid file, restart), spawns
+ * one (startTestDaemon). */
+export interface InProcessDaemon {
+  base: string;
+  sock: string;
+  daemon: Daemon;
+}
+
+export async function startInProcessDaemon(): Promise<InProcessDaemon> {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-t-"));
+  const dataDir = path.join(base, "d");
+  const paths = resolvePaths({
+    CCMSG_STATE_DIR: path.join(base, "s"),
+    CCMSG_CONFIG_DIR: testConfigDir(dataDir),
+    CCMSG_DATA_DIR: dataDir,
+  });
+  fs.mkdirSync(paths.stateDir);
+  fs.mkdirSync(dataDir);
+  const log = new Logger(paths.log);
+  const loaded = await loadConfig(paths, log);
+  if (!loaded.ok) throw new Error(`test config does not read: ${loaded.errors.join("; ")}`);
+  const daemon = createDaemon({
+    paths,
+    config: loaded.config,
+    log,
+    lock: { fd: -1, release() {} },
+    httpAllow: [],
+    // The test process is the host: a shutdown releases the daemon and leaves
+    // the process to the test runner.
+    exit() {},
+  });
+  daemon.server = listenUds(daemon);
+  return { base, sock: paths.sock, daemon };
+}
+
+export async function stopInProcessDaemon(ctx: InProcessDaemon): Promise<void> {
+  await shutdownDaemon(ctx.daemon, "test");
+  // shutdownDaemon leaves open connections to the process exit that follows
+  // it in a spawned daemon; here the test process goes on, so close them.
+  ctx.daemon.server?.stop(true);
+  fs.rmSync(ctx.base, { recursive: true, force: true });
 }
 
 export async function stopTestDaemon(ctx: DaemonCtx): Promise<void> {

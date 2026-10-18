@@ -23,7 +23,7 @@ describe("fileSearchTargets", () => {
     ]);
   });
 
-  // kawaz r55 m97: the tree browses from cwd, which under a worktree layout
+  // the tree browses from cwd, which under a worktree layout
   // sits below the daemon's containment root. The search must walk that same
   // subtree — a containment-rooted walk would return hits from sibling
   // worktrees that the tree itself never shows.

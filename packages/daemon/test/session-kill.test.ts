@@ -15,7 +15,7 @@ import {
   verifyPid,
   type SessionKillDeps,
 } from "../src/session-kill.ts";
-import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import { startInProcessDaemon, stopInProcessDaemon, sessionConn, userConn } from "./helpers.ts";
 
 /** Fake-deps factory: every effect is inert/instant by default so each test
  * overrides exactly the behavior its case is about. Timing is shrunk 10x
@@ -243,7 +243,7 @@ describe("killSession sequence (fake deps)", () => {
   });
 });
 
-describe("killSessionForce (DR-0028 addendum r38 mid=6, opt-in SIGKILL)", () => {
+describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
   // Force 経路の最小契約: SIGTERM でなく SIGKILL を 1 発、以降は通常経路と同じ
   // liveness poll。落ちたら terminated:true。SIGTERM の 2 連発 / 1s 待機は
   // 意味を成さないので排除する (SIGKILL は guard を持たない、即殺すのが仕事)。
@@ -436,10 +436,13 @@ describe("session_kill over the wire (role gate + not_found)", () => {
   // a session connection is rejected with bad_request BEFORE any pid
   // resolution work happens — same gate pattern as session_launch.
   test("session role is refused with bad_request", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "session", sid: "a9e47000-0000-4000-8000-000000000001" });
+      const c = await sessionConn(ctx, "a9e47000-0000-4000-8000-000000000001", {
+        repo: "",
+        ws: "",
+        cwd: "",
+      });
       const res = await c.requestError({
         op: "session_kill",
         session_id: "sid-victim",
@@ -448,7 +451,7 @@ describe("session_kill over the wire (role gate + not_found)", () => {
       expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 
@@ -456,10 +459,9 @@ describe("session_kill over the wire (role gate + not_found)", () => {
   // environments where the `claude` CLI itself is absent/failing — resolution
   // failure and no-match are the same not_found to the caller.
   test("user role with an unknown session_id is answered not_found", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const reply = await c.requestError({
         op: "session_kill",
         session_id: "00000000-0000-0000-0000-000000000000",
@@ -468,23 +470,22 @@ describe("session_kill over the wire (role gate + not_found)", () => {
       expect(reply.error?.code).toBe("not_found");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   }, 30000);
 
   // request_id is what a reply is paired with, so a request without one is
   // refused before dispatch (same for every op).
   test("missing request_id is refused with bad_request", async () => {
-    const ctx = await startTestDaemon();
+    const ctx = await startInProcessDaemon();
     try {
-      const c = await connect(ctx.sock);
-      await c.hello({ role: "user" });
+      const c = await userConn(ctx);
       const res = await c.requestRaw({ op: "session_kill", session_id: "sid-x" });
       expect(res.ok).toBe(false);
       expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
-      await stopTestDaemon(ctx);
+      await stopInProcessDaemon(ctx);
     }
   });
 });

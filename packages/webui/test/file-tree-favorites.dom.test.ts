@@ -13,7 +13,7 @@ import { AppContext } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { initialState, type SessionTreeState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
-import { favoritesStorageKey } from "../src/client/utils.ts";
+import { favoritesStorageKey, parseFavorites } from "../src/client/utils.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
 import { defined, instanceOf, stubGlobal } from "./helpers.ts";
@@ -127,7 +127,7 @@ describe("FileTree favorites mounted", () => {
     seed(["README.md"]);
     const root = await mount(panes(filesStore(), PEER));
     expect(favoriteWrites).toEqual([]);
-    expect(stored()).toBe(JSON.stringify(["README.md"]));
+    expect(parseFavorites(stored())).toEqual(["README.md"]);
     expect(favoritedPaths(root)).toEqual(["README.md"]);
   });
 
@@ -137,7 +137,7 @@ describe("FileTree favorites mounted", () => {
     const root = await mount(panes(store, undefined));
     await act(() => render(panes(store, PEER), root));
     expect(favoriteWrites).toEqual([]);
-    expect(stored()).toBe(JSON.stringify(["README.md"]));
+    expect(parseFavorites(stored())).toEqual(["README.md"]);
     expect(favoritedPaths(root)).toEqual(["README.md"]);
   });
 
@@ -150,8 +150,8 @@ describe("FileTree favorites mounted", () => {
       "package.json favorite toggle",
     );
     await act(() => add.click());
-    expect(favoriteWrites).toEqual([JSON.stringify(["README.md", "package.json"])]);
-    expect(stored()).toBe(JSON.stringify(["README.md", "package.json"]));
+    expect(favoriteWrites.map(parseFavorites)).toEqual([["README.md", "package.json"]]);
+    expect(parseFavorites(stored())).toEqual(["README.md", "package.json"]);
     expect(favoritedPaths(root)).toEqual(["README.md", "package.json"]);
   });
 });

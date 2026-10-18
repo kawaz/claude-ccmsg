@@ -1,5 +1,4 @@
-// Link-target classification for markdown bodies and file previews
-// (kawaz r55 m116/m117).
+// Link-target classification for markdown bodies and file previews.
 //
 // The bug this pins: a markdown link written as `[x](fixtures/a.json)` used to
 // render as an `<a href="fixtures/a.json">`, so clicking it navigated the
