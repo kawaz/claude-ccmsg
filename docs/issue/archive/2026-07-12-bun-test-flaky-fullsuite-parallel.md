@@ -199,4 +199,10 @@ CI (ubuntu-latest) で新顔の flaky を観測: `packages/daemon/test/last-live
 
 修正前の単体 `--rerun-each 100` は 100/100 pass でローカル低負荷では再現せず、CI 2 件とfull suite 1 件の低頻度症状は scheduler による close/SIGKILL 到達順の差と一致。
 
-status は wip のまま。
+## 追記: 2026-10-18 close の根拠
+
+- v0.184.0 (c3cacac3) で `just test` を 3 回連続 (出力は tee で保存): 3 回とも 4087 pass / 0 fail (83.76s / 83.47s / 86.24s)
+- 同じ日の型・launcher・webui の変更を入れた状態でも `just test` 3 回 (4078 pass ×2、4074 pass) と `just coverage` 1 回 (4074 pass) がすべて 0 fail
+- 本文の機序 (短い固定 timeout × 高負荷、Gatekeeper の inode 評価、close と SIGKILL の race) は上の各追記で根治済み。run をまたいで残る daemon / sidecar / 一時ファイルは、test run の寿命に結んだ修正で塞がった: d5fe81b1 (daemon の lifeline)、55697261 (sidecar の lifeline)、9312d87a (一時ファイルを run dir に入れ、残りを検査して run を落とす)、d5f4c445 (残った dir の中身を出す、git maintenance の書き戻しを止める)
+- 1 回目の just test だけ 1 件 timeout した件は別 issue (just-test-one-timeout-unidentified) で、eaa6627e で原因 (翻訳モデルの OS 側との競合) を特定して close 済み
+- 再発したら test 名とログを添えて新しい issue で追う
