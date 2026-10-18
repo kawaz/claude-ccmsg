@@ -10,17 +10,18 @@
 2. **stdin/stdout helper CLI の構成は成立する。** pipe から受けた UTF-8 テキストを `TranslationSession(installedSource:target:)` に渡し、翻訳結果だけを stdout に返す試行が終了コード 0 で成功した。
 3. **en→ja モデルは検証機にインストール済みだった。** `LanguageAvailability.status(from:to:)` は `installed`、session の `isReady` は翻訳前から `true` だった。`prepareTranslation()` は成功した。
 4. **未インストール言語は headless session からダウンロード要求できない。** en→ar は `supported` だが未インストールで、`TranslationSession(installedSource:target:)` は `canRequestDownloads=false`、`isReady=false`、`prepareTranslation()` は `TranslationError.notInstalled` (`Languages must be downloaded on-device.`) になった。プログラムはダウンロード要求へ遷移せずエラーを返した。
-5. **日英混在テキストは丸ごと翻訳できる。** 改行なしで英語から日本語へ切り替わる入力では英語部分だけが日本語化され、既存の日本語部分は同一文字列のまま保持された。日本語だけの入力も同一文字列で返った。
-6. **複数段落の改行は保持された。** 空行を挟む 3 段落の入力は、段落境界の `\n\n` を保ったまま英語段落だけが翻訳され、日本語段落は同一文字列のまま残った。
+5. **日英混在テキストは丸ごと翻訳できるが、同じ文中の日本語が保たれるのは敬体の時だけ。** 改行なしで英語から日本語へ切り替わる入力では英語部分が日本語化される。既存の日本語部分は、敬体 (「ここから日本語です。」) なら同一文字列のまま残るが、常体なら敬体に書き換わる (「検証済みの結果だけを述べる。」→「検証済みの結果のみを述べます。」、「原因はまだ分からない。」→「原因はまだわかりません。」、2026-10-18 の追加検証)。日本語だけの入力は常体・敬体とも同一文字列で返った。
+6. **空行 (`\n\n`) は保たれるが、単独の改行 (`\n`) は空行に広がる。** 空行を挟む 3 段落の入力は、段落境界の `\n\n` を保ったまま英語段落だけが翻訳され、日本語段落は同一文字列のまま残った。一方、1 行ずつ `\n` で区切った入力 (2 行、3 行、箇条書き 3 項目) は、どれも各行の間が `\n\n` になって返った (2026-10-18 の追加検証)。daemon の翻訳サービスは、テキストを空行で段落に分けて 1 段落ずつ batch の要素として送り、訳の中の連続する改行を 1 つに畳んで元の行の構造に戻している。
 7. **短い英文 1 件の翻訳処理は 3 試行で 1,319.914–1,396.205 ms、10 件バッチは 6,623.983–7,330.883 ms だった。** いずれも新しい CLI プロセスで測定した。session 準備は約 80–88 ms、プロセス全体の wall time は 1 件で 1.41–1.85 秒、10 件で 6.71–7.42 秒だった。
 8. **非常に短い英文の自動言語判定は失敗しうる。** `LanguageAvailability.status(for: "Hello, world.", to: ja)` は `unableToIdentifyLanguage` になった一方、source を `en` と明示した session で同じ文を翻訳すると `こんにちは、世界。` が返った。
+9. **バッククォートの中は、コードらしい語なら残り、普通の英語なら訳される。** `` `just test` `` / `` `git status` `` / `` `translateWatchdogTimeoutMs` `` はバッククォートごと残ったが、`` `not measured` `` は「測定されていない」とかぎ括弧付きで訳され、バッククォートが消えた (2026-10-18 の追加検証)。
 
 ## 実用的な示唆 / ベストプラクティス
 
 - **DR-0023 Phase 1 の stdin/stdout helper CLI 設計は成立する。メニューバー常駐 `.app` は不要。** 公開 API だけで headless CLI が実動し、pipe 入出力まで確認できた。
 - helper は source/target を明示して `TranslationSession(installedSource:target:)` を使う。短文の自動言語判定を前提にしない。
 - 初回利用前提として、必要な言語モデルが OS にインストール済みか `LanguageAvailability` で確認する。未インストール時は helper 内からダウンロード UI を出そうとせず、daemon から「端末の翻訳言語をダウンロードする」旨を案内するエラーを返す。
-- host 翻訳は入力を改行や日本語判定で分割せず、まず全文を 1 リクエストとして渡せる。今回の英日混在 3 category（改行なし混在、複数段落混在、日本語のみ）では既存日本語と改行が保持された。
+- host 翻訳に渡す時、空行で区切った段落の構造と敬体の日本語は保たれるが、段落の中の改行と、英語と同じ文に混ざった常体の日本語は保たれない (5、6)。行の構造は daemon が段落ごとに送って戻す。混在した日本語の書き換えと、バッククォートの中の英語の翻訳 (9) は手当てしていない: webui は日本語の比率が 0.1 を超える段落を翻訳に回さないので、翻訳に回るのは英語が主の段落に短い日本語が混ざったものだけで、書き換わるのは訳のタブの表示だけ (原文のタブはそのまま)。
 - 10 件は個別プロセス起動ではなく 1 session の batch API にまとめる。今回の 10 件バッチ中央値 6.738 秒は、短文 1 件中央値 1.391 秒の単純な 10 倍より短い。
 - session 準備は翻訳本体より短いが、短文 1 件でも全体で約 1.5 秒かかる。Phase 1 ではまず都度起動でも成立するが、連続リクエストの UI 応答性を重視するなら helper/session の常駐化を別途比較する価値がある。
 
@@ -41,6 +42,10 @@ PoC コードと実行ログはリポジトリ外の scratchpad `translation-poc
 | (c) 改行なし混在 | `The build completed successfully.ここから日本語です。続きはそのままです。` | `ビルドが正常に完了しました。ここから日本語です。続きはそのままです。` | OK。既存日本語を保持 |
 | (c) 複数段落 | 英語 / 日本語 / 英語の 3 段落を `\n\n` 区切りで一括翻訳 | `最初の段落は英語です。\n\nこれは日本語の段落です。\n\n第三段落も英語です。` | OK。改行と日本語段落を保持 |
 | (c) 日本語のみ | `これは最初から日本語です。` | `これは最初から日本語です。` | OK。同一文字列で返る |
+| (c) 常体の混在 (2026-10-18) | `Keep the output concise.検証済みの結果だけを述べる。` ほか 2 件 | `出力を簡潔に保ちます。検証済みの結果のみを述べます。` | NG。常体の日本語が敬体に書き換わる |
+| (c) 常体の日本語のみ (2026-10-18) | `これは最初から日本語だ。` | `これは最初から日本語だ。` | OK。同一文字列で返る |
+| (c) 段落内の改行 (2026-10-18) | 1 行ずつ `\n` で区切った 2 行 / 3 行 / 箇条書き 3 項目 | 各行の間が `\n\n` になる | NG。改行が空行に広がる |
+| (c) バッククォート (2026-10-18) | `` `just test` `` / `` `git status` `` / `` `translateWatchdogTimeoutMs` `` / `` `not measured` `` | 前 3 つは残る。`not measured` は「測定されていない」 | コードらしい語は残り、英語の句は訳される |
 | (d) 短文 1 件 | 新規プロセス × 3、`This is latency trial N.` | operation: 1390.630 / 1396.205 / 1319.914 ms。wall: 1.85 / 1.48 / 1.41 s | 中央値 operation 1390.630 ms、wall 1.48 s |
 | (d) 10 件バッチ | 新規プロセス × 3、`translations(from:)` | operation: 7330.883 / 6623.983 / 6738.140 ms。全試行 `result_count=10`。wall: 7.42 / 6.71 / 6.83 s | 中央値 operation 6738.140 ms、wall 6.83 s |
 | 短文の言語自動判定 | `status(for: "Hello, world.", to: ja)` | `TranslationError.unableToIdentifyLanguage`, `The language could not be automatically detected.` | source 明示が必要 |
@@ -123,6 +128,26 @@ input="これは最初から日本語です。"
 output="これは最初から日本語です。"
 translate_ms=269.182
 ```
+
+### 混在テキストの追加検証 (2026-10-18)
+
+macOS 26 の同じ検証機で、daemon が使う helper (`packages/translate-helper/main.swift` のビルド) に 1 テキスト 1 リクエストで 14 件を 2 回ずつ送った。2 回の出力はすべて一致した。
+
+| 入力 | 出力 |
+|---|---|
+| ``Keep the output concise.検証済みの結果だけを述べる。If the test has not run, write `not measured` rather than claiming that the change is safe.`` | `出力を簡潔に保ちます。検証済みの結果のみを述べます。テストが実行されていない場合は、変更が安全であると主張するのではなく、「測定されていない」と書きます。` |
+| `Keep the output concise.検証済みの結果だけを述べる。` | `出力を簡潔に保ちます。検証済みの結果のみを述べます。` |
+| `The build failed.原因はまだ分からない。Check the log first.` | `ビルドに失敗しました。原因はまだわかりません。まずログを確認してください。` |
+| `The build completed successfully.ここから日本語です。続きはそのままです。` | `ビルドが正常に完了しました。ここから日本語です。続きはそのままです。` |
+| `これは最初から日本語だ。` | `これは最初から日本語だ。` |
+| ``Run `just test` and then `git status` before you commit.`` | ``コミットする前に、`just test`を実行し、次に`git status`を実行します。`` |
+| ``Call `translateWatchdogTimeoutMs` with the total length.`` | ``合計長さで`translateWatchdogTimeoutMs`を呼び出します。`` |
+| `First, open the file.\nThen read the first line.\nFinally, close it.` | `まず、ファイルを開きます。\n\nそれから最初の行を読んでください。\n\n最後に、それを閉じてください。` |
+| `This is the first line.\nThis is the second line.` | `これは最初の行です。\n\nこれは2番目の行です。` |
+| `- Install the model.\n- Restart the daemon.\n- Open the webui.` | `- モデルをインストールします。\n\n- デモンを再起動します。\n\n- webuiを開きます。` |
+| `The first paragraph is in English.\n\nこれは日本語の段落です。\n\nThe third paragraph is also in English.` | `最初の段落は英語です。\n\nこれは日本語の段落です。\n\n第三段落も英語です。` |
+
+段落ごとに送って連続する改行を畳む daemon の翻訳サービスを通すと、上の 3 つの改行の例は `\n` 区切りのまま返った。
 
 ### 未インストール言語モデル
 

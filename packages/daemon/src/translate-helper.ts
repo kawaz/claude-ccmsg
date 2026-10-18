@@ -87,6 +87,29 @@ function executable(pathname: string): boolean {
   }
 }
 
+/** Translation.framework answers a single line break with a blank line
+ * (measured 2026-10-18: "line one\nline two" comes back as two lines with an
+ * empty line between them) and keeps a blank line as it is, so from its
+ * answer alone a line break cannot be told apart from a paragraph break. A
+ * text is therefore sent as its paragraphs, each its own item of the batch,
+ * and a paragraph has no blank line by construction: every run of line
+ * breaks in its translation is one line break the framework widened
+ * (docs/findings/2026-07-17-macos-translation-poc.md). */
+const PARAGRAPH_BREAK = "\n\n";
+
+function paragraphsOf(text: string): string[] {
+  return text.split(PARAGRAPH_BREAK);
+}
+
+/** A paragraph with nothing but whitespace is kept as it is, not sent. */
+function isSent(paragraph: string): boolean {
+  return paragraph.trim() !== "";
+}
+
+function foldBlankLines(translation: string): string {
+  return translation.replace(/\n{2,}/g, "\n");
+}
+
 class TranslationHelperService implements TranslateService {
   private readonly platform: NodeJS.Platform;
   private readonly sourcePath: string;
@@ -131,6 +154,40 @@ class TranslationHelperService implements TranslateService {
     // verifies the OS/build prerequisite without paying the session startup cost.
     if (texts.length === 0) return { ok: true, results: [] };
 
+    // A text is sent as its paragraphs (see paragraphsOf) and put back
+    // together from their translations.
+    const split = texts.map(paragraphsOf);
+    const sent = split.flatMap((paragraphs) => paragraphs.filter(isSent));
+    const answered = sent.length === 0 ? null : await this.enqueue(sent);
+    if (answered !== null && !answered.ok) return answered;
+    const translations = answered?.results ?? [];
+    let next = 0;
+    // performRequest has checked that there is one result per sent paragraph.
+    const translateNext = (): TranslateResult => {
+      const result = translations[next++] ?? {
+        ok: false,
+        error: "translation helper returned no result",
+      };
+      return result.ok ? { ok: true, text: foldBlankLines(result.text) } : result;
+    };
+    return {
+      ok: true,
+      results: split.map((paragraphs): TranslateResult => {
+        const parts = paragraphs.map(
+          (paragraph): TranslateResult =>
+            isSent(paragraph) ? translateNext() : { ok: true, text: paragraph },
+        );
+        const texts: string[] = [];
+        for (const part of parts) {
+          if (!part.ok) return part;
+          texts.push(part.text);
+        }
+        return { ok: true, text: texts.join(PARAGRAPH_BREAK) };
+      }),
+    };
+  }
+
+  private enqueue(texts: readonly string[]): Promise<TranslateBatchResult> {
     // Queue behind the in-flight request (see sendChain's docstring): the
     // helper answers serially, so writing early gains nothing and would start
     // the watchdog clock while the request is still queued, not processing.

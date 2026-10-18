@@ -171,6 +171,66 @@ describe("TranslationHelperService", () => {
     }
   });
 
+  // Translation.framework answers a single line break with a blank line, and
+  // keeps blank lines as they are (docs/findings/2026-07-17-macos-translation-poc.md).
+  // The mock does the same to every text it gets; what comes back from the
+  // service must have the line breaks and paragraph breaks it was sent.
+  describe("line structure", () => {
+    function newlineDoublingHelper(): string {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-lines-"));
+      tempDirs.push(dir);
+      return writeMockBin(
+        path.join(dir, "helper"),
+        `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  const results = request.texts.map((text) =>
+    text === "__error__"
+      ? { ok: false, error: "TranslationError.notInstalled" }
+      : { ok: true, text: text.toUpperCase().replaceAll("\\n", "\\n\\n") },
+  );
+  process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
+}
+`,
+      );
+    }
+
+    test("a translated text keeps its line breaks and paragraph breaks as sent", async () => {
+      const service = mockService({ platform: "darwin", binaryPath: newlineDoublingHelper() });
+
+      const result = await service.translate([
+        "first line\nsecond line\n\nnext paragraph",
+        "- one\n- two",
+        "a\n\n\n\nb",
+        "",
+      ]);
+      expect(result).toEqual({
+        ok: true,
+        results: [
+          { ok: true, text: "FIRST LINE\nSECOND LINE\n\nNEXT PARAGRAPH" },
+          { ok: true, text: "- ONE\n- TWO" },
+          { ok: true, text: "A\n\n\n\nB" },
+          { ok: true, text: "" },
+        ],
+      });
+    });
+
+    test("a text with a paragraph that fails reports that failure, and the other texts are unaffected", async () => {
+      const service = mockService({ platform: "darwin", binaryPath: newlineDoublingHelper() });
+
+      const result = await service.translate(["__error__\n\nfine", "other"]);
+      expect(result).toEqual({
+        ok: true,
+        results: [
+          { ok: false, error: "TranslationError.notInstalled" },
+          { ok: true, text: "OTHER" },
+        ],
+      });
+    });
+  });
+
   // The helper's decode-error paths answer {id, results: []} — for a real
   // N-text request that is wire drift, not a translation outcome. Resolving it
   // as ok would hand callers a truncated results array (batcher item i reads
