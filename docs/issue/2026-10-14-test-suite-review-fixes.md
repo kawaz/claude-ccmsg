@@ -3,7 +3,7 @@ title: テスト群の第三者レビュー指摘 (test-suite-review-fresh-eyes)
 status: open
 category: bug
 created: 2026-10-14T14:18:27+09:00
-last_read: 2026-10-14T16:08:21+09:00
+last_read: 2026-10-18T13:08:11+09:00
 open_entered: 2026-10-14T14:18:27+09:00
 wip_entered:
 blocked_entered:
