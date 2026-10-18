@@ -11,7 +11,8 @@
 // itself, from Claude Code's register (`claude agents --json`, as the agents
 // poll reads it): the session's row whose start is nearest the run's. The pid
 // is what tells a run whose harness died, with its sidecar still connected
-// (a sidecar notices only when a write to its module fails), from a live one.
+// (a sidecar whose output is not a socket notices only when a write to its
+// module fails), from a live one.
 import * as path from "node:path";
 import { sidecarSocketName } from "@ccmsg/protocol";
 

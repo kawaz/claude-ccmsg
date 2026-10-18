@@ -3,7 +3,7 @@
 // line written there to its standard output, which the module reads, and names
 // the run to the daemon on a connection it keeps open, so the daemon knows the
 // run is there for exactly as long as that connection is.
-import { chmodSync, mkdirSync, statSync, unlinkSync } from "node:fs";
+import { chmodSync, fstatSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import { type Identity, type Paths, sidecarSocketName } from "@ccmsg/protocol";
 import { type Client, nameRunNoSpawn, type RunName } from "./client.ts";
@@ -18,6 +18,9 @@ export interface SidecarOptions {
   /** The run (SidecarRunIdSchema), which names the socket. */
   readonly runId: string;
   readonly out: Out;
+  /** Settles when the reader closes its end of `out`: the reader gone, as a
+   * failing write says, and the only sign of it while nothing is written. */
+  readonly outClosed?: Promise<void>;
 }
 
 /** Why a sidecar stopped: asked to by whoever started it, or its reader gone. */
@@ -106,7 +109,36 @@ export function startSidecar(options: SidecarOptions): Sidecar {
     settled.resolve(why);
   }
 
+  void options.outClosed?.then(() => finish("reader_gone"));
+
   return { path: socketPath, stopped: settled.promise, stop: () => finish("stopped") };
+}
+
+/** Settles when the process at the other end of the socket `fd` has closed
+ * it, or `undefined` when `fd` is not a socket.
+ *
+ * A hooks module's spawn gives its child a socket for its output (Claude Code
+ * 2.1.302), and the module only reads from it. Reading this end therefore
+ * gets nothing until the module's process is gone, and then the end of the
+ * stream: the harness's death, told the moment it happens, whether or not
+ * anything is ever written again. Any other `fd` is left alone: a terminal's
+ * input is the person's, and the write end of a pipe cannot be read. */
+export function socketPeerClosed(fd: number): Promise<void> | undefined {
+  return fstatSync(fd).isSocket() ? streamEnded(Bun.file(fd).stream()) : undefined;
+}
+
+/** Settles when `stream` ends, whatever it carried before. A stream that
+ * fails has ended too: a socket that cannot be read any more has no one at
+ * the other end. */
+export async function streamEnded(stream: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    while (!(await reader.read()).done) {
+      // The reader writes nothing back; whatever does come is not news.
+    }
+  } catch {
+    // Ended by failing.
+  }
 }
 
 function unlink(file: string): void {

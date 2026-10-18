@@ -126,8 +126,9 @@ describe("the harness pid of a run", () => {
 });
 
 describe("a run whose harness is gone", () => {
-  // A sidecar can outlive its harness (it notices only when a write to the
-  // module fails), with its connection to the daemon still open.
+  // A sidecar can outlive its harness (one whose output is not a socket
+  // notices only when a write to the module fails), with its connection to
+  // the daemon still open.
   test("a pid that no longer runs: not live, and dropped by the next poll", () => {
     const { runs, alive } = registry();
     runs.announce({}, hello(), [row(100, T0)]);

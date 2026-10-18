@@ -48,7 +48,7 @@ import {
   sessionFilePath,
   writeSessionFile,
 } from "./session-begin.ts";
-import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
+import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -391,6 +391,7 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
       out: (line, done) => {
         process.stdout.write(line, done);
       },
+      outClosed: socketPeerClosed(1),
     });
   } catch (e) {
     process.stderr.write(

@@ -20,7 +20,7 @@ import {
   sidecarSocketName,
 } from "@ccmsg/protocol";
 import { nameRunNoSpawn } from "../src/client.ts";
-import { keepNamed, startSidecar } from "../src/sidecar.ts";
+import { keepNamed, socketPeerClosed, startSidecar, streamEnded } from "../src/sidecar.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
@@ -56,7 +56,17 @@ function shortBase(): string {
   bases.push(base);
   return base;
 }
+/** Sidecars started under a harness a test killed. One that did not leave is
+ * stopped here rather than left running after the suite. */
+const orphans: number[] = [];
 afterAll(() => {
+  for (const pid of orphans) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Already gone, as it should be.
+    }
+  }
   for (const base of bases) fs.rmSync(base, { recursive: true, force: true });
 });
 
@@ -137,6 +147,21 @@ describe("startSidecar", () => {
     expect(fs.existsSync(sidecar.path)).toBe(false);
   });
 
+  test("out closing is the reader gone, with nothing written", async () => {
+    const dir = path.join(shortBase(), "sc");
+    const closed = Promise.withResolvers<void>();
+    const sidecar = startSidecar({
+      dir,
+      sid: SID,
+      runId: "run4245",
+      out: (_line, done) => done(),
+      outClosed: closed.promise,
+    });
+    closed.resolve();
+    expect(await sidecar.stopped).toBe("reader_gone");
+    expect(fs.existsSync(sidecar.path)).toBe(false);
+  });
+
   // A later sidecar of the same run took the name over; leaving must not
   // remove its socket.
   test("leaving keeps a socket a later sidecar bound under the same name", async () => {
@@ -158,6 +183,46 @@ describe("startSidecar", () => {
     expect(() =>
       startSidecar({ dir: "/nonexistent", sid: SID, runId: "../x", out: (_l, d) => d() }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("socketPeerClosed", () => {
+  // A terminal's input is the person's and a pipe's write end cannot be read;
+  // only a socket is watched.
+  test("an fd that is not a socket is not watched", () => {
+    const file = path.join(shortBase(), "out");
+    fs.writeFileSync(file, "");
+    const fd = fs.openSync(file, "r");
+    try {
+      expect(socketPeerClosed(fd)).toBeUndefined();
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+});
+
+describe("streamEnded", () => {
+  test("settles once the stream ends, past whatever it carried", async () => {
+    const source = Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
+    let ended = false;
+    const done = streamEnded(new ReadableStream({ start: (c) => source.resolve(c) })).then(() => {
+      ended = true;
+    });
+    const controller = await source.promise;
+    controller.enqueue(new Uint8Array([1]));
+    await Promise.resolve();
+    expect(ended).toBe(false);
+    controller.close();
+    await done;
+    expect(ended).toBe(true);
+  });
+
+  test("a stream that fails has ended too", async () => {
+    await streamEnded(
+      new ReadableStream({
+        start: (c) => c.error(new Error("ECONNRESET")),
+      }),
+    );
   });
 });
 
@@ -245,6 +310,35 @@ describe("ccmsg sidecar (process)", () => {
     const rest = await readUntil(err, () => false);
     expect(rest).toContain(`reader_gone ${socketPath}\n`);
     await proc.exited;
+    expect(fs.existsSync(socketPath)).toBe(false);
+  });
+
+  // A harness that dies is not one that stops writing: nothing may be written
+  // to the sidecar for the rest of its life, and a sidecar that only learned
+  // of the death from a write would outlive it, naming a session that is gone
+  // to every daemon that starts. The harness here is a process that starts
+  // the sidecar on a socket, as Claude Code's spawn does, and is killed.
+  test("leaves once the process reading its output is gone, with nothing written", async () => {
+    const stateDir = path.join(shortBase(), "s");
+    const harness = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `const child = Bun.spawn(JSON.parse(process.argv[1]), { stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+         process.stderr.write("child " + child.pid + "\\n");
+         await child.exited;`,
+        JSON.stringify(sidecarArgv()),
+      ],
+      { env: sidecarEnv(stateDir), stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+    );
+    const err = harness.stderr.getReader();
+    const started = await readUntil(err, (t) => /ready .*\n/.test(t));
+    const child = /child (\d+)/.exec(started);
+    if (child !== null) orphans.push(Number(child[1]));
+    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+    harness.kill("SIGKILL");
+    const rest = await readUntil(err, () => false);
+    expect(rest).toContain(`reader_gone ${socketPath}\n`);
     expect(fs.existsSync(socketPath)).toBe(false);
   });
 
