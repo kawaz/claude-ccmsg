@@ -1,11 +1,11 @@
 # DR-0037: エージェント間のメッセージは harness の SendMessage に乗せ、`ccmsg:` 宛を hooks module が横取りして届ける
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ✅ 実装済み (daemon の `address_send`、hooks module の `session.send` と `ccmsg sidecar send`、`ccmsg peers` の `addresses`。実機の往復は [findings](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md) の「実装後の e2e」。同じ sid の複数 run への送信と受け手の拒否はテストだけで、実機は未確認。CLI の直送を消すかは Consequences のとおり未決)
+- Status: Superseded by [DR-0039](../DR-0039-all-mods-and-typed-tools.md) §3 / §4
 - Date: 2026-10-09
 
 ## Context
 
-[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1 は、セッション間のメッセージを CLI の `ccmsg post <sid>` / `ccmsg reply <mid> --to <sid>` による直送にした。コマンドで送る形には次の弱点がある:
+[DR-0036](../DR-0036-retire-rooms-for-p2p.md) §1 は、セッション間のメッセージを CLI の `ccmsg post <sid>` / `ccmsg reply <mid> --to <sid>` による直送にした。コマンドで送る形には次の弱点がある:
 
 - 長い本文がコマンドの出力・引数の扱いで truncate されることがあり、その回避が面倒
 - 送るたびにコマンド実行の 1 アクションが要る
@@ -21,19 +21,19 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 ### 1. 宛先の綴り
 
 - `ccmsg:<sid>`: そのセッション。同じ sid の生きている run が複数あれば、その全部に届ける
-- `ccmsg:<sid>.<pid>`: 同じ sid の特定の run。`<pid>` は run の harness の process の pid で、daemon が Claude Code の登録 (`sessions/<pid>.json`、`claude agents --json`) から引く。module とサイドカーは自分の pid を知らない ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。同じ sid が複数のプロセスで生きている時のための綴りで、通常は使わない
+- `ccmsg:<sid>.<pid>`: 同じ sid の特定の run。`<pid>` は run の harness の process の pid で、daemon が Claude Code の登録 (`sessions/<pid>.json`、`claude agents --json`) から引く。module とサイドカーは自分の pid を知らない ([DR-0035](../DR-0035-user-input-via-composer-fill.md) §3)。同じ sid が複数のプロセスで生きている時のための綴りで、通常は使わない
 - `ccmsg:path:<project_dir>`: その作業ディレクトリで動いているセッション全部 (送り主自身を除く)。1 つなら 1 対 1、複数なら全部に届ける
 - セッション間の宛先は `ccmsg:` に統一し、harness の名前での直接送信は案内しない (kawaz 2026-10-13)
 
 ### 2. 送る側: hooks module が SendMessage を横取りする
 
-- plugin の hooks module ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3 の module) が `session.send` を hook し、`to` が `ccmsg:` で始まる送信を横取りする (`next` を呼ばない)。それ以外の `to` は `next(e)` で harness に任せる
+- plugin の hooks module ([DR-0035](../DR-0035-user-input-via-composer-fill.md) §3 の module) が `session.send` を hook し、`to` が `ccmsg:` で始まる送信を横取りする (`next` を呼ばない)。それ以外の `to` は `next(e)` で harness に任せる
 - 横取りした送信は、module が daemon に渡して宛先を実際のセッションに解決させ、届け終わるまで await する。結果を `{ isDelivered: true }` / `{ isDelivered: false, reason }` で返す
 - 相手を探す入口は `ccmsg peers` (宛先の綴りを出す)
 
 ### 3. 受ける側: socket 経由で SendMessage として注入する
 
-- daemon は解決した各セッションの harness の messaging socket に、別セッションからのメッセージとして注入する ([DR-0034](./DR-0034-peer-socket-injection.md) の peer 注入)。本文の `from` は `ccmsg:<送り主 sid>` にする
+- daemon は解決した各セッションの harness の messaging socket に、別セッションからのメッセージとして注入する ([DR-0034](../DR-0034-peer-socket-injection.md) の peer 注入)。本文の `from` は `ccmsg:<送り主 sid>` にする
 - 受け手は、届いたメッセージの `from` をそのまま SendMessage の `to` に書けば返信できる。その送信は受け手側の module が同じく横取りするので、config home をまたいで往復が閉じる
 
 ### 4. 実機で確かめた前提と、そこから決めたこと (Claude Code 2.1.295)
@@ -66,6 +66,6 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 
 ## 関連
 
-- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) — room の廃止と p2p
-- [DR-0035](./DR-0035-user-input-via-composer-fill.md) — hooks module とサイドカー
-- [DR-0034](./DR-0034-peer-socket-injection.md) — peer 注入
+- [DR-0036](../DR-0036-retire-rooms-for-p2p.md) — room の廃止と p2p
+- [DR-0035](../DR-0035-user-input-via-composer-fill.md) — hooks module とサイドカー
+- [DR-0034](../DR-0034-peer-socket-injection.md) — peer 注入

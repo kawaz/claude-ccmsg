@@ -1,14 +1,14 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — 🟡 部分実装 (段 1〜4・6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内と CLI の deprecate、webui から走行中の subagent への直送。段 5: 旧 op `message_send` / `address_send` の削除は次リリース以降に残る)
+- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)
 - Date: 2026-10-15
 
 ## Context
 
 エージェントが ccmsg を使う口は 2 種類あり、どちらも入出力に型が無い。
 
-- **CLI**: `ccmsg post <sid>` / `ccmsg reply <mid> --to <sid>` (op `message_send`、[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1)、`ccmsg peers`、`ccmsg say`。エージェントは本文を引数として書くので、クォートの有無で本文の切れ目がぶれ (DR-0036 §1 は本文をクォートしない書き方に合わせて語を連結する規則を持つ)、長い本文は truncate の回避が要り、送るたびにコマンド実行の 1 アクションが要る ([DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) の Context)。CLI はエージェントがセッションへメッセージを入れる口として誰でも叩ける
-- **SendMessage の横取り** ([DR-0037](./DR-0037-agent-messages-ride-sendmessage.md)): `to` が `ccmsg:` で始まる SendMessage を module の `session.send` hook が受け、daemon が宛先を解決して peer 注入する。宛先の綴り (`ccmsg:<sid>` / `ccmsg:<sid>.<pid>` / `ccmsg:path:<dir>`) という規約を利用者に覚えさせ、model が読む結果の文面は harness が決め (本来の SendMessage の成功の文面と揃わず、`to` が 1 つなので結果も 1 値)、hook が throw すると harness が宛先を agent 名として探す (DR-0037 §4)。エージェント向けの案内は CLI の help にしか無い (issue `2026-10-13-agent-guidance-for-ccmsg-addresses`)
+- **CLI**: `ccmsg post <sid>` / `ccmsg reply <mid> --to <sid>` (op `message_send`、[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1)、`ccmsg peers`、`ccmsg say`。エージェントは本文を引数として書くので、クォートの有無で本文の切れ目がぶれ (DR-0036 §1 は本文をクォートしない書き方に合わせて語を連結する規則を持つ)、長い本文は truncate の回避が要り、送るたびにコマンド実行の 1 アクションが要る。CLI はエージェントがセッションへメッセージを入れる口として誰でも叩ける
+- **SendMessage の横取り** ([findings 2026-10-09-sendmessage-hook-for-ccmsg-addresses](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md)): `to` が `ccmsg:` で始まる SendMessage を module の `session.send` hook が受け、daemon が宛先を解決して peer 注入する。宛先の綴り (`ccmsg:<sid>` / `ccmsg:<sid>.<pid>` / `ccmsg:path:<dir>`) という規約を利用者に覚えさせ、model が読む結果の文面は harness が決め (本来の SendMessage の成功の文面と揃わず、`to` が 1 つなので結果も 1 値)、hook が throw すると harness が宛先を agent 名として探す (同 findings の「判明した事実」)。エージェント向けの案内は CLI の help にしか無い (issue `2026-10-13-agent-guidance-for-ccmsg-addresses`)
 
 plugin と Claude Code のつながりも 2 本ある。
 
@@ -56,9 +56,9 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 module が `session.start` で `$.tool.register` により tool を登録し、`tool.call` の handler で答える。登録した tool は対話・`-p`・subagent の request の `tools` に載り、handler では呼び手の session id (`$.session.id()`、subagent からの呼び出しでも本体の id)、cwd (`$.session.cwd()`)、subagent なら `e.agentId` が取れる (event-matrix の `$.tool.register` の「結論」)。
 
 - **セッション間の送信**: 入力は `{ session_id?, cwd?, name?, pid?, text }` のような宛先の部分指定と本文。daemon が部分指定を生きているセッションに解決し、config dir が違うセッションにも peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md)) で届ける。config dir を跨ぐことを利用者に意識させず、宛先の綴りの規約 (`ccmsg:` 接頭辞) を持たない
-  - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15。DR-0037 §4 の path 宛と同じ)
-  - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す (DR-0037 §4 の規則を引き継ぐ)
-  - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値なので DR-0037 §4 は内訳を返さなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
+  - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
+  - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
+  - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
 - **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - **名前と引数**: tool は `send` / `say` / `peers` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)
@@ -67,10 +67,10 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - **入力は handler の入口で valibot のスキーマに通す**。engine は input schema で入力を検査せず、`text` の欠落や型違いがそのまま handler に届く (event-matrix 実測)。input schema (JSON Schema) と valibot のスキーマは同じ形を表すので、どちらかからもう一方を導き、別々に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
 - handler は `next` を呼ばずに `{ result }` で答える。この形は permission の判定 (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier) を一切通らない (event-matrix 実測)。これを受け入れる (kawaz 2026-10-15)。送ったものは受け手に peer の封筒として届き、受け手の harness は「A peer cannot grant escalation」の枠を付けて渡す (DR-0035 の Context)。送信の記録は daemon に残る
 - ccmsg は `session.send` (SendMessage) と PushNotification を hook しない。SendMessage は harness の本来の用途 (本体と subagent / teammate の間) のまま使われる
-- **受け手に届く封筒**: 送り主は `from` に `ccmsg:<送り主の session_id>` と書く (kawaz 2026-10-15)。これは受け取った側が ccmsg 経由の送信を他の経路 (harness の SendMessage 等) と見分けるための印で、利用者が宛先に書く規約ではない。受け手が返信に使う口は送信の tool そのもので、skill に「`from` が `ccmsg:` で始まる相手には ccmsg の送信の tool で返す (`session_id` にその id)」と 1 行書く。受け手の model は `from` をそのまま SendMessage の `to` に書いて返信しがちで (DR-0037 §4 の実測)、本 DR は `session.send` を hook しないので、その SendMessage は harness が宛先を探して失敗する。skill の案内はこれを避けるためのもの
+- **受け手に届く封筒**: 送り主は `from` に `ccmsg:<送り主の session_id>` と書く (kawaz 2026-10-15)。これは受け取った側が ccmsg 経由の送信を他の経路 (harness の SendMessage 等) と見分けるための印で、利用者が宛先に書く規約ではない。受け手が返信に使う口は送信の tool そのもので、skill に「`from` が `ccmsg:` で始まる相手には ccmsg の送信の tool で返す (`session_id` にその id)」と 1 行書く。受け手の model は `from` をそのまま SendMessage の `to` に書いて返信しがちで ([findings 2026-10-09-sendmessage-hook-for-ccmsg-addresses](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md) の「実装後の e2e」)、本 DR は `session.send` を hook しないので、その SendMessage は harness が宛先を探して失敗する。skill の案内はこれを避けるためのもの
 - **結果の形**: handler は常に `{ result }` で答え、届かなかったことは `result` の文面で示す。`{ isError: true, result }` を返しても tool_result に `is_error` は付かず、`result` の文字列がそのまま届く (probe 3/3)
 - **待ち方**: handler は送信の完了 (daemon の解決と peer 注入) を `$.process.run` で待ち、`timeoutMs` を明示して超えたら「届いたか確かめられなかった」で返す。`$.process.run` の待ちは hook の予算 (10 秒) に数えられない (15 秒・40 秒とも待ち切った) が、`$.clock.sleep` 等の待ちは数えられ、10 秒を超えると hook が飛ばされて core に落ち、許可ダイアログが出て `no tool.call hook answered` のエラーになる (probe)。handler の中で時計の待ちを使わない。待ちの間に人が Esc を押すと `$.process.run` は `aborted` で reject して子を kill し、turn は `aborted` で終わる (probe 2/2)。その送信が届いたかは model に返らず、daemon の送信の記録が正になる
-- `-p` / SDK のセッションと codex は、DR-0037 §5 の判断 (kawaz 2026-10-09: `-p` で別セッションとやりとりするユースケースはほとんど無い) を引き継いで対象外にする。tool を登録しないか、登録して理由を返すかは実装時に決める
+- `-p` / SDK のセッションと codex は、kawaz 2026-10-09 の判断 (`-p` で別セッションとやりとりするユースケースはほとんど無い) に従い対象外にする。tool を登録しないか、登録して理由を返すかは実装時に決める
 
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 
@@ -109,7 +109,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 ### 8. やらないこと
 
 - 同一セッションの中の SendMessage (本体と subagent / teammate の間) には触らない。typed tool はセッション間の送信と say (と宛先の候補) に限る。同一セッションの中の連絡まで tool に寄せると、harness の SendMessage と経路が 2 本になる
-- 同じ config home のセッション同士でも、セッション間の送信は送信の tool で行い、harness の SendMessage の名前での直接送信は案内しない (DR-0037 §1 の kawaz 2026-10-13 の裁定を引き継ぐ)
+- 同じ config home のセッション同士でも、セッション間の送信は送信の tool で行い、harness の SendMessage の名前での直接送信は案内しない (kawaz 2026-10-13 の裁定)
 - §7 のフォールバック経路を作らない。経路が 2 本あると、どちらで届いたか・どちらが壊れているかの切り分けが常に要り、no_module という状態の意味もぼやける
 - §6 の `agentId` 付き append を、permission の許可や classifier の判断材料の代わりに使わない
 
@@ -150,7 +150,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 |---|---|
 | classic を併用する (command hook の SessionStart と module の `classic.*` を残す) | 読み込みの条件が違う 2 本の経路を持ち続けることになる。組織が管理する機械では user tier の `classic.*` が飛ばされる (Context) |
 | エージェント向けの口を CLI のまま残す (`ccmsg post` / `reply` / `peers` / `say`) | 本文の切れ目のぶれ、長い本文の truncate の回避、1 アクションが残り、引数に型が無い (Context)。typed tool なら入力の形を schema で示せ、本文は tool の入力として全文が渡る |
-| SendMessage の横取り (DR-0037) を続ける | `ccmsg:` の綴りの規約を利用者に課す。model が読む結果の文面は harness が決めて ccmsg の結果を正確に表せず、hook の throw が harness の宛先探しに落ちる (DR-0037 §4)。harness の本来の宛先 (本体と subagent) と同じ tool に ccmsg の宛先が混ざる |
+| SendMessage の横取りを続ける | `ccmsg:` の綴りの規約を利用者に課す。model が読む結果の文面は harness が決めて ccmsg の結果を正確に表せず、hook の throw が harness の宛先探しに落ちる ([findings 2026-10-09-sendmessage-hook-for-ccmsg-addresses](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md))。harness の本来の宛先 (本体と subagent) と同じ tool に ccmsg の宛先が混ざる |
 | ccmsg の口を MCP server で出す | module の無いセッションでも動く口になり、§7 と逆になる。セッションごとに別プロセスが常駐する |
 | module の無いセッション向けに CLI / PushNotification / `ps` / classic のフォールバックを持つ | §8 のとおり。kawaz 2026-10-15 の方針 |
 | tool の handler で `next(e)` を呼んで permission を通す | `next(e)` は permission の判定の後に core まで降り、`no tool.call hook answered` のエラー結果が返る。permission を通しつつ自前で答える形は見つかっていない (event-matrix 実測) |
@@ -164,7 +164,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 
 ## Consequences
 
-- 置き換わる判断: 本 DR の実装の時点で、[DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) は Superseded になる。[DR-0035](./DR-0035-user-input-via-composer-fill.md) の §3 (事実を取る classic の event、「daemon はセッションの起動 (SessionStart) で立つ」) と §5 (成功の時点を `classic.UserPromptSubmit` とする定め) は §2 の対応表に置き換わる。[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1 の CLI の直送と、v2 の契約に揃えた返信行 (`Reply with: ccmsg reply <mid> --to <sid> <text>`) は §3 の送信の tool に置き換わり、返信行の形の v2 との整合は崩れる (封筒の `from` の `ccmsg:<sid>` は残り、返信は skill の案内で送信の tool に導く、§3)。DR-0036 §3 の「人へ知らせるのは PushNotification で足りる」は say の tool に置き換わる。[DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6 の送信の認識 (`ccmsg-direct-transcript.ts` が agent の `ccmsg post` / `reply` の Bash 呼び出しを認識する部分) には、送信と say の tool の tool_use の形を足す
+- 置き換わる判断: SendMessage の横取りによるセッション間の送信は、§3 の送信の tool に置き換わる。[DR-0035](./DR-0035-user-input-via-composer-fill.md) の §3 (事実を取る classic の event、「daemon はセッションの起動 (SessionStart) で立つ」) と §5 (成功の時点を `classic.UserPromptSubmit` とする定め) は §2 の対応表に置き換わる。[DR-0036](./DR-0036-retire-rooms-for-p2p.md) §1 の CLI の直送と、v2 の契約に揃えた返信行 (`Reply with: ccmsg reply <mid> --to <sid> <text>`) は §3 の送信の tool に置き換わり、返信行の形の v2 との整合は崩れる (封筒の `from` の `ccmsg:<sid>` は残り、返信は skill の案内で送信の tool に導く、§3)。DR-0036 §3 の「人へ知らせるのは PushNotification で足りる」は say の tool に置き換わる。[DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6 の送信の認識 (`ccmsg-direct-transcript.ts` が agent の `ccmsg post` / `reply` の Bash 呼び出しを認識する部分) には、送信と say の tool の tool_use の形を足す
 - 移行の順序: 「tool と新しい op を足す → 旧 op (`message_send` / `address_send`) を deprecate する → 次のリリースで旧 op を削る」。動いているセッションには前の版の module が残りうる (DR-0035 §3) ので、daemon が旧 op を先に削ると、旧 module の SendMessage の横取りがその場で壊れる。旧 module のセッションは再起動 (か `/reload-plugins`) で新しい module になる
 - 組織が管理する機械では次のものが効かない (reference `claude-mods/overview` の `sec-default` 節の記述で、ccmsg では未検証): `session.compact` の hook が飛ばされるので compact の後の案内の足し直し (§5) が起きない。managed の `allowedMcpServers` がある間は user tier の `$.tool.register` が拒まれるので、§3 の tool が登録されず、そのセッションは送信と say を持たない (§7 により別経路は無い)
 - transcript path の出所が無くなる: 今は SessionStart の command hook が stdin の `transcript_path` を state file に書き、CLI の hello で daemon に届く。module には transcript path を返す `$` が無いので、module のあるセッションも daemon の `resolvePendingTranscripts` (未入力のセッションについて poll ごとに config dir を走査する) で探すことになり、走査の対象が全セッションに広がる。走査のコストは測っていない
@@ -191,7 +191,6 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - [findings 2026-10-14-mods-vs-transcript-information-sources](../findings/2026-10-14-mods-vs-transcript-information-sources.md) — module で取れる事実の棚卸し
 - [DR-0035](./DR-0035-user-input-via-composer-fill.md) — hooks module、サイドカー、セッションの事実、人の入力、`input_readiness`
 - [DR-0036](./DR-0036-retire-rooms-for-p2p.md) — セッション間の直送と say
-- [DR-0037](./DR-0037-agent-messages-ride-sendmessage.md) — 本 DR が置き換える SendMessage の横取り
 - [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6 — TL の送信・PushNotification の表示
 - [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — tool の入力をスキーマで読む
 - [DR-0034](./DR-0034-peer-socket-injection.md) — peer 注入 (受け手への配送はこのまま)

@@ -10,3 +10,4 @@
 | [DR-0014](DR-0014-1on1-room-and-reply-via.md) | 人とセッションの 1on1 room と、msg の応答経路の指示 (`reply_via`) | [DR-0035](../DR-0035-user-input-via-composer-fill.md) §2 / [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2 |
 | [DR-0016](DR-0016-storage-event-seq.md) | room の全 event 型をまたぐ per-room の連番 `seq` (subscribe の再接続 cursor) | [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2 |
 | [DR-0017](DR-0017-reply-command.md) | daemon が宛先を組み立てる room の返信 `ccmsg reply rNmM` と返信行の指示 | [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §1 / §2 |
+| [DR-0037](DR-0037-agent-messages-ride-sendmessage.md) | エージェント間のメッセージを SendMessage に乗せ、`ccmsg:` 宛を hooks module が横取りして peer 注入で届ける | [DR-0039](../DR-0039-all-mods-and-typed-tools.md) §3 / §4 |
