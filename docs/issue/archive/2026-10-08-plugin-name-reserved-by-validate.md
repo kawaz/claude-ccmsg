@@ -1,6 +1,6 @@
 ---
 title: claude plugin validate が plugin 名 claude-ccmsg を reserved として error にする
-status: open
+status: resolved
 category: bug
 created: 2026-10-08T11:51:25+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:01+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:plugin 名を ccmsg-v1 に改名済み (96baae2d)。v0.182.0 の tree で claude plugin validate . が Validation passed を実機確認"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -52,7 +52,7 @@ plugin 名を `ccmsg-v1` に改名する (kawaz 提案、統括賛成)。
 - [x] reserved とされる規則を validate の出力で確認する (`claude-` 始まり等、上記 error 文言)
 - [x] plugin 名の変更が要るか判断する (`ccmsg-v1` へ改名)
 - [x] `renames` による移行、hooks marker など plugin 名依存箇所、marketplace 名の扱いを確かめて決める
-- [ ] 改名を DR-0035 段 1 と同じリリースに載せる
+- [x] 改名を DR-0035 段 1 と同じリリースに載せる
 - [x] `claude plugin validate .` が通る (または通らないままで良い根拠が記録されている)
 
 ## 結果
@@ -73,4 +73,3 @@ personal / emrd / bare の 3 config home ごとに行う。
 3. `claude plugin install ccmsg-v1@claude-ccmsg` で cache を作る
 4. 旧 cache `plugins/cache/claude-ccmsg/claude-ccmsg/` が残れば、移行確認後に消すか判断 (自動で消えるかは未確認)
 
-残る受け入れ条件: リリースに載せる。
