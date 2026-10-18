@@ -3,7 +3,7 @@ title: truncated-ccmsg-message-partial-parse-vs-dr0038
 status: open
 category: design
 created: 2026-10-10T12:46:59+09:00
-last_read:
+last_read: 2026-10-18T17:44:11+09:00
 open_entered: 2026-10-10T12:46:59+09:00
 wip_entered:
 blocked_entered:
