@@ -1,6 +1,6 @@
 ---
 title: SessionInputComposer をマウントして storage event → 入力欄の配線をテストする
-status: open
+status: resolved
 category: task
 created: 2026-10-18T13:37:03+09:00
 last_read: 2026-10-18T14:32:12+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T14:32:49+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done","test/webui/session-input-composer.dom.test.ts (test(webui) 77b24010, change zwzokprr)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -29,6 +29,11 @@ docs/TESTING.md の webui 節 (component はマウントして effect の配線�
 
 ## 受け入れ条件
 
-- [ ] SessionInputComposer をマウントするテストがある
-- [ ] storage event → 入力欄の反映と、編集中は反映しないことを DOM で確かめている
-- [ ] 配線を壊すと落ちることを確認している
+- [x] SessionInputComposer をマウントするテストがある
+- [x] storage event → 入力欄の反映と、編集中は反映しないことを DOM で確かめている
+- [x] 配線を壊すと落ちることを確認している
+
+## 対応
+
+- packages/webui/test/session-input-composer.dom.test.ts: withDom() と timeline-harness の Mounted で SessionInputComposer をマウントし、FAB を押して入力欄を開いて 4 件を見る。入力が下書きとして保存され、開き直すと入力欄に戻る / 別タブの書き込み (同じ localStorage に saveDraft で書き、その storage event を window に送る) が、書き換え前の下書きのままの入力欄に映る / 空の入力欄に映る / このタブで書き換えた入力欄は巻き戻らない。localStorage は MemStorage を stubGlobal で生やす
+- 配線を壊すと落ちることの確認: storage の listener を外すと「書き換え前のまま」「空」の 2 件が、編集中の判定 (otherTabDraft) を storedDraftChange に置き換えると「巻き戻らない」が、入力時の saveDraft を外すと「保存され戻る」が落ちた (戻した後は 4 件とも通る)
