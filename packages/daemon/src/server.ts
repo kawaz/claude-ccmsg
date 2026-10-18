@@ -248,10 +248,10 @@ export interface Daemon {
   /** `claude agents --json` merged poll state (DR-0009-agents addendum). */
   agentsPoller: AgentsPoller;
   /** Sessions the agents poll has listed, keyed by sid, valued by the config
-   * dir whose poll listed them (syncSessionsFromAgents). Only these are ever
-   * forgotten for vanishing from that poll: a session the harness never
-   * listed (a codex peer, a test client) has no harness record whose absence
-   * could mean anything. */
+   * dir whose poll listed them (syncSessionsFromAgents): these are forgotten
+   * once they vanish from that dir's answer. A session only a hello
+   * registered is forgotten once a round begun after the hello does not list
+   * it (forgetUnlistedHellos). */
   agentsSeen: Map<string, string>;
   /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
   transcriptTail: TranscriptTailStore;
@@ -571,7 +571,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
  * alive — a Claude Code session talks to the daemon only for the moment a
  * `ccmsg` command runs, so an entry outlives every connection of its session.
  * The end signals are the harness's register no longer listing the session
- * (syncSessionsFromAgents) and `session_kill` terminating the process.
+ * (syncSessionsFromAgents), or not listing a session only a hello registered
+ * (forgetUnlistedHellos), and `session_kill` terminating the process.
  * Callers push ev:"peers" themselves. */
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
@@ -729,6 +730,30 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
     );
   }
   if (changed) maybeBroadcastPeers(daemon);
+}
+
+/** Forget the sessions only a hello registered that one round of the agents
+ * poll — begun at `begunAt` or later, answered by `answeredDirs` — should
+ * have listed and did not (DR-0034 §5). A sid the poll has listed is forgotten by syncSessionsFromAgents once
+ * it vanishes; one it never listed has only the poll's silence to go by.
+ *
+ * The round has to have begun after the hello: a session that started just
+ * before saying hello may not be in a round already under way. And the
+ * session's config dir has to have answered — any dir, for a hello that named
+ * none: a dir that failed to answer says nothing. A sid forgotten here comes
+ * back with its next hello. */
+export function forgetUnlistedHellos(
+  daemon: Daemon,
+  answeredDirs: readonly string[],
+  begunAt: number,
+): void {
+  const answered = new Set(answeredDirs);
+  for (const [sid, entry] of daemon.sessions) {
+    if (daemon.agentsSeen.has(sid) || Date.parse(entry.connectedAt) >= begunAt) continue;
+    const dirAnswered =
+      entry.configDir === undefined ? answered.size > 0 : answered.has(entry.configDir);
+    if (dirAnswered) forgetSession(daemon, sid);
+  }
 }
 
 /** Give a registry-derived session its transcript once the harness writes
@@ -2957,6 +2982,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
           agents: agentRows(poll.agents),
           answeredDirs: poll.answeredDirs.map((dir) => normalizeConfigDir(dir) ?? dir),
         };
+        forgetUnlistedHellos(daemon, round.answeredDirs, begunAfter);
         const { found, dropped } = daemon.sidecarRuns.reconcile(round, begunAfter);
         for (const run of found) {
           daemon.log.info(`sidecar ${run.sid}.${run.runId} is pid=${String(run.pid)}`);

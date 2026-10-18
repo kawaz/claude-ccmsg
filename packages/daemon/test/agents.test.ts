@@ -503,6 +503,9 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
   test("hello 済みの sid は agents 由来の値で上書きされない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
+      // No dir answers until the row is there, so no round in between
+      // forgets the hello for not listing it.
+      setRows(dirA, "FAIL");
       await sessionConn(ctx, SID_A, { repo: "hello-repo", ws: "hello-ws", cwd });
       await u.readEventUntil("peers", hasPeer(SID_A));
       setRows(dirA, [row(SID_A, os.tmpdir()), row("sMarker", cwd)]);
@@ -515,15 +518,62 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     });
   });
 
-  test("agents に一度も出ていない hello 由来の sid は agents の変化で消えない", async () => {
+  // A hello alone is not the harness's word that the session runs: a sid the
+  // poll never lists (one the harness does not know, or one whose harness is
+  // gone) is forgotten by the first round begun after the hello.
+  test("hello だけで登録された sid は、hello の後に始まった poll に載らなければ peers から消える", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
-      await sessionConn(ctx, SID_HELLO, { cwd });
       setRows(dirA, [row("sA", cwd)]);
       await u.readEventUntil("peers", hasPeer("sA"));
-      setRows(dirA, []);
-      const { ev } = await u.readEventUntil("peers", lacksPeer("sA"));
-      expect(ev.peers.map((p) => p.sid)).toEqual([SID_HELLO]);
+      await sessionConn(ctx, SID_HELLO, { cwd });
+      await u.readEventUntil("peers", hasPeer(SID_HELLO));
+      const { ev } = await u.readEventUntil("peers", lacksPeer(SID_HELLO));
+      expect(ev.peers.map((p) => p.sid)).toEqual(["sA"]);
+    });
+  });
+
+  test("hello の後に poll に載った sid は、poll から消えるまで peers に残る", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+      const u = await watcher(ctx);
+      // Rounds in which no dir answers forget nothing: the hello waits for
+      // the row.
+      setRows(dirA, "FAIL");
+      await sessionConn(ctx, SID_HELLO, { cwd });
+      setRows(dirA, [row(SID_HELLO, cwd)]);
+      await u.readEventUntil("agents", (e) => e.agents.some((a) => a.sessionId === SID_HELLO));
+      // Rounds go on listing it: still there once a later round registered
+      // a marker.
+      setRows(dirA, [row(SID_HELLO, cwd), row("sMarker", cwd)]);
+      const marked = await u.readEventUntil("peers", hasPeer("sMarker"));
+      expect(marked.ev.peers.map((p) => p.sid).toSorted()).toEqual(
+        [SID_HELLO, "sMarker"].toSorted(),
+      );
+      setRows(dirA, [row("sMarker", cwd)]);
+      const { ev } = await u.readEventUntil("peers", lacksPeer(SID_HELLO));
+      expect(ev.peers.map((p) => p.sid)).toEqual(["sMarker"]);
+    });
+  });
+
+  test("hello だけで登録された sid は、名乗った config dir が poll に答えない間は消えない", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+      const u = await watcher(ctx);
+      const dirB = path.join(path.dirname(dirA), ".claude-b");
+      fs.mkdirSync(dirB);
+      setRows(dirB, "FAIL");
+      await sessionConn(ctx, SID_HELLO, { cwd, config_dir: dirB });
+      // Each marker is registered by a later round than the one before it:
+      // the second's round began after the first's ended, so after the hello,
+      // and the third's push comes once that round has run its forgetting.
+      for (const marker of ["sM1", "sM2", "sM3"]) {
+        setRows(dirA, [row(marker, cwd)]);
+        await u.readEventUntil("peers", hasPeer(marker));
+      }
+      const res = await u.requestOk({ op: "peers" });
+      expect(res.peers.map((p) => p.sid).toSorted()).toEqual([SID_HELLO, "sM3"].toSorted());
+      // Its dir answering without it is what forgets it.
+      setRows(dirB, []);
+      await u.readEventUntil("peers", lacksPeer(SID_HELLO));
     });
   });
 
