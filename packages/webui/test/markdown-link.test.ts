@@ -15,6 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   classifyMarkdownLinkUrl,
+  codeSpanLinkTarget,
   extractMarkdownLinkUrls,
   isSafeUrl,
   markdownLinkPathRef,
@@ -135,6 +136,48 @@ describe("classifyMarkdownLinkUrl", () => {
       kind: "external",
       url: "https://ccmsg.example.com/s/abc",
     });
+  });
+});
+
+// A code span is a link when what it holds is a link destination of the same
+// kind a markdown link names: a URL with an allowed scheme, judged by
+// classifyMarkdownLinkUrl. A span without a scheme stays code — `rows` or
+// `docs/x.md` is not a destination the author wrote as one.
+describe("codeSpanLinkTarget", () => {
+  test("a URL with an allowed scheme is external", () => {
+    expect(codeSpanLinkTarget("https://example.com/x")).toEqual({
+      kind: "external",
+      url: "https://example.com/x",
+    });
+    expect(codeSpanLinkTarget("mailto:a@example.com")).toMatchObject({ kind: "external" });
+  });
+
+  test("a URL naming this webui's origin is internal", () => {
+    expect(
+      codeSpanLinkTarget("https://ccmsg.example.com/s/abc", "https://ccmsg.example.com"),
+    ).toEqual({ kind: "internal", url: "https://ccmsg.example.com/s/abc" });
+  });
+
+  // No exception for template characters: the URL rule is the one rule.
+  test("template characters do not keep a URL from linking", () => {
+    expect(codeSpanLinkTarget("https://example.com/{id}/x")).toMatchObject({ kind: "external" });
+  });
+
+  test("a span without a scheme stays code", () => {
+    expect(codeSpanLinkTarget("rows")).toBeNull();
+    expect(codeSpanLinkTarget("docs/x.md")).toBeNull();
+    expect(codeSpanLinkTarget("#section")).toBeNull();
+  });
+
+  test("a disallowed scheme stays code", () => {
+    expect(codeSpanLinkTarget("javascript:alert(1)")).toBeNull();
+  });
+
+  // A destination holds no whitespace, so a span with any is not one
+  // destination but a command or prose that mentions a URL.
+  test("a span with whitespace stays code", () => {
+    expect(codeSpanLinkTarget("https://example.com/x y")).toBeNull();
+    expect(codeSpanLinkTarget("curl https://example.com/x")).toBeNull();
   });
 });
 

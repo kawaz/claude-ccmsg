@@ -1632,6 +1632,47 @@ describe("renderMarkdownAst / markdown links to files", () => {
 // Restricted mode (user-authored messages) has no session-scoped resolver, so
 // every path target is inert there. Pinned separately because restricted mode
 // runs its own tokenizer, not the mdast walk.
+describe("code spans holding a URL", () => {
+  function codeRoot(value: string): Root {
+    return {
+      type: "root",
+      children: [{ type: "paragraph", children: [{ type: "inlineCode", value }] }],
+    };
+  }
+
+  // The link wraps the code, so the span keeps its code look; the target is
+  // the one an external markdown link opens in.
+  test("an external URL in a code span links, still as code", () => {
+    const vnode = renderMarkdownAst(codeRoot("https://example.com/x"));
+    const a = collect(vnode, (n) => n.type === "a");
+    expect(a).toHaveLength(1);
+    expect(stringProp(a[0], "href")).toBe("https://example.com/x");
+    expect(stringProp(a[0], "target")).toBe("_blank");
+    expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
+    const code = collect(a[0], (n) => n.type === "code");
+    expect(code).toHaveLength(1);
+    expect(stringProp(code[0], "class")).toBe("md-inline-code");
+    expect(flattenText(a[0])).toBe("https://example.com/x");
+  });
+
+  test("a code span that is not a URL stays plain code", () => {
+    for (const value of ["x = 1", "rows", "curl https://example.com/x"]) {
+      const vnode = renderMarkdownAst(codeRoot(value));
+      expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+      expect(collect(vnode, (n) => n.type === "code")).toHaveLength(1);
+    }
+  });
+
+  test("a user's message links a URL in a code span the same way", () => {
+    const vnode = renderRestrictedMarkdown("open `https://example.com/x` now");
+    const a = collect(vnode, (n) => n.type === "a");
+    expect(a).toHaveLength(1);
+    expect(stringProp(a[0], "href")).toBe("https://example.com/x");
+    expect(stringProp(a[0], "target")).toBe("_blank");
+    expect(collect(a[0], (n) => n.type === "code")).toHaveLength(1);
+  });
+});
+
 describe("renderRestrictedMarkdown / link targets", () => {
   test("a path-shaped target does not become an origin-relative link", () => {
     const vnode = renderRestrictedMarkdown("see [notes](docs/notes.md)");

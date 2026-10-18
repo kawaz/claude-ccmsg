@@ -88,5 +88,6 @@ position がコードポイント単位かつ入れ子でリセットされる�
   strikethrough / task-list-item)** を採用。`parse(src): Root` の同型差し替えで、自前 JSX renderer (本 DR の本体) は無改修。比較調査の正本は`docs/findings/2026-08-13-markdown-parser-comparison.md`
 - 本 DR 初版の micromark 不採用理由「mdast への変換を別途組むコストが高い」は実態と不一致だった (`mdast-util-from-markdown` が公式の mdast 変換)
 - GFM 集約パッケージ (`mdast-util-gfm`) は autolink literal 拡張が引く`unist-util-visit-parents` の self-reference subpath export を bun 1.3.13 が解決できないため不採用 (個別拡張なら回避できる。unified 系を今後足す時も同じ壁に当たる)。autolink literal / footnote は旧パーサにも無かった挙動なので非搭載のまま
+- 地の文の裸の URL はリンクにしない一方、inline code の中身が丸ごと 1 つのリンク先として読める時 (link の行き先と同じ `classifyMarkdownLinkUrl` で許可された scheme の URL、空白なし) は、code の見た目のまま `<a>` で包む。scheme の無い綴り (`rows`、`docs/x.md`) は code のまま (ファイルパスはファイルの linker が daemon に確かめて判断する)
 - ソース前処理 protect* は 4 → 1 に削減。残る `protectTagLikeAngleBrackets` は旧パーサのバグ回避ではなく CommonMark の HTML ブロックの貪欲さ (タグ形状行が後続を空行まで飲む) + no-raw-HTML ポリシーへの対策として存続
 - サイズ実測: 実バンドル gzip +5.5KB (270.5 → 276.1KB)。§コスト節の +40.7KB gz はmizchi 導入時の値であり、本差し替え後の合計は上記が正

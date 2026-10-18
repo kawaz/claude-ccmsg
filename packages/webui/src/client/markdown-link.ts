@@ -183,6 +183,24 @@ export function classifyMarkdownLinkUrl(
   return ref ? { kind: "path", ref } : { kind: "disarm" };
 }
 
+/** Where an inline code span links to, or `null` for a span that stays code.
+ *
+ * The span is read as a link destination by the same rule a markdown link's
+ * is (`classifyMarkdownLinkUrl`), and links only when that names a URL with an
+ * allowed scheme. A destination holds no whitespace, so a span with any (a
+ * command, prose mentioning a URL) is not one. A span without a scheme stays
+ * code: as a destination it would be a path, and `rows` or `docs/x.md` in
+ * backticks is not one the author wrote as a link — a file path in a code
+ * span is the file linker's to judge, against the daemon. */
+export function codeSpanLinkTarget(
+  code: string,
+  currentOrigin?: string | null,
+): Extract<MarkdownLinkTarget, { kind: "external" | "internal" }> | null {
+  if (/\s/.test(code)) return null;
+  const target = classifyMarkdownLinkUrl(code, currentOrigin);
+  return target.kind === "external" || target.kind === "internal" ? target : null;
+}
+
 /** Collect every link/image target in a markdown source so the caller can
  * probe them in one `fs_stat_batch` before render (mirrors
  * `extractInlineCodeTokens`, and skips fenced code for the same reason: a

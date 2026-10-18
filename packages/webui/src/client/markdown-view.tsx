@@ -29,7 +29,7 @@ import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { splitTextForIssueRefs } from "./issue-ref.ts";
-import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
+import { classifyMarkdownLinkUrl, codeSpanLinkTarget, isSafeUrl } from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
 import { useKeyedValue } from "./useKeyedState.ts";
@@ -583,6 +583,40 @@ function renderTextRun(
   );
 }
 
+/** An inline code span, linked when it holds a URL (`codeSpanLinkTarget`).
+ * The `<code>` sits inside the `<a>`, so the span keeps its code look; where
+ * it opens follows a markdown link to the same URL: off-app in a new tab, this
+ * webui's own origin in place. */
+function renderCodeSpan(value: string, key: string): VNode {
+  const target = codeSpanLinkTarget(value, currentOrigin());
+  const code = <code class="md-inline-code">{value}</code>;
+  if (!target) {
+    return (
+      <code class="md-inline-code" key={key}>
+        {value}
+      </code>
+    );
+  }
+  if (target.kind === "internal") {
+    return (
+      <a key={key} class="md-inline-code-url-link" href={target.url}>
+        {code}
+      </a>
+    );
+  }
+  return (
+    <a
+      key={key}
+      class="md-inline-code-url-link"
+      href={target.url}
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      {code}
+    </a>
+  );
+}
+
 /** `renderChildren` for the children of a `link` node — see `ctx.inLink`. */
 function renderLinkLabel(
   nodes: AnyNode[] | undefined,
@@ -704,13 +738,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // batch answer — falls through to plain `<code>`, matching pre-DR
       // output byte-for-byte.
       const href = ctx.filePathLinker ? ctx.filePathLinker(value) : null;
-      if (!href) {
-        return (
-          <code class="md-inline-code" key={key}>
-            {value}
-          </code>
-        );
-      }
+      if (!href) return renderCodeSpan(value, key);
       return (
         <a key={key} class="md-inline-code-file-link" href={href}>
           <code class="md-inline-code">{value}</code>
@@ -1660,11 +1688,7 @@ function renderRestrictedInline(
         ...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo),
       );
     if (m[1] !== undefined) {
-      out.push(
-        <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>
-          {m[1]}
-        </code>,
-      );
+      out.push(renderCodeSpan(m[1], `${keyPrefix}c${n++}`));
     } else {
       const label = m[2] ?? "";
       const url = m[3] ?? "";
