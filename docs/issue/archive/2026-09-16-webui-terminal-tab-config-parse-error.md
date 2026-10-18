@@ -1,6 +1,6 @@
 ---
 title: webui の Terminal タブが出ない: 本番 config.ts の構文エラーで daemon の設定が空になっている
-status: open
+status: resolved
 category: bug
 created: 2026-09-16T18:30:13+09:00
 last_read: 2026-10-18T16:39:05+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T17:01:19+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","dr/DR-0038","dr/DR-0018","done:前提は DR-0038 / DR-0018 §3.3 で解消済み (読めない config では daemon が起動時に止まり CLI が理由を表示する)。構文エラーを行・桁・行の内容つきで daemon.log と CLI の起動失敗表示に出すよう修正。受け入れ条件 1 は本番設定の作業で範囲外、2 は起動失敗として場所つきで見せることで満たす"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -48,7 +48,3 @@ webui (v1) で SessionView の Terminal タブが表示されない。調査の�
 
 - [ ] 本番 config.ts のタイポを修正し、Terminal タブおよび config 由来の各導線が復旧する
 - [ ] config 読み込み失敗時に webui 側で「機能が存在しない」状態と区別できる通知経路を検討・実装する
-
-## TODO
-
-<!-- wip 時のみ -->
