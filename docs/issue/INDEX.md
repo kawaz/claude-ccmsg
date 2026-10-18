@@ -10,7 +10,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [verify-isolated-daemon-receives-live-sessions](./2026-10-10-verify-isolated-daemon-receives-live-sessions.md) | verify の隔離 daemon に実行中の実セッションが繋がる。socket パス解決が state dir 外にある可能性、原因特定と隔離の完成 |
 | 2026-10-09 | task | open | [sidecar-socket-relative-bind](./2026-10-09-sidecar-socket-relative-bind.md) | サイドカー socket を cwd 相対パスで bind / connect し、sun_path 長超過時の退避先 (別置き場) をなくせるか調査 |
-| 2026-10-02 | bug | open | [host-translation-mixed-text-counterexamples](./2026-10-02-host-translation-mixed-text-counterexamples.md) | host 翻訳が findings の「日英混在の日本語保持」「改行保持」と食い違う観測 (敬体化・インラインコード翻訳・空行挿入) |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
 | 2026-09-07 | design | open | [multi-host-cluster](./2026-09-07-multi-host-cluster.md) | 複数ホストの ccmsg daemon を mesh で束ねる (クラスタ化)。room はクラスタ横断、持ち主 daemon が mid/seq 発行 |
 | 2026-09-06 | design | open | [session-list-sections](./2026-09-06-session-list-sections.md) | セッション一覧のセクション再設計 (Paused/Disappeared/生存統合)。r278 裁定済、実装待ち |
