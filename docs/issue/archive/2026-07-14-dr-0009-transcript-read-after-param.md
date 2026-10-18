@@ -1,6 +1,6 @@
 ---
 title: DR-0009 transcript_read に after (差分取得) パラメータを追加する
-status: idea
+status: resolved
 category: design
 created: 2026-07-14T23:34:29+09:00
 last_read: 2026-10-18T18:31:31+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T19:00:20+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0009","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -37,11 +37,7 @@ TLR-Q1=b (Timeline tab 訪問時の auto-refresh) を実装する過程で判明
 
 ## 受け入れ条件
 
-- [ ] DR-0009 §3 (TranscriptReadRequest) に `after` パラメータを追加する設計を検討する
-- [ ] `after` 指定時、daemon 側が差分行のみ返す経路を設計する (既存 `before` 経路とのモード分岐 or 統合)
-- [ ] webui 側の TLR-Q1=b 実装を `mode:replace` 全量取得から差分 append merge に切り替える
-- [ ] 既存 `before` 消費側 (通常の history 遡り読み込み) への非互換変更が無いことを確認する
-
-## TODO
-
-<!-- wip 時のみ -->
+- [x] DR-0009 §3 (TranscriptReadRequest) に `after` パラメータを追加する設計を検討する
+- [x] `after` 指定時、daemon 側が差分行のみ返す経路を設計する (既存 `before` 経路とのモード分岐 or 統合)
+- [x] webui 側の TLR-Q1=b 実装を `mode:replace` 全量取得から差分 append merge に切り替える
+- [x] 既存 `before` 消費側 (通常の history 遡り読み込み) への非互換変更が無いことを確認する
