@@ -5,6 +5,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
+| 2026-10-18 | bug | open | [test-tmpdir-leak-on-pass](./2026-10-18-test-tmpdir-leak-on-pass.md) | テストの一時ディレクトリが pass した run でも OS の temp dir に残る (fs-find ほか)。8792 個の ccmsg-* を観測 |
 | 2026-10-18 | bug | open | [translate-watchdog-vs-os-model-contention](./2026-10-18-translate-watchdog-vs-os-model-contention.md) | daemon の translate watchdog が、OS の on-device モデルの混雑中に正常な翻訳を「詰まった」と判断して helper を kill しうる |
 | 2026-10-14 | bug | open | [sidecar-hello-ghost-peer-after-harness-death](./2026-10-14-sidecar-hello-ghost-peer-after-harness-death.md) | sidecar が hello して名乗る形で、daemon 再起動で last_activity_at が更新される副作用と、harness 死亡後に幽霊 peer が残るおそれ |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
