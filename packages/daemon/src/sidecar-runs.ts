@@ -8,8 +8,8 @@
 //
 // The sidecar does not know its harness's pid (finding it needs `ps`, which a
 // sandboxed session cannot run). The daemon ties a run to its harness process
-// itself, from Claude Code's register (`claude agents --json`, as the agents
-// poll reads it): the session's row whose start is nearest the run's. The pid
+// itself, from Claude Code's state files (`sessions/<pid>.json`, as the
+// agents rows read them): the session's row whose start is nearest the run's. The pid
 // is what tells a run whose harness died, with its sidecar still connected
 // (a sidecar whose output is not a socket notices only when a write to its
 // module fails), from a live one.
@@ -37,8 +37,8 @@ export interface SidecarRun extends SidecarRunHello {
   pid?: number;
 }
 
-/** A row of `claude agents --json`, as far as tying a run to a process reads
- * it. `configDir` is the poll's, spelled as SidecarRunHello's. */
+/** An agents row (one harness process), as far as tying a run to a process
+ * reads it. `configDir` is the round's, spelled as SidecarRunHello's. */
 export interface AgentRow {
   sessionId: string;
   pid: number;

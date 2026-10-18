@@ -12,7 +12,7 @@
 //
 // Two fields, two live sources, one rule (live first, stored second, nothing
 // invented): `repo`/`ws` come from a connected session's `PeerInfo`, the title
-// from what `claude agents --json` reports as that session's `name` — the same
+// from what Claude Code records as that session's `name` — the same
 // two sources `SessionRowItem` reads for a status-section row.
 //
 // A pin is a record frozen into localStorage at pin time, so its `repo`/`ws`
@@ -186,7 +186,7 @@ export function pinnedSessionLabel(
 }
 
 /** The session's own title for one pinned row, live agent first: what
- * `/rename` set and `claude agents --json` reports as `name`, else the title
+ * `/rename` set and Claude Code records as `name`, else the title
  * the pin stored (for a pin made from a search result, what Session Search
  * read from the transcript's `custom-title` records).
  *
@@ -250,7 +250,7 @@ export function refreshPinsFromPeers(
  * session goes offline.
  *
  * It folds `agents` rather than `peers` because that is where a title comes
- * from — `claude agents --json`'s `name` — and an agent with no name is not a
+ * from — the agents row's `name` — and an agent with no name is not a
  * source: a session that never renamed itself must not blank out the title
  * Session Search recovered from the transcript. */
 export function refreshPinsFromAgents(

@@ -442,8 +442,8 @@ export function lastPathSegment(path: string): string {
 
 /** One row of the Sidebar Sessions list (U1): either a connected ccmsg
  * session (`connected: true`, from PeersResponse) optionally enriched with
- * the matching `claude agents --json` row (same sessionId), or — when
- * `claude agents` reports a session with no matching PeerInfo — an
+ * the matching agents row (same sessionId), or — when
+ * the agents rows list a session with no matching PeerInfo — an
  * agent-only row (`connected: false`) for a Claude session that hasn't
  * started/connected its ccmsg CLI. `agent` is the raw AgentInfo either way,
  * so its `pid`/`kind`/`status`/`state`/`startedAt`/`config_dir` fields are
@@ -460,13 +460,13 @@ export interface SessionRow {
   /** present iff the peer announced a transcript the daemon accepted (U3) —
    * SessionList uses this to route a row's click to the Timeline tab instead
    * of Files. Always absent on an agent-only row (offlineAgentRows): those
-   * come from `claude agents --json`, which carries no transcript info. */
+   * come from the agents rows, which carry no transcript info. */
   transcript_path?: string;
   agent?: AgentInfo;
   connected: boolean;
   /** Present iff the daemon currently reports this (connected) session as
    * stopped on a harness API error — the row's status then becomes `"error"`
-   * ahead of anything `claude agents` says (see sessionStatus). Filled in by
+   * ahead of anything the agents rows say (see sessionStatus). Filled in by
    * `toSessionRow` from the store's by-sid error map rather than passed to
    * `sessionStatus` as a second argument: every existing caller reads a row's
    * status from the row alone (`sessionBadges`, `groupSessionsBySection`), and
@@ -477,7 +477,7 @@ export interface SessionRow {
   api_error?: SessionApiError;
   /** ccmsg build / wire generation this session's latest hello announced, and
    * the warning set while some client of it is out of date (PeerInfo's three
-   * build fields). All absent on an agent-only row: `claude agents --json`
+   * build fields). All absent on an agent-only row: the agents rows
    * knows nothing about ccmsg, and a session that never connected has no
    * client to be stale. */
   client_version?: string;
@@ -485,7 +485,7 @@ export interface SessionRow {
   stale_client?: StaleClientInfo;
 }
 
-/** Indexes `claude agents --json` rows by sessionId for O(1) lookup while
+/** Indexes agents rows by sessionId for O(1) lookup while
  * merging — built once per peers/agents pair (e.g. in a `useMemo`), not
  * per-row, since AgentsResponse.agents can be large across every
  * CLAUDE_CONFIG_DIR the daemon polls. */
@@ -496,7 +496,7 @@ export function indexAgentsBySid(agents: readonly AgentInfo[]): Map<string, Agen
 }
 
 /** Builds one SessionRow for a connected peer, attaching the matching agent
- * (if `claude agents` has polled one with the same sessionId) and the matching
+ * (if the agents rows have one with the same sessionId) and the matching
  * harness API error (if the daemon currently reports this session as stopped
  * on one) — used for every entry in the Sidebar's already-sorted peers array,
  * so the existing abc/idle/new ordering (Sidebar.tsx's sortPeers over `peers`)
@@ -528,7 +528,7 @@ export function toSessionRow(
   };
 }
 
-/** Agent-only SessionRows (U1): `claude agents --json` sessions with no
+/** Agent-only SessionRows (U1): agents rows' sessions with no
  * matching PeerInfo — a Claude session running without (or not yet with) a
  * connected ccmsg CLI. Rendered as a distinct "ccmsg 未起動" group appended
  * after the peers rows (see SessionList.tsx) rather than interleaved into
@@ -543,7 +543,7 @@ export function offlineAgentRows(
 ): SessionRow[] {
   const peerSids = new Set(peers.map((p) => p.sid));
   // De-dup by sessionId (Map.set, last-wins — same policy as
-  // indexAgentsBySid) before building rows: `claude agents --json` from more
+  // indexAgentsBySid) before building rows: the agents rows from more
   // than one config_dir could in theory report the same sessionId (see
   // indexAgentsBySid's doc comment), which would otherwise produce two
   // SessionRows sharing the same `sid` — SessionList's `key={row.sid}` needs
@@ -554,7 +554,7 @@ export function offlineAgentRows(
     .sort((a, b) => b.startedAt - a.startedAt)
     .map((a) => ({
       sid: a.sessionId,
-      // `claude agents --json` carries no VCS metadata, so these rows have no
+      // the agents rows carry no VCS metadata, so these rows have no
       // repo/ws and say so. They used to borrow `a.name` for `ws` to keep the
       // old single-label first line non-blank; the row now leads with that
       // name in its own right (sessionRowTitle), and a `ws` holding a session
@@ -574,7 +574,7 @@ export function offlineAgentRows(
  * the announced `transcript_path` of a connected session first, else
  * `resolveVirtualTranscript`'s `<configDir>/projects/<project>/<sid>.jsonl`
  * from the sid alone. So a selected/pinned search hit (which carries its
- * resolved file) and an agent-only row — a sid `claude agents --json` reports
+ * resolved file) and an agent-only row — a sid the agents rows list
  * with no ccmsg connection, hence no `transcript_path` to offer, but with a
  * jsonl on disk — are both readable and foldable.
  *
@@ -593,7 +593,7 @@ export function hasSessionTranscript(
 /** Sessions-list row label (U1 first line): `{repo, ws}` when the row has
  * either (every peers row does), else falls back to the matched agent's
  * `name`, then the cwd's last path segment — an agent-only row never has
- * repo/ws (`claude agents --json` carries no VCS metadata), so this is the
+ * repo/ws (the agents rows carry no VCS metadata), so this is the
  * only path that ever exercises the fallback in practice, but a peers row
  * with an empty repo/ws (session announced neither) takes the same
  * fallback rather than rendering a blank first line. */
@@ -607,7 +607,7 @@ export function hasSessionTranscript(
  * 2. A pinned session's stored `repo/ws` — DR-0021 lets a
  *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
  *    lost the whole worktree name for those rows.
- * 3. An agent-only row (`claude agents --json`, no ccmsg connection): the
+ * 3. An agent-only row (an agents row with no ccmsg connection): the
  *    upstream carries no VCS metadata, so `agent.name` stands in for ws
  *    (the same substitution the sidebar's own first line makes).
  *
@@ -635,7 +635,7 @@ export function resolveSessionTopbar(
 }
 
 /** The Sessions-list row's headline (kawaz r135m16 §1): the session's own
- * title — what `/rename` sets and `claude agents --json` reports as `name`
+ * title — what `/rename` sets and Claude Code records as `name`
  * (e.g. "claude-ccmsg@main 20260812T0215", or whatever the user renamed it
  * to). That name is the only human-chosen identifier a session has, which is
  * why it now leads the row instead of repo/ws.
@@ -666,7 +666,6 @@ export function sessionRowTitle(row: SessionRow): string {
  *   no transcript for.
  * - `"idle"`: a connected row the agents rows do not list (yet): nothing
  *   about it to report.
- * - `"done"`: a background session that finished.
  * - `"waiting"`: Claude Code says a dialog waits for the person
  *   (`status: "waiting"`).
  * - `"busy"` / `"idle"`: the session answers a turn, or does not, as its
@@ -680,7 +679,6 @@ export type SessionStatus =
   | "error"
   | "unobserved"
   | "idle"
-  | "done"
   | "waiting"
   | "busy"
   | "no_module";
@@ -690,7 +688,6 @@ export function sessionStatus(row: SessionRow): SessionStatus {
   if (row.api_error) return "error";
   if (!row.transcript_path) return "unobserved";
   if (!row.agent) return "idle";
-  if (row.agent.state === "done") return "done";
   if (row.agent.status === "waiting") return "waiting";
   if (row.agent.turn === undefined) return "no_module";
   return row.agent.turn.state === "responding" ? "busy" : "idle";
@@ -698,20 +695,20 @@ export function sessionStatus(row: SessionRow): SessionStatus {
 
 /** Status/state badges for one Sessions-list row (U1), in display order.
  * - `"offline"` (agent-only row, no ccmsg connection) is exclusive of the
- *   busy/idle/done tri-state below — an offline row shows only "offline"
+ *   statuses below — an offline row shows only "offline"
  *   since `agent` is always present for such a row (that's how it exists),
  *   so the loop below would otherwise also emit an idle/busy badge for it.
  * - A *connected* row (`row.connected`) with no matched agent (older CLI,
- *   `claude agents` hasn't polled yet, or a non-Claude ccmsg client) gets
- *   no badges at all — "従来通り" per the U1 spec: there's nothing from
- *   `claude agents` to report, so nothing is shown instead of guessing.
- * - `"bg"` is additive: a background agent still gets its busy/idle/done
- *   badge too, `"bg"` just tags kind separately.
- * U3 note: SessionList.tsx no longer renders the busy/idle/done/offline
- * badges this returns (that status now shows via the row's section instead)
- * — it only renders the `"bg"` entry, if present. The function itself is
- * kept as-is (tests still pin its full return value) since `"bg"`'s presence
- * still depends on this same busy/idle/done/offline computation. */
+ *   the agents rows do not list it yet, or a non-Claude ccmsg client) gets
+ *   no badges at all — "従来通り" per the U1 spec: there's nothing to
+ *   report, so nothing is shown instead of guessing.
+ * - `"bg"` is additive: a background agent still gets its status badge too,
+ *   `"bg"` just tags kind separately.
+ * U3 note: SessionList.tsx no longer renders the status badges this returns
+ * (that status now shows via the row's section instead) — it only renders
+ * the `"bg"` entry, if present. The function itself is kept as-is (tests
+ * still pin its full return value) since `"bg"`'s presence still depends on
+ * this same status computation. */
 export function sessionBadges(row: SessionRow): string[] {
   if (!row.connected) return ["offline"];
   if (!row.agent) return [];
@@ -823,7 +820,6 @@ const SESSION_SECTION_ORDER: readonly SessionSectionKey[] = [
   "waiting",
   "busy",
   "no_module",
-  "done",
   "offline",
   "unobserved",
 ];
@@ -833,7 +829,6 @@ const SESSION_SECTION_LABELS: Record<SessionSectionKey, string> = {
   waiting: "Waiting",
   busy: "Active",
   no_module: "No module",
-  done: "Done",
   offline: "ccmsg未起動",
   unobserved: "No transcript",
 };

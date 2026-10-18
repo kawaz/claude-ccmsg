@@ -1,4 +1,4 @@
-// session_env boundary: resolve sid→pid with the same fresh `claude agents`
+// session_env boundary: resolve sid→pid with the same fresh state-file
 // lookup + ps verification session-kill.ts uses (kawaz r55m133: "普通に
 // プロトコル追加で pid から取る" — the daemon's own subscribe-process env is
 // not the session's env, Claude Code adds its own vars on the way down), then

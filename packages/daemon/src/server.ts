@@ -249,7 +249,7 @@ export interface Daemon {
   /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
   httpAllow: string[];
   shuttingDown: boolean;
-  /** `claude agents --json` merged poll state (DR-0009-agents addendum). */
+  /** The agents rows, read from Claude Code's state files (agents.ts). */
   agentsPoller: AgentsPoller;
   /** Sessions the agents poll has listed, keyed by sid, valued by the config
    * dir whose poll listed them (syncSessionsFromAgents): these are forgotten
@@ -710,7 +710,7 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
   const answered = new Set(poll.answeredDirs);
   const listed = new Map<string, AgentInfo>();
   for (const agent of poll.agents) {
-    if (!agent.sessionId || agent.state === "done") continue;
+    if (!agent.sessionId) continue;
     listed.set(agent.sessionId, agent);
   }
   let changed = false;
@@ -774,9 +774,9 @@ export function forgetUnlistedHellos(
 
 /** Give a registry-derived session its transcript once the harness writes
  * one (DR-0034 §5). A session registered before anything was typed into it
- * has no `<sid>.jsonl` yet, and the rows `claude agents --json` returns do not
- * change when the first prompt creates it, so this runs on every poll rather
- * than only when the rows change. */
+ * has no `<sid>.jsonl` yet, and its agents row need not change when the first
+ * prompt creates it, so this runs on every round rather than only when the
+ * rows change. */
 async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Promise<void> {
   let changed = false;
   for (const agent of poll.agents) {
@@ -1931,7 +1931,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'session_kill' requires user role");
         return;
       }
-      // Slow: the fresh `claude agents` run plus up to 3s of kill grace
+      // Slow: up to 3s of kill grace
       // (DR-0028). `force` is forwarded to session-kill.ts for the SIGKILL
       // escalation path.
       const killDeps = {
@@ -2132,7 +2132,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'session_env' requires user role");
         return;
       }
-      // Slow for session_kill's reason: the fresh `claude agents` resolution.
       const envRead = await sessionEnv(
         req.session_id,
         productionEnvDeps({
@@ -2522,7 +2521,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    // user role only (webui-only op): the merged `claude agents --json` poll
+    // user role only (webui-only op): the agents rows
     // result is not something a session (AI) needs to see.
     case "agents": {
       if (conn.identity?.role !== "user") {

@@ -120,7 +120,7 @@ export function SessionInputComposer({ sid }: { sid: string }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル: repo → ws → cwd 末尾 → sid8。
   const targetPeer = useStoreState(store, (s) => s.peers.find((p) => p.sid === sid), sameJson);
-  // ccmsg 未起動セッション (peers に居ない) でも `claude agents` に居れば
+  // ccmsg 未起動セッション (peers に居ない) でも agents の行に居れば
   // プロセスは生きている。ラベルは agents 行の cwd 末尾に fallback。
   const agent = useStoreState(store, (s) => s.agents.find((a) => a.sessionId === sid), sameJson);
   const targetAgent = targetPeer ? undefined : agent;

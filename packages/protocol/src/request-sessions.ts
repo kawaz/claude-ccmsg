@@ -236,9 +236,10 @@ export type SessionLauncherConfigRequest = Output<typeof SessionLauncherConfigRe
 
 /** Terminate the OS process behind a Claude Code session (DR-0028, user role
  * only — session-role agents must never be able to kill each other). The
- * daemon resolves sid→pid FRESH at request time via `claude agents --json
- * --all` across every detected config dir (never the agents poller cache,
- * which can be up to 5s stale — a stale pid is a mis-kill), then verifies the
+ * daemon resolves sid→pid FRESH at request time from Claude Code's state files
+ * (`sessions/<pid>.json`) in the config dirs where it reaches the session
+ * (never the agents rows, which can be a round stale — a stale pid is a
+ * mis-kill), then verifies the
  * pid's command line still looks like a claude process (`ps -p <pid> -o
  * command=`, pid-reuse guard) before signalling. Kill sequence: SIGTERM →
  * ~1s wait → SIGTERM again if still alive (the claude TUI's first SIGTERM
@@ -269,8 +270,8 @@ export type SessionKillRequest = Output<typeof SessionKillRequestSchema>;
 /** Retitle a running Claude Code session by typing its own `/rename` command
  * into the terminal that session lives in (user role only).
  *
- * There is no API to set a session's title: `claude agents --json` reports
- * `name` but nothing writes it from outside, and the title kawaz wants to fix
+ * There is no API to set a session's title: Claude Code records `name` in
+ * its state file but nothing writes it from outside, and the title kawaz wants to fix
  * is exactly that `name` (the Sessions list's first line). The one route that
  * does work is the one kawaz performs by hand today — switch to the session's
  * terminal and type `/rename <title>`. This op automates that keystroke
@@ -402,10 +403,7 @@ export type SessionFactsRequest = Output<typeof SessionFactsRequestSchema>;
  * spawns carries whatever Claude Code added on the way down, which is not
  * the session process's environment. sid→pid resolution and the ps
  * pid-reuse verification are shared verbatim with session_kill — reading a
- * recycled pid's environment would disclose an unrelated process's secrets.
- *
- * Slow for the same reason as session_kill: the fresh `claude agents`
- * resolution takes seconds. */
+ * recycled pid's environment would disclose an unrelated process's secrets. */
 export const SessionEnvRequestSchema = v.object({
   op: v.literal("session_env"),
   /** The Claude Code session UUID whose process environment to read. Carries
@@ -488,7 +486,7 @@ export const SessionDumpFileRequestSchema = v.object({
 });
 export type SessionDumpFileRequest = Output<typeof SessionDumpFileRequestSchema>;
 
-/** One-shot fetch of the latest `claude agents --json` poll result (user role
+/** One-shot fetch of the latest agents rows (user role
  * only). The webui uses this for the initial paint; subsequent changes arrive
  * as `ev:"agents"` stream events. */
 export const AgentsRequestSchema = v.object({

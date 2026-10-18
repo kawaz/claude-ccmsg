@@ -17,7 +17,7 @@ import {
 function fakeDeps(overrides: Partial<SessionEnvDeps> = {}): SessionEnvDeps {
   return {
     configDirs: () => ["/fake/.claude"],
-    runAgents: () => Promise.resolve("[]"),
+    sessionsIn: () => Promise.resolve([]),
     runPs: () => Promise.resolve("claude\n"),
     sendSignal: () => {},
     isAlive: () => false,
@@ -29,7 +29,7 @@ function fakeDeps(overrides: Partial<SessionEnvDeps> = {}): SessionEnvDeps {
   };
 }
 
-const AGENTS_ROW = (sid: string, pid: number) => JSON.stringify([{ sessionId: sid, pid }]);
+const AGENTS_ROW = (sid: string, pid: number) => [{ sessionId: sid, pid }];
 
 describe("parseProcEnviron (Linux /proc/<pid>/environ)", () => {
   test("NUL-separated records split into name/value, trailing NUL ignored", () => {
@@ -112,7 +112,7 @@ describe("sessionEnv flow", () => {
     const res = await sessionEnv(
       "sid-1",
       fakeDeps({
-        runAgents: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
+        sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
         readEnv: (pid) => {
           seen.push(pid);
           return Promise.resolve("claude FOO=bar");
@@ -128,7 +128,7 @@ describe("sessionEnv flow", () => {
     const res = await sessionEnv(
       "missing",
       fakeDeps({
-        runAgents: () => Promise.resolve("[]"),
+        sessionsIn: () => Promise.resolve([]),
         readEnv: () => {
           read = true;
           return Promise.resolve("");
@@ -146,7 +146,7 @@ describe("sessionEnv flow", () => {
     const res = await sessionEnv(
       "sid-1",
       fakeDeps({
-        runAgents: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
+        sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
         runPs: () => Promise.resolve("/usr/bin/python3 something.py\n"),
         readEnv: () => {
           read = true;
@@ -164,7 +164,7 @@ describe("sessionEnv flow", () => {
     const p = sessionEnv(
       "sid-1",
       fakeDeps({
-        runAgents: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
+        sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
         readEnv: () => Promise.reject(new Error("ps exited 1")),
       }),
     );

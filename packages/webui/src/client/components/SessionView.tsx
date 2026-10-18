@@ -211,7 +211,7 @@ export function SessionView({
   const terminalAbsence = terminalAbsenceNotice(sessionInputReadiness(peer, slice.sessionStatus));
   const hasTerminal = !!terminalGatewayUrl && (!!hyouiSessionId || terminalAbsence !== null);
   // Timeline / Status が使えるかの単一ゲート (DR-0021 §2.4/§3.1) — 導出は
-  // hasSessionTranscript を見る。agent-only 行 (peer 無し、`claude agents
+  // hasSessionTranscript を見る。agent-only 行 (peer 無し、agents の行
   // --json` に居る) でも jsonl は読めるので両タブとも出す。Timeline の live
   // tail だけは transcript_subscribe が接続中セッションを要求するため静的
   // read になる (Timeline 自身の refresh ボタンで読み直す)。Status の fold は
@@ -429,7 +429,7 @@ export function SessionView({
          * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
          * attachments state も保たれる (draft は localStorage にも保存)。
          * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
-         * (ccmsg 接続済み) か `claude agents` に居る (ccmsg 未起動だがプロセスは
+         * (ccmsg 接続済み) か agents の行に居る (ccmsg 未起動だがプロセスは
          * 動いている)。入力はセッションの hooks module が受けるので、subscribe
          * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
          * セッション) は宛先が存在しないのでガードのまま。 */}

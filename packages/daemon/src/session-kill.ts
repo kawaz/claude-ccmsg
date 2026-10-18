@@ -3,13 +3,9 @@
 // logic split out of server.ts (same division of labor as session-launch.ts)
 // with every external effect injectable so tests can drive all branches
 // without a real `claude`/`ps`, and the integration test can keep real
-// signals while faking only the two command runners.
-import { ClaudeAgentsAllTextSchema, parseWith } from "@ccmsg/protocol";
-
-/** Per-`claude agents --json --all` child budget — same rationale as
- * agents.ts's POLL_TIMEOUT_MS: one hung CLI in one config dir must not stall
- * the kill request forever. */
-export const AGENTS_TIMEOUT_MS = 5000;
+// signals while faking only the state files and `ps`.
+import { isProcessAlive } from "./sidecar-call.ts";
+import { readSessionsDir } from "./session-runs.ts";
 
 /** Wait after the first SIGTERM before deciding a second is needed. The
  * claude TUI's first SIGTERM only arms its quit-confirmation guard; too short
@@ -31,11 +27,10 @@ export const TOTAL_GRACE_MS = 3000;
 /** Injectable effects. Production defaults in `productionKillDeps` below;
  * tests replace any subset (structural, no class needed). */
 export interface SessionKillDeps {
-  /** All CLAUDE_CONFIG_DIR candidates to scan (production: detectConfigDirs). */
+  /** The CLAUDE_CONFIG_DIRs to look the session up in. */
   configDirs(): string[];
-  /** Run `claude agents --json --all` for one config dir and return stdout.
-   * Must reject on spawn failure / non-zero exit / timeout. */
-  runAgents(configDir: string): Promise<string>;
+  /** The live sessions one config dir records (`sessions/<pid>.json`). */
+  sessionsIn(configDir: string): Promise<readonly { sessionId: string; pid: number }[]>;
   /** Run `ps -p <pid> -o command=` and return stdout. Must reject when ps
    * fails (which includes "no such pid"). */
   runPs(pid: number): Promise<string>;
@@ -55,32 +50,28 @@ export interface SessionKillDeps {
   };
 }
 
-/** Resolve session_id → pid by running `claude agents --json --all` fresh
- * against every detected config dir (DR-0028: the poller cache can be up to
- * 5s stale and a stale pid is a mis-kill; `--all` includes completed
- * background sessions the default listing omits). Config dirs are scanned in
- * order and the FIRST matching row wins — session UUIDs don't collide across
- * config dirs in practice, and a deterministic pick beats failing the whole
- * request on a hypothetical duplicate. Any per-dir failure (spawn error,
- * non-zero exit, output that does not read) skips that dir, same isolation posture as
- * agents.ts's pollOne. Returns null when no dir yields a match. */
+/** Resolve session_id → pid by reading Claude Code's state files afresh in
+ * every config dir (DR-0028: the poller cache can be a round stale and a
+ * stale pid is a mis-kill). Config dirs are scanned in order and the FIRST
+ * matching record wins — session UUIDs don't collide across config dirs in
+ * practice, and a deterministic pick beats failing the whole request on a
+ * hypothetical duplicate. A dir that cannot be read skips that dir. Returns
+ * null when no dir yields a match. */
 export async function resolvePid(sessionId: string, deps: SessionKillDeps): Promise<number | null> {
   for (const dir of deps.configDirs()) {
-    let text: string;
+    let rows: readonly { sessionId: string; pid: number }[];
     try {
-      text = await deps.runAgents(dir);
+      rows = await deps.sessionsIn(dir);
     } catch {
       continue;
     }
-    const rows = parseWith(ClaudeAgentsAllTextSchema, text);
-    if (!rows.ok) continue;
-    for (const { sessionId: rowSid, pid } of rows.value) {
+    for (const { sessionId: rowSid, pid } of rows) {
       // pid must be an integer > 1: process.kill(0) signals the daemon's OWN
       // process group and negative pids signal whole groups — a corrupted
       // registry row must never be able to reach either (ps verification
       // would also refuse, but an irreversible op deserves the explicit
-      // gate at the source). A finished background session has no pid.
-      if (rowSid === sessionId && pid !== undefined && Number.isInteger(pid) && pid > 1) {
+      // gate at the source).
+      if (rowSid === sessionId && Number.isInteger(pid) && pid > 1) {
         return pid;
       }
     }
@@ -88,8 +79,8 @@ export async function resolvePid(sessionId: string, deps: SessionKillDeps): Prom
   return null;
 }
 
-/** Pid-reuse guard (DR-0028): between the `claude agents` snapshot (plus any
- * staleness in the CLI's own registry) and our kill, the pid could have been
+/** Pid-reuse guard (DR-0028): between the state file's read (plus a file a
+ * crashed session left behind) and our kill, the pid could have been
  * recycled to an unrelated process. Only pass when `ps -p <pid> -o command=`
  * shows argv[0] whose basename is exactly `claude` (with or without a
  * directory prefix: TUI sessions show `claude --model ...`, PATH-resolved
@@ -244,12 +235,10 @@ import { detectConfigDirs } from "./agents.ts";
 
 export const productionKillDeps: SessionKillDeps = {
   configDirs: detectConfigDirs,
-  runAgents: (configDir) =>
-    runCommand(
-      ["claude", "agents", "--json", "--all"],
-      { ...process.env, CLAUDE_CONFIG_DIR: configDir },
-      AGENTS_TIMEOUT_MS,
-    ),
+  sessionsIn: async (configDir) => {
+    const read = await readSessionsDir(configDir, isProcessAlive);
+    return read.live;
+  },
   runPs: (pid) => runCommand(["ps", "-p", String(pid), "-o", "command="], process.env, 2000),
   sendSignal: (pid, sig) => process.kill(pid, sig),
   isAlive: (pid) => {

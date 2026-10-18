@@ -252,7 +252,7 @@ export interface WsHandle {
    * onMessage below) until sessionStatusUnsubscribe or disconnect. */
   sessionStatusSubscribe(sid: string): Promise<ReplyOf<"session_status_subscribe">>;
   sessionStatusUnsubscribe(sid: string): Promise<ReplyOf<"session_status_unsubscribe">>;
-  /** One-shot fetch of the latest `claude agents --json` poll result (U1).
+  /** One-shot fetch of the latest agents rows (U1).
    * Called once in onOpen's handshake for the initial paint; subsequent
    * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
   agents(): Promise<ReplyOf<"agents">>;
@@ -622,7 +622,7 @@ export function createWsClient(
       if (peers.ok) {
         dispatch({ type: "peers/loaded", peers: peers.peers });
       }
-      // U1: initial `claude agents --json` paint + daemon provenance for the
+      // U1: initial the agents rows paint + daemon provenance for the
       // footer. Neither failure here should abort the handshake above (both
       // already landed) — a rejection just falls through to the catch below
       // and skips these two dispatches, same as any other mid-handshake drop.
@@ -680,7 +680,7 @@ export function createWsClient(
       return;
     }
     if (streamEv.ev === "notify") return; // not surfaced in the UI (yet)
-    // U1: live push whenever the daemon's merged `claude agents --json` poll
+    // U1: live push whenever the daemon's merged agents rows
     // result changes (only emitted while >=1 user-role subscriber is
     // connected) — folds straight into the same agents/loaded action the
     // one-shot op:"agents" reply in onOpen uses, so the reducer has exactly

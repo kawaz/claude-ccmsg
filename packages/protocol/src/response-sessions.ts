@@ -475,10 +475,11 @@ export const SessionDumpFileResponseSchema = v.object({
 });
 export type SessionDumpFileResponse = Output<typeof SessionDumpFileResponseSchema>;
 
-/** One row of `claude agents --json` output, annotated with which
- * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
- * (camelCase preserved via passthrough) — `kind`/`status`/`state` stay plain
- * strings so newer CLI values don't break older daemons. */
+/** One live session process, as Claude Code records it in
+ * `<config dir>/sessions/<pid>.json`, annotated with which CLAUDE_CONFIG_DIR
+ * it is in. Field names follow Claude Code's (camelCase), and `kind` /
+ * `status` stay plain strings so newer Claude Code values don't break older
+ * daemons. */
 export const AgentInfoSchema = v.object({
   pid: v.number(),
   cwd: v.string(),
@@ -489,17 +490,14 @@ export const AgentInfoSchema = v.object({
   sessionId: v.string(),
   name: v.optional(v.string()),
   /** Claude Code's own word for the process: "waiting" while a dialog waits
-   *  for the person (`waitingFor` says which), otherwise what it reports
-   *  ("idle" / "busy" …, an upstream-controlled open set). Whether the session
-   *  answers a turn is `turn`'s, not this. */
+   *  for the person (`waitingFor` says which), "shell" while a background
+   *  shell (a Monitor) runs, otherwise "idle" / "busy" … (an
+   *  upstream-controlled open set). Whether the session answers a turn is
+   *  `turn`'s, not this. */
   status: v.optional(v.string()),
   /** Human-readable detail for the current status, e.g. "dialog open". */
   waitingFor: v.optional(v.string()),
-  /** background sessions only, e.g. "done" */
-  state: v.optional(v.string()),
-  /** background sessions only: short id */
-  id: v.optional(v.string()),
-  /** the CLAUDE_CONFIG_DIR this row was polled from (auto-detected ~/.claude* dirs) */
+  /** the CLAUDE_CONFIG_DIR the session is in, as a realpath */
   config_dir: v.string(),
   /** The `HYOUI_SESSION_ID` the live run tied to this row's process named
    *  (sidecar_hello, DR-0035 §3): the terminal its hooks module presses Enter
@@ -520,7 +518,7 @@ export type AgentInfo = Output<typeof AgentInfoSchema>;
 export const AgentsResponseSchema = v.object({
   ok: v.literal(true),
   agents: v.array(AgentInfoSchema),
-  /** ISO time of the poll that produced `agents`; null when no poll has run yet */
+  /** ISO time of the round that read `agents`; null when none has run yet */
   polled_at: v.nullable(v.string()),
 });
 export type AgentsResponse = Output<typeof AgentsResponseSchema>;

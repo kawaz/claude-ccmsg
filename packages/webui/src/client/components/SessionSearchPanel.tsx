@@ -213,7 +213,7 @@ export function SessionSearchPanel({
   );
 
   // config_dir トグルの候補 (DR-0021 §2.1: 複数検出時のみ表示) — daemon の
-  // agents 応答 (agentConfigDirsOf、claude agents --json ポーリング由来) が検出済
+  // agents 応答 (agentConfigDirsOf、agents の行由来) が検出済
   // みの config_dir と、直近の検索結果が実際に返した config_dir の和集合。
   // 前者だけだと「今動いている agent が無い config_dir 配下の過去セッション」
   // を検索した結果が反映されない (kawaz 指示の「無理なら Phase 1 応答から」の

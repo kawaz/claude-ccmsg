@@ -4,7 +4,7 @@
 // These tests are the executable spec: fake-deps cases pin the decision
 // logic byte-for-byte, and the real-process cases prove the production
 // signal path (sendSignal/isAlive) against live children while faking only
-// the two command runners (`claude agents` / `ps`), so no real claude
+// the state files and `ps`, so no real claude
 // session is ever touched.
 import { describe, expect, test } from "bun:test";
 import {
@@ -26,7 +26,7 @@ import { startInProcessDaemon, stopInProcessDaemon, sessionConn, userConn } from
 function fakeDeps(overrides: Partial<SessionKillDeps> = {}): SessionKillDeps {
   return {
     configDirs: () => ["/fake/.claude"],
-    runAgents: () => Promise.resolve("[]"),
+    sessionsIn: () => Promise.resolve([]),
     runPs: () => Promise.resolve("claude\n"),
     sendSignal: () => {},
     isAlive: () => false,
@@ -36,34 +36,28 @@ function fakeDeps(overrides: Partial<SessionKillDeps> = {}): SessionKillDeps {
   };
 }
 
-const AGENTS_ROW = (sid: string, pid: number) => JSON.stringify([{ sessionId: sid, pid }]);
+const AGENTS_ROW = (sid: string, pid: number) => [{ sessionId: sid, pid }];
 
 describe("resolvePid (fresh sid→pid resolution)", () => {
   // A matching sessionId row yields its pid: the daemon's only trusted
-  // pid source is its own fresh `claude agents --json --all` run (DR-0028 —
+  // pid source is its own fresh read of the state files (DR-0028 —
   // never the ≤5s-stale poller cache, never a client-asserted pid).
   test("returns the pid of the row whose sessionId matches", async () => {
-    const deps = fakeDeps({ runAgents: () => Promise.resolve(AGENTS_ROW("sid-a", 4242)) });
+    const deps = fakeDeps({ sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-a", 4242)) });
     expect(await resolvePid("sid-a", deps)).toBe(4242);
   });
 
   // No matching row = null: killing must be impossible without a positive
   // identification; server.ts maps this to not_found.
   test("returns null when no row matches the sessionId", async () => {
-    const deps = fakeDeps({ runAgents: () => Promise.resolve(AGENTS_ROW("sid-other", 4242)) });
+    const deps = fakeDeps({ sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-other", 4242)) });
     expect(await resolvePid("sid-a", deps)).toBeNull();
   });
 
-  // Broken CLI output must degrade to "not found", never to a guessed pid:
-  // invalid JSON and a rejecting run (non-zero exit / spawn failure /
-  // timeout in production) both skip the dir.
-  test("returns null on invalid JSON output", async () => {
-    const deps = fakeDeps({ runAgents: () => Promise.resolve("not json {") });
-    expect(await resolvePid("sid-a", deps)).toBeNull();
-  });
-
-  test("returns null when the agents command fails (non-zero exit)", async () => {
-    const deps = fakeDeps({ runAgents: () => Promise.reject(new Error("exited 1")) });
+  // A dir that cannot be read must degrade to "not found", never to a
+  // guessed pid.
+  test("returns null when the config dir cannot be read", async () => {
+    const deps = fakeDeps({ sessionsIn: () => Promise.reject(new Error("exited 1")) });
     expect(await resolvePid("sid-a", deps)).toBeNull();
   });
 
@@ -75,9 +69,9 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
     const calls: string[] = [];
     const deps = fakeDeps({
       configDirs: () => ["/dir1", "/dir2", "/dir3"],
-      runAgents: (dir) => {
+      sessionsIn: (dir) => {
         calls.push(dir);
-        if (dir === "/dir1") return Promise.reject(new Error("broken CLI"));
+        if (dir === "/dir1") return Promise.reject(new Error("unreadable dir"));
         if (dir === "/dir2") return Promise.resolve(AGENTS_ROW("sid-a", 1111));
         return Promise.resolve(AGENTS_ROW("sid-a", 9999));
       },
@@ -91,7 +85,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
   // skip it rather than signalling a garbage value.
   test("ignores a matching row whose pid is not an integer", async () => {
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve(JSON.stringify([{ sessionId: "sid-a", pid: "4242" }])),
+      sessionsIn: () => Promise.resolve([{ sessionId: "sid-a", pid: 4242.5 }]),
     });
     expect(await resolvePid("sid-a", deps)).toBeNull();
   });
@@ -103,7 +97,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
   test("ignores matching rows whose pid is 0, negative, or 1", async () => {
     for (const pid of [0, -1, 1]) {
       const deps = fakeDeps({
-        runAgents: () => Promise.resolve(JSON.stringify([{ sessionId: "sid-a", pid }])),
+        sessionsIn: () => Promise.resolve([{ sessionId: "sid-a", pid }]),
       });
       expect(await resolvePid("sid-a", deps)).toBeNull();
     }
@@ -111,7 +105,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
 });
 
 describe("verifyPid (pid-reuse guard)", () => {
-  // The `claude agents` snapshot (and the CLI's own registry) can be stale;
+  // The state file read (and a file a crashed session left) can be stale;
   // a recycled pid must never be signalled. Pass only when ps shows argv[0]
   // whose basename is exactly `claude` — both the bare PATH-launched form
   // and an absolute-path form must pass.
@@ -292,7 +286,7 @@ describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
   test("sessionKill({force:true}) は verify を経てから SIGKILL 経路に入る", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
+      sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
       runPs: () => Promise.resolve("claude\n"),
       sendSignal: (_pid, sig) => signals.push(sig),
       isAlive: () => false,
@@ -308,7 +302,7 @@ describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
   test("sessionKill({force:true}) は verify 失敗時に SIGKILL を送らない", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
+      sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
       runPs: () => Promise.resolve("zsh\n"), // claude 以外 → verify fail
       sendSignal: (_pid, sig) => signals.push(sig),
     });
@@ -401,7 +395,7 @@ describe("sessionKill (resolve → verify → kill composition)", () => {
   test("unknown sid → found:false, no signal sent", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve("[]"),
+      sessionsIn: () => Promise.resolve([]),
       sendSignal: (_pid, sig) => signals.push(sig),
     });
     expect(await sessionKill("sid-x", deps)).toEqual({ found: false });
@@ -411,7 +405,7 @@ describe("sessionKill (resolve → verify → kill composition)", () => {
   test("pid fails ps verification → found:false, no signal sent", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 555)),
+      sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 555)),
       runPs: () => Promise.resolve("/usr/bin/vim\n"),
       sendSignal: (_pid, sig) => signals.push(sig),
     });
@@ -422,7 +416,7 @@ describe("sessionKill (resolve → verify → kill composition)", () => {
   test("resolved + verified → kill runs and reports terminated", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
-      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 555)),
+      sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 555)),
       sendSignal: (_pid, sig) => signals.push(sig),
       isAlive: () => false,
     });
@@ -455,9 +449,9 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     }
   });
 
-  // user role + a sid no `claude agents` run can know. This also covers
-  // environments where the `claude` CLI itself is absent/failing — resolution
-  // failure and no-match are the same not_found to the caller.
+  // user role + a sid no state file names. This also covers a daemon that
+  // reaches no config dir — resolution failure and no-match are the same
+  // not_found to the caller.
   test("user role with an unknown session_id is answered not_found", async () => {
     const ctx = await startInProcessDaemon();
     try {

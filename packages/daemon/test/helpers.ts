@@ -80,7 +80,7 @@ export function spawnDaemonProc(
       // No route-monitor child and no api-error folds per test daemon; tests
       // that exercise the wake drive createNetworkWatch directly.
       CCMSG_NETWORK_WATCH: "off",
-      // No `claude agents` poll registering the machine's real sessions.
+      // No agents rows read: a hello alone keeps its session (DR-0034 §5).
       CCMSG_AGENTS_POLL: "off",
       ...extraEnv,
     },

@@ -1,12 +1,18 @@
-// The live runs of the sessions on this machine, as send_message and peer_list
-// (DR-0039 §3) match them: one per harness process, read fresh from Claude
-// Code's state files (`<config dir>/sessions/<pid>.json`) at each request
-// rather than from the agents poll, which may be a poll behind: a session
-// that just started, or a run that just moved to another id (/clear), is
-// then sent to as it is now.
+// The live sessions on this machine, read from Claude Code's state files
+// (`<config dir>/sessions/<pid>.json`, one per harness process): what the
+// agents poll registers and shows (agents.ts, DR-0034 §5), and what
+// send_message and peer_list (DR-0039 §3) match, read fresh at each request
+// rather than from the poll, which may be a round behind: a session that just
+// started, or a run that just moved to another id (/clear), is then sent to as
+// it is now.
 import { readdir, readFile, realpath } from "node:fs/promises";
 import * as path from "node:path";
-import { ClaudeSessionFileTextSchema, parseWith } from "@ccmsg/protocol";
+import {
+  ClaudeSessionFileTextSchema,
+  errorText,
+  parseWith,
+  type ClaudeSessionFile,
+} from "@ccmsg/protocol";
 
 /** One live run of a session: the harness process `pid` holding session
  * `sid` under the CLAUDE_CONFIG_DIR `configDir`, working in `cwd`, under the
@@ -51,38 +57,65 @@ export async function liveRuns(
 }
 
 async function runsIn(configDir: string, isAlive: (pid: number) => boolean): Promise<SessionRun[]> {
+  const read = await readSessionsDir(configDir, isAlive);
+  return read.live.map(({ sessionId: sid, pid, cwd, name }) => ({
+    configDir,
+    sid,
+    pid,
+    ...(cwd !== undefined ? { cwd } : {}),
+    ...(name !== undefined ? { name } : {}),
+  }));
+}
+
+/** What one config dir's `sessions/` says. */
+export interface SessionsDirRead {
+  /** The records of processes that still run. A record whose process no
+   * longer runs is a run that ended without removing it, and is left out, as
+   * is one removed while the dir was read. */
+  live: ClaudeSessionFile[];
+  /** Why the dir was not read whole: `sessions/` could not be listed, or the
+   * named records could not be read or did not read as a record. Absent when
+   * it was (no `sessions/` at all is a dir with no sessions). */
+  unread?: string[];
+}
+
+/** Read `<configDir>/sessions/<pid>.json` of every process. */
+export async function readSessionsDir(
+  configDir: string,
+  isAlive: (pid: number) => boolean,
+): Promise<SessionsDirRead> {
   const sessionsDir = path.join(configDir, "sessions");
   let names: string[];
   try {
     names = await readdir(sessionsDir);
-  } catch {
-    return [];
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return { live: [] };
+    return { live: [], unread: [`${sessionsDir}: ${errorText(e)}`] };
   }
-  const runs = await Promise.all(
+  const reads = await Promise.all(
     names
       .filter((file) => /^\d+\.json$/.test(file))
-      .map(async (file): Promise<SessionRun[]> => {
+      .map(async (file): Promise<ClaudeSessionFile | string | null> => {
+        const filePath = path.join(sessionsDir, file);
         let text: string;
         try {
-          text = await readFile(path.join(sessionsDir, file), "utf8");
-        } catch {
-          return [];
+          text = await readFile(filePath, "utf8");
+        } catch (e) {
+          if (e instanceof Error && "code" in e && e.code === "ENOENT") return null;
+          return `${filePath}: ${errorText(e)}`;
         }
         const read = parseWith(ClaudeSessionFileTextSchema, text);
-        if (!read.ok || !isAlive(read.value.pid)) return [];
-        const { sessionId: sid, pid, cwd, name } = read.value;
-        return [
-          {
-            configDir,
-            sid,
-            pid,
-            ...(cwd !== undefined ? { cwd } : {}),
-            ...(name !== undefined ? { name } : {}),
-          },
-        ];
+        if (!read.ok) return `${filePath}: ${read.failure.summary}`;
+        return isAlive(read.value.pid) ? read.value : null;
       }),
   );
-  return runs.flat();
+  const live: ClaudeSessionFile[] = [];
+  const unread: string[] = [];
+  for (const read of reads) {
+    if (typeof read === "string") unread.push(read);
+    else if (read !== null) live.push(read);
+  }
+  return unread.length > 0 ? { live, unread } : { live };
 }
 
 /** `dir` as a realpath, or undefined when it does not resolve. */

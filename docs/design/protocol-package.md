@@ -60,7 +60,6 @@ hooks module は実行時に import できないので、このファイルは v
 | `transcript-attachment.ts` | `attachment` 行の中身 (`AttachmentSchema`、`type` の variant + Other) と turn の出どころ (`OriginSchema`) | daemon、webui |
 | `transcript-tool-result.ts` | 行の `toolUseResult` を、呼んだ道具ごとに読むスキーマ (Agent / SendMessage / Task* / Monitor / Bash / Read 等) | daemon、webui |
 | `agent-meta.ts` | spawn された agent の `subagents/agent-<agentId>.meta.json` | daemon |
-| `claude-agents.ts` | `claude agents --json` と `--json --all` の出力 | daemon |
 | `session-files.ts` | Claude Code の `sessions/<pid>.json` (`ClaudeSessionFileSchema`)。同じファイルに ccmsg 自身の `sessions/<sid>.json` (下の表) も置いている | CLI、daemon |
 | `workflow-run.ts` | workflow run の状態ファイル `workflows/<runId>.json` と、実行中の `journal.jsonl` の行 | daemon |
 

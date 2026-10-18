@@ -1104,15 +1104,6 @@ describe("sessionBadges / badgeLabel", () => {
     expect(sessionBadges(sessionRow({ agent: agent({}) }))).toEqual(["no_module"]);
   });
 
-  // state:"done" takes priority over the turn — a background agent that
-  // finished shouldn't still read as busy.
-  test("agent.state 'done' takes priority over a responding turn", () => {
-    const row = sessionRow({
-      agent: agent({ turn: turn("responding"), state: "done", kind: "background" }),
-    });
-    expect(sessionBadges(row)).toEqual(["done", "bg"]);
-  });
-
   test("kind:'background' adds an additive 'bg' badge alongside busy/idle/done", () => {
     const row = sessionRow({ agent: agent({ turn: turn("responding"), kind: "background" }) });
     expect(sessionBadges(row)).toEqual(["busy", "bg"]);
@@ -1122,7 +1113,6 @@ describe("sessionBadges / badgeLabel", () => {
     expect(badgeLabel("offline")).toBe("ccmsg未起動");
     expect(badgeLabel("busy")).toBe("busy");
     expect(badgeLabel("idle")).toBe("idle");
-    expect(badgeLabel("done")).toBe("done");
     expect(badgeLabel("bg")).toBe("bg");
   });
 });
@@ -1141,9 +1131,9 @@ describe("sessionStatus", () => {
     expect(
       sessionStatus(sessionRow({ connected: false, agent: agent({ turn: turn("responding") }) })),
     ).toBe("offline");
-    expect(sessionStatus(sessionRow({ connected: false, agent: agent({ state: "done" }) }))).toBe(
-      "offline",
-    );
+    expect(
+      sessionStatus(sessionRow({ connected: false, agent: agent({ status: "waiting" }) })),
+    ).toBe("offline");
   });
 
   // Connected + no matched agent: nothing about it to report.
@@ -1176,24 +1166,14 @@ describe("sessionStatus", () => {
     ).toBe("waiting");
   });
 
-  test("agent.state 'done' takes priority over a responding turn", () => {
-    expect(
-      sessionStatus(sessionRow({ agent: agent({ turn: turn("responding"), state: "done" }) })),
-    ).toBe("done");
-  });
-
   // A session stopped on a harness API error is waiting for the user, not
   // working — it must not be reported as anything else.
   test("connected row with api_error -> 'error'", () => {
     expect(sessionStatus(sessionRow({ connected: true, api_error: apiError }))).toBe("error");
   });
 
-  test("api_error takes priority over a responding turn, a dialog and agent.state 'done'", () => {
-    for (const a of [
-      agent({ turn: turn("responding") }),
-      agent({ status: "waiting" }),
-      agent({ state: "done" }),
-    ]) {
+  test("api_error takes priority over a responding turn and a dialog", () => {
+    for (const a of [agent({ turn: turn("responding") }), agent({ status: "waiting" })]) {
       expect(sessionStatus(sessionRow({ agent: a, api_error: apiError }))).toBe("error");
     }
   });
@@ -1217,11 +1197,10 @@ describe("groupSessionsBySection", () => {
         agent: agent({ turn: turn("idle") }),
       }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
     ];
     const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "done", "offline", "unobserved"]);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "offline", "unobserved"]);
     expect(sections.at(-1)).toMatchObject({ label: "No transcript", rows: [{ sid: "blank" }] });
   });
 
@@ -1232,21 +1211,15 @@ describe("groupSessionsBySection", () => {
       sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) }),
       sessionRow({ sid: "b", agent: agent({ turn: turn("idle") }) }),
       sessionRow({ sid: "m", agent: agent({}) }),
-      sessionRow({ sid: "c", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "d", connected: false, agent: agent({}) }),
     ];
     const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "no_module", "done", "offline"]);
-    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([
-      ["a", "b"],
-      ["m"],
-      ["c"],
-      ["d"],
-    ]);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "no_module", "offline"]);
+    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a", "b"], ["m"], ["d"]]);
   });
 
   // "実データに存在するセクションだけ表示" (task spec): a section with zero
-  // rows must not appear at all — no empty "Done (0)" heading.
+  // rows must not appear at all — no empty "Waiting (0)" heading.
   test("omits a section with no rows", () => {
     const rows = [sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) })];
     const sections = groupSessionsBySection(rows);
@@ -1262,11 +1235,10 @@ describe("groupSessionsBySection", () => {
   // sort the input already carries. "error" leads: an API-error-stopped
   // session is the only one where nothing at all will happen until the user
   // acts, so it outranks even "waiting" (where Claude is actively asking).
-  test("section order is fixed: error, waiting, busy, no module, done, offline, no transcript", () => {
+  test("section order is fixed: error, waiting, busy, no module, offline, no transcript", () => {
     const rows = [
       sessionRow({ sid: "blank", transcript_path: undefined }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "bare", agent: agent({}) }),
       sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
       sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
@@ -1277,7 +1249,6 @@ describe("groupSessionsBySection", () => {
       "waiting",
       "busy",
       "no_module",
-      "done",
       "offline",
       "unobserved",
     ]);
@@ -1316,7 +1287,6 @@ describe("groupSessionsBySection", () => {
       sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
       sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
       sessionRow({ sid: "bare", agent: agent({}) }),
-      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
       sessionRow({ sid: "blank", transcript_path: undefined }),
     ];
@@ -1326,7 +1296,6 @@ describe("groupSessionsBySection", () => {
       waiting: "Waiting",
       busy: "Active",
       no_module: "No module",
-      done: "Done",
       offline: "ccmsg未起動",
       unobserved: "No transcript",
     });

@@ -1,15 +1,16 @@
-// agents polling (DR-0009-agents addendum): CLAUDE_CONFIG_DIR auto-detection
-// under a fake $HOME, per-dir `claude agents --json` merge, the always-on poll
-// lifecycle, the session registry derived from it (DR-0034), the terminal each
-// row carries from the run its sidecar named (DR-0035 §3), and the user-only
-// permission gate. Each test spawns a real daemon over UDS with a mock `claude` binary on
-// PATH so no real Claude CLI or real ~/.claude* dirs are ever touched.
-import { describe, expect, test } from "bun:test";
+// The agents rows (DR-0034 §5): the live sessions read from Claude Code's
+// state files (`<config dir>/sessions/<pid>.json`) across the config dirs the
+// daemon serves, detected under a fake $HOME — read on a watch of each
+// `sessions/` and on the poll interval — the session registry derived from
+// them, what the session's hooks module says laid over them (DR-0035 §3), and
+// the user-only permission gate. Each test spawns a real daemon over UDS with
+// state files naming live processes (this test process and sleepers it
+// starts), so no real ~/.claude* dir is ever read.
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
-import { mkFixture, writeMockClaude } from "./fake-claude.ts";
 import {
   connect,
   spawnDaemonProc,
@@ -32,6 +33,80 @@ const POLL_MS = 150;
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const SID_S = "55555555-0000-4000-8000-000000000005";
 const SID_HELLO = "4e110000-0000-4000-8000-000000000001";
+
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  for (const f of cleanups.splice(0).reverse()) await f();
+});
+
+/** A fake $HOME (and a bin dir for PATH), as realpaths: the daemon reads each
+ * config dir by its realpath. */
+function mkHome(): { base: string; home: string; binDir: string } {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-")));
+  cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+  const home = path.join(base, "home");
+  const binDir = path.join(base, "bin");
+  fs.mkdirSync(home);
+  fs.mkdirSync(binDir);
+  return { base, home, binDir };
+}
+
+/** A process that runs until the test ends, for a state file to name. */
+function sleeper(): number {
+  const proc = Bun.spawn(["sleep", "600"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  cleanups.push(async () => {
+    proc.kill();
+    await proc.exited;
+  });
+  return proc.pid;
+}
+
+interface Row {
+  sessionId: string;
+  cwd: string;
+  pid?: number;
+  [field: string]: unknown;
+}
+
+function row(sessionId: string, cwd: string, extra: Partial<Row> = {}): Row {
+  return { sessionId, cwd, ...extra };
+}
+
+/** Make `dir`'s `sessions/` hold exactly `rows`, each as Claude Code writes
+ * it, and nothing else. A row without a pid is the process `pidOf` gives its
+ * session. `"FAIL"` leaves a record that does not read, which keeps the dir
+ * from being read whole. */
+function writeRows(
+  dir: string,
+  rows: readonly Row[] | "FAIL",
+  pidOf: (sid: string) => number,
+): void {
+  const sessionsDir = path.join(dir, "sessions");
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  const files = new Map<string, string>();
+  if (rows === "FAIL") files.set("0.json", "not json");
+  else {
+    for (const r of rows) {
+      const pid = r.pid ?? pidOf(r.sessionId);
+      files.set(
+        `${String(pid)}.json`,
+        JSON.stringify({ kind: "interactive", startedAt: 1, ...r, pid }),
+      );
+    }
+  }
+  for (const name of fs.readdirSync(sessionsDir)) {
+    if (!files.has(name)) fs.rmSync(path.join(sessionsDir, name));
+  }
+  for (const [name, text] of files) {
+    fs.writeFileSync(path.join(sessionsDir, `${name}.tmp`), text);
+    fs.renameSync(path.join(sessionsDir, `${name}.tmp`), path.join(sessionsDir, name));
+  }
+}
+
+/** For rows that each name their pid. */
+function namedPid(sid: string): number {
+  throw new Error(`the row of ${sid} names no pid`);
+}
 
 async function startAgentsTestDaemon(
   home: string,
@@ -60,7 +135,7 @@ async function startAgentsTestDaemon(
   const proc = spawnDaemonProc(stateDir, dataDir, env);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  return {
+  const ctx: DaemonCtx = {
     base,
     stateDir,
     configDir: testConfigDir(dataDir),
@@ -70,6 +145,8 @@ async function startAgentsTestDaemon(
     proc,
     env,
   };
+  cleanups.push(() => stopAgentsTestDaemon(ctx));
+  return ctx;
 }
 
 async function stopAgentsTestDaemon(ctx: DaemonCtx): Promise<void> {
@@ -86,412 +163,202 @@ async function stopAgentsTestDaemon(ctx: DaemonCtx): Promise<void> {
     // already gone
   }
   await ctx.proc.exited;
-  try {
-    fs.rmSync(ctx.base, { recursive: true, force: true });
-  } catch {
-    // best effort
+  fs.rmSync(ctx.base, { recursive: true, force: true });
+}
+
+/** The agents rows once a round has run. */
+async function afterARound(u: TestClient): Promise<readonly { sessionId: string }[]> {
+  for (;;) {
+    const res = await u.requestOk({ op: "agents" });
+    if (res.polled_at !== null) return res.agents;
+    await new Promise((r) => setTimeout(r, POLL_MS));
   }
 }
 
-function callCount(callLog: string): number {
-  const text = fs.readFileSync(callLog, "utf-8");
-  return text.split("\n").filter((l) => l.trim() !== "").length;
-}
+describe("agents: config dir detection", () => {
+  test("$HOME/.claude* のうちディレクトリのみ読み、regular file の ~/.claude は除外される", async () => {
+    const { home, binDir } = mkHome();
+    // ~/.claude is a regular FILE (kawaz's real environment shape, see
+    // claude-config-dir-isolation rule) — must be excluded, unlike the
+    // directory candidates below.
+    fs.writeFileSync(path.join(home, ".claude"), "not a directory");
+    const dirA = path.join(home, ".claude-a");
+    const dirB = path.join(home, ".claude-b");
+    // a dir NOT prefixed ".claude" must never be read.
+    const other = path.join(home, "not-claude-dir");
+    writeRows(
+      dirA,
+      [row("sA", "/a", { pid: process.pid, status: "waiting", waitingFor: "dialog open" })],
+      namedPid,
+    );
+    writeRows(dirB, [row("sB", "/b", { pid: process.ppid })], namedPid);
+    writeRows(other, [row("sX", "/x")], () => sleeper());
 
-describe("agents polling: config dir detection", () => {
-  test("$HOME/.claude* のうちディレクトリのみ検出され、regular file の ~/.claude は除外される", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      // ~/.claude is a regular FILE (kawaz's real environment shape, see
-      // claude-config-dir-isolation rule) — must be excluded, unlike the
-      // directory candidates below.
-      fs.writeFileSync(path.join(home, ".claude"), "not a directory");
-      const dirA = path.join(home, ".claude-a");
-      const dirB = path.join(home, ".claude-b");
-      fs.mkdirSync(dirA);
-      fs.mkdirSync(dirB);
-      // a dir NOT prefixed ".claude" must never be scanned in.
-      fs.mkdirSync(path.join(home, "not-claude-dir"));
-
-      writeMockClaude(binDir, callLog, {
-        [dirA]: [
-          {
-            pid: 1,
-            cwd: "/a",
-            kind: "interactive",
-            startedAt: 1,
-            sessionId: "sA",
-            status: "waiting",
-            waitingFor: "dialog open",
-          },
-        ],
-        [dirB]: [{ pid: 2, cwd: "/b", kind: "interactive", startedAt: 2, sessionId: "sB" }],
-      });
-
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        await u.request({ op: "subscribe" });
-        const { ev } = await u.readEventUntil("agents");
-        const agents = ev.agents;
-        const sids = agents.map((a) => a.sessionId).sort();
-        expect(sids).toEqual(["sA", "sB"]);
-        const dirs = agents.map((a) => a.config_dir).sort();
-        expect(dirs).toEqual([dirA, dirB].sort());
-        expect(agents.find((a) => a.sessionId === "sA")).toMatchObject({
-          kind: "interactive",
-          startedAt: 1,
-          status: "waiting",
-          waitingFor: "dialog open",
-        });
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    const { ev } = await u.readEventUntil("agents");
+    const agents = ev.agents;
+    expect(agents.map((a) => a.sessionId).sort()).toEqual(["sA", "sB"]);
+    expect(agents.map((a) => a.config_dir).sort()).toEqual([dirA, dirB].sort());
+    expect(agents.find((a) => a.sessionId === "sA")).toMatchObject({
+      pid: process.pid,
+      cwd: "/a",
+      kind: "interactive",
+      startedAt: 1,
+      status: "waiting",
+      waitingFor: "dialog open",
+    });
   });
 
   // DR-0034 §2: the sessions on the machine talk to the daemon at the default
   // state dir; one at another state dir lists none of them.
   test("既定でない state dir の daemon は $HOME/.claude* を読まない", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      writeMockClaude(binDir, callLog, {
-        [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
-      });
-      const ctx = await startAgentsTestDaemon(home, binDir, {
-        XDG_STATE_HOME: path.join(base, "elsewhere"),
-      });
-      try {
-        const u = await userConn(ctx);
-        for (;;) {
-          const res = await u.requestOk({ op: "agents" });
-          if (res.polled_at !== null) {
-            expect(res.agents).toEqual([]);
-            break;
-          }
-          await new Promise((r) => setTimeout(r, POLL_MS));
-        }
-        expect(callCount(callLog)).toBe(0);
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    const { base, home, binDir } = mkHome();
+    writeRows(path.join(home, ".claude-a"), [row("sA", "/a", { pid: process.pid })], namedPid);
+    const ctx = await startAgentsTestDaemon(home, binDir, {
+      XDG_STATE_HOME: path.join(base, "elsewhere"),
+    });
+    expect(await afterARound(await userConn(ctx))).toEqual([]);
   });
 
   test("config dir が1つも無い場合、agents は空のまま", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      writeMockClaude(binDir, callLog, {});
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        const res = await u.requestOk({ op: "agents" });
-        expect(res.agents).toEqual([]);
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    const { home, binDir } = mkHome();
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    expect(await afterARound(await userConn(ctx))).toEqual([]);
   });
 });
 
-describe("agents polling: permission (user role only)", () => {
+describe("agents: permission (user role only)", () => {
   test("session role からの op:'agents' は bad_request", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      writeMockClaude(binDir, callLog, {});
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const s = await sessionConn(ctx, SID_A);
-        const res = await s.requestError({ op: "agents" });
-        expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("bad_request");
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    const { home, binDir } = mkHome();
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const s = await sessionConn(ctx, SID_A);
+    const res = await s.requestError({ op: "agents" });
+    expect(res.ok).toBe(false);
+    expect(res.error.code).toBe("bad_request");
   });
 });
 
-describe("agents polling: lifecycle", () => {
-  test("webui が一度も繋がらなくても daemon 起動直後から poll する", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      writeMockClaude(binDir, callLog, {
-        [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
-      });
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        // A session-role conn only asks for peers; nothing here starts a poll.
-        const s = await sessionConn(ctx, SID_S);
-        for (;;) {
-          const res = await s.requestOk({ op: "peers" });
-          if (res.peers.some((p) => p.sid === "sA")) break;
-          await new Promise((r) => setTimeout(r, POLL_MS));
-        }
-        expect(callCount(callLog)).toBeGreaterThan(0);
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
+describe("agents: reading the state files", () => {
+  test("webui が一度も繋がらなくても daemon 起動直後から読む", async () => {
+    const { home, binDir } = mkHome();
+    writeRows(path.join(home, ".claude-a"), [row("sA", "/a", { pid: process.pid })], namedPid);
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    // A session-role conn only asks for peers; nothing here starts a round.
+    const s = await sessionConn(ctx, SID_S);
+    for (;;) {
+      const res = await s.requestOk({ op: "peers" });
+      if (res.peers.some((p) => p.sid === "sA")) break;
+      await new Promise((r) => setTimeout(r, POLL_MS));
     }
   });
 
   test("user subscribe で ev:'agents' が届き、op:'agents' で同じ結果が読める", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      writeMockClaude(binDir, callLog, {
-        [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
-      });
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        await u.request({ op: "subscribe" });
-        const { ev } = await u.readEventUntil("agents");
-        expect(ev.agents.map((a) => a.sessionId)).toEqual(["sA"]);
-        expect(ev.polled_at).not.toBeNull();
+    const { home, binDir } = mkHome();
+    writeRows(path.join(home, ".claude-a"), [row("sA", "/a", { pid: process.pid })], namedPid);
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    const { ev } = await u.readEventUntil("agents");
+    expect(ev.agents.map((a) => a.sessionId)).toEqual(["sA"]);
+    expect(ev.polled_at).not.toBeNull();
 
-        const cached = await u.requestOk({ op: "agents" });
-        expect(cached.agents.map((a) => a.sessionId)).toEqual(["sA"]);
-        // >= rather than === : the poller keeps ticking every POLL_MS in the
-        // background, so a poll cycle can legitimately land between the ev
-        // above and this request — the result is unchanged (still just sA)
-        // but polled_at may have advanced. Exact-timestamp equality would be
-        // over-asserting a timing coincidence the op contract never promised.
-        expect(cached.polled_at).not.toBeNull();
-        expect(new Date(cached.polled_at ?? "").getTime()).toBeGreaterThanOrEqual(
-          new Date(ev.polled_at).getTime(),
-        );
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    const cached = await u.requestOk({ op: "agents" });
+    expect(cached.agents.map((a) => a.sessionId)).toEqual(["sA"]);
+    // >= rather than === : rounds keep running in the background, so one can
+    // land between the ev above and this request — the result is unchanged
+    // (still just sA) but polled_at may have advanced.
+    expect(cached.polled_at).not.toBeNull();
+    expect(new Date(cached.polled_at ?? "").getTime()).toBeGreaterThanOrEqual(
+      new Date(ev.polled_at).getTime(),
+    );
   });
 
-  test("claude agents --json が変わらない限り、2 回目以降の poll では ev:'agents' が再配信されない", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      writeMockClaude(binDir, callLog, {
-        [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
-      });
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        await u.request({ op: "subscribe" });
-        await u.readEventUntil("agents"); // first (only) agents event
-
-        // Let several more poll cycles actually run underneath (proves this
-        // isn't just "the second poll hasn't happened yet").
-        await new Promise((r) => setTimeout(r, POLL_MS * 4));
-        expect(callCount(callLog)).toBeGreaterThan(1);
-
-        // Drive a distinguishable event through the same subscribe stream (a
-        // say from a fresh session) and confirm no "agents" event snuck in
-        // among the events collected while waiting for it — proves the
-        // unchanged poll result was suppressed, not just unlucky timing.
-        const s = await sessionConn(ctx, SID_S);
-        const seen = await sayMarker(s, u, "marker");
-        expect(seen.some(isKind("agents"))).toBe(false);
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
+  test("state file が変わらない限り、2 回目以降の round では ev:'agents' が再配信されない", async () => {
+    const { home, binDir } = mkHome();
+    writeRows(path.join(home, ".claude-a"), [row("sA", "/a", { pid: process.pid })], namedPid);
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    const first = await u.readEventUntil("agents");
+    // Several more rounds run underneath (proves this isn't just "the second
+    // round hasn't happened yet").
+    for (;;) {
+      const res = await u.requestOk({ op: "agents" });
+      if (res.polled_at !== null && res.polled_at > first.ev.polled_at) break;
+      await new Promise((r) => setTimeout(r, POLL_MS));
     }
+    // Drive a distinguishable event through the same subscribe stream (a
+    // say from a fresh session) and confirm no "agents" event snuck in
+    // among the events collected while waiting for it.
+    const s = await sessionConn(ctx, SID_S);
+    const seen = await sayMarker(s, u, "marker");
+    expect(seen.some(isKind("agents"))).toBe(false);
   });
 
-  // Regression (adversarial review, agents.ts minor finding): the poll
-  // interval and POLL_TIMEOUT_MS both being ~5s (here shrunk via
-  // CCMSG_AGENTS_POLL_MS) means a slow `claude agents --json` call can still
-  // be in flight when the next tick fires. Without an in-flight guard, two
-  // overlapping polls can be running at once — the mock `claude` below marks
-  // that directly (a lock file already present when it starts) instead of
-  // inferring it from timing.
-  test("in-flight guard: 前回の poll がまだ完了していない間は次の tick が新しい claude 呼び出しを開始しない", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      const lockFile = path.join(base, "poll.lock");
-      const overlapLog = path.join(base, "overlap.log");
-      fs.writeFileSync(overlapLog, "");
-      // Each invocation holds `lockFile` for well longer than POLL_MS (150ms
-      // interval, held here for 400ms) — if a second tick starts a second
-      // `claude` process while the first is still running, it observes the
-      // lock file already present and records an overlap.
-      const file = path.join(binDir, "claude");
-      // Emits a fixed non-empty row (not `[]`) so the very first poll
-      // counts as a "change" against the poller's initial empty cache and
-      // actually fires the ev:"agents" awaited below — an unchanging `[]`
-      // result would never trigger onChange at all (stableKey([]) equals
-      // stableKey(initial cache)) and the test would just hang.
-      const script = `#!/usr/bin/env bash
-set -e
-if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
-  echo "$CLAUDE_CONFIG_DIR $(date +%s%N)" >> "${callLog}"
-  if [ -e "${lockFile}" ]; then
-    echo "overlap" >> "${overlapLog}"
-  fi
-  : > "${lockFile}"
-  sleep 0.4
-  rm -f "${lockFile}"
-  echo '[{"pid":1,"cwd":"/a","kind":"interactive","startedAt":1,"sessionId":"sA"}]'
-  exit 0
-fi
-exit 1
-`;
-      writeMockBin(file, script);
-
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        await u.request({ op: "subscribe" });
-        await u.readEventUntil("agents"); // first poll landed
-
-        // Let several POLL_MS periods elapse while the mock is still busy
-        // (each call takes 400ms, interval is 150ms) — proves several
-        // ticks fired without the guard triggering an overlap.
-        await new Promise((r) => setTimeout(r, 1200));
-        expect(callCount(callLog)).toBeGreaterThan(1); // ticks did keep firing
-        expect(fs.readFileSync(overlapLog, "utf-8").trim()).toBe(""); // never overlapped
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+  // The interval is out of reach here, so only the watch on `sessions/` can
+  // be what reads a session starting and ending.
+  test("sessions/ の変化は poll の間隔を待たずに読まれる", async () => {
+    const { home, binDir } = mkHome();
+    const dirA = path.join(home, ".claude-a");
+    writeRows(dirA, [], namedPid);
+    const ctx = await startAgentsTestDaemon(home, binDir, { CCMSG_AGENTS_POLL_MS: "600000" });
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    await afterARound(u);
+    writeRows(dirA, [row("sA", "/a", { pid: process.pid })], namedPid);
+    const listed = await u.readEventUntil("agents", (e) => e.agents.length === 1);
+    expect(listed.ev.agents.map((a) => a.sessionId)).toEqual(["sA"]);
+    writeRows(dirA, [], namedPid);
+    await u.readEventUntil("agents", (e) => e.agents.length === 0);
   });
 
-  // Smoke test for pollOne's stderr draining (adversarial review finding —
-  // NOTE the review's proposed failure mode, "unread stderr past the OS pipe
-  // buffer blocks the child's write() and stalls every poll until
-  // POLL_TIMEOUT_MS's SIGKILL", was checked empirically against
-  // Bun.spawn/Bun.Subprocess directly (not just this test) and did NOT
-  // reproduce here: even 50MB of never-awaited stderr resolved in ~170ms, no
-  // timeout. Bun appears to drain "pipe" stdio internally regardless of
-  // whether JS ever reads it, unlike plain Node.js child_process. The
-  // concurrent-drain change is kept anyway — it's what makes `errText`
-  // available for the diagnostic log line below, and costs nothing — but
-  // this test only proves heavy stderr output doesn't break a poll, not that
-  // it fixes a reproduced deadlock.
-  test("stderr の大量出力があっても poll は問題なく完了する (診断目的の drain 確認)", async () => {
-    const { base, home, binDir, callLog } = mkFixture();
-    try {
-      const dirA = path.join(home, ".claude-a");
-      fs.mkdirSync(dirA);
-      const file = path.join(binDir, "claude");
-      // 200KB of stderr noise — comfortably over any common OS pipe buffer
-      // size (64KB on Linux, similar order on macOS) — before ever writing
-      // to stdout.
-      // Emits a fixed non-empty row so this first poll counts as a "change"
-      // against the poller's initial empty cache and fires ev:"agents" —
-      // see the in-flight-guard test above for why `[]` would never do that.
-      const script = `#!/usr/bin/env bash
-set -e
-if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
-  echo "$CLAUDE_CONFIG_DIR $(date +%s%N)" >> "${callLog}"
-  head -c 200000 /dev/zero | tr '\\0' 'e' 1>&2
-  echo '[{"pid":1,"cwd":"/a","kind":"interactive","startedAt":1,"sessionId":"sA"}]'
-  exit 0
-fi
-exit 1
-`;
-      writeMockBin(file, script);
-
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        const u = await userConn(ctx);
-        const start = Date.now();
-        await u.request({ op: "subscribe" });
-        await u.readEventUntil("agents");
-        const elapsedMs = Date.now() - start;
-        // POLL_TIMEOUT_MS is 5000ms; a blocked-on-stderr child would only
-        // resolve after that full timeout + SIGKILL. A generous margin
-        // below it (3000ms) still clearly distinguishes "drained
-        // concurrently" from "blocked until timeout".
-        expect(elapsedMs).toBeLessThan(3000);
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+  // A session that ended without removing its file (a crash) has no process.
+  test("process の無い state file は読まない", async () => {
+    const { home, binDir } = mkHome();
+    const gone = Bun.spawn(["true"]);
+    await gone.exited;
+    writeRows(
+      path.join(home, ".claude-a"),
+      [row("sGone", "/a", { pid: gone.pid }), row("sA", "/a", { pid: process.pid })],
+      namedPid,
+    );
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    const { ev } = await u.readEventUntil("agents");
+    expect(ev.agents.map((a) => a.sessionId)).toEqual(["sA"]);
   });
 });
 
-/** Mock `claude` whose rows per config dir are read from `<rowsDir>/<dir
- *  basename>.json` on every call, so a test can change what the harness lists
- *  between polls. A file holding `FAIL` makes that dir's call exit non-zero. */
-function writeFileDrivenMockClaude(binDir: string, rowsDir: string): void {
-  const script = `#!/usr/bin/env bash
-if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
-  f="${rowsDir}/$(basename "$CLAUDE_CONFIG_DIR").json"
-  if [ ! -f "$f" ]; then echo '[]'; exit 0; fi
-  if [ "$(cat "$f")" = "FAIL" ]; then echo boom >&2; exit 1; fi
-  cat "$f"
-  exit 0
-fi
-exit 1
-`;
-  writeMockBin(path.join(binDir, "claude"), script);
-}
-
-function row(sessionId: string, cwd: string, extra: Record<string, unknown> = {}): unknown {
-  return { pid: 1, cwd, kind: "interactive", startedAt: 1, sessionId, ...extra };
-}
-
-describe("session registry derived from the agents poll (DR-0034)", () => {
+describe("session registry derived from the agents rows (DR-0034)", () => {
   async function withRegistryFixture(
     body: (f: {
       ctx: DaemonCtx;
       dirA: string;
-      setRows: (dir: string, rows: unknown[] | "FAIL") => void;
+      setRows: (dir: string, rows: Row[] | "FAIL") => void;
       cwd: string;
       base: string;
       binDir: string;
     }) => Promise<void>,
   ): Promise<void> {
-    const { base, home, binDir } = mkFixture();
-    const rowsDir = path.join(base, "rows");
-    fs.mkdirSync(rowsDir);
+    const { base, home, binDir } = mkHome();
     const dirA = path.join(home, ".claude-a");
     fs.mkdirSync(dirA);
     const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-cwd-")));
-    const setRows = (dir: string, rows: unknown[] | "FAIL"): void => {
-      const file = path.join(rowsDir, `${path.basename(dir)}.json`);
-      fs.writeFileSync(`${file}.tmp`, rows === "FAIL" ? "FAIL" : JSON.stringify(rows));
-      fs.renameSync(`${file}.tmp`, file);
+    cleanups.push(() => fs.rmSync(cwd, { recursive: true, force: true }));
+    // A session is one process for as long as the test runs, as on a real
+    // machine: its record keeps its pid from one setRows to the next.
+    const pids = new Map<string, number>();
+    const pidOf = (sid: string): number => {
+      const pid = pids.get(sid) ?? sleeper();
+      pids.set(sid, pid);
+      return pid;
     };
-    writeFileDrivenMockClaude(binDir, rowsDir);
-    try {
-      const ctx = await startAgentsTestDaemon(home, binDir);
-      try {
-        await body({ ctx, dirA, setRows, cwd, base, binDir });
-      } finally {
-        await stopAgentsTestDaemon(ctx);
-      }
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-      fs.rmSync(cwd, { recursive: true, force: true });
-    }
+    const setRows = (dir: string, rows: Row[] | "FAIL"): void => writeRows(dir, rows, pidOf);
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    await body({ ctx, dirA, setRows, cwd, base, binDir });
   }
 
   async function watcher(ctx: DaemonCtx): Promise<TestClient> {
@@ -538,7 +405,7 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
   test("hello 済みの sid は agents 由来の値で上書きされない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
-      // No dir answers until the row is there, so no round in between
+      // No dir is read whole until the row is there, so no round in between
       // forgets the hello for not listing it.
       setRows(dirA, "FAIL");
       await sessionConn(ctx, SID_A, { repo: "hello-repo", ws: "hello-ws", cwd });
@@ -554,9 +421,9 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
   });
 
   // A hello alone is not the harness's word that the session runs: a sid the
-  // poll never lists (one the harness does not know, or one whose harness is
-  // gone) is forgotten by the first round begun after the hello.
-  test("hello だけで登録された sid は、hello の後に始まった poll に載らなければ peers から消える", async () => {
+  // state files never list (one the harness does not know, or one whose
+  // harness is gone) is forgotten by the first round begun after the hello.
+  test("hello だけで登録された sid は、hello の後に始まった round に載らなければ peers から消える", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       setRows(dirA, [row("sA", cwd)]);
@@ -568,11 +435,11 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     });
   });
 
-  test("hello の後に poll に載った sid は、poll から消えるまで peers に残る", async () => {
+  test("hello の後に round に載った sid は、round から消えるまで peers に残る", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
-      // Rounds in which no dir answers forget nothing: the hello waits for
-      // the row.
+      // Rounds in which no dir is read whole forget nothing: the hello waits
+      // for the row.
       setRows(dirA, "FAIL");
       await sessionConn(ctx, SID_HELLO, { cwd });
       setRows(dirA, [row(SID_HELLO, cwd)]);
@@ -590,11 +457,10 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     });
   });
 
-  test("hello だけで登録された sid は、名乗った config dir が poll に答えない間は消えない", async () => {
+  test("hello だけで登録された sid は、名乗った config dir が読めない間は消えない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       const dirB = path.join(path.dirname(dirA), ".claude-b");
-      fs.mkdirSync(dirB);
       setRows(dirB, "FAIL");
       await sessionConn(ctx, SID_HELLO, { cwd, config_dir: dirB });
       // Each marker is registered by a later round than the one before it:
@@ -606,25 +472,25 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
       }
       const res = await u.requestOk({ op: "peers" });
       expect(res.peers.map((p) => p.sid).toSorted()).toEqual([SID_HELLO, "sM3"].toSorted());
-      // Its dir answering without it is what forgets it.
+      // Its dir read whole without it is what forgets it.
       setRows(dirB, []);
       await u.readEventUntil("peers", lacksPeer(SID_HELLO));
     });
   });
 
-  test("poll に失敗した config dir のセッションは消さない", async () => {
+  test("読めない config dir のセッションは消さない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       const dirB = path.join(path.dirname(dirA), ".claude-b");
-      fs.mkdirSync(dirB);
       setRows(dirA, [row("sA", cwd)]);
       setRows(dirB, [row("sB", cwd)]);
       await u.readEventUntil("peers", (e) => hasPeer("sA")(e) && hasPeer("sB")(e));
-      // dirA fails while dirB drops sB: only the answered dir's loss counts.
+      // dirA does not read while dirB drops sB: only the read dir's loss
+      // counts.
       setRows(dirA, "FAIL");
       setRows(dirB, []);
-      // The push that follows the registry update for a poll in which dirA
-      // failed and dirB listed nothing.
+      // The push that follows the registry update for a round in which dirA
+      // did not read and dirB listed nothing.
       await u.readEventUntil("agents", (e) => e.agents.length === 0);
       const res = await u.requestOk({ op: "peers" });
       expect(res.peers.map((p) => p.sid)).toEqual(["sA"]);
@@ -714,7 +580,7 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
   test("同じ sid の別 process の行は、run の端末を持たない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
-      const other = 999_999;
+      const other = sleeper();
       setRows(dirA, [
         row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() }),
         row(SID_RUN, cwd, { pid: other, startedAt: 1 }),

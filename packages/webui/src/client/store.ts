@@ -229,7 +229,7 @@ export interface AppState {
   roomList: "idle" | "loading" | "loaded" | "error";
   peers: readonly PeerInfo[];
   peersLoaded: boolean;
-  /** `claude agents --json` rows, merged with `peers` by sessionId in the
+  /** agents rows, merged with `peers` by sessionId in the
    * Sidebar Sessions list (U1, see utils.ts's toSessionRow/offlineAgentRows).
    * Populated by ws.ts's onOpen `op:"agents"` fetch and kept live via
    * `ev:"agents"` push — no manual refresh needed. */
@@ -1024,7 +1024,7 @@ export function reducer(state: AppState, action: Action): AppState {
         agents: action.agents,
         agentsLoaded: true,
         // Same repair as peers/loaded, for the field this stream is the source
-        // of: a session's title (`claude agents --json`'s name, what /rename
+        // of: a session's title (the agents row's name, what /rename
         // sets). See refreshPinsFromAgents.
         pinnedSessions: refreshPinsFromAgents(state.pinnedSessions, action.agents),
       };

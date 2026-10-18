@@ -133,7 +133,7 @@ async function runHyouiCommand(args: string[], timeoutMs: number): Promise<void>
 /** Build the production deps around a live view of the agents poll. The
  * lookup is a callback rather than a snapshot so a rename issued minutes
  * after the connection opened still reads the current poll, and it uses the
- * poller cache (unlike session_kill's fresh `claude agents` run): a stale pid
+ * poller cache (unlike session_kill's fresh read of the state files): a stale pid
  * risks signalling the wrong process, whereas a stale HYOUI_SESSION_ID names
  * a terminal that either still belongs to this session or no longer exists —
  * hyoui rejects the latter, which becomes send_failed. */

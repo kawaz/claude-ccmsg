@@ -84,9 +84,8 @@ export const SubscribeSupersededStreamEventSchema = v.object({
 });
 export type SubscribeSupersededStreamEvent = Output<typeof SubscribeSupersededStreamEventSchema>;
 
-/** Push update of the `claude agents --json` poll result (user-role subscribers
- * only). Emitted when the merged agent list changes; the daemon polls only
- * while at least one user-role subscriber is connected. */
+/** Push update of the agents rows (user-role subscribers only). Emitted when
+ * the rows, or what the sessions' hooks modules say of them, change. */
 export const AgentsStreamEventSchema = v.object({
   ev: v.literal("agents"),
   agents: v.array(AgentInfoSchema),

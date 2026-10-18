@@ -1,8 +1,8 @@
 // Preloaded into every `bun test` run (bunfig.toml). Daemons spawned by tests
-// inherit this process's environment, and an agents poll in one of them would
-// register every live Claude Code session on the developer's machine into the
-// test's registry — tests that exercise the poll opt back in with their own
-// fake $HOME and `claude`.
+// inherit this process's environment, and the agents rows read in one of them
+// would forget a session that said hello with a config dir holding no state
+// file for it — tests that exercise the agents rows opt back in with their
+// own fake $HOME and state files (DR-0034 §5).
 import { afterAll, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";

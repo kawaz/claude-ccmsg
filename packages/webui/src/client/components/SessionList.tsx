@@ -238,7 +238,7 @@ function SessionIdText({ sid }: { sid: string }) {
  * What this cannot do is show the result: `session_rename` only types
  * `/rename <title>` into the session's terminal (see SessionRenameRequest),
  * so a success closes the editor and leaves a "送信した" note while the row's
- * headline keeps reporting whatever `claude agents` reports, until a later
+ * headline keeps reporting whatever the agents rows list, until a later
  * poll confirms it (or doesn't). */
 function SessionTitle({
   sid,
@@ -477,7 +477,7 @@ function SessionRowItem({
       onSent={(sent) => setRenameNote(`/rename を送信: ${sent}`)}
     />
   );
-  // An agent-only row has no repo/ws at all (claude agents reports no VCS
+  // An agent-only row has no repo/ws at all (the agents rows carry no VCS
   // metadata), and rendering its first line empty would strand the avatar on
   // a blank line above the title — so for those rows the title takes the
   // first line's place. It keeps the dim styling r135m18 asks for; what moves
@@ -507,7 +507,7 @@ function SessionRowItem({
     titleParts.push(`kind: ${row.agent.kind}`);
     titleParts.push(`started: ${new Date(row.agent.startedAt).toISOString()}`);
   }
-  if (!row.connected) titleParts.push("ccmsg 未起動 (claude agents のみで検出)");
+  if (!row.connected) titleParts.push("ccmsg 未起動 (agents の行のみで検出)");
   // 停止理由は行内には 1 行分しか出せない (下の session-error-text は CSS で
   // 省略される) ので、全文は hover の title 側で読めるようにしておく。
   if (row.api_error)
@@ -607,7 +607,7 @@ function SessionRowItem({
        * 1 行に truncate (全文は上の title に入っている)。1 行目の badge 群とは
        * 別の行に置いて statusBadge の並びを崩さない。 */}
       {row.api_error ? <div class="session-error-text">{row.api_error.text}</div> : null}
-      {/* 2 行目: セッション自身のタイトル (= /rename が設定し claude agents が
+      {/* 2 行目: セッション自身のタイトル (= /rename が設定し Claude Code が
        * name として返す文字列)。r135m17 で 1 行目から降り、以下 3 行は弱い
        * 文字 (r135m18)。repo/ws が無い行では上の 1 行目がこの内容を引き取って
        * いるので、ここは出さない。 */}
@@ -786,7 +786,7 @@ function PinnedSessionsSection({
 }: {
   pinnedSessions: Map<string, Pin>;
   peers: readonly PeerInfo[];
-  /** `claude agents --json` rows keyed by sid — the section's source for a
+  /** agents rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
@@ -861,17 +861,16 @@ function sessionListSlice(state: AppState) {
 /** Sidebar "Sessions" section (U1, developed from the DR-0008 peers list):
  * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
  * recent toggle — this component never reorders those) with the daemon's
- * `claude agents --json` poll (`agents`, read from the store with the rest of
- * `sessionListSlice`) so a session `claude agents` can see but whose ccmsg CLI hasn't connected yet still shows up, grouped
+ * agents rows (`agents`, read from the store with the rest of
+ * `sessionListSlice`) so a session the agents rows list but whose ccmsg CLI hasn't connected yet still shows up, grouped
  * as its own "ccmsg 未起動" tail (see offlineAgentRows).
  *
  * U3 (kawaz 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション
- * 切ってフォルディングもできるように"; extended 2026-07-16 to cover any
- * `claude agents` status, not just busy/idle/done — see sessionStatus's doc
- * comment): the merged rows are further split into per-status sections
- * (groupSessionsBySection), each its own `<Fold open>` so a section can be
- * collapsed — sort order (name/created/recent) still applies *within* each
- * section, unchanged from before this task. */
+ * 切ってフォルディングもできるように"): the merged rows are further split
+ * into per-status sections (groupSessionsBySection, statuses as
+ * sessionStatus's doc comment says), each its own `<Fold open>` so a section
+ * can be collapsed — sort order (name/created/recent) still applies *within*
+ * each section. */
 export function SessionList({
   peers,
   currentSid,
