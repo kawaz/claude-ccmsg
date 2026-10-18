@@ -1,6 +1,6 @@
 ---
 title: bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡
-status: wip
+status: resolved
 category: bug
 created: 2026-07-12T17:40:21+09:00
 last_read: 2026-10-18T17:19:46+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-21T03:05:15+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T17:43:26+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:2026-10-18 v0.184.0 で just test 3 連続 0 fail (4087 pass)、その後の変更後も just test 3 回と just coverage 1 回が 0 fail。機序は各追記で根治済み、run をまたぐ残留は lifeline / run dir 化で塞いだ"]
 blocked_by:
 origin: 自リポ TODO
 ---
