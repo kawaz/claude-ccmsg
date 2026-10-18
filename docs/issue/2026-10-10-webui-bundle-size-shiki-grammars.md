@@ -3,7 +3,7 @@ title: webui の JS bundle が大きい (shiki 言語文法が約半分)
 status: open
 category: bug
 created: 2026-10-10T21:06:27+09:00
-last_read:
+last_read: 2026-10-18T17:50:43+09:00
 open_entered: 2026-10-10T21:06:27+09:00
 wip_entered:
 blocked_entered:
