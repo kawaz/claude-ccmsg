@@ -2,9 +2,9 @@
 // Claude Code transcript, and nothing else. Every pattern that recognizes it —
 // the delivered envelope, the agent's `ccmsg post|reply|notify` Bash call and
 // its result, the PushNotification tool call — lives here, so the day that
-// shape changes there is one module to update (DR-0027 §6). The direct
-// envelope this daemon writes itself (DR-0036 §1) is rendered here too, so
-// what is written and what is read back are one definition.
+// shape changes there is one module to update (DR-0027 §6). The envelope
+// this daemon writes itself (DR-0039 §3) is rendered here too, so what is
+// written and what is read back are one definition.
 //
 // Three row shapes are recognized:
 //
@@ -87,14 +87,6 @@ export function directAddressSid(address: string): string {
     : address;
 }
 
-/** `<instance id>/<counter>`: the id of one direct message, there so a reply's
- * `reply_to` can point at it. Distinct from a room message's `r<N>m<M>`. */
-const DIRECT_MID_RE = /^[0-9a-f]{32}\/\d+$/;
-
-export function isDirectMid(mid: string): boolean {
-  return DIRECT_MID_RE.test(mid);
-}
-
 /** Characters a POSIX shell takes literally in an unquoted word. */
 const SHELL_PLAIN_RE = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
@@ -117,32 +109,20 @@ export function directDeliveryReplyLine(mid: string, from: string, launcher = "c
   return `Reply with: ${shellQuote(launcher)} reply ${shellQuote(mid)}${to} <text>`;
 }
 
-/** One direct message as `renderDirectDelivery` words it. `from` is the
+/** One message as `renderAddressedDelivery` words it. `from` is the
  * sender's sid. */
 export interface DirectDeliveryMessage {
   mid: string;
   from: string;
-  replyTo?: string;
   text: string;
 }
 
-/** The envelope a direct message reaches its recipient in: the sender as
- * `ccmsg:<sid>` in both `from` and `from-name`, the ccmsg identity attributes,
- * the text untouched, then the reply line naming `launcher`. */
-export function renderDirectDelivery(m: DirectDeliveryMessage, launcher: string): string {
-  return directEnvelope(m, `${m.text}\n\n${directDeliveryReplyLine(m.mid, m.from, launcher)}`);
-}
-
-/** The envelope a message sent with SendMessage to a `ccmsg:` address reaches
- * its recipient in (DR-0037 §3): the attributes of `renderDirectDelivery`, the
- * text untouched and nothing under it. The recipient answers by writing the
- * envelope's `from` as SendMessage's `to`, which the harness's own SendMessage
- * tells it to do, so no reply line names a command. */
-export function renderAddressedDelivery(m: Omit<DirectDeliveryMessage, "replyTo">): string {
-  return directEnvelope(m, m.text);
-}
-
-function directEnvelope(m: DirectDeliveryMessage, body: string): string {
+/** The envelope a message from another session reaches its recipient in
+ * (DR-0039 §3): the sender as `ccmsg:<sid>` in both `from` and `from-name`,
+ * the ccmsg identity attributes, the text untouched and nothing under it. The
+ * recipient answers with the `send` tool, naming the sid of `from`, as the
+ * plugin's skill tells it to, so no reply line names a command. */
+export function renderAddressedDelivery(m: DirectDeliveryMessage): string {
   const address = `${DIRECT_ADDRESS_PREFIX}${m.from}`;
   const attributes = [
     `from="${escapeAttribute(address)}"`,
@@ -150,9 +130,8 @@ function directEnvelope(m: DirectDeliveryMessage, body: string): string {
     `from-mode="prompting"`,
     `ccmsg-mid="${escapeAttribute(m.mid)}"`,
     `ccmsg-from="${escapeAttribute(m.from)}"`,
-    ...(m.replyTo !== undefined ? [`ccmsg-reply-to="${escapeAttribute(m.replyTo)}"`] : []),
   ];
-  return `<${TAG} ${attributes.join(" ")}>\n${body}\n</${TAG}>`;
+  return `<${TAG} ${attributes.join(" ")}>\n${m.text}\n</${TAG}>`;
 }
 
 /** True for the reply line of a direct envelope for `mid` from `from`, naming
@@ -334,12 +313,13 @@ function shellWords(input: string): string[] | null {
   return words;
 }
 
-/** The options `ccmsg post` / `ccmsg reply` take: those carrying a value,
- * and flags. */
+/** The options a transcript's `ccmsg post` / `ccmsg reply` call carries:
+ * those carrying a value, and flags. */
 export const SEND_VALUE_OPTIONS: readonly string[] = ["--to", "--sid", "--as-session"];
 export const SEND_FLAG_OPTIONS: readonly string[] = ["--help", "-h"];
 
-/** The words after `post` / `reply`, split the way the CLI reads them. */
+/** The words after `post` / `reply`, split the way the CLI that ran the call
+ * read them. */
 export interface SendWords {
   /** The words before the body: the target of `post`, the mid of `reply`. */
   leading: string[];
@@ -350,9 +330,8 @@ export interface SendWords {
 }
 
 /** Split the words after `post` / `reply` into the `leadingCount` words
- * before the body, the options, and the body. The CLI sends what this reads
- * and the timeline and the dump show what this reads, so the two cannot
- * differ.
+ * before the body, the options, and the body, as the CLI that ran the call
+ * read them, so the timeline and the dump show what was sent.
  *
  * Before the body, a word starting with `--` is an option (`--name=value`,
  * a known value option and the word after it, or a flag). From the body's
@@ -405,7 +384,7 @@ const NOTIFY_VALUE_OPTIONS = new Set(["--sid", "--about"]);
 /** Reads the ccmsg send call out of a Bash `command`, or null when there is
  * none (a `--help` call sends nothing). When the arguments use shell syntax this does not model, `text` is the
  * raw argument string after the verb rather than a guess. `post` / `reply`
- * are read by splitSendWords, as the CLI reads them. */
+ * are read by splitSendWords, as the CLI that ran them read them. */
 export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null {
   const m = [...command.matchAll(SEND_COMMAND_RE)].find((candidate) => {
     const word = shellWords(candidate[1]);
@@ -468,9 +447,9 @@ export type CcmsgSendOutcome =
   | { status: "unconfirmed"; detail: string }
   | { status: "other-ccmsg" };
 
-/** The exit status of `ccmsg post` / `ccmsg reply` for a direct message whose
- * arrival could not be told (message_send `unconfirmed`): it may have arrived,
- * so it is neither sent nor failed. A message that did not arrive exits 1. */
+/** The exit status of a transcript's `ccmsg post` / `ccmsg reply` call for a
+ * direct message whose arrival could not be told: it may have arrived, so it
+ * is neither sent nor failed. A message that did not arrive exits 1. */
 export const DIRECT_SEND_UNCONFIRMED_EXIT = 3;
 
 /** How a Bash tool_result of a non-zero exit begins, with the status. */

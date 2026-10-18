@@ -86,9 +86,18 @@ export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
  * - `session_changed`: the process the named session ran in now serves
  *   another session id (/clear, /resume)
  * - `ended`: the named session is no longer running
- * - `no_peer_socket`, `no_status_socket`, `unreachable`, `refused`: the
- *   delivery into the session's peer socket failed (DR-0036 §3, the
- *   MessageSendReason of the same names) */
+ * - `no_peer_socket`: the session has no peer messaging socket the daemon
+ *   can write to (no state file for it in its config dir, a harness speaking
+ *   another peer protocol, or no token)
+ * - `no_status_socket`: the daemon could not open the socket the recipient
+ *   would report a refusal to, so it wrote nothing rather than call an
+ *   unconfirmable write delivered (a problem on the sending machine's side)
+ * - `unreachable`: the socket took nothing (no connection, or not one byte in
+ *   time), so nothing arrived
+ * - `refused`: the recipient's harness answered that it did not take it
+ *
+ * The last four are the delivery into the session's peer socket failing
+ * (DR-0036 §3). */
 export const PeerSendReasonSchema = v.picklist([
   "self",
   "no_module",

@@ -15,7 +15,6 @@ import {
   isSessionIdShape,
   readRequest,
   resolvePaths,
-  sessionAddresses,
   type AgentInfo,
   type Identity,
   type LlmStatusReport,
@@ -106,10 +105,10 @@ import {
 } from "./session-status.ts";
 import { deriveRepoWs } from "./repo-derive.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
-import { PeerInjector, resolveLauncher } from "./peer-inject.ts";
-import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
+import { PeerInjector } from "./peer-inject.ts";
+import { createMidIssuer } from "./mid-issuer.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
-import { liveRuns, realpathOrUndefined, sendToAddress } from "./address-send.ts";
+import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
 import { listPeers, type PeerDeps, sendToPeers } from "./peer-send.ts";
 import { AGENT_INPUT_DEADLINE_MS, agentInput } from "./agent-input.ts";
 import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
@@ -199,8 +198,8 @@ interface SessionEntry {
   };
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
    * announced one. Deliberately outside `meta`: it exists to find the
-   * session's harness state files (peer injection, the config dirs an
-   * address_send reads), and `meta` is copied verbatim onto the wire (peers,
+   * session's harness state files (peer injection, the config dirs a
+   * peer_send reads), and `meta` is copied verbatim onto the wire (peers,
    * ev:"peers") where a bare config dir path would be noise nobody reads. */
   configDir?: string;
   /** ccmsg build / wire generation the latest hello for this sid announced
@@ -320,9 +319,8 @@ export interface Daemon {
   /** Direct messages handed to a session through its peer messaging socket
    * (peer-inject.ts). */
   peerInjector: PeerInjector;
-  /** Absolute launcher path the injected envelope's reply line names. */
-  launcher: string;
-  /** Issues the mid of each direct message this daemon sends (direct-send.ts). */
+  /** Issues the mid of each message this daemon sends into a peer socket
+   * (mid-issuer.ts). */
   issueDirectMid: () => string;
   /** `ccmsg say` records, memory only (say-log.ts, DR-0036 §3). */
   says: SayLog;
@@ -815,7 +813,7 @@ function peerDeps(daemon: Daemon): PeerDeps {
   };
 }
 
-/** The CLAUDE_CONFIG_DIRs whose sessions an address_send may reach: those the
+/** The CLAUDE_CONFIG_DIRs whose sessions a peer_send may reach: those the
  * agents poll scans, and those sessions announced in hello, each as a realpath
  * as the registry keeps them, so one dir is read once. Like the poll, a
  * daemon that does not poll (a test daemon) scans no config dir of its own
@@ -829,19 +827,6 @@ function knownConfigDirs(daemon: Daemon): string[] {
     return normalized !== undefined ? [normalized] : [];
   });
   return [...new Set([...detected, ...announced])];
-}
-
-/** currentPeers() as a `peers` reply: each peer with the `ccmsg:` addresses
- * it is reached at (PeerInfo.addresses). */
-function peersFor(daemon: Daemon): PeerInfo[] {
-  const pids = new Map<string, number[]>();
-  for (const row of daemon.agentsPoller.cache.agents) {
-    pids.set(row.sessionId, [...(pids.get(row.sessionId) ?? []), row.pid]);
-  }
-  return currentPeers(daemon).map((p) => ({
-    ...p,
-    addresses: sessionAddresses({ sid: p.sid, cwd: p.cwd, pids: pids.get(p.sid) ?? [] }),
-  }));
 }
 
 /** The subset of currentPeers() compared to decide whether anything worth a push
@@ -1204,8 +1189,8 @@ function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
 // uniform "must identify first" rule rather than special-casing these as the
 // sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
-  "message_send",
-  "address_send",
+  "peer_send",
+  "peer_list",
   "say",
   "say_read",
   "subscribe",
@@ -1377,9 +1362,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         );
       } else {
         // A session is named by its Claude Code session id (a UUID). The sid
-        // ends up in places other programs read as words — the `--to <sid>`
-        // of a direct envelope's reply line, which the recipient runs as a
-        // shell command — so nothing else is taken as one.
+        // ends up in places other programs read — the name of its sidecar's
+        // socket, the `from` of the envelope a recipient answers by — so
+        // nothing else is taken as one.
         if (!req.sid || !isSessionIdShape(req.sid)) {
           sendErr(
             conn,
@@ -1504,77 +1489,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         httpAllow: daemon.httpAllow,
         network: networkState(daemon),
       });
-      return;
-    }
-
-    case "message_send": {
-      // Session role only (DR-0036 §3): the person's input reaches a session
-      // through session_input, and no session-to-person route exists.
-      const id = conn.identity;
-      if (id?.role !== "session") {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          "message_send is sent by a session; a person's input reaches a session through session_input",
-        );
-        return;
-      }
-      const invalid = messageSendArgsError(req, id.sid);
-      if (invalid !== undefined) {
-        sendErr(conn, ErrorCode.invalid_args, invalid);
-        return;
-      }
-      // Waits for the write and the refusal window (DR-0034 §2); other
-      // requests on this connection run on meanwhile (DR-0029).
-      const outcome = await sendDirect(
-        {
-          from: id.sid,
-          to: req.to,
-          text: req.text,
-          ...(req.reply_to !== undefined ? { replyTo: req.reply_to } : {}),
-        },
-        {
-          session: (sid) => daemon.sessions.get(sid),
-          issueMid: daemon.issueDirectMid,
-          deliver: (configDir, sid, frame) => daemon.peerInjector.deliver(configDir, sid, frame),
-          launcher: daemon.launcher,
-          log: (line) => daemon.log.info(line),
-        },
-      );
-      send(conn, { ok: true, ...outcome });
-      return;
-    }
-
-    case "address_send": {
-      // Session role only: the sender is the session whose hooks module took
-      // the SendMessage over (DR-0037 §2), and becomes the envelope's from.
-      const id = conn.identity;
-      if (id?.role !== "session") {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          "address_send is sent by a session; a person's input reaches a session through session_input",
-        );
-        return;
-      }
-      if (req.text === "") {
-        sendErr(conn, ErrorCode.invalid_args, "address_send requires a non-empty text");
-        return;
-      }
-      // Waits for every run's write and refusal window (DR-0034 §2), the runs
-      // in parallel; other requests on this connection run on meanwhile.
-      const outcome = await sendToAddress(
-        { from: id.sid, to: req.to, text: req.text },
-        {
-          runs: () => liveRuns(knownConfigDirs(daemon), isProcessAlive),
-          realpath: realpathOrUndefined,
-          issueMid: daemon.issueDirectMid,
-          deliver: (run, frame) =>
-            daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
-          log: (line) => daemon.log.info(line),
-        },
-      );
-      send(conn, { ok: true, ...outcome });
       return;
     }
 
@@ -1738,7 +1652,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // this tab subscribed moments ago may still be folding, and a peers list
       // whose ordering key fills in afterwards would sort wrong on first paint.
       if (conn.identity?.role === "user") await sessionUserInputsReady(daemon.sessionUserInputs);
-      send(conn, { ok: true, peers: peersFor(daemon) });
+      send(conn, { ok: true, peers: currentPeers(daemon) });
       return;
     }
 
@@ -2845,7 +2759,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     llmStatusRefresher: null,
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
-    launcher: resolveLauncher(),
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),

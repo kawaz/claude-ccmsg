@@ -1,10 +1,29 @@
 // peer_send / peer_list (DR-0039 §3) over stand-in runs and deliveries: which
 // sessions a target matches, what each gets, and what a send says for each.
-import { describe, expect, test } from "bun:test";
+// Then peer_send through a daemon, with fake harnesses (peer-harness.ts) as
+// the recipients; their state files name live pids (this test process and
+// its parent) because only running processes are sent to.
+import { afterEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { SessionInputReadiness } from "@ccmsg/protocol";
-import type { SessionRun } from "../src/address-send.ts";
 import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
 import { listPeers, type PeerSendDeps, sendToPeers } from "../src/peer-send.ts";
+import type { SessionRun } from "../src/session-runs.ts";
+import {
+  connect,
+  type DaemonCtx,
+  startTestDaemon,
+  stopTestDaemon,
+  type TestClient,
+} from "./helpers.ts";
+import {
+  fakeHarness as spawnHarness,
+  parseEnvelope,
+  sessionWithConfig,
+  type FakeHarness,
+} from "./peer-harness.ts";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const A = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -134,4 +153,236 @@ describe("listPeers", () => {
     ]);
     expect((await listPeers(ME, { cwd: "/work" }, deps(runs))).map((p) => p.sid)).toEqual([B]);
   });
+});
+
+describe("peer_send through the daemon", () => {
+  const T = 15000;
+  const SENDER = "aaaaaaaa-2222-4333-8444-555555555555";
+  const PEER = "bbbbbbbb-2222-4333-8444-555555555555";
+  /** Two processes that run for as long as the test does. */
+  const LIVE_PID = process.pid;
+  const OTHER_LIVE_PID = process.ppid;
+
+  const cleanups: (() => void | Promise<void>)[] = [];
+  afterEach(async () => {
+    for (const f of cleanups.splice(0).reverse()) await f();
+  });
+
+  function tempDir(prefix: string): string {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+    cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  }
+
+  function harness(sid: string, opts: Parameters<typeof spawnHarness>[1] = {}): FakeHarness {
+    const h = spawnHarness(sid, opts);
+    cleanups.push(() => h.dispose());
+    return h;
+  }
+
+  async function daemon(): Promise<DaemonCtx> {
+    const ctx = await startTestDaemon();
+    cleanups.push(() => stopTestDaemon(ctx));
+    return ctx;
+  }
+
+  /** Name a run of `sid` to the daemon, as its sidecar does: the session then
+   * has a hooks module, and is sent to. */
+  async function withModule(ctx: DaemonCtx, sid: string): Promise<void> {
+    const c = await connect(ctx.sock);
+    await c.hello({ role: "session", sid });
+    await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+    cleanups.push(() => c.close());
+  }
+
+  async function send(
+    from: TestClient,
+    to: { session_id?: string; cwd?: string; pid?: number },
+    text: string,
+  ) {
+    return (await from.requestOk({ op: "peer_send", to, text })).results;
+  }
+
+  test(
+    "a session id reaches every run of the session; a pid the one",
+    async () => {
+      const ctx = await daemon();
+      const b1 = harness(PEER, { pid: LIVE_PID });
+      const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
+      await withModule(ctx, PEER);
+      const a = await sessionWithConfig(ctx, SENDER, b1.configDir);
+
+      expect(await send(a, { session_id: PEER }, "to both")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      const [first, second] = await Promise.all([b1.nextUser(), b2.nextUser()]);
+      expect(parseEnvelope(first.message.content)).toEqual({
+        attrs: {
+          from: `ccmsg:${SENDER}`,
+          "from-name": `ccmsg:${SENDER}`,
+          "from-mode": "prompting",
+          "ccmsg-mid": first.msg_id,
+          "ccmsg-from": SENDER,
+        },
+        body: "to both",
+      });
+      expect(first.session_id).toBe(PEER);
+      expect(second.msg_id).not.toBe(first.msg_id);
+
+      expect(await send(a, { session_id: PEER, pid: OTHER_LIVE_PID }, "to one")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      expect((await b2.nextUser()).message.content).toContain("\nto one\n");
+      expect(b1.frames.filter((f) => f.type === "user")).toHaveLength(1);
+    },
+    T,
+  );
+
+  test(
+    "a directory reaches the other sessions working there, through a symlink too",
+    async () => {
+      const ctx = await daemon();
+      const work = tempDir("ps-work-");
+      const link = path.join(tempDir("ps-link-"), "ws");
+      fs.symlinkSync(work, link);
+      const ha = harness(SENDER, { pid: LIVE_PID, cwd: work });
+      const hb = harness(PEER, { pid: OTHER_LIVE_PID, cwd: work });
+      await withModule(ctx, PEER);
+      const a = await sessionWithConfig(ctx, SENDER, ha.configDir);
+      await sessionWithConfig(ctx, PEER, hb.configDir);
+
+      expect(await send(a, { cwd: `${link}/` }, "hello dir")).toEqual([
+        { sid: PEER, cwd: work, outcome: "delivered" },
+      ]);
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("hello dir");
+      expect(ha.frames).toEqual([]);
+
+      // Nobody works in a directory of its own.
+      expect(await send(a, { cwd: tempDir("ps-alone-") }, "anyone?")).toEqual([]);
+    },
+    T,
+  );
+
+  // A test daemon polls no config dir of its own, so the recipient's config
+  // dir is known only from the sender's first hello: a later hello for the
+  // same sid without config_dir (an older CLI, a subprocess that lost the
+  // environment) must not forget it.
+  test(
+    "a re-hello without config_dir keeps the config dir the first hello announced",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(PEER, { pid: LIVE_PID });
+      await withModule(ctx, PEER);
+      await sessionWithConfig(ctx, SENDER, hb.configDir);
+      const a = await sessionWithConfig(ctx, SENDER);
+      expect(await send(a, { session_id: PEER }, "still here")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("still here");
+    },
+    T,
+  );
+
+  test(
+    "a run refusing while another takes it is delivered; every run refusing is refused",
+    async () => {
+      const ctx = await daemon();
+      const b1 = harness(PEER, { pid: LIVE_PID });
+      const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
+      await withModule(ctx, PEER);
+      b1.refuseWith = "denied";
+      const a = await sessionWithConfig(ctx, SENDER, b1.configDir);
+      expect(await send(a, { session_id: PEER }, "hi")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      b2.refuseWith = "held";
+      expect(await send(a, { session_id: PEER }, "hi")).toEqual([
+        { sid: PEER, outcome: "not_delivered", reason: "refused" },
+      ]);
+    },
+    T,
+  );
+
+  // The recipient stopped reading: the write runs out of time part-way, so
+  // the message may yet arrive whole and is not called not delivered.
+  test(
+    "a write that does not finish in time is unconfirmed",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(PEER, { pid: LIVE_PID, stall: true });
+      await hb.listening;
+      await withModule(ctx, PEER);
+      const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
+      expect(await send(a, { session_id: PEER }, "x".repeat(4 * 1024 * 1024))).toEqual([
+        { sid: PEER, outcome: "unconfirmed" },
+      ]);
+    },
+    T,
+  );
+
+  test(
+    "a session whose process has ended is not sent to, and is said to have ended",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(PEER);
+      const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
+      expect(await send(a, { session_id: PEER }, "hi")).toEqual([
+        { sid: PEER, outcome: "not_delivered", reason: "ended" },
+      ]);
+      expect(hb.frames).toEqual([]);
+    },
+    T,
+  );
+
+  // A session started with an earlier plugin may still send the ops that
+  // carried a message before peer_send (DR-0039 §3). They are not read; the
+  // send that follows on the same connection is the first thing to arrive.
+  test(
+    "an earlier client's message_send and address_send are refused as unknown, and nothing arrives",
+    async () => {
+      const ctx = await daemon();
+      const hb = harness(PEER, { pid: LIVE_PID });
+      await withModule(ctx, PEER);
+      const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
+      for (const old of [
+        { op: "message_send", to: PEER, text: "old" },
+        { op: "address_send", to: `ccmsg:${PEER}`, text: "old" },
+      ]) {
+        const refusal = await a.requestRefusal(old);
+        expect({ code: refusal.error.code, msg: refusal.error.msg }).toEqual({
+          code: "invalid_args",
+          msg: `op: unknown op: ${old.op}`,
+        });
+      }
+      expect(await send(a, { session_id: PEER }, "new")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("new");
+      expect(hb.frames.filter((f) => f.type === "user")).toHaveLength(1);
+    },
+    T,
+  );
+
+  test(
+    "invalid_args for a person or a blank text; hello first, for peer_list too",
+    async () => {
+      const ctx = await daemon();
+      const a = await sessionWithConfig(ctx, SENDER);
+      const u = await connect(ctx.sock);
+      await u.hello({ role: "user" });
+      const to = { session_id: PEER };
+      expect((await u.requestError({ op: "peer_send", to, text: "hi" })).error.code).toBe(
+        "invalid_args",
+      );
+      expect((await a.requestRefusal({ op: "peer_send", to, text: " \n" })).error.code).toBe(
+        "invalid_args",
+      );
+      const raw = await connect(ctx.sock);
+      expect((await raw.requestError({ op: "peer_send", to, text: "hi" })).error.code).toBe(
+        "hello_required",
+      );
+      expect((await raw.requestError({ op: "peer_list" })).error.code).toBe("hello_required");
+    },
+    T,
+  );
 });

@@ -35,13 +35,11 @@ import {
 } from "./response-rooms.ts";
 import { PeerListResponseSchema, PeerSendResponseSchema } from "./peer-tools.ts";
 import {
-  AddressSendResponseSchema,
   AgentInputResponseSchema,
   AgentsResponseSchema,
   DirTreeResponseSchema,
   ForkOriginResponseSchema,
   HelloResponseSchema,
-  MessageSendResponseSchema,
   NotifyResponseSchema,
   PeersResponseSchema,
   SayReadResponseSchema,
@@ -97,8 +95,6 @@ export type ErrorResponse = Output<typeof ErrorResponseSchema>;
  * session_status). */
 export const RESPONSE_SCHEMAS = {
   hello: HelloResponseSchema,
-  message_send: MessageSendResponseSchema,
-  address_send: AddressSendResponseSchema,
   agent_input: AgentInputResponseSchema,
   peer_send: PeerSendResponseSchema,
   peer_list: PeerListResponseSchema,

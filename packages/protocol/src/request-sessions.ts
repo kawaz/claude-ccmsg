@@ -38,9 +38,8 @@ export const HelloRequestSchema = v.object({
   /** CLAUDE_CONFIG_DIR of the session's own process — the CLI reads it from
    * its environment (falling back to Claude Code's default `$HOME/.claude`
    * when unset) and the daemon normalizes it. Only used to find the sessions
-   * a `ccmsg:` address may name: the daemon reads the live runs of every
-   * config dir it knows (`address_send`, DR-0037 §1); never echoed back on the
-   * wire. */
+   * a send may reach: the daemon reads the live runs of every config dir it
+   * knows (`peer_send`, DR-0039 §3); never echoed back on the wire. */
   config_dir: v.optional(v.string()),
   /** The ccmsg build this client runs (`VERSION`). Diagnostic only — the
    * daemon never gates on it — but it is what turns "this session's client is
@@ -130,44 +129,6 @@ export const SayReadRequestSchema = v.object({
   id: v.string(),
 });
 export type SayReadRequest = Output<typeof SayReadRequestSchema>;
-
-/** Send a message straight to one session, without a room (session role
- * only, DR-0036 §1).
- *
- * The daemon writes the envelope into the recipient's peer messaging socket
- * (DR-0034) and answers whether it arrived. Nothing is held for later: a
- * message that did not arrive is answered with why, and the sender decides
- * whether to send it again. The daemon keeps no record of what it sent, so a
- * reply names its recipient in `to` like any other message. */
-export const MessageSendRequestSchema = v.object({
-  op: v.literal("message_send"),
-  /** The recipient's session id. */
-  to: v.string(),
-  /** Non-empty; delivered exactly as written. */
-  text: v.string(),
-  /** The mid (`<instance id>/<n>`) of the direct message this answers. */
-  reply_to: v.optional(v.string()),
-});
-export type MessageSendRequest = Output<typeof MessageSendRequestSchema>;
-
-/** Send a message to a `ccmsg:` address: what a session's hooks module does
- * with a SendMessage it takes over (session role only, DR-0037).
- *
- * The daemon resolves `to` to the live session runs it names and writes the
- * envelope into each run's peer messaging socket (DR-0034), the sender being
- * `ccmsg:<sid>` of the asking session. It answers delivered when at least one
- * run took the message: SendMessage has one result for one `to`, and a "not
- * sent" there would have the sender send again to the runs that did get it.
- * Unlike message_send, the envelope carries no reply line and no reply_to:
- * the recipient answers with SendMessage to the envelope's `from`. */
-export const AddressSendRequestSchema = v.object({
-  op: v.literal("address_send"),
-  /** `ccmsg:<sid>`, `ccmsg:<sid>.<pid>` or `ccmsg:path:<dir>`. */
-  to: v.string(),
-  /** Non-empty; delivered exactly as written. */
-  text: v.string(),
-});
-export type AddressSendRequest = Output<typeof AddressSendRequestSchema>;
 
 /** Send a message to the sessions `to` picks out: what the `send` tool of a
  * session's hooks module asks (session role only, DR-0039 §3).

@@ -1183,7 +1183,7 @@ export function register(on: On): ModuleState {
         void sweepGuided($);
         // Awaited, so the tools are listed by the first turn. `-p` and the SDK
         // get none: talking with other sessions from there is not a use ccmsg
-        // serves (DR-0037 §5, DR-0039 §3). Registrations outlive /clear and
+        // serves (DR-0039 §3). Registrations outlive /clear and
         // /resume, so this is the one place.
         if (state.interactive) await registerTools($);
       },

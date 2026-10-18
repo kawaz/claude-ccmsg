@@ -125,13 +125,6 @@ export const PeerInfoSchema = v.object({
    * `origin`/`promptSource` fields the fold reads. Clients sort a peer without
    * it after every peer that has one rather than treating it as epoch. */
   last_user_input_at: v.optional(v.string()),
-  /** The `ccmsg:` addresses that reach this session with SendMessage from any
-   * config dir (DR-0037 §1), on a `peers` reply: `ccmsg:<sid>`, a
-   * `ccmsg:<sid>.<pid>` per run when the session runs in more than one
-   * process (as the agents poll last saw it), and `ccmsg:path:<cwd>` when the
-   * cwd is known (`sessionAddresses`). Absent on the `ev:"peers"` push, which
-   * the webui reads and which carries no address. */
-  addresses: v.optional(v.array(v.string())),
   /** ccmsg build of the client that last hello'd for this sid, when it
    * announced one (`HelloRequest.client_version`). */
   client_version: v.optional(v.string()),
@@ -189,92 +182,6 @@ export const SayReadResponseSchema = v.object({
   id: v.string(),
 });
 export type SayReadResponse = Output<typeof SayReadResponseSchema>;
-
-/** Why a direct message did not arrive (DR-0036 §3). The message is not kept
- * anywhere in any of these cases.
- *
- * - `session_not_found`: the daemon knows no session by that id (it ended, or
- *   the id is wrong)
- * - `no_config_dir`: the daemon does not know which CLAUDE_CONFIG_DIR the
- *   session runs under, so it cannot look for its socket
- * - `no_peer_socket`: the session has no peer messaging socket this daemon can
- *   write to (no state file for it in that config dir — it ended or runs under
- *   another one — a harness speaking another peer protocol, or no token)
- * - `no_status_socket`: the daemon could not open the socket the recipient
- *   would report a refusal to, so it wrote nothing rather than call an
- *   unconfirmable write delivered (a problem on the sending machine's side)
- * - `unreachable`: the socket took nothing (no connection, or not one byte in
- *   time), so nothing arrived
- * - `refused`: the recipient's harness answered that it did not take it */
-export const MessageSendReasonSchema = v.picklist([
-  "session_not_found",
-  "no_config_dir",
-  "no_peer_socket",
-  "no_status_socket",
-  "unreachable",
-  "refused",
-]);
-export type MessageSendReason = Output<typeof MessageSendReasonSchema>;
-
-/** Payload of a completed message_send (DR-0036 §1). `mid` is the id the
- * delivered envelope carries, what a reply to it names as `reply_to`.
- *
- * `unconfirmed`: the write into the recipient's socket started and did not
- * finish in time, so whether the message arrived cannot be told. Sending it
- * again may deliver it twice; `mid` is the id it carries if it did arrive. */
-export const MessageSendResponseSchema = v.variant("outcome", [
-  v.object({ ok: v.literal(true), outcome: v.literal("delivered"), mid: v.string() }),
-  v.object({
-    ok: v.literal(true),
-    outcome: v.literal("not_delivered"),
-    reason: MessageSendReasonSchema,
-  }),
-  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed"), mid: v.string() }),
-]);
-export type MessageSendResponse = Output<typeof MessageSendResponseSchema>;
-
-/** Why a message to a `ccmsg:` address reached nobody (DR-0037). The message
- * is not kept anywhere in any of these cases.
- *
- * - `invalid_address`: `to` is none of `ccmsg:<sid>`, `ccmsg:<sid>.<pid>`,
- *   `ccmsg:path:<absolute dir>`
- * - `self`: the address names the sending session itself
- * - `no_recipient`: no live session run answers to the address (the session
- *   ended, the id or pid is wrong, or no other session works in that
- *   directory)
- *
- * and, when every run the address resolved to failed, why (MessageSendReason
- * says what each means): `no_peer_socket`, `no_status_socket`, `unreachable`,
- * `refused`. When the runs failed for different reasons, the one named is the
- * first of that order reversed: a refusal, then a socket that took nothing,
- * then this side's status socket, then a run with no socket. */
-export const AddressSendReasonSchema = v.picklist([
-  "invalid_address",
-  "self",
-  "no_recipient",
-  "no_peer_socket",
-  "no_status_socket",
-  "unreachable",
-  "refused",
-]);
-export type AddressSendReason = Output<typeof AddressSendReasonSchema>;
-
-/** Payload of a completed address_send (DR-0037 §4). `delivered`: at least
- * one run the address resolved to took the message — which others did not is
- * not said, since the sender can do nothing with it but send again to those
- * that did. `unconfirmed`: none took it for certain, and the write into at
- * least one was cut off part-way, so it may have arrived; sending again may
- * deliver it twice. */
-export const AddressSendResponseSchema = v.variant("outcome", [
-  v.object({ ok: v.literal(true), outcome: v.literal("delivered") }),
-  v.object({
-    ok: v.literal(true),
-    outcome: v.literal("not_delivered"),
-    reason: AddressSendReasonSchema,
-  }),
-  v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
-]);
-export type AddressSendResponse = Output<typeof AddressSendResponseSchema>;
 
 /** The fields of one cwd-picker entry beside its children. */
 const DirTreeEntryFieldsSchema = v.object({

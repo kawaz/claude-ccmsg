@@ -41,7 +41,6 @@ const PEER = {
   connected_at: "2026-10-09T00:00:00.000Z",
   last_activity_at: "2026-10-09T00:00:01.000Z",
   last_user_input_at: "2026-10-09T00:00:02.000Z",
-  addresses: [`ccmsg:${SID}`, "ccmsg:path:/w/x/main"],
   client_version: "0.157.0",
   protocol: 3,
   stale_client: { last_seen: "2026-10-09T00:00:03.000Z", version: "0.1.0", protocol: 2 },
@@ -208,16 +207,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       sandbox_available: true,
       fork_available: true,
     },
-  ],
-  message_send: [
-    { ok: true, outcome: "delivered", mid: "i1/1" },
-    { ok: true, outcome: "not_delivered", reason: "no_peer_socket" },
-    { ok: true, outcome: "unconfirmed", mid: "i1/2" },
-  ],
-  address_send: [
-    { ok: true, outcome: "delivered" },
-    { ok: true, outcome: "not_delivered", reason: "no_recipient" },
-    { ok: true, outcome: "unconfirmed" },
   ],
   agent_input: [
     { ok: true, outcome: "appended" },

@@ -42,20 +42,6 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "hello", role: "user", protocol: "1" },
     ],
   },
-  message_send: {
-    ok: { op: "message_send", to: SID, text: "hi", reply_to: "abc/1" },
-    bad: [
-      { op: "message_send", to: SID },
-      { op: "message_send", to: 1, text: "hi" },
-    ],
-  },
-  address_send: {
-    ok: { op: "address_send", to: `ccmsg:path:/w`, text: "hi" },
-    bad: [
-      { op: "address_send", to: `ccmsg:${SID}` },
-      { op: "address_send", to: 1, text: "hi" },
-    ],
-  },
   agent_input: {
     ok: { op: "agent_input", session_id: SID, agent_id: "a1b2c3", text: "hi" },
     bad: [
@@ -403,6 +389,21 @@ describe("readRequest: a line that is not a request is a failure", () => {
     { op: "invite", room: "r1", sid: SID },
   ]) {
     test(`no op writes a room: ${value.op}`, () => {
+      expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
+        kind: "invalid_request",
+        frame: { op: value.op, request_id: "q1" },
+        failure: { issues: [{ path: "op", message: `unknown op: ${value.op}` }] },
+      });
+    });
+  }
+
+  // A session sends to another with peer_send alone (DR-0039 §3): the ops a
+  // client of an earlier build sends with a message in them are not read.
+  for (const value of [
+    { op: "message_send", to: SID, text: "hi", reply_to: "abc/1" },
+    { op: "address_send", to: `ccmsg:${SID}`, text: "hi" },
+  ]) {
+    test(`no op but peer_send sends to a session: ${value.op}`, () => {
       expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
         kind: "invalid_request",
         frame: { op: value.op, request_id: "q1" },

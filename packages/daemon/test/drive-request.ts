@@ -13,7 +13,7 @@ import {
   type ResponseOf,
 } from "@ccmsg/protocol";
 import { agentsKey, createAgentsPoller } from "../src/agents.ts";
-import { createMidIssuer } from "../src/direct-send.ts";
+import { createMidIssuer } from "../src/mid-issuer.ts";
 import { createForkOriginCache } from "../src/fork-origin.ts";
 import { LlmRequestCache } from "../src/llm-events.ts";
 import { Logger } from "../src/log.ts";
@@ -88,7 +88,6 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     llmStatusRefresher: null,
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
-    launcher: "/nonexistent/ccmsg",
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),

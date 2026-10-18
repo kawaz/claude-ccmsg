@@ -6,12 +6,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   AllowedOriginsTextSchema,
-  DIRECT_DELIVERY_USER_SENDER,
-  DIRECT_SEND_UNCONFIRMED_EXIT,
   VERSION,
-  directAddressSid,
   errorText,
-  isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
   parseWith,
@@ -19,16 +15,12 @@ import {
   SessionStateFileTextSchema,
   SidecarReplyTextSchema,
   SidecarRunIdSchema,
-  splitSendWords,
   resolvePaths,
   sessionProjectDir,
   type Identity,
-  type MessageSendReason,
-  type MessageSendRequest,
   type ReplyOf,
   type RequestInput,
   PeerListInputTextSchema,
-  type PeerInfo,
   PeerSendInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
@@ -61,7 +53,6 @@ import { keepNamed, type Sidecar, startSidecar } from "./sidecar.ts";
 // --- arg parsing -----------------------------------------------------------
 
 const BOOL_FLAGS = new Set([
-  "addresses",
   "self",
   "foreground",
   "no-thinking",
@@ -79,24 +70,20 @@ const BOOL_FLAGS = new Set([
  * identity-less because they only observe. subscribe also stays
  * available (with a stderr warning) so kawaz can observe as u1 until the
  * webui is up. */
-const WRITE_OPS = new Set(["post", "reply", "notify"]);
+const WRITE_OPS = new Set(["notify"]);
 
 interface Parsed {
   positionals: string[];
   opts: Record<string, string | boolean>;
-  /** Where in the parsed words the first positional (the command) is. */
-  commandAt?: number;
 }
 
 function parseArgs(args: string[]): Parsed {
   const positionals: string[] = [];
   const opts: Record<string, string | boolean> = {};
-  let commandAt: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === undefined) break;
     if (a === "--") {
-      if (i + 1 < args.length) commandAt ??= i + 1;
       positionals.push(...args.slice(i + 1));
       break;
     }
@@ -121,33 +108,10 @@ function parseArgs(args: string[]): Parsed {
     } else if (a === "-h") {
       opts.help = true;
     } else {
-      commandAt ??= i;
       positionals.push(a);
     }
   }
-  return { positionals, opts, ...(commandAt !== undefined ? { commandAt } : {}) };
-}
-
-/** `post` / `reply` read again: the words after the command by
- * splitSendWords, which the timeline and the dump read them with too, so a
- * body holding `--foo` or written without quotes is sent as they show it.
- * The words before the command are read as for any command. The body, when
- * there is one, is the last positional, its words joined by one space. */
-function parseSendArgs(argv: string[], commandAt: number): Parsed {
-  const before = parseArgs(argv.slice(0, commandAt));
-  const split = splitSendWords(argv.slice(commandAt + 1), 1);
-  const opts = { ...before.opts };
-  for (const [name, value] of split.options) {
-    opts[name === "-h" ? "help" : name.replace(/^--/, "")] = value;
-  }
-  return {
-    positionals: [
-      ...argv.slice(commandAt, commandAt + 1),
-      ...split.leading,
-      ...(split.body.length > 0 ? [split.body.join(" ")] : []),
-    ],
-    opts,
-  };
+  return { positionals, opts };
 }
 
 function str(opts: Record<string, string | boolean>, key: string): string | undefined {
@@ -210,7 +174,7 @@ function resolveSessionIdentity(
   const sid =
     sidOverride ?? strField(process.env.CCMSG_SID) ?? strField(process.env.CLAUDE_CODE_SESSION_ID);
   // The daemon refuses a session hello whose sid is not a Claude Code session
-  // id (the sid is written into reply lines other sessions run); refuse it
+  // id (the sid names its sidecar's socket and the envelopes it sends); refuse it
   // here first so the reason names the flag or variable it came from.
   if (sid && !isSessionIdShape(sid)) {
     throw new Error(
@@ -280,7 +244,7 @@ function resolveSessionIdentity(
 }
 
 /** stderr message + exit code for write ops invoked without a sid. Centralized
- * so post/reply/notify all reject the same way, and the
+ * so every write op rejects the same way, and the
  * message names every env var and flag a caller might expect to work. */
 function refuseWriteWithoutSid(cmd: string): never {
   process.stderr.write(
@@ -329,100 +293,6 @@ async function runOnce(identity: Identity, req: RequestInput): Promise<never> {
   const res = await client.request(req);
   client.close();
   process.exit(output(res));
-}
-
-// --- direct send (DR-0036 §1) ---------------------------------------------
-
-/** A peers row without its `addresses`. */
-function withoutAddresses(peer: PeerInfo): Omit<PeerInfo, "addresses"> {
-  const { addresses: _addresses, ...rest } = peer;
-  return rest;
-}
-
-/** Tell whoever runs a deprecated way of sending (DR-0039 §4) what replaces
- * it. It still runs: a session started with an earlier plugin may use it. */
-function deprecated(what: string): void {
-  process.stderr.write(
-    `ccmsg: ${what} は廃止予定。セッション間の送信は ccmsg plugin の send tool、宛先の候補は peers tool を使う (使い方は skill ccmsg-v1:ccmsg)\n`,
-  );
-}
-
-/** A room id (`r<N>`) and a room msg (`r<N>m<M>`): what `post` and `reply`
- * named in a room (DR-0036 §2). Rooms are read-only, and an agent holding
- * one from a room envelope it received is told where sending went. */
-const ROOM_ID_RE = /^r\d+$/;
-const ROOM_MID_RE = /^r\d+m\d+$/;
-const ROOM_RETIRED =
-  "room には書き込めない (room は読み取り専用で、webui で過去の会話を読めるだけ)。セッション間の送信は ccmsg plugin の send tool、宛先の候補は peers tool を使う (使い方は skill ccmsg-v1:ccmsg)";
-
-/** The sid a recipient argument names: a bare sid or the `ccmsg:<sid>` address.
- * The person is no recipient (DR-0036 §3), so `user` is refused with where
- * that traffic goes instead. */
-function directRecipient(address: string): string {
-  const sid = directAddressSid(address);
-  if (sid === DIRECT_DELIVERY_USER_SENDER) {
-    throw new Error(
-      "セッションから人へは送れない。人の入力は webui から届き、人に知らせるには ccmsg plugin の say tool を使う",
-    );
-  }
-  if (!isSessionIdShape(sid)) {
-    throw new Error(
-      `宛先はセッション ID (ccmsg peers に出る sid) か ccmsg:<sid> で書く: ${address}`,
-    );
-  }
-  return sid;
-}
-
-/** What a sender's agent reads when its message did not arrive: why, and what
- * it can do next. The message is held nowhere, so resending is its call. */
-const NOT_DELIVERED: Record<MessageSendReason, (to: string) => string> = {
-  session_not_found: (to) =>
-    `宛先のセッション ${to} を daemon が知らない (終了したか、sid の誤り)。ccmsg peers で今いるセッションの sid を確かめて送り直すか、送るのをやめる`,
-  no_config_dir: () =>
-    "daemon が宛先のセッションの config dir を知らないため、peer socket を探せない。送り直しても同じ結果になるので、送るのをやめる",
-  no_peer_socket: () =>
-    "宛先のセッションの peer socket が見つからない (セッションが終了した、別の config dir で動いている、または peer messaging に対応しない Claude Code)。ccmsg peers で宛先がまだ居るか確かめ、居なければ送るのをやめる",
-  no_status_socket: () =>
-    "送り手側で、受け手からの受領拒否の知らせを受ける socket を作れなかったため、送っていない (届いたか確かめられない送り方はしない)。daemon の側の問題なので、少し置いて一度だけ送り直し、また同じなら送るのをやめる",
-  unreachable: () =>
-    "宛先のセッションの peer socket に書き込めなかった (終了した直後か、応答しない)。少し置いて一度だけ送り直すか、送るのをやめる",
-  refused: () =>
-    "宛先のセッションが受け取りを拒否した。送り直しても拒否されうるので、時間を置いて送り直すか、送るのをやめる",
-};
-
-/** One message_send. A delivered message prints `{"delivered":true,"mid":…}`
- * on stdout. Anything else is a line of text on stderr and a non-zero exit —
- * never JSON carrying `ok`, which the timeline and dump read as the room CLI's
- * answer and leave out (classifyCcmsgSendResult). One that may or may not have
- * arrived exits DIRECT_SEND_UNCONFIRMED_EXIT, which they read as such. */
-async function runDirectSend(
-  identity: Identity,
-  req: Omit<MessageSendRequest, "op">,
-): Promise<never> {
-  const client = await ensureDaemon(resolvePaths(), identity);
-  const res = await client.request({
-    op: "message_send",
-    ...req,
-  });
-  client.close();
-  if (!res.ok) {
-    process.stderr.write(`ccmsg: 送れなかった (${res.error.code}): ${res.error.msg}\n`);
-    process.exit(1);
-  }
-  if (res.outcome === "delivered") {
-    process.stdout.write(`${JSON.stringify({ delivered: true, mid: res.mid })}\n`);
-    process.exit(0);
-  }
-  if (res.outcome === "unconfirmed") {
-    process.stderr.write(
-      `ccmsg: 届いたか確かめられなかった (unconfirmed)。宛先のセッションの peer socket への書き込みが途中で時間切れになり、届いたかどうか分からない。届いていれば相手には mid ${res.mid} として見えている。送り直すと二重に届くかもしれないので、まず相手の返事を待ち、送り直す時は重複しうることを本文に書く\n`,
-    );
-    process.exit(DIRECT_SEND_UNCONFIRMED_EXIT);
-  }
-  process.stderr.write(
-    `ccmsg: 届かなかった (${res.reason})。メッセージは daemon に残らない。${NOT_DELIVERED[res.reason](req.to)}\n`,
-  );
-  process.exit(1);
 }
 
 // --- sidecar ---------------------------------------------------------------
@@ -1039,11 +909,6 @@ Usage:
   ccmsg <command> [args] [options]
 
 Commands:
-  post <sid> <text>            Deprecated: a session sends to another with the
-                               ccmsg plugin's send tool
-  reply <mid> --to <sid> <text>
-                               Deprecated: a session answers a direct message
-                               with the ccmsg plugin's send tool
   subscribe                    Stream the session's notifications (notify,
                                net_online) as jsonl to stdout. Startup and
                                reconnect are silent
@@ -1057,9 +922,7 @@ Commands:
                                jsonl to a file and prints only its path (bare --out
                                auto-names it under <data>/dumps/)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
-                               by substring match on each session's cwd.
-                               --addresses (deprecated) adds each session's
-                               ccmsg: addresses
+                               by substring match on each session's cwd
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   say [args...]                Speak via /usr/bin/say, first telling the daemon
                                which session spoke so the webui can show it in
@@ -1097,7 +960,6 @@ Commands:
                                Live "subscribe" clients reattach on their own
 
 Command Options:
-  --to <sid>                   reply <mid>: the session the answer goes to
   --since <value>              dump: inclusive lower bound — an ISO 8601 timestamp with
                                timezone, or a transcript record uuid. A uuid cuts at that
                                record itself, so records sharing its timestamp are not
@@ -1134,7 +996,7 @@ Global Options:
   --version                    Print the ccmsg version and exit
 
 Notes:
-  Write ops (post, reply, notify) require a session
+  Write ops (notify) require a session
   identity (CCMSG_SID / CLAUDE_CODE_SESSION_ID / --as-session). Without one the
   CLI exits with a non-zero status rather than posting as the User (u1). The
   User admin identity is issued by the webui backend only; the CLI cannot act
@@ -1208,12 +1070,7 @@ async function main(): Promise<void> {
   }
   // Parse the whole argv so options may appear before or after the command (kawaz
   // CLI convention: option position is not fixed). The first positional is the command.
-  const parsed = parseArgs(argv);
-  const { positionals, opts } =
-    (parsed.positionals[0] === "post" || parsed.positionals[0] === "reply") &&
-    parsed.commandAt !== undefined
-      ? parseSendArgs(argv, parsed.commandAt)
-      : parsed;
+  const { positionals, opts } = parseArgs(argv);
   if (opts["help-full"] === true) {
     printFullHelp();
     return;
@@ -1255,41 +1112,6 @@ async function main(): Promise<void> {
   const identity: Identity = sessionIdentity ?? { role: "user" };
 
   switch (cmd) {
-    case "post": {
-      const usage = "ccmsg post <sid> <text>";
-      const target = requireArg(args[0], "sid", usage);
-      if (ROOM_ID_RE.test(target)) throw new Error(ROOM_RETIRED);
-      const to = directRecipient(target);
-      // The body: every word after the target, joined by one space
-      // (parseSendArgs), as the timeline shows it.
-      const text = requireArg(args[1], "text", usage);
-      if (opts.to !== undefined) {
-        throw new Error("--to は reply <mid> の宛先の指定で、post では使わない");
-      }
-      deprecated("ccmsg post <sid>");
-      await runDirectSend(identity, { to, text });
-      return;
-    }
-    case "reply": {
-      const usage = "ccmsg reply <mid> --to <sid> <text>";
-      const ref = requireArg(args[0], "mid", usage);
-      if (ROOM_MID_RE.test(ref)) throw new Error(ROOM_RETIRED);
-      if (!isDirectMid(ref)) {
-        throw new Error(
-          `返信先 "${ref}" は届いた封筒の mid (<instance id>/<n>) で書く\n  usage: ${usage}`,
-        );
-      }
-      const msg = requireArg(args[1], "text", usage);
-      const address = str(opts, "to");
-      if (address === undefined) {
-        throw new Error(
-          "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには ccmsg plugin の say tool を使う",
-        );
-      }
-      deprecated("ccmsg reply <mid>");
-      await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
-      return;
-    }
     case "dump": {
       const usage =
         "ccmsg dump <session-id> [--out [path]] [--since <timestamp|uuid>] [--until <timestamp|uuid>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
@@ -1339,21 +1161,15 @@ async function main(): Promise<void> {
       // RL-Q2 (kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]` に合わせ
       // positional 引数を cwd 部分一致 filter として実装する。絞りは CLI 側で
       // 行う (webui の op:"peers" を汚さない方針、interface-wording
-      // rule 準拠)。各セッションの addresses (SendMessage の宛先の綴り) は
-      // --addresses の時だけ出す: 送信が send tool に置き換わり (DR-0039 §4)、
-      // 一覧そのものは人の口として残るため。
+      // rule 準拠)。
       const cwdFilter = args[0];
-      const withAddresses = opts.addresses === true;
-      if (withAddresses) deprecated("ccmsg peers --addresses");
       const client = await ensureDaemon(resolvePaths(), identity);
       const res = await client.request({ op: "peers" });
       client.close();
       if (!res.ok) process.exit(output(res));
-      const peers = res.peers
-        .filter(
-          (p) => typeof cwdFilter !== "string" || cwdFilter === "" || p.cwd.includes(cwdFilter),
-        )
-        .map((p) => (withAddresses ? p : withoutAddresses(p)));
+      const peers = res.peers.filter(
+        (p) => typeof cwdFilter !== "string" || cwdFilter === "" || p.cwd.includes(cwdFilter),
+      );
       process.exit(output({ ...res, peers }));
       return;
     }

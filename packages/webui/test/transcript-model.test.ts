@@ -58,7 +58,6 @@ import {
   type JsonObject,
   type JsonValue,
   parseWith,
-  renderDirectDelivery,
   sendResultText,
   UserRowSchema,
 } from "@ccmsg/protocol";
@@ -5073,20 +5072,12 @@ describe("standalone ccmsg in the transcript", () => {
     });
   });
 
-  // The direct message this plugin's daemon writes (DR-0036 §1), and the
+  // A direct envelope with the launcher-path reply line, and the
   // launcher-path `post <sid>` / `reply <mid> --to` calls with what that CLI
-  // prints.
+  // printed, as transcripts hold them (DR-0036 §1).
   test("this plugin's direct envelope is a peer bubble without its launcher reply line", () => {
     const directMid = "0123456789abcdef0123456789abcdef/2";
-    const envelope = renderDirectDelivery(
-      {
-        mid: directMid,
-        from: SID,
-        replyTo: "0123456789abcdef0123456789abcdef/1",
-        text: "結果です",
-      },
-      "/plugin/bin/ccmsg",
-    );
+    const envelope = `<cross-session-message from="ccmsg:${SID}" from-name="ccmsg:${SID}" from-mode="prompting" ccmsg-mid="${directMid}" ccmsg-from="${SID}" ccmsg-reply-to="0123456789abcdef0123456789abcdef/1">\n結果です\n\nReply with: /plugin/bin/ccmsg reply ${directMid} --to ${SID} <text>\n</cross-session-message>`;
     const [line] = parse([deliveredRow(envelope)]);
     const [message] = extractCcmsgMessages(line);
     expect(message).toEqual({

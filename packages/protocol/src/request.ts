@@ -31,11 +31,9 @@ import {
   RoomsRequestSchema,
 } from "./request-rooms.ts";
 import {
-  AddressSendRequestSchema,
   AgentsRequestSchema,
   DirTreeRequestSchema,
   ForkOriginRequestSchema,
-  MessageSendRequestSchema,
   NotifyRequestSchema,
   PeerListRequestSchema,
   PeerSendRequestSchema,
@@ -118,8 +116,6 @@ export type RequestEnvelope = Output<typeof RequestEnvelopeSchema>;
 
 /** Every op's request but hello's, which comes in a shape per generation. */
 const OP_REQUEST_SCHEMAS = [
-  MessageSendRequestSchema,
-  AddressSendRequestSchema,
   PeerSendRequestSchema,
   PeerListRequestSchema,
   SayRequestSchema,

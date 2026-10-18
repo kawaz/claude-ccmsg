@@ -50,10 +50,6 @@ export const CliStatusSchema = v.looseObject({
   restarted: v.optional(v.boolean()),
 });
 
-/** What a direct message (`post` or `reply` to a session) prints once it is
- * delivered. */
-export const CliDeliveredSchema = v.object({ delivered: v.literal(true), mid: v.string() });
-
 const JsonObjectTextSchema = jsonText(JsonObjectSchema);
 
 /** A line of `subscribe`'s output read as a JSON object, or nothing when it

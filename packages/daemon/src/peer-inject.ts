@@ -1,4 +1,4 @@
-// Delivery of a direct message (DR-0036 §1) straight
+// Delivery of a message from another session (DR-0039 §3) straight
 // into a Claude Code session through the harness's own peer messaging socket,
 // so the receiving session needs no `ccmsg subscribe` running to hear it.
 //
@@ -424,11 +424,4 @@ async function readWith<S extends v.GenericSchema>(
   }
   const read = parseWith(schema, text);
   return read.ok ? read.value : undefined;
-}
-
-/** The launcher a recipient runs to answer: `bin/ccmsg` of the tree this
- * daemon runs from, or the bare name when that tree has none. */
-export function resolveLauncher(main: string = Bun.main): string {
-  const candidate = path.resolve(path.dirname(main), "../../../bin/ccmsg");
-  return fs.existsSync(candidate) ? candidate : "ccmsg";
 }

@@ -1,7 +1,7 @@
 // peer_send and peer_list (DR-0039 §3): the `send` and `peers` tools of a
 // session's hooks module. A send names its recipients by any of a session's
 // id, directory, name and process; the daemon matches them against the live
-// session runs read afresh (address-send.ts liveRuns, the same source for the
+// session runs read afresh (session-runs.ts liveRuns, the same source for the
 // send and the list, so what `peers` shows is what `send` reaches), and
 // writes the envelope into the peer socket of every matched session that has
 // a hooks module (peer-inject.ts). Nothing is held for a later attempt
@@ -15,7 +15,7 @@ import {
   renderAddressedDelivery,
   type SessionInputReadiness,
 } from "@ccmsg/protocol";
-import type { SessionRun } from "./address-send.ts";
+import type { SessionRun } from "./session-runs.ts";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
 
 /** One session among the live runs: its runs, and how a target spells it —
@@ -175,8 +175,9 @@ async function sendToPeer(
 }
 
 /** Which failure a session whose runs all failed reports when they failed
- * for different reasons: the first here that any run gave (address-send.ts's
- * order). */
+ * for different reasons: the first here that any run gave — a refusal, then
+ * a socket that took nothing, then this side's status socket, then a run
+ * with no socket. */
 const FAILURE_ORDER = ["refused", "unreachable", "no_status_socket", "no_peer_socket"] as const;
 
 function failureOf(results: readonly InjectResult[]): PeerSendReason {

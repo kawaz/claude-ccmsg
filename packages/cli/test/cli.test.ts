@@ -188,7 +188,7 @@ describe("ccmsg CLI end-to-end", () => {
     try {
       const noArgs = await runCli([], env);
       const help = await runCli(["--help"], env);
-      const commandHelp = await runCli(["post", "--help"], env);
+      const commandHelp = await runCli(["dump", "--help"], env);
       expect(noArgs.out).toBe(MINIMAL_HELP);
       expect(help.out).toBe(MINIMAL_HELP);
       expect(commandHelp.out).toBe(MINIMAL_HELP);
@@ -216,14 +216,13 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("--no-agent");
       expect(help.out).toContain("--agent <id|name>");
       expect(help.out).toContain("Rooms are read-only");
-      // Deprecated (DR-0039 §4): still listed, as replaced by the plugin's tools.
-      expect(help.out).toMatch(/post <sid> <text> +Deprecated/);
-      expect(help.out).toMatch(/reply <mid> --to <sid> <text>\n +Deprecated/);
+      // A session sends with the plugin's tools (DR-0039 §4): no command
+      // sends to a session, and agents are not taught another way.
       expect(help.out).toContain("ccmsg plugin's tools (send / say / peers)");
-      // Agents are not taught the ways the tools replace.
+      expect(help.out).not.toMatch(/^ {2}(post|reply) /m);
+      expect(help.out).not.toContain("--addresses");
       expect(help.out).not.toContain("PushNotification");
       expect(help.out).not.toContain("SendMessage");
-      expect(help.out).toMatch(/--addresses \(deprecated\)/);
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("stop <session-id>");
       expect(help.out).toContain("Command Options:");
@@ -369,9 +368,8 @@ describe("ccmsg CLI end-to-end", () => {
       };
       const S2 = "50000002-0000-4000-8000-000000000000";
       const cases: [string, string[]][] = [
-        ["post", ["post", S2, "hi"]],
-        ["reply", ["reply", "0123456789abcdef0123456789abcdef/1", "--to", S2, "hi"]],
         ["notify", ["notify", "--self", "--text", "hi"]],
+        ["notify", ["notify", "--sid", S2, "--text", "hi"]],
       ];
       for (const [name, args] of cases) {
         const res = await runCli(args, bareEnv);
@@ -506,26 +504,19 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // peers は人の口として残る。各セッションの addresses (SendMessage の宛先の
-  // 綴り) は送信が send tool に置き換わったので --addresses の時だけ出し、
-  // その時だけ廃止予定を案内する (DR-0039 §4)。
-  test("peers は addresses を出さず黙る。--addresses の時だけ出して案内する", async () => {
+  // peers は人の口。一覧の行は宛先の綴りを持たない (送信は plugin の send
+  // tool で、宛先はその引数で書く、DR-0039 §3)。
+  test("peers の行は宛先の綴りを持たない", async () => {
     const { env, cleanup } = makeEnv();
     const asSession = { ...env, CCMSG_SID: "50000003-0000-4000-8000-000000000000" };
     try {
       const plain = await runCli(["peers"], asSession);
       expect(plain.err).toBe("");
+      // served() reads the whole line with the peers reply's schema, so a
+      // field outside it fails here.
       const rows = served("peers", plain.out).peers;
-      expect(rows.length).toBeGreaterThan(0);
-      expect(rows.every((p) => p.addresses === undefined)).toBe(true);
-
-      const listed = await runCli(["peers", "--addresses"], asSession);
-      expect(listed.err).toMatch(/^ccmsg: ccmsg peers --addresses は廃止予定。/);
-      const me = defined(
-        served("peers", listed.out).peers.find((p) => p.sid === asSession.CCMSG_SID),
-        "me",
-      );
-      expect(me.addresses).toContain(`ccmsg:${asSession.CCMSG_SID}`);
+      expect(rows.map((p) => p.sid)).toContain(asSession.CCMSG_SID);
+      expect(plain.out).not.toContain("ccmsg:");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -959,40 +950,25 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     }
   });
 
-  // 何を保証するか: 届いた封筒の mid の形でない返信先は daemon に投げる前に
-  // usage error で弾く (typo が遠い error になって原因を探させない)。
-  test("reply の返信先が mid の形でなければ usage error で exit 非零", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const res = await runCli(
-        ["--sid", "50000001-0000-4000-8000-000000000000", "reply", "r7-m10", "text"],
-        env,
-      );
-      expect(res.code).not.toBe(0);
-      expect(res.err).toContain("<instance id>/<n>");
-      expect(res.err).toContain("usage: ccmsg reply <mid> --to <sid> <text>");
-    } finally {
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか (DR-0036 §2): room は読み取り専用。room を宛先にした post と
-  // room の msg への reply は daemon に触れる前に断られ、送信の行き先 (plugin の
-  // send tool) を案内する。room envelope を覚えているエージェントへの道案内。
-  test("post rN / reply rNmM は room に書き込めないと断られ、exit 非零", async () => {
+  // 何を保証するか (DR-0039 §4): CLI にエージェントがセッションへメッセージを
+  // 入れる口は無い。post / reply は他の知らないコマンドと同じく unknown
+  // command として exit 非零になり、daemon に触れない。
+  test("post / reply は unknown command になり、daemon を起こさない", async () => {
     const { env, cleanup } = makeEnv();
     try {
       const S1 = "50000001-0000-4000-8000-000000000000";
+      const S2 = "50000002-0000-4000-8000-000000000000";
       for (const args of [
+        ["post", S2, "hi"],
+        ["reply", "0123456789abcdef0123456789abcdef/1", "--to", S2, "hi"],
         ["post", "r1", "hi"],
         ["reply", "r1m2", "hi"],
       ]) {
         const res = await runCli(["--sid", S1, ...args], env);
-        expect({ args, code: res.code, out: res.out }).toEqual({ args, code: 1, out: "" });
-        expect(res.err).toContain("room には書き込めない");
-        expect(res.err).toContain("send tool");
+        expect({ args, code: res.code }).toEqual({ args, code: 1 });
+        expect(res.err).toBe(`ccmsg: unknown command '${args[0]}'\n\n`);
+        expect(res.out).toBe(MINIMAL_HELP);
       }
-      // 断りは daemon に接続する前に出る: daemon は起動していない
       const st = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(st.running).toBe(false);
     } finally {

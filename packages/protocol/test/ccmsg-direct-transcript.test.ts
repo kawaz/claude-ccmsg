@@ -8,14 +8,12 @@ import {
   splitSendWords,
   directAddressSid,
   shellQuote,
-  isDirectMid,
   mayContainDirectDelivery,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
   pushNotificationText,
   parseWith,
   queuedCommandPrompt,
-  renderDirectDelivery,
   TranscriptRowLineSchema,
   type JsonObject,
   type TranscriptRow,
@@ -115,36 +113,32 @@ describe("parseDirectDeliveries", () => {
   });
 });
 
-// The direct envelope this plugin's daemon writes (DR-0036 §1): the v2
-// contract's shape (kawaz/ccmsg-protocol `renderDirectDelivery`), with the
-// reply line naming the v1 launcher by absolute path.
-describe("renderDirectDelivery", () => {
+// A direct envelope with a reply line, as transcripts hold them: the v2
+// contract's shape, the reply line naming the bare `ccmsg` or a launcher by
+// absolute path (quoted as one shell word when it has to be).
+describe("a direct envelope with a reply line", () => {
   const SENDER = "aaaaaaaa-2222-4333-8444-555555555555";
   const DIRECT_MID = "0123456789abcdef0123456789abcdef/4";
   const LAUNCHER = "/opt/ccmsg v1/bin/ccmsg";
 
-  test("is the v2 contract's envelope; with the bare launcher it is identical", () => {
-    const message = {
-      mid: DIRECT_MID,
-      from: SENDER,
-      replyTo: "0123456789abcdef0123456789abcdef/1",
-      text: "line one\nline two",
-    };
-    expect(renderDirectDelivery(message, "ccmsg")).toBe(
-      `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}" ccmsg-reply-to="0123456789abcdef0123456789abcdef/1">\nline one\nline two\n\nReply with: ccmsg reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`,
-    );
-    const { replyTo: _, ...fresh } = message;
-    expect(renderDirectDelivery(fresh, LAUNCHER)).toBe(
-      `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nline one\nline two\n\nReply with: '${LAUNCHER}' reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`,
-    );
+  test("reads back with the reply line removed, the bare or a quoted launcher alike", () => {
+    const bare = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}" ccmsg-reply-to="0123456789abcdef0123456789abcdef/1">\nline one\nline two\n\nReply with: ccmsg reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`;
+    expect(parseDirectDeliveries(bare)).toEqual([
+      {
+        mid: DIRECT_MID,
+        from: SENDER,
+        fromLabel: `ccmsg:${SENDER}`,
+        replyTo: "0123456789abcdef0123456789abcdef/1",
+        text: "line one\nline two",
+      },
+    ]);
+    const quoted = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nline one\nline two\n\nReply with: '${LAUNCHER}' reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`;
+    expect(parseDirectDeliveries(quoted).map((d) => d.text)).toEqual(["line one\nline two"]);
   });
 
-  test("reads back through parseDirectDeliveries: launcher reply line removed, body untouched", () => {
+  test("a body holding the closing tag and blank lines reads back untouched", () => {
     const text = 'quote "x" & </cross-session-message> inside\n\nlast paragraph';
-    const envelope = renderDirectDelivery(
-      { mid: DIRECT_MID, from: SENDER, replyTo: "f".repeat(32) + "/9", text },
-      LAUNCHER,
-    );
+    const envelope = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}" ccmsg-reply-to="${"f".repeat(32)}/9">\n${text}\n\nReply with: ${shellQuote(LAUNCHER)} reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`;
     expect(
       parseDirectDeliveries(`Another Claude session sent a message:\n${envelope}\n\nnotice`),
     ).toEqual([
@@ -176,11 +170,7 @@ describe("renderDirectDelivery", () => {
     expect(shellQuote("")).toBe("''");
   });
 
-  test("isDirectMid and directAddressSid", () => {
-    expect(isDirectMid(DIRECT_MID)).toBe(true);
-    expect(isDirectMid("r7m3")).toBe(false);
-    expect(isDirectMid("abc/7")).toBe(false);
-    expect(isDirectMid(`${DIRECT_MID}x`)).toBe(false);
+  test("directAddressSid", () => {
     expect(directAddressSid(`ccmsg:${SENDER}`)).toBe(SENDER);
     expect(directAddressSid(SENDER)).toBe(SENDER);
     expect(directAddressSid("ccmsg:user")).toBe("user");

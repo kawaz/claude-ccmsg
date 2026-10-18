@@ -27,7 +27,7 @@
 |---|---|---|
 | `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest`、別世代の hello を見分ける `isOtherGenerationHello` | daemon |
 | `request-rooms.ts` | room のログを読む依頼 (room は読み取り専用、[DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) §2): `read` `room_history` `rooms` | daemon |
-| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say` `say_read` `message_send` `address_send` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
+| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say` `say_read` `peer_send` `peer_list` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_rename` `session_input` `agent_input` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` | daemon |
@@ -43,7 +43,9 @@
 
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
-| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send` と `session.facts`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。run id の形 (`SidecarRunIdSchema`) と引き方 (`sidecarRunId`)。hooks module が Claude Code から読んだセッションの事実 (`SessionFactsSchema`、`session.facts` の result と `session_facts` の中身)。hooks module が横取りした SendMessage の結果 (`SendMessageResultSchema`、[DR-0037](../decisions/DR-0037-agent-messages-ride-sendmessage.md) §2) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。run id は hooks module が引き、CLI (`ccmsg sidecar`) と daemon (`sidecar_hello`) が読む。セッションの事実は hooks module が書き、CLI (`ccmsg sidecar facts`) と daemon が読む。SendMessage の結果は CLI (`ccmsg sidecar send`) が書き hooks module が読む |
+| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send` と `session.facts`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。run id の形 (`SidecarRunIdSchema`) と引き方 (`sidecarRunId`)。hooks module が Claude Code から読んだセッションの事実 (`SessionFactsSchema`、`session.facts` の result と `session_facts` の中身) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。run id は hooks module が引き、CLI (`ccmsg sidecar`) と daemon (`sidecar_hello`) が読む。セッションの事実は hooks module が書き、CLI (`ccmsg sidecar facts`) と daemon が読む |
+| `peer-tools.ts` | ccmsg の tool (`send` / `say` / `peers`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) の名前と入力、hooks module が `ccmsg sidecar peer-send` / `peer-list` に標準入力で渡す形、その出力 (daemon の `peer_send` / `peer_list` の返事) | hooks module、CLI、daemon |
+| `peer-tools-text.ts` | tool の結果として model が読む文面と、transcript の読み手 (webui、dump) が `send` の結果を読み戻す処理。書く形と読む形を 1 か所で定義する | hooks module、daemon、webui |
 
 hooks module は実行時に import できないので、このファイルは valibot と `parse.ts` 以外を import せず、bundle して使う。
 
@@ -83,8 +85,8 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 | `config-migration.ts` | data dir に残った設定ファイルを config dir へ移す起動時の処理 | CLI、daemon |
 | `search-query.ts` | transcript 検索窓のクエリ文法 | daemon、webui |
 | `file-search-query.ts` | Files ペインのパス検索 (`fs_find`) のクエリ文法。daemon の探索と client の照合が同じ解釈をするために共有する | daemon、webui |
-| `ccmsg-address.ts` | セッションの宛先 `ccmsg:<sid>` / `ccmsg:<sid>.<pid>` / `ccmsg:path:<dir>` の文法 (`parseCcmsgAddress` / `formatCcmsgAddress`、[DR-0037](../decisions/DR-0037-agent-messages-ride-sendmessage.md) §1) と、session id の形 (`isSessionIdShape`) | CLI、daemon、hooks module |
-| `ccmsg-direct-transcript.ts` | transcript に現れる ccmsg の直送 (配送された封筒、agent の `ccmsg post` / `reply` / `notify` の Bash 呼び出しとその結果、PushNotification) の認識と、daemon が書く封筒の描画。書く形と読み戻す形を 1 か所で定義する | CLI、daemon、webui |
+| `ccmsg-address.ts` | 封筒の `from` が送り主を書く `ccmsg:` の接頭辞 (`DIRECT_ADDRESS_PREFIX`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) と、session id の形 (`isSessionIdShape`) | CLI、daemon |
+| `ccmsg-direct-transcript.ts` | transcript に現れる ccmsg の直送 (配送された封筒、`send` の tool の呼び出し、agent の `ccmsg post` / `reply` / `notify` の Bash 呼び出しとその結果、PushNotification) の認識と、daemon が書く封筒の描画。書く形と読み戻す形を 1 か所で定義する | daemon、webui |
 
 ### 読み方の規則 (全系統共通)
 

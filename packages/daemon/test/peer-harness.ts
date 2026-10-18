@@ -7,19 +7,13 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { type JsonObject, type Output, parseWith, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { connect, type DaemonCtx, jsonObjectOf, type TestClient } from "./helpers.ts";
 
 export const PEER_TOKEN = "tok-abc";
 
-/** The launcher a test daemon names in the envelope's reply line: `bin/ccmsg`
- * of this working copy (resolveLauncher from packages/daemon/src). */
-export const LAUNCHER = fileURLToPath(new URL("../../../bin/ccmsg", import.meta.url));
-
-/** Splits an envelope into its attributes and its inner text (the message
- * body, followed by the reply line when there is one). */
+/** Splits an envelope into its attributes and its inner text. */
 export function parseEnvelope(content: string): {
   attrs: Record<string, string>;
   body: string;

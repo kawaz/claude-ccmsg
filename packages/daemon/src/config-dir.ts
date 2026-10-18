@@ -1,6 +1,6 @@
 // A session's CLAUDE_CONFIG_DIR, as hello announces it and the agents poll
 // finds it, names where its harness state files live: peer injection and the
-// runs an address_send resolves (DR-0037 §1) read them there. The daemon keeps
+// runs a peer_send matches (DR-0039 §3) read them there. The daemon keeps
 // one spelling per directory so the same config dir is recognised, and read,
 // once.
 import * as fs from "node:fs";

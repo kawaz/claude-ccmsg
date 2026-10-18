@@ -11,13 +11,7 @@ import {
   type ContextAgentRecord,
   type SessionDump,
 } from "../src/session-dump.ts";
-import {
-  CCMSG_TOOLS,
-  renderDirectDelivery,
-  sendResultText,
-  type JsonObject,
-  type JsonValue,
-} from "@ccmsg/protocol";
+import { CCMSG_TOOLS, sendResultText, type JsonObject, type JsonValue } from "@ccmsg/protocol";
 import {
   assistantContentRow,
   attachmentRow,
@@ -1302,19 +1296,16 @@ describe("standalone ccmsg in the dump", () => {
   });
 });
 
-// The direct messages this plugin's daemon writes and its CLI sends
-// (DR-0036 §1): the envelope with the launcher-path reply line, and
-// `post <sid>` / `reply <mid> --to` answered by `{"delivered":true,"mid":…}`.
+// This plugin's direct messages as transcripts hold them (DR-0036 §1): the
+// envelope with the launcher-path reply line, and `post <sid>` /
+// `reply <mid> --to` answered by `{"delivered":true,"mid":…}`.
 describe("this plugin's direct messages in the dump", () => {
   test("received and sent direct messages are ccmsg entries with source direct", async () => {
     const { configDir, dataDir, transcript } = fixture();
     const peer = "99999999-2222-4333-8444-555555555555";
     const inMid = "0123456789abcdef0123456789abcdef/5";
     const outMid = "0123456789abcdef0123456789abcdef/6";
-    const envelope = renderDirectDelivery(
-      { mid: inMid, from: peer, text: "レビューお願いします" },
-      "/plugin/bin/ccmsg",
-    );
+    const envelope = `<cross-session-message from="ccmsg:${peer}" from-name="ccmsg:${peer}" from-mode="prompting" ccmsg-mid="${inMid}" ccmsg-from="${peer}">\nレビューお願いします\n\nReply with: /plugin/bin/ccmsg reply ${inMid} --to ${peer} <text>\n</cross-session-message>`;
     const lines = [
       row("2026-10-09T09:00:00Z", "user", "start", { origin: { kind: "human" } }),
       row(
