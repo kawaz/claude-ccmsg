@@ -9,6 +9,7 @@ import {
   HIGHLIGHT_MAX_BYTES,
   isHighlightEligible,
   tokenizeLines,
+  type HighlightLang,
 } from "../src/client/highlight.ts";
 import { defined } from "./helpers.ts";
 
@@ -156,6 +157,52 @@ describe("tokenizeLines", () => {
         .map((s) => s.text)
         .join(""),
     ).toBe("const c = 1;");
+  });
+
+  // Each grammar is loaded the first time its language is asked for
+  // (highlight.ts GRAMMARS), so a file in every language detectLanguage can
+  // return must come out styled, including languages asked for together.
+  test("every detectable language is highlighted once its grammar loads on demand", async () => {
+    const samples: Record<string, string> = {
+      "a.tsx": "const a = <b>{1}</b>;",
+      "a.json": '{"a": 1}',
+      "a.jsonc": '{"a": 1 // c\n}',
+      "a.sh": 'echo "$HOME"',
+      "a.rs": "fn main() {}",
+      "a.go": "func main() {}",
+      "a.py": "def f(): pass",
+      "a.html": '<p class="a">x</p>',
+      "a.css": "a { color: red; }",
+      "a.md": "# title",
+      "a.yaml": "a: 1",
+      "a.toml": 'a = "b"',
+      "a.diff": "+added",
+    };
+    const styled = await Promise.all(
+      Object.entries(samples).map(async ([path, src]) => {
+        const lang = detectLanguage(path);
+        const lines = lang === null ? [] : await tokenizeLines(src, lang);
+        return [lang, lines.flat().some((span) => span.style !== undefined)] as const;
+      }),
+    );
+    expect(new Set(styled.map(([lang]) => lang))).toEqual(
+      new Set<HighlightLang | null>([
+        "tsx",
+        "json",
+        "jsonc",
+        "bash",
+        "rust",
+        "go",
+        "python",
+        "html",
+        "css",
+        "markdown",
+        "yaml",
+        "toml",
+        "diff",
+      ]),
+    );
+    expect(styled.filter(([, isStyled]) => !isStyled)).toEqual([]);
   });
 
   test("empty source -> a single empty line (caller special-cases '' before calling this)", async () => {

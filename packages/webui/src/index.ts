@@ -18,8 +18,10 @@ export interface WebuiApp {
 }
 
 interface ClientBundle {
-  asset: EncodedAsset;
+  /** The entry the shell loads. The chunks it imports are its siblings under /assets/. */
   path: string;
+  /** Every output of the build (entry and chunks) by the path it is served at. */
+  assets: ReadonlyMap<string, EncodedAsset>;
 }
 
 async function bundleClient(): Promise<ClientBundle> {
@@ -31,16 +33,36 @@ async function bundleClient(): Promise<ClientBundle> {
     // bundle: for the whole app.js this is the difference between ~1.3MB and
     // ~276KB gzip.
     minify: true,
+    // Dynamic imports become chunks the entry fetches when it reaches them,
+    // so what the first page load does not run (the syntax highlighter and
+    // its grammars, see client/highlight.ts) is not in the first download.
+    // The outputs import each other by these names (a chunk imports what it
+    // shares with the entry from the entry), so they are served under them
+    // unchanged. Bun's [hash] is derived from the output's content, which
+    // includes the names of the chunks it imports, so every output can be
+    // served as immutable.
+    splitting: true,
+    naming: { entry: "app.[hash].[ext]", chunk: "[name]-[hash].[ext]" },
     throw: false,
   });
   if (!result.success) {
     throw new Error(result.logs.map((log) => log.message).join("\n"));
   }
-  const output = result.outputs[0];
-  if (!output) throw new Error("Bun.build produced no output for the webui client entry");
-  const code = await output.text();
-  const hash = new Bun.CryptoHasher("sha256").update(code).digest("hex").slice(0, 16);
-  return { asset: await encodeAsset(code), path: `/assets/app.${hash}.js` };
+  const servedAt = (output: Bun.BuildArtifact): string =>
+    `/assets/${output.path.slice(output.path.lastIndexOf("/") + 1)}`;
+  const entries = result.outputs.filter((output) => output.kind === "entry-point");
+  const [entry] = entries;
+  if (entry === undefined || entries.length !== 1) {
+    throw new Error(`Bun.build produced ${entries.length} entry outputs for the webui client`);
+  }
+  const assets = new Map(
+    await Promise.all(
+      result.outputs.map(
+        async (output) => [servedAt(output), await encodeAsset(await output.text())] as const,
+      ),
+    ),
+  );
+  return { path: servedAt(entry), assets };
 }
 
 /** One load per PROCESS (a module-level memo, not per createWebuiApp instance),
@@ -111,10 +133,10 @@ export function createWebuiApp(): WebuiApp {
 
   app.get("/assets/*", async (c) => {
     try {
-      const bundle = await getBundle();
-      if (c.req.path !== bundle.path) return c.notFound();
+      const asset = (await getBundle()).assets.get(c.req.path);
+      if (asset === undefined) return c.notFound();
       return encodedResponse(
-        bundle.asset,
+        asset,
         c.req.raw,
         {
           "content-type": "text/javascript; charset=utf-8",

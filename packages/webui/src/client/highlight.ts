@@ -5,41 +5,28 @@
 // language grammars this app actually needs (see EXTENSION_LANGUAGE_MAP)
 // avoids paying for grammars this UI never displays.
 //
-// This is NOT a small addition even after trimming: the ts/js/jsx family is
-// collapsed onto the single `tsx` grammar (see EXTENSION_LANGUAGE_MAP) because
-// the four grammars are ~185KB raw each of near-duplicate JSON, but the
-// remaining grammar set + the oniguruma-to-es regex engine still dominate the
-// serve-time single-file bundle (no code-splitting). Measure with `bun build
-// --minify` when touching this list; splitting highlighting into a
-// lazily-loaded chunk stays an open option (DR-0008 §6 follow-up).
+// Nothing of Shiki is in the first-load bundle: the highlighter (core, regex
+// engine, themes) and each language grammar are dynamic imports, which the
+// serve-time build (src/index.ts) splits into their own chunks. The core is
+// fetched the first time anything is highlighted, and a grammar the first
+// time a block in that language is (GRAMMARS below). The grammars are the
+// bulk of it (tsx alone is ~180KB raw); until they arrive the callers
+// (FileViewer / CodeBlock) show the plain text, which tokenizeLines' result
+// later replaces in place. The ts/js/jsx family is collapsed onto the single
+// `tsx` grammar (see EXTENSION_LANGUAGE_MAP) so that one chunk serves them
+// all.
 //
 // Tokens are rendered as JSX text nodes carrying an inline `style` string
 // (highlight.ts -> FileViewer.tsx / CodeBlock.tsx), never through Shiki's
 // `codeToHtml()`/innerHTML path, so Preact's own text-node escaping is what
 // protects against file content that happens to contain `<`/`&`.
-import { createHighlighterCore, type HighlighterCore } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
-import themeGithubLight from "shiki/themes/github-light.mjs";
-import themeGithubDark from "shiki/themes/github-dark.mjs";
-import langTsx from "shiki/langs/tsx.mjs";
-import langJson from "shiki/langs/json.mjs";
-import langJsonc from "shiki/langs/jsonc.mjs";
-import langBash from "shiki/langs/bash.mjs";
-import langRust from "shiki/langs/rust.mjs";
-import langGo from "shiki/langs/go.mjs";
-import langPython from "shiki/langs/python.mjs";
-import langHtml from "shiki/langs/html.mjs";
-import langCss from "shiki/langs/css.mjs";
-import langMarkdown from "shiki/langs/markdown.mjs";
-import langYaml from "shiki/langs/yaml.mjs";
-import langToml from "shiki/langs/toml.mjs";
-import langDiff from "shiki/langs/diff.mjs";
+import type { HighlighterCore, LanguageInput } from "shiki/core";
 
-// Shiki language ids this bundle actually loads (grammar `name`, not
-// necessarily the alias used to select it -- e.g. "bash" resolves to the
-// "shellscript" grammar via its built-in aliases). Kept as a union (rather
-// than plain `string`) so EXTENSION_LANGUAGE_MAP can't drift from the set of
-// grammars actually bundled below.
+// Shiki language ids this module can load (grammar `name`, not necessarily
+// the alias used to select it -- e.g. "bash" resolves to the "shellscript"
+// grammar via its built-in aliases). Kept as a union (rather than plain
+// `string`) so EXTENSION_LANGUAGE_MAP and GRAMMARS can't drift from each
+// other.
 export type HighlightLang =
   | "tsx"
   | "json"
@@ -64,13 +51,13 @@ export const HIGHLIGHT_MAX_BYTES = 200 * 1024;
 
 // Extension (lowercase, without the dot) -> Shiki language id. Only
 // extensions actually expected in a typical repo tree, restricted to the
-// language grammars bundled above (bundle-size discipline per DR-0008 §6);
+// language grammars listed in GRAMMARS (bundle-size discipline per DR-0008 §6);
 // anything else (including dotfiles and extension-less files, e.g.
 // `Dockerfile`) resolves to `null` and the plain viewer path is used.
 const EXTENSION_LANGUAGE_MAP: Record<string, HighlightLang> = {
   // ts/js/jsx 系は全部 tsx グラマー 1 本で代表させる: typescript/javascript/
   // jsx の各グラマーはそれぞれ ~185KB raw の独立 JSON 定義でほぼ重複しており、
-  // 4 本積むと bundle が +560KB raw 膨らむ。tsx は TS + JSX の上位互換文法で、
+  // 4 本積むと chunk が +560KB raw 膨らむ。tsx は TS + JSX の上位互換文法で、
   // 差異は極端なエッジケース (TS の `<T>x` 山括弧キャスト等) の誤ハイライトのみ。
   ts: "tsx",
   mts: "tsx",
@@ -129,42 +116,79 @@ export interface HighlightSpan {
   style?: string;
 }
 
-// Highlighter instance is expensive to construct (compiles every bundled
-// grammar's textmate patterns) and has no per-call state, so it's built once
-// per process and reused — same module-level-memo shape as
-// src/index.ts's bundleClient(). Both themes are loaded up front so every
-// call below can request the light/dark pair together (dual-theme
+// One dynamic import per grammar, so each becomes its own chunk and is
+// fetched only when a block in that language is first highlighted. The
+// specifiers stay literal (not built from `lang`) so the bundler can see and
+// split every one of them.
+const GRAMMARS: Record<HighlightLang, LanguageInput> = {
+  tsx: () => import("shiki/langs/tsx.mjs"),
+  json: () => import("shiki/langs/json.mjs"),
+  jsonc: () => import("shiki/langs/jsonc.mjs"),
+  bash: () => import("shiki/langs/bash.mjs"),
+  rust: () => import("shiki/langs/rust.mjs"),
+  go: () => import("shiki/langs/go.mjs"),
+  python: () => import("shiki/langs/python.mjs"),
+  html: () => import("shiki/langs/html.mjs"),
+  css: () => import("shiki/langs/css.mjs"),
+  markdown: () => import("shiki/langs/markdown.mjs"),
+  yaml: () => import("shiki/langs/yaml.mjs"),
+  toml: () => import("shiki/langs/toml.mjs"),
+  diff: () => import("shiki/langs/diff.mjs"),
+};
+
+// A failed load (a chunk that did not arrive, an initialization error) must
+// not stay memoized as a rejected promise: every later call would reuse the
+// rejection and highlighting would be off for good. The memo is dropped
+// before re-throwing, so the next call loads again (tokenizeLines' catch
+// renders the plain fallback meanwhile).
+function forgetOnFailure<T>(promise: Promise<T>, forget: () => void): Promise<T> {
+  return promise.catch((err: unknown) => {
+    forget();
+    throw err;
+  });
+}
+
+// The highlighter (core + regex engine + both themes) has no per-call state,
+// so it's built once per page and reused. Both themes are loaded up front so
+// every call below can request the light/dark pair together (dual-theme
 // tokenization, see tokenizeLines) rather than re-tokenizing per theme.
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 function getHighlighter(): Promise<HighlighterCore> {
-  highlighterPromise ??= createHighlighterCore({
-    themes: [themeGithubLight, themeGithubDark],
-    langs: [
-      langTsx,
-      langJson,
-      langJsonc,
-      langBash,
-      langRust,
-      langGo,
-      langPython,
-      langHtml,
-      langCss,
-      langMarkdown,
-      langYaml,
-      langToml,
-      langDiff,
-    ],
-    // JS-regex engine (no wasm) — see module doc comment.
-    engine: createJavaScriptRegexEngine(),
-  }).catch((err: unknown) => {
-    // 構築失敗 (grammar/engine の初期化エラー等) を rejected promise のまま
-    // memo すると、以降の全呼び出しが同じ rejection を再利用して恒久的に
-    // ハイライトが無効化される。次回呼び出しで再構築を試みられるよう memo を
-    // 解放してから re-throw する (tokenizeLines 側の catch で plain fallback)。
-    highlighterPromise = null;
-    throw err;
-  });
+  highlighterPromise ??= forgetOnFailure(
+    (async () => {
+      const [{ createHighlighterCore }, { createJavaScriptRegexEngine }, light, dark] =
+        await Promise.all([
+          import("shiki/core"),
+          import("shiki/engine/javascript"),
+          import("shiki/themes/github-light.mjs"),
+          import("shiki/themes/github-dark.mjs"),
+        ]);
+      return createHighlighterCore({
+        themes: [light, dark],
+        langs: [],
+        // JS-regex engine (no wasm) — see module doc comment.
+        engine: createJavaScriptRegexEngine(),
+      });
+    })(),
+    () => {
+      highlighterPromise = null;
+    },
+  );
   return highlighterPromise;
+}
+
+// Grammar registration is per language and memoized the same way, so blocks
+// in the same language that render together share one fetch and one compile.
+const grammarLoads = new Map<HighlightLang, Promise<void>>();
+function loadGrammar(highlighter: HighlighterCore, lang: HighlightLang): Promise<void> {
+  let load = grammarLoads.get(lang);
+  if (load === undefined) {
+    load = forgetOnFailure(highlighter.loadLanguage(GRAMMARS[lang]), () => {
+      grammarLoads.delete(lang);
+    });
+    grammarLoads.set(lang, load);
+  }
+  return load;
 }
 
 function styleString(htmlStyle: Record<string, string>): string {
@@ -190,11 +214,12 @@ function splitContentLines(src: string): string[] {
 // (e.g. a block comment) correctly attributed to each line they span.
 export async function tokenizeLines(src: string, lang: HighlightLang): Promise<HighlightSpan[][]> {
   try {
-    // ハイライタ構築の失敗 (getHighlighter) も codeToTokens の失敗も、
-    // 同じ「plain fallback」で扱う — どちらも呼び出し側 (FileViewer/
-    // CodeBlock) を「loading」のまま止めない。construction 失敗は
-    // getHighlighter 側で memo を解放するので、次回呼び出しで再構築される。
+    // ハイライタ構築・文法読み込みの失敗 (chunk が届かない場合を含む) も
+    // codeToTokens の失敗も、同じ「plain fallback」で扱う — どれも呼び出し側
+    // (FileViewer/CodeBlock) を「loading」のまま止めない。読み込みの失敗は
+    // forgetOnFailure が memo を解放するので、次回呼び出しで読み直される。
     const highlighter = await getHighlighter();
+    await loadGrammar(highlighter, lang);
     const { tokens } = highlighter.codeToTokens(src, {
       lang,
       themes: { light: "github-light", dark: "github-dark" },

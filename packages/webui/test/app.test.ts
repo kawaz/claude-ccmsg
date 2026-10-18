@@ -17,7 +17,7 @@ async function shellAndBundlePath(): Promise<{
 describe("createWebuiApp", () => {
   test("the shell points at a content-hashed bundle and requires revalidation", async () => {
     const { app, path } = await shellAndBundlePath();
-    expect(path).toMatch(/^\/assets\/app\.[0-9a-f]{16}\.js$/);
+    expect(path).toMatch(/^\/assets\/app\.[0-9a-z]+\.js$/);
     const res = await app.fetch(new Request("http://localhost/"));
     expect(res.headers.get("cache-control")).toBe("no-cache");
     const etag = res.headers.get("etag");
@@ -40,6 +40,34 @@ describe("createWebuiApp", () => {
 
     const missing = await app.fetch(new Request("http://localhost/assets/app.deadbeefdeadbeef.js"));
     expect(missing.status).toBe(404);
+  });
+
+  // The syntax highlighter and its grammars are the largest part of the
+  // client and nothing the first page load runs (client/highlight.ts), so
+  // they are fetched on demand as chunks, not shipped in the entry. Every
+  // file the entry can pull in (dynamic imports, and the static imports the
+  // chunks make, including back into the entry) must be served under the
+  // name it is imported by.
+  test("the entry leaves the highlighter grammars to chunks, and every import between them is served immutable", async () => {
+    const { app, path } = await shellAndBundlePath();
+    const bodies = new Map<string, string>();
+    const pending = [path];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      if (bodies.has(next)) continue;
+      const res = await app.fetch(new Request(`http://localhost${next}`));
+      expect({ path: next, status: res.status }).toEqual({ path: next, status: 200 });
+      expect(res.headers.get("content-type")).toContain("javascript");
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      const body = await res.text();
+      bodies.set(next, body);
+      for (const m of body.matchAll(/(?:from|import)\s*\(?\s*"\.\/([^"]+\.js)"/g)) {
+        pending.push(`/assets/${m[1]}`);
+      }
+    }
+    expect(bodies.size).toBeGreaterThan(1);
+    // A grammar is recognizable by its TextMate scope name.
+    expect(bodies.get(path)).not.toContain('"source.tsx"');
+    expect(Array.from(bodies.values()).some((body) => body.includes('"source.tsx"'))).toBe(true);
   });
 
   test("GET /app.css returns the stylesheet as CSS", async () => {
