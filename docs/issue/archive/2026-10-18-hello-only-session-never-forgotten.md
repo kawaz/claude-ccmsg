@@ -1,6 +1,6 @@
 ---
 title: hello で登録されたが agents poll に一度も出ない sid が忘れられず peers に残り続ける
-status: open
+status: resolved
 category: bug
 created: 2026-10-18T16:16:06+09:00
 last_read: 2026-10-18T16:21:48+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:48:12+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0034","implemented"]
 blocked_by:
 origin: issue-batch-3 (worker、2026-10-18)
 ---
