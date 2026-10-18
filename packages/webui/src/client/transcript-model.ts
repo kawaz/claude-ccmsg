@@ -1923,11 +1923,7 @@ export interface CcmsgMessage {
    * lazily on mount). Present for every wire-format ccmsg extraction the
    * daemon actually emitted a mid for (subscribe teammate-message relay,
    * task-notification `<event>` body, tool_result `{ok:true,room,mid}` post/
-   * reply response — even the truncated-fragment recovery when the fragment
-   * still carries `"mid":N` before the truncation point). Absent only when
-   * the fragment lost the mid to truncation before we could parse it — those
-   * still render with the recovered body (救済 parse), just without the
-   * canonical read-fallback path. */
+   * reply response). Absent for an event that carried none. */
   mid?: number;
   /** Present for a message the standalone ccmsg delivered or the session sent
    * with it (`@ccmsg/protocol`'s ccmsg-direct-transcript). Such a message has
@@ -1971,10 +1967,9 @@ export type CcmsgDirect =
  * When `mid` is present the key is `${room}|m${mid}` — canonical per daemon
  * (rooms/*.jsonl mid is unique per room), so two extractions of the same
  * message from different transcript wrappers collapse regardless of whether
- * their transcript body copies still match verbatim (truncation, XML entity
- * escaping differences, DR-0027 §2 lazy-read replacement). Falls back to the
- * old `${room}|${ts}|${from}|${msg}` form for pre-DR-0027 extractions and
- * for fragments that lost their mid to truncation. */
+ * their transcript body copies still match verbatim (XML entity escaping
+ * differences, DR-0027 §2 lazy-read replacement). Falls back to the
+ * `${room}|${ts}|${from}|${msg}` form for an event that carried no mid. */
 export function ccmsgDedupKey(m: CcmsgMessage): string {
   if (m.direct) return `direct-${m.direct.direction}|${m.direct.id}`;
   if (m.mid !== undefined) return `${m.room}|m${m.mid}`;
@@ -2047,13 +2042,14 @@ function unescapeHarnessEntities(text: string): string {
 
 /** Parses one candidate fragment (a `teammate-message` tag body, or one line
  * of a `task-notification`'s `<event>` jsonl body) into a `CcmsgMessage`.
- * Returns null — never throws — for invalid JSON or a validly-parsed value
- * that isn't a ccmsg `type:"msg"` event (kawaz spec: "壊れた JSON は空で
- * fallback", and non-msg events like `idle_notification` must NOT become a
- * bubble). */
-function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMessage | null {
+ * Returns null — never throws — for text that is not JSON or a value that
+ * isn't a ccmsg `type:"msg"` event (non-msg events like `idle_notification`
+ * must NOT become a bubble). A line the harness cut short ("...(truncated)")
+ * is not JSON and is not read in part (DR-0038 §6): the line it sits in
+ * renders the ordinary way, cut marker included. */
+function tryParseCcmsgMessage(fragment: string): CcmsgMessage | null {
   const json = parseWith(JsonTextSchema, fragment.trim());
-  if (!json.ok) return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
+  if (!json.ok) return null;
   const read = parseWith(CcmsgMsgEventSchema, json.value);
   if (!read.ok) return null;
   const event = read.value;
@@ -2066,66 +2062,6 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
     ...(event.mid !== undefined ? { mid: event.mid } : {}),
   };
 }
-
-/** Monitor 通知の <event> は長い msg を「...(truncated)」で切り詰めることが
- * あり (harness 側の通知サイズ上限)、その行は JSON として壊れて上の parse が
- * 落ちる — 従来はそのまま null → CcmsgBubble にならず生 JSON の fold 表示に
- * なっていた (kawaz r17 mid=43 の実観測)。切れていても field 順は固定
- * (daemon の subscribe wire order:
- * `type,mid,from,ts,to?,r,seq,reply_via?,msg` — msg が必ず最後、
- * docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md) なので、msg の
- * 途中までを regex で抜けば「途中まで + 切り詰め注記」の bubble にできる。
- * 読める形が生 JSON より常に良い、が判断 (全文は webui の room 表示か read
- * で見られる)。
- *
- * room (`r`) は msg より前の field なので、truncation が msg 本文側で起きる
- * 限り通常は失われない — ただし単独 msg 通知で `r` 自体が何らかの理由で
- * 欠けた場合の保険として、呼び出し側 (extractCcmsgMessages) が同じ <event>
- * ブロック内の parse できた行から補完した `fallbackRoom` を渡す (subscribe
- * の 1 通知は room event のバッチで、実観測の形は kind/title/member 行が
- * 同居する)。それも無い単独 msg 通知では `?` を room 表示に使い、復元できた
- * 本文を bubble として保持する。 */
-/** A JSON string literal, as the text it says. */
-const JsonStringTextSchema = jsonText(v.string());
-
-function tryParseTruncatedCcmsgMessage(
-  fragment: string,
-  fallbackRoom?: string,
-): CcmsgMessage | null {
-  if (!fragment.endsWith("(truncated)")) return null;
-  if (!fragment.startsWith('{"type":"msg"')) return null;
-  const from = fragment.match(/"from":"((?:[^"\\]|\\.)*)"/)?.[1];
-  const ts = fragment.match(/"ts":"((?:[^"\\]|\\.)*)"/)?.[1];
-  const knownRoom = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom;
-  const room = knownRoom ?? "?";
-  // mid は subscribe wire order (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md
-  // 済) では msg より前 (`type,mid,from,ts,to?,r,seq,reply_via?,msg`) なので
-  // truncation 前に必ず来る — 拾えれば DR-0027 §2 の read-fallback パスに乗る。
-  // ただし canonical lookup key は (r, mid) の**組**: room が復元できなかった
-  // fragment (`room === "?"`) に mid だけ付けると、`ws.read("?", [mid])` の
-  // 無意味な発火と、別 room の同 mid truncated fragment との dedup 偽衝突
-  // (`?|m99` が room を跨いで同キー化) を起こす。room 不明時は mid を捨てて
-  // 救済 parse 本文だけの最終フォールバックに落とす (DR-0027 §2.1)。
-  const midMatch = knownRoom !== undefined ? fragment.match(/"mid":(\d+)/)?.[1] : undefined;
-  const mid = midMatch !== undefined ? Number(midMatch) : undefined;
-  const msgMatch = fragment.match(/"msg":"((?:[^"\\]|\\.)*)/)?.[1];
-  if (!from || !ts || msgMatch === undefined) return null;
-  // 抜き出した半端な JSON string 断片を JSON の文字列としてデコード (escape
-  // 解決)。断片が escape の途中で切れていたら最後の \ を落としてから読む。
-  const decoded = parseWith(JsonStringTextSchema, `"${msgMatch.replace(/\\$/, "")}"`);
-  if (!decoded.ok) return null;
-  const msg = decoded.value;
-  return {
-    from,
-    room,
-    msg: `${unescapeHarnessEntities(msg)}…(切り詰め — 全文は room で)`,
-    ts,
-    ...(mid !== undefined ? { mid } : {}),
-  };
-}
-
-/** One event of a `<event>` block, read for its room alone. */
-const CcmsgEventRoomLineSchema = jsonText(v.looseObject({ r: v.string() }));
 
 /**
  * Recovers every ccmsg room message (`type:"msg"` events) embedded in a
@@ -2198,16 +2134,10 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   }
   for (const [, block] of text.matchAll(EVENT_TAG_RE)) {
     if (block === undefined) continue;
-    // truncated 行の room 補完用: 同じ <event> ブロック内で parse できた
-    // event の r (subscribe の 1 通知は同一 room のバッチが普通)。
-    let blockRoom: string | undefined;
     for (const eventLine of block.split("\n")) {
       const trimmed = eventLine.trim();
       if (!trimmed) continue;
-      // truncated 等の壊れ行・room の無い行では blockRoom はそのまま。
-      const event = parseWith(CcmsgEventRoomLineSchema, trimmed);
-      if (event.ok) blockRoom = event.value.r;
-      const parsed = tryParseCcmsgMessage(trimmed, blockRoom);
+      const parsed = tryParseCcmsgMessage(trimmed);
       if (parsed) results.push(parsed);
     }
   }

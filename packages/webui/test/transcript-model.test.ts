@@ -3079,90 +3079,50 @@ describe("foldGroupNeedsOuterFold", () => {
 // through parseSegments/classifyUserMessage the same way a live transcript
 // line would.
 describe("extractCcmsgMessages", () => {
-  // 何を保証するか (実データ回帰): Claude Code が mid=99 の Monitor event を
-  // `"seq":102...(truncated)` で切り、その後に返信指示行を続けた実 transcript
-  // でも、復元可能な u1 本文を room 不明の ccmsg bubble として残す。fixture の
-  // message.content は報告対象 jsonl 行からそのまま採取した。
-  test("the actual mid=99 truncated task-notification yields a u1 ccmsg bubble", () => {
-    const actualMid99TranscriptLine = jsonl(
-      userContentRow(
-        '<task-notification>\n<task-id>baxep3rq2</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ監視"</summary>\n<event>{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。\\n自由にプロジェクト外のパスをブラウズしたいわけではない。\\nRead/Write/Editツールで触ったファイルリストからcwd内のものを除外したフルパスリストを表示するセクションがFileツリーに欲しいということです。\\n\\n現在、おきにいり、プロジェクトという2つのセクションがあるが、ここにプロジェクト外というセクションを設けて、セッションが触ったプロジェクト外ファイルのフルパスリストを表示して選択できるようにしたい。\\n当然横幅が足りなくなると思うが、横スクロールバーを付けてくれたら良い。そもそも現在も深いディレクトリや長いファイル名の際に右側が隠れる問題は存在する。スプリッタを右にずらせば広くはできるが限界はあるのでシンプルにセクション内のリストごとに横スクロールができればよいと思う。\\nお気に入り追加も可能となるようにしたい。","seq":102...(truncated)</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn\'t need one.\n</task-notification>',
-        { timestamp: "2026-07-17T04:33:45.105Z", origin: { kind: "task-notification" } },
-      ),
-    );
-
-    const msgs = extractCcmsgMessages(parseTranscriptLine(actualMid99TranscriptLine));
-    expect(msgs.length).toBe(1);
-    const msg = defined(msgs[0], "the recovered message");
-    expect(msg.from).toBe("u1");
-    expect(msg.room).toBe("?");
-    expect(msg.msg).toContain("あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。");
-    expect(msg.msg).toContain("切り詰め");
-  });
-
-  // Monitor 通知の <event> は長い msg を「...(truncated)」で切ることがあり、
-  // その行は JSON として壊れる (kawaz の実観測 — bubble にならず
-  // 生 JSON の fold 表示になっていた)。field 順は daemon の stringify 順で
-  // 固定なので、切れていても from/ts/r/msg 冒頭を復元して「途中まで +
-  // 切り詰め注記」の bubble にする。
-  test("a truncated <event> msg line still yields a bubble with the partial text", () => {
-    const truncated =
-      '{"type":"msg","mid":43,"from":"u1","ts":"2026-07-15T04:02:43.478Z","msg":"[FILE1:スクショ.png](/tmp/x.png)\\nさっき間違えて別のセッションで1on1送信して...(truncated)';
+  // DR-0038 §6: Claude Code が Monitor の通知の <event> を「...(truncated)」で
+  // 切った行は JSON として読めないので、ccmsg のメッセージにしない (途中まで
+  // 読み直して本文を拾わない)。行はふつうの表示のまま残り、harness が付けた
+  // 「(truncated)」もその本文に見える。fixture の message.content は実際の
+  // transcript の行から採った。
+  test("a task-notification <event> line cut by the harness is not a ccmsg message", () => {
     const line = parseTranscriptLine(
       jsonl(
         userContentRow(
-          `[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n<event>${"{"}"type":"kind","kind":"1on1","ts":"t","seq":1,"r":"r20"}\n${truncated}</event>\n</task-notification>`,
-          { timestamp: "2026-07-15T04:02:44.000Z" },
-        ),
-      ),
-    );
-    const msgs = extractCcmsgMessages(line);
-    expect(msgs.length).toBe(1);
-    const msg = defined(msgs[0], "the recovered message");
-    expect(msg.from).toBe("u1");
-    expect(msg.room).toBe("r20");
-    expect(msg.msg).toContain("さっき間違えて");
-    expect(msg.msg).toContain("切り詰め");
-  });
-
-  // docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: daemon の
-  // subscribe wire order を `type,mid,from,ts,to?,r,seq,reply_via?,msg`
-  // (msg が必ず最後) に変更したことで、`r` が msg より前に来るようになった。
-  // 同居 event の無い単独 msg 通知が切れても、fallbackRoom に頼らず断片自身の
-  // `r` から room を復元できることを固定する (旧順では `r` が msg の後ろに
-  // あり truncation でほぼ確実に失われていた — 上のテストの fallbackRoom
-  // 依存はその名残)。
-  test("new wire order: a truncated standalone msg notification recovers room from its own `r` (no fallback needed)", () => {
-    const truncated =
-      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_via":"Use `ccmsg reply r30m109 <msg>`","msg":"a very long message body that keeps going and going...(truncated)';
-    const line = parseTranscriptLine(
-      jsonl(
-        userContentRow(`<task-notification>\n<event>${truncated}</event>\n</task-notification>`, {
-          timestamp: "2026-07-17T04:33:45.000Z",
-        }),
-      ),
-    );
-    const msgs = extractCcmsgMessages(line);
-    expect(msgs.length).toBe(1);
-    const msg = defined(msgs[0], "the recovered message");
-    expect(msg.from).toBe("a1");
-    expect(msg.room).toBe("r30");
-    expect(msg.msg).toContain("a very long message body");
-    expect(msg.msg).toContain("切り詰め");
-  });
-
-  // 対極 (誤爆防止): truncated marker があっても msg event でない行や、
-  // from/ts/msg のいずれかを復元できない断片は bubble にしない。
-  test("a truncated non-msg or msg missing identity fields stays out of bubbles", () => {
-    const line = parseTranscriptLine(
-      jsonl(
-        userContentRow(
-          '<task-notification>\n<event>{"type":"member","id":"a1","sid":"x...(truncated)\n{"type":"msg","from":"u1","msg":"no timestamp...(truncated)</event>\n</task-notification>',
-          { timestamp: "2026-07-15T04:02:44.000Z" },
+          '<task-notification>\n<task-id>baxep3rq2</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ監視"</summary>\n<event>{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。\\n自由にプロジェクト外のパスをブラウズしたいわけではない。\\nRead/Write/Editツールで触ったファイルリストからcwd内のものを除外したフルパスリストを表示するセクションがFileツリーに欲しいということです。\\n\\n現在、おきにいり、プロジェクトという2つのセクションがあるが、ここにプロジェクト外というセクションを設けて、セッションが触ったプロジェクト外ファイルのフルパスリストを表示して選択できるようにしたい。\\n当然横幅が足りなくなると思うが、横スクロールバーを付けてくれたら良い。そもそも現在も深いディレクトリや長いファイル名の際に右側が隠れる問題は存在する。スプリッタを右にずらせば広くはできるが限界はあるのでシンプルにセクション内のリストごとに横スクロールができればよいと思う。\\nお気に入り追加も可能となるようにしたい。","seq":102...(truncated)</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn\'t need one.\n</task-notification>',
+          { timestamp: "2026-07-17T04:33:45.105Z", origin: { kind: "task-notification" } },
         ),
       ),
     );
     expect(extractCcmsgMessages(line)).toEqual([]);
+    expect(line.kind === "turn" ? line.segments.map(segmentSearchText).join("\n") : "").toContain(
+      '"seq":102...(truncated)</event>',
+    );
+  });
+
+  // 切れた行はその行だけが読めない: 同じ <event> の読める msg event は
+  // メッセージになり、room はその event 自身の r から取る。
+  test("a cut event line does not take the readable events of its block with it", () => {
+    const whole = JSON.stringify({
+      type: "msg",
+      mid: 7,
+      from: "a1",
+      ts: "2026-07-17T04:33:44.000Z",
+      r: "r30",
+      seq: 41,
+      msg: "short",
+    });
+    const cut =
+      '{"type":"msg","mid":8,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"msg":"a very long message body that keeps going and going...(truncated)';
+    const line = parseTranscriptLine(
+      jsonl(
+        userContentRow(
+          `<task-notification>\n<event>${whole}\n${cut}</event>\n</task-notification>`,
+        ),
+      ),
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      { from: "a1", room: "r30", msg: "short", ts: "2026-07-17T04:33:44.000Z", mid: 7 },
+    ]);
   });
 
   function userLine(content: string): ParsedLine {
@@ -3396,47 +3356,6 @@ describe("extractCcmsgMessages", () => {
     const msgs = extractCcmsgMessages(line);
     expect(msgs).toHaveLength(1);
     expect(defined(msgs[0], "the extracted message").mid).toBe(77);
-  });
-
-  // DR-0027 §2 (truncated fragment 経路): 現行の wire order (msg が最後) では
-  // mid は truncation の手前に必ずあるので、切れた fragment からでも拾えて
-  // 完全版 read の canonical key を確保できる — 切り詰め本文の bubble も後で
-  // daemon 一次情報で置き換わる。
-  test("DR-0027: truncated fragment recovers `mid` before the truncation point", () => {
-    const truncated =
-      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_via":"Use `ccmsg reply r30m109 <msg>`","msg":"a long body...(truncated)';
-    const line = parseTranscriptLine(
-      jsonl(
-        userContentRow(`<task-notification>\n<event>${truncated}</event>\n</task-notification>`),
-      ),
-    );
-    const msgs = extractCcmsgMessages(line);
-    expect(msgs).toHaveLength(1);
-    const msg = defined(msgs[0], "the recovered message");
-    expect(msg.mid).toBe(110);
-  });
-
-  // 対極 (DR-0027 §2.1): canonical lookup key は (r, mid) の組。旧 wire order
-  // (`type,mid,from,ts,msg,...` — msg が中程で r が末尾側) の truncated
-  // fragment では r が truncation で失われ room="?" になる。この場合 mid を
-  // 付けると (a) ws.read("?", [mid]) の無意味な発火 (実 daemon 実測で確認)、
-  // (b) dedup key "?|mN" が room を跨いで同 mid の別メッセージと偽衝突する。
-  // room 不明の fragment は mid なし = 救済 parse 本文だけの最終フォールバック。
-  test("DR-0027: room-less truncated fragment (old wire order) drops `mid` — no canonical key without a room", () => {
-    const truncated =
-      '{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"a long body cut before the r field...(truncated)';
-    const line = parseTranscriptLine(
-      jsonl(
-        userContentRow(`<task-notification>\n<event>${truncated}</event>\n</task-notification>`),
-      ),
-    );
-    const msgs = extractCcmsgMessages(line);
-    expect(msgs).toHaveLength(1);
-    const msg = defined(msgs[0], "the recovered message");
-    expect(msg.room).toBe("?");
-    expect(msg.mid).toBeUndefined();
-    // 本文の救済 parse は従来通り生きている (最終フォールバック)。
-    expect(msg.msg).toContain("a long body cut before the r field");
   });
 });
 

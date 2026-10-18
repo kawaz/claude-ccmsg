@@ -71,6 +71,7 @@ kawaz 2026-10-09: 「validator は外部データを JSON.parse したら何も�
 - 設定で宣言させる名前は、`__proto__` / `constructor` / `prototype` を名前の規則で禁じる (valibot の object 系のスキーマはこれらのキーを扱わないので、宣言できないようにしておく)。キーを落とさないための特別なスキーマは作らない
 - 型に合わない値は、エラーで弾いて終わりにする。別の値に読み替えない (`v.fallback` で不正な値を `null` 等にしない)、失敗した入力を部分ごとに読み直して細かく分類しない、どんな入力でも何とか扱おうとする処理を足さない。kawaz 2026-10-09:「不整値はくだらないケアとかする以前にエラーで弾いて終わりで良い。クソみたいな万能ケアをしようとするな」
 - 値が無い時の既定値が要るなら、スキーマで定義する (`v.optional(schema, default)`)
+- 本文に埋め込まれた JSON も同じ: Claude Code が Monitor の通知の `<event>` を「...(truncated)」で切った ccmsg の event の行は JSON として読めないので、ccmsg のメッセージにしない。途中まで正規表現で読み直して from / r / mid / 本文を拾わない。その行が載った transcript の行はふつうの表示のまま (harness が付けた「(truncated)」も本文に見える) で、同じ `<event>` の読める行はそれぞれメッセージになる (2026-10-18)
 
 ## Alternatives Considered
 

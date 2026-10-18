@@ -1,6 +1,6 @@
 # DR-0027: TL の ccmsg メッセージを daemon 一次情報で完全復元 (断片復元の廃止)
 
-Status: Accepted (kawaz が方針を直接指定)
+Status: Accepted (kawaz が方針を直接指定)。§2.1 のうち、harness に切り詰められた event の行から r / mid / 本文を読み直す部分 (救済 parse) は [DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6 が止めた: JSON として読めない行は ccmsg のメッセージにせず、その行はふつうの表示のまま見せる
 Date: 2026-07-18
 Sponsor: kawaz
 
