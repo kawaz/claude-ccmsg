@@ -20,7 +20,12 @@ import { runCli } from "./run-cli.ts";
 
 interface Fixture {
   base: string;
-  env: Record<string, string>;
+  /** The directories the CLI is pinned to, and whatever else a test sets. */
+  env: Record<string, string> & {
+    CCMSG_STATE_DIR: string;
+    CCMSG_CONFIG_DIR: string;
+    CCMSG_DATA_DIR: string;
+  };
   /** Each line is one invocation's argv, tab-separated. */
   sayLog: string;
   cleanup: () => void;

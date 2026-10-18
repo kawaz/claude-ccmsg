@@ -467,7 +467,10 @@ describe("session_search three-stage filtering", () => {
     const delivery = ccmsg("a1", "consumed needle from agent");
     writeSession(config, sid(1), [
       delivery,
-      { ...user("ignored"), message: { role: "user", content: delivery.content } },
+      {
+        ...user("ignored"),
+        message: { role: "user", content: defined(delivery.content, "the delivery's content") },
+      },
     ]);
 
     const asUser = await search(config, {

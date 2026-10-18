@@ -330,10 +330,14 @@ function equalParsedLine(a: ParsedLine, b: ParsedLine): boolean {
 
 /** Number of leading elements two arrays share under `equal`. */
 function sharedPrefix<T>(a: readonly T[], b: readonly T[], equal: (x: T, y: T) => boolean): number {
-  const max = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < max && equal(a[i], b[i])) i++;
-  return i;
+  const ys = b.values();
+  let shared = 0;
+  for (const x of a) {
+    const y = ys.next();
+    if (y.done || !equal(x, y.value)) break;
+    shared++;
+  }
+  return shared;
 }
 
 /** Number of trailing elements two arrays share under `equal`, capped by
@@ -344,9 +348,8 @@ function sharedSuffix<T>(
   limit: number,
   equal: (x: T, y: T) => boolean,
 ): number {
-  let i = 0;
-  while (i < limit && equal(a[a.length - 1 - i], b[b.length - 1 - i])) i++;
-  return i;
+  const tail = (xs: readonly T[]): T[] => xs.slice(Math.max(0, xs.length - limit)).toReversed();
+  return sharedPrefix(tail(a), tail(b), equal);
 }
 
 /**
@@ -371,8 +374,11 @@ function reuseUnchanged<T>(
     Math.min(previous.length, next.length) - prefix,
     equal,
   );
-  for (let i = 0; i < prefix; i++) next[i] = previous[i];
-  for (let i = 0; i < suffix; i++) next[next.length - 1 - i] = previous[previous.length - 1 - i];
+  for (const [i, value] of previous.slice(0, prefix).entries()) next[i] = value;
+  const nextSuffixStart = next.length - suffix;
+  for (const [i, value] of previous.slice(previous.length - suffix).entries()) {
+    next[nextSuffixStart + i] = value;
+  }
   return next;
 }
 
@@ -389,12 +395,10 @@ function equalGroup(a: TimelineGroup, b: TimelineGroup): boolean {
     return b.kind === "entry" && a.offset === b.offset && a.line === b.line;
   }
   if (b.kind !== "fold" || a.entries.length !== b.entries.length) return false;
-  for (let i = 0; i < a.entries.length; i++) {
-    const x = a.entries[i];
+  return a.entries.every((x, i) => {
     const y = b.entries[i];
-    if (x.offset !== y.offset || x.line !== y.line) return false;
-  }
-  return true;
+    return y !== undefined && x.offset === y.offset && x.line === y.line;
+  });
 }
 
 /**

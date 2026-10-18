@@ -164,7 +164,10 @@ export function sameContent(a: InputContent | null, b: InputContent | null): boo
   const right = storedAttachments(b.attachments);
   return (
     left.length === right.length &&
-    left.every((x, i) => x.n === right[i].n && x.path === right[i].path)
+    left.every((x, i) => {
+      const y = right[i];
+      return y !== undefined && x.n === y.n && x.path === y.path;
+    })
   );
 }
 

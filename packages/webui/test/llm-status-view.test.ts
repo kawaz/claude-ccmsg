@@ -13,6 +13,7 @@ import {
   officialLabel,
   serviceRows,
   severityLabel,
+  severityMark,
   severityTone,
 } from "../src/client/llm-status-view.ts";
 
@@ -60,6 +61,20 @@ describe("severity vocabulary", () => {
     ]);
     expect(officialLabel("under_review")).toBe("不明");
     expect(observedLabel("throttled")).toBe("未観測");
+  });
+
+  // The words come from the gateway (DR-0038 §6): one that names a member of
+  // Object.prototype is just another unknown word, not a lookup of that member.
+  test("a word naming an Object.prototype member reads as unknown", () => {
+    for (const word of ["constructor", "toString", "__proto__"]) {
+      expect([severityTone(word), severityMark(word), severityLabel(word)]).toEqual([
+        "unknown",
+        "?",
+        "不明",
+      ]);
+      expect(officialLabel(word)).toBe("不明");
+      expect(observedLabel(word)).toBe("未観測");
+    }
   });
 
   // The two signals must never read as one scale: "稼働中" is the provider's

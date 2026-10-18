@@ -98,8 +98,9 @@ describe("tokenizeLines", () => {
     // The exact token split is Shiki's grammar (implementation detail);
     // what matters is that the concatenation reproduces the source and at
     // least one token carries a style (i.e. isn't left unstyled).
-    expect(lines[0].map((s) => s.text).join("")).toBe('const x = "hi";');
-    expect(lines[0].some((s) => s.style !== undefined)).toBe(true);
+    const line = defined(lines[0], "the only line");
+    expect(line.map((s) => s.text).join("")).toBe('const x = "hi";');
+    expect(line.some((s) => s.style !== undefined)).toBe(true);
   });
 
   // Dual-theme tokenization (getHighlighter in highlight.ts) means every
@@ -107,7 +108,7 @@ describe("tokenizeLines", () => {
   // string — a single call, no separate light/dark re-tokenization.
   test("styled span's inline style carries both light and dark theme colors", async () => {
     const lines = await tokenizeLines("const x = 1;", "tsx");
-    const styled = lines[0].find((s) => s.style !== undefined);
+    const styled = defined(lines[0], "the only line").find((s) => s.style !== undefined);
     expect(styled).toBeDefined();
     expect(defined(styled, "a styled span").style).toContain("--shiki-light:");
     expect(defined(styled, "a styled span").style).toContain("--shiki-dark:");
@@ -119,8 +120,16 @@ describe("tokenizeLines", () => {
     // Trailing "\n" does not produce an extra trailing empty line, mirroring
     // FileViewer's plain-line splitting (splitLines in FileViewer.tsx).
     expect(lines.length).toBe(2);
-    expect(lines[0].map((s) => s.text).join("")).toBe("const a = 1;");
-    expect(lines[1].map((s) => s.text).join("")).toBe("const b = 2;");
+    expect(
+      defined(lines[0], "the first line")
+        .map((s) => s.text)
+        .join(""),
+    ).toBe("const a = 1;");
+    expect(
+      defined(lines[1], "the second line")
+        .map((s) => s.text)
+        .join(""),
+    ).toBe("const b = 2;");
   });
 
   test("source without a trailing newline keeps the last line", async () => {
@@ -132,9 +141,21 @@ describe("tokenizeLines", () => {
     const src = "/* a\nb */\nconst c = 1;";
     const lines = await tokenizeLines(src, "tsx");
     expect(lines.length).toBe(3);
-    expect(lines[0].map((s) => s.text).join("")).toBe("/* a");
-    expect(lines[1].map((s) => s.text).join("")).toBe("b */");
-    expect(lines[2].map((s) => s.text).join("")).toBe("const c = 1;");
+    expect(
+      defined(lines[0], "the first line")
+        .map((s) => s.text)
+        .join(""),
+    ).toBe("/* a");
+    expect(
+      defined(lines[1], "the second line")
+        .map((s) => s.text)
+        .join(""),
+    ).toBe("b */");
+    expect(
+      defined(lines[2], "the third line")
+        .map((s) => s.text)
+        .join(""),
+    ).toBe("const c = 1;");
   });
 
   test("empty source -> a single empty line (caller special-cases '' before calling this)", async () => {

@@ -183,7 +183,8 @@ describe("renderMarkdownAst / XSS defenses", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(stringProp(links[0], "href")).toBe("https://example.com/pic.png");
+    const link = defined(links[0], "the image link");
+    expect(stringProp(link, "href")).toBe("https://example.com/pic.png");
   });
 
   // A safe-scheme link does get a real <a href>.
@@ -202,7 +203,8 @@ describe("renderMarkdownAst / XSS defenses", () => {
     const vnode = renderMarkdownAst(root);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(stringProp(links[0], "href")).toBe("https://example.com");
+    const link = defined(links[0], "the link");
+    expect(stringProp(link, "href")).toBe("https://example.com");
   });
 
   // Required-coverage item: "html ノードがテキスト化される". A raw-HTML mdast
@@ -285,7 +287,7 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
   test("protected underscores are restored in inline code and link URLs", () => {
     const vnode = renderSource("`snake_case` [link](https://example.com/a_b)");
     expect(flattenText(collect(vnode, (n) => n.type === "code")[0])).toBe("snake_case");
-    const link = collect(vnode, (n) => n.type === "a")[0];
+    const link = defined(collect(vnode, (n) => n.type === "a")[0], "the link");
     expect(stringProp(link, "href")).toBe("https://example.com/a_b");
   });
 
@@ -348,7 +350,8 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     const fenced = renderSource("```txt\n<script>\n```");
     const blocks = collect(fenced, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].props).toMatchObject({ lang: "txt", code: "<script>" });
+    const block = defined(blocks[0], "the code block");
+    expect(block.props).toMatchObject({ lang: "txt", code: "<script>" });
   });
 
   // CommonMark URL/email autolinks are not tag-like prose and remain links;
@@ -494,7 +497,8 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].props).toMatchObject({ lang: "ts", code: "const x = 1;" });
+    const block = defined(blocks[0], "the code block");
+    expect(block.props).toMatchObject({ lang: "ts", code: "const x = 1;" });
   });
 
   // A fence with no info-string still renders through CodeBlock, with a
@@ -505,7 +509,8 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].props).toMatchObject({ lang: null, code: "plain text" });
+    const block = defined(blocks[0], "the code block");
+    expect(block.props).toMatchObject({ lang: null, code: "plain text" });
   });
 
   // inlineCode is a separate mdast node type from a fenced code block and
@@ -688,8 +693,9 @@ describe("renderMarkdownAst / structural coverage", () => {
     expect(flattenText(headers[0])).toBe("H1");
     expect(flattenText(cells[0])).toBe("A");
     expect(
-      propsOf(headers[1], { style: v.optional(v.object({ textAlign: v.optional(v.string()) })) })
-        .style?.textAlign,
+      propsOf(defined(headers[1], "the second header"), {
+        style: v.optional(v.object({ textAlign: v.optional(v.string()) })),
+      }).style?.textAlign,
     ).toBe("right");
   });
 
@@ -819,13 +825,15 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(imgs).toHaveLength(1);
     // src は daemon の GET endpoint。生の TMPDIR path は browser sandbox 越えで
     // fetch できないので、そのまま出したら壊れる → GET URL に変換が必須。
-    expect(stringProp(imgs[0], "src")).toBe("/attachment/abc.png");
+    const img = defined(imgs[0], "the image");
+    expect(stringProp(img, "src")).toBe("/attachment/abc.png");
     // alt は link text から抽出 (`FILE1:diagram.png` 表記のまま)。
-    expect(stringProp(imgs[0], "alt")).toBe("FILE1:diagram.png");
+    expect(stringProp(img, "alt")).toBe("FILE1:diagram.png");
     // 親 <a> の href も同じ GET URL — click で開くルートを維持。
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(stringProp(links[0], "href")).toBe("/attachment/abc.png");
+    const link = defined(links[0], "the attachment link");
+    expect(stringProp(link, "href")).toBe("/attachment/abc.png");
   });
 
   // 非画像添付 (pdf 等): <img> にはならず、link のまま daemon URL を href に持つ。
@@ -849,8 +857,9 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(stringProp(links[0], "href")).toBe("/attachment/uuid.pdf");
-    expect(flattenText(links[0])).toBe("FILE1:notes.pdf");
+    const link = defined(links[0], "the attachment link");
+    expect(stringProp(link, "href")).toBe("/attachment/uuid.pdf");
+    expect(flattenText(link)).toBe("FILE1:notes.pdf");
   });
 
   // 非 attachment link は既存 (disarming / <a href> 経路) を通る。
@@ -875,7 +884,8 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(stringProp(links[0], "href")).toBe("https://example.com/");
+    const link = defined(links[0], "the link");
+    expect(stringProp(link, "href")).toBe("https://example.com/");
   });
 });
 
@@ -919,10 +929,9 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
     const marks = collect(vnode, (n) => n.type === "mark");
     expect(marks).toHaveLength(1);
-    expect(stringProp(marks[0], "class")).toBe("search-hl");
-    expect(
-      propsOf(marks[0], { style: v.optional(v.record(v.string(), v.string())) }).style,
-    ).toEqual({
+    const mark = defined(marks[0], "the search mark");
+    expect(stringProp(mark, "class")).toBe("search-hl");
+    expect(propsOf(mark, { style: v.optional(v.record(v.string(), v.string())) }).style).toEqual({
       "--hl-color": "var(--search-color-1)",
     });
     expect(flattenText(vnode)).toBe("hello world"); // content itself is unchanged, only wrapped
@@ -940,7 +949,7 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
         clicked += 1;
       },
     });
-    const mark = collect(vnode, (n) => n.type === "mark")[0];
+    const mark = defined(collect(vnode, (n) => n.type === "mark")[0], "the search mark");
     handlerProp(mark, "onClick")();
     expect(clicked).toBe(1);
   });
@@ -1019,7 +1028,8 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(src);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    const props = propsOf(blocks[0], { code: v.string(), lang: v.nullable(v.string()) });
+    const block = defined(blocks[0], "the code block");
+    const props = propsOf(block, { code: v.string(), lang: v.nullable(v.string()) });
     expect(props.code).toBe("const x = 1");
     expect(props.lang).toBe("ts");
     // The `#`-heading disaster does not happen inside fences either — the
@@ -1062,7 +1072,8 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(cleanSrc);
     const imgs = collect(vnode, (n) => n.type === "img");
     expect(imgs).toHaveLength(1);
-    const props = propsOf(imgs[0], { src: v.string(), alt: v.string() });
+    const img = defined(imgs[0], "the attachment image");
+    const props = propsOf(img, { src: v.string(), alt: v.string() });
     // Rewritten to daemon HTTP endpoint (DR-0015 §2.6), not the raw fs path.
     expect(props.src).toBe("/attachment/abcd.png");
     expect(props.alt).toBe("FILE1:screenshot.png");
@@ -1077,10 +1088,11 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(src);
     const anchors = collect(vnode, (n) => n.type === "a");
     expect(anchors).toHaveLength(1);
-    const props = propsOf(anchors[0], { href: v.string(), class: v.optional(v.string()) });
+    const anchor = defined(anchors[0], "the attachment link");
+    const props = propsOf(anchor, { href: v.string(), class: v.optional(v.string()) });
     expect(props.href).toBe("/attachment/xyz.txt");
     expect(props.class).toBe("md-attachment-link");
-    expect(flattenText(anchors[0])).toBe("FILE2:trace.txt");
+    expect(flattenText(anchor)).toBe("FILE2:trace.txt");
   });
 
   test("plain http link renders as <a>, javascript: is disarmed to text", () => {
@@ -1090,7 +1102,8 @@ describe("renderRestrictedMarkdown", () => {
     const anchors = collect(vnode, (n) => n.type === "a");
     // Only the https link produces an <a>; javascript: becomes a bare <span>.
     expect(anchors).toHaveLength(1);
-    const props = propsOf(anchors[0], { href: v.string() });
+    const anchor = defined(anchors[0], "the https link");
+    const props = propsOf(anchor, { href: v.string() });
     expect(props.href).toBe("https://example.com/x");
     // The disarmed link's label is still visible.
     expect(flattenText(vnode)).toContain("悪");
@@ -1145,12 +1158,18 @@ describe("parseMarkdownDocument / <details> folding", () => {
 
   test("`<details open>` renders expanded, a bare `<details>` collapsed", () => {
     const openProps = propsOf(
-      details(render("<details open>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+      defined(
+        details(render("<details open>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+        "the open details",
+      ),
       { open: v.boolean() },
     );
     expect(openProps.open).toBe(true);
     const shutProps = propsOf(
-      details(render("<details>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+      defined(
+        details(render("<details>\n<summary>t</summary>\n\nx\n\n</details>"))[0],
+        "the closed details",
+      ),
       { open: v.boolean() },
     );
     expect(shutProps.open).toBe(false);
@@ -1250,7 +1269,7 @@ describe("parseMarkdownDocument / <details> folding", () => {
 
   test("no attribute other than `open` ever reaches the rendered element", () => {
     const vnode = render("<details open>\n<summary>t</summary>\n\nx\n\n</details>");
-    const props = propsOf(details(vnode)[0], {});
+    const props = propsOf(defined(details(vnode)[0], "the details"), {});
     expect(Object.keys(props).sort()).toEqual(["children", "class", "open"]);
     expect(props.class).toBe("md-details");
   });
@@ -1260,7 +1279,8 @@ describe("parseMarkdownDocument / <details> folding", () => {
     expect(details(vnode)).toHaveLength(0);
     const blocks = collect(vnode, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(stringProp(blocks[0], "code")).toContain("<details>");
+    const block = defined(blocks[0], "the code block");
+    expect(stringProp(block, "code")).toContain("<details>");
   });
 
   test("a tag mentioned mid-sentence is prose, not a fold", () => {
@@ -1339,8 +1359,9 @@ describe("renderMarkdownAst / task lists", () => {
     });
     const boxes = checkboxes(vnode);
     expect(boxes.every((b) => b.disabled === false)).toBe(true);
-    boxes[0].onClick?.();
-    boxes[0].onClick?.();
+    const firstBox = defined(boxes[0], "the first checkbox");
+    firstBox.onClick?.();
+    firstBox.onClick?.();
     expect(seen).toEqual([0, 0]);
   });
 
@@ -1425,7 +1446,8 @@ describe("renderMarkdownAst / task lists", () => {
         (n) => stringProp(n, "class") === "md-task-error-dismiss",
       );
       expect(buttons).toHaveLength(1);
-      handlerProp(buttons[0], "onClick")();
+      const button = defined(buttons[0], "the dismiss button");
+      handlerProp(button, "onClick")();
       expect(dismissed).toEqual([2]);
 
       const noHandler = collect(
@@ -1494,10 +1516,11 @@ describe("renderMarkdownAst / markdown links to files", () => {
     });
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0])).toBe("#sSID:docs%2Fspec.md");
+    const link = defined(a[0], "the path link");
+    expect(hrefOf(link)).toBe("#sSID:docs%2Fspec.md");
     // target="_blank" would leave a standalone PWA with no way back, and the
     // destination is this same app anyway.
-    expect(stringProp(a[0], "target")).toBeUndefined();
+    expect(stringProp(link, "target")).toBeUndefined();
   });
 
   test("the parsed ref reaches the resolver, line fragment included", () => {
@@ -1515,9 +1538,10 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0])).toBe("https://example.com/x");
-    expect(stringProp(a[0], "target")).toBe("_blank");
-    expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
+    const link = defined(a[0], "the external link");
+    expect(hrefOf(link)).toBe("https://example.com/x");
+    expect(stringProp(link, "target")).toBe("_blank");
+    expect(stringProp(link, "rel")).toBe("noopener noreferrer");
   });
 
   // Self-referential ccmsg links (a session sharing its own webui URL) must
@@ -1551,17 +1575,19 @@ describe("renderMarkdownAst / markdown links to files", () => {
       const vnode = renderMarkdownAst(linkRoot(`${origin}/s/abc/timeline/head`));
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect(hrefOf(a[0])).toBe(`${origin}/s/abc/timeline/head`);
-      expect(stringProp(a[0], "target")).toBeUndefined();
-      expect(stringProp(a[0], "rel")).toBeUndefined();
+      const link = defined(a[0], "the same-origin link");
+      expect(hrefOf(link)).toBe(`${origin}/s/abc/timeline/head`);
+      expect(stringProp(link, "target")).toBeUndefined();
+      expect(stringProp(link, "rel")).toBeUndefined();
     });
 
     test("a link to a different origin still opens a new tab", () => {
       const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect(stringProp(a[0], "target")).toBe("_blank");
-      expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
+      const link = defined(a[0], "the other-origin link");
+      expect(stringProp(link, "target")).toBe("_blank");
+      expect(stringProp(link, "rel")).toBe("noopener noreferrer");
     });
 
     // A relative link's routing (the FileViewer `path` kind) must stay
@@ -1572,8 +1598,9 @@ describe("renderMarkdownAst / markdown links to files", () => {
       });
       const a = anchors(vnode);
       expect(a).toHaveLength(1);
-      expect(hrefOf(a[0])).toBe("#sSID:docs%2Fspec.md");
-      expect(stringProp(a[0], "target")).toBeUndefined();
+      const link = defined(a[0], "the path link");
+      expect(hrefOf(link)).toBe("#sSID:docs%2Fspec.md");
+      expect(stringProp(link, "target")).toBeUndefined();
     });
   });
 
@@ -1581,8 +1608,9 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("#md-section-2"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0])).toBe("#md-section-2");
-    expect(stringProp(a[0], "target")).toBeUndefined();
+    const link = defined(a[0], "the in-page link");
+    expect(hrefOf(link)).toBe("#md-section-2");
+    expect(stringProp(link, "target")).toBeUndefined();
   });
 
   test("a resolver is never consulted for a hostile scheme", () => {
@@ -1615,7 +1643,8 @@ describe("renderMarkdownAst / markdown links to files", () => {
     });
     const a = anchors(resolved);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0])).toBe("#sSID:assets%2Fd.png");
+    const link = defined(a[0], "the path link");
+    expect(hrefOf(link)).toBe("#sSID:assets%2Fd.png");
     expect(collect(resolved, (n) => n.type === "img")).toHaveLength(0);
   });
 
@@ -1625,7 +1654,8 @@ describe("renderMarkdownAst / markdown links to files", () => {
     const vnode = renderMarkdownAst(linkRoot("/tmp/claude-ccmsg-501/attachment/x.pdf", "FILE1:x"));
     const a = anchors(vnode);
     expect(a).toHaveLength(1);
-    expect(hrefOf(a[0])).toBe("/attachment/x.pdf");
+    const link = defined(a[0], "the attachment link");
+    expect(hrefOf(link)).toBe("/attachment/x.pdf");
   });
 });
 
@@ -1646,13 +1676,14 @@ describe("code spans holding a URL", () => {
     const vnode = renderMarkdownAst(codeRoot("https://example.com/x"));
     const a = collect(vnode, (n) => n.type === "a");
     expect(a).toHaveLength(1);
-    expect(stringProp(a[0], "href")).toBe("https://example.com/x");
-    expect(stringProp(a[0], "target")).toBe("_blank");
-    expect(stringProp(a[0], "rel")).toBe("noopener noreferrer");
-    const code = collect(a[0], (n) => n.type === "code");
+    const link = defined(a[0], "the code span link");
+    expect(stringProp(link, "href")).toBe("https://example.com/x");
+    expect(stringProp(link, "target")).toBe("_blank");
+    expect(stringProp(link, "rel")).toBe("noopener noreferrer");
+    const code = collect(link, (n) => n.type === "code");
     expect(code).toHaveLength(1);
-    expect(stringProp(code[0], "class")).toBe("md-inline-code");
-    expect(flattenText(a[0])).toBe("https://example.com/x");
+    expect(stringProp(defined(code[0], "the code span"), "class")).toBe("md-inline-code");
+    expect(flattenText(link)).toBe("https://example.com/x");
   });
 
   test("a code span that is not a URL stays plain code", () => {
@@ -1667,9 +1698,10 @@ describe("code spans holding a URL", () => {
     const vnode = renderRestrictedMarkdown("open `https://example.com/x` now");
     const a = collect(vnode, (n) => n.type === "a");
     expect(a).toHaveLength(1);
-    expect(stringProp(a[0], "href")).toBe("https://example.com/x");
-    expect(stringProp(a[0], "target")).toBe("_blank");
-    expect(collect(a[0], (n) => n.type === "code")).toHaveLength(1);
+    const link = defined(a[0], "the code span link");
+    expect(stringProp(link, "href")).toBe("https://example.com/x");
+    expect(stringProp(link, "target")).toBe("_blank");
+    expect(collect(link, (n) => n.type === "code")).toHaveLength(1);
   });
 });
 
@@ -1684,7 +1716,8 @@ describe("renderRestrictedMarkdown / link targets", () => {
     const vnode = renderRestrictedMarkdown("see [site](https://example.com)");
     const a = collect(vnode, (n) => n.type === "a");
     expect(a).toHaveLength(1);
-    expect(stringProp(a[0], "href")).toBe("https://example.com");
+    const link = defined(a[0], "the link");
+    expect(stringProp(link, "href")).toBe("https://example.com");
   });
 });
 
@@ -2010,7 +2043,8 @@ function describeStrongLinkTests(): void {
     });
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(links[0].props).toMatchObject({
+    const link = defined(links[0], "the strong file link");
+    expect(link.props).toMatchObject({
       href: "#/file/S1/docs/x.md",
       class: "md-strong-file-link",
     });
@@ -2063,7 +2097,8 @@ function describeStrongLinkTests(): void {
     const vnode = renderMarkdownAst(root, undefined, undefined, { filePathLinker: linker });
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
-    expect(links[0].props).toMatchObject({ class: "md-inline-code-file-link" });
+    const link = defined(links[0], "the inline-code file link");
+    expect(link.props).toMatchObject({ class: "md-inline-code-file-link" });
   });
 }
 
@@ -2280,7 +2315,8 @@ describe("renderMarkdownAst / issue references", () => {
   test("plain text gets an external issue link", () => {
     const links = issueLinks("この件は #123 で対応する");
     expect(links).toHaveLength(1);
-    const props = propsOf(links[0], {
+    const link = defined(links[0], "the issue link");
+    const props = propsOf(link, {
       href: v.string(),
       target: v.optional(v.string()),
       rel: v.optional(v.string()),
@@ -2320,7 +2356,8 @@ describe("renderMarkdownAst / issue references", () => {
     );
     const anchors = collect(vnode, (n) => n.type === "a");
     expect(anchors).toHaveLength(1);
-    expect(stringProp(anchors[0], "href")).toBe("https://example.com/x");
+    const anchor = defined(anchors[0], "the link");
+    expect(stringProp(anchor, "href")).toBe("https://example.com/x");
   });
 
   test("token-boundary exclusions hold through the parser", () => {

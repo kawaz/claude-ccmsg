@@ -22,8 +22,7 @@ function splitVersion(v: string): { core: [number, number, number]; suffix: stri
 export function compareVersions(a: string, b: string): number {
   const va = splitVersion(a);
   const vb = splitVersion(b);
-  for (let i = 0; i < 3; i++) {
-    const diff = va.core[i] - vb.core[i];
+  for (const diff of [va.core[0] - vb.core[0], va.core[1] - vb.core[1], va.core[2] - vb.core[2]]) {
     if (diff !== 0) return diff;
   }
   if (va.suffix === vb.suffix) return 0;

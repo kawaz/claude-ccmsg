@@ -51,22 +51,33 @@ const FENCE_RE = /^(?:[ \t]{0,3}>[ \t]?)*[ \t]*(`{3,}|~{3,})/;
  * safe — the caller compares this scan against the parsed tree and only
  * offers interaction when the two agree exactly. */
 export function findTaskLines(source: string): number[] {
-  const lines = source.split("\n");
-  const out: number[] = [];
+  return scanTasks(source).map((task) => task.index);
+}
+
+/** A task line `findTaskLines` found: its 0-based line number and its text. */
+interface ScannedTask {
+  index: number;
+  line: string;
+}
+
+/** The task lines of `source` in document order, as `findTaskLines` numbers
+ * them. */
+function scanTasks(source: string): ScannedTask[] {
+  const out: ScannedTask[] = [];
   let fence: string | null = null;
-  for (const [i, line] of lines.entries()) {
-    const fenceMatch = FENCE_RE.exec(line);
+  for (const [index, line] of source.split("\n").entries()) {
+    const fenceRun = FENCE_RE.exec(line)?.[1];
     if (fence !== null) {
-      if (fenceMatch && fenceMatch[1].length >= fence.length && fenceMatch[1][0] === fence[0]) {
+      if (fenceRun !== undefined && fenceRun.length >= fence.length && fenceRun[0] === fence[0]) {
         fence = null;
       }
       continue;
     }
-    if (fenceMatch) {
-      fence = fenceMatch[1];
+    if (fenceRun !== undefined) {
+      fence = fenceRun;
       continue;
     }
-    if (TASK_LINE_RE.test(line)) out.push(i);
+    if (TASK_LINE_RE.test(line)) out.push({ index, line });
   }
   return out;
 }
@@ -74,9 +85,8 @@ export function findTaskLines(source: string): number[] {
 /** The checked state of each task line the scanner found, in document order.
  * Compared against the parser's own sequence by `taskStatesAlign`. */
 export function scanTaskStates(source: string): boolean[] {
-  const lines = source.split("\n");
-  return findTaskLines(source).flatMap((i) => {
-    const task = parseTaskLine(lines[i]);
+  return scanTasks(source).flatMap(({ line }) => {
+    const task = parseTaskLine(line);
     return task ? [task.checked] : [];
   });
 }
@@ -86,7 +96,9 @@ export function scanTaskStates(source: string): boolean[] {
  * for a line that is not a task item. */
 function parseTaskLine(line: string): { head: string; checked: boolean } | null {
   const m = TASK_LINE_RE.exec(line);
-  return m ? { head: m[1], checked: m[2] !== " " } : null;
+  const head = m?.[1];
+  const state = m?.[2];
+  return head === undefined || state === undefined ? null : { head, checked: state !== " " };
 }
 
 /** `line` with its box set to `next`, every other byte kept. `null` for a line
@@ -141,9 +153,8 @@ export function anchorTaskLine(
   ordinal: number,
   expected: boolean,
 ): TaskAnchor | null {
-  const lineIndex = findTaskLines(source)[ordinal];
-  if (lineIndex === undefined) return null;
-  const line = source.split("\n")[lineIndex];
+  const line = scanTasks(source)[ordinal]?.line;
+  if (line === undefined) return null;
   const task = parseTaskLine(line);
   if (!task) return null; // unreachable: findTaskLines used the same test
   if (task.checked !== expected) return null;
@@ -187,28 +198,26 @@ export function resolveTaskLine(source: string, anchor: TaskAnchor): ResolveTask
   const identity = taskIdentity(anchor.line);
   if (identity === null) return { ok: false, reason: "gone" };
 
-  const lines = source.split("\n");
-  const taskLines = findTaskLines(source);
-  const matches = taskLines.filter((i) => taskIdentity(lines[i]) === identity);
-  if (matches.length === 0) return { ok: false, reason: "gone" };
+  const tasks = scanTasks(source);
+  const matches = tasks.filter((task) => taskIdentity(task.line) === identity);
+  const [only, ...others] = matches;
+  if (only === undefined) return { ok: false, reason: "gone" };
 
-  let lineIndex: number;
-  if (matches.length === 1) {
-    lineIndex = matches[0];
-  } else {
+  let found = only;
+  if (others.length > 0) {
     // Duplicates: the render-time ordinal is the only remaining evidence, and
     // it is trustworthy only if it still lands on one of the candidates.
-    const atOrdinal = taskLines[anchor.ordinal];
+    const atOrdinal = tasks[anchor.ordinal];
     if (atOrdinal === undefined || !matches.includes(atOrdinal)) {
       return { ok: false, reason: "ambiguous" };
     }
-    lineIndex = atOrdinal;
+    found = atOrdinal;
   }
 
   // Identity matched, so this is the user's item; a raw-text mismatch can only
   // be the state character, i.e. a real concurrent toggle of this very item.
-  if (lines[lineIndex] !== anchor.line) return { ok: false, reason: "conflict" };
-  return { ok: true, lineIndex };
+  if (found.line !== anchor.line) return { ok: false, reason: "conflict" };
+  return { ok: true, lineIndex: found.index };
 }
 
 /** The ordinal the anchored item occupies in `source` *now* — the coordinate
@@ -253,7 +262,8 @@ export function toggleTaskLine(
   if (!found.ok) return found;
 
   const lines = source.split("\n");
-  const toggled = withTaskState(lines[found.lineIndex], next);
+  const line = lines[found.lineIndex];
+  const toggled = line === undefined ? null : withTaskState(line, next);
   // resolveTaskLine matched the line as a task item, so it always is one.
   if (toggled === null) return { ok: false, reason: "gone" };
   lines[found.lineIndex] = toggled;

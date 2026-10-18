@@ -7,14 +7,14 @@
 // first, and match the keys FoldGroup registers itself under.
 import {
   foldGroupNeedsOuterFold,
-  type TimelineEntry,
+  type FoldEntries,
   type TimelineGroup,
 } from "./transcript-model.ts";
 
 /** Keyed by first entry offset, the same value Timeline already uses as the
  * component's Preact key — stable across live-tail appends and "load older"
  * prepends for the same reason (transcript-model.ts's lineByteOffsets doc). */
-export function foldGroupKey(entries: readonly TimelineEntry[]): string {
+export function foldGroupKey(entries: FoldEntries): string {
   return `fold:${entries[0].offset}`;
 }
 

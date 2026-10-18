@@ -926,12 +926,13 @@ export function rawTranscriptRowsFrom(
   offsets: readonly number[],
   byteLengths: readonly number[],
 ): RawTranscriptRow[] {
-  return lines.map((text, i) => ({
-    offset: offsets[i],
-    index: i + 1,
-    text,
-    bytes: byteLengths[i],
-  }));
+  return lines.flatMap((text, i) => {
+    const offset = offsets[i];
+    const bytes = byteLengths[i];
+    return offset === undefined || bytes === undefined
+      ? []
+      : [{ offset, index: i + 1, text, bytes }];
+  });
 }
 
 /**
@@ -968,14 +969,16 @@ export function itemRawSourceOffsets(
   lines.forEach((line, i) => {
     if (line.kind !== "turn") return;
     for (const segment of line.segments) {
-      if (segment.kind === "file-read" || segment.kind === "bash-use") {
-        ownerOffsetByToolUseId.set(segment.toolUseId, offsets[i]);
+      const offset = offsets[i];
+      if (offset !== undefined && (segment.kind === "file-read" || segment.kind === "bash-use")) {
+        ownerOffsetByToolUseId.set(segment.toolUseId, offset);
       }
     }
   });
   const sources = new Map<number, number[]>();
   lines.forEach((line, i) => {
     const offset = offsets[i];
+    if (offset === undefined) return;
     if (line.kind !== "turn" || !isConsumedToolResult(line)) {
       // 自分の行を先頭に置く (file 順は下の push で保たれる — consumed な
       // tool_result は必ず対応する tool_use より後ろの行)。
@@ -1212,6 +1215,10 @@ export interface TimelineEntry {
   line: ParsedLine;
 }
 
+/** The entries of a fold group: one or more, so the first one is always there
+ * to key the group by. */
+export type FoldEntries = readonly [TimelineEntry, ...TimelineEntry[]];
+
 /** The Timeline's render unit (components/timeline/) after tools-folding (kawaz spec): either a
  * boundary line rendered directly (a real user prompt, or the assistant's
  * next user-facing final response), or a run of everything in between
@@ -1219,7 +1226,7 @@ export interface TimelineEntry {
  * into one foldable group. */
 export type TimelineGroup =
   | { kind: "entry"; offset: number; line: ParsedLine }
-  | { kind: "fold"; entries: TimelineEntry[] };
+  | { kind: "fold"; entries: FoldEntries };
 
 export type UserNavTarget =
   | { key: string; offset: number; kind: "user-prompt" }
@@ -1433,14 +1440,15 @@ export function groupTimelineLines(
   const groups: TimelineGroup[] = [];
   let pending: TimelineEntry[] = [];
   const flushPending = () => {
-    if (pending.length > 0) {
-      groups.push({ kind: "fold", entries: pending });
+    const [first, ...rest] = pending;
+    if (first !== undefined) {
+      groups.push({ kind: "fold", entries: [first, ...rest] });
       pending = [];
     }
   };
   lines.forEach((line, i) => {
-    if (isConsumedToolResult(line)) return;
     const offset = offsets[i];
+    if (offset === undefined || isConsumedToolResult(line)) return;
     if (isBoundaryLine(line)) {
       flushPending();
       groups.push({ kind: "entry", offset, line });
@@ -1504,9 +1512,8 @@ const CACHE_KEEPALIVE_REPLY =
  * tool call did more than the marker asked, and is left as a bubble. */
 export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "assistant") return false;
-  if (line.segments.length !== 1) return false;
-  const segment = line.segments[0];
-  if (segment.kind !== "text") return false;
+  const segment = line.segments.length === 1 ? line.segments[0] : undefined;
+  if (segment?.kind !== "text") return false;
   // One line only: the model may wrap the token in backticks or similar, so
   // the token is matched by character-class boundaries rather than ^…$, but
   // any second line means it said something else too.
@@ -1587,7 +1594,7 @@ export function isDirectFoldEntry(entry: TimelineEntry): boolean {
 
 /** Folded-group summary label: each present category is listed in the fixed
  * order "N thinking + N ccmsg + N agent messages + N items". */
-export function foldGroupLabel(entries: TimelineEntry[]): string {
+export function foldGroupLabel(entries: readonly TimelineEntry[]): string {
   const thinkingCount = entries.filter(isThinkingEntry).length;
   const ccmsgCount = entries.reduce((count, entry) => count + ccmsgMessageCount(entry), 0);
   const agentMessageCount = entries.reduce(
@@ -1610,7 +1617,7 @@ export function foldGroupLabel(entries: TimelineEntry[]): string {
  * mid=44: 「1 items」を開く手間が無駄 — the entry carries its own tool card
  * fold already). Everything else folds, and its body lists every entry on its
  * own line. */
-export function foldGroupNeedsOuterFold(entries: TimelineEntry[]): boolean {
+export function foldGroupNeedsOuterFold(entries: readonly TimelineEntry[]): boolean {
   return entries.length > 1 || entries.some(isDirectFoldEntry);
 }
 
@@ -1757,7 +1764,7 @@ export function classifyUserMessage(row: UserRow): UserMessageKind {
     if (content.some(isToolResultBlock)) return "tool-result";
     if (content.length === 1) {
       const [block] = content;
-      if (isKnownContentBlock(block) && block.type === "text") {
+      if (block !== undefined && isKnownContentBlock(block) && block.type === "text") {
         const t = block.text;
         if (t.startsWith("[Request interrupted by user")) return "user-interrupt-marker";
         if (isMeta && t.startsWith("Base directory for this skill:"))
@@ -2185,15 +2192,16 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
       });
     }
   }
-  for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
-    const parsed = tryParseCcmsgMessage(m[1]);
+  for (const [, body] of text.matchAll(TEAMMATE_MESSAGE_RE)) {
+    const parsed = body === undefined ? null : tryParseCcmsgMessage(body);
     if (parsed) results.push(parsed);
   }
-  for (const m of text.matchAll(EVENT_TAG_RE)) {
+  for (const [, block] of text.matchAll(EVENT_TAG_RE)) {
+    if (block === undefined) continue;
     // truncated 行の room 補完用: 同じ <event> ブロック内で parse できた
     // event の r (subscribe の 1 通知は同一 room のバッチが普通)。
     let blockRoom: string | undefined;
-    for (const eventLine of m[1].split("\n")) {
+    for (const eventLine of block.split("\n")) {
       const trimmed = eventLine.trim();
       if (!trimmed) continue;
       // truncated 等の壊れ行・room の無い行では blockRoom はそのまま。
@@ -2365,8 +2373,8 @@ const XML_CHILD_TAG_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
 
 function extractXmlFields(text: string): SystemMessageField[] {
   const fields: SystemMessageField[] = [];
-  for (const m of text.matchAll(XML_CHILD_TAG_RE)) {
-    fields.push({ name: m[1], value: m[2].trim() });
+  for (const [, name, value] of text.matchAll(XML_CHILD_TAG_RE)) {
+    if (name !== undefined && value !== undefined) fields.push({ name, value: value.trim() });
   }
   return fields;
 }
@@ -2383,8 +2391,7 @@ function extractXmlFields(text: string): SystemMessageField[] {
  * for children that were never there. */
 function unwrapOuterTag(text: string, tagName: string): string | null {
   const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`);
-  const m = text.match(re);
-  return m ? m[1] : null;
+  return text.match(re)?.[1] ?? null;
 }
 
 /** Matches one `<teammate-message>`, `<agent-message>` or
@@ -2393,6 +2400,14 @@ function unwrapOuterTag(text: string, tagName: string): string | null {
  * parsed, and the tag name decides the relay's `channel`. */
 const PEER_MESSAGE_ATTRS_RE =
   /<(teammate-message|agent-message|cross-session-message)([^>]*)>([\s\S]*?)<\/\1>/g;
+
+/** Every peer relay tag in `text`: its name, its attribute string and its
+ * body, in order. */
+function peerRelayTags(text: string): { tag: string; attrs: string; body: string }[] {
+  return [...text.matchAll(PEER_MESSAGE_ATTRS_RE)].flatMap(([, tag, attrs, body]) =>
+    tag === undefined || attrs === undefined || body === undefined ? [] : [{ tag, attrs, body }],
+  );
+}
 
 /** Relay tag names, in the shape `classifyUserMessage`'s bare-prefix check and
  * `queuePairingKey`'s tail search need them. */
@@ -2426,8 +2441,8 @@ const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 
 function parseXmlAttrs(attrString: string): SystemMessageField[] {
   const fields: SystemMessageField[] = [];
-  for (const m of attrString.matchAll(XML_ATTR_RE)) {
-    fields.push({ name: m[1], value: m[2] });
+  for (const [, name, value] of attrString.matchAll(XML_ATTR_RE)) {
+    if (name !== undefined && value !== undefined) fields.push({ name, value });
   }
   return fields;
 }
@@ -2465,12 +2480,12 @@ const PERSISTED_PATH_RE = /saved to:\s*(\S+)/;
  * `<persisted-output>` shape. Returns `null` for a body that is not
  * persisted, letting the caller keep it verbatim. */
 function parsePersistedOutput(stdout: string): BashCommandOutput["persisted"] | null {
-  const match = stdout.match(PERSISTED_OUTPUT_RE);
-  if (!match) return null;
-  const note = match[1].trim();
+  const [, notice, preview] = stdout.match(PERSISTED_OUTPUT_RE) ?? [];
+  if (notice === undefined || preview === undefined) return null;
+  const note = notice.trim();
   const path = note.match(PERSISTED_PATH_RE)?.[1] ?? "";
   if (path === "") return null;
-  return { note, path, preview: match[2] };
+  return { note, path, preview };
 }
 
 /** Restores a `<bash-stdout>`/`<bash-stderr>` body to the bytes the command
@@ -2525,8 +2540,8 @@ export function parseBashInputText(rawText: string): string | null {
 const SPAWN_PROMPT_FROM = "親";
 
 function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
-  const relays = [...rawText.matchAll(PEER_MESSAGE_ATTRS_RE)].map((match) =>
-    parsePeerRelay(match[1], match[2], match[3]),
+  const relays = peerRelayTags(rawText).map(({ tag, attrs, body }) =>
+    parsePeerRelay(tag, attrs, body),
   );
   if (relays.length === 0) return null;
   return { display: "peer", relays };
@@ -2894,12 +2909,12 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
  * Applied to *both* sides of the comparison (`pairQueuedTurns`) — normalizing
  * only the delivered side would leave the queued raw text unable to match it. */
 function queuePairingKey(text: string): string {
-  const relays = [...text.matchAll(PEER_MESSAGE_ATTRS_RE)];
+  const relays = peerRelayTags(text);
   if (relays.length === 0) return text;
   return relays
-    .map((match) => {
-      const relay = parsePeerRelay(match[1], match[2], match[3]);
-      return [match[1], relay.from, relay.summary ?? "", relay.body].join("\u0000");
+    .map(({ tag, attrs, body }) => {
+      const relay = parsePeerRelay(tag, attrs, body);
+      return [tag, relay.from, relay.summary ?? "", relay.body].join("\u0000");
     })
     .join("\u0000\u0000");
 }
@@ -2965,7 +2980,8 @@ export function pairQueuedTurns(
     if (line.kind !== "turn" || line.queuedContent === undefined) return line;
     const indices = delivered.get(queuePairingKey(line.queuedContent));
     const match = indices?.find((at) => at > index && !consumed.has(at));
-    if (match === undefined) return line;
+    const raw = raws[index];
+    if (match === undefined || raw === undefined) return line;
     consumed.add(match);
     // Demoted rather than removed: the array stays index-aligned with the
     // caller's `lineByteOffsets` output (the Timeline components key every entry by its
@@ -2979,7 +2995,7 @@ export function pairQueuedTurns(
       ...(line.parentUuid ? { parentUuid: line.parentUuid } : {}),
       type: "queue-operation",
       summary: "queue-operation: enqueue",
-      raw: raws[index],
+      raw,
     };
   });
 }

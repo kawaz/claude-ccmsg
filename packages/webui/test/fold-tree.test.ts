@@ -8,6 +8,7 @@
 // screen. Timeline's one "no fold here after all" shortcut is covered below
 // (a fold group that is a single plain item is hoisted instead of wrapped).
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import {
   byteOffsetsFromLengths,
   groupTimelineLines,
@@ -82,8 +83,8 @@ describe("foldPathsByOffset", () => {
       assistantText("a"),
     ];
     const { offsets, paths } = build(raws);
-    expect(paths.get(offsets[0])).toBeUndefined();
-    expect(paths.get(offsets[4])).toBeUndefined();
+    expect(paths.get(defined(offsets[0], "the user prompt's offset"))).toBeUndefined();
+    expect(paths.get(defined(offsets[4], "the assistant text's offset"))).toBeUndefined();
   });
 
   test("every entry of a fold group needs only that group's outer fold", () => {
@@ -115,7 +116,7 @@ describe("foldPathsByOffset", () => {
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     expect(fold.entries.length).toBe(1);
-    expect(paths.get(offsets[1])).toEqual([]);
+    expect(paths.get(defined(offsets[1], "the lone tool item's offset"))).toEqual([]);
   });
 
   test("a tool-only run of several entries still folds under its own outer fold", () => {
@@ -131,8 +132,8 @@ describe("foldPathsByOffset", () => {
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     const outer = foldGroupKey(fold.entries);
-    expect(paths.get(offsets[1])).toEqual([outer]);
-    expect(paths.get(offsets[3])).toEqual([outer]);
+    expect(paths.get(defined(offsets[1], "the first tool item's offset"))).toEqual([outer]);
+    expect(paths.get(defined(offsets[3], "the second tool item's offset"))).toEqual([outer]);
   });
 
   test("every fold entry is accounted for, and only fold entries are", () => {

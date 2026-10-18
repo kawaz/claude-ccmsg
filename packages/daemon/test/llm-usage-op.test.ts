@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
 import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
+import { defined } from "./helpers.ts";
 
 const USAGE_BODY = {
   generated_at: 1785450000000,
@@ -111,7 +112,7 @@ describe("llm_usage op", () => {
     });
     expect(received.at(-1)).toBe("true");
     expect(reply.ok).toBe(true);
-    expect(reply.credentials[1].limits).toEqual([
+    expect(defined(reply.credentials[1], "the second credential").limits).toEqual([
       { kind: "weekly_all", percent: 100, severity: "critical" },
     ]);
   });
@@ -120,7 +121,7 @@ describe("llm_usage op", () => {
     const daemon = daemonWith(`${GATEWAY}/usage`);
     const reply = await requestOk(daemon, USER, { op: "llm_usage", request_id: "r2" });
     expect(received.at(-1)).toBeNull();
-    expect(reply.credentials[1].limits).toBeUndefined();
+    expect(defined(reply.credentials[1], "the second credential").limits).toBeUndefined();
   });
 
   // Anything other than an explicit `true` is a plain read: a probe spends

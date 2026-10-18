@@ -561,8 +561,8 @@ export function chartData(
 export function axisBucketLabel(key: string): string {
   const day = DATE_KEY.exec(key);
   if (day) return `${day[2]}-${day[3]}`;
-  const week = /^\d{4}-(W\d{2})$/.exec(key);
-  if (week) return week[1];
+  const week = /^\d{4}-(W\d{2})$/.exec(key)?.[1];
+  if (week !== undefined) return week;
   return formatBucket(key);
 }
 

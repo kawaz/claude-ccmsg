@@ -208,7 +208,7 @@ export async function resolveForkOrigin(
   // not into the forked message array), so the copied run matches a *subset* of
   // the ancestor in order, and comparing the two sequences index-by-index
   // diverges almost immediately (17 rows instead of 1717 on this repo's data).
-  let best: { sid: string; copied: number } | null = null;
+  let best: { sid: string; copied: number; boundary: string } | null = null;
   for (const candidate of candidates) {
     let ancestor: Set<string> | null;
     try {
@@ -219,18 +219,23 @@ export async function resolveForkOrigin(
     }
     if (ancestor === null) continue;
     let copied = 0;
-    while (copied < sequence.length && ancestor.has(sequence[copied])) copied += 1;
+    let boundary: string | undefined;
+    for (const uuid of sequence) {
+      if (!ancestor.has(uuid)) break;
+      copied += 1;
+      boundary = uuid;
+    }
     // Sibling forks of one ancestor share a prefix too, so several candidates
     // can match; the longest run is the nearest ancestor and the true seam.
-    if (copied > 0 && (best === null || copied > best.copied)) {
-      best = { sid: candidate.sid, copied };
+    if (boundary !== undefined && (best === null || copied > best.copied)) {
+      best = { sid: candidate.sid, copied, boundary };
     }
   }
   if (best === null) return null;
   // The whole file being copied would mean no forked turns exist yet; there is
   // no seam to draw below the last row.
   if (best.copied >= sequence.length) return null;
-  return { sid: best.sid, boundary_uuid: sequence[best.copied - 1], copied: best.copied };
+  return { sid: best.sid, boundary_uuid: best.boundary, copied: best.copied };
 }
 
 /**

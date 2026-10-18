@@ -7,6 +7,7 @@
 //   3. subscribers fire exactly once per batch response;
 //   4. clearSid wipes both cache + queue and notifies subscribers.
 import { afterEach, describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import type { FsStatEntry } from "@ccmsg/protocol";
 import {
   clearFilePathCacheForSid,
@@ -47,8 +48,9 @@ describe("filepath-existence-cache", () => {
     await Promise.resolve(); // let queueMicrotask flush
     await Promise.resolve(); // let the async sender resolve
     expect(calls.length).toBe(1);
-    expect(calls[0].sid).toBe("s1");
-    expect(calls[0].paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
+    const call = defined(calls[0], "the batched probe");
+    expect(call.sid).toBe("s1");
+    expect(call.paths.sort()).toEqual(["/a.md", "/b.md", "/c.md"]);
     expect(getFilePathStatus("s1", "/a.md")).toEqual({ kind: "contained", path: "a.md" });
     expect(getFilePathStatus("s1", "/b.md")).toEqual({ kind: "contained", path: "b.md" });
     expect(getFilePathStatus("s1", "/c.md")).toBeNull();

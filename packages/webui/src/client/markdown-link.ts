@@ -50,8 +50,8 @@ function urlScheme(url: string): string | null {
   // oxlint-disable-next-line no-control-regex
   const stripped = url.replace(/[\u0000-\u0020]+/g, "");
   if (stripped.startsWith("//")) return "//";
-  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped);
-  return m ? m[1].toLowerCase() : null;
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped)?.[1];
+  return scheme === undefined ? null : scheme.toLowerCase();
 }
 
 /**

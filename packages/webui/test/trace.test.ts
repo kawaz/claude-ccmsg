@@ -1,6 +1,7 @@
 // ブラウザ側のレイテンシトレース収集。ws_receive → store_dispatch → dom_commit を
 // (sid, start, end) で束ね、報告するかどうかを決める部分の単体テスト。
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import type { ClientTraceRequest } from "@ccmsg/protocol";
 import {
   createTraceCollector,
@@ -62,7 +63,7 @@ describe("createTraceCollector", () => {
     h.collector.noteDomCommit("s1", 200);
 
     expect(h.posted).toHaveLength(1);
-    const req = h.posted[0];
+    const req = defined(h.posted[0], "the reported batch");
     expect(req.op).toBe("client_trace");
     expect([req.sid, req.start, req.end, req.size]).toEqual(["s1", 100, 200, 200]);
     expect(req.elapsed_ms).toBe(25);
@@ -82,8 +83,8 @@ describe("createTraceCollector", () => {
     h.collector.noteDomCommit("s1", 250);
 
     expect(h.posted.map((r) => r.end)).toEqual([100, 250]);
-    expect(h.posted[0].elapsed_ms).toBe(20);
-    expect(h.posted[1].elapsed_ms).toBe(10);
+    expect(defined(h.posted[0], "the first report").elapsed_ms).toBe(20);
+    expect(defined(h.posted[1], "the second report").elapsed_ms).toBe(10);
     expect(h.collector.pendingCount()).toBe(0);
   });
 
@@ -116,8 +117,9 @@ describe("createTraceCollector", () => {
     h.collector.noteDomCommit("s1", 100);
 
     expect(h.posted).toHaveLength(1);
-    expect(h.posted[0].sampled).toBe(true);
-    expect(h.posted[0].elapsed_ms).toBe(101);
+    const report = defined(h.posted[0], "the slow delivery's report");
+    expect(report.sampled).toBe(true);
+    expect(report.elapsed_ms).toBe(101);
   });
 
   test("健全な配信は間引かれ、報告されない", () => {
@@ -144,7 +146,10 @@ describe("createTraceCollector", () => {
     const h = harness({ sampleEvery: 1 });
     h.collector.noteWsReceive("s1", 0, 100, 100);
     h.collector.noteDomCommit("s1", 100);
-    expect(h.posted[0].points.map((p) => p.kind)).toEqual(["ws_receive", "dom_commit"]);
+    expect(defined(h.posted[0], "the report").points.map((p) => p.kind)).toEqual([
+      "ws_receive",
+      "dom_commit",
+    ]);
   });
 
   // 対応する ws_receive を持たないコミット (静的ロード直後など) は無視する。

@@ -208,10 +208,14 @@ function collectRootRanges(
     const first = match.spans.at(0);
     const last = match.spans.at(-1);
     if (first === undefined || last === undefined) continue;
+    const startNode = nodes[first.nodeIndex];
+    const endNode = nodes[last.nodeIndex];
+    const colored = byColor[match.colorIndex];
+    if (startNode === undefined || endNode === undefined || colored === undefined) continue;
     const range = doc.createRange();
-    range.setStart(nodes[first.nodeIndex], first.start);
-    range.setEnd(nodes[last.nodeIndex], last.end);
-    byColor[match.colorIndex].push(range);
+    range.setStart(startNode, first.start);
+    range.setEnd(endNode, last.end);
+    colored.push(range);
     all.push(range);
   }
   return { matched: result.matched, byColor, all };

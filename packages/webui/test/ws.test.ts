@@ -124,7 +124,7 @@ class MockWebSocket {
 
 /** The ops of the frames this socket sent, oldest first. */
 function opsSent(ws: MockWebSocket): JsonValue[] {
-  return ws.sent.map((line) => jsonObjectOf(line).op);
+  return ws.sent.map((line) => defined(jsonObjectOf(line).op, "the op of a sent frame"));
 }
 
 /** The one frame this socket sent for `op`, every field as written; none, or
@@ -277,8 +277,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
-    expect(ws1).toBeDefined();
+    const ws1 = defined(instances[0], "the first socket");
     // Skip the onOpen hello/subscribe/peers handshake chain (not the
     // concern of this test); just mark the socket open enough for send() to
     // accept a request.
@@ -302,7 +301,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     // A request is in flight on the old socket, but connect() is invoked
@@ -311,8 +310,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(opsSent(ws1)).toEqual(["peers"]);
 
     handle.connect();
-    const ws2 = instances[1];
-    expect(ws2).toBeDefined();
+    const ws2 = defined(instances[1], "the second socket");
 
     // The stale promise must resolve on its own (flushed by connect()), not
     // stay pending waiting for a reply that will never come on ws1.
@@ -334,7 +332,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.fsList("sess-1");
@@ -349,7 +347,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.fsList("sess-1", "src");
@@ -364,7 +362,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.fsRead("sess-1", "README.md");
@@ -397,7 +395,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const externalPath = "/external/shared.md";
@@ -430,7 +428,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptRead("sess-1");
@@ -455,7 +453,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.transcriptRead("sess-1", { before: 100 });
@@ -470,7 +468,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.transcriptRead("sess-1", { before: 100, max_bytes: 4096 });
@@ -488,7 +486,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptSubscribe("sess-1");
@@ -507,7 +505,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptUnsubscribe("sess-1");
@@ -533,12 +531,11 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     handle.connect(); // reconnect path; ws1 is now stale (and already closed)
-    const ws2 = instances[1];
-    expect(ws2).toBeDefined();
+    const ws2 = defined(instances[1], "the second socket");
     ws2.readyState = MockWebSocket.OPEN;
 
     const fresh = handle.peers();
@@ -603,8 +600,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
-    expect(ws1).toBeDefined();
+    const ws1 = defined(instances[0], "the first socket");
     expect(ws1.readyState).toBe(MockWebSocket.CONNECTING);
 
     const queued = handle.fsList("sess-1");
@@ -638,7 +634,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
 
     const queued = handle.fsRead("sess-1", "README.md");
     ws1.triggerClose();
@@ -659,7 +655,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.rooms();
@@ -679,7 +675,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.roomHistory("r1");
@@ -702,12 +698,11 @@ describe("createWsClient pending queue on close/reconnect", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     handle.connect();
-    const ws2 = instances[1];
-    expect(ws2).toBeDefined();
+    const ws2 = defined(instances[1], "the second socket");
     ws2.readyState = MockWebSocket.OPEN;
     actions.length = 0; // only care about actions dispatched after this point
 
@@ -730,7 +725,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.agents();
@@ -761,7 +756,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.ping();
@@ -795,14 +790,14 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["English.日本語。", "Second."]);
     const sent = sentFrame(ws1, "translate");
     expect(sent).toEqual({
       op: "translate",
-      request_id: sent.request_id,
+      request_id: defined(sent.request_id, "the request id of the translate frame"),
       texts: ["English.日本語。", "Second."],
     });
     expect(sent.request_id).not.toBe("");
@@ -833,14 +828,14 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionRename("sid-1", "新しいタイトル");
     const sent = sentFrame(ws1, "session_rename");
     expect(sent).toEqual({
       op: "session_rename",
-      request_id: sent.request_id,
+      request_id: defined(sent.request_id, "the request id of the session_rename frame"),
       session_id: "sid-1",
       title: "新しいタイトル",
     });
@@ -867,7 +862,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.userPrompt("sid-1", "1 行目\n2 行目");
@@ -875,7 +870,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const sent = sentFrame(ws1, "user_prompt");
     expect(sent).toEqual({
       op: "user_prompt",
-      request_id: sent.request_id,
+      request_id: defined(sent.request_id, "the request id of the user_prompt frame"),
       session_id: "sid-1",
       text: "1 行目\n2 行目",
     });
@@ -898,7 +893,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.userPrompt("sid-1", "hello");
@@ -994,7 +989,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionRename("sid-1", "t");
@@ -1019,7 +1014,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const slow = handle.translate(["slow text"]);
@@ -1071,7 +1066,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const first = handle.translate(["first"]);
@@ -1117,7 +1112,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["never finishes"]);
@@ -1136,7 +1131,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["bad"]);
@@ -1179,7 +1174,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionSearch({
@@ -1191,7 +1186,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const sent = sentFrame(ws1, "session_search");
     expect(sent).toEqual({
       op: "session_search",
-      request_id: sent.request_id,
+      request_id: defined(sent.request_id, "the request id of the session_search frame"),
       query: "foo\nbar",
       case_sensitive: true,
       regex: true,
@@ -1239,7 +1234,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
     // Drive onOpen by firing its own "open" listener (readyState is already
@@ -1307,7 +1302,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const probe = sentFrame(ws1, "translate");
     expect(probe).toEqual({
       op: "translate",
-      request_id: probe.request_id,
+      request_id: defined(probe.request_id, "the request id of the translate frame"),
       texts: [],
     });
     ws1.replyTo("translate", { ok: true, results: [] });
@@ -1337,7 +1332,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
 
@@ -1354,7 +1349,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1400,7 +1395,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1441,7 +1436,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1479,7 +1474,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1496,7 +1491,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1519,7 +1514,7 @@ describe("createWsClient transcript live-tail push (U2)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1553,7 +1548,7 @@ describe("createWsClient transcript live-tail push (U2)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1586,7 +1581,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[0];
+    const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
@@ -1607,7 +1602,7 @@ describe("createWsClient daemon version guard", () => {
     const handle = createWsClient(dispatch);
     openHandles.push(handle);
     handle.connect();
-    const ws1 = instances[instances.length - 1];
+    const ws1 = defined(instances[instances.length - 1], "the latest socket");
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
     ws1.replyTo("hello", { ok: true, version, protocol: PROTOCOL_VERSION });

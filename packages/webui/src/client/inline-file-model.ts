@@ -19,28 +19,35 @@ export function lineDiff(oldText: string, newText: string): DiffLine[] {
       ...after.map((text): DiffLine => ({ kind: "add", text })),
     ];
   }
-  const table = Array.from({ length: before.length + 1 }, () => new Uint32Array(after.length + 1));
-  for (let i = before.length - 1; i >= 0; i -= 1) {
-    for (let j = after.length - 1; j >= 0; j -= 1) {
-      table[i][j] =
-        before[i] === after[j]
-          ? table[i + 1][j + 1] + 1
-          : Math.max(table[i + 1][j], table[i][j + 1]);
+  // The length of the longest common subsequence of before[i..] and
+  // after[j..]. A cell past either end is an empty suffix, whose LCS is 0.
+  const width = after.length + 1;
+  const table = new Uint32Array((before.length + 1) * width);
+  const lcs = (i: number, j: number): number => table[i * width + j] ?? 0;
+  const afterFromEnd = [...after.entries()].reverse();
+  for (const [i, removed] of [...before.entries()].reverse()) {
+    for (const [j, added] of afterFromEnd) {
+      table[i * width + j] =
+        removed === added ? lcs(i + 1, j + 1) + 1 : Math.max(lcs(i + 1, j), lcs(i, j + 1));
     }
   }
   const out: DiffLine[] = [];
   let i = 0;
   let j = 0;
-  while (i < before.length || j < after.length) {
-    if (i < before.length && j < after.length && before[i] === after[j]) {
-      out.push({ kind: "same", text: before[i] });
+  for (;;) {
+    const removed = before[i];
+    const added = after[j];
+    if (removed !== undefined && removed === added) {
+      out.push({ kind: "same", text: removed });
       i += 1;
       j += 1;
-    } else if (j >= after.length || (i < before.length && table[i + 1][j] >= table[i][j + 1])) {
-      out.push({ kind: "delete", text: before[i++] });
-    } else {
-      out.push({ kind: "add", text: after[j++] });
-    }
+    } else if (removed !== undefined && (added === undefined || lcs(i + 1, j) >= lcs(i, j + 1))) {
+      out.push({ kind: "delete", text: removed });
+      i += 1;
+    } else if (added !== undefined) {
+      out.push({ kind: "add", text: added });
+      j += 1;
+    } else break;
   }
   return out;
 }

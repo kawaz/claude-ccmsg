@@ -60,17 +60,19 @@ function srgbBytes(color: string): [number, number, number] | null {
   if (context.fillStyle === "#010203") return null;
   context.fillRect(0, 0, 1, 1);
   const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+  if (red === undefined || green === undefined || blue === undefined) return null;
   return [red, green, blue];
 }
 
 function luminance(color: string): number | null {
   const bytes = srgbBytes(color);
   if (!bytes) return null;
-  const linear = bytes.map((byte) => {
+  const linear = (byte: number): number => {
     const channel = byte / 255;
     return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  };
+  const [red, green, blue] = bytes;
+  return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
 }
 
 function contrastRatio(background: string, foreground: string): number {

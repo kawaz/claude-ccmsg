@@ -236,7 +236,7 @@ export function stringProp(node: VNode, name: string): string | undefined {
 /** A handler prop the test calls (`onClick`, `onToggle`, ...); a node without
  * one fails the test. */
 export function handlerProp(node: VNode, name: string): () => void {
-  const handler = propsOf(node, { [name]: v.function() })[name];
+  const handler = defined(propsOf(node, { [name]: v.function() })[name], `the ${name} prop`);
   return () => {
     handler();
   };

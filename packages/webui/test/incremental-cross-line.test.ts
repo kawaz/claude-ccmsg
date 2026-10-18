@@ -9,6 +9,7 @@
 // The second half of the contract is the identity reuse that makes the whole
 // thing worth doing, so each case also asserts *which* objects survived.
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import {
   crossLineIncrementally,
   emptyCrossLineCache,
@@ -70,7 +71,7 @@ function replay(windows: readonly (readonly string[])[]): CrossLineCache {
   const parses = new Map<string, ReturnType<typeof parseTranscriptLine>>();
   let cache = emptyCrossLineCache();
   for (const window of windows) cache = step(cache, window, parses);
-  const expected = fromScratch(windows[windows.length - 1]);
+  const expected = fromScratch(defined(windows[windows.length - 1], "the final window"));
   expect(cache.parsed).toEqual(expected.parsed);
   expect(cache.offsets).toEqual(expected.offsets);
   expect(cache.groups).toEqual(expected.groups);
@@ -114,7 +115,9 @@ function enqueue(content: string): string {
 /** Offsets of every group, the coarse "did the grouping come out the same"
  * signal used where a full toEqual would be noise. */
 function groupOffsets(groups: readonly TimelineGroup[]): number[] {
-  return groups.map((g) => (g.kind === "entry" ? g.offset : g.entries[0].offset));
+  return groups.map((g) =>
+    g.kind === "entry" ? g.offset : defined(g.entries[0], "the first entry of a fold group").offset,
+  );
 }
 
 /** How many of `next`'s groups are the *same objects* as `previous`'s. */

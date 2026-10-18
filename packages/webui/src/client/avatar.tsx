@@ -73,9 +73,9 @@ export function Avatar({ seed, size = 20 }: { seed: string; size?: number }) {
   const fg = `hsl(${hue} 65% 45%)`;
   const bg = `hsl(${hue} 55% 92%)`;
   const rects = [];
-  for (let row = 0; row < GRID_SIZE; row++) {
-    for (let col = 0; col < GRID_COLS_HALF; col++) {
-      if (!cells[row][col]) continue;
+  for (const [row, rowCells] of cells.entries()) {
+    for (const [col, filled] of rowCells.entries()) {
+      if (!filled) continue;
       const mirroredCol = GRID_SIZE - 1 - col;
       rects.push(<rect key={`${row}-${col}`} x={col} y={row} width={1} height={1} fill={fg} />);
       if (mirroredCol !== col) {

@@ -13,8 +13,8 @@ import {
   isUserSpeechKind,
   segmentSearchText,
   isDirectFoldEntry,
+  type FoldEntries,
   type ParsedLine,
-  type TimelineEntry,
 } from "../../transcript-model.ts";
 import { foldGroupKey } from "../../fold-tree.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../../timeline-summary.ts";
@@ -229,7 +229,7 @@ function LineView({
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold">
           <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
-          <pre class="tl-fold-body">{segmentSearchText(line.segments[0])}</pre>
+          <pre class="tl-fold-body">{line.segments.map(segmentSearchText).join("\n")}</pre>
         </details>
       </ItemRawToggle>
     );
@@ -293,7 +293,7 @@ function FoldGroup({
   translationAvailability,
   searchCtx,
 }: {
-  entries: TimelineEntry[];
+  entries: FoldEntries;
   translationAvailability: TranslationAvailability;
   searchCtx: TLSearchCtx | undefined;
 }) {

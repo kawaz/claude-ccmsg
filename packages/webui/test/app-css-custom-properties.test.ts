@@ -33,8 +33,8 @@ function customPropertyDeclarations(): { name: string; value: string; line: numb
   const re = /(--[\w-]+)\s*:\s*([^;{}]*);/g;
   for (let m = re.exec(css); m !== null; m = re.exec(css)) {
     out.push({
-      name: m[1],
-      value: m[2],
+      name: defined(m[1], "the name of a custom property"),
+      value: defined(m[2], "the value of a custom property"),
       line: css.slice(0, m.index).split("\n").length,
     });
   }

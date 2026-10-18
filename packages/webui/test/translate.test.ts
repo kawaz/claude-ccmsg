@@ -301,7 +301,9 @@ describe("translateTextOnHost", () => {
       "First.\n\nSecond.",
       (texts) =>
         new Promise((resolve) => {
-          resolvers.set(texts[0], (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+          resolvers.set(defined(texts[0], "the paragraph to translate"), (text) =>
+            resolve({ ok: true, results: [{ ok: true, text }] }),
+          );
         }),
     );
     // request() 呼び出しは microtask 越しなので 1 tick 待つ。
@@ -325,7 +327,9 @@ describe("translateTextOnHost", () => {
       input,
       (texts) =>
         new Promise((resolve) => {
-          resolvers.set(texts[0], (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+          resolvers.set(defined(texts[0], "the paragraph to translate"), (text) =>
+            resolve({ ok: true, results: [{ ok: true, text }] }),
+          );
         }),
       (partial) => partials.push(partial),
     );
@@ -377,7 +381,11 @@ describe("translateTextOnHost", () => {
     ]);
     expect(a).toBe("[ja]Alpha1.\n\n[ja]Alpha2.");
     expect(b).toBe("[ja]Beta1.");
-    expect(recorder.ops.map((op) => op[0]).sort()).toEqual(["Alpha1.", "Alpha2.", "Beta1."]);
+    expect(recorder.ops.map((op) => defined(op[0], "the op's first text")).sort()).toEqual([
+      "Alpha1.",
+      "Alpha2.",
+      "Beta1.",
+    ]);
     expect(recorder.ops.every((op) => op.length === 1)).toBe(true);
   });
 
@@ -391,7 +399,10 @@ describe("translateTextOnHost", () => {
     ]);
     expect(a).toBe("[ja]Same paragraph.");
     expect(b).toBe("[ja]Same paragraph.\n\n[ja]Other.");
-    expect(recorder.ops.map((op) => op[0]).sort()).toEqual(["Other.", "Same paragraph."]);
+    expect(recorder.ops.map((op) => defined(op[0], "the op's first text")).sort()).toEqual([
+      "Other.",
+      "Same paragraph.",
+    ]);
   });
 
   // 全段落が日本語判定または空段落なら daemon/helper の仕事は無い。全文用の

@@ -18,7 +18,15 @@ import { defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.t
 import { CliStatusSchema, printed, served } from "./cli-output.ts";
 import { runCli, CLI } from "./run-cli.ts";
 
-function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
+/** The environment a test's CLI runs under: the three directories it is pinned
+ * to, and whatever else a test sets (`HOME`, `CCMSG_SID`). */
+type CliEnv = Record<string, string> & {
+  CCMSG_STATE_DIR: string;
+  CCMSG_CONFIG_DIR: string;
+  CCMSG_DATA_DIR: string;
+};
+
+function makeEnv(): { env: CliEnv; cleanup: () => void } {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-"));
   const stateDir = path.join(base, "s");
   const dataDir = path.join(base, "d");

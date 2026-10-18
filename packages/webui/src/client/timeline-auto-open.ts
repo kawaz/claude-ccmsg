@@ -105,7 +105,7 @@ export function autoOpenCategoriesForLine(line: ParsedLine): ReadonlySet<Timelin
 }
 
 export function foldGroupShouldAutoOpen(
-  entries: TimelineEntry[],
+  entries: readonly TimelineEntry[],
   settings: TimelineAutoOpenSettings,
 ): boolean {
   if (!settings.items) return false;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import type { ReplyOf } from "@ccmsg/protocol";
 import { initialState, reducer, type AppState } from "../src/client/store.ts";
 import {
@@ -196,7 +197,10 @@ describe("recent session restoration", () => {
       ...unprobed,
       fsStatBatch: async (_sid, paths) => {
         probed = paths;
-        return { ok: true, results: [{ kind: "contained", path: paths[0] }] };
+        return {
+          ok: true,
+          results: [{ kind: "contained", path: defined(paths[0], "the probed path") }],
+        };
       },
     };
     const record = recent("/s/s1/files?path=src%2Fapp.ts");

@@ -7,6 +7,7 @@
 // - useSayBubbles: このセッションの say だけを時刻の位置に差し込み (agent TL
 //   には出さない)、既読にできなかった理由を次に成功するまで残す
 import { afterEach, describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import { h, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
 import type { SayRecord } from "@ccmsg/protocol";
@@ -95,10 +96,10 @@ describe("useTranscriptModel", () => {
     const lines = exchange(1);
     const hook = track(await renderHook(useTranscriptModel, { lines, start: 0 }));
     const { offsets, itemRawLookup } = hook.current();
-    const answerOffset = offsets[1];
+    const answerOffset = defined(offsets[1], "the answer's offset");
     const sources = itemRawLookup.sources.get(answerOffset) ?? [];
     expect(sources).toEqual([answerOffset]);
-    expect(itemRawLookup.rows.get(answerOffset)?.text).toBe(lines[1]);
+    expect(itemRawLookup.rows.get(answerOffset)?.text).toBe(defined(lines[1], "the answer row"));
   });
 });
 

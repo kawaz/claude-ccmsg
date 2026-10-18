@@ -470,7 +470,7 @@ export function Timeline({
                                 // boundaries[i] は上の useMemo で groups と同じ index で
                                 // 計算済み (render のたびの再分類を避けるため)。
                                 const boundary = boundaries[i];
-                                if (boundary === null) return null;
+                                if (boundary === undefined || boundary === null) return null;
                                 switch (boundary.kind) {
                                   case "user-prompt":
                                     return (

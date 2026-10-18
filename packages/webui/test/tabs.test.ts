@@ -13,7 +13,7 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChild, ComponentChildren, VNode } from "preact";
 import { Tabs } from "../src/client/components/Tabs.tsx";
 import { Fold } from "../src/client/components/Fold.tsx";
-import { handlerProp, isChildList, isVNode, propsOf } from "./helpers.ts";
+import { defined, handlerProp, isChildList, isVNode, propsOf } from "./helpers.ts";
 
 function children(node: VNode): ComponentChild[] {
   const c = node.props.children;
@@ -57,21 +57,27 @@ describe("Tabs", () => {
   });
 
   test("an item with href is a link, so a tab stays middle-clickable", () => {
-    const tab = tabsOf(Tabs({ items, selected: "files", tabClass: "session-tab" }))[0];
+    const tab = defined(
+      tabsOf(Tabs({ items, selected: "files", tabClass: "session-tab" }))[0],
+      "the Files tab",
+    );
     expect(tab.type).toBe("a");
     expect(props(tab).href).toBe("#files");
   });
 
   test("an item without href is a button that reports its id to onSelect", () => {
     const picked: string[] = [];
-    const tab = tabsOf(
-      Tabs({
-        items,
-        selected: "files",
-        tabClass: "session-tab",
-        onSelect: (id) => picked.push(id),
-      }),
-    )[2];
+    const tab = defined(
+      tabsOf(
+        Tabs({
+          items,
+          selected: "files",
+          tabClass: "session-tab",
+          onSelect: (id) => picked.push(id),
+        }),
+      )[2],
+      "the Status tab",
+    );
     expect(tab.type).toBe("button");
     expect(props(tab).type).toBe("button");
     handlerProp(tab, "onClick")();
@@ -79,7 +85,10 @@ describe("Tabs", () => {
   });
 
   test("a disabled item is an inert span — no href, no handler, and it says so", () => {
-    const tab = tabsOf(Tabs({ items, selected: "files", tabClass: "session-tab" }))[1];
+    const tab = defined(
+      tabsOf(Tabs({ items, selected: "files", tabClass: "session-tab" }))[1],
+      "the Timeline tab",
+    );
     expect(tab.type).toBe("span");
     expect(props(tab)["aria-disabled"]).toBe("true");
     expect(props(tab).onClick).toBeUndefined();
@@ -89,13 +98,18 @@ describe("Tabs", () => {
   });
 
   test("a disabled tab is not drawn as selected even when it is the selected id — a session with no transcript sits on `timeline` and must not underline it", () => {
-    const tab = tabsOf(Tabs({ items, selected: "timeline", tabClass: "session-tab" }))[1];
+    const tab = defined(
+      tabsOf(Tabs({ items, selected: "timeline", tabClass: "session-tab" }))[1],
+      "the Timeline tab",
+    );
     expect(props(tab).class).toBe("session-tab disabled");
     expect(props(tab)["aria-selected"]).toBeUndefined();
   });
 
   test("selection shows up as both the `active` class and aria-selected", () => {
-    const [files, , status] = tabsOf(Tabs({ items, selected: "status", tabClass: "session-tab" }));
+    const tabs = tabsOf(Tabs({ items, selected: "status", tabClass: "session-tab" }));
+    const files = defined(tabs[0], "the Files tab");
+    const status = defined(tabs[2], "the Status tab");
     expect(props(status).class).toBe("session-tab active");
     expect(props(status)["aria-selected"]).toBe(true);
     expect(props(files).class).toBe("session-tab");

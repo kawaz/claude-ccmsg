@@ -64,16 +64,11 @@ export function saySlots<T extends SayPlacement>(
   const ordered = [...says].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
   for (const say of ordered) {
     const at = toMillis(say.ts);
-    let slot = groups.length;
-    for (let i = 0; i < stamps.length; i++) {
-      const stamp = stamps[i];
-      if (stamp === null || stamp === undefined) continue;
-      if (toMillis(stamp) > at) {
-        slot = i;
-        break;
-      }
-    }
-    slots[slot].push(say);
+    const later = stamps.findIndex(
+      (stamp) => stamp !== null && stamp !== undefined && toMillis(stamp) > at,
+    );
+    const slot = slots[later < 0 ? groups.length : later];
+    if (slot !== undefined) slot.push(say);
   }
   return slots;
 }

@@ -273,6 +273,7 @@ function toSrgbHex(color: string): string {
   if (ctx.fillStyle === "#010203") return "";
   ctx.fillRect(0, 0, 1, 1);
   const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+  if (r === undefined || g === undefined || b === undefined) return "";
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 

@@ -26,6 +26,7 @@ import {
   shareOf,
   windowTotalUsd,
 } from "../src/client/llm-stats-view.ts";
+import { defined } from "./helpers.ts";
 
 /** Two days either side of a month boundary, shaped like the live endpoint:
  * a named credential with two models, and the "-" bucket the gateway uses for
@@ -79,7 +80,7 @@ describe("dailyTotals", () => {
   });
 
   test("sums models across every credential, biggest spend first", () => {
-    const models = rows[0].models;
+    const models = defined(rows[0], "the newest day").models;
     expect(models.map((m) => [m.model, m.usd])).toEqual([
       ["gpt-5.6-sol", 2.5],
       ["claude-opus-5", 1],
@@ -88,9 +89,9 @@ describe("dailyTotals", () => {
   });
 
   test("reads the gateway's token kinds into the four counters", () => {
-    const gpt = rows[0].models.find((m) => m.model === "gpt-5.6-sol");
+    const gpt = defined(rows[0], "the newest day").models.find((m) => m.model === "gpt-5.6-sol");
     expect(gpt).toMatchObject({ inputTokens: 0, cacheReadTokens: 2_000_000 });
-    const opus = dailyTotals(DAYS)[1].models[0];
+    const opus = defined(dailyTotals(DAYS)[1], "the older day").models[0];
     expect(opus).toMatchObject({ inputTokens: 100, outputTokens: 50 });
   });
 
@@ -117,7 +118,7 @@ describe("dailyTotals", () => {
         },
       },
     });
-    expect(row.models[0]).toMatchObject({
+    expect(defined(row, "the day").models[0]).toMatchObject({
       inputTokens: 98,
       outputTokens: 1503,
       cacheCreationTokens: 4130,
@@ -126,12 +127,14 @@ describe("dailyTotals", () => {
   });
 
   test("counters missing from upstream count as zero, not NaN", () => {
-    const sonnet = rows[0].models.find((m) => m.model === "claude-sonnet-5");
+    const sonnet = defined(rows[0], "the newest day").models.find(
+      (m) => m.model === "claude-sonnet-5",
+    );
     expect(sonnet).toMatchObject({ requests: 2, inputTokens: 0, outputTokens: 0 });
   });
 
   test("keeps the unattributed '-' bucket as a credential of its own", () => {
-    const credentials = rows[0].credentials;
+    const credentials = defined(rows[0], "the newest day").credentials;
     // Credentials sort by spend like models do, so the unattributed bucket
     // leads here on the strength of its own figure.
     expect(credentials.map((c) => [c.credential, c.usd])).toEqual([
@@ -161,8 +164,9 @@ describe("bucketTotals", () => {
   test("weekly buckets follow the ISO week across a month boundary", () => {
     const weeks = bucketTotals(DAYS, "weekly");
     expect(weeks).toHaveLength(1);
-    expect(weeks[0].usd).toBe(8);
-    expect(weeks[0].dayCount).toBe(2);
+    const week = defined(weeks[0], "the week");
+    expect(week.usd).toBe(8);
+    expect(week.dayCount).toBe(2);
   });
 
   test("yearly buckets collapse to the calendar year", () => {
@@ -178,10 +182,11 @@ describe("bucketTotals", () => {
       "monthly",
     );
     expect(july).toHaveLength(1);
-    expect(july[0].dayCount).toBe(2);
-    expect(july[0].usd).toBe(4);
-    expect(july[0].models).toHaveLength(1);
-    expect(july[0].models[0]).toMatchObject({ model: "m", usd: 4, requests: 3 });
+    const month = defined(july[0], "the month");
+    expect(month.dayCount).toBe(2);
+    expect(month.usd).toBe(4);
+    expect(month.models).toHaveLength(1);
+    expect(month.models[0]).toMatchObject({ model: "m", usd: 4, requests: 3 });
   });
 
   test("an empty window rolls up to no buckets rather than to one empty one", () => {
@@ -222,9 +227,12 @@ describe("bucketKey", () => {
     for (const period of ["daily", "weekly", "monthly", "yearly"] as const) {
       expect(bucketKey("week-31", period)).toBe("week-31");
     }
-    expect(bucketTotals({ "week-31": { credentials: {}, total_usd: 2 } }, "monthly")[0].key).toBe(
-      "week-31",
-    );
+    expect(
+      defined(
+        bucketTotals({ "week-31": { credentials: {}, total_usd: 2 } }, "monthly")[0],
+        "the bucket",
+      ).key,
+    ).toBe("week-31");
   });
 });
 
@@ -375,7 +383,7 @@ describe("contextTotals", () => {
 
   test("shares are of total tokens and add up to one", () => {
     const totals = contextTotals(models);
-    expect(totals[0].share).toBeCloseTo(200 / 1100, 10);
+    expect(defined(totals[0], "the first context kind").share).toBeCloseTo(200 / 1100, 10);
     expect(totals.reduce((sum, entry) => sum + entry.share, 0)).toBeCloseTo(1, 10);
   });
 
@@ -456,7 +464,10 @@ describe("chartData", () => {
       ]),
     ]);
     expect(data.models).toEqual(["dear", "cheap"]);
-    expect(data.bars[1].segments.map((s) => s.model)).toEqual(["dear", "cheap"]);
+    expect(defined(data.bars[1], "the second bar").segments.map((s) => s.model)).toEqual([
+      "dear",
+      "cheap",
+    ]);
   });
 
   test("segments stack from the baseline as fractions of the tallest bar", () => {
@@ -467,7 +478,7 @@ describe("chartData", () => {
       ]),
     ]);
     expect(data.max).toBe(4);
-    expect(data.bars[0].segments).toEqual([
+    expect(defined(data.bars[0], "the bar").segments).toEqual([
       { model: "a", usd: 3, start: 0, end: 0.75 },
       { model: "b", usd: 1, start: 0.75, end: 1 },
     ]);
@@ -480,21 +491,21 @@ describe("chartData", () => {
     const data = chartData([bucket("2026-07-01", models)]);
     expect(data.models).toHaveLength(9);
     expect(data.models[8]).toBe("その他");
-    const other = data.bars[0].segments.find((s) => s.model === "その他");
+    const other = defined(data.bars[0], "the bar").segments.find((s) => s.model === "その他");
     // m8 (2) + m9 (1): the two that did not get a slot.
     expect(other?.usd).toBe(3);
   });
 
   test("a model absent from a bucket contributes no segment", () => {
     const data = chartData([bucket("2026-07-01", [["a", 1]]), bucket("2026-07-02", [["b", 1]])]);
-    expect(data.bars[0].segments.map((s) => s.model)).toEqual(["a"]);
-    expect(data.bars[1].segments.map((s) => s.model)).toEqual(["b"]);
+    expect(defined(data.bars[0], "the first bar").segments.map((s) => s.model)).toEqual(["a"]);
+    expect(defined(data.bars[1], "the second bar").segments.map((s) => s.model)).toEqual(["b"]);
   });
 
   test("an all-zero window produces no geometry rather than NaN fractions", () => {
     const data = chartData([bucket("2026-07-01", [["a", 0]])]);
     expect(data.max).toBe(0);
-    expect(data.bars[0].segments).toEqual([]);
+    expect(defined(data.bars[0], "the bar").segments).toEqual([]);
   });
 
   test("no buckets is an empty chart, not a crash", () => {
@@ -553,7 +564,7 @@ describe("model filtering", () => {
 
   test("no filter keeps the gateway's own authoritative total", () => {
     expect(windowTotalUsd(DAYS_2)).toBe(12);
-    expect(bucketTotals(DAYS_2, "daily")[0].usd).toBe(12);
+    expect(defined(bucketTotals(DAYS_2, "daily")[0], "the day").usd).toBe(12);
   });
 
   // Under a filter that total covers models the reader excluded, so the sum of
@@ -561,7 +572,7 @@ describe("model filtering", () => {
   test("a filter totals the retained models rather than the gateway's figure", () => {
     const filter = new Set(["opus"]);
     expect(windowTotalUsd(DAYS_2, filter)).toBe(6);
-    const bucket = bucketTotals(DAYS_2, "daily", filter)[0];
+    const bucket = defined(bucketTotals(DAYS_2, "daily", filter)[0], "the day");
     expect(bucket.usd).toBe(6);
     expect(bucket.models.map((m) => m.model)).toEqual(["opus"]);
   });
@@ -571,28 +582,28 @@ describe("model filtering", () => {
   });
 
   test("token counters follow the filter, so the context split matches", () => {
-    const bucket = bucketTotals(DAYS_2, "daily", new Set(["sonnet"]))[0];
-    expect(bucket.models[0].inputTokens).toBe(20);
-    expect(contextTotals(bucket.models)[0].tokens).toBe(20);
+    const bucket = defined(bucketTotals(DAYS_2, "daily", new Set(["sonnet"]))[0], "the day");
+    expect(defined(bucket.models[0], "the sonnet model").inputTokens).toBe(20);
+    expect(defined(contextTotals(bucket.models)[0], "the input kind").tokens).toBe(20);
   });
 
   // A credential whose every model was excluded has nothing to report; an
   // empty row would read as "spent nothing on this key".
   test("a credential left with no models drops out entirely", () => {
-    const bucket = bucketTotals(DAYS_2, "daily", new Set(["haiku"]))[0];
+    const bucket = defined(bucketTotals(DAYS_2, "daily", new Set(["haiku"]))[0], "the day");
     expect(bucket.credentials.map((c) => c.credential)).toEqual(["cred-b"]);
   });
 
   test("a filter naming nothing present yields an empty, zeroed bucket", () => {
-    const bucket = bucketTotals(DAYS_2, "daily", new Set(["gone"]))[0];
+    const bucket = defined(bucketTotals(DAYS_2, "daily", new Set(["gone"]))[0], "the day");
     expect(bucket.usd).toBe(0);
     expect(bucket.models).toEqual([]);
     expect(bucket.credentials).toEqual([]);
   });
 
   test("daily rollups honour the filter the same way", () => {
-    expect(dailyTotals(DAYS_2, new Set(["opus"]))[0].usd).toBe(6);
-    expect(dailyTotals(DAYS_2)[0].usd).toBe(12);
+    expect(defined(dailyTotals(DAYS_2, new Set(["opus"]))[0], "the day").usd).toBe(6);
+    expect(defined(dailyTotals(DAYS_2)[0], "the day").usd).toBe(12);
   });
 });
 
@@ -630,7 +641,7 @@ describe("chartData with a reused series order", () => {
     const filtered = [bucketOf("2026-07-01", [["cheap", 1]])];
     const data = chartData(filtered, { series: legend.models, folded: legend.folded });
     expect(data.models).toEqual(["dear", "cheap"]);
-    expect(data.bars[0].segments.map((s) => s.model)).toEqual(["cheap"]);
+    expect(defined(data.bars[0], "the bar").segments.map((s) => s.model)).toEqual(["cheap"]);
   });
 
   test("reports what the folded entry stands for", () => {
@@ -647,6 +658,6 @@ describe("chartData with a reused series order", () => {
       folded: [],
     });
     expect(data.models).toEqual(["dear"]);
-    expect(data.bars[0].segments).toEqual([]);
+    expect(defined(data.bars[0], "the bar").segments).toEqual([]);
   });
 });

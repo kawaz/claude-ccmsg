@@ -1,9 +1,10 @@
 // Placing say bubbles in the rendered group list (say-merge.ts). A say is
 // never echoed into the transcript, so its only anchor is wall-clock time.
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import type { SayRecord } from "@ccmsg/protocol";
 import { saySlots } from "../src/client/say-merge.ts";
-import type { ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
+import type { FoldEntries, ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
 
 function turn(ts: string | null): ParsedLine {
   return { kind: "turn", ts, role: "user", segments: [] };
@@ -13,8 +14,8 @@ function entry(offset: number, line: ParsedLine): TimelineGroup {
   return { kind: "entry", offset, line };
 }
 
-function fold(...lines: { offset: number; line: ParsedLine }[]): TimelineGroup {
-  return { kind: "fold", entries: lines };
+function fold(...entries: FoldEntries): TimelineGroup {
+  return { kind: "fold", entries };
 }
 
 function say(ts: string, n: number): SayRecord {
@@ -36,12 +37,12 @@ describe("saySlots", () => {
   test("a say newer than the whole window trails the transcript", () => {
     // The live case: the turn that spoke has not been written to the jsonl yet.
     const slots = saySlots(GROUPS, [say("2026-08-31T11:00:00.000Z", 2)]);
-    expect(slots[3].map((s) => s.id)).toEqual(["i/2"]);
+    expect(defined(slots[3], "slot 3").map((s) => s.id)).toEqual(["i/2"]);
   });
 
   test("a say older than the window sits at the top rather than vanishing", () => {
     const slots = saySlots(GROUPS, [say("2026-08-31T09:00:00.000Z", 3)]);
-    expect(slots[0].map((s) => s.id)).toEqual(["i/3"]);
+    expect(defined(slots[0], "slot 0").map((s) => s.id)).toEqual(["i/3"]);
   });
 
   test("several says in one slot keep chronological order", () => {
@@ -49,7 +50,7 @@ describe("saySlots", () => {
       say("2026-08-31T10:08:00.000Z", 5),
       say("2026-08-31T10:06:00.000Z", 4),
     ]);
-    expect(slots[2].map((s) => s.id)).toEqual(["i/4", "i/5"]);
+    expect(defined(slots[2], "slot 2").map((s) => s.id)).toEqual(["i/4", "i/5"]);
   });
 
   test("two says sharing a stamp keep the order they came in", () => {
@@ -57,7 +58,7 @@ describe("saySlots", () => {
       say("2026-08-31T10:06:00.000Z", 8),
       say("2026-08-31T10:06:00.000Z", 7),
     ]);
-    expect(slots[2].map((s) => s.id)).toEqual(["i/8", "i/7"]);
+    expect(defined(slots[2], "slot 2").map((s) => s.id)).toEqual(["i/8", "i/7"]);
   });
 
   test("unstamped groups are transparent, not boundaries", () => {

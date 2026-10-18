@@ -3,7 +3,7 @@
 // that follows it — everything below is history this session made itself.
 import { describe, expect, test } from "bun:test";
 import { forkDividerGroupIndex } from "../src/client/fork-divider.ts";
-import type { ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
+import type { FoldEntries, ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
 
 function turn(role: "user" | "assistant", uuid: string): ParsedLine {
   return { kind: "turn", ts: null, role, segments: [], uuid };
@@ -13,8 +13,8 @@ function entry(offset: number, line: ParsedLine): TimelineGroup {
   return { kind: "entry", offset, line };
 }
 
-function fold(...lines: { offset: number; line: ParsedLine }[]): TimelineGroup {
-  return { kind: "fold", entries: lines };
+function fold(...entries: FoldEntries): TimelineGroup {
+  return { kind: "fold", entries };
 }
 
 const GROUPS: TimelineGroup[] = [

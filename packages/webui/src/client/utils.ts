@@ -191,7 +191,12 @@ export type { PeerSortKey };
 // (name -> created -> recent -> name), which happens to differ from the
 // PeerSortKey union's own declaration order above. "prompt" leads: it is the
 // default, so the cycle starts where a fresh tab already is.
-const PEER_SORT_CYCLE: PeerSortKey[] = ["prompt", "name", "connected", "idle"];
+const NEXT_PEER_SORT_KEY = {
+  prompt: "name",
+  name: "connected",
+  connected: "idle",
+  idle: "prompt",
+} as const satisfies Record<PeerSortKey, PeerSortKey>;
 
 /** Short label for the sort-toggle button, so its current mode is visible
  * without hovering for the title attribute. kawaz 2026-07-16: "わかりづらい。
@@ -213,7 +218,7 @@ export function peerSortButtonLabel(key: PeerSortKey): string {
 }
 
 export function nextPeerSortKey(key: PeerSortKey): PeerSortKey {
-  return PEER_SORT_CYCLE[(PEER_SORT_CYCLE.indexOf(key) + 1) % PEER_SORT_CYCLE.length];
+  return NEXT_PEER_SORT_KEY[key];
 }
 
 /** repo → ws → branch → sid, each segment compared with localeCompare — same
@@ -223,13 +228,12 @@ export function nextPeerSortKey(key: PeerSortKey): PeerSortKey {
  * same repo with no workspace layer) still sort deterministically instead of
  * however they happened to arrive in `peers`. */
 function cmpByName(a: PeerInfo, b: PeerInfo): number {
-  const pa = [a.repo ?? "", a.ws ?? "", a.branch ?? "", a.sid];
-  const pb = [b.repo ?? "", b.ws ?? "", b.branch ?? "", b.sid];
-  for (let i = 0; i < pa.length; i++) {
-    const c = pa[i].localeCompare(pb[i]);
-    if (c !== 0) return c;
-  }
-  return 0;
+  return (
+    (a.repo ?? "").localeCompare(b.repo ?? "") ||
+    (a.ws ?? "").localeCompare(b.ws ?? "") ||
+    (a.branch ?? "").localeCompare(b.branch ?? "") ||
+    a.sid.localeCompare(b.sid)
+  );
 }
 
 /** Descending compare on an optional ISO timestamp field (newest first);

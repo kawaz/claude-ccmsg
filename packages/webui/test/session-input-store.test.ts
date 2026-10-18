@@ -607,7 +607,7 @@ describe("send records (DR-0035 §5)", () => {
       ok: true,
       outcome: "unconfirmed",
     }));
-    const [recordA] = loadSends("sid-8");
+    const recordA = defined(loadSends("sid-8")[0], "the record of A");
     saveDraft("sid-8", "B");
     discardSend("sid-8", recordA.id);
     expect(loadSends("sid-8")).toEqual([]);
@@ -618,7 +618,7 @@ describe("send records (DR-0035 §5)", () => {
       ok: true,
       outcome: "unconfirmed",
     }));
-    const [recordA2] = loadSends("sid-8");
+    const recordA2 = defined(loadSends("sid-8")[0], "the record of A2");
     discardSend("sid-8", recordA2.id);
     expect(loadDraft("sid-8")).toBeNull();
   });

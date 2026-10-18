@@ -3,6 +3,7 @@
 // looping index nav used by both the search "[N/M]" counter and the 👤
 // user-turn nav.
 import { describe, expect, test } from "bun:test";
+import { defined } from "./helpers.ts";
 import {
   collectHighlightRanges,
   loopNextIndex,
@@ -73,7 +74,7 @@ describe("parseSearchQuery", () => {
     expect(unitMatchesQuery("foo or bar", q.words)).toBe(false);
 
     const spaced = parseSearchQuery(" foo ", { caseSensitive: false, regex: true });
-    expect(spaced.words[0].text).toBe(" foo ");
+    expect(defined(spaced.words[0], "the only word").text).toBe(" foo ");
     expect(unitMatchesQuery("x foo y", spaced.words)).toBe(true);
     expect(unitMatchesQuery("foo", spaced.words)).toBe(false);
   });
@@ -116,8 +117,8 @@ describe("parseSearchQuery", () => {
   test("regex mode isolates a per-line compile error without dropping other lines", () => {
     const q = parseSearchQuery("foo(\nbar", { caseSensitive: false, regex: true });
     expect(q.words).toHaveLength(2);
-    expect(q.words[0].error).not.toBeNull();
-    expect(q.words[1].error).toBeNull();
+    expect(defined(q.words[0], "the malformed line").error).not.toBeNull();
+    expect(defined(q.words[1], "the valid line").error).toBeNull();
     expect(q.hasError).toBe(true);
   });
 
@@ -371,7 +372,7 @@ describe("matchingUnitKeysOf", () => {
       expect(matchingUnitKeysOf(before, q("ソケット"))).toEqual([]);
       expect(matchingUnitKeysOf(translated, q("ソケット"))).toEqual(["0-0"]);
       expect(matchingUnitKeysOf(before, q("daemon"))).toEqual(
-        matchingUnitKeysOf([translated[0]], q("daemon")),
+        matchingUnitKeysOf([defined(translated[0], "the translated unit")], q("daemon")),
       );
     });
   });

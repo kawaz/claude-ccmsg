@@ -31,6 +31,7 @@ import {
   sessionConn,
   userConn,
   fixtureDir,
+  defined,
 } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -1567,12 +1568,15 @@ describe("agent tree from meta.json", () => {
       expect(scan?.done).toBe(2);
       expect(scan?.total).toBe(2);
       expect(scan?.members.map((m) => m.agent_id).sort()).toEqual(["a0000000001", "a0000000002"]);
-      expect(scan?.members[0].kind).toBe("workflow_member");
-      expect(scan?.members[0].workflow_id).toBe(runId);
+      const scanMember = defined(scan?.members[0], "the first member of the Scan phase");
+      expect(scanMember.kind).toBe("workflow_member");
+      expect(scanMember.workflow_id).toBe(runId);
       const report = wf?.phases[1];
       expect(report?.done).toBe(0);
       expect(report?.total).toBe(1);
-      expect(report?.members[0].state).toBe("running");
+      expect(defined(report?.members[0], "the first member of the Report phase").state).toBe(
+        "running",
+      );
       expect(wf?.unassigned).toEqual([]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -1653,26 +1657,39 @@ describe("session status external file fold (DR-0024)", () => {
       for (const file of files) fs.writeFileSync(file, nameOf(file));
       const result = await apply(
         [
-          toolUse("read-a", "Read", { file_path: files[0] }),
-          toolUse("read-b", "Read", { file_path: files[1], offset: 366, limit: 10 }),
-          toolUse("write-a", "Write", { content: "x", file_path: files[2] }),
+          toolUse("read-a", "Read", { file_path: defined(files[0], "the read-a file") }),
+          toolUse("read-b", "Read", {
+            file_path: defined(files[1], "the read-b file"),
+            offset: 366,
+            limit: 10,
+          }),
+          toolUse("write-a", "Write", {
+            content: "x",
+            file_path: defined(files[2], "the write-a file"),
+          }),
           toolUse("write-extra", "Write", {
             command: "ignored",
             content: "x",
             description: "ignored",
-            file_path: files[3],
+            file_path: defined(files[3], "the write-extra file"),
             new_string: "ignored",
             old_string: "ignored",
             replace_all: false,
           }),
           toolUse("edit-a", "Edit", {
-            file_path: files[4],
+            file_path: defined(files[4], "the edit-a file"),
             old_string: "a",
             new_string: "b",
             replace_all: "false",
           }),
-          toolUse("notebook", "NotebookEdit", { notebook_path: files[5], cell_id: "c" }),
-          toolUse("multi", "MultiEdit", { file_path: files[6], edits: [] }),
+          toolUse("notebook", "NotebookEdit", {
+            notebook_path: defined(files[5], "the notebook file"),
+            cell_id: "c",
+          }),
+          toolUse("multi", "MultiEdit", {
+            file_path: defined(files[6], "the multi file"),
+            edits: [],
+          }),
         ],
         root,
       );

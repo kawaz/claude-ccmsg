@@ -20,66 +20,65 @@ import type {
  * own because "we could not find out" is not a degree of bad. */
 export type StatusTone = "ok" | "warn" | "bad" | "unknown";
 
-const TONES: Record<LlmStatusSeverity, StatusTone> = {
-  ok: "ok",
-  warning: "warn",
-  critical: "bad",
-  unknown: "unknown",
-};
+// The tables below are Maps rather than object literals: the words are the
+// gateway's, and looking one up must not reach Object.prototype (a severity
+// "constructor" would otherwise read as a function). A word a table does not
+// list, "unknown" among them, reads as unknown.
+const TONES = new Map<LlmStatusSeverity, StatusTone>([
+  ["ok", "ok"],
+  ["warning", "warn"],
+  ["critical", "bad"],
+]);
 
 export function severityTone(severity: LlmStatusSeverity): StatusTone {
-  return TONES[severity] ?? "unknown";
+  return TONES.get(severity) ?? "unknown";
 }
 
 /** A mark rather than a coloured dot alone: colour is the fast read, but it
  * is also the one a colour-blind reader does not get, and these rows are
  * where an outage is announced. */
-const MARKS: Record<LlmStatusSeverity, string> = {
-  ok: "●",
-  warning: "▲",
-  critical: "■",
-  unknown: "?",
-};
+const MARKS = new Map<LlmStatusSeverity, string>([
+  ["ok", "●"],
+  ["warning", "▲"],
+  ["critical", "■"],
+]);
 
 export function severityMark(severity: LlmStatusSeverity): string {
-  return MARKS[severity] ?? MARKS.unknown;
+  return MARKS.get(severity) ?? "?";
 }
 
-const SEVERITY_LABELS: Record<LlmStatusSeverity, string> = {
-  ok: "正常",
-  warning: "注意",
-  critical: "障害",
-  unknown: "不明",
-};
+const SEVERITY_LABELS = new Map<LlmStatusSeverity, string>([
+  ["ok", "正常"],
+  ["warning", "注意"],
+  ["critical", "障害"],
+]);
 
 export function severityLabel(severity: LlmStatusSeverity): string {
-  return SEVERITY_LABELS[severity] ?? SEVERITY_LABELS.unknown;
+  return SEVERITY_LABELS.get(severity) ?? "不明";
 }
 
 /** Provider-side words. Kept distinct from the observed vocabulary below so
  * the two columns can never be read as one scale — "稼働中" is a claim by the
  * provider, "疎通" is something this gateway did. */
-const OFFICIAL_LABELS: Record<LlmStatusOfficialState, string> = {
-  operational: "稼働中",
-  degraded: "性能低下",
-  partial_outage: "一部障害",
-  major_outage: "大規模障害",
-  maintenance: "メンテナンス",
-  unknown: "不明",
-};
+const OFFICIAL_LABELS = new Map<LlmStatusOfficialState, string>([
+  ["operational", "稼働中"],
+  ["degraded", "性能低下"],
+  ["partial_outage", "一部障害"],
+  ["major_outage", "大規模障害"],
+  ["maintenance", "メンテナンス"],
+]);
 
 export function officialLabel(state: LlmStatusOfficialState): string {
-  return OFFICIAL_LABELS[state] ?? OFFICIAL_LABELS.unknown;
+  return OFFICIAL_LABELS.get(state) ?? "不明";
 }
 
-const OBSERVED_LABELS: Record<LlmStatusObservedState, string> = {
-  reachable: "疎通",
-  failing: "失敗",
-  unknown: "未観測",
-};
+const OBSERVED_LABELS = new Map<LlmStatusObservedState, string>([
+  ["reachable", "疎通"],
+  ["failing", "失敗"],
+]);
 
 export function observedLabel(state: LlmStatusObservedState): string {
-  return OBSERVED_LABELS[state] ?? OBSERVED_LABELS.unknown;
+  return OBSERVED_LABELS.get(state) ?? "未観測";
 }
 
 /** How long ago, in the units a reader of an outage screen cares about:
@@ -103,15 +102,17 @@ export function formatStatusAge(atMs: number | null | undefined, nowMs: number):
  * to matter must not be third. `unknown` sorts below `ok` — not knowing is
  * less urgent than a known problem, and the gateway's own roll-up treats it
  * the same way. Ties keep the gateway's order, which is the configured one. */
-const SEVERITY_RANK: Record<LlmStatusSeverity, number> = {
-  critical: 0,
-  warning: 1,
-  ok: 2,
-  unknown: 3,
-};
+const SEVERITY_RANK = new Map<LlmStatusSeverity, number>([
+  ["critical", 0],
+  ["warning", 1],
+  ["ok", 2],
+]);
+const UNKNOWN_RANK = 3;
 
 export function compareServices(a: LlmStatusService, b: LlmStatusService): number {
-  const rank = (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3);
+  const rank =
+    (SEVERITY_RANK.get(a.severity) ?? UNKNOWN_RANK) -
+    (SEVERITY_RANK.get(b.severity) ?? UNKNOWN_RANK);
   return rank !== 0 ? rank : 0;
 }
 

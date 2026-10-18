@@ -141,8 +141,14 @@ function isDirectReplyLine(line: string, mid: string, from: string): boolean {
   const bare = directDeliveryReplyLine(mid, from);
   const tail = bare.slice(`${prefix}ccmsg`.length);
   if (!line.startsWith(prefix) || !line.endsWith(tail)) return false;
-  const launcher = shellWords(line.slice(prefix.length, line.length - tail.length));
-  return launcher?.length === 1 && isLauncherWord(launcher[0], true);
+  const launcher = soleWord(shellWords(line.slice(prefix.length, line.length - tail.length)));
+  return launcher !== undefined && isLauncherWord(launcher, true);
+}
+
+/** The one word of `words`, or undefined for none, several, or text
+ * `shellWords` does not model. */
+function soleWord(words: readonly string[] | null): string | undefined {
+  return words?.length === 1 ? words[0] : undefined;
 }
 
 /** `ccmsg`, or a path ending in `/ccmsg` (absolute only, when `absolute`). */
@@ -219,7 +225,7 @@ export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
   if (end < bodyStart - 1) return [];
   const attributes = new Map<string, string>();
   for (const [, key, value] of (opening[1] ?? "").matchAll(ATTRIBUTE_RE)) {
-    attributes.set(key, unescapeAttribute(value));
+    if (key !== undefined && value !== undefined) attributes.set(key, unescapeAttribute(value));
   }
   const mid = attributes.get("ccmsg-mid");
   const from = attributes.get("ccmsg-from");
@@ -283,8 +289,10 @@ function shellWords(input: string): string[] | null {
       for (; j < input.length && input[j] !== '"'; j++) {
         const d = input[j];
         if (d === "$" || d === "`") return null;
-        if (d === "\\" && j + 1 < input.length && '"\\$`'.includes(input[j + 1])) {
-          cur += input[++j];
+        const escaped = d === "\\" ? input[j + 1] : undefined;
+        if (escaped !== undefined && '"\\$`'.includes(escaped)) {
+          cur += escaped;
+          j++;
         } else cur += d;
       }
       if (j >= input.length) return null;
@@ -346,8 +354,9 @@ export function splitSendWords(words: readonly string[], leadingCount: number): 
   const options = new Map<string, string | true>();
   const body: string[] = [];
   let literal = false;
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
+  // An option's value is the next word, taken from the same iterator.
+  const rest = words[Symbol.iterator]();
+  for (const w of rest) {
     const word = (): void => {
       if (leading.length < leadingCount) leading.push(w);
       else body.push(w);
@@ -360,9 +369,12 @@ export function splitSendWords(words: readonly string[], leadingCount: number): 
       literal = true;
       continue;
     }
-    if (SEND_VALUE_OPTIONS.includes(w) && i + 1 < words.length) {
-      options.set(w, words[++i]);
-      continue;
+    if (SEND_VALUE_OPTIONS.includes(w)) {
+      const value = rest.next();
+      if (!value.done) {
+        options.set(w, value.value);
+        continue;
+      }
     }
     if (SEND_FLAG_OPTIONS.includes(w)) {
       options.set(w, true);
@@ -387,8 +399,9 @@ const NOTIFY_VALUE_OPTIONS = new Set(["--sid", "--about"]);
  * are read by splitSendWords, as the CLI that ran them read them. */
 export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null {
   const m = [...command.matchAll(SEND_COMMAND_RE)].find((candidate) => {
-    const word = shellWords(candidate[1]);
-    return word?.length === 1 && isLauncherWord(word[0]);
+    const quoted = candidate[1];
+    const word = quoted === undefined ? undefined : soleWord(shellWords(quoted));
+    return word !== undefined && isLauncherWord(word);
   });
   if (!m) return null;
   const verb = SEND_VERBS.find((name) => name === m[2]);
@@ -416,14 +429,16 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
   if (words.includes("--help") || words.includes("-h")) return null;
   const options = new Map<string, string>();
   const positional: string[] = [];
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
+  const remaining = words[Symbol.iterator]();
+  for (const w of remaining) {
     const eq = w.indexOf("=");
     if (w.startsWith("--") && eq > 0 && NOTIFY_VALUE_OPTIONS.has(w.slice(0, eq))) {
       options.set(w.slice(0, eq), w.slice(eq + 1));
-    } else if (NOTIFY_VALUE_OPTIONS.has(w) && i + 1 < words.length) {
-      options.set(w, words[++i]);
-    } else positional.push(w);
+      continue;
+    }
+    const value = NOTIFY_VALUE_OPTIONS.has(w) ? remaining.next() : undefined;
+    if (value !== undefined && !value.done) options.set(w, value.value);
+    else positional.push(w);
   }
   const about = options.get("--about");
   return { verb, ...(about !== undefined ? { about } : {}), text: positional.join(" ") };

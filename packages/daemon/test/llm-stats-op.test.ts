@@ -7,6 +7,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
 import { requestError, requestOk, requestRefusal, stubDaemon } from "./drive-request.ts";
+import { defined } from "./helpers.ts";
 
 /** Every `days` the gateway was actually asked for, newest last. Recorded on
  * the server rather than echoed in the body because the daemon normalizes the
@@ -62,7 +63,7 @@ describe("llm_stats op", () => {
     });
     expect(reply.ok).toBe(true);
     expect(reply.generated_at).toBe(1785552299000);
-    expect(reply.days["2026-07-31"].total_usd).toBe(1.25);
+    expect(defined(reply.days["2026-07-31"], "the stats of 2026-07-31").total_usd).toBe(1.25);
   });
 
   // The whole point of the parameter: a window chosen in the UI has to reach

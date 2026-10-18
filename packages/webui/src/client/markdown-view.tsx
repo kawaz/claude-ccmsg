@@ -104,9 +104,8 @@ const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
  * route does its own uuid/ext re-validation regardless.
  */
 export function attachmentUrlFromPath(url: string): { url: string; isImage: boolean } | null {
-  const m = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url);
-  if (!m) return null;
-  const basename = m[1];
+  const basename = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url)?.[1];
+  if (basename === undefined) return null;
   const dot = basename.lastIndexOf(".");
   const ext = dot >= 0 ? basename.slice(dot).toLowerCase() : "";
   return {
@@ -177,7 +176,14 @@ function childrenOf(node: AnyNode): AnyNode[] | undefined {
 }
 
 /** `h<depth>` for a heading's depth (mdast's depth is 1-6). */
-const HEADING_TAGS = ["h1", "h2", "h3", "h4", "h5", "h6"] as const;
+const HEADING_TAGS = {
+  1: "h1",
+  2: "h2",
+  3: "h3",
+  4: "h4",
+  5: "h5",
+  6: "h6",
+} as const satisfies Record<Heading["depth"], string>;
 
 export interface MarkdownHeading {
   depth: Heading["depth"];
@@ -206,7 +212,7 @@ function headingPlainText(node: PhrasingContent): string {
  * file preview's TOC. The counter transition mirrors app.css exactly: entering
  * depth N increments that level and resets every deeper level. */
 export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
-  const counters = [0, 0, 0, 0, 0, 0];
+  let counters = [0, 0, 0, 0, 0, 0];
   const headings: MarkdownHeading[] = [];
 
   function visit(nodes: AnyNode[] | undefined): void {
@@ -214,9 +220,8 @@ export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
     for (const node of nodes) {
       if (node.type === "heading") {
         const heading = node;
-        const index = heading.depth - 1;
-        counters[index] += 1;
-        counters.fill(0, index + 1);
+        const level = heading.depth - 1;
+        counters = counters.map((count, i) => (i < level ? count : i === level ? count + 1 : 0));
         const number = counters.slice(0, heading.depth).join(".");
         headings.push({
           depth: heading.depth,
@@ -562,7 +567,7 @@ function renderTextRun(
 ): VNode | string {
   if (!search || search.words.length === 0) return value;
   const pieces = splitTextForHighlight(value, search.words);
-  if (pieces.length === 1 && pieces[0].colorIndex === null) return value;
+  if (pieces.length === 1 && pieces[0]?.colorIndex === null) return value;
   return (
     <span key={key}>
       {pieces.map((p, i) =>
@@ -689,7 +694,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
 
     case "heading": {
       const heading = node;
-      const Tag = HEADING_TAGS[heading.depth - 1];
+      const Tag = HEADING_TAGS[heading.depth];
       const outlineHeading = ctx.headings?.[ctx.headingIndex];
       ctx.headingIndex += 1;
       return (
@@ -1322,16 +1327,13 @@ function matchSummaryLine(line: PhrasingContent[]): PhrasingContent[] | null {
   const last = line[line.length - 1];
   if (!first || !last || first.type !== "text" || last.type !== "text") return null;
   if (line.length === 1) {
-    const m = /^<summary\s*>([\s\S]*)<\/summary\s*>$/i.exec(first.value.trim());
-    if (!m) return null;
-    const inner = m[1].trim();
+    const inner = /^<summary\s*>([\s\S]*)<\/summary\s*>$/i.exec(first.value.trim())?.[1]?.trim();
+    if (inner === undefined) return null;
     return inner === "" ? [] : [{ type: "text", value: inner }];
   }
-  const openMatch = SUMMARY_OPEN_RE.exec(first.value.trimStart());
-  const closeMatch = SUMMARY_CLOSE_RE.exec(last.value.trimEnd());
-  if (!openMatch || !closeMatch) return null;
-  const head = openMatch[1];
-  const tail = closeMatch[1];
+  const head = SUMMARY_OPEN_RE.exec(first.value.trimStart())?.[1];
+  const tail = SUMMARY_CLOSE_RE.exec(last.value.trimEnd())?.[1];
+  if (head === undefined || tail === undefined) return null;
   const middle = line.slice(1, -1);
   const label: PhrasingContent[] = [];
   if (head !== "") label.push({ type: "text", value: head });
@@ -1359,8 +1361,7 @@ function foldDetailsBlocks<N extends RootContent>(
   const items = toFoldItems(nodes);
   const out: FoldItem<Folded<N>>[] = [];
   let i = 0;
-  while (i < items.length) {
-    const item = items[i];
+  for (let item = items[i]; item !== undefined; item = items[i]) {
     const tag = item.kind === "line" ? lineAsPlainText(item.line) : null;
     const openMatch = tag === null ? null : DETAILS_OPEN_TAG_RE.exec(tag);
     if (!openMatch) {
@@ -1370,9 +1371,8 @@ function foldDetailsBlocks<N extends RootContent>(
     }
     let depth = 1;
     let closeAt = -1;
-    for (let j = i + 1; j < items.length; j += 1) {
-      const candidate = items[j];
-      if (candidate.kind !== "line") continue;
+    for (const [j, candidate] of items.entries()) {
+      if (j <= i || candidate.kind !== "line") continue;
       const text = lineAsPlainText(candidate.line);
       if (text === null) continue;
       if (DETAILS_CLOSE_TAG_RE.test(text)) {
@@ -1574,19 +1574,17 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
       </span>,
     );
   };
-  while (i < lines.length) {
-    const line = lines[i];
+  for (let line = lines[i]; line !== undefined; line = lines[i]) {
     const fence = /^(`{3,})(\S*)\s*$/.exec(line);
-    if (fence) {
+    const marker = fence?.[1];
+    if (marker !== undefined) {
       flushText();
-      const marker = fence[1];
-      const lang = fence[2] ? fence[2] : null;
+      const lang = fence?.[2] || null;
       const body: string[] = [];
       i += 1;
       const closer = new RegExp(`^${marker}\\s*$`);
-      while (i < lines.length && !closer.test(lines[i])) {
-        body.push(lines[i]);
-        i += 1;
+      for (let inner = lines[i]; inner !== undefined && !closer.test(inner); inner = lines[++i]) {
+        body.push(inner);
       }
       if (i < lines.length) i += 1; // consume closing fence
       blocks.push(<CodeBlock key={`b${key++}`} code={body.join("\n")} lang={lang} />);
@@ -1595,9 +1593,8 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
     if (/^>\s?/.test(line)) {
       flushText();
       const quoted: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) {
-        quoted.push(lines[i].replace(/^>\s?/, ""));
-        i += 1;
+      for (let inner = lines[i]; inner !== undefined && /^>\s?/.test(inner); inner = lines[++i]) {
+        quoted.push(inner.replace(/^>\s?/, ""));
       }
       const text = quoted.join("\n");
       blocks.push(

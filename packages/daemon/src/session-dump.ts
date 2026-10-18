@@ -993,8 +993,8 @@ export async function dumpSession(
         sentEntries.push(direct);
         continue;
       }
-      const commandMatch = command.match(CCMSG_COMMAND_RE);
-      if (!commandMatch) continue;
+      const op = command.match(CCMSG_COMMAND_RE)?.[1];
+      if (op === undefined) continue;
       const response = parseResponse(toolResultText(block));
       if (!response) continue;
       const key = `${response.room}|${response.mid}`;
@@ -1004,7 +1004,7 @@ export async function dumpSession(
       sentEntries.push(
         canonicalEntry(session, "ccmsg-sent", use.ts, message, {
           source: "bash",
-          op: commandMatch[1],
+          op,
           tool_use_id: use.id,
           command,
           transcript_line: use.index + 1,

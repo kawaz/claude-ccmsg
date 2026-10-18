@@ -103,9 +103,9 @@ function regexRequiredLiteral(pattern: string): string | null {
   const runs: string[] = [];
 
   for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
+    const ch = pattern.charAt(i);
     if (ch === "\\") {
-      const escapeKind = pattern[i + 1];
+      const escapeKind = pattern.charAt(i + 1);
       if (escapeKind === "x") i += 3;
       else if (escapeKind === "u" && pattern[i + 2] === "{") {
         const end = pattern.indexOf("}", i + 3);
@@ -119,7 +119,7 @@ function regexRequiredLiteral(pattern: string): string | null {
         i = end >= 0 ? end : pattern.length;
       } else if (escapeKind === "c") i += 2;
       else if (escapeKind && /[0-9]/.test(escapeKind)) {
-        while (i + 1 < pattern.length && /[0-9]/.test(pattern[i + 1])) i += 1;
+        while (/[0-9]/.test(pattern.charAt(i + 1))) i += 1;
       } else i += 1;
       continue;
     }
@@ -148,7 +148,7 @@ function regexRequiredLiteral(pattern: string): string | null {
     if (depth !== 0 || !/[A-Za-z0-9]/.test(ch)) continue;
 
     const start = i;
-    while (i + 1 < pattern.length && /[A-Za-z0-9]/.test(pattern[i + 1])) i += 1;
+    while (/[A-Za-z0-9]/.test(pattern.charAt(i + 1))) i += 1;
     let run = pattern.slice(start, i + 1);
     const next = pattern[i + 1];
     if (next === "?" || next === "*" || next === "+" || next === "{") {
@@ -332,8 +332,8 @@ export async function readSessionLaunchContext(file: string): Promise<SessionLau
       // A window that starts mid-file opens inside a record; that partial line
       // is unparseable and belongs to the next, wider window.
       if (start > 0) lines.shift();
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const context = launchContextFromRow(lines[i]);
+      for (const line of lines.toReversed()) {
+        const context = launchContextFromRow(line);
         if (context) return context;
       }
       if (start === 0) return {};
@@ -418,10 +418,10 @@ async function scanCandidateFile(
   const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
-  // Per clause, the indexes of its AND terms seen anywhere in this session.
-  const matchedTerms = clauses.map(() => new Set<number>());
+  // Each clause with the indexes of its AND terms seen anywhere in this session.
+  const clauseProgress = clauses.map((clause) => ({ clause, matched: new Set<number>() }));
   const someClauseComplete = (): boolean =>
-    clauses.some((clause, clauseIndex) => matchedTerms[clauseIndex].size === clause.length);
+    clauseProgress.some(({ clause, matched }) => matched.size === clause.length);
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   // Best-effort within the same early window that establishes cwd/timestamp
@@ -439,11 +439,8 @@ async function scanCandidateFile(
     if (clauses.length > 0 && linePassesPrefilter(line, clauses, caseSensitive)) {
       forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
         const matchingPatterns: CompiledQueryPattern[] = [];
-        for (let clauseIndex = 0; clauseIndex < clauses.length; clauseIndex++) {
-          const clause = clauses[clauseIndex];
-          const matched = matchedTerms[clauseIndex];
-          for (let termIndex = 0; termIndex < clause.length; termIndex++) {
-            const pattern = clause[termIndex];
+        for (const { clause, matched } of clauseProgress) {
+          for (const [termIndex, pattern] of clause.entries()) {
             if (patternIndex(text, pattern) < 0) continue;
             matched.add(termIndex);
             matchingPatterns.push(pattern);
@@ -810,8 +807,7 @@ export async function sessionSearch(
   let scannedBytes = 0;
   let truncated = false;
 
-  for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
-    const candidate = candidates[candidateIndex];
+  for (const [candidateIndex, candidate] of candidates.entries()) {
     const remaining = REQUEST_SCAN_MAX_BYTES - scannedBytes;
     if (remaining <= 0) {
       truncated = true;

@@ -163,11 +163,11 @@ function useCcmsgBody(room: string, mid: number | undefined): CcmsgReadBody | "f
     const p = ws
       .read(room, [mid])
       .then((resp) => {
-        if (!resp.ok || resp.msgs.length === 0) {
+        const m = resp.ok ? resp.msgs[0] : undefined;
+        if (m === undefined) {
           setCcmsgBody(key, "failed");
           return null;
         }
-        const m = resp.msgs[0];
         const body: CcmsgReadBody = {
           from: m.from,
           ...(m.to ? { to: m.to } : {}),
