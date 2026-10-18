@@ -98,7 +98,7 @@ describe("test daemon lifeline", () => {
       await run.stdin.end();
       const err = await new Response(run.stderr).text();
       expect(await run.exited).toBe(1);
-      expect(err).toContain("1 daemon(s) were not stopped by the test that started them");
+      expect(err).toContain("1 process(es) were not stopped by the test that started them");
       expect(err).toContain(path.dirname(sock));
       await gone;
     } finally {

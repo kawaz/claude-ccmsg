@@ -17,7 +17,7 @@ process.env.CCMSG_AGENTS_POLL ??= "off";
 setDefaultTimeout(15_000);
 
 // Every temp dir a test makes lives no longer than this run (tmp.ts), and
-// every daemon a test spawns, directly or through the CLI, neither
+// every daemon or sidecar a test spawns, directly or through the CLI, neither
 // (lifeline.ts; its socket sits in the run's temp dir). What is still there
 // after the last test fails the run: a test made it and did not remove or stop
 // it. That includes a daemon that bun killed as a timed-out test's dangling
@@ -29,15 +29,15 @@ const lifeline = openLifeline(path.join(runTmp.dir, LIFELINE));
 process.env.CCMSG_TEST_LIFELINE = lifeline.path;
 
 afterAll(() => {
-  const daemons = lifeline.holders();
+  const holders = lifeline.holders();
   lifeline.close();
   const dirs = runTmp.leftovers([LIFELINE]);
   runTmp.remove();
   const failures: string[] = [];
-  if (daemons.length > 0) {
+  if (holders.length > 0) {
     failures.push(
-      `${String(daemons.length)} daemon(s) were not stopped by the test that started them; ` +
-        `the state dir of each (its prefix names the test file):\n${daemons.join("\n")}`,
+      `${String(holders.length)} process(es) were not stopped by the test that started them; ` +
+        `the state dir of each daemon and the socket of each sidecar (its prefix names the test file):\n${holders.join("\n")}`,
     );
   }
   if (dirs.length > 0) {

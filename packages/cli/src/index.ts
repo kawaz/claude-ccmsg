@@ -25,6 +25,7 @@ import {
   type SessionStateFile,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
+import { holdTestLifeline } from "@ccmsg/daemon/test-lifeline";
 import {
   dumpSession,
   formatJsonlDump,
@@ -402,6 +403,15 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
   const stop = (): void => running.stop();
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, stop);
   process.stdout.on("error", stop);
+  // A sidecar a test run started lives no longer than the run, as its daemons
+  // do (test-lifeline.ts): neither a write failing nor stdout's socket ending
+  // reaches one whose output is a pipe nobody writes to. Held before `ready`,
+  // so a test that read `ready` knows the sidecar is held.
+  const lifelinePath = process.env.CCMSG_TEST_LIFELINE;
+  if (lifelinePath !== undefined && lifelinePath !== "") {
+    const lifeline = await holdTestLifeline(lifelinePath, running.path, stop);
+    void running.stopped.then(() => lifeline.release());
+  }
   process.stderr.write(`ready ${running.path}\n`);
   const named = keepNamed({
     paths,

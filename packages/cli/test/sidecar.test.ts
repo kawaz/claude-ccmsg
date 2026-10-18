@@ -33,9 +33,12 @@ import {
   userConn,
 } from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
+import { openLifeline } from "../../testkit/src/lifeline.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+const LEAKY_FIXTURE = fileURLToPath(new URL("./leaky-sidecar.fixture.ts", import.meta.url));
 
 const SidecarRequestTextSchema = jsonText(SidecarRequestSchema);
 
@@ -340,6 +343,64 @@ describe("ccmsg sidecar (process)", () => {
     const rest = await readUntil(err, () => false);
     expect(rest).toContain(`reader_gone ${socketPath}\n`);
     expect(fs.existsSync(socketPath)).toBe(false);
+  });
+
+  // A sidecar a test run starts lives no longer than the run, as a daemon does
+  // (packages/testkit/src/lifeline.ts): written to or not, and whatever reads
+  // its output, it leaves once the run's lifeline closes.
+  test("leaves once the test run's lifeline closes, with nothing written", async () => {
+    const base = shortBase();
+    const lifeline = openLifeline(path.join(base, "line.sock"));
+    const stateDir = path.join(base, "s");
+    const proc = Bun.spawn(sidecarArgv(), {
+      env: { ...sidecarEnv(stateDir), CCMSG_TEST_LIFELINE: lifeline.path },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      const err = proc.stderr.getReader();
+      await readUntil(err, (t) => t.includes("\n"));
+      const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+      lifeline.close();
+      const rest = await readUntil(err, () => false);
+      expect(rest).toContain(`stopped ${socketPath}\n`);
+      expect(await proc.exited).toBe(0);
+      expect(fs.existsSync(socketPath)).toBe(false);
+    } finally {
+      lifeline.close();
+      proc.kill();
+    }
+  });
+
+  // The run's end check names a sidecar a test left running, and the sidecar
+  // goes with the run.
+  test("a run that leaves a sidecar running fails naming it, and the sidecar goes with the run", async () => {
+    const run = Bun.spawn([process.execPath, "test", LEAKY_FIXTURE], {
+      cwd: REPO_ROOT,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      const out = await readUntil(run.stdout.getReader(), (t) => /socket=.*\n/.test(t));
+      const socketPath = defined(/socket=(.*)\n/.exec(out)?.[1], "the leaked sidecar's socket");
+      // The sidecar keeps a connection open until its process exits.
+      const gone = Promise.withResolvers<void>();
+      await Bun.connect({
+        unix: socketPath,
+        socket: { data() {}, close: () => gone.resolve(), error: () => gone.resolve() },
+      });
+      // Let the fixture's test finish with its sidecar still up.
+      await run.stdin.end();
+      const err = await new Response(run.stderr).text();
+      expect(await run.exited).toBe(1);
+      expect(err).toContain("1 process(es) were not stopped by the test that started them");
+      expect(err).toContain(socketPath);
+      await gone.promise;
+    } finally {
+      run.kill();
+    }
   });
 
   test("--help says what it is and no more", async () => {

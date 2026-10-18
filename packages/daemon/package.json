@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/server.ts",
     "./run": "./src/run.ts",
-    "./session-dump": "./src/session-dump.ts"
+    "./session-dump": "./src/session-dump.ts",
+    "./test-lifeline": "./src/test-lifeline.ts"
   },
   "dependencies": {
     "@ccmsg/protocol": "workspace:*",
