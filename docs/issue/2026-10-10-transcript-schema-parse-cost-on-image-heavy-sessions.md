@@ -3,7 +3,7 @@ title: transcript-schema-parse-cost-on-image-heavy-sessions
 status: open
 category: bug
 created: 2026-10-10T12:47:04+09:00
-last_read:
+last_read: 2026-10-18T17:57:40+09:00
 open_entered: 2026-10-10T12:47:04+09:00
 wip_entered:
 blocked_entered:
