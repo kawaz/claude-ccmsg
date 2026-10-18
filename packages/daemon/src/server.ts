@@ -1598,16 +1598,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
             daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
           appendToAgent: async (sid, agentId, text, from) => {
             const { tries: _tries, ...outcome } = await userMessage(
-              sid,
-              agentId,
-              text,
+              { sid, agentId, text, from },
               {
                 ...productionSidecarDeps(daemon.sidecarReplies),
                 deadlineMs: USER_MESSAGE_DEADLINE_MS,
                 runs: daemon.sidecarRuns,
                 isRunning: (running) => daemon.sessions.has(running),
               },
-              from,
             );
             return outcome;
           },
@@ -1950,12 +1947,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'user_message' requires user role");
         return;
       }
-      const { tries, ...outcome } = await userMessage(req.session_id, req.agent_id, req.text, {
-        ...productionSidecarDeps(daemon.sidecarReplies),
-        deadlineMs: USER_MESSAGE_DEADLINE_MS,
-        runs: daemon.sidecarRuns,
-        isRunning: (sid) => daemon.sessions.has(sid),
-      });
+      const { tries, ...outcome } = await userMessage(
+        { sid: req.session_id, agentId: req.agent_id, text: req.text },
+        {
+          ...productionSidecarDeps(daemon.sidecarReplies),
+          deadlineMs: USER_MESSAGE_DEADLINE_MS,
+          runs: daemon.sidecarRuns,
+          isRunning: (sid) => daemon.sessions.has(sid),
+        },
+      );
       daemon.log.info(
         `agent-input -> ${req.session_id} ${req.agent_id}: ${outcome.outcome}` +
           (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +

@@ -178,7 +178,9 @@ describe("userMessage", () => {
 
   test("appended by the run the subagent runs in, the next tried after not_running", async () => {
     const { deps, written } = agentDeps({ run100: notDelivered("not_running"), run200: APPENDED });
-    expect(await userMessage(SID, "a1", "hi", deps)).toMatchObject({ outcome: "appended" });
+    expect(await userMessage({ sid: SID, agentId: "a1", text: "hi" }, deps)).toMatchObject({
+      outcome: "appended",
+    });
     expect(written.map((w) => w.line)).toEqual([
       { v: 1, op: "agent.append", id: "id1", args: { agentId: "a1", text: "hi" } },
       { v: 1, op: "agent.append", id: "id2", args: { agentId: "a1", text: "hi" } },
@@ -187,10 +189,13 @@ describe("userMessage", () => {
 
   test("not running in any run: not_running; a refusal stops at that run", async () => {
     expect(
-      await userMessage(SID, "a1", "hi", agentDeps({ run100: notDelivered("not_running") }).deps),
+      await userMessage(
+        { sid: SID, agentId: "a1", text: "hi" },
+        agentDeps({ run100: notDelivered("not_running") }).deps,
+      ),
     ).toMatchObject({ outcome: "not_delivered", reason: "not_running" });
     const { deps, written } = agentDeps({ run100: notDelivered("refused"), run200: APPENDED });
-    expect(await userMessage(SID, "a1", "hi", deps)).toMatchObject({
+    expect(await userMessage({ sid: SID, agentId: "a1", text: "hi" }, deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "refused",
     });
@@ -198,18 +203,29 @@ describe("userMessage", () => {
   });
 
   test("no module, a changed session, an ended one; and a run that does not answer", async () => {
-    expect(await userMessage(SID, "a1", "hi", agentDeps({}).deps)).toMatchObject({
+    expect(
+      await userMessage({ sid: SID, agentId: "a1", text: "hi" }, agentDeps({}).deps),
+    ).toMatchObject({
       reason: "no_module",
     });
-    expect(await userMessage(SID, "a1", "hi", agentDeps({}, false).deps)).toMatchObject({
+    expect(
+      await userMessage({ sid: SID, agentId: "a1", text: "hi" }, agentDeps({}, false).deps),
+    ).toMatchObject({
       reason: "ended",
     });
     const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
-    expect(await userMessage(SID, "a1", "hi", { ...deps, isRunning: () => true })).toMatchObject({
+    expect(
+      await userMessage(
+        { sid: SID, agentId: "a1", text: "hi" },
+        { ...deps, isRunning: () => true },
+      ),
+    ).toMatchObject({
       reason: "session_changed",
     });
     const silent = agentDeps({ run100: "silent" }).deps;
-    expect(await userMessage(SID, "a1", "hi", { ...silent, deadlineMs: 50 })).toMatchObject({
+    expect(
+      await userMessage({ sid: SID, agentId: "a1", text: "hi" }, { ...silent, deadlineMs: 50 }),
+    ).toMatchObject({
       outcome: "unconfirmed",
     });
   });

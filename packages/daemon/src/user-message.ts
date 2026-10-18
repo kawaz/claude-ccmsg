@@ -39,16 +39,22 @@ export interface UserMessageTry {
     | `not_delivered:${AgentAppendReason}`;
 }
 
-/** Ask the runs of `sid` in turn to add `text` to its subagent `agentId`.
- * `from` is the session that sent it with `send` (DR-0039 §3), absent for a
- * person's (user_message). */
+/** One text for a running subagent: `agentId` of session `sid`. `from` is
+ * the session that sent it with `send` (DR-0039 §3), absent for a person's
+ * (user_message). */
+export interface SubagentMessage {
+  sid: string;
+  agentId: string;
+  text: string;
+  from?: string;
+}
+
+/** Ask the runs of the session in turn to add the text to its subagent. */
 export async function userMessage(
-  sid: string,
-  agentId: string,
-  text: string,
+  message: SubagentMessage,
   deps: UserMessageDeps,
-  from?: string,
 ): Promise<UserMessageOutcome & { tries: UserMessageTry[] }> {
+  const { sid, agentId, text, from } = message;
   const until = deps.now() + deps.deadlineMs;
   const tries: UserMessageTry[] = [];
   let answered: AgentAppendReason | undefined;
