@@ -1,6 +1,6 @@
 ---
 title: classic hook を mods に寄せる、TL の応答中を module の event で即時通知する
-status: open
+status: resolved
 category: design
 created: 2026-10-14T11:21:50+09:00
 last_read: 2026-10-18T19:20:35+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T19:40:06+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0039","dr/DR-0035","implemented"]
 blocked_by:
 origin: 自リポ TODO (kawaz 2026-10-14)
 ---
@@ -34,6 +34,6 @@ kawaz 2026-10-14 の指示。DR-0035 §4 の裁定 (UserPromptSubmit の扱い) 
 
 ## 受け入れ条件
 
-- [ ] `session.start` で session-start.ts と classic.SessionStart の役割を置き換えられるか実機確認し、結論を記録
-- [ ] `prompt.submit` が classic.UserPromptSubmit と同じ判定をできるか実機確認し、DR-0035 §4 の変更要否を決める
-- [ ] Claude Mods reference で event 一覧とペイロードを確認し、daemon への即時通知と TL の「応答中」表示の設計を DR にまとめる (TL の応答中は実装済み。DR へのまとめは DR-0035 §3 に追記済み。sidebar の状態の置き換えは未)
+- [x] `session.start` で session-start.ts と classic.SessionStart の役割を置き換えられるか実機確認し、結論を記録 (DR-0039 で classic 全廃として済み)
+- [x] `prompt.submit` が classic.UserPromptSubmit と同じ判定をできるか実機確認し、DR-0035 §4 の変更要否を決める (DR-0039 で済み)
+- [x] Claude Mods reference で event 一覧とペイロードを確認し、daemon への即時通知と TL の「応答中」表示の設計を DR にまとめる (DR-0035 §3 に記載。TL の応答中、sidebar の状態の置き換えとも実装済み)
