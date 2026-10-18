@@ -33,7 +33,6 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
-      CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",
       CCMSG_DAEMON_ENTRY: DAEMON_ENTRY,
       // The session the CLI acts as is fixed here, never inherited: a test run

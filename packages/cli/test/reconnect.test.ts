@@ -44,7 +44,6 @@ function makeEnv(): TestEnv {
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
       // Pin every spawned CLI to this working copy even if PATH has a newer install.
-      CCMSG_NO_SELF_EXEC: "1",
       // HTTP off で並列 test の port 衝突を避ける (daemon helpers.ts と同じ理由)。
       CCMSG_HTTP_BIND: "off",
       // ensure-daemon の spawn 経路は bun test 下では argv[1] を test runner に

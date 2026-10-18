@@ -25,13 +25,13 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定ではshell の `PATH` に無い。`PATH` 上の安定パスに symlink を張って入れる:
+plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では shell の `PATH` に無い。shell から使う時は、使いたい版の launcher を alias か、`PATH` 上の安定パスに置いた symlink で指す:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 ```
 
-こうして入れた symlink は、以降 `ccmsg` launcher が実行のたびに自動で最新版へ追従させる — versioned cache パスからの実行で、symlink の現在の張り先より厳密に新しい版なら張り替える([DR-0007](./docs/decisions/DR-0007-path-installation.md) 参照)。
+launcher は自分の版の CLI だけを動かし、`PATH` の `ccmsg` には触らない。plugin を update したら symlink を新しい版へ張り直す (古い版の cache が消えると symlink は切れる)。[DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4 参照。
 
 ## Web UI
 

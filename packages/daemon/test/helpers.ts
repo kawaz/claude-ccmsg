@@ -76,8 +76,6 @@ export function spawnDaemonProc(
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
-      // Pin integration subprocesses to this working copy rather than PATH's install.
-      CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",
       // No route-monitor child and no api-error folds per test daemon; tests
       // that exercise the wake drive createNetworkWatch directly.
@@ -117,7 +115,6 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
     CCMSG_STATE_DIR: stateDir,
     CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
-    CCMSG_NO_SELF_EXEC: "1",
     CCMSG_HTTP_BIND: "off",
     CCMSG_NETWORK_WATCH: "off",
     CCMSG_AGENTS_POLL: "off",

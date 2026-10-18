@@ -22,7 +22,6 @@
 | [DR-0002](./DR-0002-daemon-supervision.md) | Accepted | 置き換わる予定 | Daemon supervision & lifecycle — 起動は [daemon-v2](../design/daemon-v2.md) §8.4 の常駐登録へ。§4 の互換方針は DR-0032 §3「互換経路は持たない」で決着 |
 | [DR-0003](./DR-0003-wire-protocol.md) | Accepted | 契約に吸収 | Wire protocol & room semantics — room 語彙は v2 で持たない |
 | [DR-0006](./DR-0006-id-scheme-v2.md) | Accepted | 契約に吸収 | ID 体系 v2 (member id を u/a namespace の型付き文字列に分離) |
-| [DR-0007](./DR-0007-path-installation.md) | Accepted | 対象外 | PATH への symlink インストールと自己更新 — v2 の配布は `ccmsg plugin install` (DR-0032 §2.4) |
 | [DR-0008](./DR-0008-workspace-file-access.md) | Accepted | 契約に吸収 | Workspace file access (fs_list / fs_read op) — control 面 |
 | [DR-0009](./DR-0009-session-transcript-access.md) | Accepted | 契約に吸収 | Session transcript access (transcript_read op) — control 面 |
 | [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | webui へ移管 | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker) |
@@ -57,6 +56,7 @@
 |---|---|---|---|
 | [DR-0004](./DR-0004-webui-architecture.md) | §4 実装方式 → [DR-0005](./DR-0005-webui-frontend-architecture.md) / §5 locator → [webui-url-grammar](../design/webui-url-grammar.md) | 置き換わる予定 | webui architecture (HTTP/WS transport + UI) — origin 制限は DR-0032 §2.1 の「許可 origin の設定」へ。§4「protocol 拡張はしない」は面の分離 (protocol-v2 §2) が引き取る |
 | [DR-0005](./DR-0005-webui-frontend-architecture.md) | §1 action/reducer・§3 配信形態 → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.1 | webui へ移管 | webui frontend architecture (workspace 化を見込んだ器) |
+| [DR-0007](./DR-0007-path-installation.md) | §1 symlink の提案・§2 自己更新・launcher の self-exec → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4 (止めた) | 対象外 | PATH への symlink インストールと自己更新 — 現行なのは §3 の `version` |
 
 ## Archived
 

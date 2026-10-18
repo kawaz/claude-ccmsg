@@ -25,13 +25,13 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't on your shell `PATH` by default. To put it there, symlink it into a stable dir on `PATH`:
+The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't on your shell `PATH` by default. To use it from a shell, point an alias or a symlink in a stable dir on `PATH` at the version you want:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 ```
 
-Once installed this way, the `ccmsg` launcher keeps that symlink pointed at the newest version on its own — every invocation from a versioned cache path re-points it if it's strictly newer than what the symlink currently targets (see [DR-0007](./docs/decisions/DR-0007-path-installation.md)).
+The launcher runs the CLI of the version it belongs to and never touches the `ccmsg` on `PATH`, so after a plugin update, point the symlink at the new version yourself (it breaks once the old version's cache is removed). See [DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4.
 
 ## Web UI
 

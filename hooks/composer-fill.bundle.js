@@ -1249,7 +1249,6 @@ async function describe($) {
   const described = { v: [SIDECAR_REQUEST_VERSION], ops: [...SIDECAR_OP_NAMES] };
   try {
     const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "version"], {
-      env: { CCMSG_NO_SELF_EXEC: "1" },
       timeoutMs: REPLY_TIMEOUT_MS
     });
     const version = run.stdout.trim();

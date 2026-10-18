@@ -1,6 +1,6 @@
 # DR-0007: PATH への symlink インストールと自己更新
 
-- **Status**: Accepted (2026-07-10、kawaz 提案の擬似コードに基づく。細部の [提案] は実装先行)
+- **Status**: Accepted (2026-07-10、kawaz 提案の擬似コードに基づく。細部の [提案] は実装先行)。§1 の SessionStart での symlink の提案、§2 の自己更新、§4 の注記の launcher の self-exec は [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4 が止めた (launcher は自分の plugin の CLI だけを起動する)。現行なのは §3 の `version` だけ
 - **Date**: 2026-07-10
 - **Author**: kawaz (整理: AI agent)
 - **一次資料**: 本セッション 2026-07-10 の kawaz 発言 (擬似コード付き提案、下記 Context に転記)

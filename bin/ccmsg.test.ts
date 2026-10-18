@@ -1,10 +1,9 @@
-// launcher の PATH 収束 (self-update + self-exec) を、実 bin/ccmsg を bash で実行して
-// ブラックボックス検証する。テスト対象は「実 launcher スクリプトそのもの」—
-// version-compare や path-extraction のロジックを bun 側に移植して二重に検証すると
-// launcher の実体との乖離を見逃すので、pure 判定も source した shell 関数を直接叩く。
+// launcher (どの CLI を起動するか、依存の自己修復) を、実 bin/ccmsg を bash で実行して
+// ブラックボックス検証する。テスト対象は「実 launcher スクリプトそのもの」なので、
+// 個々の判定も source した shell 関数を直接叩く。
 //
 // fake の versioned plugin cache 構造 (.../ccmsg/<version>/bin/ccmsg) を一時 dir に
-// 作り、launcher をコピーして配置する。`bun` は PATH 上のスタブに差し替え、実際の
+// 作り、launcher を配置する。`bun` は PATH 上のスタブに差し替え、実際の
 // CLI 起動をノーオペにしつつ、最終的にどの版の entrypoint が選ばれたかを記録する。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -16,8 +15,7 @@ import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 const LAUNCHER = fileURLToPath(new URL("./ccmsg", import.meta.url));
 
 /** Places the launcher at `dest` as a hard link rather than a copy. The launcher
- *  only ever creates symlinks — it never rewrites a file — so every fixture copy
- *  can share the repo's inode, and sharing it is what keeps these tests fast on
+ *  never writes to its own file, so every fixture copy can share the repo's inode, and sharing it is what keeps these tests fast on
  *  macOS: a copy is a new inode, and the first exec of a new inode waits for
  *  Gatekeeper (minutes under load; see packages/testkit/src/mock-bin.ts). Falls
  *  back to copying when a link is impossible (e.g. across filesystems). */
@@ -35,7 +33,6 @@ interface Fixture {
   base: string;
   userBin: string;
   stubBin: string;
-  devCheckoutBin: string;
   v1: string; // .../cache/ccmsg/0.0.1/bin/ccmsg
   v2: string; // .../cache/ccmsg/0.0.2/bin/ccmsg
   cleanup: () => void;
@@ -72,16 +69,10 @@ function makeFixture(): Fixture {
     '#!/usr/bin/env bash\nprintf \'%s\\n\' "$2" >> "$CCMSG_TEST_BUN_LOG"\nexit 0\n',
   );
 
-  const devCheckoutBin = path.join(base, "devcheckout", "bin");
-  fs.mkdirSync(devCheckoutBin, { recursive: true });
-  const devDest = path.join(devCheckoutBin, "ccmsg");
-  linkLauncher(devDest);
-
   return {
     base,
     userBin,
     stubBin,
-    devCheckoutBin,
     v1,
     v2,
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
@@ -131,19 +122,10 @@ function linkTarget(p: string): string | null {
   }
 }
 
-describe("bin/ccmsg self-exec pure decisions", () => {
-  test("launcher semver comparison follows the shared newer-wins ordering", () => {
-    // Numeric major/minor/patch order and release-over-prerelease are the complete
-    // version domain emitted by bump-semver, so these cases fix the launcher copy.
-    expect(runFunction("__ccmsg_version_compare", ["2.0.0", "1.9.9"]).out).toBe("1");
-    expect(runFunction("__ccmsg_version_compare", ["1.2.3", "1.2.3"]).out).toBe("0");
-    expect(runFunction("__ccmsg_version_compare", ["1.2.3-a", "1.2.3"]).out).toBe("-1");
-    expect(runFunction("__ccmsg_version_compare", ["1.2.3", "1.2.3-a"]).out).toBe("1");
-  }, 30_000);
-
-  test("親 directory の symlink も解決した物理 realpath を比較に使う", () => {
-    // A stable PATH directory may itself be a symlink; lexical normalization alone
-    // would misclassify the same executable as a different path.
+describe("bin/ccmsg resolves its own real path", () => {
+  test("親 directory の symlink も解決した物理 realpath を返す", () => {
+    // A stable PATH directory may itself be a symlink; the launcher finds its
+    // plugin root from the physical path, not the lexical one.
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-realpath-"));
     try {
       const realDir = path.join(base, "real");
@@ -158,45 +140,18 @@ describe("bin/ccmsg self-exec pure decisions", () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   }, 30_000);
-
-  test("realpath が同一なら redirect しない", () => {
-    // PATH lookup が自分自身を指す通常起動は exec せず、そのプロセスで続行する。
-    const self = "/cache/ccmsg/1.2.3/bin/ccmsg";
-    expect(runFunction("__ccmsg_should_self_exec", [self, self]).code).not.toBe(0);
-  }, 30_000);
-
-  test("PATH 側 realpath の semver が新しい時だけ redirect する", () => {
-    // Path difference alone is insufficient: only a monotonic version advance may exec.
-    const self = "/cache/ccmsg/1.2.3/bin/ccmsg";
-    expect(
-      runFunction("__ccmsg_should_self_exec", [self, "/cache/ccmsg/1.2.4/bin/ccmsg"]).code,
-    ).toBe(0);
-    expect(
-      runFunction("__ccmsg_should_self_exec", [self, "/cache/ccmsg/1.2.2/bin/ccmsg"]).code,
-    ).not.toBe(0);
-  }, 30_000);
 });
 
-describe("bin/ccmsg self-exec", () => {
-  test("古い plugin cache 実体から PATH 上の新版へ exec する", () => {
-    // The bun stub records which version's packages/cli entry ultimately runs.
+// DR-0032 §2.2-4: the launcher runs the CLI of the plugin it belongs to and
+// leaves the `ccmsg` on PATH alone. The fixture's cache layout
+// (`.../ccmsg/<version>/bin/ccmsg`) is one a version-reading launcher would
+// recognise, so a launcher that went back to following PATH fails here.
+describe("bin/ccmsg stays in its own plugin (DR-0032 §2.2-4)", () => {
+  test("PATH に新しい版の ccmsg があっても、起動した launcher の版の CLI を動かす", () => {
     const f = makeFixture();
     try {
       fs.symlinkSync(f.v2, path.join(f.userBin, "ccmsg"));
       const result = run(f, f.v1);
-      expect(result.code).toBe(0);
-      expect(path.normalize(result.cliEntry)).toContain("/ccmsg/0.0.2/packages/cli/src/index.ts");
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("CCMSG_NO_SELF_EXEC=1 は PATH 上の新版への exec を無効化する", () => {
-    // Tests can pin the working copy process even when an installed ccmsg is newer.
-    const f = makeFixture();
-    try {
-      fs.symlinkSync(f.v2, path.join(f.userBin, "ccmsg"));
-      const result = run(f, f.v1, { CCMSG_NO_SELF_EXEC: "1" });
       expect(result.code).toBe(0);
       expect(path.normalize(result.cliEntry)).toContain("/ccmsg/0.0.1/packages/cli/src/index.ts");
     } finally {
@@ -204,94 +159,13 @@ describe("bin/ccmsg self-exec", () => {
     }
   }, 30_000);
 
-  test("PATH に ccmsg が無ければ起動元の実体で続行する", () => {
-    // Fail-open keeps absolute plugin-cache invocations usable before PATH install.
-    const f = makeFixture();
-    try {
-      const result = run(f, f.v1);
-      expect(result.code).toBe(0);
-      expect(path.normalize(result.cliEntry)).toContain("/ccmsg/0.0.1/packages/cli/src/index.ts");
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-});
-
-describe("bin/ccmsg self-update (DR-0007 §2)", () => {
-  test("新しい版からの実行で PATH の symlink が張り替わる", () => {
+  test("PATH の ccmsg の symlink を、起動した launcher が新しい版でも書き換えない", () => {
     const f = makeFixture();
     try {
       const userCcmsg = path.join(f.userBin, "ccmsg");
       fs.symlinkSync(f.v1, userCcmsg);
       run(f, f.v2);
-      expect(linkTarget(userCcmsg)).toBe(fs.realpathSync(f.v2));
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("古い版から実行しても PATH の symlink は退行しない", () => {
-    const f = makeFixture();
-    try {
-      const userCcmsg = path.join(f.userBin, "ccmsg");
-      fs.symlinkSync(f.v2, userCcmsg);
-      run(f, f.v1);
-      expect(linkTarget(userCcmsg)).toBe(f.v2);
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("PATH の ccmsg が versioned cache 外を指す symlink なら不干渉", () => {
-    const f = makeFixture();
-    try {
-      const userCcmsg = path.join(f.userBin, "ccmsg");
-      const devEntry = path.join(f.devCheckoutBin, "ccmsg");
-      fs.symlinkSync(devEntry, userCcmsg);
-      run(f, f.v2);
-      expect(linkTarget(userCcmsg)).toBe(devEntry);
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("PATH の ccmsg が symlink でない (実ファイル) なら不干渉", () => {
-    const f = makeFixture();
-    try {
-      const userCcmsg = path.join(f.userBin, "ccmsg");
-      // A real copy, not a hard link: this test asserts the file was left alone,
-      // which only means something if it is its own inode. It is never exec'd
-      // (the launcher run below is f.v2), so it costs no Gatekeeper evaluation.
-      fs.copyFileSync(f.v1, userCcmsg);
-      fs.chmodSync(userCcmsg, 0o755);
-      run(f, f.v2);
-      expect(fs.lstatSync(userCcmsg).isSymbolicLink()).toBe(false);
-      // 内容も書き換わっていない (最初にコピーしたファイルのまま)
-      expect(fs.readFileSync(userCcmsg, "utf8")).toBe(fs.readFileSync(f.v1, "utf8"));
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("dev checkout (unversioned path) からの実行では不発火", () => {
-    const f = makeFixture();
-    try {
-      const userCcmsg = path.join(f.userBin, "ccmsg");
-      fs.symlinkSync(f.v1, userCcmsg);
-      const devEntry = path.join(f.devCheckoutBin, "ccmsg");
-      run(f, devEntry);
       expect(linkTarget(userCcmsg)).toBe(f.v1);
-    } finally {
-      f.cleanup();
-    }
-  }, 30_000);
-
-  test("PATH に ccmsg が無ければ何も作らない (best-effort no-op)", () => {
-    const f = makeFixture();
-    try {
-      const userCcmsg = path.join(f.userBin, "ccmsg");
-      run(f, f.v2);
-      expect(fs.existsSync(userCcmsg)).toBe(false);
     } finally {
       f.cleanup();
     }
@@ -329,8 +203,7 @@ describe("bin/ccmsg __ccmsg_ensure_deps", () => {
         log: fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",
       };
     } finally {
-      // log は返却済み文字列に読み込み済みなので dir ごと消してよい
-      setTimeout(() => fs.rmSync(dir, { recursive: true, force: true }), 0);
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   }
 
@@ -373,9 +246,10 @@ describe("bin/ccmsg __ccmsg_ensure_deps", () => {
 });
 
 describe("bin/ccmsg deps self-heal from a PATH symlink", () => {
-  // PATH には versioned cache への symlink を置く運用 (DR-0007)。ensure_deps の
-  // root は resolve_symlink 済みの実体パスから導出するので、symlink 経由の起動
-  // でも install は実体 cache root で走る — その合成を launcher 全体で固定する。
+  // shell から使う時は PATH や alias に versioned cache の launcher への symlink を
+  // 置く。ensure_deps の root は resolve_symlink 済みの実体パスから導出するので、
+  // symlink 経由の起動でも install は実体 cache root で走る — その合成を launcher
+  // 全体で固定する。
   test("symlink 起動でも実体 cache root に install が走る", () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-symheal-"));
     try {
@@ -399,7 +273,7 @@ describe("bin/ccmsg deps self-heal from a PATH symlink", () => {
       fs.symlinkSync(dest, link);
       const proc = Bun.spawnSync({
         cmd: [link, "status"],
-        env: { PATH: `${stubBin}:/usr/bin:/bin`, CCMSG_NO_SELF_EXEC: "1" },
+        env: { PATH: `${stubBin}:/usr/bin:/bin` },
         stdout: "ignore",
         stderr: "ignore",
       });

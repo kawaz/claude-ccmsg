@@ -147,8 +147,6 @@ interface Fake {
   /** The runs that asked the harness pid. */
   /** What each run got on standard input, by the index of the run. */
   stdins: (string | undefined)[];
-  /** The env each run was given, by the index of the run. */
-  envs: (Record<string, string> | undefined)[];
   spawns: { argv: readonly string[]; stream: ReturnType<typeof controlledStream> }[];
   timers: Timer[];
   hooks: HookTable;
@@ -212,7 +210,6 @@ function fakeEngine(
   const composer = { text: options.draft ?? "" };
   const runs: string[][] = [];
   const stdins: (string | undefined)[] = [];
-  const envs: (Record<string, string> | undefined)[] = [];
   const spawns: Fake["spawns"] = [];
   const timers: Timer[] = [];
   const sid = { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" };
@@ -284,7 +281,6 @@ function fakeEngine(
         }
         runs.push([...argv]);
         stdins.push(init?.stdin);
-        envs.push(init?.env);
         if (argv[0] === "hyoui") {
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
@@ -338,7 +334,6 @@ function fakeEngine(
     begins,
     runs,
     stdins,
-    envs,
     spawns,
     timers,
     hooks: emptyTable(),
@@ -1137,9 +1132,6 @@ describe("requests the module answers without running prompt.send", () => {
     };
     expect(reply).toEqual({ id: "d1", ok: true, result });
     expect(fake.runs[0]).toEqual(["/plugin/bin/ccmsg", "version"]);
-    // The launcher must not hand over to a newer ccmsg on PATH, whose version
-    // would not be this module's.
-    expect(fake.envs[0]).toEqual({ CCMSG_NO_SELF_EXEC: "1" });
   });
 
   test("describe without a version when ccmsg cannot say", async () => {

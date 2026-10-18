@@ -574,15 +574,12 @@ async function promptSend(
 }
 
 /** describe's result. The version is the one `ccmsg` beside this module
- * prints; left out when it cannot be had. `CCMSG_NO_SELF_EXEC` keeps that
- * launcher from handing over to a newer ccmsg on PATH, which would print its
- * own version rather than this plugin's. (`$.process.run`'s `env` is laid
- * over the session's environment, not in place of it.) */
+ * prints (the launcher runs its own plugin's CLI, DR-0032 §2.2-4); left out
+ * when it cannot be had. */
 async function describe($: Engine): Promise<DescribeResult> {
   const described: DescribeResult = { v: [SIDECAR_REQUEST_VERSION], ops: [...SIDECAR_OP_NAMES] };
   try {
     const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "version"], {
-      env: { CCMSG_NO_SELF_EXEC: "1" },
       timeoutMs: REPLY_TIMEOUT_MS,
     });
     const version = run.stdout.trim();

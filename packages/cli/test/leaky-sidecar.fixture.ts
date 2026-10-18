@@ -24,7 +24,7 @@ test("starts a sidecar and leaves it running", async () => {
       String(Date.now()),
     ],
     {
-      env: { ...process.env, CCMSG_STATE_DIR: stateDir, CCMSG_NO_SELF_EXEC: "1" },
+      env: { ...process.env, CCMSG_STATE_DIR: stateDir },
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

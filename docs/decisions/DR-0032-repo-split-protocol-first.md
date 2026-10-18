@@ -36,6 +36,10 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
    で決め、参照 0 / テスト未 import の部品は移植しない
 4. 新系を入れる前に、旧 plugin の最終 patch で **PATH への symlink と「PATH の新版へ self-exec」
    (DR-0007) を止める**。旧系は plugin cache 内の絶対パスで閉じ、PATH の `ccmsg` は新系が専有する(旧セッションの hook / skill / `reply_via` は既に絶対パスを使っている)
+   - **決定 (2026-10-18、実装済み)**: launcher (`bin/ccmsg`) は自分の plugin の CLI だけを起動する。PATH の `ccmsg` へ self-exec せず、PATH の symlink も書き換えない (DR-0007 §2 の自己更新と §4 の注記の self-exec を止める)。v2 の有無に依らない v1 自身の理由で決める:
+     - hook と skill は plugin root の絶対パスで launcher を起動するので、どの版が動くかは Claude Code が解決した plugin root で決まる。PATH の `ccmsg` は利用者が置くもので、名前が同じ別の配布物 (別の plugin の CLI や手書きの wrapper) が占めることもある。版を比べて PATH 側へ exec すると、plugin の外にある物が hook の動作を決め、名前が同じだけの別物に hook を渡しうる
+     - 版は cache のパスの形 (`<marketplace>/<plugin>/<version>`) から読むしかなく、marketplace や plugin の名前が変わると黙って読めなくなる (regex を今の名前に合わせても次の改名で同じことが起きる)
+     - shell から使う時は、使いたい版の launcher を alias か PATH 上の symlink で指し、plugin を update したら指し直す。この手動の張り直しが正規の手順 (README の Install)
 5. **切替は config home (= instance) 単位で一気に**行う: その config home で旧 marketplace の plugin を
    disable し、`ccmsg plugin install claude --config-home <dir>` を入れる。同じ config home に 2 種類のplugin が同時に有効な期間を作らない。走行中の旧セッションは subscribe の Monitor と絶対パスで寿命まで旧系と話せる。gateway の通知先 (webhook) は新 instance を追加登録する
 6. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の

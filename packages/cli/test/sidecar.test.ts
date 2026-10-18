@@ -249,7 +249,6 @@ function sidecarEnv(stateDir: string): Record<string, string> {
   return {
     ...process.env,
     CCMSG_STATE_DIR: stateDir,
-    CCMSG_NO_SELF_EXEC: "1",
   };
 }
 
@@ -465,7 +464,6 @@ async function startShortDaemon(): Promise<DaemonCtx> {
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
-      CCMSG_NO_SELF_EXEC: "1",
     },
   };
 }

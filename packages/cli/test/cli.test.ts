@@ -38,7 +38,6 @@ function makeEnv(): { env: CliEnv; cleanup: () => void } {
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
       // Pin every spawned CLI to this working copy even if PATH has a newer install.
-      CCMSG_NO_SELF_EXEC: "1",
     },
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
   };

@@ -50,7 +50,6 @@ function makeFixture(exitCode = 0): Fixture {
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
-      CCMSG_NO_SELF_EXEC: "1",
       CCMSG_SAY_BIN: sayBin,
     },
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
