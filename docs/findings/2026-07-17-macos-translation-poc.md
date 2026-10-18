@@ -149,6 +149,21 @@ macOS 26 の同じ検証機で、daemon が使う helper (`packages/translate-he
 
 段落ごとに送って連続する改行を畳む daemon の翻訳サービスを通すと、上の 3 つの改行の例は `\n` 区切りのまま返った。
 
+### OS の on-device モデルが混んでいる時の所要と、返らない長文 (2026-10-18)
+
+翻訳の推論は OS の on-device モデル (modelmanagerd 配下) を OS 自身の文章解析 (textunderstandingd の TextPersonExtraction、ほぼ 1 時間ごとに数分) と共有している。daemon の翻訳サービス (既定の watchdog) で短い 1 文を途切れなく送り続け、解析の開始 (modelmanagerd のログ) から 4 分間を測った。
+
+| 項目 | 値 |
+|---|---|
+| 翻訳した文 | 315 (成功 314、watchdog の kill 1) |
+| 成功の所要 | p50 0.63 s / p90 0.67 s / p99 3.6 s / 最大 10.8 s |
+| 遅かったもの | 解析の開始から 50 秒の間に 10.8 / 5.0 / 7.9 / 6.5 / 3.6 s。その間の 1 件が 11 s の期限 (当時の短い入力の値) で kill された |
+| 同じ日の別の解析の時間帯 (modelmanagerd のログ) | 12.5 / 30.6 / 13.2 / 10.5 / 17.0 s |
+
+解析が走っていない時は 1 文 0.5〜0.7 s。CPU の負荷だけでは遅くならない (load average 27 で 1.2〜1.6 s)。
+
+返らない長文: 14.7k 文字の 1 段落を helper に送ると、modelmanagerd に推論の request が約 2 分で 208 件作られた後に止まり、推論のプロセスの CPU が 0 % のまま 12 分経っても答えが返らなかった (helper を kill して打ち切り)。その間 helper の stdout / stderr には何も出ず、プロセスは生きていた。待たされているだけの request と外から見分ける手がかりは無く、daemon の watchdog は固定の期限 (入力の長さに比例) で判断している (`packages/daemon/src/translate-helper.ts` の `WATCHDOG_BASE_MS`)。
+
 ### 未インストール言語モデル
 
 availability を調べた候補のうち en→ar / en→ru が `supported`、en→ja / fr / de / es / ko / zh-Hans が `installed` だった。最初の未インストール候補 en→ar で直接 session を準備した結果:

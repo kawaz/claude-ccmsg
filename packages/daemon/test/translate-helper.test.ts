@@ -424,9 +424,22 @@ for await (const line of lines) {
 });
 
 describe("translateWatchdogTimeoutMs", () => {
-  // Deadline scales with input length: 10s base + 1s per 100 chars, capped at
-  // 120s (measured basis: 1 sentence 1.8s, 10k chars 89s — the curve leaves
-  // real requests comfortable margin while bounding a wedge to 2 minutes).
+  // Deadline scales with input length: a base + 1s per 100 chars, capped
+  // (measured basis in translate-helper.ts's WATCHDOG_BASE_MS doc: a short
+  // sentence ~0.6s alone and up to 30.6s while the OS's text analysis shares
+  // the on-device model, 10k chars 89s).
+  //
+  // A waiting request must not be taken for a wedged one: the slowest
+  // translation of one sentence observed while the model was contended
+  // (docs/findings/2026-07-17-macos-translation-poc.md) has to
+  // finish inside the deadline of a one-paragraph request.
+  test("a one-sentence request's deadline outlasts the slowest wait observed on a contended model", () => {
+    const slowestContendedSentenceMs = 30_620;
+    expect(
+      translateWatchdogTimeoutMs("This is one sentence of a thinking block.".length),
+    ).toBeGreaterThan(slowestContendedSentenceMs);
+  });
+
   test("empty input gets the base deadline", () => {
     expect(translateWatchdogTimeoutMs(0)).toBe(WATCHDOG_BASE_MS);
   });
@@ -437,9 +450,8 @@ describe("translateWatchdogTimeoutMs", () => {
   });
 
   test("very large input is capped at the maximum deadline", () => {
-    // 14.7k chars (the real wedge case) maps under the cap boundary formula:
-    // 10s + 147s would exceed 120s, so the cap applies.
-    expect(translateWatchdogTimeoutMs(14_700)).toBe(WATCHDOG_MAX_MS);
+    const charsAtCap = ((WATCHDOG_MAX_MS - WATCHDOG_BASE_MS) / WATCHDOG_PER_100_CHARS_MS) * 100;
+    expect(translateWatchdogTimeoutMs(charsAtCap + 1)).toBe(WATCHDOG_MAX_MS);
     expect(translateWatchdogTimeoutMs(1_000_000)).toBe(WATCHDOG_MAX_MS);
   });
 });
@@ -472,14 +484,17 @@ realHelperTest(
   },
 );
 
-/** How long the real translation below may take before the service gives up.
- * Translation.framework runs on the OS's shared on-device model: alone it
- * answers this batch in ~1s, but while the OS's own periodic text analysis
- * uses the model a request was measured at 10-30s (issue
- * just-test-one-timeout-unidentified). The deadline only has to tell a wedged
- * helper from a queued one; the watchdog's own behaviour is covered by the
- * mock-helper tests above. */
-const REAL_TRANSLATION_DEADLINE_MS = 25_000;
+const REAL_TRANSLATION_TEXTS = [
+  "The build completed successfully.ここから日本語です。",
+  "これは日本語です。",
+];
+/** The real translation below runs under the service's own default deadline
+ * (translateWatchdogTimeoutMs): Translation.framework runs on the OS's shared
+ * on-device model, so a slow answer here is the same wait the product
+ * accepts, and only what the product would call wedged fails the test. */
+const REAL_TRANSLATION_DEADLINE_MS = translateWatchdogTimeoutMs(
+  REAL_TRANSLATION_TEXTS.reduce((n, text) => n + text.length, 0),
+);
 
 realHelperTest(
   "the daemon's translate service translates a mixed-text batch with the built Swift helper",
@@ -487,14 +502,9 @@ realHelperTest(
     // Default source and binary paths, the persistent child, JSONL id
     // correlation and the daemon's response parser — everything the daemon's
     // translate op runs, except the op plumbing (translate-op.test.ts).
-    const service = createTranslateService({
-      watchdogTimeoutMs: () => REAL_TRANSLATION_DEADLINE_MS,
-    });
+    const service = createTranslateService();
     services.push(service);
-    const reply = await service.translate([
-      "The build completed successfully.ここから日本語です。",
-      "これは日本語です。",
-    ]);
+    const reply = await service.translate(REAL_TRANSLATION_TEXTS);
     if (!reply.ok) throw new Error(`translate failed: ${reply.code}: ${reply.msg}`);
     expect(reply.results).toHaveLength(2);
     const [first, second] = reply.results;

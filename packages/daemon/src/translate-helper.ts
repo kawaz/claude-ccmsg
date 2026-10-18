@@ -54,15 +54,29 @@ export interface TranslateServiceOptions {
   watchdogTimeoutMs?: (totalChars: number) => number;
 }
 
-/** Watchdog budget: Translation.framework answers a short text in ~2s but its
- * latency grows with input size (measured 2026-07-18: 1 sentence 1.8s, 10k
- * chars 89s, 14.7k chars never returned), so the deadline scales with input
- * length. A request that outlives its deadline is assumed wedged — the helper
- * process gives no partial progress signal, so killing it is the only way to
- * unblock the queue (the next request respawns a fresh helper). */
-export const WATCHDOG_BASE_MS = 10_000;
+/** Watchdog budget. A request that outlives its deadline is taken as wedged:
+ * the helper is killed so the queue behind it moves (the next request
+ * respawns a fresh helper).
+ *
+ * Design rationale: a fixed deadline, not a judgement of whether the helper
+ * is still making progress, because nothing the daemon can see tells a
+ * wedged request from a waiting one. Translation.framework's
+ * `translations(from:)` is a single await with no progress of its own, the
+ * helper writes nothing to stdout or stderr until it answers, and its
+ * process is alive in both cases. Wedges are real: a 14.7k-char paragraph
+ * stopped producing inference requests after about two minutes and had not
+ * answered after twelve, with the OS's inference service idle (measured
+ * 2026-10-18). Waiting is real too: the on-device model is shared with the
+ * OS's own periodic text analysis, during which a one-sentence translation
+ * took up to 30.6 s instead of ~0.6 s (2026-10-18; 314 sentences translated
+ * through one analysis window: p50 0.63 s, p99 3.6 s, max 10.8 s). The base
+ * therefore outlasts the slowest wait observed with a 2x margin, and the
+ * per-length part keeps the measured cost of long inputs (10k chars in 89 s,
+ * 2026-07-18) under the deadline. The cap bounds how long a wedged long
+ * input holds up the queue (docs/findings/2026-07-17-macos-translation-poc.md). */
+export const WATCHDOG_BASE_MS = 60_000;
 export const WATCHDOG_PER_100_CHARS_MS = 1_000;
-export const WATCHDOG_MAX_MS = 120_000;
+export const WATCHDOG_MAX_MS = 240_000;
 
 export function translateWatchdogTimeoutMs(totalChars: number): number {
   return Math.min(
