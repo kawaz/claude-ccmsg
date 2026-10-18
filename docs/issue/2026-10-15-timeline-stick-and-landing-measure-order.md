@@ -1,6 +1,6 @@
 ---
 title: Timeline の末尾追従と位置への着地が、内容が伸びた後・着地の前の測り直しに引きずられる可能性 (未検証)
-status: open
+status: wip
 category: bug
 created: 2026-10-15T03:10:09+09:00
 last_read: 2026-10-18T14:08:50+09:00
