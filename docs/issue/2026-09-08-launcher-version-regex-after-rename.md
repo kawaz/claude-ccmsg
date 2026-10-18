@@ -3,7 +3,7 @@ title: launcher-version-regex-after-rename
 status: open
 category: bug
 created: 2026-09-08T12:48:00+09:00
-last_read:
+last_read: 2026-10-18T17:37:18+09:00
 open_entered: 2026-09-08T12:48:00+09:00
 wip_entered:
 blocked_entered:
