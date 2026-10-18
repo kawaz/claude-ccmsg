@@ -26,8 +26,8 @@ import { createKeyedSerial } from "./serial.ts";
 
 /** What one delivery came to, with why for a message that did not arrive.
  *
- * - `no_peer_socket`: nothing to write to — no state file for the session in
- *   that config dir, a harness speaking another peer protocol, or no token
+ * - `no_peer_socket`: nothing to write to, and `lookup` says which part of
+ *   the session's files was missing (PeerSocketLookup)
  * - `no_status_socket`: this side could not open the socket the recipient
  *   reports a refusal to, so nothing was written — a write whose refusal could
  *   not be heard would be called delivered without knowing it was
@@ -39,9 +39,20 @@ import { createKeyedSerial } from "./serial.ts";
  * cannot be told, and sending it again may deliver it twice. */
 export type InjectResult =
   | { outcome: "delivered" }
-  | { outcome: "unavailable"; cause: "no_peer_socket" | "no_status_socket" | "unreachable" }
+  | { outcome: "unavailable"; cause: "no_peer_socket"; lookup: PeerSocketLookup }
+  | { outcome: "unavailable"; cause: "no_status_socket" | "unreachable" }
   | { outcome: "refused" }
   | { outcome: "unconfirmed" };
+
+/** Why the session's peer socket was not found in its config dir's
+ * `sessions/`:
+ * - `scan_timed_out`: the files were not all read within INJECT_SCAN_MS
+ * - `no_state_file`: `sessions/` cannot be listed, or no readable
+ *   `<pid>.json` names the session (in that process, when one is named)
+ * - `no_socket`: the state file names no socket, or one speaking another
+ *   peer protocol
+ * - `no_key`: no readable `<pid>.<hex>.key` holds the token */
+export type PeerSocketLookup = "scan_timed_out" | "no_state_file" | "no_socket" | "no_key";
 
 /** One `user` frame's payload: `mid` names it to the harness (and to the
  * refusal it may answer), `content` is the envelope the model reads. */
@@ -242,9 +253,13 @@ export class PeerInjector {
   ): Promise<InjectResult> {
     const sessionsDir = path.join(configDir, "sessions");
     const target = await this.#target(sessionsDir, sid, pid);
-    if (target === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
+    if (typeof target === "string") {
+      return { outcome: "unavailable", cause: "no_peer_socket", lookup: target };
+    }
     const token = await this.#token(sessionsDir, target.pid);
-    if (token === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
+    if (token.found === undefined) {
+      return { outcome: "unavailable", cause: "no_peer_socket", lookup: token.lookup };
+    }
     const inbox = await this.#inbox(target.socketPath);
     if (inbox === undefined) return { outcome: "unavailable", cause: "no_status_socket" };
     // Heard from before the write; the refusal window starts once the write
@@ -252,7 +267,7 @@ export class PeerInjector {
     const watching = inbox.watch(frame.mid);
     const written = await writeSocket(
       target.socketPath,
-      injectFrames(sid, token, frame, `uds:${inbox.path}`),
+      injectFrames(sid, token.found, frame, `uds:${inbox.path}`),
       this.#writeMs,
     );
     if (written !== "written") {
@@ -300,49 +315,56 @@ export class PeerInjector {
     sessionsDir: string,
     sid: string,
     runPid: number | undefined,
-  ): Promise<{ pid: number; socketPath: string } | undefined> {
+  ): Promise<{ pid: number; socketPath: string } | PeerSocketLookup> {
     const rows = await this.#rows(sessionsDir, /^\d+\.json$/, ClaudeSessionFileTextSchema);
-    for (const row of rows ?? []) {
+    if (typeof rows === "string") return rows;
+    for (const row of rows) {
       if (row === undefined || row.sessionId !== sid) continue;
       if (runPid !== undefined && row.pid !== runPid) continue;
       const { pid, messagingSocketPath: socketPath, peerProtocol } = row;
-      if (socketPath === undefined || socketPath === "") return undefined;
-      return peerProtocol === PEER_PROTOCOL ? { pid, socketPath } : undefined;
+      if (socketPath === undefined || socketPath === "") return "no_socket";
+      return peerProtocol === PEER_PROTOCOL ? { pid, socketPath } : "no_socket";
     }
-    return undefined;
+    return "no_state_file";
   }
 
   /** Found by the pid the key is named after: the digest part of
    * `<pid>.<hex>.key` is not rebuilt here. */
-  async #token(sessionsDir: string, pid: number): Promise<string | undefined> {
+  async #token(
+    sessionsDir: string,
+    pid: number,
+  ): Promise<{ found: string } | { found?: undefined; lookup: PeerSocketLookup }> {
     const rows = await this.#rows(
       sessionsDir,
       new RegExp(`^${pid}\\.[0-9a-f]+\\.key$`),
       SessionKeyTextSchema,
     );
-    for (const row of rows ?? []) {
+    if (typeof rows === "string") return { lookup: rows === "scan_timed_out" ? rows : "no_key" };
+    for (const row of rows) {
       const token = row?.peerToken;
-      if (token !== undefined && token !== "") return token;
+      if (token !== undefined && token !== "") return { found: token };
     }
-    return undefined;
+    return { lookup: "no_key" };
   }
 
   /** The files in `sessionsDir` named like `pattern`, each read with
-   * `schema`: undefined for one that cannot be read or does not read. */
+   * `schema`: undefined for one that cannot be read or does not read. Why
+   * there are none to look at when `sessionsDir` cannot be listed or the
+   * files are not read in time. */
   async #rows<S extends v.GenericSchema>(
     sessionsDir: string,
     pattern: RegExp,
     schema: S,
-  ): Promise<(Output<S> | undefined)[] | undefined> {
+  ): Promise<(Output<S> | undefined)[] | "no_state_file" | "scan_timed_out"> {
     let names: string[];
     try {
       names = await readdir(sessionsDir);
     } catch {
-      return undefined;
+      return "no_state_file";
     }
     const wanted = names.filter((name) => pattern.test(name));
-    const late = Promise.withResolvers<undefined>();
-    const deadline = setTimeout(() => late.resolve(undefined), this.#scanMs);
+    const late = Promise.withResolvers<"scan_timed_out">();
+    const deadline = setTimeout(() => late.resolve("scan_timed_out"), this.#scanMs);
     try {
       return await Promise.race([
         Promise.all(wanted.map((name) => readWith(schema, path.join(sessionsDir, name)))),

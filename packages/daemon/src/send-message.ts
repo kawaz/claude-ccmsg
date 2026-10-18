@@ -229,7 +229,9 @@ async function sendToPeer(
       const result = await deps.deliver(run, { mid, content });
       deps.log(
         `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (send_message): ${result.outcome}` +
-          (result.outcome === "unavailable" ? ` (${result.cause})` : ""),
+          (result.outcome === "unavailable"
+            ? ` (${result.cause}${result.cause === "no_peer_socket" ? `: ${result.lookup}` : ""})`
+            : ""),
       );
       return result;
     }),

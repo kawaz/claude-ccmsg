@@ -105,8 +105,8 @@ describe("sendToPeers", () => {
     const runs = [run(A, 2), run(A, 4), run(B, 3), run(B, 5)];
     const answers: Record<number, InjectResult> = {
       2: { outcome: "unconfirmed" },
-      4: { outcome: "unavailable", cause: "no_peer_socket" },
-      3: { outcome: "unavailable", cause: "no_peer_socket" },
+      4: { outcome: "unavailable", cause: "no_peer_socket", lookup: "no_state_file" },
+      3: { outcome: "unavailable", cause: "no_peer_socket", lookup: "no_state_file" },
       5: { outcome: "refused" },
     };
     expect(
@@ -336,9 +336,12 @@ describe("send_message through the daemon", () => {
       await servedRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
       cleanups.push(() => servedRun.close());
       const b = await sessionWithConfig(serving, SENDER);
-      expect(await send(b, { session_id: PEER }, "served")).toEqual([
-        { sid: PEER, outcome: "delivered" },
-      ]);
+      const served = await send(b, { session_id: PEER }, "served");
+      if (served[0]?.outcome !== "delivered") {
+        // Which lookup failed is in the daemon's log line for the delivery.
+        console.error(fs.readFileSync(path.join(serving.stateDir, "daemon.log"), "utf8"));
+      }
+      expect(served).toEqual([{ sid: PEER, outcome: "delivered" }]);
       expect(parseEnvelope(await hb.nextContent()).body).toBe("served");
     },
     T,

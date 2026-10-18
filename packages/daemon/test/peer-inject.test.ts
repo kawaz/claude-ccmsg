@@ -10,6 +10,7 @@ import {
   writeSocket,
   type InjectFrame,
   type InjectResult,
+  type PeerSocketLookup,
 } from "../src/peer-inject.ts";
 import { defined } from "./helpers.ts";
 import { PEER_TOKEN, fakeHarness as spawnHarness, type FakeHarness } from "./peer-harness.ts";
@@ -60,21 +61,52 @@ describe("PeerInjector", () => {
     expect(await injector.deliver(h.configDir, SID, MESSAGE)).toEqual({ outcome: "refused" });
   });
 
-  test("unavailable: unknown sid, other peerProtocol, no socket, no config dir", async () => {
+  test("unavailable: unknown sid, other peerProtocol, no token, no socket, no config dir", async () => {
     const injector = new PeerInjector();
     cleanups.push(() => injector.close());
-    const noPeer: InjectResult = { outcome: "unavailable", cause: "no_peer_socket" };
+    const noPeer = (lookup: PeerSocketLookup): InjectResult => ({
+      outcome: "unavailable",
+      cause: "no_peer_socket",
+      lookup,
+    });
     const other = fakeHarness({ sid: "someone-else" });
-    expect(await injector.deliver(other.configDir, SID, MESSAGE)).toEqual(noPeer);
+    expect(await injector.deliver(other.configDir, SID, MESSAGE)).toEqual(noPeer("no_state_file"));
     const v2 = fakeHarness({ peerProtocol: 2 });
-    expect(await injector.deliver(v2.configDir, SID, MESSAGE)).toEqual(noPeer);
+    expect(await injector.deliver(v2.configDir, SID, MESSAGE)).toEqual(noPeer("no_socket"));
+    const keyless = fakeHarness();
+    for (const name of fs.readdirSync(path.join(keyless.configDir, "sessions"))) {
+      if (name.endsWith(".key")) fs.rmSync(path.join(keyless.configDir, "sessions", name));
+    }
+    expect(await injector.deliver(keyless.configDir, SID, MESSAGE)).toEqual(noPeer("no_key"));
     const gone = fakeHarness();
     gone.stop();
     expect(await injector.deliver(gone.configDir, SID, MESSAGE)).toEqual({
       outcome: "unavailable",
       cause: "unreachable",
     });
-    expect(await injector.deliver("/nonexistent-pi-config", SID, MESSAGE)).toEqual(noPeer);
+    expect(await injector.deliver("/nonexistent-pi-config", SID, MESSAGE)).toEqual(
+      noPeer("no_state_file"),
+    );
+  });
+
+  // A state file that is never read through (here a FIFO no one writes to)
+  // keeps the scan from finishing: the lookup says the time ran out.
+  test("unavailable: the state files not read in time", async () => {
+    const h = fakeHarness();
+    const fifo = path.join(h.configDir, "sessions", "99.json");
+    expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+    const injector = new PeerInjector({ scanMs: 100 });
+    cleanups.push(() => injector.close());
+    try {
+      expect(await injector.deliver(h.configDir, SID, MESSAGE)).toEqual({
+        outcome: "unavailable",
+        cause: "no_peer_socket",
+        lookup: "scan_timed_out",
+      });
+    } finally {
+      // Opening the FIFO for writing lets the blocked read finish.
+      fs.writeFileSync(fifo, "");
+    }
   });
 
   // The write takes longer than the refusal window: the recipient starts
