@@ -1,6 +1,6 @@
 ---
 title: webui のピン留めセッションの保存形を protocol の SessionSearchHit から切り離す
-status: open
+status: resolved
 category: design
 created: 2026-10-10T13:45:40+09:00
 last_read: 2026-10-18T18:31:07+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T18:46:17+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:webui PinSchema 定義、localStorage は { v: 1, pins }、読み出しは現形と旧形式 SessionSearchHit 配列の union、読めない値は丸ごと捨てて console.warn"]
 blocked_by:
 origin: 自リポ TODO (段 C worker の候補)
 ---
@@ -31,5 +31,5 @@ webui のピン留めセッションは localStorage に protocol の `SessionSe
 
 ## 受け入れ条件
 
-- [ ] ピン用の webui 内スキーマが定義され、保存と読み出しがそれを使う
-- [ ] protocol の `SessionSearchHit` に必須 field を足しても、保存済みのピンが消えない
+- [x] ピン用の webui 内スキーマが定義され、保存と読み出しがそれを使う
+- [x] protocol の `SessionSearchHit` に必須 field を足しても、保存済みのピンが消えない
