@@ -1,6 +1,6 @@
 ---
 title: テスト群の第三者レビュー指摘 (test-suite-review-fresh-eyes) を直す
-status: open
+status: resolved
 category: bug
 created: 2026-10-14T14:18:27+09:00
 last_read: 2026-10-18T13:08:11+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T13:37:52+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:high(1) は issue/webui-session-input-composer-mount-test へ切り出し","done:high(2) 残の cli/test/sidecar.test.ts Bun.sleep(1) は sidecar 側に読み取りの区切りを観測する口が無く未対応"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -52,6 +52,6 @@ commit 07e4ac32 (change wznuytvw) で解消。
 
 ## 受け入れ条件
 
-- [ ] high (1) が解消している
+- [x] high (1) は issue webui-session-input-composer-mount-test (docs/issue/2026-10-18-webui-session-input-composer-mount-test.md) へ切り出した
 - [x] medium (6) が解消している
 - [x] (7)〜(12) が findings に沿って解消している
