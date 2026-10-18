@@ -208,13 +208,13 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       fork_available: true,
     },
   ],
-  agent_input: [
+  user_message: [
     { ok: true, outcome: "appended" },
     { ok: true, outcome: "not_delivered", reason: "not_running" },
     { ok: true, outcome: "not_delivered", reason: "session_changed" },
     { ok: true, outcome: "unconfirmed" },
   ],
-  peer_send: [
+  send_message: [
     { ok: true, results: [] },
     {
       ok: true,
@@ -295,7 +295,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   ],
   session_kill: [{ ok: true, terminated: false }],
   session_rename: [{ ok: true, hyoui_session_id: "h1", title: "t" }],
-  session_input: [
+  user_prompt: [
     { ok: true, outcome: "accepted" },
     { ok: true, outcome: "not_delivered", reason: "no_module" },
     { ok: true, outcome: "not_delivered", reason: "dialog" },
@@ -623,8 +623,8 @@ describe("a reply that is not the op's", () => {
   });
 
   test("an outcome no op answers with is a failure", () => {
-    expect(failure("session_input", { ok: true, outcome: "maybe" })).toContain("outcome");
-    expect(failure("session_input", { ok: true, outcome: "not_delivered", reason: "x" })).toContain(
+    expect(failure("user_prompt", { ok: true, outcome: "maybe" })).toContain("outcome");
+    expect(failure("user_prompt", { ok: true, outcome: "not_delivered", reason: "x" })).toContain(
       "reason",
     );
   });

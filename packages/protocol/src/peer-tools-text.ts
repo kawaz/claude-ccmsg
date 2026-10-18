@@ -8,12 +8,12 @@
 //
 // The hooks module bundles this file, so it imports nothing but the schema
 // files beside it.
-import type { PeerListEntry, PeerSendReason, PeerSendResult } from "./peer-tools.ts";
+import type { PeerListEntry, SendMessageReason, SendMessageResult } from "./peer-tools.ts";
 
 /** The advice for a send whose arrival cannot be told. */
 export const UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
 
-const NOT_DELIVERED: Record<PeerSendReason, string> = {
+const NOT_DELIVERED: Record<SendMessageReason, string> = {
   self: "送り主自身なので送っていない",
   no_module:
     "ccmsg の hooks module が動いていないセッションなので送っていない。そのセッションには ccmsg で届けられない",
@@ -44,7 +44,7 @@ function spelled(session: { sid: string; name?: string; cwd?: string }): string 
 
 /** A send's results, one line per session it matched, after a line that
  * counts them. */
-export function sendResultText(results: readonly PeerSendResult[]): string {
+export function sendResultText(results: readonly SendMessageResult[]): string {
   if (results.length === 0) {
     return "宛先に当たる生きているセッションが無いので、送っていない。peers で今いるセッションを確かめて送り直すか、送るのをやめる";
   }

@@ -1,4 +1,4 @@
-// peer_send and peer_list (DR-0039 §3): the `send` and `peers` tools of a
+// send_message and peer_list (DR-0039 §3): the `send` and `peers` tools of a
 // session's hooks module. A send names its recipients by any of a session's
 // id, directory, name and process; the daemon matches them against the live
 // session runs read afresh (session-runs.ts liveRuns, the same source for the
@@ -9,8 +9,8 @@
 import {
   type PeerListEntry,
   type PeerListInput,
-  type PeerSendReason,
-  type PeerSendResult,
+  type SendMessageReason,
+  type SendMessageResult,
   type PeerTarget,
   renderAddressedDelivery,
   type SessionInputReadiness,
@@ -36,7 +36,7 @@ export interface PeerDeps {
   hasModule(sid: string): boolean;
 }
 
-export interface PeerSendDeps extends PeerDeps {
+export interface SendMessageDeps extends PeerDeps {
   /** What the daemon knows of a session no live run serves. */
   readiness(sid: string): SessionInputReadiness;
   issueMid(): string;
@@ -91,7 +91,7 @@ function spelled(peer: Peer): { sid: string; name?: string; cwd?: string } {
   };
 }
 
-/** The sessions a send could go to, as peer_send matches them. */
+/** The sessions a send could go to, as send_message matches them. */
 export async function listPeers(
   from: string,
   filter: PeerListInput,
@@ -112,8 +112,8 @@ export async function listPeers(
  * the sender, and say what came of it for each. */
 export async function sendToPeers(
   message: { from: string; to: PeerTarget; text: string },
-  deps: PeerSendDeps,
-): Promise<PeerSendResult[]> {
+  deps: SendMessageDeps,
+): Promise<SendMessageResult[]> {
   const { from, to, text } = message;
   const peers = await peersOf(await deps.runs(), deps);
   const matched = await matching(peers, to, deps);
@@ -146,8 +146,8 @@ async function sendToPeer(
   peer: Peer,
   from: string,
   text: string,
-  deps: PeerSendDeps,
-): Promise<PeerSendResult> {
+  deps: SendMessageDeps,
+): Promise<SendMessageResult> {
   if (!deps.hasModule(peer.sid)) {
     return { ...spelled(peer), outcome: "not_delivered", reason: "no_module" };
   }
@@ -159,7 +159,7 @@ async function sendToPeer(
       const content = renderAddressedDelivery({ mid, from, text });
       const result = await deps.deliver(run, { mid, content });
       deps.log(
-        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (peer_send): ${result.outcome}` +
+        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (send_message): ${result.outcome}` +
           (result.outcome === "unavailable" ? ` (${result.cause})` : ""),
       );
       return result;
@@ -180,8 +180,8 @@ async function sendToPeer(
  * with no socket. */
 const FAILURE_ORDER = ["refused", "unreachable", "no_status_socket", "no_peer_socket"] as const;
 
-function failureOf(results: readonly InjectResult[]): PeerSendReason {
-  const causes = new Set<PeerSendReason>(
+function failureOf(results: readonly InjectResult[]): SendMessageReason {
+  const causes = new Set<SendMessageReason>(
     results.flatMap((r) =>
       r.outcome === "refused" ? ["refused"] : r.outcome === "unavailable" ? [r.cause] : [],
     ),

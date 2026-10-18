@@ -1,7 +1,7 @@
 // DR-0035 §5: セッションへの入力の送信結果を、入力欄の振る舞い (文を消すか残すか)
 // と人に見せる文言に落とす pure 層 (components/session-input.ts) の仕様。
 import { describe, expect, test } from "bun:test";
-import type { SessionInputReason } from "@ccmsg/protocol";
+import type { UserPromptReason } from "@ccmsg/protocol";
 import {
   classifySessionInputReply,
   formatSentAt,
@@ -15,7 +15,7 @@ import {
 } from "../src/client/components/session-input.ts";
 import { defined } from "./helpers.ts";
 
-const ALL_REASONS: SessionInputReason[] = [
+const ALL_REASONS: UserPromptReason[] = [
   "dialog",
   "no_composer",
   "refused",
@@ -69,7 +69,7 @@ describe("classifySessionInputReply", () => {
   test("treats a refused request as failed, keeping the daemon's message", () => {
     const got = classifySessionInputReply({
       ok: false,
-      error: { code: "bad_request", msg: "op 'session_input' requires user role" },
+      error: { code: "bad_request", msg: "op 'user_prompt' requires user role" },
     });
     expect(got.kind).toBe("failed");
     expect(got.kind === "failed" && got.message).toContain("requires user role");
@@ -113,7 +113,7 @@ describe("sessionInputNotice", () => {
   // もの (ダイアログを閉じる) はその操作を、環境の対処が要るもの (plugin の
   // 更新、hyoui での起動、対話モード) は具体的な手順を書く。
   test("names the next step for each reason", () => {
-    const detail = (reason: SessionInputReason) =>
+    const detail = (reason: UserPromptReason) =>
       defined(sessionInputNotice({ kind: "not_delivered", reason }), "the notice").detail;
     expect(detail("dialog")).toContain("ダイアログを閉じてから送り直して");
     expect(detail("no_terminal")).toContain("hyoui run 経由で起動し直して");

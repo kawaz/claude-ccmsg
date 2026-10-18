@@ -1,4 +1,4 @@
-// The live runs of the sessions on this machine, as peer_send and peer_list
+// The live runs of the sessions on this machine, as send_message and peer_list
 // (DR-0039 §3) match them: one per harness process, read fresh from Claude
 // Code's state files (`<config dir>/sessions/<pid>.json`) at each request
 // rather than from the agents poll, which may be a poll behind: a session

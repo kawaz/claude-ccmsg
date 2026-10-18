@@ -9,7 +9,7 @@
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import type {
-  AgentInputResponse,
+  UserMessageResponse,
   ErrorResponse,
   SessionBackgroundStatus,
   SessionEnvResponse,
@@ -424,7 +424,7 @@ export function StatusPanel({
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
-  onAgentInput: (agentId: string, text: string) => Promise<AgentInputResponse | ErrorResponse>;
+  onAgentInput: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
 }) {
   const { store } = useApp();
   const cwd = useStoreState(store, (s) => resolveSessionTopbar(s, sid).cwd);

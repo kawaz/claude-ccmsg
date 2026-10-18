@@ -2,8 +2,8 @@
 // 文言に落とす pure な層。SubagentInput はこの結果だけを見る。JSX を通さず
 // bun test から直接叩けるよう .ts に切り出している (session-input.ts と同じ流儀)。
 import type {
-  AgentInputReason,
-  AgentInputResponse,
+  UserMessageReason,
+  UserMessageResponse,
   ErrorResponse,
   SessionSubagent,
 } from "@ccmsg/protocol";
@@ -21,7 +21,7 @@ export function subagentLabel(agent: SessionSubagent, now: number): string {
   return `${head} — turn の途中 (開始から ${String(minutes)} 分)`;
 }
 
-const NOT_DELIVERED: Record<AgentInputReason, string> = {
+const NOT_DELIVERED: Record<UserMessageReason, string> = {
   not_running: "この subagent はもう走っていない (turn が終わった)。届いていない。",
   refused: "subagent の会話への追加が拒まれた。届いていない。",
   no_module: "このセッションは入力の受け口 (ccmsg plugin の module) を持っていない。届いていない。",
@@ -35,12 +35,12 @@ const REPLY_LOST_CODES = new Set(["connection_closed", "request_timeout"]);
 /** 送信の結果: 文を消してよいのは `appended` だけ。 */
 export type AgentInputOutcome =
   | { kind: "appended" }
-  | { kind: "not_delivered"; reason: AgentInputReason; text: string }
+  | { kind: "not_delivered"; reason: UserMessageReason; text: string }
   | { kind: "unconfirmed"; text: string }
   | { kind: "failed"; text: string };
 
 export function classifyAgentInputReply(
-  reply: AgentInputResponse | ErrorResponse,
+  reply: UserMessageResponse | ErrorResponse,
 ): AgentInputOutcome {
   if (!reply.ok) {
     if (REPLY_LOST_CODES.has(reply.error.code)) {

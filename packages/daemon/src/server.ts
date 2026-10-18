@@ -109,9 +109,9 @@ import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
 import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
-import { listPeers, type PeerDeps, sendToPeers } from "./peer-send.ts";
-import { AGENT_INPUT_DEADLINE_MS, agentInput } from "./agent-input.ts";
-import { inputReadiness, productionInputDeps, sessionInput } from "./session-input.ts";
+import { listPeers, type PeerDeps, sendToPeers } from "./send-message.ts";
+import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
+import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
 import {
   callSidecar,
   isProcessAlive,
@@ -199,7 +199,7 @@ interface SessionEntry {
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
    * announced one. Deliberately outside `meta`: it exists to find the
    * session's harness state files (peer injection, the config dirs a
-   * peer_send reads), and `meta` is copied verbatim onto the wire (peers,
+   * send_message reads), and `meta` is copied verbatim onto the wire (peers,
    * ev:"peers") where a bare config dir path would be noise nobody reads. */
   configDir?: string;
   /** ccmsg build / wire generation the latest hello for this sid announced
@@ -329,7 +329,7 @@ export interface Daemon {
   sidecarReplies: SidecarReplies;
   /** The live runs of each session, as their sidecars named them on
    * connections still open (sidecar-runs.ts, sidecar_hello): where
-   * session_input writes, and what input readiness is judged from. */
+   * user_prompt writes, and what input readiness is judged from. */
   sidecarRuns: SidecarRuns;
   /** What each session's hooks module last said of its session
    * (session-facts.ts, session_facts). */
@@ -574,7 +574,7 @@ function maybeBroadcastAgents(
   }
 }
 
-/** `sid`'s input readiness (session-input.ts inputReadiness), judged from the
+/** `sid`'s input readiness (user-prompt.ts inputReadiness), judged from the
  * runs its sidecars named. */
 function readinessOf(daemon: Daemon, sid: string): SessionInputReadiness {
   return inputReadiness(sid, {
@@ -803,7 +803,7 @@ function clientBuildFields(
   };
 }
 
-/** Where peer_send and peer_list read the sessions they match from: the
+/** Where send_message and peer_list read the sessions they match from: the
  * live runs of every config dir the daemon knows, read afresh. */
 function peerDeps(daemon: Daemon): PeerDeps {
   return {
@@ -813,7 +813,7 @@ function peerDeps(daemon: Daemon): PeerDeps {
   };
 }
 
-/** The CLAUDE_CONFIG_DIRs whose sessions a peer_send may reach: those the
+/** The CLAUDE_CONFIG_DIRs whose sessions a send_message may reach: those the
  * agents poll scans, and those sessions announced in hello, each as a realpath
  * as the registry keeps them, so one dir is read once. Like the poll, a
  * daemon that does not poll (a test daemon) scans no config dir of its own
@@ -1189,8 +1189,9 @@ function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
 // uniform "must identify first" rule rather than special-casing these as the
 // sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
-  "peer_send",
+  "send_message",
   "peer_list",
+  "user_message",
   "say",
   "say_read",
   "subscribe",
@@ -1202,7 +1203,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "session_launch",
   "session_kill",
   "session_rename",
-  "session_input",
+  "user_prompt",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -1492,7 +1493,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "peer_send": {
+    case "send_message": {
       // Session role only: the sender is the session whose `send` tool was
       // called (DR-0039 §3), and becomes the envelope's from.
       const id = conn.identity;
@@ -1500,7 +1501,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          "peer_send is sent by a session; a person's input reaches a session through session_input",
+          "send_message is sent by a session; a person's input reaches a session through user_prompt",
         );
         return;
       }
@@ -1822,17 +1823,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "session_input": {
+    case "user_prompt": {
       // user role only (DR-0035 §4): what this op puts into a session is
       // recorded as a person's typing, so no session-role agent may call it.
       if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'session_input' requires user role");
+        sendErr(conn, ErrorCode.bad_request, "op 'user_prompt' requires user role");
         return;
       }
       // Slow reply: it waits for the session's hooks module to reply, up to
-      // SESSION_INPUT_DEADLINE_MS. Other requests on this connection run on
+      // USER_PROMPT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
-      const { tries, ...outcome } = await sessionInput(
+      const { tries, ...outcome } = await userPrompt(
         req.session_id,
         req.text,
         productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
@@ -1846,16 +1847,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "agent_input": {
-      // user role only, as session_input: what it adds is recorded as the
+    case "user_message": {
+      // user role only, as user_prompt: what it adds is recorded as the
       // person's, through the webui (DR-0039 §6).
       if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'agent_input' requires user role");
+        sendErr(conn, ErrorCode.bad_request, "op 'user_message' requires user role");
         return;
       }
-      const { tries, ...outcome } = await agentInput(req.session_id, req.agent_id, req.text, {
+      const { tries, ...outcome } = await userMessage(req.session_id, req.agent_id, req.text, {
         ...productionSidecarDeps(daemon.sidecarReplies),
-        deadlineMs: AGENT_INPUT_DEADLINE_MS,
+        deadlineMs: USER_MESSAGE_DEADLINE_MS,
         runs: daemon.sidecarRuns,
         isRunning: (sid) => daemon.sessions.has(sid),
       });
@@ -1877,7 +1878,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       // A refused reply is logged: the module's own debug log is the only
       // other place it would show, and a late or misaddressed reply is what
-      // explains a session_input that came back unconfirmed.
+      // explains a user_prompt that came back unconfirmed.
       const reply = req.reply;
       if (!daemon.sidecarReplies.take(conn.identity.sid, reply)) {
         daemon.log.warn(

@@ -7,8 +7,8 @@ import type {
   PeerInfo,
   SessionStatusSnapshot,
   SessionInputReadiness,
-  SessionInputReason,
-  SessionInputResponse,
+  UserPromptReason,
+  UserPromptResponse,
 } from "@ccmsg/protocol";
 
 /** 1 回の送信がどう終わったか。
@@ -22,7 +22,7 @@ import type {
  *   依頼を受け付けなかった)。セッションには何も入っていない */
 export type SessionInputOutcome =
   | { kind: "accepted" }
-  | { kind: "not_delivered"; reason: SessionInputReason }
+  | { kind: "not_delivered"; reason: UserPromptReason }
   | { kind: "unconfirmed" }
   | { kind: "failed"; message: string };
 
@@ -38,7 +38,7 @@ const REPLY_LOST_CODES = new Set(["connection_closed", "request_timeout"]);
  * `unconfirmed` に入れる (DR-0035 §5 の「成功も失敗も返らない時」)。それ以外の
  * エラーは daemon が依頼を拒んだもので、セッションには何も届いていない。 */
 export function classifySessionInputReply(
-  reply: SessionInputResponse | ErrorResponse,
+  reply: UserPromptResponse | ErrorResponse,
 ): SessionInputOutcome {
   if (!reply.ok) {
     if (REPLY_LOST_CODES.has(reply.error.code)) return { kind: "unconfirmed" };
@@ -70,7 +70,7 @@ export function shouldClearAfter(outcome: SessionInputOutcome): boolean {
 }
 
 /** 送る前から分かる理由 (daemon の input_readiness) と、送った後に返る同じ
- * 理由 (session_input の reason) で共有する文言。入力欄の近くに先に出す 1 行と、
+ * 理由 (user_prompt の reason) で共有する文言。入力欄の近くに先に出す 1 行と、
  * 届かなかった時の注記が同じ言葉で同じ対処を示す。 */
 const NO_MODULE_DETAIL =
   "このセッションは入力の受け口 (ccmsg plugin の module) を持っていません。plugin を更新してセッションを起動し直してください。";
@@ -133,7 +133,7 @@ export function terminalAbsenceNotice(readiness: SessionInputReadiness | undefin
 /** 届かなかった理由ごとの、何が起きたかと次の行動。人がその場で直せるもの
  * (ダイアログを閉じる等) は先にそれを書き、環境の対処が要るもの (plugin の
  * 更新、起動のし直し) はその具体的な手順を書く。 */
-const REASON_DETAIL: Record<SessionInputReason, string> = {
+const REASON_DETAIL: Record<UserPromptReason, string> = {
   dialog:
     "セッションで選択や確認のダイアログが開いていたため、入力できませんでした。セッションの画面 (Terminal タブなど) でダイアログを閉じてから送り直してください。",
   no_composer:

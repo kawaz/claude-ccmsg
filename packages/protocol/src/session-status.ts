@@ -332,7 +332,7 @@ export const WorkspaceFolderSchema = v.object({
 });
 export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
 
-/** Whether a person's input (session_input, DR-0035) can reach the session
+/** Whether a person's input (user_prompt, DR-0035) can reach the session
  * now, judged before anything is sent from what the send itself depends on.
  * One variant per reason, so a client says why and what to do next:
  *
@@ -347,7 +347,7 @@ export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
  * - `ended`: the session is no longer running
  *
  * A send can still fail for what only the moment of sending shows (a dialog
- * open, the text not submitted); those reasons come back on session_input. */
+ * open, the text not submitted); those reasons come back on user_prompt. */
 export const SessionInputReadinessSchema = v.variant("kind", [
   v.object({ kind: v.literal("ready") }),
   v.object({ kind: v.literal("no_module") }),
@@ -414,7 +414,7 @@ export const SessionStatusSnapshotSchema = v.object({
    * without the hooks module, or before the module said. */
   turn: v.optional(SessionTurnSchema),
   /** The subagents running a turn now, which a person can add a message to
-   * (agent_input). Absent for a session without the hooks module, or before
+   * (user_message). Absent for a session without the hooks module, or before
    * the module said. */
   subagents: v.optional(v.array(SessionSubagentSchema)),
 });

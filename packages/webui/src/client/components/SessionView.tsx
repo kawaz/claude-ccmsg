@@ -425,7 +425,7 @@ export function SessionView({
               sid={sid}
               onKill={(opts) => ws.sessionKill(sid, opts)}
               onLoadEnv={() => ws.sessionEnv(sid)}
-              onAgentInput={(agentId, text) => ws.agentInput(sid, agentId, text)}
+              onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
             />
           ) : hasTranscript ? (
             <p id="empty-state">Status を読み込めません: {statusError}</p>

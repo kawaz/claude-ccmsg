@@ -1808,7 +1808,7 @@ function startRefold(
 export interface SessionStatusSnapshotSources {
   /** Whether a person's input can reach a session now, carried on every
    * snapshot as `input_readiness`. Not read off the transcript: it depends on
-   * the runs the session's sidecars named (session-input.ts inputReadiness). */
+   * the runs the session's sidecars named (user-prompt.ts inputReadiness). */
   inputReadiness?: (sid: string) => SessionInputReadiness;
   /** What the session's hooks module last said of it (session-facts.ts),
    * laid over the transcript's fold (withFacts). */

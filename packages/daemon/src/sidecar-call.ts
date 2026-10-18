@@ -6,7 +6,7 @@
 // arriving here as sidecar_reply. What this file owns is writing a request and
 // matching a reply to the request it names; which runs a session has is
 // sidecar-runs.ts's. What an op's result means belongs to whoever asked for
-// the op (session-input.ts for prompt.send).
+// the op (user-prompt.ts for prompt.send).
 import { randomUUID } from "node:crypto";
 import {
   type Parsed,

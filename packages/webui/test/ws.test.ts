@@ -14,7 +14,7 @@ import {
   KEEPALIVE_IDLE_MS,
   KEEPALIVE_TIMEOUT_MS,
   RECONNECT_DELAYS_MS,
-  SESSION_INPUT_REPLY_TIMEOUT_MS,
+  USER_PROMPT_REPLY_TIMEOUT_MS,
 } from "../src/client/ws.ts";
 import type { Action } from "../src/client/store.ts";
 import {
@@ -860,20 +860,20 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // DR-0035 §1: the input panel sends the text verbatim as session_input (no
+  // DR-0035 §1: the input panel sends the text verbatim as user_prompt (no
   // room is created or posted to) and the daemon's answer pairs by request_id.
-  test("sessionInput sends session_input with the text and resolves from the reply", async () => {
+  test("userPrompt sends user_prompt with the text and resolves from the reply", async () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionInput("sid-1", "1 行目\n2 行目");
-    expect(opsSent(ws1)).toEqual(["session_input"]);
-    const sent = sentFrame(ws1, "session_input");
+    const req = handle.userPrompt("sid-1", "1 行目\n2 行目");
+    expect(opsSent(ws1)).toEqual(["user_prompt"]);
+    const sent = sentFrame(ws1, "user_prompt");
     expect(sent).toEqual({
-      op: "session_input",
+      op: "user_prompt",
       request_id: sent.request_id,
       session_id: "sid-1",
       text: "1 行目\n2 行目",
@@ -890,18 +890,18 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(await req).toEqual({ ok: true, outcome: "not_delivered", reason: "dialog" });
   });
 
-  // A session_input written before the socket closed settles with
+  // A user_prompt written before the socket closed settles with
   // connection_closed — the panel reads that as "maybe delivered", not as a
   // failure, so this must not hang or reject.
-  test("sessionInput written before a close settles with connection_closed", async () => {
+  test("userPrompt written before a close settles with connection_closed", async () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionInput("sid-1", "hello");
-    expect(opsSent(ws1)).toEqual(["session_input"]);
+    const req = handle.userPrompt("sid-1", "hello");
+    expect(opsSent(ws1)).toEqual(["user_prompt"]);
     ws1.triggerClose();
 
     expect(await req).toEqual({
@@ -910,10 +910,10 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // A written session_input whose answer never comes on a socket that stays
+  // A written user_prompt whose answer never comes on a socket that stays
   // open settles with request_timeout once its own deadline passes, so the
   // input panel's lock is released; the late answer is then dropped.
-  test("sessionInput settles with request_timeout when no reply comes", async () => {
+  test("userPrompt settles with request_timeout when no reply comes", async () => {
     const clock = new FakeClock();
     const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
@@ -921,16 +921,16 @@ describe("createWsClient agents/ping (U1)", () => {
     const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionInput("sid-1", "hello");
-    const sent = sentRequest(ws1, "session_input");
-    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
+    const req = handle.userPrompt("sid-1", "hello");
+    const sent = sentRequest(ws1, "user_prompt");
+    clock.advance(USER_PROMPT_REPLY_TIMEOUT_MS - 1);
     expect(await settledNow(req)).toBe(false);
     clock.advance(1);
     expect(await req).toEqual({
       ok: false,
       error: {
         code: "request_timeout",
-        msg: `no reply within ${SESSION_INPUT_REPLY_TIMEOUT_MS} ms`,
+        msg: `no reply within ${USER_PROMPT_REPLY_TIMEOUT_MS} ms`,
       },
     });
     // The late answer has nothing left to settle and must not throw.
@@ -941,7 +941,7 @@ describe("createWsClient agents/ping (U1)", () => {
 
   // A reply inside the deadline wins; the deadline firing afterwards changes
   // nothing.
-  test("sessionInput resolves from a reply that beats its deadline", async () => {
+  test("userPrompt resolves from a reply that beats its deadline", async () => {
     const clock = new FakeClock();
     const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
@@ -949,21 +949,21 @@ describe("createWsClient agents/ping (U1)", () => {
     const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionInput("sid-1", "hello");
-    const sent = sentRequest(ws1, "session_input");
-    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
+    const req = handle.userPrompt("sid-1", "hello");
+    const sent = sentRequest(ws1, "user_prompt");
+    clock.advance(USER_PROMPT_REPLY_TIMEOUT_MS - 1);
     ws1.triggerMessage(
       JSON.stringify({ request_id: sent.request_id, ok: true, outcome: "accepted" }),
     );
     expect(await req).toEqual({ ok: true, outcome: "accepted" });
     // The deadline passing afterwards has nothing left to settle.
-    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS);
+    clock.advance(USER_PROMPT_REPLY_TIMEOUT_MS);
   });
 
   // Still queued behind a connecting socket at the deadline means it was never
   // sent: it rejects (the panel reads that as "could not send") and is not
   // written when the socket opens later.
-  test("sessionInput still queued at its deadline rejects and is never written", async () => {
+  test("userPrompt still queued at its deadline rejects and is never written", async () => {
     const clock = new FakeClock();
     const handle = createWsClient(() => {}, { clock });
     openHandles.push(handle);
@@ -971,8 +971,8 @@ describe("createWsClient agents/ping (U1)", () => {
     const ws1 = defined(instances[0], "the first socket");
     expect(ws1.readyState).toBe(MockWebSocket.CONNECTING);
 
-    const req = handle.sessionInput("sid-1", "hello");
-    clock.advance(SESSION_INPUT_REPLY_TIMEOUT_MS - 1);
+    const req = handle.userPrompt("sid-1", "hello");
+    clock.advance(USER_PROMPT_REPLY_TIMEOUT_MS - 1);
     expect(await settledNow(req)).toBe(false);
     clock.advance(1);
     let rejected: unknown = null;
@@ -985,7 +985,7 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(instanceOf(rejected, Error, "the rejection").message).toBe("ws not open");
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
-    expect(opsSent(ws1)).not.toContain("session_input");
+    expect(opsSent(ws1)).not.toContain("user_prompt");
   });
 
   // The failure path the row's editor renders inline.

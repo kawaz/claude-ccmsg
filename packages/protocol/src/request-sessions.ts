@@ -8,7 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
-import { PeerListInputSchema, PeerSendInputSchema } from "./peer-tools.ts";
+import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import {
   AgentAppendArgsSchema,
   SessionFactsSchema,
@@ -39,7 +39,7 @@ export const HelloRequestSchema = v.object({
    * its environment (falling back to Claude Code's default `$HOME/.claude`
    * when unset) and the daemon normalizes it. Only used to find the sessions
    * a send may reach: the daemon reads the live runs of every config dir it
-   * knows (`peer_send`, DR-0039 §3); never echoed back on the wire. */
+   * knows (`send_message`, DR-0039 §3); never echoed back on the wire. */
   config_dir: v.optional(v.string()),
   /** The ccmsg build this client runs (`VERSION`). Diagnostic only — the
    * daemon never gates on it — but it is what turns "this session's client is
@@ -138,13 +138,13 @@ export type SayReadRequest = Output<typeof SayReadRequestSchema>;
  * the asking session, no reply line) into the peer socket of each that has a
  * hooks module. The asking session is left out; a send that matched it alone
  * says so. It answers one result per session matched. */
-export const PeerSendRequestSchema = v.object({
-  op: v.literal("peer_send"),
-  ...PeerSendInputSchema.entries,
+export const SendMessageRequestSchema = v.object({
+  op: v.literal("send_message"),
+  ...SendMessageInputSchema.entries,
 });
-export type PeerSendRequest = Output<typeof PeerSendRequestSchema>;
+export type SendMessageRequest = Output<typeof SendMessageRequestSchema>;
 
-/** The sessions a send could go to, as peer_send would match them: what the
+/** The sessions a send could go to, as send_message would match them: what the
  * `peers` tool of a session's hooks module asks (session role only,
  * DR-0039 §3). */
 export const PeerListRequestSchema = v.object({
@@ -321,8 +321,8 @@ export type SessionRenameRequest = Output<typeof SessionRenameRequestSchema>;
  * is asked only after one answers `no_composer` or `no_terminal`, which say it
  * cannot take a person's input at all. Asking two runs that both have a
  * composer would put the text in twice (DR-0035 §3). */
-export const SessionInputRequestSchema = v.object({
-  op: v.literal("session_input"),
+export const UserPromptRequestSchema = v.object({
+  op: v.literal("user_prompt"),
   session_id: SessionIdSchema,
   /** The prompt, verbatim. Several lines become one prompt. Must hold
    * something other than whitespace. */
@@ -331,20 +331,20 @@ export const SessionInputRequestSchema = v.object({
     v.check((text) => text.trim() !== "", "Expected text with something other than whitespace"),
   ),
 });
-export type SessionInputRequest = Output<typeof SessionInputRequestSchema>;
+export type UserPromptRequest = Output<typeof UserPromptRequestSchema>;
 
 /** Add what a person wrote to the conversation of a running subagent of a
  * session (user role only, DR-0039 §6). The daemon hands it to a run's hooks
  * module as an `agent.append` request; the subagent's next request carries
  * it, the session's main thread does not. Context, not a prompt: it grants
  * nothing. */
-export const AgentInputRequestSchema = v.object({
-  op: v.literal("agent_input"),
+export const UserMessageRequestSchema = v.object({
+  op: v.literal("user_message"),
   session_id: SessionIdSchema,
   agent_id: AgentAppendArgsSchema.entries.agentId,
   text: AgentAppendArgsSchema.entries.text,
 });
-export type AgentInputRequest = Output<typeof AgentInputRequestSchema>;
+export type UserMessageRequest = Output<typeof UserMessageRequestSchema>;
 
 /** Hand the daemon a session's hooks module's SidecarReply (session role,
  * DR-0035 §1). Taken only from the session the request was written to, and
@@ -359,7 +359,7 @@ export type SidecarReplyRequest = Output<typeof SidecarReplyRequestSchema>;
 /** Name a run of the session to the daemon (session role, DR-0035 §3). The
  * session's sidecar sends it once it has bound its socket, on a connection of
  * its own that it keeps open for its life: the run counts among the session's
- * live runs — the ones a session_input is written to — until that connection
+ * live runs — the ones a user_prompt is written to — until that connection
  * closes, and a sidecar whose daemon went away connects to the next one and
  * names the run again. The session is the connection's (its hello), and the
  * socket is `<sid>.<run_id>.sock` in the sidecar directory both sides derive

@@ -2,11 +2,11 @@
 // Status タブの、走行中の subagent への入力 (DR-0039 §6)。
 //
 // session_status の `subagents` (module が turn.start / turn.complete で畳んだ、
-// 今 turn の途中の subagent) から宛先を選び、書いた文を `agent_input` で送る。
+// 今 turn の途中の subagent) から宛先を選び、書いた文を `user_message` で送る。
 // 文は subagent の次の request に「ユーザから (webui 経由)」として載り、本体には
 // 載らない。足されるのは文脈であって権限ではないことを入力欄の近くに出す。
 import { useState } from "preact/hooks";
-import type { AgentInputResponse, ErrorResponse, SessionSubagent } from "@ccmsg/protocol";
+import type { UserMessageResponse, ErrorResponse, SessionSubagent } from "@ccmsg/protocol";
 import {
   AGENT_INPUT_NOTE,
   type AgentInputOutcome,
@@ -20,7 +20,7 @@ export function SubagentInput({
 }: {
   /** Absent for a session whose module says nothing of its subagents. */
   subagents: readonly SessionSubagent[] | undefined;
-  onSend: (agentId: string, text: string) => Promise<AgentInputResponse | ErrorResponse>;
+  onSend: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
 }) {
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [text, setText] = useState("");

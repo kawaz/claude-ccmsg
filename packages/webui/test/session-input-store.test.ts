@@ -6,7 +6,7 @@
 // under bun test where `window.localStorage` isn't available.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
-import type { ErrorResponse, SessionInputResponse } from "@ccmsg/protocol";
+import type { ErrorResponse, UserPromptResponse } from "@ccmsg/protocol";
 import {
   beginSend,
   cleanupStaleSessionInputs,
@@ -466,17 +466,17 @@ describe("sameContent", () => {
 
 /** daemon への依頼の代わり。resolve を外から呼んで返事の時機を決める。 */
 function deferredRequest() {
-  let resolve!: (r: SessionInputResponse | ErrorResponse) => void;
+  let resolve!: (r: UserPromptResponse | ErrorResponse) => void;
   let sent: string | null = null;
   const request = (text: string) => {
     sent = text;
-    return new Promise<SessionInputResponse | ErrorResponse>((r) => {
+    return new Promise<UserPromptResponse | ErrorResponse>((r) => {
       resolve = r;
     });
   };
   return {
     request,
-    reply: (r: SessionInputResponse | ErrorResponse) => resolve(r),
+    reply: (r: UserPromptResponse | ErrorResponse) => resolve(r),
     sentText: () => sent,
   };
 }

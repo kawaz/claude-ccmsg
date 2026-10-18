@@ -1,7 +1,7 @@
 // The ccmsg tools an agent uses (DR-0039 §3) — send, say, peers — as
 // schemas (DR-0038): what the model writes into each tool, what the hooks
-// module hands `ccmsg sidecar peer-send` / `peer-list` on standard input, and
-// what those print, which is the daemon's peer_send / peer_list reply.
+// module hands `ccmsg sidecar send-message` / `peer-list` on standard input, and
+// what those print, which is the daemon's send_message / peer_list reply.
 //
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
@@ -66,10 +66,10 @@ const PeerTextSchema = v.pipe(
   v.check((text) => text.trim() !== "", "the text holds something other than whitespace"),
 );
 
-/** What `ccmsg sidecar peer-send` takes on standard input. */
-export const PeerSendInputSchema = v.object({ to: PeerTargetSchema, text: PeerTextSchema });
-export type PeerSendInput = Output<typeof PeerSendInputSchema>;
-export const PeerSendInputTextSchema = jsonText(PeerSendInputSchema);
+/** What `ccmsg sidecar send-message` takes on standard input. */
+export const SendMessageInputSchema = v.object({ to: PeerTargetSchema, text: PeerTextSchema });
+export type SendMessageInput = Output<typeof SendMessageInputSchema>;
+export const SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 
 /** What `ccmsg sidecar peer-list` takes on standard input: the sessions to
  * list, all of them when neither field is given. */
@@ -98,7 +98,7 @@ export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
  *
  * The last four are the delivery into the session's peer socket failing
  * (DR-0036 §3). */
-export const PeerSendReasonSchema = v.picklist([
+export const SendMessageReasonSchema = v.picklist([
   "self",
   "no_module",
   "session_changed",
@@ -108,7 +108,7 @@ export const PeerSendReasonSchema = v.picklist([
   "unreachable",
   "refused",
 ]);
-export type PeerSendReason = Output<typeof PeerSendReasonSchema>;
+export type SendMessageReason = Output<typeof SendMessageReasonSchema>;
 
 /** A session, spelled as the fields of PeerTargetSchema take it: `cwd` is
  * the realpath, so either can be sent to again as written. */
@@ -122,21 +122,25 @@ const PeerEntries = {
  * it took the message), `unconfirmed` (none took it for certain, and the
  * write into one was cut off part-way, so it may have arrived), or
  * `not_delivered` and why. */
-export const PeerSendResultSchema = v.variant("outcome", [
+export const SendMessageResultSchema = v.variant("outcome", [
   v.object({ ...PeerEntries, outcome: v.literal("delivered") }),
   v.object({ ...PeerEntries, outcome: v.literal("unconfirmed") }),
-  v.object({ ...PeerEntries, outcome: v.literal("not_delivered"), reason: PeerSendReasonSchema }),
+  v.object({
+    ...PeerEntries,
+    outcome: v.literal("not_delivered"),
+    reason: SendMessageReasonSchema,
+  }),
 ]);
-export type PeerSendResult = Output<typeof PeerSendResultSchema>;
+export type SendMessageResult = Output<typeof SendMessageResultSchema>;
 
-/** peer_send's reply, and what `ccmsg sidecar peer-send` prints: one result
+/** send_message's reply, and what `ccmsg sidecar send-message` prints: one result
  * per session the send matched, none when it matched none. */
-export const PeerSendResponseSchema = v.object({
+export const SendMessageResponseSchema = v.object({
   ok: v.literal(true),
-  results: v.array(PeerSendResultSchema),
+  results: v.array(SendMessageResultSchema),
 });
-export type PeerSendResponse = Output<typeof PeerSendResponseSchema>;
-export const PeerSendResponseTextSchema = jsonText(PeerSendResponseSchema);
+export type SendMessageResponse = Output<typeof SendMessageResponseSchema>;
+export const SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
 
 /** One session a send could go to: its processes, whether it has a hooks
  * module (one without is not sent to), and whether it is the asking session. */

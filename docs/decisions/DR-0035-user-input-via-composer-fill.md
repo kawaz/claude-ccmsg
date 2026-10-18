@@ -1,6 +1,6 @@
 # DR-0035: webui からセッションへの人の入力は composer への fill + Enter で届け、1on1 room を廃止する
 
-- Status: Accepted (2026-10-08、kawaz 裁定) — ✅ 実装済み (daemon の `session_input`・サイドカー・hooks module、webui の入力欄、1on1 room の作成の停止と既存 1on1 room の読み取り専用化)(2026-10-09 DR-0038 に合わせて §3 を改訂)
+- Status: Accepted (2026-10-08、kawaz 裁定) — ✅ 実装済み (daemon の `user_prompt`・サイドカー・hooks module、webui の入力欄、1on1 room の作成の停止と既存 1on1 room の読み取り専用化)(2026-10-09 DR-0038 に合わせて §3 を改訂)
 - Date: 2026-10-06
 
 ## Context
@@ -22,7 +22,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 ### 1. 人からセッションへの入力は composer に入れる
 
-- webui がセッションに書く入力は、room への post ではなく、セッション宛の新しい op (仮称 `session_input`、user role 限定) で daemon に渡す
+- webui がセッションに書く入力は、room への post ではなく、セッション宛の新しい op (仮称 `user_prompt`、user role 限定) で daemon に渡す
 - daemon はそのセッションのサイドカーに `prompt.send` の依頼 (§3) を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` を宛先に `$.process.run(["hyoui", "input", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
 - module は結果 (成功、または届かなかった理由) を依頼への返事として `ccmsg sidecar reply` で daemon に返し (§3)、daemon がそれを webui への応答にする。daemon が返事を待つのは期限 (12 秒) までで、過ぎたら未確認として返す (§5)
 - 入った文は人の入力そのものなので、返信はセッションの通常の応答 (TL) になる。返信方法の指示行は付けない
@@ -49,7 +49,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
   - `session.facts` (args `{}`): module が Claude Code から読んだセッションの事実 (下の「セッションの事実」) を、今の全体のまま返す。daemon は run の `sidecar_hello` を受けた時にこれを問う。module より後に立った daemon (再起動・更新) は、module がそれまでに送った事実を持たないため
 - 返事は module が `$.process.run([<plugin>/bin/ccmsg, "sidecar", "reply", "--sid", <sid>], { stdin: <返事の JSON> })` で渡し、CLI が daemon の op `sidecar_reply` (session role) で届ける。`$` には socket を直接開く口が無いので、往復 1 回の CLI を挟む
   - 返事の本体は引数でなく stdin で渡す。返事の大きさは op の結果次第で長くなりうるが、引数は大きさに上限があり、`ps` で他のユーザにも見える。`$.process.run` の `stdin` は文字列を 1 回書いて閉じる形 (2.1.295 の実装で確認) で、返事 1 つを渡すのにちょうど合う。module は shell を通さず argv で起動するので、引用の事故は引数でも stdin でも起きず、判断の軸にならない
-  - daemon は返事を、依頼を書いた session の sid から来た時だけ受け、同じ id の返事は最初の 1 回だけを有効にする。依頼と返事の対応付けは op に依らず、`session_input` はその上で `prompt.send` の result を読む
+  - daemon は返事を、依頼を書いた session の sid から来た時だけ受け、同じ id の返事は最初の 1 回だけを有効にする。依頼と返事の対応付けは op に依らず、`user_prompt` はその上で `prompt.send` の result を読む
 - socket の名前は `<sid>.<run id>.sock` (0600)。run id は module が読み込まれた時に引く値 (読み込みの時刻と乱数、英小文字と数字で 16 文字まで) で、module の 1 回の読み込みの間は、サイドカーを起こし直しても、セッションの id が変わっても (/clear、/resume) 同じものを使う。同じ sid の run が複数あっても run ごとに名前が分かれる。module とサイドカーは harness の pid を知らず、探さない (祖先を `ps` で辿る方法は sandbox の中では使えない)。置き場は v1 の daemon の dir の下にし、kawaz/ccmsg (v2) の sidecar dir とは分ける。v1 と v2 の plugin は同じ環境に並んで入りうる (kawaz の環境では両方入っている) ので、同じ dir だと同じ run の 2 つのサイドカーが互いの socket を unlink し合う
 - サイドカーは socket を bind したら daemon に繋ぎ、そのセッションとして hello してから `sidecar_hello` で run を名乗る。名乗りは run id、run の開始 (module の読み込み時刻)、module が `$.env.get` で読んだ `CLAUDE_CONFIG_DIR` と `HYOUI_SESSION_ID` (無ければ省く)。module が依頼を実行する時に使う値と同じものを名乗るので、daemon の判定 (§5 の `input_readiness`) と module の振る舞いが食い違わない。socket の path は名乗りに含めず、daemon が sid と run id から state dir の規則で組み立てる (送り手の言う path に daemon が書き込む形にしない)
 - 名乗った接続は張ったままにし、daemon はその接続が開いている間をその run の生存とする。サイドカーが去る時 (socket を閉じる時) は接続が閉じ、daemon はそれで run が去ったことを知る。daemon が止まって接続が切れたら、サイドカーは daemon を起こさずに繋ぎ直しを続け (間隔は 250ms から倍にして 5 秒まで、subscribe の再接続と同じ作法)、次に立った daemon に名乗り直す。daemon を起こさないのは、人が止めた daemon をセッションの寿命の子が蘇らせないため。daemon はセッションの起動 (SessionStart) で立つ
@@ -98,8 +98,8 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 ## Consequences
 
-- webui: `OneOnOneComposer` はセッション宛の入力欄になり、`session_input` を送る。届かなかった時・未確認の時の表示と、確認が取れるまで文を残す保持 (§5) が要る
-- daemon: `session_input` op、サイドカーへの依頼の書き込み、返事の受け取り (`sidecar_reply`) を持つ。1on1 room の作成・配送・`reply_via` の 1on1 分岐を削る
+- webui: `OneOnOneComposer` はセッション宛の入力欄になり、`user_prompt` を送る。届かなかった時・未確認の時の表示と、確認が取れるまで文を残す保持 (§5) が要る
+- daemon: `user_prompt` op、サイドカーへの依頼の書き込み、返事の受け取り (`sidecar_reply`) を持つ。1on1 room の作成・配送・`reply_via` の 1on1 分岐を削る
 - plugin: hooks module と `ccmsg sidecar` / `ccmsg sidecar reply` サブコマンドが入る。function hooks が無効な環境では §1 の経路は使えない (§5 のとおり理由を返す)
 - 封筒を前提にしていた読み取り (`packages/protocol/src/ccmsg-direct-transcript.ts`、`packages/daemon/src/session-user-input.ts`、`packages/daemon/src/session-dump.ts`、webui の `transcript-model.ts` の u1 バブル化) は、1on1 の封筒が来なくなる前提で見直す。人の入力は transcript 上で手入力と同じ形になるので、u1 バブル化の特別扱いは不要になる
 - 既存の 1on1 room のログは、ほかの room と同じく読み取り専用の閲覧で読む ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §2)

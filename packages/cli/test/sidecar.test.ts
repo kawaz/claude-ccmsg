@@ -1,7 +1,7 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, name the run to the
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
-// carries the module's reply to the daemon; `ccmsg sidecar peer-send` /
+// carries the module's reply to the daemon; `ccmsg sidecar send-message` /
 // `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -12,9 +12,9 @@ import {
   parseWith,
   resolvePaths,
   resolveSidecarDir,
-  type PeerSendResult,
+  type SendMessageResult,
   PeerListResponseTextSchema,
-  PeerSendResponseTextSchema,
+  SendMessageResponseTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
   sidecarSocketName,
@@ -316,7 +316,7 @@ async function startShortDaemon(): Promise<DaemonCtx> {
 describe("ccmsg sidecar reply", () => {
   // The whole route the module uses: the daemon writes to the sidecar, the
   // sidecar copies the request out, and `sidecar reply` answers it.
-  test("answers the session_input request the sidecar copied out", async () => {
+  test("answers the user_prompt request the sidecar copied out", async () => {
     const ctx = await startShortDaemon();
     const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
       env: { ...process.env, ...ctx.env },
@@ -329,9 +329,9 @@ describe("ccmsg sidecar reply", () => {
       await readUntil(sidecar.stderr.getReader(), (t) => t.includes("named "));
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const answer = user.request({ op: "session_input", session_id: SID, text: "from the web" });
+      const answer = user.request({ op: "user_prompt", session_id: SID, text: "from the web" });
       // The daemon asks the run for its facts when it is named; the
-      // session_input's request is the prompt.send.
+      // user_prompt's request is the prompt.send.
       const promptSendIn = (text: string): SidecarRequest | undefined =>
         text
           .split("\n")
@@ -624,7 +624,7 @@ describe("keepNamed", () => {
 /** `ccmsg sidecar <command> --sid SID` with `stdin` on its standard input,
  * as the module's `$.process.run` runs it. */
 async function runPeer(
-  command: "peer-send" | "peer-list",
+  command: "send-message" | "peer-list",
   stdin: string,
   env: Record<string, string | undefined>,
 ): Promise<{ code: number; out: string; err: string }> {
@@ -642,15 +642,15 @@ async function runPeer(
   return { code, out, err };
 }
 
-function sendResults(out: string): PeerSendResult[] {
-  const read = parseWith(PeerSendResponseTextSchema, out);
-  if (!read.ok) throw new Error(`not a peer_send reply: ${read.failure.summary}: ${out}`);
+function sendResults(out: string): SendMessageResult[] {
+  const read = parseWith(SendMessageResponseTextSchema, out);
+  if (!read.ok) throw new Error(`not a send_message reply: ${read.failure.summary}: ${out}`);
   return [...read.value.results];
 }
 
 // `send` and `peers` (DR-0039 §3): the sessions are matched against the live
 // runs of the config dirs the daemon knows, here the one the sender names.
-describe("ccmsg sidecar peer-send / peer-list", () => {
+describe("ccmsg sidecar send-message / peer-list", () => {
   const OTHER = "22222222-2222-4333-8444-555555555555";
   const BARE = "33333333-2222-4333-8444-555555555555";
 
@@ -669,7 +669,7 @@ describe("ccmsg sidecar peer-send / peer-list", () => {
     try {
       const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: other.configDir };
       const text = "line 1\n`not run` $HOME 'quoted' \"double\"\n";
-      const sent = await runPeer("peer-send", JSON.stringify({ to: { cwd: work }, text }), env);
+      const sent = await runPeer("send-message", JSON.stringify({ to: { cwd: work }, text }), env);
       expect(sent.code).toBe(0);
       expect(sendResults(sent.out)).toEqual([
         { sid: OTHER, name: "other", cwd: work, outcome: "delivered" },
@@ -681,13 +681,13 @@ describe("ccmsg sidecar peer-send / peer-list", () => {
 
       // The name and the id narrow as the cwd does; every field given must match.
       const byName = await runPeer(
-        "peer-send",
+        "send-message",
         JSON.stringify({ to: { name: "other", cwd: work }, text: "n" }),
         env,
       );
       expect(sendResults(byName.out).map((r) => r.outcome)).toEqual(["delivered"]);
       const mismatch = await runPeer(
-        "peer-send",
+        "send-message",
         JSON.stringify({ to: { name: "other", session_id: BARE }, text: "n" }),
         env,
       );
@@ -695,7 +695,7 @@ describe("ccmsg sidecar peer-send / peer-list", () => {
 
       const ended = "44444444-2222-4333-8444-555555555555";
       const gone = await runPeer(
-        "peer-send",
+        "send-message",
         JSON.stringify({ to: { session_id: ended }, text: "n" }),
         env,
       );
@@ -725,7 +725,7 @@ describe("ccmsg sidecar peer-send / peer-list", () => {
     try {
       const env = { ...process.env, ...ctx.env, CLAUDE_CONFIG_DIR: self.configDir };
       const run = await runPeer(
-        "peer-send",
+        "send-message",
         JSON.stringify({ to: { name: "me" }, text: "hi" }),
         env,
       );
@@ -741,7 +741,7 @@ describe("ccmsg sidecar peer-send / peer-list", () => {
   test("input that names nobody, or has no text, is refused before reaching the daemon", async () => {
     const env = sidecarEnv(path.join(shortBase(), "s"));
     for (const stdin of ['{"to":{},"text":"hi"}', '{"to":{"cwd":"/w"},"text":"  "}', "not json"]) {
-      const run = await runPeer("peer-send", stdin, env);
+      const run = await runPeer("send-message", stdin, env);
       expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
       expect(run.err).toContain("standard input must be { to, text }");
     }

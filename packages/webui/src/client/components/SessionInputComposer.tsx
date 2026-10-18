@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // SessionView のセッション宛の入力欄 (DR-0035 §1, §5)。
 //
-// 右下の "+" FAB を押すとパネルが開き、書いた文を `session_input` でセッションに
+// 右下の "+" FAB を押すとパネルが開き、書いた文を `user_prompt` でセッションに
 // 渡す。セッションの hooks module が入力欄に入れて Enter を押すので、文は人が
 // 端末で打ったのと同じ prompt としてセッションに入り、返事はセッションの通常の
 // 応答として Timeline に出る。
@@ -358,7 +358,7 @@ export function SessionInputComposer({ sid }: { sid: string }) {
     // 送った文のままか」を比べる相手になる。
     saveDraft(sid, text, attachments);
     const outcome = await sendSessionInput(sid, { text, attachments }, finalText, (t) =>
-      ws.sessionInput(sid, t),
+      ws.userPrompt(sid, t),
     );
     // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
     // 別タブで書き換わっていれば、その文を見せたまま残す。

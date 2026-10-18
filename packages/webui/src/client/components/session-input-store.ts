@@ -25,7 +25,7 @@ import {
   sessionInputSendFailure,
   type SessionInputOutcome,
 } from "./session-input.ts";
-import type { ErrorResponse, SessionInputResponse } from "@ccmsg/protocol";
+import type { ErrorResponse, UserPromptResponse } from "@ccmsg/protocol";
 import { jsonText, type Output, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 
@@ -483,7 +483,7 @@ export async function sendSessionInput(
   sid: string,
   content: InputContent,
   finalText: string,
-  request: (text: string) => Promise<SessionInputResponse | ErrorResponse>,
+  request: (text: string) => Promise<UserPromptResponse | ErrorResponse>,
   now: number = Date.now(),
 ): Promise<SessionInputOutcome> {
   const record = beginSend(sid, content, now);

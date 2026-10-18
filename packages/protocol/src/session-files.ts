@@ -21,7 +21,7 @@ export const ClaudeSessionFileSchema = v.looseObject({
   /** The working directory, as a realpath (observed 2026-10-09 with the
    * session started through a symlink and with a trailing `/`). */
   cwd: v.optional(v.string()),
-  /** The name the session was given (`--name`, a rename), as `peer_send`
+  /** The name the session was given (`--name`, a rename), as `send_message`
    * matches a `name` against it. */
   name: v.optional(v.string()),
   /** The socket the session takes peer messages on. */

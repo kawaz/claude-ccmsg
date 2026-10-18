@@ -1,6 +1,6 @@
-// peer_send / peer_list (DR-0039 §3) over stand-in runs and deliveries: which
+// send_message / peer_list (DR-0039 §3) over stand-in runs and deliveries: which
 // sessions a target matches, what each gets, and what a send says for each.
-// Then peer_send through a daemon, with fake harnesses (peer-harness.ts) as
+// Then send_message through a daemon, with fake harnesses (peer-harness.ts) as
 // the recipients; their state files name live pids (this test process and
 // its parent) because only running processes are sent to.
 import { afterEach, describe, expect, test } from "bun:test";
@@ -9,7 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { SessionInputReadiness } from "@ccmsg/protocol";
 import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
-import { listPeers, type PeerSendDeps, sendToPeers } from "../src/peer-send.ts";
+import { listPeers, type SendMessageDeps, sendToPeers } from "../src/send-message.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import {
   connect,
@@ -43,7 +43,7 @@ function deps(
     answers?: Record<number, InjectResult>;
     readiness?: SessionInputReadiness;
   } = {},
-): PeerSendDeps & { frames: { pid: number; frame: InjectFrame }[] } {
+): SendMessageDeps & { frames: { pid: number; frame: InjectFrame }[] } {
   const frames: { pid: number; frame: InjectFrame }[] = [];
   let mid = 0;
   return {
@@ -155,7 +155,7 @@ describe("listPeers", () => {
   });
 });
 
-describe("peer_send through the daemon", () => {
+describe("send_message through the daemon", () => {
   const T = 15000;
   const SENDER = "aaaaaaaa-2222-4333-8444-555555555555";
   const PEER = "bbbbbbbb-2222-4333-8444-555555555555";
@@ -200,7 +200,7 @@ describe("peer_send through the daemon", () => {
     to: { session_id?: string; cwd?: string; pid?: number },
     text: string,
   ) {
-    return (await from.requestOk({ op: "peer_send", to, text })).results;
+    return (await from.requestOk({ op: "send_message", to, text })).results;
   }
 
   test(
@@ -335,7 +335,7 @@ describe("peer_send through the daemon", () => {
   );
 
   // A session started with an earlier plugin may still send the ops that
-  // carried a message before peer_send (DR-0039 §3). They are not read; the
+  // carried a message before send_message (DR-0039 §3). They are not read; the
   // send that follows on the same connection is the first thing to arrive.
   test(
     "an earlier client's message_send and address_send are refused as unknown, and nothing arrives",
@@ -371,14 +371,14 @@ describe("peer_send through the daemon", () => {
       const u = await connect(ctx.sock);
       await u.hello({ role: "user" });
       const to = { session_id: PEER };
-      expect((await u.requestError({ op: "peer_send", to, text: "hi" })).error.code).toBe(
+      expect((await u.requestError({ op: "send_message", to, text: "hi" })).error.code).toBe(
         "invalid_args",
       );
-      expect((await a.requestRefusal({ op: "peer_send", to, text: " \n" })).error.code).toBe(
+      expect((await a.requestRefusal({ op: "send_message", to, text: " \n" })).error.code).toBe(
         "invalid_args",
       );
       const raw = await connect(ctx.sock);
-      expect((await raw.requestError({ op: "peer_send", to, text: "hi" })).error.code).toBe(
+      expect((await raw.requestError({ op: "send_message", to, text: "hi" })).error.code).toBe(
         "hello_required",
       );
       expect((await raw.requestError({ op: "peer_list" })).error.code).toBe("hello_required");

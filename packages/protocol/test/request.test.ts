@@ -42,22 +42,22 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "hello", role: "user", protocol: "1" },
     ],
   },
-  agent_input: {
-    ok: { op: "agent_input", session_id: SID, agent_id: "a1b2c3", text: "hi" },
+  user_message: {
+    ok: { op: "user_message", session_id: SID, agent_id: "a1b2c3", text: "hi" },
     bad: [
-      { op: "agent_input", session_id: SID, agent_id: "", text: "hi" },
-      { op: "agent_input", session_id: SID, agent_id: "a1", text: " \n" },
-      { op: "agent_input", session_id: SID, text: "hi" },
+      { op: "user_message", session_id: SID, agent_id: "", text: "hi" },
+      { op: "user_message", session_id: SID, agent_id: "a1", text: " \n" },
+      { op: "user_message", session_id: SID, text: "hi" },
     ],
   },
-  peer_send: {
-    ok: { op: "peer_send", to: { cwd: "/w", name: "n", session_id: SID, pid: 7 }, text: "hi" },
+  send_message: {
+    ok: { op: "send_message", to: { cwd: "/w", name: "n", session_id: SID, pid: 7 }, text: "hi" },
     bad: [
       // A send to every session is not one: at least one field names somebody.
-      { op: "peer_send", to: {}, text: "hi" },
-      { op: "peer_send", to: { cwd: "/w" }, text: " \n" },
-      { op: "peer_send", to: { pid: 1.5 }, text: "hi" },
-      { op: "peer_send", to: { name: "" }, text: "hi" },
+      { op: "send_message", to: {}, text: "hi" },
+      { op: "send_message", to: { cwd: "/w" }, text: " \n" },
+      { op: "send_message", to: { pid: 1.5 }, text: "hi" },
+      { op: "send_message", to: { name: "" }, text: "hi" },
     ],
   },
   peer_list: {
@@ -115,11 +115,11 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "session_rename", session_id: SID },
     ],
   },
-  session_input: {
-    ok: { op: "session_input", session_id: SID, text: " two\nlines " },
+  user_prompt: {
+    ok: { op: "user_prompt", session_id: SID, text: " two\nlines " },
     bad: [
-      { op: "session_input", session_id: SID, text: " \n " },
-      { op: "session_input", text: "x" },
+      { op: "user_prompt", session_id: SID, text: " \n " },
+      { op: "user_prompt", text: "x" },
     ],
   },
   sidecar_reply: {
@@ -397,13 +397,13 @@ describe("readRequest: a line that is not a request is a failure", () => {
     });
   }
 
-  // A session sends to another with peer_send alone (DR-0039 §3): the ops a
+  // A session sends to another with send_message alone (DR-0039 §3): the ops a
   // client of an earlier build sends with a message in them are not read.
   for (const value of [
     { op: "message_send", to: SID, text: "hi", reply_to: "abc/1" },
     { op: "address_send", to: `ccmsg:${SID}`, text: "hi" },
   ]) {
-    test(`no op but peer_send sends to a session: ${value.op}`, () => {
+    test(`no op but send_message sends to a session: ${value.op}`, () => {
       expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
         kind: "invalid_request",
         frame: { op: value.op, request_id: "q1" },

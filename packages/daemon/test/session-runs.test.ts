@@ -1,4 +1,4 @@
-// The live runs peer_send and peer_list match (DR-0039 §3), read from Claude
+// The live runs send_message and peer_list match (DR-0039 §3), read from Claude
 // Code's state files. The files name live pids (this test process and its
 // parent) where a run has to be running.
 import { afterEach, describe, expect, test } from "bun:test";

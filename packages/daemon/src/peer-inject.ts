@@ -353,7 +353,7 @@ export class PeerInjector {
 export type WriteOutcome = "written" | "not_written" | "uncertain";
 
 /** Connect and flush. The connection carries nothing back, so the budget covers
- * connect and flush only. Shared with the sidecar writes of session_input,
+ * connect and flush only. Shared with the sidecar writes of user_prompt,
  * whose sockets answer nothing either.
  *
  * A payload that went in whole is `written` even when the last byte went in

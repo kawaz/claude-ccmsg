@@ -46,7 +46,7 @@
 // their id, directory, name and process, in any config home), `say` (to the
 // person, by voice and in the webui) and `peers` (who `send` can reach). Each
 // is answered here without `next`: `send` and `peers` through `ccmsg sidecar
-// peer-send` / `peer-list`, `say` through `ccmsg say`, the result always a
+// send-message` / `peer-list`, `say` through `ccmsg say`, the result always a
 // text the model reads. SendMessage is left to the harness.
 //
 // A session without a composer (`-p`, the SDK) gets no sidecar. When the
@@ -70,7 +70,7 @@ import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
   type CcmsgToolName,
   PeerListResponseTextSchema,
-  PeerSendResponseTextSchema,
+  SendMessageResponseTextSchema,
   PeersToolInputSchema,
   SayToolInputSchema,
   SendToolInputSchema,
@@ -311,7 +311,7 @@ async function observe<E, R, S extends v.GenericSchema>(
 
 /** `hyoui input` budget. One prompt.send costs at most
  * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPLY_TIMEOUT_MS (9 s), which fits the
- * daemon's 12 s deadline for a session_input with room for a second run's
+ * daemon's 12 s deadline for a user_prompt with room for a second run's
  * quick answer. Enter itself takes tens of milliseconds; the margin
  * is hyoui's own lock when another client is mid-input. */
 export const HYOUI_TIMEOUT_MS = 3_000;
@@ -323,7 +323,7 @@ export const ACCEPT_WAIT_MS = 3_000;
  * at about 0.3 s. `ccmsg version` for describe is the same process without
  * the round trip. */
 export const REPLY_TIMEOUT_MS = 3_000;
-/** `send` budget: the `ccmsg sidecar peer-send` process, the daemon reading
+/** `send` budget: the `ccmsg sidecar send-message` process, the daemon reading
  * the runs (within 1 s), and every run's write (2 s) and refusal window
  * (0.25 s), the runs in parallel — about 5 s at worst, with the rest left for
  * a daemon the command has to start. The wait is the process's, which the
@@ -792,9 +792,13 @@ async function registerTools($: Engine): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar peer-send` / `peer-list` for session `sid`: the input goes
+/** `ccmsg sidecar send-message` / `peer-list` for session `sid`: the input goes
  * on standard input, for the reason a reply does (see `sendReply`). */
-export function peerArgv(root: string, command: "peer-send" | "peer-list", sid: string): string[] {
+export function peerArgv(
+  root: string,
+  command: "send-message" | "peer-list",
+  sid: string,
+): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
 }
 
@@ -811,15 +815,15 @@ async function sendTool<E>($: Engine, e: E): Promise<string> {
   const { text, ...to } = read.value;
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
-    run = await $.process.run(peerArgv($.plugin.root, "peer-send", await $.session.id()), {
+    run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
       stdin: JSON.stringify({ to, text }),
       timeoutMs: SEND_TIMEOUT_MS,
     });
   } catch (error) {
     $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar peer-send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+    return `ccmsg sidecar send-message が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
   }
-  const answered = parseWith(PeerSendResponseTextSchema, run.stdout);
+  const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
   if (answered.ok) return sendResultText(answered.value.results);
   const said = run.stderr.trim().split("\n")[0] ?? "";
   $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });

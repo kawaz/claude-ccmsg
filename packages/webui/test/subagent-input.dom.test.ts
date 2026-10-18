@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { AgentInputResponse, ErrorResponse, SessionSubagent } from "@ccmsg/protocol";
+import type { UserMessageResponse, ErrorResponse, SessionSubagent } from "@ccmsg/protocol";
 import {
   AGENT_INPUT_NOTE,
   classifyAgentInputReply,
@@ -61,7 +61,7 @@ describe("subagentLabel / classifyAgentInputReply", () => {
 
 async function mount(
   subagents: readonly SessionSubagent[] | undefined,
-  answer: AgentInputResponse,
+  answer: UserMessageResponse,
 ): Promise<{ root: HTMLElement; sent: [string, string][] }> {
   const root = document.createElement("div");
   document.body.append(root);

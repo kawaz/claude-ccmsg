@@ -12,7 +12,7 @@ import {
   SessionInputReadinessSchema,
   SessionStatusSnapshotSchema,
 } from "./session-status.ts";
-import { AgentAppendReasonSchema, SessionInputModuleReasonSchema } from "./sidecar.ts";
+import { AgentAppendReasonSchema, UserPromptModuleReasonSchema } from "./sidecar.ts";
 import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 
 export const HelloResponseSchema = v.object({
@@ -290,23 +290,23 @@ export const SessionRenameResponseSchema = v.object({
 });
 export type SessionRenameResponse = Output<typeof SessionRenameResponseSchema>;
 
-/** Why a session_input did not reach the session (DR-0035 §5). Nothing is
+/** Why a user_prompt did not reach the session (DR-0035 §5). Nothing is
  * sent by another route in any of these cases.
  *
- * The module's own reasons are SessionInputModuleReason (sidecar.ts). The
+ * The module's own reasons are UserPromptModuleReason (sidecar.ts). The
  * daemon adds `no_module`: no run of the session has a hooks module that took
  * the request (the plugin not loaded or of a ccmsg that does not know
  * `prompt.send`, a session without a composer, the session gone).
  *
  * With several runs, `no_composer` / `no_terminal` / `session_changed` are
  * the last run's answer after every run gave one of the three. */
-export const SessionInputReasonSchema = v.picklist([
-  ...SessionInputModuleReasonSchema.options,
+export const UserPromptReasonSchema = v.picklist([
+  ...UserPromptModuleReasonSchema.options,
   "no_module",
 ]);
-export type SessionInputReason = Output<typeof SessionInputReasonSchema>;
+export type UserPromptReason = Output<typeof UserPromptReasonSchema>;
 
-/** Payload of a completed session_input (DR-0035 §5).
+/** Payload of a completed user_prompt (DR-0035 §5).
  *
  * - `accepted`: the session took the text as a person's prompt
  * - `not_delivered`: it did not, for `reason`; the text went nowhere else
@@ -314,41 +314,41 @@ export type SessionInputReason = Output<typeof SessionInputReasonSchema>;
  *   daemon's wait. The text may or may not be in the session — it shows in the
  *   session's timeline if it is — so a caller keeps it rather than sending it
  *   again blindly */
-export const SessionInputResponseSchema = v.variant("outcome", [
+export const UserPromptResponseSchema = v.variant("outcome", [
   v.object({ ok: v.literal(true), outcome: v.literal("accepted") }),
   v.object({
     ok: v.literal(true),
     outcome: v.literal("not_delivered"),
-    reason: SessionInputReasonSchema,
+    reason: UserPromptReasonSchema,
   }),
   v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
 ]);
-export type SessionInputResponse = Output<typeof SessionInputResponseSchema>;
+export type UserPromptResponse = Output<typeof UserPromptResponseSchema>;
 
-/** Why an agent_input did not reach the subagent (DR-0039 §6): the module's
- * AgentAppendReason, or as for session_input, `no_module` (no run's module
+/** Why an user_message did not reach the subagent (DR-0039 §6): the module's
+ * AgentAppendReason, or as for user_prompt, `no_module` (no run's module
  * took the request), `session_changed` (/clear, /resume) or `ended`. */
-export const AgentInputReasonSchema = v.picklist([
+export const UserMessageReasonSchema = v.picklist([
   ...AgentAppendReasonSchema.options,
   "no_module",
   "session_changed",
   "ended",
 ]);
-export type AgentInputReason = Output<typeof AgentInputReasonSchema>;
+export type UserMessageReason = Output<typeof UserMessageReasonSchema>;
 
-/** Payload of a completed agent_input: `appended` (the subagent's next
+/** Payload of a completed user_message: `appended` (the subagent's next
  * request carries it), `not_delivered` for `reason`, or `unconfirmed` (a
  * sidecar took the request but no answer came in time). */
-export const AgentInputResponseSchema = v.variant("outcome", [
+export const UserMessageResponseSchema = v.variant("outcome", [
   v.object({ ok: v.literal(true), outcome: v.literal("appended") }),
   v.object({
     ok: v.literal(true),
     outcome: v.literal("not_delivered"),
-    reason: AgentInputReasonSchema,
+    reason: UserMessageReasonSchema,
   }),
   v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
 ]);
-export type AgentInputResponse = Output<typeof AgentInputResponseSchema>;
+export type UserMessageResponse = Output<typeof UserMessageResponseSchema>;
 
 /** Payload of a sidecar_reply the daemon was waiting for. */
 export const SidecarReplyResponseSchema = v.object({

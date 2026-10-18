@@ -129,7 +129,7 @@ export class SidecarRuns {
     return true;
   }
 
-  /** The live runs of `sid`, oldest first — the order session_input asks
+  /** The live runs of `sid`, oldest first — the order user_prompt asks
    * them in. A run whose harness is known to have ended is not live. */
   liveOf(sid: string): SidecarRun[] {
     const live: SidecarRun[] = [];

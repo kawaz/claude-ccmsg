@@ -192,7 +192,7 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
-    /** What the ccmsg command a tool runs (`sidecar peer-send`, `sidecar
+    /** What the ccmsg command a tool runs (`sidecar send-message`, `sidecar
      * peer-list`, `say`) does, given its argv and what it was run with. */
     command?: (
       argv: readonly string[],
@@ -289,7 +289,7 @@ function fakeEngine(
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
-        if (argv[1] === "say" || argv[2] === "peer-send" || argv[2] === "peer-list") {
+        if (argv[1] === "say" || argv[2] === "send-message" || argv[2] === "peer-list") {
           if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
           return options.command(argv, init ?? {});
         }
@@ -1801,7 +1801,7 @@ describe("the ccmsg tools", () => {
     expect(fake.tools).toEqual([]);
   });
 
-  test("send hands { to, text } to ccmsg sidecar peer-send and reads each result", async () => {
+  test("send hands { to, text } to ccmsg sidecar send-message and reads each result", async () => {
     const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
     const fake = toolFake(async (argv, init) => {
       seen.push({ argv, ...init });
@@ -1822,7 +1822,7 @@ describe("the ccmsg tools", () => {
     });
     expect(seen).toEqual([
       {
-        argv: ["/plugin/bin/ccmsg", "sidecar", "peer-send", "--sid", fake.sid.value],
+        argv: ["/plugin/bin/ccmsg", "sidecar", "send-message", "--sid", fake.sid.value],
         stdin: JSON.stringify({ to: { cwd: "/w" }, text }),
         timeoutMs: SEND_TIMEOUT_MS,
       },

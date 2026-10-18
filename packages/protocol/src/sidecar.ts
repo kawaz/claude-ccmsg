@@ -63,7 +63,7 @@ export const PromptSendArgsSchema = v.object({
 export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
 
 /** The reasons a session's hooks module gives for a prompt.send it could not
- * put in (the wire's SessionInputReason, but for `no_module`, which is the
+ * put in (the wire's UserPromptReason, but for `no_module`, which is the
  * daemon's own conclusion).
  *
  * - `dialog`: a dialog holds the keys, so the composer refused the text
@@ -77,7 +77,7 @@ export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
  *   left the composer; the composer was put back as for `not_submitted`
  * - `session_changed`: the run moved to another session id (/clear, /resume)
  *   before Enter, so the text was not put in */
-export const SessionInputModuleReasonSchema = v.picklist([
+export const UserPromptModuleReasonSchema = v.picklist([
   "dialog",
   "no_composer",
   "refused",
@@ -86,7 +86,7 @@ export const SessionInputModuleReasonSchema = v.picklist([
   "enter_failed",
   "session_changed",
 ]);
-export type SessionInputModuleReason = Output<typeof SessionInputModuleReasonSchema>;
+export type UserPromptModuleReason = Output<typeof UserPromptModuleReasonSchema>;
 
 /** What a `prompt.send` that ran says. `accepted` means the harness's
  * `prompt.submit` of the filled text from the composer went through: the
@@ -97,7 +97,7 @@ export type SessionInputModuleReason = Output<typeof SessionInputModuleReasonSch
  * the composer no longer holding the text. */
 export const PromptSendResultSchema = v.variant("outcome", [
   v.object({ outcome: v.literal("accepted") }),
-  v.object({ outcome: v.literal("not_delivered"), reason: SessionInputModuleReasonSchema }),
+  v.object({ outcome: v.literal("not_delivered"), reason: UserPromptModuleReasonSchema }),
   v.object({ outcome: v.literal("unconfirmed") }),
 ]);
 export type PromptSendResult = Output<typeof PromptSendResultSchema>;

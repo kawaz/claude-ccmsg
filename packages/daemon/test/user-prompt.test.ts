@@ -1,4 +1,4 @@
-// session_input (DR-0035 §1, §5): the daemon asks the hooks module of one run
+// user_prompt (DR-0035 §1, §5): the daemon asks the hooks module of one run
 // of a session at a time to `prompt.send` the text, and answers with what the
 // module replies, or unconfirmed.
 import { describe, expect, test } from "bun:test";
@@ -24,11 +24,11 @@ import {
   inputReadiness,
   productionInputDeps,
   readPromptSendReply,
-  sessionInput,
-  type SessionInputDeps,
-} from "../src/session-input.ts";
+  userPrompt,
+  type UserPromptDeps,
+} from "../src/user-prompt.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
-import { agentInput } from "../src/agent-input.ts";
+import { userMessage } from "../src/user-message.ts";
 import type { SidecarRun } from "../src/sidecar-runs.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
@@ -76,7 +76,7 @@ describe("readPromptSendReply", () => {
   });
 
   // What the composer holds is unknown after these. Which results are not of
-  // prompt.send's shape is the schema's (sessionInput below, and the
+  // prompt.send's shape is the schema's (userPrompt below, and the
   // protocol's own tests).
   test("an op that failed part-way, or a result not of prompt.send's shape, is unconfirmed", () => {
     expect(readPromptSendReply(failed("internal"))).toEqual({ outcome: "unconfirmed" });
@@ -130,12 +130,12 @@ function runIdOf(socket: string): string {
  * Records every line written, by socket. */
 function scripted(
   runs: Record<string, RunBehaviour>,
-  extra: Partial<SessionInputDeps> = {},
-): { deps: SessionInputDeps; written: { socket: string; line: SidecarRequest }[] } {
+  extra: Partial<UserPromptDeps> = {},
+): { deps: UserPromptDeps; written: { socket: string; line: SidecarRequest }[] } {
   const replies = new SidecarReplies();
   let n = 0;
   const written: { socket: string; line: SidecarRequest }[] = [];
-  const deps: SessionInputDeps = {
+  const deps: UserPromptDeps = {
     replies,
     newId: () => `id${++n}`,
     runs: {
@@ -164,9 +164,9 @@ const notDelivered = (reason: string): RunBehaviour => ({
 });
 const ACCEPTED: RunBehaviour = { result: { outcome: "accepted" } };
 
-// agent_input (DR-0039 §6): the same runs are asked to agent.append; a run
+// user_message (DR-0039 §6): the same runs are asked to agent.append; a run
 // whose loops do not include the subagent passes it to the next.
-describe("agentInput", () => {
+describe("userMessage", () => {
   const APPENDED: RunBehaviour = { result: { outcome: "appended" } };
   const agentDeps = (runs: Record<string, RunBehaviour>, isRunning = true) => {
     const { deps, written } = scripted(runs);
@@ -175,7 +175,7 @@ describe("agentInput", () => {
 
   test("appended by the run the subagent runs in, the next tried after not_running", async () => {
     const { deps, written } = agentDeps({ run100: notDelivered("not_running"), run200: APPENDED });
-    expect(await agentInput(SID, "a1", "hi", deps)).toMatchObject({ outcome: "appended" });
+    expect(await userMessage(SID, "a1", "hi", deps)).toMatchObject({ outcome: "appended" });
     expect(written.map((w) => w.line)).toEqual([
       { v: 1, op: "agent.append", id: "id1", args: { agentId: "a1", text: "hi" } },
       { v: 1, op: "agent.append", id: "id2", args: { agentId: "a1", text: "hi" } },
@@ -184,10 +184,10 @@ describe("agentInput", () => {
 
   test("not running in any run: not_running; a refusal stops at that run", async () => {
     expect(
-      await agentInput(SID, "a1", "hi", agentDeps({ run100: notDelivered("not_running") }).deps),
+      await userMessage(SID, "a1", "hi", agentDeps({ run100: notDelivered("not_running") }).deps),
     ).toMatchObject({ outcome: "not_delivered", reason: "not_running" });
     const { deps, written } = agentDeps({ run100: notDelivered("refused"), run200: APPENDED });
-    expect(await agentInput(SID, "a1", "hi", deps)).toMatchObject({
+    expect(await userMessage(SID, "a1", "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "refused",
     });
@@ -195,27 +195,27 @@ describe("agentInput", () => {
   });
 
   test("no module, a changed session, an ended one; and a run that does not answer", async () => {
-    expect(await agentInput(SID, "a1", "hi", agentDeps({}).deps)).toMatchObject({
+    expect(await userMessage(SID, "a1", "hi", agentDeps({}).deps)).toMatchObject({
       reason: "no_module",
     });
-    expect(await agentInput(SID, "a1", "hi", agentDeps({}, false).deps)).toMatchObject({
+    expect(await userMessage(SID, "a1", "hi", agentDeps({}, false).deps)).toMatchObject({
       reason: "ended",
     });
     const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
-    expect(await agentInput(SID, "a1", "hi", { ...deps, isRunning: () => true })).toMatchObject({
+    expect(await userMessage(SID, "a1", "hi", { ...deps, isRunning: () => true })).toMatchObject({
       reason: "session_changed",
     });
     const silent = agentDeps({ run100: "silent" }).deps;
-    expect(await agentInput(SID, "a1", "hi", { ...silent, deadlineMs: 50 })).toMatchObject({
+    expect(await userMessage(SID, "a1", "hi", { ...silent, deadlineMs: 50 })).toMatchObject({
       outcome: "unconfirmed",
     });
   });
 });
 
-describe("sessionInput asks one run at a time", () => {
+describe("userPrompt asks one run at a time", () => {
   test("no live run: not_delivered no_module", async () => {
     const { deps } = scripted({});
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
     });
@@ -225,7 +225,7 @@ describe("sessionInput asks one run at a time", () => {
   // The person is told the session changed, not to update the plugin.
   test("no run of the id, its run serving another id: session_changed", async () => {
     const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "session_changed",
     });
@@ -236,7 +236,7 @@ describe("sessionInput asks one run at a time", () => {
       run100: notDelivered("session_changed"),
       run200: ACCEPTED,
     });
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
     expect(written.length).toBe(2);
   });
 
@@ -246,7 +246,7 @@ describe("sessionInput asks one run at a time", () => {
       run200: ACCEPTED,
     });
     const text = "two\nlines  ";
-    expect(await sessionInput(SID, text, deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt(SID, text, deps)).toMatchObject({ outcome: "accepted" });
     expect(written).toEqual([
       {
         socket: `${SID}.run100.sock`,
@@ -261,13 +261,13 @@ describe("sessionInput asks one run at a time", () => {
 
   test("a run that did not take the line is passed over", async () => {
     const { deps, written } = scripted({ run100: "unwritten", run200: ACCEPTED });
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
     expect(written.map((w) => w.socket)).toEqual([`${SID}.run200.sock`]);
   });
 
   test("no run that takes the line: not_delivered no_module", async () => {
     const { deps } = scripted({ run100: "unwritten", run200: "unwritten" });
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
     });
@@ -278,7 +278,7 @@ describe("sessionInput asks one run at a time", () => {
   for (const reason of ["dialog", "refused", "not_submitted", "enter_failed"] as const) {
     test(`${reason} stops at that run`, async () => {
       const { deps, written } = scripted({ run100: notDelivered(reason), run200: ACCEPTED });
-      expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+      expect(await userPrompt(SID, "hi", deps)).toMatchObject({
         outcome: "not_delivered",
         reason,
       });
@@ -305,7 +305,7 @@ describe("sessionInput asks one run at a time", () => {
         { run100: behaviour, run200: ACCEPTED },
         { deadlineMs: 30 },
       );
-      expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+      expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
       expect(written.length).toBe(1);
     });
   }
@@ -315,7 +315,7 @@ describe("sessionInput asks one run at a time", () => {
       run100: notDelivered("no_terminal"),
       run200: notDelivered("no_composer"),
     });
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_composer",
     });
@@ -342,7 +342,7 @@ describe("sessionInput asks one run at a time", () => {
         },
       },
     );
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
     expect(written.length).toBe(1);
   });
 });
@@ -372,11 +372,11 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
     const runs = ["run100", "run200"].map((runId) =>
       runOf(runId, { socket: path.join(dir, sidecarSocketName(SID, runId)) }),
     );
-    const deps: SessionInputDeps = {
+    const deps: UserPromptDeps = {
       ...productionInputDeps(new SidecarReplies(), { liveOf: () => runs, movedOn: () => false }),
       deadlineMs: 400,
     };
-    const res = await sessionInput(SID, "x".repeat(4 * 1024 * 1024), deps);
+    const res = await userPrompt(SID, "x".repeat(4 * 1024 * 1024), deps);
     expect(res.outcome).toBe("unconfirmed");
     expect(res.tries.map((t) => t.result)).toEqual(["write_uncertain"]);
     expect(reached).toBe(0);
@@ -411,7 +411,7 @@ describe("inputReadiness", () => {
     expect(readinessOver({ run1: "hy-1" })).toEqual({ kind: "ready" });
   });
 
-  // sessionInput moves past a run that answers no_terminal, so one run with a
+  // userPrompt moves past a run that answers no_terminal, so one run with a
   // terminal among several is enough.
   test("ready when any run has a terminal, no_terminal when none has", () => {
     expect(readinessOver({ run1: null, run2: "hy-2" })).toEqual({ kind: "ready" });
@@ -423,7 +423,7 @@ describe("inputReadiness", () => {
     expect(readinessOver({}, { isRunning: false })).toEqual({ kind: "ended" });
   });
 
-  // The same judgment sessionInput gives after /clear: a run that served the
+  // The same judgment userPrompt gives after /clear: a run that served the
   // id now serves another.
   test("no run of the id, its run serving another id: session_changed", () => {
     expect(readinessOver({}, { movedOn: true, isRunning: false })).toEqual({
@@ -542,14 +542,14 @@ function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar
   return { op: "sidecar_reply", reply };
 }
 
-describe("session_input over the wire", () => {
+describe("user_prompt over the wire", () => {
   test("the module's accepted reply is the answer", async () => {
     const ctx = await startShortDaemon();
     const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const reply = user.request({ op: "session_input", session_id: SID, text: "hi there" });
+      const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi there" });
       const line = await nextRequest(sidecar);
       expect(line).toEqual({ v: 1, op: "prompt.send", id: line.id, args: { text: "hi there" } });
       const module = await connect(ctx.sock);
@@ -573,7 +573,7 @@ describe("session_input over the wire", () => {
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       const line = await nextRequest(sidecar);
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
@@ -603,7 +603,7 @@ describe("session_input over the wire", () => {
       await left.leave();
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const res = await user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const res = await user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       expect(res).toEqual({ ok: true, outcome: "not_delivered", reason: "no_module" });
       user.close();
     } finally {
@@ -621,7 +621,7 @@ describe("session_input over the wire", () => {
     try {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const reply = user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
       const toFirst = await nextRequest(first);
@@ -679,7 +679,7 @@ describe("session_input over the wire", () => {
       const session = await connect(ctx.sock);
       await session.hello({ role: "session", sid: SID });
       const asSession = await session.requestError({
-        op: "session_input",
+        op: "user_prompt",
         session_id: SID,
         text: "x",
       });
@@ -688,12 +688,12 @@ describe("session_input over the wire", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const blank = await user.requestError({
-        op: "session_input",
+        op: "user_prompt",
         session_id: SID,
         text: " \n ",
       });
       expect(blank.error.code).toBe("invalid_args");
-      const noSid = await user.requestRefusal({ op: "session_input", text: "x" });
+      const noSid = await user.requestRefusal({ op: "user_prompt", text: "x" });
       expect(noSid.error.code).toBe("invalid_args");
       const replyAsUser = await user.requestError(sidecarReply({ id: "x", ok: true, result: {} }));
       expect(replyAsUser.error.code).toBe("bad_request");
@@ -713,6 +713,25 @@ describe("session_input over the wire", () => {
       const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
       expect(log).toContain(`sidecar_reply never-sent from ${SID} refused: no request is waiting`);
       expect(log).toContain(`request sidecar_reply from ${SID} refused: reply.error: Invalid key`);
+
+      // user_message is the user role's too, and both need hello first.
+      const appendAsSession = await session.requestError({
+        op: "user_message",
+        session_id: SID,
+        agent_id: "a1",
+        text: "x",
+      });
+      expect(appendAsSession.error.code).toBe("bad_request");
+      const raw = await connect(ctx.sock);
+      for (const op of ["user_prompt", "user_message"] as const) {
+        const early = await raw.requestError(
+          op === "user_prompt"
+            ? { op, session_id: SID, text: "x" }
+            : { op, session_id: SID, agent_id: "a1", text: "x" },
+        );
+        expect({ op, code: early.error.code }).toEqual({ op, code: "hello_required" });
+      }
+      raw.close();
       user.close();
       session.close();
     } finally {
@@ -728,7 +747,7 @@ describe("session_input over the wire", () => {
       await user.hello({ role: "user" });
       // Left waiting: the connection closes before the daemon would answer it.
       const reply = user
-        .request({ op: "session_input", session_id: SID, text: "hi" })
+        .request({ op: "user_prompt", session_id: SID, text: "hi" })
         .catch(() => undefined);
       const line = await nextRequest(sidecar);
       const other = await connect(ctx.sock);
@@ -871,7 +890,7 @@ describe("input_readiness on session_status", () => {
       expect(peers.peers.find((p) => p.sid === SID)?.input_readiness).toEqual({
         kind: "session_changed",
       });
-      const sent = await user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const sent = await user.request({ op: "user_prompt", session_id: SID, text: "hi" });
       expect(sent).toEqual({ ok: true, outcome: "not_delivered", reason: "session_changed" });
       user.close();
     } finally {

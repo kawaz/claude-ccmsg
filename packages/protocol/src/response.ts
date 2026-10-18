@@ -33,9 +33,9 @@ import {
   RoomHistoryResponseSchema,
   RoomsResponseSchema,
 } from "./response-rooms.ts";
-import { PeerListResponseSchema, PeerSendResponseSchema } from "./peer-tools.ts";
+import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
 import {
-  AgentInputResponseSchema,
+  UserMessageResponseSchema,
   AgentsResponseSchema,
   DirTreeResponseSchema,
   ForkOriginResponseSchema,
@@ -47,7 +47,7 @@ import {
   SessionDumpFileResponseSchema,
   SessionEnvResponseSchema,
   SessionErrorsResponseSchema,
-  SessionInputResponseSchema,
+  UserPromptResponseSchema,
   SessionKillResponseSchema,
   SessionLaunchResponseSchema,
   SessionLauncherConfigResponseSchema,
@@ -95,8 +95,8 @@ export type ErrorResponse = Output<typeof ErrorResponseSchema>;
  * session_status). */
 export const RESPONSE_SCHEMAS = {
   hello: HelloResponseSchema,
-  agent_input: AgentInputResponseSchema,
-  peer_send: PeerSendResponseSchema,
+  user_message: UserMessageResponseSchema,
+  send_message: SendMessageResponseSchema,
   peer_list: PeerListResponseSchema,
   say: SayResponseSchema,
   say_read: SayReadResponseSchema,
@@ -110,7 +110,7 @@ export const RESPONSE_SCHEMAS = {
   session_launch: SessionLaunchResponseSchema,
   session_kill: SessionKillResponseSchema,
   session_rename: SessionRenameResponseSchema,
-  session_input: SessionInputResponseSchema,
+  user_prompt: UserPromptResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

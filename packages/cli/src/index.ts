@@ -21,7 +21,7 @@ import {
   type ReplyOf,
   type RequestInput,
   PeerListInputTextSchema,
-  PeerSendInputTextSchema,
+  SendMessageInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
@@ -303,7 +303,7 @@ what its tools send go to the daemon. Not for direct use.
 `;
 
 /** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
- * §3), `ccmsg sidecar begin` (DR-0039 §2) and `ccmsg sidecar peer-send` /
+ * §3), `ccmsg sidecar begin` (DR-0039 §2) and `ccmsg sidecar send-message` /
  * `peer-list` (DR-0039 §3). All are the hooks module's: it starts the first
  * for its session's life, runs the second to answer a request the first
  * copied to it, the third to hand the daemon what it knows of its session,
@@ -320,8 +320,8 @@ async function runSidecarCommand(args: string[]): Promise<void> {
     await runSidecarReply(opts);
     return;
   }
-  if (positionals[0] === "peer-send") {
-    await runSidecarPeerSend(opts);
+  if (positionals[0] === "send-message") {
+    await runSidecarSendMessage(opts);
     return;
   }
   if (positionals[0] === "peer-list") {
@@ -498,9 +498,9 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
   process.exit(0);
 }
 
-/** `ccmsg sidecar peer-send --sid <sid> < input.json` (DR-0039 §3): send a
+/** `ccmsg sidecar send-message --sid <sid> < input.json` (DR-0039 §3): send a
  * message as session `<sid>` to the sessions `{ to, text }` on standard input
- * picks out, and print the daemon's peer_send reply (one result per session
+ * picks out, and print the daemon's send_message reply (one result per session
  * matched), exiting 0. The input comes on standard input for the reason a
  * reply does: a message may be long, and an argument is bounded in size and
  * shown to every user by `ps`.
@@ -508,18 +508,18 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
  * Exits 3, nothing sent, when no daemon can be had; exits 1 when the daemon
  * took the request and its reply did not come, which leaves unknown whether
  * the message went. */
-async function runSidecarPeerSend(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar peer-send --sid <sid> < input.json";
-  const read = parseWith(PeerSendInputTextSchema, await Bun.stdin.text());
+async function runSidecarSendMessage(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar send-message --sid <sid> < input.json";
+  const read = parseWith(SendMessageInputTextSchema, await Bun.stdin.text());
   if (!read.ok) {
     throw new Error(
       `standard input must be { to, text } as JSON: ${read.failure.summary}\n  usage: ${usage}`,
     );
   }
   const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar peer-send");
-  const client = await daemonOrExit(identity, "sidecar peer-send");
-  const res = await client.request({ op: "peer_send", ...read.value });
+  if (identity === null) refuseWriteWithoutSid("sidecar send-message");
+  const client = await daemonOrExit(identity, "sidecar send-message");
+  const res = await client.request({ op: "send_message", ...read.value });
   client.close();
   process.exit(output(res));
 }

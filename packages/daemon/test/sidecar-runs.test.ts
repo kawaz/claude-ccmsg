@@ -63,7 +63,7 @@ describe("a run is live while its sidecar's connection is open", () => {
   });
 
   // A resume started twice: one session, two harness processes, each with a
-  // run id of its own. Listed oldest first, the order session_input asks in.
+  // run id of its own. Listed oldest first, the order user_prompt asks in.
   test("two runs of one session are both live and told apart by run id", () => {
     const { runs } = registry();
     const late = {};

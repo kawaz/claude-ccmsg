@@ -56,6 +56,7 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 module が `session.start` で `$.tool.register` により tool を登録し、`tool.call` の handler で答える。登録した tool は対話・`-p`・subagent の request の `tools` に載り、handler では呼び手の session id (`$.session.id()`、subagent からの呼び出しでも本体の id)、cwd (`$.session.cwd()`)、subagent なら `e.agentId` が取れる (event-matrix の `$.tool.register` の「結論」)。
 
 - **セッション間の送信**: 入力は `{ session_id?, cwd?, name?, pid?, text }` のような宛先の部分指定と本文。daemon が部分指定を生きているセッションに解決し、config dir が違うセッションにも peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md)) で届ける。config dir を跨ぐことを利用者に意識させず、宛先の綴りの規約 (`ccmsg:` 接頭辞) を持たない
+  - daemon の op は `send_message` (宛先の候補は `peer_list`) で、module は `ccmsg sidecar send-message` / `peer-list` を transport にする。wire の op の名は本家の SendMessage / user prompt / user message と対照させ、composer を通る本物の prompt (`user_prompt`、DR-0035 §1) と文脈を足すだけの message (`user_message`、§6) の違いを名前で表す (kawaz 2026-10-18)
   - 面 (config dir) で絞らない。一覧 (`peers`) と送信 (`send`) は同じ解決元で、daemon が検出した config dir と hello で名乗られた config dir の全部のセッションを対象にする (kawaz 2026-10-18)
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
   - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
@@ -77,11 +78,11 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 - **人の口**: `daemon` / `status` / `stop` / `origins` 等、人が端末で使うもの
 - **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`) と、say の tool の handler が起こす `say`
-- `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
+- `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`、transport は `ccmsg sidecar send-message`) に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
 - `subscribe` / `notify` は本 DR では残す
 - サブコマンドごとの最終の振り分けは実装時に行い、判断の軸は「エージェントが呼ぶ口か」とする
-- webui からの人の入力 (op `session_input`、user role、DR-0035 §1) は人の口なので変えない
+- webui からの人の入力 (op `user_prompt`、user role、DR-0035 §1) は人の口なので変えない
 
 ### 5. 最初の turn の前に、エージェント向けの案内を会話に入れる
 
@@ -95,7 +96,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 ### 6. webui から走行中の subagent へ文脈を直送する
 
-- webui から走行中の subagent に書いた文は、daemon がサイドカー経由で module に渡し、module が `$.session.append({ message: { type: 'user', ... }, agentId })` で足す。子の次の request で、直前の tool_result と同じ user message の後ろの text block として載り、本体の request には載らない (event-matrix の agentId 付き append の実測 5/5)。観測は background の `Agent` の子が tool を実行している間に、timer を契機に足した場合だけで、foreground の `Agent`、stream の途中、`-p` の子・teammate・workflow の agent、peer socket やサイドカーの依頼を契機にした append は未観測
+- webui から走行中の subagent に書いた文は、op `user_message` (user role) で daemon に届き、daemon がサイドカー経由で module に渡し、module が `$.session.append({ message: { type: 'user', ... }, agentId })` で足す。子の次の request で、直前の tool_result と同じ user message の後ろの text block として載り、本体の request には載らない (event-matrix の agentId 付き append の実測 5/5)。観測は background の `Agent` の子が tool を実行している間に、timer を契機に足した場合だけで、foreground の `Agent`、stream の途中、`-p` の子・teammate・workflow の agent、peer socket やサイドカーの依頼を契機にした append は未観測
 - module は `agentId` 付きの `turn.start` / `turn.complete` を畳んで、走行中の subagent の `agentId` の一覧をセッションの事実 (DR-0035 §3) の subagent の節として daemon に送る。webui は直送の宛先をこの一覧から選ぶ (transcript の `Agent` の結果からは子が今走っているかが分からないため)。これは findings 2026-10-15-mods-reference-opportunities の B1 (agent tree の生存判定を event にする) の一部を先に入れることになる。`turn.*` の `agentId` は直送の宛先と同じ値 (同実測: `turn.*`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` はすべて一致)
 - 終わった子と存在しない id への append は `refused: no running loop is <agentId>` で拒まれる (同実測)。module はこれを「届かなかった (subagent が走っていない)」として daemon に返し、webui に出す。文言では終わった子と存在しない id を区別できないので、区別して示さない
 - これは会話への文脈の追加であって user prompt ではない (transcript では `isMeta` の user 行)。permission や classifier の判断を変える権限の付与には使わない (§8)。classifier がこの行をどう読むかは未検証

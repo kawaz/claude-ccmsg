@@ -43,16 +43,16 @@ export const KEEPALIVE_TIMEOUT_MS = 10_000;
 /** How often an open socket is checked for having gone idle. */
 export const KEEPALIVE_CHECK_MS = 5_000;
 
-/** How long sessionInput waits for its reply. The daemon always answers a
- * session_input within its own 12 s deadline (`unconfirmed` at worst,
- * SESSION_INPUT_DEADLINE_MS in the daemon), so this only fires when that
+/** How long userPrompt waits for its reply. The daemon always answers a
+ * user_prompt within its own 12 s deadline (`unconfirmed` at worst,
+ * USER_PROMPT_DEADLINE_MS in the daemon), so this only fires when that
  * answer is lost on a socket that still looks alive. The 3 s on top covers
  * the daemon's event loop running late and the transport (a phone over the
  * tailnet) without making a lost answer hold the input panel much longer. */
-export const SESSION_INPUT_REPLY_TIMEOUT_MS = 15_000;
-/** How long agentInput waits for its reply: the daemon's AGENT_INPUT_DEADLINE_MS
- * (5 s) and the same margin as SESSION_INPUT_REPLY_TIMEOUT_MS. */
-export const AGENT_INPUT_REPLY_TIMEOUT_MS = 8_000;
+export const USER_PROMPT_REPLY_TIMEOUT_MS = 15_000;
+/** How long userMessage waits for its reply: the daemon's USER_MESSAGE_DEADLINE_MS
+ * (5 s) and the same margin as USER_PROMPT_REPLY_TIMEOUT_MS. */
+export const USER_MESSAGE_REPLY_TIMEOUT_MS = 8_000;
 
 /** The time the client reads and the waits it sets: how long a socket has
  * been idle, when to reconnect, when a reply is overdue. The same seam as the
@@ -332,11 +332,11 @@ export interface WsHandle {
    * session's hooks module fill its composer and press Enter, then replies
    * with the module's answer, or `unconfirmed` once its own wait runs out, so
    * this call can take several seconds. An `error.code` of `connection_closed`
-   * or `request_timeout` (no answer within SESSION_INPUT_REPLY_TIMEOUT_MS)
+   * or `request_timeout` (no answer within USER_PROMPT_REPLY_TIMEOUT_MS)
    * means the request was written but its answer was lost: the text may be in
    * the session. */
-  sessionInput(sessionId: string, text: string): Promise<ReplyOf<"session_input">>;
-  agentInput(sessionId: string, agentId: string, text: string): Promise<ReplyOf<"agent_input">>;
+  userPrompt(sessionId: string, text: string): Promise<ReplyOf<"user_prompt">>;
+  userMessage(sessionId: string, agentId: string, text: string): Promise<ReplyOf<"user_message">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -980,19 +980,19 @@ export function createWsClient(
         session_id: sessionId,
         title,
       }),
-    sessionInput: (sessionId, text) =>
+    userPrompt: (sessionId, text) =>
       send(
         {
-          op: "session_input",
+          op: "user_prompt",
           session_id: sessionId,
           text,
         },
-        { timeoutMs: SESSION_INPUT_REPLY_TIMEOUT_MS },
+        { timeoutMs: USER_PROMPT_REPLY_TIMEOUT_MS },
       ),
-    agentInput: (sessionId, agentId, text) =>
+    userMessage: (sessionId, agentId, text) =>
       send(
-        { op: "agent_input", session_id: sessionId, agent_id: agentId, text },
-        { timeoutMs: AGENT_INPUT_REPLY_TIMEOUT_MS },
+        { op: "user_message", session_id: sessionId, agent_id: agentId, text },
+        { timeoutMs: USER_MESSAGE_REPLY_TIMEOUT_MS },
       ),
     sessionEnv: (sessionId) =>
       send({

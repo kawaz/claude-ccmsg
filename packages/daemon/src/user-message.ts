@@ -1,26 +1,26 @@
-// agent_input (DR-0039 §6): hand what a person wrote for a running subagent
+// user_message (DR-0039 §6): hand what a person wrote for a running subagent
 // of a session to the hooks module of a run of the session as an
 // `agent.append` request, and wait for the module to say whether the
 // subagent's conversation took it.
 //
-// Which runs are asked and how a missing module reads follow session_input
-// (session-input.ts); the request and its reply go through sidecar-call.ts.
-import type { AgentAppendReason, AgentInputReason } from "@ccmsg/protocol";
+// Which runs are asked and how a missing module reads follow user_prompt
+// (user-prompt.ts); the request and its reply go through sidecar-call.ts.
+import type { AgentAppendReason, UserMessageReason } from "@ccmsg/protocol";
 import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
-import type { SessionRunsView } from "./session-input.ts";
+import type { SessionRunsView } from "./user-prompt.ts";
 
-/** The longest an agent_input takes to answer: the write and one
+/** The longest an user_message takes to answer: the write and one
  * `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3), with room for a
  * second run after a first whose subagent was not its. */
-export const AGENT_INPUT_DEADLINE_MS = 5_000;
+export const USER_MESSAGE_DEADLINE_MS = 5_000;
 
-/** AgentInputResponse without the envelope's `ok`. */
-export type AgentInputOutcome =
+/** UserMessageResponse without the envelope's `ok`. */
+export type UserMessageOutcome =
   | { outcome: "appended" }
-  | { outcome: "not_delivered"; reason: AgentInputReason }
+  | { outcome: "not_delivered"; reason: UserMessageReason }
   | { outcome: "unconfirmed" };
 
-export interface AgentInputDeps extends SidecarDeps {
+export interface UserMessageDeps extends SidecarDeps {
   deadlineMs: number;
   runs: SessionRunsView;
   /** Whether the daemon still counts `sid` among the running sessions. */
@@ -28,7 +28,7 @@ export interface AgentInputDeps extends SidecarDeps {
 }
 
 /** What became of one try, for the daemon log. */
-export interface AgentInputTry {
+export interface UserMessageTry {
   id: string;
   socket: string;
   result:
@@ -39,14 +39,14 @@ export interface AgentInputTry {
     | `not_delivered:${AgentAppendReason}`;
 }
 
-export async function agentInput(
+export async function userMessage(
   sid: string,
   agentId: string,
   text: string,
-  deps: AgentInputDeps,
-): Promise<AgentInputOutcome & { tries: AgentInputTry[] }> {
+  deps: UserMessageDeps,
+): Promise<UserMessageOutcome & { tries: UserMessageTry[] }> {
   const until = deps.now() + deps.deadlineMs;
-  const tries: AgentInputTry[] = [];
+  const tries: UserMessageTry[] = [];
   let answered: AgentAppendReason | undefined;
   for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();

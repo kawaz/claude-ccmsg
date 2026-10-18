@@ -1,4 +1,4 @@
-// session_input (DR-0035 §1, §3, §5): hand what a person wrote to the hooks
+// user_prompt (DR-0035 §1, §3, §5): hand what a person wrote to the hooks
 // module of a run of the session as a `prompt.send` request, and wait for the
 // module to say whether the harness took it as the person's prompt.
 //
@@ -10,9 +10,9 @@
 import {
   type Parsed,
   type PromptSendResult,
-  type SessionInputModuleReason,
+  type UserPromptModuleReason,
   type SessionInputReadiness,
-  type SessionInputReason,
+  type UserPromptReason,
   type SidecarReplyOf,
 } from "@ccmsg/protocol";
 import {
@@ -23,7 +23,7 @@ import {
 } from "./sidecar-call.ts";
 import type { SidecarRuns } from "./sidecar-runs.ts";
 
-/** The longest a session_input takes to answer, every run it tries included.
+/** The longest a user_prompt takes to answer, every run it tries included.
  *
  * One try on the module's side is at most a `hyoui input` (3 s), the wait for
  * the filled text's prompt.submit (3 s) and the reply process (3 s) — 9 s — plus the fill and
@@ -32,18 +32,18 @@ import type { SidecarRuns } from "./sidecar-runs.ts";
  * (no_composer / no_terminal, which needs no Enter and so comes back within a
  * reply's time). Past it the answer is unconfirmed: a person waiting on a
  * send is told it may or may not have landed rather than kept waiting. */
-export const SESSION_INPUT_DEADLINE_MS = 12_000;
+export const USER_PROMPT_DEADLINE_MS = 12_000;
 
-/** SessionInputResponse without the envelope's `ok`. */
-export type SessionInputOutcome =
+/** UserPromptResponse without the envelope's `ok`. */
+export type UserPromptOutcome =
   | { outcome: "accepted" }
-  | { outcome: "not_delivered"; reason: SessionInputReason }
+  | { outcome: "not_delivered"; reason: UserPromptReason }
   | { outcome: "unconfirmed" };
 
-/** The runs of each session, as session_input and readiness read them. */
+/** The runs of each session, as user_prompt and readiness read them. */
 export type SessionRunsView = Pick<SidecarRuns, "liveOf" | "movedOn">;
 
-export interface SessionInputDeps extends SidecarDeps {
+export interface UserPromptDeps extends SidecarDeps {
   deadlineMs: number;
   runs: SessionRunsView;
 }
@@ -65,14 +65,14 @@ export function readPromptSendReply(
  * or none — may mean the text is in, or that this run is the one with the
  * composer and simply could not now; trying the next run then risks a second
  * copy, which is what one-at-a-time exists to prevent (DR-0035 §3). */
-const TRY_NEXT: ReadonlySet<SessionInputModuleReason> = new Set([
+const TRY_NEXT: ReadonlySet<UserPromptModuleReason> = new Set([
   "no_composer",
   "no_terminal",
   "session_changed",
 ]);
 
 /** What became of one try, for the daemon log. */
-export interface SessionInputTry {
+export interface UserPromptTry {
   id: string;
   socket: string;
   result:
@@ -80,17 +80,17 @@ export interface SessionInputTry {
     | "write_uncertain"
     | "accepted"
     | "unconfirmed"
-    | `not_delivered:${SessionInputModuleReason}`;
+    | `not_delivered:${UserPromptModuleReason}`;
 }
 
-export async function sessionInput(
+export async function userPrompt(
   sid: string,
   text: string,
-  deps: SessionInputDeps,
-): Promise<SessionInputOutcome & { tries: SessionInputTry[] }> {
+  deps: UserPromptDeps,
+): Promise<UserPromptOutcome & { tries: UserPromptTry[] }> {
   const until = deps.now() + deps.deadlineMs;
-  const tries: SessionInputTry[] = [];
-  let unable: SessionInputModuleReason | undefined;
+  const tries: UserPromptTry[] = [];
+  let unable: UserPromptModuleReason | undefined;
   for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
@@ -139,10 +139,10 @@ export interface InputReadinessDeps {
 }
 
 /** Whether a person's input can reach `sid` now (SessionInputReadiness), from
- * what sessionInput depends on: the live runs, and for each the terminal its
+ * what userPrompt depends on: the live runs, and for each the terminal its
  * module would press Enter on, as its sidecar named it (the module reads the
  * same HYOUI_SESSION_ID through `$.env.get` and answers `no_terminal`
- * without one). Ready when one run has a terminal, as sessionInput moves past
+ * without one). Ready when one run has a terminal, as userPrompt moves past
  * runs that answer `no_terminal` to the next. */
 export function inputReadiness(sid: string, deps: InputReadinessDeps): SessionInputReadiness {
   const runs = deps.runs.liveOf(sid);
@@ -158,10 +158,10 @@ export function inputReadiness(sid: string, deps: InputReadinessDeps): SessionIn
 export function productionInputDeps(
   replies: SidecarReplies,
   runs: SessionRunsView,
-): SessionInputDeps {
+): UserPromptDeps {
   return {
     ...productionSidecarDeps(replies),
-    deadlineMs: SESSION_INPUT_DEADLINE_MS,
+    deadlineMs: USER_PROMPT_DEADLINE_MS,
     runs,
   };
 }

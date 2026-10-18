@@ -838,11 +838,11 @@ function namesSomebody(to) {
 var NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
 var PeerTargetSchema = pipe(object(PeerTargetEntries), check(namesSomebody, NAMES_SOMEBODY));
 var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
-var PeerSendInputSchema = object({ to: PeerTargetSchema, text: PeerTextSchema });
-var PeerSendInputTextSchema = jsonText(PeerSendInputSchema);
+var SendMessageInputSchema = object({ to: PeerTargetSchema, text: PeerTextSchema });
+var SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 var PeerListInputSchema = object(PeerFilterEntries);
 var PeerListInputTextSchema = jsonText(PeerListInputSchema);
-var PeerSendReasonSchema = picklist([
+var SendMessageReasonSchema = picklist([
   "self",
   "no_module",
   "session_changed",
@@ -857,16 +857,20 @@ var PeerEntries = {
   name: optional(string()),
   cwd: optional(string())
 };
-var PeerSendResultSchema = variant("outcome", [
+var SendMessageResultSchema = variant("outcome", [
   object({ ...PeerEntries, outcome: literal("delivered") }),
   object({ ...PeerEntries, outcome: literal("unconfirmed") }),
-  object({ ...PeerEntries, outcome: literal("not_delivered"), reason: PeerSendReasonSchema })
+  object({
+    ...PeerEntries,
+    outcome: literal("not_delivered"),
+    reason: SendMessageReasonSchema
+  })
 ]);
-var PeerSendResponseSchema = object({
+var SendMessageResponseSchema = object({
   ok: literal(true),
-  results: array(PeerSendResultSchema)
+  results: array(SendMessageResultSchema)
 });
-var PeerSendResponseTextSchema = jsonText(PeerSendResponseSchema);
+var SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
 var PeerListEntrySchema = object({
   ...PeerEntries,
   pids: array(number()),
@@ -893,7 +897,7 @@ function sidecarRunId(startedAt, random) {
 var PromptSendArgsSchema = object({
   text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
 });
-var SessionInputModuleReasonSchema = picklist([
+var UserPromptModuleReasonSchema = picklist([
   "dialog",
   "no_composer",
   "refused",
@@ -904,7 +908,7 @@ var SessionInputModuleReasonSchema = picklist([
 ]);
 var PromptSendResultSchema = variant("outcome", [
   object({ outcome: literal("accepted") }),
-  object({ outcome: literal("not_delivered"), reason: SessionInputModuleReasonSchema }),
+  object({ outcome: literal("not_delivered"), reason: UserPromptModuleReasonSchema }),
   object({ outcome: literal("unconfirmed") })
 ]);
 var NoArgsSchema = pipe(unknown(), check((args) => !Array.isArray(args), "args is an object, not an array"), strictObject({}));
@@ -1447,15 +1451,15 @@ async function sendTool($, e) {
   const { text, ...to } = read.value;
   let run;
   try {
-    run = await $.process.run(peerArgv($.plugin.root, "peer-send", await $.session.id()), {
+    run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
       stdin: JSON.stringify({ to, text }),
       timeoutMs: SEND_TIMEOUT_MS
     });
   } catch (error) {
     $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar peer-send が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+    return `ccmsg sidecar send-message が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
   }
-  const answered = parseWith(PeerSendResponseTextSchema, run.stdout);
+  const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
   if (answered.ok)
     return sendResultText(answered.value.results);
   const said = run.stderr.trim().split(`

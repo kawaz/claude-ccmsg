@@ -144,7 +144,7 @@ export interface SessionIdentity {
   branch?: string;
   /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
    * daemon normalized it at hello time. It adds the directory to those whose
-   * sessions a send may reach (`peer_send`, DR-0039 §3).
+   * sessions a send may reach (`send_message`, DR-0039 §3).
    * Absent when the client did not announce one. */
   config_dir?: string;
 }
