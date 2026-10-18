@@ -1,6 +1,6 @@
 ---
 title: エージェント向け ccmsg 宛先の案内を v1 plugin に置く
-status: open
+status: resolved
 category: design
 created: 2026-10-13T15:45:43+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:24+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0039","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
