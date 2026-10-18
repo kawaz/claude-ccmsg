@@ -41,6 +41,7 @@ kawaz 2026-10-09: 「全てちゃんと型ガードすれば良いだけ、な�
   - 必須にする field は、その種類の行が実機で必ず持つものだけにする (queue-operation に uuid は無く、metadata 系の行に timestamp は無い)
   - 行の一部だけを見る走査 (uuid・cwd・timestamp 等) は、行と同じ field のスキーマから組んだ投影で読む。投影は読む field 以外の不正で落ちない
   - 中身が別の所で決まる値 (`toolUseResult` は呼んだ道具で、tool_use の input は道具ごとに) は、行では JsonValue として持ち、道具と突き合わせる所で道具ごとのスキーマに通す。モデルが書いた input の不正でその行全体を失敗にしないため
+  - JsonValue は配列とオブジェクトの入れ子を 256 段までとし、それより深い値は失敗として返す。上限の無い再帰はスタックを使い切って parseWith の外へ throw し、その行だけの失敗にならないため。実機の transcript の最深は 16 段 (約 320 万行で計測)
   - 画像を添えた queued_command の `prompt` は文字列ではなくブロックの配列で来る。prompt を本文として読む所 (`queuedCommandPrompt`) は、text ブロックの本文を 1 ブロック 1 行で連結した文字列を返す (画像は本文に含めない)
 
 ### 4. hooks module
