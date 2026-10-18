@@ -2725,6 +2725,11 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
       }
     },
   });
+  // The files the daemon writes are closed here, not left to the process
+  // exit: a daemon hosted in a test process outlives its shutdown, and an
+  // open FileHandle collected by GC is reported as an error.
+  await daemon.trace.close();
+  daemon.log.close();
   daemon.exit();
 }
 

@@ -69,6 +69,12 @@ export class Logger {
     this.log("error", msg);
   }
 
+  /** Release the held descriptor. A line logged after this opens the file
+   * again. */
+  close(): void {
+    this.closeFd();
+  }
+
   private open(): number {
     if (this.fd !== null) return this.fd;
     const fd = fs.openSync(this.path, "a");
