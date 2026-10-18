@@ -1,6 +1,6 @@
 ---
 title: webui が session_status の snapshot を field 列挙で写していて、field を足すたびに漏れる
-status: open
+status: resolved
 category: design
 created: 2026-10-15T05:51:35+09:00
 last_read: 2026-10-18T12:53:11+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T13:01:15+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","commit f8158c69"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -43,5 +43,5 @@ protocol の `SessionStatusSnapshot` に field を足すたびに、型検査で
 
 ## 受け入れ条件
 
-- [ ] snapshot に field を足しても受け口の修正が要らない、または漏れが型検査・test で検出される
-- [ ] SessionView 側の受け口にも test がある
+- [x] snapshot に field を足しても受け口の修正が要らない、または漏れが型検査・test で検出される
+- [x] SessionView 側の受け口にも test がある
