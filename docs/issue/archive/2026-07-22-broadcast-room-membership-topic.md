@@ -1,6 +1,6 @@
 ---
 title: broadcast room の membership を topic 化する (leave を書かない monotone 集合へ)
-status: open
+status: resolved
 category: design
 created: 2026-07-22T17:29:25+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:36+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["discarded:前提が消えた: DR-0036 (room 廃止、sid 宛の直送) で room の join/leave・broadcast の membership モデル自体が無くなった。room ログは読み取り専用の閲覧のみ"]
 blocked_by:
 origin: 自リポ TODO
 ---
