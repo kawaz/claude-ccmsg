@@ -3,7 +3,7 @@ title: テストの一時ディレクトリが pass した run でも OS の tem
 status: open
 category: bug
 created: 2026-10-18T15:08:04+09:00
-last_read:
+last_read: 2026-10-18T15:09:42+09:00
 open_entered: 2026-10-18T15:08:04+09:00
 wip_entered:
 blocked_entered:
