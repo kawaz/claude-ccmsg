@@ -97,10 +97,10 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 ### 6. webui から走行中の subagent へ文脈を直送する
 
-- webui から走行中の subagent に書いた文は、op `user_message` (user role) で daemon に届き、daemon がサイドカー経由で module に渡し、module が `$.session.append({ message: { type: 'user', ... }, agentId })` で足す。子の次の request で、直前の tool_result と同じ user message の後ろの text block として載り、本体の request には載らない (event-matrix の agentId 付き append の実測 5/5)。観測は background の `Agent` の子が tool を実行している間に、timer を契機に足した場合だけで、foreground の `Agent`、stream の途中、`-p` の子・teammate・workflow の agent、peer socket やサイドカーの依頼を契機にした append は未観測
+- webui から走行中の subagent に書いた文は、op `user_message` (user role) で daemon に届き、daemon がサイドカー経由で module に渡し、module が `$.session.append({ message: { type: 'user', ... }, agentId })` で足す。子の次の request で、直前の tool_result と同じ user message の後ろの text block として載り、本体の request には載らない (event-matrix の agentId 付き append の実測 5/5)。実 model では、subagent (`run_in_background` の指定の有無を問わず、この環境ではどちらも background で起きる) と in-process の teammate に届いた (findings 2026-10-18-subagents-teammate-vs-subagent、各 2/2 以上)。split pane (tmux / iTerm2) の teammate は別プロセス・別セッションの loop で、leader では `agentId` 付きの `turn.*` が起きず、append は `no running loop` で拒まれる (3/3)。観測の契機はどれも timer で、stream の途中、`-p` の子・workflow の agent、peer socket やサイドカーの依頼を契機にした append は未観測
 - 足す本文の頭には「ユーザから (ccmsg 経由):」の印を付け、model が自分の task の外からの言葉として読めるようにする。入り口が webui かどうかは本質でないので、印は ccmsg に抽象化する (kawaz 2026-10-18)
 - §3 の `send` に `agent_id` を渡したセッションからの送信も同じ経路で足す。その時の印は「ccmsg:<送り主の session_id> から:」で、サイドカーの `agent.append` の `from` で module に渡す
-- module は `agentId` 付きの `turn.start` / `turn.complete` を畳んで、走行中の subagent の `agentId` の一覧をセッションの事実 (DR-0035 §3) の subagent の節として daemon に送る。webui は直送の宛先をこの一覧から選ぶ (transcript の `Agent` の結果からは子が今走っているかが分からないため)。これは findings 2026-10-15-mods-reference-opportunities の B1 (agent tree の生存判定を event にする) の一部を先に入れることになる。`turn.*` の `agentId` は直送の宛先と同じ値 (同実測: `turn.*`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` はすべて一致)
+- module は `agentId` 付きの `turn.start` / `turn.complete` を畳んで、走行中の subagent の `agentId` の一覧をセッションの事実 (DR-0035 §3) の subagent の節として daemon に送る。webui は直送の宛先をこの一覧から選ぶ (transcript の `Agent` の結果からは子が今走っているかが分からないため)。これは findings 2026-10-15-mods-reference-opportunities の B1 (agent tree の生存判定を event にする) の一部を先に入れることになる。一覧に出るのは同じプロセスで回る loop (subagent と in-process の teammate) で、split pane の teammate は出ない。split pane の teammate は直送の宛先ではなく別セッションで、ccmsg でどう扱うかは issue split-pane-teammate-sessions で決める。`turn.*` の `agentId` は直送の宛先と同じ値 (同実測: `turn.*`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` はすべて一致)
 - 終わった子と存在しない id への append は `refused: no running loop is <agentId>` で拒まれる (同実測)。module はこれを「届かなかった (subagent が走っていない)」として daemon に返し、webui に出す。文言では終わった子と存在しない id を区別できないので、区別して示さない
 - これは会話への文脈の追加であって user prompt ではない (transcript では `isMeta` の user 行)。permission や classifier の判断を変える権限の付与には使わない (§8)。classifier がこの行をどう読むかは未検証
 - 本体への人の入力は今までどおり composer への fill + Enter (DR-0035 §1) で、この経路は subagent 宛てに限る
@@ -145,8 +145,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 
 未観測:
 
-- teammate のループへの `agentId` 付きの `$.session.append` (§6 の一覧には teammate も入れている)
-- §6 の直送の、foreground の `Agent` の子・応答の stream の途中・`-p` の子への到達
+- §6 の直送の、応答の stream の途中・`-p` の子への到達
 - `prompt.submit` の `text` の末尾空白の扱い (受け付けの照合は `classic.UserPromptSubmit` で測った許容を流用している)
 
 ## Alternatives Considered
