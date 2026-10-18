@@ -3,7 +3,7 @@ title: verify の隔離 daemon に実行中の実セッションが繋がる
 status: open
 category: bug
 created: 2026-10-10T12:47:26+09:00
-last_read:
+last_read: 2026-10-18T19:20:27+09:00
 open_entered: 2026-10-10T12:47:26+09:00
 wip_entered:
 blocked_entered:
