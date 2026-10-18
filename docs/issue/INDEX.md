@@ -6,7 +6,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 |---|---|---|---|---|
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
 | 2026-10-18 | task | open | [webui-session-input-composer-mount-test](./2026-10-18-webui-session-input-composer-mount-test.md) | SessionInputComposer をマウントして storage event → 入力欄の配線をテストする |
-| 2026-10-15 | bug | wip | [timeline-stick-and-landing-measure-order](./2026-10-15-timeline-stick-and-landing-measure-order.md) | Timeline の末尾追従と位置への着地が、内容が伸びた後・着地の前の測り直しに引きずられる可能性 (未検証) |
 | 2026-10-14 | bug | open | [sidecar-hello-ghost-peer-after-harness-death](./2026-10-14-sidecar-hello-ghost-peer-after-harness-death.md) | sidecar が hello して名乗る形で、daemon 再起動で last_activity_at が更新される副作用と、harness 死亡後に幽霊 peer が残るおそれ |
 | 2026-10-14 | design | open | [hidden-sessionview-stop-store-notifications](./2026-10-14-hidden-sessionview-stop-store-notifications.md) | 隠れている SessionView 配下の Timeline が store 変更で再描画する (612 render)。隠れている間は変更通知を止める store を配る |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |

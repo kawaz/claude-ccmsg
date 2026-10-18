@@ -1,6 +1,6 @@
 ---
 title: Timeline の末尾追従と位置への着地が、内容が伸びた後・着地の前の測り直しに引きずられる可能性 (未検証)
-status: wip
+status: resolved
 category: bug
 created: 2026-10-15T03:10:09+09:00
 last_read: 2026-10-18T14:08:50+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-10-18T14:16:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T14:23:24+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:2 つとも /verify で再現し、落ちるテストを足してから直した (fix(webui) commit e5dbd998 の親 swkylmop)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -45,5 +45,11 @@ webui Timeline の scroller の測り直し (useStickToBottom の測り直しの
 
 ## 受け入れ条件
 
-- [ ] 2 つの仮説それぞれについて、実機で再現するかを確認した
-- [ ] 再現したものは落ちるテストを足してから直した。再現しなかったものは、確認した手順と結果を本文に残した
+- [x] 2 つの仮説それぞれについて、実機で再現するかを確認した
+- [x] 再現したものは落ちるテストを足してから直した。再現しなかったものは、確認した手順と結果を本文に残した
+
+## 確認結果
+
+- 仮説 1: 再現した。試験用セッションで数ターン積み、wheel で上 (300px) に動かして保持を外し、wheel で最下部へ戻した (scrollTop 1042 = scrollHeight - clientHeight)。1〜60 を 1 行ずつ返させると scrollTop は 1042 のまま、最下部は 2730 になり追わなかった。短い応答 (「了」) でも、ユーザ発話と応答の 2 行と応答中の表示の分 (計 178px) で追わなかった。直した後は同じ操作で 1710px 伸びても scrollTop = 最下部 (4618) に追従した。原因: 測り直しが内容の変化のたびに走り、伸びた後の位置で「最下部付近でない」と判定していた。scroller を測るのをスクロールが起きた時だけにした
+- 仮説 2: 本文の手順どおりでは位置 URL へ戻れなかった。項目のクリックでの選択は replace で履歴を書き換えるので積まれず、戻るは Timeline の前の URL へ行った。代わりに、最下部で項目をクリックして選び、最下部のまま wheel を回し (動かないので scroll は来ない)、別の画面 (/usage) へ行ってからブラウザの戻るで位置 URL へ戻ると、着地はするが URL が head に置き換わり選択が外れた (wheel を回さない対照では位置が残った)。原因: 位置を張る前のスクロールの記録が残ったまま、着地の前にスクロール位置の復元で最下部が測られていた。測り直しを位置の変化で走らせないだけでは直らず (実機で確認)、head に戻った時にその記録を捨てるようにして直った
+- テスト: packages/webui/test/timeline.dom.test.ts に 2 件 (80px を超える追記で最下部へ戻った読み手を追う / 最下部で wheel を回してから離れて戻った位置を着地させて保つ)、packages/webui/test/use-timeline-scroll-hooks.dom.test.ts に 1 件 (head に戻る前のスクロールで、後から来た位置を外さない)。どれも直す前に落ちることを確かめた。内容の変化で測り直すことを固定していた hook のテストは、スクロールの時だけ測る仕様に書き換えた
