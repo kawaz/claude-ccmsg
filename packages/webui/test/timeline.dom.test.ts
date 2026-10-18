@@ -359,6 +359,18 @@ describe("Timeline follows the bottom", () => {
     expect(el.scrollTop).toBe(el.scrollHeight);
   });
 
+  test("an append taller than the near-bottom margin follows a reader who scrolled back to the bottom", async () => {
+    const view = await openLoaded(threeExchanges());
+    await userScrollTo(view.root, 0);
+    await userScrollTo(view.root, 6 * ITEM_PX - VIEWPORT_PX);
+    // 2 往復分 (200px) は、最下部付近とみなす余裕 (80px) より高い。
+    const end = loadedEnd(view.store);
+    await tail(view.store, [...exchange(4), ...exchange(5)], end);
+    const el = scroller(view.root);
+    expect(el.scrollHeight).toBe(10 * ITEM_PX);
+    expect(el.scrollTop).toBe(el.scrollHeight);
+  });
+
   test("an append leaves a reader who scrolled up where they are", async () => {
     const view = await openLoaded(threeExchanges());
     await userScrollTo(view.root, 0);
@@ -422,6 +434,42 @@ describe("Timeline position", () => {
 
     await act(() => element(itemOf(view.root, uuidOf("a", 2)), ".tl-bubble-body").click());
     expect(navigations.at(-1)).toEqual({ url: timelineHref(SID), history: "replace" });
+  });
+
+  test("coming back to a position by 戻る lands on it and keeps it, even after wheeling at the bottom before leaving", async () => {
+    const view = await openLoaded(threeExchanges());
+    const target = uuidOf("a", 3);
+    await act(() => element(itemOf(view.root, target), ".tl-bubble-body").click());
+    await act(() =>
+      view.store.dispatch({
+        type: "locator/changed",
+        locator: { view: "timeline", sid: SID, position: target },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    // 最下部で wheel を回しても、それ以上は動かない (scroll は来ない)。
+    await act(() => {
+      scroller(view.root).dispatchEvent(new Event("wheel"));
+    });
+    await act(() =>
+      view.store.dispatch({
+        type: "locator/changed",
+        locator: { view: "usage", tab: "quota" },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    const before = { navigations: navigations.length, scrollTos: scrollTos.length };
+
+    await act(() =>
+      view.store.dispatch({
+        type: "locator/changed",
+        locator: { view: "timeline", sid: SID, position: target },
+        sidebar: CLOSED_SIDEBAR,
+      }),
+    );
+    expect(navigations.slice(before.navigations)).toEqual([]);
+    expect(scrollTos.length).toBe(before.scrollTos + 1);
+    expect(itemOf(view.root, target).classList.contains("tl-position-selected")).toBe(true);
   });
 
   test("reaching the bottom by the reader's own scroll releases the position", async () => {

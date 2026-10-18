@@ -212,11 +212,9 @@ export function Timeline({
     [sid, currentPosition, forkAction, forkAvailable, pin.selectPosition, agentActive],
   );
 
-  // Design rationale: 宣言順に意味がある。末尾追従の hook の測り直し (scroller の
-  // 位置を測り、最下部なら位置を外す / 読書位置を覚える) は、位置への着地より
-  // 先に走らせる。着地のスクロールの後で測ると、着地した位置ではなく toolbar
-  // の裏に隠れた項目を「読んでいた位置」として覚え直してしまう。2 つの hook は
-  // 位置の状態 (pin.tracker) を戻り値で共有し、順序だけがこの宣言順に残る。
+  // 末尾追従と位置への着地は、位置の状態 (pin.tracker) を戻り値で共有する。
+  // scroller を測る (最下部なら位置を外す / 読書位置を覚える) のはスクロール
+  // が起きた時だけなので、着地との間に宣言順の取り決めは無い。
   const stick = useStickToBottom({
     sid,
     end: timeline.end,

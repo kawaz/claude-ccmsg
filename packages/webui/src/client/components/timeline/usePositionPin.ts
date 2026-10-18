@@ -53,9 +53,13 @@ export class PinTracker {
     return shouldReturnToHead(position, this.userScrolledSincePin);
   }
 
-  /** head に戻った: 同じ位置を選び直したら、それは新しい遷移として着地させる。 */
-  forgetLanding(): void {
+  /** head に戻った (セッションや画面を離れた時も、この TL の位置は head に
+   * なる): 同じ位置を選び直したら、それは新しい遷移として着地させる。位置を
+   * 張っていない間のスクロールは、次に張る位置について数えない — 戻る / 進む
+   * で戻ってきた位置を、着地の前に測られた最下部で外さないため。 */
+  backToHead(): void {
     this.landedKey = null;
+    this.userScrolledSincePin = false;
   }
 
   /** `key` へまだ着地していなければ着地したことにして true。着地のスクロールは
@@ -106,8 +110,8 @@ export function usePositionPin({
       if (nearBottom) {
         // 位置を張った直後 (= 画面内クリックでの選択) にここで外すと、選択した
         // 瞬間に URL と装飾が剥がされて **最下部が見えている間はメッセージを
-        // 選べない** (kawaz r115 m4)。測り直しは位置の変化でも走るので、scroll
-        // イベントが 1 度も来ていなくてもここへ来る。
+        // 選べない** (kawaz r115 m4)。内容が縮んでスクロール位置が詰まった時の
+        // ように、読み手が動かさなくても scroll は来る。
         if (currentPosition !== "head") {
           if (!tracker.mayReturnToHead(currentPosition)) return;
           rememberTimelinePosition(sid, "head");
@@ -155,7 +159,7 @@ export function usePositionLanding({
   tracker: PinTracker;
 }): void {
   useEffect(() => {
-    if (currentPosition === "head") tracker.forgetLanding();
+    if (currentPosition === "head") tracker.backToHead();
     if (timelineStatus !== "loaded" || currentPosition === "head") return;
     const target = scrollRef.current?.querySelector<HTMLElement>(
       `[data-timeline-uuid="${CSS.escape(currentPosition)}"]`,

@@ -107,7 +107,7 @@ describe("useStickToBottom", () => {
     const { hold, calls } = recordingHold();
     const measured: boolean[] = [];
     let intents = 0;
-    // Timeline が渡すのと同じく、render をまたいで同じ関数 (変わると測り直す)。
+    // Timeline が渡すのと同じく、render をまたいで同じ関数。
     const onScrollMeasured = (_scroller: HTMLElement, nearBottom: boolean) => {
       measured.push(nearBottom);
     };
@@ -198,16 +198,16 @@ describe("useStickToBottom", () => {
     expect(calls).toEqual(["bottom"]);
   });
 
-  test("each measurement is reported, and the reader's own scrolling is passed on", async () => {
+  test("a scroll is measured and reported, and the reader's own scrolling is passed on", async () => {
     const { hook, measured, scroller, intents } = await mountStick();
-    expect(measured).toEqual([true]);
+    expect(measured).toEqual([]);
     await scrollUp(scroller);
-    expect(measured.at(-1)).toBe(false);
+    expect(measured).toEqual([false]);
     expect(intents()).toBe(1);
-    // 内容が変わると、scroll イベントを待たずに測り直す。
+    // 内容が変わっても読み手は動いていないので、測らない。
     scroller.scrollTop = 800;
     await hook.rerender({ end: 0, atHead: true, visible: true, content: 1 });
-    expect(measured.at(-1)).toBe(true);
+    expect(measured).toEqual([false]);
   });
 });
 
@@ -444,5 +444,21 @@ describe("usePositionPin and usePositionLanding", () => {
     hook.current().pin.onUserScrollIntent();
     hook.current().pin.onScrollMeasured(scroller, true);
     expect(navigations).toEqual([timelineHref(SID)]);
+  });
+
+  test("scrolling done before going back to the head does not drop a position arrived at later", async () => {
+    const target = UUIDS[0] ?? "";
+    const { hook, scroller } = await mountPin({
+      position: target,
+      status: "loaded",
+      parsedVersion: 0,
+    });
+    hook.current().pin.onUserScrollIntent();
+    await hook.rerender({ position: "head", status: "loaded", parsedVersion: 0 });
+    // 戻ってきた位置へ着地する前 (読み込み中) に、スクロール位置の復元で
+    // 最下部が測られる。
+    await hook.rerender({ position: target, status: "loading", parsedVersion: 0 });
+    hook.current().pin.onScrollMeasured(scroller, true);
+    expect(navigations).toEqual([]);
   });
 });

@@ -43,12 +43,12 @@ export function useStickToBottom({
   atHead: boolean;
   /** Timeline タブが実際に画面に出ているか。 */
   visible: boolean;
-  /** 描いている内容 (group の列)。変わるたびに scroller を測り直す。 */
+  /** 描いている内容 (group の列)。変わるたびに scroller へ listener を付け直す
+   * (scroller は読み込みが届くまで描かれない)。 */
   content: unknown;
   scrollRef: { readonly current: HTMLElement | null };
   scrollHold: ScrollHold;
-  /** scroller を測るたびに、その結果 (最下部付近か) を渡す先。この関数が
-   * 変わった時 (位置が変わった時) も測り直す。 */
+  /** scroller を測るたびに、その結果 (最下部付近か) を渡す先。 */
   onScrollMeasured: (scroller: HTMLElement, nearBottom: boolean) => void;
   /** 読み手自身のスクロール操作 (wheel / touch / キー / scrollbar) を渡す先。 */
   onUserScrollIntent: () => void;
@@ -56,23 +56,29 @@ export function useStickToBottom({
   /** 「更新」の後: 末尾へ寄せ、続く追記にも追従する状態に戻す。 */
   resumeFollowing: () => void;
 } {
-  // 今、読み手は最下部付近を見ているか。scroll イベント (rAF で間引く) と
-  // 測り直しでだけ更新する — DOM 位置に依存する値を state に上げると余計な
-  // 再レンダーを誘発するので ref に留める。初期値 true: マウント直後 (まだ
-  // 何もスクロールしていない) は最下部相当とみなし、直後に届く tail に追従する。
+  // 今、読み手は最下部付近を見ているか。scroll イベント (rAF で間引く) でだけ
+  // 更新する — DOM 位置に依存する値を state に上げると余計な再レンダーを誘発
+  // するので ref に留める。初期値 true: マウント直後 (まだ何もスクロールして
+  // いない) は最下部相当とみなし、直後に届く tail に追従する。
   const nearBottomRef = useRef(true);
 
-  // Design rationale: 測り直し (この effect) は下の追従の effect より先に宣言
-  // する。同じ commit で内容が伸びた時 (live tail の追記) は、追従の判定が
-  // 伸びた後の位置で測った nearBottom を読む。effect は宣言順に走るので、この
-  // 順序が判定に使う値を決めている。
+  // 測るのはスクロール (読み手の操作か、保持・着地の書き込み) が起きた時だけ。
+  // 内容や位置 (URL) が変わっただけでは測らない: 追記で伸びた後の位置で測ると、
+  // 最下部に居た読み手が伸びた分だけ「離れた」ことになって追従しない。位置が
+  // 変わった直後に測ると、着地より先に「自分で最下部へ来た」と判定して位置を
+  // 外す。どちらも読み手は動いていないので、最後のスクロールで測った値が正しい。
+  // 渡す先は Effect Event に置き、それ自体の変化では listener を付け直さない。
+  const reportMeasured = useEffectEvent((scroller: HTMLElement, nearBottom: boolean) =>
+    onScrollMeasured(scroller, nearBottom),
+  );
+  const reportUserScrollIntent = useEffectEvent(() => onUserScrollIntent());
   useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
     const measure = () => {
       const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
       nearBottomRef.current = distance < NEAR_BOTTOM_PX;
-      onScrollMeasured(scroller, nearBottomRef.current);
+      reportMeasured(scroller, nearBottomRef.current);
     };
     let ticking = false;
     const onScroll = () => {
@@ -88,23 +94,23 @@ export function useStickToBottom({
     // スクロールバーのドラッグは wheel も touch も出さないので mousedown で拾う。
     // バルーンのクリックでも発火するが、click は mousedown の後なので、
     // クリックでの位置の選択が数え直しを最後に効かせる。
+    const onIntent = () => reportUserScrollIntent();
     scroller.addEventListener("scroll", onScroll, { passive: true });
-    scroller.addEventListener("wheel", onUserScrollIntent, { passive: true });
-    scroller.addEventListener("touchmove", onUserScrollIntent, { passive: true });
-    scroller.addEventListener("keydown", onUserScrollIntent);
-    scroller.addEventListener("mousedown", onUserScrollIntent);
-    measure();
+    scroller.addEventListener("wheel", onIntent, { passive: true });
+    scroller.addEventListener("touchmove", onIntent, { passive: true });
+    scroller.addEventListener("keydown", onIntent);
+    scroller.addEventListener("mousedown", onIntent);
     return () => {
       scroller.removeEventListener("scroll", onScroll);
-      scroller.removeEventListener("wheel", onUserScrollIntent);
-      scroller.removeEventListener("touchmove", onUserScrollIntent);
-      scroller.removeEventListener("keydown", onUserScrollIntent);
-      scroller.removeEventListener("mousedown", onUserScrollIntent);
+      scroller.removeEventListener("wheel", onIntent);
+      scroller.removeEventListener("touchmove", onIntent);
+      scroller.removeEventListener("keydown", onIntent);
+      scroller.removeEventListener("mousedown", onIntent);
     };
-    // content は測り直しのきっかけとしてだけ deps に入れる (中身は読まない)。
-    // 読み込み中は scroller が描かれていないので、読み込みが届いて内容が
-    // 変わった時にここで初めて listener が付く。
-  }, [content, scrollRef, onScrollMeasured, onUserScrollIntent]);
+    // content は listener を付けるきっかけとしてだけ deps に入れる (中身は
+    // 読まない)。読み込み中は scroller が描かれていないので、読み込みが届いて
+    // 内容が変わった時にここで初めて listener が付く。
+  }, [content, scrollRef]);
 
   // 反応するのは sid と end の変化だけ。位置・最下部付近かは、変わった瞬間の
   // 値を読むだけなので Effect Event に置く。前回の印との比較で、セッションに
