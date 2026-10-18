@@ -5,7 +5,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
-| 2026-10-18 | bug | open | [test-tmpdir-leak-on-pass](./2026-10-18-test-tmpdir-leak-on-pass.md) | テストの一時ディレクトリが pass した run でも OS の temp dir に残る (fs-find ほか)。8792 個の ccmsg-* を観測 |
 | 2026-10-18 | bug | open | [translate-watchdog-vs-os-model-contention](./2026-10-18-translate-watchdog-vs-os-model-contention.md) | daemon の translate watchdog が、OS の on-device モデルの混雑中に正常な翻訳を「詰まった」と判断して helper を kill しうる |
 | 2026-10-14 | bug | open | [sidecar-hello-ghost-peer-after-harness-death](./2026-10-14-sidecar-hello-ghost-peer-after-harness-death.md) | sidecar が hello して名乗る形で、daemon 再起動で last_activity_at が更新される副作用と、harness 死亡後に幽霊 peer が残るおそれ |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
@@ -42,4 +41,5 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
+| 2026-10-18 | bug | wip | [test-tmpdir-leak-on-pass](./2026-10-18-test-tmpdir-leak-on-pass.md) | テストの一時ディレクトリが pass した run でも OS の temp dir に残る (fs-find ほか)。8792 個の ccmsg-* を観測 |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
