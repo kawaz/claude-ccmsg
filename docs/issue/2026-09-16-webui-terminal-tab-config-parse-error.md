@@ -3,7 +3,7 @@ title: webui の Terminal タブが出ない: 本番 config.ts の構文エラ�
 status: open
 category: bug
 created: 2026-09-16T18:30:13+09:00
-last_read:
+last_read: 2026-10-18T16:39:05+09:00
 open_entered: 2026-09-16T18:30:13+09:00
 wip_entered:
 blocked_entered:
