@@ -264,23 +264,11 @@ export function SessionView({
           setStatusError(res.error.msg);
           return;
         }
-        store.dispatch({
-          type: "session-status/loaded",
-          sid,
-          snapshot: {
-            todos: res.todos,
-            workflows: res.workflows,
-            background: res.background,
-            ...(res.context ? { context: res.context } : {}),
-            teammates: res.teammates ?? [],
-            external_files: res.external_files ?? [],
-            ...(res.workspace_folders ? { workspace_folders: res.workspace_folders } : {}),
-            ...(res.agent_tree ? { agent_tree: res.agent_tree } : {}),
-            ...(res.input_readiness ? { input_readiness: res.input_readiness } : {}),
-            ...(res.turn ? { turn: res.turn } : {}),
-            ...(res.subagents ? { subagents: res.subagents } : {}),
-          },
-        });
+        // The response is the snapshot plus `ok` / `sid` (same as the
+        // ev:"session_status" push in ws.ts): the rest goes to the store as
+        // the schema read it.
+        const { ok: _ok, sid: _sid, ...snapshot } = res;
+        store.dispatch({ type: "session-status/loaded", sid, snapshot });
       })
       .catch(() => {
         // send() rejects while the socket isn't open (ws.ts) — next

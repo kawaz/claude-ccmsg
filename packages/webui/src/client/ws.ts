@@ -763,24 +763,11 @@ export function createWsClient(
     // ev:"transcript" above, minus contiguity bookkeeping since this is
     // always a full recomputed snapshot, not an append).
     if (streamEv.ev === "session_status") {
-      const ev = streamEv;
-      dispatch({
-        type: "session-status/loaded",
-        sid: ev.sid,
-        snapshot: {
-          todos: ev.todos,
-          workflows: ev.workflows,
-          background: ev.background,
-          ...(ev.context ? { context: ev.context } : {}),
-          teammates: ev.teammates ?? [],
-          external_files: ev.external_files ?? [],
-          ...(ev.workspace_folders ? { workspace_folders: ev.workspace_folders } : {}),
-          ...(ev.agent_tree ? { agent_tree: ev.agent_tree } : {}),
-          ...(ev.input_readiness ? { input_readiness: ev.input_readiness } : {}),
-          ...(ev.turn ? { turn: ev.turn } : {}),
-          ...(ev.subagents ? { subagents: ev.subagents } : {}),
-        },
-      });
+      // The push is the snapshot plus `ev` / `sid`: everything else goes to
+      // the store as the schema read it, so a field added to the snapshot
+      // reaches the store without a change here.
+      const { ev: _ev, sid, ...snapshot } = streamEv;
+      dispatch({ type: "session-status/loaded", sid, snapshot });
       return;
     }
   }

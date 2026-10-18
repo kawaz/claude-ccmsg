@@ -35,6 +35,7 @@ import {
   requestOf,
   stubGlobal,
 } from "./helpers.ts";
+import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -1576,12 +1577,11 @@ describe("createWsClient transcript live-tail push (U2)", () => {
 
 // DR-0020 Phase 2: ev:"session_status" pushes relayed as session-status/loaded
 // actions, mirroring the ev:"transcript" coverage above. The push carries the
-// snapshot fields inline (ev/sid + status snapshot); the relay must preserve
-// context/teammates alongside the original three arrays — one shared reducer
-// path with the subscribe response's own initial dispatch.
+// snapshot fields inline (ev/sid + status snapshot); the relay hands every
+// snapshot field to the reducer, the same path the subscribe response's own
+// initial dispatch takes (SessionView).
 describe("createWsClient session_status push (DR-0020)", () => {
-  test("ev:'session_status' push dispatches session-status/loaded with the snapshot fields", () => {
-    // Full snapshot relay must not drop newly-added optional fields at the WebSocket boundary.
+  test("ev:'session_status' push dispatches session-status/loaded with every snapshot field", () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
@@ -1590,71 +1590,10 @@ describe("createWsClient session_status push (DR-0020)", () => {
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
-    ws1.triggerMessage(
-      JSON.stringify({
-        ev: "session_status",
-        sid: "sess-1",
-        todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
-        workflows: [
-          {
-            task_id: "w1",
-            name: "release",
-            status: "running",
-            started_at: "2026-07-16T00:00:00.000Z",
-          },
-        ],
-        background: [],
-        context: {
-          tokens: 522_000,
-          model: "claude-fable-5",
-          timestamp: "2026-07-17T00:00:00.000Z",
-        },
-        teammates: [
-          {
-            name: "worker-a",
-            spawned: true,
-            state: "idle",
-            spawned_at: "2026-07-17T00:00:00.000Z",
-          },
-        ],
-        external_files: [{ path: "/external/shared.md", origin: "tool" }],
-        subagents: [{ id: "a1", type: "Explore", since: "2026-07-17T00:00:00.000Z" }],
-      }),
-    );
+    const snapshot = fullSessionStatusSnapshot();
+    ws1.triggerMessage(JSON.stringify({ ev: "session_status", sid: "sess-1", ...snapshot }));
 
-    expect(actions).toEqual([
-      {
-        type: "session-status/loaded",
-        sid: "sess-1",
-        snapshot: {
-          todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
-          workflows: [
-            {
-              task_id: "w1",
-              name: "release",
-              status: "running",
-              started_at: "2026-07-16T00:00:00.000Z",
-            },
-          ],
-          background: [],
-          context: {
-            tokens: 522_000,
-            model: "claude-fable-5",
-            timestamp: "2026-07-17T00:00:00.000Z",
-          },
-          teammates: [
-            {
-              name: "worker-a",
-              spawned: true,
-              state: "idle",
-              spawned_at: "2026-07-17T00:00:00.000Z",
-            },
-          ],
-          external_files: [{ path: "/external/shared.md", origin: "tool" }],
-          subagents: [{ id: "a1", type: "Explore", since: "2026-07-17T00:00:00.000Z" }],
-        },
-      },
-    ]);
+    expect(actions).toEqual([{ type: "session-status/loaded", sid: "sess-1", snapshot }]);
   });
 });
 
