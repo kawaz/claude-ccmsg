@@ -3,7 +3,7 @@ title: sidecar が hello して名乗る形で harness 死亡後に幽霊 peer �
 status: open
 category: bug
 created: 2026-10-14T17:40:26+09:00
-last_read:
+last_read: 2026-10-18T15:30:20+09:00
 open_entered: 2026-10-14T17:40:26+09:00
 wip_entered:
 blocked_entered:
