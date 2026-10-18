@@ -22,6 +22,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
   - それ以外: `Reply with: <launcher> reply <room.id>m<mid> <text>` (`<launcher>` は `resolveLauncher()` が解決する、この daemon が動くツリーの `bin/ccmsg` 絶対パス。無ければ `ccmsg` の裸名)
 - **成否の扱い**: 注入の成否は待たず、結果は `daemon.log` に `peer-inject <mid> -> <sid>: <outcome>` として記録するのみで、呼び出し元の処理やレスポンスには一切影響しない (`outcome` は `delivered` / `unavailable` / `refused`)
 - **期限値**: ソケット接続とフレーム書き込みの flush 完了まで 2 秒 (`INJECT_WRITE_MS`)。受け手が拒否 (`peer_message_status` で `refused`/`denied`/`dropped`/`expired`/`held`) を返してくるかを待つ猶予は 250ms (`INJECT_STATUS_MS`)。拒否は書き込みの前から聞き始め、250ms は書き込みが終わってから数える (書き込みに時間がかかっても、受け取った直後の拒否を取りこぼさない。書き込み中に届いた拒否も拒否として扱う)。`sessions/` ディレクトリの走査 (`readdir` + 各 JSON の読み取り) 全体に 1 秒 (`INJECT_SCAN_MS`)。いずれも超過は `unavailable` 扱いで、待たずに次の処理へ進む。ただし書き込みが途中まで入って期限を過ぎた時は、届いたか分からない (`unconfirmed`、DR-0036 §1)
+- **順序**: 同じセッション宛ての注入は 1 つずつ、頼まれた順に行う。注入は 1 通ごとに別の接続で、受け手は接続を来た順に読むので、前の 1 通と同時に書くと大きい前の 1 通より小さい後の 1 通が先に着きうる。次の 1 通は前の 1 通の結果 (拒否を待つ 250ms の沈黙を含む) が出てから書くので、受け手にはその間に前の 1 通を読む猶予もある。別のセッション宛ては互いを待たない。`send_message` は、宛先の照合から注入の依頼までを daemon に届いた順に 1 つずつ行い、照合の読み取りにかかる時間で依頼の順が入れ替わらないようにする (配送そのものは並行して進む)
 - **config dir の限定**: 注入先は、daemon が `configDir` を知っている member に限る。`configDir` の出どころは、セッションが hello で自己申告した値か、そのセッションを列挙した harness の登録簿の config dir (§5) のどちらか。daemon が推測で config dir を組み立てることはしない
 
 ## 3. Alternatives Considered

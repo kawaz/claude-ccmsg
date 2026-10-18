@@ -87,6 +87,7 @@ import {
 } from "./session-user-input.ts";
 import { createNetworkWatch, fileNetworkSource, type NetworkWatch } from "./network-watch.ts";
 import { holdTestLifeline, type TestLifeline } from "./test-lifeline.ts";
+import { createSerial, type Serial } from "./serial.ts";
 import {
   createSessionWakeState,
   recordWoken,
@@ -323,6 +324,9 @@ export interface Daemon {
   /** Direct messages handed to a session through its peer messaging socket
    * (peer-inject.ts). */
   peerInjector: PeerInjector;
+  /** The line send_message requests stand in until their deliveries are
+   * asked for (send-message.ts sendToPeers). */
+  sendOrder: Serial;
   /** Issues the mid of each message this daemon sends into a peer socket
    * (mid-issuer.ts). */
   issueDirectMid: () => string;
@@ -403,6 +407,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     llmStatusRefresher: null,
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
+    sendOrder: createSerial(),
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
@@ -1584,8 +1589,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         );
         return;
       }
-      // Waits for every run's write and refusal window (DR-0034 §2), the runs
-      // in parallel; other requests on this connection run on meanwhile.
+      // Waits for every run's write and refusal window (DR-0034 §2), the
+      // sessions in parallel and each session's runs one at a time behind
+      // what was sent to it before; other requests on this connection run on
+      // meanwhile.
       // With an agent id the text goes to that subagent through the session's
       // module, as user_message's does (DR-0039 §3).
       const results = await sendToPeers(
@@ -1601,6 +1608,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           issueMid: daemon.issueDirectMid,
           deliver: (run, frame) =>
             daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
+          inOrder: daemon.sendOrder,
           appendToAgent: async (sid, agentId, text, from) => {
             const { tries: _tries, ...outcome } = await userMessage(
               { sid, agentId, text, from },

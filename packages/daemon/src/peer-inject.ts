@@ -9,12 +9,20 @@
 // The receiver answers nothing for a message it takes; it reports only a
 // message it did not take, as `peer_message_status` on the socket the `user`
 // frame names in `from`. Silence within the status window is delivery.
+//
+// Deliveries to one session go one at a time, in the order they were asked
+// for: each is its own connection, and the recipient reads connections as
+// they come, so a message written alongside the one before it could land
+// first. The next starts once the one before it has come to its outcome —
+// silence through the window included, which also gives the recipient that
+// long to read it.
 import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import { chmod, readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { ClaudeSessionFileTextSchema, jsonText, parseWith, type Output } from "@ccmsg/protocol";
 import * as v from "valibot";
+import { createKeyedSerial } from "./serial.ts";
 
 /** What one delivery came to, with why for a message that did not arrive.
  *
@@ -207,6 +215,8 @@ export class PeerInjector {
   readonly #scanMs: number;
   readonly #inboxes = new Map<string, Promise<StatusInbox | undefined>>();
   readonly #bound = new Set<StatusInbox>();
+  /** Each session's deliveries, one at a time. */
+  readonly #inTurn = createKeyedSerial<string>();
   #closed = false;
 
   constructor(options: PeerInjectorOptions = {}) {
@@ -218,12 +228,17 @@ export class PeerInjector {
   /** Any envelope, already rendered, answered with why when it did not
    * arrive. `configDir` is the CLAUDE_CONFIG_DIR the target session runs
    * under. With `pid`, only the run of the session in that harness process
-   * is written to; without, the first run found. */
-  async deliver(
+   * is written to; without, the first run found. Written after every
+   * delivery to `sid` asked for before this call has come to its outcome. */
+  deliver(configDir: string, sid: string, frame: InjectFrame, pid?: number): Promise<InjectResult> {
+    return this.#inTurn(sid, () => this.#deliverNow(configDir, sid, frame, pid));
+  }
+
+  async #deliverNow(
     configDir: string,
     sid: string,
     frame: InjectFrame,
-    pid?: number,
+    pid: number | undefined,
   ): Promise<InjectResult> {
     const sessionsDir = path.join(configDir, "sessions");
     const target = await this.#target(sessionsDir, sid, pid);

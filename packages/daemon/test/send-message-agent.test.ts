@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
 import { type SendMessageDeps, sendToPeers } from "../src/send-message.ts";
+import { createSerial } from "../src/serial.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import type { UserMessageOutcome } from "../src/user-message.ts";
 
@@ -39,6 +40,7 @@ function deps(
       frames.push(frame);
       return { outcome: "delivered" };
     },
+    inOrder: createSerial(),
     appendToAgent: async (sid, agentId, text, from) => {
       asked.push({ sid, agentId, text, from });
       return options.appends?.[sid] ?? { outcome: "appended" };

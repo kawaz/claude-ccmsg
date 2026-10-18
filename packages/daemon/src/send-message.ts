@@ -19,6 +19,7 @@ import {
 } from "@ccmsg/protocol";
 import type { SessionRun } from "./session-runs.ts";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
+import type { Serial } from "./serial.ts";
 import type { UserMessageOutcome } from "./user-message.ts";
 
 /** One session among the live runs: its runs, and how a target spells it —
@@ -43,7 +44,11 @@ export interface SendMessageDeps extends PeerDeps {
   /** What the daemon knows of a session no live run serves. */
   readiness(sid: string): SessionInputReadiness;
   issueMid(): string;
+  /** Delivers to one session in the order deliver was called for it. */
   deliver(run: SessionRun, frame: InjectFrame): Promise<InjectResult>;
+  /** The line every send stands in, from reading the runs to asking for its
+   * deliveries: one daemon's sends share one. */
+  inOrder: Serial;
   /** Add `text` from session `from` to the running subagent `agentId` of
    * session `sid`, through its module (agent.append). */
   appendToAgent(
@@ -127,9 +132,27 @@ export async function sendToPeers(
   message: { from: string; to: PeerTarget; agentId?: string; text: string },
   deps: SendMessageDeps,
 ): Promise<SendMessageResult[]> {
+  // Matched and set going in the order the sends were asked for, so the
+  // deliveries of a send asked for first are asked for first whatever its
+  // reads take (deliver keeps that order from there on); the deliveries
+  // themselves finish outside the line. Wrapped, because a promise resolved
+  // with a promise would wait for it.
+  const { results } = await deps.inOrder(async () => {
+    const peers = await peersOf(await deps.runs(), deps);
+    const matched = await matching(peers, message.to, deps);
+    return { results: startSend(message, peers, matched, deps) };
+  });
+  return await results;
+}
+
+/** Ask for every delivery `matched` calls for, all before the first await. */
+async function startSend(
+  message: { from: string; to: PeerTarget; agentId?: string; text: string },
+  peers: readonly Peer[],
+  matched: readonly Peer[],
+  deps: SendMessageDeps,
+): Promise<SendMessageResult[]> {
   const { from, to, agentId, text } = message;
-  const peers = await peersOf(await deps.runs(), deps);
-  const matched = await matching(peers, to, deps);
   if (matched.length === 0) {
     // A session named by id that no live run serves: say why, rather than
     // that nobody matched. One that runs but differs in another field is no

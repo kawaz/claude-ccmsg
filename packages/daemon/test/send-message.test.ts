@@ -10,6 +10,7 @@ import * as path from "node:path";
 import type { SessionInputReadiness } from "@ccmsg/protocol";
 import type { InjectFrame, InjectResult } from "../src/peer-inject.ts";
 import { listPeers, type SendMessageDeps, sendToPeers } from "../src/send-message.ts";
+import { createSerial } from "../src/serial.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import {
   connect,
@@ -63,6 +64,7 @@ function deps(
       frames.push({ pid: r.pid, frame });
       return options.answers?.[r.pid] ?? { outcome: "delivered" };
     },
+    inOrder: createSerial(),
     log: () => {},
   };
 }
@@ -146,6 +148,28 @@ describe("sendToPeers", () => {
       [],
     );
     expect(d.frames).toEqual([]);
+  });
+
+  // The order a session is sent to is the order the sends were asked for
+  // (peer-inject.ts keeps it from there on), however long each takes to
+  // read the runs: the first send's read here ends a task later than the
+  // second's, which has nothing to wait for.
+  test("deliveries to a session are asked for in the order the sends were", async () => {
+    const d = deps([]);
+    const reads = [
+      new Promise<SessionRun[]>((resolve) => setTimeout(() => resolve([run(A, 2)]), 0)),
+      Promise.resolve([run(A, 2)]),
+    ];
+    const sends = { ...d, runs: () => reads.shift() ?? Promise.resolve([]) };
+    const results = await Promise.all([
+      sendToPeers({ from: ME, to: { session_id: A }, text: "first" }, sends),
+      sendToPeers({ from: ME, to: { session_id: A }, text: "second" }, sends),
+    ]);
+    expect(results).toEqual([
+      [{ sid: A, outcome: "delivered" }],
+      [{ sid: A, outcome: "delivered" }],
+    ]);
+    expect(d.frames.map((f) => parseEnvelope(f.frame.content).body)).toEqual(["first", "second"]);
   });
 });
 

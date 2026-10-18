@@ -100,6 +100,49 @@ describe("PeerInjector", () => {
     const big = { ...MESSAGE, content: "x".repeat(4 * 1024 * 1024) };
     expect(await injector.deliver(h.configDir, SID, big)).toEqual({ outcome: "unconfirmed" });
   });
+
+  // Each delivery to a session is its own connection, and the recipient reads
+  // connections as they come: a large message asked for first would land
+  // after a small one asked for next if both were written at once. Here the
+  // recipient reads each connection 100 ms after taking it.
+  test("deliveries to one session land in the order they were asked for", async () => {
+    const h = fakeHarness({ readAfterMs: 100 });
+    await h.listening;
+    const injector = new PeerInjector({ statusMs: 20 });
+    cleanups.push(() => injector.close());
+    const big = { mid: "first", content: "x".repeat(4 * 1024 * 1024) };
+    const small = { mid: "second", content: "y" };
+    const results = await Promise.all([
+      injector.deliver(h.configDir, SID, big),
+      injector.deliver(h.configDir, SID, small),
+    ]);
+    expect(results).toEqual([{ outcome: "delivered" }, { outcome: "delivered" }]);
+    expect((await h.nextUser()).msg_id).toBe("first");
+    expect((await h.nextUser()).msg_id).toBe("second");
+  });
+
+  // The order is kept per session: a session whose socket stopped reading
+  // holds up the next message to it, and no other session's.
+  test("a delivery still under way to one session holds up no other session's", async () => {
+    const stalled = fakeHarness({ stall: true });
+    await stalled.listening;
+    const other = "22222222-3333-4444-8555-666666666666";
+    const h = fakeHarness({ sid: other });
+    const injector = new PeerInjector({ writeMs: 1000, statusMs: 20 });
+    cleanups.push(() => injector.close());
+    const big = { mid: "big", content: "x".repeat(4 * 1024 * 1024) };
+    const toStalled = injector
+      .deliver(stalled.configDir, SID, big)
+      .then((result) => ({ to: "stalled", result }));
+    const toOther = injector
+      .deliver(h.configDir, other, MESSAGE)
+      .then((result) => ({ to: "other", result }));
+    expect(await Promise.race([toStalled, toOther])).toEqual({
+      to: "other",
+      result: { outcome: "delivered" },
+    });
+    expect(await toStalled).toEqual({ to: "stalled", result: { outcome: "unconfirmed" } });
+  });
 });
 
 describe("writeSocket", () => {
