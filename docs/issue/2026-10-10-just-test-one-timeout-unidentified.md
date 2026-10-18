@@ -50,6 +50,24 @@ worker unify-ccmsg-address の `just test` 1 回目が 3985 pass / 1 fail / 1 er
 
 共通点: 1 回目だけ落ちる、落ちた回は 10 s ほど遅い。3 回目・4 回目とも translate-e2e の同一 test で、translate の経路に無関係な変更中に起きたため変更起因ではない。
 
+## 5 回目の観測 (2026-10-18)
+
+`bun test packages/daemon packages/cli` の 1 回目で translate-e2e の "daemon translate replies with a real en→ja mixed-text result" が 5017ms で timeout。直前に "connection closed before response"。
+
+直後に translate-e2e.test.ts 単体を 3 回続けて回した結果:
+
+| 回 | 所要 | 結果 |
+|---|---|---|
+| 1 | 5.05 秒 | timeout で fail |
+| 2 | 2.79 秒 | pass |
+| 3 | 1.30 秒 | pass |
+
+- 他のテストと並走しない単体でも 1 回目だけ 5 秒を超え、回すほど速くなる。CPU 競合より translate helper (Translation.framework) の冷えた状態からの初回の遅さが疑わしい
+- 未検証: helper の起動と初回翻訳の時間は分けて測っていない
+- この直前の `just test` 2 回 (101 秒、82 秒) では translate-e2e は通っていた
+- 環境: macOS、bun 1.4.2
+- 変更: daemon のテスト基盤 (in-process daemon) と server.ts の createDaemon の切り出し。translate の経路は触れていない (translate-e2e は子プロセスの daemon のまま)
+
 ## 受け入れ条件
 
 - [ ] timeout 再発時にログを取得し、test 名と並走プロセスを記録する
