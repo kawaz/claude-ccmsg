@@ -56,6 +56,7 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 module が `session.start` で `$.tool.register` により tool を登録し、`tool.call` の handler で答える。登録した tool は対話・`-p`・subagent の request の `tools` に載り、handler では呼び手の session id (`$.session.id()`、subagent からの呼び出しでも本体の id)、cwd (`$.session.cwd()`)、subagent なら `e.agentId` が取れる (event-matrix の `$.tool.register` の「結論」)。
 
 - **セッション間の送信**: 入力は `{ session_id?, cwd?, name?, pid?, text }` のような宛先の部分指定と本文。daemon が部分指定を生きているセッションに解決し、config dir が違うセッションにも peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md)) で届ける。config dir を跨ぐことを利用者に意識させず、宛先の綴りの規約 (`ccmsg:` 接頭辞) を持たない
+  - 面 (config dir) で絞らない。一覧 (`peers`) と送信 (`send`) は同じ解決元で、daemon が検出した config dir と hello で名乗られた config dir の全部のセッションを対象にする (kawaz 2026-10-18)
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
   - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
   - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
@@ -151,6 +152,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 | classic を併用する (command hook の SessionStart と module の `classic.*` を残す) | 読み込みの条件が違う 2 本の経路を持ち続けることになる。組織が管理する機械では user tier の `classic.*` が飛ばされる (Context) |
 | エージェント向けの口を CLI のまま残す (`ccmsg post` / `reply` / `peers` / `say`) | 本文の切れ目のぶれ、長い本文の truncate の回避、1 アクションが残り、引数に型が無い (Context)。typed tool なら入力の形を schema で示せ、本文は tool の入力として全文が渡る |
 | SendMessage の横取りを続ける | `ccmsg:` の綴りの規約を利用者に課す。model が読む結果の文面は harness が決めて ccmsg の結果を正確に表せず、hook の throw が harness の宛先探しに落ちる ([findings 2026-10-09-sendmessage-hook-for-ccmsg-addresses](../findings/2026-10-09-sendmessage-hook-for-ccmsg-addresses.md))。harness の本来の宛先 (本体と subagent) と同じ tool に ccmsg の宛先が混ざる |
+| 宛先の解決を送り主と同じ面 (config dir) のセッションに絞る | 面を跨いで届けることが本来の用途で、到達範囲は SendMessage の横取りの時と同じ (同じ config dir の集合を読む)。絞ると面を跨ぐ相手に送る口が無くなる |
 | ccmsg の口を MCP server で出す | module の無いセッションでも動く口になり、§7 と逆になる。セッションごとに別プロセスが常駐する |
 | module の無いセッション向けに CLI / PushNotification / `ps` / classic のフォールバックを持つ | §8 のとおり。kawaz 2026-10-15 の方針 |
 | tool の handler で `next(e)` を呼んで permission を通す | `next(e)` は permission の判定の後に core まで降り、`no tool.call hook answered` のエラー結果が返る。permission を通しつつ自前で答える形は見つかっていない (event-matrix 実測) |
