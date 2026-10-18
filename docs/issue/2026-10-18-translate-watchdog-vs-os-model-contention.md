@@ -3,7 +3,7 @@ title: daemon の translate watchdog が、OS の on-device モデルの混雑�
 status: open
 category: bug
 created: 2026-10-18T14:25:44+09:00
-last_read:
+last_read: 2026-10-18T18:07:42+09:00
 open_entered: 2026-10-18T14:25:44+09:00
 wip_entered:
 blocked_entered:
