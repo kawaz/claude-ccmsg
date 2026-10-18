@@ -41,5 +41,8 @@ env -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_CODE_SESSION_ID \
   claude --name "🤖ccmsg-verify-<topic>"
 ```
 
+- Give the test session the same `CCMSG_STATE_DIR`, `CCMSG_CONFIG_DIR`, and `CCMSG_DATA_DIR` as the isolated daemon, not only the state dir. A newer plugin can be released while the test runs: a process started after that (a teammate, a restarted session) loads it, and its hello makes the isolated daemon shut down for the upgrade. The daemon it then starts takes only the variables the session has, so with only `CCMSG_STATE_DIR` passed its config and data go to the default places.
+- For flows about subagents (the session's `subagents` facts, sending to a running subagent), launch with `--settings '{"teammateMode":"in-process"}'` when the test session runs inside tmux. The real config has agent teams enabled with `teammateMode: "auto"`, and the model can name the Agent it spawns. A named Agent then starts as a teammate, and inside tmux `auto` puts the teammate in a split pane: a separate process with its own sid. It never shows up as a subagent of the test session, so `subagents` stays empty. Outside tmux, `auto` falls back to in-process, where teammates show up like subagents (docs/findings/2026-10-18-subagents-teammate-vs-subagent.md).
+
 - Never copy a sid from `ccmsg peers`, `sessions/*.json`, or a transcript path into a `hello`, a room member list, or a `send_message` / `send` target. A sid you did not just create for this verify run is someone's live conversation.
 - A fake harness socket in the temp base (no Claude at all) is also acceptable for the receiving side when a full session is not needed.
