@@ -1,6 +1,6 @@
 ---
 title: webui 接続ログに接続 ID / User-Agent を付与
-status: open
+status: resolved
 category: task
 created: 2026-09-06T16:54:55+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:00+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","解消済み: commit 5a503c85 で webui 接続ログに接続 ID・ページ読込種別・UA 要約を付与。packages/daemon/src/server.ts の webui hello と http.ts の webui ws closed が同じ接続 ID (Conn.id) を出す"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -38,5 +38,5 @@ webui 接続ログに接続 ID / User-Agent を付けて、古い bundle のま�
 
 ## 受け入れ条件
 
-- [ ] daemon.log の `webui hello` / `webui ws closed` に共通の接続 ID が出る
-- [ ] `webui hello` に UA 要約が出る
+- [x] daemon.log の `webui hello` / `webui ws closed` に共通の接続 ID が出る
+- [x] `webui hello` に UA 要約が出る
