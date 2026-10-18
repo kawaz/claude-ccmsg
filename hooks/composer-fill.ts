@@ -812,11 +812,11 @@ function notTheInput(tool: string, summary: string): string {
 async function sendTool<E>($: Engine, e: E): Promise<string> {
   const read = parseWith(SendToolInputSchema, e);
   if (!read.ok) return notTheInput("send", read.failure.summary);
-  const { text, ...to } = read.value;
+  const { text, agent_id, ...to } = read.value;
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
     run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
-      stdin: JSON.stringify({ to, text }),
+      stdin: JSON.stringify({ to, ...(agent_id !== undefined ? { agent_id } : {}), text }),
       timeoutMs: SEND_TIMEOUT_MS,
     });
   } catch (error) {
@@ -968,23 +968,27 @@ function subagentEnded($: Engine, state: ModuleState, id: string): void {
   sendFacts($, state);
 }
 
-/** What a subagent reads of a person's message: marked as the person's,
- * through ccmsg, so the model takes it as a word from outside its task, not a
- * tool's output. */
-export function agentMessage(text: string): string {
-  return `ユーザから (ccmsg 経由):\n${text}`;
+/** What a subagent reads of a message: marked as the person's through ccmsg,
+ * or as from the session `from` that sent it with `send` (DR-0039 §3), so the
+ * model takes it as a word from outside its task, not a tool's output. */
+export function agentMessage(text: string, from?: string): string {
+  const mark = from !== undefined ? `ccmsg:${from} から:` : "ユーザから (ccmsg 経由):";
+  return `${mark}\n${text}`;
 }
 
-/** agent.append: add the person's text to the running subagent's
- * conversation. Claude Code refuses an id no loop runs under with
- * "no running loop is <id>". */
+/** agent.append: add the text to the running subagent's conversation.
+ * Claude Code refuses an id no loop runs under with "no running loop is
+ * <id>". */
 async function appendToAgent(
   $: Engine,
-  args: { agentId: string; text: string },
+  args: { agentId: string; from?: string; text: string },
 ): Promise<AgentAppendResult> {
   try {
     await $.session.append({
-      message: { type: "user", content: [{ type: "text", text: agentMessage(args.text) }] },
+      message: {
+        type: "user",
+        content: [{ type: "text", text: agentMessage(args.text, args.from) }],
+      },
       agentId: args.agentId,
     });
     return { outcome: "appended" };

@@ -1581,14 +1581,36 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       // Waits for every run's write and refusal window (DR-0034 §2), the runs
       // in parallel; other requests on this connection run on meanwhile.
+      // With an agent id the text goes to that subagent through the session's
+      // module, as user_message's does (DR-0039 §3).
       const results = await sendToPeers(
-        { from: id.sid, to: req.to, text: req.text },
+        {
+          from: id.sid,
+          to: req.to,
+          ...(req.agent_id !== undefined ? { agentId: req.agent_id } : {}),
+          text: req.text,
+        },
         {
           ...peerDeps(daemon),
           readiness: (sid) => readinessOf(daemon, sid),
           issueMid: daemon.issueDirectMid,
           deliver: (run, frame) =>
             daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
+          appendToAgent: async (sid, agentId, text, from) => {
+            const { tries: _tries, ...outcome } = await userMessage(
+              sid,
+              agentId,
+              text,
+              {
+                ...productionSidecarDeps(daemon.sidecarReplies),
+                deadlineMs: USER_MESSAGE_DEADLINE_MS,
+                runs: daemon.sidecarRuns,
+                isRunning: (running) => daemon.sessions.has(running),
+              },
+              from,
+            );
+            return outcome;
+          },
           log: (line) => daemon.log.info(line),
         },
       );

@@ -66,8 +66,17 @@ const PeerTextSchema = v.pipe(
   v.check((text) => text.trim() !== "", "the text holds something other than whitespace"),
 );
 
+/** A running subagent of a session, by its agent id: a send that names one
+ * adds the text to that subagent's conversation instead of the session's
+ * (DR-0039 §3). */
+const AgentIdSchema = v.optional(v.pipe(v.string(), v.nonEmpty("an agent id is not empty")));
+
 /** What `ccmsg sidecar send-message` takes on standard input. */
-export const SendMessageInputSchema = v.object({ to: PeerTargetSchema, text: PeerTextSchema });
+export const SendMessageInputSchema = v.object({
+  to: PeerTargetSchema,
+  agent_id: AgentIdSchema,
+  text: PeerTextSchema,
+});
 export type SendMessageInput = Output<typeof SendMessageInputSchema>;
 export const SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 
@@ -86,6 +95,8 @@ export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
  * - `session_changed`: the process the named session ran in now serves
  *   another session id (/clear, /resume)
  * - `ended`: the named session is no longer running
+ * - `not_running`: the send named an agent id, and no subagent of that id
+ *   runs in the session now (it ended, or the id is wrong)
  * - `no_peer_socket`: the session has no peer messaging socket the daemon
  *   can write to (no state file for it in its config dir, a harness speaking
  *   another peer protocol, or no token)
@@ -97,12 +108,14 @@ export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
  * - `refused`: the recipient's harness answered that it did not take it
  *
  * The last four are the delivery into the session's peer socket failing
- * (DR-0036 §3). */
+ * (DR-0036 §3); a send to a subagent says `refused` when the session's
+ * module refused the append. */
 export const SendMessageReasonSchema = v.picklist([
   "self",
   "no_module",
   "session_changed",
   "ended",
+  "not_running",
   "no_peer_socket",
   "no_status_socket",
   "unreachable",
@@ -162,10 +175,11 @@ export const PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
 
 // --- the tools ------------------------------------------------------------------
 
-/** `send`'s input: who to (PeerTargetSchema's fields, at least one) and the
+/** `send`'s input: who to (PeerTargetSchema's fields, at least one), the
+ * running subagent of theirs to add it to when `agent_id` is given, and the
  * text. */
 export const SendToolInputSchema = v.pipe(
-  v.object({ ...PeerTargetEntries, text: PeerTextSchema }),
+  v.object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }),
   v.check((input) => namesSomebody(input), NAMES_SOMEBODY),
 );
 export type SendToolInput = Output<typeof SendToolInputSchema>;

@@ -55,6 +55,10 @@ function deps(
     hasModule: (sid) => (options.modules ?? [A, B, ME]).includes(sid),
     readiness: () => options.readiness ?? { kind: "ended" },
     issueMid: () => `i/${String(++mid)}`,
+    // No send here names an agent id (send-message-agent.test.ts does).
+    appendToAgent: async () => {
+      throw new Error("a send without an agent id appended to a subagent");
+    },
     deliver: async (r, frame) => {
       frames.push({ pid: r.pid, frame });
       return options.answers?.[r.pid] ?? { outcome: "delivered" };

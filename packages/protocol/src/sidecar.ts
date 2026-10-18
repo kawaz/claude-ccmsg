@@ -207,12 +207,15 @@ export const SessionFactsArgsSchema = NoArgsSchema;
 
 // --- agent.append ----------------------------------------------------------
 
-/** `agent.append` (DR-0039 §6): add what a person wrote in the web UI to the
- * conversation of the session's subagent `agentId` while its loop runs, as
- * context its next request carries; the module marks it as the person's,
- * through the web UI. `text` must hold something other than whitespace. */
+/** `agent.append` (DR-0039 §6): add a text to the conversation of the
+ * session's subagent `agentId` while its loop runs, as context its next
+ * request carries. `from` is the session that sent it with `send` (DR-0039
+ * §3), absent for what a person wrote (`user_message`); the module marks the
+ * text as from that session, or as the person's. `text` must hold something
+ * other than whitespace. */
 export const AgentAppendArgsSchema = v.object({
   agentId: v.pipe(v.string(), v.nonEmpty("an agent id is not empty")),
+  from: v.optional(v.pipe(v.string(), v.nonEmpty("a sender is not empty"))),
   text: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "text holds something other than whitespace"),

@@ -51,13 +51,19 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   send_message: {
-    ok: { op: "send_message", to: { cwd: "/w", name: "n", session_id: SID, pid: 7 }, text: "hi" },
+    ok: {
+      op: "send_message",
+      to: { cwd: "/w", name: "n", session_id: SID, pid: 7 },
+      agent_id: "a1b2",
+      text: "hi",
+    },
     bad: [
       // A send to every session is not one: at least one field names somebody.
       { op: "send_message", to: {}, text: "hi" },
       { op: "send_message", to: { cwd: "/w" }, text: " \n" },
       { op: "send_message", to: { pid: 1.5 }, text: "hi" },
       { op: "send_message", to: { name: "" }, text: "hi" },
+      { op: "send_message", to: { session_id: SID }, agent_id: "", text: "hi" },
     ],
   },
   peer_list: {

@@ -1634,6 +1634,27 @@ describe("the subagents", () => {
     });
   });
 
+  // send with agent_id (DR-0039 §3): the session that sent it is named, not
+  // the person.
+  test("agent.append with from marks the text as from that session", async () => {
+    const fake = fakeEngine();
+    fake.agents.push({ id: A, description: "d", type: "t", status: "running" });
+    registerOn(fake);
+    const sender = "11111111-2222-4333-8444-555555555555";
+    const reply = await replyTo(
+      fake,
+      JSON.stringify({
+        v: 1,
+        op: "agent.append",
+        id: "g3",
+        args: { agentId: A, from: sender, text: "確認お願い" },
+      }),
+    );
+    expect(reply).toEqual({ id: "g3", ok: true, result: { outcome: "appended" } });
+    expect(fake.agentAppends).toEqual([{ agentId: A, text: `ccmsg:${sender} から:\n確認お願い` }]);
+    expect(agentMessage("x", sender)).toBe(`ccmsg:${sender} から:\nx`);
+  });
+
   test("an append refused for another reason says refused", async () => {
     const fake = fakeEngine();
     fake.$.session = {
@@ -1830,6 +1851,27 @@ describe("the ccmsg tools", () => {
     expect(result).toContain("2 件の宛先のうち 1 件に届いた");
     expect(result).toContain(`- session_id: ${OTHER}, name: "n", cwd: "/w": 届いた`);
     expect(result).toContain("- session_id: c: 届かなかった。ccmsg の hooks module が動いていない");
+  });
+
+  // A send that names a running subagent hands its agent_id on with the rest.
+  test("send with agent_id hands it to ccmsg sidecar send-message", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing({ ok: true, results: [{ sid: OTHER, outcome: "delivered" }] })();
+    });
+    const result = await callTool(fake, "mcp__ccmsg-v1__send", {
+      session_id: OTHER,
+      agent_id: "a1b2",
+      text: "hi",
+    });
+    expect(seen).toEqual([
+      JSON.stringify({ to: { session_id: OTHER }, agent_id: "a1b2", text: "hi" }),
+    ]);
+    expect(result).toContain(`- session_id: ${OTHER}: 届いた`);
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__send", { session_id: OTHER, agent_id: "", text: "hi" }),
+    ).toContain("send の入力が形に合わない");
   });
 
   // engine does not check the input against the schema (DR-0039 §3): the

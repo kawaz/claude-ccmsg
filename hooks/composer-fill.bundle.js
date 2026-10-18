@@ -838,7 +838,12 @@ function namesSomebody(to) {
 var NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
 var PeerTargetSchema = pipe(object(PeerTargetEntries), check(namesSomebody, NAMES_SOMEBODY));
 var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
-var SendMessageInputSchema = object({ to: PeerTargetSchema, text: PeerTextSchema });
+var AgentIdSchema = optional(pipe(string(), nonEmpty("an agent id is not empty")));
+var SendMessageInputSchema = object({
+  to: PeerTargetSchema,
+  agent_id: AgentIdSchema,
+  text: PeerTextSchema
+});
 var SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 var PeerListInputSchema = object(PeerFilterEntries);
 var PeerListInputTextSchema = jsonText(PeerListInputSchema);
@@ -847,6 +852,7 @@ var SendMessageReasonSchema = picklist([
   "no_module",
   "session_changed",
   "ended",
+  "not_running",
   "no_peer_socket",
   "no_status_socket",
   "unreachable",
@@ -882,7 +888,7 @@ var PeerListResponseSchema = object({
   peers: array(PeerListEntrySchema)
 });
 var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
-var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
+var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
 var SayToolInputSchema = object({ text: PeerTextSchema });
 var PeersToolInputSchema = PeerListInputSchema;
 
@@ -947,6 +953,7 @@ var SessionFactsTextSchema = jsonText(SessionFactsSchema);
 var SessionFactsArgsSchema = NoArgsSchema;
 var AgentAppendArgsSchema = object({
   agentId: pipe(string(), nonEmpty("an agent id is not empty")),
+  from: optional(pipe(string(), nonEmpty("a sender is not empty"))),
   text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
 });
 var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
@@ -1009,6 +1016,7 @@ var NOT_DELIVERED = {
   no_module: "ccmsg の hooks module が動いていないセッションなので送っていない。そのセッションには ccmsg で届けられない",
   session_changed: "その session_id はもう使われていない (/clear か /resume で別の id に移った)。peers で今の session_id を確かめて送り直す",
   ended: "そのセッションは終了している",
+  not_running: "その agent_id の subagent はそのセッションで今走っていない (終わったか、agent_id の誤り)",
   no_peer_socket: "peer socket が見つからない。終了した直後か、peer messaging に対応しない Claude Code。peers でまだ居るか確かめる",
   no_status_socket: "受け手の受領拒否を聞く socket を送り手側で作れず、送っていない。少し置いて一度だけ送り直し、また同じなら送るのをやめる",
   unreachable: "peer socket に書き込めなかった。少し置いて一度だけ送り直すか、送るのをやめる",
@@ -1374,6 +1382,10 @@ var TOOL_INPUT_SCHEMAS = {
         minimum: 1,
         maximum: 9007199254740991
       },
+      agent_id: {
+        type: "string",
+        minLength: 1
+      },
       text: {
         type: "string"
       }
@@ -1448,11 +1460,11 @@ async function sendTool($, e) {
   const read = parseWith(SendToolInputSchema, e);
   if (!read.ok)
     return notTheInput("send", read.failure.summary);
-  const { text, ...to } = read.value;
+  const { text, agent_id, ...to } = read.value;
   let run;
   try {
     run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
-      stdin: JSON.stringify({ to, text }),
+      stdin: JSON.stringify({ to, ...agent_id !== undefined ? { agent_id } : {}, text }),
       timeoutMs: SEND_TIMEOUT_MS
     });
   } catch (error) {
@@ -1578,14 +1590,18 @@ function subagentEnded($, state, id) {
   state.facts = { ...state.facts, subagents: held.filter((a) => a.id !== id) };
   sendFacts($, state);
 }
-function agentMessage(text) {
-  return `ユーザから (ccmsg 経由):
+function agentMessage(text, from) {
+  const mark = from !== undefined ? `ccmsg:${from} から:` : "ユーザから (ccmsg 経由):";
+  return `${mark}
 ${text}`;
 }
 async function appendToAgent($, args) {
   try {
     await $.session.append({
-      message: { type: "user", content: [{ type: "text", text: agentMessage(args.text) }] },
+      message: {
+        type: "user",
+        content: [{ type: "text", text: agentMessage(args.text, args.from) }]
+      },
       agentId: args.agentId
     });
     return { outcome: "appended" };

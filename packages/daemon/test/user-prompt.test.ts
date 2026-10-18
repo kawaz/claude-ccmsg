@@ -42,6 +42,7 @@ import {
   sessionConn,
   userConn,
 } from "./helpers.ts";
+import { fakeHarness, sessionWithConfig } from "./peer-harness.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RequestTextSchema = jsonText(SidecarRequestSchema);
@@ -543,6 +544,47 @@ async function nextRequest(sidecar: {
 function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar_reply" }> {
   return { op: "sidecar_reply", reply };
 }
+
+// send_message with an agent id (DR-0039 §3): the session's live run is
+// matched as any send's, and the text goes to its module as agent.append,
+// naming the sender, rather than into its peer socket.
+describe("send_message with an agent id over the wire", () => {
+  test("the module is asked to append, the sender named, and its answer is the result", async () => {
+    const ctx = await startShortDaemon();
+    const harness = fakeHarness(SID, { pid: process.pid });
+    const sidecar = await fakeSidecar(ctx, SID, "run1");
+    const SENDER = "22222222-2222-4333-8444-555555555555";
+    try {
+      const sender = await sessionWithConfig(ctx, SENDER, harness.configDir);
+      const results = sender.requestOk({
+        op: "send_message",
+        to: { session_id: SID },
+        agent_id: "a1",
+        text: "確認お願い",
+      });
+      const line = await nextRequest(sidecar);
+      expect(line).toEqual({
+        v: 1,
+        op: "agent.append",
+        id: line.id,
+        args: { agentId: "a1", from: SENDER, text: "確認お願い" },
+      });
+      const module = await connect(ctx.sock);
+      await module.hello({ role: "session", sid: SID });
+      await module.requestOk(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "appended" } }),
+      );
+      expect((await results).results).toEqual([{ sid: SID, outcome: "delivered" }]);
+      expect(harness.frames).toEqual([]);
+      sender.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      harness.dispose();
+      await stopTestDaemon(ctx);
+    }
+  });
+});
 
 describe("user_prompt over the wire", () => {
   test("the module's accepted reply is the answer", async () => {

@@ -222,6 +222,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
         { sid: SID, name: "n", cwd: "/w", outcome: "delivered" },
         { sid: SID, outcome: "unconfirmed" },
         { sid: SID, outcome: "not_delivered", reason: "no_module" },
+        { sid: SID, outcome: "not_delivered", reason: "not_running" },
       ],
     },
   ],

@@ -57,6 +57,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 - **セッション間の送信**: 入力は `{ session_id?, cwd?, name?, pid?, text }` のような宛先の部分指定と本文。daemon が部分指定を生きているセッションに解決し、config dir が違うセッションにも peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md)) で届ける。config dir を跨ぐことを利用者に意識させず、宛先の綴りの規約 (`ccmsg:` 接頭辞) を持たない
   - daemon の op は `send_message` (宛先の候補は `peer_list`) で、module は `ccmsg sidecar send-message` / `peer-list` を transport にする。wire の op の名は本家の SendMessage / user prompt / user message と対照させ、composer を通る本物の prompt (`user_prompt`、DR-0035 §1) と文脈を足すだけの message (`user_message`、§6) の違いを名前で表す (kawaz 2026-10-18)
+  - `send` の入力に `agent_id?` を足し、指定した時は部分指定で解決したセッション (複数に当たれば全部) の走行中の subagent `agent_id` に届ける。経路は §6 の直送と同じ (daemon がそのセッションの module にサイドカーの `agent.append` を渡し、module が `$.session.append({ agentId })` で足す) で、本文の頭に送り主の分かる印 `ccmsg:<送り主の session_id> から:` を付ける (§6 の人の印と対称)。宛先は subagent で送り主のセッションそのものではないので、送り主自身のセッションも宛先から除かない。結果は宛先ごとに `delivered` / `unconfirmed` / `not_delivered` (`not_running`・`no_module`・`refused`・`session_changed`・`ended`) で、他の宛先と同じ文面で返す。用途は、組み込みの SendMessage が使えない時に人の意思で subagent に届ける道で、skill には「subagent への連絡は通常 SendMessage、`agent_id` は SendMessage が使えない時」と書く (kawaz 2026-10-18)
   - 面 (config dir) で絞らない。一覧 (`peers`) と送信 (`send`) は同じ解決元で、daemon が検出した config dir と hello で名乗られた config dir の全部のセッションを対象にする (kawaz 2026-10-18)
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
   - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
@@ -98,6 +99,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 - webui から走行中の subagent に書いた文は、op `user_message` (user role) で daemon に届き、daemon がサイドカー経由で module に渡し、module が `$.session.append({ message: { type: 'user', ... }, agentId })` で足す。子の次の request で、直前の tool_result と同じ user message の後ろの text block として載り、本体の request には載らない (event-matrix の agentId 付き append の実測 5/5)。観測は background の `Agent` の子が tool を実行している間に、timer を契機に足した場合だけで、foreground の `Agent`、stream の途中、`-p` の子・teammate・workflow の agent、peer socket やサイドカーの依頼を契機にした append は未観測
 - 足す本文の頭には「ユーザから (ccmsg 経由):」の印を付け、model が自分の task の外からの言葉として読めるようにする。入り口が webui かどうかは本質でないので、印は ccmsg に抽象化する (kawaz 2026-10-18)
+- §3 の `send` に `agent_id` を渡したセッションからの送信も同じ経路で足す。その時の印は「ccmsg:<送り主の session_id> から:」で、サイドカーの `agent.append` の `from` で module に渡す
 - module は `agentId` 付きの `turn.start` / `turn.complete` を畳んで、走行中の subagent の `agentId` の一覧をセッションの事実 (DR-0035 §3) の subagent の節として daemon に送る。webui は直送の宛先をこの一覧から選ぶ (transcript の `Agent` の結果からは子が今走っているかが分からないため)。これは findings 2026-10-15-mods-reference-opportunities の B1 (agent tree の生存判定を event にする) の一部を先に入れることになる。`turn.*` の `agentId` は直送の宛先と同じ値 (同実測: `turn.*`・`$.agent.list()` の `id`・`tool.call` の `agentId`・`Agent` tool の結果の `agentId` はすべて一致)
 - 終わった子と存在しない id への append は `refused: no running loop is <agentId>` で拒まれる (同実測)。module はこれを「届かなかった (subagent が走っていない)」として daemon に返し、webui に出す。文言では終わった子と存在しない id を区別できないので、区別して示さない
 - これは会話への文脈の追加であって user prompt ではない (transcript では `isMeta` の user 行)。permission や classifier の判断を変える権限の付与には使わない (§8)。classifier がこの行をどう読むかは未検証

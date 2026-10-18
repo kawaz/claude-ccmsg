@@ -193,8 +193,12 @@ describe("the ops' results", () => {
       args: { agentId: "a1", text: "hi" },
     } as const;
     expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    // From a session's send (DR-0039 §3): the sender rides along.
+    const sent = { ...request, args: { agentId: "a1", from: "s1", text: "hi" } };
+    expect(readSidecarRequest(line(sent))).toEqual({ ok: true, value: sent });
     for (const args of [
       { agentId: "", text: "hi" },
+      { agentId: "a1", from: "", text: "hi" },
       { agentId: "a1", text: "  " },
       { text: "hi" },
     ]) {

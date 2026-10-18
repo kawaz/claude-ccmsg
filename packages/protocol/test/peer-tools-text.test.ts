@@ -27,6 +27,7 @@ describe("readSendResultText", () => {
       sendResultText([]),
       sendResultText([{ sid: A, outcome: "not_delivered", reason: "self" }]),
       sendResultText([{ sid: B, outcome: "not_delivered", reason: "no_module" }]),
+      sendResultText([{ sid: B, outcome: "not_delivered", reason: "not_running" }]),
       "send の入力が形に合わないので何もしていない: text: Invalid type",
     ]) {
       expect(readSendResultText(failed)).toEqual({ status: "failed", detail: failed });

@@ -4,8 +4,10 @@
 // session runs read afresh (session-runs.ts liveRuns, the same source for the
 // send and the list, so what `peers` shows is what `send` reaches), and
 // writes the envelope into the peer socket of every matched session that has
-// a hooks module (peer-inject.ts). Nothing is held for a later attempt
-// (DR-0036 §3).
+// a hooks module (peer-inject.ts). A send that names an agent id goes to that
+// running subagent of each matched session instead, through the session's
+// module as user_message's text does (user-message.ts). Nothing is held for a
+// later attempt (DR-0036 §3).
 import {
   type PeerListEntry,
   type PeerListInput,
@@ -17,6 +19,7 @@ import {
 } from "@ccmsg/protocol";
 import type { SessionRun } from "./session-runs.ts";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
+import type { UserMessageOutcome } from "./user-message.ts";
 
 /** One session among the live runs: its runs, and how a target spells it —
  * the name its record gives and its directory as a realpath. */
@@ -41,6 +44,14 @@ export interface SendMessageDeps extends PeerDeps {
   readiness(sid: string): SessionInputReadiness;
   issueMid(): string;
   deliver(run: SessionRun, frame: InjectFrame): Promise<InjectResult>;
+  /** Add `text` from session `from` to the running subagent `agentId` of
+   * session `sid`, through its module (agent.append). */
+  appendToAgent(
+    sid: string,
+    agentId: string,
+    text: string,
+    from: string,
+  ): Promise<UserMessageOutcome>;
   log(line: string): void;
 }
 
@@ -109,12 +120,14 @@ export async function listPeers(
 }
 
 /** Deliver `text` from session `from` to every session `to` picks out but
- * the sender, and say what came of it for each. */
+ * the sender — or, given `agentId`, to that running subagent of every session
+ * it picks out, the sender's own included — and say what came of it for
+ * each. */
 export async function sendToPeers(
-  message: { from: string; to: PeerTarget; text: string },
+  message: { from: string; to: PeerTarget; agentId?: string; text: string },
   deps: SendMessageDeps,
 ): Promise<SendMessageResult[]> {
-  const { from, to, text } = message;
+  const { from, to, agentId, text } = message;
   const peers = await peersOf(await deps.runs(), deps);
   const matched = await matching(peers, to, deps);
   if (matched.length === 0) {
@@ -134,12 +147,45 @@ export async function sendToPeers(
       },
     ];
   }
+  if (agentId !== undefined) {
+    const results = await Promise.all(
+      matched.map((peer) => appendToPeer(peer, agentId, from, text, deps)),
+    );
+    return results.sort((a, b) => a.sid.localeCompare(b.sid));
+  }
   const others = matched.filter((peer) => peer.sid !== from);
   if (others.length === 0) {
     return matched.map((peer) => ({ ...spelled(peer), outcome: "not_delivered", reason: "self" }));
   }
   const results = await Promise.all(others.map((peer) => sendToPeer(peer, from, text, deps)));
   return results.sort((a, b) => a.sid.localeCompare(b.sid));
+}
+
+/** Add `text` to the subagent `agentId` of `peer`. The subagent's own
+ * session is not the sender's self: its subagents are other loops. */
+async function appendToPeer(
+  peer: Peer,
+  agentId: string,
+  from: string,
+  text: string,
+  deps: SendMessageDeps,
+): Promise<SendMessageResult> {
+  if (!deps.hasModule(peer.sid)) {
+    return { ...spelled(peer), outcome: "not_delivered", reason: "no_module" };
+  }
+  const appended = await deps.appendToAgent(peer.sid, agentId, text, from);
+  deps.log(
+    `agent-append ${peer.sid} ${agentId} (send_message from ${from}): ${appended.outcome}` +
+      (appended.outcome === "not_delivered" ? ` (${appended.reason})` : ""),
+  );
+  switch (appended.outcome) {
+    case "appended":
+      return { ...spelled(peer), outcome: "delivered" };
+    case "unconfirmed":
+      return { ...spelled(peer), outcome: "unconfirmed" };
+    case "not_delivered":
+      return { ...spelled(peer), outcome: "not_delivered", reason: appended.reason };
+  }
 }
 
 async function sendToPeer(
