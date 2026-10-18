@@ -50,10 +50,10 @@ describe("looksLikeFile — file vs directory heuristic", () => {
     expect(looksLikeFile("foo/bar/index.html")).toBe(true);
   });
   test("rejects directory-shaped tokens", () => {
-    // The exact m56 example: dated worktree dir with dashes, no extension.
+    // A dated worktree dir with dashes, no extension.
     expect(
       looksLikeFile(
-        "/Users/kawaz/.local/share/repos/github.com/emeradaco/antenna/2632-2631-fix-remove-cc-institutions-back-button",
+        "/home/user/repos/github.com/example-org/example-repo/2632-2631-fix-remove-back-button",
       ),
     ).toBe(false);
     expect(looksLikeFile("packages/webui")).toBe(false);
@@ -62,9 +62,9 @@ describe("looksLikeFile — file vs directory heuristic", () => {
     expect(looksLikeFile("foo.")).toBe(false); // trailing dot
   });
   test("rejects too-long / non-alphanumeric ext", () => {
-    // `fix/2631-remove-cc-institutions-back-button` — the dashy suffix isn't
+    // `fix/2631-remove-back-button` — the dashy suffix isn't
     // an extension. `.back-button` fails the [A-Za-z0-9] restriction.
-    expect(looksLikeFile("fix/2631-remove-cc-institutions-back-button")).toBe(false);
+    expect(looksLikeFile("fix/2631-remove-back-button")).toBe(false);
   });
 });
 
@@ -77,7 +77,7 @@ describe("parseFilePathRef — suffix shapes", () => {
     // extension and line info, so parseFilePathRef refuses it.
     expect(
       parseFilePathRef(
-        "/Users/kawaz/.local/share/repos/github.com/emeradaco/antenna/2632-2631-fix-remove-cc-institutions-back-button",
+        "/home/user/repos/github.com/example-org/example-repo/2632-2631-fix-remove-back-button",
       ),
     ).toBeNull();
     expect(parseFilePathRef("docs/decision-records/2632")).toBeNull();
@@ -86,7 +86,7 @@ describe("parseFilePathRef — suffix shapes", () => {
     // Branch names look path-shaped (`/` present) but aren't files. The
     // trailing segment has no file-shaped extension (dashy word), so the
     // "extension OR line info" gate rejects it.
-    expect(parseFilePathRef("fix/2631-remove-cc-institutions-back-button")).toBeNull();
+    expect(parseFilePathRef("fix/2631-remove-back-button")).toBeNull();
   });
   test("line info alone qualifies extension-less paths", () => {
     // Some real files have no extension (`Makefile`, `LICENSE`); if the

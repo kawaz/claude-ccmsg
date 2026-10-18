@@ -3098,7 +3098,7 @@ describe("extractCcmsgMessages", () => {
   // 切り詰め注記」の bubble にする。
   test("a truncated <event> msg line still yields a bubble with the partial text", () => {
     const truncated =
-      '{"type":"msg","mid":43,"from":"u1","ts":"2026-07-15T04:02:43.478Z","msg":"[FILE1:スクショ.png](/tmp/x.png)\\nさっき間違えてemeradacoのセッションで1on1送信して...(truncated)';
+      '{"type":"msg","mid":43,"from":"u1","ts":"2026-07-15T04:02:43.478Z","msg":"[FILE1:スクショ.png](/tmp/x.png)\\nさっき間違えて別のセッションで1on1送信して...(truncated)';
     const line = parseTranscriptLine(
       jsonl(
         userContentRow(

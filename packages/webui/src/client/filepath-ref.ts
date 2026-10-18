@@ -67,8 +67,7 @@ export function looksLikePath(s: string): boolean {
 /** True when the path's basename carries a file-shaped extension (a `.` not
  * at start/end of the segment, and the extension is non-empty short
  * alphanumeric). Used together with "has line info" to distinguish files
- * from directory / branch-name tokens (kawaz r46 m56: bare directory paths
- * like `.../2632-2631-fix-remove-cc-institutions-back-button` must not
+ * from directory / branch-name tokens (bare directory paths like `.../2632-2631-fix-remove-back-button` must not
  * linkify, and the "has extension" cue is the reliable local signal). */
 export function looksLikeFile(path: string): boolean {
   const lastSlash = path.lastIndexOf("/");
