@@ -3,7 +3,7 @@ title: host 翻訳 (Translation.framework) が findings の「日英混在の日
 status: open
 category: bug
 created: 2026-10-02T15:08:24+09:00
-last_read:
+last_read: 2026-10-18T18:04:30+09:00
 open_entered: 2026-10-02T15:08:24+09:00
 wip_entered:
 blocked_entered:
