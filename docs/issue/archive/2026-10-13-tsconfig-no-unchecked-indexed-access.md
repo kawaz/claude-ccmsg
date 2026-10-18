@@ -1,6 +1,6 @@
 ---
 title: tsconfig で noUncheckedIndexedAccess を有効にする
-status: open
+status: resolved
 category: design
 created: 2026-10-13T12:48:19+09:00
 last_read: 2026-10-18T17:35:01+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T17:37:20+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","commit/822f2789"]
 blocked_by:
 origin: 自リポ TODO
 ---
