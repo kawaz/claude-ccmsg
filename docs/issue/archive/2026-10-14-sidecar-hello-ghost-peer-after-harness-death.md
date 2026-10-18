@@ -1,6 +1,6 @@
 ---
 title: sidecar が hello して名乗る形で harness 死亡後に幽霊 peer が残るおそれ
-status: open
+status: resolved
 category: bug
 created: 2026-10-14T17:40:26+09:00
 last_read: 2026-10-18T15:30:20+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:11:13+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: 実機で再現。daemon 停止中に harness が死ぬと sidecar が次の daemon に死んだ sid を名乗り直し、peers に no_module の幽霊行が残った。sidecar が stdout の socket の EOF で harness の死を知って去る形に修正 (commit nuwytorn)。(1) の last_activity_at 更新は実害が小さいと判断し変更なし"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -34,6 +34,6 @@ DR-0035 §3 のサイドカー名乗り実装 (sidecar_hello、run id、接続�
 
 ## 受け入れ条件
 
-- [ ] 実機で (1) (2) を再現し、残るかを確認する
-- [ ] 残るなら sidecar 側で親プロセスの死を検知して自分で終了する (stdin の EOF 等) 形を足す
+- [x] 実機で (1) (2) を再現し、残るかを確認する
+- [x] 残るなら sidecar 側で親プロセスの死を検知して自分で終了する (stdin の EOF 等) 形を足す
 - [ ] (1) が問題なら `last_activity_at` を名乗り直しで更新しない形を検討する
