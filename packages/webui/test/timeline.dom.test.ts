@@ -265,14 +265,18 @@ describe("Timeline loading", () => {
     expect(ws.subscribes).toEqual([SID]);
   });
 
-  test("coming back to a cached transcript re-reads the tail while still showing the cache", async () => {
+  test("coming back to a cached transcript reads what was appended after it while still showing the cache", async () => {
     const view = await openLoaded(exchange(1));
+    const end = loadedEnd(view.store);
     await view.rerender({ active: false, visible: false });
     await view.rerender({ active: true, visible: true });
     expect(view.ws.reads).toHaveLength(2);
-    expect(view.ws.lastRead().opts).toBeUndefined();
+    expect(view.ws.lastRead().opts).toEqual({ after: end });
+    expect(view.root.textContent).toContain("question 1");
+    expect(view.root.textContent).not.toContain("読み込み中");
 
-    await view.ws.lastRead().answer(page([...exchange(1), ...exchange(2)]));
+    await view.ws.lastRead().answer(page(exchange(2), end));
+    expect(view.root.textContent).toContain("question 1");
     expect(view.root.textContent).toContain("question 2");
   });
 
@@ -305,15 +309,17 @@ describe("Timeline loading", () => {
     expect(view.root.textContent).toContain("question 1");
   });
 
-  test("a tail push that does not line up re-reads in the background without blanking the rows", async () => {
+  test("a tail push that does not line up catches up in the background without blanking the rows", async () => {
     const view = await openLoaded(exchange(1));
     const end = loadedEnd(view.store);
     await tail(view.store, exchange(3), end + 10);
     expect(view.ws.reads).toHaveLength(2);
+    expect(view.ws.lastRead().opts).toEqual({ after: end });
     expect(view.root.textContent).toContain("question 1");
     expect(view.root.textContent).not.toContain("読み込み中");
 
-    await view.ws.lastRead().answer(page([...exchange(1), ...exchange(2), ...exchange(3)]));
+    await view.ws.lastRead().answer(page([...exchange(2), ...exchange(3)], end));
+    expect(view.root.textContent).toContain("question 1");
     expect(view.root.textContent).toContain("question 3");
   });
 
@@ -511,23 +517,25 @@ describe("Timeline user-turn nav", () => {
     await tail(view.store, exchange(4), loadedEnd(view.store));
     expect(userNavCount(view.root)).toBe("👤 2/4");
 
-    // 再訪の読み直しが同じ末尾まで返る: 選んでいた発話 (2 番目) を指したまま、
+    // tail の読み直しが同じ末尾まで返る: 選んでいた発話 (2 番目) を指したまま、
     // 窓から外れた 1 番目の分だけ番号が詰まる。
     const lines = [...threeExchanges(), ...exchange(4)];
     const secondStart = endOf(lines.slice(0, 2), 0);
-    await revisit(view, page(lines.slice(2), secondStart));
+    await rereadOnRevisit(view, page(lines.slice(2), secondStart));
     expect(userNavCount(view.root)).toBe("👤 1/3");
 
     // 末尾が手前に戻った (読み直しで短くなった) 時は、末尾の発話を選び直す。
-    await revisit(view, page(lines.slice(2, 6), secondStart));
+    await rereadOnRevisit(view, page(lines.slice(2, 6), secondStart));
     expect(userNavCount(view.root)).toBe("👤 2/2");
   });
 });
 
-/** タブを離れて戻り、到着時の読み直しに `reply` を返す。 */
-async function revisit(view: View, reply: ReturnType<typeof page>): Promise<void> {
+/** タブを離れて戻る。読み込み済みの終わりからは続かない (transcript が差し
+ * 替わった) と答え、続く tail の読み直しに `reply` を返す。 */
+async function rereadOnRevisit(view: View, reply: ReturnType<typeof page>): Promise<void> {
   await view.rerender({ active: false, visible: false });
   await view.rerender({ active: true, visible: true });
+  await view.ws.lastRead().answer({ ok: true, sid: SID, lines: [], start: 0, end: 0, size: 0 });
   await view.ws.lastRead().answer(reply);
 }
 

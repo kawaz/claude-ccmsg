@@ -46,7 +46,11 @@ DR-0008 でファイルツリー + コードビューアは実装済みだが、
 - `TranscriptReadRequest.before` (省略時 = ファイル末尾) を起点に、その offset **以前で終わる行**を集めて返す。初回呼び出し (`before` 省略) は tail から読むため、webui は「開いたら直近ログが見える」を実現できる
 - 返却は必ず**完全な行**の集合 (`TranscriptReadResponse.lines: string[]`、各行は生 jsonl 文字列)。行の途中で切れた断片を返さない — クライアントは各行をそのまま `JSON.parse` すればよく、部分行の結合処理を持たない
 - `max_bytes` は `TRANSCRIPT_READ_MAX_BYTES` (256 KiB) で clamp する。数十〜数百 MB の transcript を一度に読み切ることを防ぎ、webui 側は「もっと読む (`start` を次の `before` に渡す)」の pull 型ページングで遡る
-- `TranscriptReadResponse.size` (現在のファイルサイズ) を毎回返す。session 実行中は transcript が伸び続けるため、webui はこれを見て「新着があるか」を判定し、必要なら次のポーリングで `before` にこの `size` を渡して追従できる
+- `TranscriptReadResponse.size` (現在のファイルサイズ) を毎回返す。session 実行中は transcript が伸び続けるため、webui はこれを見て「新着があるか」を判定できる
+- `TranscriptReadRequest.after` (`before` とは併用しない) は、その offset **以後に始まる行**を古い順に cap まで返す。前の読み (または live tail の push) の `end` を渡すと、その後に書かれた分だけが届く。返事の `end` が `size` に届かなければ続きがあり、`end` を次の `after` に渡して読み進める
+  - `after` から続きにならない時 (ファイルの末尾より後 = 差し替え・切り詰め、行の途中、cap と走査の予算を超える 1 行で始まる) は、行を返さず `start` をファイルの末尾に置く。`start` が `after` と違うことで、読み手はキャッシュを続けられないと知り、tail を読み直す
+  - 書きかけの最後の行 (改行がまだ無い) は返さず、`end` は行の境界に留まる。cap を超える 1 行は、`before` 側の soft cap と同じく、その行を丸ごと返す
+- webui の Timeline は、訪れた時と live tail の push が読み込み済みの `end` に続かなかった時に、`after` で `end` から後を読み足す。画面を消さず、読み込み済みの行 (older で読んだ分を含む) を残し、新しく書かれた分だけを運ぶ。「更新」は読み手が明示する読み直しなので、tail を読んで置き換える
 
 ### 4. hello を transcript_read の必須前提にする (IDENTITY_OPS へ追加) [提案]
 

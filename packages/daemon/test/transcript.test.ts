@@ -589,6 +589,134 @@ describe("transcript_read pagination", () => {
   });
 });
 
+describe("transcript_read after (DR-0009 §3: 差分取得)", () => {
+  const lines = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, i) => `L${from + i}`);
+  const content = (from: number, to: number) => lines(from, to).join("\n") + "\n";
+
+  // One daemon and one transcript per test: `run` gets the session connection
+  // and the file to grow.
+  async function withTranscript(
+    initial: string,
+    run: (c: Awaited<ReturnType<typeof sessionConn>>, sid: string, file: string) => Promise<void>,
+  ): Promise<void> {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const file = path.join(dir, `${SID_A}.jsonl`);
+      fs.writeFileSync(file, initial);
+      const c = await sessionConn(ctx, SID_A, { transcript_path: file });
+      await run(c, SID_A, file);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("after に前の読みの end を渡すと、その後に足された行だけが返る", async () => {
+    await withTranscript(content(0, 5), async (c, sid, file) => {
+      const tail = await c.requestOk({ op: "transcript_read", sid });
+      fs.appendFileSync(file, content(5, 8));
+      const next = await c.requestOk({ op: "transcript_read", sid, after: tail.end });
+      expect(next.lines).toEqual(lines(5, 8));
+      expect(next.start).toBe(tail.end);
+      expect(next.end).toBe(next.size);
+      expect(next.size).toBe(fs.statSync(file).size);
+    });
+  });
+
+  // A cap smaller than what was appended returns a page; its end, passed on,
+  // continues with no gap and no overlap until end reaches size.
+  test("cap で区切られたページは end を次の after に渡して漏れ・重複なく続く", async () => {
+    await withTranscript(content(0, 10), async (c, sid) => {
+      const read: string[] = [];
+      let after = 0;
+      for (;;) {
+        const page = await c.requestOk({ op: "transcript_read", sid, after, max_bytes: 7 });
+        expect(page.start).toBe(after);
+        read.push(...page.lines);
+        if (page.end === page.size) break;
+        expect(page.end).toBeGreaterThan(after);
+        after = page.end;
+      }
+      expect(read).toEqual(lines(0, 10));
+    });
+  });
+
+  test("after がファイルの末尾なら空ページ (start === end === after)", async () => {
+    await withTranscript(content(0, 3), async (c, sid, file) => {
+      const size = fs.statSync(file).size;
+      const page = await c.requestOk({ op: "transcript_read", sid, after: size });
+      expect(page.lines).toEqual([]);
+      expect(page.start).toBe(size);
+      expect(page.end).toBe(size);
+    });
+  });
+
+  // The writer is mid-line: the unterminated tail is left for a later read,
+  // so end stays on a line boundary and the next after picks the line up whole.
+  test("書きかけの最後の行は返さず、書き終わった後の after で丸ごと返る", async () => {
+    await withTranscript(content(0, 2), async (c, sid, file) => {
+      const tail = await c.requestOk({ op: "transcript_read", sid });
+      fs.appendFileSync(file, "L2\nL3-part");
+      const partial = await c.requestOk({ op: "transcript_read", sid, after: tail.end });
+      expect(partial.lines).toEqual(["L2"]);
+      fs.appendFileSync(file, "ial\n");
+      const rest = await c.requestOk({ op: "transcript_read", sid, after: partial.end });
+      expect(rest.lines).toEqual(["L3-partial"]);
+      expect(rest.end).toBe(rest.size);
+    });
+  });
+
+  // An offset the file does not continue from — past its end (replaced or cut
+  // short) or inside a line — reads as no lines anchored at the file's end, a
+  // start other than after.
+  test("続きにならない after は行を返さず、start をファイルの末尾に置く", async () => {
+    await withTranscript(content(0, 3), async (c, sid, file) => {
+      const size = fs.statSync(file).size;
+      for (const after of [size + 10, 1]) {
+        const page = await c.requestOk({ op: "transcript_read", sid, after });
+        expect(page.lines).toEqual([]);
+        expect(page.start).toBe(size);
+        expect(page.end).toBe(size);
+      }
+    });
+  });
+
+  test("cap を超える 1 行はその行を丸ごと返す", async () => {
+    const long = "X".repeat(40);
+    await withTranscript(`S0\n${long}\nS1\n`, async (c, sid) => {
+      const page = await c.requestOk({ op: "transcript_read", sid, after: 3, max_bytes: 8 });
+      expect(page.lines).toEqual([long]);
+      expect(page.start).toBe(3);
+      expect(page.end).toBe(3 + long.length + 1);
+    });
+  });
+
+  // Past the scan budget the line's content is not buffered: the read says
+  // the file does not continue from after, and the reader reads the tail.
+  test("cap と走査の予算を超える巨大行は続きにならないと答える", async () => {
+    const giant = "H".repeat(TRANSCRIPT_READ_MAX_BYTES + 5 * 1024 * 1024 - 1);
+    await withTranscript(`S0\n${giant}\nS1\n`, async (c, sid, file) => {
+      const page = await c.requestOk({ op: "transcript_read", sid, after: 3 });
+      expect(page.lines).toEqual([]);
+      expect(page.start).toBe(fs.statSync(file).size);
+    });
+  });
+
+  test("invalid_args: after が負数、before と同時", async () => {
+    await withTranscript(content(0, 1), async (c, sid) => {
+      for (const req of [
+        { op: "transcript_read" as const, sid, after: -1 },
+        { op: "transcript_read" as const, sid, after: 0, before: 3 },
+      ]) {
+        const res = await c.requestError(req);
+        expect(res.error.code).toBe("invalid_args");
+      }
+    });
+  });
+});
+
 describe("transcript live tail (DR-0009 live-tail addendum)", () => {
   test("session role からの transcript_subscribe / transcript_unsubscribe は bad_request (user role only)", async () => {
     const ctx = await startInProcessDaemon();

@@ -1,5 +1,5 @@
-// Timeline の transcript_read: 初回の読み込み、tail のずれの読み直し、訪れた
-// 時の読み直し、older、更新。応答は世代付きで store に流し、reducer が今の
+// Timeline の transcript_read: 初回の読み込み、tail のずれの追いつき、訪れた
+// 時の追いつき、older、更新。応答は世代付きで store に流し、reducer が今の
 // 要求への応答だけを取り込む (request-generation.ts)。
 import { useEffect, useMemo } from "preact/hooks";
 import { useApp } from "../../context.ts";
@@ -41,6 +41,51 @@ function readTranscriptIntoStore(
     .catch((err) => {
       store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: errorMessage(err) });
     });
+}
+
+/** Catch the cache up with what was written after its `end`: an `after`
+ * read (DR-0009 §3) appended behind what is cached, so the lines already
+ * shown — older pages included — stay, and only what is new travels. Pages
+ * on while the reply says more follows. A transcript that does not continue
+ * from `end` (replaced, cut short) is read again from its tail instead.
+ * Starts with `timeline/resyncing`: the pane keeps showing the cache while
+ * it catches up. */
+async function appendTranscriptIntoStore(
+  store: Store,
+  ws: WsHandle,
+  sid: string,
+  after: number,
+  opts: ReadOpts,
+): Promise<void> {
+  const generation = nextRequestGeneration();
+  store.dispatch({ type: "timeline/resyncing", sid, generation });
+  const mode = "append";
+  let res: Awaited<ReturnType<WsHandle["transcriptRead"]>>;
+  try {
+    res = await ws.transcriptRead(sid, { ...opts, after });
+  } catch (err) {
+    store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: errorMessage(err) });
+    return;
+  }
+  if (!res.ok) {
+    store.dispatch({ type: "timeline/loaded", sid, generation, mode, error: res.error.msg });
+    return;
+  }
+  if (res.start !== after) {
+    if (store.getState().sessionTrees.get(sid)?.timeline.generation !== generation) return;
+    await readTranscriptIntoStore(store, ws, sid, {
+      started: "timeline/resyncing",
+      mode: "replace",
+      opts,
+    });
+    return;
+  }
+  store.dispatch({ type: "timeline/loaded", sid, generation, mode, response: res });
+  const timeline = store.getState().sessionTrees.get(sid)?.timeline;
+  const more = res.end > after && res.end < res.size;
+  if (more && timeline?.generation === generation && timeline.end === res.end) {
+    await appendTranscriptIntoStore(store, ws, sid, res.end, opts);
+  }
 }
 
 /** `agent` を渡すと、`sid` の下のその agent の transcript を読む (DR-0025
@@ -99,28 +144,19 @@ export function useTranscriptLoader({
     });
   }, [active, sid, timeline.status, connStatus, store, ws, agentOpts]);
 
-  // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
-  // review fix): applyTimelineTail (store.ts) can only detect that a
-  // `timeline/tail` push doesn't line up with the cached `end` — it can't
-  // fetch, so it flags `timeline.needsResync` instead of just dropping the
-  // push and leaving live tail silently stuck (DR-0005 §1: side effects stay
-  // out of the reducer). This effect is the side effect: a background
-  // "replace" read that catches the cache up. Starts with `timeline/resyncing`
-  // rather than `timeline/loading` (which every other read here uses) —
-  // flipping status to "loading" would blank the pane (Timeline's
-  // "読み込み中…" branch) for what should be an invisible catch-up, not a
-  // user-visible reload. If the re-read's own result is already stale by the
-  // time it lands (more appends happened meanwhile), the next tail push simply
-  // re-flags needsResync and this effect fires again — self-healing, no bound
-  // on retries needed since each attempt is a normal full tail read.
+  // Resync on a non-contiguous tail push (DR-0009 addendum): applyTimelineTail
+  // (store.ts) can only detect that a `timeline/tail` push doesn't line up
+  // with the cached `end` — it can't fetch, so it flags `timeline.needsResync`
+  // instead of just dropping the push and leaving live tail silently stuck
+  // (DR-0005 §1: side effects stay out of the reducer). This effect is the
+  // side effect: an invisible catch-up from the cached `end`
+  // (appendTranscriptIntoStore). If more was appended by the time it lands,
+  // the next tail push re-flags needsResync and this effect fires again.
+  const resyncEnd = useEffectEvent(() => timeline.end);
   useEffect(() => {
     if (!active || !timeline.needsResync) return;
     if (connStatus !== "connected") return;
-    void readTranscriptIntoStore(store, ws, sid, {
-      started: "timeline/resyncing",
-      mode: "replace",
-      opts: agentOpts,
-    });
+    void appendTranscriptIntoStore(store, ws, sid, resyncEnd(), agentOpts);
   }, [active, sid, timeline.needsResync, connStatus, store, ws, agentOpts]);
 
   // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
@@ -143,12 +179,16 @@ export function useTranscriptLoader({
   //   loading→loaded flip caused by our own fetch would loop. So the status
   //   gate (and the agent opts) are read in an Effect Event, which sees the
   //   current values without being a reason to re-run.
-  // - mode: "replace" because DR-0009's transcript_read has no "after"
-  //   parameter — an incremental "just what's new" is not representable in
-  //   the current protocol. The response's own start/end/lines become the
-  //   new cache wholesale (same shape as refresh below).
+  // - A loaded cache catches up from its `end` (appendTranscriptIntoStore):
+  //   only what was written meanwhile travels, and what the reader had
+  //   loaded — older pages included — stays on screen. A cache that ended in
+  //   an error has nothing to continue and reads the tail again.
   const revalidateOnArrival = useEffectEvent(() => {
-    if (timeline.status !== "loaded" && timeline.status !== "error") return;
+    if (timeline.status === "loaded") {
+      void appendTranscriptIntoStore(store, ws, sid, timeline.end, agentOpts);
+      return;
+    }
+    if (timeline.status !== "error") return;
     void readTranscriptIntoStore(store, ws, sid, {
       started: "timeline/loading",
       mode: "replace",
@@ -169,12 +209,10 @@ export function useTranscriptLoader({
     });
   }
 
-  // "更新" (refresh): re-reads the tail (before omitted) and replaces the
-  // cache wholesale rather than fetching only what's new since `end` — DR-0009
-  // offers no cheaper "read what's new" shape (transcript_read has no
-  // "after" parameter), and re-reading the tail is simple and correct at the
-  // cost of re-fetching content we may already have (implementation
-  // simplicity prioritized per the delegated spec).
+  // "更新" (refresh): the reader's explicit reload — re-reads the tail (before
+  // omitted) and replaces the cache wholesale, rather than catching up from
+  // `end` as an arrival does: it is also the way back from a cache the
+  // reader no longer trusts.
   function refresh(): Promise<void> | null {
     if (timeline.status === "loading") return null;
     return readTranscriptIntoStore(store, ws, sid, {

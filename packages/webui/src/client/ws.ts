@@ -215,11 +215,13 @@ export interface WsHandle {
   sandboxRevoke(gid: string): Promise<ReplyOf<"sandbox_revoke">>;
   /** Read a slice of a connected session's transcript jsonl (DR-0009
    * transcript_read). `before` omitted = tail of the file; pass the previous
-   * reply's `start` to page older. */
+   * reply's `start` to page older, or its `end` as `after` to read what was
+   * appended since. */
   transcriptRead(
     sid: string,
     opts?: {
       before?: number;
+      after?: number;
       max_bytes?: number;
       /** DR-0025 Phase 2: read a subagent / workflow-agent transcript. Static
        * read only — subscribe is not offered on agent transcripts (DR-0025
@@ -929,6 +931,7 @@ export function createWsClient(
         op: "transcript_read",
         sid,
         ...(opts?.before !== undefined ? { before: opts.before } : {}),
+        ...(opts?.after !== undefined ? { after: opts.after } : {}),
         ...(opts?.max_bytes !== undefined ? { max_bytes: opts.max_bytes } : {}),
         ...(opts?.agent_id !== undefined ? { agent_id: opts.agent_id } : {}),
         ...(opts?.run_id !== undefined ? { run_id: opts.run_id } : {}),

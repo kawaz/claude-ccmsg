@@ -2447,12 +2447,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         );
         return;
       }
-      const result = await transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes, {
-        allowVirtual: conn.identity?.role === "user",
-        agentId: req.agent_id,
-        runId: req.run_id,
-        teammate: req.teammate,
-      });
+      const result = await transcriptRead(
+        daemon.sessions,
+        req.sid,
+        { before: req.before, after: req.after, maxBytes: req.max_bytes },
+        {
+          allowVirtual: conn.identity?.role === "user",
+          agentId: req.agent_id,
+          runId: req.run_id,
+          teammate: req.teammate,
+        },
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

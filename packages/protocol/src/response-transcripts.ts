@@ -16,7 +16,8 @@ export const TranscriptReadResponseSchema = v.object({
   /** byte offset of the first returned line — pass as `before` to page older;
    * 0 means the beginning of the transcript is included */
   start: v.number(),
-  /** byte offset just past the last returned line's newline */
+  /** byte offset just past the last returned line's newline — pass as
+   * `after` to read what was appended since */
   end: v.number(),
   /** current transcript size in bytes (grows while the session runs — pass as
    * `before` later to page content that appeared after this read) */

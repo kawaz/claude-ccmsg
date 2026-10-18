@@ -142,9 +142,10 @@ export interface TimelineState {
   lines: readonly string[];
   /** byte offset of the earliest loaded line — pass as `before` to page older */
   start: number;
-  /** byte offset just past the last loaded line's newline, as of the last
-   * tail read (a "load older" page doesn't move this: it only extends
-   * backwards from `start`, see applyTimelineLoaded) */
+  /** byte offset just past the last loaded line's newline: where the cache
+   * stops, moved by a tail read, an `after` read or a live-tail push (a "load
+   * older" page doesn't move it: it only extends backwards from `start`, see
+   * applyTimelineLoaded) */
   end: number;
   /** transcript size as of the last response received (daemon-reported) */
   size: number;
@@ -156,7 +157,7 @@ export interface TimelineState {
    * `end` (subscribe/read race, or a gap opened while disconnected) — see
    * applyTimelineTail's doc comment for why the push itself is still
    * dropped. The resync effect in components/timeline/useTranscriptLoader.ts watches this flag and issues a
-   * background transcript_read to catch the cache up; a later
+   * background `after` read from `end` to catch the cache up; a later
    * `timeline/loaded` (which never carries this field) clears it. Absent
    * (not just `false`) in the common case so existing equality-style
    * assertions on a fresh TimelineState are unaffected. */
@@ -553,13 +554,15 @@ export type Action =
     }
   // "replace" (initial load / refresh, before omitted) discards the cache and
   // takes the response as-is; "prepend" (older-page load) splices the older
-  // lines in front of what's cached — see applyTimelineLoaded for the offset
-  // bookkeeping either mode implies. error XOR response, never both.
+  // lines in front of what's cached; "append" (an `after` read from the
+  // cache's end) adds what was written since behind it — see
+  // applyTimelineLoaded for the offset bookkeeping each mode implies. error
+  // XOR response, never both.
   | {
       type: "timeline/loaded";
       sid: string;
       generation: number;
-      mode: "replace" | "prepend";
+      mode: "replace" | "prepend" | "append";
       response?: TranscriptReadResponse;
       error?: string;
     }
@@ -899,6 +902,26 @@ function applyTimelineLoaded(
   const res = action.response;
   if (!res) return state; // unreachable: loaded always carries error xor response
   const prev = tree.timeline;
+  if (action.mode === "append") {
+    // Continues the cache only from where it ends. A live-tail push that
+    // moved `end` while the read was in flight leaves the read behind it:
+    // flag a resync, which reads again from the new end.
+    if (prev.status !== "loaded" || res.start !== prev.end) {
+      sessionTrees.set(action.sid, { ...tree, timeline: { ...prev, needsResync: true } });
+      return { ...state, sessionTrees };
+    }
+    const timeline: TimelineState = {
+      status: "loaded",
+      lines: [...prev.lines, ...res.lines],
+      start: prev.start,
+      end: res.end,
+      size: res.size,
+      atStart: prev.atStart,
+      generation: action.generation,
+    };
+    sessionTrees.set(action.sid, { ...tree, timeline });
+    return { ...state, sessionTrees };
+  }
   const lines = action.mode === "prepend" ? [...res.lines, ...prev.lines] : res.lines;
   const timeline: TimelineState = {
     status: "loaded",

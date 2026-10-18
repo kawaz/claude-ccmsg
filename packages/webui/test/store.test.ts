@@ -43,6 +43,18 @@ function readTranscript(state: AppState, sid: string, answer: Answer<"timeline/l
   return dispatch(asked, { type: "timeline/loaded", sid, generation, ...answer });
 }
 
+/** An `after` read asked and answered: started as a resync, so the cache
+ * stays loaded while it is in flight (useTranscriptLoader). */
+function appendTranscript(
+  state: AppState,
+  sid: string,
+  response: TranscriptReadResponse,
+): AppState {
+  const generation = nextRequestGeneration();
+  const asked = dispatch(state, { type: "timeline/resyncing", sid, generation });
+  return dispatch(asked, { type: "timeline/loaded", sid, generation, mode: "append", response });
+}
+
 /** An fs_read of `path` asked and answered, as readTranscript. */
 function readFile(
   state: AppState,
@@ -959,6 +971,52 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
       response: { ok: true, sid: "sess-1", lines: ["first"], start: 0, end: 50, size: 100 },
     });
     expect(afterOlder.sessionTrees.get("sess-1")?.timeline.atStart).toBe(true);
+  });
+
+  // "append" mode (an `after` read from the cache's `end`): what was written
+  // since goes BEHIND what's cached; `start` and atStart stay where older
+  // pages put them, `end` and `size` move on.
+  test("timeline/loaded (append) adds the lines behind the cache, moves end, keeps start", () => {
+    const afterInitial = readTranscript(initialState(), "sess-1", {
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["tail"], start: 0, end: 100, size: 100 },
+    });
+    const appended = appendTranscript(afterInitial, "sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["new-1", "new-2"],
+      start: 100,
+      end: 180,
+      size: 200,
+    });
+    const timeline = appended.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["tail", "new-1", "new-2"]);
+    expect(timeline?.start).toBe(0);
+    expect(timeline?.atStart).toBe(true);
+    expect(timeline?.end).toBe(180);
+    expect(timeline?.size).toBe(200);
+  });
+
+  // A live-tail push moved `end` while the read was in flight: the answer no
+  // longer starts where the cache stops. It is not spliced; a resync reads
+  // again from the new end.
+  test("timeline/loaded (append) that does not start at the cached end flags a resync", () => {
+    const afterInitial = readTranscript(initialState(), "sess-1", {
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["tail"], start: 0, end: 100, size: 100 },
+    });
+    const appended = appendTranscript(afterInitial, "sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["x"],
+      start: 50,
+      end: 120,
+      size: 120,
+    });
+    const timeline = appended.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["tail"]);
+    expect(timeline?.end).toBe(100);
+    expect(timeline?.needsResync).toBe(true);
   });
 
   test("timeline/loaded (error) flips status to error and records the message, does not touch lines", () => {

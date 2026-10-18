@@ -15,13 +15,23 @@ import type { Output } from "./parse.ts";
  * traversal surface exists. Paging is by byte offset, aligned to line
  * boundaries, so a multi-hundred-MB transcript never needs a full scan or a
  * line index: the viewer starts from the tail (`before` absent) and pages older
- * by passing the previous reply's `start`.
+ * by passing the previous reply's `start`, and catches up with what was
+ * appended since by passing the previous reply's `end` as `after`.
  */
 export const TranscriptReadRequestSchema = v.object({
   op: v.literal("transcript_read"),
   sid: v.string(),
   /** read lines that END at or before this byte offset (exclusive); absent = file end */
   before: v.optional(v.number()),
+  /** read lines that START at or after this byte offset — the `end` of a
+   * previous reply (or of a live-tail push) — up to the cap, oldest first.
+   * The reply's `start` is `after` when the file continues from there; any
+   * other `start` means it does not (the offset is past the file's end, is
+   * not at a line's start, or starts a line too long to return), and the
+   * reply holds no lines. An `end` short of
+   * `size` means more follows: pass it as the next `after`. Not with
+   * `before`. */
+  after: v.optional(v.number()),
   /** cap on returned line bytes; clamped to TRANSCRIPT_READ_MAX_BYTES */
   max_bytes: v.optional(v.number()),
   /** DR-0025 Phase 1: read a subagent / workflow-agent / teammate transcript

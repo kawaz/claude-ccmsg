@@ -1,9 +1,10 @@
 // transcript を取りに行く Timeline の hook をマウントして、要求と store の
 // 契約を固定する。
 // - useTranscriptLoader: 初回は接続と active を待って 1 度だけ tail を読む。
-//   tail のずれは画面を消さずに読み直し、訪れるたびに読み直す。older は
-//   読み込み済みの先頭より前、更新は tail。agent TL はその agent を読み、
-//   agent を切り替える前の要求への応答は取り込まない
+//   tail のずれと訪れた時は、画面を消さずに読み込み済みの終わりから後を読み
+//   足す (続きにならなければ tail を読み直す)。older は読み込み済みの先頭より
+//   前、更新は tail。agent TL はその agent を読み、agent を切り替える前の要求
+//   への応答は取り込まない
 // - useLiveTailSubscription: active で接続中のセッション TL だけが購読し、
 //   購読の応答を待ってから外す。行が DOM に入ったら latency trace を閉じる
 // - useForkOrigin: セッションごとに 1 度だけ fork 地点を問い合わせる
@@ -125,7 +126,7 @@ describe("useTranscriptLoader", () => {
     expect(timelineOf(store).status).toBe("loaded");
   });
 
-  test("a tail push that does not line up re-reads without leaving the loaded state", async () => {
+  test("a tail push that does not line up catches up from the cached end, staying loaded", async () => {
     const { store, ws } = await mountLoader();
     await ws.lastRead().answer(page(exchange(1)));
     const end = timelineOf(store).end;
@@ -133,30 +134,97 @@ describe("useTranscriptLoader", () => {
       store.dispatch({
         type: "timeline/tail",
         sid: SID,
-        lines: exchange(2),
-        start: end + 1,
-        end: end + 100,
-        size: end + 100,
+        lines: exchange(3),
+        start: end + 100,
+        end: end + 200,
+        size: end + 200,
       }),
     );
     expect(ws.reads).toHaveLength(2);
+    expect(ws.lastRead().opts).toEqual({ after: end });
     expect(timelineOf(store).status).toBe("loaded");
-    await ws.lastRead().answer(page([...exchange(1), ...exchange(2)]));
+    await ws.lastRead().answer(page(exchange(2), end));
     expect(timelineOf(store).needsResync).toBeUndefined();
-    expect(timelineOf(store).lines).toHaveLength(4);
+    expect(timelineOf(store).lines).toEqual([...exchange(1), ...exchange(2)]);
   });
 
-  test("arriving again (active again, or a reconnect) re-reads a loaded transcript", async () => {
+  // Arriving at a loaded Timeline reads only what was written after its end
+  // and keeps what the reader had loaded, older pages included, on screen.
+  test("arriving again (active again, or a reconnect) reads what was appended after the cached end", async () => {
     const { store, ws, hook } = await mountLoader();
-    await ws.lastRead().answer(page(exchange(1)));
+    const older = exchange(1);
+    const olderEnd = endOf(older, 0);
+    await ws.lastRead().answer(page(exchange(2), olderEnd));
+    await act(() => hook.current().loadOlder());
+    await ws.lastRead().answer(page(older, 0));
+    const end = timelineOf(store).end;
+
     await hook.rerender({ active: false });
     await hook.rerender({ active: true });
-    expect(ws.reads).toHaveLength(2);
-    await ws.lastRead().answer(page(exchange(1)));
+    expect(ws.reads).toHaveLength(3);
+    expect(ws.lastRead().opts).toEqual({ after: end });
+    expect(timelineOf(store).status).toBe("loaded");
+    await ws.lastRead().answer(page(exchange(3), end));
+    expect(timelineOf(store).lines).toEqual([...older, ...exchange(2), ...exchange(3)]);
+    expect(timelineOf(store).start).toBe(0);
+    expect(timelineOf(store).atStart).toBe(true);
 
     await act(() => store.dispatch({ type: "conn/status", status: "disconnected" }));
     await act(() => store.dispatch({ type: "conn/status", status: "connected" }));
+    expect(ws.reads).toHaveLength(4);
+    expect(ws.lastRead().opts).toEqual({ after: timelineOf(store).end });
+  });
+
+  // An answer that says more follows is followed by the next page, from its end.
+  test("catching up pages on while the answer ends short of the transcript's size", async () => {
+    const { store, ws, hook } = await mountLoader();
+    await ws.lastRead().answer(page(exchange(1)));
+    const end = timelineOf(store).end;
+    await hook.rerender({ active: false });
+    await hook.rerender({ active: true });
+    const firstEnd = endOf(exchange(2), end);
+    await ws.lastRead().answer({
+      ok: true,
+      sid: SID,
+      lines: exchange(2),
+      start: end,
+      end: firstEnd,
+      size: firstEnd + 1000,
+    });
     expect(ws.reads).toHaveLength(3);
+    expect(ws.lastRead().opts).toEqual({ after: firstEnd });
+    await ws.lastRead().answer(page(exchange(3), firstEnd));
+    expect(ws.reads).toHaveLength(3);
+    expect(timelineOf(store).lines).toEqual([...exchange(1), ...exchange(2), ...exchange(3)]);
+  });
+
+  // The transcript was replaced or cut short: the daemon answers with a start
+  // other than the end asked from, and the cache is read again from the tail.
+  test("a transcript that does not continue from the cached end is read again from its tail", async () => {
+    const { store, ws, hook } = await mountLoader();
+    await ws.lastRead().answer(page(exchange(1)));
+    const end = timelineOf(store).end;
+    await hook.rerender({ active: false });
+    await hook.rerender({ active: true });
+    await ws.lastRead().answer({ ok: true, sid: SID, lines: [], start: 10, end: 10, size: 10 });
+    expect(ws.reads).toHaveLength(3);
+    expect(ws.lastRead().opts).toBeUndefined();
+    expect(timelineOf(store).status).toBe("loaded");
+    await ws.lastRead().answer(page(exchange(5)));
+    expect(timelineOf(store).lines).toEqual(exchange(5));
+    expect(end).toBeGreaterThan(10);
+  });
+
+  test("arriving at a Timeline whose read failed reads the tail again", async () => {
+    const { store, ws, hook } = await mountLoader();
+    await ws
+      .lastRead()
+      .answer({ ok: false, error: { code: "not_found", msg: "transcript not found" } });
+    expect(timelineOf(store).status).toBe("error");
+    await hook.rerender({ active: false });
+    await hook.rerender({ active: true });
+    expect(ws.reads).toHaveLength(2);
+    expect(ws.lastRead().opts).toBeUndefined();
   });
 
   test("older reads before the loaded start and prepends; nothing once the start is reached", async () => {

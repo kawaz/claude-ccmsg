@@ -209,6 +209,66 @@ function readSoftCapLine(
 }
 
 /**
+ * The `after` read: complete lines from `after` on, oldest first, up to `cap`
+ * bytes — what a reader whose cache ends at `after` is missing.
+ *
+ * `after` has to be where a line starts (byte 0, or just past a newline) for
+ * the file to continue from it. When it is not — past the file's end (the
+ * file was replaced or cut short) or inside a line — the reply holds no lines
+ * and is anchored at the file's end, a `start` other than `after`, which is
+ * how the reader learns its cache cannot be continued and reads the tail
+ * again instead.
+ *
+ * Trailing trim as in the `before` read: a last line still being written
+ * (no newline yet) is left for later, so `end` stays on a line boundary. A
+ * window holding no newline at all is either that (it reaches the file's end:
+ * an empty page at `after`) or one line longer than the cap, which, as in
+ * `readSoftCapLine`, is returned whole when its newline turns up within
+ * TRANSCRIPT_LINE_SCAN_MAX more bytes, and otherwise reported as a file that
+ * does not continue from `after` (its content is not buffered without bound).
+ */
+function readForward(
+  file: string,
+  sid: string,
+  after: number,
+  cap: number,
+  size: number,
+): TranscriptResult<Omit<TranscriptReadResponse, "ok">> {
+  const discontinued: TranscriptResult<Omit<TranscriptReadResponse, "ok">> = {
+    ok: true,
+    data: { sid, lines: [], start: size, end: size, size },
+  };
+  if (after > size) return discontinued;
+  const fd = fs.openSync(file, "r");
+  try {
+    if (after > 0 && readWindow(fd, after - 1, after)[0] !== 0x0a) return discontinued;
+    const windowEnd = Math.min(size, after + cap);
+    let data = readWindow(fd, after, windowEnd);
+    let lastNl = data.lastIndexOf(0x0a);
+    if (lastNl === -1 && windowEnd < size) {
+      let scanned = 0;
+      let scanFrom = windowEnd;
+      while (lastNl === -1 && scanned < TRANSCRIPT_LINE_SCAN_MAX && scanFrom < size) {
+        const chunk = readWindow(fd, scanFrom, Math.min(size, scanFrom + cap));
+        const idx = chunk.indexOf(0x0a);
+        if (idx !== -1) lastNl = scanFrom - after + idx;
+        scanned += chunk.length;
+        scanFrom += chunk.length;
+        if (chunk.length === 0) break;
+      }
+      if (lastNl === -1) return discontinued;
+      data = readWindow(fd, after, after + lastNl + 1);
+    }
+    if (lastNl === -1)
+      return { ok: true, data: { sid, lines: [], start: after, end: after, size } };
+    const lines = data.subarray(0, lastNl).toString("utf-8").split("\n");
+    return { ok: true, data: { sid, lines, start: after, end: after + lastNl + 1, size } };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
  * `before`/`max_bytes` paginated read of `sid`'s announced transcript.
  *
  * Byte-offset windowing with line-boundary alignment, so a multi-hundred-MB
@@ -258,13 +318,22 @@ export interface TranscriptReadAgentOptions {
   teammate?: string;
 }
 
+/** Which slice of the transcript to read: lines ending at or before `before`
+ * (absent: the file's end), or lines starting at or after `after`. At most
+ * `maxBytes` (clamped to TRANSCRIPT_READ_MAX_BYTES) of them. */
+export interface TranscriptReadRange {
+  before?: number;
+  after?: number;
+  maxBytes?: number;
+}
+
 export async function transcriptRead(
   sessions: SessionLookup,
   sid: string,
-  before: number | undefined,
-  maxBytes: number | undefined,
+  range: TranscriptReadRange,
   opts: TranscriptResolveOptions & TranscriptReadAgentOptions = {},
 ): Promise<TranscriptResult<Omit<TranscriptReadResponse, "ok">>> {
+  const { before, after, maxBytes } = range;
   const resolved = await resolveTranscript(sessions, sid, opts);
   if (!resolved.ok) return resolved;
   // DR-0025 Phase 1: if the caller asked for an agent/teammate transcript,
@@ -304,6 +373,20 @@ export async function transcriptRead(
       msg: "transcript_read max_bytes must be a positive number",
     };
   }
+  if (after !== undefined && (!Number.isFinite(after) || after < 0)) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "transcript_read after must be a non-negative number",
+    };
+  }
+  if (after !== undefined && before !== undefined) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "transcript_read takes before or after, not both",
+    };
+  }
 
   let stat: fs.Stats;
   try {
@@ -314,6 +397,7 @@ export async function transcriptRead(
 
   const size = stat.size;
   const cap = Math.min(maxBytes ?? TRANSCRIPT_READ_MAX_BYTES, TRANSCRIPT_READ_MAX_BYTES);
+  if (after !== undefined) return readForward(readFile, sid, after, cap, size);
   const targetEnd = before === undefined ? size : Math.min(before, size);
   const rawStart = Math.max(0, targetEnd - cap);
 

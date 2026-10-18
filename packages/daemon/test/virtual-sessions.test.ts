@@ -180,14 +180,19 @@ describe("virtual session lookup boundary", () => {
       },
     ]);
 
-    const legacy = await transcriptRead(emptySessions, sid(), undefined, undefined);
+    const legacy = await transcriptRead(emptySessions, sid(), {});
     expect(legacy.ok).toBe(false);
     if (!legacy.ok) expect(legacy.code).toBe("session_not_found");
 
-    const virtual = await transcriptRead(emptySessions, sid(), undefined, undefined, {
-      allowVirtual: true,
-      configDirs: [config],
-    });
+    const virtual = await transcriptRead(
+      emptySessions,
+      sid(),
+      {},
+      {
+        allowVirtual: true,
+        configDirs: [config],
+      },
+    );
     expect(virtual.ok).toBe(true);
     if (virtual.ok) expect(virtual.data.lines).toHaveLength(2);
   });
@@ -205,10 +210,15 @@ describe("virtual session lookup boundary", () => {
     const sessions = new Map([
       [sid(), { meta: { transcript_path: undefined }, conns: { size: 1 } }],
     ]);
-    const result = await transcriptRead(sessions, sid(), undefined, undefined, {
-      allowVirtual: true,
-      configDirs: [config],
-    });
+    const result = await transcriptRead(
+      sessions,
+      sid(),
+      {},
+      {
+        allowVirtual: true,
+        configDirs: [config],
+      },
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("not_found");
   });
