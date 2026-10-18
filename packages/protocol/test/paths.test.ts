@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolvePaths, resolveSidecarDir, sidecarSocketName } from "../src/index.ts";
+import { resolvePaths, sidecarSocketName } from "../src/index.ts";
 
 describe("resolvePaths (DR-0002 §1)", () => {
   // CCMSG_STATE_DIR / CCMSG_CONFIG_DIR / CCMSG_DATA_DIR are direct overrides that tests
@@ -44,17 +44,12 @@ describe("resolvePaths (DR-0002 §1)", () => {
 describe("sidecar sockets (DR-0035 §3)", () => {
   const sid = "11111111-2222-4333-8444-555555555555";
 
-  test("live under the state dir when the widest name fits sun_path", () => {
+  // One place whatever the state dir's length: a socket path longer than
+  // `sun_path` is still bound and connected (cli/test/sidecar.test.ts).
+  test("live under the state dir, however long it is", () => {
     expect(resolvePaths({ CCMSG_STATE_DIR: "/s" }).sidecars).toBe("/s/sidecars");
-  });
-
-  // The widest name carries the longest run id (16 characters): a state dir
-  // that fits a shorter one but not that one still falls back.
-  test("fall back to a short per-uid directory when it would not fit", () => {
-    expect(resolveSidecarDir(`/${"x".repeat(35)}`)).toBe(
-      `/tmp/claude-ccmsg-${String(process.getuid?.() ?? 0)}/sidecars`,
-    );
-    expect(resolveSidecarDir(`/${"x".repeat(34)}`)).toBe(`/${"x".repeat(34)}/sidecars`);
+    const long = `/${"x".repeat(200)}`;
+    expect(resolvePaths({ CCMSG_STATE_DIR: long }).sidecars).toBe(`${long}/sidecars`);
   });
 
   // Named after the session and the run, not the harness process: the

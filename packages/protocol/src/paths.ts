@@ -18,7 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { isSessionIdShape } from "./ccmsg-address.ts";
 import { parseWith } from "./parse.ts";
-import { SIDECAR_RUN_ID_MAX, SidecarRunIdSchema } from "./sidecar.ts";
+import { SidecarRunIdSchema } from "./sidecar.ts";
 
 export interface Paths {
   stateDir: string;
@@ -60,13 +60,10 @@ export interface Paths {
    * path is meant to be pasted somewhere and read back later, possibly after
    * a daemon restart. */
   dumps: string;
-  /** Where each session run's sidecar binds `<sid>.<run id>.sock` (DR-0035
-   * §3); see resolveSidecarDir. */
+  /** `<stateDir>/sidecars`: where each session run's sidecar binds
+   * `<sid>.<run id>.sock` (DR-0035 §3). */
   sidecars: string;
 }
-
-/** macOS `sun_path` holds 104 bytes including the terminating NUL. */
-const MAX_SOCKET_PATH = 104;
 
 /** The directory under the state dir where sidecars bind.
  *
@@ -82,23 +79,6 @@ export function sidecarSocketName(sid: string, runId: string): string {
   if (!isSessionIdShape(sid)) throw new RangeError(`not a session id: ${sid}`);
   if (!parseWith(SidecarRunIdSchema, runId).ok) throw new RangeError(`not a run id: ${runId}`);
   return `${sid}.${runId}.sock`;
-}
-
-/** `<stateDir>/sidecars`, or the short per-uid directory under `/tmp` when the
- * widest socket name would not fit in `sun_path` there. The daemon and every
- * sidecar derive it from the same state dir, so the sidecar names its run to
- * the daemon (sidecar_hello) and no path travels — which is why the widest
- * name is judged by the longest run id rather than by any one run's: a run
- * whose id happened to fit would bind where a run with a longer one could
- * not, and the two would disagree on where to look. */
-export function resolveSidecarDir(stateDir: string): string {
-  const beside = path.join(stateDir, SIDECAR_DIR);
-  const widest = path.join(
-    beside,
-    sidecarSocketName("00000000-0000-0000-0000-000000000000", "z".repeat(SIDECAR_RUN_ID_MAX)),
-  );
-  if (Buffer.byteLength(widest) < MAX_SOCKET_PATH) return beside;
-  return path.join("/tmp", `claude-ccmsg-${String(process.getuid?.() ?? 0)}`, SIDECAR_DIR);
 }
 
 function home(): string {
@@ -142,7 +122,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),
     dumps: path.join(dataDir, "dumps"),
-    sidecars: resolveSidecarDir(stateDir),
+    sidecars: path.join(stateDir, SIDECAR_DIR),
   };
 }
 

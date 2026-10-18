@@ -28,8 +28,7 @@ export const SidecarRequestIdSchema = v.pipe(v.string(), v.nonEmpty("an id is no
  * /resume) name the same run. The sidecar's socket is named after it
  * (`<sid>.<run id>.sock`), and the sidecar names it to the daemon
  * (sidecar_hello). Lowercase letters and digits, so it can sit in a file name,
- * and at most 16 of them, which keeps the widest socket name inside `sun_path`
- * under the usual state dir (resolveSidecarDir). */
+ * and at most 16 of them, so the socket's name stays short. */
 export const SIDECAR_RUN_ID_MAX = 16;
 export const SidecarRunIdSchema = v.pipe(
   v.string(),

@@ -11,7 +11,7 @@ import {
   PROTOCOL_VERSION,
   type PromptSendResult,
   type RequestInput,
-  resolveSidecarDir,
+  resolvePaths,
   type SidecarErrorCode,
   type SidecarReply,
   type SidecarReplyOf,
@@ -500,8 +500,7 @@ async function fakeSidecar(
   runId: string,
   hyouiSessionId?: string,
 ): Promise<{ lines: AsyncGenerator<string, void>; leave(): Promise<void>; close(): void }> {
-  const dir = resolveSidecarDir(ctx.stateDir);
-  expect(dir.startsWith(ctx.stateDir)).toBe(true);
+  const dir = resolvePaths({ CCMSG_STATE_DIR: ctx.stateDir }).sidecars;
   fs.mkdirSync(dir, { recursive: true });
   const queue: string[] = [];
   let wake: (() => void) | undefined;

@@ -11,7 +11,6 @@ import {
   jsonText,
   parseWith,
   resolvePaths,
-  resolveSidecarDir,
   type SendMessageResult,
   PeerListResponseTextSchema,
   SendMessageResponseTextSchema,
@@ -33,6 +32,7 @@ import {
   userConn,
 } from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
+import { writeSocket } from "../../daemon/src/peer-inject.ts";
 import { openLifeline } from "../../testkit/src/lifeline.ts";
 import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -51,8 +51,7 @@ function sidecarRequestOf(line: string): SidecarRequest {
 const SID = "11111111-2222-4333-8444-555555555555";
 const RUN = "mgq1k2x3abcd1234";
 
-/** Sidecar sockets need a directory short enough for `sun_path`, which
- * macOS's tmpdir is not. */
+/** The base dirs this file's tests make, removed after the file. */
 const bases: string[] = [];
 function shortBase(): string {
   const base = shortTmpDir("ccmsg-sc-");
@@ -102,6 +101,33 @@ describe("startSidecar", () => {
       await writeTo(sidecar.path, '{"c":3}');
       await got.promise;
       expect(lines).toEqual(['{"a":1}\n', '{"b":2}\n', '{"c":3}\n']);
+    } finally {
+      sidecar.stop();
+    }
+    expect(await sidecar.stopped).toBe("stopped");
+    expect(fs.existsSync(sidecar.path)).toBe(false);
+  });
+
+  // The sidecar binds and the daemon writes to `<stateDir>/sidecars` however
+  // long the state dir: a socket path past `sun_path` (104 bytes on macOS,
+  // 108 on Linux) is bound and connected as is, so there is no second place
+  // to fall back to (DR-0035 §3).
+  test("a socket path longer than sun_path is bound, written to and removed", async () => {
+    const dir = path.join(shortBase(), "d".repeat(100), "e".repeat(100), "sidecars");
+    const got = Promise.withResolvers<string>();
+    const sidecar = startSidecar({
+      dir,
+      sid: SID,
+      runId: "run4246",
+      out: (line, done) => {
+        got.resolve(line);
+        done();
+      },
+    });
+    try {
+      expect(Buffer.byteLength(sidecar.path)).toBeGreaterThan(108);
+      expect(await writeSocket(sidecar.path, "long\n", 2_000)).toBe("written");
+      expect(await got.promise).toBe("long\n");
     } finally {
       sidecar.stop();
     }
@@ -277,7 +303,10 @@ describe("ccmsg sidecar (process)", () => {
     });
     const err = proc.stderr.getReader();
     const ready = await readUntil(err, (t) => t.includes("\n"));
-    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+    const socketPath = path.join(
+      resolvePaths({ CCMSG_STATE_DIR: stateDir }).sidecars,
+      sidecarSocketName(SID, RUN),
+    );
     expect(ready).toBe(`ready ${socketPath}\n`);
     const request = '{"v":1,"op":"prompt.send","id":"1","args":{"text":"t"}}\n';
     await writeTo(socketPath, request);
@@ -306,7 +335,10 @@ describe("ccmsg sidecar (process)", () => {
     );
     const err = proc.stderr.getReader();
     await readUntil(err, (t) => t.includes("\n"));
-    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+    const socketPath = path.join(
+      resolvePaths({ CCMSG_STATE_DIR: stateDir }).sidecars,
+      sidecarSocketName(SID, RUN),
+    );
     await writeTo(socketPath, "first\n");
     await writeTo(socketPath, "second\n");
     const rest = await readUntil(err, () => false);
@@ -337,7 +369,10 @@ describe("ccmsg sidecar (process)", () => {
     const started = await readUntil(err, (t) => /ready .*\n/.test(t));
     const child = /child (\d+)/.exec(started);
     if (child !== null) orphans.push(Number(child[1]));
-    const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+    const socketPath = path.join(
+      resolvePaths({ CCMSG_STATE_DIR: stateDir }).sidecars,
+      sidecarSocketName(SID, RUN),
+    );
     harness.kill("SIGKILL");
     const rest = await readUntil(err, () => false);
     expect(rest).toContain(`reader_gone ${socketPath}\n`);
@@ -360,7 +395,10 @@ describe("ccmsg sidecar (process)", () => {
     try {
       const err = proc.stderr.getReader();
       await readUntil(err, (t) => t.includes("\n"));
-      const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, RUN));
+      const socketPath = path.join(
+        resolvePaths({ CCMSG_STATE_DIR: stateDir }).sidecars,
+        sidecarSocketName(SID, RUN),
+      );
       lifeline.close();
       const rest = await readUntil(err, () => false);
       expect(rest).toContain(`stopped ${socketPath}\n`);
