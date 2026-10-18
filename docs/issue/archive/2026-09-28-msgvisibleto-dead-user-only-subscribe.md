@@ -1,6 +1,6 @@
 ---
 title: msgVisibleTo が subscribe stream 上で死んだ判定になっている (user role only 化の帰結)
-status: open
+status: discarded
 category: task
 created: 2026-09-28T14:36:26+09:00
 last_read:
@@ -8,11 +8,11 @@ open_entered: 2026-09-28T14:36:26+09:00
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-10-18T15:28:31+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["前提が消えた: DR-0036 (room 廃止) / DR-0039 で msg の配送が peer 注入・send_message に一本化され msgVisibleTo は packages 全体で grep 0 件 (削除済み)。cursor 未保持 room の非 msg イベント欠落も room 自体が無いため対象外"]
 pending_reason:
-close_reason:
+close_reason: ["discarded"]
 blocked_by:
 origin: 自リポ TODO
 ---
