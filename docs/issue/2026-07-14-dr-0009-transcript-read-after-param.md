@@ -3,7 +3,7 @@ title: DR-0009 transcript_read に after (差分取得) パラメータを追加
 status: idea
 category: design
 created: 2026-07-14T23:34:29+09:00
-last_read:
+last_read: 2026-10-18T18:31:31+09:00
 open_entered:
 wip_entered:
 blocked_entered:
