@@ -15,7 +15,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-10-09 | task | open | [sidecar-socket-relative-bind](./2026-10-09-sidecar-socket-relative-bind.md) | サイドカー socket を cwd 相対パスで bind / connect し、sun_path 長超過時の退避先 (別置き場) をなくせるか調査 |
 | 2026-10-02 | bug | open | [host-translation-mixed-text-counterexamples](./2026-10-02-host-translation-mixed-text-counterexamples.md) | host 翻訳が findings の「日英混在の日本語保持」「改行保持」と食い違う観測 (敬体化・インラインコード翻訳・空行挿入) |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
-| 2026-09-08 | bug | open | [launcher-version-regex-after-rename](./2026-09-08-launcher-version-regex-after-rename.md) | `__ccmsg_extract_version` が改名後の cache パスに一致せず self-update/self-exec が無効化。DR-0032 §2.2-4 の意図的停止か regex 修正かの判断含む |
 | 2026-09-07 | design | open | [multi-host-cluster](./2026-09-07-multi-host-cluster.md) | 複数ホストの ccmsg daemon を mesh で束ねる (クラスタ化)。room はクラスタ横断、持ち主 daemon が mid/seq 発行 |
 | 2026-09-06 | design | open | [session-list-sections](./2026-09-06-session-list-sections.md) | セッション一覧のセクション再設計 (Paused/Disappeared/生存統合)。r278 裁定済、実装待ち |
 | 2026-09-06 | design | open | [session-status-from-sessions-json](./2026-09-06-session-status-from-sessions-json.md) | セッション状態の取得元を `claude agents --json` から `sessions/<pid>.json` 直読みに変え、活動判定を transcript の turn 状態に寄せる |

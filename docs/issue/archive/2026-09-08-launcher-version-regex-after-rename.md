@@ -1,6 +1,6 @@
 ---
 title: launcher-version-regex-after-rename
-status: open
+status: resolved
 category: bug
 created: 2026-09-08T12:48:00+09:00
 last_read: 2026-10-18T17:37:18+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T17:43:01+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0032","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
