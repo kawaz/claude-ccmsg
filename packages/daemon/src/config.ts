@@ -442,15 +442,21 @@ function refused(file: string, why: string): ConfigLoad {
   return { ok: false, errors: [`config: ${file}: ${why}`] };
 }
 
-/** A syntax error bun found building a module: what, and where in the file.
- * Bun's own object; the fields read are listed and the rest let through. */
+/** A syntax error bun found building a module: what, and where in the file
+ * (the line's text included). Bun's own object; the fields read are listed
+ * and the rest let through. */
 const BuildMessageSchema = v.looseObject({
   message: v.string(),
-  position: v.looseObject({ line: v.number(), column: v.number() }),
+  position: v.looseObject({
+    line: v.number(),
+    column: v.number(),
+    lineText: v.optional(v.string()),
+  }),
 });
 
 /** Why `import()` of a config module failed. A module that does not parse is
- * answered with each syntax error at its line and column: bun throws one
+ * answered with each syntax error at its line and column, followed by the
+ * text of that line: bun throws one
  * BuildMessage for a single error, and for several an AggregateError whose
  * message only counts them. Anything else thrown is answered as it is. */
 function notLoaded(file: string, e: unknown): ConfigLoad {
@@ -462,8 +468,9 @@ function notLoaded(file: string, e: unknown): ConfigLoad {
   return {
     ok: false,
     errors: built.value.map(
-      ({ message, position: { line, column } }) =>
-        `config: ${file}:${String(line)}:${String(column)}: could not be loaded (${message})`,
+      ({ message, position: { line, column, lineText } }) =>
+        `config: ${file}:${String(line)}:${String(column)}: could not be loaded (${message})` +
+        (lineText !== undefined && lineText.trim() !== "" ? `: ${lineText.trim()}` : ""),
     ),
   };
 }

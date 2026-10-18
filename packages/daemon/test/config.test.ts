@@ -874,15 +874,18 @@ describe("loadConfig", () => {
     // A module that does not parse says where, error by error: bun reports a
     // build with several errors as one error whose message only counts them,
     // and the person has to find the typo from what the daemon says.
-    test("a module that fails to parse names the line and column of each error", async () => {
+    test("a module that fails to parse names the line, column and text of each error", async () => {
       const at = (line: number): RegExp =>
         new RegExp(
-          `^config: ${RegExp.escape(tsFile)}:${String(line)}:\\d+: could not be loaded \\(.+\\)$`,
+          `^config: ${RegExp.escape(tsFile)}:${String(line)}:\\d+: could not be loaded \\(.+\\): `,
         );
       fs.writeFileSync(tsFile, 'export default {\n  a: ["x"].join("\\n")."\\n", b: {},\n};\n');
       const several = await refusal();
       expect(several.length).toBeGreaterThan(1);
-      for (const line of several) expect(line).toMatch(at(2));
+      for (const line of several) {
+        expect(line).toMatch(at(2));
+        expect(line.endsWith(': a: ["x"].join("\\n")."\\n", b: {},')).toBe(true);
+      }
 
       tsFile = path.join(dir, "one-error.ts");
       files = { config: file, configJs: jsFile, configTs: tsFile };
@@ -890,6 +893,7 @@ describe("loadConfig", () => {
       const one = await refusal();
       expect(one).toHaveLength(1);
       expect(one[0]).toMatch(at(1));
+      expect(one[0]?.endsWith(": export default { a: ;")).toBe(true);
     });
 
     // readJsConfig loads through a dynamic `import()`, which (unlike the
