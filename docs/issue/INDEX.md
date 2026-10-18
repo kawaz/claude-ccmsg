@@ -5,7 +5,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-18 | design | open | [split-pane-teammate-sessions](./2026-10-18-split-pane-teammate-sessions.md) | split pane の teammate を ccmsg のセッションとしてどう扱うか。agent teams が有効で teammateMode が tmux / iTerm2 の split pane…  |
-| 2026-10-18 | bug | open | [translate-watchdog-vs-os-model-contention](./2026-10-18-translate-watchdog-vs-os-model-contention.md) | daemon の translate watchdog が、OS の on-device モデルの混雑中に正常な翻訳を「詰まった」と判断して helper を kill しうる |
 | 2026-10-14 | design | open | [mods-consolidation-and-turn-events](./2026-10-14-mods-consolidation-and-turn-events.md) | classic hook を mods の session.start 等に寄せる検討と、TL の応答中を turn event で daemon に即時通知する設計 |
 | 2026-10-10 | design | open | [pinned-sessions-storage-shape](./2026-10-10-pinned-sessions-storage-shape.md) | webui のピン留めセッションが protocol の SessionSearchHit をそのまま保存しており、必須 field が増えるたびに保存済みピンが全消えする。保存形を webui 内スキーマに分離 |
 | 2026-10-10 | bug | open | [verify-isolated-daemon-receives-live-sessions](./2026-10-10-verify-isolated-daemon-receives-live-sessions.md) | verify の隔離 daemon に実行中の実セッションが繋がる。socket パス解決が state dir 外にある可能性、原因特定と隔離の完成 |
