@@ -124,3 +124,17 @@ wire 越しに op を確かめるテスト (fs-access / fs-find / transcript / s
 | hooks | 92.27 → 92.27 | 95.30 → 95.30 | 80 / 85 (据え置き) |
 
 daemon の上がり幅は、同じプロセスの daemon を通る `server.ts` の op の処理が計測に入ったことによる (子プロセスの daemon は計測されない)。webui は SessionView の import で StatusPanel / Timeline / FilesPanes 等が分母に入り、lines が 15856 → 17515 行に増えた (通った行も 12284 → 12993 に増えている)。webui は上の「分母の変化を見て置き直す」運用に従って実測 − 2 に置き直した。
+
+## 直送の順序・hello だけの登録の忘却・config の構文エラー表示を足した後の下限 (2026-10-18)
+
+`serial.ts` とその利用、`forgetUnlistedHellos`、config の構文エラーの読み取りと、それぞれのテストを足した後の実測 (`just coverage`):
+
+| package | lines % | functions % | 下限 (前 → 後) |
+|---|---|---|---|
+| protocol | 99.72 | 99.19 | 97 / 98 (据え置き) |
+| daemon | 82.09 | 90.10 | 80 / 87 → 80 / 88 |
+| cli | 89.98 | 87.36 | 87 / 85 (据え置き) |
+| webui | 75.55 | 82.24 | 73 / 80 (据え置き) |
+| hooks | 92.31 | 95.30 | 80 / 85 (据え置き) |
+
+実測 − 2 を切り捨てた値が今の下限を上回ったのは daemon の functions だけ。
