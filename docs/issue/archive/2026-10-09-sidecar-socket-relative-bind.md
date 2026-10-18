@@ -1,6 +1,6 @@
 ---
 title: サイドカー socket を cwd 相対パスで bind / connect して退避先 (別置き場) をなくす
-status: open
+status: resolved
 category: task
 created: 2026-10-09T08:18:10+09:00
 last_read: 2026-10-18T18:31:16+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T18:49:03+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["finding/2026-10-18-unix-socket-long-path-bun","dr/DR-0035","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -39,6 +39,10 @@ origin: 自リポ TODO
 
 ## 受け入れ条件
 
-- [ ] daemon 側から相対パス (または同等の手段) で connect できるかの調査結果を記録
-- [ ] 置き換え可能なら退避先 (`/tmp/claude-ccmsg-<uid>/sidecars/`) と長さ判定を削除し、置き場を 1 か所にする
-- [ ] 結論を v2 (kawaz/ccmsg) に還元
+- [x] daemon 側から相対パス (または同等の手段) で connect できるかの調査結果を記録
+- [x] 置き換え可能なら退避先 (`/tmp/claude-ccmsg-<uid>/sidecars/`) と長さ判定を削除し、置き場を 1 か所にする
+- [ ] 結論を v2 (kawaz/ccmsg) に還元 (未実施: v1 が本線で v2 への還元はしない方針)
+
+## 結論
+
+前提 (sun_path を超える path は bind / connect できない) は Bun の実行系では成り立たなかった。Bun 1.4.2 は長い絶対 path をそのまま listen / connect できる (macOS 232 バイト実測)。相対 bind も chdir も不要で、退避先と長さ判定を削除し置き場を <state dir>/sidecars の 1 か所にした。Linux は CI の ubuntu で確認する (ローカル未検証)。
