@@ -3,7 +3,7 @@
 //
 // session_status の `subagents` (module が turn.start / turn.complete で畳んだ、
 // 今 turn の途中の subagent) から宛先を選び、書いた文を `user_message` で送る。
-// 文は subagent の次の request に「ユーザから (webui 経由)」として載り、本体には
+// 文は subagent の次の request に「ユーザから (ccmsg 経由)」として載り、本体には
 // 載らない。足されるのは文脈であって権限ではないことを入力欄の近くに出す。
 import { useState } from "preact/hooks";
 import type { UserMessageResponse, ErrorResponse, SessionSubagent } from "@ccmsg/protocol";

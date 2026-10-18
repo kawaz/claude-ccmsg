@@ -969,10 +969,10 @@ function subagentEnded($: Engine, state: ModuleState, id: string): void {
 }
 
 /** What a subagent reads of a person's message: marked as the person's,
- * through the web UI, so the model takes it as a word from outside its task,
- * not a tool's output. */
+ * through ccmsg, so the model takes it as a word from outside its task, not a
+ * tool's output. */
 export function agentMessage(text: string): string {
-  return `ユーザから (webui 経由):\n${text}`;
+  return `ユーザから (ccmsg 経由):\n${text}`;
 }
 
 /** agent.append: add the person's text to the running subagent's

@@ -10,7 +10,7 @@ import type {
 
 /** 入力欄の近くに常に出す注記: 足されるのは文脈であって権限ではない。 */
 export const AGENT_INPUT_NOTE =
-  "subagent の会話に「ユーザから (webui 経由)」として文脈を足すだけで、権限の付与や許可の代わりには使えない。";
+  "subagent の会話に「ユーザから (ccmsg 経由)」として文脈を足すだけで、権限の付与や許可の代わりには使えない。";
 
 /** 一覧の 1 行。種別と説明、今の turn がいつ始まったか (module が見ていない時は出さない)。 */
 export function subagentLabel(agent: SessionSubagent, now: number): string {

@@ -1625,7 +1625,7 @@ describe("the subagents", () => {
       result: { outcome: "appended" },
     });
     expect(fake.agentAppends).toEqual([{ agentId: A, text: agentMessage("その方針で") }]);
-    expect(agentMessage("x")).toBe("ユーザから (webui 経由):\nx");
+    expect(agentMessage("x")).toBe("ユーザから (ccmsg 経由):\nx");
     expect(fake.appended).toEqual([]);
     expect(await append(B, "x")).toEqual({
       id: "g1",

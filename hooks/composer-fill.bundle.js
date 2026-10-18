@@ -1579,7 +1579,7 @@ function subagentEnded($, state, id) {
   sendFacts($, state);
 }
 function agentMessage(text) {
-  return `ユーザから (webui 経由):
+  return `ユーザから (ccmsg 経由):
 ${text}`;
 }
 async function appendToAgent($, args) {
