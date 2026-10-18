@@ -1,6 +1,6 @@
 ---
 title: sidecar.test.ts の pipe 経路から孤児の sidecar が漏れ、run の後も動き続ける
-status: open
+status: resolved
 category: bug
 created: 2026-10-18T16:16:06+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:28:28+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented"]
 blocked_by:
 origin: issue-batch-3 (worker、2026-10-18)
 ---
