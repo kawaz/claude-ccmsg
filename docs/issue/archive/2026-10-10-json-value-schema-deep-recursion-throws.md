@@ -1,6 +1,6 @@
 ---
 title: json-value-schema-deep-recursion-throws
-status: open
+status: resolved
 category: bug
 created: 2026-10-10T14:24:05+09:00
 last_read: 2026-10-18T15:30:06+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:10:59+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: JsonValue の入れ子に 256 段の上限 (実 transcript 約 320 万行の最深 16 段が根拠) を設け、超えた値は「JSON nested deeper than 256 levels」の型付き失敗として返す。値の種類でスキーマを選ぶ形にして union の指数的な再走査をなくした。20,000 段の配列を含む行が失敗として返り、前後の行は読めることをテストで固定。DR-0038 §3 に追記。commit krkzzuuy"]
 blocked_by:
 origin: reviewer-sol-high (2026-10-10)
 ---
@@ -34,5 +34,5 @@ reviewer-sol-high のレビュー (2026-10-10) で指摘。実機の transcript 
 
 ## 受け入れ条件
 
-- [ ] 20,000 階層の配列を含む行が throw でなく型付き失敗として返る
-- [ ] 同じ transcript 内の他の行は影響を受けない
+- [x] 20,000 階層の配列を含む行が throw でなく型付き失敗として返る
+- [x] 同じ transcript 内の他の行は影響を受けない
