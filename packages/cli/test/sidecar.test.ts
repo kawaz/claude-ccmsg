@@ -33,6 +33,7 @@ import {
   userConn,
 } from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
+import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -51,7 +52,7 @@ const RUN = "mgq1k2x3abcd1234";
  * macOS's tmpdir is not. */
 const bases: string[] = [];
 function shortBase(): string {
-  const base = fs.mkdtempSync("/tmp/ccmsg-sc-");
+  const base = shortTmpDir("ccmsg-sc-");
   bases.push(base);
   return base;
 }

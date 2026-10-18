@@ -5,15 +5,16 @@
 // same JSON file, exercised via the CLI's own JSON output shape).
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { createOriginsFile } from "../src/origins-file.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const silentLog = { warn: () => {} };
 
+const tmpDir = perTestTmpDir();
+
 function tmpFile(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-origins-"));
-  return path.join(dir, "allowed-origins.json");
+  return path.join(tmpDir("ccmsg-origins-"), "allowed-origins.json");
 }
 
 describe("createOriginsFile", () => {

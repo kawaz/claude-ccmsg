@@ -364,6 +364,7 @@ describe("session launcher wire ops", () => {
       expect(hello.fork_available).toBe(true);
     } finally {
       await stopTestDaemon(configured);
+      fs.rmSync(root, { recursive: true, force: true });
     }
 
     const bare = await startTestDaemon();

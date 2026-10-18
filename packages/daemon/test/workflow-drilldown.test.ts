@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { readWorkflowDrilldown } from "../src/workflow-drilldown.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
+
+const tmpDir = perTestTmpDir();
 
 function tmpSidDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-drill-"));
   // Sit realsome-projDir/some-sid — the resolver only cares that
   // `<sidDir>/workflows/` and `<sidDir>/subagents/workflows/` are readable.
-  return dir;
+  return tmpDir("wf-drill-");
 }
 
 const RUN_ID = "wf_abcdef01-234";

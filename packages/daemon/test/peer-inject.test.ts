@@ -13,6 +13,7 @@ import {
 } from "../src/peer-inject.ts";
 import { defined } from "./helpers.ts";
 import { PEER_TOKEN, fakeHarness as spawnHarness, type FakeHarness } from "./peer-harness.ts";
+import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
@@ -106,7 +107,7 @@ describe("writeSocket", () => {
     const h = fakeHarness();
     expect(await writeSocket(h.socketPath, "{}\n", 1_000)).toBe("written");
 
-    const dir = fs.mkdtempSync("/tmp/pi-w-");
+    const dir = shortTmpDir("pi-w-");
     cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
     expect(await writeSocket(path.join(dir, "none.sock"), "{}\n", 1_000)).toBe("not_written");
 

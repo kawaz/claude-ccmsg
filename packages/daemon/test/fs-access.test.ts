@@ -81,8 +81,9 @@ describe("fs_list / fs_read", () => {
 
   test("session_not_found: an sid with no live connection can't be browsed", async () => {
     const ctx = await startInProcessDaemon();
+    const root = fixtureDir("fsroot");
     try {
-      const c = await sessionConn(ctx, A, { cwd: fixtureDir("fsroot") });
+      const c = await sessionConn(ctx, A, { cwd: root });
       const res = await c.requestError({
         op: "fs_list",
         sid: "no-such-sid",
@@ -91,6 +92,7 @@ describe("fs_list / fs_read", () => {
       expect(res.error.code).toBe("session_not_found");
     } finally {
       await stopInProcessDaemon(ctx);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -1791,11 +1793,13 @@ describe("fs_create", () => {
 
   test("containment: a ../ escape is path_forbidden even with a real ancestor sibling", async () => {
     const ctx = await startInProcessDaemon();
-    const root = fixtureDir("fsroot");
+    const parent = fixtureDir("fsroot");
+    const root = path.join(parent, "root");
+    // Sibling of root that a naive lexical join would reach via "../".
+    const sibling = path.join(parent, "sibling");
+    fs.mkdirSync(root);
+    fs.mkdirSync(sibling);
     try {
-      // Sibling of root that a naive lexical join would reach via "../".
-      const sibling = path.join(path.dirname(root), "sibling");
-      fs.mkdirSync(sibling, { recursive: true });
       await sessionConn(ctx, A, { cwd: root });
       const user = await userConn(ctx);
       const res = await user.requestError({
@@ -1810,7 +1814,7 @@ describe("fs_create", () => {
       expect(fs.existsSync(path.join(sibling, "escape.txt"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);
-      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(parent, { recursive: true, force: true });
     }
   });
 });

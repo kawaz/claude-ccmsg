@@ -2,21 +2,16 @@
 // +x it": the tests that use it assert on their mocks' output, exit codes and
 // arguments, and those assertions are only trustworthy if the indirection through
 // the shim is invisible. Each case below pins one channel between caller and mock.
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { mockScriptPath, writeMockBin } from "../src/mock-bin.ts";
+import { perTestTmpDir } from "../src/tmp.ts";
 
-const tempDirs: string[] = [];
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
+const tmpDir = perTestTmpDir();
 
 function tempDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-mockbin-"));
-  tempDirs.push(dir);
-  return dir;
+  return tmpDir("ccmsg-mockbin-");
 }
 
 async function run(

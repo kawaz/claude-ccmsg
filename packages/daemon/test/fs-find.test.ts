@@ -18,10 +18,18 @@ import {
   type TestClient,
   sessionConn,
   userConn,
-  fixtureDir,
 } from "./helpers.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
+
+const tmpDir = perTestTmpDir();
+
+/** A new fixture dir, removed after the test (its real path, as the daemon
+ * reports paths). */
+function fixture(): string {
+  return fs.realpathSync(tmpDir("ccmsg-fsfind-"));
+}
 
 /** Session whose cwd carries a `.code-workspace`, so session_status folds a
  * workspace_folders allowlist for the kind:"workspace" branch to authorize
@@ -61,7 +69,7 @@ describe("fs_find (contained)", () => {
     // The point of the op: src/components was never fs_list'd by this
     // client, yet its files are reachable by name.
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -85,7 +93,7 @@ describe("fs_find (contained)", () => {
 
   test("paths are root-relative and directories are matchable targets too", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -114,7 +122,7 @@ describe("fs_find (contained)", () => {
     // Ordering is load-bearing: it decides which matches survive the result
     // cap, and vendored/deep noise must not crowd out the user's own files.
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -133,7 +141,7 @@ describe("fs_find (contained)", () => {
 
   test("an empty query returns nothing rather than the whole tree", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -153,7 +161,7 @@ describe("fs_find (contained)", () => {
 
   test("caps results and reports truncated", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     const many = path.join(cwd, "many");
     fs.mkdirSync(many);
     for (let i = 0; i < FS_FIND_RESULT_MAX + 25; i++) {
@@ -177,7 +185,7 @@ describe("fs_find (contained)", () => {
 
   test("a sub-root confines the walk to that subtree", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -199,7 +207,7 @@ describe("fs_find (contained)", () => {
 describe("fs_find authorization", () => {
   test("requires user role — a session cannot walk another session's tree", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       const session = await sessionConn(ctx, A, { cwd });
@@ -235,7 +243,7 @@ describe("fs_find authorization", () => {
 
   test("an absolute root is refused for kind:'contained' (fs_list's path contract)", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -256,7 +264,7 @@ describe("fs_find authorization", () => {
 
   test("a '..' root escaping the containment root is refused", async () => {
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     fs.mkdirSync(cwd);
     buildTree(cwd);
@@ -283,7 +291,7 @@ describe("fs_find authorization", () => {
     // which reports links as-is) but is NOT descended into, so the secret
     // outside can never appear as a hit.
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     const outside = path.join(parent, "outside");
     fs.mkdirSync(cwd);
@@ -308,7 +316,7 @@ describe("fs_find authorization", () => {
 
   test("a symlink cycle terminates instead of walking forever", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     const loop = path.join(cwd, "loop");
     fs.mkdirSync(loop);
     fs.writeFileSync(path.join(loop, "target-README.md"), "");
@@ -332,7 +340,7 @@ describe("fs_find authorization", () => {
 describe("fs_find (workspace, DR-0026)", () => {
   test("walks an allowlisted folder and returns absolute paths", async () => {
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     const sibling = path.join(parent, "sibling");
     fs.mkdirSync(cwd);
@@ -361,7 +369,7 @@ describe("fs_find (workspace, DR-0026)", () => {
 
   test("refuses a root outside the workspace allowlist", async () => {
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     const sibling = path.join(parent, "sibling");
     const other = path.join(parent, "other");
@@ -393,7 +401,7 @@ describe("fs_find (workspace, DR-0026)", () => {
 
   test("requires a root for kind:'workspace' (there is no single default folder)", async () => {
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     const sibling = path.join(parent, "sibling");
     fs.mkdirSync(cwd);
@@ -421,7 +429,7 @@ describe("fs_find (workspace, DR-0026)", () => {
 
   test("a session with no workspace folders cannot reach anything via kind:'workspace'", async () => {
     const ctx = await startInProcessDaemon();
-    const parent = fs.realpathSync(fixtureDir("fsfind"));
+    const parent = fixture();
     const cwd = path.join(parent, "cwd");
     const other = path.join(parent, "other");
     fs.mkdirSync(cwd);
@@ -453,7 +461,7 @@ describe("fs_find (workspace, DR-0026)", () => {
 
   test("rejects an unknown kind", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     try {
       await sessionConn(ctx, A, { cwd });
       const user = await userConn(ctx);
@@ -477,7 +485,7 @@ describe("fs_find query grammar at the op level", () => {
   // falling back to a plain substring filter.
   test("a -term excludes matching paths from the walk's results", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -496,7 +504,7 @@ describe("fs_find query grammar at the op level", () => {
 
   test("an exclusion-only query returns nothing rather than the whole tree minus a few", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -516,7 +524,7 @@ describe("fs_find query grammar at the op level", () => {
 
   test("+- searches a literal hyphen instead of excluding", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     fs.writeFileSync(path.join(cwd, "file-search.ts"), "");
     fs.writeFileSync(path.join(cwd, "filesearch.ts"), "");
     try {
@@ -548,7 +556,7 @@ describe("fs_find .gitignore filtering", () => {
 
   test("ignored paths are absent by default, and .git is pruned unconditionally", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildIgnoredTree(cwd);
     fs.mkdirSync(path.join(cwd, ".git"));
     fs.writeFileSync(path.join(cwd, ".git", "package.json"), "");
@@ -569,7 +577,7 @@ describe("fs_find .gitignore filtering", () => {
 
   test("respect_gitignore:false restores the unfiltered walk (but still skips .git)", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildIgnoredTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });
@@ -596,7 +604,7 @@ describe("fs_find .gitignore filtering", () => {
     // typically live in a .gitignore at the repo root, above where the walk
     // starts.
     const ctx = await startInProcessDaemon();
-    const repo = fs.realpathSync(fixtureDir("fsfind"));
+    const repo = fixture();
     fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n");
     const pkg = path.join(repo, "pkg");
     fs.mkdirSync(path.join(pkg, "node_modules"), { recursive: true });
@@ -622,7 +630,7 @@ describe("fs_find .gitignore filtering", () => {
     // A .gitignore above the authorized surface must not shape the reply:
     // filtering may only use files the op was already allowed to read.
     const ctx = await startInProcessDaemon();
-    const outside = fs.realpathSync(fixtureDir("fsfind"));
+    const outside = fixture();
     fs.writeFileSync(path.join(outside, ".gitignore"), "secret.txt\n");
     const cwd = path.join(outside, "repo");
     fs.mkdirSync(cwd);
@@ -644,7 +652,7 @@ describe("fs_find .gitignore filtering", () => {
 
   test("a nested .gitignore's negation re-includes what the root hid", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     fs.writeFileSync(path.join(cwd, ".gitignore"), "*.log\n");
     fs.mkdirSync(path.join(cwd, "keep"));
     fs.writeFileSync(path.join(cwd, "keep", ".gitignore"), "!*.log\n");
@@ -667,7 +675,7 @@ describe("fs_find .gitignore filtering", () => {
 
   test("a non-boolean respect_gitignore is rejected rather than coerced", async () => {
     const ctx = await startInProcessDaemon();
-    const cwd = fs.realpathSync(fixtureDir("fsfind"));
+    const cwd = fixture();
     buildTree(cwd);
     try {
       await sessionConn(ctx, A, { cwd });

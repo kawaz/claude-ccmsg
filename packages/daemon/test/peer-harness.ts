@@ -10,6 +10,7 @@ import * as path from "node:path";
 import { type JsonObject, type Output, parseWith, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { connect, type DaemonCtx, jsonObjectOf, type TestClient } from "./helpers.ts";
+import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 export const PEER_TOKEN = "tok-abc";
 
@@ -90,7 +91,7 @@ export function fakeHarness(
   } = {},
 ): FakeHarness {
   const configDir = opts.configDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
-  const sockDir = fs.mkdtempSync("/tmp/pi-");
+  const sockDir = shortTmpDir("pi-");
   const socketPath = path.join(sockDir, "s.sock");
   const pid = opts.pid ?? 424242;
   fs.mkdirSync(path.join(configDir, "sessions"), { recursive: true });

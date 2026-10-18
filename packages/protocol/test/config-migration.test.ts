@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { migrateLegacyConfigFiles, resolvePaths } from "../src/index.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
+
+const tmpDir = perTestTmpDir();
 
 function tmpPaths(): ReturnType<typeof resolvePaths> {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-migrate-"));
+  const base = tmpDir("ccmsg-migrate-");
   const paths = resolvePaths({
     CCMSG_STATE_DIR: path.join(base, "s"),
     CCMSG_CONFIG_DIR: path.join(base, "c"),
@@ -92,7 +94,7 @@ describe("migrateLegacyConfigFiles", () => {
   // CCMSG_CONFIG_DIR pointed at the data dir would make "legacy" and "new" the
   // same file; moving it onto itself must not be attempted.
   test("does nothing when config and data resolve to the same dir", () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-migrate-same-"));
+    const base = tmpDir("ccmsg-migrate-same-");
     const paths = resolvePaths({
       CCMSG_STATE_DIR: path.join(base, "s"),
       CCMSG_CONFIG_DIR: base,

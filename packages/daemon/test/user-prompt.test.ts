@@ -43,6 +43,7 @@ import {
   userConn,
 } from "./helpers.ts";
 import { fakeHarness, sessionWithConfig } from "./peer-harness.ts";
+import { shortTmpDir } from "../../testkit/src/tmp.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RequestTextSchema = jsonText(SidecarRequestSchema);
@@ -370,7 +371,7 @@ describe("userPrompt asks one run at a time", () => {
 // line goes in part-way and the write runs out of time. The module may still
 // get the whole line, so the second run must not be sent it as well.
 test("a write that stopped part-way is unconfirmed and goes to no other run", async () => {
-  const dir = fs.mkdtempSync("/tmp/ccmsg-si-w-");
+  const dir = shortTmpDir("ccmsg-si-w-");
   const held = new Set<net.Socket>();
   const stalled = net.createServer({ pauseOnConnect: true }, (c) => {
     held.add(c);
@@ -455,7 +456,7 @@ describe("inputReadiness", () => {
  * under it (macOS's tmpdir is not), so the test reads the same path the
  * daemon derives. */
 async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
-  const base = fs.mkdtempSync("/tmp/ccmsg-si-");
+  const base = shortTmpDir("ccmsg-si-");
   const stateDir = path.join(base, "s");
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
@@ -867,7 +868,7 @@ describe("input_readiness on session_status", () => {
   // anything is sent, and a run named or gone pushes the change: the push
   // follows the name and the close, with no directory watched and no poll.
   test("follows the runs the session's sidecars name, and their terminals", async () => {
-    const base = fs.mkdtempSync("/tmp/ccmsg-si-ps-");
+    const base = shortTmpDir("ccmsg-si-ps-");
     const ps = psRecorder(base);
     const ctx = await startShortDaemon(ps.env);
     const transcript = path.join(ctx.base, `${SID}.jsonl`);

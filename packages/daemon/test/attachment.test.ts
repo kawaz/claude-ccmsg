@@ -10,8 +10,9 @@
 // outside the attachment dir, an over-cap upload must 413 up-front, and a
 // probe for a nonexistent uuid must 404 (not 500). Together those failure
 // tests define what "safe endpoint" means at this trust boundary.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { startTestDaemon, stopTestDaemon, type DaemonCtx, defined, userConn } from "./helpers.ts";
 import {
   attachmentDir,
@@ -25,6 +26,13 @@ import {
   jsonText,
   parseWith,
 } from "@ccmsg/protocol";
+
+// The daemons here save uploads into the per-uid dir under TMPDIR, which no
+// daemon empties (DR-0015 §2.1). In a test run TMPDIR is the run's own dir
+// (packages/testkit/src/tmp.ts), so the dir is this file's to remove.
+afterAll(() => {
+  fs.rmSync(path.dirname(attachmentDir()), { recursive: true, force: true });
+});
 
 async function startHttpDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
   return startTestDaemon({ CCMSG_HTTP_BIND: "127.0.0.1:0", ...extraEnv });

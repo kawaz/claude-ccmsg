@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
 import { AGENT_ID_RE, resolveAgentTranscript, RUN_ID_RE } from "../src/agent-transcripts.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
+
+const tmpDir = perTestTmpDir();
 
 /** Build a minimal `<configDir>/projects/<project>/<sid>.jsonl` + sidebar
  * tree in a tempdir. Returns the transcript file the resolver expects. */
@@ -12,7 +14,7 @@ function buildFixture(): {
   sidDir: string;
   configDir: string;
 } {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "cfg-"));
+  const configDir = tmpDir("cfg-");
   const projectDir = path.join(configDir, "projects", "some-project");
   fs.mkdirSync(projectDir, { recursive: true });
   const sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -141,7 +143,7 @@ describe("resolveAgentTranscript (DR-0025)", () => {
   });
 
   test("projects/ 外の session path は path_forbidden", async () => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "outside-"));
+    const outside = tmpDir("outside-");
     const sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const transcriptFile = path.join(outside, `${sid}.jsonl`);
     fs.writeFileSync(transcriptFile, "");
