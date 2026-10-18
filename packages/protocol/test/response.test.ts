@@ -372,10 +372,12 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
             main: {
               "claude-x": {
                 requests: 1,
-                input_tokens: 2,
-                output_tokens: 3,
-                cache_creation_input_tokens: 4,
-                cache_read_input_tokens: 5,
+                tokens: {
+                  input: 2,
+                  output: 3,
+                  "input.cache_creation": 4,
+                  "input.cache_read": 5,
+                },
                 usd: 0.5,
               },
             },

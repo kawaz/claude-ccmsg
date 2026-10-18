@@ -221,10 +221,12 @@ export type LlmUsageResponse = Output<typeof LlmUsageResponseSchema>;
  * zero the UI would then sum. */
 export const LlmStatsModelUsageSchema = v.object({
   requests: v.optional(v.number()),
-  input_tokens: v.optional(v.number()),
-  output_tokens: v.optional(v.number()),
-  cache_creation_input_tokens: v.optional(v.number()),
-  cache_read_input_tokens: v.optional(v.number()),
+  /** Token counts by the gateway's kind name ("input", "output",
+   * "input.cache_read", …), kept as the gateway's own map: the kinds are an
+   * open set a provider can add to, and a dotted kind can be a part of the
+   * kind it extends ("input.cache_creation.ephemeral_1h" is counted inside
+   * "input.cache_creation"), so which kinds to add up is the reader's call. */
+  tokens: v.optional(v.record(v.string(), v.number())),
   /** Spend in USD. The one field the screen is built around. */
   usd: v.optional(v.number()),
 });

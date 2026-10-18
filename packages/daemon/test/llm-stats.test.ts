@@ -20,7 +20,9 @@ function parseStatsPayload(document: unknown) {
 }
 
 /** The live endpoint's document, trimmed to two credentials on one day —
- * including the "-" bucket the gateway uses for unattributed traffic. */
+ * including the "-" bucket the gateway uses for unattributed traffic. Token
+ * counts arrive as one `tokens` map keyed by the gateway's own kind names,
+ * beside a per-origin breakdown and the basis `input` is counted on. */
 const UPSTREAM = {
   generated_at: 1785552299000,
   days: {
@@ -29,20 +31,28 @@ const UPSTREAM = {
         "-": {
           "gpt-5.6-sol": {
             requests: 259,
-            input_tokens: 2780800,
-            output_tokens: 69863,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 53148672,
+            tokens: {
+              input: 2780800,
+              "input.cache_creation": 0,
+              "input.cache_read": 53148672,
+              output: 69863,
+              "output.reasoning": 1200,
+            },
             usd: 42.574226,
+            origins: {
+              main: { requests: 259, tokens: { input: 2780800 }, usd: 42.574226 },
+            },
+            input_basis: "fresh",
           },
         },
         "claude-kawazzz": {
-          "claude-opus-5": { requests: 1605, usd: 290.447535 },
+          "claude-opus-5": { requests: 1605, usd: 290.447535, input_basis: "fresh" },
         },
       },
       total_usd: 1548.119857,
     },
   },
+  total_usd: 1548.119857,
 };
 
 function jsonDeps(body: unknown, init: ResponseInit = {}): LlmGatewayDeps {
@@ -117,12 +127,27 @@ describe("parseStatsPayload", () => {
     expect(Object.keys(day?.credentials ?? {})).toEqual(["-", "claude-kawazzz"]);
     expect(day?.credentials["-"]?.["gpt-5.6-sol"]).toEqual({
       requests: 259,
-      input_tokens: 2780800,
-      output_tokens: 69863,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 53148672,
+      tokens: {
+        input: 2780800,
+        "input.cache_creation": 0,
+        "input.cache_read": 53148672,
+        output: 69863,
+        "output.reasoning": 1200,
+      },
       usd: 42.574226,
     });
+  });
+
+  // Token counts are summed like usd, so a string among them refuses the
+  // document the same way.
+  test("a token count that is not a number does not read", () => {
+    expect(
+      refusal({
+        days: {
+          "2026-07-31": { credentials: { c: { m: { tokens: { input: "12" } } } } },
+        },
+      }),
+    ).toContain("days.2026-07-31.credentials.c.m.tokens.input");
   });
 
   // The UI sums these counters, so a string that slipped through upstream must

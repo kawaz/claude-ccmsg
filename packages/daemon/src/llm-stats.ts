@@ -25,8 +25,8 @@ import {
 
 /** The gateway's spend document (its `stats.rs` Report), read for what the
  * screen draws. Its days and counters are the wire's own shape; what else the
- * gateway reports (the `tokens` breakdown, per-origin entries, the window's
- * total) is not read, and leaves the document readable. */
+ * gateway reports (per-origin entries, the basis `input` is counted on, the
+ * window's total) is not read, and leaves the document readable. */
 const StatsDocumentSchema = v.object({
   generated_at: v.optional(v.number()),
   days: v.record(v.string(), LlmStatsDaySchema),

@@ -34,7 +34,7 @@ const DAYS: LlmStatsResponse["days"] = {
   "2026-06-30": {
     credentials: {
       "claude-a": {
-        "claude-opus-5": { requests: 10, input_tokens: 100, output_tokens: 50, usd: 4 },
+        "claude-opus-5": { requests: 10, tokens: { input: 100, output: 50 }, usd: 4 },
       },
     },
     total_usd: 4,
@@ -42,11 +42,11 @@ const DAYS: LlmStatsResponse["days"] = {
   "2026-07-01": {
     credentials: {
       "claude-a": {
-        "claude-opus-5": { requests: 5, input_tokens: 10, output_tokens: 5, usd: 1 },
+        "claude-opus-5": { requests: 5, tokens: { input: 10, output: 5 }, usd: 1 },
         "claude-sonnet-5": { requests: 2, usd: 0.5 },
       },
       "-": {
-        "gpt-5.6-sol": { requests: 3, cache_read_input_tokens: 2_000_000, usd: 2.5 },
+        "gpt-5.6-sol": { requests: 3, tokens: { "input.cache_read": 2_000_000 }, usd: 2.5 },
       },
     },
     total_usd: 4,
@@ -85,6 +85,44 @@ describe("dailyTotals", () => {
       ["claude-opus-5", 1],
       ["claude-sonnet-5", 0.5],
     ]);
+  });
+
+  test("reads the gateway's token kinds into the four counters", () => {
+    const gpt = rows[0].models.find((m) => m.model === "gpt-5.6-sol");
+    expect(gpt).toMatchObject({ inputTokens: 0, cacheReadTokens: 2_000_000 });
+    const opus = dailyTotals(DAYS)[1].models[0];
+    expect(opus).toMatchObject({ inputTokens: 100, outputTokens: 50 });
+  });
+
+  // The gateway reports kinds nested under a parent (the cache-write TTLs,
+  // reasoning output) whose counts the parent already contains. Adding them
+  // in would count those tokens twice.
+  test("kinds the parent already contains are not added again", () => {
+    const [row] = dailyTotals({
+      "2026-10-17": {
+        credentials: {
+          c: {
+            m: {
+              tokens: {
+                input: 98,
+                "input.cache_creation": 4130,
+                "input.cache_creation.ephemeral_1h": 4130,
+                "input.cache_creation.ephemeral_5m": 0,
+                "input.cache_read": 23_467_662,
+                output: 1503,
+                "output.reasoning": 700,
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(row.models[0]).toMatchObject({
+      inputTokens: 98,
+      outputTokens: 1503,
+      cacheCreationTokens: 4130,
+      cacheReadTokens: 23_467_662,
+    });
   });
 
   test("counters missing from upstream count as zero, not NaN", () => {
@@ -502,8 +540,8 @@ describe("model filtering", () => {
     "2026-07-01": {
       credentials: {
         "cred-a": {
-          opus: { requests: 2, input_tokens: 10, usd: 6 },
-          sonnet: { requests: 4, input_tokens: 20, usd: 3 },
+          opus: { requests: 2, tokens: { input: 10 }, usd: 6 },
+          sonnet: { requests: 4, tokens: { input: 20 }, usd: 3 },
         },
         "cred-b": { haiku: { requests: 8, usd: 1 } },
       },

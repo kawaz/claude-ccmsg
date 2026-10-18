@@ -58,13 +58,24 @@ function emptyModelTotal(model: string): ModelTotal {
   };
 }
 
+/** The gateway's kind name behind each counter. Only these four are read: the
+ * gateway's other kinds are parts of one of them (cache-write TTLs, reasoning
+ * output) or a provider's own, and adding a part in would count it twice. */
+const GATEWAY_TOKEN_KIND = {
+  input: "input",
+  output: "output",
+  cacheCreation: "input.cache_creation",
+  cacheRead: "input.cache_read",
+} as const;
+
 function addUsage(into: ModelTotal, usage: LlmStatsModelUsage): void {
+  const tokens = usage.tokens ?? {};
   into.usd += usage.usd ?? 0;
   into.requests += usage.requests ?? 0;
-  into.inputTokens += usage.input_tokens ?? 0;
-  into.outputTokens += usage.output_tokens ?? 0;
-  into.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
-  into.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+  into.inputTokens += tokens[GATEWAY_TOKEN_KIND.input] ?? 0;
+  into.outputTokens += tokens[GATEWAY_TOKEN_KIND.output] ?? 0;
+  into.cacheCreationTokens += tokens[GATEWAY_TOKEN_KIND.cacheCreation] ?? 0;
+  into.cacheReadTokens += tokens[GATEWAY_TOKEN_KIND.cacheRead] ?? 0;
 }
 
 /** Spend first, then name. The screen is read to find what the money went to,
