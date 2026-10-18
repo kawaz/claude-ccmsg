@@ -23,11 +23,11 @@ CCMSG_HTTP_BIND=127.0.0.1:18642 \
 4. Capture a focused snapshot or screenshot plus browser-visible state (`aria-pressed`, counters, highlights, and error text).
 5. Close the browser session and stop the isolated daemon.
 
-Use a different port when `18642` is occupied. The daemon scans the normal detected Claude config dirs while its own runtime, configuration, and data stay isolated.
+Use a different port when `18642` is occupied. A daemon whose state dir is not the default one serves no Claude config dir: it lists, registers and delivers to only the sessions that say hello to it, each in the config dir that session announces, and not the sessions beside it. To show the sessions of a fixture config dir, name it in `CCMSG_CLAUDE_CONFIG_DIRS` (absolute paths joined by `:`). Never name a real config dir (`~/.claude*`) there: the daemon then reaches every session in it.
 
 ## Never deliver into a session kawaz is using
 
-The isolated daemon still delivers to real sessions: peer injection resolves the target by session id against the real Claude config dirs and writes straight into that session's harness socket, regardless of the daemon's own state dir. A `hello` with `role: "session"` that names a live session's sid, a room whose member is a live sid, or a `send_message` (the `send` tool) that names a live session, lands in that session's conversation.
+The isolated daemon still delivers to a real session that says hello to it: peer injection writes straight into that session's harness socket, found under the config dir the hello announced. The daemon cannot tell a hello that names a live session's sid and config dir from that session's own, so such a `hello` with `role: "session"`, a room whose member is that sid, or a `send_message` (the `send` tool) that names it, lands in that session's conversation.
 
 Delivering into a real Claude Code session is fine when that session exists for the test. It is never fine to deliver into a session kawaz is working in.
 

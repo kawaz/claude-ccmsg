@@ -571,7 +571,10 @@ describe("send_message with an agent id over the wire", () => {
     const sidecar = await fakeSidecar(ctx, SID, "run1");
     const SENDER = "22222222-2222-4333-8444-555555555555";
     try {
-      const sender = await sessionWithConfig(ctx, SENDER, harness.configDir);
+      // The session announces its config dir, which is where the daemon
+      // reaches it (DR-0034 §2).
+      const target = await sessionWithConfig(ctx, SID, harness.configDir);
+      const sender = await sessionWithConfig(ctx, SENDER);
       const results = sender.requestOk({
         op: "send_message",
         to: { session_id: SID },
@@ -593,6 +596,7 @@ describe("send_message with an agent id over the wire", () => {
       expect((await results).results).toEqual([{ sid: SID, outcome: "delivered" }]);
       expect(harness.frames).toEqual([]);
       sender.close();
+      target.close();
       module.close();
     } finally {
       sidecar.close();

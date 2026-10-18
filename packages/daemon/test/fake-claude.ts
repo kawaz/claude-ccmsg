@@ -17,7 +17,8 @@ export function mkFixture(): {
   binDir: string;
   callLog: string;
 } {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-"));
+  // As a realpath: the daemon reads each config dir by its realpath.
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-")));
   const home = path.join(base, "home");
   fs.mkdirSync(home);
   const binDir = path.join(base, "bin");

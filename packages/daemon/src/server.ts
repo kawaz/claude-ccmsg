@@ -139,10 +139,12 @@ import {
   agentsPollEnabled,
   createAgentsPoller,
   detectConfigDirs,
+  servedConfigDirs,
   startAgentsPoller,
   stopAgentsPoller,
   type AgentsPoll,
   type AgentsPoller,
+  type AgentsScope,
 } from "./agents.ts";
 import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
 import {
@@ -914,29 +916,55 @@ function clientBuildFields(
 }
 
 /** Where send_message and peer_list read the sessions they match from: the
- * live runs of every config dir the daemon knows, read afresh. */
+ * live runs of the sessions the daemon reaches, read afresh. */
 function peerDeps(daemon: Daemon): PeerDeps {
   return {
-    runs: () => liveRuns(knownConfigDirs(daemon), isProcessAlive),
+    runs: async () => {
+      const scope = sessionScope(daemon);
+      const runs = await liveRuns(scope.dirs, isProcessAlive);
+      return runs.filter((run) => scope.has(run.configDir, run.sid));
+    },
     realpath: realpathOrUndefined,
     hasModule: (sid) => daemon.sidecarRuns.liveOf(sid).length > 0,
   };
 }
 
-/** The CLAUDE_CONFIG_DIRs whose sessions a send_message may reach: those the
- * agents poll scans, and those sessions announced in hello, each as a realpath
- * as the registry keeps them, so one dir is read once. Like the poll, a
- * daemon that does not poll (a test daemon) scans no config dir of its own
- * finding, so it never reaches the sessions running on the machine. */
-function knownConfigDirs(daemon: Daemon): string[] {
-  const announced = [...daemon.sessions.values()].flatMap((s) =>
-    s.configDir !== undefined ? [s.configDir] : [],
-  );
-  const detected = (agentsPollEnabled() ? detectConfigDirs() : []).flatMap((dir) => {
+/** The config dirs this daemon serves (servedConfigDirs), each as a realpath
+ * as the registry keeps them. */
+function servedDirs(daemon: Daemon): string[] {
+  return servedConfigDirs(daemon.paths.stateDir).flatMap((dir) => {
     const normalized = normalizeConfigDir(dir);
     return normalized !== undefined ? [normalized] : [];
   });
-  return [...new Set([...detected, ...announced])];
+}
+
+/** The sessions this daemon reaches (DR-0034 §2): every session of each
+ * config dir it serves, and each session that announced its config dir to it
+ * (hello) in that dir, alone. A session announcing a dir the daemon does not
+ * serve says it is one of this daemon's; the sessions beside it said nothing
+ * of the kind, so a daemon started for a test reaches the test's session and
+ * not the ones someone is working in. Each dir as a realpath, as the registry
+ * keeps them, so one dir is read once. */
+function sessionScope(daemon: Daemon): AgentsScope {
+  const every = new Set(servedDirs(daemon));
+  const alone = new Map<string, Set<string>>();
+  for (const { configDir, meta } of daemon.sessions.values()) {
+    if (configDir === undefined || every.has(configDir)) continue;
+    const sids = alone.get(configDir) ?? new Set<string>();
+    sids.add(meta.sid);
+    alone.set(configDir, sids);
+  }
+  return {
+    dirs: [...every, ...alone.keys()],
+    has: (configDir, sid) => every.has(configDir) || alone.get(configDir)?.has(sid) === true,
+  };
+}
+
+/** The config dirs in which `sid` is one of the sessions this daemon reaches:
+ * where session_kill and session_env look its process up. */
+function scopeDirsOf(daemon: Daemon, sid: string): string[] {
+  const scope = sessionScope(daemon);
+  return scope.dirs.filter((dir) => scope.has(dir, sid));
 }
 
 /** The subset of currentPeers() compared to decide whether anything worth a push
@@ -1893,7 +1921,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // Slow: the fresh `claude agents` run plus up to 3s of kill grace
       // (DR-0028). `force` is forwarded to session-kill.ts for the SIGKILL
       // escalation path.
-      const killed = await sessionKill(req.session_id, productionKillDeps, {
+      const killDeps = {
+        ...productionKillDeps,
+        configDirs: () => scopeDirsOf(daemon, req.session_id),
+      };
+      const killed = await sessionKill(req.session_id, killDeps, {
         force: req.force === true,
       });
       if (!killed.found) {
@@ -2088,7 +2120,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       // Slow for session_kill's reason: the fresh `claude agents` resolution.
-      const envRead = await sessionEnv(req.session_id, productionEnvDeps(productionKillDeps));
+      const envRead = await sessionEnv(
+        req.session_id,
+        productionEnvDeps({
+          ...productionKillDeps,
+          configDirs: () => scopeDirsOf(daemon, req.session_id),
+        }),
+      );
       if (!envRead.found) {
         // Unresolvable sid and a pid that failed ps verification are the
         // same outcome for the caller, exactly as in session_kill.
@@ -3004,6 +3042,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   if (agentsPollEnabled()) {
     startAgentsPoller(
       daemon.agentsPoller,
+      () => sessionScope(daemon),
       log,
       async (poll, polledAt) => {
         await syncSessionsFromAgents(daemon, poll);

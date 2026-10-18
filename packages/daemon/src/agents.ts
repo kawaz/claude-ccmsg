@@ -1,7 +1,7 @@
-// `claude agents --json` polling across every detected CLAUDE_CONFIG_DIR
-// candidate: the harness's own register of live sessions, which the daemon's
-// session registry is derived from (DR-0034) and the webui "Agents" panel
-// shows.
+// `claude agents --json` polling across the CLAUDE_CONFIG_DIRs whose sessions
+// the daemon serves (servedConfigDirs, DR-0034 §2): the harness's own register
+// of live sessions, which the daemon's session registry is derived from
+// (DR-0034) and the webui "Agents" panel shows.
 //
 // Detection re-scans `$HOME/.claude*` on every poll instead of trusting a
 // fixed env var: the daemon process's own environment can lose a
@@ -12,7 +12,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ClaudeAgentsTextSchema, errorText, parseWith, type AgentInfo } from "@ccmsg/protocol";
+import {
+  ClaudeAgentsTextSchema,
+  errorText,
+  parseWith,
+  resolveStateDir,
+  type AgentInfo,
+} from "@ccmsg/protocol";
 
 /** Per-`claude agents --json` child process budget; a hung/slow CLI in one
  *  config dir must not stall the poll of the others or the poll cycle itself. */
@@ -58,6 +64,43 @@ export function detectConfigDirs(): string[] {
   }
   dirs.sort();
   return dirs;
+}
+
+/** The config dirs whose sessions the daemon at `stateDir` serves: it lists
+ * them, registers them and delivers to them.
+ *
+ * - `CCMSG_CLAUDE_CONFIG_DIRS` (absolute paths joined by `:`) names them; set
+ *   but empty, it names none.
+ * - Otherwise the daemon at the default state dir serves every
+ *   `$HOME/.claude*` directory (detectConfigDirs): it is the daemon the
+ *   sessions on this machine talk to.
+ * - A daemon at any other state dir (one started for a test or a /verify run)
+ *   serves none: the sessions on the machine talk to the default daemon, and
+ *   what another daemon delivered to them would be a test's messages in
+ *   someone's conversation.
+ *
+ * A session that announces its config dir to the daemon (hello,
+ * sidecar_hello) is served in that dir besides, alone (server.ts
+ * sessionScope). */
+export function servedConfigDirs(
+  stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+  detect: () => string[] = detectConfigDirs,
+): string[] {
+  const named = env.CCMSG_CLAUDE_CONFIG_DIRS;
+  if (named !== undefined) {
+    return named.split(":").filter((dir) => dir !== "" && path.isAbsolute(dir));
+  }
+  const defaultStateDir = resolveStateDir({ ...env, CCMSG_STATE_DIR: undefined });
+  return realpathOrSelf(stateDir) === realpathOrSelf(defaultStateDir) ? detect() : [];
+}
+
+function realpathOrSelf(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
 }
 
 /** Run `claude agents --json` with CLAUDE_CONFIG_DIR=configDir, tag every row
@@ -128,12 +171,22 @@ export interface AgentsPoll {
   answeredDirs: string[];
 }
 
-/** Poll every detected config dir in parallel and merge the results. */
-export async function pollAgents(log: AgentsLog): Promise<AgentsPoll> {
-  const dirs = detectConfigDirs();
+/** Which config dirs a round reads, and which sessions in them it keeps. */
+export interface AgentsScope {
+  dirs: readonly string[];
+  has(configDir: string, sid: string): boolean;
+}
+
+/** Poll every config dir of `scope` in parallel and merge the rows of the
+ * sessions it has. */
+export async function pollAgents(scope: AgentsScope, log: AgentsLog): Promise<AgentsPoll> {
+  const dirs = scope.dirs;
   const results = await Promise.all(dirs.map((d) => pollOne(d, log)));
   const answeredDirs = dirs.filter((_, i) => results[i] !== null);
-  return { agents: results.flatMap((r) => r ?? []), answeredDirs };
+  const agents = results
+    .flatMap((r) => r ?? [])
+    .filter((row) => scope.has(row.config_dir, row.sessionId));
+  return { agents, answeredDirs };
 }
 
 /** Order-independent identity for change detection: sort by a stable key
@@ -184,6 +237,7 @@ export function agentsPollEnabled(): boolean {
  */
 export function startAgentsPoller(
   poller: AgentsPoller,
+  scope: () => AgentsScope,
   log: AgentsLog,
   onChange: (poll: AgentsPoll, polledAt: string) => void | Promise<void>,
   onPoll?: (poll: AgentsPoll) => void | Promise<void>,
@@ -202,7 +256,7 @@ export function startAgentsPoller(
     inFlight = true;
     void (async () => {
       try {
-        const poll = await pollAgents(log);
+        const poll = await pollAgents(scope(), log);
         const changed = agentsKey(poll.agents) !== agentsKey(poller.cache.agents);
         const polledAt = new Date().toISOString();
         // The cache moves only after onChange has pushed, so a subscriber

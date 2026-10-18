@@ -24,6 +24,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
 - **期限値**: ソケット接続とフレーム書き込みの flush 完了まで 2 秒 (`INJECT_WRITE_MS`)。受け手が拒否 (`peer_message_status` で `refused`/`denied`/`dropped`/`expired`/`held`) を返してくるかを待つ猶予は 250ms (`INJECT_STATUS_MS`)。拒否は書き込みの前から聞き始め、250ms は書き込みが終わってから数える (書き込みに時間がかかっても、受け取った直後の拒否を取りこぼさない。書き込み中に届いた拒否も拒否として扱う)。`sessions/` ディレクトリの走査 (`readdir` + 各 JSON の読み取り) 全体に 1 秒 (`INJECT_SCAN_MS`)。いずれも超過は `unavailable` 扱いで、待たずに次の処理へ進む。ただし書き込みが途中まで入って期限を過ぎた時は、届いたか分からない (`unconfirmed`、DR-0036 §1)
 - **順序**: 同じセッション宛ての注入は 1 つずつ、頼まれた順に行う。注入は 1 通ごとに別の接続で、受け手は接続を来た順に読むので、前の 1 通と同時に書くと大きい前の 1 通より小さい後の 1 通が先に着きうる。次の 1 通は前の 1 通の結果 (拒否を待つ 250ms の沈黙を含む) が出てから書くので、受け手にはその間に前の 1 通を読む猶予もある。別のセッション宛ては互いを待たない。`send_message` は、宛先の照合から注入の依頼までを daemon に届いた順に 1 つずつ行い、照合の読み取りにかかる時間で依頼の順が入れ替わらないようにする (配送そのものは並行して進む)
 - **config dir の限定**: 注入先は、daemon が `configDir` を知っている member に限る。`configDir` の出どころは、セッションが hello で自己申告した値か、そのセッションを列挙した harness の登録簿の config dir (§5) のどちらか。daemon が推測で config dir を組み立てることはしない
+- **daemon が受け持つセッション**: daemon が列挙・登録・配送するのは、受け持つ config dir の全セッションと、hello で config dir を申告したセッション (その dir の中で申告したセッションだけ) である (`server.ts` の `sessionScope`)。受け持つ config dir は `CCMSG_CLAUDE_CONFIG_DIRS` (絶対パスを `:` で連結) が決め、無ければ既定の state dir の daemon は `$HOME/.claude*` のディレクトリすべて、それ以外の state dir の daemon (試験や `/verify` で立てたもの) はなし (`agents.ts` の `servedConfigDirs`)。マシンのセッションは既定の daemon と話すので、別の daemon がそれらに届けると試験のメッセージが人の会話に入る。申告した dir の他のセッションはこの daemon のものだと名乗っていないので届けない。hello が名乗る sid と config dir が本物かは daemon には分からないので、生きているセッションの sid を名乗る hello はそのセッションとして扱われる (`/verify` の手順が架空の sid を使う理由)
 
 ## 3. Alternatives Considered
 
@@ -43,7 +44,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
 
 注入の宛先は daemon の session registry (`daemon.sessions`) にあるセッションである。この registry を、セッションが v1 CLI で hello したかどうかではなく、harness 自身の登録簿から導出する。既に起動しているセッションは、ccmsg を一度も実行していなくても生きているものとして扱う。
 
-- **登録簿**: 検出した全 config dir (`$HOME/.claude*` のディレクトリ) それぞれで `claude agents --json` を実行した結果を合わせたもの (`packages/daemon/src/agents.ts`)。間隔は 5 秒で、daemon の起動から停止まで常時回す
+- **登録簿**: daemon が受け持つセッション (§2) の config dir それぞれで `claude agents --json` を実行した結果のうち、受け持つセッションの行を合わせたもの (`packages/daemon/src/agents.ts`)。間隔は 5 秒で、daemon の起動から停止まで常時回す
 - **登録**: 登録簿に載っていて registry に無い sid を登録する。cwd は realpath に正規化し、repo/ws は cwd から導出する (`repo-derive.ts`。cwd だけを名乗った hello と同じ扱い)。transcript は、その行を返した config dir の `projects/` から `<sid>.jsonl` を引けた時だけ持たせる。`configDir` はその行を返した config dir とする。登録時に transcript が無かったセッション (まだ何も入力されていない等) は、以後のポーリングのたびに同じ引き方で再解決し、見つかった時点で transcript を持たせて peers を push する。`state` が `done` の行は終わったセッションなので登録しない
 - **hello との関係**: 既に registry にある sid は登録簿の値で上書きしない。hello はセッション自身が名乗るもので、行よりも詳しい (branch、repo_root、申告された transcript)。登録簿で登録した後に届いた hello は、通常どおり registry を更新する
 - **忘却**: 登録簿に載ったことのある sid が、その sid を列挙した config dir の回答から消えたら、セッションは終わったとみなして registry から外す (`forgetSession`。broadcast room に leave が書かれる)。その回の `claude agents --json` が失敗した config dir は何も言っていないので、その config dir のセッションは外さない。hello だけで登録された (登録簿に一度も載っていない) sid は、hello の後に始まった回で、その sid が hello で名乗った config dir (名乗っていなければどれか 1 つ) が答えて載せていなければ外す (`forgetUnlistedHellos`)。hello の前から走っていた回は、hello の直前に始まったセッションを拾えていないことがあるので数えない。答えなかった config dir は何も言っていないので外さない。登録簿に載った sid は以後、上の通り登録簿から消えた時に外す。harness の外から hello する peer も同じ扱いで、hello し直すたびに登録され、次の回で外れる

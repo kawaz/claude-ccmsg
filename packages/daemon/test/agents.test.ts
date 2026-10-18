@@ -39,11 +39,14 @@ async function startAgentsTestDaemon(
   extraEnv: Record<string, string> = {},
 ): Promise<DaemonCtx> {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-daemon-"));
-  const stateDir = path.join(base, "s");
+  // The default state dir of this environment (XDG_STATE_HOME/ccmsg): the
+  // daemon there serves the `$HOME/.claude*` dirs (servedConfigDirs).
+  const stateDir = path.join(base, "ccmsg");
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
   const env: Record<string, string> = {
+    XDG_STATE_HOME: base,
     CCMSG_STATE_DIR: stateDir,
     CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
@@ -141,6 +144,38 @@ describe("agents polling: config dir detection", () => {
           status: "waiting",
           waitingFor: "dialog open",
         });
+      } finally {
+        await stopAgentsTestDaemon(ctx);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  // DR-0034 §2: the sessions on the machine talk to the daemon at the default
+  // state dir; one at another state dir lists none of them.
+  test("既定でない state dir の daemon は $HOME/.claude* を読まない", async () => {
+    const { base, home, binDir, callLog } = mkFixture();
+    try {
+      const dirA = path.join(home, ".claude-a");
+      fs.mkdirSync(dirA);
+      writeMockClaude(binDir, callLog, {
+        [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
+      });
+      const ctx = await startAgentsTestDaemon(home, binDir, {
+        XDG_STATE_HOME: path.join(base, "elsewhere"),
+      });
+      try {
+        const u = await userConn(ctx);
+        for (;;) {
+          const res = await u.requestOk({ op: "agents" });
+          if (res.polled_at !== null) {
+            expect(res.agents).toEqual([]);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, POLL_MS));
+        }
+        expect(callCount(callLog)).toBe(0);
       } finally {
         await stopAgentsTestDaemon(ctx);
       }

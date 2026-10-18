@@ -14,11 +14,11 @@ import { createSerial } from "../src/serial.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import {
   connect,
+  sessionConn,
   type DaemonCtx,
   startTestDaemon,
   stopTestDaemon,
   type TestClient,
-  sessionConn,
   userConn,
 } from "./helpers.ts";
 import {
@@ -216,10 +216,11 @@ describe("send_message through the daemon", () => {
     return ctx;
   }
 
-  /** Name a run of `sid` to the daemon, as its sidecar does: the session then
-   * has a hooks module, and is sent to. */
-  async function withModule(ctx: DaemonCtx, sid: string): Promise<void> {
-    const c = await sessionConn(ctx, sid);
+  /** Name a run of `sid` to the daemon, as its sidecar does, announcing the
+   * session's config dir: the session then has a hooks module, the daemon
+   * reaches it in that dir, and it is sent to. */
+  async function withModule(ctx: DaemonCtx, sid: string, configDir: string): Promise<void> {
+    const c = await sessionWithConfig(ctx, sid, configDir);
     await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
     cleanups.push(() => c.close());
   }
@@ -238,7 +239,7 @@ describe("send_message through the daemon", () => {
       const ctx = await daemon();
       const b1 = harness(PEER, { pid: LIVE_PID });
       const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
-      await withModule(ctx, PEER);
+      await withModule(ctx, PEER, b1.configDir);
       const a = await sessionWithConfig(ctx, SENDER, b1.configDir);
 
       expect(await send(a, { session_id: PEER }, "to both")).toEqual([
@@ -276,9 +277,8 @@ describe("send_message through the daemon", () => {
       fs.symlinkSync(work, link);
       const ha = harness(SENDER, { pid: LIVE_PID, cwd: work });
       const hb = harness(PEER, { pid: OTHER_LIVE_PID, cwd: work });
-      await withModule(ctx, PEER);
+      await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, ha.configDir);
-      await sessionWithConfig(ctx, PEER, hb.configDir);
 
       expect(await send(a, { cwd: `${link}/` }, "hello dir")).toEqual([
         { sid: PEER, cwd: work, outcome: "delivered" },
@@ -292,22 +292,54 @@ describe("send_message through the daemon", () => {
     T,
   );
 
-  // A test daemon polls no config dir of its own, so the recipient's config
-  // dir is known only from the sender's first hello: a later hello for the
-  // same sid without config_dir (an older CLI, a subprocess that lost the
+  // A test daemon serves no config dir of its own, so the recipient's config
+  // dir is known only from its own first hello: a later hello for the same
+  // sid without config_dir (an older CLI, a subprocess that lost the
   // environment) must not forget it.
   test(
     "a re-hello without config_dir keeps the config dir the first hello announced",
     async () => {
       const ctx = await daemon();
       const hb = harness(PEER, { pid: LIVE_PID });
-      await withModule(ctx, PEER);
-      await sessionWithConfig(ctx, SENDER, hb.configDir);
+      await withModule(ctx, PEER, hb.configDir);
+      await sessionWithConfig(ctx, PEER);
       const a = await sessionWithConfig(ctx, SENDER);
       expect(await send(a, { session_id: PEER }, "still here")).toEqual([
         { sid: PEER, outcome: "delivered" },
       ]);
       expect(parseEnvelope(await hb.nextContent()).body).toBe("still here");
+    },
+    T,
+  );
+
+  // DR-0034 §2: a daemon at another state dir than the default serves no
+  // config dir of its own. A session announcing its config dir is reached
+  // there alone; the sessions beside it, which never said they are this
+  // daemon's, are not, even with a hooks module named.
+  test(
+    "a session in a dir another session announced is not reached; one in a dir CCMSG_CLAUDE_CONFIG_DIRS names is",
+    async () => {
+      const hb = harness(PEER, { pid: LIVE_PID });
+      const isolated = await daemon();
+      const peerRun = await sessionConn(isolated, PEER);
+      await peerRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+      cleanups.push(() => peerRun.close());
+      const a = await sessionWithConfig(isolated, SENDER, hb.configDir);
+      expect(await send(a, { session_id: PEER }, "not for you")).toEqual([
+        { sid: PEER, outcome: "not_delivered", reason: "ended" },
+      ]);
+      expect(hb.frames).toEqual([]);
+
+      const serving = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
+      cleanups.push(() => stopTestDaemon(serving));
+      const servedRun = await sessionConn(serving, PEER);
+      await servedRun.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+      cleanups.push(() => servedRun.close());
+      const b = await sessionWithConfig(serving, SENDER);
+      expect(await send(b, { session_id: PEER }, "served")).toEqual([
+        { sid: PEER, outcome: "delivered" },
+      ]);
+      expect(parseEnvelope(await hb.nextContent()).body).toBe("served");
     },
     T,
   );
@@ -318,7 +350,7 @@ describe("send_message through the daemon", () => {
       const ctx = await daemon();
       const b1 = harness(PEER, { pid: LIVE_PID });
       const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
-      await withModule(ctx, PEER);
+      await withModule(ctx, PEER, b1.configDir);
       b1.refuseWith = "denied";
       const a = await sessionWithConfig(ctx, SENDER, b1.configDir);
       expect(await send(a, { session_id: PEER }, "hi")).toEqual([
@@ -340,7 +372,7 @@ describe("send_message through the daemon", () => {
       const ctx = await daemon();
       const hb = harness(PEER, { pid: LIVE_PID, stall: true });
       await hb.listening;
-      await withModule(ctx, PEER);
+      await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
       expect(await send(a, { session_id: PEER }, "x".repeat(4 * 1024 * 1024))).toEqual([
         { sid: PEER, outcome: "unconfirmed" },
@@ -371,7 +403,7 @@ describe("send_message through the daemon", () => {
     async () => {
       const ctx = await daemon();
       const hb = harness(PEER, { pid: LIVE_PID });
-      await withModule(ctx, PEER);
+      await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
       for (const old of [
         { op: "message_send", to: PEER, text: "old" },

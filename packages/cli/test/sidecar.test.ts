@@ -481,13 +481,13 @@ function runReply(stdin: string, env: Record<string, string>) {
   });
 }
 
-async function startShortDaemon(): Promise<DaemonCtx> {
+async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
   const base = shortBase();
   const stateDir = path.join(base, "s");
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
-  const proc = spawnDaemonProc(stateDir, dataDir);
+  const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
   return {
@@ -837,18 +837,19 @@ function sendResults(out: string): SendMessageResult[] {
 }
 
 // `send` and `peers` (DR-0039 §3): the sessions are matched against the live
-// runs of the config dirs the daemon knows, here the one the sender names.
+// runs of the sessions the daemon reaches (DR-0034 §2), here those of the
+// config dir it is told to serve.
 describe("ccmsg sidecar send-message / peer-list", () => {
   const OTHER = "22222222-2222-4333-8444-555555555555";
   const BARE = "33333333-2222-4333-8444-555555555555";
 
   test("sends to the sessions `to` names and prints a result for each", async () => {
-    const ctx = await startShortDaemon();
     const work = fs.realpathSync(shortBase());
     // Two sessions in one directory, each a running process: one has a hooks
     // module (its run is named), the other none.
     const other = fakeHarness(OTHER, { pid: process.pid, cwd: work, name: "other" });
     const bare = fakeHarness(BARE, { pid: process.ppid, cwd: work, configDir: other.configDir });
+    const ctx = await startShortDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: other.configDir });
     const module = await nameRunNoSpawn(
       resolvePaths(ctx.env),
       { role: "session", sid: OTHER, repo: "", ws: "", cwd: "" },
