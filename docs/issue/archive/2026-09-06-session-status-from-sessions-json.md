@@ -1,6 +1,6 @@
 ---
 title: セッション状態の取得元を `claude agents --json` から `sessions/<pid>.json` の直読みに変える
-status: open
+status: resolved
 category: design
 created: 2026-09-06T18:34:57+09:00
 last_read: 2026-10-18T19:20:48+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T19:54:18+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:agents の行を sessions/<pid>.json 直読みに変更 (commit omyylzss)","done:Busy/Idle は hooks module の事実 (turn) に寄せた (commit zvutlnmz)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -30,14 +30,14 @@ daemon のセッション状態取得元を `claude agents --json` から `<conf
 
 ## 受け入れ条件
 
-- [ ] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る(subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream非公開なので変化に備えたフォールバックを残す
-- [ ] SessionList の Busy / Idle 判定は `claude agents` の値 (transcript の turn 状態)
+- [x] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る(subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream非公開なので変化に備えたフォールバックを残す
+- [x] (llm-gateway のイベントでなく hooks module の事実 (turn の responding / idle) で置き換えた。issue mods-consolidation-and-turn-events と同じ) SessionList の Busy / Idle 判定は `claude agents` の値 (transcript の turn 状態)
       でなく、llm-gateway から届く request/response イベント (cache ring のために
       既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、リクエスト進行中 = Busy (kawaz)。transcript / jsonl は活動判定に
       使わない
-- [ ] `claude agents` 由来の値は「プロセスの存在」「waiting (dialog)」「pid / cwd / name」
+- [x] `claude agents` 由来の値は「プロセスの存在」「waiting (dialog)」「pid / cwd / name」
       にだけ使う
-- [ ] 生 status `"shell"` は Monitor 等の背景 shell が動いている待機中を示す (実測)。
+- [x] 生 status `"shell"` は Monitor 等の背景 shell が動いている待機中を示す (実測)。
       この事実は活動判定の切替後も残す
 
 ## 依存
