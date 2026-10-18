@@ -138,3 +138,5 @@ daemon の上がり幅は、同じプロセスの daemon を通る `server.ts` �
 | hooks | 92.31 | 95.30 | 80 / 85 (据え置き) |
 
 実測 − 2 を切り捨てた値が今の下限を上回ったのは daemon の functions だけ。
+
+hooks の下限は、上の規則どおり実測 (2026-10-18 の `just coverage` で lines 92.30 / functions 95.30) − 2 を切り捨てた 90 / 93 に上げた。

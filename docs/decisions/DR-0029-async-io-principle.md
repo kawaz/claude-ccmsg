@@ -51,7 +51,7 @@ parse 不能な JSON と、`request_id` (空でない文字列) か `op` (文字
 
 一方、遅い op を 1 応答へ畳んだ変更で **`PROTOCOL_VERSION` は 1 のまま**。世代を上げる基準は「稼働中の subscribe client が通らなくなるか」であり (kawaz 裁定)、2-phase 撤去は hello / subscribe / イベント配信のどれにも触れないので世代 1 の subscribe はそのまま動く。ここで世代を上げると稼働中の全 subscribe がhello で拒否され、避けたいはずの張り直しを全セッションに強いることになる。
 
-世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) とCLI の単発コマンド (ランチャーの self-exec で最新版に流れる) だけなので、実害は無い。
+世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) と CLI の単発コマンドだけ。CLI は起動した plugin の版で動く ([DR-0032](./DR-0032-repo-split-protocol-first.md) §2.2-4) ので、plugin を update した後に起動したセッションの CLI は 1 応答の op を使う。
 
 ## 影響
 
