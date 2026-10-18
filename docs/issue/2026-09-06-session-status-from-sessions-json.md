@@ -3,7 +3,7 @@ title: セッション状態の取得元を `claude agents --json` から `sessi
 status: open
 category: design
 created: 2026-09-06T18:34:57+09:00
-last_read:
+last_read: 2026-10-18T19:20:48+09:00
 open_entered: 2026-09-06T18:34:57+09:00
 wip_entered:
 blocked_entered:
