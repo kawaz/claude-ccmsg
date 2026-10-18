@@ -3,7 +3,7 @@ title: hello で登録されたが agents poll に一度も出ない sid が忘�
 status: open
 category: bug
 created: 2026-10-18T16:16:06+09:00
-last_read:
+last_read: 2026-10-18T16:21:48+09:00
 open_entered: 2026-10-18T16:16:06+09:00
 wip_entered:
 blocked_entered:
