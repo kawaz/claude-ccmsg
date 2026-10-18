@@ -4,13 +4,19 @@
 // (react.dev "useSyncExternalStore") ので、「無関係な dispatch で再描画しない」
 // は「snapshot が同じ参照を返す」、「初回 render と購読開始の間の dispatch を
 // 取りこぼさない」は「snapshot が呼ばれた時点の state を読む」に置き換わる。
-//
-// マウントしての検証 (DOM 基盤) は未導入 (docs/TESTING.md)。導入されたら
-// コンポーネント単位の再描画数をここに足す。
+// pausableStore は通知を止めている間の取りこぼしと、再開時の 1 度の通知を
+// 固定する。マウントしての再描画数は use-store-state.dom.test.ts と
+// session-view-hidden.dom.test.ts。
 import { describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import { initialState, type AppState } from "../src/client/store.ts";
-import { createStore, sameJson, selectionReader, shallowEqual } from "../src/client/useStore.ts";
+import {
+  createStore,
+  pausableStore,
+  sameJson,
+  selectionReader,
+  shallowEqual,
+} from "../src/client/useStore.ts";
 
 function peer(sid: string, ws = "main"): PeerInfo {
   return { sid, repo: "repo", ws, cwd: `/work/${sid}` };
@@ -109,5 +115,44 @@ describe("sameJson", () => {
   test("an absent row differs from a present one", () => {
     expect(sameJson<PeerInfo | undefined>(undefined, undefined)).toBe(true);
     expect(sameJson<PeerInfo | undefined>(undefined, peer("a"))).toBe(false);
+  });
+});
+
+describe("pausableStore", () => {
+  test("holds notifications while paused, and notifies once on resume when something was held", () => {
+    const base = createStore(initialState());
+    const store = pausableStore(base);
+    let notified = 0;
+    store.subscribe(() => {
+      notified += 1;
+    });
+    store.pause();
+    store.dispatch({ type: "conn/status", status: "connected" });
+    store.dispatch({ type: "fork/availability", available: true });
+    expect(notified).toBe(0);
+    // 止めている間も state は進む。
+    expect(store.getState()).toBe(base.getState());
+    expect(store.getState().connStatus).toBe("connected");
+
+    store.resume();
+    expect(notified).toBe(1);
+    store.pause();
+    store.resume();
+    expect(notified).toBe(1);
+    store.dispatch({ type: "conn/status", status: "disconnected" });
+    expect(notified).toBe(2);
+  });
+
+  test("an unsubscribed listener is not notified on resume", () => {
+    const store = pausableStore(createStore(initialState()));
+    let notified = 0;
+    const unsubscribe = store.subscribe(() => {
+      notified += 1;
+    });
+    store.pause();
+    store.dispatch({ type: "conn/status", status: "connected" });
+    unsubscribe();
+    store.resume();
+    expect(notified).toBe(0);
   });
 });

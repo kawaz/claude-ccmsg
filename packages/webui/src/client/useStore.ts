@@ -35,6 +35,54 @@ export function createStore(initial: AppState): Store {
   };
 }
 
+/** A {@link Store} that can hold its change notifications — what
+ * {@link pausableStore} returns. */
+export interface PausableStore extends Store {
+  /** Stop notifying the listeners subscribed here. */
+  pause(): void;
+  /** Notify again, and notify once now if a dispatch was held meanwhile. */
+  resume(): void;
+}
+
+/**
+ * `base` seen by a part of the page that stays mounted while hidden (a session
+ * view the LRU keeps): state and dispatch pass straight through, and only the
+ * notifications to the listeners subscribed here can be held. While paused,
+ * the components reading through it do not render for changes nobody can
+ * see; on resume each of them checks its slice against the current state, so
+ * what changed while hidden shows up in one go. `getState` is never held:
+ * whatever renders or runs for another reason reads the current state.
+ */
+export function pausableStore(base: Store): PausableStore {
+  let paused = false;
+  let held = false;
+  const listeners = new Set<() => void>();
+  return {
+    getState: () => base.getState(),
+    dispatch: (action) => base.dispatch(action),
+    subscribe(listener) {
+      listeners.add(listener);
+      const unsubscribe = base.subscribe(() => {
+        if (paused) held = true;
+        else listener();
+      });
+      return () => {
+        listeners.delete(listener);
+        unsubscribe();
+      };
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      if (!held) return;
+      held = false;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
 /**
  * The slice `selector` picks out of `store`, re-rendering the calling
  * component only when that slice changes (by `isEqual`, `Object.is` by

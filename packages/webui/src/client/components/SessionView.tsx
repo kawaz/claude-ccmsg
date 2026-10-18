@@ -4,7 +4,7 @@
 // state.view is "session" or "timeline"). Files/Timeline/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
@@ -20,8 +20,8 @@ import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
 import { hasSessionTranscript } from "../utils.ts";
 import { hitFromLive, isSessionPinned, pinnedHitForSid } from "../pinned-sessions.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
-import { useApp } from "../context.ts";
-import { sameJson, shallowEqual, useStoreState } from "../useStore.ts";
+import { AppContext, useApp } from "../context.ts";
+import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStore.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./timeline/Timeline.tsx";
@@ -107,7 +107,17 @@ export function SessionView({
   agent: AgentRef | null;
   active: boolean;
 }) {
-  const { store, ws } = useApp();
+  const { store: appStore, ws } = useApp();
+  // この表示と配下が読む store。隠れている間 (App の LRU が別セッションの表示を
+  // mount したまま残している間) は変更の通知を止め、誰にも見えない変化で
+  // Timeline ごと描き直さない。表示に戻った時に、隠れている間の変化を 1 度に
+  // 映す。配下へは context で配る。
+  const [store] = useState(() => pausableStore(appStore));
+  const app = useMemo(() => ({ store, ws }), [store, ws]);
+  useLayoutEffect(() => {
+    if (active) store.resume();
+    else store.pause();
+  }, [active, store]);
   const slice = useStoreState(
     store,
     (s) => ({
@@ -310,129 +320,131 @@ export function SessionView({
   const sessionStatus = slice.sessionStatus;
 
   return (
-    <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
-      <div class="session-tabs">
-        {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
-         * you can middle-click into a second window is worth more here than
-         * one that only flips state. Timeline stays present-but-disabled when
-         * the session declares no transcript: its absence would silently
-         * change the shape of the row between sessions.
-         *
-         * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
-         * Timeline (similar views adjacent).
-         *
-         * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
-         * open (= state.currentAgent set) — navigating to `statusHref(sid)`
-         * clears currentAgent, which a <button> could not do; the tab
-         * resolution above (`state.currentAgent ? "timeline" : ...`) would
-         * keep forcing "timeline" otherwise. */}
-        <Tabs
-          class="session-tabs-list"
-          tabClass="session-tab"
-          label="セッションの表示"
-          selected={tab}
-          items={sessionTabItems(sid, hasTranscript, hasTerminal)}
-        />
-        {pinCwd ? (
-          <button
-            type="button"
-            class={"session-pin-toggle" + (pinned ? " active" : "")}
-            aria-pressed={pinned}
-            aria-label={pinned ? "ピン解除" : "ピン留め"}
-            title={pinned ? "ピン解除" : "ピン留め"}
-            onClick={() => store.dispatch({ type: "pinned/toggled", hit: pinHit })}
-          >
-            {pinned ? "⭐" : "☆"}
-          </button>
-        ) : null}
-      </div>
-      {visitedTabs.has("files") ? (
-        <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
-          <FilesPanes
-            sid={sid}
-            tree={tree}
-            peer={peer}
-            externalFiles={sessionStatus?.external_files ?? []}
-            workspaceFolders={sessionStatus?.workspace_folders ?? []}
+    <AppContext.Provider value={app}>
+      <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
+        <div class="session-tabs">
+          {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
+           * you can middle-click into a second window is worth more here than
+           * one that only flips state. Timeline stays present-but-disabled when
+           * the session declares no transcript: its absence would silently
+           * change the shape of the row between sessions.
+           *
+           * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
+           * Timeline (similar views adjacent).
+           *
+           * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
+           * open (= state.currentAgent set) — navigating to `statusHref(sid)`
+           * clears currentAgent, which a <button> could not do; the tab
+           * resolution above (`state.currentAgent ? "timeline" : ...`) would
+           * keep forcing "timeline" otherwise. */}
+          <Tabs
+            class="session-tabs-list"
+            tabClass="session-tab"
+            label="セッションの表示"
+            selected={tab}
+            items={sessionTabItems(sid, hasTranscript, hasTerminal)}
           />
+          {pinCwd ? (
+            <button
+              type="button"
+              class={"session-pin-toggle" + (pinned ? " active" : "")}
+              aria-pressed={pinned}
+              aria-label={pinned ? "ピン解除" : "ピン留め"}
+              title={pinned ? "ピン解除" : "ピン留め"}
+              onClick={() => store.dispatch({ type: "pinned/toggled", hit: pinHit })}
+            >
+              {pinned ? "⭐" : "☆"}
+            </button>
+          ) : null}
         </div>
-      ) : null}
-      {visitedTabs.has("timeline") ? (
-        <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
-          {hasTranscript ? (
-            (() => {
-              const graph = sessionStatus?.agent_tree;
-              return graph &&
-                (graph.teammates.length > 0 ||
-                  graph.agents.length > 0 ||
-                  graph.workflows.length > 0) ? (
-                <TimelinePanes
-                  sid={sid}
-                  agentTree={graph}
-                  timeline={tree.timeline}
-                  search={tree.timelineSearch}
-                  sessionStatus={sessionStatus}
-                  agent={agent}
-                  active={active}
-                  visible={active && tab === "timeline"}
-                />
-              ) : (
-                <Timeline
-                  key={sid}
-                  sid={sid}
-                  timeline={tree.timeline}
-                  search={tree.timelineSearch}
-                  sessionStatus={sessionStatus}
-                  agent={agent}
-                  active={active}
-                  visible={active && tab === "timeline"}
-                />
-              );
-            })()
-          ) : (
-            <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
-          )}
-        </div>
-      ) : null}
-      {visitedTabs.has("terminal") && hasTerminal ? (
-        <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
-          {terminalAbsence !== null || !hyouiSessionId ? (
-            <div class="terminal-pane">
-              <p id="empty-state">{terminalAbsence}</p>
-            </div>
-          ) : (
-            <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
-          )}
-        </div>
-      ) : null}
-      {visitedTabs.has("status") ? (
-        <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
-          {hasTranscript && !statusError ? (
-            <StatusPanel
-              snapshot={sessionStatus}
+        {visitedTabs.has("files") ? (
+          <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
+            <FilesPanes
               sid={sid}
-              onKill={(opts) => ws.sessionKill(sid, opts)}
-              onLoadEnv={() => ws.sessionEnv(sid)}
-              onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
+              tree={tree}
+              peer={peer}
+              externalFiles={sessionStatus?.external_files ?? []}
+              workspaceFolders={sessionStatus?.workspace_folders ?? []}
             />
-          ) : hasTranscript ? (
-            <p id="empty-state">Status を読み込めません: {statusError}</p>
-          ) : (
-            <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
-          )}
-        </div>
-      ) : null}
-      {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
-       * (files/timeline/status/terminal) によらず常時表示する —
-       * position:fixed の floating FAB なので裏のタブコンテンツと干渉しない。
-       * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
-       * attachments state も保たれる (draft は localStorage にも保存)。
-       * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
-       * (ccmsg 接続済み) か `claude agents` に居る (ccmsg 未起動だがプロセスは
-       * 動いている)。入力はセッションの hooks module が受けるので、subscribe
-       * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
-       * セッション) は宛先が存在しないのでガードのまま。 */}
-      {peer || agentForSid ? <SessionInputComposer sid={sid} /> : null}
-    </main>
+          </div>
+        ) : null}
+        {visitedTabs.has("timeline") ? (
+          <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
+            {hasTranscript ? (
+              (() => {
+                const graph = sessionStatus?.agent_tree;
+                return graph &&
+                  (graph.teammates.length > 0 ||
+                    graph.agents.length > 0 ||
+                    graph.workflows.length > 0) ? (
+                  <TimelinePanes
+                    sid={sid}
+                    agentTree={graph}
+                    timeline={tree.timeline}
+                    search={tree.timelineSearch}
+                    sessionStatus={sessionStatus}
+                    agent={agent}
+                    active={active}
+                    visible={active && tab === "timeline"}
+                  />
+                ) : (
+                  <Timeline
+                    key={sid}
+                    sid={sid}
+                    timeline={tree.timeline}
+                    search={tree.timelineSearch}
+                    sessionStatus={sessionStatus}
+                    agent={agent}
+                    active={active}
+                    visible={active && tab === "timeline"}
+                  />
+                );
+              })()
+            ) : (
+              <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
+            )}
+          </div>
+        ) : null}
+        {visitedTabs.has("terminal") && hasTerminal ? (
+          <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
+            {terminalAbsence !== null || !hyouiSessionId ? (
+              <div class="terminal-pane">
+                <p id="empty-state">{terminalAbsence}</p>
+              </div>
+            ) : (
+              <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
+            )}
+          </div>
+        ) : null}
+        {visitedTabs.has("status") ? (
+          <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
+            {hasTranscript && !statusError ? (
+              <StatusPanel
+                snapshot={sessionStatus}
+                sid={sid}
+                onKill={(opts) => ws.sessionKill(sid, opts)}
+                onLoadEnv={() => ws.sessionEnv(sid)}
+                onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
+              />
+            ) : hasTranscript ? (
+              <p id="empty-state">Status を読み込めません: {statusError}</p>
+            ) : (
+              <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
+            )}
+          </div>
+        ) : null}
+        {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
+         * (files/timeline/status/terminal) によらず常時表示する —
+         * position:fixed の floating FAB なので裏のタブコンテンツと干渉しない。
+         * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
+         * attachments state も保たれる (draft は localStorage にも保存)。
+         * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
+         * (ccmsg 接続済み) か `claude agents` に居る (ccmsg 未起動だがプロセスは
+         * 動いている)。入力はセッションの hooks module が受けるので、subscribe
+         * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
+         * セッション) は宛先が存在しないのでガードのまま。 */}
+        {peer || agentForSid ? <SessionInputComposer sid={sid} /> : null}
+      </main>
+    </AppContext.Provider>
   );
 }
