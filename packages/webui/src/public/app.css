@@ -1348,6 +1348,29 @@ a {
   min-width: 2em;
 }
 
+/* keepalive の停止ボタンと停止中の印。model / effort と同じ弱い文字の大きさで
+ * 3 行目の末尾に置き、縮めない (押せるか消えるかの二値)。色は延命の輪と同じ
+ * トークン: 何を止めるのか (黄の輪が示す延命) を色で結ぶ。 */
+.session-keepalive {
+  flex: 0 0 auto;
+  font-size: var(--font-size-2xs);
+  line-height: 1;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--cache-keepalive-ring);
+  cursor: pointer;
+}
+
+.session-keepalive-paused {
+  color: var(--fg-muted);
+  cursor: default;
+}
+
+.session-keepalive-failed {
+  color: var(--danger);
+}
+
 /* 4 行目: project path。左省略 (右端が常に見える) — direction:rtl が
  * ellipsis を行頭側に回す唯一の CSS 手段で、その副作用 (中立文字の並べ替え)
  * は中身の <bdi dir="ltr"> が吸収する (SessionList.tsx のコメント参照)。

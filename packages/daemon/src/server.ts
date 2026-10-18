@@ -68,6 +68,7 @@ import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
 import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
 import { fetchLlmStatus, LlmStatusRefresher } from "./llm-status.ts";
+import { pauseLlmKeepalive } from "./llm-keepalive-pause.ts";
 import {
   createSessionErrorsStore,
   sessionErrorEntries,
@@ -1559,6 +1560,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // gateway かどうかは usage を返せるかと独立 (古い gateway は usage だけ)
       // なので capability も独立に返す。
       const llmStatusAvailable = newId.role === "user" && !!daemon.config.llm_status_url;
+      // keepalive の停止 endpoint も同じ扱い。他の 3 つとは独立に設定できる。
+      const llmKeepalivePauseAvailable =
+        newId.role === "user" && !!daemon.config.llm_keepalive_pause_url;
       // sandbox origin (DR-0030 §7.1) も同じ流儀。template 自体は返さない —
       // client が触るのは sandbox_grant が組み立てた完成 URL だけなので、
       // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
@@ -1576,6 +1580,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
         ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
         ...(llmStatusAvailable ? { llm_status_available: true } : {}),
+        ...(llmKeepalivePauseAvailable ? { llm_keepalive_pause_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
         ...(forkAvailable ? { fork_available: true } : {}),
       });
@@ -2567,6 +2572,34 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const status = await fetchLlmStatus(statusUrl, req.refresh === true);
       if (!status.ok) sendErr(conn, status.code, status.msg);
       else send(conn, { ok: true, ...status.data });
+      return;
+    }
+
+    // Same role rationale as the three above: stopping a session's keepalive
+    // is the person's call about what the host's gateway spends, made from
+    // outside the session so that the session's context stays as it was.
+    case "llm_keepalive_pause": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'llm_keepalive_pause' requires user role");
+        return;
+      }
+      const pauseUrl = daemon.config.llm_keepalive_pause_url;
+      if (!pauseUrl) {
+        sendErr(
+          conn,
+          ErrorCode.llm_keepalive_pause_not_configured,
+          "llm keepalive pause endpoint is not configured",
+        );
+        return;
+      }
+      const paused = await pauseLlmKeepalive(pauseUrl, req.sid);
+      if (!paused.ok) {
+        sendErr(conn, paused.code, paused.msg);
+        return;
+      }
+      daemon.llmRequests.pause(req.sid, Date.now());
+      broadcastLlmRequests(daemon);
+      send(conn, { ok: true });
       return;
     }
 

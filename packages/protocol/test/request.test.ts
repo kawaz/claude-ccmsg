@@ -173,6 +173,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "llm_status", refresh: false },
     bad: [{ op: "llm_status", refresh: 1 }],
   },
+  llm_keepalive_pause: {
+    ok: { op: "llm_keepalive_pause", sid: SID },
+    bad: [{ op: "llm_keepalive_pause" }, { op: "llm_keepalive_pause", sid: 1 }],
+  },
   fs_list: {
     ok: { op: "fs_list", sid: SID, path: "src" },
     bad: [{ op: "fs_list" }, { op: "fs_list", sid: SID, path: 1 }],

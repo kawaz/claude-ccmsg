@@ -367,6 +367,10 @@ export interface WsHandle {
    * same report unsolicited (ev:"llm_status") after a 529, so a client that
    * has asked once stays current without asking again. */
   llmStatus(opts?: { refresh?: boolean }): Promise<ReplyOf<"llm_status">>;
+  /** Stop session `sid`'s prompt-cache keepalive at the gateway (user role
+   * only). The daemon then pushes the session's request events marked
+   * `cache_paused` until the session's next request starts it again. */
+  llmKeepalivePause(sid: string): Promise<ReplyOf<"llm_keepalive_pause">>;
 }
 
 export function createWsClient(
@@ -582,6 +586,11 @@ export function createWsClient(
         dispatch({
           type: "llm-status/availability",
           available: hello.llm_status_available === true,
+        });
+        // keepalive の停止も同じく、省略時は false へ明示的に落とす。
+        dispatch({
+          type: "llm-keepalive-pause/availability",
+          available: hello.llm_keepalive_pause_available === true,
         });
         if (hello.llm_status_available === true) {
           void send({
@@ -1004,5 +1013,6 @@ export function createWsClient(
         op: "llm_status",
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
+    llmKeepalivePause: (sid) => send({ op: "llm_keepalive_pause", sid }),
   };
 }

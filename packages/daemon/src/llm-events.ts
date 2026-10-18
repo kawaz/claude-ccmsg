@@ -167,6 +167,20 @@ export class LlmRequestCache {
   private sidsByPrefix = new Map<string, Set<string>>();
   /** Monotonic first-seen counter, the tiebreak among a session's series. */
   private sequence = 0;
+  /** When each session's keepalive was stopped from here (`pause`), epoch ms. */
+  private pausedAt = new Map<string, number>();
+
+  /** Note that the gateway stopped session `sid`'s keepalive at `at`.
+   *
+   * The gateway announces nothing when it pauses, and the chain its last
+   * event projected (`next_keepalive_at` / `cache_until`) is not going to be
+   * sent. So until a series of that session reports a request after the
+   * pause — the real request that starts its keepalive again — the daemon
+   * serves it as paused (`cache_paused`), which is what makes the ring stop
+   * promising the extension. */
+  pause(sid: string, at: number): void {
+    this.pausedAt.set(sid, at);
+  }
 
   /** Record one event, keeping the newer of the two when the series already
    * had one — events are near-ordered in practice, but a reconnect can
@@ -270,9 +284,20 @@ export class LlmRequestCache {
     }
     for (const [sid, series] of fallback) mainKey.set(sid, series);
     for (const [sid, series] of stated) mainKey.set(sid, series);
-    return live.map((series) => ({
-      ...series.info,
-      main: mainKey.get(series.info.session_id) === series,
-    }));
+    const stillPaused = new Set<string>();
+    const out = live.map((series) => {
+      const sid = series.info.session_id;
+      const pausedAt = this.pausedAt.get(sid);
+      const paused = pausedAt !== undefined && series.info.ts <= pausedAt;
+      if (paused) stillPaused.add(sid);
+      return {
+        ...series.info,
+        main: mainKey.get(sid) === series,
+        ...(paused ? { cache_paused: true } : {}),
+      };
+    });
+    // A pause no live series predates any more has nothing left to mark.
+    for (const sid of this.pausedAt.keys()) if (!stillPaused.has(sid)) this.pausedAt.delete(sid);
+    return out;
   }
 }

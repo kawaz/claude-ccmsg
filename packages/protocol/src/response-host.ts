@@ -404,3 +404,11 @@ export const LlmStatusResponseSchema = v.object({
   ...LlmStatusReportSchema.entries,
 });
 export type LlmStatusResponse = Output<typeof LlmStatusResponseSchema>;
+
+// --- llm_keepalive_pause -----------------------------------------------------
+
+/** The gateway took the pause. */
+export const LlmKeepalivePauseResponseSchema = v.object({
+  ok: v.literal(true),
+});
+export type LlmKeepalivePauseResponse = Output<typeof LlmKeepalivePauseResponseSchema>;

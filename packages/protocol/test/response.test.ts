@@ -204,6 +204,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       llm_usage_available: true,
       llm_stats_available: true,
       llm_status_available: true,
+      llm_keepalive_pause_available: true,
       sandbox_available: true,
       fork_available: true,
     },
@@ -388,6 +389,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       },
     },
   ],
+  llm_keepalive_pause: [{ ok: true }],
   llm_status: [
     {
       ok: true,

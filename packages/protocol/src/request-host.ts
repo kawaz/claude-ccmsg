@@ -92,3 +92,16 @@ export const LlmStatusRequestSchema = v.object({
   refresh: v.optional(v.boolean()),
 });
 export type LlmStatusRequest = Output<typeof LlmStatusRequestSchema>;
+
+/** Stop the gateway's prompt-cache keepalive for one session, by posting its
+ * id to the gateway endpoint named by `<configDir>/config.json`'s
+ * `llm_keepalive_pause_url` (user role only, same posture as `llm_usage`: the
+ * daemon posts because the gateway serves no CORS headers, and its address
+ * stays out of the browser). Asked from outside the session so that stopping
+ * it adds nothing to its context. There is no resume: the session's next real
+ * request starts the keepalive again on the gateway's side. */
+export const LlmKeepalivePauseRequestSchema = v.object({
+  op: v.literal("llm_keepalive_pause"),
+  sid: v.string(),
+});
+export type LlmKeepalivePauseRequest = Output<typeof LlmKeepalivePauseRequestSchema>;

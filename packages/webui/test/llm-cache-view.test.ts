@@ -10,6 +10,7 @@ import {
   cacheRemainingMs,
   cacheRingPhase,
   cacheRingProps,
+  keepaliveState,
 } from "../src/client/llm-cache-view.ts";
 import { defined } from "./helpers.ts";
 
@@ -56,6 +57,35 @@ const chained = (
   next_keepalive_at: tsAgo(tsAgoMs) + INTERVAL_MS,
   cache_until: tsAgo(sinceAgo) + untilCount * INTERVAL_MS + HOUR_MS,
   ...over,
+});
+
+describe("keepaliveState", () => {
+  test("is running while a marker is planned for a warm cache", () => {
+    expect(keepaliveState(firstCache(10 * 60_000, 45 * 60_000), NOW)).toBe("running");
+  });
+
+  test("is running while a chain of markers is under way", () => {
+    const chained: CacheWindow = {
+      ...firstCache(10 * 60_000, 45 * 60_000),
+      cache_count: 2,
+      next_keepalive_at: undefined,
+    };
+    expect(keepaliveState(chained, NOW)).toBe("running");
+  });
+
+  // Stopped: the cache still runs to its own deadline, and says so.
+  test("is paused once the keepalive was stopped and the cache is still warm", () => {
+    expect(
+      keepaliveState({ ...firstCache(10 * 60_000, 45 * 60_000), cache_paused: true }, NOW),
+    ).toBe("paused");
+  });
+
+  test("is null for a cold cache, and for one no keepalive was planned for", () => {
+    expect(
+      keepaliveState({ ...firstCache(2 * HOUR_MS, 45 * 60_000), cache_paused: true }, NOW),
+    ).toBeNull();
+    expect(keepaliveState(win(60_000, HOUR_MS), NOW)).toBeNull();
+  });
 });
 
 describe("cacheRemainingMs", () => {

@@ -36,6 +36,7 @@ import {
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
+import { KeepaliveControl } from "./KeepaliveControl.tsx";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 
@@ -618,6 +619,7 @@ function SessionRowItem({
       <div class="session-line3">
         <SessionIdText sid={row.sid} />
         <SessionModelEffort info={modelEffort} />
+        <KeepaliveControl sid={row.sid} request={cacheRequest} />
       </div>
       {/* 4 行目: project path。左を省略して右端 (= worktree 名まで) を常時
        * 見せる。全文は行の title 属性で読める。 */}

@@ -21,6 +21,7 @@ import {
   SandboxRevokeResponseSchema,
 } from "./response-files.ts";
 import {
+  LlmKeepalivePauseResponseSchema,
   LlmStatsResponseSchema,
   LlmStatusResponseSchema,
   LlmUsageResponseSchema,
@@ -119,6 +120,7 @@ export const RESPONSE_SCHEMAS = {
   llm_usage: LlmUsageResponseSchema,
   llm_stats: LlmStatsResponseSchema,
   llm_status: LlmStatusResponseSchema,
+  llm_keepalive_pause: LlmKeepalivePauseResponseSchema,
   fs_list: FsListResponseSchema,
   fs_read: FsReadResponseSchema,
   fs_read_external: FsReadResponseSchema,

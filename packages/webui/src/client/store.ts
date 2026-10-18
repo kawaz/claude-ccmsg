@@ -269,6 +269,10 @@ export interface AppState {
    * できるので flag も独立で、これが false の環境では service status strip も
    * topbar の badge も出さない。 */
   llmStatusAvailable: boolean;
+  /** hello response の `llm_keepalive_pause_available`。daemon が gateway の
+   * keepalive 停止 endpoint を設定している時だけ true で、これが false の
+   * 環境ではセッション行に keepalive の停止操作を出さない。 */
+  llmKeepalivePauseAvailable: boolean;
   /** 直近の upstream service status report。接続時と /usage を開いた時の
    * `llm_status` 応答、および daemon が 529 を観測して push してくる
    * ev:"llm_status" で更新される。まだ 1 度も取れていなければ null (= badge
@@ -414,6 +418,7 @@ export function initialState(): AppState {
     llmUsageProbes: new Map(),
     llmStatsAvailable: false,
     llmStatusAvailable: false,
+    llmKeepalivePauseAvailable: false,
     llmStatus: null,
     sandboxAvailable: false,
     forkAvailable: false,
@@ -478,6 +483,7 @@ export type Action =
   | { type: "llm-usage/availability"; available: boolean }
   | { type: "llm-stats/availability"; available: boolean }
   | { type: "llm-status/availability"; available: boolean }
+  | { type: "llm-keepalive-pause/availability"; available: boolean }
   // Whole-report replacement, whichever way it arrived (the `llm_status`
   // answer or the daemon's ev:"llm_status" push): the gateway reports the
   // state of every configured service every time, so a service that stopped
@@ -1072,6 +1078,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "llm-status/loaded":
       return { ...state, llmStatus: action.report };
+    case "llm-keepalive-pause/availability":
+      return { ...state, llmKeepalivePauseAvailable: action.available };
     case "sandbox/availability":
       return { ...state, sandboxAvailable: action.available };
     case "fork/availability":

@@ -89,6 +89,22 @@ export function cacheRingPhase(window: CacheWindow, now: number): RingPhase | nu
   return { phase: "window", start: window.ts, end };
 }
 
+/** Where the gateway's keepalive stands for the cache `window` describes:
+ * "running" while it plans to extend a cache that is still warm (a marker
+ * planned, or a chain under way), "paused" when it was stopped and the cache
+ * runs out at its own deadline, null when there is nothing to stop — the
+ * cache is cold, or no keepalive was ever planned for it. */
+export type KeepaliveState = "running" | "paused";
+
+export function keepaliveState(window: CacheWindow, now: number): KeepaliveState | null {
+  if (llmCacheWindowEndMs(window) <= now) return null;
+  if (window.cache_paused === true) return "paused";
+  const planned = window.next_keepalive_at !== undefined && window.next_keepalive_at > now;
+  const chained =
+    (window.cache_count ?? 0) >= 1 && window.cache_until !== undefined && window.cache_until > now;
+  return planned || chained ? "running" : null;
+}
+
 /** Milliseconds left in `window`. 0 once it has closed, so callers can treat
  * "expired" and "never had one" the same way. */
 export function cacheRemainingMs(window: CacheWindow, now: number): number {

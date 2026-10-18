@@ -733,6 +733,24 @@ describe("loadConfig", () => {
     });
   });
 
+  // llm_keepalive_pause_url: the gateway's keepalive pause endpoint, a fourth
+  // independent key for the same reason as the three above.
+  describe("llm_keepalive_pause_url", () => {
+    test("valid https URL is retained", async () => {
+      const url = "https://gw.example/llm-gateway/keepalive/pause";
+      fs.writeFileSync(file, JSON.stringify({ llm_keepalive_pause_url: url }));
+      expect((await loaded()).llm_keepalive_pause_url).toBe(url);
+      expect(warnings).toEqual([]);
+    });
+
+    test("non-string / empty / non-http does not read", async () => {
+      for (const value of [42, "", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ llm_keepalive_pause_url: value }));
+        expect(await refusal()).toEqual([expect.stringContaining("llm_keepalive_pause_url")]);
+      }
+    });
+  });
+
   // A key the configuration does not have is a typo or a retired key: it does
   // not read, with its name, rather than doing nothing without a word.
   describe("unknown keys", () => {

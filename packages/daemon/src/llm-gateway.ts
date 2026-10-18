@@ -73,6 +73,9 @@ export interface GatewayRequest {
   code: ErrorCodeType;
   maxBytes: number;
   timeoutMs: number;
+  /** Posted as the JSON body of a POST; absent, the document is fetched with
+   * a GET. */
+  post?: JsonValue;
 }
 
 /** Fetch one gateway document and hand back its JSON, or the one error every
@@ -88,7 +91,13 @@ export async function fetchGatewayJson(
   try {
     res = await deps.fetch(req.url, {
       signal: AbortSignal.timeout(req.timeoutMs),
-      headers: { accept: "application/json" },
+      ...(req.post === undefined
+        ? { headers: { accept: "application/json" } }
+        : {
+            method: "POST",
+            headers: { accept: "application/json", "content-type": "application/json" },
+            body: JSON.stringify(req.post),
+          }),
     });
   } catch (e) {
     const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");

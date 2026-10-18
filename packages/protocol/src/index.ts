@@ -246,6 +246,11 @@ export const ErrorCode = {
   // status at all, and the webui hides only the part it cannot fill.
   llm_status_not_configured: "llm_status_not_configured",
   llm_status_unavailable: "llm_status_unavailable",
+  // llm_keepalive_pause: the same two distinctions, for the gateway's
+  // keepalive pause endpoint (`llm_keepalive_pause_url`), configured on its
+  // own like the three above.
+  llm_keepalive_pause_not_configured: "llm_keepalive_pause_not_configured",
+  llm_keepalive_pause_unavailable: "llm_keepalive_pause_unavailable",
   // sandbox_grant: `<configDir>/config.json` has no usable
   // `sandbox_origin_template`, so there is no origin to mint a URL on
   // (DR-0030 §7.1). Same "operator never set this up" role

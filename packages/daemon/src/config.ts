@@ -308,6 +308,11 @@ const CcmsgConfigObjectSchema = v.strictObject({
    * 返す) で、capability を独立に持てないと「押せば必ずエラー」の strip が
    * 出る。llm_usage_url / llm_stats_url が既に独立キーなのと同じ理由。 */
   llm_status_url: v.optional(HttpUrlSchema),
+  /** LLM gateway の keepalive 停止 endpoint URL (`/llm-gateway/keepalive/pause`)
+   * — webui のセッション行の停止操作が `llm_keepalive_pause` op 経由でここに
+   * session_id を POST する。usage / stats / status と同じ理由で独立のキーに
+   * し、URL を他から導かない。未設定なら webui は停止操作を出さない。 */
+  llm_keepalive_pause_url: v.optional(HttpUrlSchema),
   webhooks: v.optional(WebhooksSchema),
   /** 非信頼コンテンツを配信する sandbox origin の URL テンプレート (DR-0030
    * §7.1)、例: `https://ccmsg-files-{gid}.host.example`。未設定なら sandbox

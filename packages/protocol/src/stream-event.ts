@@ -166,9 +166,11 @@ export const LlmRequestInfoSchema = v.object({
    * hour-long cache the keepalive strategy is built around). A LENGTH, so the
    * unit is in the name — every instant beside it is epoch ms. */
   cache_ttl_secs: v.optional(v.number()),
-  /** True while the gateway is holding off on keepalive markers for this
-   * series. Stated on every event of a series the strategy covers, so absent
-   * means "not a series the gateway keeps alive", never "running". */
+  /** True while no keepalive is sent for this series: as the gateway states
+   * it, or set by the daemon on the session's events after an
+   * `llm_keepalive_pause` until the session's next request (the gateway
+   * announces nothing on a pause). The chain the event projects
+   * (`next_keepalive_at` / `cache_until`) is then not going to be sent. */
   cache_paused: v.optional(v.boolean()),
   /** Epoch ms of the real request that started the current keepalive chain —
    * the same value on the request itself and on every marker's return trip,

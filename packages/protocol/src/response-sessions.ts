@@ -53,6 +53,11 @@ export const HelloResponseSchema = v.object({
    * and the webui then shows the quota screen with no service strip rather
    * than a strip that can only ever error. */
   llm_status_available: v.optional(v.boolean()),
+  /** True when the daemon has a usable `llm_keepalive_pause_url` configured.
+   * Same posture and same independence as the flags above: without it the
+   * webui offers no way to stop a session's keepalive, rather than a button
+   * that can only ever error. */
+  llm_keepalive_pause_available: v.optional(v.boolean()),
   /** True when the daemon has a usable `sandbox_origin_template` configured
    * (DR-0030 §7.1), user-role hellos only. Same posture as the two flags
    * above: the template itself stays server-side (the client only ever
