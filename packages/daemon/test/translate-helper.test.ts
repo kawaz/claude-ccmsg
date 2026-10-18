@@ -384,7 +384,7 @@ describe("translateWatchdogTimeoutMs", () => {
   });
 });
 
-// The real helper test is deliberately gated by the generated binary. Linux CI
+// The real helper tests are deliberately gated by the generated binary. Linux CI
 // and a fresh checkout do not build it; a macOS developer who ran the build
 // recipe exercises Translation.framework itself in the normal bun test suite.
 const helperBinary = defaultTranslateHelperPaths().binary;
@@ -393,32 +393,51 @@ const HelperResponseTextSchema = jsonText(
   v.object({ id: v.string(), results: v.array(TranslateResultSchema) }),
 );
 const realHelperTest = fs.existsSync(helperBinary) ? test : test.skip;
+
 realHelperTest(
-  "the built Swift helper translates a mixed-text batch over JSONL",
+  "the built Swift helper answers an empty batch and exits at end of input",
   async () => {
-    // The Swift helper cold-spawns Translation.framework, which under an 8x
-    // parallel suite run has been observed to blow past the 5000ms default per-
-    // test deadline. Give it a generous ceiling — this test is a smoke check on
-    // the real binary, not a latency bound.
+    // The helper's own empty-batch answer, before any Translation.framework call:
+    // the binary's JSONL framing and lifecycle, with nothing on the OS's model.
     const proc = Bun.spawn([helperBinary], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    const stdin = proc.stdin;
-    await stdin.write(
-      JSON.stringify({
-        id: "mixed",
-        texts: ["The build completed successfully.ここから日本語です。", "これは日本語です。"],
-      }) + "\n",
-    );
-    await stdin.end();
+    await proc.stdin.write(JSON.stringify({ id: "probe", texts: [] }) + "\n");
+    await proc.stdin.end();
     const output = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
     expect(await proc.exited).toBe(0);
     expect(stderr).toBe("");
     const read = parseWith(HelperResponseTextSchema, output.trim());
     if (!read.ok) throw new Error(`not a helper answer: ${read.failure.summary}: ${output}`);
-    const response = read.value;
-    expect(response.id).toBe("mixed");
-    expect(response.results).toHaveLength(2);
-    const [first, second] = response.results;
+    expect(read.value).toEqual({ id: "probe", results: [] });
+  },
+);
+
+/** How long the real translation below may take before the service gives up.
+ * Translation.framework runs on the OS's shared on-device model: alone it
+ * answers this batch in ~1s, but while the OS's own periodic text analysis
+ * uses the model a request was measured at 10-30s (issue
+ * just-test-one-timeout-unidentified). The deadline only has to tell a wedged
+ * helper from a queued one; the watchdog's own behaviour is covered by the
+ * mock-helper tests above. */
+const REAL_TRANSLATION_DEADLINE_MS = 25_000;
+
+realHelperTest(
+  "the daemon's translate service translates a mixed-text batch with the built Swift helper",
+  async () => {
+    // Default source and binary paths, the persistent child, JSONL id
+    // correlation and the daemon's response parser — everything the daemon's
+    // translate op runs, except the op plumbing (translate-op.test.ts).
+    const service = createTranslateService({
+      watchdogTimeoutMs: () => REAL_TRANSLATION_DEADLINE_MS,
+    });
+    services.push(service);
+    const reply = await service.translate([
+      "The build completed successfully.ここから日本語です。",
+      "これは日本語です。",
+    ]);
+    if (!reply.ok) throw new Error(`translate failed: ${reply.code}: ${reply.msg}`);
+    expect(reply.results).toHaveLength(2);
+    const [first, second] = reply.results;
     expect(first?.ok).toBe(true);
     expect(second?.ok).toBe(true);
     if (first?.ok !== true || second?.ok !== true) throw new Error("a text was not translated");
@@ -426,5 +445,7 @@ realHelperTest(
     expect(first.text).not.toContain("The build completed successfully.");
     expect(second.text).toBe("これは日本語です。");
   },
-  30_000,
+  // Past the service's deadline, so a slow model fails with the service's
+  // "timed out" error rather than the runner's bare timeout.
+  REAL_TRANSLATION_DEADLINE_MS + 5_000,
 );
