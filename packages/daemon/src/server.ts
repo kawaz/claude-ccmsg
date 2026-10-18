@@ -86,6 +86,7 @@ import {
   type SessionUserInputStore,
 } from "./session-user-input.ts";
 import { createNetworkWatch, fileNetworkSource, type NetworkWatch } from "./network-watch.ts";
+import { holdTestLifeline, type TestLifeline } from "./test-lifeline.ts";
 import {
   createSessionWakeState,
   recordWoken,
@@ -270,6 +271,9 @@ export interface Daemon {
   /** Host network online/offline transitions, the trigger for waking sessions
    * stalled on an API error. Null where no monitor could be started. */
   networkWatch: NetworkWatch | null;
+  /** The test run this daemon lives no longer than (test-lifeline.ts). Null
+   * outside tests. */
+  testLifeline: TestLifeline | null;
   /** Which stalls have already been woken, so a flapping link pokes each
    * stopped session at most once per stall. */
   sessionWake: SessionWakeState;
@@ -386,6 +390,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
     networkWatch: null,
+    testLifeline: null,
     sessionWake: createSessionWakeState(),
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
@@ -2685,6 +2690,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   if (daemon.shuttingDown) return;
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
+  daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
@@ -2974,6 +2980,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     // Enabling the watch adds a consumer of the api-error fold, so the watched
     // set has to be recomputed with it in place.
     if (daemon.networkWatch.enabled) syncSessionErrors(daemon);
+  }
+
+  // A daemon a test run spawned holds that run's lifeline before it accepts
+  // anyone, so a client that reached it knows it is held; one whose run is
+  // already gone shuts down without ever listening.
+  const lifeline = process.env.CCMSG_TEST_LIFELINE;
+  if (lifeline && lifeline !== "") {
+    daemon.testLifeline = await holdTestLifeline(
+      lifeline,
+      paths.stateDir,
+      () => void shutdownDaemon(daemon, "test run ended"),
+    );
+    if (daemon.shuttingDown) return;
   }
 
   // The pid file must exist by the time the socket accepts: a client that
