@@ -16,7 +16,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-10-10 | bug | open | [webui-bundle-size-shiki-grammars](./2026-10-10-webui-bundle-size-shiki-grammars.md) | webui の JS bundle は minify 後 1.48 MB (br 251 KB)。内訳の上位は @shikijs/langs の 15 言語文法 715 KB (48%)…… |
 | 2026-10-09 | task | open | [sidecar-socket-relative-bind](./2026-10-09-sidecar-socket-relative-bind.md) | サイドカー socket を cwd 相対パスで bind / connect し、sun_path 長超過時の退避先 (別置き場) をなくせるか調査 |
 | 2026-10-02 | bug | open | [host-translation-mixed-text-counterexamples](./2026-10-02-host-translation-mixed-text-counterexamples.md) | host 翻訳が findings の「日英混在の日本語保持」「改行保持」と食い違う観測 (敬体化・インラインコード翻訳・空行挿入) |
-| 2026-09-28 | bug | open | [peer-inject](./2026-09-28-peer-inject.md) | peer-inject の同一セッション宛て連続 post の到着順が非保証。sid ごとの直列化を検討 |
 | 2026-09-16 | bug | open | [webui-terminal-tab-config-parse-error](./2026-09-16-webui-terminal-tab-config-parse-error.md) | webui の Terminal タブが出ない: 本番 config.ts の構文エラーで daemon の設定が空になっている |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
 | 2026-09-08 | bug | open | [launcher-version-regex-after-rename](./2026-09-08-launcher-version-regex-after-rename.md) | `__ccmsg_extract_version` が改名後の cache パスに一致せず self-update/self-exec が無効化。DR-0032 §2.2-4 の意図的停止か regex 修正かの判断含む |

@@ -1,6 +1,6 @@
 ---
 title: peer-inject の同一セッション宛て連続 post の到着順が非保証
-status: open
+status: resolved
 category: bug
 created: 2026-09-28T14:36:12+09:00
 last_read: 2026-10-18T16:31:35+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T16:39:06+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:PeerInjector を sid ごとの列にし send_message の照合から注入依頼まで daemon 到着順に直列化 (serial.ts)、順序テスト追加、DR-0034 §2 に追記"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -31,7 +31,3 @@ peer-inject の同一セッション宛て連続 post の到着順が非保証�
 
 - [ ] 同一 sid 宛て連続 post の到着順が送信順と一致することを保証する (例: sid ごとに send を直列化するキュー導入)
 - [ ] 上記の担保を検証するテストがある
-
-## TODO
-
-<!-- wip 時のみ -->
