@@ -30,7 +30,6 @@ import { AppContext, useApp } from "../context.ts";
 import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStore.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
-import { Timeline } from "./timeline/Timeline.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { SessionInputComposer } from "./SessionInputComposer.tsx";
@@ -381,35 +380,16 @@ export function SessionView({
         {visitedTabs.has("timeline") ? (
           <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
             {hasTranscript ? (
-              (() => {
-                const graph = sessionStatus?.agent_tree;
-                return graph &&
-                  (graph.teammates.length > 0 ||
-                    graph.agents.length > 0 ||
-                    graph.workflows.length > 0) ? (
-                  <TimelinePanes
-                    sid={sid}
-                    agentTree={graph}
-                    timeline={tree.timeline}
-                    search={tree.timelineSearch}
-                    sessionStatus={sessionStatus}
-                    agent={agent}
-                    active={active}
-                    visible={active && tab === "timeline"}
-                  />
-                ) : (
-                  <Timeline
-                    key={sid}
-                    sid={sid}
-                    timeline={tree.timeline}
-                    search={tree.timelineSearch}
-                    sessionStatus={sessionStatus}
-                    agent={agent}
-                    active={active}
-                    visible={active && tab === "timeline"}
-                  />
-                );
-              })()
+              <TimelinePanes
+                sid={sid}
+                agentTree={sessionStatus?.agent_tree}
+                timeline={tree.timeline}
+                search={tree.timelineSearch}
+                sessionStatus={sessionStatus}
+                agent={agent}
+                active={active}
+                visible={active && tab === "timeline"}
+              />
             ) : (
               <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
             )}

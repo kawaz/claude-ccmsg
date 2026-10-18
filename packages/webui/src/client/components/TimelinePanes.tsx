@@ -6,8 +6,12 @@
 // mobile 分岐) を一本の CSS で維持するため。ratio 永続キーは Timeline 用に別で
 // 持つ (Files タブの split とは独立に記憶される)。
 //
-// agent_tree が空 (undefined / 0 件) の場合は左ペインを出さず Timeline 単独描画。
-// SessionView 側で判定して本コンポーネントは agent_tree が非空の時のみ mount する。
+// agent_tree が空 (undefined / 0 件) の場合は左ペインと splitter を出さず、
+// Timeline だけを描く。Timeline は agent_tree の有無に関わらず同じ位置に置く:
+// status の snapshot は Timeline の mount より後に届き、セッションを離れると
+// 消えるので、木の有無で Timeline の置き場を変えると、木が現れるたびに
+// Timeline が作り直され、到着時の読みと live tail の購読が重なり、スクロール
+// や畳みの状態も失われる。
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { AgentRef } from "../locator.ts";
@@ -42,9 +46,9 @@ export function TimelinePanes({
   visible,
 }: {
   sid: string;
-  /** 呼び出し側 (SessionView) で空でないことを確認済み前提。r46 m8:
-   * 3 種グループ (teammates / agents / workflows) に統合。 */
-  agentTree: AgentTreeGroups;
+  /** r46 m8: 3 種グループ (teammates / agents / workflows) に統合。
+   * undefined または 3 つとも空なら左ペインを出さない。 */
+  agentTree: AgentTreeGroups | undefined;
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
   sessionStatus: SessionStatusSnapshot | undefined;
@@ -71,17 +75,27 @@ export function TimelinePanes({
 
   const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };
 
+  const hasTree =
+    agentTree !== undefined &&
+    (agentTree.teammates.length > 0 ||
+      agentTree.agents.length > 0 ||
+      agentTree.workflows.length > 0);
+
   return (
     <div class="session-panes" ref={containerRef}>
-      <div class="session-pane session-pane-tree timeline-pane-tree" style={treeStyle}>
-        <AgentTreePanel
-          sid={sid}
-          tree={agentTree}
-          workflows={sessionStatus?.workflows}
-          currentAgent={agent}
-        />
-      </div>
-      <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
+      {hasTree ? (
+        <div class="session-pane session-pane-tree timeline-pane-tree" style={treeStyle}>
+          <AgentTreePanel
+            sid={sid}
+            tree={agentTree}
+            workflows={sessionStatus?.workflows}
+            currentAgent={agent}
+          />
+        </div>
+      ) : null}
+      {hasTree ? (
+        <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
+      ) : null}
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <Timeline
           key={sid}
