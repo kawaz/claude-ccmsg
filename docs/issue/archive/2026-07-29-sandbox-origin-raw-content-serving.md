@@ -1,6 +1,6 @@
 ---
 title: canddy sandbox origin を使った非信頼コンテンツ配信 (生ファイル / HTML / 大出力)
-status: open
+status: resolved
 category: design
 created: 2026-07-29T00:14:53+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:25+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0030","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -44,7 +44,3 @@ webui は same-origin の /fs-serve (画像拡張子 allowlist のみ) しか配
 - [ ] sandbox origin 経由での生配信エンドポイントの設計方針が decisions/DR として確定する
 - [ ] capability トークンの発行・検証・失効の仕組みが定まる
 - [ ] issue 2026-07-11-origin-isolated-app-reverse-proxy との関係 (統合/supersede) が整理される
-
-## 解決時の記録先
-
-- 設計判断を伴う: decisions/DR-NNNN
