@@ -265,18 +265,33 @@ describe("agent live state display", () => {
     config_dir: "/home/.claude-personal",
   };
 
-  test("status と waitingFor を upstream 語彙のまま結合する", () => {
+  const since = "2026-10-18T00:00:00.000Z";
+
+  test("ダイアログ待ちは waitingFor を upstream 語彙のまま添えて waiting と出す", () => {
     expect(formatAgentLiveState({ ...agent, status: "waiting", waitingFor: "dialog open" })).toBe(
       "waiting (dialog open)",
     );
+    expect(formatAgentLiveState({ ...agent, status: "waiting" })).toBe("waiting");
+    expect(
+      formatAgentLiveState({ ...agent, status: "waiting", turn: { state: "responding", since } }),
+    ).toBe("waiting");
   });
 
-  test("waitingFor 無しは status のみ、未知 status もそのまま表示する", () => {
-    expect(formatAgentLiveState({ ...agent, status: "rescheduling" })).toBe("rescheduling");
+  // DR-0035 §3: 応答中かは hooks module の turn から。Claude Code の status は
+  // 背景 shell が動いている間ずっと busy を返すので読まない
+  test("応答中かは module の turn から出し、Claude Code の status は読まない", () => {
+    expect(formatAgentLiveState({ ...agent, turn: { state: "responding", since } })).toBe(
+      "responding",
+    );
+    expect(formatAgentLiveState({ ...agent, status: "busy", turn: { state: "idle", since } })).toBe(
+      "idle",
+    );
   });
 
-  test("status 未観測なら表示しない", () => {
+  test("module が何も言っていなければ表示しない (status があっても)", () => {
     expect(formatAgentLiveState(agent)).toBeNull();
+    expect(formatAgentLiveState({ ...agent, status: "busy" })).toBeNull();
+    expect(formatAgentLiveState(undefined)).toBeNull();
   });
 });
 

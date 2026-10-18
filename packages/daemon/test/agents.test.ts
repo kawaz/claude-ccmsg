@@ -773,6 +773,40 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     });
   });
 
+  // DR-0035 §3: whether a session answers a turn is its hooks module's word,
+  // laid over the session's rows as the module says it, between polls.
+  test("行は module が言った turn を持ち、言う前は持たない", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+      const u = await watcher(ctx);
+      setRows(dirA, [row(SID_RUN, cwd)]);
+      const turnOf = (e: ItemOf<"agents">) => e.agents.find((a) => a.sessionId === SID_RUN)?.turn;
+      const listed = await u.readEventUntil("agents", (e) =>
+        e.agents.some((a) => a.sessionId === SID_RUN),
+      );
+      expect(turnOf(listed.ev)).toBeUndefined();
+
+      const module = await sessionConn(ctx, SID_RUN);
+      const since = Date.parse("2026-10-18T01:00:00.000Z");
+      await module.requestOk({
+        op: "session_facts",
+        facts: { at: 1, turn: { state: "responding", since } },
+      });
+      const responding = await u.readEventUntil("agents", (e) => turnOf(e) !== undefined);
+      expect(turnOf(responding.ev)).toEqual({
+        state: "responding",
+        since: "2026-10-18T01:00:00.000Z",
+      });
+      await module.requestOk({
+        op: "session_facts",
+        facts: { at: 2, turn: { state: "idle", since: since + 1000 } },
+      });
+      const idle = await u.readEventUntil("agents", (e) => turnOf(e)?.state === "idle");
+      expect(turnOf(idle.ev)).toEqual({ state: "idle", since: "2026-10-18T01:00:01.000Z" });
+      expect((await u.requestOk({ op: "agents" })).agents[0]?.turn?.state).toBe("idle");
+      module.close();
+    });
+  });
+
   test("登録時に無かった transcript が後で書かれたら次の poll で peers に載る", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const sid = "231e3d3d-1aed-4050-be17-7e5cdf2f7402";

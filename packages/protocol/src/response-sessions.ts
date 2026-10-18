@@ -11,6 +11,7 @@ import {
   SessionErrorEntrySchema,
   SessionInputReadinessSchema,
   SessionStatusSnapshotSchema,
+  SessionTurnSchema,
 } from "./session-status.ts";
 import { AgentAppendReasonSchema, UserPromptModuleReasonSchema } from "./sidecar.ts";
 import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
@@ -487,7 +488,10 @@ export const AgentInfoSchema = v.object({
   startedAt: v.number(),
   sessionId: v.string(),
   name: v.optional(v.string()),
-  /** e.g. "waiting" / "running"; upstream-controlled open set */
+  /** Claude Code's own word for the process: "waiting" while a dialog waits
+   *  for the person (`waitingFor` says which), otherwise what it reports
+   *  ("idle" / "busy" …, an upstream-controlled open set). Whether the session
+   *  answers a turn is `turn`'s, not this. */
   status: v.optional(v.string()),
   /** Human-readable detail for the current status, e.g. "dialog open". */
   waitingFor: v.optional(v.string()),
@@ -504,6 +508,12 @@ export const AgentInfoSchema = v.object({
    *  outside hyoui. Per process: resuming the same sessionId in a new process
    *  is a new run with its own terminal. */
   hyoui_session_id: v.optional(v.string()),
+  /** Whether the session's main thread is answering a turn, and since when,
+   *  as its hooks module said (session_facts, DR-0035 §3). Absent when no
+   *  module has said anything of the session: it has none (an older plugin,
+   *  a config home that does not load it), or the daemon has not heard from
+   *  it yet. */
+  turn: v.optional(SessionTurnSchema),
 });
 export type AgentInfo = Output<typeof AgentInfoSchema>;
 

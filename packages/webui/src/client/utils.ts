@@ -651,46 +651,39 @@ export function sessionRowTitle(row: SessionRow): string {
 }
 
 /** Primary status of a Sessions-list row — the single source of truth both
- * `sessionBadges` (U1, being retired per-row in U3 down to just the `"bg"`
- * tag) and `groupSessionsBySection` (U3) read, so the two can never disagree
- * about what one row's status is.
- *
- * Kept as a plain `string` (open set), not a fixed union: `AgentInfo.status`
- * itself is documented as an open, upstream-controlled set ("e.g. busy",
- * protocol/src/index.ts) — `claude agents --json` has already been observed
- * returning values beyond the "busy"/absent pair the original U3 spec
- * assumed (kawaz 2026-07-16: "busy と ccmsg 未起動しかない。カテゴリ作って",
- * reporting an `"inactive"` row that this function used to silently collapse
- * into `"idle"`). Passing an unrecognized status straight through — instead
- * of forcing it into `"idle"` — lets `groupSessionsBySection` give it its
- * own section rather than burying it in "nothing to report".
- * - A disconnected (agent-only, "ccmsg 未起動") row is always `"offline"`,
- *   regardless of what its matched agent's `status`/`state` say — offline
- *   rows form their own section (U3), not a busy/idle/inactive/done bucket.
- *   This stays the first check: `api_error` below can only be set for a
- *   connected row anyway (the daemon folds it over connected peers only), so
- *   testing it first would be a second way to say the same thing while
- *   weakening the "disconnected ⇒ offline" invariant.
- * - A connected row with no `transcript_path` is `"unobserved"`: nothing about
- *   it can be viewed (Timeline, Status and the terminal all read the
- *   transcript), which is the case for a session nobody has typed into yet
- *   and for launches the daemon has no transcript for. Checked ahead of the
- *   agent's status because `claude agents` reports such a session as idle,
- *   which would put an unopenable row among the running ones.
- * - `api_error` (harness API-error row ended the latest main-context turn)
- *   outranks everything `claude agents` reports for a connected row. Such a
- *   session still looks busy from the outside but is actually stopped waiting
- *   for the user, which makes it the most actionable state there is — the
- *   opposite of what a "busy" section heading would tell the reader.
- * - `state: "done"` (background-session completion) takes priority over
- *   `status` — a finished background agent shouldn't still read as busy.
- * - A *connected* row with no matched agent, or a matched agent with no
- *   `status` (upstream omits the field entirely when idle), has no distinct
- *   signal to report and falls into `"idle"` — the same "nothing to report"
- *   bucket as before, now reached via one shared fallback instead of two
- *   separate `!row.agent` / `status === undefined` branches collapsing to
- *   the same string. */
-export type SessionStatus = string;
+ * `sessionBadges` and `groupSessionsBySection` read, so the two can never
+ * disagree about what one row's status is. In order:
+ * - `"offline"`: a disconnected (agent-only, "ccmsg 未起動") row, whatever its
+ *   agent says. Offline rows form their own section, and `api_error` can only
+ *   be set for a connected row anyway (the daemon folds it over connected
+ *   peers only).
+ * - `"error"`: the latest main-context turn ended on a harness API error. The
+ *   session is stopped waiting for the user, the most actionable state there
+ *   is, whatever else is said of it.
+ * - `"unobserved"`: a connected row with no `transcript_path`, so nothing
+ *   about it can be viewed (Timeline, Status and the terminal all read the
+ *   transcript): a session nobody has typed into yet, a launch the daemon has
+ *   no transcript for.
+ * - `"idle"`: a connected row the agents rows do not list (yet): nothing
+ *   about it to report.
+ * - `"done"`: a background session that finished.
+ * - `"waiting"`: Claude Code says a dialog waits for the person
+ *   (`status: "waiting"`).
+ * - `"busy"` / `"idle"`: the session answers a turn, or does not, as its
+ *   hooks module said (`turn`, DR-0035 §3). Claude Code's own `status` is not
+ *   read for this: it reports a session with a background shell (a Monitor)
+ *   as busy for as long as the shell runs.
+ * - `"no_module"`: no hooks module has said whether the session answers a
+ *   turn, so the sidebar does not claim either. */
+export type SessionStatus =
+  | "offline"
+  | "error"
+  | "unobserved"
+  | "idle"
+  | "done"
+  | "waiting"
+  | "busy"
+  | "no_module";
 
 export function sessionStatus(row: SessionRow): SessionStatus {
   if (!row.connected) return "offline";
@@ -698,7 +691,9 @@ export function sessionStatus(row: SessionRow): SessionStatus {
   if (!row.transcript_path) return "unobserved";
   if (!row.agent) return "idle";
   if (row.agent.state === "done") return "done";
-  return row.agent.status || "idle";
+  if (row.agent.status === "waiting") return "waiting";
+  if (row.agent.turn === undefined) return "no_module";
+  return row.agent.turn.state === "responding" ? "busy" : "idle";
 }
 
 /** Status/state badges for one Sessions-list row (U1), in display order.
@@ -809,105 +804,71 @@ export function badgeLabel(kind: string): string {
 
 // --- Sidebar Sessions-list: status sections (U3) --- //
 
-/** Fixed relative order for the `sessionStatus` values we know about. Busy
- * first (kawaz's stated reason for sectioning at all: "busy 表示邪魔" — busy
- * sessions are the ones worth noticing first); "inactive" added 2026-07-16
- * (kawaz: "busy と ccmsg 未起動しかない。カテゴリ作って" — `claude agents
- * --json` reports this status and it was previously being silently folded
- * into "idle", see sessionStatus's doc comment). "offline" ("ccmsg未起動") is
- * *not* listed here — it's always sorted last regardless of this array (see
- * `orderedSectionKeys`), it's the least actionable section (nothing to do
- * from the webui for a session that hasn't connected). */
-// "waiting" (承認待ち等でユーザ入力を待っている) は Busy より先頭 (kawaz r46
-// mid=41: 「Busyより優先度高いので一番上に」— 人間のアクションが要る状態が
-// 最も actionable)。
-// "error" (harness の API エラー行で turn が終わり停止している) は更にその先頭。
-// waiting と同じく人間の介入待ちだが、waiting は Claude 側が能動的に待っている
-// のに対し error は誰も何も待っていない (放置すると永久に止まったまま) ため、
-// 気付く優先度が一段高い。
-const SESSION_SECTION_KNOWN_ORDER: string[] = ["error", "waiting", "busy", "inactive", "done"];
+/** A Sessions-list section: the statuses it holds. Busy and idle are both
+ * running sessions, so they form one section; each row still shows its own
+ * idle time. */
+export type SessionSectionKey = Exclude<SessionStatus, "idle">;
 
-/** Sections kept after every other one, in this order. */
-const SESSION_SECTION_TAIL: string[] = ["offline", "unobserved"];
+/** Section order. "error" (a harness API error stopped the turn) leads: like
+ * "waiting" it waits for the person, but nobody is asking, so left alone it
+ * stays stopped forever. "waiting" (承認待ち等でユーザ入力を待っている) comes
+ * next (kawaz r46 mid=41: 「Busyより優先度高いので一番上に」— 人間のアクション
+ * が要る状態が最も actionable), then busy (kawaz's stated reason for sectioning
+ * at all: "busy 表示邪魔"), then "no_module": those sessions run too, but the
+ * sidebar cannot say whether they answer a turn. "offline" (nothing to do
+ * from the webui for a session that hasn't connected) and "unobserved" (rows
+ * with nothing to open) close the list. */
+const SESSION_SECTION_ORDER: readonly SessionSectionKey[] = [
+  "error",
+  "waiting",
+  "busy",
+  "no_module",
+  "done",
+  "offline",
+  "unobserved",
+];
 
-const SESSION_SECTION_LABELS: Record<string, string> = {
+const SESSION_SECTION_LABELS: Record<SessionSectionKey, string> = {
   error: "Error",
   waiting: "Waiting",
   busy: "Active",
-  inactive: "Inactive",
+  no_module: "No module",
   done: "Done",
   offline: "ccmsg未起動",
   unobserved: "No transcript",
 };
 
-/** Capitalizes an unrecognized `sessionStatus` value for its section heading
- * (e.g. a future upstream status like `"paused"` renders as `"Paused"`)
- * rather than either falling back to a generic label or leaving it in raw
- * lowercase — matches the capitalization style of every known label above. */
-function capitalizeStatus(status: string): string {
-  return status.length > 0 ? status.charAt(0).toUpperCase() + status.slice(1) : status;
-}
-
-/** Statuses that share another status's section. Busy and idle are both
- * running sessions, so they form one section; each row still shows its own
- * idle time. */
-const SESSION_SECTION_MERGE: Record<string, string> = { idle: "busy" };
-
-function sectionKeyOf(row: SessionRow): string {
+function sectionKeyOf(row: SessionRow): SessionSectionKey {
   const status = sessionStatus(row);
-  return SESSION_SECTION_MERGE[status] ?? status;
-}
-
-function sectionLabel(key: string): string {
-  return SESSION_SECTION_LABELS[key] ?? capitalizeStatus(key);
-}
-
-/** Orders a set of section keys (as found in the data, any order): known
- * statuses first in `SESSION_SECTION_KNOWN_ORDER`'s order, then any
- * unrecognized status alphabetically, then `"offline"`, then `"unobserved"`
- * — rows with nothing to open — always last. Keeping
- * this separate from `groupSessionsBySection` lets each rule (fixed known
- * order / alphabetical unknowns / offline-always-last) be tested and read on
- * its own. */
-function orderedSectionKeys(keys: string[]): string[] {
-  const known = SESSION_SECTION_KNOWN_ORDER.filter((k) => keys.includes(k));
-  const unknown = keys
-    .filter((k) => !SESSION_SECTION_TAIL.includes(k) && !SESSION_SECTION_KNOWN_ORDER.includes(k))
-    .sort((a, b) => a.localeCompare(b));
-  const tail = SESSION_SECTION_TAIL.filter((k) => keys.includes(k));
-  return [...known, ...unknown, ...tail];
+  return status === "idle" ? "busy" : status;
 }
 
 export interface SessionSection {
-  key: SessionStatus;
+  key: SessionSectionKey;
   label: string;
   rows: SessionRow[];
 }
 
 /** Groups Sessions-list rows into per-status sections (U3, kawaz 2026-07-11:
  * "busy 表示邪魔。リスト側に busy とかのやつでセクション切ってフォルディングも
- * できるように。で各アイテムの busy は取る"). Only sections that actually have
- * a row appear — an empty section would just be a heading with nothing under
- * it. Row order *within* each section is the input array's order (already
- * the Sidebar's name/created/recent sort by the time `rows` reaches here, see
- * SessionList.tsx) — this function only partitions, it never reorders rows.
- * Section order itself follows `orderedSectionKeys` (known statuses fixed,
- * unknown ones alphabetical, offline last) rather than the
- * `SESSION_SECTION_ORDER.filter(...)` a fixed-union `SessionStatus` used to
- * allow — that pattern silently dropped any status not in the list, which is
- * exactly the bug this grouping exists to fix (kawaz 2026-07-16). */
+ * できるように。で各アイテムの busy は取る"), in `SESSION_SECTION_ORDER`. Only
+ * sections that actually have a row appear — an empty section would just be
+ * a heading with nothing under it. Row order *within* each section is the
+ * input array's order (already the Sidebar's name/created/recent sort by the
+ * time `rows` reaches here, see SessionList.tsx) — this function only
+ * partitions, it never reorders rows. */
 export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
-  const buckets = new Map<string, SessionRow[]>();
+  const buckets = new Map<SessionSectionKey, SessionRow[]>();
   for (const row of rows) {
     const key = sectionKeyOf(row);
     const bucket = buckets.get(key);
     if (bucket) bucket.push(row);
     else buckets.set(key, [row]);
   }
-  const order = orderedSectionKeys([...buckets.keys()]);
-  return [...buckets]
-    .sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
-    .map(([key, rows]) => ({ key, label: sectionLabel(key), rows }));
+  return SESSION_SECTION_ORDER.flatMap((key) => {
+    const bucket = buckets.get(key);
+    return bucket ? [{ key, label: SESSION_SECTION_LABELS[key], rows: bucket }] : [];
+  });
 }
 
 // --- FileTree favorites (U-fav) --- //

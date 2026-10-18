@@ -41,6 +41,7 @@ import {
   type SessionBackgroundStatus,
   type SessionContextUsage,
   type SessionFacts,
+  type SessionTurn,
   type SessionInputReadiness,
   type SessionStatusSnapshot,
   type SessionTeammate,
@@ -1892,7 +1893,7 @@ export function withFacts(
   if (facts === undefined) return data;
   const { context: folded, ...rest } = data;
   const context = contextWithFacts(folded, facts);
-  const turn = facts.turn;
+  const turn = turnOf(facts);
   const subagents = facts.subagents?.map(({ since, ...agent }) => ({
     ...agent,
     ...(since !== undefined ? { since: isoAt(since) } : {}),
@@ -1900,9 +1901,16 @@ export function withFacts(
   return {
     ...rest,
     ...(context !== undefined ? { context } : {}),
-    ...(turn !== undefined ? { turn: { state: turn.state, since: isoAt(turn.since) } } : {}),
+    ...(turn !== undefined ? { turn } : {}),
     ...(subagents !== undefined ? { subagents } : {}),
   };
+}
+
+/** Whether the session's main thread is answering a turn, as its hooks
+ * module's facts say it, on the wire's clock (ISO). */
+export function turnOf(facts: SessionFacts | undefined): SessionTurn | undefined {
+  const turn = facts?.turn;
+  return turn !== undefined ? { state: turn.state, since: isoAt(turn.since) } : undefined;
 }
 
 /** The snapshot of a fold with the session's input readiness and its hooks

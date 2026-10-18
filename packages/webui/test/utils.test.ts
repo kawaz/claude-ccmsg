@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type {
   AgentInfo,
+  SessionTurn,
   MemberEvent,
   PeerInfo,
   SayRecord,
@@ -1079,9 +1080,14 @@ describe("offlineAgentRows repo/ws honesty", () => {
   });
 });
 
+/** Whether the session answers a turn, as its hooks module said. */
+function turn(state: "responding" | "idle"): SessionTurn {
+  return { state, since: "2026-10-18T00:00:00.000Z" };
+}
+
 describe("sessionBadges / badgeLabel", () => {
   test("agent-only (disconnected) row gets exactly one 'offline' badge, no busy/idle/done", () => {
-    const row = sessionRow({ connected: false, agent: agent({ status: "busy" }) });
+    const row = sessionRow({ connected: false, agent: agent({ turn: turn("responding") }) });
     expect(sessionBadges(row)).toEqual(["offline"]);
   });
 
@@ -1090,31 +1096,25 @@ describe("sessionBadges / badgeLabel", () => {
     expect(sessionBadges(row)).toEqual([]);
   });
 
-  test("connected + agent busy -> ['busy']", () => {
-    const row = sessionRow({ connected: true, agent: agent({ status: "busy" }) });
-    expect(sessionBadges(row)).toEqual(["busy"]);
+  test("the module's turn: responding -> ['busy'], idle -> ['idle'], none -> ['no_module']", () => {
+    expect(sessionBadges(sessionRow({ agent: agent({ turn: turn("responding") }) }))).toEqual([
+      "busy",
+    ]);
+    expect(sessionBadges(sessionRow({ agent: agent({ turn: turn("idle") }) }))).toEqual(["idle"]);
+    expect(sessionBadges(sessionRow({ agent: agent({}) }))).toEqual(["no_module"]);
   });
 
-  test("connected + agent with no status -> ['idle'] (upstream omits status when idle)", () => {
-    const row = sessionRow({ connected: true, agent: agent({ status: undefined }) });
-    expect(sessionBadges(row)).toEqual(["idle"]);
-  });
-
-  // state:"done" takes priority over status:"busy" — a background agent
-  // that finished shouldn't still read as busy.
-  test("agent.state 'done' takes priority over status 'busy'", () => {
+  // state:"done" takes priority over the turn — a background agent that
+  // finished shouldn't still read as busy.
+  test("agent.state 'done' takes priority over a responding turn", () => {
     const row = sessionRow({
-      connected: true,
-      agent: agent({ status: "busy", state: "done", kind: "background" }),
+      agent: agent({ turn: turn("responding"), state: "done", kind: "background" }),
     });
     expect(sessionBadges(row)).toEqual(["done", "bg"]);
   });
 
   test("kind:'background' adds an additive 'bg' badge alongside busy/idle/done", () => {
-    const row = sessionRow({
-      connected: true,
-      agent: agent({ status: "busy", kind: "background" }),
-    });
+    const row = sessionRow({ agent: agent({ turn: turn("responding"), kind: "background" }) });
     expect(sessionBadges(row)).toEqual(["busy", "bg"]);
   });
 
@@ -1138,62 +1138,48 @@ const apiError = {
 
 describe("sessionStatus", () => {
   test("disconnected (agent-only) row is always 'offline', regardless of agent status/state", () => {
-    expect(sessionStatus(sessionRow({ connected: false, agent: agent({ status: "busy" }) }))).toBe(
-      "offline",
-    );
+    expect(
+      sessionStatus(sessionRow({ connected: false, agent: agent({ turn: turn("responding") }) })),
+    ).toBe("offline");
     expect(sessionStatus(sessionRow({ connected: false, agent: agent({ state: "done" }) }))).toBe(
       "offline",
     );
   });
 
-  // Connected + no matched agent: no distinct signal from `claude agents` —
-  // falls into "idle" (see sessionStatus's doc comment for why "idle" and
-  // not a fifth section) rather than the "no badges" of pre-U3 sessionBadges.
+  // Connected + no matched agent: nothing about it to report.
   test("connected row with no matched agent -> 'idle'", () => {
     expect(sessionStatus(sessionRow({ connected: true, agent: undefined }))).toBe("idle");
   });
 
-  test("connected + agent busy -> 'busy'", () => {
-    expect(sessionStatus(sessionRow({ connected: true, agent: agent({ status: "busy" }) }))).toBe(
-      "busy",
-    );
+  // DR-0035 §3: whether a session answers a turn is its hooks module's word.
+  test("the module's turn decides busy / idle", () => {
+    expect(sessionStatus(sessionRow({ agent: agent({ turn: turn("responding") }) }))).toBe("busy");
+    expect(sessionStatus(sessionRow({ agent: agent({ turn: turn("idle") }) }))).toBe("idle");
   });
 
-  test("connected + agent with no status -> 'idle' (upstream omits status when idle)", () => {
+  // Claude Code's own status says busy for as long as a background shell (a
+  // Monitor) runs, so it is not read for activity, and a session no module
+  // speaks for is not given one from it.
+  test("Claude Code's status is not read for busy / idle; without the module's turn it is 'no_module'", () => {
+    expect(sessionStatus(sessionRow({ agent: agent({ status: "busy" }) }))).toBe("no_module");
+    expect(sessionStatus(sessionRow({ agent: agent({ status: "idle" }) }))).toBe("no_module");
     expect(
-      sessionStatus(sessionRow({ connected: true, agent: agent({ status: undefined }) })),
+      sessionStatus(sessionRow({ agent: agent({ status: "busy", turn: turn("idle") }) })),
     ).toBe("idle");
   });
 
-  // state:"done" takes priority over status:"busy" — same precedence as
-  // sessionBadges (both read this off the same underlying computation).
-  test("agent.state 'done' takes priority over status 'busy'", () => {
+  // A dialog waiting for the person is Claude Code's word, module or not.
+  test("Claude Code's 'waiting' -> 'waiting', with or without the module's turn", () => {
+    expect(sessionStatus(sessionRow({ agent: agent({ status: "waiting" }) }))).toBe("waiting");
     expect(
-      sessionStatus(
-        sessionRow({ connected: true, agent: agent({ status: "busy", state: "done" }) }),
-      ),
+      sessionStatus(sessionRow({ agent: agent({ status: "waiting", turn: turn("responding") }) })),
+    ).toBe("waiting");
+  });
+
+  test("agent.state 'done' takes priority over a responding turn", () => {
+    expect(
+      sessionStatus(sessionRow({ agent: agent({ turn: turn("responding"), state: "done" }) })),
     ).toBe("done");
-  });
-
-  // Regression (kawaz 2026-07-16: "busy と ccmsg 未起動しかない。カテゴリ作っ
-  // て"): `claude agents --json` reports status:"inactive" on some rows, and
-  // the pre-fix sessionStatus silently collapsed every non-"busy" status into
-  // "idle" — this connected+inactive row must come back as "inactive", not
-  // "idle".
-  test("connected + agent status 'inactive' -> 'inactive' (not silently folded into idle)", () => {
-    expect(
-      sessionStatus(sessionRow({ connected: true, agent: agent({ status: "inactive" }) })),
-    ).toBe("inactive");
-  });
-
-  // SessionStatus is an open set (mirrors AgentInfo.status's own doc comment
-  // in protocol/src/index.ts): an upstream status this code has never seen
-  // before must still pass through verbatim, not get coerced to a known
-  // value.
-  test("unrecognized status passes through unchanged", () => {
-    expect(sessionStatus(sessionRow({ connected: true, agent: agent({ status: "paused" }) }))).toBe(
-      "paused",
-    );
   });
 
   // A session stopped on a harness API error is waiting for the user, not
@@ -1202,23 +1188,14 @@ describe("sessionStatus", () => {
     expect(sessionStatus(sessionRow({ connected: true, api_error: apiError }))).toBe("error");
   });
 
-  // The whole point of the "error" status: `claude agents` still reports such
-  // a session as busy (its process is alive), which is exactly the misleading
-  // signal this overrides.
-  test("api_error takes priority over agent status 'busy'", () => {
-    expect(
-      sessionStatus(
-        sessionRow({ connected: true, agent: agent({ status: "busy" }), api_error: apiError }),
-      ),
-    ).toBe("error");
-  });
-
-  test("api_error takes priority over agent.state 'done'", () => {
-    expect(
-      sessionStatus(
-        sessionRow({ connected: true, agent: agent({ state: "done" }), api_error: apiError }),
-      ),
-    ).toBe("error");
+  test("api_error takes priority over a responding turn, a dialog and agent.state 'done'", () => {
+    for (const a of [
+      agent({ turn: turn("responding") }),
+      agent({ status: "waiting" }),
+      agent({ state: "done" }),
+    ]) {
+      expect(sessionStatus(sessionRow({ agent: a, api_error: apiError }))).toBe("error");
+    }
   });
 
   // "disconnected ⇒ offline" stays the outermost invariant (see
@@ -1231,14 +1208,17 @@ describe("sessionStatus", () => {
 
 describe("groupSessionsBySection", () => {
   // A session with no transcript (never typed into, SDK / IDE launches) has
-  // nothing to open, so it gets its own section after every other one — even
-  // though `claude agents` reports it as idle.
+  // nothing to open, so it gets its own section after every other one.
   test("a connected row without transcript_path goes to a last 'No transcript' section", () => {
     const rows = [
-      sessionRow({ sid: "blank", transcript_path: undefined, agent: agent({ status: undefined }) }),
+      sessionRow({
+        sid: "blank",
+        transcript_path: undefined,
+        agent: agent({ turn: turn("idle") }),
+      }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
       sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
-      sessionRow({ sid: "busy", agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
     ];
     const sections = groupSessionsBySection(rows);
     expect(sections.map((s) => s.key)).toEqual(["busy", "done", "offline", "unobserved"]);
@@ -1249,20 +1229,26 @@ describe("groupSessionsBySection", () => {
   // rows land in the section matching sessionStatus(row).
   test("partitions rows into their sessionStatus section", () => {
     const rows = [
-      sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "b", connected: true, agent: agent({ status: undefined }) }),
-      sessionRow({ sid: "c", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) }),
+      sessionRow({ sid: "b", agent: agent({ turn: turn("idle") }) }),
+      sessionRow({ sid: "m", agent: agent({}) }),
+      sessionRow({ sid: "c", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "d", connected: false, agent: agent({}) }),
     ];
     const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "done", "offline"]);
-    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a", "b"], ["c"], ["d"]]);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "no_module", "done", "offline"]);
+    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([
+      ["a", "b"],
+      ["m"],
+      ["c"],
+      ["d"],
+    ]);
   });
 
   // "実データに存在するセクションだけ表示" (task spec): a section with zero
   // rows must not appear at all — no empty "Done (0)" heading.
   test("omits a section with no rows", () => {
-    const rows = [sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) })];
+    const rows = [sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) })];
     const sections = groupSessionsBySection(rows);
     expect(sections.map((s) => s.key)).toEqual(["busy"]);
   });
@@ -1271,65 +1257,30 @@ describe("groupSessionsBySection", () => {
     expect(groupSessionsBySection([])).toEqual([]);
   });
 
-  // Section order for the known statuses is fixed (busy (with idle merged
-  // in), inactive, done), offline always last, regardless of the input array's row order —
-  // this is a *section* ordering, independent of the name/created/recent
-  // row-level sort the input already carries.
-  test("section order is fixed: busy, inactive, done, offline", () => {
+  // Section order is fixed regardless of the input array's row order — this
+  // is a *section* ordering, independent of the name/created/recent row-level
+  // sort the input already carries. "error" leads: an API-error-stopped
+  // session is the only one where nothing at all will happen until the user
+  // acts, so it outranks even "waiting" (where Claude is actively asking).
+  test("section order is fixed: error, waiting, busy, no module, done, offline, no transcript", () => {
     const rows = [
+      sessionRow({ sid: "blank", transcript_path: undefined }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
-      sessionRow({ sid: "inactive", connected: true, agent: agent({ status: "inactive" }) }),
-      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "bare", agent: agent({}) }),
+      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
+      sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
+      sessionRow({ sid: "err", api_error: apiError }),
     ];
     expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual([
+      "error",
+      "waiting",
       "busy",
-      "inactive",
+      "no_module",
       "done",
       "offline",
+      "unobserved",
     ]);
-  });
-
-  // "error" leads every other section: an API-error-stopped session is the
-  // only one where nothing at all will happen until the user acts, so it must
-  // outrank even "waiting" (where Claude is actively asking).
-  test("'error' section comes first, ahead of waiting/busy", () => {
-    const rows = [
-      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "waiting", connected: true, agent: agent({ status: "waiting" }) }),
-      sessionRow({ sid: "err", connected: true, api_error: apiError }),
-    ];
-    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["error", "waiting", "busy"]);
-  });
-
-  test("'error' section label is 'Error'", () => {
-    const rows = [sessionRow({ sid: "err", connected: true, api_error: apiError })];
-    expect(groupSessionsBySection(rows)[0]?.label).toBe("Error");
-  });
-
-  // Regression (kawaz 2026-07-16): an unrecognized status must still get its
-  // own section — never dropped — placed after every known status and before
-  // "offline" (which is always last regardless of what unknown statuses
-  // exist).
-  test("unrecognized status gets its own section, after known statuses and before offline", () => {
-    const rows = [
-      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
-      sessionRow({ sid: "paused", connected: true, agent: agent({ status: "paused" }) }),
-      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
-    ];
-    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["done", "paused", "offline"]);
-  });
-
-  // Multiple unrecognized statuses sort alphabetically among themselves —
-  // there's no "worth noticing more" signal available for statuses this code
-  // has never seen before, so alphabetical is the only deterministic order.
-  test("multiple unrecognized statuses sort alphabetically", () => {
-    const rows = [
-      sessionRow({ sid: "z", connected: true, agent: agent({ status: "zzz-status" }) }),
-      sessionRow({ sid: "a", connected: true, agent: agent({ status: "aaa-status" }) }),
-    ];
-    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["aaa-status", "zzz-status"]);
   });
 
   // Row order *within* a section must be preserved from the input — the
@@ -1337,9 +1288,9 @@ describe("groupSessionsBySection", () => {
   // function (see SessionList.tsx), and grouping must not reshuffle it.
   test("preserves input row order within a section", () => {
     const rows = [
-      sessionRow({ sid: "z", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "m", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "z", agent: agent({ turn: turn("responding") }) }),
+      sessionRow({ sid: "a", agent: agent({ turn: turn("responding") }) }),
+      sessionRow({ sid: "m", agent: agent({ turn: turn("responding") }) }),
     ];
     const sections = groupSessionsBySection(rows);
     expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["z", "a", "m"]);
@@ -1349,8 +1300,8 @@ describe("groupSessionsBySection", () => {
   // both statuses.
   test("idle rows merge into the busy section in input order", () => {
     const rows = [
-      sessionRow({ sid: "i1", connected: true, agent: agent({ status: undefined }) }),
-      sessionRow({ sid: "b1", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "i1", agent: agent({ turn: turn("idle") }) }),
+      sessionRow({ sid: "b1", agent: agent({ turn: turn("responding") }) }),
       sessionRow({ sid: "i2", connected: true }),
     ];
     const sections = groupSessionsBySection(rows);
@@ -1359,30 +1310,26 @@ describe("groupSessionsBySection", () => {
   });
 
   // Section label text, used verbatim by SessionList.tsx's <summary>.
-  test("labels: Active / Inactive / Done / ccmsg未起動", () => {
+  test("labels", () => {
     const rows = [
-      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
-      sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
-      sessionRow({ sid: "inactive", connected: true, agent: agent({ status: "inactive" }) }),
-      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "err", api_error: apiError }),
+      sessionRow({ sid: "waiting", agent: agent({ status: "waiting" }) }),
+      sessionRow({ sid: "busy", agent: agent({ turn: turn("responding") }) }),
+      sessionRow({ sid: "bare", agent: agent({}) }),
+      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
+      sessionRow({ sid: "blank", transcript_path: undefined }),
     ];
     const labels = Object.fromEntries(groupSessionsBySection(rows).map((s) => [s.key, s.label]));
     expect(labels).toEqual({
+      error: "Error",
+      waiting: "Waiting",
       busy: "Active",
-      inactive: "Inactive",
+      no_module: "No module",
       done: "Done",
       offline: "ccmsg未起動",
+      unobserved: "No transcript",
     });
-  });
-
-  // Unknown status labels are capitalized rather than left lowercase or
-  // rendered as a generic fallback (e.g. "Unknown") — see
-  // groupSessionsBySection's / capitalizeStatus's doc comment.
-  test("unrecognized status label is capitalized", () => {
-    const rows = [sessionRow({ sid: "p", connected: true, agent: agent({ status: "paused" }) })];
-    const sections = groupSessionsBySection(rows);
-    expect(sections[0]?.label).toBe("Paused");
   });
 });
 

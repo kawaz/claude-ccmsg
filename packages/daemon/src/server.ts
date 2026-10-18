@@ -100,6 +100,7 @@ import {
   getSessionStatus,
   refreshInputReadiness,
   refreshSessionFacts,
+  turnOf,
   sessionStatusUnsubscribeAll,
   stopAllSessionStatus,
   subscribeSessionStatus,
@@ -299,10 +300,10 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
-  /** agentsKey() of the rows the last `ev:"agents"` push carried, terminals
-   * included (agentsWithTerminals) — lets maybeBroadcastAgents skip a push
-   * when neither the rows nor a run's terminal changed. Starts as the key of
-   * no rows, as the poller's cache does. */
+  /** agentsKey() of the rows the last `ev:"agents"` push carried, with what
+   * the modules say of them (agentsWithModule) — lets maybeBroadcastAgents
+   * skip a push when neither the rows nor a terminal or turn changed. Starts
+   * as the key of no rows, as the poller's cache does. */
   agentsSnapshot: string;
   /** Out-of-date ccmsg clients seen per sid (PeerInfo.stale_client), including
    * the ones whose hello was refused — those never reach `sessions`, so this
@@ -592,6 +593,8 @@ const SESSION_FACTS_ASK_MS = 5_000;
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
   if (!daemon.sessionFacts.take(sid, facts)) return;
   refreshSessionFacts(daemon.sessionStatus, sid, daemon.log);
+  const { agents, polledAt } = daemon.agentsPoller.cache;
+  maybeBroadcastAgents(daemon, agents, polledAt);
 }
 
 /** Ask the module behind `run` for its facts (`session.facts`). A module
@@ -627,24 +630,34 @@ function refreshReadiness(daemon: Daemon): void {
   maybeBroadcastAgents(daemon, agents, polledAt);
 }
 
-/** The agents poll's rows, each carrying the terminal (`hyoui_session_id`)
- * the live run tied to its process named (sidecar_hello, DR-0035 §3). The
- * terminal is what the session's hooks module names, read the same way the
- * module reads it to press Enter, so a row whose process no run is tied to
- * carries none: its session has no module (input_readiness `no_module`), or
- * its module has not named the run yet. */
-function agentsWithTerminals(daemon: Daemon, agents: readonly AgentInfo[]): AgentInfo[] {
+/** The agents poll's rows with what the session's hooks module says of them
+ * (DR-0035 §3):
+ * - the terminal (`hyoui_session_id`) the live run tied to the row's process
+ *   named (sidecar_hello). The terminal is what the module names, read the
+ *   same way the module reads it to press Enter, so a row whose process no
+ *   run is tied to carries none: its session has no module (input_readiness
+ *   `no_module`), or its module has not named the run yet.
+ * - whether the session answers a turn (`turn`, session_facts). A session no
+ *   module has said anything of carries none, and the sidebar says so rather
+ *   than reading it off another source. */
+function agentsWithModule(daemon: Daemon, agents: readonly AgentInfo[]): AgentInfo[] {
   return agents.map((agent) => {
     const terminal = daemon.sidecarRuns
       .liveOf(agent.sessionId)
       .find((run) => run.pid === agent.pid && run.hyouiSessionId !== undefined)?.hyouiSessionId;
-    return terminal !== undefined ? { ...agent, hyoui_session_id: terminal } : agent;
+    const turn = turnOf(daemon.sessionFacts.get(agent.sessionId));
+    return {
+      ...agent,
+      ...(terminal !== undefined ? { hyoui_session_id: terminal } : {}),
+      ...(turn !== undefined ? { turn } : {}),
+    };
   });
 }
 
-/** Push the agents rows (agentsWithTerminals) to every user subscriber when
- * they differ from the last push: the poll's rows changed, or a run was
- * named, tied to a process, or went. Nothing before the first poll, as the
+/** Push the agents rows (agentsWithModule) to every user subscriber when
+ * they differ from the last push: the poll's rows changed, a run was named,
+ * tied to a process, or went, or a module said its session started or ended
+ * a turn. Nothing before the first poll, as the
  * subscribe catch-up sends nothing then. */
 function maybeBroadcastAgents(
   daemon: Daemon,
@@ -652,7 +665,7 @@ function maybeBroadcastAgents(
   polledAt: string | null,
 ): void {
   if (polledAt === null) return;
-  const rows = agentsWithTerminals(daemon, agents);
+  const rows = agentsWithModule(daemon, agents);
   const key = agentsKey(rows);
   if (key === daemon.agentsSnapshot) return;
   daemon.agentsSnapshot = key;
@@ -1753,7 +1766,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         if (polledAt !== null) {
           send(conn, {
             ev: "agents",
-            agents: agentsWithTerminals(daemon, agents),
+            agents: agentsWithModule(daemon, agents),
             polled_at: polledAt,
           });
         }
@@ -1963,7 +1976,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         titleCheck.title,
         productionRenameDeps(
           (sid) =>
-            agentsWithTerminals(daemon, daemon.agentsPoller.cache.agents).find(
+            agentsWithModule(daemon, daemon.agentsPoller.cache.agents).find(
               (agent) => agent.sessionId === sid && agent.hyoui_session_id !== undefined,
             )?.hyoui_session_id ?? null,
         ),
@@ -2518,7 +2531,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       send(conn, {
         ok: true,
-        agents: agentsWithTerminals(daemon, daemon.agentsPoller.cache.agents),
+        agents: agentsWithModule(daemon, daemon.agentsPoller.cache.agents),
         polled_at: daemon.agentsPoller.cache.polledAt,
       });
       return;

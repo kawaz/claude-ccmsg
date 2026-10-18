@@ -502,6 +502,7 @@ function SessionRowItem({
   if (row.connected_at) titleParts.push(`connected: ${row.connected_at}`);
   if (row.last_activity_at) titleParts.push(`last activity: ${row.last_activity_at}`);
   if (liveState) titleParts.push(`status: ${liveState}`);
+  else if (row.agent) titleParts.push("hooks module 無し: 応答中かは分からない");
   if (row.agent) {
     titleParts.push(`kind: ${row.agent.kind}`);
     titleParts.push(`started: ${new Date(row.agent.startedAt).toISOString()}`);
@@ -579,7 +580,7 @@ function SessionRowItem({
           <span
             class={
               "session-live-dot" +
-              (row.agent?.status === "running" ? " session-live-dot-running" : "") +
+              (row.agent?.turn?.state === "responding" ? " session-live-dot-running" : "") +
               (row.agent?.status === "waiting" ? " session-live-dot-waiting" : "")
             }
             title={liveState}

@@ -155,12 +155,16 @@ export function respondingSince(snapshot: SessionStatusSnapshot | undefined): st
   return turn?.state === "responding" ? turn.since : null;
 }
 
-/** Live state text from `claude agents --json`. Values are intentionally
- * rendered verbatim: both status and waitingFor are upstream-controlled open
- * sets, so a newer Claude CLI value must remain visible without a webui update. */
+/** What the session is doing, for a row's live dot and the Status tab:
+ * `waiting` (with what for, verbatim: an upstream-controlled open set) while
+ * Claude Code says a dialog waits for the person, else `responding` / `idle`
+ * as the session's hooks module said (`turn`, DR-0035 §3). Null when no
+ * module has said: the session's activity is then not known. */
 export function formatAgentLiveState(agent: AgentInfo | undefined): string | null {
-  if (!agent?.status) return null;
-  return agent.waitingFor ? `${agent.status} (${agent.waitingFor})` : agent.status;
+  if (agent?.status === "waiting") {
+    return agent.waitingFor ? `waiting (${agent.waitingFor})` : "waiting";
+  }
+  return agent?.turn?.state ?? null;
 }
 
 /** The ctx line: the fill over the window Claude Code reported through the
