@@ -3,7 +3,7 @@ title: SessionInputComposer をマウントして storage event → 入力欄の
 status: open
 category: task
 created: 2026-10-18T13:37:03+09:00
-last_read:
+last_read: 2026-10-18T14:32:12+09:00
 open_entered: 2026-10-18T13:37:03+09:00
 wip_entered:
 blocked_entered:
