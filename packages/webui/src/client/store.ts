@@ -42,8 +42,8 @@ import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
 import * as v from "valibot";
 import {
-  pinKey,
-  pinsFromHits,
+  type Pin,
+  pinsFromList,
   refreshPinsFromAgents,
   refreshPinsFromPeers,
 } from "./pinned-sessions.ts";
@@ -374,8 +374,8 @@ export interface AppState {
    * restarted daemon's empty set clears what the old one left here. */
   says: readonly SayRecord[];
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
-   * cwd (pinKey): one entry per pinned directory, holding the hit frozen when
-   * it was pinned. Which sessions a pin lists is derived at render time
+   * cwd: one entry per pinned directory, holding the record frozen when it
+   * was pinned (Pin, the webui's own stored shape). Which sessions a pin lists is derived at render time
    * (pinnedRows) from this and the live peers.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
@@ -388,7 +388,7 @@ export interface AppState {
    * §1). Search-origin pins carry their jsonl `file`; arbitrary SessionView
    * pins may not have a transcript, so SessionView uses the stored file only
    * as transcript capability evidence rather than treating every pin as one. */
-  pinnedSessions: Map<string, SessionSearchHit>;
+  pinnedSessions: Map<string, Pin>;
   connStatus: ConnStatus;
   /** サイドバーが在るか。既定は「在る」で、ハンバーガーが唯一の切り替え口
    * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたい時に消す)。
@@ -596,14 +596,13 @@ export type Action =
   | { type: "session-status/cleared"; sid: string }
   // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
   // once at startup from main.tsx after reading localStorage — never
-  // dispatched again afterward. Every action keys on the hit's cwd (pinKey);
-  // a hit with no cwd cannot be pinned and leaves the state unchanged.
+  // dispatched again afterward. Every action keys on the pin's cwd.
   // "toggled" is the pin buttons' action; "removed" is the sidebar Pinned
   // section's unpin, by pin key.
-  | { type: "pinned/hydrated"; hits: SessionSearchHit[] }
-  | { type: "pinned/added"; hit: SessionSearchHit }
+  | { type: "pinned/hydrated"; pins: readonly Pin[] }
+  | { type: "pinned/added"; pin: Pin }
   | { type: "pinned/removed"; key: string }
-  | { type: "pinned/toggled"; hit: SessionSearchHit };
+  | { type: "pinned/toggled"; pin: Pin };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
  * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
@@ -1237,12 +1236,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, sessionStatuses };
     }
     case "pinned/hydrated":
-      return { ...state, pinnedSessions: pinsFromHits(action.hits) };
+      return { ...state, pinnedSessions: pinsFromList(action.pins) };
     case "pinned/added": {
-      const key = pinKey(action.hit);
-      if (key === null) return state;
       const pinnedSessions = new Map(state.pinnedSessions);
-      pinnedSessions.set(key, action.hit);
+      pinnedSessions.set(action.pin.cwd, action.pin);
       return { ...state, pinnedSessions };
     }
     case "pinned/removed": {
@@ -1252,11 +1249,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, pinnedSessions };
     }
     case "pinned/toggled": {
-      const key = pinKey(action.hit);
-      if (key === null) return state;
+      const key = action.pin.cwd;
       const pinnedSessions = new Map(state.pinnedSessions);
       if (pinnedSessions.has(key)) pinnedSessions.delete(key);
-      else pinnedSessions.set(key, action.hit);
+      else pinnedSessions.set(key, action.pin);
       return { ...state, pinnedSessions };
     }
     default:

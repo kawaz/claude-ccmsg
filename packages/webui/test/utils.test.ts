@@ -2,7 +2,7 @@
 // fsList/fsRead/transcriptRead .catch() handlers use to fold a rejected
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type {
   AgentInfo,
   MemberEvent,
@@ -13,6 +13,8 @@ import type {
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
+import type { Pin } from "../src/client/pinned-sessions.ts";
+import { stubProperty } from "./helpers.ts";
 import {
   badgeLabel,
   clientBuildLabel,
@@ -44,6 +46,7 @@ import {
   paneRatioFromPointer,
   parseFavorites,
   parsePinnedSessions,
+  serializePinnedSessions,
   peerSortButtonLabel,
   resolveInboxFilename,
   documentTitleFor,
@@ -921,27 +924,22 @@ describe("resolveSessionTopbar", () => {
   });
 
   // DR-0021 pinned/virtual: a session with no live peer still keeps its
-  // SessionSearchHit in state.pinnedSessions — before this helper the topbar
-  // fell straight through to `sid.slice(0,8)` and lost the worktree name for
-  // pinned rows entirely.
-  test("falls back to a pinned session's SessionSearchHit when no peer is connected", () => {
+  // pin in state.pinnedSessions — the topbar reads the worktree name from it
+  // rather than falling through to the short sid.
+  test("falls back to a pinned session's stored repo/ws when no peer is connected", () => {
     const state: AppState = {
       ...initialState(),
-      pinnedSessions: new Map<string, SessionSearchHit>([
+      pinnedSessions: new Map<string, Pin>([
         [
           "/repos/pinned/main",
           {
             sid: "s1",
-            config_dir: "/home/kawaz/.claude",
-            file: "/transcripts/s1.jsonl",
             cwd: "/repos/pinned/main",
             repo: "kawaz/pinned",
             ws: "main",
-            created_at: "2026-07-19T00:00:00Z",
-            updated_at: "2026-07-19T00:00:00Z",
-            size: 0,
-            matches: [],
             title: null,
+            file: "/transcripts/s1.jsonl",
+            updated_at: "2026-07-19T00:00:00Z",
           },
         ],
       ]),
@@ -1986,31 +1984,79 @@ describe("matchRoleBadge", () => {
 // --- Pinned sessions (DR-0021 §2.4/§3.2) --- //
 
 describe("parsePinnedSessions", () => {
-  test("returns an empty list for a missing key", () => {
+  const stored: Pin = {
+    sid: "11111111-2222-3333-4444-555555555555",
+    cwd: "/repos/claude-ccmsg/main",
+    repo: "kawaz/claude-ccmsg",
+    ws: "main",
+    title: "Issue管理",
+    file: "/home/.claude/projects/x/11111111-2222-3333-4444-555555555555.jsonl",
+    updated_at: "2026-07-15T00:00:00.000Z",
+    model: "claude-fable-5[1m]",
+  };
+
+  // A failed read is reported, a missing value is not: an empty localStorage is
+  // the normal first visit.
+  let warnings: string[] = [];
+  let restoreWarn = () => {};
+  beforeEach(() => {
+    warnings = [];
+    restoreWarn = stubProperty(console, "warn", {
+      value: (message: string) => {
+        warnings.push(message);
+      },
+      configurable: true,
+      writable: true,
+    });
+  });
+  afterEach(() => restoreWarn());
+
+  test("returns no pins for a missing key, without a warning", () => {
     expect(parsePinnedSessions(null)).toEqual([]);
+    expect(warnings).toEqual([]);
   });
 
-  test("returns an empty list for malformed JSON", () => {
-    expect(parsePinnedSessions("{not json")).toEqual([]);
+  test("reads back what serializePinnedSessions wrote", () => {
+    expect(parsePinnedSessions(serializePinnedSessions([stored]))).toEqual([stored]);
   });
 
-  test("returns an empty list for JSON that isn't an array", () => {
-    expect(parsePinnedSessions(JSON.stringify({ sid: "x" }))).toEqual([]);
+  // The stored shape is the webui's own: it holds none of Session Search's
+  // answer fields (matches, size, created_at, config_dir), so what the protocol
+  // requires of a search hit does not decide whether stored pins read.
+  test("reads stored pins that carry none of a search hit's other fields", () => {
+    const raw = JSON.stringify({ v: 1, pins: [stored] });
+    expect(parsePinnedSessions(raw)).toEqual([stored]);
   });
 
-  test("parses a valid list of hits", () => {
-    const hit = searchHit({});
-    expect(parsePinnedSessions(JSON.stringify([hit]))).toEqual([hit]);
+  // An earlier webui stored the Session Search hits themselves, as a bare
+  // list. They read as pins: the fields a pin keeps are taken, the rest (and
+  // any field a later protocol adds) left behind, and a hit with no cwd — one
+  // that could never be pinned by directory — is no pin.
+  test("reads a list of stored search hits as pins", () => {
+    const hit = {
+      ...searchHit({ title: "Issue管理", model: "claude-fable-5[1m]" }),
+      sid: stored.sid,
+      field_added_later: { anything: true },
+    };
+    const raw = JSON.stringify([hit, searchHit({ sid: "no-cwd", cwd: null })]);
+    expect(parsePinnedSessions(raw)).toEqual([{ ...stored, file: hit.file }]);
   });
 
-  // A list with a malformed entry (missing required fields — a prior schema
-  // version, a hand edit, or storage corruption) does not read as pins: it is
-  // ignored as a whole rather than read in part (DR-0038 §6).
-  test("a list with a malformed entry is ignored as a whole", () => {
-    const good = searchHit({});
-    const garbage = [good, { sid: "only-a-sid" }, "not even an object", 42, null];
-    expect(parsePinnedSessions(JSON.stringify(garbage))).toEqual([]);
-    expect(parsePinnedSessions(JSON.stringify([good]))).toEqual([good]);
+  // Unreadable as any stored shape (malformed JSON, a manual edit, corruption):
+  // ignored as a whole rather than read in part (DR-0038 §6), and said so.
+  test("ignores a value that reads as no stored shape, and warns why", () => {
+    for (const raw of [
+      "{not json",
+      JSON.stringify({ sid: "x" }),
+      JSON.stringify({ v: 2, pins: [] }),
+      JSON.stringify({ v: 1, pins: [stored, { sid: "only-a-sid" }] }),
+      JSON.stringify([searchHit({}), "not even an object"]),
+    ]) {
+      warnings = [];
+      expect(parsePinnedSessions(raw)).toEqual([]);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toStartWith("ccmsg: ignored the stored pinned sessions: ");
+    }
   });
 });
 

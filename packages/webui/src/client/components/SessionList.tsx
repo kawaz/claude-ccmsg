@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
@@ -27,7 +27,12 @@ import {
   sayUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
-import { pinnedRows, pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
+import {
+  type Pin,
+  pinnedRows,
+  pinnedSessionLabel,
+  pinnedSessionTitle,
+} from "../pinned-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
@@ -630,7 +635,7 @@ function SessionRowItem({
 }
 
 /** One row of the sidebar's Pinned section (DR-0021 §2.4/§3.2). Deliberately
- * NOT a `SessionRowItem` reuse — a pinned entry is a `SessionSearchHit`, not
+ * NOT a `SessionRowItem` reuse — a pinned entry is a `Pin`, not
  * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
  * forcing it through the same merge shape `toSessionRow` builds would need a
  * lot of made-up filler fields. What it does share is the four-element
@@ -643,7 +648,7 @@ function SessionRowItem({
  * through the session root so recent restoration is identical to a live
  * session row. */
 function PinnedSessionRow({
-  hit,
+  pin,
   currentSid,
   peer,
   agent,
@@ -651,7 +656,7 @@ function PinnedSessionRow({
   sayUnread,
   onUnpin,
 }: {
-  hit: SessionSearchHit;
+  pin: Pin;
   currentSid: string | null;
   peer: PeerInfo | undefined;
   agent: AgentInfo | undefined;
@@ -666,19 +671,19 @@ function PinnedSessionRow({
   onUnpin: () => void;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
-  const { repo, ws: wsLabel } = pinnedSessionLabel(hit, peer);
+  const { repo, ws: wsLabel } = pinnedSessionLabel(pin, peer);
   // Same tail as sessionRowTitle: a pin whose session never renamed itself
   // (and whose transcript held no custom-title for Session Search to read)
   // still gets a non-blank line rather than a gap where a title goes.
   const title =
-    pinnedSessionTitle(hit, agent) || lastPathSegment(hit.cwd ?? "") || shortSid(hit.sid);
+    pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
   // Editable on exactly the condition SessionRowItem uses — the daemon needs a
   // hyoui terminal to type `/rename` into, which only a running session has.
   // An offline pin's title is therefore plain text, not an editor that could
   // only fail.
   const titleCell = (
     <SessionTitle
-      sid={hit.sid}
+      sid={pin.sid}
       title={title}
       editable={Boolean(agent?.hyoui_session_id)}
       onSent={(sent) => setRenameNote(`/rename を送信: ${sent}`)}
@@ -697,13 +702,13 @@ function PinnedSessionRow({
 
   return (
     <li
-      class={hit.sid === currentSid ? "active session-row" : "session-row"}
-      title={hit.cwd ?? undefined}
-      onClick={selectSessionOnRowClick(hit.sid)}
+      class={pin.sid === currentSid ? "active session-row" : "session-row"}
+      title={pin.cwd ?? undefined}
+      onClick={selectSessionOnRowClick(pin.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
-        <a href={sessionHref(hit.sid)} class="session-main-link">
-          <Avatar seed={hit.sid} size={16} />
+        <a href={sessionHref(pin.sid)} class="session-main-link">
+          <Avatar seed={pin.sid} size={16} />
           {/* 📣 の位置は SessionRowItem と同じ「アイコンと repo の間」
            * (kawaz r244m13)。 */}
           {sayUnread > 0 ? (
@@ -740,13 +745,13 @@ function PinnedSessionRow({
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
       {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
       <div class="session-line3">
-        <SessionIdText sid={hit.sid} />
+        <SessionIdText sid={pin.sid} />
         <SessionModelEffort info={modelEffort} />
       </div>
-      {hit.cwd ? (
-        <div class="session-line4" title={hit.cwd}>
+      {pin.cwd ? (
+        <div class="session-line4" title={pin.cwd}>
           <span class="session-cwd">
-            <bdi dir="ltr">{hit.cwd}</bdi>
+            <bdi dir="ltr">{pin.cwd}</bdi>
           </span>
         </div>
       ) : null}
@@ -776,7 +781,7 @@ function PinnedSessionsSection({
   sayUnreadBy,
   resolveModelEffort,
 }: {
-  pinnedSessions: Map<string, SessionSearchHit>;
+  pinnedSessions: Map<string, Pin>;
   peers: readonly PeerInfo[];
   /** `claude agents --json` rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
@@ -804,15 +809,15 @@ function PinnedSessionsSection({
       summary={`Pinned (${pinnedSessions.size})`}
     >
       <ul class="session-section-list">
-        {rows.map(({ key, hit }) => (
+        {rows.map(({ key, pin }) => (
           <PinnedSessionRow
-            key={hit.sid}
-            hit={hit}
+            key={pin.sid}
+            pin={pin}
             currentSid={currentSid}
-            peer={peersBySid.get(hit.sid)}
-            agent={agentsBySid.get(hit.sid)}
-            modelEffort={resolveModelEffort(hit.sid, hit)}
-            sayUnread={sayUnreadBy.get(hit.sid) ?? 0}
+            peer={peersBySid.get(pin.sid)}
+            agent={agentsBySid.get(pin.sid)}
+            modelEffort={resolveModelEffort(pin.sid, pin)}
+            sayUnread={sayUnreadBy.get(pin.sid) ?? 0}
             onUnpin={() => store.dispatch({ type: "pinned/removed", key })}
           />
         ))}

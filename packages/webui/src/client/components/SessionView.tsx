@@ -5,7 +5,7 @@
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
   fileHref,
@@ -18,7 +18,13 @@ import {
 } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
 import { hasSessionTranscript } from "../utils.ts";
-import { hitFromLive, isSessionPinned, pinnedHitForSid } from "../pinned-sessions.ts";
+import {
+  isSessionPinned,
+  type Pin,
+  pinForSid,
+  pinFromHit,
+  pinFromLive,
+} from "../pinned-sessions.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { AppContext, useApp } from "../context.ts";
 import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStore.ts";
@@ -84,16 +90,25 @@ const EMPTY_TREE: SessionTreeState = {
   timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
 };
 
+/** What the pin button pins for this session (DR-0021 §2.4): the record the
+ * session left — its pin, else the search hit it was opened from, else one
+ * built from what it reports live — placed in its directory: the live peer's
+ * cwd when connected, else the record's. Null when no directory is known:
+ * there is nothing to pin. */
 function pinCandidate(
   pinnedSessions: AppState["pinnedSessions"],
   sid: string,
   tree: SessionTreeState,
   peer: PeerInfo | undefined,
   agent: AgentInfo | undefined,
-): SessionSearchHit {
-  const stored = pinnedHitForSid(pinnedSessions, sid) ?? tree.searchHit;
-  if (stored) return stored;
-  return hitFromLive(sid, peer, agent);
+): Pin | null {
+  const pinned = pinForSid(pinnedSessions, sid);
+  const stored = pinned ?? tree.searchHit;
+  const cwd = peer?.cwd ?? (stored ? stored.cwd : agent?.cwd);
+  if (!cwd) return null;
+  if (pinned) return { ...pinned, cwd };
+  if (tree.searchHit) return pinFromHit({ ...tree.searchHit, cwd });
+  return pinFromLive(sid, cwd, peer, agent);
 }
 
 export function SessionView({
@@ -204,17 +219,12 @@ export function SessionView({
   // daemon 側が jsonl を直接 tail するので未接続でも更新が届く。接続したら
   // 5s の agents poll と peers push がこの component を再描画し、通常の
   // subscribe 経路に切り替わる。
-  const storedHit = sid
-    ? (pinnedHitForSid(slice.pinnedSessions, sid) ?? tree.searchHit)
-    : undefined;
+  const storedHit = sid ? (pinForSid(slice.pinnedSessions, sid) ?? tree.searchHit) : undefined;
   const hasTranscript = hasSessionTranscript(peer, storedHit?.file, !!agentForSid);
-  // The pin button acts on this session's directory (DR-0021 §2.4): the live
-  // peer's cwd when connected, else whatever record the session left. No cwd
-  // means nothing to pin, so the button is not shown.
-  const candidate = pinCandidate(slice.pinnedSessions, sid, tree, peer, agentForSid);
-  const pinCwd = peer?.cwd ?? candidate.cwd;
-  const pinHit = { ...candidate, cwd: pinCwd };
-  const pinned = isSessionPinned(slice.pinnedSessions, pinCwd);
+  // The pin button acts on this session's directory (pinCandidate). No
+  // directory means nothing to pin, so the button is not shown.
+  const pinTarget = pinCandidate(slice.pinnedSessions, sid, tree, peer, agentForSid);
+  const pinned = isSessionPinned(slice.pinnedSessions, pinTarget?.cwd);
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
@@ -344,14 +354,14 @@ export function SessionView({
             selected={tab}
             items={sessionTabItems(sid, hasTranscript, hasTerminal)}
           />
-          {pinCwd ? (
+          {pinTarget ? (
             <button
               type="button"
               class={"session-pin-toggle" + (pinned ? " active" : "")}
               aria-pressed={pinned}
               aria-label={pinned ? "ピン解除" : "ピン留め"}
               title={pinned ? "ピン解除" : "ピン留め"}
-              onClick={() => store.dispatch({ type: "pinned/toggled", hit: pinHit })}
+              onClick={() => store.dispatch({ type: "pinned/toggled", pin: pinTarget })}
             >
               {pinned ? "⭐" : "☆"}
             </button>

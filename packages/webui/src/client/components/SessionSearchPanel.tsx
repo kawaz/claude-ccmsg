@@ -38,7 +38,7 @@ import {
 import { prefillSidebarState } from "../session-creator.ts";
 import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
 import { SearchModeToggles } from "./SearchBar.tsx";
-import { isSessionPinned } from "../pinned-sessions.ts";
+import { isSessionPinned, pinFromHit } from "../pinned-sessions.ts";
 
 /** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
  * size/match-summary, clickable as a whole). A `<div role="button">` rather
@@ -396,19 +396,24 @@ export function SessionSearchPanel({
       {result ? (
         <>
           <ul class="session-search-results">
-            {result.hits.map((hit) => (
-              <SearchResultRow
-                key={hit.sid}
-                hit={hit}
-                pinned={isSessionPinned(pinnedSessions, hit.cwd)}
-                pinnable={hit.cwd !== null}
-                active={hit.sid === currentSid}
-                words={resultWords}
-                onSelect={() => openResult(hit)}
-                onResume={() => resumeResult(hit)}
-                onTogglePin={() => store.dispatch({ type: "pinned/toggled", hit })}
-              />
-            ))}
+            {result.hits.map((hit) => {
+              const pin = pinFromHit(hit);
+              return (
+                <SearchResultRow
+                  key={hit.sid}
+                  hit={hit}
+                  pinned={isSessionPinned(pinnedSessions, hit.cwd)}
+                  pinnable={pin !== null}
+                  active={hit.sid === currentSid}
+                  words={resultWords}
+                  onSelect={() => openResult(hit)}
+                  onResume={() => resumeResult(hit)}
+                  onTogglePin={() => {
+                    if (pin) store.dispatch({ type: "pinned/toggled", pin });
+                  }}
+                />
+              );
+            })}
           </ul>
           {result.hits.length === 0 ? <p class="session-search-empty">該当なし</p> : null}
           {result.truncated ? (

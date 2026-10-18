@@ -7,7 +7,11 @@ import { createStore } from "./useStore.ts";
 import { initialState } from "./store.ts";
 import { createWsClient } from "./ws.ts";
 import { setupNavigation } from "./navigation.ts";
-import { parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
+import {
+  parsePinnedSessions,
+  PINNED_SESSIONS_STORAGE_KEY,
+  serializePinnedSessions,
+} from "./utils.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import {
   clearFilePathCacheForSid,
@@ -55,7 +59,7 @@ store.subscribe(() => {
 // store.ts's copy-on-write convention used throughout.
 store.dispatch({
   type: "pinned/hydrated",
-  hits: parsePinnedSessions(readStorage(PINNED_SESSIONS_STORAGE_KEY)),
+  pins: parsePinnedSessions(readStorage(PINNED_SESSIONS_STORAGE_KEY)),
 });
 let lastPinned = store.getState().pinnedSessions;
 store.subscribe(() => {
@@ -64,7 +68,7 @@ store.subscribe(() => {
   lastPinned = pinned;
   // storage unavailable — pinning still works for the session, just doesn't
   // persist across reload.
-  writeStorage(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify([...pinned.values()]));
+  writeStorage(PINNED_SESSIONS_STORAGE_KEY, serializePinnedSessions(pinned.values()));
 });
 
 const root = document.getElementById("app-root");

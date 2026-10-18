@@ -13,7 +13,7 @@ import type {
   SessionSearchRequest,
   StaleClientInfo,
 } from "@ccmsg/protocol";
-import { jsonText, parseWith, SessionSearchHitSchema } from "@ccmsg/protocol";
+import { jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 import type { PeerSortKey } from "./sidebar-url.ts";
 import { numberText } from "./storage.ts";
@@ -21,7 +21,7 @@ import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
 import { viewerPathForAbsolute } from "./filepath-ref.ts";
-import { pinnedHitForSid } from "./pinned-sessions.ts";
+import { type Pin, PinSchema, pinForSid } from "./pinned-sessions.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -604,7 +604,7 @@ export function hasSessionTranscript(
  *
  * 1. A live peer's hello metadata (the session announced its own
  *    `SessionIdentity.ws` — the strongest signal we ever get).
- * 2. A pinned/virtual session's `SessionSearchHit.repo/ws` — DR-0021 lets a
+ * 2. A pinned session's stored `repo/ws` — DR-0021 lets a
  *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
  *    lost the whole worktree name for those rows.
  * 3. An agent-only row (`claude agents --json`, no ccmsg connection): the
@@ -622,7 +622,7 @@ export function resolveSessionTopbar(
   if (peer && (peer.repo || peer.ws)) {
     return { repo: peer.repo, ws: peer.ws, cwd: peer.cwd };
   }
-  const pinned = pinnedHitForSid(state.pinnedSessions, sid);
+  const pinned = pinForSid(state.pinnedSessions, sid);
   if (pinned && (pinned.repo || pinned.ws)) {
     return { repo: pinned.repo ?? "", ws: pinned.ws ?? "", cwd: pinned.cwd };
   }
@@ -1290,19 +1290,50 @@ export function matchRoleBadge(role: SessionSearchMatch["role"]): string {
 
 export const PINNED_SESSIONS_STORAGE_KEY = "ccmsg.pinnedSessions";
 
-/** The stored pins: the hits as they were when pinned, none when nothing is
- * stored. */
-const PinnedSessionsSchema = v.optional(v.array(SessionSearchHitSchema), () => []);
-const PinnedSessionsTextSchema = jsonText(PinnedSessionsSchema);
+/** The stored pins as this webui writes them: a versioned envelope, so a later
+ * change to `PinSchema` adds an option here and keeps reading what was
+ * written before it. */
+const PinnedSessionsV1Schema = v.object({ v: v.literal(1), pins: v.array(PinSchema) });
+
+/** The stored pins as an earlier webui wrote them: Session Search hits, bare,
+ * one per pin. Only the fields a pin keeps are read; a hit with no cwd could
+ * never be pinned by directory and becomes no pin. */
+const PinnedSessionsHitListSchema = v.pipe(
+  v.array(
+    v.object({
+      ...PinSchema.entries,
+      cwd: v.nullable(v.string()),
+    }),
+  ),
+  v.transform((hits) => hits.flatMap(({ cwd, ...rest }) => (cwd ? [{ ...rest, cwd }] : []))),
+);
+
+const PinnedSessionsTextSchema = jsonText(
+  v.union([
+    v.pipe(
+      PinnedSessionsV1Schema,
+      v.transform(({ pins }) => pins),
+    ),
+    PinnedSessionsHitListSchema,
+  ]),
+);
 
 /** Reads a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
- * into a pinned-hit list (the store keys it by cwd, pinsFromHits). A value
- * that does not read as a list of hits (schema drift, a manual edit) is
- * ignored as a whole — no pins — rather than read in part, same as
- * `parseFavorites`. */
-export function parsePinnedSessions(raw: string | null): SessionSearchHit[] {
-  const read = raw === null ? null : parseWith(PinnedSessionsTextSchema, raw);
-  return [...(read?.ok ? read.value : v.getDefault(PinnedSessionsSchema))];
+ * into a pin list (the store keys it by cwd, pinsFromList). Nothing stored is
+ * no pins. A value that reads as none of the stored shapes (a manual edit,
+ * storage corruption) is no pins either — ignored as a whole rather than read
+ * in part, same as `parseFavorites` — and the console says so, with why. */
+export function parsePinnedSessions(raw: string | null): Pin[] {
+  if (raw === null) return [];
+  const read = parseWith(PinnedSessionsTextSchema, raw);
+  if (read.ok) return [...read.value];
+  console.warn(`ccmsg: ignored the stored pinned sessions: ${read.failure.summary}`);
+  return [];
+}
+
+/** The localStorage text for `pins`, read back by `parsePinnedSessions`. */
+export function serializePinnedSessions(pins: Iterable<Pin>): string {
+  return JSON.stringify({ v: 1, pins: [...pins] });
 }
 
 /** textarea の視覚行数 = 改行 + 1 (空文字でも 1 行、末尾改行はその後ろの

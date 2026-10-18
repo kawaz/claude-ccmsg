@@ -57,7 +57,8 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 
 webui localStorage。daemon 側の永続化はしない。
 
-- key `ccmsg.pinnedSessions`、値は pin 時に凍結した `SessionSearchHit` の配列 (pin 1 つにつき 1 件)。読み込み時に `cwd` で索引し、同じ `cwd` の記録が複数あれば `updated_at` が最新のものを採り、`cwd` が null の記録は捨てる
+- key `ccmsg.pinnedSessions`、値は `{ v: 1, pins: [...] }`。pin は pin 時に凍結した記録で、形は webui が自分のスキーマ (`PinSchema`: sid、cwd、repo、ws、title、transcript の file、updated_at、model / effort) で持ち、protocol の `SessionSearchHit` とは切り離す。protocol が検索結果に field を足しても保存済みの pin は読める ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §3)
+- 読み込みは保存されうる形の union で読む: 今の `{ v: 1, pins }` と、`SessionSearchHit` をそのまま並べた配列 (pin に要る field だけを取り、`cwd` が null の記録は pin にならない)。どの形でも読めない値は丸ごと読まず (pin なし)、読めなかったことと理由を console に出す。読んだ pin は `cwd` で索引し、同じ `cwd` の記録が複数あれば `updated_at` が最新のものを採る
 - 凍結した記録の repo/ws・title は、その sid のセッションが接続中・稼働中の間 live 側の値で補修する
 
 ## 4. Phase 分割

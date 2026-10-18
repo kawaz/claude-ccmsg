@@ -21,6 +21,7 @@ import {
   selectedSid,
 } from "../src/client/store.ts";
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
+import type { Pin } from "../src/client/pinned-sessions.ts";
 import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 import type { Locator } from "../src/client/locator.ts";
 import { nextRequestGeneration } from "../src/client/request-generation.ts";
@@ -1750,38 +1751,50 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     };
   }
 
-  test("hydrated replaces pinnedSessions with the given hits, keyed by cwd", () => {
+  function pin(sid: string): Pin {
+    return {
+      sid,
+      cwd: dir(sid),
+      repo: "kawaz/claude-ccmsg",
+      ws: "main",
+      title: null,
+      file: `/home/.claude/projects/x/${sid}.jsonl`,
+      updated_at: "2026-07-15T00:00:00.000Z",
+    };
+  }
+
+  test("hydrated replaces pinnedSessions with the given pins, keyed by cwd", () => {
     const state = dispatch(initialState(), {
       type: "pinned/hydrated",
-      hits: [hit("a"), hit("b")],
+      pins: [pin("a"), pin("b")],
     });
     expect(state.pinnedSessions.size).toBe(2);
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(hit("a"));
+    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
   });
 
   // A later hydrate is a full replace, not a merge — matches rooms/loaded's
   // own "the daemon's/localStorage's snapshot wins" convention.
   test("a later hydrated call fully replaces (not merges) the map", () => {
-    const first = dispatch(initialState(), { type: "pinned/hydrated", hits: [hit("a")] });
-    const second = dispatch(first, { type: "pinned/hydrated", hits: [hit("b")] });
+    const first = dispatch(initialState(), { type: "pinned/hydrated", pins: [pin("a")] });
+    const second = dispatch(first, { type: "pinned/hydrated", pins: [pin("b")] });
     expect(second.pinnedSessions.has(dir("a"))).toBe(false);
     expect(second.pinnedSessions.has(dir("b"))).toBe(true);
   });
 
   test("added inserts a new pin", () => {
-    const state = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(hit("a"));
+    const state = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
+    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
   });
 
   test("added for an already-pinned sid replaces its cached metadata", () => {
-    const first = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
-    const refreshed = { ...hit("a"), size: 9999 };
-    const second = dispatch(first, { type: "pinned/added", hit: refreshed });
-    expect(second.pinnedSessions.get(dir("a"))?.size).toBe(9999);
+    const first = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
+    const refreshed = { ...pin("a"), title: "更新" };
+    const second = dispatch(first, { type: "pinned/added", pin: refreshed });
+    expect(second.pinnedSessions.get(dir("a"))?.title).toBe("更新");
   });
 
   test("removed deletes the sid's pin", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const removed = dispatch(pinned, { type: "pinned/removed", key: dir("a") });
     expect(removed.pinnedSessions.has(dir("a"))).toBe(false);
   });
@@ -1799,24 +1812,24 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   test("peers/loaded fills in a pin whose stored repo/ws is worse than its live peer's", () => {
     const pinned = dispatch(initialState(), {
       type: "pinned/added",
-      hit: { ...hit("a"), repo: null, ws: "wip-issue-board" },
+      pin: { ...pin("a"), repo: null, ws: "wip-issue-board" },
     });
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "wip-issue-board", cwd: "/repos/wip" }],
     });
     expect(state.pinnedSessions.get(dir("a"))).toEqual({
-      ...hit("a"),
+      ...pin("a"),
       repo: "kawaz/claude-ccmsg",
       ws: "wip-issue-board",
     });
   });
 
   // Only repo/ws are repaired: the rest of the record is what the pin captured
-  // (its title, its size, when it was last written), not a re-pin.
+  // (its title, its transcript, when it was last written), not a re-pin.
   test("peers/loaded leaves every other field of the pin untouched", () => {
-    const stored = { ...hit("a"), repo: null, ws: null, title: "Issue管理", size: 4242 };
-    const pinned = dispatch(initialState(), { type: "pinned/added", hit: stored });
+    const stored = { ...pin("a"), repo: null, ws: null, title: "Issue管理", file: "/kept.jsonl" };
+    const pinned = dispatch(initialState(), { type: "pinned/added", pin: stored });
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/other" }],
@@ -1832,7 +1845,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   // peers/loaded fires on every connect/disconnect — a rewrite per event that
   // stores identical bytes is what returning the same Map avoids.
   test("peers/loaded keeps the same pinnedSessions Map when nothing needs repair", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [
@@ -1846,18 +1859,18 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   // is not a better source: replacing the pair with two empty strings would
   // erase a label the pin legitimately holds.
   test("peers/loaded does not blank a pin from a peer that has neither repo nor ws", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [{ sid: "a", repo: "", ws: "", cwd: "/repos/claude-ccmsg/main" }],
     });
     expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
-    expect(state.pinnedSessions.get(dir("a"))).toEqual(hit("a"));
+    expect(state.pinnedSessions.get(dir("a"))).toEqual(pin("a"));
   });
 
   // Peers of sessions that were never pinned are just the peers list.
   test("peers/loaded ignores peers with no pin of their own", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/added", pin: pin("a") });
     const state = dispatch(pinned, {
       type: "peers/loaded",
       peers: [{ sid: "b", repo: "kawaz/other", ws: "main", cwd: "/repos/other/main" }],
@@ -1872,7 +1885,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   test("agents/loaded writes a renamed session's title into its pin", () => {
     const pinned = dispatch(initialState(), {
       type: "pinned/added",
-      hit: { ...hit("a"), title: "古いタイトル" },
+      pin: { ...pin("a"), title: "古いタイトル" },
     });
     const state = dispatch(pinned, {
       type: "agents/loaded",
@@ -1888,13 +1901,13 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
         },
       ],
     });
-    expect(state.pinnedSessions.get(dir("a"))).toEqual({ ...hit("a"), title: "Issue管理" });
+    expect(state.pinnedSessions.get(dir("a"))).toEqual({ ...pin("a"), title: "Issue管理" });
   });
 
   test("agents/loaded keeps the same pinnedSessions Map when no title changed", () => {
     const pinned = dispatch(initialState(), {
       type: "pinned/added",
-      hit: { ...hit("a"), title: "Issue管理" },
+      pin: { ...pin("a"), title: "Issue管理" },
     });
     const state = dispatch(pinned, {
       type: "agents/loaded",
@@ -1916,9 +1929,9 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
   // The SessionView header button is one sid-keyed action: absent -> present,
   // then present -> absent, without requiring UI code to choose two reducers.
   test("toggled pins and then unpins the same sid", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/toggled", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/toggled", pin: pin("a") });
     expect(pinned.pinnedSessions.has(dir("a"))).toBe(true);
-    const unpinned = dispatch(pinned, { type: "pinned/toggled", hit: hit("a") });
+    const unpinned = dispatch(pinned, { type: "pinned/toggled", pin: pin("a") });
     expect(unpinned.pinnedSessions.has(dir("a"))).toBe(false);
   });
 
@@ -1981,43 +1994,32 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     });
   });
 
-  // A pin belongs to a directory, so a hit Session Search could not restore a
-  // cwd for has nothing to be pinned under.
-  test("added and toggled ignore a hit with no cwd", () => {
-    const state = initialState();
-    expect(dispatch(state, { type: "pinned/added", hit: { ...hit("a"), cwd: null } })).toBe(state);
-    expect(dispatch(state, { type: "pinned/toggled", hit: { ...hit("a"), cwd: null } })).toBe(
-      state,
-    );
-  });
-
   // The successor of a handed-over session runs in the same directory under a
   // new sid; its pin button acts on the directory's existing pin.
   test("toggled with a different sid in a pinned directory unpins the directory", () => {
-    const pinned = dispatch(initialState(), { type: "pinned/toggled", hit: hit("a") });
+    const pinned = dispatch(initialState(), { type: "pinned/toggled", pin: pin("a") });
     const unpinned = dispatch(pinned, {
       type: "pinned/toggled",
-      hit: { ...hit("successor"), cwd: dir("a") },
+      pin: { ...pin("successor"), cwd: dir("a") },
     });
     expect(unpinned.pinnedSessions.size).toBe(0);
   });
 
   // Stored records from when pins were per sid can hold several sessions of
-  // one directory; hydration keeps the most recently updated one per cwd and
-  // drops records with no cwd.
-  test("hydrated collapses stored hits sharing a cwd and drops cwd-less ones", () => {
-    const older = { ...hit("old"), cwd: dir("a"), updated_at: "2026-07-01T00:00:00.000Z" };
-    const newer = { ...hit("new"), cwd: dir("a"), updated_at: "2026-07-20T00:00:00.000Z" };
+  // one directory; hydration keeps the most recently updated one per cwd.
+  test("hydrated collapses stored pins sharing a cwd", () => {
+    const older = { ...pin("old"), cwd: dir("a"), updated_at: "2026-07-01T00:00:00.000Z" };
+    const newer = { ...pin("new"), cwd: dir("a"), updated_at: "2026-07-20T00:00:00.000Z" };
     const state = dispatch(initialState(), {
       type: "pinned/hydrated",
-      hits: [older, newer, { ...hit("x"), cwd: null }],
+      pins: [older, newer],
     });
     expect([...state.pinnedSessions.entries()]).toEqual([[dir("a"), newer]]);
   });
 
   test("does not mutate the previous state (reducer purity)", () => {
     const before = initialState();
-    dispatch(before, { type: "pinned/added", hit: hit("a") });
+    dispatch(before, { type: "pinned/added", pin: pin("a") });
     expect(before.pinnedSessions.size).toBe(0);
   });
 });
