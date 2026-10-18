@@ -6,7 +6,7 @@
 import { afterAll, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";
-import { openRunTmp } from "./tmp.ts";
+import { contentsOf, openRunTmp } from "./tmp.ts";
 
 process.env.CCMSG_AGENTS_POLL ??= "off";
 
@@ -31,7 +31,9 @@ process.env.CCMSG_TEST_LIFELINE = lifeline.path;
 afterAll(() => {
   const holders = lifeline.holders();
   lifeline.close();
-  const dirs = runTmp.leftovers([LIFELINE]);
+  const dirs = runTmp
+    .leftovers([LIFELINE])
+    .map((dir) => [dir, ...contentsOf(dir).map((entry) => `  ${entry}`)].join("\n"));
   runTmp.remove();
   const failures: string[] = [];
   if (holders.length > 0) {
@@ -43,7 +45,7 @@ afterAll(() => {
   if (dirs.length > 0) {
     failures.push(
       `${String(dirs.length)} temp file(s) were not removed by the test that made them ` +
-        `(the run removed them; each name's prefix names the test file):\n${dirs.join("\n")}`,
+        `(the run removed them; each name's prefix names the test file, and what it held follows it):\n${dirs.join("\n")}`,
     );
   }
   if (failures.length > 0) throw new Error(failures.join("\n\n"));

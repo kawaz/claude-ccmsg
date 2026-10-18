@@ -42,6 +42,15 @@ function git(cwd: string, ...args: string[]): void {
       ...process.env,
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_CONFIG_SYSTEM: "/dev/null",
+      // No background maintenance: `git commit` otherwise starts a detached
+      // `git maintenance run --auto` (GIT_TRACE shows it with git 2.55), a
+      // process no test waits for, which could write into the fixture after
+      // the test removed it.
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "maintenance.auto",
+      GIT_CONFIG_VALUE_0: "false",
+      GIT_CONFIG_KEY_1: "gc.auto",
+      GIT_CONFIG_VALUE_1: "0",
       GIT_AUTHOR_NAME: "t",
       GIT_AUTHOR_EMAIL: "t@example.com",
       GIT_COMMITTER_NAME: "t",

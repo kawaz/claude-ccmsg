@@ -21,7 +21,9 @@ describe("the test run's temp dir", () => {
     expect(os.tmpdir()).toMatch(/^\/tmp\/ccmsg-run-/);
   });
 
-  test("a run whose test timed out before removing its temp dirs removes them, and fails naming them", async () => {
+  // What a dir held says who wrote it when its name alone does not (a process
+  // the test started may have written into it after the test removed it).
+  test("a run whose test timed out before removing its temp dirs removes them, and fails naming them and what they held", async () => {
     const run = Bun.spawn([process.execPath, "test", LEAKY_FIXTURE], {
       cwd: REPO_ROOT,
       stdout: "pipe",
@@ -37,8 +39,8 @@ describe("the test run's temp dir", () => {
 
     expect(code).toBe(1);
     expect(err).toContain("2 temp file(s) were not removed by the test that made them");
-    expect(err).toContain(dir);
-    expect(err).toContain(short);
+    expect(err).toContain(`${dir}\n  inner/\n  inner/file.txt\n`);
+    expect(err).toContain(`${short}\n  (empty)`);
     expect(fs.existsSync(dir)).toBe(false);
     expect(fs.existsSync(short)).toBe(false);
     // The fixture's run dir went with it.

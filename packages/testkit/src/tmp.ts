@@ -45,6 +45,30 @@ export function shortTmpDir(prefix: string): string {
   return dir;
 }
 
+/** How many entries `contentsOf` lists of one leftover before it stops. */
+const CONTENTS_SHOWN = 20;
+
+/** What a leftover holds, one line per entry: its path relative to `file`, a
+ * directory's ending in `/`, sorted; `(empty)` for an empty directory, nothing
+ * for a file or for what is gone by now. What it holds can say who wrote it
+ * when its name cannot: a process the test started may have written into it
+ * after the test removed it. */
+export function contentsOf(file: string): string[] {
+  if (fs.statSync(file, { throwIfNoEntry: false })?.isDirectory() !== true) return [];
+  const entries = fs
+    .readdirSync(file, { recursive: true, withFileTypes: true })
+    .map((entry) => {
+      const relative = path.relative(file, path.join(entry.parentPath, entry.name));
+      return entry.isDirectory() ? `${relative}/` : relative;
+    })
+    .toSorted();
+  if (entries.length === 0) return ["(empty)"];
+  const shown = entries.slice(0, CONTENTS_SHOWN);
+  return entries.length > shown.length
+    ? [...shown, `... and ${String(entries.length - shown.length)} more`]
+    : shown;
+}
+
 export interface RunTmp {
   /** The dir TMPDIR points at for this run. */
   dir: string;
