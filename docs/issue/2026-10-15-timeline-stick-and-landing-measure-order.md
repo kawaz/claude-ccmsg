@@ -3,7 +3,7 @@ title: Timeline の末尾追従と位置への着地が、内容が伸びた後�
 status: open
 category: bug
 created: 2026-10-15T03:10:09+09:00
-last_read:
+last_read: 2026-10-18T14:08:50+09:00
 open_entered: 2026-10-15T03:10:09+09:00
 wip_entered:
 blocked_entered:
