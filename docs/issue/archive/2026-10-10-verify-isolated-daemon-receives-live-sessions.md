@@ -1,6 +1,6 @@
 ---
 title: verify の隔離 daemon に実行中の実セッションが繋がる
-status: open
+status: resolved
 category: bug
 created: 2026-10-10T12:47:26+09:00
 last_read: 2026-10-18T19:20:27+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T19:33:53+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","commit/nmwtyzqz","dr/DR-0034"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -29,10 +29,10 @@ origin: 自リポ TODO
 
 ## 受け入れ条件
 
-- [ ] 実セッションが隔離 daemon に繋がる原因を特定する (socket パス解決の経路を hooks module / CLI の両方で確認)
-- [ ] 隔離 daemon には擬似セッションだけが繋がる
-- [ ] 害の有無 (実セッションへの誤配、実 daemon の状態汚染) を確認して記録する
-- [ ] 再発防止の検証手順 (verify skill) を更新する
+- [x] 実セッションが隔離 daemon に繋がる原因を特定する (socket パス解決の経路を hooks module / CLI の両方で確認)
+- [x] 隔離 daemon には擬似セッションだけが繋がる
+- [x] 害の有無 (実セッションへの誤配、実 daemon の状態汚染) を確認して記録する
+- [x] 再発防止の検証手順 (verify skill) を更新する
 
 ## 実害 (2026-10-14)
 
