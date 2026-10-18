@@ -3,7 +3,7 @@ title: webui からセッション単位で llm-gateway の keepalive を止め�
 status: open
 category: request
 created: 2026-09-05T19:52:40+09:00
-last_read:
+last_read: 2026-10-18T18:31:28+09:00
 open_entered: 2026-09-05T19:52:40+09:00
 wip_entered:
 blocked_entered:
