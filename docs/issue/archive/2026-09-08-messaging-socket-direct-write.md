@@ -1,6 +1,6 @@
 ---
 title: messaging socket への直接書き込みで idle セッションを即起動できる
-status: open
+status: resolved
 category: idea
 created: 2026-09-08T15:59:18+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-18T15:28:13+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0034","dr/DR-0039","implemented:packages/daemon/src/peer-inject.ts が <config dir>/sessions/<pid>.json の messagingSocketPath に auth+user フレームを直書き、from 側は daemon の status inbox (no_status_socket 含む) で解決"]
 blocked_by:
 origin: llm-gateway (依頼元プロジェクト)
 ---
