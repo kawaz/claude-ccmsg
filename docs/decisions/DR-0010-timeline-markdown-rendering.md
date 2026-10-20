@@ -49,7 +49,7 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 `SegmentView` で `segment.role === "assistant"` の場合のみ `MarkdownView` を通す。ユーザ発言は人間が実際にタイプした生テキストであり、markdown 構文として解釈すべき対象ではない (かつ既存のチャットバブルスタイル `tl-text-user` は維持する)。
 
-ただしユーザ発言でも、裸の URL はアシスタント発言と同じ規則でリンクにする (`renderPlainTextWithLinks`)。文字は 1 つも記法として消費せず、打たれたとおりに出したうえで href だけを付ける。URL は下記 §7 の GFM autolink literal の規則を markdown パーサを通さずにテキストへ直接当てて見つける。
+ただしユーザ発言でも、裸の URL と実在する絶対パスはアシスタント発言と同じ規則でリンクにする (`renderPlainTextWithLinks`)。文字は 1 つも記法として消費せず、打たれたとおりに出したうえで href だけを付ける。URL は下記 §7 の GFM autolink literal の規則を markdown パーサを通さずにテキストへ直接当てて見つけ、パスは §8 と同じ linker で実在確認する。
 
 ### 7. 地の文の裸の URL はリンクにする [kawaz 経由]
 
@@ -58,6 +58,12 @@ GFM の autolink literal (`micromark-extension-gfm-autolink-literal` + `mdast-ut
 GFM は literal をホワイトスペースか `<` までとするので、空白を置かない日本語の文では URL の後ろの文までリンクに入る (`https://example.com/a。続き`)。literal の URL は最初の非 ASCII 文字か `<` で切り、切った端に出た句読点を GFM と同じ規則で落とす (`literalAutolinkText`)。切った残りはテキストに戻し、そこに続く URL を探し直す。生の非 ASCII を含む URL (IRI) はその文字以降を失うが、アドレスバーやツールからコピーされた URL は percent-encode 済みで、URL の直後に文が続く日本語の方がはるかに多いので、こちらを取る [提案]。
 
 書かれたリンク・`<url>` autolink・inline code・コードフェンスの中身は対象外 (それぞれのノードが先に取る)。`protectTagLikeAngleBrackets` が退避した `<…>` は literal の中では非 ASCII の印として現れるので、URL はその手前で切れ、角括弧はテキストのまま残る。
+
+### 8. 地の文の絶対パスは実在するファイルだけリンクにする [kawaz 経由]
+
+地の文の `/…` と `~/…` のパス (`findProsePaths`) を、inline code と太字のパスと同じ linker (`FilePathLinker`) に通し、daemon の `fs_stat_batch` が実在を確かめたものだけをリンクにする。見た目は地の文のまま点線の下線だけを付ける (`.md-prose-file-link`、inline code のチップにはしない)。`~/` は daemon がユーザの HOME で展開して判定する。
+
+パスは単語の途中・相対パスの途中・URL の `//` からは始まらず、空白・引用符・括弧・`,`・非 ASCII 文字で終わる (`/tmp/x.mdにある` → `/tmp/x.md`)。末尾の `.` と `:` は文の句読点として外し、行番号 (`/tmp/x.md:12`) は残す。相対パス (`docs/x.md`) は地の文では探さない: `and/or`・`I/O`・日付と区別が付かず、相対パスは inline code と太字で書かれる。リンクのラベルの中や、太字ごとファイルリンクになった中では、`<a>` の入れ子を作らないようリンクにしない。
 
 ## Bundle size (実測、DR-0004 のビルドレス方針への影響評価)
 

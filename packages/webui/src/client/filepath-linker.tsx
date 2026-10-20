@@ -25,11 +25,13 @@
  * Previously duplicated inline in `TimelineItem.tsx` (kawaz r46 m55-m58);
  * extracted here for the TL rich-unify task so both surfaces stay in lockstep.
  */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import {
   containmentRootOf,
   extractInlineCodeTokens,
+  extractProsePathTokens,
   extractStrongTokens,
+  findProsePaths,
   hrefFromStatEntry,
   parseFilePathRef,
   refLinkTarget,
@@ -43,7 +45,12 @@ import {
   getFilePathStatus,
   subscribeFilePathCache,
 } from "./filepath-existence-cache.ts";
-import { MarkdownView, type FilePathLinker, type MarkdownPathLinker } from "./markdown-view.tsx";
+import {
+  MarkdownView,
+  renderPlainTextWithLinks,
+  type FilePathLinker,
+  type MarkdownPathLinker,
+} from "./markdown-view.tsx";
 import type { SearchWord } from "./in-view-search.ts";
 
 /** Build the per-message linker MarkdownView calls on every inline-code
@@ -101,6 +108,18 @@ export function makeMarkdownPathLinker(
   };
 }
 
+/** The guessed path references in a body, per how the body is shown: a
+ * markdown body's inline code, bold runs and prose paths, or a plain body's
+ * prose paths (it has no markup to carry the others). */
+function probeTokens(source: string, format: "markdown" | "plain"): string[] {
+  if (format === "plain") return findProsePaths(source).map((path) => path.token);
+  return [
+    ...extractInlineCodeTokens(source),
+    ...extractStrongTokens(source),
+    ...extractProsePathTokens(source),
+  ];
+}
+
 /** Enqueue every candidate absolute path from a message body into the
  * filepath-existence-cache. Runs in an effect so a re-render (streaming
  * event addition, unrelated store change) does not re-enqueue — the cache
@@ -109,6 +128,7 @@ export function makeMarkdownPathLinker(
 export function useFilePathProbeEnqueue(
   source: string | undefined,
   ctx: FilePathResolveCtx | undefined,
+  format: "markdown" | "plain" = "markdown",
 ): void {
   // Keyed on the fields the resolution reads, not on the ctx object: callers
   // rebuild it whenever the peer row is replaced, the same anchors included.
@@ -122,14 +142,14 @@ export function useFilePathProbeEnqueue(
       ...(cwd !== undefined ? { cwd } : {}),
       ...(repoRoot !== undefined ? { repoRoot } : {}),
     };
-    for (const token of [...extractInlineCodeTokens(source), ...extractStrongTokens(source)]) {
+    for (const token of probeTokens(source, format)) {
       const ref = parseFilePathRef(token);
       if (!ref) continue;
       const abs = refToAbsolutePath(ref, anchors);
       if (!abs) continue;
       enqueueFilePathProbe(sid, abs);
     }
-  }, [source, sid, cwd, repoRoot]);
+  }, [source, sid, cwd, repoRoot, format]);
 }
 
 /** Subscribe to cache updates so a batch response triggers a re-render;
@@ -177,7 +197,7 @@ export function LinkedMarkdownView({
 }) {
   const probeTarget = restricted ? undefined : probeSource === undefined ? source : probeSource;
   const probeCtx = restricted ? undefined : ctx;
-  // Only guessed references (inline code, bold runs) are probed. Markdown
+  // Only guessed references (inline code, bold runs, prose paths) are probed. Markdown
   // link targets are declared, not guessed, so they link without asking (see
   // `makeMarkdownPathLinker`).
   useFilePathProbeEnqueue(probeTarget, probeCtx);
@@ -195,4 +215,20 @@ export function LinkedMarkdownView({
       issueRepo={issueRepo ?? ctx?.repo}
     />
   );
+}
+
+/** A user's own words, verbatim, with bare URLs and daemon-confirmed absolute
+ * / `~/` paths linked (`renderPlainTextWithLinks`). The plain-text sibling of
+ * `LinkedMarkdownView`, wired to the same probe and cache. */
+export function LinkedPlainText({
+  text,
+  ctx,
+}: {
+  text: string;
+  ctx: FilePathResolveCtx | undefined;
+}) {
+  useFilePathProbeEnqueue(text, ctx, "plain");
+  const cacheTick = useFilePathCacheTick();
+  const linker = useMemo(() => makeFilePathLinker(ctx, cacheTick), [ctx, cacheTick]);
+  return useMemo(() => <>{renderPlainTextWithLinks(text, linker)}</>, [text, linker]);
 }

@@ -39,7 +39,7 @@ import {
   isSafeUrl,
   literalAutolinkText,
 } from "./markdown-link.ts";
-import type { ParsedFilePathRef } from "./filepath-ref.ts";
+import { findProsePaths, type ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
 import { useKeyedValue } from "./useKeyedState.ts";
 
@@ -55,8 +55,10 @@ function currentOrigin(): string | null {
 // answers to the same question); re-exported here so existing importers and
 // DR-0010's named coverage target keep resolving through this module.
 export { isSafeUrl };
-/** A callback that MarkdownView invokes on every inline-code token to decide
- * whether it should render as a FileViewer link. Returns the href when the
+/** A callback that MarkdownView invokes on every inline-code token, every
+ * single-text bold run and every absolute / `~/` path in prose
+ * (`findProsePaths`) to decide whether it should render as a FileViewer
+ * link. Returns the href when the
  * token names a real, daemon-confirmed file for the sender's session, or
  * `null` otherwise (plain `<code>`). Kept as a function rather than a
  * pre-built Map so the caller — which owns the sender-scoped `ctx`, the
@@ -316,8 +318,9 @@ interface MarkdownRenderCtx {
    * known. Set = `#NNN` runs in plain text become links to that repo's
    * issues; absent = they render as the text they always were. */
   issueRepo?: string;
-  /** True while rendering the children of a `link` node. `#NNN` inside a link
-   * keeps its plain text — an `<a>` inside an `<a>` is invalid HTML, and the
+  /** True while rendering the label of an `<a>` (a `link` node, or a bold run
+   * the file linker turned into one). `#NNN` and prose paths inside it keep
+   * their plain text — an `<a>` inside an `<a>` is invalid HTML, and the
    * author's own link target wins over a derived one. Mutated during the
    * walk, mirroring `headingIndex`. */
   inLink: boolean;
@@ -631,6 +634,48 @@ function renderCodeSpan(value: string, key: string): VNode {
   );
 }
 
+/** A run of prose holding no file link: plain text, with `#NNN` issue links
+ * (kawaz r259 m1) when the repo is known and we are not already inside an
+ * `<a>`. */
+function renderProseRun(value: string, key: string, ctx: MarkdownRenderCtx): VNode | string {
+  const search = ctx.search;
+  const issuePieces = ctx.inLink ? null : splitTextForIssueRefs(value, ctx.issueRepo);
+  if (!issuePieces || !issuePieces.some((p) => p.href)) {
+    return renderTextRun(value, key, search);
+  }
+  return (
+    <span key={key}>
+      {issuePieces.map((p, i) => {
+        const pieceKey = `${key}.i${i}`;
+        const body = renderTextRun(p.text, pieceKey, search);
+        return p.href ? (
+          <a
+            key={pieceKey}
+            class="md-issue-link"
+            href={p.href}
+            {...(p.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+          >
+            {body}
+          </a>
+        ) : (
+          body
+        );
+      })}
+    </span>
+  );
+}
+
+/** The prose paths in `value` the linker turns into a FileViewer href. */
+function linkedProsePaths(
+  value: string,
+  linker: FilePathLinker,
+): { start: number; end: number; token: string; href: string }[] {
+  return findProsePaths(value).flatMap((path) => {
+    const href = linker(path.token);
+    return href ? [{ ...path, href }] : [];
+  });
+}
+
 /** `renderChildren` for the children of a `link` node — see `ctx.inLink`. */
 function renderLinkLabel(
   nodes: AnyNode[] | undefined,
@@ -669,33 +714,33 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
   switch (node.type) {
     case "text": {
       const value = node.value;
-      // kawaz r259 m1: `#NNN` becomes an issue link when the repo is known and
-      // we are not already inside an <a>. Code spans and fenced blocks never
-      // reach here (separate node types), so that exclusion is structural.
-      const issuePieces = ctx.inLink ? null : splitTextForIssueRefs(value, ctx.issueRepo);
-      if (!issuePieces || !issuePieces.some((p) => p.href)) {
-        return renderTextRun(value, key, search);
+      // An absolute / `~/` path written in prose links to the file when the
+      // daemon confirmed it — the same linker inline code and bold go
+      // through, so a path that names nothing (or is still being asked about)
+      // stays the text it was. Code spans and fenced blocks never reach here
+      // (separate node types), so they are left to their own cases.
+      const linker = ctx.inLink ? undefined : ctx.filePathLinker;
+      const paths = linker ? linkedProsePaths(value, linker) : [];
+      if (paths.length === 0) return renderProseRun(value, key, ctx);
+      const pieces: (VNode | string)[] = [];
+      let last = 0;
+      paths.forEach((path, i) => {
+        if (path.start > last) {
+          pieces.push(renderProseRun(value.slice(last, path.start), `${key}.t${i}`, ctx));
+        }
+        // Prose stays prose: no code chip, only the underline that says it
+        // opens (app.css `.md-prose-file-link`).
+        pieces.push(
+          <a key={`${key}.f${i}`} class="md-prose-file-link" href={path.href}>
+            {renderTextRun(path.token, `${key}.f${i}`, search)}
+          </a>,
+        );
+        last = path.end;
+      });
+      if (last < value.length) {
+        pieces.push(renderProseRun(value.slice(last), `${key}.t${paths.length}`, ctx));
       }
-      return (
-        <span key={key}>
-          {issuePieces.map((p, i) => {
-            const pieceKey = `${key}.i${i}`;
-            const body = renderTextRun(p.text, pieceKey, search);
-            return p.href ? (
-              <a
-                key={pieceKey}
-                class="md-issue-link"
-                href={p.href}
-                {...(p.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-              >
-                {body}
-              </a>
-            ) : (
-              body
-            );
-          })}
-        </span>
-      );
+      return <span key={key}>{pieces}</span>;
     }
 
     case "paragraph":
@@ -730,7 +775,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       if (!href) return <strong key={key}>{renderChildren(strong.children, key, ctx)}</strong>;
       return (
         <a key={key} class="md-strong-file-link" href={href}>
-          <strong>{renderChildren(strong.children, key, ctx)}</strong>
+          <strong>{renderLinkLabel(strong.children, key, ctx)}</strong>
         </a>
       );
     }
@@ -1622,11 +1667,20 @@ function trimLiteralAutolinks(node: Nodes, source: string): void {
   }
 }
 
-/** Plain text — a user's own words, shown verbatim — with its bare URLs
- * turned into links and nothing else reinterpreted. The URLs are found by the same GFM rule a markdown body's
+/** Plain text — a user's own words, shown verbatim — with its bare URLs and
+ * daemon-confirmed absolute / `~/` paths turned into links and nothing else
+ * reinterpreted. The URLs are found by the same GFM rule a markdown body's
  * are (`literalAutolinkNodes`). */
-export function renderPlainTextWithLinks(text: string): (VNode | string)[] {
-  const ctx: MarkdownRenderCtx = { headingIndex: 0, taskIndex: 0, inLink: false };
+export function renderPlainTextWithLinks(
+  text: string,
+  filePathLinker?: FilePathLinker,
+): (VNode | string)[] {
+  const ctx: MarkdownRenderCtx = {
+    headingIndex: 0,
+    filePathLinker,
+    taskIndex: 0,
+    inLink: false,
+  };
   return renderChildren(literalAutolinkNodes(text), "pt", ctx);
 }
 

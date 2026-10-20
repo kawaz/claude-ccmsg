@@ -4,10 +4,11 @@
 // and the resolver can be unit-tested without a DOM.
 //
 // Design (kawaz r46 mid=55):
-//   - Trigger surface is inline code (`...`) inside markdown messages —
-//     prose-level paths would false-positive too aggressively. The pattern
-//     itself is intentionally conservative so a random `2:3` or `foo:bar`
-//     doesn't turn into a broken link.
+//   - Trigger surfaces are inline code (`...`), bold runs, and absolute /
+//     `~/` paths in prose (`findProsePaths`). Prose is limited to the
+//     absolute forms because a relative `a/b` there is as often a word as a
+//     path. The pattern itself is intentionally conservative so a random
+//     `2:3` or `foo:bar` doesn't turn into a broken link.
 //   - No existence check (approach (a) in the task brief): the daemon owns
 //     the authoritative fs listing and re-validates on `fs_read`. Adding a
 //     protocol op just to gate linkification would be over-cost; FileViewer
@@ -467,9 +468,72 @@ export function extractStrongTokens(source: string): string[] {
   return extractTokens(source, /\*\*([^*]+)\*\*/g);
 }
 
+/** One path written straight into prose: `token` is `text.slice(start, end)`. */
+export interface ProsePath {
+  start: number;
+  end: number;
+  token: string;
+}
+
+// The characters a prose path is made of. Printable ASCII minus whitespace,
+// quotes, brackets, `,`, `;`, `` ` ``, `*` and the like, which in prose
+// delimit a path rather than belong to it — so `(/tmp/x.md)`, `"/tmp/x.md"`
+// and `/tmp/x.md、` all yield `/tmp/x.md`. Non-ASCII ends a path for the same
+// reason: Japanese prose runs straight into it (`/tmp/x.mdにある`).
+const PROSE_PATH_CHAR = "[A-Za-z0-9._~@+%:/-]";
+// Starts at `/` or `~/`, never in the middle of a word or a relative path
+// (`docs/x.md`, `a/b`) and never on a URL's `//`. A colon may come right
+// before it (`file:/tmp/x`, `出力:/tmp/x.md`): every URL reaching this has a
+// `//` after its scheme, which the `(?!\/)` already refuses.
+const PROSE_PATH_RE = new RegExp(`(?<![A-Za-z0-9._~@+%/-])~?\\/(?!\\/)${PROSE_PATH_CHAR}*`, "g");
+
+/** Absolute (`/…`) and home (`~/…`) paths written in prose, outside any code
+ * span. Relative paths are not looked for: `docs/x.md` is also how prose
+ * writes `and/or`, `I/O` and dates, and inline code and bold already carry the
+ * relative form. A trailing `.` or `:` belongs to the sentence (`/tmp/x.md.`,
+ * `/tmp/x.md:`), while a line suffix (`/tmp/x.md:12`) ends in a digit and is
+ * kept. Whether a match is a file is not decided here — the caller runs it
+ * through `parseFilePathRef` and the daemon, like every other guessed path. */
+export function findProsePaths(text: string): ProsePath[] {
+  const found: ProsePath[] = [];
+  PROSE_PATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PROSE_PATH_RE.exec(text)) !== null) {
+    const token = m[0].replace(/[.:]+$/, "");
+    if (token === "/" || token === "~/") continue;
+    found.push({ start: m.index, end: m.index + token.length, token });
+  }
+  return found;
+}
+
+/** `findProsePaths` over a markdown source, skipping fenced code the way
+ * `extractInlineCodeTokens` does. Inline code and link targets are not cut
+ * out: a path there is collected too, which costs one wasted probe at worst
+ * (the renderer only asks about paths in prose text), whereas missing one
+ * here would leave a prose path unlinked for good. */
+export function extractProsePathTokens(source: string): string[] {
+  const tokens: string[] = [];
+  forEachProseLine(source, (line) => {
+    for (const path of findProsePaths(line)) tokens.push(path.token);
+  });
+  return tokens;
+}
+
 function extractTokens(source: string, inlineRe: RegExp): string[] {
   const tokens: string[] = [];
-  const lines = source.split("\n");
+  forEachProseLine(source, (line) => {
+    inlineRe.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = inlineRe.exec(line)) !== null) {
+      const token = m[1];
+      if (token !== undefined) tokens.push(token);
+    }
+  });
+  return tokens;
+}
+
+/** Every line of a markdown source that is not inside fenced code. */
+function forEachProseLine(source: string, visit: (line: string) => void): void {
   let inFence = false;
   // CommonMark: a fence is 3+ backticks or tildes at line start (up to 3
   // leading spaces). The character used to open must be the one that closes;
@@ -477,18 +541,11 @@ function extractTokens(source: string, inlineRe: RegExp): string[] {
   // slightly larger region than the spec would, which for our purpose (avoid
   // linkifying code samples) is fine.
   const fenceRe = /^ {0,3}(?:`{3,}|~{3,})/;
-  for (const line of lines) {
+  for (const line of source.split("\n")) {
     if (fenceRe.test(line)) {
       inFence = !inFence;
       continue;
     }
-    if (inFence) continue;
-    inlineRe.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = inlineRe.exec(line)) !== null) {
-      const token = m[1];
-      if (token !== undefined) tokens.push(token);
-    }
+    if (!inFence) visit(line);
   }
-  return tokens;
 }

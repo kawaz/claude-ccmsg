@@ -2481,9 +2481,101 @@ describe("bare URLs in prose", () => {
   });
 });
 
-// A user's words: verbatim text, with only URLs linked.
+// Absolute / `~/` paths in prose link through the same daemon-backed linker
+// inline code and bold use, so only a confirmed file links.
+describe("prose paths", () => {
+  const known = new Set(["/tmp/x.md", "~/notes/y.md", "/tmp/x.md:12"]);
+  const linker = (token: string) => (known.has(token) ? `#/file/S1${token}` : null);
+  const render = (source: string): VNode =>
+    renderMarkdownAst(parseMarkdownSource(source), undefined, undefined, {
+      filePathLinker: linker,
+    });
+  const fileLinks = (vnode: VNode) =>
+    collect(vnode, (n) => n.type === "a" && stringProp(n, "class") === "md-prose-file-link");
+
+  test("a confirmed absolute or home path links, its text unchanged", () => {
+    const source = "see /tmp/x.md and ~/notes/y.md. done";
+    const vnode = render(source);
+    const links = fileLinks(vnode);
+    expect(links.map((a) => [stringProp(a, "href"), flattenText(a)])).toEqual([
+      ["#/file/S1/tmp/x.md", "/tmp/x.md"],
+      ["#/file/S1~/notes/y.md", "~/notes/y.md"],
+    ]);
+    expect(flattenText(vnode)).toBe(source);
+  });
+
+  test("a line suffix is part of the path handed to the linker", () => {
+    expect(fileLinks(render("at /tmp/x.md:12.")).map((a) => flattenText(a))).toEqual([
+      "/tmp/x.md:12",
+    ]);
+  });
+
+  test("a path the linker declines stays text", () => {
+    const vnode = render("see /tmp/missing.md");
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("see /tmp/missing.md");
+  });
+
+  test("without a linker nothing links", () => {
+    const vnode = renderMarkdownAst(parseMarkdownSource("see /tmp/x.md"));
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  });
+
+  test("a path inside a URL or a link label is not linked again", () => {
+    const url = render("https://ex.com/tmp/x.md");
+    expect(collect(url, (n) => n.type === "a")).toHaveLength(1);
+    expect(fileLinks(url)).toHaveLength(0);
+
+    const label = render("[open /tmp/x.md](https://ex.com/)");
+    expect(collect(label, (n) => n.type === "a")).toHaveLength(1);
+    expect(fileLinks(label)).toHaveLength(0);
+  });
+
+  // `**/tmp/x.md**` is already a bold file link; its text must not become a
+  // second `<a>` inside it. A bold run holding more than the path keeps its
+  // `<strong>` and links the path in it.
+  test("a bold path links once, a path inside longer bold links inside it", () => {
+    const whole = render("**/tmp/x.md**");
+    expect(collect(whole, (n) => n.type === "a")).toHaveLength(1);
+    expect(collect(whole, (n) => n.type === "a")[0]?.props).toMatchObject({
+      class: "md-strong-file-link",
+    });
+
+    const inside = render("**see /tmp/x.md**");
+    const strong = defined(collect(inside, (n) => n.type === "strong")[0], "the strong");
+    expect(fileLinks(strong)).toHaveLength(1);
+  });
+
+  test("a path in inline code is left to the inline-code linker", () => {
+    const vnode = render("`/tmp/x.md`");
+    expect(fileLinks(vnode)).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "a")[0]?.props).toMatchObject({
+      class: "md-inline-code-file-link",
+    });
+  });
+
+  test("issue references beside a path still link", () => {
+    const vnode = renderMarkdownAst(
+      parseMarkdownSource("#12 /tmp/x.md #34"),
+      undefined,
+      undefined,
+      {
+        filePathLinker: linker,
+        issueRepo: "o/r",
+      },
+    );
+    expect(collect(vnode, (n) => n.type === "a").map((a) => stringProp(a, "class"))).toEqual([
+      "md-issue-link",
+      "md-prose-file-link",
+      "md-issue-link",
+    ]);
+  });
+});
+
+// A user's words: verbatim text, with only URLs and confirmed paths linked.
 describe("renderPlainTextWithLinks", () => {
-  const render = (text: string): VNode => h("div", null, renderPlainTextWithLinks(text));
+  const linker = (token: string) => (token === "/tmp/x.md" ? "#/file/S1/tmp/x.md" : null);
+  const render = (text: string): VNode => h("div", null, renderPlainTextWithLinks(text, linker));
   const hrefs = (vnode: VNode): (string | undefined)[] =>
     collect(vnode, (n) => n.type === "a").map((a) => stringProp(a, "href"));
 
@@ -2503,6 +2595,13 @@ describe("renderPlainTextWithLinks", () => {
       target: "_blank",
       rel: "noopener noreferrer",
     });
+  });
+
+  test("a confirmed path links, an unconfirmed one stays text", () => {
+    const text = "edit /tmp/x.md and /tmp/missing.md";
+    const vnode = render(text);
+    expect(hrefs(vnode)).toEqual(["#/file/S1/tmp/x.md"]);
+    expect(flattenText(vnode)).toBe(text);
   });
 
   test("schemes outside the allowlist stay text", () => {

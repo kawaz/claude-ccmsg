@@ -5083,12 +5083,23 @@ button.session-tab {
   text-underline-offset: 0.15em;
 }
 
-/* ユーザ発話 (.md の外の plain text) に張るリンク。見た目は
+/* ユーザ発話 (.md の外の plain text) に張る URL・パスのリンク。見た目は
  * markdown 本文のリンク (`.md a`) と揃える。 */
 .tl-text-user a {
   color: var(--accent);
   text-underline-offset: 0.2em;
   text-decoration-thickness: from-font;
+}
+
+/* 地の文に書かれた実在ファイルのパス (markdown-view.tsx の text case)。地の文
+ * として読ませるので色は本文のまま、開けることは点線の下線だけで示す
+ * (inline code のチップにはしない)。`.md a` / `.tl-text-user a` の accent を
+ * 打ち消すため要素名で詳細度を揃え、それらより後に置く。 */
+a.md-prose-file-link {
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 0.2em;
 }
 
 /* 地 / 罫 / 文字の 3 つとも面を基準に決め、どの面でも同じだけ浮かせる。罫が

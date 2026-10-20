@@ -12,7 +12,9 @@ import {
   refToAbsolutePath,
   hrefFromStatEntry,
   extractInlineCodeTokens,
+  extractProsePathTokens,
   extractStrongTokens,
+  findProsePaths,
   previewFilePathCtx,
   alternateLinkReading,
   isRecoverableLinkError,
@@ -191,6 +193,53 @@ describe("hrefFromStatEntry", () => {
     expect(
       hrefFromStatEntry("s1", { path: "/outside/x.md" }, { path: "/outside/x.md", line: 3 }),
     ).toBe(fileHref("s1", "/outside/x.md", { start: 3, end: 3 }));
+  });
+});
+
+// Paths written straight into prose. Only the absolute and `~/` forms are
+// picked up; whether one is a file is left to parseFilePathRef + the daemon.
+describe("findProsePaths", () => {
+  const tokens = (text: string) => findProsePaths(text).map((p) => p.token);
+
+  test("absolute and home paths are found, with their offsets", () => {
+    const text = "see /tmp/a/DESIGN.md and ~/notes/x.md";
+    expect(findProsePaths(text)).toEqual([
+      { start: 4, end: 20, token: "/tmp/a/DESIGN.md" },
+      { start: 25, end: 37, token: "~/notes/x.md" },
+    ]);
+    expect(text.slice(4, 20)).toBe("/tmp/a/DESIGN.md");
+  });
+
+  test("prose delimiters around a path are not part of it", () => {
+    expect(tokens("(/tmp/x.md)")).toEqual(["/tmp/x.md"]);
+    expect(tokens("\"/tmp/x.md\", '/tmp/y.md'")).toEqual(["/tmp/x.md", "/tmp/y.md"]);
+    expect(tokens("/tmp/x.mdにある")).toEqual(["/tmp/x.md"]);
+    expect(tokens("「/tmp/x.md」、/tmp/y.md。")).toEqual(["/tmp/x.md", "/tmp/y.md"]);
+    expect(tokens("出力:/tmp/x.md")).toEqual(["/tmp/x.md"]);
+  });
+
+  test("sentence punctuation at the end is dropped, a line suffix is kept", () => {
+    expect(tokens("open /tmp/x.md.")).toEqual(["/tmp/x.md"]);
+    expect(tokens("at /tmp/x.md: here")).toEqual(["/tmp/x.md"]);
+    expect(tokens("at /tmp/x.md:12.")).toEqual(["/tmp/x.md:12"]);
+    expect(tokens("at /tmp/x.md:L3-5")).toEqual(["/tmp/x.md:L3-5"]);
+  });
+
+  test("relative paths, words with slashes and URLs are not prose paths", () => {
+    expect(tokens("docs/x.md and/or I/O 2026/10/20")).toEqual([]);
+    expect(tokens("https://ex.com/tmp/x.md file:///tmp/y.md")).toEqual([]);
+    expect(tokens("a~/x.md ~user/x.md")).toEqual([]);
+  });
+
+  test("a bare root or home is not a path", () => {
+    expect(tokens("/ and ~/ alone")).toEqual([]);
+  });
+});
+
+describe("extractProsePathTokens", () => {
+  test("collects prose paths outside fenced code", () => {
+    const src = ["see /tmp/a.md", "```", "cat /tmp/in-fence.md", "```", "and ~/b.md."].join("\n");
+    expect(extractProsePathTokens(src)).toEqual(["/tmp/a.md", "~/b.md"]);
   });
 });
 
