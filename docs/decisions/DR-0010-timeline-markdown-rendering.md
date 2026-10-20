@@ -51,6 +51,8 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 ただしユーザ発言でも、裸の URL と実在する絶対パスはアシスタント発言と同じ規則でリンクにする (`renderPlainTextWithLinks`)。文字は 1 つも記法として消費せず、打たれたとおりに出したうえで href だけを付ける。URL は下記 §7 の GFM autolink literal の規則を markdown パーサを通さずにテキストへ直接当てて見つけ、パスは §8 と同じ linker で実在確認する。
 
+markdown の記法のうち `[label](target)` だけはユーザ発言でも読む。添付をこの app 自身が `[FILE1:name](<添付のパス>)` の形で発言へ埋め込むため。target が http(s) の URL・添付 (daemon の添付配信経路で開き、ファイルの許可判定は通さない)・§8 の linker が実在を確かめた絶対パス / `~/` パスのどれかの時だけ label のリンクにし、それ以外 (相対パス、確かめられないパス、`![alt](url)`、素の `[x]`) は打たれた文字のまま出す。リンクの描画は markdown 本文の `link` と同じ処理なので、画像の添付は本文と同じく画像として出る。
+
 ### 7. 地の文の裸の URL はリンクにする [kawaz 経由]
 
 GFM の autolink literal (`micromark-extension-gfm-autolink-literal` + `mdast-util-gfm-autolink-literal`) を登録し、地の文の `https://…` / `www.…` / メールアドレスを link ノードにする。link ノードなので、書かれたリンク (`[x](url)`) と同じ `link` case を通り、scheme 許可リスト (`classifyMarkdownLinkUrl`) と新規タブの扱いもそのまま効く。`www.` 始まりは拡張の既定どおり `http://` を補う。

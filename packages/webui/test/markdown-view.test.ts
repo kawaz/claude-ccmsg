@@ -2618,6 +2618,57 @@ describe("renderPlainTextWithLinks", () => {
     expect(flattenText(vnode)).toBe(text);
   });
 
+  // The one markdown form read in a user's words, because the app writes it
+  // there itself (attachments). Only targets that open become links.
+  test("[label](http URL) shows as its label, linked", () => {
+    const vnode = render("see [設計書](https://ex.com/a) here");
+    const link = defined(collect(vnode, (n) => n.type === "a")[0], "the label link");
+    expect(link.props).toMatchObject({ href: "https://ex.com/a", target: "_blank" });
+    expect(flattenText(link)).toBe("設計書");
+    expect(flattenText(vnode)).toBe("see 設計書 here");
+  });
+
+  test("[label](absolute path) links only when the file is confirmed", () => {
+    const confirmed = render("open [design](/tmp/x.md) now");
+    const link = defined(collect(confirmed, (n) => n.type === "a")[0], "the path link");
+    expect(link.props).toMatchObject({ class: "md-path-link", href: "#/file/S1/tmp/x.md" });
+    expect(flattenText(confirmed)).toBe("open design now");
+
+    const missing = "open [design](/tmp/missing.md) now";
+    expect(collect(render(missing), (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(render(missing))).toBe(missing);
+  });
+
+  test("an attachment target opens through the attachment route", () => {
+    const image = render("[FILE1:shot.png](/var/folders/x/T/claude-ccmsg-501/attachment/u1.png)");
+    const imageLink = defined(collect(image, (n) => n.type === "a")[0], "the image link");
+    expect(imageLink.props).toMatchObject({ href: "/attachment/u1.png" });
+    expect(collect(image, (n) => n.type === "img")).toHaveLength(1);
+
+    const file = render("[FILE2:log.txt](/var/folders/x/T/claude-ccmsg-501/attachment/u2.txt)");
+    const fileLink = defined(collect(file, (n) => n.type === "a")[0], "the file link");
+    expect(fileLink.props).toMatchObject({ href: "/attachment/u2.txt" });
+    expect(flattenText(fileLink)).toBe("FILE2:log.txt");
+  });
+
+  test("other bracket forms stay the characters typed", () => {
+    for (const text of [
+      "[x](docs/x.md)",
+      "[x]",
+      "[x] (https-less)",
+      "[x](javascript:alert(1))",
+      "[x](//ex.com/a)",
+    ]) {
+      const vnode = render(text);
+      expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(text);
+    }
+    // `![alt](url)` is not a label link; its URL is still a bare URL.
+    const image = render("![alt](https://ex.com/i.png)");
+    expect(hrefs(image)).toEqual(["https://ex.com/i.png"]);
+    expect(flattenText(image)).toBe("![alt](https://ex.com/i.png)");
+  });
+
   test("text with nothing to link comes back as-is", () => {
     expect(renderPlainTextWithLinks("ただの文")).toEqual(["ただの文"]);
     expect(renderPlainTextWithLinks("")).toEqual([]);

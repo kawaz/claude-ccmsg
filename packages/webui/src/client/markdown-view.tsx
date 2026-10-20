@@ -38,6 +38,7 @@ import {
   codeSpanLinkTarget,
   isSafeUrl,
   literalAutolinkText,
+  markdownLinkPathRef,
 } from "./markdown-link.ts";
 import { findProsePaths, type ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
@@ -1667,10 +1668,16 @@ function trimLiteralAutolinks(node: Nodes, source: string): void {
   }
 }
 
-/** Plain text — a user's own words, shown verbatim — with its bare URLs and
- * daemon-confirmed absolute / `~/` paths turned into links and nothing else
- * reinterpreted. The URLs are found by the same GFM rule a markdown body's
- * are (`literalAutolinkNodes`). */
+/** Plain text — a user's own words, shown verbatim — with its bare URLs,
+ * daemon-confirmed absolute / `~/` paths and `[label](target)` links turned
+ * into links and nothing else reinterpreted. The URLs are found by the same
+ * GFM rule a markdown body's are (`literalAutolinkNodes`).
+ *
+ * `[label](target)` is the one markdown form read here, because the app puts
+ * it into the user's words itself: an attachment reaches the prompt as
+ * `[FILE1:name](<attachment path>)`. It shows as its label only when the
+ * target is somewhere to go — an http(s) URL, an attachment, or a file the
+ * daemon confirmed — and stays the characters typed otherwise. */
 export function renderPlainTextWithLinks(
   text: string,
   filePathLinker?: FilePathLinker,
@@ -1678,10 +1685,62 @@ export function renderPlainTextWithLinks(
   const ctx: MarkdownRenderCtx = {
     headingIndex: 0,
     filePathLinker,
+    // Reached only for a target `plainLinkTargetOpens` already confirmed.
+    pathLinker: filePathLinker ? (ref) => filePathLinker(filePathToken(ref)) : undefined,
     taskIndex: 0,
     inLink: false,
   };
-  return renderChildren(literalAutolinkNodes(text), "pt", ctx);
+  return renderChildren(plainTextNodes(text, filePathLinker), "pt", ctx);
+}
+
+/** `[label](target)` with no brackets in the label and nothing a link
+ * destination cannot hold in the target. Not after `!`: the app never writes
+ * an image this way, so `![alt](url)` is a user's own characters. */
+const PLAIN_LINK_RE = /(?<!!)\[([^[\]\n]+)\]\(([^()\s]+)\)/g;
+
+/** `text` as text and links: `[label](target)` where `plainLinkTargetOpens`,
+ * and bare URLs in the rest. */
+function plainTextNodes(text: string, filePathLinker?: FilePathLinker): PhrasingContent[] {
+  const nodes: PhrasingContent[] = [];
+  let last = 0;
+  PLAIN_LINK_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PLAIN_LINK_RE.exec(text)) !== null) {
+    const label = m[1] ?? "";
+    const target = m[2] ?? "";
+    if (!plainLinkTargetOpens(target, filePathLinker)) continue;
+    nodes.push(...literalAutolinkNodes(text.slice(last, m.index)));
+    nodes.push({
+      type: "link",
+      url: target,
+      title: null,
+      children: [{ type: "text", value: label }],
+    });
+    last = m.index + m[0].length;
+  }
+  nodes.push(...literalAutolinkNodes(text.slice(last)));
+  return nodes;
+}
+
+/** Whether a `[label](target)` in plain text links: an http(s) URL, an
+ * attachment (served by the daemon's attachment route, no file access
+ * involved), or an absolute / `~/` path the file linker confirmed. A relative
+ * target (`docs/x.md`) has no directory to be relative to in a user's words. */
+function plainLinkTargetOpens(target: string, filePathLinker?: FilePathLinker): boolean {
+  if (/^https?:\/\//i.test(target)) return true;
+  if (!/^(?:~?\/)(?!\/)/.test(target)) return false;
+  if (attachmentUrlFromPath(target)) return true;
+  const ref = markdownLinkPathRef(target);
+  return (
+    ref !== null && filePathLinker !== undefined && filePathLinker(filePathToken(ref)) !== null
+  );
+}
+
+/** A link target's ref spelled as the token the file linker reads
+ * (`path`, `path:12`, `path:L12-20`). */
+function filePathToken(ref: ParsedFilePathRef): string {
+  if (ref.line === undefined) return ref.path;
+  return ref.end === undefined ? `${ref.path}:${ref.line}` : `${ref.path}:L${ref.line}-${ref.end}`;
 }
 
 /** `parseMarkdownSource` plus the `<details>` fold. Separate from the parse

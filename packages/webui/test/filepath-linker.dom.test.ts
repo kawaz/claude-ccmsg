@@ -95,6 +95,16 @@ describe("prose paths through the probe", () => {
     expect(root.textContent).toBe(text);
   });
 
+  test("a [label](path) in a user's text links as its label once confirmed", async () => {
+    const asked = installDaemon(["/tmp/d/DESIGN.md"]);
+    const root = await mount(
+      h(LinkedPlainText, { text: "[設計](/tmp/d/DESIGN.md) と [無い](/tmp/missing.md)", ctx }),
+    );
+    expect(asked.sort()).toEqual(["/tmp/d/DESIGN.md", "/tmp/missing.md"]);
+    expect(links(root).map((l) => [l.cls, l.text])).toEqual([["md-path-link", "設計"]]);
+    expect(root.textContent).toBe("設計 と [無い](/tmp/missing.md)");
+  });
+
   test("with no session to ask, paths stay text while URLs still link", async () => {
     const asked = installDaemon(["/tmp/d/DESIGN.md"]);
     const root = await mount(
