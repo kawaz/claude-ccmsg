@@ -13,7 +13,7 @@ import { enqueueFilePathProbe, getFilePathStatus } from "../../filepath-existenc
 import { hrefFromStatEntry, viewerPathForAbsolute } from "../../filepath-ref.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "../InlineFileViewer.tsx";
-import { FileToolSidContext, SessionFilePathCtxContext } from "./context.ts";
+import { FileToolSidContext, SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
 
 function fileToolLineRange(segment: Extract<Segment, { kind: "file-read" }>): {
@@ -76,18 +76,45 @@ function FileReadResultView({
   return <InlineFileViewer path={path} content={result.content} />;
 }
 
-export function FileToolFold({
+/** Read のカード。読んだだけで何も変えないので auto open の対象にせず、既定は閉。 */
+export function FileReadFold({
   segment,
   ts,
 }: {
+  segment: Extract<Segment, { kind: "file-read" }>;
+  ts: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return <FileToolFold segment={segment} ts={ts} open={open} setOpen={setOpen} />;
+}
+
+/** Edit / Write のカード。開閉の既定は auto open の E に従う。 */
+export function FileChangeFold({
+  segment,
+  ts,
+}: {
+  segment: Extract<Segment, { kind: "file-write" | "file-edit" }>;
+  ts: string | null;
+}) {
+  const [open, setOpen] = useCategoryOpen("edit");
+  return <FileToolFold segment={segment} ts={ts} open={open} setOpen={setOpen} />;
+}
+
+function FileToolFold({
+  segment,
+  ts,
+  open,
+  setOpen,
+}: {
   segment: Extract<Segment, { kind: "file-read" | "file-write" | "file-edit" }>;
   ts: string | null;
+  open: boolean;
+  setOpen: (open: boolean) => void;
 }) {
   const sid = useContext(FileToolSidContext);
   const range = segment.kind === "file-read" ? fileToolLineRange(segment) : null;
   const suffix = range ? `:${range.start}-${range.end}` : "";
   const label = `${segment.kind === "file-read" ? "Read" : segment.kind === "file-write" ? "Write" : "Edit"} ${segment.path}${suffix}`;
-  const [open, setOpen] = useState(false);
   return (
     <details
       class="tl-fold tl-file-tool-fold"

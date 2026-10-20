@@ -9,25 +9,31 @@ import {
   type TimelineEntry,
 } from "./transcript-model.ts";
 
-export type TimelineOpenCategory = "U" | "R" | "C" | "T" | "A";
+export type TimelineOpenCategory = "U" | "R" | "C" | "T" | "A" | "E";
 
-const TimelineAutoOpenSettingsSchema = v.object({
-  thinking: v.boolean(),
-  ccmsg: v.boolean(),
-  agent: v.boolean(),
-  items: v.boolean(),
-});
-export type TimelineAutoOpenSettings = Output<typeof TimelineAutoOpenSettingsSchema>;
+/** The toggles of a Timeline. A stored value without `edit` keeps its other
+ * toggles and reads `edit` as the Timeline's default. */
+function timelineAutoOpenSettingsSchema(editDefault: boolean) {
+  return v.object({
+    thinking: v.boolean(),
+    ccmsg: v.boolean(),
+    agent: v.boolean(),
+    edit: v.optional(v.boolean(), editDefault),
+    items: v.boolean(),
+  });
+}
+export type TimelineAutoOpenSettings = Output<ReturnType<typeof timelineAutoOpenSettingsSchema>>;
 
 /** TL (親) は自セッション主体の会話 + 他セッション ccmsg も主要文脈なので
  * C=true。thinking も自セッションの思考過程として T=true。agent 通信は自身の
  * subagent 呼出の詳細なので既定は畳む。agent TL (drilldown) では逆に peer/
  * agent 通信軸を主にするため T/C を閉じ、A/items を開く (agent 通信の詳細を
- * 一目で追える方が用途に合う)。 */
+ * 一目で追える方が用途に合う)。ファイルの書き換え (Edit / Write) はどちらの
+ * TL でも何を変えたかを読みたいので E=true。 */
 export function defaultTimelineAutoOpen(agentTimeline: boolean): TimelineAutoOpenSettings {
   return agentTimeline
-    ? { thinking: false, ccmsg: false, agent: true, items: true }
-    : { thinking: true, ccmsg: true, agent: false, items: false };
+    ? { thinking: false, ccmsg: false, agent: true, edit: true, items: true }
+    : { thinking: true, ccmsg: true, agent: false, edit: true, items: false };
 }
 
 export function toggleTimelineAutoOpen(
@@ -52,7 +58,7 @@ export function timelineAutoOpenStorageKey(sid: string, agentKey: string | undef
  * `timelineAutoOpenStorageKey`), that Timeline's defaults when nothing is
  * stored. */
 function storedSettings(defaults: TimelineAutoOpenSettings) {
-  const schema = v.optional(TimelineAutoOpenSettingsSchema, defaults);
+  const schema = v.optional(timelineAutoOpenSettingsSchema(defaults.edit), defaults);
   return { schema, text: jsonText(schema) };
 }
 
@@ -60,7 +66,7 @@ const MAIN_SETTINGS = storedSettings(defaultTimelineAutoOpen(false));
 const AGENT_SETTINGS = storedSettings(defaultTimelineAutoOpen(true));
 
 /** Reads a raw `localStorage.getItem(timelineAutoOpenStorageKey(...))`
- * result. Nothing stored, or a value that does not read as the four toggles
+ * result. Nothing stored, or a value that does not read as the toggles
  * (one a prior version / a manual edit / storage corruption left behind), is
  * the Timeline's defaults: the stored value is ignored, never partially
  * applied. */
@@ -73,7 +79,7 @@ export function parseTimelineAutoOpenSettings(
   return read?.ok ? read.value : v.getDefault(stored.schema);
 }
 
-export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | null {
+export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | "E" | null {
   switch (segment.kind) {
     case "thinking":
     case "thinking-hidden":
@@ -81,6 +87,12 @@ export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | null {
     case "agent-send":
     case "agent-spawn":
       return "A";
+    // Edit / Write の呼び出し (transcript-model.ts の toolUseSegment がカードに
+    // する形)。input が読めず汎用の tool_use になった呼び出しは書き換えて
+    // いないので含めない。
+    case "file-edit":
+    case "file-write":
+      return "E";
     default:
       return null;
   }
@@ -95,6 +107,9 @@ export function autoOpenCategoriesForLine(line: ParsedLine): ReadonlySet<Timelin
   }
   if (line.segments.some((segment) => segmentAutoOpenCategory(segment) === "T")) {
     categories.add("T");
+  }
+  if (line.segments.some((segment) => segmentAutoOpenCategory(segment) === "E")) {
+    categories.add("E");
   }
   // ccmsg boundary は通常 fold group の外側 (boundary entry) に出るが、
   // fold group 側の auto-open 判定にも同じ粒度で参加させるため、line 単位で
@@ -114,7 +129,8 @@ export function foldGroupShouldAutoOpen(
     return (
       (settings.thinking && categories.has("T")) ||
       (settings.ccmsg && categories.has("C")) ||
-      (settings.agent && categories.has("A"))
+      (settings.agent && categories.has("A")) ||
+      (settings.edit && categories.has("E"))
     );
   });
 }

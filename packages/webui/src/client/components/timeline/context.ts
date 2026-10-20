@@ -6,7 +6,10 @@ import { type RoomState } from "../../store.ts";
 import { useResettableState } from "../../useKeyedState.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { FoldOpenStore } from "../../fold-open-store.ts";
-import { defaultTimelineAutoOpen } from "../../timeline-auto-open.ts";
+import {
+  defaultTimelineAutoOpen,
+  type TimelineAutoOpenSettings,
+} from "../../timeline-auto-open.ts";
 import { type TimelineAutoOpenContextValue } from "./useAutoOpenSettings.ts";
 import { type ItemRawLookup } from "./useTranscriptModel.ts";
 
@@ -92,7 +95,7 @@ export interface CcmsgRenderCtxValue {
 export const CcmsgRenderContext = createContext<CcmsgRenderCtxValue | null>(null);
 
 export function useCategoryOpen(
-  category: "thinking" | "ccmsg" | "agent",
+  category: Exclude<keyof TimelineAutoOpenSettings, "items">,
 ): [boolean, (open: boolean) => void] {
   const { settings, revision } = useContext(TimelineAutoOpenContext);
   // 自動展開の設定が変わる (revision が進む) たびに、その設定の既定値へ戻す。

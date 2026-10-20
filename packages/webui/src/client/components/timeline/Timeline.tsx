@@ -659,12 +659,18 @@ export function Timeline({
                           aria-label="自動オープンする Timeline カテゴリ"
                         >
                           <legend>auto open</legend>
-                          {(["U", "R", "C", "T", "A"] as const).map((category) => {
+                          {(["U", "R", "C", "T", "A", "E"] as const).map((category) => {
                             const fixed = category === "U" || category === "R";
-                            // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
+                            // C/T/A/E の checkbox 表示状態と toggle 対象キーの対応。
                             // U/R は境界要素なので常に表示 (fixed)。
                             const settingKey =
-                              category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
+                              category === "C"
+                                ? "ccmsg"
+                                : category === "T"
+                                  ? "thinking"
+                                  : category === "E"
+                                    ? "edit"
+                                    : "agent";
                             return (
                               <label
                                 key={category}
@@ -683,7 +689,7 @@ export function Timeline({
                             );
                           })}
                           <span class="tl-auto-open-separator" aria-hidden="true" />
-                          <label title="C/T/A を含む外側の fold を自動オープン">
+                          <label title="C/T/A/E を含む外側の fold を自動オープン">
                             <input
                               type="checkbox"
                               checked={autoOpen.settings.items}

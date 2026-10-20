@@ -1,6 +1,6 @@
 // Timeline をマウントして、transcript の行の種類ごとに読み手に見えるものを
 // 固定する。fold group の中身まで描かせるため、auto open をすべて開いた状態で
-// 開く (外側の fold も thinking / agent / ccmsg も開く)。
+// 開く (外側の fold も thinking / agent / ccmsg / Edit も開く)。
 // - ファイル / Bash の tool、agent の起動と送信、thinking が fold の中に出る
 // - ccmsg のメッセージは、ユーザ発はバブル、peer 発は fold の中に出る
 // - system 発の行 (task-notification) と API エラーは、それと分かる形で出る
@@ -36,7 +36,7 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(
     timelineAutoOpenStorageKey(SID, undefined),
-    JSON.stringify({ thinking: true, ccmsg: true, agent: true, items: true }),
+    JSON.stringify({ thinking: true, ccmsg: true, agent: true, edit: true, items: true }),
   );
   restores = [stubGlobal("navigation", { navigate() {} })];
 });

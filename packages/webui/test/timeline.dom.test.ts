@@ -20,6 +20,14 @@ import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import {
+  assistantContentRow,
+  line as jsonl,
+  textBlock,
+  toolResultBlock,
+  toolUseBlock,
+  userContentRow,
+} from "../../protocol/test/transcript-rows.ts";
+import {
   endOf,
   exchange,
   FakeTranscriptWs,
@@ -606,6 +614,72 @@ describe("Timeline side panel", () => {
 
     await act(() => element(view.root, ".tl-toolbar").click());
     expect(float.classList.contains("tl-auto-open-float-open")).toBe(false);
+  });
+});
+
+describe("Timeline auto open", () => {
+  /** 発話、tool を挟んで最終応答、の 1 往復。`tools` は fold group に入る行。 */
+  function exchangeWith(n: number, tools: readonly string[]): string[] {
+    return [
+      jsonl(userContentRow(`question ${n}`, { uuid: uuidOf("u", n) })),
+      ...tools,
+      jsonl(assistantContentRow([textBlock(`answer ${n}`)], { uuid: uuidOf("a", n) })),
+    ];
+  }
+  function readCall(id: string): string[] {
+    return [
+      jsonl(assistantContentRow([toolUseBlock("Read", { file_path: "src/a.ts" }, id)])),
+      jsonl(userContentRow([toolResultBlock("1\talpha", { tool_use_id: id })])),
+    ];
+  }
+  const editing = exchangeWith(1, [
+    ...readCall("tu_read_1"),
+    jsonl(
+      assistantContentRow([
+        toolUseBlock(
+          "Edit",
+          { file_path: "src/a.ts", old_string: "alpha", new_string: "beta" },
+          "tu_edit",
+        ),
+      ]),
+    ),
+    jsonl(userContentRow([toolResultBlock("updated", { tool_use_id: "tu_edit" })])),
+  ]);
+  const readingOnly = exchangeWith(2, readCall("tu_read_2"));
+
+  function foldGroup(root: HTMLElement, index: number): HTMLDetailsElement {
+    const group = defined(root.querySelectorAll(".tl-fold-group")[index], `fold group ${index}`);
+    return instanceOf(group, HTMLDetailsElement, `fold group ${index}`);
+  }
+  function fileFold(root: HTMLElement, label: string): HTMLDetailsElement {
+    const fold = defined(
+      [...root.querySelectorAll(".tl-file-tool-fold")].find((el) =>
+        el.querySelector("summary")?.textContent?.includes(label),
+      ),
+      `${label} fold`,
+    );
+    return instanceOf(fold, HTMLDetailsElement, `${label} fold`);
+  }
+
+  // E と N items が on なら、Edit を含む fold group と Edit のカードが開いて
+  // 書き換えの diff が見える。Read だけの fold group と Read のカードは閉じたまま。
+  test("E opens the fold group holding an Edit and the Edit card, not a Read-only group", async () => {
+    localStorage.setItem(
+      timelineAutoOpenStorageKey(SID, undefined),
+      JSON.stringify({ thinking: false, ccmsg: false, agent: false, edit: true, items: true }),
+    );
+    const view = await openLoaded([...editing, ...readingOnly]);
+    const withEdit = foldGroup(view.root, 0);
+    const withReadOnly = foldGroup(view.root, 1);
+    expect(withEdit.open).toBe(true);
+    expect(withReadOnly.open).toBe(false);
+    expect(fileFold(withEdit, "Edit src/a.ts").open).toBe(true);
+    expect(fileFold(withEdit, "Read src/a.ts").open).toBe(false);
+
+    // E を切ると、同じ fold group と Edit のカードは閉じた既定に戻る。
+    await act(() => autoOpenBox(view.root, "E").click());
+    expect(foldGroup(view.root, 0).open).toBe(false);
+    expect(fileFold(foldGroup(view.root, 0), "Edit src/a.ts").open).toBe(false);
   });
 });
 

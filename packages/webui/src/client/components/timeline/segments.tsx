@@ -8,7 +8,7 @@ import { Tabs } from "../Tabs.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
-import { FileToolFold, BashUseFold, BashResultFold } from "./tools.tsx";
+import { FileReadFold, FileChangeFold, BashUseFold, BashResultFold } from "./tools.tsx";
 import { AgentSendFold, AgentSpawnFold } from "./agents.tsx";
 import {
   type TranslationAvailability,
@@ -334,9 +334,10 @@ export function SegmentView({
           </details>
         );
       case "file-read":
+        return <FileReadFold segment={segment} ts={ts} />;
       case "file-write":
       case "file-edit":
-        return <FileToolFold segment={segment} ts={ts} />;
+        return <FileChangeFold segment={segment} ts={ts} />;
       case "file-tool-result":
         return null;
       case "bash-use":
