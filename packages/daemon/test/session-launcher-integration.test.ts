@@ -215,7 +215,10 @@ describe("session launcher wire ops", () => {
       expect(fs.existsSync(legacy)).toBe(false);
       expect(fs.existsSync(path.join(testConfigDir(dataDir), "config.json"))).toBe(true);
     } finally {
+      // Wait for the exit before removing its dirs: a daemon still shutting
+      // down writes into them, and outlives the test if the run ends first.
       proc.kill();
+      await proc.exited;
       fs.rmSync(base, { recursive: true, force: true });
       fs.rmSync(root, { recursive: true, force: true });
     }
