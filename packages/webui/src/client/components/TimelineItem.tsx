@@ -3,7 +3,8 @@ import type { ComponentChildren } from "preact";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
-import { formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
+import { formatDuration, formatMsgTime, memberLabel } from "../utils.ts";
+import { useSecondTick } from "../useSecondTick.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
@@ -269,12 +270,13 @@ export function SayBubble({
  * only once the answer is done, so without this nothing there would show the
  * turn running. */
 export function TurnRespondingRow({ since }: { since: string }) {
-  const at = formatClockTime(since);
+  const now = useSecondTick();
+  const elapsed = formatDuration(now - new Date(since).getTime());
   return (
-    <div class="tl-turn-responding" role="status" title={`応答中 (${at} から)`}>
+    <div class="tl-turn-responding" role="status" title={`応答中 …${elapsed}`}>
       <span class="tl-turn-responding-dot" aria-hidden="true" />
       <span>応答中</span>
-      <span class="tl-turn-responding-since">{at} から</span>
+      <span class="tl-turn-responding-since">…{elapsed}</span>
     </div>
   );
 }
