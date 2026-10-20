@@ -5083,6 +5083,14 @@ button.session-tab {
   text-underline-offset: 0.15em;
 }
 
+/* ユーザ発話 (.md の外の plain text) に張るリンク。見た目は
+ * markdown 本文のリンク (`.md a`) と揃える。 */
+.tl-text-user a {
+  color: var(--accent);
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: from-font;
+}
+
 /* 地 / 罫 / 文字の 3 つとも面を基準に決め、どの面でも同じだけ浮かせる。罫が
  * 範囲を確定させ、地の色相が「ここは記号列だ」を示す (色相を絶対値で与える
  * 理由は :root の --md-code-hue のコメント)。彩度 0.06 は、4 面 × 2 テーマの

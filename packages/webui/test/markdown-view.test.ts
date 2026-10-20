@@ -12,7 +12,7 @@
 // hand via `.type`/`.props.children`, which is all Preact's `h()` output
 // exposes without a DOM.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { ComponentChildren, VNode } from "preact";
+import { h, type ComponentChildren, type VNode } from "preact";
 import type {
   Blockquote,
   Heading,
@@ -32,6 +32,7 @@ import {
   parseMarkdownDocument,
   parseMarkdownSource,
   renderMarkdownAst,
+  renderPlainTextWithLinks,
   renderRestrictedMarkdown,
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
@@ -1990,14 +1991,10 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
     expect(shape("> a\n> b\n")).toBe("blockquote(paragraph(text))");
   });
 
-  // A bare URL in prose stays prose. GFM's autolink-literal extension would
-  // turn it into a link, which is a behavior change for message bodies full of
-  // pasted URLs — so this app registers table/strikethrough/task-list only.
-  // If this starts failing, the GFM extension set grew.
-  test("a bare URL in prose is not autolinked", () => {
-    expect(shape("see https://ex.com x\n")).toBe("paragraph(text)");
-    const vnode = renderMarkdownAst(parseMarkdownSource("see https://ex.com x\n"));
-    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  // A bare URL in prose is a link (GFM autolink literal). Its rendering is
+  // pinned in the "bare URLs in prose" block below; this is the parser half.
+  test("a bare URL in prose parses as a link", () => {
+    expect(shape("see https://ex.com x\n")).toBe("paragraph(text,link(text),text)");
   });
 
   // `position.start.offset` is a document-absolute UTF-16 index. Both halves
@@ -2397,5 +2394,133 @@ describe("renderMarkdownAst / issue references", () => {
     )[0];
     expect(flattenText(link)).toBe("#123");
     expect(collect(link, (n) => n.type === "mark").map(flattenText)).toEqual(["123"]);
+  });
+});
+
+// Bare URLs in prose (GFM autolink literal) render through the same `link`
+// case a written `[x](url)` does, so the scheme allowlist and new-tab handling
+// are the ones every link gets.
+describe("bare URLs in prose", () => {
+  const render = (source: string): VNode => renderMarkdownAst(parseMarkdownSource(source));
+  const hrefs = (vnode: VNode): (string | undefined)[] =>
+    collect(vnode, (n) => n.type === "a").map((a) => stringProp(a, "href"));
+
+  test("a bare http(s) URL links off-app in a new tab, text unchanged", () => {
+    const vnode = render("see https://ex.com/a?b=1. next");
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    const link = defined(links[0], "the URL link");
+    expect(link.props).toMatchObject({
+      href: "https://ex.com/a?b=1",
+      target: "_blank",
+      rel: "noopener noreferrer",
+    });
+    expect(flattenText(vnode)).toBe("see https://ex.com/a?b=1. next");
+  });
+
+  test("www. and email literals follow the extension's defaults", () => {
+    expect(hrefs(render("www.ex.com and a@ex.com"))).toEqual([
+      "http://www.ex.com",
+      "mailto:a@ex.com",
+    ]);
+  });
+
+  test("schemes outside the allowlist stay text", () => {
+    for (const source of ["javascript:alert(1)", "ftp://ex.com/x", "data:text/html,x"]) {
+      const vnode = render(source);
+      expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  // Japanese prose runs straight into a URL; GFM alone would link the
+  // sentence along with it.
+  test("prose written right after a URL stays out of it", () => {
+    const source = "詳細はhttps://ex.com/a。続きはhttps://ex.com/bを参照";
+    const vnode = render(source);
+    expect(hrefs(vnode)).toEqual(["https://ex.com/a", "https://ex.com/b"]);
+    expect(flattenText(vnode)).toBe(source);
+  });
+
+  test("a strikethrough URL links inside the strikethrough", () => {
+    const vnode = render("~~https://ex.com/a~~");
+    const del = defined(collect(vnode, (n) => n.type === "del")[0], "the strikethrough");
+    expect(hrefs(del)).toEqual(["https://ex.com/a"]);
+  });
+
+  test("a URL with no host left after the cut stays text", () => {
+    const vnode = render("see https://日本.jp/a");
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("see https://日本.jp/a");
+  });
+
+  // The `<…>` guard (protectTagLikeAngleBrackets) and the literal extension
+  // must not step on each other: an autolink stays one link, and a protected
+  // bracket pair keeps its brackets as text around the URL inside it.
+  test("angle-bracket autolinks and protected brackets coexist with literals", () => {
+    const autolink = render("<https://ex.com/a> and <https://ex.com/日本>");
+    expect(hrefs(autolink)).toEqual(["https://ex.com/a", "https://ex.com/日本"]);
+
+    const protectedPair = render("<see https://ex.com/a>");
+    expect(hrefs(protectedPair)).toEqual(["https://ex.com/a"]);
+    expect(flattenText(protectedPair)).toBe("<see https://ex.com/a>");
+
+    const tagAfter = render("https://ex.com/a<b>c");
+    expect(hrefs(tagAfter)).toEqual(["https://ex.com/a"]);
+    expect(flattenText(tagAfter)).toBe("https://ex.com/a<b>c");
+  });
+
+  test("an author's link keeps its own target, never nesting a literal", () => {
+    const vnode = render("[see https://ex.com/a here](https://ex.com/b)");
+    expect(hrefs(vnode)).toEqual(["https://ex.com/b"]);
+  });
+
+  test("a URL in a code span or fence is left to the code's own rendering", () => {
+    const vnode = render("`see https://ex.com/a`\n\n```\nhttps://ex.com/b\n```");
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  });
+});
+
+// A user's words: verbatim text, with only URLs linked.
+describe("renderPlainTextWithLinks", () => {
+  const render = (text: string): VNode => h("div", null, renderPlainTextWithLinks(text));
+  const hrefs = (vnode: VNode): (string | undefined)[] =>
+    collect(vnode, (n) => n.type === "a").map((a) => stringProp(a, "href"));
+
+  test("markdown syntax is shown as typed", () => {
+    const text = "# not a heading\n**not bold** `not code` [x](y) <tag>\n\n  indented";
+    const vnode = render(text);
+    expect(flattenText(vnode)).toBe(text);
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  });
+
+  test("bare URLs link by the same rule as in markdown, text unchanged", () => {
+    const text = "see https://ex.com/a, 詳細はhttps://ex.com/b。と www.ex.com";
+    const vnode = render(text);
+    expect(hrefs(vnode)).toEqual(["https://ex.com/a", "https://ex.com/b", "http://www.ex.com"]);
+    expect(flattenText(vnode)).toBe(text);
+    expect(collect(vnode, (n) => n.type === "a")[0]?.props).toMatchObject({
+      target: "_blank",
+      rel: "noopener noreferrer",
+    });
+  });
+
+  test("schemes outside the allowlist stay text", () => {
+    const vnode = render("javascript:alert(1) ftp://ex.com/x");
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  });
+
+  // The cut can leave a host with no dot (`https://a.` -> `https://a`): that
+  // whole literal goes back to text, and is not searched again.
+  test("a literal with nothing left after the cut is text, searched once", () => {
+    const text = "https://a.日本.jp と https://ex.com/a";
+    const vnode = render(text);
+    expect(hrefs(vnode)).toEqual(["https://ex.com/a"]);
+    expect(flattenText(vnode)).toBe(text);
+  });
+
+  test("text with nothing to link comes back as-is", () => {
+    expect(renderPlainTextWithLinks("ただの文")).toEqual(["ただの文"]);
+    expect(renderPlainTextWithLinks("")).toEqual([]);
   });
 });

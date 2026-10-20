@@ -1,7 +1,8 @@
 // turn の中の 1 segment (text / thinking / tool ...) の描画。
-import { useContext, useEffect, useRef, useState } from "preact/hooks";
+import { useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Segment } from "../../transcript-model.ts";
 import { LinkedMarkdownView } from "../../filepath-linker.tsx";
+import { renderPlainTextWithLinks } from "../../markdown-view.tsx";
 import { isTranslationSkippedText, hasCachedHostText } from "../../translate.ts";
 import { type SearchWord } from "../../in-view-search.ts";
 import { Tabs } from "../Tabs.tsx";
@@ -257,6 +258,12 @@ function AssistantMarkdownText({
   );
 }
 
+/** ユーザ発話の本文。打たれた文字をそのまま出し、裸の URL だけをリンクに
+ * する (markdown としては解釈しない — DR-0010 §6)。 */
+function UserPlainText({ text }: { text: string }) {
+  return useMemo(() => <>{renderPlainTextWithLinks(text)}</>, [text]);
+}
+
 export function SegmentView({
   segment,
   translationAvailability,
@@ -290,7 +297,7 @@ export function SegmentView({
       case "text":
         // Markdown rendering (DR-0010) is assistant-only: a user turn's text
         // is what the human actually typed, so it's shown verbatim rather than
-        // interpreted as markdown syntax.
+        // interpreted as markdown syntax — only its URLs link.
         return (
           <div class={"tl-text tl-text-" + segment.role}>
             {segment.role === "assistant" ? (
@@ -301,7 +308,7 @@ export function SegmentView({
                 onDisplayChange={searchCtx?.notifyDisplayChange}
               />
             ) : (
-              segment.text
+              <UserPlainText text={segment.text} />
             )}
           </div>
         );

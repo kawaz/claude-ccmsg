@@ -201,6 +201,45 @@ export function codeSpanLinkTarget(
   return target.kind === "external" || target.kind === "internal" ? target : null;
 }
 
+/** The part of a bare URL in prose (a GFM autolink literal's visible text)
+ * that is the URL, or `""` when nothing addressable is left.
+ *
+ * GFM ends an autolink literal only at whitespace or `<`, so in prose written
+ * without spaces — Japanese, routinely — the sentence after a URL becomes part
+ * of it (`https://example.com/a。続き` links `…/a。続き`). The URL is cut at its
+ * first character outside printable ASCII or at a `<`, and then gets the same
+ * trailing-punctuation trim GFM applies at the end of the literal (`.`, `,`,
+ * `)` not closing an opened `(`, …), since the cut can expose one (`…/a.を`).
+ *
+ * Design rationale: a URL holding raw non-ASCII characters (an IRI) loses the
+ * part from the first such character. URLs reach a message body by being
+ * copied from an address bar or a tool, both of which percent-encode, while
+ * prose running into a URL is what every Japanese sentence citing one does —
+ * so the cut is right far more often than it truncates. A URL left with no host
+ * past its scheme (`https://日本.jp`) returns `""` and stays text. */
+export function literalAutolinkText(visible: string): string {
+  // Printable ASCII is U+0021-U+007E; `<` ends a literal per GFM.
+  const cut = visible.search(/[^!-~]|</);
+  if (cut === -1) return visible;
+  let url = visible.slice(0, cut);
+  const trail = /[!"&'),.:;>?\]}]+$/.exec(url);
+  if (trail) {
+    // Keep `)`s that close a `(` inside the URL, the way GFM does
+    // (`https://en.wikipedia.org/wiki/A_(b)`).
+    let kept = url.slice(0, trail.index);
+    let rest = trail[0];
+    let open = kept.split("(").length - kept.split(")").length;
+    for (let close = rest.indexOf(")"); close !== -1 && open > 0; close = rest.indexOf(")")) {
+      kept += rest.slice(0, close + 1);
+      rest = rest.slice(close + 1);
+      open -= 1;
+    }
+    url = kept;
+  }
+  const host = /^(?:[a-z]+:\/\/)?([^/?#]*)/i.exec(url)?.[1] ?? "";
+  return host.includes(".") ? url : "";
+}
+
 /** Collect every link/image target in a markdown source so the caller can
  * probe them in one `fs_stat_batch` before render (mirrors
  * `extractInlineCodeTokens`, and skips fenced code for the same reason: a

@@ -47,7 +47,17 @@ raw HTML の source テキストをそのまま JSX テキスト子要素とし�
 
 ### 6. Markdown レンダリングはアシスタント発言のみ、ユーザ発言はプレーンテキストのまま [提案]
 
-Timeline.tsx の `SegmentView` で `segment.role === "assistant"` の場合のみ `MarkdownView` を通す。ユーザ発言は人間が実際にタイプした生テキストであり、markdown 構文として解釈すべき対象ではない (かつ既存のチャットバブルスタイル `tl-text-user` は維持する)。
+`SegmentView` で `segment.role === "assistant"` の場合のみ `MarkdownView` を通す。ユーザ発言は人間が実際にタイプした生テキストであり、markdown 構文として解釈すべき対象ではない (かつ既存のチャットバブルスタイル `tl-text-user` は維持する)。
+
+ただしユーザ発言でも、裸の URL はアシスタント発言と同じ規則でリンクにする (`renderPlainTextWithLinks`)。文字は 1 つも記法として消費せず、打たれたとおりに出したうえで href だけを付ける。URL は下記 §7 の GFM autolink literal の規則を markdown パーサを通さずにテキストへ直接当てて見つける。
+
+### 7. 地の文の裸の URL はリンクにする [kawaz 経由]
+
+GFM の autolink literal (`micromark-extension-gfm-autolink-literal` + `mdast-util-gfm-autolink-literal`) を登録し、地の文の `https://…` / `www.…` / メールアドレスを link ノードにする。link ノードなので、書かれたリンク (`[x](url)`) と同じ `link` case を通り、scheme 許可リスト (`classifyMarkdownLinkUrl`) と新規タブの扱いもそのまま効く。`www.` 始まりは拡張の既定どおり `http://` を補う。
+
+GFM は literal をホワイトスペースか `<` までとするので、空白を置かない日本語の文では URL の後ろの文までリンクに入る (`https://example.com/a。続き`)。literal の URL は最初の非 ASCII 文字か `<` で切り、切った端に出た句読点を GFM と同じ規則で落とす (`literalAutolinkText`)。切った残りはテキストに戻し、そこに続く URL を探し直す。生の非 ASCII を含む URL (IRI) はその文字以降を失うが、アドレスバーやツールからコピーされた URL は percent-encode 済みで、URL の直後に文が続く日本語の方がはるかに多いので、こちらを取る [提案]。
+
+書かれたリンク・`<url>` autolink・inline code・コードフェンスの中身は対象外 (それぞれのノードが先に取る)。`protectTagLikeAngleBrackets` が退避した `<…>` は literal の中では非 ASCII の印として現れるので、URL はその手前で切れ、角括弧はテキストのまま残る。
 
 ## Bundle size (実測、DR-0004 のビルドレス方針への影響評価)
 
@@ -84,10 +94,9 @@ Timeline.tsx の `SegmentView` で `segment.role === "assistant"` の場合の�
 `@mizchi/markdown` 0.6.5 に実バグ 7 種を実測確認した (リスト継続行が list を分断 —継続行が list 外へ脱出し後続 bullet が別 list になる / strong 内 inline 後のテキスト重複 / link reference 非対応 — definition が AST から消失 / inline HTML を link として誤生成 / ネスト emphasis 不発 / tab インデント非対応 — `\tcode` が先頭文字を食う /
 position がコードポイント単位かつ入れ子でリセットされる破損)。週次 DL 42 の実質単独メンテでワークアラウンド蓄積のコストが上回るため、パーサのみ差し替える:
 
-- **`mdast-util-from-markdown` + micromark/mdast の GFM 個別拡張 (table /
-  strikethrough / task-list-item)** を採用。`parse(src): Root` の同型差し替えで、自前 JSX renderer (本 DR の本体) は無改修。比較調査の正本は`docs/findings/2026-08-13-markdown-parser-comparison.md`
+- **`mdast-util-from-markdown` + micromark/mdast の GFM 個別拡張 (table / strikethrough / task-list-item / autolink literal)** を採用。`parse(src): Root` の同型差し替えで、自前 JSX renderer (本 DR の本体) は無改修。比較調査の正本は`docs/findings/2026-08-13-markdown-parser-comparison.md`
 - 本 DR 初版の micromark 不採用理由「mdast への変換を別途組むコストが高い」は実態と不一致だった (`mdast-util-from-markdown` が公式の mdast 変換)
-- GFM 集約パッケージ (`mdast-util-gfm`) は autolink literal 拡張が引く`unist-util-visit-parents` の self-reference subpath export を bun 1.3.13 が解決できないため不採用 (個別拡張なら回避できる。unified 系を今後足す時も同じ壁に当たる)。autolink literal / footnote は旧パーサにも無かった挙動なので非搭載のまま
-- 地の文の裸の URL はリンクにしない一方、inline code の中身が丸ごと 1 つのリンク先として読める時 (link の行き先と同じ `classifyMarkdownLinkUrl` で許可された scheme の URL、空白なし) は、code の見た目のまま `<a>` で包む。scheme の無い綴り (`rows`、`docs/x.md`) は code のまま (ファイルパスはファイルの linker が daemon に確かめて判断する)
+- GFM の拡張は集約パッケージ (`mdast-util-gfm`) ではなく個別に登録し、使う構文だけを選ぶ。footnote は非搭載
+- 地の文の裸の URL は §7 のとおりリンクにする。inline code の中身が丸ごと 1 つのリンク先として読める時 (link の行き先と同じ `classifyMarkdownLinkUrl` で許可された scheme の URL、空白なし) は、code の見た目のまま `<a>` で包む。scheme の無い綴り (`rows`、`docs/x.md`) は code のまま (ファイルパスはファイルの linker が daemon に確かめて判断する)
 - ソース前処理 protect* は 4 → 1 に削減。残る `protectTagLikeAngleBrackets` は旧パーサのバグ回避ではなく CommonMark の HTML ブロックの貪欲さ (タグ形状行が後続を空行まで飲む) + no-raw-HTML ポリシーへの対策として存続
 - サイズ実測: 実バンドル gzip +5.5KB (270.5 → 276.1KB)。§コスト節の +40.7KB gz はmizchi 導入時の値であり、本差し替え後の合計は上記が正

@@ -9,9 +9,11 @@
 import { createContext, type VNode } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmAutolinkLiteralFromMarkdown } from "mdast-util-gfm-autolink-literal";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmTaskListItemFromMarkdown } from "mdast-util-gfm-task-list-item";
+import { gfmAutolinkLiteral } from "micromark-extension-gfm-autolink-literal";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
@@ -19,17 +21,24 @@ import type {
   BlockContent,
   DefinitionContent,
   Heading,
+  Link,
   Nodes,
   Paragraph,
   PhrasingContent,
   Root,
   RootContent,
+  Text,
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { splitTextForIssueRefs } from "./issue-ref.ts";
-import { classifyMarkdownLinkUrl, codeSpanLinkTarget, isSafeUrl } from "./markdown-link.ts";
+import {
+  classifyMarkdownLinkUrl,
+  codeSpanLinkTarget,
+  isSafeUrl,
+  literalAutolinkText,
+} from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
 import { useKeyedValue } from "./useKeyedState.ts";
@@ -1516,16 +1525,109 @@ export function collectMarkdownSectionKeys(
 export function parseMarkdownSource(source: string): Root {
   const protectedAngles = protectTagLikeAngleBrackets(source);
   const root = fromMarkdown(protectedAngles.source, {
-    extensions: [gfmTable(), gfmStrikethrough(), gfmTaskListItem()],
+    extensions: [gfmTable(), gfmStrikethrough(), gfmTaskListItem(), gfmAutolinkLiteral()],
     mdastExtensions: [
       gfmTableFromMarkdown(),
       gfmStrikethroughFromMarkdown(),
       gfmTaskListItemFromMarkdown(),
+      gfmAutolinkLiteralFromMarkdown(),
     ],
   });
+  // Before the restore: a protected `<…>` is a private-use marker here, which
+  // the trim cuts at like any other non-ASCII character.
+  trimLiteralAutolinks(root, protectedAngles.source);
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
   return root;
+}
+
+/** True for a link the GFM autolink-literal extension made out of a bare URL,
+ * as opposed to one the author wrote (`[x](url)` or `<url>`). The extension's
+ * tokenizer gives its links a position starting at the URL itself; its
+ * text-node pass gives them none. `source` is what the parser read. */
+function isLiteralAutolink(link: Link, source: string): boolean {
+  const start = link.position?.start.offset;
+  if (start === undefined) return true;
+  const first = source[start];
+  return first !== "[" && first !== "<";
+}
+
+/** `children` with every bare-URL link cut back to the URL itself
+ * (`literalAutolinkText`). What the cut removes is text again — searched for
+ * further URLs, since the literal swallowed any that followed without a space
+ * (`https://a.example/x。次はhttps://b.example/y`) — and a link with nothing left
+ * becomes text whole. */
+function trimLiteralAutolinksIn(children: PhrasingContent[], source: string): PhrasingContent[] {
+  return children.flatMap((child): PhrasingContent[] => {
+    if (child.type !== "link" || !isLiteralAutolink(child, source)) return [child];
+    const label = child.children.length === 1 ? child.children[0] : undefined;
+    if (label?.type !== "text" || !child.url.endsWith(label.value)) return [child];
+    const kept = literalAutolinkText(label.value);
+    if (kept === label.value) return [child];
+    if (kept === "") return [{ type: "text", value: label.value }];
+    // `www.x` links to `http://www.x`: the scheme the extension added is
+    // whatever the URL has in front of the visible text.
+    const scheme = child.url.slice(0, child.url.length - label.value.length);
+    return [
+      {
+        type: "link",
+        url: scheme + kept,
+        title: child.title,
+        children: [{ type: "text", value: kept }],
+      },
+      ...literalAutolinkNodes(label.value.slice(kept.length)),
+    ];
+  });
+}
+
+/** `text` as text and links, its bare URLs found by the GFM autolink-literal
+ * rule without parsing it as markdown — no character is consumed as syntax.
+ *
+ * The extension's tokenizer accepts a URL right after any character other
+ * than an ASCII letter (`詳細はhttps://…`), while its text pass needs a space
+ * or punctuation there. Splitting the text in front of every such `http(s)://`
+ * first gives the text pass the tokenizer's reading. */
+function literalAutolinkNodes(text: string): PhrasingContent[] {
+  const pieces = text.split(/(?<![A-Za-z])(?=https?:\/\/)/i).filter((piece) => piece !== "");
+  let root: Root = {
+    type: "root",
+    children: [
+      { type: "paragraph", children: pieces.map((value): Text => ({ type: "text", value })) },
+    ],
+  };
+  for (const transform of gfmAutolinkLiteralFromMarkdown().transforms ?? []) {
+    root = transform(root) ?? root;
+  }
+  const paragraph = root.children[0];
+  if (paragraph?.type !== "paragraph") return [{ type: "text", value: text }];
+  return trimLiteralAutolinksIn(paragraph.children, "");
+}
+
+/** `trimLiteralAutolinksIn` over every run of inline content in the tree. */
+function trimLiteralAutolinks(node: Nodes, source: string): void {
+  switch (node.type) {
+    case "paragraph":
+    case "heading":
+    case "emphasis":
+    case "strong":
+    case "delete":
+    case "tableCell":
+      node.children = trimLiteralAutolinksIn(node.children, source);
+      break;
+    default:
+      break;
+  }
+  if ("children" in node) {
+    for (const child of node.children) trimLiteralAutolinks(child, source);
+  }
+}
+
+/** Plain text — a user's own words, shown verbatim — with its bare URLs
+ * turned into links and nothing else reinterpreted. The URLs are found by the same GFM rule a markdown body's
+ * are (`literalAutolinkNodes`). */
+export function renderPlainTextWithLinks(text: string): (VNode | string)[] {
+  const ctx: MarkdownRenderCtx = { headingIndex: 0, taskIndex: 0, inLink: false };
+  return renderChildren(literalAutolinkNodes(text), "pt", ctx);
 }
 
 /** `parseMarkdownSource` plus the `<details>` fold. Separate from the parse

@@ -18,6 +18,7 @@ import {
   codeSpanLinkTarget,
   extractMarkdownLinkUrls,
   isSafeUrl,
+  literalAutolinkText,
   markdownLinkPathRef,
 } from "../src/client/markdown-link.ts";
 
@@ -259,5 +260,37 @@ describe("extractMarkdownLinkUrls", () => {
   // costs a wasted entry in a batch nobody sees.
   test("over-collecting is tolerated — a non-path target is filtered later, not here", () => {
     expect(extractMarkdownLinkUrls("[a](https://example.com)")).toEqual(["https://example.com"]);
+  });
+});
+
+// A bare URL in prose runs, by the GFM rule, until whitespace — so a Japanese
+// sentence written straight after it becomes part of it.
+describe("literalAutolinkText", () => {
+  test("an all-ASCII URL is kept whole (GFM already trimmed it)", () => {
+    expect(literalAutolinkText("https://ex.com/a?b=1#c")).toBe("https://ex.com/a?b=1#c");
+    expect(literalAutolinkText("www.ex.com/a")).toBe("www.ex.com/a");
+  });
+
+  test("prose running into the URL is cut off at the first non-ASCII character", () => {
+    expect(literalAutolinkText("https://ex.com/a。続き")).toBe("https://ex.com/a");
+    expect(literalAutolinkText("https://ex.com/aを参照")).toBe("https://ex.com/a");
+    expect(literalAutolinkText("https://ex.com/a\u3000b")).toBe("https://ex.com/a");
+  });
+
+  test("a `<` ends the URL, as GFM's literal does", () => {
+    expect(literalAutolinkText("https://ex.com/a<b>")).toBe("https://ex.com/a");
+  });
+
+  // The cut can expose punctuation that GFM would have trimmed had it been at
+  // the end, so the same trim runs again — parentheses stay balanced.
+  test("punctuation exposed by the cut is trimmed, balanced parentheses kept", () => {
+    expect(literalAutolinkText("https://ex.com/a.を")).toBe("https://ex.com/a");
+    expect(literalAutolinkText("https://ex.com/a),を")).toBe("https://ex.com/a");
+    expect(literalAutolinkText("https://ex.com/w/A_(b)。")).toBe("https://ex.com/w/A_(b)");
+  });
+
+  test("nothing addressable left after the cut yields an empty string", () => {
+    expect(literalAutolinkText("https://日本.jp/a")).toBe("");
+    expect(literalAutolinkText("https://ex日本.jp")).toBe("");
   });
 });
