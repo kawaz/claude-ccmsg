@@ -4045,7 +4045,9 @@ button.session-tab {
 /* JSON 文字列トークンのコピー UI (useJsonStringCopy)。ボタンはコード領域
    (position: relative なホスト) の内側に absolute で 1 個だけ置き、hover 中の
    トークンへ座標を動かす。transform で「トークンの右上を基準に、上辺の上・
-   右辺の内側」へ寄せる (斜め外側に飛び出さない)。 */
+   右辺の内側」へ寄せる (斜め外側に飛び出さない)。z-index は持たせない
+   (.code-copy-btn と同じ理由: ホストの最後の子なので内容の上には描かれ、
+   sticky な .tl-toolbar の下へは潜る)。 */
 .json-copy-host {
   position: relative;
 }
@@ -4058,7 +4060,6 @@ button.session-tab {
      両ラベルが収まる幅に固定して geometry を動かさない。 */
   min-width: 4em;
   text-align: center;
-  z-index: 1;
   border: 1px solid var(--border);
   border-radius: 0.25rem;
   padding: 0 var(--space-7);

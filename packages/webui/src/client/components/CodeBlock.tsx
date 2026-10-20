@@ -14,7 +14,17 @@ import {
 import { useJsonStringCopy } from "../useJsonStringCopy.tsx";
 import { CodeCopyFrame } from "./CodeCopyFrame.tsx";
 
-export function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
+/** `placeholder` は `code` が空の時に代わりに出す文字 (「(空のコマンド)」等)。
+ * 写す中身が無いのでコピーボタンは付かない。 */
+export function CodeBlock({
+  code,
+  lang,
+  placeholder,
+}: {
+  code: string;
+  lang: string | null;
+  placeholder?: string;
+}) {
   const jsonCopy = useJsonStringCopy();
   const shjLang = lang ? detectLanguage(`_.${lang.toLowerCase()}`) : null;
   const eligible = isHighlightEligible(shjLang, code, false);
@@ -43,7 +53,7 @@ export function CodeBlock({ code, lang }: { code: string; lang: string | null })
     return (
       <CodeCopyFrame text={code}>
         <pre class="md-code">
-          <code>{code}</code>
+          <code>{code === "" ? placeholder : code}</code>
         </pre>
       </CodeCopyFrame>
     );

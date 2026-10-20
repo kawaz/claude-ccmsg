@@ -60,7 +60,7 @@ export function InlineFileViewer({
           <MarkdownView source={content} />
         </div>
       ) : (
-        <CopyablePreText class="tl-inline-preview" text={content || "(空のファイル)"} />
+        <CopyablePreText class="tl-inline-preview" text={content} placeholder="(空のファイル)" />
       )}
     </div>
   );

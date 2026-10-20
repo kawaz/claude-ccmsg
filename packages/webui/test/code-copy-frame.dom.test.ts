@@ -79,6 +79,21 @@ describe("CodeCopyFrame", () => {
     expect(root.textContent).toBe("body");
   });
 
+  // 「(出力なし)」等は中身の代わりに出している文字で、写す中身が無い。
+  test("中身が空なら代わりの文字を出し、コピーボタンは付けない", async () => {
+    const root = await mount(h(CopyablePreText, { text: "", placeholder: "(出力なし)" }));
+    expect(defined(root.querySelector("pre"), "pre").textContent).toBe("(出力なし)");
+    expect(root.querySelector("button.code-copy-btn")).toBeNull();
+  });
+
+  test("空の fence (CodeBlock) も代わりの文字だけで、コピーボタンは付けない", async () => {
+    const root = await mount(
+      h(CodeBlock, { code: "", lang: "bash", placeholder: "(空のコマンド)" }),
+    );
+    expect(defined(root.querySelector("pre"), "pre").textContent).toBe("(空のコマンド)");
+    expect(root.querySelector("button.code-copy-btn")).toBeNull();
+  });
+
   test("markdown の fence (CodeBlock) にも付き、fence の中身を書く", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {

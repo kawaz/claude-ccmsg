@@ -190,7 +190,7 @@ export function BashUseFold({
         <div class="tl-file-tool-card tl-bash-card">
           <div class="tl-bash-description">command</div>
           <div class="tl-bash-command">
-            <CodeBlock code={segment.command || "(空のコマンド)"} lang="bash" />
+            <CodeBlock code={segment.command} lang="bash" placeholder="(空のコマンド)" />
           </div>
           {segment.background ? (
             <div class="tl-bash-result-status">
@@ -203,7 +203,7 @@ export function BashUseFold({
           ) : segment.result ? (
             <div class={"tl-bash-output" + (segment.result.isError ? " is-error" : "")}>
               <div class="tl-bash-output-label">{segment.result.isError ? "error" : "output"}</div>
-              <CopyablePreText text={segment.result.text || "(出力なし)"} />
+              <CopyablePreText text={segment.result.text} placeholder="(出力なし)" />
             </div>
           ) : (
             <div class="tl-bash-result-status">実行中 / 結果なし</div>
@@ -346,7 +346,7 @@ export function BashRunCard({
         </div>
         {command !== null ? (
           <div class="tl-bash-command">
-            <CodeBlock code={command || "(空のコマンド)"} lang="bash" />
+            <CodeBlock code={command} lang="bash" placeholder="(空のコマンド)" />
           </div>
         ) : null}
         {output ? <BashRunOutput output={output} /> : null}
@@ -385,7 +385,7 @@ export function BashResultFold({
             </div>
           ) : null}
           <div class={"tl-bash-output" + (segment.isError ? " is-error" : "")}>
-            <CopyablePreText text={segment.text || "(出力なし)"} />
+            <CopyablePreText text={segment.text} placeholder="(出力なし)" />
           </div>
         </div>
       </div>

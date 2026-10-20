@@ -145,7 +145,7 @@ function LineView({
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold tl-broken">
           <FoldSummary ts={null} label="読めなかった行" trailing={line.error} />
-          <CopyablePreText class="tl-broken-raw" text={line.raw || "(空行)"} />
+          <CopyablePreText class="tl-broken-raw" text={line.raw} placeholder="(空行)" />
         </details>
       </ItemRawToggle>
     );
