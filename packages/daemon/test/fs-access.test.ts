@@ -898,7 +898,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
       const user = await userConn(ctx);
       const res = await user.requestOk({ op: "session_status", sid: A });
       expect(res.workspace_folders).toEqual([
-        { name: "self", path: cwd },
+        { name: "self", path: cwd, is_cwd: true },
         { name: "sib", path: sibling },
       ]);
     } finally {

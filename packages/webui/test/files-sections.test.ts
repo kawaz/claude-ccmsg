@@ -13,7 +13,7 @@ import {
 // A jj-style layout: the containment root is the repo container, the session
 // works in `main`, and the workspace file names `main` itself plus a library.
 const PEER = { cwd: "/repo/main", repo_root: "/repo" };
-const MAIN = { name: "main", path: "/repo/main" };
+const MAIN = { name: "main", path: "/repo/main", is_cwd: true as const };
 const LIB = { name: "lib", path: "/repo/lib" };
 
 describe("filesLayout", () => {
@@ -32,6 +32,24 @@ describe("filesLayout", () => {
       { name: "main", path: "/repo/main", key: "main", isCwd: true },
     ]);
     expect(layout.routed).toEqual([LIB]);
+  });
+
+  // The daemon realpaths both sides; the peer row keeps the spelling the
+  // session announced. A cwd reached through a symlink is still its folder.
+  test("a cwd announced through a symlink still matches the folder the daemon marked", () => {
+    const layout = filesLayout({ cwd: "/link/main", repo_root: "/link" }, [
+      { name: "main", path: "/real/main", is_cwd: true },
+    ]);
+    expect(layout.folders).toEqual([
+      { name: "main", path: "/link/main", key: "main", isCwd: true },
+    ]);
+    expect(layout.routed).toEqual([]);
+  });
+
+  test("a folder spelled like the cwd but not marked is not the cwd's", () => {
+    expect(
+      filesLayout(PEER, [{ name: "main", path: "/repo/main" }]).folders.map((f) => f.name),
+    ).toEqual([PROJECT_ROOT_NAME, "main"]);
   });
 
   test("with workspace folders but none at the cwd, PROJECT_ROOT comes first", () => {

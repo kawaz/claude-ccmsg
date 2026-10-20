@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseWith } from "@ccmsg/protocol";
+import { parseWith, type WorkspaceFolder } from "@ccmsg/protocol";
 import { CodeWorkspaceTextSchema, discoverWorkspaceFolders } from "../src/workspace-folders.ts";
 import { fixtureDir } from "./helpers.ts";
 
@@ -128,6 +128,33 @@ describe("discoverWorkspaceFolders", () => {
       ["self", cwd],
       ["sib", sibling],
     ]);
+  });
+
+  // A session may announce its cwd through a symlink; the folder list holds
+  // realpaths, so the cwd is realpath'd before deciding which folder is it.
+  test("marks the folder at the cwd, also when the cwd is reached through a symlink", async () => {
+    const parent = fs.realpathSync(fixtureDir("ws"));
+    cleanup.push(parent);
+    const cwd = path.join(parent, "real", "main");
+    const lib = path.join(parent, "real", "lib");
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(lib);
+    fs.symlinkSync(path.join(parent, "real"), path.join(parent, "link"));
+    fs.writeFileSync(
+      path.join(cwd, "w.code-workspace"),
+      JSON.stringify({
+        folders: [
+          { name: "main", path: "." },
+          { name: "lib", path: "../lib" },
+        ],
+      }),
+    );
+    const expected: WorkspaceFolder[] = [
+      { name: "main", path: cwd, is_cwd: true },
+      { name: "lib", path: lib },
+    ];
+    expect(await discoverWorkspaceFolders(cwd)).toEqual(expected);
+    expect(await discoverWorkspaceFolders(path.join(parent, "link", "main"))).toEqual(expected);
   });
 
   test("realpath-normalizes folders reached through symlinks", async () => {

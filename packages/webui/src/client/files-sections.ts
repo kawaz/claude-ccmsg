@@ -71,7 +71,9 @@ export function filesLayout(
   }
   const cwd = trimSlash(peer.cwd);
   const rootKey = treeRootPath(peer);
-  const cwdFolder = workspaceFolders.find((f) => trimSlash(f.path) === cwd);
+  // The daemon marks the cwd's folder (it can realpath both sides; a cwd
+  // announced through a symlink is spelled differently from the folder).
+  const cwdFolder = workspaceFolders.find((f) => f.is_cwd === true);
   const folders: FilesFolder[] = workspaceFolders.map((f) =>
     f === cwdFolder
       ? { name: f.name, path: cwd, key: rootKey, isCwd: true }

@@ -170,7 +170,9 @@ function folderSpecs(source: string): Array<{ path: string; name?: string }> {
 /** Discover all workspace folders declared by `*.code-workspace` files at
  * the top level of `cwd`. Each returned entry's `path` is a realpath — the
  * exact string fs_list_workspace / fs_read_workspace check as an allowlist
- * prefix. Order is deterministic (workspace-file name ascending, then the
+ * prefix. The folder at the cwd itself carries `is_cwd`: the cwd is
+ * realpath'd for that compare, since a session may announce it through a
+ * symlink and the client can resolve neither side. Order is deterministic (workspace-file name ascending, then the
  * order folders[] declares them); duplicates by realpath drop the later one
  * so a folder listed twice (or referenced by two workspace files) shows once.
  *
@@ -204,7 +206,14 @@ export async function discoverWorkspaceFolders(cwd: string): Promise<WorkspaceFo
       result.push(folder);
     }
   }
-  return result;
+  if (result.length === 0) return result;
+  let realCwd: string;
+  try {
+    realCwd = await fs.promises.realpath(cwd);
+  } catch {
+    return result;
+  }
+  return result.map((folder) => (folder.path === realCwd ? { ...folder, is_cwd: true } : folder));
 }
 
 /** `*.code-workspace` names at the top level of one cwd, keyed by that cwd and

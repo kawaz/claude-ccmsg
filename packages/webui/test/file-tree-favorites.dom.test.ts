@@ -215,7 +215,7 @@ describe("FileTree sections", () => {
   test("favorites group by workspace folder, labelled inside the folder, others last", async () => {
     seed([`${CWD}/README.md`, "/repo/lib/src/a.ts", "/elsewhere/notes.md"]);
     const folders = [
-      { name: "main", path: CWD },
+      { name: "main", path: CWD, is_cwd: true as const },
       { name: "lib", path: "/repo/lib" },
       { name: "empty", path: "/repo/empty" },
     ];

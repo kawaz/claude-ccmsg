@@ -329,6 +329,10 @@ export const WorkspaceFolderSchema = v.object({
    * / fs_read_workspace. Never a trailing separator (except at filesystem
    * root itself). */
   path: v.string(),
+  /** this folder is the session's cwd (`"."` in the workspace file). Decided
+   * by the daemon with both sides realpath'd, so a cwd announced through a
+   * symlink still matches its folder; absent on every other folder. */
+  is_cwd: v.optional(v.literal(true)),
 });
 export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
 

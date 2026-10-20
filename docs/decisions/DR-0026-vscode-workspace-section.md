@@ -28,7 +28,7 @@ Sponsor: kawaz
 ## 4. 節構成とお気に入り (2026-10-20 kawaz 指定)
 
 - 節は お気に入り / ワークスペース / プロジェクト外 の 3 つ。「プロジェクト」節は置かず、セッションの cwd はワークスペース節の folder の 1 つとして出す
-- cwd の folder: workspace ファイルに cwd (`"."`) を指す folder があればその名前で、無ければ `PROJECT_ROOT` という folder を先頭に足す (workspace ファイルが無い時も同じ)。cwd の folder は containment root 経由 (fs_list / fs_read) で読み、他の folder は今どおり fs_*_workspace で読む
+- cwd の folder: workspace ファイルに cwd (`"."`) を指す folder があればその名前で (当たるかは daemon が cwd と folder の両方を realpath にして比べ、`is_cwd` で知らせる)、無ければ `PROJECT_ROOT` という folder を先頭に足す (workspace ファイルが無い時も同じ)。cwd の folder は containment root 経由 (fs_list / fs_read) で読み、他の folder は今どおり fs_*_workspace で読む
 - お気に入りは正規化したフルパスで持ち、フルパスが同じなら同じお気に入り。相対で保存された項目は containment root 基準でフルパスとして読む。workspace 定義を変えても過去のお気に入りが別物にならないよう、folder への畳み込みは表示時に行う
 - お気に入り節は folder ごとにまとめ、各行は folder 内の相対パスで出す。cwd の folder の分は見出し無しで先頭、他の folder は見出し付き (既定で開いた畳める見出し)、どの folder にも無いものは `others` 見出しにフルパスで出す。空の見出しは出さない
 - プロジェクト外節も同じ形 (folder ごと + `others`)
