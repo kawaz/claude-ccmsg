@@ -23,6 +23,7 @@ import {
   paneRatioFromPointer,
   parsePaneRatio,
 } from "../utils.ts";
+import { filesLayout } from "../files-sections.ts";
 import { FileTree, loadDir } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
@@ -56,7 +57,8 @@ export function FilesPanes({
   /** DR-0026 `.code-workspace` folders published on session_status; drives
    * both the FileTree "ワークスペース" section and FileViewer's fs_read_workspace
    * routing (an absolute path inside any allowlisted folder uses workspace ops
-   * rather than fs_read_external). */
+   * rather than fs_read_external) — except the folder at the cwd, whose files
+   * both panes address through the containment root (`filesLayout`). */
   workspaceFolders: readonly WorkspaceFolder[];
 }) {
   const { store, ws } = useApp();
@@ -88,6 +90,7 @@ export function FilesPanes({
   // FilesPanes owns which spelling the two panes address, so an in-project
   // absolute selection is rebased to the root-relative form here rather than in
   // each pane (see `canonicalViewerPath` for why it would otherwise 403).
+  const layout = filesLayout(peer, workspaceFolders);
   const selectedPath = tree.selectedPath;
   // A `~/` selection (a home-relative link) expands with the daemon's home,
   // which arrives with the handshake's ping reply.
@@ -95,7 +98,7 @@ export function FilesPanes({
   const canonicalPath =
     selectedPath === null
       ? null
-      : canonicalViewerPath(selectedPath, peer?.repo_root ?? peer?.cwd, workspaceFolders, home);
+      : canonicalViewerPath(selectedPath, layout.containmentRoot, layout.routed, home);
   // Replace rather than push: the absolute spelling is the same destination,
   // so it should not cost a back-button step.
   const selectedLineRange = tree.selectedLineRange;
@@ -149,7 +152,7 @@ export function FilesPanes({
           tree={paneTree}
           peer={peer}
           externalFiles={externalFiles}
-          workspaceFolders={workspaceFolders}
+          layout={layout}
           onNewMemo={() => setMemoEditorOpen(true)}
         />
       </div>
@@ -159,7 +162,7 @@ export function FilesPanes({
           sid={sid}
           tree={paneTree}
           peer={peer}
-          workspaceFolders={workspaceFolders}
+          workspaceFolders={layout.routed}
           memoEditorOpen={memoEditorOpen}
           onMemoCancel={() => setMemoEditorOpen(false)}
           onMemoCreated={onMemoCreated}

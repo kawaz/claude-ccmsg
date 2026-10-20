@@ -896,29 +896,14 @@ export function parseFavorites(raw: string | null): string[] {
   return [...(read?.ok ? read.value : v.getDefault(FavoritesSchema))];
 }
 
-/** Toggles one path in a favorites list — project-relative paths and DR-0024
- * external absolute paths share the flat list safely because the latter always
- * starts with `/`. Removes it if already present, appends it if absent. Pure
- * (always returns a new array, never
- * mutates `favorites`) so a caller can feed the result straight into
- * `useState`'s setter / a localStorage-persisting effect without aliasing
- * concerns. Append-not-prepend on add doesn't matter for *display* order
- * (see `sortFavorites`, which re-sorts alphabetically) but keeps this
- * function's own behavior simple to reason about independent of that. */
+/** Toggles one path in a favorites list: removes it if already present,
+ * appends it if absent. Pure (always returns a new array, never mutates
+ * `favorites`) so a caller can feed the result straight into `useState`'s
+ * setter / a localStorage-persisting effect without aliasing concerns. The
+ * list holds normalized full paths (see FileTree); display order is the
+ * Files tree's own (`groupByFolder` in files-sections.ts), not this list's. */
 export function toggleFavorite(favorites: string[], path: string): string[] {
   return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
-}
-
-/** Display order for the Files-tree "お気に入り" section: alphabetical over
- * the full path (`localeCompare`), not registration order. Absolute external
- * paths coexist without collision with project-relative paths — chosen
- * over registration order so a newly-starred path lands in a predictable
- * spot next to its neighbors instead of always at the list's end, matching
- * kawaz's mock ("docs/QUESTIONS.md" sorting after "docs/inbox"). Never
- * mutates its input (same posture as `sortPeers`/`sortEntries` elsewhere in
- * this file). */
-export function sortFavorites(favorites: string[]): string[] {
-  return [...favorites].sort((a, b) => a.localeCompare(b));
 }
 
 /** DR-0024 client convention: project tree paths are root-relative and never
@@ -1074,11 +1059,11 @@ export function fileAncestorDirectories(filePath: string): string[] {
  * 到達するために開かねばならない node」を数える — 起点となる section root
  * の扱いが違うので別関数になる:
  *
- * - プロジェクト section の root (`rootPath`) は常に展開済みとして描画される
- *   (`<Nodes parentPath={rootPath}>`) ので、それ自身と祖先は返さない。
- *   `rootPath` 配下でない相対パスはツリーに現れない (お気に入り section が
- *   フルパス 1 行で描くだけ) ので空を返す。
- * - ワークスペース section の folder root は畳める DirNode なので、それ自身を
+ * - 相対パスは cwd の folder (`rootPath`) の下にある。cwd の folder も
+ *   ワークスペース section の畳める DirNode なので、それ自身を含めて返す
+ *   (祖先は返さない)。`rootPath` 配下でない相対パスはツリーに現れない
+ *   (お気に入り / プロジェクト外が 1 行で描くだけ) ので空を返す。
+ * - それ以外のワークスペース folder root も畳める DirNode なので、それ自身を
  *   含めて返す。
  * - どの workspace folder にも属さない絶対パス (DR-0024 のプロジェクト外
  *   ファイル) は depth 0 の平坦な行なので展開対象なし。 */
@@ -1089,22 +1074,19 @@ export function expandPathsForSelection(
 ): string[] {
   if (selectedPath === "") return [];
   let base: string;
-  let includeBase: boolean;
   if (selectedPath.startsWith("/")) {
     const folder = workspaceFolders.find((f) => isWorkspaceFilePath(selectedPath, [f]));
     if (!folder) return [];
     base = folder.path.replace(/\/+$/, "");
-    includeBase = true;
   } else {
     base = rootPath.replace(/\/+$/, "");
     if (base !== "" && !selectedPath.startsWith(`${base}/`)) return [];
-    includeBase = false;
   }
   const prefix = base === "" ? "" : `${base}/`;
   const deeper = fileAncestorDirectories(selectedPath).filter(
     (dir) => dir.length > base.length && dir.startsWith(prefix),
   );
-  return includeBase ? [base, ...deeper] : deeper;
+  return [base, ...deeper];
 }
 
 /** docs/inbox メモ作成エディタ (FileViewer.tsx) の自動ファイル名。DR-0019 §2.2

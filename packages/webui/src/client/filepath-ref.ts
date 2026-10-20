@@ -169,7 +169,7 @@ export interface FilePathResolveCtx {
 /** POSIX-style path normalization (collapse `.` / `..`, strip duplicate `/`).
  * The daemon runs on unix, and message paths on macOS/Linux — no Windows
  * back-slash handling needed. Absolute inputs keep their leading `/`. */
-function normalizePosix(p: string): string {
+export function normalizePosix(p: string): string {
   const isAbs = p.startsWith("/");
   const parts = p.split("/");
   const out: string[] = [];

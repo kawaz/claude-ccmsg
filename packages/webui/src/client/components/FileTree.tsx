@@ -23,12 +23,16 @@ import {
   favoritesStorageKey,
   isWorkspaceFilePath,
   parseFavorites,
-  groupExternalFiles,
   sortExternalFiles,
-  sortFavorites,
   toggleFavorite,
-  treeRootPath,
 } from "../utils.ts";
+import {
+  favoriteFullPaths,
+  type FilesGroup,
+  type FilesLayout,
+  fullPathOf,
+  groupByFolder,
+} from "../files-sections.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 
 function joinPath(parent: string, name: string): string {
@@ -109,9 +113,10 @@ export function FavoriteToggle({
 /** Threaded down every tree row so it can render its own FavoriteToggle;
  * `null` end-to-end (from FileTree) means favorites are disabled for this
  * session (see FileTree's doc comment on why) and no row renders the
- * button at all. */
+ * button at all. Rows pass their tree key; a favorite is identified by the
+ * full path the key names, so every spelling of one file shares one ★. */
 export interface FavContext {
-  favorites: Set<string>;
+  isFavorite: (path: string) => boolean;
   onToggle: (path: string) => void;
 }
 
@@ -264,7 +269,7 @@ function DirNode({
           </button>
         ) : null}
         {fav ? (
-          <FavoriteToggle path={path} favorited={fav.favorites.has(path)} onToggle={fav.onToggle} />
+          <FavoriteToggle path={path} favorited={fav.isFavorite(path)} onToggle={fav.onToggle} />
         ) : null}
       </div>
       {expanded ? (
@@ -421,7 +426,7 @@ function FileNode({
           </button>
         ) : null}
         {fav ? (
-          <FavoriteToggle path={path} favorited={fav.favorites.has(path)} onToggle={fav.onToggle} />
+          <FavoriteToggle path={path} favorited={fav.isFavorite(path)} onToggle={fav.onToggle} />
         ) : null}
       </div>
     </li>
@@ -532,45 +537,84 @@ function favoriteEntryKind(
   return { kind: "file", symlink: false };
 }
 
-/** One origin group of the プロジェクト外 section. DR-0024: external paths
- * render at depth 0 with the full absolute path as both label and locator key.
- * FavoriteToggle shares the same flat string set as project rows; the `/`
- * prefix guarantees no collision, and a starred external file therefore also
- * appears in the favorites section through favoriteEntryKind's file fallback. */
-function ExternalFileGroup({
-  label,
-  paths,
+/** One folder's group in the お気に入り / プロジェクト外 sections. Rows render
+ * through the same DirNode / FileNode the tree uses, addressed by their tree
+ * key and labelled by their path inside the folder — the folder's own prefix
+ * is what made the rows unreadable when every row carried it. The cwd's group
+ * (`name === null`) has no heading; every other group's heading folds it and
+ * starts open. Rows outside every deletion surface get no delete button:
+ * `deletable` says whether a row's section may delete at all, and an
+ * absolute key outside the workspace folders is a DR-0024 external file. */
+function PathGroup({
+  group,
   sid,
   tree,
+  workspaceFolders,
   fav,
+  create,
+  del,
 }: {
-  label: string;
-  paths: readonly string[];
+  group: FilesGroup;
   sid: string;
   tree: SessionTreeState;
+  workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
+  create: CreateContext | null;
+  del: DeleteContext | null;
 }) {
-  if (paths.length === 0) return null;
+  const [open, setOpen] = useState(true);
+  const depth = group.name === null ? 0 : 1;
+  const rows = (
+    <ul class="tree-root tree-favorites">
+      {group.rows.map(({ key, label }) => {
+        const { kind, symlink } = favoriteEntryKind(key, tree);
+        const isExternal = key.startsWith("/") && !isWorkspaceFilePath(key, workspaceFolders);
+        const rowDel = isExternal ? null : del;
+        return kind === "dir" ? (
+          <DirNode
+            key={key}
+            sid={sid}
+            path={key}
+            name={label}
+            depth={depth}
+            tree={tree}
+            selectedPath={tree.selectedPath}
+            workspaceFolders={workspaceFolders}
+            fav={fav}
+            create={create}
+            del={rowDel}
+          />
+        ) : (
+          <FileNode
+            key={key}
+            sid={sid}
+            path={key}
+            name={label}
+            depth={depth}
+            selected={tree.selectedPath === key}
+            symlink={symlink}
+            fav={fav}
+            del={rowDel}
+          />
+        );
+      })}
+    </ul>
+  );
+  if (group.name === null) return rows;
   return (
     <>
-      <p class="tree-section-sublabel">{label}</p>
-      <ul class="tree-root tree-external">
-        {paths.map((externalPath) => (
-          <FileNode
-            key={externalPath}
-            sid={sid}
-            path={externalPath}
-            name={externalPath}
-            depth={0}
-            selected={tree.selectedPath === externalPath}
-            symlink={false}
-            fav={fav}
-            // DR-0024 external files live outside fs_delete's authorization
-            // surfaces (contained | workspace) — no delete affordance.
-            del={null}
-          />
-        ))}
-      </ul>
+      <div class="tree-row-line">
+        <button
+          type="button"
+          class="tree-row tree-dir tree-group-heading"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span class="tree-caret">{open ? "▾" : "▸"}</span>
+          {group.name}
+        </button>
+      </div>
+      {open ? rows : null}
     </>
   );
 }
@@ -580,7 +624,7 @@ export function FileTree({
   tree,
   peer,
   externalFiles,
-  workspaceFolders,
+  layout,
   onNewMemo,
 }: {
   sid: string;
@@ -588,16 +632,13 @@ export function FileTree({
   /** DR-0024 allowlisted absolute paths from the live session_status fold,
    * each tagged with the kind of transcript record that named it. */
   externalFiles: readonly ExternalFile[];
-  /** DR-0026 allowlisted absolute folder roots from the live session_status
-   * fold. Each becomes a root-level DirNode in the ワークスペース section
-   * (rendered between お気に入り and プロジェクト). Empty array = the
-   * session's cwd carries no `.code-workspace` file, and the section is
-   * suppressed. */
-  workspaceFolders: readonly WorkspaceFolder[];
-  /** Peer record for `sid`, as seen in state.peers — carries the repo_root/cwd
-   * pair the tree's browsing origin is derived from (see rootPath below).
-   * Undefined for a sid that hasn't shown up in a peers/loaded response yet
-   * (same fallback posture as SessionView's hasTranscript lookup). */
+  /** The ワークスペース section's folders (the cwd always among them) and the
+   * DR-0026 workspace folders paths route through (`filesLayout`). */
+  layout: FilesLayout;
+  /** Peer record for `sid`, as seen in state.peers — carries the cwd the
+   * favorites are kept per. Undefined for a sid that hasn't shown up in a
+   * peers/loaded response yet (same fallback posture as SessionView's
+   * hasTranscript lookup). */
   peer: PeerInfo | undefined;
   /** Switch the right-hand viewer pane into its new-memo editor. FilesPanes
    * owns that cross-pane display mode; FileTree only exposes the affordance. */
@@ -605,12 +646,12 @@ export function FileTree({
 }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store, (s) => s.connStatus);
+  const workspaceFolders = layout.routed;
   // Browsing origin is the session's own cwd (kawaz r55 m97), expressed in the
   // containment-root-relative space every fs path key uses — see treeRootPath.
-  // `null` peer means the daemon hasn't told us this sid's cwd yet, in which
-  // case "" (the containment root) is the only root we can name; it self-
-  // corrects to the cwd root once `peer` arrives.
-  const rootPath = peer ? treeRootPath(peer) : "";
+  // Until the peer row arrives the layout names the containment root ("")
+  // instead; it self-corrects to the cwd root once `peer` arrives.
+  const rootPath = layout.folders.find((folder) => folder.isCwd)?.key ?? "";
   const rootEntries = tree.dirs.get(rootPath);
   const rootError = tree.dirErrors.get(rootPath);
 
@@ -627,21 +668,35 @@ export function FileTree({
   // stored list with an empty one. An instance serves one root: FilesPanes
   // keys FileTree by it, so a root change is a fresh mount that reads the new
   // root's list rather than carrying the old one over.
+  //
+  // A favorite is its normalized full path: one file is one favorite however
+  // its row was reached, and a change to the workspace file regroups the list
+  // instead of orphaning it. Entries saved relative (containment-root-relative
+  // tree keys) are read as the full path they name, and the list a toggle
+  // writes back holds full paths only.
   const favRoot = peer ? peer.cwd : null;
   const [favorites, setFavorites] = useState(() => (favRoot ? loadFavorites(favRoot) : []));
+  const favoriteFulls = favoriteFullPaths(favorites, layout.containmentRoot);
+  const favoriteSet = new Set(favoriteFulls);
 
   const onToggleFavorite = (path: string) => {
-    if (!favRoot) return;
-    const next = toggleFavorite(favorites, path);
+    const full = fullPathOf(path, layout.containmentRoot);
+    if (!favRoot || full === null) return;
+    const next = toggleFavorite(favoriteFulls, full);
     setFavorites(next);
     saveFavorites(favRoot, next);
   };
   const fav: FavContext | null = favRoot
-    ? { favorites: new Set(favorites), onToggle: onToggleFavorite }
+    ? {
+        isFavorite: (path) => {
+          const full = fullPathOf(path, layout.containmentRoot);
+          return full !== null && favoriteSet.has(full);
+        },
+        onToggle: onToggleFavorite,
+      }
     : null;
-  const sortedFavorites = sortFavorites(favorites);
-  const externalGroups = groupExternalFiles(externalFiles);
-  const externalCount = externalGroups.tool.length + externalGroups.attachment.length;
+  const favoriteGroups = groupByFolder(favoriteFulls, layout);
+  const externalGroups = groupByFolder(sortExternalFiles(externalFiles), layout);
 
   // New-file creation state (kawaz r46 mid=24): kept here so at most one
   // DirNode hosts the inline input at a time — sharing a single `activePath`
@@ -768,6 +823,13 @@ export function FileTree({
         });
     },
   };
+
+  // The cwd's folder is the tree the session works in, so it opens when the
+  // tree mounts (the other workspace folders start closed). It is a DirNode
+  // like them, so the user can still fold it for the rest of the visit.
+  useEffect(() => {
+    store.dispatch({ type: "fs/dirs-expanded", sid, paths: [rootPath] });
+  }, [sid, rootPath, store]);
 
   // Root listing loads eagerly on mount / session switch — everything below
   // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
@@ -952,108 +1014,48 @@ export function FileTree({
         <>
           {/* Favorites section (U-fav): only shown once ≥1 path is favorited —
            * an empty section would just be two separator lines with nothing
-           * between them. Each favorite renders through the same DirNode/
-           * FileNode components the main tree uses, at depth 0 with its full
-           * relative path as the display name (rather than just the basename),
-           * so expand state / lazy-load / selection-highlight / the ★ toggle
-           * itself all come for free — `path` doubles as both `tree.dirs`/
-           * `tree.expanded` key and displayed name here. A favorited directory
-           * therefore shares expand/collapse state with the *same* directory
-           * reachable via the normal tree below (both key off the identical
-           * path) — collapsing it in one place collapses it in the other too.
-           * This is an accepted, documented behavior, not a bug: keeping two
-           * independent expand states for the same path would need a second
-           * `SessionTreeState` namespace for no real benefit. */}
-          {sortedFavorites.length > 0 ? (
+           * between them. Favorites are grouped by the workspace folder holding
+           * them and labelled by their path inside it (see PathGroup); each row
+           * renders through the same DirNode/FileNode the tree uses, keyed by
+           * its tree key, so expand state / lazy-load / selection-highlight /
+           * the ★ toggle all come for free. A favorited directory therefore
+           * shares expand/collapse state with the *same* directory in the
+           * ワークスペース section (both key off the identical tree key) —
+           * collapsing it in one place collapses it in the other too. This is
+           * an accepted behavior: two independent expand states for one path
+           * would need a second `SessionTreeState` namespace for no benefit. */}
+          {favoriteGroups.length > 0 ? (
             <>
               <p class="tree-section-label">お気に入り</p>
-              <ul class="tree-root tree-favorites">
-                {sortedFavorites.map((path) => {
-                  const { kind, symlink } = favoriteEntryKind(path, tree);
-                  // Favorites can hold either project-relative or /-prefixed
-                  // external paths. External paths (starts with "/" and NOT a
-                  // workspace folder path) can't be deleted through fs_delete
-                  // (external is outside its authorization surfaces), so drop the
-                  // affordance for those rows only.
-                  const isExternal =
-                    path.startsWith("/") && !isWorkspaceFilePath(path, workspaceFolders);
-                  return kind === "dir" ? (
-                    <DirNode
-                      key={path}
-                      sid={sid}
-                      path={path}
-                      name={path}
-                      depth={0}
-                      tree={tree}
-                      selectedPath={tree.selectedPath}
-                      workspaceFolders={workspaceFolders}
-                      fav={fav}
-                      create={createCtx}
-                      del={isExternal ? null : deleteCtx}
-                    />
-                  ) : (
-                    <FileNode
-                      key={path}
-                      sid={sid}
-                      path={path}
-                      name={path}
-                      depth={0}
-                      selected={tree.selectedPath === path}
-                      symlink={symlink}
-                      fav={fav}
-                      del={isExternal ? null : deleteCtx}
-                    />
-                  );
-                })}
-              </ul>
+              {favoriteGroups.map((group) => (
+                <PathGroup
+                  key={group.name ?? ""}
+                  group={group}
+                  sid={sid}
+                  tree={tree}
+                  workspaceFolders={workspaceFolders}
+                  fav={fav}
+                  create={createCtx}
+                  del={deleteCtx}
+                />
+              ))}
             </>
           ) : null}
-          {/* Workspace section (DR-0026): folders discovered in the session's
-           * cwd `.code-workspace` file(s). Each folder renders as a root-level
-           * DirNode with its absolute realpath as both key and display name —
-           * expand/lazy-load/★ reuse the same components as お気に入り, and
-           * fs_list_workspace routing keys off the same path via loadDir's
-           * DR-0026 branch. Suppressed when no workspace folders were published
-           * (either no .code-workspace file, or the session hasn't subscribed
-           * to session_status yet — same posture as the プロジェクト外 section). */}
-          {workspaceFolders.length > 0 ? (
-            <>
-              <p class="tree-section-label">ワークスペース</p>
-              <ul class="tree-root tree-workspace">
-                {workspaceFolders.map((folder) => (
-                  <DirNode
-                    key={folder.path}
-                    sid={sid}
-                    path={folder.path}
-                    name={folder.name}
-                    depth={0}
-                    tree={tree}
-                    selectedPath={tree.selectedPath}
-                    workspaceFolders={workspaceFolders}
-                    fav={fav}
-                    create={createCtx}
-                    del={deleteCtx}
-                  />
-                ))}
-              </ul>
-            </>
-          ) : null}
-          {sortedFavorites.length > 0 || workspaceFolders.length > 0 || externalCount > 0 ? (
-            <p class="tree-section-label">プロジェクト</p>
-          ) : null}
-          {rootError ? (
-            <p class="tree-error">{rootError}</p>
-          ) : rootEntries === undefined ? (
-            <p class="tree-loading">loading…</p>
-          ) : (
-            <ul class="tree-root">
-              {/* Top level is the session's cwd listing, whatever the daemon's
-               * containment root happens to be (kawaz r55 m97) — no filtering
-               * or pinning pass, just the directory as it is on disk. */}
-              <Nodes
+          {/* Workspace section (DR-0026): the folders of the session's cwd
+           * `.code-workspace` file(s), with the cwd always among them — under
+           * its own name when a folder is the cwd, else as PROJECT_ROOT first
+           * (`filesLayout`). The cwd's folder lists through the containment
+           * root like the session's files always have; every other folder is
+           * keyed by its absolute realpath, which loadDir routes to
+           * fs_list_workspace. */}
+          <p class="tree-section-label">ワークスペース</p>
+          <ul class="tree-root tree-workspace">
+            {layout.folders.map((folder) => (
+              <DirNode
+                key={folder.key}
                 sid={sid}
-                parentPath={rootPath}
-                entries={rootEntries}
+                path={folder.key}
+                name={folder.name}
                 depth={0}
                 tree={tree}
                 selectedPath={tree.selectedPath}
@@ -1062,30 +1064,28 @@ export function FileTree({
                 create={createCtx}
                 del={deleteCtx}
               />
-            </ul>
-          )}
-          {externalCount > 0 ? (
+            ))}
+          </ul>
+          {externalGroups.length > 0 ? (
             <>
               <p class="tree-section-label">プロジェクト外</p>
-              {/* Grouped by what named the file (kawaz r99 m35): a path the
-               * session read or wrote is something it worked on, while an
-               * attachment is something it was handed, and one flat list of
-               * absolute paths made the two indistinguishable. A group with no
-               * files is omitted entirely rather than shown empty. */}
-              <ExternalFileGroup
-                label="Read/Edit/Write"
-                paths={externalGroups.tool}
-                sid={sid}
-                tree={tree}
-                fav={fav}
-              />
-              <ExternalFileGroup
-                label="attachments"
-                paths={externalGroups.attachment}
-                sid={sid}
-                tree={tree}
-                fav={fav}
-              />
+              {/* Same form as お気に入り: grouped by the workspace folder
+               * holding each file, with the files in no folder under
+               * `others`. A folder with no file gets no heading. */}
+              {externalGroups.map((group) => (
+                <PathGroup
+                  key={group.name ?? ""}
+                  group={group}
+                  sid={sid}
+                  tree={tree}
+                  workspaceFolders={workspaceFolders}
+                  fav={fav}
+                  create={null}
+                  // DR-0024 external files live outside fs_delete's
+                  // authorization surfaces (contained | workspace).
+                  del={null}
+                />
+              ))}
             </>
           ) : null}
         </>

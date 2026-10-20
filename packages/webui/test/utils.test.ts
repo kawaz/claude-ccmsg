@@ -65,7 +65,6 @@ import {
   shortSid,
   groupExternalFiles,
   sortExternalFiles,
-  sortFavorites,
   sortPeers,
   treeRootPath,
   summarizeUserAgent,
@@ -1411,27 +1410,6 @@ describe("toggleFavorite", () => {
   });
 });
 
-describe("sortFavorites", () => {
-  // Display order is alphabetical over the full relative path, not
-  // registration order — a favorite added last can still sort first.
-  // Lowercase-only fixtures to keep the assertion independent of any
-  // locale's case-collation rules (localeCompare's case ordering isn't
-  // guaranteed ASCII-simple across environments).
-  test("orders alphabetically regardless of registration order", () => {
-    expect(sortFavorites(["docs/questions.md", "docs/inbox", "app.ts"])).toEqual([
-      "app.ts",
-      "docs/inbox",
-      "docs/questions.md",
-    ]);
-  });
-
-  test("never mutates the input array", () => {
-    const favorites = ["b", "a"];
-    sortFavorites(favorites);
-    expect(favorites).toEqual(["b", "a"]);
-  });
-});
-
 describe("external file view helpers (DR-0024)", () => {
   test("only slash-prefixed absolute paths use the external read rail", () => {
     // Project-tree relpaths remain on fs_read; external_files use fs_read_external.
@@ -1628,10 +1606,11 @@ describe("fileAncestorDirectories", () => {
 describe("expandPathsForSelection", () => {
   const folders = [{ path: "/repo/one", name: "one" }];
 
-  // The project section renders rootPath's listing already expanded, so the
-  // chain to open starts one level below it and the root never appears.
-  test("returns each directory between the tree root and the file", () => {
+  // The cwd's folder is a collapsible DirNode keyed by rootPath, so the chain
+  // to open starts at it; its ancestors never appear.
+  test("returns the tree root and each directory between it and the file", () => {
     expect(expandPathsForSelection("main/packages/webui/src/app.ts", "main", [])).toEqual([
+      "main",
       "main/packages",
       "main/packages/webui",
       "main/packages/webui/src",
@@ -1639,12 +1618,16 @@ describe("expandPathsForSelection", () => {
   });
 
   test("a containment-rooted session starts the chain at the first segment", () => {
-    expect(expandPathsForSelection("docs/inbox/memo.md", "", [])).toEqual(["docs", "docs/inbox"]);
+    expect(expandPathsForSelection("docs/inbox/memo.md", "", [])).toEqual([
+      "",
+      "docs",
+      "docs/inbox",
+    ]);
   });
 
-  // Already visible in the root listing — nothing to open.
-  test("a file directly in the root needs no expansion", () => {
-    expect(expandPathsForSelection("main/README.md", "main", [])).toEqual([]);
+  // Directly in the root listing — only the root itself to open.
+  test("a file directly in the root opens just the root", () => {
+    expect(expandPathsForSelection("main/README.md", "main", [])).toEqual(["main"]);
   });
 
   // A sibling worktree is inside the daemon's containment but outside the
@@ -1653,8 +1636,7 @@ describe("expandPathsForSelection", () => {
     expect(expandPathsForSelection("other/pkg/x.ts", "main", [])).toEqual([]);
   });
 
-  // Unlike the project root, a workspace folder root is a collapsible DirNode,
-  // so it has to open too.
+  // Any other workspace folder root is a collapsible DirNode too.
   test("a workspace file opens its folder root and everything below it", () => {
     expect(expandPathsForSelection("/repo/one/src/deep/x.ts", "main", folders)).toEqual([
       "/repo/one",

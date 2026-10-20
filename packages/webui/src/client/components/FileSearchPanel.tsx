@@ -70,13 +70,13 @@ function HitRow({
         <span class="file-search-hit-path">{display}</span>
       </a>
       {/* お気に入り (kawaz r55m82): ツリー行と同じ FavoriteToggle を行末に置く。
-       * 同じ Set を共有しているので、検索結果で付けた星はツリー側にも即座に
+       * 同じ一覧を共有しているので、検索結果で付けた星はツリー側にも即座に
        * 反映される。`<a>` の兄弟として置くのはツリー行と同じ理由 (ネストは
        * 不正 HTML かつクリック対象が競合する)。 */}
       {fav ? (
         <FavoriteToggle
           path={hit.path}
-          favorited={fav.favorites.has(hit.path)}
+          favorited={fav.isFavorite(hit.path)}
           onToggle={fav.onToggle}
         />
       ) : null}

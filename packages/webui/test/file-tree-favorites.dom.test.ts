@@ -3,12 +3,15 @@
 // - マウントしただけでは一覧を書かない (初回 mount でも、peer が後から届いて
 //   root が決まった時でも)。途中で 1 度でも空の一覧を書くと、その間に閉じた
 //   タブや別のタブの読み込みで保存済みの一覧が消える
-// - 一覧を書くのは toggle だけで、変えた結果をそのまま書く
+// - 一覧を書くのは toggle だけで、変えた結果をそのまま書く。書く一覧は正規化した
+//   フルパスで、相対で保存された既存の項目もフルパスに直して書く
+// - 同じファイルは綴りが違っても 1 つのお気に入り。表示は workspace folder ごとに
+//   畳み、cwd の folder は見出し無し、どの folder にも無いものは others
 // 出典: docs/findings/2026-10-14-webui-hooks-review-react-guidance.md (high 1)
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { initialState, type SessionTreeState } from "../src/client/store.ts";
@@ -83,13 +86,17 @@ function filesStore(): Store {
   return store;
 }
 
-function panes(store: Store, peer: PeerInfo | undefined): ComponentChild {
+function panes(
+  store: Store,
+  peer: PeerInfo | undefined,
+  workspaceFolders: readonly WorkspaceFolder[] = [],
+): ComponentChild {
   const tree: SessionTreeState = defined(store.getState().sessionTrees.get(SID), "session tree");
   const ws = createWsClient((action) => store.dispatch(action));
   return h(
     AppContext.Provider,
     { value: { store, ws } },
-    h(FilesPanes, { sid: SID, tree, peer, externalFiles: [], workspaceFolders: [] }),
+    h(FilesPanes, { sid: SID, tree, peer, externalFiles: [], workspaceFolders }),
   );
 }
 
@@ -98,6 +105,19 @@ async function mount(vnode: ComponentChild): Promise<HTMLElement> {
   document.body.append(root);
   container = root;
   await act(() => render(vnode, root));
+  return root;
+}
+
+/** Mount, then render again with the tree as the store holds it after the
+ * mount's own effects (the cwd's folder opens on mount): `panes` passes the
+ * tree as a value, the way SessionView re-renders with each store change. */
+async function mountSettled(
+  store: Store,
+  peer: PeerInfo | undefined,
+  workspaceFolders: readonly WorkspaceFolder[] = [],
+): Promise<HTMLElement> {
+  const root = await mount(panes(store, peer, workspaceFolders));
+  await act(() => render(panes(store, peer, workspaceFolders), root));
   return root;
 }
 
@@ -143,15 +163,94 @@ describe("FileTree favorites mounted", () => {
 
   test("a toggle saves the list it produced", async () => {
     seed(["README.md"]);
-    const root = await mount(panes(filesStore(), PEER));
+    const root = await mountSettled(filesStore(), PEER);
     const add = instanceOf(
       root.querySelector('.tree-fav-toggle[aria-label="package.json をお気に入りに追加"]'),
       HTMLElement,
       "package.json favorite toggle",
     );
     await act(() => add.click());
-    expect(favoriteWrites.map(parseFavorites)).toEqual([["README.md", "package.json"]]);
-    expect(parseFavorites(stored())).toEqual(["README.md", "package.json"]);
+    const written = [`${CWD}/README.md`, `${CWD}/package.json`];
+    expect(favoriteWrites.map(parseFavorites)).toEqual([written]);
+    expect(parseFavorites(stored())).toEqual(written);
     expect(favoritedPaths(root)).toEqual(["README.md", "package.json"]);
+  });
+});
+
+/** The お気に入り section as text rows: a group heading as `▾name`, a row as
+ * its label. */
+function favoritesSection(root: HTMLElement): string[] {
+  const tree = defined(root.querySelector(".file-tree"), "file tree");
+  const out: string[] = [];
+  let inFavorites = false;
+  for (const el of tree.querySelectorAll(
+    ".tree-section-label, .tree-group-heading, .tree-favorites > li > .tree-row-line > .tree-row",
+  )) {
+    if (el.classList.contains("tree-section-label")) {
+      inFavorites = el.textContent === "お気に入り";
+      continue;
+    }
+    if (inFavorites) out.push((el.textContent ?? "").trim());
+  }
+  return out;
+}
+
+function sectionLabels(root: HTMLElement): string[] {
+  return [...root.querySelectorAll(".tree-section-label")].map((el) => el.textContent ?? "");
+}
+
+function workspaceRows(root: HTMLElement): string[] {
+  return [...root.querySelectorAll(".tree-workspace > li > .tree-row-line > .tree-dir")].map((el) =>
+    (el.textContent ?? "").replace(/^[▾▸]/, "").trim(),
+  );
+}
+
+describe("FileTree sections", () => {
+  test("one file favorited by its relative and its full path shows once", async () => {
+    seed(["README.md", `${CWD}/README.md`]);
+    const root = await mount(panes(filesStore(), PEER));
+    expect(favoritesSection(root)).toEqual(["README.md"]);
+  });
+
+  test("favorites group by workspace folder, labelled inside the folder, others last", async () => {
+    seed([`${CWD}/README.md`, "/repo/lib/src/a.ts", "/elsewhere/notes.md"]);
+    const folders = [
+      { name: "main", path: CWD },
+      { name: "lib", path: "/repo/lib" },
+      { name: "empty", path: "/repo/empty" },
+    ];
+    const root = await mount(panes(filesStore(), PEER, folders));
+    expect(favoritesSection(root)).toEqual([
+      "README.md",
+      "▾lib",
+      "src/a.ts",
+      "▾others",
+      "/elsewhere/notes.md",
+    ]);
+    expect(workspaceRows(root)).toEqual(["main", "lib", "empty"]);
+  });
+
+  test("a group heading folds its rows and starts open", async () => {
+    seed(["/repo/lib/src/a.ts"]);
+    const root = await mount(panes(filesStore(), PEER, [{ name: "lib", path: "/repo/lib" }]));
+    const heading = instanceOf(root.querySelector(".tree-group-heading"), HTMLElement, "heading");
+    expect(heading.getAttribute("aria-expanded")).toBe("true");
+    await act(() => heading.click());
+    expect(favoritesSection(root)).toEqual(["▸lib"]);
+  });
+
+  test("without a workspace file the cwd is PROJECT_ROOT and the プロジェクト section is gone", async () => {
+    const root = await mountSettled(filesStore(), PEER);
+    expect(workspaceRows(root)).toEqual(["PROJECT_ROOT"]);
+    expect(sectionLabels(root)).toEqual(["ワークスペース"]);
+    // The cwd's folder opens on mount, so its listing shows without a click.
+    expect(
+      root.querySelector('.tree-fav-toggle[aria-label="package.json をお気に入りに追加"]'),
+    ).not.toBeNull();
+  });
+
+  test("with workspace folders but none at the cwd, PROJECT_ROOT comes first", async () => {
+    const root = await mount(panes(filesStore(), PEER, [{ name: "lib", path: "/repo/lib" }]));
+    expect(workspaceRows(root)).toEqual(["PROJECT_ROOT", "lib"]);
   });
 });
