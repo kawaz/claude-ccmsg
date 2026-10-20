@@ -124,13 +124,16 @@ describe("llm_usage op", () => {
     expect(defined(reply.credentials[1], "the second credential").limits).toBeUndefined();
   });
 
-  // Anything other than an explicit `true` is a plain read: a probe spends
-  // upstream rate limit, so it must never happen by accident.
+  // Anything other than an explicit `true` is refused: a probe spends upstream
+  // rate limit, so it must never happen by accident. A refused request reaches
+  // the gateway not at all — asserted as "nothing new received", since the
+  // last entry belongs to whichever test asked the gateway before this one.
   test("a non-true refresh value does not trigger a probe", async () => {
     const daemon = daemonWith(`${GATEWAY}/usage`);
+    const before = received.length;
     for (const refresh of ["true", 1, null]) {
       await requestRefusal(daemon, USER, { op: "llm_usage", request_id: "r3", refresh });
-      expect(received.at(-1)).toBeNull();
+      expect(received.slice(before)).toEqual([]);
     }
   });
 
