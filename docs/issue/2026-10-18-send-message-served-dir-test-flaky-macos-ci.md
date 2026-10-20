@@ -49,3 +49,15 @@ PeerInjector の no_peer_socket に `lookup` (scan_timed_out / no_state_file / n
 
 - [ ] 失敗時の lookup を得て真因を特定する
 - [ ] 真因を直す (期限の延長・テストの緩和・skip はしない)
+
+## 追記: 同型の失敗と機構 (2026-10-21)
+
+- Release v0.192.0 の CI (run 39452714527、macos-latest のみ) で `send_message through the daemon > a run refusing while another takes it is delivered; every run refusing is refused` が `refused` でなく `ended` で落ちた (1503ms、ubuntu 765ms)。この daemon は agents の poll を止めているので、外れたのは liveRuns の読み込み (RUNS_SCAN_MS 1 秒の期限)。no_peer_socket の件と同じく「同じ dir を読む期限付きの読み込みが外れる」形
+- 機構 (ローカルで再現): 期限付きの読み込みを始めた直後に process が期限を越えて動けないと (busy で 1.5 秒止める)、再開時に timer と読み終わりが揃い、timer が先に見られて「期限切れ」になる (Bun 1.4.2 で 5 回中 5 回。setImmediate で決定を遅らせても 5 回中 3 回は期限切れ)
+- 対策 (commit xvrrrptp): 期限を process が動いていた時間で数える `withinBudget` (packages/daemon/src/time-budget.ts) を liveRuns と PeerInjector の走査に使う。timer が予定より 50ms 以上遅れて鳴ったら遅れの分だけ延ばす。本当に終わらない読み込みは予定どおり期限切れになる
+- 未検証: CI の runner でこの daemon が実際に 1 秒以上動けなかったかは観測していない (所要時間の超過が約 0.6〜0.75 秒で、期限切れの経路と矛盾しないことだけが根拠)
+- 同じ run の `agents.test.ts` の「読めない config dir のセッションは消さない」の失敗は別の原因で、テストの fixture が state file を消してから書く順だったため、その間の round が dir を読み切って session を外していた (消すと書くの間に 400ms 挟むと 3 回中 3 回再現、順を逆にして 5 回中 5 回 pass)。同じ commit で直した
+
+## 次に要る観測
+
+次に macOS CI でこの種の失敗が出たら daemon.log の lookup (scan_timed_out か否か) を見る。対策後も scan_timed_out が出るなら process の停止以外の要因を追う。
