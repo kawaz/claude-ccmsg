@@ -12,6 +12,7 @@ import {
 import { type FoldSummaryDecoration } from "../../timeline-summary.ts";
 import { peerChannelLabel, peerMessagePresentation } from "../../agent-communication-view.ts";
 import { Tabs } from "../Tabs.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
@@ -115,7 +116,7 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
       );
     }
     case "text":
-      return <pre class="tl-fold-body">{rich.text}</pre>;
+      return <CopyablePreText class="tl-fold-body" text={rich.text} />;
   }
 }
 

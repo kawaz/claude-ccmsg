@@ -33,6 +33,7 @@ import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
 import { useStickToBottom } from "./useStickToBottom.ts";
 import { useUserTurnNav } from "./useUserTurnNav.ts";
+import { useSelectionContainment } from "./useSelectionContainment.ts";
 import {
   ItemRawContext,
   AgentTimelineHrefsContext,
@@ -131,6 +132,7 @@ export function Timeline({
   const tlLinesRef = useRef<HTMLDivElement | null>(null);
   const sidePanel = useSidePanel(tlLinesRef);
   useLiveTailSubscription({ sid, active, agentActive, timeline });
+  useSelectionContainment();
   const forkOrigin = useForkOrigin({ sid, active, agentActive });
   const loader = useTranscriptLoader({ sid, agent, active, timeline });
 

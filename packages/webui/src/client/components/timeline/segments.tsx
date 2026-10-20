@@ -5,6 +5,7 @@ import { LinkedMarkdownView, LinkedPlainText } from "../../filepath-linker.tsx";
 import { isTranslationSkippedText, hasCachedHostText } from "../../translate.ts";
 import { type SearchWord } from "../../in-view-search.ts";
 import { Tabs } from "../Tabs.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
@@ -242,7 +243,7 @@ function AssistantMarkdownText({
       {view?.source === true ? (
         // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
         // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
-        <pre class="tl-bubble-source">{bodyText}</pre>
+        <CopyablePreText class="tl-bubble-source" text={bodyText} />
       ) : (
         <LinkedMarkdownView
           source={bodyText}
@@ -338,7 +339,7 @@ export function SegmentView({
             <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
+              <CopyablePreText class="tl-fold-body" text={JSON.stringify(segment.input, null, 2)} />
             </div>
           </details>
         );
@@ -363,7 +364,7 @@ export function SegmentView({
             <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">{segment.text}</pre>
+              <CopyablePreText class="tl-fold-body" text={segment.text} />
             </div>
           </details>
         );
@@ -373,7 +374,7 @@ export function SegmentView({
             <FoldSummary ts={ts} label={segment.type} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
+              <CopyablePreText class="tl-fold-body" text={JSON.stringify(segment.raw, null, 2)} />
             </div>
           </details>
         );

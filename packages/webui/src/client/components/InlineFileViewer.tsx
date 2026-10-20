@@ -2,20 +2,23 @@ import { useState } from "preact/hooks";
 import { MarkdownView } from "../markdown-view.tsx";
 import { lineDiff, splitFileLines } from "../inline-file-model.ts";
 import { isMarkdownPath } from "../utils.ts";
+import { CodeCopyFrame, CopyablePreText } from "./CodeCopyFrame.tsx";
 
 function CodeBody({ content, startLine = 1 }: { content: string; startLine?: number }) {
   const contentLines = splitFileLines(content);
   return contentLines.length === 0 ? (
     <p class="viewer-empty-file">(空のファイル)</p>
   ) : (
-    <pre class="viewer-body tl-inline-file-body">
-      {contentLines.map((line, index) => (
-        <div class="viewer-line" key={index}>
-          <span class="viewer-lineno">{startLine + index}</span>
-          <span class="viewer-text">{line}</span>
-        </div>
-      ))}
-    </pre>
+    <CodeCopyFrame text={content}>
+      <pre class="viewer-body tl-inline-file-body">
+        {contentLines.map((line, index) => (
+          <div class="viewer-line" key={index}>
+            <span class="viewer-lineno">{startLine + index}</span>
+            <span class="viewer-text">{line}</span>
+          </div>
+        ))}
+      </pre>
+    </CodeCopyFrame>
   );
 }
 
@@ -57,7 +60,7 @@ export function InlineFileViewer({
           <MarkdownView source={content} />
         </div>
       ) : (
-        <pre class="tl-inline-preview">{content || "(空のファイル)"}</pre>
+        <CopyablePreText class="tl-inline-preview" text={content || "(空のファイル)"} />
       )}
     </div>
   );

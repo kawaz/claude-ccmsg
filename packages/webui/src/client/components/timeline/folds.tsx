@@ -2,6 +2,7 @@
 import { memo } from "preact/compat";
 import { useContext, useMemo } from "preact/hooks";
 import { formatClockTime } from "../../utils.ts";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import {
   agentCommunicationCount,
   CACHE_KEEPALIVE_FOLD_LABEL,
@@ -144,7 +145,7 @@ function LineView({
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold tl-broken">
           <FoldSummary ts={null} label="読めなかった行" trailing={line.error} />
-          <pre class="tl-broken-raw">{line.raw || "(空行)"}</pre>
+          <CopyablePreText class="tl-broken-raw" text={line.raw || "(空行)"} />
         </details>
       </ItemRawToggle>
     );
@@ -173,7 +174,7 @@ function LineView({
             </dl>
           ) : null}
           {attachment?.file ? <AttachmentFileView file={attachment.file} /> : null}
-          <pre class="tl-fold-body">{line.raw}</pre>
+          <CopyablePreText class="tl-fold-body" text={line.raw} />
         </details>
       </ItemRawToggle>
     );
@@ -229,7 +230,10 @@ function LineView({
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold">
           <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
-          <pre class="tl-fold-body">{line.segments.map(segmentSearchText).join("\n")}</pre>
+          <CopyablePreText
+            class="tl-fold-body"
+            text={line.segments.map(segmentSearchText).join("\n")}
+          />
         </details>
       </ItemRawToggle>
     );

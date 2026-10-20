@@ -67,6 +67,30 @@ GFM は literal をホワイトスペースか `<` までとするので、空�
 
 パスは単語の途中・相対パスの途中・URL の `//` からは始まらず、空白・引用符・括弧・`,`・非 ASCII 文字で終わる (`/tmp/x.mdにある` → `/tmp/x.md`)。末尾の `.` と `:` は文の句読点として外し、行番号 (`/tmp/x.md:12`) は残す。相対パス (`docs/x.md`) は地の文では探さない: `and/or`・`I/O`・日付と区別が付かず、相対パスは inline code と太字で書かれる。リンクのラベルの中や、太字ごとファイルリンクになった中では、`<a>` の入れ子を作らないようリンクにしない。
 
+### 9. Timeline の項目の中で始まった選択は、その項目の外へ広げない [kawaz 経由]
+
+コードをコピーしようと選択範囲を調節している間に、選択が隣の項目や吹き出しの外まで広がる (タッチ端末のハンドル操作で特に起きる)。選択の始点が項目の中なら、選択を調節している間はその項目に閉じ込める。項目は始点から次の順で決める: コードの塊 (`pre`) > 吹き出しの本文 (`.tl-bubble-body`) > thinking の本文 > 吹き出しの外の発言 (`.tl-text`)。コードを最優先するのはコピーしたいのが大抵コードだから (本文ごと選びたい時は本文から始める)。吹き出しの本文を中の段落より優先するのは、段落や segment をまたいで選べるようにするため。項目でない場所 (fold の見出し等) から始めた選択は閉じ込めない。
+
+CSS UI 4 の `user-select: contain` がこの振る舞いそのものだが、使えない [提案、2026-10-21 確認]:
+
+| 確認先 | 結果 |
+|---|---|
+| MDN `user-select` | 「`contain` を実装しているブラウザは無い」と明記 |
+| MDN browser-compat-data (`css.properties.user-select`) | 下位項目は `all` / `auto` / `none` / `text` のみで `contain` が無い |
+| Chrome 155 / Chrome Beta 157 / WebKit 26.6 (playwright で実測) | `CSS.supports("user-select", "contain")` が false、`contain` を当てた `pre` の中から drag した選択は外の段落まで伸びる |
+
+代わりに、選択が始まった時点 (`selectstart`) で「その項目以外を選択不可 (`user-select: none`)」にする (`useSelectionContainment.ts`、`:root[data-select-contained]` と `[data-select-host]`)。選択の端をどこに置けるかの判断はブラウザが持ったままなので、操作の種類 (マウスの drag・タッチのハンドル・Shift+矢印) によらず同じ user-select の規則で決まる。JS は始点を覚えて属性を付け外すだけで、Selection を書き戻さない (`selectionchange` で端を戻す方式は、ユーザが動かしているタッチのハンドルと JS の書き換えが同じ選択を奪い合う。実機では確かめていない)。閉じ込めは、項目の外を押した時 (別の場所から選び始められるよう、ブラウザが押下を処理する前に) と、押していない間に選択が畳まれた時に外す。
+
+Chrome と WebKit の実画面でマウスの drag (下方向・上方向とも項目の外で離す) が項目に収まることを確かめた。タッチは Chrome の Pixel エミュレーションで長押し選択が閉じ込めを起動することまで確かめた。ハンドルの drag はエミュレーションで再現できない (閉じ込めなしでも動かない) ため、実機のハンドル操作での挙動は未確認 [保留]。`user-select: contain` が実装されたら置き換える。
+
+### 10. コードの塊にコピーボタンを重ねる [kawaz 経由]
+
+fence (`CodeBlock`)、Timeline の tool 入出力・raw 行・system message 等の `pre`、吹き出しの source 表示、Timeline 内のファイル表示に、塊全体をクリップボードへ書くボタンを付ける (`CodeCopyFrame.tsx`)。成功の印は他のコピーボタン (`CopyButton`) と同じく 1.5 秒の ✓ で、ボタンの幅を動かさない。
+
+- ボタンは `pre` の外 (包みの右上) に置く。`pre` はスクロールする箱で、中に置くと内容と一緒に流れて見えなくなる
+- 通常は不可視で塊の hover / focus で出し、hover の無い端末では常時薄く出す (`.tl-msg-toolbar` と同じ)
+- ボタンの文字は CSS の `content` で出し、DOM のテキストにしない。塊は Timeline の検索単位 (描画済みテキストを走査する) と選択範囲の中にあり、DOM に文字を置くと「コピー」が検索に当たり、本文を選択してコピーした文字列にも混ざる。読み上げる名前は `aria-label` が持つ
+
 ## Bundle size (実測、DR-0004 のビルドレス方針への影響評価)
 
 `GET /assets/app.js` (createWebuiApp 経由、serve-time bundle) を導入前後で実測 [提案]:

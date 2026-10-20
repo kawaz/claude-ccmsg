@@ -12,6 +12,7 @@ import {
   type HighlightSpan,
 } from "../highlight.ts";
 import { useJsonStringCopy } from "../useJsonStringCopy.tsx";
+import { CodeCopyFrame } from "./CodeCopyFrame.tsx";
 
 export function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
   const jsonCopy = useJsonStringCopy();
@@ -40,31 +41,35 @@ export function CodeBlock({ code, lang }: { code: string; lang: string | null })
 
   if (!lines) {
     return (
-      <pre class="md-code">
-        <code>{code}</code>
-      </pre>
+      <CodeCopyFrame text={code}>
+        <pre class="md-code">
+          <code>{code}</code>
+        </pre>
+      </CodeCopyFrame>
     );
   }
 
   return (
-    <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
-      <code>
-        {lines.map((spans, i) => (
-          <span class="md-code-line" key={i}>
-            {spans.map((span, j) =>
-              span.style ? (
-                <span class="shiki-tok" style={span.style} key={j}>
-                  {span.text}
-                </span>
-              ) : (
-                span.text
-              ),
-            )}
-            {i < lines.length - 1 ? "\n" : null}
-          </span>
-        ))}
-      </code>
-      {jsonCopy.overlay}
-    </pre>
+    <CodeCopyFrame text={code}>
+      <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
+        <code>
+          {lines.map((spans, i) => (
+            <span class="md-code-line" key={i}>
+              {spans.map((span, j) =>
+                span.style ? (
+                  <span class="shiki-tok" style={span.style} key={j}>
+                    {span.text}
+                  </span>
+                ) : (
+                  span.text
+                ),
+              )}
+              {i < lines.length - 1 ? "\n" : null}
+            </span>
+          ))}
+        </code>
+        {jsonCopy.overlay}
+      </pre>
+    </CodeCopyFrame>
   );
 }

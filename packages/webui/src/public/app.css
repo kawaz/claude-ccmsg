@@ -4076,6 +4076,91 @@ button.session-tab {
   border-color: var(--accent);
 }
 
+/* コードの塊全体のコピー (CodeCopyFrame.tsx)。ボタンは pre の外 (包みの右上)
+ * に重ねる: pre はスクロールする箱で、中に置くと内容と一緒に流れる。包みは
+ * 余白を持たないので、pre の上下 margin は包みを透過して外へ効く。 */
+.code-copy-frame {
+  position: relative;
+}
+
+/* 通常時は不可視で、塊の hover / focus で出す (.tl-msg-toolbar と同じ流儀:
+ * opacity だけを落とし、tab キーで到達できるままにする)。z-index は持たせない:
+ * pre より後ろの DOM なので pre の上には描かれ、z-index: 1 の sticky な
+ * .tl-toolbar の下へは潜る (1 にすると、スクロールで toolbar の下に入った塊の
+ * ボタンが toolbar の上に出る)。 */
+.code-copy-btn {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0 var(--space-7);
+  background: var(--bg);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.code-copy-frame:hover > .code-copy-btn,
+.code-copy-btn:focus-visible,
+.code-copy-btn.copied {
+  opacity: 1;
+}
+
+.code-copy-btn:hover,
+.code-copy-btn.copied {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 文字は DOM でなく content で出す (検索と本文の選択コピーに混ざらないように、
+ * 理由は CodeCopyFrame.tsx)。成功時はラベルを place に残したまま ✓ を重ね、
+ * ボタンの幅を動かさない (.status-meta-copy と同じ組み)。 */
+.code-copy-btn::before {
+  content: "コピー";
+}
+
+.code-copy-btn.copied::before {
+  visibility: hidden;
+}
+
+.code-copy-btn::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.code-copy-btn.copied::after {
+  opacity: 1;
+}
+
+/* タッチ端末には hover が無いので常時薄く見せる (押せることが判る程度)。 */
+@media (hover: none) {
+  .code-copy-btn {
+    opacity: 0.45;
+  }
+}
+
+/* 選択の閉じ込め (useSelectionContainment.ts)。Timeline の項目の中で選択が
+ * 始まったら、その項目 (data-select-host) 以外を選択不可にし、選択の端を項目の
+ * 外へ置けなくする。`user-select: contain` が実装されれば置き換わる。 */
+:root[data-select-contained] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:root[data-select-contained] [data-select-host] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* --- Timeline view: transcript jsonl (DR-0009) --- */
 
 .timeline-view {
@@ -4264,12 +4349,12 @@ button.session-tab {
  * 折り返し方を raw 表示 (.tl-raw-text) に合わせる: 既定の overflow-x auto +
  * white-space: pre だと base64 の長大な値で行ごとに横スクロールが生まれ、
  * 縦に並べて読む raw ビューでは読み進められない。 */
-.tl-raw-line > .md-code {
+.tl-raw-line > .code-copy-frame > .md-code {
   margin: 0;
   overflow-x: visible;
 }
 
-.tl-raw-line > .md-code code {
+.tl-raw-line > .code-copy-frame > .md-code code {
   white-space: pre-wrap;
   word-break: break-all;
 }
@@ -4660,10 +4745,12 @@ button.session-tab {
   line-height: var(--md-leading-tight);
 }
 
-.md > :first-child {
+.md > :first-child,
+.md > .code-copy-frame:first-child > pre {
   margin-top: 0;
 }
-.md > :last-child {
+.md > :last-child,
+.md > .code-copy-frame:last-child > pre {
   margin-bottom: 0;
 }
 
@@ -5056,7 +5143,8 @@ button.session-tab {
   border-bottom: 1px solid var(--md-details-rule);
 }
 
-.md-details > :last-child {
+.md-details > :last-child,
+.md-details > .code-copy-frame:last-child > pre {
   margin-bottom: var(--space-3);
 }
 

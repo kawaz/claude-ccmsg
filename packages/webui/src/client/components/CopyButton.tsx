@@ -4,7 +4,7 @@
 // リストの sid の 2 箇所あり、成功時の見え方 (1.5 秒だけ ✓ が出る) が揃って
 // いないと「押した結果どうなるか」を場所ごとに覚え直すことになるので、
 // 見た目と feedback をここに 1 本化する。
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 
 /** 成功マークが出ている時間。値そのものは押した場所に見えたままなので、
  * 「押した」ことが伝わればよく、居座らせる意味はない。 */
@@ -27,6 +27,35 @@ export function copyButtonLabel(compact: boolean): string {
   return compact ? COMPACT_ICON : "コピー";
 }
 
+/** クリップボードへ書き、成功した時だけ `copied` を COPIED_MARK_MS の間 true
+ * にする。コピーを提供するボタン (このファイルの CopyButton と、コードの
+ * 塊に重ねる CodeCopyFrame) が成功の見え方を揃えるための共通部分。 */
+export function useClipboardCopy(): {
+  copied: boolean;
+  /** 書けたかを返す (押した場所側の印を出すかの判断に使う)。 */
+  copy: (value: string) => Promise<boolean>;
+} {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+
+  const copy = useCallback(async (value: string): Promise<boolean> => {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // 失敗を成功と見分けられない印は出さない (安全でない文脈・権限拒否)。
+      setCopied(false);
+      return false;
+    }
+    setCopied(true);
+    window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_MARK_MS);
+    return true;
+  }, []);
+
+  return { copied, copy };
+}
+
 export function CopyButton({
   value,
   label,
@@ -44,22 +73,7 @@ export function CopyButton({
    * (SESSIONS の行では sid 自身が accent 色に染まる)。 */
   onCopied?: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_MARK_MS);
-      onCopied?.();
-    } catch {
-      // 失敗を成功と見分けられない印は出さない (安全でない文脈・権限拒否)。
-      setCopied(false);
-    }
-  }
+  const { copied, copy } = useClipboardCopy();
 
   return (
     <button
@@ -76,7 +90,9 @@ export function CopyButton({
         // コピーが遷移も兼ねてしまわないようにする。
         e.preventDefault();
         e.stopPropagation();
-        void copy();
+        void copy(value).then((ok) => {
+          if (ok) onCopied?.();
+        });
       }}
     >
       {/* ラベルは成功時も置いたまま (見えなくするだけ) で、✓ はその上に重ねる

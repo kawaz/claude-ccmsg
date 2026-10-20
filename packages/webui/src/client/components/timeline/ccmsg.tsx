@@ -15,6 +15,7 @@ import {
 } from "../../transcript-model.ts";
 import { LinkedMarkdownView } from "../../filepath-linker.tsx";
 import { Tabs } from "../Tabs.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { CcmsgRenderContext, useCategoryOpen } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
@@ -368,7 +369,10 @@ export function CcmsgBubble({
             <LinkedMarkdownView source={msgBody} ctx={filePathCtx} restricted={isUser} />
           </div>
         ) : (
-          <pre class="tl-fold-body">{direct?.direction === "out" ? direct.command : rawText}</pre>
+          <CopyablePreText
+            class="tl-fold-body"
+            text={direct?.direction === "out" ? direct.command : rawText}
+          />
         )}
         {direct?.direction === "out" && direct.status === "failed" ? (
           <p class="tl-say-error">送信失敗: {direct.error}</p>

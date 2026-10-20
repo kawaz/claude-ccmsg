@@ -12,6 +12,7 @@ import { useFilePathCacheTick } from "../../filepath-linker.tsx";
 import { enqueueFilePathProbe, getFilePathStatus } from "../../filepath-existence-cache.ts";
 import { hrefFromStatEntry, viewerPathForAbsolute } from "../../filepath-ref.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "../InlineFileViewer.tsx";
 import { FileToolSidContext, SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
@@ -202,7 +203,7 @@ export function BashUseFold({
           ) : segment.result ? (
             <div class={"tl-bash-output" + (segment.result.isError ? " is-error" : "")}>
               <div class="tl-bash-output-label">{segment.result.isError ? "error" : "output"}</div>
-              <pre>{segment.result.text || "(出力なし)"}</pre>
+              <CopyablePreText text={segment.result.text || "(出力なし)"} />
             </div>
           ) : (
             <div class="tl-bash-result-status">実行中 / 結果なし</div>
@@ -299,14 +300,16 @@ function BashRunOutput({ output }: { output: BashCommandOutput }) {
             </a>
           ) : null}
           <div class="tl-bash-output-label">preview</div>
-          <pre class="tl-bashrun-out">{output.persisted.preview}</pre>
+          <CopyablePreText class="tl-bashrun-out" text={output.persisted.preview} />
         </div>
       ) : null}
-      {output.stdout !== null ? <pre class="tl-bashrun-out">{output.stdout}</pre> : null}
+      {output.stdout !== null ? (
+        <CopyablePreText class="tl-bashrun-out" text={output.stdout} />
+      ) : null}
       {output.stderr !== null ? (
         <>
           <div class="tl-bash-output-label">stderr</div>
-          <pre class="tl-bashrun-out is-error">{output.stderr}</pre>
+          <CopyablePreText class="tl-bashrun-out is-error" text={output.stderr} />
         </>
       ) : null}
       {output.persisted === null && output.stdout === null && output.stderr === null ? (
@@ -382,7 +385,7 @@ export function BashResultFold({
             </div>
           ) : null}
           <div class={"tl-bash-output" + (segment.isError ? " is-error" : "")}>
-            <pre>{segment.text || "(出力なし)"}</pre>
+            <CopyablePreText text={segment.text || "(出力なし)"} />
           </div>
         </div>
       </div>

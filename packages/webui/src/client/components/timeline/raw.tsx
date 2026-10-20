@@ -10,6 +10,7 @@ import {
   RAW_PRETTY_MAX_CHARS,
 } from "../../raw-view-mode.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
+import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { ItemRawContext } from "./context.ts";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
@@ -167,7 +168,7 @@ function RawLineRow({ row }: { row: RawTranscriptRow }) {
           // バンドル済みで、トークナイズ失敗時の plain fallback も込み。
           <CodeBlock code={shown} lang="json" />
         ) : (
-          <pre class="tl-fold-body tl-raw-text">{shown}</pre>
+          <CopyablePreText class="tl-fold-body tl-raw-text" text={shown} />
         )}
         {preview.truncated ? (
           <button type="button" class="tl-raw-more" onClick={() => setExpanded((v) => !v)}>
