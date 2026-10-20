@@ -1,6 +1,7 @@
 // Integration: a real daemon spawned in a temp dir, exercised over UDS.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   connect,
@@ -71,6 +72,9 @@ describe("wire protocol integration", () => {
       expect(pong.script).toBeTruthy();
       expect(pong.script?.endsWith("index.ts")).toBe(true);
       expect(fs.existsSync(pong.script ?? "")).toBe(true);
+      // home: the daemon user's home, which `~/` link targets expand against —
+      // the subprocess inherits this harness's environment.
+      expect(pong.home).toBe(os.homedir());
     } finally {
       await stopTestDaemon(ctx);
     }

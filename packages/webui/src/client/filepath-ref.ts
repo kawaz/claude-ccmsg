@@ -186,6 +186,22 @@ function normalizePosix(p: string): string {
   return isAbs ? "/" + joined : joined;
 }
 
+/** True when `p` names a path under the daemon user's home (`~/...`). `~user/`
+ * is not one — it stays an ordinary relative name. */
+export function isHomePath(p: string): boolean {
+  return p.startsWith("~/");
+}
+
+/** A `~/` path normalized below the home, or `null` when it names the home
+ * itself or climbs out of it. Only the daemon knows what `~` is, so the result
+ * stays home-relative; the daemon (`fs_stat_batch`) or the viewer (with the
+ * daemon's published home, `canonicalViewerPath`) expands it. */
+function normalizeHomePath(p: string): string | null {
+  const rest = normalizePosix(p.slice(2));
+  if (rest === "" || rest === ".." || rest.startsWith("../")) return null;
+  return `~/${rest}`;
+}
+
 // --- daemon-backed resolution (Phase B/C, kawaz r46 m57/m58) ---
 
 /** Convert a parsed ref to the absolute filesystem path the daemon needs to
@@ -213,9 +229,13 @@ function normalizePosix(p: string): string {
  * a wrong link costs a wasted click and misleads the reader.
  *
  * `ctx.repoRoot` is used only as a last resort when the sender announced no
- * cwd at all, where a plausible anchor beats no link. */
+ * cwd at all, where a plausible anchor beats no link.
+ *
+ * A `~/` path anchors at the daemon user's home, not at any session directory,
+ * and is returned home-relative (see `normalizeHomePath`). */
 export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string | null {
   if (ref.path.startsWith("/")) return normalizePosix(ref.path);
+  if (isHomePath(ref.path)) return normalizeHomePath(ref.path);
   const anchor = ctx.cwd ?? ctx.repoRoot;
   if (!anchor) return null;
   const anchorTrim = anchor.replace(/\/+$/, "");
@@ -226,7 +246,7 @@ export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCt
 
 /** The single absolute path a **markdown link** target names (kawaz r76 m11).
  *
- * Each of the two target shapes has exactly one reading:
+ * Each of the three target shapes has exactly one reading:
  *
  *   - Relative — anchored at `ctx.cwd`, same as `refToAbsolutePath`. In the
  *     file preview that is the previewed document's own directory, which is
@@ -236,6 +256,8 @@ export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCt
  *     name that file and nothing else; rebasing it onto the document's tree
  *     would break the one reading that is unambiguously correct in order to
  *     serve a root-relative convention the author only *might* have meant.
+ *   - Leading `~/` — under the daemon user's home, kept home-relative for the
+ *     viewer to expand (`canonicalViewerPath`).
  *
  * A leading `/` written with root-relative intent therefore 404s. That is the
  * accepted cost and it is not a dead end: the not-found view derives the

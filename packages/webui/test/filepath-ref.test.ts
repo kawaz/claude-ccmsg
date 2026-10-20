@@ -391,6 +391,33 @@ describe("refLinkTarget", () => {
   test("no anchor at all yields null — nothing to link to", () => {
     expect(refLinkTarget({ path: "notes.md" }, { sid: "S1" })).toBeNull();
   });
+
+  // `~/` names the daemon user's home, which only the daemon knows: the target
+  // stays home-relative (normalized) instead of being read as a directory
+  // literally named `~` under the document's tree.
+  test("a ~/ target stays home-relative, never rebased onto the document tree", () => {
+    expect(refLinkTarget({ path: "~/notes/a.md" }, ctx)).toBe("~/notes/a.md");
+    expect(refLinkTarget({ path: "~/notes/./x/../a.md" }, ctx)).toBe("~/notes/a.md");
+    expect(refLinkTarget({ path: "~/notes/a.md" }, { sid: "S1" })).toBe("~/notes/a.md");
+  });
+
+  test("a ~/ target that climbs out of the home or names it is no link", () => {
+    expect(refLinkTarget({ path: "~/../etc/hosts" }, ctx)).toBeNull();
+    expect(refLinkTarget({ path: "~/" }, ctx)).toBeNull();
+  });
+
+  // `~user/` is out of scope: it stays an ordinary relative name.
+  test("~user/ is not a home path", () => {
+    expect(refLinkTarget({ path: "~alice/a.md" }, ctx)).toBe("/repo/main/docs/design/~alice/a.md");
+  });
+});
+
+describe("refToAbsolutePath with ~/", () => {
+  test("an inline-code ~/ token stays home-relative for the daemon to expand", () => {
+    expect(refToAbsolutePath({ path: "~/a/b.md" }, { sid: "S1", cwd: "/repo/main" })).toBe(
+      "~/a/b.md",
+    );
+  });
 });
 
 // The FileViewer addresses contained files root-relatively and everything else

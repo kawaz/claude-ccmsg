@@ -12,6 +12,7 @@ import {
 } from "./sidebar-url.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 import { pinForSid } from "./pinned-sessions.ts";
+import { isHomePath } from "./filepath-ref.ts";
 
 const RECENT_PREFIX = "ccmsg.recent.";
 const timelinePositions = new Map<string, string>();
@@ -135,7 +136,11 @@ export async function recentIsValid(
   const stored = pinForSid(state.pinnedSessions, sid) ?? state.sessionTrees.get(sid)?.searchHit;
   const cwd = peer?.cwd ?? stored?.cwd;
   if (!cwd) return false;
-  const absolutePath = locator.path.startsWith("/") ? locator.path : `${cwd}/${locator.path}`;
+  // `~/` paths go as written: fs_stat_batch expands them with the daemon's home.
+  const absolutePath =
+    locator.path.startsWith("/") || isHomePath(locator.path)
+      ? locator.path
+      : `${cwd}/${locator.path}`;
   try {
     const result = await ws.fsStatBatch(sid, [absolutePath]);
     return result.ok && result.results[0] !== null;

@@ -22,6 +22,10 @@ export const PingResponseSchema = v.object({
    * from; version skew across faces is resolved by the newer-wins upgrade. */
   exe: v.optional(v.string()),
   script: v.optional(v.string()),
+  /** the daemon user's home directory (`os.homedir()`). A `~/` path names a
+   * file under it, and the client needs it to tell which read op such a path
+   * goes through (the containment root, a workspace folder, or neither). */
+  home: v.optional(v.string()),
   /** actual HTTP/WS bind addresses ("host:port"); empty when CCMSG_HTTP_BIND=off (DR-0004 §3). */
   http: v.array(v.string()),
   /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */

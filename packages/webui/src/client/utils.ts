@@ -20,7 +20,7 @@ import { numberText } from "./storage.ts";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
-import { viewerPathForAbsolute } from "./filepath-ref.ts";
+import { isHomePath, viewerPathForAbsolute } from "./filepath-ref.ts";
 import { type Pin, PinSchema, pinForSid } from "./pinned-sessions.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
@@ -976,16 +976,28 @@ export function isWorkspaceFilePath(
  * `containmentRoot` is `repo_root ?? cwd` — the daemon's own `resolveRoot`
  * rule. An absolute path cannot be classified until that root arrives. `null`
  * tells the caller to hold the read instead of prematurely treating it as an
- * external file. */
+ * external file.
+ *
+ * A `~/` path (a home-relative link target, see `refLinkTarget`) is expanded
+ * with `home` — the daemon user's home from its `ping` reply, since only the
+ * daemon's own home decides what the daemon serves — and then classified like
+ * any absolute path. It is held (`null`) until that home is known. */
 export function canonicalViewerPath(
   selectedPath: string,
   containmentRoot: string | undefined,
   workspaceFolders: readonly { path: string }[],
+  home?: string,
 ): string | null {
-  if (!isExternalFilePath(selectedPath)) return selectedPath;
+  const path = !isHomePath(selectedPath)
+    ? selectedPath
+    : home === undefined
+      ? null
+      : `${home.replace(/\/+$/, "")}/${selectedPath.slice(2)}`;
+  if (path === null) return null;
+  if (!isExternalFilePath(path)) return path;
   if (containmentRoot === undefined) return null;
-  if (isWorkspaceFilePath(selectedPath, workspaceFolders)) return selectedPath;
-  return viewerPathForAbsolute(selectedPath, containmentRoot);
+  if (isWorkspaceFilePath(path, workspaceFolders)) return path;
+  return viewerPathForAbsolute(path, containmentRoot);
 }
 
 /** Extensions the daemon's /fs-serve endpoint renders as inline images. Keep

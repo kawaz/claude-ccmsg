@@ -1,6 +1,7 @@
 // UDS + HTTP/WS server + wire protocol dispatch + delivery (DR-0003, DR-0004).
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as v from "valibot";
 import {
@@ -1641,6 +1642,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         // (e.g. ~/.claude-personal vs a work overlay) is observable.
         exe: process.execPath,
         script: Bun.main,
+        home: os.homedir(),
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
         network: networkState(daemon),

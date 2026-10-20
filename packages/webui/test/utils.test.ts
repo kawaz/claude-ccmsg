@@ -1578,6 +1578,22 @@ describe("canonicalViewerPath", () => {
     expect(canonicalViewerPath(`${ROOT}/main/docs/dr.md`, undefined, [])).toBeNull();
   });
 
+  // A `~/` path (a markdown link written home-relative) is expanded with the
+  // daemon's home and then classified like any absolute path.
+  test("~/ path expands with the daemon's home, then classifies as usual", () => {
+    const home = "/repo";
+    expect(canonicalViewerPath("~/container/main/docs/dr.md", ROOT, [], home)).toBe(
+      "main/docs/dr.md",
+    );
+    expect(canonicalViewerPath("~/elsewhere/x.md", ROOT, [], home)).toBe("/repo/elsewhere/x.md");
+    const folders = [{ path: "/repo/ws" }];
+    expect(canonicalViewerPath("~/ws/x.md", ROOT, folders, home)).toBe("/repo/ws/x.md");
+  });
+
+  test("~/ path is held until the daemon's home is known", () => {
+    expect(canonicalViewerPath("~/x.md", ROOT, [], undefined)).toBeNull();
+  });
+
   test("the containment root itself is not rebased to an empty path", () => {
     expect(canonicalViewerPath(ROOT, ROOT, [])).toBe(ROOT);
   });

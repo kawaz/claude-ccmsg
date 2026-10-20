@@ -39,7 +39,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 
 | キー | 付く path | 意味 |
 |---|---|---|
-| `path` | `/s/<sid>/files` | 開いているファイル |
+| `path` | `/s/<sid>/files` | 開いているファイル。セッションの containment root からの相対パスか絶対パス。`~/` 始まりは daemon ユーザの HOME 基準で、開いた時点で相対 / 絶対の形に置き換わる |
 | `lines` | `/s/<sid>/files` | 選択行 (`<start>-<end>`) |
 | `from` | `/s/<sid>/files` | リンク元ドキュメント (「もしかして」復帰用) |
 | `days` | `/usage/stats/<period>` | 集計日数 (単位の既定値と同じなら省略) |

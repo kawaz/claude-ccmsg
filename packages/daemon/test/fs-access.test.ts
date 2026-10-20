@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { FS_READ_MAX_BYTES, type JsonObject } from "@ccmsg/protocol";
-import { validateRepoRoot } from "../src/fs-access.ts";
+import { fsStatBatch, validateRepoRoot } from "../src/fs-access.ts";
 import {
   assistantContentRow,
   attachmentRow,
@@ -2379,6 +2379,44 @@ describe("fs_stat_batch (message-body path linkifier)", () => {
         // takes absolute strings directly.
         { kind: "workspace", path: workspaceAbs },
         { kind: "external", path: externalAbs },
+        null,
+      ]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  // A `~/` path (a home-relative link target) is expanded with the daemon's
+  // home and then goes through the same three surfaces as its absolute
+  // spelling: expanding grants nothing a full path would not.
+  test("~/ paths expand with the daemon's home and resolve through the same three surfaces", async () => {
+    const ctx = await startInProcessDaemon();
+    const parent = fs.realpathSync(fixtureDir("fsroot"));
+    try {
+      const { cwd, containedRel, workspaceAbs, externalAbs, unrelatedAbs } =
+        await sessionWithAllThreeKinds(ctx, A, parent);
+      const home = (abs: string) => `~/${path.relative(parent, abs)}`;
+      const res = await fsStatBatch(
+        ctx.daemon.sessions,
+        ctx.daemon.sessionStatus,
+        A,
+        [
+          home(path.join(cwd, containedRel)),
+          home(workspaceAbs),
+          home(externalAbs),
+          home(unrelatedAbs),
+          "~/../etc/hosts",
+          "~/",
+        ],
+        { home: parent },
+      );
+      expect(res.ok && res.data.results).toEqual([
+        { kind: "contained", path: containedRel },
+        { kind: "workspace", path: workspaceAbs },
+        { kind: "external", path: externalAbs },
+        null,
+        null,
         null,
       ]);
     } finally {

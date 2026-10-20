@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ExternalFile, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
 import { pushNavigation, replaceNavigation } from "../navigation.ts";
 import {
@@ -88,10 +89,13 @@ export function FilesPanes({
   // absolute selection is rebased to the root-relative form here rather than in
   // each pane (see `canonicalViewerPath` for why it would otherwise 403).
   const selectedPath = tree.selectedPath;
+  // A `~/` selection (a home-relative link) expands with the daemon's home,
+  // which arrives with the handshake's ping reply.
+  const home = useStoreState(store, (s) => s.daemonInfo?.home);
   const canonicalPath =
     selectedPath === null
       ? null
-      : canonicalViewerPath(selectedPath, peer?.repo_root ?? peer?.cwd, workspaceFolders);
+      : canonicalViewerPath(selectedPath, peer?.repo_root ?? peer?.cwd, workspaceFolders, home);
   // Replace rather than push: the absolute spelling is the same destination,
   // so it should not cost a back-button step.
   const selectedLineRange = tree.selectedLineRange;

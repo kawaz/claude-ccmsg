@@ -219,6 +219,8 @@ export interface SessionTreeState {
 export interface DaemonInfo {
   version: string;
   exe?: string;
+  /** The daemon user's home, which `~/` link targets expand against. */
+  home?: string;
 }
 
 export interface AppState {
@@ -473,7 +475,7 @@ export type Action =
   | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
   // Full replacement, same as llm-requests/loaded (ev:"says").
   | { type: "says/loaded"; says: readonly SayRecord[] }
-  | { type: "daemon-info/loaded"; version: string; exe?: string }
+  | { type: "daemon-info/loaded"; version: string; exe?: string; home?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
   // bundle と揃っていれば導線を引っ込める。
@@ -1049,7 +1051,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "daemon-info/loaded":
       return {
         ...state,
-        daemonInfo: { version: action.version, exe: action.exe },
+        daemonInfo: { version: action.version, exe: action.exe, home: action.home },
       };
     case "version-mismatch/detected": {
       // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を

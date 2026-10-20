@@ -777,6 +777,17 @@ export async function fsResolveForServe(
 
 // --- fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier) ---
 
+/** `~/rest` joined onto `home`, any other input unchanged, or `null` for a
+ * `~/` path that names the home itself or climbs out of it (`~/../x`) — a
+ * home-relative spelling that leaves the home is not one. `~user/` is not a
+ * home path and stays as written (relative, so every surface refuses it). */
+function expandHomePath(input: string, home: string): string | null {
+  if (!input.startsWith("~/")) return input;
+  const rest = path.posix.normalize(input.slice(2));
+  if (rest === "." || rest === ".." || rest.startsWith("../")) return null;
+  return path.join(home, rest);
+}
+
 /** Per-path existence + kind probe used by the message-body linkifier. Each
  * input is tried against the same three authorization surfaces the read ops
  * use (contained → workspace → external, in that order — contained is the
@@ -792,12 +803,20 @@ export async function fsResolveForServe(
  * Batch failure modes are limited to whole-request contract violations
  * (paths not an array, size cap) so a single bad token in the middle of an
  * otherwise-valid list still returns results for the rest.
+ *
+ * A `~/` input names a file under the daemon user's home: the client cannot
+ * expand it (the home is the daemon's), so it is expanded here before the
+ * three surfaces are tried, and the entry reports the expanded spelling. The
+ * expansion grants nothing — the result goes through the same three checks as
+ * the absolute spelling of the same file.
  */
 export async function fsStatBatch(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   paths: readonly string[],
+  /** Test seam; production omits this and uses the daemon user's home. */
+  opts: { home?: string } = {},
 ): Promise<FsAccessResult<Omit<FsStatBatchResponse, "ok">>> {
   if (paths.length > FS_STAT_BATCH_MAX_PATHS) {
     return {
@@ -814,9 +833,11 @@ export async function fsStatBatch(
   const rootRes = await resolveRoot(sessions, sid);
   const containmentRoot = rootRes.ok ? rootRes.root : null;
 
+  const home = opts.home ?? os.homedir();
   const results: (FsStatEntry | null)[] = await Promise.all(
-    paths.map(async (raw): Promise<FsStatEntry | null> => {
-      if (raw === "" || !path.isAbsolute(raw)) return null;
+    paths.map(async (input): Promise<FsStatEntry | null> => {
+      const raw = expandHomePath(input, home);
+      if (raw === null || raw === "" || !path.isAbsolute(raw)) return null;
       const normalized = path.normalize(raw);
 
       // 1) contained: absolute path lies inside the session's containment root
