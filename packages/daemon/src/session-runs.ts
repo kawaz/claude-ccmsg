@@ -13,6 +13,7 @@ import {
   parseWith,
   type ClaudeSessionFile,
 } from "@ccmsg/protocol";
+import { withinBudget } from "./time-budget.ts";
 
 /** One live run of a session: the harness process `pid` holding session
  * `sid` under the CLAUDE_CONFIG_DIR `configDir`, working in `cwd`, under the
@@ -31,7 +32,8 @@ export const RUNS_SCAN_MS = 1_000;
 /** The live runs recorded in `<config dir>/sessions/<pid>.json` of each of
  * `configDirs`. A file whose process no longer runs is a run that ended
  * without removing it, and is left out. A config dir that cannot be read, or
- * whose files are not all read within `scanMs`, adds none. A process is one
+ * whose files are not all read within `scanMs` of this process's running time
+ * (withinBudget), adds none. A process is one
  * run however many of `configDirs` name its config dir (one through a
  * symlink, another by its realpath): it is listed once, so it is sent to
  * once. */
@@ -41,15 +43,7 @@ export async function liveRuns(
   scanMs: number = RUNS_SCAN_MS,
 ): Promise<SessionRun[]> {
   const perDir = await Promise.all(
-    configDirs.map(async (configDir) => {
-      const late = Promise.withResolvers<SessionRun[]>();
-      const deadline = setTimeout(() => late.resolve([]), scanMs);
-      try {
-        return await Promise.race([runsIn(configDir, isAlive), late.promise]);
-      } finally {
-        clearTimeout(deadline);
-      }
-    }),
+    configDirs.map((configDir) => withinBudget(runsIn(configDir, isAlive), scanMs, [])),
   );
   const byPid = new Map<number, SessionRun>();
   for (const run of perDir.flat()) if (!byPid.has(run.pid)) byPid.set(run.pid, run);

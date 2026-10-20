@@ -94,12 +94,12 @@ function writeRows(
       );
     }
   }
-  for (const name of fs.readdirSync(sessionsDir)) {
-    if (!files.has(name)) fs.rmSync(path.join(sessionsDir, name));
-  }
   for (const [name, text] of files) {
     fs.writeFileSync(path.join(sessionsDir, `${name}.tmp`), text);
     fs.renameSync(path.join(sessionsDir, `${name}.tmp`), path.join(sessionsDir, name));
+  }
+  for (const name of fs.readdirSync(sessionsDir)) {
+    if (!files.has(name)) fs.rmSync(path.join(sessionsDir, name));
   }
 }
 
@@ -466,9 +466,16 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
       // Each marker is registered by a later round than the one before it:
       // the second's round began after the first's ended, so after the hello,
       // and the third's push comes once that round has run its forgetting.
+      // A marker's round is the one that also no longer lists the one before.
+      let previous: string | undefined;
       for (const marker of ["sM1", "sM2", "sM3"]) {
         setRows(dirA, [row(marker, cwd)]);
-        await u.readEventUntil("peers", hasPeer(marker));
+        const gone = previous;
+        await u.readEventUntil(
+          "peers",
+          (e) => hasPeer(marker)(e) && (gone === undefined || lacksPeer(gone)(e)),
+        );
+        previous = marker;
       }
       const res = await u.requestOk({ op: "peers" });
       expect(res.peers.map((p) => p.sid).toSorted()).toEqual([SID_HELLO, "sM3"].toSorted());

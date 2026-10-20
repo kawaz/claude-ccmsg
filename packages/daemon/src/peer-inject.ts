@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { ClaudeSessionFileTextSchema, jsonText, parseWith, type Output } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { createKeyedSerial } from "./serial.ts";
+import { withinBudget } from "./time-budget.ts";
 
 /** What one delivery came to, with why for a message that did not arrive.
  *
@@ -46,7 +47,8 @@ export type InjectResult =
 
 /** Why the session's peer socket was not found in its config dir's
  * `sessions/`:
- * - `scan_timed_out`: the files were not all read within INJECT_SCAN_MS
+ * - `scan_timed_out`: the files were not all read within INJECT_SCAN_MS of
+ *   this process's running time (withinBudget)
  * - `no_state_file`: `sessions/` cannot be listed, or no readable
  *   `<pid>.json` names the session (in that process, when one is named)
  * - `no_socket`: the state file names no socket, or one speaking another
@@ -363,16 +365,11 @@ export class PeerInjector {
       return "no_state_file";
     }
     const wanted = names.filter((name) => pattern.test(name));
-    const late = Promise.withResolvers<"scan_timed_out">();
-    const deadline = setTimeout(() => late.resolve("scan_timed_out"), this.#scanMs);
-    try {
-      return await Promise.race([
-        Promise.all(wanted.map((name) => readWith(schema, path.join(sessionsDir, name)))),
-        late.promise,
-      ]);
-    } finally {
-      clearTimeout(deadline);
-    }
+    return await withinBudget(
+      Promise.all(wanted.map((name) => readWith(schema, path.join(sessionsDir, name)))),
+      this.#scanMs,
+      "scan_timed_out",
+    );
   }
 }
 
