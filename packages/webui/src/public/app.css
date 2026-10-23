@@ -4077,22 +4077,25 @@ button.session-tab {
   border-color: var(--accent);
 }
 
-/* コードの塊全体のコピー (CodeCopyFrame.tsx)。ボタンは pre の外 (包みの右上)
- * に重ねる: pre はスクロールする箱で、中に置くと内容と一緒に流れる。包みは
- * 余白を持たないので、pre の上下 margin は包みを透過して外へ効く。 */
+/* コードのコピー (CodeCopyFrame.tsx)。ボタンはコード (包みの最初の子) の左上の
+ * 真上に、コードに重ねずに置く: コードに重ねると下の文字が隠れ、pre の中に
+ * 置くとスクロールで内容と一緒に流れる。包みは余白を持たないので、pre の上下
+ * margin は包みを透過して外へ効き、包みの箱は pre の箱と一致する。inline code
+ * の包み (span) を基準にした `left: 0` は、行をまたいで折り返したコードでも
+ * 1 行目の始まり (コードの始まり) を指す (Chrome / WebKit で実測)。 */
 .code-copy-frame {
   position: relative;
 }
 
-/* 通常時は不可視で、塊の hover / focus で出す (.tl-msg-toolbar と同じ流儀:
- * opacity だけを落とし、tab キーで到達できるままにする)。z-index は持たせない:
- * pre より後ろの DOM なので pre の上には描かれ、z-index: 1 の sticky な
- * .tl-toolbar の下へは潜る (1 にすると、スクロールで toolbar の下に入った塊の
- * ボタンが toolbar の上に出る)。 */
+/* 通常時は不可視かつ押せない (コードの上の行の文字を見えないボタンが塞がない
+ * ように pointer-events も切る)。tab キーでは到達でき、focus で出る。
+ * z-index は持たせない: コードより後ろの DOM なので本文の上には描かれ、
+ * z-index: 1 の sticky な .tl-toolbar の下へは潜る (1 にすると、スクロールで
+ * toolbar の下に入ったコードのボタンが toolbar の上に出る)。 */
 .code-copy-btn {
   position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
+  bottom: 100%;
+  left: 0;
   border: 1px solid var(--border);
   border-radius: 0.25rem;
   padding: 0 var(--space-7);
@@ -4100,15 +4103,33 @@ button.session-tab {
   color: var(--fg-muted);
   font: inherit;
   font-size: var(--font-size-sm);
+  /* 見出しの中の inline code でも本文の太さで出す。 */
+  font-weight: normal;
   line-height: 1.4;
+  /* 包みが狭い (短い inline code) と、絶対配置の幅がそこへ縮んで「コピー」が
+   * 1 字ずつ折り返す。 */
+  white-space: nowrap;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
   opacity: 0;
+  pointer-events: none;
 }
 
-.code-copy-frame:hover > .code-copy-btn,
-.code-copy-btn:focus-visible,
-.code-copy-btn.copied {
+/* hover で出すのは hover できる端末だけ。どの端末でも、コードのクリック
+ * (タップ) とボタンの押下で出し、外を押すまで残す (.revealed、
+ * CodeCopyFrame.tsx の useTapReveal)。 */
+@media (hover: hover) {
+  .code-copy-frame:hover > .code-copy-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.code-copy-frame.revealed > .code-copy-btn,
+.code-copy-btn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .code-copy-btn:hover,
@@ -4140,13 +4161,6 @@ button.session-tab {
 
 .code-copy-btn.copied::after {
   opacity: 1;
-}
-
-/* タッチ端末には hover が無いので常時薄く見せる (押せることが判る程度)。 */
-@media (hover: none) {
-  .code-copy-btn {
-    opacity: 0.45;
-  }
 }
 
 /* 選択の閉じ込め (useSelectionContainment.ts)。Timeline の項目の中で選択が

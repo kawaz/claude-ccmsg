@@ -29,7 +29,7 @@ export function copyButtonLabel(compact: boolean): string {
 
 /** クリップボードへ書き、成功した時だけ `copied` を COPIED_MARK_MS の間 true
  * にする。コピーを提供するボタン (このファイルの CopyButton と、コードの
- * 塊に重ねる CodeCopyFrame) が成功の見え方を揃えるための共通部分。 */
+ * コードに添える CodeCopyFrame) が成功の見え方を揃えるための共通部分。 */
 export function useClipboardCopy(): {
   copied: boolean;
   /** 書けたかを返す (押した場所側の印を出すかの判断に使う)。 */

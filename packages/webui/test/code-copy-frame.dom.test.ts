@@ -1,10 +1,12 @@
-// コードの塊に重ねるコピーボタン (CodeCopyFrame.tsx)。押すと塊の文字列が
+// コードに添えるコピーボタン (CodeCopyFrame.tsx)。押すとコードの文字列が
 // そのままクリップボードへ入り、成功した時だけ印が付く。ボタンの文字は DOM に
-// 置かない — 塊は Timeline の検索単位と本文の選択範囲の中にあるため。
+// 置かない — コードは Timeline の検索単位と本文の選択範囲の中にあるため。
+// ボタンはコードのクリック (タップ) と押下で出し (.revealed)、包みの外を押すと
+// 消す。
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import { CopyablePreText } from "../src/client/components/CodeCopyFrame.tsx";
+import { CodeCopyFrame, CopyablePreText } from "../src/client/components/CodeCopyFrame.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
 import { withDom } from "./dom.ts";
 import { defined, stubProperty } from "./helpers.ts";
@@ -104,5 +106,109 @@ describe("CodeCopyFrame", () => {
       buttonIn(root).click();
     });
     expect(written).toEqual(["echo hi"]);
+  });
+});
+
+describe("CodeCopyFrame: inline code", () => {
+  test("包みは span で、文の textContent は code の文字だけ", async () => {
+    const root = await mount(
+      h(
+        "p",
+        null,
+        "run ",
+        h(CodeCopyFrame, { text: "ls -l", inline: true, children: h("code", null, "ls -l") }),
+        " now",
+      ),
+    );
+    const frame = defined(root.querySelector(".code-copy-frame"), "frame");
+    expect(frame.tagName).toBe("SPAN");
+    expect(frame.classList.contains("code-copy-frame-inline")).toBe(true);
+    expect(buttonIn(root).textContent).toBe("");
+    expect(root.textContent).toBe("run ls -l now");
+  });
+});
+
+describe("CodeCopyFrame: クリック (タップ) で出し、外を押すと消す", () => {
+  afterEach(() => document.getSelection()?.removeAllRanges());
+
+  function frameIn(root: HTMLElement): HTMLElement {
+    return defined(root.querySelector<HTMLElement>(".code-copy-frame"), "frame");
+  }
+  function revealed(root: HTMLElement): boolean {
+    return frameIn(root).classList.contains("revealed");
+  }
+  async function pointerDown(target: Element): Promise<void> {
+    await act(() => {
+      target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+  }
+  async function click(target: Element): Promise<void> {
+    await act(() => {
+      target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+  async function mountBlock(): Promise<HTMLElement> {
+    const root = await mount(
+      h("div", null, h(CopyablePreText, { text: "body" }), h("p", { id: "outside" }, "outside")),
+    );
+    return root;
+  }
+
+  test("選択の無いクリックで出て、包みの外を押すと消える", async () => {
+    const root = await mountBlock();
+    const pre = defined(root.querySelector("pre"), "pre");
+    expect(revealed(root)).toBe(false);
+    await click(pre);
+    expect(revealed(root)).toBe(true);
+    // 包みの中 (コード・ボタン) を押しても消えない。
+    await pointerDown(pre);
+    await pointerDown(buttonIn(root));
+    expect(revealed(root)).toBe(true);
+    await pointerDown(defined(root.querySelector("#outside"), "outside"));
+    expect(revealed(root)).toBe(false);
+  });
+
+  // drag で文字を選んだ後の click は選択操作の終わりで、ボタンを出さない
+  // (出ていたら消し、選んだ文字に重ねない)。
+  test("選択が残っている click では出さず、出ていたら消す", async () => {
+    const root = await mountBlock();
+    const pre = defined(root.querySelector("pre"), "pre");
+    await click(pre);
+    expect(revealed(root)).toBe(true);
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const selection = defined(document.getSelection(), "selection");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await click(pre);
+    expect(revealed(root)).toBe(false);
+  });
+
+  test("ボタンを押すとコピーし、成功の印を見せる間も外を押すまで残る", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const root = await mountBlock();
+    await act(async () => {
+      buttonIn(root).click();
+    });
+    expect(written).toEqual(["body"]);
+    expect(revealed(root)).toBe(true);
+    await pointerDown(defined(root.querySelector("#outside"), "outside"));
+    expect(revealed(root)).toBe(false);
+  });
+
+  // inline code の URL・ファイルのリンクのクリックは遷移で、ボタンを出す操作ではない。
+  test("包んだリンクのクリックでは出さない", async () => {
+    const root = await mount(
+      h(CodeCopyFrame, {
+        text: "https://example.com/",
+        inline: true,
+        children: h("a", { href: "#x" }, h("code", null, "https://example.com/")),
+      }),
+    );
+    await click(defined(root.querySelector("code"), "code"));
+    expect(revealed(root)).toBe(false);
   });
 });

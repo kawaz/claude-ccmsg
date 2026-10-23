@@ -2,7 +2,8 @@
 // (useSelectionContainment.ts)。選択の端をどこに置けるかはブラウザが
 // user-select で決めるので、ここで固定するのは「どの項目を選択可能に残すか」
 // と「いつ閉じ込めを外すか」:
-// - 始点からの項目の決め方 (コード > 吹き出しの本文 > thinking > 吹き出しの外の発言)
+// - 始点からの項目の決め方 (コード (塊・inline code) > 吹き出しの本文 > thinking >
+//   吹き出しの外の発言)
 // - 項目の外を押す / 押していない間に選択が畳まれると外れる
 // - drag 中 (押している間) の一時的な畳み込みでは外れない
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -32,7 +33,7 @@ beforeEach(() => {
       <div class="tl-bubble tl-bubble-left">
         <div class="tl-bubble-body">
           <div class="tl-text tl-text-assistant">
-            <p id="prose">prose</p>
+            <p id="prose">prose <code class="md-inline-code" id="inline">x = 1</code> tail</p>
             <pre id="code"><code id="code-inner">let x = 1;</code></pre>
           </div>
           <div class="tl-text tl-text-assistant"><p id="prose2">second</p></div>
@@ -60,6 +61,14 @@ function textOf(id: string): Text {
 describe("selectionHostOf: 始点から閉じ込める項目", () => {
   test("コードの中で始まればそのコード (吹き出しの中でも)", () => {
     expect(selectionHostOf(textOf("code-inner"))).toBe(byId("code"));
+  });
+
+  // inline code の中から始めた選択はその code に閉じ込め、code の外 (同じ段落)
+  // から始めた選択は code を含めて本文を選べる。
+  test("inline code の中で始まればその code、外で始まれば本文", () => {
+    expect(selectionHostOf(textOf("inline"))).toBe(byId("inline"));
+    const body = defined(tl.querySelector(".tl-bubble-body"), "bubble body");
+    expect(selectionHostOf(textOf("prose"))).toBe(body);
   });
 
   test("吹き出しの本文で始まれば本文全体 (segment をまたいで選べる)", () => {

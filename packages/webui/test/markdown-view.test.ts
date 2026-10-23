@@ -36,6 +36,7 @@ import {
   renderRestrictedMarkdown,
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
+import { CodeCopyFrame } from "../src/client/components/CodeCopyFrame.tsx";
 import { parseSearchQuery, type SearchWord } from "../src/client/in-view-search.ts";
 import {
   collect,
@@ -1703,6 +1704,39 @@ describe("code spans holding a URL", () => {
     expect(stringProp(link, "href")).toBe("https://example.com/x");
     expect(stringProp(link, "target")).toBe("_blank");
     expect(collect(link, (n) => n.type === "code")).toHaveLength(1);
+  });
+});
+
+// Every inline code span carries the copy button (CodeCopyFrame) for its own
+// text — around the `<a>` when the span is a link, so the button is not inside
+// the link. Inside a link's label the span stays bare: a button inside an
+// `<a>` is invalid HTML.
+describe("inline code copy button", () => {
+  function framesOf(vnode: VNode): VNode[] {
+    return collect(vnode, (n) => n.type === CodeCopyFrame);
+  }
+
+  test("a plain code span and a URL code span each get one, around the link", () => {
+    const vnode = renderMarkdownAst(parseMarkdownSource("`x = 1` and `https://example.com/x`"));
+    const frames = framesOf(vnode);
+    expect(frames.map((f) => f.props)).toMatchObject([
+      { text: "x = 1", inline: true },
+      { text: "https://example.com/x", inline: true },
+    ]);
+    const linked = defined(frames[1], "the URL span frame");
+    expect(collect(linked, (n) => n.type === "a")).toHaveLength(1);
+    expect(collect(linked, (n) => n.type === "code")).toHaveLength(1);
+  });
+
+  test("a user's message gets the same", () => {
+    const vnode = renderRestrictedMarkdown("run `ls -l` now");
+    expect(framesOf(vnode).map((f) => f.props)).toMatchObject([{ text: "ls -l", inline: true }]);
+  });
+
+  test("a code span inside a link label stays bare", () => {
+    const vnode = renderMarkdownAst(parseMarkdownSource("[see `x`](https://example.com/)"));
+    expect(framesOf(vnode)).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "code")).toHaveLength(1);
   });
 });
 

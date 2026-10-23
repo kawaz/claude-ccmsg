@@ -30,6 +30,7 @@ import type {
   Text,
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
+import { CodeCopyFrame } from "./components/CodeCopyFrame.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { splitTextForIssueRefs } from "./issue-ref.ts";
@@ -605,24 +606,30 @@ function renderTextRun(
  * The `<code>` sits inside the `<a>`, so the span keeps its code look; where
  * it opens follows a markdown link to the same URL: off-app in a new tab, this
  * webui's own origin in place. */
-function renderCodeSpan(value: string, key: string): VNode {
+function renderCodeSpan(value: string, key: string, inLink: boolean): VNode {
   const target = codeSpanLinkTarget(value, currentOrigin());
   const code = <code class="md-inline-code">{value}</code>;
   if (!target) {
-    return (
+    return withInlineCopy(
       <code class="md-inline-code" key={key}>
         {value}
-      </code>
+      </code>,
+      value,
+      key,
+      inLink,
     );
   }
   if (target.kind === "internal") {
-    return (
+    return withInlineCopy(
       <a key={key} class="md-inline-code-url-link" href={target.url}>
         {code}
-      </a>
+      </a>,
+      value,
+      key,
+      inLink,
     );
   }
-  return (
+  return withInlineCopy(
     <a
       key={key}
       class="md-inline-code-url-link"
@@ -631,7 +638,24 @@ function renderCodeSpan(value: string, key: string): VNode {
       rel="noopener noreferrer"
     >
       {code}
-    </a>
+    </a>,
+    value,
+    key,
+    inLink,
+  );
+}
+
+/** Puts the copy button (`CodeCopyFrame`) beside an inline code span — or the
+ * link wrapping it, so the button stays outside the `<a>`. Inside the label of
+ * an `<a>` the span goes bare: a button inside a link is invalid HTML and its
+ * press would also be the link's. `span` carries `key` itself for that bare
+ * case. */
+function withInlineCopy(span: VNode, value: string, key: string, inLink: boolean): VNode {
+  if (inLink) return span;
+  return (
+    <CodeCopyFrame key={key} text={value} inline>
+      {span}
+    </CodeCopyFrame>
   );
 }
 
@@ -798,11 +822,14 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // batch answer — falls through to plain `<code>`, matching pre-DR
       // output byte-for-byte.
       const href = ctx.filePathLinker ? ctx.filePathLinker(value) : null;
-      if (!href) return renderCodeSpan(value, key);
-      return (
+      if (!href) return renderCodeSpan(value, key, ctx.inLink);
+      return withInlineCopy(
         <a key={key} class="md-inline-code-file-link" href={href}>
           <code class="md-inline-code">{value}</code>
-        </a>
+        </a>,
+        value,
+        key,
+        ctx.inLink,
       );
     }
 
@@ -1900,7 +1927,7 @@ function renderRestrictedInline(
         ...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo),
       );
     if (m[1] !== undefined) {
-      out.push(renderCodeSpan(m[1], `${keyPrefix}c${n++}`));
+      out.push(renderCodeSpan(m[1], `${keyPrefix}c${n++}`, false));
     } else {
       const label = m[2] ?? "";
       const url = m[3] ?? "";

@@ -1,6 +1,6 @@
-// Timeline の 1 つの項目 (コードの塊、吹き出しの本文、thinking の本文、
-// 吹き出しの外の発言) の中で始まった選択を、選択範囲を調節している間その
-// 項目の外へ広げない。
+// Timeline の 1 つの項目 (コードの塊、inline code、吹き出しの本文、thinking
+// の本文、吹き出しの外の発言) の中で始まった選択を、選択範囲を調節している間
+// その項目の外へ広げない。
 //
 // Design rationale: CSS UI 4 の `user-select: contain` がこの振る舞いそのもの
 // だが、実装しているブラウザが無い (MDN の互換データに値が無く、Chrome 155 /
@@ -14,15 +14,16 @@
 // 選択を奪い合う。
 import { useEffect } from "preact/hooks";
 
-/** 選択の始点から、閉じ込める先の項目を決める。コードの塊を最優先
- * (コピーしたいのは大抵コードで、隣の本文まで選びたい時は本文から始める)。
- * 吹き出しの本文は中の段落より優先する — 複数の段落・segment にまたがって
- * 選べるようにするため。 */
+/** 選択の始点から、閉じ込める先の項目を決める。コード (塊と inline code) を
+ * 最優先する (コピーしたいのは大抵コードで、コードを含めて本文を選びたい時は
+ * コードの外から始める)。吹き出しの本文は中の段落より優先する — 複数の段落・
+ * segment にまたがって選べるようにするため。 */
 export function selectionHostOf(start: EventTarget | null): Element | null {
   const el = start instanceof Element ? start : start instanceof Node ? start.parentElement : null;
   if (el === null || el.closest(".timeline-view") === null) return null;
   return (
     el.closest("pre") ??
+    el.closest(".md-inline-code") ??
     el.closest(".tl-bubble-body") ??
     el.closest(".tl-thinking-body") ??
     el.closest(".tl-text")
