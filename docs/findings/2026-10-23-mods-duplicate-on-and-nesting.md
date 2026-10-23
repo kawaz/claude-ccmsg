@@ -61,3 +61,20 @@ rules リポの reference `claude-mods/overview` の「`on(pattern, matcher?, ho
 reference `claude-mods/develop` の「test」の項に足す候補:
 
 - `$.session.start(...)` を呼ぶ test は、test の側で `on('session.start', ($, e) => ({ cwd: e.cwd }))` を登録して core の代わりに答えさせる (無いと `no implementation for session.start`)
+
+## ハンドラ数の上限 (裏取り)
+
+「hooks module の event に対するハンドラ登録が 10 個まで、のような上限が changelog に入った」という記憶を一次資料で確かめた。
+
+結論: **見つからなかった**。mods の `on()` の登録数に上限を定める記述は、changelog にも公式 docs にも engine の型定義にも無い。
+
+見た場所と結果:
+
+- changelog (anthropics/claude-code の CHANGELOG.md、2.1.309 から最古まで全文を取得して `hooks module` / `mod` / `at most` / `up to` / `maximum` / `limit` / `registr` で検索): 登録数の上限は無い。近い記述は次の 3 つで、どれも mods の `on()` の登録数ではない
+  - 2.1.304: "Changed skill hooks: the skills of one source (a repo, your own folder, or a plugin) can register at most 1,024 hooks and 16,384 matcher characters per session" (skill の frontmatter の hooks。ソース単位・session 単位で、event 単位ではない)
+  - 2.1.302: "Changed prompt and agent hooks so that at most 12 of one event run at a time; the rest wait their turn" (settings の prompt / agent hook の同時実行数。登録数ではない)
+  - 2.1.309: "Improved the error when a hooks module is nested too deep to load: it now names the file instead of showing a bare stack-overflow message" (ネストの深さ。数ではない)
+- 公式 docs: `plugins/mods/events` の「Register each event once per matcher. If you call `on` twice for `session.start` with no matcher, the module fails to load with `on("session.start") is registered twice without a matcher`」が、登録に関する唯一の制約 (上記の実測と同じ)。`plugins/mods/reference` の Limits 表は、hook の実行時間 (10 秒、`prompt.edit` は 50 ms)、`.catch` の 1 秒、scope のネスト 2,000、名前の長さ 64 文字などを挙げるが、event あたりの登録数は無い。`hooks` の docs の "Hook limit" は skill の hooks (1,024 / 16,384 文字) の話
+- engine の型定義 (本リポの `.claude-plugin/types/claude-code/index.d.ts`、2.1.308 向け): `at most` / `limit` / `per event` / `registered` で検索し、`on()` の登録数に触れる記述は無い (`NarrowDepth = 8` は matcher の入れ子の深さ)
+
+「10」に近いもの: hook の実行時間 10 秒、`$.process.run` の最長 10 分、`$.ui.invalidate` の redraw が 1 秒に 10 回。記憶はこれらのどれかと混ざった可能性があるが、推測であり確かめていない。
