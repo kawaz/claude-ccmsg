@@ -829,7 +829,7 @@ var AnyInputSchema = looseObject({});
 var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 function guidanceText(webuiUrl) {
   return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}
-ccmsg_host: ${webuiUrl}`;
+ccmsg_url: ${webuiUrl}`;
 }
 function statusArgv(root) {
   return [`${root}/bin/ccmsg`, "status"];

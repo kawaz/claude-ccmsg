@@ -1,6 +1,6 @@
 // The URL the webui is opened at from elsewhere (http.ts webuiUrlOf), which
 // the ping answers as `webui_url` and the hooks module puts in the agent's
-// guidance as `ccmsg_host` (DR-0039 §5).
+// guidance as `ccmsg_url` (DR-0039 §5).
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";

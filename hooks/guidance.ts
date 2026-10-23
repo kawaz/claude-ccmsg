@@ -13,10 +13,10 @@ export const GUIDANCE =
   'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 
 /** The guidance with the URL the webui is opened at, as the line
- * `ccmsg_host: <url>` the agent's own instructions name it by; without the
+ * `ccmsg_url: <url>` the agent's own instructions name it by; without the
  * line when the daemon told none. */
 export function guidanceText(webuiUrl: string | undefined): string {
-  return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}\nccmsg_host: ${webuiUrl}`;
+  return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}\nccmsg_url: ${webuiUrl}`;
 }
 
 /** `ccmsg status`, which asks a running daemon and starts none. */

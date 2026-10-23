@@ -1838,7 +1838,7 @@ describe("the guidance", () => {
     expect(fake.appended).toEqual([GUIDANCE, GUIDANCE, GUIDANCE]);
   });
 
-  // The agent links the person to the webui by `ccmsg_host`: the URL the
+  // The agent links the person to the webui by `ccmsg_url`: the URL the
   // daemon says the webui is opened at, in the guidance of the session's
   // start and of each /clear.
   test("carries the webui URL the daemon names, at the start and after /clear", async () => {
@@ -1849,7 +1849,7 @@ describe("the guidance", () => {
     await prompt(fake, "after clear");
     await prompt(fake, "next");
     expect(fake.appended).toEqual([guidanceText(url), guidanceText(url)]);
-    expect(guidanceText(url)).toBe(`${GUIDANCE}\nccmsg_host: ${url}`);
+    expect(guidanceText(url)).toBe(`${GUIDANCE}\nccmsg_url: ${url}`);
     // Asked when the guidance goes in, not for every prompt.
     expect(fake.statuses.count).toBe(2);
   });
