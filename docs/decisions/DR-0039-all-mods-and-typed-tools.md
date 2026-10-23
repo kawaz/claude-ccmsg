@@ -33,6 +33,8 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 
 - hooks.json は `{ "modules": [...] }` だけにする。command hook の SessionStart (`hooks/session-start.ts`) と、module 内の `classic.*` の hook はすべて削る
 - 今 classic で行っていることは、§2 の対応表の mods の event で行う
+- module は関心ごとのファイルに分ける: `session-lifecycle` (composer の有無、session id とその世代、state file)、`sidecar` (サイドカーと、それを通る依頼の振り分け)、`session-facts` (main thread の model / effort / window / turn)、`subagents` (走行中の subagent と `agent.append`)、`prompt-send` (webui の入力の fill と受け付け、下書きの復元)、`guidance` (§5 の案内)、`tools` (§3 の tool)。下に engine の型 (`engine`)、facts とその送信 (`facts`) を置き、エントリ `hooks/register.ts` は `bus` と tool の登録を呼ぶだけ
+- engine への登録は `bus` が観測する event ごとに matcher なしの 1 本だけ持ち、その event を見る関心の処理を書いた順に呼ぶ。各関心は入力を自分のスキーマで読み、どの入力が自分に関わるか (`/clear` と `/resume`、`/model`、subagent の turn、composer からの prompt) を読んだ後に判定する。失敗 (読めない入力、処理の throw) はその関心だけを log して外し、他の関心の処理は止めない。engine は同じ event を matcher なしで 2 回登録する module を読み込まず、登録を分けても内側の hook の throw で外側の hook の後の部分が走らない (2.1.308、[findings 2026-10-23-mods-duplicate-on-and-nesting](../findings/2026-10-23-mods-duplicate-on-and-nesting.md))。`{}` の matcher で関心ごとに登録する形は、engine が `{}` を matcher なしと同じに扱った時点で module ごと読み込まれなくなるので使わない。engine の matcher は、同じ event に 1 本しか無い tool.call (tool ごと) だけに使う
 - 組織が管理する機械で飛ばされる user tier の hook (`classic.*` の他に `prompt.context` / `prompt.attachment` / `session.compact` 等、reference `claude-mods/overview` の `sec-default` 節の表) を、ccmsg の機能が成り立つための前提に使わない。`session.compact` だけは §5 の案内の足し直しに使い、飛ばされた時に失うものを Consequences に書く
 
 ### 2. classic の各口の置き換え

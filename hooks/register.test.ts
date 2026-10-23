@@ -18,35 +18,34 @@ import {
   SidecarReplyTextSchema,
   SidecarRunIdSchema,
 } from "@ccmsg/protocol/sidecar";
+import { concern, fanOut } from "./bus.ts";
+import { type ModuleState, register } from "./register.ts";
 import {
-  ACCEPT_WAIT_MS,
-  agentMessage,
-  GUIDANCE,
-  guidanceText,
-  GUIDED_TTL_MS,
+  AnyInputSchema,
   type Engine,
-  type HookedEvent,
-  answer,
-  beginArgv,
-  handlePromptSend,
-  hyouiEnterArgv,
-  lineSplitter,
   type HookArgs,
+  type HookedEvent,
   type HookOf,
-  type ModuleState,
   type ObservedEvent,
   type On,
-  type QueuedSend,
-  register,
-  replyArgv,
-  RESPAWN_MIN_MS,
-  samePrompt,
-  SEND_TIMEOUT_MS,
   type SpawnChunk,
   type SpawnEnd,
   type ToolAnswer,
   type ToolName,
-} from "./composer-fill.ts";
+} from "./engine.ts";
+import { GUIDANCE, guidanceText, GUIDED_TTL_MS } from "./guidance.ts";
+import {
+  ACCEPT_WAIT_MS,
+  handlePromptSend,
+  hyouiEnterArgv,
+  PromptSubmitInputSchema,
+  type QueuedSend,
+  samePrompt,
+} from "./prompt-send.ts";
+import { beginArgv } from "./session-lifecycle.ts";
+import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
+import { agentMessage } from "./subagents.ts";
+import { SEND_TIMEOUT_MS } from "./tools.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
 /** A command.run as the engine raises it for `/<command>`. */
@@ -371,6 +370,9 @@ function fakeEngine(
   return fake;
 }
 
+/** A matcher as a schema of the inputs it matches, read as the engine reads
+ * a matcher: a leaf by `===` or a RegExp, an array as any of its values, an
+ * object as a partial form of the input. */
 /** Run the module's hook on `event` as the engine would: when the hook
  * throws, its `.catch` handler runs in its place with a replay-safe `next`,
  * which answers what the hook's own call settled to and runs nothing beneath
@@ -381,13 +383,25 @@ async function fire<E, R>(
   e: E,
   next: (e: E) => Promise<R>,
 ): Promise<R> {
-  const hook = fake.hooks[event][0]?.[0];
-  if (hook === undefined) throw new Error(`no hook on ${event}`);
+  return fireOne(fake, event, 0, e, next);
+}
+
+/** Run the `at`th hook registered on `event` over `next`. */
+async function fireOne<E, R>(
+  fake: Fake,
+  event: ObservedEvent,
+  at: number,
+  e: E,
+  next: (e: E) => Promise<R>,
+): Promise<R> {
+  const registered: HookArgs[ObservedEvent][] = fake.hooks[event];
+  const hook = registered[at]?.[0];
+  if (hook === undefined) throw new Error(`no hook #${at} on ${event}`);
   const once = replaySafe(next);
   try {
     return await hook(fake.$, e, once);
   } catch (error) {
-    const handler = fake.catchers[event][0];
+    const handler = fake.catchers[event][at];
     if (handler === undefined) throw error;
     return handler(fake.$, e, once);
   }
@@ -1454,10 +1468,12 @@ describe("each hook passes the event on once", () => {
     const state = registerOn(fake);
     state.restoring = { text: "mine", draft: "draft" };
     const { calls, next } = countingNext();
-    await fire(fake, "prompt.submit", { text: "mine", origin: "composer" }, next);
+    await fire(fake, "prompt.submit", { text: 42, origin: { kind: "composer" } }, next);
     expect(calls.count).toBe(1);
     expect(fake.fills).toEqual([]);
-    expect(fake.logs.some((l) => l.startsWith("ccmsg: prompt.submit not read: origin"))).toBe(true);
+    expect(
+      fake.logs.some((l) => l.startsWith("ccmsg: prompt.submit not read (prompt-send): text")),
+    ).toBe(true);
   });
 
   // The draft put-back runs after the prompt went in: its failure is logged,
@@ -1478,7 +1494,8 @@ describe("each hook passes the event on once", () => {
     expect(calls.count).toBe(1);
     expect(
       fake.logs.some(
-        (l) => l === "ccmsg: prompt.submit failed after the event: Error: engine gone",
+        (l) =>
+          l === "ccmsg: prompt.submit failed after the event (prompt-send): Error: engine gone",
       ),
     ).toBe(true);
   });
@@ -1498,9 +1515,11 @@ describe("each hook passes the event on once", () => {
       return entered(e);
     });
     expect(calls).toBe(1);
-    expect(fake.logs.some((l) => l.includes("failed after the event: Error: accept broke"))).toBe(
-      true,
-    );
+    expect(
+      fake.logs.some((l) =>
+        l.includes("failed after the event (prompt-send): Error: accept broke"),
+      ),
+    ).toBe(true);
   });
 
   // Only `next` failing makes the hook throw; the `.catch` then answers with
@@ -1549,14 +1568,91 @@ describe("each hook passes the event on once", () => {
     const observed = fake.registered.flatMap((e) =>
       e === "tool.call" || e === "turn.step" ? [] : [e],
     );
+    // An event several concerns hook has a hook of each: every one of them,
+    // run alone.
+    const seen = new Map<ObservedEvent, number>();
     for (const event of observed) {
+      const at = seen.get(event) ?? 0;
+      seen.set(event, at + 1);
       logged = 0;
       const { calls, next } = countingNext({ passed: event });
       // No hook reads this input; logging that is what throws.
-      expect(await fire(fake, event, "not an event", next)).toEqual({ passed: event });
+      expect(await fireOne(fake, event, at, "not an event", next)).toEqual({ passed: event });
       expect(calls.count).toBe(1);
       expect(logged).toBe(1);
     }
+  });
+});
+
+// The concerns that observe one event are run from its one registration
+// (bus.ts): each takes its part on its own.
+describe("the concerns of one event", () => {
+  // The engine refuses a module that registers one event twice without a
+  // matcher: every event the module observes is registered once, and only
+  // tool.call goes by a matcher, one per tool.
+  test("each event is registered once, and tool.call once per tool", () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const observed = fake.registered.filter((e) => e !== "tool.call");
+    expect(observed.length).toBe(new Set(observed).size);
+    const tools = fake.hooks["tool.call"].map(([matcher]) => matcher.tool);
+    expect(tools.length).toBe(new Set(tools).size);
+  });
+
+  test("a concern whose part throws is logged, and the others' parts run", async () => {
+    const fake = fakeEngine();
+    const ran: string[] = [];
+    const { calls, next } = countingNext({ passed: true });
+    const result = await fanOut(fake.$, {}, next, "session.start", [
+      concern("first", AnyInputSchema, {
+        before: () => {
+          throw new Error("first broke before");
+        },
+        after: () => {
+          throw new Error("first broke after");
+        },
+      }),
+      concern("second", AnyInputSchema, {
+        before: () => {
+          ran.push("second before");
+        },
+        after: () => {
+          ran.push("second after");
+        },
+      }),
+    ]);
+    expect(result).toEqual({ passed: true });
+    expect(calls.count).toBe(1);
+    expect(ran).toEqual(["second before", "second after"]);
+    expect(fake.logs).toContain(
+      "ccmsg: session.start failed before the event (first): Error: first broke before",
+    );
+    expect(fake.logs).toContain(
+      "ccmsg: session.start failed after the event (first): Error: first broke after",
+    );
+  });
+
+  test("a concern whose input does not read takes no part, and the others' parts run", async () => {
+    const fake = fakeEngine();
+    const ran: string[] = [];
+    const { calls, next } = countingNext();
+    await fanOut(fake.$, { text: 42 }, next, "prompt.submit", [
+      concern("reads text", PromptSubmitInputSchema, {
+        after: () => {
+          ran.push("reads text");
+        },
+      }),
+      concern("reads nothing", AnyInputSchema, {
+        after: () => {
+          ran.push("reads nothing");
+        },
+      }),
+    ]);
+    expect(calls.count).toBe(1);
+    expect(ran).toEqual(["reads nothing"]);
+    expect(
+      fake.logs.some((l) => l.startsWith("ccmsg: prompt.submit not read (reads text): text")),
+    ).toBe(true);
   });
 });
 

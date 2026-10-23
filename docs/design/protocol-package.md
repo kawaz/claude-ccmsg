@@ -10,7 +10,7 @@
 
 ### ファイルの系統
 
-`src/index.ts` はすべてのファイルを re-export し、利用側は `@ccmsg/protocol` から import する。hooks module (`hooks/composer-fill.ts`) だけは bundle に入れるものを絞るため、サブパス `@ccmsg/protocol/parse`、`@ccmsg/protocol/sidecar`、`@ccmsg/protocol/address` から import する。`index.ts` 自身は系統をまたぐ定数 (`ADMIN_ID`、各種の上限値・既定値、`ErrorCode`) と `Identity` の型を持つ。
+`src/index.ts` はすべてのファイルを re-export し、利用側は `@ccmsg/protocol` から import する。hooks module (`hooks/` の `register.ts` とそれが import するファイル) だけは bundle に入れるものを絞るため、サブパス `@ccmsg/protocol/parse`、`@ccmsg/protocol/sidecar`、`@ccmsg/protocol/address` から import する。`index.ts` 自身は系統をまたぐ定数 (`ADMIN_ID`、各種の上限値・既定値、`ErrorCode`) と `Identity` の型を持つ。
 
 #### 部品
 
@@ -118,7 +118,7 @@ room のログ (`StorageEvent`) の `from` / `to` / member の `id` は、人か
 ## 制約 / 前提
 
 - valibot 1.x を使う ([DR-0038](../decisions/DR-0038-json-is-parsed-by-schema.md) §2)。`Output<S>` を深い readonly にしているのは、valibot の `v.readonly()` が 1 段しか効かず variant の option に pipe を付けられないため
-- スキーマのファイルは valibot と互いのファイル以外を import しない。hooks module (`hooks/composer-fill.ts`) が bundle して使えるようにするため。例外は node の API を使う `paths.ts` / `config-migration.ts` と、package.json を読む `version.ts` で、これらは hooks module からは使わない
+- スキーマのファイルは valibot と互いのファイル以外を import しない。hooks module (`hooks/`) が bundle して使えるようにするため。例外は node の API を使う `paths.ts` / `config-migration.ts` と、package.json を読む `version.ts` で、これらは hooks module からは使わない
 - wire は同じホストの daemon と client が一緒に変わる前提 ([DR-0002](../decisions/DR-0002-daemon-supervision.md) §4)。世代の違いは hello の `protocol` で 1 度だけ判定する
 
 ## 関連

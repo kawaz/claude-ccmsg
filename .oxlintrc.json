@@ -30,5 +30,5 @@
   "env": {
     "builtin": true
   },
-  "ignorePatterns": ["node_modules", "docs", "hooks/composer-fill.bundle.js"]
+  "ignorePatterns": ["node_modules", "docs", "hooks/register.bundle.js"]
 }

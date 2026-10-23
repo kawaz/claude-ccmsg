@@ -25,7 +25,7 @@
 ## 決定性
 
 - 「起きないこと」は sleep で待って主張しない。marker の round-trip (`readEventUntil` 等) で順序づけた後に、溜まったイベントやファイルを読んで主張する。
-- 時間に依存するコードは clock を注入する (`hooks/composer-fill.ts` の `Engine.clock` と同型)。テストは実時間を待たない。実時間の待ちは外部プロセスの観測だけに使い、deadline 付きの retry にする。
+- 時間に依存するコードは clock を注入する (`hooks/engine.ts` の `Engine.clock` と同型)。テストは実時間を待たない。実時間の待ちは外部プロセスの観測だけに使い、deadline 付きの retry にする。
 - ポートは `0` で取る。固定ポートを書かない。
 - timeout は preload (`packages/testkit/src/test-env.ts`) の `setDefaultTimeout` で全テストに 1 つ。bun は bunfig.toml の `[test]` の `timeout` を読まない。個別に長くするテストは理由をコメントに書く。
 - 一時ディレクトリは `os.tmpdir()` の下に `mkdtemp` で作り、そのテストの後で消す。ファイルの各テストが作るものは `perTestTmpDir()` (`packages/testkit/src/tmp.ts`) で作れば、テストの終わりに消える。preload は run ごとの dir (`/tmp/ccmsg-run-*`) を作って TMPDIR をそこに向け、テストと、テストが起こすプロセス (CLI・daemon・スクリプト) の一時ファイルをすべてそこに入れて、run の終わりに消す (timeout・失敗でも消える)。最後のテストの後にまだ残っているものは、消さなかったテストのものとして run を落とす。UNIX socket のために短いパスが要るテストは `/tmp` を直に書かず `shortTmpDir` で作る (run の終わりの検査と削除の対象になる)。

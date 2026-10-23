@@ -142,14 +142,17 @@ _coverage-check:
 validate: lint
     claude plugin validate .
 
-# hooks module (hooks/composer-fill.ts) を Claude Code が読む 1 ファイルに bundle する (DR-0038 §4)
+# hooks module (hooks/register.ts) を Claude Code が読む 1 ファイルに bundle する (DR-0038 §4)
 build-hooks:
     bun hooks/bundle.ts
 
-# 配る bundle (hooks/composer-fill.bundle.js) が今の source の bundle か確かめる。
+# 配る bundle (hooks/register.bundle.js) が今の source の bundle か確かめる。
 # GitHub CI は bundle の 1 行目が記録している bun でこれを走らせる (.github/workflows/ci.yml の hooks-bundle)
+# 続けて `claude plugin validate .` で、engine がその bundle を読み込めるか (同じ event の matcher なしの重複登録、
+# top-level の関数以外へ `$` を渡す形などは module ごと読み込まれない) を確かめる。claude の無い GitHub CI では飛ばす
 check-hooks-bundle:
     bun hooks/bundle.ts --check
+    if command -v claude >/dev/null; then claude plugin validate .; else echo "claude: not installed, plugin validate skipped" >&2; fi
 
 # 現在の version を表示 (3 ファイルの一致確認も兼ねる)
 version:
