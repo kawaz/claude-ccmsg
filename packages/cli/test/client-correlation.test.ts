@@ -7,17 +7,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, expect, test } from "bun:test";
 import {
-  jsonText,
-  parseWith,
   PROTOCOL_VERSION,
   readRequest,
   type Request,
   type RequestFrame,
-  RequestFrameSchema,
   UNANNOUNCED_PROTOCOL_VERSION,
   VERSION,
 } from "@ccmsg/protocol";
 import { Client, helloRequest } from "../src/client.ts";
+import { type FakeAnswer, fakeDaemon } from "./fake-daemon.ts";
 
 let cleanup: Array<() => void> = [];
 
@@ -25,15 +23,6 @@ afterEach(() => {
   for (const fn of cleanup) fn();
   cleanup = [];
 });
-
-const RequestFrameTextSchema = jsonText(RequestFrameSchema);
-
-/** A request line the client wrote, read as the frame every request has. */
-function frameOf(line: string): RequestFrame {
-  const read = parseWith(RequestFrameTextSchema, line);
-  if (!read.ok) throw new Error(`the client wrote no request frame: ${read.failure.summary}`);
-  return read.value;
-}
 
 /** A request line the client wrote, read as a request of this generation. */
 function requestOf(line: string): Request {
@@ -43,37 +32,17 @@ function requestOf(line: string): Request {
   return read.request;
 }
 
-/** A UDS peer that answers each request line with `reply(request)`. */
-async function fakeDaemon(reply: (req: RequestFrame) => object[]): Promise<string> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-client-corr-"));
-  const sock = path.join(dir, "daemon.sock");
-  const server = Bun.listen<undefined>({
-    unix: sock,
-    socket: {
-      data(socket, chunk) {
-        for (const line of new TextDecoder().decode(chunk).split("\n")) {
-          if (line.trim() === "") continue;
-          for (const frame of reply(frameOf(line))) {
-            socket.write(`${JSON.stringify(frame)}\n`);
-          }
-        }
-      },
-      open() {},
-      close() {},
-      error() {},
-    },
-  });
-  cleanup.push(() => {
-    server.stop(true);
-    fs.rmSync(dir, { recursive: true, force: true });
-  });
-  return sock;
+/** A fake daemon's socket, stopped once the test ends. */
+function peer(answer: (req: RequestFrame) => FakeAnswer): string {
+  const daemon = fakeDaemon(answer);
+  cleanup.push(() => daemon.stop());
+  return daemon.sock;
 }
 
 test("a reply is paired by request_id, not by arrival order", async () => {
   // Answers in reverse: the second request is replied to first.
   const held: RequestFrame[] = [];
-  const sock = await fakeDaemon((req) => {
+  const sock = peer((req) => {
     held.push(req);
     const [first, second] = held;
     if (first === undefined || second === undefined) return [];
@@ -96,7 +65,7 @@ test("a reply with no request_id settles the oldest request", async () => {
   // ensureDaemon has to complete a hello against one before it can decide to
   // replace it.
   const refusal = { ok: false as const, error: { code: "bad_request", msg: "m" } };
-  const sock = await fakeDaemon(() => [refusal]);
+  const sock = peer(() => [refusal]);
   const client = await Client.connect(sock);
   expect(await client.request({ op: "hello", role: "user" })).toEqual(refusal);
   client.close();
@@ -106,7 +75,7 @@ test("a hello reply with no request_id and no protocol is read, so a pre-correla
   // This is the version-mismatch path: ensureDaemon has to read the version in
   // the hello reply of an older daemon before it can decide to replace it, and
   // that daemon echoes no request_id and announces no generation.
-  const sock = await fakeDaemon(() => [{ ok: true, version: "0.0.1" }]);
+  const sock = peer(() => [{ ok: true, version: "0.0.1" }]);
   const client = await Client.connect(sock);
   expect(await client.request(helloRequest({ role: "user" }))).toEqual({
     ok: true,
@@ -117,7 +86,7 @@ test("a hello reply with no request_id and no protocol is read, so a pre-correla
 });
 
 test("a reply that is not its op's answer fails the request", async () => {
-  const sock = await fakeDaemon((req) => [{ ok: true, request_id: req.request_id }]);
+  const sock = peer((req) => [{ ok: true, request_id: req.request_id }]);
   const client = await Client.connect(sock);
   const failure = await client.request({ op: "room_history", room: "r1" }).then(
     () => "answered",
