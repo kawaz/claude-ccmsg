@@ -9,6 +9,7 @@ import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   PeerListResponseTextSchema,
   PeersToolInputSchema,
+  RefusalTextSchema,
   SayToolInputSchema,
   SendMessageResponseTextSchema,
   SendToolInputSchema,
@@ -100,13 +101,33 @@ async function sendTool<E>($: Engine, e: E): Promise<string> {
   }
   const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
   if (answered.ok) return sendResultText(answered.value.results);
-  const said = run.stderr.trim().split("\n")[0] ?? "";
   $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  const said = firstStderrLine(run.stderr);
   // 3: no daemon could be had, so nothing went out.
   if (run.exitCode === 3) {
     return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
   }
-  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${UNCONFIRMED_ADVICE}`;
+  // The daemon refuses a send before it writes to any session; only an op
+  // that threw (`internal`) may have stopped part way.
+  const refusal = parseWith(RefusalTextSchema, said);
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が送信を断ったので、送っていない: ${refusal.value.error.msg}`;
+  }
+  const why = refusal.ok ? refusal.value.error.msg : said;
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why !== "" ? `: ${why}` : ""}。${UNCONFIRMED_ADVICE}`;
+}
+
+/** The first line a ccmsg command wrote to standard error. */
+function firstStderrLine(stderr: string): string {
+  return stderr.trim().split("\n")[0] ?? "";
+}
+
+/** A ccmsg command's reason for failing, in words: the daemon's `msg` when
+ * the command printed its refusal, the command's own first line otherwise. */
+function failureText(stderr: string): string {
+  const said = firstStderrLine(stderr);
+  const refusal = parseWith(RefusalTextSchema, said);
+  return refusal.ok ? refusal.value.error.msg : said;
 }
 
 /** The `say` tool: say the text to the person through `ccmsg say`, which
@@ -139,7 +160,7 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
     });
     const answered = parseWith(PeerListResponseTextSchema, run.stdout);
     if (answered.ok) return peersText(answered.value.peers);
-    return `一覧を返せなかった: ${run.stderr.trim().split("\n")[0] ?? ""}`;
+    return `一覧を返せなかった: ${failureText(run.stderr)}`;
   } catch (error) {
     return `一覧を返せなかった: ${errorText(error)}`;
   }

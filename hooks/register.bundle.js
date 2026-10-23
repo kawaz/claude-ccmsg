@@ -1519,6 +1519,15 @@ async function replaceSidecar($, state) {
   runSidecar($, state, sid, state.run);
 }
 
+var ErrorBodySchema = object({
+  code: string(),
+  msg: string()
+});
+var ErrorResponseSchema = object({
+  ok: literal(false),
+  error: ErrorBodySchema
+});
+
 var PeerFilterEntries = {
   cwd: optional(pipe(string(), nonEmpty("a cwd is not empty"))),
   name: optional(pipe(string(), nonEmpty("a name is not empty")))
@@ -1584,6 +1593,7 @@ var PeerListResponseSchema = object({
   peers: array(PeerListEntrySchema)
 });
 var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
+var RefusalTextSchema = jsonText(ErrorResponseSchema);
 var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
 var SayToolInputSchema = object({ text: PeerTextSchema });
 var PeersToolInputSchema = PeerListInputSchema;
@@ -1764,13 +1774,26 @@ async function sendTool($, e) {
   const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
   if (answered.ok)
     return sendResultText(answered.value.results);
-  const said = run.stderr.trim().split(`
-`)[0] ?? "";
   $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  const said = firstStderrLine(run.stderr);
   if (run.exitCode === 3) {
     return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
   }
-  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${said !== "" ? `: ${said}` : ""}。${UNCONFIRMED_ADVICE}`;
+  const refusal = parseWith(RefusalTextSchema, said);
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が送信を断ったので、送っていない: ${refusal.value.error.msg}`;
+  }
+  const why = refusal.ok ? refusal.value.error.msg : said;
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why !== "" ? `: ${why}` : ""}。${UNCONFIRMED_ADVICE}`;
+}
+function firstStderrLine(stderr) {
+  return stderr.trim().split(`
+`)[0] ?? "";
+}
+function failureText(stderr) {
+  const said = firstStderrLine(stderr);
+  const refusal = parseWith(RefusalTextSchema, said);
+  return refusal.ok ? refusal.value.error.msg : said;
 }
 async function sayTool($, e) {
   const read = parseWith(SayToolInputSchema, e);
@@ -1802,8 +1825,7 @@ async function peersTool($, e) {
     const answered = parseWith(PeerListResponseTextSchema, run.stdout);
     if (answered.ok)
       return peersText(answered.value.peers);
-    return `一覧を返せなかった: ${run.stderr.trim().split(`
-`)[0] ?? ""}`;
+    return `一覧を返せなかった: ${failureText(run.stderr)}`;
   } catch (error) {
     return `一覧を返せなかった: ${errorText(error)}`;
   }

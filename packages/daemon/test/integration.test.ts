@@ -194,4 +194,25 @@ describe("error handling & boundaries", () => {
       await stopTestDaemon(ctx);
     }
   });
+
+  // A webui left open across an upgrade sends a person's input under the op
+  // names of its build; the refusal names the op it is now.
+  test("a person's input under an earlier op name is refused with the op it is now", async () => {
+    const ctx = await startTestDaemon();
+    try {
+      const u = await userConn(ctx);
+      for (const [old, now] of [
+        [{ op: "session_input", sid: A, text: "x" }, "user_prompt"],
+        [{ op: "agent_input", sid: A, agent_id: "a1", text: "x" }, "user_message"],
+      ] as const) {
+        const refusal = await u.requestRefusal(old);
+        expect({ code: refusal.error.code, msg: refusal.error.msg }).toEqual({
+          code: "invalid_args",
+          msg: `op: \`${old.op}\` は \`${now}\` に改名された。送ったのは古い版の ccmsg (起動時の plugin の hooks module、または開いたままの webui)。セッションを再起動すると最新の plugin が載る (webui はページを読み込み直す)`,
+        });
+      }
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
 });

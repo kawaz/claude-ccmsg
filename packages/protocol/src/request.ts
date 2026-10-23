@@ -181,8 +181,39 @@ export const RequestBodySchema = v.variant(
   // Names the op rather than listing every op this daemon serves: the list is
   // long enough to be clipped from the refusal, and the sender needs to know
   // which op was not served.
-  (issue) => `unknown op: ${String(issue.input)}`,
+  (issue) => unknownOpMessage(String(issue.input)),
 );
+
+/** The ops this daemon no longer serves under the name an earlier build sent,
+ * each with the op it is now, or `null` for one taken away. A session keeps
+ * the module of the plugin it started with (DR-0035 §3), so a long-lived one
+ * sends these to a daemon of a later build; the refusal tells it what came of
+ * the op and that a restart loads the plugin of the daemon's build. Not
+ * served under the old name: a renamed op is moved, not aliased (DR-0039
+ * Consequences). */
+export const RETIRED_OPS: ReadonlyMap<string, RequestOp | null> = new Map<string, RequestOp | null>(
+  [
+    ["peer_send", "send_message"],
+    ["session_input", "user_prompt"],
+    ["agent_input", "user_message"],
+    ["message_send", null],
+    ["address_send", null],
+  ],
+);
+
+const RESTART_ADVICE =
+  "送ったのは古い版の ccmsg (起動時の plugin の hooks module、または開いたままの webui)。セッションを再起動すると最新の plugin が載る (webui はページを読み込み直す)";
+
+/** Why an op is not served, for the op name `op`: what became of it when an
+ * earlier build served it, and that it is unknown otherwise. */
+function unknownOpMessage(op: string): string {
+  const now = RETIRED_OPS.get(op);
+  if (now === undefined) return `unknown op: ${op}`;
+  return now === null
+    ? `\`${op}\` は削除された (セッションへの送信は send tool)。${RESTART_ADVICE}`
+    : `\`${op}\` は \`${now}\` に改名された。${RESTART_ADVICE}`;
+}
+
 export type RequestBody = Output<typeof RequestBodySchema>;
 
 /** A request on the wire: one of the bodies above plus its correlation id.

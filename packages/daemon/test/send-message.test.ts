@@ -399,23 +399,37 @@ describe("send_message through the daemon", () => {
   );
 
   // A session started with an earlier plugin may still send the ops that
-  // carried a message before send_message (DR-0039 §3). They are not read; the
-  // send that follows on the same connection is the first thing to arrive.
+  // carried a message before send_message (DR-0039 §3), or send_message under
+  // its earlier name. They are not read, and the refusal says what became of
+  // the op and that a restart loads the current plugin; the send that follows
+  // on the same connection is the first thing to arrive.
   test(
-    "an earlier client's message_send and address_send are refused as unknown, and nothing arrives",
+    "an earlier client's message_send, address_send and peer_send are refused with what became of them, and nothing arrives",
     async () => {
       const ctx = await daemon();
       const hb = harness(PEER, { pid: LIVE_PID });
       await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, hb.configDir);
-      for (const old of [
-        { op: "message_send", to: PEER, text: "old" },
-        { op: "address_send", to: `ccmsg:${PEER}`, text: "old" },
-      ]) {
+      const restart =
+        "送ったのは古い版の ccmsg (起動時の plugin の hooks module、または開いたままの webui)。セッションを再起動すると最新の plugin が載る (webui はページを読み込み直す)";
+      for (const [old, became] of [
+        [
+          { op: "message_send", to: PEER, text: "old" },
+          "は削除された (セッションへの送信は send tool)",
+        ],
+        [
+          { op: "address_send", to: `ccmsg:${PEER}`, text: "old" },
+          "は削除された (セッションへの送信は send tool)",
+        ],
+        [
+          { op: "peer_send", to: { session_id: PEER }, text: "old" },
+          "は `send_message` に改名された",
+        ],
+      ] as const) {
         const refusal = await a.requestRefusal(old);
         expect({ code: refusal.error.code, msg: refusal.error.msg }).toEqual({
           code: "invalid_args",
-          msg: `op: unknown op: ${old.op}`,
+          msg: `op: \`${old.op}\` ${became}。${restart}`,
         });
       }
       expect(await send(a, { session_id: PEER }, "new")).toEqual([

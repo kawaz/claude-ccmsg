@@ -2075,6 +2075,33 @@ describe("the ccmsg tools", () => {
     );
   });
 
+  // The daemon's refusal is printed as its JSON; the tool says its msg in
+  // words. A refusal comes before any session is written to, so nothing went;
+  // one from an op that threw part way leaves the send unconfirmed.
+  test("a send the daemon refused says the daemon's reason, not its JSON", async () => {
+    const refusing = (code: string) =>
+      toolFake(async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: `${JSON.stringify({ ok: false, error: { code, msg: "op: `peer_send` は `send_message` に改名された" } })}\n`,
+      }));
+    const refused = await callTool(refusing("invalid_args"), "mcp__ccmsg-v1__send", {
+      cwd: "/w",
+      text: "hi",
+    });
+    expect(refused).toBe(
+      "ccmsg の daemon が送信を断ったので、送っていない: op: `peer_send` は `send_message` に改名された",
+    );
+    const threw = await callTool(refusing("internal"), "mcp__ccmsg-v1__send", {
+      cwd: "/w",
+      text: "hi",
+    });
+    expect(threw).toContain(
+      "届いたか確かめられなかった: op: `peer_send` は `send_message` に改名された。",
+    );
+    expect(threw).not.toContain("{");
+  });
+
   // A handler that throws (here its log) is answered by the `.catch`, never
   // by `next`, which would only reach core's "no tool.call hook answered".
   test("a send whose handler fails is answered by its .catch", async () => {
@@ -2128,6 +2155,17 @@ describe("the ccmsg tools", () => {
       `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
       "- session_id: c (ccmsg の hooks module が動いていないので送れない)",
     ]);
+  });
+
+  test("peers the daemon refused says the daemon's reason, not its JSON", async () => {
+    const fake = toolFake(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ ok: false, error: { code: "invalid_args", msg: "op: unknown op: peer_list" } })}\n`,
+    }));
+    expect(await callTool(fake, "mcp__ccmsg-v1__peers", {})).toBe(
+      "一覧を返せなかった: op: unknown op: peer_list",
+    );
   });
 });
 

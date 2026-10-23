@@ -3,10 +3,11 @@
 // module hands `ccmsg sidecar send-message` / `peer-list` on standard input, and
 // what those print, which is the daemon's send_message / peer_list reply.
 //
-// The hooks module bundles this file, so it imports nothing but valibot and
-// parse.ts.
+// The hooks module bundles this file, so it imports nothing but valibot,
+// parse.ts and response-error.ts.
 import * as v from "valibot";
 import { jsonText, type Output } from "./parse.ts";
+import { ErrorResponseSchema } from "./response-error.ts";
 
 /** The tools, as the model calls them: `mcp__<plugin>__<tool>`, the plugin's
  * name (plugin.json) the prefix. */
@@ -172,6 +173,11 @@ export const PeerListResponseSchema = v.object({
 });
 export type PeerListResponse = Output<typeof PeerListResponseSchema>;
 export const PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
+
+/** What `ccmsg sidecar send-message` / `peer-list` and `ccmsg say` print on
+ * standard error, exiting 1, when the daemon did not serve the request: its
+ * refusal, whose `msg` says why in words a reader can act on. */
+export const RefusalTextSchema = jsonText(ErrorResponseSchema);
 
 // --- the tools ------------------------------------------------------------------
 

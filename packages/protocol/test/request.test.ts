@@ -7,6 +7,7 @@ import {
   isOtherGenerationHello,
   readRequest,
   REQUEST_OPS,
+  RETIRED_OPS,
   type Request,
   type RequestInput,
   type RequestOp,
@@ -408,19 +409,49 @@ describe("readRequest: a line that is not a request is a failure", () => {
   }
 
   // A session sends to another with send_message alone (DR-0039 §3): the ops a
-  // client of an earlier build sends with a message in them are not read.
+  // client of an earlier build sends with a message in them are not read, and
+  // the refusal says they are gone and a restart loads the current plugin.
   for (const value of [
     { op: "message_send", to: SID, text: "hi", reply_to: "abc/1" },
     { op: "address_send", to: `ccmsg:${SID}`, text: "hi" },
   ]) {
     test(`no op but send_message sends to a session: ${value.op}`, () => {
-      expect(readRequest(line({ ...value, request_id: "q1" }))).toMatchObject({
+      const read = readRequest(line({ ...value, request_id: "q1" }));
+      expect(read).toMatchObject({
         kind: "invalid_request",
         frame: { op: value.op, request_id: "q1" },
-        failure: { issues: [{ path: "op", message: `unknown op: ${value.op}` }] },
+        failure: { issues: [{ path: "op" }] },
       });
+      expect(read.kind === "invalid_request" && read.failure.summary).toBe(
+        `op: \`${value.op}\` は削除された (セッションへの送信は send tool)。送ったのは古い版の ccmsg (起動時の plugin の hooks module、または開いたままの webui)。セッションを再起動すると最新の plugin が載る (webui はページを読み込み直す)`,
+      );
     });
   }
+
+  // An op renamed under a later build (DR-0039 Consequences) is not read under
+  // its old name; the refusal names the op it is now.
+  for (const [old, now] of [
+    ["peer_send", "send_message"],
+    ["session_input", "user_prompt"],
+    ["agent_input", "user_message"],
+  ]) {
+    test(`a renamed op is refused with its new name: ${old}`, () => {
+      const read = readRequest(
+        line({ op: old, to: { session_id: SID }, text: "hi", request_id: "q1" }),
+      );
+      expect(read.kind === "invalid_request" && read.failure.summary).toBe(
+        `op: \`${old}\` は \`${now}\` に改名された。送ったのは古い版の ccmsg (起動時の plugin の hooks module、または開いたままの webui)。セッションを再起動すると最新の plugin が載る (webui はページを読み込み直す)`,
+      );
+    });
+  }
+
+  test("no retired op is served, and each renamed one names a served op", () => {
+    const served: readonly string[] = REQUEST_OPS;
+    for (const [old, now] of RETIRED_OPS) {
+      expect(served).not.toContain(old);
+      if (now !== null) expect(served).toContain(now);
+    }
+  });
 
   test("a request id that is missing or empty", () => {
     expect(readLine(line({ op: "ping" })).ok).toBe(false);

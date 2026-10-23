@@ -8,6 +8,7 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import type { RequestOp } from "./request.ts";
+import type { ErrorResponse } from "./response-error.ts";
 import {
   FsCreateResponseSchema,
   FsDeleteResponseSchema,
@@ -74,21 +75,7 @@ export * from "./response-sessions.ts";
 export * from "./response-files.ts";
 export * from "./response-transcripts.ts";
 export * from "./response-host.ts";
-
-/** Why a request was not served: a code from ErrorCode (or `internal` for an
- * op that threw), and a line saying what to do about it. */
-export const ErrorBodySchema = v.object({
-  code: v.string(),
-  msg: v.string(),
-});
-export type ErrorBody = Output<typeof ErrorBodySchema>;
-
-/** The reply to a request the daemon did not serve, whatever its op. */
-export const ErrorResponseSchema = v.object({
-  ok: v.literal(false),
-  error: ErrorBodySchema,
-});
-export type ErrorResponse = Output<typeof ErrorResponseSchema>;
+export * from "./response-error.ts";
 
 /** Each op's success reply. An op that answers with the same shape as
  * another names the same schema (fs_read_external, fs_read_workspace and
