@@ -1,6 +1,6 @@
 ---
 title: MCP tool send が daemon から `unknown op: peer_send` で拒否される (plugin 0.177.2 のセッション、CLI の post は通る)
-status: open
+status: resolved
 category: bug
 created: 2026-10-22T05:19:37+09:00
 last_read: 2026-10-23T12:53:15+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-23T13:00:11+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:commit 7a48f484 で対応。op peer_send は send_message に改名 (e771837d、v0.178.0)、旧名の別名互換は持たない"]
 blocked_by:
 origin: workboard-personal
 ---
@@ -41,8 +41,8 @@ ccmsg が送信の結果を返さず、届いたか確かめられなかった: 
 
 推測 (裏取りしていない): plugin 0.177.2 の `send` が投げる op 名 `peer_send` を、今動いている daemon が知らない (daemon が新しく op 名が変わった、または古くて未対応)。長く生きているセッションほど plugin の版が古いまま取り残される構図なら、互換を daemon 側で持つか、利用側に「plugin が古いので再起動を」と返す案内があると困らない。
 
-利用側のワークアラウンド: `ccmsg post` (CLI) で送る。
+利用側のワークアラウンド: `ccmsg post` (CLI) で送る。`ccmsg post` はもう無い (DR-0039 段 5 で削除)。古い plugin のセッションは再起動が解。
 
 ## 受け入れ条件
 
-- [ ] 原因 (plugin と daemon の op 名のずれ) を裏取りし、採否を決める
+- [x] 原因 (plugin と daemon の op 名のずれ) を裏取りし、採否を決める
