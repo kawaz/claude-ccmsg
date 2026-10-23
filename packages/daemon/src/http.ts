@@ -186,6 +186,38 @@ async function frameAncestorsFor(
   return [...out];
 }
 
+/**
+ * The URL the webui is opened at from elsewhere (DR-0039 §5): the first of the
+ * origins this daemon trusts besides its own binds — `CCMSG_HTTP_ALLOW_ORIGIN`
+ * and the tailscale auto-allow additions (`extraOrigins`, in that order), then
+ * the persisted `origins add` file — that is an http(s) origin of a host other
+ * than this machine's loopback. Each of these is an origin a person opens the
+ * webui at through a proxy in front of this daemon, so none is a guess.
+ * Undefined when there is none: a daemon reached only at its own bind.
+ */
+export function webuiUrlOf(
+  extraOrigins: Iterable<string>,
+  fileOrigins: Iterable<string>,
+): string | undefined {
+  for (const origin of [...extraOrigins, ...fileOrigins]) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      continue;
+    }
+    if (url.origin !== origin) continue;
+    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+    if (isLoopbackHost(url.hostname)) continue;
+    return origin;
+  }
+  return undefined;
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
+}
+
 /** Source of `Conn.id`. Process-wide rather than per-listener so two listeners
  * in one process never hand out the same label to different sockets. */
 let nextConnSeq = 0;

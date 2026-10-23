@@ -66,7 +66,7 @@
 // each hook is a function literal, and `$` is passed only to functions
 // declared at the top of the file.
 import * as v from "valibot";
-import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
+import { errorText, jsonText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
   type CcmsgToolName,
   PeerListResponseTextSchema,
@@ -671,6 +671,40 @@ export const BEGIN_TIMEOUT_MS = 25_000;
 export const GUIDANCE =
   'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 
+/** The guidance with the URL the webui is opened at, as the line
+ * `ccmsg_host: <url>` the agent's own instructions name it by; without the
+ * line when the daemon told none. */
+export function guidanceText(webuiUrl: string | undefined): string {
+  return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}\nccmsg_host: ${webuiUrl}`;
+}
+
+/** `ccmsg status`, which asks a running daemon and starts none. */
+export function statusArgv(root: string): string[] {
+  return [`${root}/bin/ccmsg`, "status"];
+}
+
+/** `ccmsg status` budget: the process and one ping. The prompt waits on it,
+ * once per conversation. */
+export const STATUS_TIMEOUT_MS = 3_000;
+
+/** The part of `ccmsg status` the guidance reads: the daemon's `webui_url`,
+ * absent when it knows none or when no daemon runs. */
+const StatusTextSchema = jsonText(v.looseObject({ webui_url: v.optional(v.string()) }));
+
+/** The URL the webui is opened at, as the running daemon says, or undefined
+ * when it says none or cannot be asked. Never rejects. */
+async function webuiUrl($: Engine): Promise<string | undefined> {
+  try {
+    const run = await $.process.run(statusArgv($.plugin.root), { timeoutMs: STATUS_TIMEOUT_MS });
+    const read = parseWith(StatusTextSchema, run.stdout);
+    if (read.ok) return read.value.webui_url;
+    $.ui.log(`ccmsg: status not read: ${read.failure.summary}`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg: status failed: ${errorText(e)}`, { to: "debug" });
+  }
+  return undefined;
+}
+
 /** Whether a session's conversation holds the guidance, by session id in
  * `$.store`: a conversation's id outlives its process (`--resume`, an in-
  * session `/resume`), so a resumed one is not told again, and `/clear`
@@ -713,9 +747,8 @@ async function guide($: Engine, state: ModuleState): Promise<void> {
       if (now - held.at > GUIDED_TOUCH_MS) await $.store.set(key, { guided: true, at: now });
       return;
     }
-    await $.session.append({
-      message: { type: "user", content: [{ type: "text", text: GUIDANCE }] },
-    });
+    const text = guidanceText(await webuiUrl($));
+    await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
     await $.store.set(key, { guided: true, at: now });
   } catch (e) {
     $.ui.log(`ccmsg: guidance not added: ${errorText(e)}`, { to: "debug" });

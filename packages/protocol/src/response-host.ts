@@ -30,6 +30,10 @@ export const PingResponseSchema = v.object({
   http: v.array(v.string()),
   /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */
   httpAllow: v.array(v.string()),
+  /** The URL the webui is opened at from elsewhere (scheme://host[:port]): the
+   * first trusted proxy origin that is not this machine's loopback. Absent
+   * when the daemon is reached only at its own binds (DR-0039 §5). */
+  webui_url: v.optional(v.string()),
   /** The daemon's current view of the host link, which decides whether a
    * recovery can wake sessions stopped on an API error: `"off"` when no
    * network watch is running, `"unknown"` before its first probe settles,

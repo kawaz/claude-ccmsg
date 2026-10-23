@@ -93,6 +93,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - `$.state` の印は `prompt.submit` 以降に読む。`/clear` の直後の hook の入口では前の session の値が見えることがある (同 findings の「`$.state` と module の生死」)
 - `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
+- 案内には、webui を外から開く URL を `ccmsg_host: <url>` の 1 行で添える (エージェントが人を webui のセッションへ案内するリンクの host に使う、kawaz 2026-10-23)。値は案内を足す時に `ccmsg status` で daemon に聞いた `webui_url` で、daemon が信頼する proxy の Origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve の自動許可、`ccmsg origins add` の file の順) のうち loopback でない最初の http(s) のもの。HTTP の listener が無い時、該当が無い時、daemon に聞けない時は行を出さない
 - 注入する案内は skill (§3) への誘導に留め、tool の使い方そのものは書かない。文面は実装時に決める。DR-0035 §4 のとおり、サイドカーの socket path と依頼の形式は案内にも skill にも書かない
 
 ### 6. webui から走行中の subagent へ文脈を直送する

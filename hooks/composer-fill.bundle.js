@@ -1305,6 +1305,27 @@ function beginArgv(root, sid, cwd) {
 }
 var BEGIN_TIMEOUT_MS = 25000;
 var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+function guidanceText(webuiUrl) {
+  return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}
+ccmsg_host: ${webuiUrl}`;
+}
+function statusArgv(root) {
+  return [`${root}/bin/ccmsg`, "status"];
+}
+var STATUS_TIMEOUT_MS = 3000;
+var StatusTextSchema = jsonText(looseObject({ webui_url: optional(string()) }));
+async function webuiUrl($) {
+  try {
+    const run = await $.process.run(statusArgv($.plugin.root), { timeoutMs: STATUS_TIMEOUT_MS });
+    const read = parseWith(StatusTextSchema, run.stdout);
+    if (read.ok)
+      return read.value.webui_url;
+    $.ui.log(`ccmsg: status not read: ${read.failure.summary}`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg: status failed: ${errorText(e)}`, { to: "debug" });
+  }
+  return;
+}
 var GuidedRecordSchema = object({ guided: boolean(), at: number() });
 var GUIDED_PREFIX = "guided:";
 function guidedKey(sid) {
@@ -1328,9 +1349,8 @@ async function guide($, state) {
         await $.store.set(key, { guided: true, at: now });
       return;
     }
-    await $.session.append({
-      message: { type: "user", content: [{ type: "text", text: GUIDANCE }] }
-    });
+    const text = guidanceText(await webuiUrl($));
+    await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
     await $.store.set(key, { guided: true, at: now });
   } catch (e) {
     $.ui.log(`ccmsg: guidance not added: ${errorText(e)}`, { to: "debug" });
@@ -1863,10 +1883,12 @@ export {
   SAY_TIMEOUT_MS,
   SEND_TIMEOUT_MS,
   STABLE_MS,
+  STATUS_TIMEOUT_MS,
   agentMessage,
   answer,
   beginArgv,
   factsArgv,
+  guidanceText,
   handlePromptSend,
   hyouiEnterArgv,
   lineSplitter,
@@ -1874,5 +1896,6 @@ export {
   peerArgv,
   register,
   replyArgv,
-  samePrompt
+  samePrompt,
+  statusArgv
 };

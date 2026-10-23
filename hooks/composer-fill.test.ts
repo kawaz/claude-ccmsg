@@ -22,6 +22,7 @@ import {
   ACCEPT_WAIT_MS,
   agentMessage,
   GUIDANCE,
+  guidanceText,
   GUIDED_TTL_MS,
   type Engine,
   type HookedEvent,
@@ -141,9 +142,12 @@ interface Fake {
   /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
    * named, in order. Kept apart from `runs` as the facts are. */
   begins: { sid: string; cwd: string }[];
-  /** The commands the module ran other than `ccmsg sidecar facts` and
-   * `ccmsg sidecar begin`. */
+  /** The commands the module ran other than `ccmsg sidecar facts`,
+   * `ccmsg sidecar begin` and `ccmsg status`. */
   runs: string[][];
+  /** How many times the module ran `ccmsg status`. Kept apart from `runs` as
+   * the facts are: it goes with the guidance, before a prompt. */
+  statuses: { count: number };
   /** The runs that asked the harness pid. */
   /** What each run got on standard input, by the index of the run. */
   stdins: (string | undefined)[];
@@ -198,6 +202,9 @@ function fakeEngine(
     ) => Promise<CommandRun>;
     /** The plugin's store as an earlier process left it. */
     store?: Map<string, unknown>;
+    /** What `ccmsg status` does: print a running daemon's status with this
+     * `webui_url` (none when undefined), or throw. */
+    webuiUrl?: string | Error;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -209,6 +216,7 @@ function fakeEngine(
   let now = 0;
   const composer = { text: options.draft ?? "" };
   const runs: string[][] = [];
+  const statuses = { count: 0 };
   const stdins: (string | undefined)[] = [];
   const spawns: Fake["spawns"] = [];
   const timers: Timer[] = [];
@@ -279,6 +287,17 @@ function fakeEngine(
           begins.push({ sid: flagOf(argv, "--sid"), cwd: flagOf(argv, "--cwd") });
           return { exitCode: 0, stdout: "", stderr: "" };
         }
+        if (argv[1] === "status") {
+          statuses.count += 1;
+          const url = options.webuiUrl;
+          if (url instanceof Error) throw url;
+          const status = { running: true, ok: true, pong: true, http: ["127.0.0.1:8642"] };
+          return {
+            exitCode: 0,
+            stdout: `${JSON.stringify(url === undefined ? status : { ...status, webui_url: url })}\n`,
+            stderr: "",
+          };
+        }
         runs.push([...argv]);
         stdins.push(init?.stdin);
         if (argv[0] === "hyoui") {
@@ -333,6 +352,7 @@ function fakeEngine(
     factsSent,
     begins,
     runs,
+    statuses,
     stdins,
     spawns,
     timers,
@@ -1720,6 +1740,34 @@ describe("the guidance", () => {
     await prompt(fake, "after compact");
     await prompt(fake, "next");
     expect(fake.appended).toEqual([GUIDANCE, GUIDANCE, GUIDANCE]);
+  });
+
+  // The agent links the person to the webui by `ccmsg_host`: the URL the
+  // daemon says the webui is opened at, in the guidance of the session's
+  // start and of each /clear.
+  test("carries the webui URL the daemon names, at the start and after /clear", async () => {
+    const url = "https://ccmsg.host.example.com";
+    const fake = await started({ webuiUrl: url });
+    await prompt(fake, "one");
+    fake.sid.value = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    await prompt(fake, "after clear");
+    await prompt(fake, "next");
+    expect(fake.appended).toEqual([guidanceText(url), guidanceText(url)]);
+    expect(guidanceText(url)).toBe(`${GUIDANCE}\nccmsg_host: ${url}`);
+    // Asked when the guidance goes in, not for every prompt.
+    expect(fake.statuses.count).toBe(2);
+  });
+
+  // No URL is made up: a daemon that names none, and one that cannot be
+  // asked, leave the line out and the guidance goes in regardless.
+  test("leaves the line out when the daemon names no URL or cannot be asked", async () => {
+    const none = await started();
+    await prompt(none, "one");
+    expect(none.appended).toEqual([GUIDANCE]);
+    const failing = await started({ webuiUrl: new Error("timed out") });
+    await prompt(failing, "one");
+    expect(failing.appended).toEqual([GUIDANCE]);
+    expect(failing.logs).toContain("ccmsg: status failed: Error: timed out");
   });
 
   test("a session with no composer (-p) gets none", async () => {

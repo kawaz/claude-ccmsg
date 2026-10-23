@@ -158,7 +158,7 @@ import {
 import { type WebhookSource } from "./webhook.ts";
 import { releaseDaemonResources } from "./daemon-shutdown.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
-import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
+import { startHttpListener, webuiUrlOf, type HttpFallback, type HttpListener } from "./http.ts";
 import {
   compileSandboxOrigin,
   createSandboxGrants,
@@ -247,6 +247,9 @@ export interface Daemon {
   lock: LockHandle;
   server: Listener | null;
   httpListeners: HttpListener[];
+  /** The URL the webui is opened at from elsewhere (http.ts webuiUrlOf), read
+   * when asked; undefined while no HTTP listener serves it. */
+  webuiUrl: () => Promise<string | undefined>;
   /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
   httpAllow: string[];
   shuttingDown: boolean;
@@ -385,6 +388,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     lock: host.lock,
     server: null,
     httpListeners: [],
+    webuiUrl: async () => undefined,
     httpAllow: host.httpAllow,
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
@@ -1630,6 +1634,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "ping": {
+      const webuiUrl = await daemon.webuiUrl();
       send(conn, {
         ok: true,
         pong: true,
@@ -1645,6 +1650,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         home: os.homedir(),
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
+        ...(webuiUrl !== undefined ? { webui_url: webuiUrl } : {}),
         network: networkState(daemon),
       });
       return;
@@ -3152,6 +3158,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     }
   }
   daemon.httpListeners = httpListeners;
+  if (httpListeners.length > 0) {
+    daemon.webuiUrl = async () => webuiUrlOf(httpAllowOrigin, await originsFile.get());
+  }
 
   // Zero-config tailscale serve origin auto-allow (DR-0004 §3): best-effort, async,
   // never delays or blocks startup. `extraOrigins`/`httpAllowOrigin` is the very Set
