@@ -77,8 +77,9 @@ export function warmExecutable(
  */
 export function writeMockBin(binPath: string, script: string): string {
   fs.writeFileSync(mockScriptPath(binPath), script);
-  // A hard link cannot cross a filesystem boundary (repo and TMPDIR are both on
-  // the system volume here, but a test may point elsewhere), and cannot replace
+  // A hard link cannot cross a filesystem boundary (on macOS the repo and TMPDIR
+  // share the system volume; a tmpfs /tmp, as Ubuntu 26.04 mounts by default, is
+  // another filesystem, and a test may point elsewhere), and cannot replace
   // an existing file. Copying instead is always correct — it only forfeits the
   // speedup — so fall back rather than fail.
   fs.rmSync(binPath, { force: true });

@@ -4,7 +4,9 @@
 // the shim is invisible. Each case below pins one channel between caller and mock.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { mockScriptPath, writeMockBin } from "../src/mock-bin.ts";
 import { perTestTmpDir } from "../src/tmp.ts";
 
@@ -126,13 +128,46 @@ for await (const line of lines) {
   // the shared shim, because that is what keeps macOS from re-evaluating a new inode
   // (see the measurements in mock-bin.ts). A copy would still pass every test above
   // while quietly restoring the multi-minute stalls, so it is asserted directly.
-  test("the mock is a hard link to the shared shim, and is executable", () => {
-    const first = writeMockBin(path.join(tempDir(), "one"), `#!/bin/sh\nexit 0\n`);
-    const second = writeMockBin(path.join(tempDir(), "two"), `#!/bin/sh\nexit 0\n`);
+  // A hard link cannot leave the shim's filesystem, though: where the temp space is
+  // on another one (a tmpfs /tmp, as Ubuntu 26.04 mounts by default) writeMockBin
+  // copies instead. Each of the two is pinned by its own test, and the one that
+  // does not apply here is skipped, so the run's output says which ran.
+  const shimPath = fileURLToPath(new URL("../src/exec-shim", import.meta.url));
+  const tmpOnShimDevice = fs.statSync(os.tmpdir()).dev === fs.statSync(shimPath).dev;
 
-    const a = fs.statSync(first);
-    expect(a.ino).toBe(fs.statSync(second).ino);
-    expect(a.mode & 0o111).not.toBe(0);
-    expect(fs.readFileSync(mockScriptPath(first), "utf8")).toBe("#!/bin/sh\nexit 0\n");
+  test.skipIf(!tmpOnShimDevice)(
+    "on the shim's filesystem, the mock is a hard link to the shared shim, and is executable",
+    () => {
+      const first = fs.statSync(writeMockBin(path.join(tempDir(), "one"), `#!/bin/sh\nexit 0\n`));
+      const second = fs.statSync(writeMockBin(path.join(tempDir(), "two"), `#!/bin/sh\nexit 0\n`));
+
+      const shim = fs.statSync(shimPath);
+      expect([first, second].map((s) => [s.dev, s.ino])).toEqual([
+        [shim.dev, shim.ino],
+        [shim.dev, shim.ino],
+      ]);
+      expect(first.mode & 0o111).not.toBe(0);
+    },
+  );
+
+  test.skipIf(tmpOnShimDevice)(
+    "on another filesystem, the mock is an executable copy of the shim",
+    () => {
+      const first = writeMockBin(path.join(tempDir(), "one"), `#!/bin/sh\nexit 0\n`);
+      const second = writeMockBin(path.join(tempDir(), "two"), `#!/bin/sh\nexit 0\n`);
+
+      const [a, b] = [fs.statSync(first), fs.statSync(second)];
+      // A copy each: one link apiece, not one file shared between the mocks.
+      expect([a.nlink, b.nlink]).toEqual([1, 1]);
+      expect(a.ino).not.toBe(b.ino);
+      expect([a.mode & 0o111, b.mode & 0o111]).toEqual([0o111, 0o111]);
+      expect(fs.readFileSync(first)).toEqual(fs.readFileSync(shimPath));
+    },
+  );
+
+  test("the script a mock runs is written beside it as given", () => {
+    const bin = writeMockBin(path.join(tempDir(), "one"), `#!/bin/sh\nexit 0\n`);
+
+    expect(fs.readFileSync(mockScriptPath(bin), "utf8")).toBe("#!/bin/sh\nexit 0\n");
   });
 });
