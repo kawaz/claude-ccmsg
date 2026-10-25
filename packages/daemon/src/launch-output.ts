@@ -10,6 +10,17 @@ import { errorText } from "@ccmsg/protocol";
  * answered with. */
 export const LAUNCH_OUTPUT_INLINE_LIMIT = 4096;
 
+/** How much of each output the daemon keeps: past this, the rest is read
+ * (so the pipe never fills) and only counted. */
+export const LAUNCH_OUTPUT_CAPTURE_LIMIT = 1024 * 1024;
+
+/** One output of the launch command as the daemon took it in: the first
+ * LAUNCH_OUTPUT_CAPTURE_LIMIT bytes, and how many bytes came in all. */
+export interface CapturedOutput {
+  readonly bytes: Uint8Array;
+  readonly total: number;
+}
+
 /** How long a launch's files are kept after they were written. */
 export const LAUNCH_OUTPUT_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -66,16 +77,18 @@ export async function pruneLaunchOutputs(dir: string, now: number, log: Log): Pr
 
 /** One launch's output streams, as the reply carries them: the text, or for
  * a stream of LAUNCH_OUTPUT_INLINE_LIMIT bytes or more, where it was written.
- * Nothing is written, not even the directory, when both streams are short. */
+ * A stream cut at LAUNCH_OUTPUT_CAPTURE_LIMIT says so at the end of its file
+ * and in the reply. Nothing is written, not even the directory, when both
+ * streams are short. */
 export async function launchOutputTexts(
   dir: string,
-  streams: { readonly stdout: Uint8Array; readonly stderr: Uint8Array },
+  streams: { readonly stdout: CapturedOutput; readonly stderr: CapturedOutput },
   now: Date,
   log: Log,
 ): Promise<{ stdout: string; stderr: string }> {
-  const long = (bytes: Uint8Array): boolean => bytes.byteLength >= LAUNCH_OUTPUT_INLINE_LIMIT;
+  const long = (output: CapturedOutput): boolean => output.total >= LAUNCH_OUTPUT_INLINE_LIMIT;
   if (!long(streams.stdout) && !long(streams.stderr)) {
-    return { stdout: utf8(streams.stdout), stderr: utf8(streams.stderr) };
+    return { stdout: utf8(streams.stdout.bytes), stderr: utf8(streams.stderr.bytes) };
   }
   await pruneLaunchOutputs(dir, now.getTime(), log);
   const launchDir = path.join(dir, launchId(now));
@@ -84,15 +97,28 @@ export async function launchOutputTexts(
   const made: Promise<void> = fs
     .mkdir(dir, { recursive: true, mode: 0o700 })
     .then(() => fs.mkdir(launchDir, { mode: 0o700 }));
-  const text = async (name: "stdout" | "stderr", bytes: Uint8Array): Promise<string> => {
-    if (!long(bytes)) return utf8(bytes);
+  const text = async (name: "stdout" | "stderr", output: CapturedOutput): Promise<string> => {
+    if (!long(output)) return utf8(output.bytes);
     const file = path.join(launchDir, name);
+    const truncated = output.total > output.bytes.byteLength;
+    const size = `output is ${String(output.total)} bytes`;
+    const kept = truncated ? `, truncated to the first ${String(output.bytes.byteLength)}` : "";
     try {
       await made;
-      await fs.writeFile(file, bytes, { mode: 0o600, flag: "wx" });
-      return `output is ${String(bytes.byteLength)} bytes, file: ${file}`;
+      const trailer = truncated
+        ? [
+            Buffer.from(
+              `\n[ccmsg: truncated: the first ${String(output.bytes.byteLength)} of ${String(output.total)} bytes]\n`,
+            ),
+          ]
+        : [];
+      await fs.writeFile(file, Buffer.concat([output.bytes, ...trailer]), {
+        mode: 0o600,
+        flag: "wx",
+      });
+      return `${size}${kept}, file: ${file}`;
     } catch (e) {
-      return `output is ${String(bytes.byteLength)} bytes, not saved: ${errorText(e)}`;
+      return `${size}${kept}, not saved: ${errorText(e)}`;
     }
   };
   const [stdout, stderr] = await Promise.all([

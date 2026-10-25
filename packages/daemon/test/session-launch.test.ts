@@ -1,9 +1,11 @@
 // Running the launch command (DR-0018 §3.5): the environment it inherits, and
 // how one run ends — its exit code (a signal as 128 + N), the timeout's
-// SIGTERM and SIGKILL, and output read while it runs and after it exits.
+// SIGTERM and SIGKILL to its process group, and output read while it runs
+// and after it exits, kept up to its limit.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { LAUNCH_OUTPUT_CAPTURE_LIMIT } from "../src/launch-output.ts";
 import { buildLaunchEnv, runLaunchCommand } from "../src/session-launch.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
@@ -38,7 +40,38 @@ async function run(
     stdin: options.stdin ?? "{}",
     deadline: options.deadline ?? new AbortController().signal,
   });
-  return { exitCode: result.exitCode, stdout: text(result.stdout), stderr: text(result.stderr) };
+  return {
+    exitCode: result.exitCode,
+    stdout: text(result.stdout.bytes),
+    stderr: text(result.stderr.bytes),
+  };
+}
+
+/** The pid a command wrote to `file`, read only when it is a pid: a blank or
+ * stray text must not reach process.kill, where 0 names the whole group. */
+async function pidIn(file: string): Promise<number | undefined> {
+  const written = (await fs.readFile(file, "utf8").catch(() => "")).trim();
+  return /^\d+$/.test(written) ? Number(written) : undefined;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `pid` is gone within 5 s: a killed process the test did not start
+ * is reaped by its new parent, which the test cannot await. */
+async function goneWithin5s(pid: number): Promise<boolean> {
+  const until = Date.now() + 5000;
+  while (alive(pid)) {
+    if (Date.now() > until) return false;
+    await Bun.sleep(20);
+  }
+  return true;
 }
 
 describe("runLaunchCommand", () => {
@@ -97,7 +130,7 @@ describe("runLaunchCommand", () => {
     expect(await running).toEqual({ exitCode: 143, stdout: "", stderr: "term-received" });
   });
 
-  // A command that ignores SIGTERM is killed FORCE_KILL_GRACE_MS later: the
+  // A command that ignores SIGTERM is killed LAUNCH_KILL_GRACE_MS later: the
   // mark shows the SIGTERM arrived, and 137 that SIGKILL ended it.
   test("a command that ignores SIGTERM is killed, and the run is 137", async () => {
     const { dir, fifo } = readyFifo();
@@ -113,24 +146,98 @@ describe("runLaunchCommand", () => {
     expect(await running).toEqual({ exitCode: 137, stdout: "", stderr: "term-ignored" });
   });
 
-  // A grandchild the command detached keeps the pipes' write ends, so EOF does
-  // not come while it lives. The run returns after the command exits, with
-  // the output so far, instead of waiting for the grandchild. The daemon does
-  // not manage the survivor (DR-0018 §2.3); the test stops it.
-  test("returns after the command exits while a detached grandchild holds the pipes", async () => {
-    const { bin, dir } = command("sleep 30 & printf '%s' $!; exit 0");
+  // A grandchild the command left running keeps the pipes' write ends, so
+  // EOF does not come while it lives. The run returns after the command
+  // exits, with the output so far, instead of waiting for the grandchild. The
+  // daemon does not manage the survivor (DR-0018 §2.3); the test stops it.
+  test("returns after the command exits while a grandchild holds the pipes", async () => {
+    const dir = tmp("ccmsg-launch-run-");
+    const pidFile = path.join(dir, "grandchild.pid");
+    const { bin } = command(`sleep 30 & printf '%s' $! > ${JSON.stringify(pidFile)}; exit 0`, dir);
     const started = Date.now();
-    const result = await run(bin, dir);
-    const elapsedMs = Date.now() - started;
     try {
+      const result = await run(bin, dir);
+      const elapsedMs = Date.now() - started;
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/^\d+$/);
       // Well under the grandchild's 30 s: the run did not wait for EOF.
       expect(elapsedMs).toBeLessThan(5000);
+      // A normal exit stops nothing the command started.
+      const grandchild = await pidIn(pidFile);
+      expect(grandchild === undefined ? false : alive(grandchild)).toBe(true);
     } finally {
-      process.kill(Number(result.stdout), "SIGKILL");
+      const grandchild = await pidIn(pidFile);
+      if (grandchild !== undefined) process.kill(grandchild, "SIGKILL");
     }
   }, 10000);
+
+  // The deadline stops the command's process group, so what the command
+  // started and left in it does not outlive the timeout holding the pipes.
+  test("the deadline stops what the command started in its group", async () => {
+    const { dir, fifo } = readyFifo();
+    const pidFile = path.join(dir, "grandchild.pid");
+    const { bin } = command(
+      `sleep 30 & printf '%s' $! > ${JSON.stringify(pidFile)}\n` +
+        `printf ready > ${JSON.stringify(fifo)}\nwait`,
+      dir,
+    );
+    const deadline = new AbortController();
+    try {
+      const running = runLaunchCommand({
+        argv: [bin],
+        cwd: dir,
+        env: buildLaunchEnv(process.env, [], []),
+        stdin: "{}",
+        deadline: deadline.signal,
+      });
+      expect(await fs.readFile(fifo, "utf8")).toBe("ready");
+      deadline.abort();
+      const result = await running;
+      expect({ exitCode: result.exitCode, timedOut: result.timedOut }).toEqual({
+        exitCode: 143,
+        timedOut: true,
+      });
+      const grandchild = await pidIn(pidFile);
+      expect(grandchild).toBeDefined();
+      expect(grandchild === undefined ? false : await goneWithin5s(grandchild)).toBe(true);
+    } finally {
+      const grandchild = await pidIn(pidFile);
+      if (grandchild !== undefined && alive(grandchild)) process.kill(grandchild, "SIGKILL");
+    }
+  }, 10000);
+
+  // A run the deadline did not touch says so: 143 of its own is not a timeout.
+  test("a command that exits 143 by itself is not timed out", async () => {
+    const { bin, dir } = command("exit 143");
+    const result = await runLaunchCommand({
+      argv: [bin],
+      cwd: dir,
+      env: {},
+      stdin: "{}",
+      deadline: new AbortController().signal,
+    });
+    expect({ exitCode: result.exitCode, timedOut: result.timedOut }).toEqual({
+      exitCode: 143,
+      timedOut: false,
+    });
+  });
+
+  // Past the capture limit the output is read on (the pipe never fills) and
+  // counted, but not kept.
+  test("output past the capture limit is counted and not kept", async () => {
+    const over = LAUNCH_OUTPUT_CAPTURE_LIMIT + 70_000;
+    const { bin, dir } = command(`head -c ${String(over)} /dev/zero | tr '\\0' a`);
+    const result = await runLaunchCommand({
+      argv: [bin],
+      cwd: dir,
+      env: buildLaunchEnv(process.env, [], []),
+      stdin: "{}",
+      deadline: new AbortController().signal,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.total).toBe(over);
+    expect(result.stdout.bytes.byteLength).toBe(LAUNCH_OUTPUT_CAPTURE_LIMIT);
+    expect(text(result.stdout.bytes)).toBe("a".repeat(LAUNCH_OUTPUT_CAPTURE_LIMIT));
+  });
 
   // A program that cannot be started has no exit code: the run throws.
   test("a program that cannot be started rejects", async () => {
@@ -218,6 +325,11 @@ describe("buildLaunchEnv: clean_env", () => {
     const base = { "A\\B": "bs-only", "A\\XYZB": "bs-then-text", AXB: "no-bs" };
     // no backslash in the key = the literal `\` in the pattern has no match
     expect(buildLaunchEnv(base, ["A\\*B"], [])).toEqual({ AXB: "no-bs" });
+  });
+
+  // Line breaks are part of a key name like any other character to `*`.
+  test("* matches across a line break in a key", () => {
+    expect(buildLaunchEnv({ "A\nB": "x", C: "y" }, ["A*B"], [])).toEqual({ C: "y" });
   });
 
   // Empty pattern list = no cleaning: the base env passes through.

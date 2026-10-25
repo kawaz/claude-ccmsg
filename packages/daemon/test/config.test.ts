@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_DIR_TREE_DEPTH, DEFAULT_LAUNCH_TIMEOUT_SECONDS } from "@ccmsg/protocol";
+import {
+  DEFAULT_DIR_TREE_DEPTH,
+  DEFAULT_LAUNCH_MAX_IN_FLIGHT,
+  DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+} from "@ccmsg/protocol";
 import {
   CONFIG_TYPES_BASENAME,
   loadConfig,
@@ -76,23 +80,36 @@ describe("loadConfig", () => {
     }
   });
 
-  /** `session_launcher` with the two required keys and `extra`. */
+  /** `session_launcher` with the two required keys and `extra`. The program
+   * is `sh`, a name every PATH the tests run with finds. */
   function launcher(extra: object = {}): object {
-    return { session_launcher: { launch_command: ["launch"], root_dirs: [dir], ...extra } };
+    return { session_launcher: { launch_command: ["sh"], root_dirs: [dir], ...extra } };
+  }
+
+  /** Where `sh` is in PATH: what a launch_command of `sh` reads as. */
+  const SH = Bun.which("sh") ?? "sh";
+
+  /** An executable file at `file`. */
+  function executable(at: string): string {
+    fs.mkdirSync(path.dirname(at), { recursive: true });
+    fs.writeFileSync(at, "#!/bin/sh\n", { mode: 0o755 });
+    return at;
   }
 
   // This is the complete accepted shape: every configured field survives while
   // root paths are normalized before they become containment boundaries.
   test("complete session_launcher parses every field", async () => {
     const root = path.join(dir, "root", "..");
+    const program = executable(path.join(dir, "bin", "launch-claude"));
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
-          launch_command: ["/opt/bin/launch-claude", "--profile", "work"],
+          launch_command: [program, "--profile", "work"],
           root_dirs: [root],
           dir_tree_depth: 3,
           timeout_seconds: 25,
+          max_in_flight: 2,
           clean_env: ["CLAUDE_*", "AI_AGENT"],
           keep_env: ["CLAUDE_CONFIG_DIR"],
         },
@@ -101,10 +118,11 @@ describe("loadConfig", () => {
 
     expect(await loaded()).toEqual({
       session_launcher: {
-        launch_command: ["/opt/bin/launch-claude", "--profile", "work"],
+        launch_command: [program, "--profile", "work"],
         root_dirs: [path.resolve(root)],
         dir_tree_depth: 3,
         timeout_seconds: 25,
+        max_in_flight: 2,
         clean_env: ["CLAUDE_*", "AI_AGENT"],
         keep_env: ["CLAUDE_CONFIG_DIR"],
       },
@@ -117,10 +135,11 @@ describe("loadConfig", () => {
     fs.writeFileSync(file, JSON.stringify(launcher()));
     expect(await loaded()).toEqual({
       session_launcher: {
-        launch_command: ["launch"],
+        launch_command: [SH],
         root_dirs: [path.resolve(dir)],
         dir_tree_depth: DEFAULT_DIR_TREE_DEPTH,
         timeout_seconds: DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+        max_in_flight: DEFAULT_LAUNCH_MAX_IN_FLIGHT,
         clean_env: [],
         keep_env: [],
       },
@@ -128,19 +147,54 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
   });
 
-  // The program is a path the daemon can find from any launch's cwd: an
-  // absolute one, a ~/ one (expanded against the daemon user's home), or a
-  // name looked up in PATH.
-  test("the program is absolute, ~/-expanded, or a bare name", async () => {
+  // The program is fixed to an absolute path when the config is read, so a
+  // launch runs what startup found: an absolute path as it is, a bare name
+  // looked up in PATH.
+  test("the program is read as an absolute path: absolute, or found in PATH", async () => {
+    const absolute = executable(path.join(dir, "bin", "launch"));
     for (const [program, read] of [
-      ["/usr/local/bin/launch", "/usr/local/bin/launch"],
-      ["~/bin/launch", path.join(os.homedir(), "bin", "launch")],
-      ["launch-claude", "launch-claude"],
+      [absolute, absolute],
+      ["sh", SH],
     ] as const) {
       fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: [program, "~/arg"] })));
       // Only the program is a path; the arguments are passed as written.
       expect((await loaded()).session_launcher?.launch_command).toEqual([read, "~/arg"]);
     }
+  });
+
+  // A ~/ program is looked for under the daemon user's home. The test makes
+  // nothing there: a name no home has shows where it was looked for.
+  test("a ~/ program is expanded against the daemon user's home", async () => {
+    const name = `ccmsg-no-such-launch-command-${String(process.pid)}`;
+    fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: [`~/${name}`] })));
+    expect(await refusal()).toEqual([
+      `config: ${file}: session_launcher.launch_command.0: ${path.join(os.homedir(), name)} is not an executable file`,
+    ]);
+  });
+
+  // A program startup cannot find would fail every launch: the daemon does
+  // not start, saying which.
+  test("a program that is not found, or not executable, does not read", async () => {
+    const plain = path.join(dir, "plain");
+    fs.writeFileSync(plain, "#!/bin/sh\n", { mode: 0o644 });
+    for (const [program, why] of [
+      [path.join(dir, "missing"), `${path.join(dir, "missing")} is not an executable file`],
+      [plain, `${plain} is not an executable file`],
+      ["ccmsg-no-such-launch-command", "ccmsg-no-such-launch-command is not found in PATH"],
+    ] as const) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: [program] })));
+      expect(await refusal()).toEqual([
+        `config: ${file}: session_launcher.launch_command.0: ${why}`,
+      ]);
+    }
+  });
+
+  // `~` alone names a directory, not a program.
+  test("a program of ~ alone does not read", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: ["~"] })));
+    expect(await refusal()).toEqual([
+      `config: ${file}: session_launcher.launch_command.0: must name a program, not ~`,
+    ]);
   });
 
   // A relative path would resolve against each launch's cwd.
@@ -154,7 +208,7 @@ describe("loadConfig", () => {
   });
 
   test("a missing, empty, or non-array launch_command does not read", async () => {
-    for (const launch_command of [undefined, [], "launch", [""], ["launch", ""], ["launch", 1]]) {
+    for (const launch_command of [undefined, [], "sh", [""], ["sh", ""], ["sh", 1]]) {
       fs.writeFileSync(
         file,
         JSON.stringify({
@@ -210,7 +264,7 @@ describe("loadConfig", () => {
         file,
         JSON.stringify({
           session_launcher: {
-            launch_command: ["launch"],
+            launch_command: ["sh"],
             ...(root_dirs === undefined ? {} : { root_dirs }),
           },
         }),
@@ -229,8 +283,9 @@ describe("loadConfig", () => {
   });
 
   // timeout_seconds is a whole number of seconds from 1 to 50: the launch
-  // tool waits 60 s, which has to hold the timeout, the kill grace and the
-  // output files. A value outside does not read rather than being replaced.
+  // tool's wait has to hold the timeout, the kill grace and the output
+  // (hooks/register.test.ts pins that). A value outside does not read rather
+  // than being replaced.
   test("timeout_seconds outside 1..50 or not whole does not read", async () => {
     for (const ok of [1, 50]) {
       fs.writeFileSync(file, JSON.stringify(launcher({ timeout_seconds: ok })));
@@ -244,8 +299,20 @@ describe("loadConfig", () => {
     }
   });
 
-  test("a dir_tree_depth that is not a positive number does not read", async () => {
-    for (const invalid of ["abc", -1, 0]) {
+  // max_in_flight is a whole number from 1 to 16.
+  test("max_in_flight outside 1..16 or not whole does not read", async () => {
+    for (const ok of [1, 16]) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ max_in_flight: ok })));
+      expect((await loaded()).session_launcher?.max_in_flight).toBe(ok);
+    }
+    for (const invalid of ["4", 0, 17, 2.5]) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ max_in_flight: invalid })));
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.max_in_flight")]);
+    }
+  });
+
+  test("a dir_tree_depth that is not a positive whole number does not read", async () => {
+    for (const invalid of ["abc", -1, 0, 1.5]) {
       fs.writeFileSync(file, JSON.stringify(launcher({ dir_tree_depth: invalid })));
       expect(await refusal()).toEqual([expect.stringContaining("session_launcher.dir_tree_depth")]);
     }
@@ -312,7 +379,7 @@ describe("loadConfig", () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          session_launcher: { launch_command: ["launch"], root_dirs: [dir] },
+          session_launcher: { launch_command: ["sh"], root_dirs: [dir] },
           terminal_gateway_url: "https://gw.example",
         }),
       );
@@ -468,7 +535,7 @@ describe("loadConfig", () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          session_launcher: { launch_command: ["launch"], root_dirs: [dir], shel: "zsh" },
+          session_launcher: { launch_command: ["sh"], root_dirs: [dir], shel: "zsh" },
         }),
       );
       expect(await refusal()).toEqual([expect.stringContaining("session_launcher.shel")]);
@@ -549,17 +616,14 @@ describe("loadConfig", () => {
         [
           "export default {",
           "  session_launcher: {",
-          "    launch_command: ['launch', `line 1",
+          "    launch_command: ['sh', `line 1",
           "line 2`],",
           "    root_dirs: [" + JSON.stringify(dir) + "],",
           "  },",
           "};",
         ].join("\n"),
       );
-      expect((await loaded()).session_launcher?.launch_command).toEqual([
-        "launch",
-        "line 1\nline 2",
-      ]);
+      expect((await loaded()).session_launcher?.launch_command).toEqual([SH, "line 1\nline 2"]);
       expect(warnings).toEqual([]);
     });
 
@@ -672,7 +736,7 @@ describe("loadConfig", () => {
           "export default {",
           "  session_launcher: {",
           "    ...launcher,",
-          "    launch_command: ['launch'],",
+          "    launch_command: ['sh'],",
           "  },",
           "};",
         ].join("\n"),

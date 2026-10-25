@@ -37,6 +37,8 @@ export function stubDaemon(fields: Partial<Daemon> = {}, base = "/nonexistent/cc
     log: new SilentLogger(paths.log),
     lock: { fd: -1, release() {} },
     httpAllow: [],
+    // No CLAUDE_CONFIG_DIR of the developer's: the stub reads no settings.
+    env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config") },
     exit() {
       throw new Error("a stub daemon has no host to end");
     },

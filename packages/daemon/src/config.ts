@@ -27,7 +27,9 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_DIR_TREE_DEPTH,
+  DEFAULT_LAUNCH_MAX_IN_FLIGHT,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+  LAUNCH_TIMEOUT_SECONDS_MAX,
   errorText,
   jsonText,
   parseWith,
@@ -80,20 +82,35 @@ const RootDirSchema = v.pipe(
   v.transform((value) => path.resolve(value)),
 );
 
-const PositiveNumberSchema = v.pipe(v.number(), v.finite(), v.gtValue(0));
 const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-empty string")));
 
-/** The program a launch runs: an absolute path, a `~/` path (expanded here),
- * or a name the daemon looks up in its PATH when it launches. A relative path
- * would resolve against each launch's cwd, so it is none of these. */
+/** The program a launch runs, fixed to an absolute path when the config is
+ * read: an absolute path, a `~/` path (expanded), or a name looked up in the
+ * daemon's PATH. A program that is not found (or not executable) there stops
+ * the daemon at startup rather than fail every launch. A relative path would
+ * resolve against each launch's cwd, so it is none of these, and `~` alone
+ * names a directory. */
 const LaunchProgramSchema = v.pipe(
   v.string("must name the program to run"),
   v.nonEmpty("must be a non-empty string"),
+  v.check((value) => value !== "~", "must name a program, not ~"),
   v.transform(expandRoot),
   v.check(
     (value) => path.isAbsolute(value) || !value.includes("/"),
     "must be an absolute path, start with ~/, or be a command name looked up in PATH",
   ),
+  v.rawTransform(({ dataset, addIssue, NEVER }) => {
+    const found = Bun.which(dataset.value, { PATH: process.env.PATH ?? "" });
+    if (found === null) {
+      addIssue({
+        message: path.isAbsolute(dataset.value)
+          ? `${dataset.value} is not an executable file`
+          : `${dataset.value} is not found in PATH`,
+      });
+      return NEVER;
+    }
+    return found;
+  }),
 );
 
 /** The launch command's argv (DR-0018 §3.1), run without a shell. */
@@ -107,12 +124,22 @@ const LaunchCommandSchema = v.tupleWithRest(
 const SessionLauncherSchema = v.strictObject({
   launch_command: LaunchCommandSchema,
   root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
-  dir_tree_depth: v.optional(PositiveNumberSchema, DEFAULT_DIR_TREE_DEPTH),
-  /** Kept within the `launch` tool's 60 s wait, with room for the kill grace
-   * and writing the output files. */
+  dir_tree_depth: v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1)),
+    DEFAULT_DIR_TREE_DEPTH,
+  ),
+  /** Kept within the `launch` tool's wait, with room for the kill grace and
+   * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
   timeout_seconds: v.optional(
-    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50)),
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+  ),
+  /** How many launches may run at once; one more is refused with
+   * `launch_busy`. Not per asker: the bound is on the processes the daemon
+   * holds. */
+  max_in_flight: v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
+    DEFAULT_LAUNCH_MAX_IN_FLIGHT,
   ),
   /** Patterns of the daemon's environment keys the launch command does not
    * inherit: `*` is any run of characters, the rest literal and

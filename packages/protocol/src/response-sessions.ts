@@ -6,6 +6,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import { LaunchEffortSchema, LaunchModelSchema } from "./launch.ts";
 import type { Output } from "./parse.ts";
 import {
   SessionErrorEntrySchema,
@@ -216,10 +217,17 @@ export const DirTreeResponseSchema = v.object({
 export type DirTreeResponse = Output<typeof DirTreeResponseSchema>;
 
 /** session_launcher_config reply — see its request doc comment. Read once
- * when the form opens; the config changes only across a daemon restart. */
+ * when the form opens; the config changes only across a daemon restart.
+ *
+ * `default_effort`: per model, the `modelSettings.<model>.effortLevel` of the
+ * `settings.json` in the daemon's own `CLAUDE_CONFIG_DIR`, read when asked.
+ * The form preselects it for a new session's effort (DR-0018 §3.9). A model
+ * with no such setting, or one outside the efforts a launch may name, is left
+ * out. */
 export const SessionLauncherConfigResponseSchema = v.object({
   ok: v.literal(true),
   root_dirs: v.array(v.string()),
+  default_effort: v.record(LaunchModelSchema, LaunchEffortSchema),
 });
 export type SessionLauncherConfigResponse = Output<typeof SessionLauncherConfigResponseSchema>;
 

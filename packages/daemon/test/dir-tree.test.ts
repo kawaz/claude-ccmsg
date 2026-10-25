@@ -14,6 +14,7 @@ function config(root: string, depth = 2): SessionLauncherConfig {
     launch_command: ["launch"],
     root_dirs: [root],
     timeout_seconds: 10,
+    max_in_flight: 4,
     dir_tree_depth: depth,
     clean_env: [],
     keep_env: [],

@@ -61,6 +61,7 @@ import {
 import { fsFind } from "./fs-find.ts";
 import { launchSession } from "./session-launch.ts";
 import { pruneLaunchOutputs } from "./launch-output.ts";
+import { defaultEfforts } from "./default-effort.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
@@ -254,6 +255,11 @@ export interface Daemon {
   /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
   httpAllow: string[];
   shuttingDown: boolean;
+  /** DaemonHost.env. */
+  env: Readonly<Record<string, string | undefined>>;
+  /** The launch commands running now (DR-0018 §3.5): `max_in_flight` bounds
+   * them, and a shutdown waits for them, each ending by its own deadline. */
+  launches: Set<Promise<unknown>>;
   /** The agents rows, read from Claude Code's state files (agents.ts). */
   agentsPoller: AgentsPoller;
   /** Sessions the agents poll has listed, keyed by sid, valued by the config
@@ -368,6 +374,9 @@ export interface DaemonHost {
   lock: LockHandle;
   /** raw CCMSG_HTTP_ALLOW entries in effect, for status/ping display. */
   httpAllow: string[];
+  /** The daemon's environment: what a launch command inherits (cleaned), and
+   * the CLAUDE_CONFIG_DIR whose settings give the form's default efforts. */
+  env: Readonly<Record<string, string | undefined>>;
   exit: () => void;
 }
 
@@ -392,6 +401,8 @@ export function createDaemon(host: DaemonHost): Daemon {
     webuiUrl: async () => undefined,
     httpAllow: host.httpAllow,
     shuttingDown: false,
+    env: host.env,
+    launches: new Set(),
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
@@ -1881,7 +1892,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
         return;
       }
-      send(conn, { ok: true, root_dirs: launcher.root_dirs });
+      send(conn, {
+        ok: true,
+        root_dirs: launcher.root_dirs,
+        default_effort: await defaultEfforts(daemon.env),
+      });
       return;
     }
 
@@ -1912,16 +1927,42 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.hello_required, "op 'session_launch' requires hello first");
         return;
       }
-      const outcome = await launchSession(
+      const launcher = daemon.config.session_launcher;
+      // A shutdown waits for the launches running; it takes no more. (With no
+      // launcher there is nothing to take: launchSession says so.)
+      if (launcher !== undefined && daemon.shuttingDown) {
+        sendErr(
+          conn,
+          ErrorCode.launch_busy,
+          "the daemon is shutting down; ask again once it is back",
+        );
+        return;
+      }
+      if (launcher !== undefined && daemon.launches.size >= launcher.max_in_flight) {
+        sendErr(
+          conn,
+          ErrorCode.launch_busy,
+          `${String(daemon.launches.size)} launches are running (max_in_flight); ask again once one ends`,
+        );
+        return;
+      }
+      const running = launchSession(
         {
-          launcher: daemon.config.session_launcher,
+          launcher,
           requester: id.role === "user" ? "user" : id.sid,
-          baseEnv: process.env,
+          baseEnv: daemon.env,
           launchesDir: daemon.paths.launches,
           log: daemon.log,
         },
         req.launch,
       );
+      daemon.launches.add(running);
+      let outcome: Awaited<typeof running>;
+      try {
+        outcome = await running;
+      } finally {
+        daemon.launches.delete(running);
+      }
       if (!outcome.ok) {
         sendErr(conn, outcome.code, outcome.msg);
         return;
@@ -2817,6 +2858,13 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   if (daemon.shuttingDown) return;
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
+  // The launches running are answered before anything stops: each ends by
+  // its own deadline (timeout_seconds, then SIGTERM), and its asker would
+  // otherwise not know whether a session was started (DR-0018 §3.5).
+  if (daemon.launches.size > 0) {
+    daemon.log.info(`graceful shutdown: waiting for ${String(daemon.launches.size)} launches`);
+    await Promise.allSettled(daemon.launches);
+  }
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.translator.stop();
@@ -3051,6 +3099,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     log,
     lock,
     httpAllow,
+    env: process.env,
     exit: () => process.exit(0),
   });
 

@@ -185,9 +185,10 @@ export const SessionLaunchRequestSchema = v.object({
 });
 export type SessionLaunchRequest = Output<typeof SessionLaunchRequestSchema>;
 
-/** What the webui's launch form needs from the config before anything is
- * picked: `root_dirs`, the roots of its cwd tree (DR-0018 §3.4, user role).
- * The models and efforts come from the protocol's picklists, not from here.
+/** What the webui's launch form needs before anything is picked: `root_dirs`,
+ * the roots of its cwd tree, and `default_effort`, the effort to preselect for
+ * each model (DR-0018 §3.4, user role). The models and efforts offered come
+ * from the protocol's picklists, not from here.
  * `launcher_not_configured` when there is no `session_launcher`, as for the
  * launch itself. */
 export const SessionLauncherConfigRequestSchema = v.object({

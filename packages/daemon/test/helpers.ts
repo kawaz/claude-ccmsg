@@ -76,6 +76,9 @@ export function spawnDaemonProc(
       CCMSG_STATE_DIR: stateDir,
       CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
+      // A Claude config dir of the test's: the daemon reads its settings.json
+      // (session_launcher_config's default efforts), never the developer's.
+      CLAUDE_CONFIG_DIR: path.join(dataDir, "claude-config"),
       CCMSG_HTTP_BIND: "off",
       // No route-monitor child and no api-error folds per test daemon; tests
       // that exercise the wake drive createNetworkWatch directly.
@@ -198,9 +201,11 @@ export interface InProcessDaemon {
 }
 
 /** `config`, when given, is written as the daemon's config.json and read the
- * way a daemon reads it at startup. */
+ * way a daemon reads it at startup. The daemon's environment is this
+ * process's, with CLAUDE_CONFIG_DIR an empty dir of the test's (so no
+ * developer's settings are read), and `env` over it. */
 export async function startInProcessDaemon(
-  options: { config?: CcmsgConfig } = {},
+  options: { config?: CcmsgConfig; env?: Record<string, string> } = {},
 ): Promise<InProcessDaemon> {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-t-"));
   const dataDir = path.join(base, "d");
@@ -224,6 +229,7 @@ export async function startInProcessDaemon(
     log,
     lock: { fd: -1, release() {} },
     httpAllow: [],
+    env: { ...process.env, CLAUDE_CONFIG_DIR: path.join(base, "claude-config"), ...options.env },
     // The test process is the host: a shutdown releases the daemon and leaves
     // the process to the test runner.
     exit() {},

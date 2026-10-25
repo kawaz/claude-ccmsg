@@ -8,8 +8,8 @@ export const DIRECT_ADDRESS_PREFIX = "ccmsg:";
 
 /** A session id as it may become part of a socket name: a separator in it
  * would name a file outside the directory. */
-const SID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function isSessionIdShape(sid: string): boolean {
-  return SID_SHAPE.test(sid);
+  return SESSION_ID_SHAPE.test(sid);
 }

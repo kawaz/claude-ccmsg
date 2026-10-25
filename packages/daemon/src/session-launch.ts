@@ -9,65 +9,74 @@ import * as os from "node:os";
 import {
   ErrorCode,
   errorText,
+  LAUNCH_KILL_GRACE_MS,
+  LAUNCH_PIPE_DRAIN_GRACE_MS,
+  launchMakesSession,
   type LaunchCommandInput,
   type LaunchInput,
   type SessionLaunchResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
-import { launchOutputTexts } from "./launch-output.ts";
-
-/** After the timeout's SIGTERM, how long the command has before SIGKILL. */
-export const FORCE_KILL_GRACE_MS = 500;
-
-/** After the command exits, how long to wait for its stdout / stderr to reach
- * EOF. A grandchild the command detached can hold the pipes' write ends, and
- * then EOF does not come while it lives; the reply carries what arrived by
- * then. On an ordinary exit EOF comes first and this adds nothing. */
-export const PIPE_DRAIN_GRACE_MS = 500;
+import {
+  type CapturedOutput,
+  LAUNCH_OUTPUT_CAPTURE_LIMIT,
+  launchOutputTexts,
+} from "./launch-output.ts";
 
 /** Collect a pipe from the moment the child starts, so a full pipe never
- * stops it. `finish` waits for EOF up to `graceMs`, then stops reading and
- * returns the bytes that arrived. */
+ * stops it. The first LAUNCH_OUTPUT_CAPTURE_LIMIT bytes are kept and the rest
+ * only counted. `finish` waits for EOF up to `graceMs`, then stops reading and
+ * returns what arrived. */
 function collectStream(stream: ReadableStream<Uint8Array>): {
-  finish: (graceMs: number) => Promise<Uint8Array>;
+  finish: (graceMs: number) => Promise<CapturedOutput>;
 } {
   const chunks: Uint8Array[] = [];
+  let kept = 0;
+  let total = 0;
   const reader = stream.getReader();
+  // A read that fails ends the collection with what arrived; the catch is
+  // here, where the promise is made, so the failure is never unhandled.
   const drained = (async () => {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
+      total += value.byteLength;
+      const room = LAUNCH_OUTPUT_CAPTURE_LIMIT - kept;
+      if (room > 0) {
+        const part = value.byteLength <= room ? value : value.subarray(0, room);
+        chunks.push(part);
+        kept += part.byteLength;
+      }
     }
-  })();
+  })().catch(() => {});
   return {
-    finish: async (graceMs: number): Promise<Uint8Array> => {
+    finish: async (graceMs: number): Promise<CapturedOutput> => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        drained.catch(() => {}),
+        drained,
         new Promise((resolve) => {
           timer = setTimeout(resolve, graceMs);
         }),
       ]);
       clearTimeout(timer);
       await reader.cancel().catch(() => {});
-      await drained.catch(() => {});
-      return Buffer.concat(chunks);
+      await drained;
+      return { bytes: Buffer.concat(chunks), total };
     },
   };
 }
 
 /** Compile one clean_env / keep_env pattern into an anchored RegExp: every
  * regex metacharacter is escaped first so only `*` carries meaning (any
- * substring of the key name), then anchored so a pattern without `*` is an
- * exact, case-sensitive key match. The `\*` → `.*` rewrite cannot collide
- * with an escaped literal backslash: escaping maps a source `\` to `\\` and a
- * source `*` to `\*`, so every `\*` digram in the escaped text (scanning
- * left-to-right in non-overlapping steps, exactly how replaceAll matches)
- * comes from a source `*`. */
+ * substring of the key name, line breaks included: the `s` flag), then
+ * anchored so a pattern without `*` is an exact, case-sensitive key match.
+ * The `\*` → `.*` rewrite cannot collide with an escaped literal backslash:
+ * escaping maps a source `\` to `\\` and a source `*` to `\*`, so every `\*`
+ * digram in the escaped text (scanning left-to-right in non-overlapping
+ * steps, exactly how replaceAll matches) comes from a source `*`. */
 function envPatternToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
+  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`, "s");
 }
 
 /** The launch command's environment: `baseEnv` without the keys a clean_env
@@ -93,8 +102,12 @@ export function buildLaunchEnv(
 export interface LaunchCommandRun {
   /** The exit code, or `128 + <signal number>` for a signal. */
   exitCode: number;
-  stdout: Uint8Array;
-  stderr: Uint8Array;
+  /** Whether the deadline stopped it (SIGTERM, and SIGKILL if it outlived the
+   * grace). An exit code of 143 alone cannot say: the command may exit 143
+   * itself. */
+  timedOut: boolean;
+  stdout: CapturedOutput;
+  stderr: CapturedOutput;
 }
 
 export interface LaunchCommandSpawn {
@@ -102,10 +115,21 @@ export interface LaunchCommandSpawn {
   cwd: string;
   env: Record<string, string>;
   stdin: string;
-  /** Once aborted, SIGTERM, and SIGKILL FORCE_KILL_GRACE_MS later if the
-   * command is still alive. The daemon's is `AbortSignal.timeout` of
-   * timeout_seconds. */
+  /** Once aborted, SIGTERM to the command's process group, SIGKILL to it
+   * LAUNCH_KILL_GRACE_MS later, and LAUNCH_KILL_GRACE_MS more to see the
+   * command exit. The daemon's is `AbortSignal.timeout` of timeout_seconds. */
   deadline: AbortSignal;
+}
+
+/** Send `signal` to the command's process group: the command and what it
+ * started without leaving the group, which the command does not outlive
+ * holding the pipes. A group that is already gone is nothing to stop. */
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // ESRCH: every member has exited.
+  }
 }
 
 /** Run the launch command once and wait for it to end. Throws only when the
@@ -120,44 +144,55 @@ export async function runLaunchCommand(spawn: LaunchCommandSpawn): Promise<Launc
     stdin: new Blob([spawn.stdin]),
     stdout: "pipe",
     stderr: "pipe",
+    // Its own process group (setsid), so the deadline stops what it started
+    // along with it.
+    detached: true,
   });
   const stdout = collectStream(proc.stdout);
   const stderr = collectStream(proc.stderr);
-  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  /** Settles LAUNCH_KILL_GRACE_MS after SIGKILL: the command did not exit
+   * even then, and is answered as killed. */
+  let gaveUp: (() => void) | undefined;
+  const givenUp = new Promise<"gave-up">((resolve) => {
+    gaveUp = () => resolve("gave-up");
+  });
   const terminate = (): void => {
-    proc.kill("SIGTERM");
-    forceKillTimer = setTimeout(() => {
-      if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-    }, FORCE_KILL_GRACE_MS);
+    timedOut = true;
+    signalGroup(proc.pid, "SIGTERM");
+    timers.push(
+      setTimeout(() => {
+        signalGroup(proc.pid, "SIGKILL");
+        timers.push(setTimeout(() => gaveUp?.(), LAUNCH_KILL_GRACE_MS));
+      }, LAUNCH_KILL_GRACE_MS),
+    );
   };
   if (spawn.deadline.aborted) terminate();
   else spawn.deadline.addEventListener("abort", terminate, { once: true });
   try {
-    const code = await proc.exited;
+    const ended = await Promise.race([proc.exited, givenUp]);
     spawn.deadline.removeEventListener("abort", terminate);
-    clearTimeout(forceKillTimer);
+    for (const timer of timers) clearTimeout(timer);
+    // Stopped by the deadline: what the command started in its group goes
+    // with it, even a process that outlived the SIGTERM.
+    if (timedOut) signalGroup(proc.pid, "SIGKILL");
     const [out, err] = await Promise.all([
-      stdout.finish(PIPE_DRAIN_GRACE_MS),
-      stderr.finish(PIPE_DRAIN_GRACE_MS),
+      stdout.finish(LAUNCH_PIPE_DRAIN_GRACE_MS),
+      stderr.finish(LAUNCH_PIPE_DRAIN_GRACE_MS),
     ]);
     const signal = proc.signalCode;
-    return {
-      exitCode: signal === null ? code : 128 + os.constants.signals[signal],
-      stdout: out,
-      stderr: err,
-    };
+    const exitCode =
+      ended === "gave-up"
+        ? 128 + os.constants.signals.SIGKILL
+        : signal === null
+          ? ended
+          : 128 + os.constants.signals[signal];
+    return { exitCode, timedOut, stdout: out, stderr: err };
   } finally {
     spawn.deadline.removeEventListener("abort", terminate);
-    clearTimeout(forceKillTimer);
+    for (const timer of timers) clearTimeout(timer);
   }
-}
-
-/** The program `argv[0]` names, as spawn is given it: a path as written, a
- * bare name looked up in the daemon's PATH. Undefined when the name is not
- * found there. */
-function resolveProgram(program: string, daemonPath: string | undefined): string | undefined {
-  if (program.includes("/")) return program;
-  return Bun.which(program, { PATH: daemonPath ?? "" }) ?? undefined;
 }
 
 /** `dir` resolved to its realpath, or undefined when it is not an existing
@@ -171,28 +206,10 @@ async function realDirectory(dir: string): Promise<string | undefined> {
   }
 }
 
-/** The launch as the launch command reads it: `cwd` the realpath, and on
- * `new` / `fork` the new session's id. */
-function commandInputOf(
-  launch: LaunchInput,
-  cwd: string,
-): { input: LaunchCommandInput; sessionId?: string } {
-  switch (launch.type) {
-    case "new":
-    case "fork": {
-      const sessionId = crypto.randomUUID();
-      return { input: { ...launch, cwd, session_id: sessionId }, sessionId };
-    }
-    case "continue":
-    case "resume":
-      return { input: { ...launch, cwd } };
-  }
-}
-
 export interface SessionLaunchDeps {
   /** `session_launcher` of the config; undefined when there is none. */
   launcher: SessionLauncherConfig | undefined;
-  /** Who asked, for the log line: `user`, or the asking session's sid. */
+  /** Who asked: `user`, or the asking session's sid. */
   requester: string;
   /** The daemon's environment, which the launch command inherits cleaned. */
   baseEnv: Readonly<Record<string, string | undefined>>;
@@ -205,8 +222,26 @@ export type SessionLaunchOutcome =
   | { ok: true; response: SessionLaunchResponse }
   | { ok: false; code: ErrorCode; msg: string };
 
+/** The log line's fields for a launch: what it asked for, never the prompt's
+ * text (its length only). Text that comes from the asker (`cwd`) is written
+ * as a JSON string, so it cannot pose as another field of the line. */
+function logFieldsOf(input: LaunchCommandInput): string {
+  return [
+    `by=${input.requested_by}`,
+    `cwd=${JSON.stringify(input.cwd)}`,
+    ...(input.continue === true ? ["continue=true"] : []),
+    ...(input.resume !== undefined ? [`resume=${input.resume}`] : []),
+    ...(input.fork_session === true ? ["fork_session=true"] : []),
+    ...(input.resume_session_at !== undefined
+      ? [`resume_session_at=${input.resume_session_at}`]
+      : []),
+    ...(input.session_id !== undefined ? [`session_id=${input.session_id}`] : []),
+    ...(input.prompt !== undefined ? [`prompt_bytes=${Buffer.byteLength(input.prompt)}`] : []),
+  ].join(" ");
+}
+
 /** One launch, DR-0018 §3.5 steps 1 and 3–10 (step 2, reading the launch, is
- * the request schema's). */
+ * the request schema's; the in-flight bound is the caller's). */
 export async function launchSession(
   deps: SessionLaunchDeps,
   launch: LaunchInput,
@@ -229,41 +264,39 @@ export async function launchSession(
     };
   }
 
-  const { input, sessionId } = commandInputOf(launch, cwd);
-  const logFields = [
-    `by=${deps.requester}`,
-    `type=${launch.type}`,
-    `cwd=${cwd}`,
-    ...("resume_session_id" in launch ? [`resume_session_id=${launch.resume_session_id}`] : []),
-    ...(sessionId !== undefined ? [`session_id=${sessionId}`] : []),
-    ...(launch.prompt !== undefined ? [`prompt_bytes=${Buffer.byteLength(launch.prompt)}`] : []),
-  ].join(" ");
-
-  const unavailable = (why: string): SessionLaunchOutcome => {
-    const msg = `the launch command could not be started: ${why}`;
-    log.warn(`session_launch: ${logFields} ${ErrorCode.launch_command_unavailable}: ${msg}`);
-    return { ok: false, code: ErrorCode.launch_command_unavailable, msg };
+  const sessionId = launchMakesSession(launch) ? crypto.randomUUID() : undefined;
+  const input: LaunchCommandInput = {
+    ...launch,
+    cwd,
+    ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+    requested_by: deps.requester,
   };
-  const [program, ...args] = launcher.launch_command;
-  const resolved = resolveProgram(program, deps.baseEnv.PATH);
-  if (resolved === undefined) return unavailable(`${program} is not found in PATH`);
+  const logFields = logFieldsOf(input);
+
+  // launch_command[0] is an absolute path, fixed when the config was read.
+  const [program] = launcher.launch_command;
   let run: LaunchCommandRun;
   try {
     run = await runLaunchCommand({
-      argv: [resolved, ...args],
+      argv: launcher.launch_command,
       cwd,
       env: buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
       stdin: JSON.stringify(input),
       deadline: AbortSignal.timeout(launcher.timeout_seconds * 1000),
     });
   } catch (e) {
-    return unavailable(errorText(e));
+    const msg = `the launch command could not be started: ${program} in ${cwd}: ${errorText(e)}`;
+    log.warn(
+      `session_launch: ${logFields} ${ErrorCode.launch_command_unavailable}: ${JSON.stringify(msg)}`,
+    );
+    return { ok: false, code: ErrorCode.launch_command_unavailable, msg };
   }
 
   const texts = await launchOutputTexts(deps.launchesDir, run, new Date(), log);
   log.info(
     `session_launch: ${logFields} exit_code=${String(run.exitCode)}` +
-      ` stdout_bytes=${String(run.stdout.byteLength)} stderr_bytes=${String(run.stderr.byteLength)}`,
+      (run.timedOut ? " timed_out=true" : "") +
+      ` stdout_bytes=${String(run.stdout.total)} stderr_bytes=${String(run.stderr.total)}`,
   );
   return {
     ok: true,

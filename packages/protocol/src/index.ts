@@ -64,6 +64,7 @@ export const FS_READ_MAX_BYTES = 512 * 1024;
 /** DR-0018 §3.1 defaults the config schema gives an absent field. */
 export const DEFAULT_DIR_TREE_DEPTH = 2;
 export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
+export const DEFAULT_LAUNCH_MAX_IN_FLIGHT = 4;
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.
@@ -219,6 +220,9 @@ export const ErrorCode = {
   // session_launch: the launch command could not be started (not found, not
   // executable). No exit code exists, so the reply cannot take its shape.
   launch_command_unavailable: "launch_command_unavailable",
+  // session_launch: `max_in_flight` launches are already running, or the
+  // daemon is shutting down. Nothing was run; the caller may ask again.
+  launch_busy: "launch_busy",
   // DR-0023 host translation: the daemon is not running on macOS, the helper
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",

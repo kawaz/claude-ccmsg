@@ -307,7 +307,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   sidecar_hello: [{ ok: true }],
   session_facts: [{ ok: true }],
   session_env: [{ ok: true, pid: 42, env: { PATH: "/bin", HOME: "/h" } }],
-  session_launcher_config: [{ ok: true, root_dirs: ["/w"] }],
+  session_launcher_config: [
+    { ok: true, root_dirs: ["/w"], default_effort: {} },
+    { ok: true, root_dirs: ["/w"], default_effort: { fable: "high", haiku: "low" } },
+  ],
   llm_usage: [
     {
       ok: true,

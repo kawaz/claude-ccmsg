@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  type CapturedOutput,
   LAUNCH_OUTPUT_INLINE_LIMIT,
   LAUNCH_OUTPUT_LIFETIME_MS,
   launchId,
@@ -15,7 +16,11 @@ import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const tmp = perTestTmpDir();
 const NOW = Date.UTC(2026, 9, 25, 12, 0, 0);
-const bytes = (n: number, c = "a"): Uint8Array => Buffer.from(c.repeat(n));
+/** An output taken in whole: `n` times `c`. */
+const whole = (n: number, c = "a"): CapturedOutput => {
+  const bytes = Buffer.from(c.repeat(n));
+  return { bytes, total: bytes.byteLength };
+};
 
 function quietLog(): { warn(msg: string): void; lines: string[] } {
   const lines: string[] = [];
@@ -62,7 +67,7 @@ describe("launchOutputTexts", () => {
     const dir = path.join(tmp("ccmsg-launches-"), "launches");
     const texts = await launchOutputTexts(
       dir,
-      { stdout: bytes(LAUNCH_OUTPUT_INLINE_LIMIT - 1), stderr: Buffer.from("e") },
+      { stdout: whole(LAUNCH_OUTPUT_INLINE_LIMIT - 1), stderr: whole(1, "e") },
       new Date(NOW),
       quietLog(),
     );
@@ -76,7 +81,7 @@ describe("launchOutputTexts", () => {
     const dir = path.join(tmp("ccmsg-launches-"), "launches");
     const texts = await launchOutputTexts(
       dir,
-      { stdout: Buffer.from("o"), stderr: bytes(LAUNCH_OUTPUT_INLINE_LIMIT, "é") },
+      { stdout: whole(1, "o"), stderr: whole(LAUNCH_OUTPUT_INLINE_LIMIT, "é") },
       new Date(NOW),
       quietLog(),
     );
@@ -100,7 +105,7 @@ describe("launchOutputTexts", () => {
     fs.mkdirSync(path.join(dir, old));
     await launchOutputTexts(
       dir,
-      { stdout: bytes(LAUNCH_OUTPUT_INLINE_LIMIT), stderr: Buffer.from("") },
+      { stdout: whole(LAUNCH_OUTPUT_INLINE_LIMIT), stderr: whole(0) },
       new Date(NOW),
       quietLog(),
     );
@@ -117,7 +122,7 @@ describe("launchOutputTexts", () => {
     fs.writeFileSync(dir, "");
     const texts = await launchOutputTexts(
       dir,
-      { stdout: bytes(LAUNCH_OUTPUT_INLINE_LIMIT), stderr: Buffer.from("e") },
+      { stdout: whole(LAUNCH_OUTPUT_INLINE_LIMIT), stderr: whole(1, "e") },
       new Date(NOW),
       quietLog(),
     );
@@ -125,5 +130,28 @@ describe("launchOutputTexts", () => {
       `output is ${String(LAUNCH_OUTPUT_INLINE_LIMIT)} bytes, not saved: `,
     );
     expect(texts.stderr).toBe("e");
+  });
+
+  // Output past the capture limit was cut when it was taken in: the file ends
+  // by saying so, and so does the reply.
+  test("a cut output says so at the end of its file and in the reply", async () => {
+    const dir = path.join(tmp("ccmsg-launches-"), "launches");
+    const kept = Buffer.from("k".repeat(LAUNCH_OUTPUT_INLINE_LIMIT));
+    const total = LAUNCH_OUTPUT_INLINE_LIMIT * 3;
+    const texts = await launchOutputTexts(
+      dir,
+      { stdout: { bytes: kept, total }, stderr: whole(0) },
+      new Date(NOW),
+      quietLog(),
+    );
+    const [launch] = fs.readdirSync(dir);
+    if (launch === undefined) throw new Error("no launch dir");
+    const file = path.join(dir, launch, "stdout");
+    expect(texts.stdout).toBe(
+      `output is ${String(total)} bytes, truncated to the first ${String(kept.byteLength)}, file: ${file}`,
+    );
+    expect(fs.readFileSync(file, "utf8")).toBe(
+      `${"k".repeat(LAUNCH_OUTPUT_INLINE_LIMIT)}\n[ccmsg: truncated: the first ${String(kept.byteLength)} of ${String(total)} bytes]\n`,
+    );
   });
 });

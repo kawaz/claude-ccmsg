@@ -1,6 +1,7 @@
 // session_launch and its sibling ops over the wire (DR-0018 §3.4, §3.5, §3.8):
 // what the launch command reads on standard input, what the reply carries,
-// who may launch, and the daemon.log line each launch leaves.
+// who may launch, how many may run at once, what a shutdown does to the ones
+// running, and the daemon.log line each launch leaves.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -27,6 +28,7 @@ import {
   type InProcessDaemon,
   type TestClient,
 } from "./helpers.ts";
+import { shutdownDaemon } from "../src/server.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
@@ -56,8 +58,9 @@ function launcherConfig(
 async function withDaemon(
   config: CcmsgConfig | undefined,
   run: (ctx: InProcessDaemon) => Promise<void>,
+  env: Record<string, string> = {},
 ): Promise<void> {
-  const ctx = await startInProcessDaemon(config === undefined ? {} : { config });
+  const ctx = await startInProcessDaemon(config === undefined ? { env } : { config, env });
   try {
     await run(ctx);
   } finally {
@@ -78,6 +81,35 @@ async function launch(client: TestClient, input: LaunchInput): Promise<SessionLa
   return client.requestOk({ op: "session_launch", launch: input });
 }
 
+/** A FIFO the launch command blocks on until the test writes a line to it,
+ * so the test, not a race, decides when the command ends. */
+function gate(dir: string, name = "gate"): string {
+  const fifo = path.join(dir, name);
+  expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+  return fifo;
+}
+
+/** A launch command that writes its stdin to `<dir>/started-<n>` once it is
+ * running, then waits on `gateFifo` before echoing its stdin. */
+function gatedCommand(dir: string, gateFifo: string): string {
+  return writeMockBin(
+    path.join(dir, "gated"),
+    `#!/bin/sh\ninput=$(cat)\nprintf '%s' "$input" > "$(mktemp ${JSON.stringify(path.join(dir, "started-XXXXXX"))})"\n` +
+      `read line < ${JSON.stringify(gateFifo)}\nprintf '%s' "$input"\n`,
+  );
+}
+
+/** How many gated commands have started, once `n` have: a deadline-bound
+ * look at the files they wrote (the commands are other processes). */
+async function startedCount(dir: string, n: number): Promise<number> {
+  const until = Date.now() + 5000;
+  for (;;) {
+    const count = fs.readdirSync(dir).filter((name) => name.startsWith("started-")).length;
+    if (count >= n || Date.now() > until) return count;
+    await Bun.sleep(20);
+  }
+}
+
 /** The daemon.log lines of the in-process daemon that record launches. */
 function launchLogLines(ctx: InProcessDaemon): string[] {
   return fs
@@ -87,17 +119,16 @@ function launchLogLines(ctx: InProcessDaemon): string[] {
 }
 
 describe("session_launch: what the launch command reads", () => {
-  // `new` gets the id the daemon chose, and the reply returns that id once
-  // the command exits 0. The cwd the command runs in, and the one it reads,
-  // is the realpath of what was asked (here through a symlink).
-  test("new carries the new session's id and a realpath cwd", async () => {
+  // A new session gets the id the daemon chose, and the reply returns that id
+  // once the command exits 0. The cwd the command runs in, and the one it
+  // reads, is the realpath of what was asked (here through a symlink).
+  test("a new session carries its id, a realpath cwd and who asked", async () => {
     const dir = tmp("ccmsg-launch-");
     const real = fs.realpathSync(dir);
     fs.symlinkSync(real, path.join(real, "link"));
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await userConn(ctx);
       const reply = await launch(client, {
-        type: "new",
         cwd: path.join(dir, "link"),
         model: "opus",
         effort: "high",
@@ -109,65 +140,81 @@ describe("session_launch: what the launch command reads", () => {
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
       expect(commandInput(reply)).toEqual({
-        type: "new",
         cwd: real,
         model: "opus",
         effort: "high",
         name: "worker",
         prompt: "do the work",
         session_id: reply.session_id ?? "",
+        requested_by: "user",
       });
       expect(reply.stderr).toBe(`${real}\n`);
     });
   });
 
-  test("fork carries the new session's id beside the session it copies", async () => {
+  // The command reads one JSON text with no line break after it
+  // (launch-command.md): a reader that keeps the last byte sees `}`.
+  test("standard input is the JSON text with no trailing line break", async () => {
+    const dir = tmp("ccmsg-launch-");
+    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+      const client = await userConn(ctx);
+      const reply = await launch(client, { cwd: dir, continue: true, prompt: "ends with\n" });
+      expect(reply.stdout).toBe(
+        JSON.stringify({
+          cwd: fs.realpathSync(dir),
+          continue: true,
+          prompt: "ends with\n",
+          requested_by: "user",
+        }),
+      );
+      expect(reply.stdout.endsWith("}")).toBe(true);
+    });
+  });
+
+  test("a fork carries the new session's id beside the session it copies", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await userConn(ctx);
       const reply = await launch(client, {
-        type: "fork",
         cwd: dir,
-        resume_session_id: RESUME_SID,
-        resume_at: RECORD_UUID,
+        resume: RESUME_SID,
+        fork_session: true,
+        resume_session_at: RECORD_UUID,
       });
       expect(reply.session_id).toBeDefined();
       expect(reply.session_id).not.toBe(RESUME_SID);
       expect(commandInput(reply)).toEqual({
-        type: "fork",
         cwd: fs.realpathSync(dir),
-        resume_session_id: RESUME_SID,
-        resume_at: RECORD_UUID,
+        resume: RESUME_SID,
+        fork_session: true,
+        resume_session_at: RECORD_UUID,
         session_id: reply.session_id ?? "",
+        requested_by: "user",
       });
     });
   });
 
-  // continue and resume start no new id: the reply has none, and the command
-  // reads none (claude refuses --session-id on a resume that does not fork).
-  test("continue and resume carry no session id, in or out", async () => {
+  // A continue or resume that does not fork starts no new id: the reply has
+  // none, and the command reads none (claude refuses --session-id there).
+  test("a continue or resume that does not fork carries no session id, in or out", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const cont = await launch(client, { type: "continue", cwd: dir, model: "sonnet" });
+      const cont = await launch(client, { cwd: dir, continue: true, model: "sonnet" });
       expect(cont.session_id).toBeUndefined();
       expect(commandInput(cont)).toEqual({
-        type: "continue",
         cwd: fs.realpathSync(dir),
+        continue: true,
         model: "sonnet",
+        requested_by: "user",
       });
-      const resume = await launch(client, {
-        type: "resume",
-        cwd: dir,
-        resume_session_id: RESUME_SID,
-        prompt: "go on",
-      });
+      const resume = await launch(client, { cwd: dir, resume: RESUME_SID, prompt: "go on" });
       expect(resume.session_id).toBeUndefined();
       expect(commandInput(resume)).toEqual({
-        type: "resume",
         cwd: fs.realpathSync(dir),
-        resume_session_id: RESUME_SID,
+        resume: RESUME_SID,
         prompt: "go on",
+        requested_by: "user",
       });
     });
   });
@@ -178,10 +225,10 @@ describe("session_launch: what the launch command reads", () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir, 3)], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const reply = await launch(client, { type: "new", cwd: dir, model: "haiku", effort: "low" });
+      const reply = await launch(client, { cwd: dir, model: "haiku", effort: "low" });
       expect(reply.exit_code).toBe(3);
       expect(reply.session_id).toBeUndefined();
-      expect(commandInput(reply)).toMatchObject({ type: "new", model: "haiku" });
+      expect(commandInput(reply)).toMatchObject({ model: "haiku" });
     });
   });
 
@@ -192,21 +239,69 @@ describe("session_launch: what the launch command reads", () => {
     const bin = writeMockBin(path.join(dir, "args"), `#!/bin/sh\nprintf '[%s]' "$@"\n`);
     await withDaemon(launcherConfig([bin, "--flag", "two words"], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const reply = await launch(client, { type: "continue", cwd: dir });
+      const reply = await launch(client, { cwd: dir, continue: true });
       expect(reply.stdout).toBe("[--flag][two words]");
     });
   });
 });
 
 describe("session_launch: how the run ends", () => {
-  // timeout_seconds sends SIGTERM; a command ended by it answers 143.
-  test("a command past timeout_seconds is ended and answers 143", async () => {
+  // timeout_seconds sends SIGTERM; a command ended by it answers 143, and the
+  // log line says the deadline did it.
+  test("a command past timeout_seconds is ended, answers 143, and is logged timed_out", async () => {
     const dir = tmp("ccmsg-launch-");
     const bin = writeMockBin(path.join(dir, "slow"), "#!/bin/sh\nexec sleep 30\n");
     await withDaemon(launcherConfig([bin], dir, { timeout_seconds: 1 }), async (ctx) => {
       const client = await userConn(ctx);
-      const reply = await launch(client, { type: "new", cwd: dir, model: "opus", effort: "low" });
+      const reply = await launch(client, { cwd: dir, model: "opus", effort: "low" });
       expect(reply).toEqual({ ok: true, exit_code: 143, stdout: "", stderr: "" });
+      expect(launchLogLines(ctx)[0]).toContain(" exit_code=143 timed_out=true ");
+    });
+  });
+
+  // A command that ignores the SIGTERM is killed LAUNCH_KILL_GRACE_MS later;
+  // the reply is SIGKILL's 137, with what it printed before.
+  test("a command that ignores the timeout's SIGTERM answers 137", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const bin = writeMockBin(
+      path.join(dir, "stubborn"),
+      // No child to wait on: the SIGTERM to the group would end it, and the
+      // shell would report that on stderr.
+      "#!/bin/sh\ntrap 'printf term-ignored >&2' TERM\nprintf started\nwhile :; do :; done\n",
+    );
+    await withDaemon(launcherConfig([bin], dir, { timeout_seconds: 1 }), async (ctx) => {
+      const client = await userConn(ctx);
+      const reply = await launch(client, { cwd: dir, continue: true });
+      expect(reply).toEqual({
+        ok: true,
+        exit_code: 137,
+        stdout: "started",
+        stderr: "term-ignored",
+      });
+    });
+  });
+
+  // A command that leaves a child holding the pipes is answered
+  // LAUNCH_PIPE_DRAIN_GRACE_MS after it exits, with what arrived by then: the
+  // reply does not wait for the child.
+  test("a child left holding the pipes does not hold back the reply", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const pidFile = path.join(dir, "child.pid");
+    const bin = writeMockBin(
+      path.join(dir, "leaves-child"),
+      `#!/bin/sh\nprintf before\nsleep 30 &\nprintf '%s' $! > ${JSON.stringify(pidFile)}\nexit 0\n`,
+    );
+    await withDaemon(launcherConfig([bin], dir), async (ctx) => {
+      const client = await userConn(ctx);
+      const started = Date.now();
+      try {
+        const reply = await launch(client, { cwd: dir, continue: true });
+        expect(reply).toEqual({ ok: true, exit_code: 0, stdout: "before", stderr: "" });
+        expect(Date.now() - started).toBeLessThan(5000);
+      } finally {
+        const written = fs.existsSync(pidFile) ? fs.readFileSync(pidFile, "utf8").trim() : "";
+        if (/^\d+$/.test(written)) process.kill(Number(written), "SIGKILL");
+      }
     });
   });
 
@@ -220,7 +315,7 @@ describe("session_launch: how the run ends", () => {
     );
     await withDaemon(launcherConfig([bin], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const reply = await launch(client, { type: "continue", cwd: dir });
+      const reply = await launch(client, { cwd: dir, continue: true });
       const launches = ctx.daemon.paths.launches;
       const [id] = fs.readdirSync(launches);
       if (id === undefined) throw new Error("no launch dir");
@@ -238,7 +333,7 @@ describe("session_launch: how the run ends", () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await userConn(ctx);
-      await launch(client, { type: "continue", cwd: dir });
+      await launch(client, { cwd: dir, continue: true });
       expect(fs.existsSync(ctx.daemon.paths.launches)).toBe(false);
     });
   });
@@ -252,26 +347,18 @@ describe("session_launch: how the run ends", () => {
       '#!/bin/sh\nprintf "kept=%s cleaned=%s other=%s" "${CCMSG_TEST_LE_KEEP-absent}" ' +
         '"${CCMSG_TEST_LE_DROP-absent}" "${CCMSG_TEST_OTHER-absent}"\n',
     );
-    process.env.CCMSG_TEST_LE_KEEP = "k";
-    process.env.CCMSG_TEST_LE_DROP = "d";
-    process.env.CCMSG_TEST_OTHER = "o";
-    try {
-      await withDaemon(
-        launcherConfig([bin], dir, {
-          clean_env: ["CCMSG_TEST_LE_*"],
-          keep_env: ["CCMSG_TEST_LE_KEEP"],
-        }),
-        async (ctx) => {
-          const client = await userConn(ctx);
-          const reply = await launch(client, { type: "continue", cwd: dir });
-          expect(reply.stdout).toBe("kept=k cleaned=absent other=o");
-        },
-      );
-    } finally {
-      delete process.env.CCMSG_TEST_LE_KEEP;
-      delete process.env.CCMSG_TEST_LE_DROP;
-      delete process.env.CCMSG_TEST_OTHER;
-    }
+    await withDaemon(
+      launcherConfig([bin], dir, {
+        clean_env: ["CCMSG_TEST_LE_*"],
+        keep_env: ["CCMSG_TEST_LE_KEEP"],
+      }),
+      async (ctx) => {
+        const client = await userConn(ctx);
+        const reply = await launch(client, { cwd: dir, continue: true });
+        expect(reply.stdout).toBe("kept=k cleaned=absent other=o");
+      },
+      { CCMSG_TEST_LE_KEEP: "k", CCMSG_TEST_LE_DROP: "d", CCMSG_TEST_OTHER: "o" },
+    );
   });
 
   // The reply waits for the command; other requests of the same connection
@@ -279,19 +366,103 @@ describe("session_launch: how the run ends", () => {
   // gate, so the order is the test's, not a race.
   test("a launch still running holds back no other reply on its connection", async () => {
     const dir = tmp("ccmsg-launch-");
-    const gate = path.join(dir, "gate");
-    expect(Bun.spawnSync(["mkfifo", gate]).exitCode).toBe(0);
+    const fifo = gate(dir);
     const bin = writeMockBin(
       path.join(dir, "gated"),
-      `#!/bin/sh\nread line < ${JSON.stringify(gate)}\nprintf "released-%s" "$line"\n`,
+      `#!/bin/sh\nread line < ${JSON.stringify(fifo)}\nprintf "released-%s" "$line"\n`,
     );
     await withDaemon(launcherConfig([bin], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const launching = launch(client, { type: "continue", cwd: dir });
+      const launching = launch(client, { cwd: dir, continue: true });
       expect(await client.requestOk({ op: "ping" })).toMatchObject({ pong: true });
-      await fs.promises.writeFile(gate, "go\n");
+      await fs.promises.writeFile(fifo, "go\n");
       expect((await launching).stdout).toBe("released-go");
     });
+  });
+
+  // Two launches running at once each get their own id, and each reply is
+  // its own command's.
+  test("two launches at once get two ids and their own replies", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const fifo = gate(dir);
+    await withDaemon(launcherConfig([gatedCommand(dir, fifo)], dir), async (ctx) => {
+      const client = await userConn(ctx);
+      const first = launch(client, { cwd: dir, model: "opus", effort: "low", name: "first" });
+      const second = launch(client, { cwd: dir, model: "haiku", effort: "high", name: "second" });
+      expect(await startedCount(dir, 2)).toBe(2);
+      await fs.promises.writeFile(fifo, "go\ngo\n");
+      const [a, b] = await Promise.all([first, second]);
+      expect(a.session_id).toBeDefined();
+      expect(b.session_id).toBeDefined();
+      expect(a.session_id).not.toBe(b.session_id);
+      expect(commandInput(a)).toMatchObject({ name: "first", session_id: a.session_id ?? "" });
+      expect(commandInput(b)).toMatchObject({ name: "second", session_id: b.session_id ?? "" });
+    });
+  });
+});
+
+describe("session_launch: how many run at once", () => {
+  // max_in_flight bounds the launch commands the daemon holds: one more is
+  // refused without running, and a launch is taken again once one ends.
+  test("a launch past max_in_flight is launch_busy, and is taken once one ends", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const fifo = gate(dir);
+    await withDaemon(
+      launcherConfig([gatedCommand(dir, fifo)], dir, { max_in_flight: 1 }),
+      async (ctx) => {
+        const client = await userConn(ctx);
+        const running = launch(client, { cwd: dir, continue: true });
+        expect(await startedCount(dir, 1)).toBe(1);
+        const busy = await client.requestError({
+          op: "session_launch",
+          launch: { cwd: dir, continue: true },
+        });
+        expect(busy.error.code).toBe("launch_busy");
+        expect(busy.error.msg).toContain("max_in_flight");
+        // Refused before it ran: still the one command started.
+        expect(await startedCount(dir, 1)).toBe(1);
+        await fs.promises.writeFile(fifo, "go\n");
+        expect((await running).exit_code).toBe(0);
+        const next = launch(client, { cwd: dir, continue: true });
+        expect(await startedCount(dir, 2)).toBe(2);
+        await fs.promises.writeFile(fifo, "go\n");
+        expect((await next).exit_code).toBe(0);
+      },
+    );
+  });
+
+  // A shutdown takes no more launches, and waits for the ones running so
+  // their askers are answered.
+  test("a shutdown refuses a new launch and answers the one running", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const fifo = gate(dir);
+    const ctx = await startInProcessDaemon({
+      config: launcherConfig([gatedCommand(dir, fifo)], dir),
+    });
+    let stopped = false;
+    try {
+      const client = await userConn(ctx);
+      const other = await userConn(ctx);
+      const running = launch(client, { cwd: dir, continue: true });
+      expect(await startedCount(dir, 1)).toBe(1);
+      const stopping = shutdownDaemon(ctx.daemon, "test").then(() => {
+        stopped = true;
+      });
+      const refused = await other.requestError({
+        op: "session_launch",
+        launch: { cwd: dir, continue: true },
+      });
+      expect(refused.error.code).toBe("launch_busy");
+      expect(refused.error.msg).toContain("shutting down");
+      // Still waiting for the launch: nothing has stopped yet.
+      expect(stopped).toBe(false);
+      await fs.promises.writeFile(fifo, "go\n");
+      expect((await running).exit_code).toBe(0);
+      await stopping;
+      expect(stopped).toBe(true);
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
   });
 });
 
@@ -302,7 +473,7 @@ describe("session_launch: refusals", () => {
       for (const op of ["session_launch", "session_launcher_config"] as const) {
         const response =
           op === "session_launch"
-            ? await client.requestError({ op, launch: { type: "continue", cwd: "/" } })
+            ? await client.requestError({ op, launch: { cwd: "/", continue: true } })
             : await client.requestError({ op });
         expect(response.error).toEqual({
           code: "launcher_not_configured",
@@ -326,85 +497,87 @@ describe("session_launch: refusals", () => {
       for (const cwd of [path.join(dir, "missing"), file]) {
         const response = await client.requestError({
           op: "session_launch",
-          launch: { type: "continue", cwd },
+          launch: { cwd, continue: true },
         });
         expect(response.error).toEqual({
           code: "invalid_args",
           msg: `launch.cwd is not an existing directory: ${cwd}`,
         });
       }
-      const elsewhere = await launch(client, { type: "continue", cwd: outside });
+      const elsewhere = await launch(client, { cwd: outside, continue: true });
       expect(elsewhere.exit_code).toBe(0);
     });
   });
 
-  // The launch is read by its schema: a field its type does not have is
-  // refused with where it is, and nothing runs.
+  // The launch is read by its schema: a field it does not have, or a
+  // combination claude refuses, is refused with where it is, and nothing
+  // runs.
   test("a launch that does not read is invalid_args, and nothing runs", async () => {
     const dir = tmp("ccmsg-launch-");
     const marker = path.join(dir, "ran");
     const bin = writeMockBin(path.join(dir, "mark"), `#!/bin/sh\n: > ${JSON.stringify(marker)}\n`);
     await withDaemon(launcherConfig([bin], dir), async (ctx) => {
       const client = await userConn(ctx);
-      const response = await client.requestRefusal({
-        op: "session_launch",
-        launch: { type: "continue", cwd: dir, resume_session_id: RESUME_SID },
-      });
-      expect(response.error.code).toBe("invalid_args");
-      expect(response.error.msg).toContain("launch.resume_session_id");
+      for (const [launchValue, where] of [
+        [{ cwd: dir, continue: true, resume_session_id: RESUME_SID }, "launch.resume_session_id"],
+        [{ cwd: dir, continue: true, resume: RESUME_SID }, "launch.resume"],
+        [{ cwd: dir, model: "opus" }, "launch.effort"],
+      ] as const) {
+        const response = await client.requestRefusal({ op: "session_launch", launch: launchValue });
+        expect(response.error.code).toBe("invalid_args");
+        expect(response.error.msg).toContain(where);
+      }
       expect(fs.existsSync(marker)).toBe(false);
     });
   });
 
-  // A command that cannot be started has no exit code to answer with.
+  // The program is checked when the config is read; one that goes away
+  // afterwards cannot be started, and there is no exit code to answer with.
   test("a launch command that cannot be started is launch_command_unavailable", async () => {
     const dir = tmp("ccmsg-launch-");
-    const notExecutable = path.join(dir, "plain");
-    fs.writeFileSync(notExecutable, "#!/bin/sh\n", { mode: 0o644 });
-    const cases: [string, string][] = [
-      [path.join(dir, "missing"), "ENOENT"],
-      [notExecutable, "EACCES"],
-      ["ccmsg-no-such-launch-command", "ccmsg-no-such-launch-command is not found in PATH"],
-    ];
-    for (const [program, why] of cases) {
-      await withDaemon(launcherConfig([program], dir), async (ctx) => {
-        const client = await userConn(ctx);
-        const response = await client.requestError({
-          op: "session_launch",
-          launch: { type: "continue", cwd: dir },
-        });
-        expect(response.error.code).toBe("launch_command_unavailable");
-        expect(response.error.msg).toContain(why);
-        const lines = launchLogLines(ctx);
-        expect(lines).toHaveLength(1);
-        expect(lines[0]).toContain(`launch_command_unavailable: ${response.error.msg}`);
+    const bin = writeMockBin(path.join(dir, "vanishing"), "#!/bin/sh\n");
+    await withDaemon(launcherConfig([bin], dir), async (ctx) => {
+      fs.rmSync(bin);
+      const client = await userConn(ctx);
+      const response = await client.requestError({
+        op: "session_launch",
+        launch: { cwd: dir, continue: true },
       });
-    }
+      expect(response.error.code).toBe("launch_command_unavailable");
+      expect(response.error.msg).toContain(`${bin} in ${fs.realpathSync(dir)}: `);
+      expect(response.error.msg).toContain("ENOENT");
+      const lines = launchLogLines(ctx);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(
+        `launch_command_unavailable: ${JSON.stringify(response.error.msg)}`,
+      );
+    });
   });
 });
 
 describe("session_launch: who launches", () => {
   // A session may launch (§3.8): what runs is still the one configured
-  // command. The log line names the session that asked, and carries the
-  // prompt's length, never its text.
-  test("a session launches, and the log line names it without the prompt", async () => {
+  // command. The command reads which session asked; the log line names it
+  // and carries the prompt's length, never its text.
+  test("a session launches, the command reads who asked, and the log line has no prompt", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await sessionConn(ctx, SID, { cwd: dir });
       const prompt = "a secret plan";
       const reply = await launch(client, {
-        type: "fork",
         cwd: dir,
-        resume_session_id: RESUME_SID,
+        resume: RESUME_SID,
+        fork_session: true,
         prompt,
       });
       expect(reply.exit_code).toBe(0);
+      expect(commandInput(reply).requested_by).toBe(SID);
       const lines = launchLogLines(ctx);
       expect(lines).toHaveLength(1);
       const [line] = lines;
       expect(line).toContain(
-        `session_launch: by=${SID} type=fork cwd=${fs.realpathSync(dir)}` +
-          ` resume_session_id=${RESUME_SID} session_id=${reply.session_id ?? ""}` +
+        `session_launch: by=${SID} cwd=${JSON.stringify(fs.realpathSync(dir))}` +
+          ` resume=${RESUME_SID} fork_session=true session_id=${reply.session_id ?? ""}` +
           ` prompt_bytes=${String(Buffer.byteLength(prompt))} exit_code=0` +
           ` stdout_bytes=${String(Buffer.byteLength(reply.stdout))}` +
           ` stderr_bytes=${String(Buffer.byteLength(reply.stderr))}`,
@@ -413,15 +586,19 @@ describe("session_launch: who launches", () => {
     });
   });
 
-  test("a launch by the user is logged as by=user", async () => {
-    const dir = tmp("ccmsg-launch-");
-    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
+  // The cwd is the asker's text: written as a JSON string, a line break or a
+  // `key=value` in it cannot pose as a field of the line.
+  test("a cwd in the log line is a JSON string", async () => {
+    const base = tmp("ccmsg-launch-");
+    const dir = path.join(base, "a exit_code=0\nsession_launch: by=user");
+    fs.mkdirSync(dir);
+    await withDaemon(launcherConfig([echoCommand(base)], base), async (ctx) => {
       const client = await userConn(ctx);
-      await launch(client, { type: "continue", cwd: dir });
+      await launch(client, { cwd: dir, continue: true });
       const lines = launchLogLines(ctx);
       expect(lines).toHaveLength(1);
       expect(lines[0]).toContain(
-        `session_launch: by=user type=continue cwd=${fs.realpathSync(dir)}`,
+        `session_launch: by=user cwd=${JSON.stringify(fs.realpathSync(dir))} continue=true exit_code=0`,
       );
     });
   });
@@ -440,15 +617,55 @@ describe("session_launch: who launches", () => {
     });
   });
 
-  test("session_launcher_config answers the user with root_dirs", async () => {
+  // default_effort is read from the daemon's own CLAUDE_CONFIG_DIR when
+  // asked: a model whose effortLevel is not one a launch names is left out.
+  test("session_launcher_config answers root_dirs and the settings' default efforts", async () => {
     const dir = tmp("ccmsg-launch-");
-    await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
-      const client = await userConn(ctx);
-      expect(await client.requestOk({ op: "session_launcher_config" })).toEqual({
-        ok: true,
-        root_dirs: [path.resolve(dir)],
-      });
-    });
+    const claudeConfig = tmp("ccmsg-launch-claude-");
+    fs.writeFileSync(
+      path.join(claudeConfig, "settings.json"),
+      JSON.stringify({
+        theme: "dark",
+        modelSettings: {
+          fable: { effortLevel: "xhigh" },
+          opus: { effortLevel: "ultra" },
+          sonnet: { other: 1 },
+          haiku: { effortLevel: "low", extra: true },
+          "gpt-x": { effortLevel: "high" },
+        },
+      }),
+    );
+    await withDaemon(
+      launcherConfig([echoCommand(dir)], dir),
+      async (ctx) => {
+        const client = await userConn(ctx);
+        expect(await client.requestOk({ op: "session_launcher_config" })).toEqual({
+          ok: true,
+          root_dirs: [path.resolve(dir)],
+          default_effort: { fable: "xhigh", haiku: "low" },
+        });
+      },
+      { CLAUDE_CONFIG_DIR: claudeConfig },
+    );
+  });
+
+  test("no settings.json, or one that does not read, is no default efforts", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const claudeConfig = tmp("ccmsg-launch-claude-");
+    await withDaemon(
+      launcherConfig([echoCommand(dir)], dir),
+      async (ctx) => {
+        const client = await userConn(ctx);
+        expect(await client.requestOk({ op: "session_launcher_config" })).toMatchObject({
+          default_effort: {},
+        });
+        fs.writeFileSync(path.join(claudeConfig, "settings.json"), "{ not json");
+        expect(await client.requestOk({ op: "session_launcher_config" })).toMatchObject({
+          default_effort: {},
+        });
+      },
+      { CLAUDE_CONFIG_DIR: claudeConfig },
+    );
   });
 
   // launch_available is for the user's webui, and only where a launch can
@@ -528,7 +745,7 @@ describe("session_launcher config at daemon startup", () => {
     fs.mkdirSync(testConfigDir(dataDir), { recursive: true });
     fs.writeFileSync(
       path.join(testConfigDir(dataDir), "config.json"),
-      JSON.stringify(launcherConfig(["launch"], root)),
+      JSON.stringify(launcherConfig(["sh"], root)),
     );
     const proc = spawnDaemonProc(stateDir, dataDir);
     try {
@@ -551,7 +768,7 @@ describe("session_launcher config at daemon startup", () => {
     fs.mkdirSync(stateDir);
     fs.mkdirSync(dataDir);
     const legacy = path.join(dataDir, "config.json");
-    fs.writeFileSync(legacy, JSON.stringify(launcherConfig(["launch"], root)));
+    fs.writeFileSync(legacy, JSON.stringify(launcherConfig(["sh"], root)));
     const proc = spawnDaemonProc(stateDir, dataDir);
     try {
       await waitConnectable(path.join(stateDir, "daemon.sock"));
@@ -559,6 +776,7 @@ describe("session_launcher config at daemon startup", () => {
       expect(await client.requestOk({ op: "session_launcher_config" })).toEqual({
         ok: true,
         root_dirs: [path.resolve(root)],
+        default_effort: {},
       });
       client.close();
       expect(fs.existsSync(legacy)).toBe(false);
@@ -576,11 +794,11 @@ describe("session_launcher config at daemon startup", () => {
   test("config changes are not reloaded while the daemon is running", async () => {
     const root = tmp("ccmsg-launch-root-");
     const replacement = tmp("ccmsg-launch-replacement-");
-    await withDaemon(launcherConfig(["launch"], root), async (ctx) => {
+    await withDaemon(launcherConfig(["sh"], root), async (ctx) => {
       const client = await userConn(ctx);
       fs.writeFileSync(
         ctx.daemon.paths.config,
-        JSON.stringify(launcherConfig(["replacement"], replacement)),
+        JSON.stringify(launcherConfig(["sh"], replacement)),
       );
       expect((await client.request({ op: "dir_tree", roots: [root], depth: 1 })).ok).toBe(true);
       const newlyWritten = await client.requestError({

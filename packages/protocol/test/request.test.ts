@@ -104,11 +104,11 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   session_launch: {
     ok: {
       op: "session_launch",
-      launch: { type: "fork", cwd: "/w", resume_session_id: SID, resume_at: SID, prompt: "p" },
+      launch: { cwd: "/w", resume: SID, fork_session: true, resume_session_at: SID, prompt: "p" },
     },
     bad: [
       { op: "session_launch" },
-      { op: "session_launch", launch: { type: "new", cwd: "/w", model: "opus" } },
+      { op: "session_launch", launch: { cwd: "/w", model: "opus" } },
       { op: "session_launch", cwd: "/w", params: { MODEL: "m" } },
     ],
   },
@@ -512,18 +512,22 @@ describe("readRequest: the forms beside each op's type", () => {
     ).toEqual({ ok: true, value: { op: "subscribe", request_id: "q1" } });
   });
 
-  // The launch is read whole by its own schema, so a field the launch's type
-  // does not have is refused under the launch's path rather than dropped
-  // (DR-0018 §3.2).
-  test("session_launch refuses a field its launch type does not have", () => {
+  // The launch is read whole by its own schema, so a field the launch does
+  // not have is refused under the launch's path rather than dropped, and a
+  // combination claude refuses is refused on the field to change (DR-0018
+  // §3.2).
+  test("session_launch refuses a field the launch does not have, and a refused combination", () => {
     expect(
       refusal(
         read({
           op: "session_launch",
-          launch: { type: "new", cwd: "/w", model: "opus", effort: "high", resume_session_id: SID },
+          launch: { cwd: "/w", model: "opus", effort: "high", resume_session_id: SID },
         }),
       ),
     ).toContain("launch.resume_session_id");
+    expect(
+      refusal(read({ op: "session_launch", launch: { cwd: "/w", continue: true, resume: SID } })),
+    ).toContain("launch.resume");
   });
 });
 
