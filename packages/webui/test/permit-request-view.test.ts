@@ -25,10 +25,10 @@ function request(fields: Partial<PermitRequestRecord>): PermitRequestRecord {
 }
 
 describe("permitGrantText", () => {
-  // 何を保証するか: 添付のパス、許可する intent、コマンドの全文をこの順に
-  // 並べる。コマンドは説明があれば見出しに添え、書かれたとおり (引用符・
+  // 何を保証するか: 確認した添付のパス、許可する intent、コマンドの全文をこの
+  // 順に並べる。コマンドは説明があれば見出しに添え、書かれたとおり (引用符・
   // 記号を含めて) コードブロックに入る。
-  test("lists the files, then each intent and each command whole", () => {
+  test("lists the files checked, then each intent and each command whole", () => {
     expect(
       permitGrantText(
         request({
@@ -42,6 +42,7 @@ describe("permitGrantText", () => {
             { command: "sh /w/deploy.sh prod \\\n  && echo done" },
           ],
         }),
+        ["/w/deploy.sh", "/w/policy.json"],
       ),
     ).toBe(
       [
@@ -65,9 +66,15 @@ describe("permitGrantText", () => {
     );
   });
 
-  // 何を保証するか: 添付が無ければファイルの段落ごと書かない。
-  test("leaves out the files paragraph when there are none", () => {
-    expect(permitGrantText(request({ intents: ["編集"] }))).toBe(
+  // 何を保証するか: 確認した添付だけを、依頼に書かれた順に並べる。確認した
+  // ものが無ければ (添付が無い時も) ファイルの段落ごと書かない。
+  test("lists only the files checked, and leaves the paragraph out when none is", () => {
+    const asked = request({ attachments: ["/w/a", "/w/b", "/w/c"], intents: ["編集"] });
+    expect(permitGrantText(asked, ["/w/c", "/w/a"])).toBe(
+      "以下ファイルの内容を確認しました。問題無し。\n- /w/a\n- /w/c\n\n以下の操作を許可します。\n- 編集\n",
+    );
+    expect(permitGrantText(asked, [])).toBe("以下の操作を許可します。\n- 編集\n");
+    expect(permitGrantText(request({ intents: ["編集"] }), [])).toBe(
       "以下の操作を許可します。\n- 編集\n",
     );
   });
@@ -75,7 +82,7 @@ describe("permitGrantText", () => {
   // 何を保証するか: コマンドの中に ``` があっても、閉じられないフェンスで囲む。
   test("writes a command in a fence it cannot close", () => {
     const command = "cat <<'EOF' > a.md\n```\ncode\n```\nEOF";
-    expect(permitGrantText(request({ commands: [{ command }] }))).toBe(
+    expect(permitGrantText(request({ commands: [{ command }] }), [])).toBe(
       `以下の操作を許可します。\n- 以下コマンドの実行\n\`\`\`\`\n${command}\n\`\`\`\`\n`,
     );
   });

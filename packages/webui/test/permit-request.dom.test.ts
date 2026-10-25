@@ -7,6 +7,8 @@
 //   理由を差し込む。読めた後は開き直しても読み直さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
+// - 許可の文の「確認しました」には、開いて読めた添付だけを並べる。開いて
+//   いない・読めなかった添付が残っていれば「未確認の添付 N 件」を添える
 // - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
 //   場所に入る
 // daemon の代わりに、store へ ev:"permit_requests" / ev:"permit_request" と
@@ -141,6 +143,32 @@ function bubbles(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(".permit")];
 }
 
+function foldsOf(root: HTMLElement): HTMLDetailsElement[] {
+  return [...root.querySelectorAll<HTMLDetailsElement>("details.permit-attachment")];
+}
+
+/** Open or close a fold as the person does, and let its read settle. */
+async function toggle(fold: HTMLDetailsElement | undefined, open: boolean): Promise<void> {
+  const details = defined(fold, "fold");
+  await act(async () => {
+    // happy-dom fires `toggle` itself when `open` changes, after the change
+    // as browsers do: wait for that event, then for the reply.
+    const toggled = new Promise((resolve) =>
+      details.addEventListener("toggle", resolve, { once: true }),
+    );
+    details.open = open;
+    await toggled;
+    await Promise.resolve();
+  });
+}
+
+async function press(button: HTMLButtonElement): Promise<void> {
+  await act(async () => {
+    button.click();
+    await Promise.resolve();
+  });
+}
+
 function grantButton(bubble: HTMLElement): HTMLButtonElement {
   return instanceOf(bubble.querySelector("button.permit-grant"), HTMLButtonElement, "grant");
 }
@@ -182,20 +210,7 @@ describe("permission request bubbles", () => {
   // 時はそう言い、次に開いた時に読み直す。
   test("read a file when it is opened, once it has been read", async () => {
     const { root, opens } = await openWith([ASKED]);
-    const folds = [...root.querySelectorAll<HTMLDetailsElement>("details.permit-attachment")];
-    const toggle = async (fold: HTMLDetailsElement | undefined, open: boolean) => {
-      const details = defined(fold, "fold");
-      await act(async () => {
-        // happy-dom fires `toggle` itself when `open` changes, after the
-        // change as browsers do: wait for that event, then for the reply.
-        const toggled = new Promise((resolve) =>
-          details.addEventListener("toggle", resolve, { once: true }),
-        );
-        details.open = open;
-        await toggled;
-        await Promise.resolve();
-      });
-    };
+    const folds = foldsOf(root);
     await toggle(folds[0], true);
     expect(folds[0]?.querySelector("pre")?.textContent).toBe('{"Statement":[]}\n');
     await toggle(folds[0], false);
@@ -247,7 +262,10 @@ describe("permission request bubbles", () => {
       button.click();
       await Promise.resolve();
     });
-    expect(written).toEqual([permitGrantText(ASKED)]);
+    // Nothing opened: no file is listed as checked, and the 3 are said.
+    expect(written).toEqual([permitGrantText(ASKED, [])]);
+    expect(written[0]).not.toContain("確認しました");
+    expect(root.querySelector(".permit-grant-unconfirmed")?.textContent).toBe("未確認の添付 3 件");
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
@@ -259,6 +277,41 @@ describe("permission request bubbles", () => {
       await Promise.resolve();
     });
     expect(reads).toEqual([[ASKED.id]]);
+  });
+
+  // 何を保証するか: 許可の文は人自身の「確認した」という発話になるので、
+  // 開いて中身を読めた添付だけを並べる。読めなかった・開いていない添付は
+  // 並べず、その数を押した後に添える。全部確認していれば何も添えない。
+  test("lists as checked only the files opened and read", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const { root } = await openWith([ASKED]);
+    const folds = foldsOf(root);
+    await toggle(folds[0], true);
+    await toggle(folds[1], true);
+    await press(grantButton(defined(bubbles(root)[0], "bubble")));
+    expect(written).toEqual([permitGrantText(ASKED, ["/w/policy.json"])]);
+    expect(written[0]).toContain(
+      "以下ファイルの内容を確認しました。問題無し。\n- /w/policy.json\n\n",
+    );
+    expect(written[0]).not.toContain("/w/gone.sh");
+    expect(root.querySelector(".permit-grant-unconfirmed")?.textContent).toBe("未確認の添付 2 件");
+  });
+
+  test("adds nothing beside the button once every file is checked", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const { root: whole } = await openWith([
+      { ...ASKED, id: "i/9", attachments: ["/w/policy.json"] },
+    ]);
+    await toggle(foldsOf(whole)[0], true);
+    await press(grantButton(defined(bubbles(whole)[0], "bubble")));
+    expect(written.at(-1)).toContain("- /w/policy.json");
+    expect(whole.querySelector(".permit-grant-unconfirmed")).toBeNull();
   });
 
   test("says so when the permission could not be copied", async () => {

@@ -2693,6 +2693,10 @@ a {
   color: var(--danger);
 }
 
+.permit-grant-unconfirmed {
+  color: var(--fg-warn);
+}
+
 .event {
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
