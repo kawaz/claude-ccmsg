@@ -89,13 +89,35 @@ function gate(dir: string, name = "gate"): string {
   return fifo;
 }
 
-/** A launch command that writes its stdin to `<dir>/started-<n>` once it is
- * running, then waits on `gateFifo` before echoing its stdin. */
-function gatedCommand(dir: string, gateFifo: string): string {
+/** A launch command that makes its own FIFO `<dir>/gate-<n>`, then writes its
+ * stdin to `<dir>/started-<n>`, then waits for a line on its FIFO before
+ * echoing its stdin. Each command has its own FIFO so that a line the test
+ * writes (releaseGates) reaches that command: the test's write waits for its
+ * one reader to open it. On a FIFO the commands shared, a line written while
+ * only one of them had it open went with that one and the rest was dropped. */
+function gatedCommand(dir: string): string {
+  const at = (name: string): string => JSON.stringify(path.join(dir, name));
   return writeMockBin(
     path.join(dir, "gated"),
-    `#!/bin/sh\ninput=$(cat)\nprintf '%s' "$input" > "$(mktemp ${JSON.stringify(path.join(dir, "started-XXXXXX"))})"\n` +
-      `read line < ${JSON.stringify(gateFifo)}\nprintf '%s' "$input"\n`,
+    `#!/bin/sh\ninput=$(cat)\ngate=$(mktemp -u ${at("gate-XXXXXX")})\nmkfifo "$gate"\n` +
+      `printf '%s' "$input" > "$(mktemp ${at("started-XXXXXX")})"\n` +
+      `read line < "$gate"\nprintf '%s' "$input"\n`,
+  );
+}
+
+/** Let every gated command waiting in `dir` go: one line to each one's FIFO,
+ * each write waiting for its reader, then the FIFO removed so a later call
+ * lets only the commands started since. */
+async function releaseGates(dir: string): Promise<void> {
+  const gates = fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith("gate-"))
+    .map((name) => path.join(dir, name));
+  await Promise.all(
+    gates.map(async (fifo) => {
+      await fs.promises.writeFile(fifo, "go\n");
+      await fs.promises.rm(fifo);
+    }),
   );
 }
 
@@ -395,13 +417,12 @@ describe("session_launch: how the run ends", () => {
   // its own command's.
   test("two launches at once get two ids and their own replies", async () => {
     const dir = tmp("ccmsg-launch-");
-    const fifo = gate(dir);
-    await withDaemon(launcherConfig([gatedCommand(dir, fifo)], dir), async (ctx) => {
+    await withDaemon(launcherConfig([gatedCommand(dir)], dir), async (ctx) => {
       const client = await userConn(ctx);
       const first = launch(client, { cwd: dir, model: "opus", effort: "low", name: "first" });
       const second = launch(client, { cwd: dir, model: "haiku", effort: "high", name: "second" });
       expect(await startedCount(dir, 2)).toBe(2);
-      await fs.promises.writeFile(fifo, "go\ngo\n");
+      await releaseGates(dir);
       const [a, b] = await Promise.all([first, second]);
       expect(a.session_id).toBeDefined();
       expect(b.session_id).toBeDefined();
@@ -417,9 +438,8 @@ describe("session_launch: how many run at once", () => {
   // refused without running, and a launch is taken again once one ends.
   test("a launch past launch_max_concurrency is launch_busy, and is taken once one ends", async () => {
     const dir = tmp("ccmsg-launch-");
-    const fifo = gate(dir);
     await withDaemon(
-      launcherConfig([gatedCommand(dir, fifo)], dir, { launch_max_concurrency: 1 }),
+      launcherConfig([gatedCommand(dir)], dir, { launch_max_concurrency: 1 }),
       async (ctx) => {
         const client = await userConn(ctx);
         const running = launch(client, { cwd: dir, continue: true });
@@ -432,11 +452,11 @@ describe("session_launch: how many run at once", () => {
         expect(busy.error.msg).toContain("launch_max_concurrency");
         // Refused before it ran: still the one command started.
         expect(await startedCount(dir, 1)).toBe(1);
-        await fs.promises.writeFile(fifo, "go\n");
+        await releaseGates(dir);
         expect((await running).exit_code).toBe(0);
         const next = launch(client, { cwd: dir, continue: true });
         expect(await startedCount(dir, 2)).toBe(2);
-        await fs.promises.writeFile(fifo, "go\n");
+        await releaseGates(dir);
         expect((await next).exit_code).toBe(0);
       },
     );
@@ -446,9 +466,8 @@ describe("session_launch: how many run at once", () => {
   // their askers are answered.
   test("a shutdown refuses a new launch and answers the one running", async () => {
     const dir = tmp("ccmsg-launch-");
-    const fifo = gate(dir);
     const ctx = await startInProcessDaemon({
-      config: launcherConfig([gatedCommand(dir, fifo)], dir),
+      config: launcherConfig([gatedCommand(dir)], dir),
     });
     let stopped = false;
     try {
@@ -467,7 +486,7 @@ describe("session_launch: how many run at once", () => {
       expect(refused.error.msg).toContain("shutting down");
       // Still waiting for the launch: nothing has stopped yet.
       expect(stopped).toBe(false);
-      await fs.promises.writeFile(fifo, "go\n");
+      await releaseGates(dir);
       expect((await running).exit_code).toBe(0);
       await stopping;
       expect(stopped).toBe(true);
