@@ -1,0 +1,148 @@
+# DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
+
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request`、TL の許可依頼バブル、skill の節)
+- Date: 2026-10-25
+
+## Context
+
+Claude Code の auto mode の classifier に止められた操作を再実行させるには、そのセッションの会話に人の許可の発話が要る。classifier はその会話の文脈しか見ないので、別のセッションへの伝言や subagent への許可は効かない。今はエージェントが rules の定型文 (「X が止められました。実行してよければ `… を実行して良い` と言ってください」) を本文に手で書き、人がその許可文を入力欄に打ち返している。この形には 3 つの弱みがある。
+
+- 形がエージェントごと・回ごとにぶれる。人は毎回、何を許可するのかを本文から読み取り直す
+- 許可文に具体 (コマンドの全文、コマンドが読むファイルの中身) を入れ忘れる。具体の無い許可は classifier が当該操作と結び付けられず、許可しても再び止められる
+- コマンドが読むファイル (script・policy の JSON・patch) の中身を人に見せるには本文に貼るしかなく、エージェントの context を食う
+
+kawaz 2026-10-25 の裁定: 構造化した許可依頼を webui に専用のバブルで出し、「許可する」ボタンで許可文をクリップボードに写せるようにする。許可したかどうかの状態は持たない。
+
+## Decision
+
+### 1. 入力 (tool `permit`)
+
+hooks module が `session.start` で 5 つ目の tool として登録する ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の登録の形と「mods の tool の作り方」に従う)。description は `Ask the person for permission`、field の説明は付けない。model に見せる input schema は型だけ:
+
+```
+blocked:     string      # 止められた行動 (markdown、1〜2 文)
+attachments: string[]    # コマンドが読むファイル (絶対パス)
+intents:     string[]    # コマンドでない許可してほしいこと (markdown、各 1 文。Edit 等)
+commands:    string[]    # Bash に渡す内容そのまま (複数行可)
+```
+
+- 必須は `blocked` だけで、`intents` と `commands` の少なくとも一方に 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
+- `attachments` は絶対パス (`/` で始まる) で、同じパスを 2 度書かない。数は 16 まで (§3 の 1 件あたりの上限と合わせ、1 つの依頼の大きさを抑える)
+- 配列の field は要素の型ごと見せる (`{ type: "array", items: { type: "string" } }`)。配列の型は中身の型までで 1 つの型なので、`toolInputSchemaOf` は `items` を同じ規則 (型と enum だけ) で導く。長さや重複の決まりは見せない
+- 合わない入力は「permit の入力が形に合わないので何もしていない: <理由>」で返す (DR-0039 §3)
+
+### 2. 経路
+
+say と同じ流儀で、module の handler → CLI の transport → daemon の op → 記録 → 全タブへの配送 → TL のバブル。
+
+- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行と attachments の読み取りと、短い音声の分)
+- `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が記録したら音声 (§6) を鳴らして終わるのを待ち、daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
+- op `permit_request` は session role だけが送れる。依頼するのは止められたエージェント自身なので、依頼はセッションを名指さず、送ったセッションの sid で記録する
+- 応答は記録の id と、attachments ごとの結果 (読めたか、切り詰めたか、読めなかった理由)。中身は返さない (エージェントは中身を知っている)。handler はこれを「許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ」と、人が全部を見られなかった attachments の一覧の文にして返す
+- handler は `next` を呼ばずに答えるので、`permit` 自体は permission の判定 (classifier を含む) を通らない (DR-0039 §3)。止められた直後でも呼べる。`permit` がするのは記録と表示と音声だけで、権限は何も変えない
+
+### 3. attachments を daemon が読む範囲
+
+- 読むのは依頼したセッションが名指した絶対パスだけで、依頼を受けた時点で 1 回読み、その時の中身を記録に写す。webui からパスを指定して読む口は作らない。信頼の形は [DR-0024](./DR-0024-out-of-project-files.md) §3.2 の allowlist と同じで、「セッション自身が名指したパスを、名指された分だけ」読む。人 (user role) が任意のパスを読めるようにはならない
+- パスはそのまま開く (symlink は辿る)。通常のファイルだけを読み、先頭の 64 KiB (`PERMIT_ATTACHMENT_MAX_BYTES`) までを持つ。長いファイルは先頭だけを持ち、全体のバイト数と切り詰めた印を添える。上限で切れた多バイト文字は捨てる
+- 中身は UTF-8 のテキストとして読む。NUL を含む、または UTF-8 に無いバイト列を含むものは「テキストでない」として中身を持たない
+- 読めない時は理由を持つ: `missing` (無い)、`not_a_file` (ディレクトリ等)、`denied` (権限が無い)、`not_text`、`failed` (その他)。webui はバブルに、handler はエージェントへの結果に、それぞれ同じ文言 (`PERMIT_ATTACHMENT_UNREADABLE_TEXT`) で出す
+
+### 4. 記録
+
+- say の記録 (say-log) とは別の記録 (`PermitRequestLog`) にする。形が違い (attachments の中身を持つ、既読を持たない)、上限の根拠も違う
+- daemon のメモリだけに持つ。v1 だけの永続状態を増やさない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3) のは say と同じで、daemon を再起動すると消える
+- 上限は 50 件で、超えたら古いものから消える。1 件が attachments を最大 16 × 64 KiB 持つので say の上限 (200) より小さくし、依頼が意味を持つのはエージェントが許可を待つ間だけなので、それで足りる
+- 記録は `{ id, sid, ts, blocked, attachments, intents, commands }`。無い list は空の list で持つ。記録した後は変えない。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
+
+### 5. 配送
+
+- user role の subscriber だけに送る。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い。say と同じ)
+- subscribe の時に全件を `ev:"permit_requests"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い依頼を捨てられるように)。記録のたびに、その 1 件だけを `ev:"permit_request"` で送る
+- say は記録が変わるたびに全件を送るが、許可依頼は 1 件が大きく (attachments を持つ)、記録した後に変わらないので、追加の 1 件だけで足りる。webui は全件で置き換え、1 件は id で重複を除いて足す
+
+### 6. 音声
+
+`ccmsg sidecar permit` は daemon が記録した後、`ccmsg say` と同じ音声のコマンド (`/usr/bin/say`、試験では `CCMSG_SAY_BIN`) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
+
+- 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
+- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、標準エラーにその旨を出すだけで exit は変えない
+- daemon が依頼を記録しなかった時 (daemon が無い、断られた) は鳴らさない。見に行っても何も無いため
+
+### 7. webui のバブル
+
+そのセッションの Timeline に、say と同じく時刻で合流させて出す (say-merge.ts の `saySlots` を共用し、同じ slot の say と許可依頼は時刻順に並べる)。subagent の Timeline には出さない。メッセージのバブルとは別の種類で、見た目は info の面と枠 (say は warn の面) にする。
+
+```
+🔐 許可依頼
+
+止められた行動
+{blocked を markdown で}
+
+Attachments                       (無ければ節ごと出さない)
+▸ `{path}`  {先頭の 64 KiB だけ (全体 N バイト)}      ← 読めたものは <details> (既定で閉じる)
+    {中身を拡張子から推定した言語のコードブロックで}
+  `{path}`  {読めなかった理由}                         ← 読めないものは 1 行
+
+許可してほしいこと
+- {intents の各要素を markdown で}
+- {commands の各要素をコードブロック (sh) で} の実行
+
+{時刻}  [✅ 許可する]
+```
+
+- 言語は拡張子をコードブロックの言語名として渡し、既存のコードブロックの言語表 (`highlight.ts`) で引く。拡張子の無いファイルは素のテキスト
+- 「✅ 許可する」は §8 の文をクリップボードに写す (`useClipboardCopy`、既存のコピーボタンと同じ成功の見え方の時間)。写せたらボタンの文字を「コピーしました」に短く替える。2 つの文字を同じ升目に重ねて幅を広い方に固定し、押した時にボタンの幅が動かないようにする。写せなかった時 (安全でない文脈、権限の拒否) は「コピーできませんでした」と添える
+
+### 8. ボタンが写す文
+
+```
+内容を確認したファイル
+- {path}
+- …
+
+以下を許可します。
+- {intents の各要素}
+- {commands の各要素 (全文)} の実行
+```
+
+- classifier が許可を当該操作と結び付けられるように、コマンドは全文を入れる。1 行のコマンドはその行に書き、複数行のコマンド (行末の `\`、here document) は「- 次のコマンドの実行」の後にコードブロックで全文を書く。フェンスはコマンドの中の最も長いバッククォートの並びより 1 つ長くし、閉じられないようにする
+- 「内容を確認したファイル」には中身を見せられたファイルだけを並べる。先頭だけを見せたファイルは `(先頭の 64 KiB)` を添える。読めなかったファイルは人が見ていないので並べない。並べるものが無ければ節ごと書かない
+
+### 9. subagent からの呼び出しは断る
+
+handler は `tool.call` の `agentId` があれば何もせず「permit は subagent からは使えない。止められた操作は委譲元に報告して止まる (委譲元が自分で実行し、止められたら委譲元が permit で許可を求める)」を返す。人の許可は人がセッションに書く発話で、classifier はそれが書かれた会話 (本体) の操作しか通さない。subagent が依頼を出しても、許可を受けて再実行できるのは本体なので、止められた操作は委譲元に渡し、委譲元が自分で実行して止められたら委譲元が依頼する。
+
+### 10. skill
+
+plugin の skill (`skills/ccmsg/SKILL.md`) に `mcp__ccmsg-v1__permit` の節を足す: いつ使うか (classifier に止められた直後、止められた操作を書き換えずに再実行するため)、入力の定型、許可の文を受けたら `commands` を 1 つずつそのまま実行すること、subagent からは使わないこと。
+
+## Alternatives Considered
+
+| 案 | 不採用理由 |
+|---|---|
+| rules の定型文を手で書く今の形だけにする | Context の 3 つの弱み (形のぶれ、具体の入れ忘れ、ファイルの中身を貼ると context を食う) が残る |
+| ファイルの中身をエージェントが本文に貼る | 中身がエージェントの context に載り、長いファイルほど高くつく。本文の中で許可の対象と説明の境目も曖昧になる |
+| say の記録に許可依頼を混ぜる | 形 (attachments の中身、既読の有無) と上限の根拠が違う。say の未読の数 (Sessions の 📣) に許可依頼が混ざる |
+| 記録をファイルに持ち、daemon の再起動を越えて残す | v1 だけの永続状態を増やさない (DR-0036 §3)。依頼が意味を持つのは許可を待つ間で、再起動の後も transcript には `permit` の tool_use (入力の全文) が残る |
+| 記録が変わるたびに全件を送る (say と同じ) | 1 件が大きく (attachments を持つ)、記録した後に変わらないので、全件を送り直す理由が無い |
+| バブルを transcript の `permit` の tool_use から描く | attachments の中身は transcript に無く、daemon の記録と突き合わせる経路が要る。say と同じ時刻の合流で足りる |
+| webui がバブルを開いた時にファイルを読む | 人が任意の時点でパスを読む口になり、§3 の信頼の形 (セッションが名指したものを名指した時に) から外れる |
+| 許可したかどうかを記録する | 許可の正は人の発話とエージェントの再実行で、webui のボタンを押したことではない (写した文を送らないこともある) |
+| subagent の依頼もバブルに出す | 許可を受けて再実行できるのは本体だけで、subagent は止まったまま残る (§9) |
+
+## Consequences
+
+- daemon の再起動で TL のバブルは消える。transcript には `permit` の tool_use (止められた行動・パス・intents・commands の全文) が汎用の tool の行として残るので、内容は読み返せるが、attachments の中身と「許可する」は失われる。再起動の後も許可が要るなら、エージェントにもう一度 `permit` を呼ばせる
+- attachments は依頼の時点の写しで、人が読んだ後にファイルが変わっても、許可の文はパスを名指すだけで変わったことを示さない。classifier も中身を確かめない
+- daemon は依頼したセッションが名指したファイルを読み、webui を開ける人に見せる。同じ uid のエージェントは元からそのファイルを読めて transcript に出せるので、見える範囲は広がらない
+- `permit` は permission の判定を通らない tool なので、エージェントはいつでも呼べる。呼んでも権限は変わらず、許可は人の発話でしか生まれない
+- TL のバブルの「Attachments」等の文字と「許可する」「コピーしました」は DOM にあるので、Timeline の検索に当たる (say の「既読」と同じ)
+- rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
+
+## 関連
+
+- [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 — typed tool の登録の形、handler の流儀、`say` の記録と配送
+- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 — say の記録をメモリだけに持つ、v1 だけの永続状態を増やさない
+- [DR-0024](./DR-0024-out-of-project-files.md) §3.2 — セッションが名指したパスだけを読む信頼の形
+- [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と記録をスキーマで読む
