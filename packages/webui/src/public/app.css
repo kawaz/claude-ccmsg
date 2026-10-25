@@ -2627,13 +2627,6 @@ a {
   word-break: break-all;
 }
 
-.permit-attachment-note {
-  margin-left: var(--space-6);
-  white-space: nowrap;
-  font-size: var(--font-size-xs);
-  color: var(--fg-warn);
-}
-
 .permit-asks {
   margin: 0;
   padding-left: 1.2rem;
@@ -2643,10 +2636,16 @@ a {
   margin: var(--space-3) 0;
 }
 
-/* コマンドはコードブロックの下に「の実行」を添える。li は block のまま
- * にして箇条書きの印を残す (flex にすると印が消える)。 */
+/* コマンドは「以下コマンドの実行（説明）」の下にコードブロックを置く。li は
+ * block のままにして箇条書きの印を残す (flex にすると印が消える)。 */
 .permit-command > span {
   display: block;
+}
+
+.permit-attachment-status {
+  margin: var(--space-3) 0;
+  font-size: var(--font-size-xs);
+  color: var(--fg-warn);
 }
 
 .permit-footer {

@@ -1,10 +1,11 @@
-// 許可依頼 (DR-0040) の「許可する」が写す文と、attachments の見せ方。
+// 許可依頼 (DR-0040) の「許可する」が写す文と、開いた添付の見せ方。
 // 写した文は人がそのセッションの入力欄に貼って送る許可で、auto mode の
 // classifier はその文が名指す操作と、止めた操作を結び付ける。
 import { describe, expect, test } from "bun:test";
 import { PERMIT_ATTACHMENT_MAX_BYTES, type PermitRequestRecord } from "@ccmsg/protocol";
 import {
   attachmentNote,
+  commandHeading,
   fenceLangOfPath,
   permitGrantText,
 } from "../src/client/permit-request-view.ts";
@@ -24,61 +25,65 @@ function request(fields: Partial<PermitRequestRecord>): PermitRequestRecord {
 }
 
 describe("permitGrantText", () => {
-  // 何を保証するか: 見たファイル、許可する intent、コマンドの全文を、この
-  // 順に並べる。コマンドは書かれたとおり (引用符・記号を含めて) 1 行に入る。
-  test("lists the files seen, then each intent and each command whole", () => {
+  // 何を保証するか: 添付のパス、許可する intent、コマンドの全文をこの順に
+  // 並べる。コマンドは説明があれば見出しに添え、書かれたとおり (引用符・
+  // 記号を含めて) コードブロックに入る。
+  test("lists the files, then each intent and each command whole", () => {
     expect(
       permitGrantText(
         request({
-          attachments: [
-            { path: "/w/policy.json", read: true, content: "{}", bytes: 2, truncated: false },
-          ],
+          attachments: ["/w/policy.json", "/w/deploy.sh"],
           intents: ["`/w/a.ts` の編集"],
-          commands: [`aws s3api put-bucket-policy --bucket b --policy "file://policy.json"`],
+          commands: [
+            {
+              command: `aws s3api put-bucket-policy --bucket b --policy "file://policy.json"`,
+              description: "公開読み取りの policy を当てる",
+            },
+            { command: "sh /w/deploy.sh prod \\\n  && echo done" },
+          ],
         }),
       ),
     ).toBe(
       [
-        "内容を確認したファイル",
+        "以下ファイルの内容を確認しました。問題無し。",
         "- /w/policy.json",
+        "- /w/deploy.sh",
         "",
-        "以下を許可します。",
+        "以下の操作を許可します。",
         "- `/w/a.ts` の編集",
-        `- aws s3api put-bucket-policy --bucket b --policy "file://policy.json" の実行`,
+        "- 以下コマンドの実行（公開読み取りの policy を当てる）",
+        "```",
+        `aws s3api put-bucket-policy --bucket b --policy "file://policy.json"`,
+        "```",
+        "- 以下コマンドの実行",
+        "```",
+        "sh /w/deploy.sh prod \\",
+        "  && echo done",
+        "```",
         "",
       ].join("\n"),
     );
   });
 
-  // 何を保証するか: 人が中身を見られなかったファイルは「確認した」に入れず、
-  // 先頭だけを見たファイルはそう書く。ファイルが無ければ節ごと書かない。
-  test("leaves out files the person could not see, and says which were cut short", () => {
-    const text = permitGrantText(
-      request({
-        attachments: [
-          { path: "/w/gone", read: false, reason: "missing" },
-          { path: "/w/long.log", read: true, content: "a", bytes: 1e6, truncated: true },
-        ],
-        commands: ["ls"],
-      }),
-    );
-    expect(text).toBe(
-      `内容を確認したファイル\n- /w/long.log (先頭の ${String(PERMIT_ATTACHMENT_MAX_BYTES / 1024)} KiB)\n\n以下を許可します。\n- ls の実行\n`,
-    );
-    expect(permitGrantText(request({ commands: ["ls"] }))).toBe(
-      "以下を許可します。\n- ls の実行\n",
+  // 何を保証するか: 添付が無ければファイルの段落ごと書かない。
+  test("leaves out the files paragraph when there are none", () => {
+    expect(permitGrantText(request({ intents: ["編集"] }))).toBe(
+      "以下の操作を許可します。\n- 編集\n",
     );
   });
 
-  // 何を保証するか: 複数行のコマンド (行末の \ や here document) も全文が
-  // 入る。中身に ``` があっても閉じられないフェンスで囲む。
-  test("writes a command of several lines in a fence it cannot close", () => {
+  // 何を保証するか: コマンドの中に ``` があっても、閉じられないフェンスで囲む。
+  test("writes a command in a fence it cannot close", () => {
     const command = "cat <<'EOF' > a.md\n```\ncode\n```\nEOF";
-    expect(permitGrantText(request({ commands: [command] }))).toBe(
-      `以下を許可します。\n- 次のコマンドの実行\n\`\`\`\`\n${command}\n\`\`\`\`\n`,
+    expect(permitGrantText(request({ commands: [{ command }] }))).toBe(
+      `以下の操作を許可します。\n- 以下コマンドの実行\n\`\`\`\`\n${command}\n\`\`\`\`\n`,
     );
-    expect(permitGrantText(request({ commands: ["git push \\\n  origin main"] }))).toBe(
-      "以下を許可します。\n- 次のコマンドの実行\n```\ngit push \\\n  origin main\n```\n",
+  });
+
+  test("a command's heading carries its description when it has one", () => {
+    expect(commandHeading({ command: "ls" })).toBe("以下コマンドの実行");
+    expect(commandHeading({ command: "ls", description: "一覧" })).toBe(
+      "以下コマンドの実行（一覧）",
     );
   });
 });

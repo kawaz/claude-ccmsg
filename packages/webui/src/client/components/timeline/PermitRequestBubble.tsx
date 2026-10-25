@@ -1,42 +1,84 @@
 /** @jsxImportSource preact */
 // 許可依頼 (DR-0040) のバブル。auto mode の classifier に止められたエージェント
 // が、止められた行動・読むファイル・許可してほしいことを並べて人に見せ、
-// 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。人はそれを
-// そのセッションの入力欄に貼って送る。写せたら依頼を既読にし、Sessions 一覧の
-// 🔐 を消す。許可したかどうかは持たない (エージェントが許可の文を受けて再実行
-// する)。
+// 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。添付の中身は
+// 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
+// 送る。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
+// 持たない (エージェントが許可の文を受けて再実行する)。
+import type { TargetedEvent } from "preact";
 import { useState } from "preact/hooks";
 import type { PermitAttachment, PermitRequestRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
-import { attachmentNote, fenceLangOfPath, permitGrantText } from "../../permit-request-view.ts";
+import {
+  attachmentNote,
+  commandHeading,
+  fenceLangOfPath,
+  permitGrantText,
+} from "../../permit-request-view.ts";
 import { formatMsgTime } from "../../utils.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { useClipboardCopy } from "../CopyButton.tsx";
 
-/** 中身を見せられるファイルは折り畳み (既定で閉じる: 読むかは人が選ぶ)、
- * 見せられないファイルは理由を添えた 1 行。 */
-function Attachment({ attachment }: { attachment: PermitAttachment }) {
-  const note = attachmentNote(attachment);
-  if (!attachment.read) {
-    return (
-      <div class="permit-attachment permit-attachment-unreadable">
-        <code>{attachment.path}</code>
-        <span class="permit-attachment-note">{note}</span>
-      </div>
-    );
+/** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
+ * か読めない理由)、daemon が答えなかった。 */
+type AttachmentLoad =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "loaded"; attachment: PermitAttachment }
+  | { kind: "failed"; message: string };
+
+/** 開いた添付の中身。読めたものは拡張子の言語のコードブロック、読めない
+ * ものは理由。 */
+function AttachmentBody({ load }: { load: AttachmentLoad }) {
+  if (load.kind === "idle" || load.kind === "loading") {
+    return <p class="permit-attachment-status">読み込み中…</p>;
   }
+  if (load.kind === "failed") {
+    return <p class="permit-attachment-status permit-grant-error">{load.message}</p>;
+  }
+  const { attachment } = load;
+  const note = attachmentNote(attachment);
   return (
-    <details class="permit-attachment">
+    <>
+      {note !== null ? <p class="permit-attachment-status">{note}</p> : null}
+      {attachment.read ? (
+        <CodeBlock
+          code={attachment.content}
+          lang={fenceLangOfPath(attachment.path)}
+          placeholder="(空のファイル)"
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** 添付 1 つ。折り畳み (既定で閉じる: 読むかは人が選ぶ) にパスだけを出し、
+ * 開いた時に daemon から今の中身を読んで差し込む。読めた後は閉じて開き直し
+ * ても読み直さない。daemon が答えなかった時は、次に開いた時に読み直す。 */
+function Attachment({ id, path }: { id: string; path: string }) {
+  const { ws } = useApp();
+  const [load, setLoad] = useState<AttachmentLoad>({ kind: "idle" });
+  const onToggle = (e: TargetedEvent<HTMLDetailsElement>): void => {
+    if (!e.currentTarget.open || load.kind === "loading" || load.kind === "loaded") return;
+    setLoad({ kind: "loading" });
+    void ws
+      .permitAttachmentRead(id, path)
+      .then((res) =>
+        setLoad(
+          res.ok
+            ? { kind: "loaded", attachment: res.attachment }
+            : { kind: "failed", message: `読めませんでした: ${res.error.msg}` },
+        ),
+      )
+      .catch(() => setLoad({ kind: "failed", message: "接続エラーのため読めませんでした" }));
+  };
+  return (
+    <details class="permit-attachment" onToggle={onToggle}>
       <summary>
-        <code>{attachment.path}</code>
-        {note !== null ? <span class="permit-attachment-note">{note}</span> : null}
+        <code>{path}</code>
       </summary>
-      <CodeBlock
-        code={attachment.content}
-        lang={fenceLangOfPath(attachment.path)}
-        placeholder="(空のファイル)"
-      />
+      <AttachmentBody load={load} />
     </details>
   );
 }
@@ -112,8 +154,8 @@ export function PermitRequestBubble({
       {request.attachments.length > 0 ? (
         <section class="permit-section">
           <h4 class="permit-heading">添付</h4>
-          {request.attachments.map((attachment) => (
-            <Attachment key={attachment.path} attachment={attachment} />
+          {request.attachments.map((path) => (
+            <Attachment key={path} id={request.id} path={path} />
           ))}
         </section>
       ) : null}
@@ -127,8 +169,8 @@ export function PermitRequestBubble({
           ))}
           {request.commands.map((command, i) => (
             <li key={`c${String(i)}`} class="permit-command">
-              <CodeBlock code={command} lang="sh" />
-              <span>の実行</span>
+              <span>{commandHeading(command)}</span>
+              <CodeBlock code={command.command} lang="sh" />
             </li>
           ))}
         </ul>

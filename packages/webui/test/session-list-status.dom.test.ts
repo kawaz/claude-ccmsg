@@ -137,7 +137,7 @@ describe("the Sessions list's unread requests for permission", () => {
     blocked: "x",
     attachments: [],
     intents: [],
-    commands: ["ls"],
+    commands: [{ command: "ls" }],
     read,
   });
 

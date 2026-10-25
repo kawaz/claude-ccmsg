@@ -1,19 +1,21 @@
 // 許可依頼バブル (usePermitBubbles + PermitRequestBubble) を Timeline に
 // マウントして、読み手に見えるものと「許可する」が写すものを固定する。
 // - そのセッションの依頼だけが出る (別セッションの依頼、agent TL には出ない)
-// - 止められた行動・添付 (読めたものは折り畳み、読めないものは理由)・
-//   許可してほしいこと (intent とコマンド) の節を出し、添付が無ければ
-//   その節を出さない
+// - 止められた行動・添付 (パスだけの折り畳み)・許可してほしいこと (intent と
+//   コマンド) の節を出し、添付が無ければその節を出さない
+// - 添付は開いた時に daemon から読み (permit_attachment_read)、中身か読めない
+//   理由を差し込む。読めた後は開き直しても読み直さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
 // - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
 //   場所に入る
 // daemon の代わりに、store へ ev:"permit_requests" / ev:"permit_request" と
-// 同じ action を流し、permit_request_read で受けた id を既読にして返す。
+// 同じ action を流し、permit_request_read で受けた id を既読にして返し、
+// permit_attachment_read にはパスごとに決めた答えを返す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import type { PermitRequestRecord } from "@ccmsg/protocol";
+import type { PermitAttachment, PermitRequestRecord, ReplyOf } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
@@ -59,19 +61,29 @@ const ASKED: PermitRequestRecord = {
   sid: SID,
   ts: "2026-10-25T00:00:01.000Z",
   blocked: "`aws s3api put-bucket-policy` が止められた",
-  attachments: [
-    {
-      path: "/w/policy.json",
-      read: true,
-      content: '{"Statement":[]}\n',
-      bytes: 17,
-      truncated: false,
-    },
-    { path: "/w/gone.sh", read: false, reason: "missing" },
-  ],
+  attachments: ["/w/policy.json", "/w/gone.sh", "/w/offline.txt"],
   intents: ["`/w/a.ts` の編集"],
-  commands: ["aws s3api put-bucket-policy --bucket b --policy file://policy.json"],
+  commands: [
+    {
+      command: "aws s3api put-bucket-policy --bucket b --policy file://policy.json",
+      description: "公開読み取りの policy を当てる",
+    },
+    { command: "ls" },
+  ],
   read: false,
+};
+
+/** What the fake daemon answers for each attachment: its content, why it
+ * cannot be read, or (for /w/offline.txt) a refusal. */
+const OPENED: Readonly<Record<string, PermitAttachment>> = {
+  "/w/policy.json": {
+    path: "/w/policy.json",
+    read: true,
+    content: '{"Statement":[]}\n',
+    bytes: 17,
+    truncated: false,
+  },
+  "/w/gone.sh": { path: "/w/gone.sh", read: false, reason: "missing" },
 };
 
 async function openWith(
@@ -81,11 +93,13 @@ async function openWith(
   root: HTMLElement;
   store: Store;
   reads: Array<readonly string[]>;
+  opens: string[];
 }> {
   const store = timelineStore(agent !== undefined ? { agent } : {});
   store.dispatch({ type: "permit-requests/loaded", requests: [...requests] });
   const ws = new FakeTranscriptWs(store);
   const reads: Array<readonly string[]> = [];
+  const opens: string[] = [];
   const handle = {
     ...ws.handle,
     permitRequestRead: (ids: readonly string[]) => {
@@ -97,6 +111,18 @@ async function openWith(
       }
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },
+    permitAttachmentRead: (
+      id: string,
+      path: string,
+    ): Promise<ReplyOf<"permit_attachment_read">> => {
+      opens.push(`${id} ${path}`);
+      const attachment = OPENED[path];
+      return Promise.resolve(
+        attachment !== undefined
+          ? { ok: true, attachment }
+          : { ok: false, error: { code: "invalid_args", msg: `no permit request with id ${id}` } },
+      );
+    },
   };
   const root = await mounted.mount(
     store,
@@ -104,7 +130,7 @@ async function openWith(
     h(TimelineOf, agent !== undefined ? { agent } : {}),
   );
   await ws.lastRead().answer(page([]));
-  return { root, store, reads };
+  return { root, store, reads, opens };
 }
 
 function stubClipboard(writeText: (text: string) => Promise<void>): void {
@@ -133,18 +159,63 @@ describe("permission request bubbles", () => {
     expect(shown.querySelector(".permit-section .md")?.textContent).toContain(
       "aws s3api put-bucket-policy が止められた",
     );
-    // A file read is folded, closed; one that could not be is a line with why.
-    const folded = defined(shown.querySelector("details.permit-attachment"), "details");
-    expect(folded.hasAttribute("open")).toBe(false);
-    expect(folded.querySelector("summary")?.textContent).toBe("/w/policy.json");
-    expect(folded.querySelector("pre")?.textContent).toBe('{"Statement":[]}\n');
-    expect(shown.querySelector(".permit-attachment-unreadable")?.textContent).toBe(
-      "/w/gone.shファイルが無い",
-    );
+    // Each file is a closed fold showing its path alone, nothing read yet.
+    const folds = [...shown.querySelectorAll("details.permit-attachment")];
+    expect(
+      folds.map((d) => [d.querySelector("summary")?.textContent, d.hasAttribute("open")]),
+    ).toEqual([
+      ["/w/policy.json", false],
+      ["/w/gone.sh", false],
+      ["/w/offline.txt", false],
+    ]);
+    expect(shown.querySelector(".permit-attachment pre")).toBeNull();
     const asks = [...shown.querySelectorAll(".permit-asks > li")].map((li) => li.textContent);
     expect(asks).toEqual([
       "/w/a.ts の編集",
-      "aws s3api put-bucket-policy --bucket b --policy file://policy.jsonの実行",
+      "以下コマンドの実行（公開読み取りの policy を当てる）aws s3api put-bucket-policy --bucket b --policy file://policy.json",
+      "以下コマンドの実行ls",
+    ]);
+  });
+
+  // 何を保証するか: 添付は開いた時に読み、中身か読めない理由をその折り畳みに
+  // 差し込む。読めた後は閉じて開き直しても読み直さない。daemon が答えなかった
+  // 時はそう言い、次に開いた時に読み直す。
+  test("read a file when it is opened, once it has been read", async () => {
+    const { root, opens } = await openWith([ASKED]);
+    const folds = [...root.querySelectorAll<HTMLDetailsElement>("details.permit-attachment")];
+    const toggle = async (fold: HTMLDetailsElement | undefined, open: boolean) => {
+      const details = defined(fold, "fold");
+      await act(async () => {
+        // happy-dom fires `toggle` itself when `open` changes, after the
+        // change as browsers do: wait for that event, then for the reply.
+        const toggled = new Promise((resolve) =>
+          details.addEventListener("toggle", resolve, { once: true }),
+        );
+        details.open = open;
+        await toggled;
+        await Promise.resolve();
+      });
+    };
+    await toggle(folds[0], true);
+    expect(folds[0]?.querySelector("pre")?.textContent).toBe('{"Statement":[]}\n');
+    await toggle(folds[0], false);
+    await toggle(folds[0], true);
+    await toggle(folds[1], true);
+    expect(folds[1]?.querySelector(".permit-attachment-status")?.textContent).toBe(
+      "ファイルが無い",
+    );
+    expect(folds[1]?.querySelector("pre")).toBeNull();
+    await toggle(folds[2], true);
+    expect(folds[2]?.querySelector(".permit-attachment-status")?.textContent).toBe(
+      "読めませんでした: no permit request with id i/1",
+    );
+    await toggle(folds[2], false);
+    await toggle(folds[2], true);
+    expect(opens).toEqual([
+      "i/1 /w/policy.json",
+      "i/1 /w/gone.sh",
+      "i/1 /w/offline.txt",
+      "i/1 /w/offline.txt",
     ]);
   });
 

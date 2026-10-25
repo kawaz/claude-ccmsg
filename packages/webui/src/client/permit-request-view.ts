@@ -10,6 +10,7 @@ import {
   PERMIT_ATTACHMENT_MAX_BYTES,
   PERMIT_ATTACHMENT_UNREADABLE_TEXT,
   type PermitAttachment,
+  type PermitCommand,
   type PermitRequestRecord,
 } from "@ccmsg/protocol";
 
@@ -24,8 +25,8 @@ export function fenceLangOfPath(path: string): string | null {
 
 const LIMIT_KIB = PERMIT_ATTACHMENT_MAX_BYTES / 1024;
 
-/** What the summary of an attachment says beside its path: that only its
- * start is shown, or why nothing is. Null for a file shown whole. */
+/** What an opened attachment says beside its content: that only its start
+ * is shown, or why nothing is. Null for a file shown whole. */
 export function attachmentNote(attachment: PermitAttachment): string | null {
   if (!attachment.read) return PERMIT_ATTACHMENT_UNREADABLE_TEXT[attachment.reason];
   if (attachment.truncated) {
@@ -41,28 +42,32 @@ function fenceFor(code: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
-/** One command as a line of the permission: on the line itself when it is
- * one line, in a code block when it is more (a continued line, a here
- * document), so it is written whole either way. */
-function commandLine(command: string): string {
-  if (!command.includes("\n")) return `- ${command} の実行`;
-  const fence = fenceFor(command);
-  return `- 次のコマンドの実行\n${fence}\n${command}\n${fence}`;
+/** What a command's line of the permission says it is: what it does, when
+ * the agent said. The bubble shows the same words above the command. */
+export function commandHeading(command: PermitCommand): string {
+  return command.description !== undefined
+    ? `以下コマンドの実行（${command.description}）`
+    : "以下コマンドの実行";
 }
 
-/** The text the 許可する button copies: the files whose content the person
- * was shown (a file cut short says so; one that could not be read is not
- * listed, since the person did not see it), then what is permitted, each
- * intent and each command whole. */
+/** One command as an item of the permission: its heading, then the command
+ * whole in a code block (a continued line, a here document stay as written). */
+function commandItem(command: PermitCommand): string {
+  const fence = fenceFor(command.command);
+  return `- ${commandHeading(command)}\n${fence}\n${command.command}\n${fence}`;
+}
+
+/** The text the 許可する button copies: the files the request put in front
+ * of the person, then what is permitted, each intent and each command
+ * whole. */
 export function permitGrantText(request: PermitRequestRecord): string {
-  const seen = request.attachments.flatMap((a) => {
-    if (!a.read) return [];
-    return [a.truncated ? `- ${a.path} (先頭の ${String(LIMIT_KIB)} KiB)` : `- ${a.path}`];
-  });
+  const files =
+    request.attachments.length > 0
+      ? `以下ファイルの内容を確認しました。問題無し。\n${request.attachments.map((path) => `- ${path}`).join("\n")}\n\n`
+      : "";
   const granted = [
     ...request.intents.map((intent) => `- ${intent}`),
-    ...request.commands.map(commandLine),
+    ...request.commands.map(commandItem),
   ];
-  const files = seen.length > 0 ? `内容を確認したファイル\n${seen.join("\n")}\n\n` : "";
-  return `${files}以下を許可します。\n${granted.join("\n")}\n`;
+  return `${files}以下の操作を許可します。\n${granted.join("\n")}\n`;
 }

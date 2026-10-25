@@ -195,7 +195,7 @@ describe("permitUnreadBySid", () => {
       blocked: "x",
       attachments: [],
       intents: [],
-      commands: ["ls"],
+      commands: [{ command: "ls" }],
       read,
     });
     const got = permitUnreadBySid([

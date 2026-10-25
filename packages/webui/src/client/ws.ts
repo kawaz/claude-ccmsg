@@ -125,6 +125,9 @@ export interface WsHandle {
    * Non-optimistic, like sayRead — the daemon pushes each record it changed
    * as ev:"permit_request". */
   permitRequestRead(ids: readonly string[]): Promise<ReplyOf<"permit_request_read">>;
+  /** Read one attachment of a request for permission as it is now
+   * (DR-0040 §3): the bubble's opening it. */
+  permitAttachmentRead(id: string, path: string): Promise<ReplyOf<"permit_attachment_read">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
    * room message a past transcript shows. */
@@ -922,6 +925,7 @@ export function createWsClient(
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
     permitRequestRead: (ids) => send({ op: "permit_request_read", ids: [...ids] }),
+    permitAttachmentRead: (id, path) => send({ op: "permit_attachment_read", id, path }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),
