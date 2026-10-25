@@ -33,3 +33,7 @@ macOS (APFS の system volume)、bun 1.4.2。別 device は `hdiutil create -fs 
 | 5 | repo (同じ device) | 直した後のテスト | 9 pass / 1 skip。hard link の test が pass、copy の test が skip |
 
 `just test` (lint / typecheck を含む): 4250 pass / 1 skip / 0 fail (skip は上の copy の test)。
+
+## 追記: claude の代役のプロセスが ubuntu-26.04 で即座に終わる (session-restart.test)
+
+`packages/daemon/test/session-restart.test.ts` は restart の対象のプロセスの代役を、`/bin/sleep` を `<一時ディレクトリ>/claude` に copy して起動していた (daemon の pid の検証は `ps -p <pid> -o command=` の argv[0] の basename が `claude` であることを見る、[DR-0028](../decisions/DR-0028-session-kill.md))。macOS の `/bin/sleep` は単体の実行ファイルなので通るが、CI の `ci (ubuntu-latest)` では `coreutils: unknown program 'claude'` を出して終わり、daemon は `not_found` で断って 2 件が落ちた。ubuntu-26.04 の coreutils は argv[0] で実行するプログラムを選ぶ multi-call binary (uutils) で、`claude` という名前のプログラムを持たないため、と読める (手元の nix の coreutils も multi-call で、`claude` の名前で起こすと同じ文を出して exit 1 で終わった)。`#!/bin/sh` のスクリプトを `claude` の名前で置く形は使えない: 起動したプロセスの argv は `/bin/sh <スクリプト>` になり、argv[0] が `/bin/sh` なので pid の検証に通らない (macOS の `ps` で確認)。代役は、テストを走らせている bun (`process.execPath`) への `claude` という名前の symlink を `-e` で timer を持たせて起動する形にした。argv[0] は `<一時ディレクトリ>/claude` のまま `ps` に出て (macOS で確認)、SIGTERM で終わる。bun は argv[0] で振る舞いを変えるのが `bunx` / `node` の名前の時だけで、coreutils の実体に依存しない。未検証: ubuntu-26.04 の runner でこの形が通ること (手元に Linux が無い。push 後の CI で確かめる)。

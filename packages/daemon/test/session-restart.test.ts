@@ -44,13 +44,14 @@ function commandInput(stdout: string): LaunchCommandInput {
 
 /** A process whose command line reads as claude's (`ps` shows argv[0]
  * `<dir>/claude`), standing in for the session's: it must never be a real
- * one. It is `sleep` copied under that name (a multi-call coreutils picks
- * its program by argv[0], so the system's own `sleep` is copied). */
+ * one. It is the running bun under a symlink named `claude`, holding a timer:
+ * bun does not pick its program by argv[0] (a multi-call coreutils such as
+ * uutils does, and dies on `claude`), and a `#!/bin/sh` script would show
+ * the interpreter as argv[0], which the pid check refuses. */
 function fakeClaude(): Bun.Subprocess {
   const bin = path.join(tmp("fake-claude-"), "claude");
-  fs.copyFileSync("/bin/sleep", bin);
-  fs.chmodSync(bin, 0o755);
-  return Bun.spawn([bin, "600"]);
+  fs.symlinkSync(process.execPath, bin);
+  return Bun.spawn([bin, "-e", "setTimeout(() => {}, 600_000)"]);
 }
 
 function isAlive(pid: number): boolean {
