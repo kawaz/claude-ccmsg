@@ -1910,6 +1910,14 @@ a {
   color: var(--fg);
 }
 
+/* 入力を受けない欄 (`--session-id`、daemon が生成する) は、打てる欄と
+ * 見分けがつくよう背景を落とし枠を破線にする。 */
+.session-creator-field input[type="text"]:disabled {
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
 /* 読めずに送れない欄 (aria-invalid) は枠で示し、理由は下の
  * .session-creator-issue が言う。 */
 .session-creator-field [aria-invalid="true"] {
