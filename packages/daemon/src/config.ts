@@ -7,9 +7,9 @@
 // `<configDir>/config.js` — an ES module whose default export is that same
 // object (or a Promise resolving to one, letting the module use top-level
 // `await` or build the config asynchronously) — is accepted as well, and wins
-// over config.json when both files exist. Launcher commands are multi-line
-// shell snippets, which JSON can only express as one string with every
-// newline escaped; a module writes them as template literals.
+// over config.json when both files exist: a module can build values (a path
+// from the environment, a list shared between keys) that JSON can only spell
+// out literally.
 // `<configDir>/config.ts` is the same acceptance path with type annotations
 // available on the default export (Bun's ESM loader evaluates it directly,
 // stripping types with no build step) and wins over both when present. The
@@ -30,96 +30,11 @@ import {
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
   errorText,
   jsonText,
-  LAUNCHER_CWD_PARAM,
   parseWith,
-  type LauncherParam,
   type Output,
   type ParseFailure,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
-
-/** The schema a launch request's `params` are read with, for one template:
- * one text field per declared parameter but CWD (which travels as the
- * request's `cwd`), each optional with its declared default. A name the
- * template does not declare fails the read. */
-export type LaunchParamsSchema = v.StrictObjectSchema<
-  Record<string, v.OptionalSchema<v.StringSchema<undefined>, string>>,
-  undefined
->;
-
-/** One named launch recipe in the parsed normal form of `session_launcher`.
- * Every field is fully resolved at parse time (an inherited `shell` and the
- * implicit CWD parameter are normalized here), so nothing downstream has to
- * re-apply fallbacks. Built by `launcherTemplate`, which derives `readParams`
- * from `params`.
- *
- * `command` is a shell program, not an argv: its vocabulary is the shell
- * variables this template declares in `params`, which the launcher shell
- * defines from the request before running this text. The daemon never
- * substitutes anything into it. */
-export interface SessionLauncherTemplate {
-  /** Non-empty, unique within one launcher config. Shown verbatim in the
-   * webui's template picker and named by SessionLaunchRequest.template. */
-  readonly name: string;
-  readonly command: string;
-  /** Declared parameters in config order; always contains LAUNCHER_CWD_PARAM. */
-  readonly params: readonly LauncherParam[];
-  readonly shell: "bash" | "zsh";
-  /** `params` as the schema a launch request's values are read with. */
-  readonly readParams: LaunchParamsSchema;
-}
-
-/** A template of these fields, with the schema of its launch values built
- * from its declaration once, here. */
-export function launcherTemplate(
-  fields: Omit<SessionLauncherTemplate, "readParams">,
-): SessionLauncherTemplate {
-  const entries = Object.fromEntries(
-    fields.params
-      .filter((param) => param.name !== LAUNCHER_CWD_PARAM)
-      .map((param): [string, v.OptionalSchema<v.StringSchema<undefined>, string>] => [
-        param.name,
-        v.optional(v.string(), param.default),
-      ]),
-  );
-  return { ...fields, readParams: v.strictObject(entries) };
-}
-
-/** Parsed normal form of `<configDir>/config.json`'s `session_launcher` key
- * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
- * built-in choice so launch never falls through to an implicit `sh -c`.
- *
- * `templates` is always non-empty — a config that yields no usable template
- * disables the launcher entirely. `templates[0]` is the launcher's default
- * recipe. */
-export interface SessionLauncherConfig {
-  readonly root_dirs: readonly string[];
-  readonly templates: readonly SessionLauncherTemplate[];
-  readonly timeout_seconds: number;
-  readonly dir_tree_depth: number;
-  /** DR-0018 §3.1: wildcard patterns naming environment
-   * variables to REMOVE from the daemon's own environment before a launched
-   * child inherits it. The daemon itself is typically started from inside a
-   * Claude session's shell, so its process.env carries that origin session's
-   * variables (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ANTHROPIC_*
-   * …) which would silently reconfigure every launched session. `*` matches
-   * any substring of a key name (no separator semantics); everything else is
-   * literal, case-sensitive. Absent/empty = no cleaning.
-   * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
-   * shell turns into the template variables) are layered on AFTER
-   * cleaning, so they can never be removed by a pattern. */
-  readonly clean_env?: readonly string[];
-  /** DR-0018 §3.1: wildcard patterns naming
-   * environment variables to KEEP even when a `clean_env` pattern matches
-   * them — keep_env takes precedence over clean_env. Same pattern grammar as
-   * clean_env (`*` = any substring, otherwise literal, case-sensitive,
-   * anchored whole-key match). Motivation: a broad clean pattern like
-   * `CLAUDE*` also removes CLAUDE_CONFIG_DIR, which the launched session
-   * needs for config-plane isolation; the allowlist carves such exceptions
-   * out of the broad removal. A key matching only keep_env (and no
-   * clean_env pattern) is a no-op — it would have survived anyway. */
-  readonly keep_env?: readonly string[];
-}
 
 function expandRoot(value: string): string {
   if (value === "~") return os.homedir();
@@ -157,55 +72,7 @@ const SandboxOriginTemplateSchema = v.pipe(
   ),
 );
 
-const ShellSchema = v.picklist(["bash", "zsh"]);
-
-/** A parameter name has to be a shell identifier: the launcher shell defines it
- * with a fixed prologue (`NAME="$carrier"`), so anything else would be a syntax
- * error at launch instead of a config error at startup. */
-const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/** Shell identifiers a parameter may not be named: the names an object's
- * prototype answers to. A launch request's values are read by a schema built
- * from the declared names (`launcherTemplate`), and an object schema does not
- * read these keys. */
-const RESERVED_PARAM_NAMES = ["__proto__", "constructor", "prototype"] as const;
-
-/** Whether a declaration names a reserved parameter.
- *
- * Design rationale: this looks at the value before it is read, against the
- * rule that only a schema looks inside an unread value. valibot's record
- * passes over these three keys without a word, so after the read a declared
- * `constructor` would be gone rather than refused; the check has to run on the
- * value the record is given. It is a step of the params schema itself. */
-function declaresReservedName(input: unknown): boolean {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    RESERVED_PARAM_NAMES.some((name) => Object.hasOwn(input, name))
-  );
-}
-
-/** Parameter name → form default value, in declaration order (the order the
- * form renders). */
-const LauncherParamsSchema = v.pipe(
-  v.custom<Record<string, string>>(
-    (input) => !declaresReservedName(input),
-    `must not declare ${RESERVED_PARAM_NAMES.join(" / ")}`,
-  ),
-  v.record(v.pipe(v.string(), v.regex(PARAM_NAME_RE, "is not a shell identifier")), v.string()),
-);
-
-const LauncherTemplateSchema = v.strictObject({
-  name: v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
-  command: v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
-  /** Absent: the launcher-level `shell`. */
-  shell: v.optional(ShellSchema),
-  /** The declaration is the only source of truth for which inputs the form
-   * shows. */
-  params: LauncherParamsSchema,
-});
-
-/** A root the launcher may start sessions under: absolute, or `~/…`. */
+/** A root the cwd tree starts from: absolute, or `~/…`. */
 const RootDirSchema = v.pipe(
   v.string(),
   v.transform(expandRoot),
@@ -216,50 +83,50 @@ const RootDirSchema = v.pipe(
 const PositiveNumberSchema = v.pipe(v.number(), v.finite(), v.gtValue(0));
 const EnvPatternsSchema = v.array(v.pipe(v.string(), v.nonEmpty("must be a non-empty string")));
 
-/** Every template needs CWD (it is where the process runs), so a declaration
- * that omits it gets it first — the form then always has its directory picker
- * and the daemon always has a path to containment-check. */
-function withCwdParam(params: readonly LauncherParam[]): readonly LauncherParam[] {
-  if (params.some((p) => p.name === LAUNCHER_CWD_PARAM)) return params;
-  return [{ name: LAUNCHER_CWD_PARAM, default: "" }, ...params];
-}
-
-/** `session_launcher`, read into its normal form: each template resolved in
- * full (its `shell` inherited from the launcher's, CWD declared), so nothing
- * downstream re-applies defaults. The schema of each template's launch values
- * is built from the read value afterwards (`resolveConfig`). */
-const SessionLauncherSchema = v.pipe(
-  v.strictObject({
-    root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
-    /** Default for templates that omit their own `shell`. */
-    shell: v.optional(ShellSchema, "bash"),
-    timeout_seconds: v.optional(PositiveNumberSchema, DEFAULT_LAUNCH_TIMEOUT_SECONDS),
-    dir_tree_depth: v.optional(PositiveNumberSchema, DEFAULT_DIR_TREE_DEPTH),
-    clean_env: v.optional(EnvPatternsSchema, []),
-    keep_env: v.optional(EnvPatternsSchema, []),
-    templates: v.pipe(
-      v.array(LauncherTemplateSchema),
-      v.minLength(1, "must list at least one template"),
-      v.check(
-        (templates) => new Set(templates.map((t) => t.name)).size === templates.length,
-        "template names must be unique",
-      ),
-    ),
-  }),
-  v.transform(({ templates, shell, ...rest }) => ({
-    ...rest,
-    templates: templates.map(
-      (template): Omit<SessionLauncherTemplate, "readParams"> => ({
-        name: template.name,
-        command: template.command,
-        params: withCwdParam(
-          Object.entries(template.params).map(([name, value]) => ({ name, default: value })),
-        ),
-        shell: template.shell ?? shell,
-      }),
-    ),
-  })),
+/** The program a launch runs: an absolute path, a `~/` path (expanded here),
+ * or a name the daemon looks up in its PATH when it launches. A relative path
+ * would resolve against each launch's cwd, so it is none of these. */
+const LaunchProgramSchema = v.pipe(
+  v.string("must name the program to run"),
+  v.nonEmpty("must be a non-empty string"),
+  v.transform(expandRoot),
+  v.check(
+    (value) => path.isAbsolute(value) || !value.includes("/"),
+    "must be an absolute path, start with ~/, or be a command name looked up in PATH",
+  ),
 );
+
+/** The launch command's argv (DR-0018 §3.1), run without a shell. */
+const LaunchCommandSchema = v.tupleWithRest(
+  [LaunchProgramSchema],
+  v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
+);
+
+/** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
+ * left out; a value of the wrong shape does not read. */
+const SessionLauncherSchema = v.strictObject({
+  launch_command: LaunchCommandSchema,
+  root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
+  dir_tree_depth: v.optional(PositiveNumberSchema, DEFAULT_DIR_TREE_DEPTH),
+  /** Kept within the `launch` tool's 60 s wait, with room for the kill grace
+   * and writing the output files. */
+  timeout_seconds: v.optional(
+    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50)),
+    DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+  ),
+  /** Patterns of the daemon's environment keys the launch command does not
+   * inherit: `*` is any run of characters, the rest literal and
+   * case-sensitive, matched against the whole key. The daemon is often
+   * started from a session's shell, and that session's variables would
+   * otherwise reach the new one. */
+  clean_env: v.optional(EnvPatternsSchema, []),
+  /** Keys kept even where a `clean_env` pattern matches them (same pattern
+   * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
+  keep_env: v.optional(EnvPatternsSchema, []),
+});
+
+/** `session_launcher` as the daemon holds it. */
+export type SessionLauncherConfig = Output<typeof SessionLauncherSchema>;
 
 /** 外部プロデューサからの `POST /webhook/<source>` 受け口 (webhook.ts)。source 名
  * → その source 専用の bearer token を置いたファイルパス。token 値をここに直書き
@@ -330,33 +197,15 @@ export const CcmsgConfigSchema = v.pipe(
   CcmsgConfigObjectSchema,
 );
 
-type ReadConfig = Output<typeof CcmsgConfigSchema>;
-
 /** The configuration as the daemon holds it (`Daemon.config`). */
-export type ResolvedCcmsgConfig = Omit<ReadConfig, "session_launcher"> & {
-  readonly session_launcher?: SessionLauncherConfig;
-};
-
-/** The read configuration with each launcher template's launch-value schema
- * built from its declaration. */
-function resolveConfig({ session_launcher, ...rest }: ReadConfig): ResolvedCcmsgConfig {
-  return session_launcher === undefined
-    ? rest
-    : {
-        ...rest,
-        session_launcher: {
-          ...session_launcher,
-          templates: session_launcher.templates.map(launcherTemplate),
-        },
-      };
-}
+export type ResolvedCcmsgConfig = Output<typeof CcmsgConfigSchema>;
 
 /** The shape a hand-authored `config.ts` / `config.js` / `config.json` may
  * declare: what the schema reads, before its defaults and normalization.
  * `writeConfigTypesFile` re-exports this one, so a config.ts author
  * `satisfies`-checks against it. The rules a type cannot say (a URL's scheme,
- * unique template names, …) are still the schema's, and stop the daemon at
- * startup like any other. */
+ * an absolute root, …) are still the schema's, and stop the daemon at startup
+ * like any other. */
 export type CcmsgConfig = v.InferInput<typeof CcmsgConfigSchema>;
 
 interface Log {
@@ -503,9 +352,7 @@ async function readJsConfig(file: string): Promise<ConfigLoad> {
     return refused(file, `default export rejected (${errorText(e)})`);
   }
   const config = parseWith(CcmsgConfigSchema, value);
-  return config.ok
-    ? { ok: true, config: resolveConfig(config.value) }
-    : failed(file, config.failure);
+  return config.ok ? { ok: true, config: config.value } : failed(file, config.failure);
 }
 
 /** Read `config.json`. A missing file is the unconfigured state. */
@@ -518,9 +365,7 @@ function readJsonConfig(file: string): ConfigLoad {
     return refused(file, `unreadable (${errorText(e)})`);
   }
   const config = parseWith(CcmsgConfigTextSchema, text);
-  return config.ok
-    ? { ok: true, config: resolveConfig(config.value) }
-    : failed(file, config.failure);
+  return config.ok ? { ok: true, config: config.value } : failed(file, config.failure);
 }
 
 /** Read daemon configuration once at startup (LN-Q4). Missing is the normal

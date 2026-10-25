@@ -59,7 +59,8 @@ import {
   validateRepoRoot,
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
-import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
+import { launchSession } from "./session-launch.ts";
+import { pruneLaunchOutputs } from "./launch-output.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
@@ -1614,10 +1615,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
       // ドメインが前段に無い環境) では webui が導線を一切出さない。
       const sandboxAvailable = newId.role === "user" && daemon.sandboxOrigin !== null;
-      // fork も同じ流儀の capability。fork は launcher テンプレを起動する操作
-      // なので、launcher が設定されていなければ導線を出す意味がない (押した先
-      // の起動フォームが launcher_not_configured しか返せない)。
-      const forkAvailable = newId.role === "user" && !!daemon.config.session_launcher;
+      // 起動 (DR-0018 §3.4) も同じ流儀の capability。launcher が設定されて
+      // いなければ、新規フォームも Timeline の fork も launcher_not_configured
+      // しか返せない。
+      const launchAvailable = newId.role === "user" && !!daemon.config.session_launcher;
       send(conn, {
         ok: true,
         version: daemon.version,
@@ -1628,7 +1629,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ...(llmStatusAvailable ? { llm_status_available: true } : {}),
         ...(llmKeepalivePauseAvailable ? { llm_keepalive_pause_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
-        ...(forkAvailable ? { fork_available: true } : {}),
+        ...(launchAvailable ? { launch_available: true } : {}),
       });
       return;
     }
@@ -1880,17 +1881,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
         return;
       }
-      send(conn, {
-        ok: true,
-        root_dirs: launcher.root_dirs,
-        // `shell` は daemon 側の実行詳細なので落とす — form が使うのは名前・
-        // command テンプレ・params 宣言の 3 つだけ。
-        templates: launcher.templates.map(({ name, command, params }) => ({
-          name,
-          command,
-          params,
-        })),
-      });
+      send(conn, { ok: true, root_dirs: launcher.root_dirs });
       return;
     }
 
@@ -1914,27 +1905,34 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "session_launch": {
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'session_launch' requires user role");
+      // Both roles (DR-0018 §3.8): what runs is the one command the config
+      // names, and the caller chooses only the launch.
+      const id = conn.identity;
+      if (id === null) {
+        sendErr(conn, ErrorCode.hello_required, "op 'session_launch' requires hello first");
         return;
       }
-      const launcher = daemon.config.session_launcher;
-      if (!launcher) {
-        sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
+      const outcome = await launchSession(
+        {
+          launcher: daemon.config.session_launcher,
+          requester: id.role === "user" ? "user" : id.sid,
+          baseEnv: process.env,
+          launchesDir: daemon.paths.launches,
+          log: daemon.log,
+        },
+        req.launch,
+      );
+      if (!outcome.ok) {
+        sendErr(conn, outcome.code, outcome.msg);
         return;
       }
-      const validation = validateSessionLaunch(launcher, req);
-      if (!validation.ok) {
-        sendErr(conn, validation.code, validation.msg);
-        return;
-      }
-      send(conn, await executeSessionLaunch(validation, launcher.timeout_seconds));
+      send(conn, outcome.response);
       return;
     }
 
     case "session_kill": {
       // DR-0028: user role only — session-role agents must never be able to
-      // kill each other. Same gate wording/pattern as session_launch.
+      // kill each other.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_kill' requires user role");
         return;
@@ -3125,6 +3123,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     );
     if (daemon.shuttingDown) return;
   }
+
+  // Launch outputs past their 7 days (DR-0018 §3.6) go before anyone can ask
+  // for a launch that writes more.
+  await pruneLaunchOutputs(paths.launches, Date.now(), log);
 
   // The pid file must exist by the time the socket accepts: a client that
   // connects and then reads the pid (the upgrade test does exactly this) would

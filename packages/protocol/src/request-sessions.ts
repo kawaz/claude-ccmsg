@@ -7,6 +7,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import { LaunchInputSchema } from "./launch.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import {
@@ -157,7 +158,7 @@ export const PeerListRequestSchema = v.object({
 });
 export type PeerListRequest = Output<typeof PeerListRequestSchema>;
 
-/** Session-launcher cwd tree (DR-0018 §3.2, user role only). Requested roots
+/** Session-launcher cwd tree (DR-0018 §3.4, user role only). Requested roots
  * may be configured roots or any descendants: descendant roots are required
  * for LN-Q3 lazy expansion after the initial bounded fetch. */
 export const DirTreeRequestSchema = v.object({
@@ -170,65 +171,25 @@ export const DirTreeRequestSchema = v.object({
 });
 export type DirTreeRequest = Output<typeof DirTreeRequestSchema>;
 
-/** Session launch request (DR-0018 §3.2, user role only). The daemon validates
- * the opaque values, builds env/argv, and executes the configured command.
+/** Session launch request (DR-0018 §3.4), from the user and from a session
+ * alike (§3.8): the one launch command the config names is what runs, and the
+ * caller chooses only the launch.
  *
- * Slow reply: launching awaits the whole run (up to timeout_seconds + kill
- * escalation, potentially ~10s), and the single reply carrying the outcome
- * comes back then. Requests of one connection are answered concurrently
- * (RequestEnvelope), so the wait holds nothing else back. */
+ * Slow reply: the reply comes once the launch command has finished (up to
+ * timeout_seconds, the kill grace and the wait for its output). Requests of
+ * one connection are answered concurrently (RequestEnvelope), so the wait
+ * holds nothing else back. */
 export const SessionLaunchRequestSchema = v.object({
   op: v.literal("session_launch"),
-  /** Working directory for the launched process, and the value the command
-   * sees as `$CWD`. Carried as its own field rather than inside `params`
-   * because it is the one launch value the daemon itself acts on: it is
-   * `realpath`-checked against `root_dirs` and passed to spawn(). */
-  cwd: v.string(),
-  /** Values for the chosen template's declared parameters, by name. Read here
-   * only as names with text values: which names may appear is the chosen
-   * template's declaration, and the daemon reads them again with the schema it
-   * built from that declaration. A declared parameter the request omits takes
-   * its configured default; a name the template does not declare, CWD among
-   * them (it belongs in `cwd`), is refused as invalid_args rather than
-   * silently dropped (a client sending a value nothing will read is a client
-   * bug worth surfacing). Values are opaque strings — they travel as
-   * environment carriers, never interpolated into shell text, so no value can
-   * inject shell syntax. */
-  params: v.record(v.string(), v.string()),
-  /** Optional user-supplied command template override (DR-0018 §3.2).
-   * When absent, the daemon uses the administrator-configured
-   * `session_launcher.command` verbatim. When present, it must be a non-empty
-   * string; empty string is rejected as invalid_args. Rationale: user role
-   * (webui = kawaz-in-person) editing the template is equivalent to typing
-   * the command in a terminal, and the session-role launch gate is untouched
-   * (server.ts continues to reject session_launch from non-user roles before
-   * this field is even inspected). No template substitution is performed on
-   * this value either — it is passed to the same `shellArgv(shell, command)`
-   * path as the config value, and sees the same declared parameters as shell
-   * variables. */
-  command: v.optional(v.string()),
-  /** Which configured template to launch with, by `SessionLauncherTemplate.name`.
-   * Absent = the launcher's default recipe (`templates[0]`). An unknown name is
-   * rejected as invalid_args rather than silently falling back — a client that
-   * asks for a recipe it can't get should say so, not launch something else.
-   * The chosen template supplies `shell`, its parameter declaration (which
-   * decides what `params` may contain), and `command` unless the request
-   * overrides it. */
-  template: v.optional(v.string()),
+  launch: LaunchInputSchema,
 });
 export type SessionLaunchRequest = Output<typeof SessionLaunchRequestSchema>;
 
-/** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
- * only). Neither `dir_tree` (roots required, containment-checked against
- * root_dirs) nor `session_launch` (opaque cwd/model/effort/prompt, no
- * config echo) gives the webui a way to learn `root_dirs` (needed for the
- * CwdTree's initial fetch) or the templates and their parameter declarations
- * (which are the form itself) before the user has already picked something —
- * this op fills that one gap with a read-only projection of the config fields
- * the form needs. Same `launcher_not_configured` error as the other two ops
- * when session_launcher is absent, so the webui can reuse one error-handling
- * path to decide whether to show the launcher UI at all (DR-0018 §2.1
- * "launcher 未設定時" case). */
+/** What the webui's launch form needs from the config before anything is
+ * picked: `root_dirs`, the roots of its cwd tree (DR-0018 §3.4, user role).
+ * The models and efforts come from the protocol's picklists, not from here.
+ * `launcher_not_configured` when there is no `session_launcher`, as for the
+ * launch itself. */
 export const SessionLauncherConfigRequestSchema = v.object({
   op: v.literal("session_launcher_config"),
 });

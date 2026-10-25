@@ -206,7 +206,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       llm_status_available: true,
       llm_keepalive_pause_available: true,
       sandbox_available: true,
-      fork_available: true,
+      launch_available: true,
     },
   ],
   user_message: [
@@ -292,8 +292,8 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   session_launch: [
-    { ok: true, stdout: "o", stderr: "", exit_code: 0, timed_out: false },
-    { ok: true, stdout: "", stderr: "", exit_code: null, timed_out: true },
+    { ok: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },
+    { ok: true, exit_code: 143, stdout: "", stderr: "" },
   ],
   session_kill: [{ ok: true, terminated: false }],
   session_rename: [{ ok: true, hyoui_session_id: "h1", title: "t" }],
@@ -307,22 +307,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   sidecar_hello: [{ ok: true }],
   session_facts: [{ ok: true }],
   session_env: [{ ok: true, pid: 42, env: { PATH: "/bin", HOME: "/h" } }],
-  session_launcher_config: [
-    {
-      ok: true,
-      root_dirs: ["/w"],
-      templates: [
-        {
-          name: "default",
-          command: 'claude --model "$MODEL"',
-          params: [
-            { name: "CWD", default: "" },
-            { name: "MODEL", default: "opus" },
-          ],
-        },
-      ],
-    },
-  ],
+  session_launcher_config: [{ ok: true, root_dirs: ["/w"] }],
   llm_usage: [
     {
       ok: true,

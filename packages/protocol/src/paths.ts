@@ -42,10 +42,9 @@ export interface Paths {
    * disposable runtime state and data/ holds only what must not be lost. */
   config: string;
   /** The same configuration written as an ES module (`export default {…}`),
-   * which is what the daemon prefers when both files exist. JSON cannot carry a
-   * multi-line launcher command without escaping every newline; a module can
-   * (template literals), and it is the form every JS tool now offers for
-   * hand-written configuration. */
+   * which is what the daemon prefers when both files exist. A module can build
+   * values JSON can only spell out literally, and it is the form every JS tool
+   * now offers for hand-written configuration. */
   configJs: string;
   /** The same configuration written as a TypeScript ES module, evaluated the
    * same way as configJs (Bun's ESM loader strips types without a build step)
@@ -63,6 +62,10 @@ export interface Paths {
   /** `<stateDir>/sidecars`: where each session run's sidecar binds
    * `<sid>.<run id>.sock` (DR-0035 §3). */
   sidecars: string;
+  /** `<stateDir>/launches`: the output of a launch command too long to answer
+   * with, one `<launch id>/stdout|stderr` per launch, kept 7 days (DR-0018
+   * §3.6). */
+  launches: string;
 }
 
 /** The directory under the state dir where sidecars bind.
@@ -123,6 +126,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     configTs: path.join(configDir, "config.ts"),
     dumps: path.join(dataDir, "dumps"),
     sidecars: path.join(stateDir, SIDECAR_DIR),
+    launches: path.join(stateDir, "launches"),
   };
 }
 

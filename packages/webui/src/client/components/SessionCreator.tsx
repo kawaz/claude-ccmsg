@@ -12,18 +12,17 @@
 //
 // Explicitly out of scope (DR-0018 §2.3): no process tracking after launch.
 // The run button's request/response round trip *is* the whole feature —
-// stdout/stderr/exit_code/timed_out render once and nothing here polls,
-// subscribes, or remembers past launches.
+// stdout/stderr/exit_code render once and nothing here polls, subscribes, or
+// remembers past launches.
+//
+// The daemon offers no recipes any more (session_launcher_config carries only
+// root_dirs), so the form has nothing to render and its run button sends
+// nothing until it is rebuilt on the four launch types (DR-0018 §3.9).
 import { useEffect, useState } from "preact/hooks";
-import type {
-  LauncherParam,
-  SessionLauncherConfigTemplate,
-  SessionLaunchResponse,
-} from "@ccmsg/protocol";
+import type { SessionLaunchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { errorMessage } from "../utils.ts";
 import {
-  buildSessionLaunchRequest,
   commitCwdInput,
   forkSourceDefaults,
   initialCwdPickerMode,
@@ -39,7 +38,9 @@ import {
   SESSION_ID_PARAM,
   type CwdPickerMode,
   type ForkSourceInfo,
+  type LauncherParam,
   type SessionCreatorForm,
+  type SessionLauncherConfigTemplate,
 } from "../session-creator.ts";
 import type { AppState } from "../store.ts";
 import { CwdTree } from "./CwdTree.tsx";
@@ -73,10 +74,7 @@ type LauncherProbe =
   | {
       status: "ready";
       rootDirs: readonly string[];
-      /** Configured launch recipes in config order. Each carries its raw shell
-       * command (verbatim, no variable substitution) and prompt, which are the
-       * textarea initial values and the "default" buttons' restore targets —
-       * DR-0018 §3.2 addendum 2026-07-17. */
+      /** The recipes the form renders from: none, as the daemon offers none. */
       templates: readonly SessionLauncherConfigTemplate[];
     };
 
@@ -273,10 +271,7 @@ function LaunchResultPanel({ state }: { state: LaunchState }) {
   const { result } = state;
   return (
     <div class="session-creator-result">
-      <p class="session-creator-result-summary">
-        exit_code: {result.exit_code === null ? "null (シグナル終了)" : result.exit_code}
-        {result.timed_out ? " · timeout" : ""}
-      </p>
+      <p class="session-creator-result-summary">exit_code: {result.exit_code}</p>
       {result.stdout ? (
         <>
           <p class="session-creator-result-label">stdout</p>
@@ -329,7 +324,8 @@ export function SessionCreator({
       .then((res) => {
         if (cancelled) return;
         if (res.ok) {
-          setProbe({ status: "ready", rootDirs: res.root_dirs, templates: res.templates });
+          const templates: readonly SessionLauncherConfigTemplate[] = [];
+          setProbe({ status: "ready", rootDirs: res.root_dirs, templates });
           // URL が名指したセッションが今も動いていれば、そこから cwd /
           // model / effort を補う。URL に無いものだけが埋まる (URL が優先、
           // initialSessionCreatorForm 参照) ので、Timeline の ⑂ のように
@@ -341,7 +337,7 @@ export function SessionCreator({
           const defaults = sessionId
             ? forkSourceDefaults(forkSourceInfo(store.getState(), sessionId), res.root_dirs)
             : {};
-          const initialForm = initialSessionCreatorForm(res.templates, template, params, defaults);
+          const initialForm = initialSessionCreatorForm(templates, template, params, defaults);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(sessionCreatorCwd(initialForm)));
         } else if (res.error.code === "launcher_not_configured") {
@@ -361,20 +357,13 @@ export function SessionCreator({
     // 経路がそれで、seed からやり直すのが正しい。
   }, [ws, store, template, params]);
 
-  async function run(e: Event): Promise<void> {
+  function run(e: Event): void {
     e.preventDefault();
-    if (!form) return;
-    if (probe.status !== "ready") return;
-    const req = buildSessionLaunchRequest(form, probe.templates);
-    if (!req) return;
-    setLaunch({ status: "running" });
-    try {
-      const res = await ws.sessionLaunch(req);
-      if (res.ok) setLaunch({ status: "done", result: res });
-      else setLaunch({ status: "error", message: res.error.msg });
-    } catch (err) {
-      setLaunch({ status: "error", message: errorMessage(err) });
-    }
+    setLaunch({
+      status: "error",
+      message:
+        "このフォームはまだ起動の 4 つの type (new / continue / resume / fork) に対応していない",
+    });
   }
 
   return (
@@ -398,7 +387,7 @@ export function SessionCreator({
           <p>設定例は docs/runbooks/session-launcher-setup.md を参照。</p>
         </div>
       ) : form ? (
-        <form class="session-creator-form" onSubmit={(e) => void run(e)}>
+        <form class="session-creator-form" onSubmit={run}>
           {probe.templates.length > 1 ? (
             <label class="session-creator-field">
               <span class="session-creator-label">template</span>

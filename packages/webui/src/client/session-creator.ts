@@ -5,15 +5,37 @@
 // AppState nor does I/O (that's SessionCreator.tsx's job, per DR-0005 §1).
 //
 // The form is entirely driven by the selected template's `params` declaration:
-// which inputs exist, in what order, and what they start as all come from
-// config. Nothing here reads the command text to guess at fields.
-import {
-  LAUNCHER_CWD_PARAM,
-  type LauncherParam,
-  type SessionLauncherConfigTemplate,
-  type SessionLaunchRequest,
-} from "@ccmsg/protocol";
+// which inputs exist, in what order, and what they start as. The daemon's
+// session_launcher_config no longer carries templates (the launch is one of the
+// four types of DR-0018 §3.2), so the form has none to offer and cannot launch
+// until it is rebuilt on those types (DR-0018 §3.9).
 import type { SidebarUrlState } from "./sidebar-url.ts";
+
+/** One parameter a form recipe declares: its name and the value the form opens
+ * with. */
+export interface LauncherParam {
+  name: string;
+  default: string;
+}
+
+/** One recipe the form renders from: a name, a command and the parameters it
+ * takes. */
+export interface SessionLauncherConfigTemplate {
+  name: string;
+  command: string;
+  params: readonly LauncherParam[];
+}
+
+/** The parameter a recipe's working directory lives in. */
+export const LAUNCHER_CWD_PARAM = "CWD";
+
+/** What the form projects a recipe and its values to. */
+export interface SessionCreatorLaunchFields {
+  cwd: string;
+  params: Record<string, string>;
+  template?: string;
+  command?: string;
+}
 
 /** DR-0018 §2.1 fixed dropdown options — the DR explicitly scopes "コマンド
  * テンプレの UI 編集" out (§2.3), so these lists are hardcoded here rather
@@ -506,14 +528,14 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
   templates: readonly SessionLauncherConfigTemplate[],
-): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
+): SessionCreatorLaunchFields | null {
   if (!sessionCreatorFormValid(form)) return null;
   const selected = templates.find((t) => t.name === form.template);
   const params: Record<string, string> = {};
   for (const [name, value] of Object.entries(form.params)) {
     if (name !== LAUNCHER_CWD_PARAM) params[name] = value;
   }
-  const req: Omit<SessionLaunchRequest, "op" | "request_id"> = {
+  const req: SessionCreatorLaunchFields = {
     cwd: sessionCreatorCwd(form).trim(),
     params,
     ...(form.template === "" ? {} : { template: form.template }),

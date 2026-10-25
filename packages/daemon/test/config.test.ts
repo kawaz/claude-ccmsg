@@ -1,4 +1,4 @@
-// Daemon configuration reading (DR-0018 Phase 1, DR-0038 §6): the whole file is
+// Daemon configuration reading (DR-0018 §3.1, DR-0038 §6): the whole file is
 // read by one schema, and a file that does not read is answered with every
 // reason (file, place, what was expected) so the daemon stops at startup.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -10,28 +10,8 @@ import {
   CONFIG_TYPES_BASENAME,
   loadConfig,
   type ResolvedCcmsgConfig,
-  type SessionLauncherTemplate,
   writeConfigTypesFile,
 } from "../src/config.ts";
-
-/** A template as its config declares it: the schema of its launch values,
- * built from `params`, left out. */
-function declared({ name, command, params, shell }: SessionLauncherTemplate) {
-  return { name, command, params, shell };
-}
-
-/** A config with its templates as declared. */
-function declaredConfig({ session_launcher, ...rest }: ResolvedCcmsgConfig) {
-  return session_launcher === undefined
-    ? rest
-    : {
-        ...rest,
-        session_launcher: {
-          ...session_launcher,
-          templates: session_launcher.templates.map(declared),
-        },
-      };
-}
 
 describe("loadConfig", () => {
   let dir: string;
@@ -96,6 +76,11 @@ describe("loadConfig", () => {
     }
   });
 
+  /** `session_launcher` with the two required keys and `extra`. */
+  function launcher(extra: object = {}): object {
+    return { session_launcher: { launch_command: ["launch"], root_dirs: [dir], ...extra } };
+  }
+
   // This is the complete accepted shape: every configured field survives while
   // root paths are normalized before they become containment boundaries.
   test("complete session_launcher parses every field", async () => {
@@ -104,42 +89,22 @@ describe("loadConfig", () => {
       file,
       JSON.stringify({
         session_launcher: {
+          launch_command: ["/opt/bin/launch-claude", "--profile", "work"],
           root_dirs: [root],
-          shell: "zsh",
-          templates: [
-            {
-              name: "new",
-              command: 'claude --model "$MODEL" "$PROMPT"',
-              params: { CWD: "", MODEL: "fable", PROMPT: "start here" },
-            },
-          ],
-          timeout_seconds: 25,
           dir_tree_depth: 3,
+          timeout_seconds: 25,
           clean_env: ["CLAUDE_*", "AI_AGENT"],
           keep_env: ["CLAUDE_CONFIG_DIR"],
         },
       }),
     );
 
-    expect(declaredConfig(await loaded())).toEqual({
+    expect(await loaded()).toEqual({
       session_launcher: {
+        launch_command: ["/opt/bin/launch-claude", "--profile", "work"],
         root_dirs: [path.resolve(root)],
-        templates: [
-          {
-            name: "new",
-            command: 'claude --model "$MODEL" "$PROMPT"',
-            // Declaration order is the form's field order, so it is preserved
-            // as written rather than normalized into some canonical order.
-            params: [
-              { name: "CWD", default: "" },
-              { name: "MODEL", default: "fable" },
-              { name: "PROMPT", default: "start here" },
-            ],
-            shell: "zsh",
-          },
-        ],
-        timeout_seconds: 25,
         dir_tree_depth: 3,
+        timeout_seconds: 25,
         clean_env: ["CLAUDE_*", "AI_AGENT"],
         keep_env: ["CLAUDE_CONFIG_DIR"],
       },
@@ -147,262 +112,106 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
   });
 
-  // Every recipe needs a directory to run in, so a declaration that forgot CWD
-  // gets it first rather than producing a form with no way to pick one.
-  test("a params declaration without CWD gets it prepended", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "t", command: "run", params: { PROMPT: "hi" } }],
-        },
-      }),
-    );
-
-    expect((await loaded()).session_launcher?.templates[0]?.params).toEqual([
-      { name: "CWD", default: "" },
-      { name: "PROMPT", default: "hi" },
-    ]);
+  // The schema gives the defaults of a field left out, and only then.
+  test("absent optional fields take their defaults without warning", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher()));
+    expect(await loaded()).toEqual({
+      session_launcher: {
+        launch_command: ["launch"],
+        root_dirs: [path.resolve(dir)],
+        dir_tree_depth: DEFAULT_DIR_TREE_DEPTH,
+        timeout_seconds: DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+        clean_env: [],
+        keep_env: [],
+      },
+    });
     expect(warnings).toEqual([]);
   });
 
-  // A parameter name reaches the launcher shell as a variable assignment, so
-  // anything that is not an identifier would be a syntax error at launch; it
-  // stops the daemon at startup instead. A non-string default is refused too,
-  // and every reason is reported at once.
-  test("a parameter with a bad name or a non-string default does not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [
-            {
-              name: "t",
-              command: "run",
-              params: { "not an ident": "", "1ST": "", MODEL: 7, PROMPT: "" },
-            },
-          ],
-        },
-      }),
-    );
-
-    const errors = await refusal();
-    expect(errors).toHaveLength(3);
-    expect(errors[0]).toContain("is not a shell identifier");
-    expect(errors[2]).toContain("session_launcher.templates.0.params.MODEL");
-  });
-
-  // A launch request's values are read by a schema built from the declared
-  // names, and an object schema does not read the names a prototype answers
-  // to, so they cannot be declared.
-  test("a parameter named like a prototype member does not read", async () => {
-    for (const name of ["__proto__", "constructor", "prototype"]) {
-      fs.writeFileSync(
-        file,
-        `{"session_launcher":{"root_dirs":[${JSON.stringify(dir)}],"templates":[{"name":"t","command":"run","params":{"${name}":"","PROMPT":""}}]}}`,
-      );
-      expect(await refusal()).toEqual([expect.stringContaining("must not declare __proto__")]);
+  // The program is a path the daemon can find from any launch's cwd: an
+  // absolute one, a ~/ one (expanded against the daemon user's home), or a
+  // name looked up in PATH.
+  test("the program is absolute, ~/-expanded, or a bare name", async () => {
+    for (const [program, read] of [
+      ["/usr/local/bin/launch", "/usr/local/bin/launch"],
+      ["~/bin/launch", path.join(os.homedir(), "bin", "launch")],
+      ["launch-claude", "launch-claude"],
+    ] as const) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: [program, "~/arg"] })));
+      // Only the program is a path; the arguments are passed as written.
+      expect((await loaded()).session_launcher?.launch_command).toEqual([read, "~/arg"]);
     }
   });
 
-  // `params` is the only source of truth for the form's inputs, so a template
-  // that omits it (or its command) is unusable: it must not silently launch a
-  // recipe nobody declared, and it stops the daemon with the place named.
-  test("templates without params or command do not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [
-            { name: "no-params", command: 'run "$PROMPT"' },
-            { name: "no-command", params: { PROMPT: "" } },
-            { name: "ok", command: 'run "$PROMPT"', params: { PROMPT: "hi" } },
-          ],
-        },
-      }),
-    );
-
-    const errors = await refusal();
-    expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain("session_launcher.templates.0.params");
-    expect(errors[1]).toContain("session_launcher.templates.1.command");
-  });
-
-  // No `templates` key at all leaves nothing to launch, and a recipe is not
-  // inferred from other fields.
-  test("a launcher without templates does not read", async () => {
-    for (const templates of [undefined, []]) {
-      fs.writeFileSync(
-        file,
-        JSON.stringify({
-          session_launcher: { root_dirs: [dir], ...(templates ? { templates } : {}) },
-        }),
-      );
-      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.templates")]);
-    }
-  });
-
-  // DR-0018's user-facing examples use ~/..., so the parser expands it against
-  // the daemon user's actual home before absolute-path normalization.
-  test("a ~/ root expands to the daemon user's home", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: ["~/launcher-root"],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-
-    expect((await loaded()).session_launcher?.root_dirs).toEqual([
-      path.join(os.homedir(), "launcher-root"),
+  // A relative path would resolve against each launch's cwd.
+  test("a relative program path does not read", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher({ launch_command: ["bin/launch"] })));
+    expect(await refusal()).toEqual([
+      expect.stringContaining(
+        "session_launcher.launch_command.0: must be an absolute path, start with ~/, or be a command name looked up in PATH",
+      ),
     ]);
   });
 
-  // shell is deliberately a built-in two-choice contract. Missing selects the
-  // documented bash default; any other value does not read.
-  test("shell defaults to bash and rejects values outside bash or zsh", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-    expect((await loaded()).session_launcher?.templates[0]?.shell).toBe("bash");
-    for (const shell of ["fish", 123]) {
+  test("a missing, empty, or non-array launch_command does not read", async () => {
+    for (const launch_command of [undefined, [], "launch", [""], ["launch", ""], ["launch", 1]]) {
       fs.writeFileSync(
         file,
         JSON.stringify({
           session_launcher: {
             root_dirs: [dir],
-            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-            shell,
+            ...(launch_command === undefined ? {} : { launch_command }),
           },
         }),
       );
-      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.shell")]);
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.launch_command")]);
     }
   });
 
-  // Each entry may state only what differs from the launcher-level `shell`,
-  // and the parsed form is fully resolved so nothing downstream re-applies the
-  // inheritance.
-  test("templates inherit the launcher-level shell", async () => {
+  // A launcher of another shape (templates of shell snippets, a shell) is
+  // not a launcher with parts missing: it does not read, naming what is
+  // unknown and what is missing, and the daemon does not start.
+  test("a launcher with templates and a shell does not read", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
-          shell: "zsh",
-          templates: [
-            { name: "plain", command: "run $PROMPT", params: { PROMPT: "shared" } },
-            {
-              name: "fork",
-              command: 'run --resume "$SESSION_ID"',
-              params: { SESSION_ID: "" },
-              shell: "bash",
-            },
-          ],
+          shell: "bash",
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
         },
       }),
     );
-
-    expect((await loaded()).session_launcher?.templates.map(declared)).toEqual([
-      {
-        name: "plain",
-        command: "run $PROMPT",
-        params: [
-          { name: "CWD", default: "" },
-          { name: "PROMPT", default: "shared" },
-        ],
-        shell: "zsh",
-      },
-      {
-        name: "fork",
-        command: 'run --resume "$SESSION_ID"',
-        params: [
-          { name: "CWD", default: "" },
-          { name: "SESSION_ID", default: "" },
-        ],
-        shell: "bash",
-      },
+    // The first key it does not know is named (here `shell`, before
+    // `templates`).
+    expect(await refusal()).toEqual([
+      `config: ${file}: session_launcher.launch_command: Invalid key: Expected "launch_command" but received undefined`,
+      `config: ${file}: session_launcher.shell: Invalid key: Expected never but received "shell"`,
     ]);
-    expect(warnings).toEqual([]);
   });
 
-  // Every unusable recipe is reported, each with its place, so the user knows
-  // which line to repair; none is left out silently.
-  test("broken template entries do not read, each reported", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [
-            "not-an-object",
-            { name: "", command: "run", params: {} },
-            { name: "good", command: "run", params: {} },
-            { name: "commandless", params: {} },
-          ],
-        },
-      }),
-    );
-
-    const errors = await refusal();
-    expect(errors).toHaveLength(3);
-    expect(errors[0]).toContain("session_launcher.templates.0");
-    expect(errors[1]).toContain("session_launcher.templates.1.name");
-    expect(errors[2]).toContain("session_launcher.templates.3.command");
+  test("an unknown key beside launch_command does not read", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher({ command: "launch" })));
+    expect(await refusal()).toEqual([expect.stringContaining("session_launcher.command")]);
   });
 
-  // Two recipes under one name cannot both be picked by it.
-  test("duplicate template names do not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [
-            { name: "good", command: "run", params: {} },
-            { name: "good", command: "shadow", params: {} },
-          ],
-        },
-      }),
-    );
-    expect(await refusal()).toEqual([expect.stringContaining("template names must be unique")]);
+  // DR-0018's user-facing examples use ~/..., so the parser expands it against
+  // the daemon user's actual home before absolute-path normalization.
+  test("a ~/ root expands to the daemon user's home", async () => {
+    fs.writeFileSync(file, JSON.stringify(launcher({ root_dirs: ["~/launcher-root"] })));
+    expect((await loaded()).session_launcher?.root_dirs).toEqual([
+      path.join(os.homedir(), "launcher-root"),
+    ]);
   });
 
-  test("a template with only a name does not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "commandless" }],
-        },
-      }),
-    );
-
-    expect(await refusal()).toHaveLength(2);
-  });
-
-  // Containment cannot be defined without at least one root, so absent, empty,
-  // or wrong-typed roots do not read rather than opening the launcher wide.
   test("missing, empty, or non-array root_dirs does not read", async () => {
     for (const root_dirs of [undefined, [], "not-an-array"]) {
       fs.writeFileSync(
         file,
         JSON.stringify({
           session_launcher: {
+            launch_command: ["launch"],
             ...(root_dirs === undefined ? {} : { root_dirs }),
-            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
           },
         }),
       );
@@ -410,153 +219,52 @@ describe("loadConfig", () => {
     }
   });
 
-  // Absent numbers take the DR defaults; a value that is not a positive number
-  // does not read rather than being replaced by one.
-  test("timeout and tree depth default when absent and refuse invalid values", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-    const cfg = (await loaded()).session_launcher;
-    expect(cfg?.timeout_seconds).toBe(DEFAULT_LAUNCH_TIMEOUT_SECONDS);
-    expect(cfg?.dir_tree_depth).toBe(DEFAULT_DIR_TREE_DEPTH);
-    for (const invalid of ["abc", -1, 0]) {
-      fs.writeFileSync(
-        file,
-        JSON.stringify({
-          session_launcher: {
-            root_dirs: [dir],
-            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-            timeout_seconds: invalid,
-            dir_tree_depth: invalid,
-          },
-        }),
-      );
-      const errors = await refusal();
-      expect(errors).toHaveLength(2);
-      expect(errors[0]).toContain("session_launcher.timeout_seconds");
-      expect(errors[1]).toContain("session_launcher.dir_tree_depth");
-    }
-  });
-
   // A relative root is not a containment boundary; it does not read, with the
   // entry named.
   test("a relative root entry does not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: ["relative/root", dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-
+    fs.writeFileSync(file, JSON.stringify(launcher({ root_dirs: ["relative/root", dir] })));
     expect(await refusal()).toEqual([
       expect.stringContaining("session_launcher.root_dirs.0: must be absolute or start with ~/"),
     ]);
   });
 
-  // clean_env absent means "no cleaning" (the pre-addendum contract): the
-  // parsed config carries an empty list, so the launcher passes the daemon
-  // env through untouched — existing configs keep their exact behavior.
-  test("absent clean_env parses to an empty list without warning", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-    expect((await loaded()).session_launcher?.clean_env).toEqual([]);
-    expect(warnings).toEqual([]);
+  // timeout_seconds is a whole number of seconds from 1 to 50: the launch
+  // tool waits 60 s, which has to hold the timeout, the kill grace and the
+  // output files. A value outside does not read rather than being replaced.
+  test("timeout_seconds outside 1..50 or not whole does not read", async () => {
+    for (const ok of [1, 50]) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ timeout_seconds: ok })));
+      expect((await loaded()).session_launcher?.timeout_seconds).toBe(ok);
+    }
+    for (const invalid of ["abc", 0, 51, 1.5, -1]) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ timeout_seconds: invalid })));
+      expect(await refusal()).toEqual([
+        expect.stringContaining("session_launcher.timeout_seconds"),
+      ]);
+    }
   });
 
-  test("non-array clean_env does not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          clean_env: "CLAUDE_*",
-        },
-      }),
-    );
-    expect(await refusal()).toEqual([expect.stringContaining("session_launcher.clean_env")]);
+  test("a dir_tree_depth that is not a positive number does not read", async () => {
+    for (const invalid of ["abc", -1, 0]) {
+      fs.writeFileSync(file, JSON.stringify(launcher({ dir_tree_depth: invalid })));
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.dir_tree_depth")]);
+    }
   });
 
-  test("empty or non-string clean_env entries do not read, each reported", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          clean_env: ["CLAUDE_*", "", 42, "AI_AGENT"],
-        },
-      }),
-    );
-    const errors = await refusal();
-    expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain("session_launcher.clean_env.1");
-    expect(errors[1]).toContain("session_launcher.clean_env.2");
-  });
+  for (const key of ["clean_env", "keep_env"] as const) {
+    test(`non-array ${key} does not read`, async () => {
+      fs.writeFileSync(file, JSON.stringify(launcher({ [key]: "CLAUDE_*" })));
+      expect(await refusal()).toEqual([expect.stringContaining(`session_launcher.${key}`)]);
+    });
 
-  // keep_env absent means "no exceptions" (clean_env removes its matches
-  // unimpeded): existing configs written before the allowlist keep their
-  // exact behavior, expressed as an empty list.
-  test("absent keep_env parses to an empty list without warning", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-        },
-      }),
-    );
-    expect((await loaded()).session_launcher?.keep_env).toEqual([]);
-    expect(warnings).toEqual([]);
-  });
-
-  test("non-array keep_env does not read", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          keep_env: "CLAUDE_*",
-        },
-      }),
-    );
-    expect(await refusal()).toEqual([expect.stringContaining("session_launcher.keep_env")]);
-  });
-
-  test("empty or non-string keep_env entries do not read, each reported", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          keep_env: ["CLAUDE_*", "", 42, "AI_AGENT"],
-        },
-      }),
-    );
-    const errors = await refusal();
-    expect(errors).toHaveLength(2);
-    expect(errors[0]).toContain("session_launcher.keep_env.1");
-    expect(errors[1]).toContain("session_launcher.keep_env.2");
-  });
+    test(`empty or non-string ${key} entries do not read, each reported`, async () => {
+      fs.writeFileSync(file, JSON.stringify(launcher({ [key]: ["CLAUDE_*", "", 42, "AI_AGENT"] })));
+      const errors = await refusal();
+      expect(errors).toHaveLength(2);
+      expect(errors[0]).toContain(`session_launcher.${key}.1`);
+      expect(errors[1]).toContain(`session_launcher.${key}.2`);
+    });
+  }
 
   // terminal_gateway_url (issue 2026-07-21-webui-terminal-tab-embed):
   // 独立トップレベルキー。session_launcher の有無とは無関係にパースする。
@@ -604,10 +312,7 @@ describe("loadConfig", () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          session_launcher: {
-            root_dirs: [dir],
-            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
-          },
+          session_launcher: { launch_command: ["launch"], root_dirs: [dir] },
           terminal_gateway_url: "https://gw.example",
         }),
       );
@@ -759,19 +464,14 @@ describe("loadConfig", () => {
       expect(await refusal()).toEqual([expect.stringContaining("llm_events_url")]);
     });
 
-    test("an unknown key in a template does not read", async () => {
+    test("an unknown key in session_launcher does not read", async () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          session_launcher: {
-            root_dirs: [dir],
-            templates: [{ name: "t", command: "run", params: {}, shel: "zsh" }],
-          },
+          session_launcher: { launch_command: ["launch"], root_dirs: [dir], shel: "zsh" },
         }),
       );
-      expect(await refusal()).toEqual([
-        expect.stringContaining("session_launcher.templates.0.shel"),
-      ]);
+      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.shel")]);
     });
   });
 
@@ -838,8 +538,8 @@ describe("loadConfig", () => {
       expect(await refusal()).toEqual([expect.stringContaining("webhooks")]);
     });
   });
-  // `config.js` exists because a launcher command is a shell script, and JSON
-  // can only hold one as a single escaped line. Everything past the file read
+  // `config.js` lets a module build values JSON can only spell out literally
+  // (a multi-line string, a shared list). Everything past the file read
   // is shared with the JSON path, so these cases cover the choice of file and
   // the module-specific failures — not the field validation above.
   describe("config.js", () => {
@@ -849,21 +549,17 @@ describe("loadConfig", () => {
         [
           "export default {",
           "  session_launcher: {",
+          "    launch_command: ['launch', `line 1",
+          "line 2`],",
           "    root_dirs: [" + JSON.stringify(dir) + "],",
-          "    templates: [",
-          "      {",
-          "        name: 'multiline',",
-          "        command: `cd $CWD &&",
-          "  claude --model $MODEL`,",
-          "        params: { CWD: '', MODEL: 'fable' },",
-          "      },",
-          "    ],",
           "  },",
           "};",
         ].join("\n"),
       );
-      const templates = (await loaded()).session_launcher?.templates;
-      expect(templates?.[0]?.command).toBe("cd $CWD &&\n  claude --model $MODEL");
+      expect((await loaded()).session_launcher?.launch_command).toEqual([
+        "launch",
+        "line 1\nline 2",
+      ]);
       expect(warnings).toEqual([]);
     });
 
@@ -976,7 +672,7 @@ describe("loadConfig", () => {
           "export default {",
           "  session_launcher: {",
           "    ...launcher,",
-          "    templates: [{ name: 'typed', command: 'echo $CWD', params: { CWD: '' } }],",
+          "    launch_command: ['launch'],",
           "  },",
           "};",
         ].join("\n"),

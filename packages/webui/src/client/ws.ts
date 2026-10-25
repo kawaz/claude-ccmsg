@@ -299,17 +299,16 @@ export interface WsHandle {
     roots: readonly string[],
     opts?: { depth?: number; filter?: string },
   ): Promise<ReplyOf<"dir_tree">>;
-  /** Launch a new session via the configured command template (DR-0018 §3.2,
-   * user role only). The daemon awaits the whole run (bounded by
-   * `timeout_seconds` + kill x2, §3.3) before replying, so this call is
+  /** Launch a session through the configured launch command (DR-0018 §3.4).
+   * The daemon awaits the whole run (bounded by `timeout_seconds`, the kill
+   * grace and the wait for its output, §3.5) before replying, so this call is
    * naturally slow — SessionCreator shows its own loading state while it's in
    * flight rather than relying on a generic pending indicator. */
   sessionLaunch(
     req: Omit<SessionLaunchRequest, "op" | "request_id">,
   ): Promise<ReplyOf<"session_launch">>;
-  /** Session-launcher config projection (DR-0018 §3.4 addendum, user role
-   * only): `root_dirs` (CwdTree's initial fetch roots) and the `templates`
-   * SessionCreator renders its form from. `error.code === "launcher_not_configured"`
+  /** Session-launcher config projection (DR-0018 §3.4, user role only):
+   * `root_dirs`, CwdTree's initial fetch roots. `error.code === "launcher_not_configured"`
    * is the signal SessionCreator uses to show setup guidance instead of the
    * form (§2.1 "launcher 未設定時"). */
   sessionLauncherConfig(): Promise<ReplyOf<"session_launcher_config">>;
@@ -610,11 +609,11 @@ export function createWsClient(
           type: "sandbox/availability",
           available: hello.sandbox_available === true,
         });
-        // fork の capability も同じ扱い。daemon に launcher が無ければ fork の
+        // 起動の capability も同じ扱い。daemon に launcher が無ければ fork の
         // 導線は押した先で行き止まりになるので、そこでは出さない。
         dispatch({
           type: "fork/availability",
-          available: hello.fork_available === true,
+          available: hello.launch_available === true,
         });
       }
       await send({ op: "subscribe" });

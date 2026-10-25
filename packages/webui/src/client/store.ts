@@ -285,9 +285,9 @@ export interface AppState {
    * 「HTML として開く」/「生ダウンロード」はこの時のみ出す。未設定環境 (=
    * 前段に sandbox ドメインが無い) では押せば必ず失敗するので導線ごと隠す。 */
   sandboxAvailable: boolean;
-  /** hello response の `fork_available`。daemon に session_launcher が設定
+  /** hello response の `launch_available`。daemon に session_launcher が設定
    * されている時だけ true で、Timeline の「ここから fork」導線はこの時のみ
-   * 出す (fork は launcher テンプレの起動そのものなので、未設定 daemon では
+   * 出す (fork は launcher の起動そのものなので、未設定 daemon では
    * 押した先の起動フォームが「未設定」しか返せない — sandboxAvailable と
    * 同じ姿勢)。 */
   forkAvailable: boolean;

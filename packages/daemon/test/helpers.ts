@@ -31,7 +31,7 @@ import {
   type StreamEvent,
   resolvePaths,
 } from "@ccmsg/protocol";
-import { loadConfig } from "../src/config.ts";
+import { loadConfig, type CcmsgConfig } from "../src/config.ts";
 import { Logger } from "../src/log.ts";
 import { createDaemon, listenUds, shutdownDaemon, type Daemon } from "../src/server.ts";
 
@@ -197,7 +197,11 @@ export interface InProcessDaemon {
   daemon: Daemon;
 }
 
-export async function startInProcessDaemon(): Promise<InProcessDaemon> {
+/** `config`, when given, is written as the daemon's config.json and read the
+ * way a daemon reads it at startup. */
+export async function startInProcessDaemon(
+  options: { config?: CcmsgConfig } = {},
+): Promise<InProcessDaemon> {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-t-"));
   const dataDir = path.join(base, "d");
   const paths = resolvePaths({
@@ -207,6 +211,10 @@ export async function startInProcessDaemon(): Promise<InProcessDaemon> {
   });
   fs.mkdirSync(paths.stateDir);
   fs.mkdirSync(dataDir);
+  if (options.config !== undefined) {
+    fs.mkdirSync(paths.configDir, { recursive: true });
+    fs.writeFileSync(paths.config, JSON.stringify(options.config));
+  }
   const log = new Logger(paths.log);
   const loaded = await loadConfig(paths, log);
   if (!loaded.ok) throw new Error(`test config does not read: ${loaded.errors.join("; ")}`);

@@ -35,6 +35,7 @@ import {
   RoomHistoryResponseSchema,
   RoomsResponseSchema,
 } from "./response-rooms.ts";
+import { SessionLaunchResponseSchema } from "./launch.ts";
 import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
 import {
   UserMessageResponseSchema,
@@ -51,7 +52,6 @@ import {
   SessionErrorsResponseSchema,
   UserPromptResponseSchema,
   SessionKillResponseSchema,
-  SessionLaunchResponseSchema,
   SessionLauncherConfigResponseSchema,
   SessionRenameResponseSchema,
   SessionSearchResponseSchema,

@@ -1,27 +1,22 @@
-// dir_tree (DR-0018 Phase 1): containment-checked, bounded directory-only
+// dir_tree (DR-0018 §3.4): containment-checked, bounded directory-only
 // traversal used by the session launcher cwd picker.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { DirTreeEntry } from "@ccmsg/protocol";
-import { launcherTemplate, type SessionLauncherConfig } from "../src/config.ts";
+import type { SessionLauncherConfig } from "../src/config.ts";
 import { dirTree, matchesAllTokens, tokenizeFilter } from "../src/dir-tree.ts";
 import { defined } from "./helpers.ts";
 
 function config(root: string, depth = 2): SessionLauncherConfig {
   return {
+    launch_command: ["launch"],
     root_dirs: [root],
-    templates: [
-      launcherTemplate({
-        name: "default",
-        command: "run",
-        params: [{ name: "CWD", default: "" }],
-        shell: "bash",
-      }),
-    ],
     timeout_seconds: 10,
     dir_tree_depth: depth,
+    clean_env: [],
+    keep_env: [],
   };
 }
 
@@ -223,6 +218,17 @@ describe("dirTree", () => {
   test("a missing requested root returns not_found", async () => {
     const result = await dirTree(config(root), [path.join(root, "gone")], 1, undefined);
     expect(result).toMatchObject({ ok: false, code: "not_found" });
+  });
+
+  // A root has to be an absolute path to a directory; the tree is of
+  // directories only.
+  test("a relative or non-directory requested root is invalid_args", async () => {
+    const file = path.join(root, "file");
+    fs.writeFileSync(file, "");
+    for (const requested of ["", "root", file]) {
+      const result = await dirTree(config(root), [requested], 1, undefined);
+      expect(result).toMatchObject({ ok: false, code: "invalid_args" });
+    }
   });
 
   // No valid launcher config means there is no administrator-defined boundary;

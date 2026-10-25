@@ -129,7 +129,7 @@ export function ForkAction({
   onFork,
 }: {
   state: ForkActionState;
-  /** hello の `fork_available`。fork は launcher テンプレの起動なので、daemon
+  /** hello の `launch_available`。fork は launcher の起動なので、daemon
    * に launcher が無い時はボタンを出さない (押しても起動フォームが「未設定」
    * を返すだけ)。 */
   available: boolean;

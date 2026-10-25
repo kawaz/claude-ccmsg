@@ -102,10 +102,14 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [{ op: "dir_tree" }, { op: "dir_tree", roots: "/w" }],
   },
   session_launch: {
-    ok: { op: "session_launch", cwd: "/w", params: { MODEL: "m" }, command: "c", template: "t" },
+    ok: {
+      op: "session_launch",
+      launch: { type: "fork", cwd: "/w", resume_session_id: SID, resume_at: SID, prompt: "p" },
+    },
     bad: [
-      { op: "session_launch", cwd: "/w" },
-      { op: "session_launch", cwd: "/w", params: { MODEL: 7 } },
+      { op: "session_launch" },
+      { op: "session_launch", launch: { type: "new", cwd: "/w", model: "opus" } },
+      { op: "session_launch", cwd: "/w", params: { MODEL: "m" } },
     ],
   },
   session_kill: {
@@ -508,19 +512,18 @@ describe("readRequest: the forms beside each op's type", () => {
     ).toEqual({ ok: true, value: { op: "subscribe", request_id: "q1" } });
   });
 
-  test("session_launch reads params as names with text values", () => {
-    expect(read({ op: "session_launch", cwd: "/w", params: { MODEL: "m", EMPTY: "" } })).toEqual({
-      ok: true,
-      value: {
-        op: "session_launch",
-        cwd: "/w",
-        params: { MODEL: "m", EMPTY: "" },
-        request_id: "q1",
-      },
-    });
-    expect(refusal(read({ op: "session_launch", cwd: "/w", params: { MODEL: 7 } }))).toContain(
-      "params.MODEL",
-    );
+  // The launch is read whole by its own schema, so a field the launch's type
+  // does not have is refused under the launch's path rather than dropped
+  // (DR-0018 §3.2).
+  test("session_launch refuses a field its launch type does not have", () => {
+    expect(
+      refusal(
+        read({
+          op: "session_launch",
+          launch: { type: "new", cwd: "/w", model: "opus", effort: "high", resume_session_id: SID },
+        }),
+      ),
+    ).toContain("launch.resume_session_id");
   });
 });
 

@@ -68,11 +68,10 @@ export const HelloResponseSchema = v.object({
    * offer a button that can only fail. */
   sandbox_available: v.optional(v.boolean()),
   /** True when the daemon has a `session_launcher` configured, user-role
-   * hellos only. Same posture as the flags above, for the webui's fork
-   * affordances: a fork is a launcher template run with the fork point filled
-   * in, so with no launcher configured the button could only ever lead to a
-   * launch form that answers launcher_not_configured. */
-  fork_available: v.optional(v.boolean()),
+   * hellos only (DR-0018 §3.4). Same posture as the flags above: without it
+   * the webui offers neither the launch form nor a fork from the Timeline,
+   * which could only answer launcher_not_configured. */
+  launch_available: v.optional(v.boolean()),
 });
 export type HelloResponse = Output<typeof HelloResponseSchema>;
 
@@ -216,59 +215,13 @@ export const DirTreeResponseSchema = v.object({
 });
 export type DirTreeResponse = Output<typeof DirTreeResponseSchema>;
 
-/** One launch parameter a template declares: the shell variable name its
- * command may read, and the value the form opens with. The declaration is the
- * only source of truth for which variables exist — the launcher shell defines
- * exactly the declared ones (nothing else), and the webui renders one input per
- * declaration, in declaration order. */
-export const LauncherParamSchema = v.object({
-  /** A shell identifier (`[A-Za-z_][A-Za-z0-9_]*`), unique within one template.
-   * Reaches the command as `$NAME`. Names the webui knows get a dedicated
-   * widget (CWD a directory picker, MODEL/EFFORT a dropdown, PROMPT a
-   * textarea); any other name gets a plain text input. */
-  name: v.string(),
-  /** The form's initial value, and what its "default" button restores. Empty
-   * string is the normal "user fills this in" case. */
-  default: v.string(),
-});
-export type LauncherParam = Output<typeof LauncherParamSchema>;
-
-/** One template as seen by a client: the parsed template minus `shell`, which
- * is a daemon-side execution detail the form has no use for. */
-export const SessionLauncherConfigTemplateSchema = v.object({
-  name: v.string(),
-  command: v.string(),
-  params: v.array(LauncherParamSchema),
-});
-export type SessionLauncherConfigTemplate = Output<typeof SessionLauncherConfigTemplateSchema>;
-
-/** session_launcher_config reply — see its request doc comment.
- * `templates` is the configured recipe list in config order, each carrying its
- * shell command template verbatim (no variable substitution — `$CWD` and every
- * other declared parameter stay literal) plus the parameter declaration that
- * tells the form which inputs to render, in which order, with which initial
- * values; the webui surfaces the chosen template's command as an editable
- * textarea per DR-0018 §3.2, and sends the edited value
- * back via SessionLaunchRequest.command override. Same
- * one-shot read as root_dirs — a re-fetch is only useful across a daemon
- * config reload + restart. */
+/** session_launcher_config reply — see its request doc comment. Read once
+ * when the form opens; the config changes only across a daemon restart. */
 export const SessionLauncherConfigResponseSchema = v.object({
   ok: v.literal(true),
   root_dirs: v.array(v.string()),
-  templates: v.array(SessionLauncherConfigTemplateSchema),
 });
 export type SessionLauncherConfigResponse = Output<typeof SessionLauncherConfigResponseSchema>;
-
-/** Payload of a completed session launch, delivered inside
- * the session_launch reply. Signal termination uses null exit_code. */
-export const SessionLaunchResponseSchema = v.object({
-  ok: v.literal(true),
-  stdout: v.string(),
-  stderr: v.string(),
-  exit_code: v.nullable(v.number()),
-  timed_out: v.boolean(),
-});
-export type SessionLaunchResponse = Output<typeof SessionLaunchResponseSchema>;
 
 /** Payload of a completed session_kill (DR-0028), delivered inside
  * the session_kill reply. `terminated: true` = the process was observed gone

@@ -1,7 +1,6 @@
 // DR-0018 §2.1: pure form-state helpers for SessionCreator.tsx (params-driven
 // construction, run-button validity gate, wire-request projection).
 import { describe, expect, test } from "bun:test";
-import type { LauncherParam, SessionLauncherConfigTemplate } from "@ccmsg/protocol";
 import {
   buildSessionLaunchRequest,
   commitCwdInput,
@@ -24,8 +23,10 @@ import {
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
+  type LauncherParam,
   type SessionCreatorForm,
   type SessionCreatorPrefill,
+  type SessionLauncherConfigTemplate,
 } from "../src/client/session-creator.ts";
 
 /** 「セッションを選んでランチャーを開く」経路を、本番と同じ 2 段で通す:

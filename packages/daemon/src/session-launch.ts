@@ -1,47 +1,35 @@
-// DR-0018 session launch boundary: validate administrator-controlled roots and
-// command selection, construct opaque env + explicit shell argv, then execute
-// with bounded output capture and two-stage timeout termination.
+// Starting a session through the configured launch command (DR-0018 §3.5).
+// The daemon checks the launch, chooses the new session's id, hands the launch
+// command the launch as JSON on standard input, waits for it to end, and
+// answers with what it did. How claude is started is the command's
+// (docs/design/launch-command.md); the daemon does not read its exit code.
+import * as crypto from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import {
   ErrorCode,
-  LAUNCHER_CWD_PARAM,
-  parseWith,
-  type SessionLaunchRequest,
+  errorText,
+  type LaunchCommandInput,
+  type LaunchInput,
   type SessionLaunchResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
-import { containedInRoots } from "./launcher-paths.ts";
+import { launchOutputTexts } from "./launch-output.ts";
 
-export type SessionLaunchValidation =
-  | {
-      ok: true;
-      cwd: string;
-      env: Record<string, string>;
-      shellArgv: string[];
-      cleanEnv: readonly string[];
-      keepEnv: readonly string[];
-    }
-  | { ok: false; code: ErrorCode; msg: string };
+/** After the timeout's SIGTERM, how long the command has before SIGKILL. */
+export const FORCE_KILL_GRACE_MS = 500;
 
-type ValidatedSessionLaunch = Extract<SessionLaunchValidation, { ok: true }>;
+/** After the command exits, how long to wait for its stdout / stderr to reach
+ * EOF. A grandchild the command detached can hold the pipes' write ends, and
+ * then EOF does not come while it lives; the reply carries what arrived by
+ * then. On an ordinary exit EOF comes first and this adds nothing. */
+export const PIPE_DRAIN_GRACE_MS = 500;
 
-const FORCE_KILL_GRACE_MS = 500;
-
-/** After the direct child exits, wait at most this long for the stdout/stderr
- * pipes to reach EOF before returning what was captured so far. A launcher
- * command that backgrounds/detaches a grandchild (the DR-0018 template does
- * exactly this via `hyoui run --detached`) can leave that grandchild holding
- * the inherited pipe write end, so EOF may never arrive — without this bound
- * the reply would stall until the grandchild dies. On a clean exit every fd
- * is closed at exit time, EOF races ahead of the timer, and this grace adds
- * zero latency. */
-const PIPE_DRAIN_GRACE_MS = 500;
-
-/** Accumulate a spawned pipe without `Response.text()` — that helper resolves
- * only at EOF, which an orphaned grandchild can postpone forever (see
- * PIPE_DRAIN_GRACE_MS). `finish` waits for EOF up to `graceMs`, then cancels
- * the reader and returns whatever bytes arrived. */
+/** Collect a pipe from the moment the child starts, so a full pipe never
+ * stops it. `finish` waits for EOF up to `graceMs`, then stops reading and
+ * returns the bytes that arrived. */
 function collectStream(stream: ReadableStream<Uint8Array>): {
-  finish: (graceMs: number) => Promise<string>;
+  finish: (graceMs: number) => Promise<Uint8Array>;
 } {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -49,78 +37,182 @@ function collectStream(stream: ReadableStream<Uint8Array>): {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value) chunks.push(value);
+      chunks.push(value);
     }
   })();
   return {
-    finish: async (graceMs: number): Promise<string> => {
+    finish: async (graceMs: number): Promise<Uint8Array> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         drained.catch(() => {}),
-        new Promise((resolve) => setTimeout(resolve, graceMs)),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, graceMs);
+        }),
       ]);
+      clearTimeout(timer);
       await reader.cancel().catch(() => {});
       await drained.catch(() => {});
-      return Buffer.concat(chunks).toString("utf-8");
+      return Buffer.concat(chunks);
     },
   };
 }
 
-export function shellArgv(shell: "bash" | "zsh", command: string): string[] {
-  if (shell === "bash") return ["bash", "-eu", "-o", "pipefail", "-c", command];
-  return ["zsh", "-e", "-u", "-o", "pipefail", "-c", command];
+/** Compile one clean_env / keep_env pattern into an anchored RegExp: every
+ * regex metacharacter is escaped first so only `*` carries meaning (any
+ * substring of the key name), then anchored so a pattern without `*` is an
+ * exact, case-sensitive key match. The `\*` → `.*` rewrite cannot collide
+ * with an escaped literal backslash: escaping maps a source `\` to `\\` and a
+ * source `*` to `\*`, so every `\*` digram in the escaped text (scanning
+ * left-to-right in non-overlapping steps, exactly how replaceAll matches)
+ * comes from a source `*`. */
+function envPatternToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
 }
 
-/** The transport environment variable that carries one parameter's value into
- * the launcher shell. Parameter names are shell identifiers (config.ts checks),
- * so the carrier is one too; the lowercase `ccmsg_new_session_param_` namespace
- * is what the shell erases from its environment before running the command, and
- * the prefix makes the mapping injective (no two parameters share a carrier). */
-export function launchVarCarrier(name: string): string {
-  return `ccmsg_new_session_param_${name}`;
+/** The launch command's environment: `baseEnv` without the keys a clean_env
+ * pattern matches, except those a keep_env pattern also matches (keep wins:
+ * a broad `CLAUDE*` must not remove CLAUDE_CONFIG_DIR). Nothing is added. */
+export function buildLaunchEnv(
+  baseEnv: Readonly<Record<string, string | undefined>>,
+  cleanEnv: readonly string[],
+  keepEnv: readonly string[],
+): Record<string, string> {
+  const cleanRes = cleanEnv.map(envPatternToRegExp);
+  const keepRes = keepEnv.map(envPatternToRegExp);
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined) continue;
+    if (!keepRes.some((re) => re.test(key)) && cleanRes.some((re) => re.test(key))) continue;
+    env[key] = value;
+  }
+  return env;
 }
 
-/** Shell prologue that moves each launch value out of the environment and into
- * a plain (non-exported) shell variable, so nothing the command starts — the
- * claude session and its whole process tree — inherits it. Per parameter:
- *
- *   unset -v CWD; CWD="$ccmsg_new_session_param_CWD"; unset -v ccmsg_new_session_param_CWD
- *
- * The leading `unset -v` matters twice: it drops any same-named variable the
- * daemon itself inherited (which would otherwise survive as a stale export,
- * since the launch values no longer overwrite it), and it clears the export
- * attribute so the following assignment creates a shell-local variable.
- *
- * The prologue and the command run in *one* shell — a nested `bash -c` would
- * defeat the whole design, because non-exported variables do not cross into a
- * child shell and re-exporting them would put the values right back into the
- * environment we are trying to keep clean.
- *
- * Exactly the template's declared parameters are defined, each always defined
- * (empty rather than absent when neither request nor default supplies a value)
- * so a `set -u` command never aborts on a parameter the user left blank. Only
- * validated identifiers appear here; no request value is ever interpolated into
- * shell text, so the prologue cannot be injected through. */
-export function launchPrecode(paramNames: string[]): string {
-  return paramNames
-    .map((name) => {
-      const carrier = launchVarCarrier(name);
-      return `unset -v ${name}; ${name}="$${carrier}"; unset -v ${carrier}`;
-    })
-    .join("\n");
+/** How a run of the launch command ended. */
+export interface LaunchCommandRun {
+  /** The exit code, or `128 + <signal number>` for a signal. */
+  exitCode: number;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
 }
 
-/** Join prologue and command with a newline rather than `;` so a command that
- * opens with a comment or a shell keyword parses exactly as the administrator
- * wrote it. Exported for tests. */
-export function launchShellProgram(paramNames: string[], command: string): string {
-  return `${launchPrecode(paramNames)}\n${command}`;
+export interface LaunchCommandSpawn {
+  argv: readonly string[];
+  cwd: string;
+  env: Record<string, string>;
+  stdin: string;
+  /** Once aborted, SIGTERM, and SIGKILL FORCE_KILL_GRACE_MS later if the
+   * command is still alive. The daemon's is `AbortSignal.timeout` of
+   * timeout_seconds. */
+  deadline: AbortSignal;
 }
 
-export function validateSessionLaunch(
-  cfg: SessionLauncherConfig | undefined,
-  req: SessionLaunchRequest,
-): SessionLaunchValidation {
-  if (!cfg) {
+/** Run the launch command once and wait for it to end. Throws only when the
+ * command could not be started (spawn's ENOENT / EACCES …). No pid is kept
+ * after it returns. */
+export async function runLaunchCommand(spawn: LaunchCommandSpawn): Promise<LaunchCommandRun> {
+  const proc = Bun.spawn([...spawn.argv], {
+    cwd: spawn.cwd,
+    env: spawn.env,
+    // Bun writes the whole text and closes the pipe; a command that exits
+    // without reading it does not fail the launch.
+    stdin: new Blob([spawn.stdin]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = collectStream(proc.stdout);
+  const stderr = collectStream(proc.stderr);
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminate = (): void => {
+    proc.kill("SIGTERM");
+    forceKillTimer = setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+    }, FORCE_KILL_GRACE_MS);
+  };
+  if (spawn.deadline.aborted) terminate();
+  else spawn.deadline.addEventListener("abort", terminate, { once: true });
+  try {
+    const code = await proc.exited;
+    spawn.deadline.removeEventListener("abort", terminate);
+    clearTimeout(forceKillTimer);
+    const [out, err] = await Promise.all([
+      stdout.finish(PIPE_DRAIN_GRACE_MS),
+      stderr.finish(PIPE_DRAIN_GRACE_MS),
+    ]);
+    const signal = proc.signalCode;
+    return {
+      exitCode: signal === null ? code : 128 + os.constants.signals[signal],
+      stdout: out,
+      stderr: err,
+    };
+  } finally {
+    spawn.deadline.removeEventListener("abort", terminate);
+    clearTimeout(forceKillTimer);
+  }
+}
+
+/** The program `argv[0]` names, as spawn is given it: a path as written, a
+ * bare name looked up in the daemon's PATH. Undefined when the name is not
+ * found there. */
+function resolveProgram(program: string, daemonPath: string | undefined): string | undefined {
+  if (program.includes("/")) return program;
+  return Bun.which(program, { PATH: daemonPath ?? "" }) ?? undefined;
+}
+
+/** `dir` resolved to its realpath, or undefined when it is not an existing
+ * directory. */
+async function realDirectory(dir: string): Promise<string | undefined> {
+  try {
+    const real = await fs.realpath(dir);
+    return (await fs.stat(real)).isDirectory() ? real : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The launch as the launch command reads it: `cwd` the realpath, and on
+ * `new` / `fork` the new session's id. */
+function commandInputOf(
+  launch: LaunchInput,
+  cwd: string,
+): { input: LaunchCommandInput; sessionId?: string } {
+  switch (launch.type) {
+    case "new":
+    case "fork": {
+      const sessionId = crypto.randomUUID();
+      return { input: { ...launch, cwd, session_id: sessionId }, sessionId };
+    }
+    case "continue":
+    case "resume":
+      return { input: { ...launch, cwd } };
+  }
+}
+
+export interface SessionLaunchDeps {
+  /** `session_launcher` of the config; undefined when there is none. */
+  launcher: SessionLauncherConfig | undefined;
+  /** Who asked, for the log line: `user`, or the asking session's sid. */
+  requester: string;
+  /** The daemon's environment, which the launch command inherits cleaned. */
+  baseEnv: Readonly<Record<string, string | undefined>>;
+  /** `<state dir>/launches`. */
+  launchesDir: string;
+  log: { info(msg: string): void; warn(msg: string): void };
+}
+
+export type SessionLaunchOutcome =
+  | { ok: true; response: SessionLaunchResponse }
+  | { ok: false; code: ErrorCode; msg: string };
+
+/** One launch, DR-0018 §3.5 steps 1 and 3–10 (step 2, reading the launch, is
+ * the request schema's). */
+export async function launchSession(
+  deps: SessionLaunchDeps,
+  launch: LaunchInput,
+): Promise<SessionLaunchOutcome> {
+  const { launcher, log } = deps;
+  if (launcher === undefined) {
     return {
       ok: false,
       code: ErrorCode.launcher_not_configured,
@@ -128,174 +220,59 @@ export function validateSessionLaunch(
     };
   }
 
-  const cwd = containedInRoots(cfg.root_dirs, req.cwd, "session_launch cwd");
-  if (!cwd.ok) return cwd;
-  // DR-0018 §3.2 addendum (2026-07-17): user role may override the shell
-  // command template. Absent = use config's command verbatim (previous
-  // behavior). Present but empty = invalid_args (an empty template runs
-  // nothing meaningful and would mask a client bug). Present and non-empty =
-  // use it as-is; still no variable substitution, same env vars are exposed.
-  // The user-role gate is enforced upstream in server.ts's session_launch
-  // handler — session role never reaches this override at all.
-  if (req.command !== undefined) {
-    if (req.command === "") {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: "session_launch command override must be a non-empty string",
-      };
-    }
-  }
-  // Template selection: absent = the launcher's default recipe (templates[0],
-  // which for a flat config is the only one). An unknown name is an error
-  // rather than a fallback — launching a different recipe than the one the
-  // client asked for would run the wrong command silently.
-  const template =
-    req.template === undefined
-      ? cfg.templates[0]
-      : cfg.templates.find((t) => t.name === req.template);
-  if (!template) {
+  const cwd = await realDirectory(launch.cwd);
+  if (cwd === undefined) {
     return {
       ok: false,
       code: ErrorCode.invalid_args,
-      msg: `session_launch template not found: ${String(req.template)}`,
+      msg: `launch.cwd is not an existing directory: ${launch.cwd}`,
     };
   }
-  // Parameter values stay opaque strings: the UI may offer a curated dropdown
-  // for MODEL or EFFORT, but daemon enums would couple every new launcher
-  // choice to a daemon release, and a template is free to declare parameters
-  // the daemon has never heard of. Values may be empty (a prompt-less launch is
-  // a valid `claude` invocation). The values are read with the schema the
-  // template's declaration built (DR-0038 §6): a declared parameter the request
-  // left out takes its configured default, and a name the template does not
-  // declare (CWD among them, which travels as `cwd`) fails the read — a value
-  // nothing will read means the client and the config disagree about what the
-  // form is.
-  const params = parseWith(template.readParams, req.params, { firstIssue: true });
-  if (!params.ok) {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: `session_launch params for template ${template.name}: ${params.failure.summary}`,
-    };
-  }
-  const command = req.command ?? template.command;
 
-  // One carrier per declared parameter. CWD is the containment-checked
-  // realpath rather than anything the request said about it, so the command
-  // and the spawn always see the same directory.
-  const env = Object.fromEntries<string>([
-    [launchVarCarrier(LAUNCHER_CWD_PARAM), cwd.data.realPath],
-    ...Object.entries(params.value).map(([name, value]): [string, string] => [
-      launchVarCarrier(name),
-      value,
-    ]),
-  ]);
+  const { input, sessionId } = commandInputOf(launch, cwd);
+  const logFields = [
+    `by=${deps.requester}`,
+    `type=${launch.type}`,
+    `cwd=${cwd}`,
+    ...("resume_session_id" in launch ? [`resume_session_id=${launch.resume_session_id}`] : []),
+    ...(sessionId !== undefined ? [`session_id=${sessionId}`] : []),
+    ...(launch.prompt !== undefined ? [`prompt_bytes=${Buffer.byteLength(launch.prompt)}`] : []),
+  ].join(" ");
+
+  const unavailable = (why: string): SessionLaunchOutcome => {
+    const msg = `the launch command could not be started: ${why}`;
+    log.warn(`session_launch: ${logFields} ${ErrorCode.launch_command_unavailable}: ${msg}`);
+    return { ok: false, code: ErrorCode.launch_command_unavailable, msg };
+  };
+  const [program, ...args] = launcher.launch_command;
+  const resolved = resolveProgram(program, deps.baseEnv.PATH);
+  if (resolved === undefined) return unavailable(`${program} is not found in PATH`);
+  let run: LaunchCommandRun;
+  try {
+    run = await runLaunchCommand({
+      argv: [resolved, ...args],
+      cwd,
+      env: buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+      stdin: JSON.stringify(input),
+      deadline: AbortSignal.timeout(launcher.timeout_seconds * 1000),
+    });
+  } catch (e) {
+    return unavailable(errorText(e));
+  }
+
+  const texts = await launchOutputTexts(deps.launchesDir, run, new Date(), log);
+  log.info(
+    `session_launch: ${logFields} exit_code=${String(run.exitCode)}` +
+      ` stdout_bytes=${String(run.stdout.byteLength)} stderr_bytes=${String(run.stderr.byteLength)}`,
+  );
   return {
     ok: true,
-    cwd: cwd.data.realPath,
-    env,
-    shellArgv: shellArgv(
-      template.shell,
-      launchShellProgram(
-        template.params.map((p) => p.name),
-        command,
-      ),
-    ),
-    cleanEnv: cfg.clean_env ?? [],
-    keepEnv: cfg.keep_env ?? [],
-  };
-}
-
-/** Compile one clean_env wildcard pattern (DR-0018 §3.1 addendum 2026-07-18)
- * into an anchored RegExp: every regex metacharacter is escaped first so only
- * `*` carries meaning (any substring of the key name), then anchored so a
- * pattern without `*` is an exact, case-sensitive key match. The `\*` → `.*`
- * rewrite cannot collide with an escaped literal backslash: escaping maps a
- * source `\` to `\\` and a source `*` to `\*`, so every `\*` digram in the
- * escaped text (scanning left-to-right in non-overlapping steps, exactly how
- * replaceAll matches) comes from a source `*`. */
-function cleanEnvPatternToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
-}
-
-/** Build the launcher shell's environment: daemon env minus clean_env matches
- * (except keys a keep_env pattern also matches — keep wins over clean, DR-0018
- * §3.1 addendum: a broad `CLAUDE*` clean must not remove CLAUDE_CONFIG_DIR),
- * with the launch's own `ccmsg_new_session_*` carriers layered on top
- * afterwards — so those four always win even if a pattern names them. The
- * carriers live only in this shell; `launchPrecode` unsets them before the
- * command runs. Exported for tests. */
-export function buildLaunchEnv(
-  baseEnv: Record<string, string | undefined>,
-  cleanEnv: readonly string[],
-  launchEnv: Record<string, string>,
-  keepEnv: readonly string[] = [],
-): Record<string, string | undefined> {
-  const cleanRes = cleanEnv.map(cleanEnvPatternToRegExp);
-  const keepRes = keepEnv.map(cleanEnvPatternToRegExp);
-  const env: Record<string, string | undefined> = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (!keepRes.some((re) => re.test(key)) && cleanRes.some((re) => re.test(key))) continue;
-    env[key] = value;
-  }
-  return { ...env, ...launchEnv };
-}
-
-/** Execute one validated launch and wait only for this child result. No pid is
- * retained after return and no restart/progress lifecycle is introduced. */
-export async function executeSessionLaunch(
-  launch: ValidatedSessionLaunch,
-  timeoutSeconds: number,
-): Promise<SessionLaunchResponse> {
-  const proc = Bun.spawn(launch.shellArgv, {
-    cwd: launch.cwd,
-    env: buildLaunchEnv(process.env, launch.cleanEnv, launch.env, launch.keepEnv),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  let timedOut = false;
-  let settled = false;
-  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutTimer = setTimeout(() => {
-    if (settled || proc.exitCode !== null || proc.signalCode !== null) return;
-    timedOut = true;
-    proc.kill("SIGTERM");
-    forceKillTimer = setTimeout(() => {
-      if (settled || proc.exitCode !== null || proc.signalCode !== null) return;
-      proc.kill("SIGKILL");
-    }, FORCE_KILL_GRACE_MS);
-  }, timeoutSeconds * 1000);
-
-  const exited = proc.exited.then((code) => {
-    settled = true;
-    return code;
-  });
-
-  // Start draining both pipes before waiting for exit so output larger than a
-  // pipe buffer cannot deadlock the child. After exit, wait only a bounded
-  // grace for pipe EOF (see PIPE_DRAIN_GRACE_MS) — a detached grandchild
-  // holding the write end must not stall the reply.
-  const stdoutCollector = collectStream(proc.stdout);
-  const stderrCollector = collectStream(proc.stderr);
-  try {
-    const exitCode = await exited;
-    const [stdout, stderr] = await Promise.all([
-      stdoutCollector.finish(PIPE_DRAIN_GRACE_MS),
-      stderrCollector.finish(PIPE_DRAIN_GRACE_MS),
-    ]);
-    return {
+    response: {
       ok: true,
-      stdout,
-      stderr,
-      exit_code: proc.signalCode === null ? exitCode : null,
-      timed_out: timedOut,
-    };
-  } finally {
-    settled = true;
-    clearTimeout(timeoutTimer);
-    if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
-  }
+      ...(sessionId !== undefined && run.exitCode === 0 ? { session_id: sessionId } : {}),
+      exit_code: run.exitCode,
+      stdout: texts.stdout,
+      stderr: texts.stderr,
+    },
+  };
 }

@@ -25,6 +25,7 @@ export * from "./workflow-run.ts";
 export * from "./sidecar.ts";
 export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
+export * from "./launch.ts";
 export * from "./request.ts";
 export * from "./storage-event.ts";
 export * from "./session-status.ts";
@@ -60,16 +61,9 @@ export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
  * silently showing a partial file. */
 export const FS_READ_MAX_BYTES = 512 * 1024;
 
-/** DR-0018 §3.1 defaults used when session launcher config omits or corrupts
- * the corresponding positive numeric fields. */
+/** DR-0018 §3.1 defaults the config schema gives an absent field. */
 export const DEFAULT_DIR_TREE_DEPTH = 2;
 export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
-
-/** Every template implicitly declares this parameter, because the launcher has
- * to have a directory to spawn in: it is the child process's working directory
- * and the one value checked against `root_dirs`. A config that omits it from a
- * template's `params` gets it prepended at parse time. */
-export const LAUNCHER_CWD_PARAM = "CWD";
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.
@@ -222,6 +216,9 @@ export const ErrorCode = {
   // Session launcher (DR-0018): no valid session_launcher configuration means
   // both directory browsing and launch remain closed.
   launcher_not_configured: "launcher_not_configured",
+  // session_launch: the launch command could not be started (not found, not
+  // executable). No exit code exists, so the reply cannot take its shape.
+  launch_command_unavailable: "launch_command_unavailable",
   // DR-0023 host translation: the daemon is not running on macOS, the helper
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",

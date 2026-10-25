@@ -1,6 +1,7 @@
-// Shared realpath containment for DR-0018 launcher operations. Both dir_tree
-// and session_launch accept absolute host paths, but only beneath administrator-
-// configured roots; keeping one implementation prevents browse/launch drift.
+// Realpath containment for the session launcher's cwd tree (DR-0018 §3.4):
+// dir_tree accepts absolute host paths, but only beneath the configured
+// root_dirs. A launch's cwd is not held to the roots (§3.8): whether a cwd may
+// be launched in is the launch command's call.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
