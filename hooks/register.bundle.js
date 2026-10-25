@@ -1901,8 +1901,7 @@ var TOOL_INPUT_SCHEMAS = {
     },
     required: [
       "cwd"
-    ],
-    additionalProperties: false
+    ]
   }
 };
 async function registerTools($) {

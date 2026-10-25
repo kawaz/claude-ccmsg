@@ -26,7 +26,6 @@ describe("toolInputSchemaOf", () => {
         count: { type: "integer" },
       },
       required: ["id"],
-      additionalProperties: false,
     });
   });
 
@@ -57,12 +56,14 @@ describe("toolInputSchemaOf", () => {
 
 describe("toolInputSchemas", () => {
   // Claude Code drops a tool whose schema has a top-level oneOf / anyOf
-  // (docs/findings/2026-10-25-launch-tool-input-schema.md), and the model has
-  // no use for the converter's dialect.
-  test("every tool's schema is one object, with no oneOf, anyOf or $schema", () => {
+  // (docs/findings/2026-10-25-launch-tool-input-schema.md), and a model
+  // reading the schema has no use for its metadata.
+  test("every tool's schema is one object, with no oneOf, anyOf or metadata", () => {
     for (const schema of Object.values(toolInputSchemas())) {
       expect(schema.type).toBe("object");
-      for (const key of ["oneOf", "anyOf", "$schema"]) expect(schema).not.toHaveProperty(key);
+      for (const key of ["oneOf", "anyOf", "$schema", "$id", "title", "additionalProperties"]) {
+        expect(schema).not.toHaveProperty(key);
+      }
     }
   });
 

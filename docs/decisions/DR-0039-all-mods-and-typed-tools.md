@@ -84,7 +84,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 
 - **description**: 付けないか、数語 (3 語程度) にする。使い方・結果の読み方・注意は skill (または reference) に、tool のフルネームで定型として書く
 - **field の description**: field 名で中身が分かるもの (`cwd` / `model` / `text` 等) には付けない。名前だけでは中身が決まらないもの (`resume` が session id であること等) にだけ、数語で付ける
-- **input schema の型**: 各 field の型 (`string` / `boolean` / `integer`) と enum の値、`required`、`additionalProperties` だけを見せる。`minLength` / `pattern` / `format` / 範囲 / field の組み合わせ等の細則は書かない。細則は handler が入口で読む valibot のスキーマ (従来どおり厳密) が持ち、合わない入力は「<tool> の入力が形に合わないので何もしていない: <理由>」の短い文で返して model に書き直させる
+- **input schema の型**: 各 field の型 (`string` / `boolean` / `integer`) と enum の値、`required`、短い description だけを見せる。schema はエージェントがコードでなく context で読むものなので strict さは多少軽んじてよく、model が読んで意味を持たないメタのキー (`$schema` / `$id` / `title` / `additionalProperties: false` 等) は出さない (知らない field を断るのは handler の valibot のスキーマ)。`minLength` / `pattern` / `format` / 範囲 / field の組み合わせ等の細則は書かない。細則は handler が入口で読む valibot のスキーマ (従来どおり厳密) が持ち、合わない入力は「<tool> の入力が形に合わないので何もしていない: <理由>」の短い文で返して model に書き直させる
 - **導き方**: input schema は handler の valibot のスキーマから変換で導き、変換が細則のキーを落とす (`hooks/tool-input-schemas.ts` の `toolInputSchemaOf`)。手書きの別のスキーマを増やさない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
 - 汎用ツールとして配る plugin の tool なら、tool 自体の説明は見つけてもらえる程度に持ってよい。input schema に「言わなくても分かる」細則を書かないのは同じ
 

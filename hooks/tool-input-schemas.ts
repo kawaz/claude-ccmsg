@@ -7,7 +7,7 @@
 // The schemas are kept to what a call needs to be written (DR-0039 §3, "mods
 // の tool の作り方"): each field's type, an enum's values, which fields are
 // required, and a few words only on a field whose name does not say what it
-// holds. Every finer rule (a minimum length, a pattern, a range, which fields
+// holds. No schema metadata (`$schema`, `additionalProperties` …). Every finer rule (a minimum length, a pattern, a range, which fields
 // go together) stays in the valibot schema the handler reads the input with,
 // and a call that breaks one is answered in text. How to use the tools is the
 // skill's to say, by their full names.
@@ -29,8 +29,10 @@ function fieldShape(field: JsonSchema): JsonSchema {
 }
 
 /** The object `schema` reads, as the model is shown it: each field's type and
- * enum, what is required, and whether other fields are refused, with
- * `descriptions` on the fields named there. A description of a field the
+ * enum and what is required, with `descriptions` on the fields named there.
+ * Nothing else: keys that mean nothing to a model reading the schema in its
+ * context (`$schema`, `$id`, `title`, `additionalProperties`) are left out,
+ * and the handler's schema refuses a field it does not take. A description of a field the
  * object does not have fails the bundle rather than describe nothing. */
 export function toolInputSchemaOf(
   schema: v.GenericSchema,
@@ -56,9 +58,6 @@ export function toolInputSchemaOf(
     properties,
     ...(converted.required !== undefined && converted.required.length > 0
       ? { required: converted.required }
-      : {}),
-    ...(converted.additionalProperties !== undefined
-      ? { additionalProperties: converted.additionalProperties }
       : {}),
   };
 }

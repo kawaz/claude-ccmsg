@@ -196,8 +196,8 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
  * Design rationale: the input is picked out by the tool's fields rather than
  * the engine's fields taken off by name, so a field the engine adds does not
  * make every call unreadable. A field the model wrote outside the tool's
- * fields is dropped with them; the schema it is shown refuses one
- * (`additionalProperties: false`). */
+ * fields is dropped with them: the schema it is shown lists the fields, and
+ * says nothing more (DR-0039 §3). */
 const LaunchToolCallSchema = v.object(LaunchToolFieldsSchema.entries);
 
 const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";

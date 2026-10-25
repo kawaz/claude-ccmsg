@@ -2206,7 +2206,6 @@ describe("the ccmsg tools", () => {
         prompt: { type: "string" },
       },
       required: ["cwd"],
-      additionalProperties: false,
     });
   });
 
