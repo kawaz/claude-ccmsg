@@ -20,9 +20,19 @@ import {
  * for the permission, which is far shorter than the daemon lives. */
 export const PERMIT_REQUEST_LOG_LIMIT = 50;
 
+/** What `markRead` did: the records it changed (none when every one was
+ * read already), or the ids no record has, in which case nothing is marked
+ * (never recorded, recorded by another daemon process, or dropped by the
+ * bound). */
+export type MarkPermitReadResult =
+  | { kind: "read"; changed: readonly PermitRequestRecord[] }
+  | { kind: "missing"; ids: readonly string[] };
+
 export interface PermitRequestLog {
-  /** Record one request and return it. */
-  add(record: Omit<PermitRequestRecord, "id">): PermitRequestRecord;
+  /** Record one request and return it (unread). */
+  add(record: Omit<PermitRequestRecord, "id" | "read">): PermitRequestRecord;
+  /** Mark the records `ids` read, all of them or none. */
+  markRead(ids: readonly string[]): MarkPermitReadResult;
   /** Every request held, oldest first. */
   snapshot(): readonly PermitRequestRecord[];
 }
@@ -34,9 +44,23 @@ export function createPermitRequestLog(
   let records: readonly PermitRequestRecord[] = [];
   return {
     add(fields) {
-      const record: PermitRequestRecord = { id: issueId(), ...fields };
+      const record: PermitRequestRecord = { id: issueId(), ...fields, read: false };
       records = [...records, record].slice(-limit);
       return record;
+    },
+    markRead(ids) {
+      const held = new Set(records.map((r) => r.id));
+      const missing = ids.filter((id) => !held.has(id));
+      if (missing.length > 0) return { kind: "missing", ids: missing };
+      const targets = new Set(ids);
+      const changed: PermitRequestRecord[] = [];
+      records = records.map((r) => {
+        if (!targets.has(r.id) || r.read) return r;
+        const marked = { ...r, read: true };
+        changed.push(marked);
+        return marked;
+      });
+      return { kind: "read", changed };
     },
     snapshot() {
       return records;
@@ -108,7 +132,7 @@ export async function permitRequestFields(
   sid: string,
   permit: PermitInput,
   ts: string,
-): Promise<Omit<PermitRequestRecord, "id">> {
+): Promise<Omit<PermitRequestRecord, "id" | "read">> {
   const attachments = await Promise.all((permit.attachments ?? []).map(readPermitAttachment));
   return {
     sid,

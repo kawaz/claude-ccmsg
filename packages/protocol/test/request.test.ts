@@ -121,6 +121,14 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "permit_request", permit: { blocked: "x", commands: ["ls"], agent_id: "a1" } },
     ],
   },
+  permit_request_read: {
+    ok: { op: "permit_request_read", ids: ["0f0f/1"] },
+    bad: [
+      { op: "permit_request_read" },
+      { op: "permit_request_read", ids: [] },
+      { op: "permit_request_read", ids: [1] },
+    ],
+  },
   subscribe: { ok: { op: "subscribe" }, bad: [] },
   read: {
     ok: { op: "read", room: "r1", mids: [1, 2] },

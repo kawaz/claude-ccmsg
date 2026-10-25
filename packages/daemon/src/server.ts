@@ -1081,9 +1081,9 @@ function sendPermitRequests(daemon: Daemon, conn: Conn): void {
   send(conn, { ev: "permit_requests", requests: daemon.permitRequests.snapshot() });
 }
 
-/** Push one request for permission just recorded to every user-role
- * subscriber (ev:"permit_request"). Never to a session: the asking session
- * knows it asked. */
+/** Push one request for permission just recorded or marked read to every
+ * user-role subscriber (ev:"permit_request"). Never to a session: the asking
+ * session knows it asked. */
 function broadcastPermitRequest(daemon: Daemon, request: PermitRequestRecord): void {
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "permit_request", request });
@@ -1389,6 +1389,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "say",
   "say_read",
   "permit_request",
+  "permit_request_read",
   "subscribe",
   "rooms",
   "room_history",
@@ -1810,6 +1811,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
             : { path: a.path, read: false, reason: a.reason },
         ),
       });
+      return;
+    }
+
+    case "permit_request_read": {
+      // 既読は webui のバブルの「許可する」からだけ立つ (user role 限定、
+      // say_read と同じ理由)。存在しない id は黙って ack せず、どれも既読に
+      // しない。変わった記録だけを 1 件ずつ全タブに送る。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_request_read' requires user role");
+        return;
+      }
+      const marked = daemon.permitRequests.markRead(req.ids);
+      if (marked.kind === "missing") {
+        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${marked.ids.join(", ")}`);
+        return;
+      }
+      for (const record of marked.changed) broadcastPermitRequest(daemon, record);
+      send(conn, { ok: true, ids: req.ids });
       return;
     }
 

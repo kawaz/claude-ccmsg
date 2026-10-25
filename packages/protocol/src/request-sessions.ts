@@ -132,6 +132,15 @@ export const PermitRequestRequestSchema = v.object({
 });
 export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
+/** Mark requests for permission as read (the webui's 許可する, DR-0040 §7).
+ * User role only, as say_read is: what is unread is what the person has not
+ * acted on. */
+export const PermitRequestReadRequestSchema = v.object({
+  op: v.literal("permit_request_read"),
+  ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one request id")),
+});
+export type PermitRequestReadRequest = Output<typeof PermitRequestReadRequestSchema>;
+
 /** Mark say records as read (the webui's 既読 button). User role only: the
  * unread count exists for the person watching the session list, and a session
  * acking its own speech would clear a badge nobody looked at. */

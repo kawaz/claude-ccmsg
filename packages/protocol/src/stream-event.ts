@@ -79,11 +79,12 @@ export const PermitRequestsStreamEventSchema = v.object({
 });
 export type PermitRequestsStreamEvent = Output<typeof PermitRequestsStreamEventSchema>;
 
-/** One request for permission the daemon has just recorded, to the same
- * subscribers. One rather than the whole set as ev:"says" sends: a request
- * carries its attachments, up to PERMIT_ATTACHMENTS_MAX files of
- * PERMIT_ATTACHMENT_MAX_BYTES, and a recorded one never changes, so the
- * catch-up above and this addition are all a tab needs. */
+/** One request for permission the daemon has just recorded, or just marked
+ * read, to the same subscribers; a tab puts it in place of the one of the
+ * same id, or adds it. One rather than the whole set as ev:"says" sends: a
+ * request carries its attachments, up to PERMIT_ATTACHMENTS_MAX files of
+ * PERMIT_ATTACHMENT_MAX_BYTES, and only its `read` ever changes, so the
+ * catch-up above and these single records are all a tab needs. */
 export const PermitRequestStreamEventSchema = v.object({
   ev: v.literal("permit_request"),
   request: PermitRequestRecordSchema,

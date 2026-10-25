@@ -245,6 +245,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ],
     },
   ],
+  permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

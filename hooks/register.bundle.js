@@ -1857,7 +1857,8 @@ var PermitRequestRecordSchema = object({
   blocked: string(),
   attachments: array(PermitAttachmentSchema),
   intents: array(string()),
-  commands: array(string())
+  commands: array(string()),
+  read: boolean()
 });
 var PermitAttachmentOutcomeSchema = variant("read", [
   object({ path: string(), read: literal(true), truncated: boolean() }),
@@ -1869,6 +1870,10 @@ var PermitRequestResponseSchema = object({
   attachments: array(PermitAttachmentOutcomeSchema)
 });
 var PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
+var PermitRequestReadResponseSchema = object({
+  ok: literal(true),
+  ids: array(string())
+});
 
 var SEND_TIMEOUT_MS = 1e4;
 var PEERS_TIMEOUT_MS = 5000;

@@ -124,8 +124,8 @@ export const PermitAttachmentSchema = v.variant("read", [
 export type PermitAttachment = Output<typeof PermitAttachmentSchema>;
 
 /** One request for permission as the daemon holds it. Held in memory only,
- * like a say (DR-0040 §4), and never changed once recorded: whether the
- * person permitted is not tracked. */
+ * like a say (DR-0040 §4). The one thing that changes is `read`, which the
+ * person's 許可する sets; whether the person permitted is not tracked. */
 export const PermitRequestRecordSchema = v.object({
   /** `<instance id>/<n>` (mid-issuer.ts). */
   id: v.string(),
@@ -136,6 +136,9 @@ export const PermitRequestRecordSchema = v.object({
   attachments: v.array(PermitAttachmentSchema),
   intents: v.array(v.string()),
   commands: v.array(v.string()),
+  /** Set when the person pressed 許可する on it (permit_request_read); never
+   * cleared. What the Sessions list's 🔐 counts is the unread ones. */
+  read: v.boolean(),
 });
 export type PermitRequestRecord = Output<typeof PermitRequestRecordSchema>;
 
@@ -156,3 +159,10 @@ export const PermitRequestResponseSchema = v.object({
 });
 export type PermitRequestResponse = Output<typeof PermitRequestResponseSchema>;
 export const PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
+
+/** permit_request_read's reply: the ids it marked, echoed. */
+export const PermitRequestReadResponseSchema = v.object({
+  ok: v.literal(true),
+  ids: v.array(v.string()),
+});
+export type PermitRequestReadResponse = Output<typeof PermitRequestReadResponseSchema>;

@@ -69,6 +69,7 @@ describe("permit_request op", () => {
         attachments: [],
         intents: [],
         commands: ["git push origin main", "git push origin v1 \\\n  --tags"],
+        read: false,
       });
       u.close();
       s.close();
@@ -171,6 +172,74 @@ describe("permit_request op", () => {
       const res = await s.requestError({ op: "permit_request", permit: { blocked: "x" } });
       expect(res.error.code).toBe("invalid_args");
       expect(res.error.msg).toContain("ask for at least one of intents and commands");
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+});
+
+describe("permit_request_read op", () => {
+  // 何を保証するか: 既読は渡した id の記録だけを read にし (他は未読のまま)、
+  // 変わった記録を 1 件ずつ全タブに送る。二度目の既読は成功を返し、何も
+  // 送らない (ボタンの連打は普通に起きる)。
+  test("marks the named requests read, pushing each one changed to every tab", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const s = await sessionConn(ctx, SID_A);
+      const permit = { blocked: "x", commands: ["ls"] };
+      const a = await s.requestOk({ op: "permit_request", permit });
+      const b = await s.requestOk({ op: "permit_request", permit });
+      const { u, requests } = await subscribedUser(ctx);
+      expect(requests.map((r) => [r.id, r.read])).toEqual([
+        [a.id, false],
+        [b.id, false],
+      ]);
+      const { u: otherTab } = await subscribedUser(ctx);
+
+      expect(await u.request({ op: "permit_request_read", ids: [a.id] })).toMatchObject({
+        ok: true,
+        ids: [a.id],
+      });
+      for (const tab of [u, otherTab]) {
+        const { ev } = await tab.readEventUntil("permit_request");
+        expect([ev.request.id, ev.request.read]).toEqual([a.id, true]);
+      }
+      expect(ctx.daemon.permitRequests.snapshot().map((r) => r.read)).toEqual([true, false]);
+
+      expect(await u.request({ op: "permit_request_read", ids: [a.id] })).toMatchObject({
+        ok: true,
+      });
+      await u.request({ op: "ping" });
+      expect((await u.pendingEvents()).filter(isKind("permit_request"))).toEqual([]);
+      u.close();
+      otherTab.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: 存在しない id の既読は黙って成功せず、どれも既読に
+  // しない。既読は人の操作なので session からは立てられない。
+  test("refuses an id that is no request, and a session asking", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const s = await sessionConn(ctx, SID_A);
+      const a = await s.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", commands: ["ls"] },
+      });
+      const u = await userConn(ctx);
+      const res = await u.requestError({ op: "permit_request_read", ids: [a.id, "0000/9"] });
+      expect(res.error).toEqual({
+        code: "invalid_args",
+        msg: "no permit request with id 0000/9",
+      });
+      expect(ctx.daemon.permitRequests.snapshot().map((r) => r.read)).toEqual([false]);
+      const bySession = await s.requestError({ op: "permit_request_read", ids: [a.id] });
+      expect(bySession.error.code).toBe("bad_request");
+      u.close();
       s.close();
     } finally {
       await stopInProcessDaemon(ctx);
