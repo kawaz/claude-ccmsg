@@ -44,9 +44,9 @@
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
 | `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send` と `session.facts`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。run id の形 (`SidecarRunIdSchema`) と引き方 (`sidecarRunId`)。hooks module が Claude Code から読んだセッションの事実 (`SessionFactsSchema`、`session.facts` の result と `session_facts` の中身) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。run id は hooks module が引き、CLI (`ccmsg sidecar`) と daemon (`sidecar_hello`) が読む。セッションの事実は hooks module が書き、CLI (`ccmsg sidecar facts`) と daemon が読む |
-| `peer-tools.ts` | ccmsg の tool (`send` / `say` / `peers`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) の名前と入力、hooks module が `ccmsg sidecar send-message` / `peer-list` に標準入力で渡す形、その出力 (daemon の `send_message` / `peer_list` の返事) | hooks module、CLI、daemon |
+| `peer-tools.ts` | ccmsg の tool (`send` / `say` / `peers`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) の名前と入力 (`launch` は名前だけで、入力は `launch.ts`)、hooks module が `ccmsg sidecar send-message` / `peer-list` に標準入力で渡す形、その出力 (daemon の `send_message` / `peer_list` の返事) | hooks module、CLI、daemon |
 | `peer-tools-text.ts` | tool の結果として model が読む文面と、transcript の読み手 (webui、dump) が `send` の結果を読み戻す処理。書く形と読む形を 1 か所で定義する | hooks module、daemon、webui |
-| `launch.ts` | セッションの起動 ([DR-0018](../decisions/DR-0018-session-launcher.md) §3) の入力 (`LaunchInputSchema`、`type` で 4 つに分かれる variant)、起動コマンドが標準入力で読む形 (`LaunchCommandInputSchema`)、`session_launch` の返事 (`SessionLaunchResponseSchema`) | daemon、webui、hooks module (tool `launch`) |
+| `launch.ts` | セッションの起動 ([DR-0018](../decisions/DR-0018-session-launcher.md) §3) の入力 (`LaunchInputSchema`、`type` で 4 つに分かれる variant)、起動コマンドが標準入力で読む形 (`LaunchCommandInputSchema`)、`session_launch` の返事 (`SessionLaunchResponseSchema`)、hooks module が `ccmsg sidecar launch` に標準入力で渡す形とその出力 (`LaunchInputTextSchema` / `SessionLaunchResponseTextSchema`) | daemon、webui、hooks module (tool `launch`)、CLI |
 
 hooks module は実行時に import できないので、このファイルは valibot と `parse.ts` 以外を import せず、bundle して使う。
 

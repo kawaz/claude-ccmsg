@@ -20,6 +20,7 @@ import {
   type Identity,
   type ReplyOf,
   type RequestInput,
+  LaunchInputTextSchema,
   PeerListInputTextSchema,
   SendMessageInputTextSchema,
   type SessionStateFile,
@@ -304,13 +305,13 @@ what its tools send go to the daemon. Not for direct use.
 `;
 
 /** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
- * §3), `ccmsg sidecar begin` (DR-0039 §2) and `ccmsg sidecar send-message` /
- * `peer-list` (DR-0039 §3). All are the hooks module's: it starts the first
- * for its session's life, runs the second to answer a request the first
- * copied to it, the third to hand the daemon what it knows of its session,
- * the fourth when the session starts or changes its id, and the last two for
- * its `send` and `peers` tools. The help says no more than that on purpose
- * (DR-0035 §4). */
+ * §3), `ccmsg sidecar begin` (DR-0039 §2), `ccmsg sidecar send-message` /
+ * `peer-list` (DR-0039 §3) and `ccmsg sidecar launch` (DR-0018 §3.7). All are
+ * the hooks module's: it starts the first for its session's life, runs the
+ * second to answer a request the first copied to it, the third to hand the
+ * daemon what it knows of its session, the fourth when the session starts or
+ * changes its id, and the last three for its `send`, `peers` and `launch`
+ * tools. The help says no more than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -327,6 +328,10 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   }
   if (positionals[0] === "peer-list") {
     await runSidecarPeerList(opts);
+    return;
+  }
+  if (positionals[0] === "launch") {
+    await runSidecarLaunch(opts);
     return;
   }
   if (positionals[0] === "facts") {
@@ -550,6 +555,33 @@ async function runSidecarPeerList(opts: Record<string, string | boolean>): Promi
   if (identity === null) refuseWriteWithoutSid("sidecar peer-list");
   const client = await daemonOrExit(identity, "sidecar peer-list");
   const res = await client.request({ op: "peer_list", ...read.value });
+  client.close();
+  process.exit(output(res));
+}
+
+/** `ccmsg sidecar launch --sid <sid> < launch.json` (DR-0018 §3.7): ask the
+ * daemon, as session `<sid>`, to start a session through its configured
+ * launch command with the launch on standard input, and print the daemon's
+ * session_launch reply (what the command did, uninterpreted), exiting 0. The
+ * launch comes on standard input for the reason a reply does: its prompt may
+ * be long, and an argument is shown to every user by `ps`.
+ *
+ * The reply waits for the launch command to end; nothing here times it out,
+ * the module's wait does. Exits 3, nothing started, when no daemon can be
+ * had; exits 1 with the daemon's refusal on standard error when it did not
+ * run the command. */
+async function runSidecarLaunch(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar launch --sid <sid> < launch.json";
+  const read = parseWith(LaunchInputTextSchema, await Bun.stdin.text());
+  if (!read.ok) {
+    throw new Error(
+      `standard input must be one launch as JSON: ${read.failure.summary}\n  usage: ${usage}`,
+    );
+  }
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar launch");
+  const client = await daemonOrExit(identity, "sidecar launch");
+  const res = await client.request({ op: "session_launch", launch: read.value });
   client.close();
   process.exit(output(res));
 }

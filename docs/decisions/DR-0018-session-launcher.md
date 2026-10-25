@@ -186,7 +186,7 @@ export const LaunchCommandInputSchema = v.variant("type", [
 [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の `send` / `say` / `peers` と同じ形で、module が `session.start` で登録し (`isDeferred: true`、対話のセッションだけ)、`tool.call` の handler が `next` を呼ばずに `{ result }` で答える。
 
 - **description**: `Start a Claude Code session through the configured launch command (see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.` 使い方の正本は skill に置く (DR-0039 §3) が、この 1 文は結果を読み違えると誤った報告に直結するので description に置く
-- **model に見せる input schema**: `LaunchInputSchema` の 4 つの option を合併した 1 つの object (properties は全 option の和、`type` の enum は 4 値、required は全 option に共通の `type` と `cwd`)。Messages API の tool の input_schema は top-level が `type: "object"` の schema とされており (API の型の記述。top-level の `anyOf` を `$.tool.register` に渡した時の挙動は未検証)、合併した object ならその制約の有無に関わらず渡せるため。合併は variant の option から機械的に導き (`tool-input-schemas.ts` の macro)、手で別に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)。type ごとの必須は各 field の description に書き、handler の入口で `LaunchInputSchema` に通して読めなければ「launch の入力が形に合わないので何もしていない: <理由>」で返す
+- **model に見せる input schema**: `LaunchInputSchema` の 4 つの option を合併した 1 つの object (properties は全 option の和、`type` の enum は 4 値、required は全 option に共通の `type` と `cwd`)。Claude Code は top-level に `oneOf` か `anyOf` を持つ input schema の tool を「Anthropic API が受けない」として session の tools から外す (`$.tool.register` は resolve するが model からは呼べない。`type: "object"` を並べても外される。2.1.309、[findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md)) ため。合併は variant の option から機械的に導き (`tool-input-schemas.ts` の macro)、手で別に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)。type ごとの必須は各 field の description に書き、handler の入口で `LaunchInputSchema` に通して読めなければ「launch の入力が形に合わないので何もしていない: <理由>」で返す
 - **transport**: `ccmsg sidecar launch --sid <sid>`。stdin に入力の JSON、stdout に response の JSON。module の待ちは 60 秒 (`timeout_seconds` の上限 50 秒 + kill の猶予 + 退避の書き込み + daemon の起動を待つ分)
 - **結果の文**: response の `{ session_id?, exit_code, stdout, stderr }` を JSON の文字列で返す。daemon が断った時 (`invalid_args` 等) は「ccmsg の daemon が起動を断ったので、起動していない: <msg>」、daemon に繋がらない時は「ccmsg の daemon に繋がらず、起動していない」、60 秒を超えた時と途中で止まった時は「起動したか確かめられなかった。`peers` で確かめる」
 - **skill**: ccmsg の skill に `launch` の節を足す (いつ使うか、4 つの type の選び方、`exit_code` 0 の後に `peers` で到達を確かめること、非 0 なら `session_id` は無く起動していないこと、`resume` は走っているセッションに使わないこと)
@@ -243,14 +243,14 @@ session role (エージェント) からの `session_launch` を受ける。
 | エージェントに起動スクリプトを Bash で叩かせる | 引数の渡し方がぶれて prompt が捨てられ、Bash での起動は classifier に止められる (§1) |
 | fork の新しい id を、起動したセッションの hello を待って知る | `--fork-session` と `--session-id` の併用で先に決められる (findings 2026-10-25-fork-with-session-id)。hello 待ちは到達の確認であり、§2.3 で daemon がしないと決めたこと |
 | daemon が起動の cwd を `root_dirs` の配下に限る | cwd の信頼判定は起動コマンドが持つ (§3.8)。2 か所で判定すると食い違った時にどちらが正か決まらない |
-| tool の input schema を `LaunchInputSchema` の変換 (top-level `anyOf`) にする | Messages API の input_schema は top-level が object とされている (§3.7)。合併した object なら確かめなくても渡せる |
+| tool の input schema を `LaunchInputSchema` の変換 (valibot の変換では top-level `oneOf`) にする | top-level の `oneOf` / `anyOf` を持つ tool は Claude Code が session の tools から外し、model から呼べない (§3.7) |
 
 ## 7. 未確定
 
 - **timeout と起動コマンド自身の終了コードの区別**: timeout の SIGTERM で終わった時の `exit_code` 143 は、起動コマンドが自分で 143 で終わった時と見分けられない。対話の claude を起動した後に timeout で止められると、セッションはあるのに非 0 なので `session_id` が返らない。response に `timed_out` を足すかは実際に困ったら決める
 - **走っているセッションへの `resume`**: 同じ transcript に 2 つのプロセスが書くことになる。daemon は止めない (§2.3、起動コマンドの判断) が、skill で使わないよう案内する。起動コマンドか daemon が止めるべきかは未決
 - **起動の `prompt` に起動者の印を付けるか**: §3.8 のとおり、起動されたセッションは `prompt` を人の言葉として読む。エージェントが起動した時に本文の頭へ `ccmsg:<起動したセッションの id> から:` のような印 (DR-0039 §6 の印と同型) を付けるかは未決
-- **tool の合併した input schema を `$.tool.register` が受け、model が type ごとの必須を守るか**: 段 3 の実装時に実機で確かめる
+- **model が合併した input schema の description に従い、type ごとの必須を守るか**: 合併した schema が tools に載り呼び出しが handler に届くことは確かめた ([findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md)、代役の API)。本物の model の振る舞いは未観測で、守らなくても handler の入口で読めない入力として返る
 
 ## 8. 関連
 

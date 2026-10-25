@@ -45,7 +45,7 @@ import {
 import { beginArgv } from "./session-lifecycle.ts";
 import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
-import { SEND_TIMEOUT_MS } from "./tools.ts";
+import { LAUNCH_TIMEOUT_MS, SEND_TIMEOUT_MS } from "./tools.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
 /** A command.run as the engine raises it for `/<command>`. */
@@ -194,7 +194,8 @@ function fakeEngine(
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
     /** What the ccmsg command a tool runs (`sidecar send-message`, `sidecar
-     * peer-list`, `say`) does, given its argv and what it was run with. */
+     * peer-list`, `sidecar launch`, `say`) does, given its argv and what it
+     * was run with. */
     command?: (
       argv: readonly string[],
       init: { stdin?: string; timeoutMs?: number; env?: Record<string, string> },
@@ -303,7 +304,12 @@ function fakeEngine(
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
-        if (argv[1] === "say" || argv[2] === "send-message" || argv[2] === "peer-list") {
+        if (
+          argv[1] === "say" ||
+          argv[2] === "send-message" ||
+          argv[2] === "peer-list" ||
+          argv[2] === "launch"
+        ) {
           if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
           return options.command(argv, init ?? {});
         }
@@ -1929,13 +1935,14 @@ describe("the ccmsg tools", () => {
     return fake;
   }
 
-  test("an interactive session.start registers send, say and peers, deferred", async () => {
+  test("an interactive session.start registers send, say, peers and launch, deferred", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     expect(fake.tools.map((t) => [t.name, t.isDeferred])).toEqual([
       ["send", true],
       ["say", true],
       ["peers", true],
+      ["launch", true],
     ]);
     // The model is shown the shape the handler reads: send's text required,
     // the recipient fields beside it.
@@ -2033,10 +2040,15 @@ describe("the ccmsg tools", () => {
     const fake = toolFake(printing({}));
     const answered: string[] = fake.hooks["tool.call"].map(([matcher]) => matcher.tool);
     expect(answered).toEqual(
-      ["send", "say", "peers"].map((tool) => `mcp__${read.value.name}__${tool}`),
+      ["send", "say", "peers", "launch"].map((tool) => `mcp__${read.value.name}__${tool}`),
     );
     // A transcript's reader knows the tools by the same names.
-    expect(answered).toEqual([CCMSG_TOOLS.send, CCMSG_TOOLS.say, CCMSG_TOOLS.peers]);
+    expect(answered).toEqual([
+      CCMSG_TOOLS.send,
+      CCMSG_TOOLS.say,
+      CCMSG_TOOLS.peers,
+      CCMSG_TOOLS.launch,
+    ]);
   });
 
   test("a send that matched only the sender says so", async () => {
@@ -2155,6 +2167,178 @@ describe("the ccmsg tools", () => {
       `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
       "- session_id: c (ccmsg の hooks module が動いていないので送れない)",
     ]);
+  });
+
+  // launch (DR-0018 §3.7): the model is shown one object, since Claude Code
+  // leaves out a tool whose schema is a top-level oneOf / anyOf
+  // (docs/findings/2026-10-25-launch-tool-input-schema.md).
+  test("launch is shown one object: type and cwd required, the rest said per type", async () => {
+    const fake = toolFake(printing({}));
+    await fire(fake, "session.start", START, async () => ({}));
+    const launch = fake.tools.find((t) => t.name === "launch");
+    expect(launch?.description).toContain("exit_code 0 means the launch command finished normally");
+    const schema = launch?.inputSchema;
+    expect(schema).toMatchObject({
+      type: "object",
+      required: ["type", "cwd"],
+      additionalProperties: false,
+      properties: {
+        type: { type: "string", enum: ["new", "continue", "resume", "fork"] },
+        resume_session_id: { format: "uuid" },
+      },
+    });
+    expect(schema).not.toHaveProperty("oneOf");
+    expect(schema).not.toHaveProperty("anyOf");
+    // What the fold loses is said in the fields' descriptions.
+    const described = parseWith(
+      v.object({
+        properties: v.object({
+          model: v.object({ description: v.string() }),
+          resume_session_id: v.object({ description: v.string() }),
+        }),
+      }),
+      schema,
+    );
+    if (!described.ok) throw new Error(described.failure.summary);
+    expect(described.value.properties.model.description).toContain("Required when type is new.");
+    expect(described.value.properties.resume_session_id.description).toContain(
+      "Not accepted when type is new or continue.",
+    );
+  });
+
+  const RESUMED = "cccccccc-0000-4000-8000-000000000003";
+  const launched = { ok: true, session_id: OTHER, exit_code: 0, stdout: "started\n", stderr: "" };
+
+  // The engine puts the tool's name, the call's id and a subagent's agent id
+  // beside the input; only the input goes to the command.
+  test("launch hands the launch to ccmsg sidecar launch and answers its reply as JSON", async () => {
+    const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
+    const fake = toolFake(async (argv, init) => {
+      seen.push({ argv, ...init });
+      return printing(launched)();
+    });
+    // In the schema's order, which is the order the handler writes it in.
+    const input = { type: "new", cwd: "/w", prompt: "a\n`b` $c", model: "opus", effort: "high" };
+    const result = await callTool(fake, "mcp__ccmsg-v1__launch", {
+      ...input,
+      tool: "mcp__ccmsg-v1__launch",
+      tool_use_id: "toolu_1",
+      agentId: "a1",
+    });
+    expect(seen).toEqual([
+      {
+        argv: ["/plugin/bin/ccmsg", "sidecar", "launch", "--sid", fake.sid.value],
+        stdin: JSON.stringify(input),
+        timeoutMs: LAUNCH_TIMEOUT_MS,
+      },
+    ]);
+    expect(result).toBe(
+      JSON.stringify({ session_id: OTHER, exit_code: 0, stdout: "started\n", stderr: "" }),
+    );
+    // A non-zero exit carries no session_id, and is answered as it came.
+    const failed = toolFake(
+      printing({ ok: true, exit_code: 2, stdout: "", stderr: "no such dir\n" }),
+    );
+    expect(
+      await callTool(failed, "mcp__ccmsg-v1__launch", {
+        type: "resume",
+        cwd: "/w",
+        resume_session_id: RESUMED,
+      }),
+    ).toBe(JSON.stringify({ exit_code: 2, stdout: "", stderr: "no such dir\n" }));
+  });
+
+  // Each type is strict: what a type requires missing, or a field it has no
+  // use for, is answered in text, and nothing runs.
+  test("an input that is not a launch is answered in text, and nothing runs", async () => {
+    const fake = toolFake(printing(launched));
+    for (const input of [
+      {},
+      { tool: 1, type: "new", cwd: "/w", model: "opus", effort: "high" },
+      { type: "new", cwd: "/w" },
+      { type: "new", cwd: "/w", model: "opus", effort: "high", resume_session_id: RESUMED },
+      { type: "continue", cwd: "w" },
+      { type: "resume", cwd: "/w" },
+      { type: "fork", cwd: "/w", resume_session_id: "not-a-uuid" },
+      { type: "continue", cwd: "/w", prompt: "" },
+      { type: "restart", cwd: "/w" },
+    ]) {
+      const result = await callTool(fake, "mcp__ccmsg-v1__launch", {
+        tool: "mcp__ccmsg-v1__launch",
+        ...input,
+      });
+      expect({
+        input,
+        answer: result.startsWith("launch の入力が形に合わないので何もしていない: "),
+      }).toEqual({
+        input,
+        answer: true,
+      });
+    }
+    expect(fake.runs).toEqual([]);
+  });
+
+  test("a launch the daemon refused or could not be asked was not started; else it is unconfirmed", async () => {
+    const refusing = (code: string, msg: string) =>
+      toolFake(async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: `${JSON.stringify({ ok: false, error: { code, msg } })}\n`,
+      }));
+    const input = { tool: "mcp__ccmsg-v1__launch", type: "continue", cwd: "/w" };
+    expect(
+      await callTool(
+        refusing("invalid_args", "cwd: not a directory"),
+        "mcp__ccmsg-v1__launch",
+        input,
+      ),
+    ).toBe("ccmsg の daemon が起動を断ったので、起動していない: cwd: not a directory");
+    expect(
+      await callTool(
+        refusing("launcher_not_configured", "no session_launcher"),
+        "mcp__ccmsg-v1__launch",
+        input,
+      ),
+    ).toBe("ccmsg の daemon が起動を断ったので、起動していない: no session_launcher");
+    // An op that threw may have run the command.
+    expect(
+      await callTool(refusing("internal", "spawn broke"), "mcp__ccmsg-v1__launch", input),
+    ).toBe(
+      "ccmsg が起動の結果を返さなかった: spawn broke。起動したか確かめられなかった。`peers` で確かめる",
+    );
+    const nodaemon = toolFake(async () => ({ exitCode: 3, stdout: "", stderr: "no daemon\n" }));
+    expect(await callTool(nodaemon, "mcp__ccmsg-v1__launch", input)).toBe(
+      "ccmsg の daemon に繋がらず、起動していない: no daemon",
+    );
+    const silent = toolFake(async () => ({ exitCode: 1, stdout: "", stderr: "" }));
+    expect(await callTool(silent, "mcp__ccmsg-v1__launch", input)).toBe(
+      "ccmsg が起動の結果を返さなかった。起動したか確かめられなかった。`peers` で確かめる",
+    );
+    // The wait ran out (or the command could not be run): it may have started.
+    const overran = toolFake(async () => {
+      throw new Error("aborted: still running after 60000ms");
+    });
+    expect(await callTool(overran, "mcp__ccmsg-v1__launch", input)).toBe(
+      "ccmsg sidecar launch が 60 秒以内に終わらなかったか起動できなかった: Error: aborted: still running after 60000ms。起動したか確かめられなかった。`peers` で確かめる",
+    );
+  });
+
+  test("a launch whose handler fails is answered by its .catch", async () => {
+    const fake = toolFake(async () => {
+      throw new Error("run broke");
+    });
+    fake.$.ui = {
+      log: () => {
+        throw new Error("log broke");
+      },
+    };
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__launch", {
+        tool: "mcp__ccmsg-v1__launch",
+        type: "continue",
+        cwd: "/w",
+      }),
+    ).toBe("ccmsg の launch が途中で止まった。起動したか確かめられなかった。`peers` で確かめる");
   });
 
   test("peers the daemon refused says the daemon's reason, not its JSON", async () => {

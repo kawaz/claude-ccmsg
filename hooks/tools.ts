@@ -1,10 +1,14 @@
-// An agent uses ccmsg through three tools the module registers at
+// An agent uses ccmsg through four tools the module registers at
 // session.start (DR-0039 §3): `send` (to other sessions, named by any of
 // their id, directory, name and process, in any config home), `say` (to the
-// person, by voice and in the webui) and `peers` (who `send` can reach). Each
-// is answered here without `next`: `send` and `peers` through `ccmsg sidecar
-// send-message` / `peer-list`, `say` through `ccmsg say`, the result always a
-// text the model reads. SendMessage is left to the harness.
+// person, by voice and in the webui), `peers` (who `send` can reach) and
+// `launch` (start a session through the configured launch command, DR-0018
+// §3.7). Each is answered here without `next`: `send`, `peers` and `launch`
+// through `ccmsg sidecar send-message` / `peer-list` / `launch`, `say`
+// through `ccmsg say`, the result always a text the model reads. SendMessage
+// is left to the harness.
+import * as v from "valibot";
+import { LaunchInputSchema, SessionLaunchResponseTextSchema } from "@ccmsg/protocol/launch";
 import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   PeerListResponseTextSchema,
@@ -31,6 +35,10 @@ export const PEERS_TIMEOUT_MS = 5_000;
 /** `say` budget: `ccmsg say` records the say and then speaks, and returns
  * when the speech ends, so a long text takes as long as it is to say. */
 export const SAY_TIMEOUT_MS = 120_000;
+/** `launch` budget: the launch command's longest wait (`timeout_seconds`,
+ * at most 50 s), its kill grace and output wait, writing its output aside,
+ * and a daemon the command has to start (DR-0018 §3.7). */
+export const LAUNCH_TIMEOUT_MS = 60_000;
 
 /** The tools' input schemas for the model, derived from the schemas their
  * handlers read the inputs with when the module is bundled (a macro). */
@@ -60,6 +68,15 @@ async function registerTools($: Engine): Promise<void> {
       inputSchema: TOOL_INPUT_SCHEMAS.peers,
       isDeferred: true,
     }),
+    // The one sentence of use kept here: reading exit_code 0 as "the session
+    // is up" goes straight into a wrong report (DR-0018 §3.7).
+    $.tool.register({
+      name: "launch",
+      description:
+        "Start a Claude Code session through the configured launch command (see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+      inputSchema: TOOL_INPUT_SCHEMAS.launch,
+      isDeferred: true,
+    }),
   ]);
   for (const outcome of registered) {
     if (outcome.status === "rejected") {
@@ -68,11 +85,11 @@ async function registerTools($: Engine): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar send-message` / `peer-list` for session `sid`: the input goes
- * on standard input, for the reason a reply does (sidecar.ts). */
-export function peerArgv(
+/** `ccmsg sidecar send-message` / `peer-list` / `launch` for session `sid`: the
+ * input goes on standard input, for the reason a reply does (sidecar.ts). */
+export function toolArgv(
   root: string,
-  command: "send-message" | "peer-list",
+  command: "send-message" | "peer-list" | "launch",
   sid: string,
 ): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
@@ -91,7 +108,7 @@ async function sendTool<E>($: Engine, e: E): Promise<string> {
   const { text, agent_id, ...to } = read.value;
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
-    run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
+    run = await $.process.run(toolArgv($.plugin.root, "send-message", await $.session.id()), {
       stdin: JSON.stringify({ to, ...(agent_id !== undefined ? { agent_id } : {}), text }),
       timeoutMs: SEND_TIMEOUT_MS,
     });
@@ -154,7 +171,7 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
   const read = parseWith(PeersToolInputSchema, e);
   if (!read.ok) return notTheInput("peers", read.failure.summary);
   try {
-    const run = await $.process.run(peerArgv($.plugin.root, "peer-list", await $.session.id()), {
+    const run = await $.process.run(toolArgv($.plugin.root, "peer-list", await $.session.id()), {
       stdin: JSON.stringify(read.value),
       timeoutMs: PEERS_TIMEOUT_MS,
     });
@@ -164,6 +181,60 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
   } catch (error) {
     return `一覧を返せなかった: ${errorText(error)}`;
   }
+}
+
+/** What the engine puts beside a tool's input in a `tool.call`: the tool's
+ * name, the call's id, and on a subagent's call its agent id. The input's
+ * fields come at the same level.
+ *
+ * Design rationale: these are taken off by name rather than the input picked
+ * out by launch's fields. Each type of a launch is strict, so a field the
+ * model wrote that the type has no use for is refused rather than dropped
+ * (DR-0018 §3.2); picking would drop it. */
+const ToolCallEnvelopeSchema = v.looseObject({
+  tool: v.optional(v.string()),
+  tool_use_id: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+});
+
+const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
+
+/** The `launch` tool: start a session through `ccmsg sidecar launch`, which
+ * asks the daemon to run the configured launch command, and answer what the
+ * command did as JSON. Never rejects. */
+async function launchTool<E>($: Engine, e: E): Promise<string> {
+  const call = parseWith(ToolCallEnvelopeSchema, e);
+  if (!call.ok) return notTheInput("launch", call.failure.summary);
+  const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = call.value;
+  const read = parseWith(LaunchInputSchema, input);
+  if (!read.ok) return notTheInput("launch", read.failure.summary);
+  let run: { exitCode: number; stdout: string; stderr: string };
+  try {
+    run = await $.process.run(toolArgv($.plugin.root, "launch", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: LAUNCH_TIMEOUT_MS,
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: launch failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar launch が ${String(LAUNCH_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できなかった: ${errorText(error)}。${LAUNCH_UNCONFIRMED}`;
+  }
+  const answered = parseWith(SessionLaunchResponseTextSchema, run.stdout);
+  if (answered.ok) {
+    const { ok: _ok, ...result } = answered.value;
+    return JSON.stringify(result);
+  }
+  $.ui.log(`ccmsg: launch exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  const said = firstStderrLine(run.stderr);
+  // 3: no daemon could be had, so nothing was asked to start.
+  if (run.exitCode === 3) return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
+  // The daemon refuses a launch before it runs the command; only an op that
+  // threw (`internal`) may have run it.
+  const refusal = parseWith(RefusalTextSchema, said);
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が起動を断ったので、起動していない: ${refusal.value.error.msg}`;
+  }
+  const why = refusal.ok ? refusal.value.error.msg : said;
+  return `ccmsg が起動の結果を返さなかった${why !== "" ? `: ${why}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 
 /** At session.start: register the tools, awaited so they are listed by the
@@ -193,4 +264,7 @@ export function registerToolCalls(on: On): void {
   on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
     result: await peersTool($, e),
   })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__launch" }, async ($, e) => ({
+    result: await launchTool($, e),
+  })).catch(async () => ({ result: `ccmsg の launch が途中で止まった。${LAUNCH_UNCONFIRMED}` }));
 }

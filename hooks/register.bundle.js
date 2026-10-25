@@ -102,6 +102,7 @@ function getDotPath(issue) {
   }
   return null;
 }
+var UUID_REGEX = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu;
 function check(requirement, message$1) {
   return {
     kind: "validation",
@@ -129,6 +130,22 @@ function maxLength(requirement, message$1) {
     message: message$1,
     "~run"(dataset, config$1) {
       if (dataset.typed && dataset.value.length > this.requirement)
+        _addIssue(this, "length", dataset, config$1, { received: `${dataset.value.length}` });
+      return dataset;
+    }
+  };
+}
+function minLength(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "min_length",
+    reference: minLength,
+    async: false,
+    expects: `>=${requirement}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && dataset.value.length < this.requirement)
         _addIssue(this, "length", dataset, config$1, { received: `${dataset.value.length}` });
       return dataset;
     }
@@ -215,6 +232,22 @@ function safeInteger(message$1) {
     "~run"(dataset, config$1) {
       if (dataset.typed && !this.requirement(dataset.value))
         _addIssue(this, "safe integer", dataset, config$1);
+      return dataset;
+    }
+  };
+}
+function uuid(message$1) {
+  return {
+    kind: "validation",
+    type: "uuid",
+    reference: uuid,
+    async: false,
+    expects: null,
+    requirement: UUID_REGEX,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && !this.requirement.test(dataset.value))
+        _addIssue(this, "UUID", dataset, config$1);
       return dataset;
     }
   };
@@ -826,7 +859,7 @@ function errorText(e) {
 var CommandRunInputSchema = looseObject({ command: optional(string()) });
 var AnyInputSchema = looseObject({});
 
-var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 function guidanceText(webuiUrl) {
   return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}
 ccmsg_url: ${webuiUrl}`;
@@ -1519,6 +1552,65 @@ async function replaceSidecar($, state) {
   runSidecar($, state, sid, state.run);
 }
 
+var LaunchModelSchema = picklist(["fable", "opus", "sonnet", "haiku"]);
+var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "must be an absolute path"));
+var NonEmptySchema = pipe(string(), minLength(1, "must not be empty"));
+var SessionUuidSchema = pipe(string(), uuid("must be a uuid"));
+var common = {
+  cwd: LaunchCwdSchema,
+  name: optional(NonEmptySchema),
+  prompt: optional(NonEmptySchema)
+};
+var NewLaunchSchema = strictObject({
+  type: literal("new"),
+  ...common,
+  model: LaunchModelSchema,
+  effort: LaunchEffortSchema
+});
+var ContinueLaunchSchema = strictObject({
+  type: literal("continue"),
+  ...common,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema)
+});
+var ResumeLaunchSchema = strictObject({
+  type: literal("resume"),
+  ...common,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema),
+  resume_session_id: SessionUuidSchema
+});
+var ForkLaunchSchema = strictObject({
+  type: literal("fork"),
+  ...common,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema),
+  resume_session_id: SessionUuidSchema,
+  resume_at: optional(SessionUuidSchema)
+});
+var LaunchInputSchema = variant("type", [
+  NewLaunchSchema,
+  ContinueLaunchSchema,
+  ResumeLaunchSchema,
+  ForkLaunchSchema
+]);
+var LaunchInputTextSchema = jsonText(LaunchInputSchema);
+var LaunchCommandInputSchema = variant("type", [
+  strictObject({ ...NewLaunchSchema.entries, session_id: SessionUuidSchema }),
+  ContinueLaunchSchema,
+  ResumeLaunchSchema,
+  strictObject({ ...ForkLaunchSchema.entries, session_id: SessionUuidSchema })
+]);
+var SessionLaunchResponseSchema = object({
+  ok: literal(true),
+  session_id: optional(SessionUuidSchema),
+  exit_code: pipe(number(), safeInteger()),
+  stdout: string(),
+  stderr: string()
+});
+var SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
+
 var ErrorBodySchema = object({
   code: string(),
   msg: string()
@@ -1661,6 +1753,7 @@ function peersText(peers) {
 var SEND_TIMEOUT_MS = 1e4;
 var PEERS_TIMEOUT_MS = 5000;
 var SAY_TIMEOUT_MS = 120000;
+var LAUNCH_TIMEOUT_MS = 60000;
 var TOOL_INPUT_SCHEMAS = {
   send: {
     type: "object",
@@ -1721,6 +1814,72 @@ var TOOL_INPUT_SCHEMAS = {
     },
     required: [],
     $schema: "http://json-schema.org/draft-07/schema#"
+  },
+  launch: {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "object",
+    properties: {
+      type: {
+        type: "string",
+        enum: [
+          "new",
+          "continue",
+          "resume",
+          "fork"
+        ],
+        description: "new: a new session. continue: the newest session in cwd, continued. resume: the session resume_session_id names, continued under its own id. fork: a new session holding a copy of the history of resume_session_id (up to resume_at when given)."
+      },
+      cwd: {
+        type: "string",
+        description: "The directory the session starts in, an absolute path. continue looks for the newest session there."
+      },
+      name: {
+        type: "string",
+        minLength: 1,
+        description: "The session's name (claude --name). The launch command chooses when absent."
+      },
+      prompt: {
+        type: "string",
+        minLength: 1,
+        description: "The session's first prompt. The launch command chooses when absent."
+      },
+      model: {
+        enum: [
+          "fable",
+          "opus",
+          "sonnet",
+          "haiku"
+        ],
+        type: "string",
+        description: "claude --model. The launch command chooses when absent. Required when type is new. Optional when type is continue, resume or fork."
+      },
+      effort: {
+        enum: [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        type: "string",
+        description: "claude --effort. The launch command chooses when absent. Required when type is new. Optional when type is continue, resume or fork."
+      },
+      resume_session_id: {
+        type: "string",
+        format: "uuid",
+        description: "The id of the session to continue or copy (claude --resume). Required when type is resume or fork. Not accepted when type is new or continue."
+      },
+      resume_at: {
+        type: "string",
+        format: "uuid",
+        description: "The uuid of the transcript record the fork copies up to (claude --resume-session-at). The tip when absent. Optional when type is fork. Not accepted when type is new, continue or resume."
+      }
+    },
+    required: [
+      "type",
+      "cwd"
+    ],
+    additionalProperties: false
   }
 };
 async function registerTools($) {
@@ -1742,6 +1901,12 @@ async function registerTools($) {
       description: "List the sessions send can reach (see the ccmsg skill).",
       inputSchema: TOOL_INPUT_SCHEMAS.peers,
       isDeferred: true
+    }),
+    $.tool.register({
+      name: "launch",
+      description: "Start a Claude Code session through the configured launch command (see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+      inputSchema: TOOL_INPUT_SCHEMAS.launch,
+      isDeferred: true
     })
   ]);
   for (const outcome of registered) {
@@ -1750,7 +1915,7 @@ async function registerTools($) {
     }
   }
 }
-function peerArgv(root, command, sid) {
+function toolArgv(root, command, sid) {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
 }
 function notTheInput(tool, summary) {
@@ -1763,7 +1928,7 @@ async function sendTool($, e) {
   const { text, agent_id, ...to } = read.value;
   let run;
   try {
-    run = await $.process.run(peerArgv($.plugin.root, "send-message", await $.session.id()), {
+    run = await $.process.run(toolArgv($.plugin.root, "send-message", await $.session.id()), {
       stdin: JSON.stringify({ to, ...agent_id !== undefined ? { agent_id } : {}, text }),
       timeoutMs: SEND_TIMEOUT_MS
     });
@@ -1818,7 +1983,7 @@ async function peersTool($, e) {
   if (!read.ok)
     return notTheInput("peers", read.failure.summary);
   try {
-    const run = await $.process.run(peerArgv($.plugin.root, "peer-list", await $.session.id()), {
+    const run = await $.process.run(toolArgv($.plugin.root, "peer-list", await $.session.id()), {
       stdin: JSON.stringify(read.value),
       timeoutMs: PEERS_TIMEOUT_MS
     });
@@ -1829,6 +1994,46 @@ async function peersTool($, e) {
   } catch (error) {
     return `一覧を返せなかった: ${errorText(error)}`;
   }
+}
+var ToolCallEnvelopeSchema = looseObject({
+  tool: optional(string()),
+  tool_use_id: optional(string()),
+  agentId: optional(string())
+});
+var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
+async function launchTool($, e) {
+  const call = parseWith(ToolCallEnvelopeSchema, e);
+  if (!call.ok)
+    return notTheInput("launch", call.failure.summary);
+  const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = call.value;
+  const read = parseWith(LaunchInputSchema, input);
+  if (!read.ok)
+    return notTheInput("launch", read.failure.summary);
+  let run;
+  try {
+    run = await $.process.run(toolArgv($.plugin.root, "launch", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: LAUNCH_TIMEOUT_MS
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: launch failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar launch が ${String(LAUNCH_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できなかった: ${errorText(error)}。${LAUNCH_UNCONFIRMED}`;
+  }
+  const answered = parseWith(SessionLaunchResponseTextSchema, run.stdout);
+  if (answered.ok) {
+    const { ok: _ok, ...result } = answered.value;
+    return JSON.stringify(result);
+  }
+  $.ui.log(`ccmsg: launch exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  const said = firstStderrLine(run.stderr);
+  if (run.exitCode === 3)
+    return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
+  const refusal = parseWith(RefusalTextSchema, said);
+  if (refusal.ok && refusal.value.error.code !== "internal") {
+    return `ccmsg の daemon が起動を断ったので、起動していない: ${refusal.value.error.msg}`;
+  }
+  const why = refusal.ok ? refusal.value.error.msg : said;
+  return `ccmsg が起動の結果を返さなかった${why !== "" ? `: ${why}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 async function toolsAtStart($, state) {
   if (state.interactive)
@@ -1846,6 +2051,9 @@ function registerToolCalls(on) {
   on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
     result: await peersTool($, e)
   })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__launch" }, async ($, e) => ({
+    result: await launchTool($, e)
+  })).catch(async () => ({ result: `ccmsg の launch が途中で止まった。${LAUNCH_UNCONFIRMED}` }));
 }
 
 function concern(name, schema, parts) {

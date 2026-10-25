@@ -9,7 +9,7 @@
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
 import * as v from "valibot";
-import type { Output } from "./parse.ts";
+import { jsonText, type Output } from "./parse.ts";
 
 /** The models a launch may name (`claude --model`). */
 export const LaunchModelSchema = v.picklist(["fable", "opus", "sonnet", "haiku"]);
@@ -80,6 +80,8 @@ export const LaunchInputSchema = v.variant("type", [
 ]);
 export type LaunchInput = Output<typeof LaunchInputSchema>;
 export type LaunchType = LaunchInput["type"];
+/** What `ccmsg sidecar launch` takes on standard input: one launch. */
+export const LaunchInputTextSchema = jsonText(LaunchInputSchema);
 
 /** What the launch command reads on standard input (docs/design/launch-command.md):
  * the launch with its `cwd` resolved to a realpath, and on `new` and `fork`
@@ -111,3 +113,5 @@ export const SessionLaunchResponseSchema = v.object({
   stderr: v.string(),
 });
 export type SessionLaunchResponse = Output<typeof SessionLaunchResponseSchema>;
+/** The session_launch reply, as `ccmsg sidecar launch` prints it. */
+export const SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);

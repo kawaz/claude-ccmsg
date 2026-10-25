@@ -19,6 +19,7 @@
     "paths": {
       "@ccmsg/protocol": ["./packages/protocol/src/index.ts"],
       "@ccmsg/protocol/address": ["./packages/protocol/src/ccmsg-address.ts"],
+      "@ccmsg/protocol/launch": ["./packages/protocol/src/launch.ts"],
       "@ccmsg/protocol/parse": ["./packages/protocol/src/parse.ts"],
       "@ccmsg/protocol/peer-tools": ["./packages/protocol/src/peer-tools.ts"],
       "@ccmsg/protocol/peer-tools-text": ["./packages/protocol/src/peer-tools-text.ts"],

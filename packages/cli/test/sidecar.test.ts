@@ -2,15 +2,18 @@
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
 // carries the module's reply to the daemon; `ccmsg sidecar send-message` /
-// `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools.
+// `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools, and
+// `ccmsg sidecar launch` (DR-0018 §3.7) its `launch` tool.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   jsonText,
+  LaunchCommandInputSchema,
   parseWith,
   resolvePaths,
+  SessionLaunchResponseTextSchema,
   type SendMessageResult,
   PeerListResponseTextSchema,
   SendMessageResponseTextSchema,
@@ -25,6 +28,8 @@ import {
   connect,
   defined,
   spawnDaemonProc,
+  startInProcessDaemon,
+  stopInProcessDaemon,
   stopTestDaemon,
   testConfigDir,
   waitConnectable,
@@ -933,6 +938,146 @@ describe("ccmsg sidecar send-message / peer-list", () => {
       const run = await runPeer("send-message", stdin, env);
       expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
       expect(run.err).toContain("standard input must be { to, text }");
+    }
+  });
+});
+
+// `launch` (DR-0018 §3.7): the launch goes to the daemon as the session's
+// session_launch, the daemon runs the configured launch command, and its
+// reply is printed as it came.
+describe("ccmsg sidecar launch", () => {
+  /** `ccmsg sidecar launch --sid SID` with `stdin` on its standard input. */
+  async function runLaunch(
+    stdin: string,
+    env: Record<string, string | undefined>,
+  ): Promise<{ code: number; out: string; err: string }> {
+    const proc = Bun.spawn([process.execPath, CLI, "sidecar", "launch", "--sid", SID], {
+      env,
+      stdin: new TextEncoder().encode(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, out, err };
+  }
+
+  /** A daemon in this process whose launch command is a script that prints
+   * its standard input and exits `exit`; `run` gets the CLI's environment
+   * for it and a directory to launch in. */
+  async function withLauncher(
+    exit: number,
+    run: (env: Record<string, string | undefined>, work: string) => Promise<void>,
+  ): Promise<void> {
+    const work = fs.realpathSync(shortBase());
+    const command = writeMockBin(
+      path.join(work, "launch"),
+      `#!/bin/sh\ncat\necho launched >&2\nexit ${String(exit)}\n`,
+    );
+    const ctx = await startInProcessDaemon({
+      config: { session_launcher: { launch_command: [command], root_dirs: [work] } },
+    });
+    try {
+      const { stateDir, configDir, dataDir } = ctx.daemon.paths;
+      await run(
+        {
+          ...process.env,
+          CCMSG_STATE_DIR: stateDir,
+          CCMSG_CONFIG_DIR: configDir,
+          CCMSG_DATA_DIR: dataDir,
+        },
+        work,
+      );
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  }
+
+  function launchReply(out: string) {
+    const read = parseWith(SessionLaunchResponseTextSchema, out);
+    if (!read.ok) throw new Error(`not a session_launch reply: ${read.failure.summary}: ${out}`);
+    return read.value;
+  }
+
+  test("prints the daemon's reply: what the launch command read, and the new session's id", async () => {
+    await withLauncher(0, async (env, work) => {
+      const prompt = "line 1\n`not run` $HOME 'quoted'";
+      const run = await runLaunch(
+        JSON.stringify({ type: "new", cwd: work, model: "haiku", effort: "low", prompt }),
+        env,
+      );
+      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+      const reply = launchReply(run.out);
+      expect(reply).toMatchObject({ ok: true, exit_code: 0, stderr: "launched\n" });
+      const read = parseWith(jsonText(LaunchCommandInputSchema), reply.stdout);
+      if (!read.ok) throw new Error(read.failure.summary);
+      expect(read.value).toEqual({
+        type: "new",
+        cwd: work,
+        model: "haiku",
+        effort: "low",
+        prompt,
+        session_id: defined(reply.session_id, "the new session's id"),
+      });
+    });
+  });
+
+  test("a launch command that exits non-zero is printed as it came, with no session id", async () => {
+    await withLauncher(4, async (env, work) => {
+      const run = await runLaunch(
+        JSON.stringify({ type: "fork", cwd: work, resume_session_id: SID }),
+        env,
+      );
+      expect(run.code).toBe(0);
+      const reply = launchReply(run.out);
+      expect(reply.exit_code).toBe(4);
+      expect(reply).not.toHaveProperty("session_id");
+    });
+  });
+
+  test("a launch the daemon refused prints its refusal on stderr and exits 1", async () => {
+    await withLauncher(0, async (env, work) => {
+      const run = await runLaunch(
+        JSON.stringify({ type: "continue", cwd: path.join(work, "missing") }),
+        env,
+      );
+      expect({ code: run.code, out: run.out }).toEqual({ code: 1, out: "" });
+      expect(JSON.parse(run.err)).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    });
+    // No session_launcher in the config: nothing can be launched.
+    const ctx = await startInProcessDaemon();
+    try {
+      const { stateDir, configDir, dataDir } = ctx.daemon.paths;
+      const env = {
+        ...process.env,
+        CCMSG_STATE_DIR: stateDir,
+        CCMSG_CONFIG_DIR: configDir,
+        CCMSG_DATA_DIR: dataDir,
+      };
+      const run = await runLaunch(JSON.stringify({ type: "continue", cwd: "/" }), env);
+      expect(run.code).toBe(1);
+      expect(JSON.parse(run.err)).toMatchObject({
+        ok: false,
+        error: { code: "launcher_not_configured" },
+      });
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  test("input that is not one launch is refused before reaching the daemon", async () => {
+    const env = sidecarEnv(path.join(shortBase(), "s"));
+    for (const stdin of [
+      '{"type":"new","cwd":"/w"}',
+      '{"type":"continue","cwd":"/w","extra":1}',
+      "not json",
+    ]) {
+      const run = await runLaunch(stdin, env);
+      expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
+      expect(run.err).toContain("standard input must be one launch as JSON");
     }
   });
 });

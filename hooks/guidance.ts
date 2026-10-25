@@ -10,7 +10,7 @@ import type { LifecycleState } from "./session-lifecycle.ts";
  * (the plugin's skill), and nothing of the tools' use itself, which is the
  * skill's to say. */
 export const GUIDANCE =
-  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせは、先に skill ccmsg-v1:ccmsg を読んでから行う。';
+  'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 
 /** The guidance with the URL the webui is opened at, as the line
  * `ccmsg_url: <url>` the agent's own instructions name it by; without the

@@ -11,7 +11,7 @@
 //   subagents.ts          the running subagents, and agent.append
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
 //   guidance.ts           what the model is told of ccmsg before its first turn
-//   tools.ts              the send / say / peers tools
+//   tools.ts              the send / say / peers / launch tools
 //
 // bus.ts registers the events they observe, once per event, and runs each
 // concern's part of it; engine.ts is the engine as the module uses it, and
