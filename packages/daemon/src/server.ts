@@ -1760,17 +1760,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'say_read' requires user role");
         return;
       }
-      const marked = daemon.says.markRead(req.id);
-      if (marked === "missing") {
+      const marked = daemon.says.markRead(req.ids);
+      if (marked.kind === "missing") {
         // 存在しない id を黙って ack すると、未読数が減らないまま "既読にした"
-        // と見える。落として気づかせる。daemon の再起動で記録が消えた後の
-        // ack もここに来る。
-        sendErr(conn, ErrorCode.invalid_args, `no say with id ${req.id}`);
+        // と見える。どれも既読にせず落として気づかせる。daemon の再起動で
+        // 記録が消えた後の ack もここに来る。
+        sendErr(conn, ErrorCode.invalid_args, `no say with id ${marked.ids.join(", ")}`);
         return;
       }
       // 他タブの webui にも既読を伝える。二度目の ack は何も変えないので送らない。
-      if (marked === "read") broadcastSays(daemon);
-      send(conn, { ok: true, id: req.id });
+      if (marked.kind === "read") broadcastSays(daemon);
+      send(conn, { ok: true, ids: req.ids });
       return;
     }
 

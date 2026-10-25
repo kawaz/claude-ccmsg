@@ -6,7 +6,7 @@
 //   - 記録は ev:"says" (全件) で user role にだけ届く。subscribe 時にも全件
 //     (空でも) 届き、session の subscribe には一切流さない (kawaz 「セッション
 //     への echo は不要、コンテキストの無駄」)
-//   - say_read が記録の read を立て、全タブに更新後の全件を送る
+//   - say_read が渡した id の記録の read を立て、全タブに更新後の全件を送る
 //   - role gate: say は session 限定、say_read は user 限定
 //   - 再起動で記録 (未読含む) が消える
 //
@@ -190,15 +190,21 @@ describe("say_read op", () => {
       expect(says.map((r) => r.read)).toEqual([false, false]);
       const { u: otherTab } = await subscribedUser(ctx);
 
-      expect(await u.request({ op: "say_read", id: a.id })).toMatchObject({ ok: true, id: a.id });
+      expect(await u.request({ op: "say_read", ids: [a.id] })).toMatchObject({
+        ok: true,
+        ids: [a.id],
+      });
       const unreadAfter = (ev: { says: readonly SayRecord[] }) =>
         ev.says.filter((r) => !r.read).map((r) => r.id);
       expect(unreadAfter((await u.readEventUntil("says")).ev)).toEqual([b.id]);
       expect(unreadAfter((await otherTab.readEventUntil("says")).ev)).toEqual([b.id]);
 
       // 二度目の ack は成功を返し、状態は変わらない。
-      expect(await u.request({ op: "say_read", id: a.id })).toMatchObject({ ok: true, id: a.id });
-      await u.request({ op: "say_read", id: b.id });
+      expect(await u.request({ op: "say_read", ids: [a.id] })).toMatchObject({
+        ok: true,
+        ids: [a.id],
+      });
+      await u.request({ op: "say_read", ids: [b.id] });
       const { ev } = await u.readEventUntil("says");
       expect(ev.says.map((r) => [r.id, r.read])).toEqual([
         [a.id, true],
@@ -206,6 +212,34 @@ describe("say_read op", () => {
       ]);
       u.close();
       otherTab.close();
+      s.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: 複数の id を 1 回で既読にし、更新後の全件を 1 回送る
+  // (webui の「すべて既読」)。渡していない id は未読のまま残る。
+  test("acks several says at once, leaving the ones not named unread", async () => {
+    const ctx = await startTestDaemon();
+    try {
+      const s = await session(ctx, SID_SAY_5);
+      const a = await s.requestOk({ op: "say", text: "one" });
+      const b = await s.requestOk({ op: "say", text: "two" });
+      const c = await s.requestOk({ op: "say", text: "three" });
+      const { u } = await subscribedUser(ctx);
+
+      expect(await u.request({ op: "say_read", ids: [a.id, b.id] })).toMatchObject({
+        ok: true,
+        ids: [a.id, b.id],
+      });
+      const { ev } = await u.readEventUntil("says");
+      expect(ev.says.map((r) => [r.id, r.read])).toEqual([
+        [a.id, true],
+        [b.id, true],
+        [c.id, false],
+      ]);
+      u.close();
       s.close();
     } finally {
       await stopTestDaemon(ctx);
@@ -220,7 +254,7 @@ describe("say_read op", () => {
       const s = await session(ctx, SID_SAY_6);
       await s.requestOk({ op: "say", text: "hi" });
       const u = await userConn(ctx);
-      const res = await u.requestError({ op: "say_read", id: "0000/9999" });
+      const res = await u.requestError({ op: "say_read", ids: ["0000/9999"] });
       expect(res.error).toEqual({ code: "invalid_args", msg: "no say with id 0000/9999" });
       u.close();
       s.close();
@@ -243,7 +277,7 @@ describe("say role gates", () => {
 
       const userSay = await u.requestError({ op: "say", text: "nope" });
       expect(userSay.error.code).toBe("bad_request");
-      const sessionAck = await s.requestError({ op: "say_read", id: said.id });
+      const sessionAck = await s.requestError({ op: "say_read", ids: [said.id] });
       expect(sessionAck.error.code).toBe("bad_request");
       u.close();
       s.close();
@@ -272,7 +306,7 @@ describe("say memory", () => {
 
       const { u: u2, says: after } = await subscribedUser(ctx);
       expect(after).toEqual([]);
-      const res = await u2.requestError({ op: "say_read", id: a.id });
+      const res = await u2.requestError({ op: "say_read", ids: [a.id] });
       expect(res.error.code).toBe("invalid_args");
       u2.close();
     } finally {

@@ -192,15 +192,19 @@ function MsgItem({
  * carries what the machine actually said. The 既読 button is the only way the
  * unread 📣 in the Sessions list goes away, so it stays visible until acked
  * and then reports the ack rather than vanishing (a disappearing control
- * leaves the reader unsure whether the click landed). */
+ * leaves the reader unsure whether the click landed). `readIds` are what the
+ * button acks: this say alone, or on the newest unread say every unread one
+ * in the Timeline, which the button then says with their count. */
 export function SayRecordBubble({
   record,
   now,
+  readIds,
   onRead,
 }: {
   record: SayRecord;
   now: number;
-  onRead: (id: string) => void;
+  readIds: readonly string[];
+  onRead: (ids: readonly string[]) => void;
 }) {
   return (
     <SayBubble
@@ -213,8 +217,8 @@ export function SayRecordBubble({
         record.read ? (
           <span class="say-read-done">既読</span>
         ) : (
-          <button type="button" class="say-read-btn" onClick={() => onRead(record.id)}>
-            既読
+          <button type="button" class="say-read-btn" onClick={() => onRead(readIds)}>
+            {readIds.length > 1 ? `${readIds.length} 件すべて既読` : "既読"}
           </button>
         )
       }

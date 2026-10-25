@@ -232,7 +232,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
   ],
   say: [{ ok: true, id: "0f0f/1" }],
-  say_read: [{ ok: true, id: "0f0f/1" }],
+  say_read: [{ ok: true, ids: ["0f0f/1"] }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

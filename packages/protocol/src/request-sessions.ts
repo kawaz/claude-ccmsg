@@ -121,13 +121,15 @@ export const SayRequestSchema = v.object({
 });
 export type SayRequest = Output<typeof SayRequestSchema>;
 
-/** Mark one say record as read (the webui's 既読 button). User role only: the
+/** Mark say records as read (the webui's 既読 button). User role only: the
  * unread count exists for the person watching the session list, and a session
  * acking its own speech would clear a badge nobody looked at. */
 export const SayReadRequestSchema = v.object({
   op: v.literal("say_read"),
-  /** `id` of the SayRecord being acked. */
-  id: v.string(),
+  /** `id`s of the SayRecords being acked: one for a single bubble, every
+   * unread one the Timeline shows for its 「すべて既読」. The ids are the ones
+   * the reader saw, so a say arriving after the click stays unread. */
+  ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one say id")),
 });
 export type SayReadRequest = Output<typeof SayReadRequestSchema>;
 

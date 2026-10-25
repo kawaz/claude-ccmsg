@@ -13,13 +13,20 @@ import type { SayRecord } from "@ccmsg/protocol";
  * matter. */
 export const SAY_LOG_LIMIT = 200;
 
+/** What `markRead` did. `missing` lists the ids no record has (never
+ * recorded, recorded by another daemon process, or dropped by the bound);
+ * when any is missing nothing is marked. `unchanged` is every id already
+ * read. */
+export type MarkReadResult =
+  | { kind: "read" }
+  | { kind: "unchanged" }
+  | { kind: "missing"; ids: readonly string[] };
+
 export interface SayLog {
   /** Record one say and return it (unread). */
   add(sid: string, text: string, ts: string): SayRecord;
-  /** Mark the record `id` read. `"missing"` when no record has that id (never
-   * recorded, recorded by another daemon process, or dropped by the bound);
-   * `"unchanged"` when it was already read. */
-  markRead(id: string): "read" | "unchanged" | "missing";
+  /** Mark the records `ids` read, all of them or none. */
+  markRead(ids: readonly string[]): MarkReadResult;
   /** Every record held, oldest first. */
   snapshot(): readonly SayRecord[];
 }
@@ -32,12 +39,14 @@ export function createSayLog(issueId: () => string, limit: number = SAY_LOG_LIMI
       records = [...records, record].slice(-limit);
       return record;
     },
-    markRead(id) {
-      const target = records.find((r) => r.id === id);
-      if (target === undefined) return "missing";
-      if (target.read) return "unchanged";
-      records = records.map((r) => (r.id === id ? { ...r, read: true } : r));
-      return "read";
+    markRead(ids) {
+      const held = new Set(records.map((r) => r.id));
+      const missing = ids.filter((id) => !held.has(id));
+      if (missing.length > 0) return { kind: "missing", ids: missing };
+      const targets = new Set(ids);
+      if (records.every((r) => !targets.has(r.id) || r.read)) return { kind: "unchanged" };
+      records = records.map((r) => (targets.has(r.id) ? { ...r, read: true } : r));
+      return { kind: "read" };
     },
     snapshot() {
       return records;

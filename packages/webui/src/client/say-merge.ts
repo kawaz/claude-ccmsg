@@ -11,6 +11,7 @@
 // Same shape as fork-divider.ts, which likewise turns "where does this belong"
 // into an index in the rendered group list — but this one places many items
 // and can place them past the end, hence a slot array rather than one index.
+import type { SayRecord } from "@ccmsg/protocol";
 import type { ParsedLine, TimelineGroup } from "./transcript-model.ts";
 
 /** What placement needs from a say: when it happened. Generic over the
@@ -42,6 +43,13 @@ function toMillis(ts: string): number {
   return Number.isNaN(ms) ? Number.POSITIVE_INFINITY : ms;
 }
 
+/** The says in the order the Timeline draws them. Two says sharing a stamp
+ * keep the order they came in (the daemon's record order):
+ * Array.prototype.sort is stable. */
+function inTimeOrder<T extends SayPlacement>(says: readonly T[]): T[] {
+  return [...says].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
+}
+
 /**
  * Slot array of length `groups.length + 1`: slot `i` holds the say events to
  * draw immediately before group `i`, and the last slot the ones that happened
@@ -59,9 +67,7 @@ export function saySlots<T extends SayPlacement>(
   const slots: T[][] = Array.from({ length: groups.length + 1 }, () => []);
   if (says.length === 0) return slots;
   const stamps = groups.map(groupTs);
-  // Two says sharing a stamp keep the order they came in (the daemon's
-  // record order): Array.prototype.sort is stable.
-  const ordered = [...says].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
+  const ordered = inTimeOrder(says);
   for (const say of ordered) {
     const at = toMillis(say.ts);
     const later = stamps.findIndex(
@@ -71,4 +77,16 @@ export function saySlots<T extends SayPlacement>(
     if (slot !== undefined) slot.push(say);
   }
   return slots;
+}
+
+/**
+ * The ids the 既読 button on the say `id` acks, out of one Timeline's `says`.
+ * The newest unread say's button acks every unread one (kawaz 2026-10-25: a
+ * run of says piles up, and pressing each is a chore); any other button acks
+ * its own say only. Newest is the last one the Timeline draws. The ids are
+ * the ones drawn now, so a say arriving after the click stays unread.
+ */
+export function sayReadTargets(says: readonly SayRecord[], id: string): readonly string[] {
+  const unread = inTimeOrder(says.filter((r) => !r.read)).map((r) => r.id);
+  return unread.at(-1) === id ? unread : [id];
 }

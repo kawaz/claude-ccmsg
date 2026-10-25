@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { defined } from "./helpers.ts";
 import type { SayRecord } from "@ccmsg/protocol";
-import { saySlots } from "../src/client/say-merge.ts";
+import { sayReadTargets, saySlots } from "../src/client/say-merge.ts";
 import type { FoldEntries, ParsedLine, TimelineGroup } from "../src/client/transcript-model.ts";
 
 function turn(ts: string | null): ParsedLine {
@@ -72,5 +72,37 @@ describe("saySlots", () => {
 
   test("no says leaves one empty slot per group boundary", () => {
     expect(saySlots(GROUPS, [])).toEqual([[], [], [], []]);
+  });
+});
+
+describe("sayReadTargets", () => {
+  const read = (record: SayRecord): SayRecord => ({ ...record, read: true });
+  // 届いた順と時刻順が逆の記録を混ぜて、「最新」が TL の描く順で決まることも見る。
+  const SAYS: SayRecord[] = [
+    say("2026-08-31T10:01:00.000Z", 1),
+    say("2026-08-31T10:03:00.000Z", 3),
+    say("2026-08-31T10:02:00.000Z", 2),
+  ];
+
+  test("the newest unread say's button acks every unread one", () => {
+    expect(sayReadTargets(SAYS, "i/3")).toEqual(["i/1", "i/2", "i/3"]);
+  });
+
+  test("an older say's button acks that say alone", () => {
+    expect(sayReadTargets(SAYS, "i/1")).toEqual(["i/1"]);
+    expect(sayReadTargets(SAYS, "i/2")).toEqual(["i/2"]);
+  });
+
+  test("read says are left out, and the newest unread one is newest among the unread", () => {
+    const says = [
+      read(defined(SAYS[0], "i/1")),
+      defined(SAYS[2], "i/2"),
+      read(defined(SAYS[1], "i/3")),
+    ];
+    expect(sayReadTargets(says, "i/2")).toEqual(["i/2"]);
+  });
+
+  test("a lone unread say acks itself", () => {
+    expect(sayReadTargets([say("2026-08-31T10:01:00.000Z", 1)], "i/1")).toEqual(["i/1"]);
   });
 });

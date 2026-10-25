@@ -153,6 +153,7 @@ export function Timeline({
         key={`say-${record.id}`}
         record={record}
         now={now}
+        readIds={sayBubbles.readTargets(record.id)}
         onRead={sayBubbles.markRead}
       />
     ));

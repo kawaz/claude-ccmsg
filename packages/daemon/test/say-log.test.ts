@@ -10,24 +10,37 @@ function counter(): () => string {
 }
 
 describe("createSayLog", () => {
-  // 何を保証するか: 記録は来た順に並び、未読で入る。read は当該 id だけを
-  // 立て、二度目は "unchanged"、無い id は "missing" で区別できる (daemon は
-  // missing を invalid_args にし、unchanged では push しない)。
-  test("holds records in arrival order and marks one read by id", () => {
+  // 何を保証するか: 記録は来た順に並び、未読で入る。read は渡した id だけを
+  // 立て、全部が既読なら "unchanged"、無い id は "missing" で区別できる
+  // (daemon は missing を invalid_args にし、unchanged では push しない)。
+  test("holds records in arrival order and marks the given ids read", () => {
     const log = createSayLog(counter());
     const a = log.add("s1", "one", "t1");
     const b = log.add("s2", "two", "t2");
+    const c = log.add("s1", "three", "t3");
     expect(log.snapshot()).toEqual([
       { id: "i/1", sid: "s1", text: "one", ts: "t1", read: false },
       { id: "i/2", sid: "s2", text: "two", ts: "t2", read: false },
+      { id: "i/3", sid: "s1", text: "three", ts: "t3", read: false },
     ]);
-    expect(log.markRead(a.id)).toBe("read");
-    expect(log.markRead(a.id)).toBe("unchanged");
-    expect(log.markRead("i/99")).toBe("missing");
+    expect(log.markRead([a.id])).toEqual({ kind: "read" });
+    expect(log.markRead([a.id])).toEqual({ kind: "unchanged" });
+    // 既読を含んでいても、未読が 1 つあれば "read"。
+    expect(log.markRead([a.id, c.id])).toEqual({ kind: "read" });
     expect(log.snapshot().map((r) => [r.id, r.read])).toEqual([
       [a.id, true],
       [b.id, false],
+      [c.id, true],
     ]);
+  });
+
+  // 何を保証するか: 無い id が 1 つでも混ざれば、どれも既読にしない。一部
+  // だけ立てると、返事の失敗と残った未読の数が食い違う。
+  test("marks none when any id is missing", () => {
+    const log = createSayLog(counter());
+    const a = log.add("s1", "one", "t1");
+    expect(log.markRead([a.id, "i/99"])).toEqual({ kind: "missing", ids: ["i/99"] });
+    expect(log.snapshot().map((r) => r.read)).toEqual([false]);
   });
 
   // 何を保証するか: daemon は何日も動くので記録には上限があり、超えた分は
@@ -38,6 +51,6 @@ describe("createSayLog", () => {
     log.add("s1", "two", "t2");
     log.add("s1", "three", "t3");
     expect(log.snapshot().map((r) => r.text)).toEqual(["two", "three"]);
-    expect(log.markRead("i/1")).toBe("missing");
+    expect(log.markRead(["i/1"])).toEqual({ kind: "missing", ids: ["i/1"] });
   });
 });

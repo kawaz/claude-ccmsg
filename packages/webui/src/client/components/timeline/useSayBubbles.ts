@@ -7,7 +7,7 @@
 import { useCallback, useMemo, useState } from "preact/hooks";
 import type { SayRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
-import { saySlots } from "../../say-merge.ts";
+import { sayReadTargets, saySlots } from "../../say-merge.ts";
 import type { TimelineGroup } from "../../transcript-model.ts";
 import { useStoreState } from "../../useStore.ts";
 
@@ -27,9 +27,11 @@ export function useSayBubbles({
   /** `groups` の index ごとに、その group の前に出す say (末尾の 1 つ多い
    * slot は読み込み済みのどの group より新しいもの)。 */
   slots: ReadonlyArray<readonly SayRecord[]>;
+  /** say `id` の既読ボタンが既読にする id (sayReadTargets)。 */
+  readTargets: (id: string) => readonly string[];
   /** 既読にできなかった理由。次に成功するまで残す。 */
   readError: string | null;
-  markRead: (id: string) => void;
+  markRead: (ids: readonly string[]) => void;
 } {
   const { store, ws } = useApp();
   const allSays = useStoreState(store, (s) => s.says);
@@ -38,14 +40,15 @@ export function useSayBubbles({
     [allSays, sid, agentTimeline],
   );
   const slots = useMemo(() => saySlots(groups, says), [groups, says]);
+  const readTargets = useCallback((id: string) => sayReadTargets(says, id), [says]);
   // 既読は非楽観 — 成功すると daemon が更新後の ev:"says" を全タブに送り、
   // store がそれで置き換える。失敗を黙って捨てると「押しても何も起きない」に
   // 見えるので、TL でも 1 行のエラーとして出して次の試行まで残す。
   const [readError, setReadError] = useState<string | null>(null);
   const markRead = useCallback(
-    (id: string): void => {
+    (ids: readonly string[]): void => {
       void ws
-        .sayRead(id)
+        .sayRead(ids)
         .then((res) => {
           setReadError(res.ok ? null : res.error.msg);
         })
@@ -55,5 +58,5 @@ export function useSayBubbles({
     },
     [ws],
   );
-  return { says, slots, readError, markRead };
+  return { says, slots, readTargets, readError, markRead };
 }

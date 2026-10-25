@@ -153,14 +153,14 @@ describe("useSayBubbles", () => {
       groups: [],
     });
     await act(async () => {
-      hook.current().markRead("i/1");
+      hook.current().markRead(["i/1"]);
       await Promise.resolve();
     });
     expect(hook.current().readError).toBe("no such say");
 
-    reply = { ok: true, id: "i/1" };
+    reply = { ok: true, ids: ["i/1"] };
     await act(async () => {
-      hook.current().markRead("i/1");
+      hook.current().markRead(["i/1"]);
       await Promise.resolve();
     });
     expect(hook.current().readError).toBeNull();
@@ -169,7 +169,7 @@ describe("useSayBubbles", () => {
   test("a read that cannot be sent says the connection failed", async () => {
     const hook = await mountSays(noReply, { agentTimeline: false, groups: [] });
     await act(async () => {
-      hook.current().markRead("i/1");
+      hook.current().markRead(["i/1"]);
       await Promise.resolve();
       await Promise.resolve();
     });

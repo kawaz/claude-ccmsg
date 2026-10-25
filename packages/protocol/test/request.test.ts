@@ -76,8 +76,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     bad: [{ op: "say" }, { op: "say", text: ["hello"] }],
   },
   say_read: {
-    ok: { op: "say_read", id: "0f0f/1" },
-    bad: [{ op: "say_read" }, { op: "say_read", id: 1 }],
+    ok: { op: "say_read", ids: ["0f0f/1", "0f0f/2"] },
+    bad: [
+      { op: "say_read" },
+      { op: "say_read", ids: [] },
+      { op: "say_read", ids: [1] },
+      { op: "say_read", id: "0f0f/1" },
+    ],
   },
   subscribe: { ok: { op: "subscribe" }, bad: [] },
   read: {

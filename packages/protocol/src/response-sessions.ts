@@ -184,8 +184,8 @@ export type SayResponse = Output<typeof SayResponseSchema>;
 
 export const SayReadResponseSchema = v.object({
   ok: v.literal(true),
-  /** echo of the acked SayRecord's id */
-  id: v.string(),
+  /** echo of the acked SayRecords' ids */
+  ids: v.array(v.string()),
 });
 export type SayReadResponse = Output<typeof SayReadResponseSchema>;
 

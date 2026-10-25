@@ -116,11 +116,11 @@ function invalidReply(op: string, failure: ParseFailure): ErrorResponse {
 export interface WsHandle {
   connect(): void;
   close(): void;
-  /** Ack one say record as read (kawaz r244 m5-m6): the 既読 button on a
-   * 📣 bubble. `id` is the SayRecord's id. Non-optimistic — the daemon pushes
-   * the updated `ev:"says"` set to every tab and the store takes it from
-   * there, so every open tab converges on the same badge. */
-  sayRead(id: string): Promise<ReplyOf<"say_read">>;
+  /** Ack say records as read (kawaz r244 m5-m6): the 既読 button on a
+   * 📣 bubble. `ids` are the SayRecords' ids. Non-optimistic — the daemon
+   * pushes the updated `ev:"says"` set to every tab and the store takes it
+   * from there, so every open tab converges on the same badge. */
+  sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
    * room message a past transcript shows. */
@@ -900,7 +900,7 @@ export function createWsClient(
       reconnectTimer = null;
       ws?.close();
     },
-    sayRead: (id) => send({ op: "say_read", id }),
+    sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),
