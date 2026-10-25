@@ -68,6 +68,38 @@ describe("toolInputSchemaOf", () => {
     });
   });
 
+  // An object a list holds is shown with its fields, each shaped the same
+  // way, and which of them are required; its rules stay in valibot.
+  test("shows the fields of an object a list holds, and which are required", () => {
+    const L = v.object({
+      steps: v.array(
+        v.strictObject({
+          run: v.pipe(v.string(), v.minLength(1)),
+          note: v.optional(v.string()),
+          level: v.optional(v.picklist(["low", "high"])),
+        }),
+      ),
+    });
+    expect(toolInputSchemaOf(L)).toEqual({
+      type: "object",
+      properties: {
+        steps: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              run: { type: "string" },
+              note: { type: "string" },
+              level: { enum: ["low", "high"], type: "string" },
+            },
+            required: ["run"],
+          },
+        },
+      },
+      required: ["steps"],
+    });
+  });
+
   // A schema with no required field says nothing of it.
   test("no required field leaves required out", () => {
     expect(toolInputSchemaOf(v.object({ a: v.optional(v.string()) }))).toEqual({

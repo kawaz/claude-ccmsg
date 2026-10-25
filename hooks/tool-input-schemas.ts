@@ -21,14 +21,32 @@ import {
 } from "@ccmsg/protocol/peer-tools";
 import { PermitToolInputSchema } from "@ccmsg/protocol/permit-request";
 
-/** A field as the model is shown it: its type, an enum's values, and an
- * array's items shaped the same way (the type of a list is what it holds). */
+/** A field as the model is shown it: its type, an enum's values, an
+ * array's items and an object's fields shaped the same way (the type of a
+ * list is what it holds, of an object its fields and which are required). */
 function fieldShape(field: JsonSchema): JsonSchema {
   const items = field.items;
   return {
     ...(field.type !== undefined ? { type: field.type } : {}),
     ...(field.enum !== undefined ? { enum: field.enum } : {}),
     ...(typeof items === "object" && !Array.isArray(items) ? { items: fieldShape(items) } : {}),
+    ...(field.properties !== undefined ? objectShape(field) : {}),
+  };
+}
+
+/** An object's fields, each shaped as fieldShape does, and which of them are
+ * required. */
+function objectShape(field: JsonSchema): JsonSchema {
+  const properties: Record<string, JsonSchema> = {};
+  for (const [name, inner] of Object.entries(field.properties ?? {})) {
+    if (typeof inner !== "object") throw new Error(`field ${name} has no schema`);
+    properties[name] = fieldShape(inner);
+  }
+  return {
+    properties,
+    ...(field.required !== undefined && field.required.length > 0
+      ? { required: field.required }
+      : {}),
   };
 }
 

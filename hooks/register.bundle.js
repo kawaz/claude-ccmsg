@@ -1809,19 +1809,49 @@ var PERMIT_ATTACHMENT_MAX_BYTES = 64 * 1024;
 var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
+var PermitCommandEntries = {
+  command: PermitTextSchema,
+  description: optional(PermitTextSchema)
+};
 var PermitEntries = {
   blocked: PermitTextSchema,
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
   intents: optional(array(PermitTextSchema)),
-  commands: optional(array(PermitTextSchema))
+  commands: optional(array(object(PermitCommandEntries)))
 };
-function asksForSomething(input) {
-  return (input.intents?.length ?? 0) + (input.commands?.length ?? 0) > 0;
+function asksForSomething(intents, commands) {
+  return (intents ?? 0) + (commands ?? 0) > 0;
 }
 var ASKS_FOR_SOMETHING = "ask for at least one of intents and commands";
-var PermitToolInputSchema = pipe(object(PermitEntries), check((input) => asksForSomething(input), ASKS_FOR_SOMETHING));
-var PermitInputSchema = pipe(strictObject(PermitEntries), check((input) => asksForSomething(input), ASKS_FOR_SOMETHING));
+var PermitToolInputSchema = pipe(object(PermitEntries), check((input) => asksForSomething(input.intents?.length, input.commands?.length), ASKS_FOR_SOMETHING));
+var PermitInputSchema = pipe(strictObject({
+  ...PermitEntries,
+  commands: optional(array(strictObject(PermitCommandEntries)))
+}), check((input) => asksForSomething(input.intents?.length, input.commands?.length), ASKS_FOR_SOMETHING));
 var PermitInputTextSchema = jsonText(PermitInputSchema);
+var PermitCommandSchema = object({
+  command: string(),
+  description: optional(string())
+});
+var PermitRequestRecordSchema = object({
+  id: string(),
+  sid: string(),
+  ts: string(),
+  blocked: string(),
+  attachments: array(string()),
+  intents: array(string()),
+  commands: array(PermitCommandSchema),
+  read: boolean()
+});
+var PermitRequestResponseSchema = object({
+  ok: literal(true),
+  id: string()
+});
+var PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
+var PermitRequestReadResponseSchema = object({
+  ok: literal(true),
+  ids: array(string())
+});
 var PermitAttachmentUnreadableSchema = picklist([
   "missing",
   "not_a_file",
@@ -1829,13 +1859,6 @@ var PermitAttachmentUnreadableSchema = picklist([
   "not_text",
   "failed"
 ]);
-var PERMIT_ATTACHMENT_UNREADABLE_TEXT = {
-  missing: "ファイルが無い",
-  not_a_file: "通常のファイルでない",
-  denied: "読む権限が無い",
-  not_text: "テキストでない",
-  failed: "読めなかった"
-};
 var PermitAttachmentSchema = variant("read", [
   object({
     path: string(),
@@ -1850,29 +1873,9 @@ var PermitAttachmentSchema = variant("read", [
     reason: PermitAttachmentUnreadableSchema
   })
 ]);
-var PermitRequestRecordSchema = object({
-  id: string(),
-  sid: string(),
-  ts: string(),
-  blocked: string(),
-  attachments: array(PermitAttachmentSchema),
-  intents: array(string()),
-  commands: array(string()),
-  read: boolean()
-});
-var PermitAttachmentOutcomeSchema = variant("read", [
-  object({ path: string(), read: literal(true), truncated: boolean() }),
-  object({ path: string(), read: literal(false), reason: PermitAttachmentUnreadableSchema })
-]);
-var PermitRequestResponseSchema = object({
+var PermitAttachmentReadResponseSchema = object({
   ok: literal(true),
-  id: string(),
-  attachments: array(PermitAttachmentOutcomeSchema)
-});
-var PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
-var PermitRequestReadResponseSchema = object({
-  ok: literal(true),
-  ids: array(string())
+  attachment: PermitAttachmentSchema
 });
 
 var SEND_TIMEOUT_MS = 1e4;
@@ -1997,7 +2000,18 @@ var TOOL_INPUT_SCHEMAS = {
       commands: {
         type: "array",
         items: {
-          type: "string"
+          type: "object",
+          properties: {
+            command: {
+              type: "string"
+            },
+            description: {
+              type: "string"
+            }
+          },
+          required: [
+            "command"
+          ]
         }
       }
     },
@@ -2161,19 +2175,6 @@ async function launchTool($, e) {
   return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 var CallerSchema = object({ agentId: optional(string()) });
-function unshownAttachmentsText(attachments) {
-  const lines = attachments.flatMap((a) => {
-    if (!a.read)
-      return [`- ${a.path}: ${PERMIT_ATTACHMENT_UNREADABLE_TEXT[a.reason]}`];
-    if (a.truncated)
-      return [`- ${a.path}: 長いので先頭だけを見せている`];
-    return [];
-  });
-  return lines.length > 0 ? `
-人に中身を全部は見せられなかった attachments:
-${lines.join(`
-`)}` : "";
-}
 async function permitTool($, e) {
   const caller = parseWith(CallerSchema, e);
   if (caller.ok && caller.value.agentId !== undefined) {
@@ -2193,9 +2194,8 @@ async function permitTool($, e) {
     return `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: ${errorText(error)}`;
   }
   const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
-  if (answered.ok) {
-    return `許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ${unshownAttachmentsText(answered.value.attachments)}`;
-  }
+  if (answered.ok)
+    return "許可依頼を出した";
   $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
   if (run.exitCode === 3) {
     return `ccmsg の daemon に繋がらず、許可依頼を出していない: ${firstStderrLine(run.stderr)}`;

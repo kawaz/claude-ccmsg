@@ -27,8 +27,6 @@ import {
 } from "@ccmsg/protocol/peer-tools";
 import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import {
-  PERMIT_ATTACHMENT_UNREADABLE_TEXT,
-  type PermitAttachmentOutcome,
   PermitRequestResponseTextSchema,
   PermitToolInputSchema,
 } from "@ccmsg/protocol/permit-request";
@@ -259,19 +257,6 @@ async function launchTool<E>($: Engine, e: E): Promise<string> {
 /** The engine's field a subagent's call carries: the subagent's id. */
 const CallerSchema = v.object({ agentId: v.optional(v.string()) });
 
-/** What became of the attachments the person cannot read, in words, or ""
- * when every one is shown. */
-function unshownAttachmentsText(attachments: readonly PermitAttachmentOutcome[]): string {
-  const lines = attachments.flatMap((a) => {
-    if (!a.read) return [`- ${a.path}: ${PERMIT_ATTACHMENT_UNREADABLE_TEXT[a.reason]}`];
-    if (a.truncated) return [`- ${a.path}: 長いので先頭だけを見せている`];
-    return [];
-  });
-  return lines.length > 0
-    ? `\n人に中身を全部は見せられなかった attachments:\n${lines.join("\n")}`
-    : "";
-}
-
 /** The `permit` tool: ask the person for permission through `ccmsg sidecar
  * permit`, which shows the request in the session's Timeline and says that
  * one is asking. Never rejects.
@@ -299,9 +284,7 @@ async function permitTool<E>($: Engine, e: E): Promise<string> {
     return `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: ${errorText(error)}`;
   }
   const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
-  if (answered.ok) {
-    return `許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ${unshownAttachmentsText(answered.value.attachments)}`;
-  }
+  if (answered.ok) return "許可依頼を出した";
   $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
   // 3: no daemon could be had, so nothing was shown.
   if (run.exitCode === 3) {

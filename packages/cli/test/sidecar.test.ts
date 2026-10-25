@@ -1174,8 +1174,7 @@ describe("ccmsg sidecar permit", () => {
   test("records the request as the session's, says one is asking, and prints the reply", async () => {
     await withDaemon(0, async (env, ctx, spoken, work) => {
       const script = path.join(work, "deploy.sh");
-      fs.writeFileSync(script, "#!/bin/sh\necho deploy\n");
-      const command = "sh deploy.sh \\\n  --prod";
+      const command = { command: "sh deploy.sh \\\n  --prod", description: "本番に出す" };
       const run = await runPermit(
         JSON.stringify({
           blocked: "deploy が止められた",
@@ -1187,9 +1186,8 @@ describe("ccmsg sidecar permit", () => {
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
       const reply = parseWith(PermitRequestResponseTextSchema, run.out);
       if (!reply.ok) throw new Error(reply.failure.summary);
-      expect(reply.value.attachments).toEqual([{ path: script, read: true, truncated: false }]);
       expect(ctx.daemon.permitRequests.snapshot()).toMatchObject([
-        { id: reply.value.id, sid: SID, commands: [command] },
+        { id: reply.value.id, sid: SID, attachments: [script], commands: [command] },
       ]);
       expect(spoken()).toBe("許可を求めています\n");
     });
@@ -1210,7 +1208,8 @@ describe("ccmsg sidecar permit", () => {
     await withDaemon(0, async (env, ctx, spoken) => {
       for (const stdin of [
         '{"blocked":"x"}',
-        '{"blocked":"x","commands":["ls"],"extra":1}',
+        '{"blocked":"x","commands":[{"command":"ls"}],"extra":1}',
+        '{"blocked":"x","commands":["ls"]}',
         "nope",
       ]) {
         const run = await runPermit(stdin, env);
@@ -1232,7 +1231,7 @@ describe("ccmsg sidecar permit", () => {
       path.join(base, "say"),
       `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\n`,
     );
-    const run = await runPermit(JSON.stringify({ blocked: "x", commands: ["ls"] }), {
+    const run = await runPermit(JSON.stringify({ blocked: "x", commands: [{ command: "ls" }] }), {
       ...process.env,
       CCMSG_STATE_DIR: path.join(base, "s"),
       CCMSG_CONFIG_DIR: configDir,
