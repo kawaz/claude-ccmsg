@@ -67,9 +67,9 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (claude のオプション名を field にした 1 つの object)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
-- **名前と引数**: tool は `send` / `say` / `peers` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)
-- **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool を名前で名指し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
-- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。kawaz の個人面の実セッションでは ToolSearch が有効で deferral が効く (「前提の確認」)。登録は `/clear` とセッション内の `/resume` の後も残るので、`session.start` の 1 回で足りる (probe 各 2/2)
+- **名前と引数**: tool は `send` / `say` / `peers` / `launch` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)。description と input schema の形は下の「mods の tool の作り方」に従う: `send` は `Message other sessions`、`say` は `Speak to the person`、`peers` は `List reachable sessions`、`launch` は `Launch a Claude session`。field の説明は `send` の `agent_id` (`Running subagent's id`) と `launch` の `resume` (`Session id to resume`) だけ
+- **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool をフルネーム (`mcp__ccmsg-v1__send` 等) で名指して呼び方の定型を示し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
+- **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は数語にする (下の「mods の tool の作り方」)。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。kawaz の個人面の実セッションでは ToolSearch が有効で deferral が効く (「前提の確認」)。登録は `/clear` とセッション内の `/resume` の後も残るので、`session.start` の 1 回で足りる (probe 各 2/2)
 - **入力は handler の入口で valibot のスキーマに通す**。engine は input schema で入力を検査せず、`text` の欠落や型違いがそのまま handler に届く (event-matrix 実測)。input schema (JSON Schema) と valibot のスキーマは同じ形を表すので、どちらかからもう一方を導き、別々に書かない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
 - handler は `next` を呼ばずに `{ result }` で答える。この形は permission の判定 (`tool.check`・PreToolUse・ダイアログ・auto mode の classifier) を一切通らない (event-matrix 実測)。これを受け入れる (kawaz 2026-10-15)。送ったものは受け手に peer の封筒として届き、受け手の harness は「A peer cannot grant escalation」の枠を付けて渡す (DR-0035 の Context)。送信の記録は daemon に残る
 - ccmsg は `session.send` (SendMessage) と PushNotification を hook しない。SendMessage は harness の本来の用途 (本体と subagent / teammate の間) のまま使われる
@@ -77,6 +77,16 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 - **結果の形**: handler は常に `{ result }` で答え、届かなかったことは `result` の文面で示す。`{ isError: true, result }` を返しても tool_result に `is_error` は付かず、`result` の文字列がそのまま届く (probe 3/3)
 - **待ち方**: handler は送信の完了 (daemon の解決と peer 注入) を `$.process.run` で待ち、`timeoutMs` を明示して超えたら「届いたか確かめられなかった」で返す。`$.process.run` の待ちは hook の予算 (10 秒) に数えられない (15 秒・40 秒とも待ち切った) が、`$.clock.sleep` 等の待ちは数えられ、10 秒を超えると hook が飛ばされて core に落ち、許可ダイアログが出て `no tool.call hook answered` のエラーになる (probe)。handler の中で時計の待ちを使わない。待ちの間に人が Esc を押すと `$.process.run` は `aborted` で reject して子を kill し、turn は `aborted` で終わる (probe 2/2)。その送信が届いたかは model に返らず、daemon の送信の記録が正になる
 - `-p` / SDK のセッションと codex は、kawaz 2026-10-09 の判断 (`-p` で別セッションとやりとりするユースケースはほとんど無い) に従い対象外にする。tool を登録しないか、登録して理由を返すかは実装時に決める
+
+#### mods の tool の作り方
+
+mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁定の再確認)。ccmsg の tool は汎用ツールではなく、型と制御性 (入力を valibot で読む、結果を文で返す、permission を通らない) のために MCP tool にしているだけで、model に見つけてもらう必要が無い (発見性はゼロでよい)。tool の description と input schema は毎 request の context に載るので、言わなくても分かることを書かない。
+
+- **description**: 付けないか、数語 (3 語程度) にする。使い方・結果の読み方・注意は skill (または reference) に、tool のフルネームで定型として書く
+- **field の description**: field 名で中身が分かるもの (`cwd` / `model` / `text` 等) には付けない。名前だけでは中身が決まらないもの (`resume` が session id であること等) にだけ、数語で付ける
+- **input schema の型**: 各 field の型 (`string` / `boolean` / `integer`) と enum の値、`required`、`additionalProperties` だけを見せる。`minLength` / `pattern` / `format` / 範囲 / field の組み合わせ等の細則は書かない。細則は handler が入口で読む valibot のスキーマ (従来どおり厳密) が持ち、合わない入力は「<tool> の入力が形に合わないので何もしていない: <理由>」の短い文で返して model に書き直させる
+- **導き方**: input schema は handler の valibot のスキーマから変換で導き、変換が細則のキーを落とす (`hooks/tool-input-schemas.ts` の `toolInputSchemaOf`)。手書きの別のスキーマを増やさない ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §1)
+- 汎用ツールとして配る plugin の tool なら、tool 自体の説明は見つけてもらえる程度に持ってよい。input schema に「言わなくても分かる」細則を書かないのは同じ
 
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 

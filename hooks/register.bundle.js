@@ -1812,25 +1812,20 @@ var TOOL_INPUT_SCHEMAS = {
     type: "object",
     properties: {
       session_id: {
-        type: "string",
-        minLength: 1
+        type: "string"
       },
       cwd: {
-        type: "string",
-        minLength: 1
+        type: "string"
       },
       name: {
-        type: "string",
-        minLength: 1
+        type: "string"
       },
       pid: {
-        type: "integer",
-        minimum: 1,
-        maximum: 9007199254740991
+        type: "integer"
       },
       agent_id: {
         type: "string",
-        minLength: 1
+        description: "Running subagent's id"
       },
       text: {
         type: "string"
@@ -1855,66 +1850,53 @@ var TOOL_INPUT_SCHEMAS = {
     type: "object",
     properties: {
       cwd: {
-        type: "string",
-        minLength: 1
+        type: "string"
       },
       name: {
-        type: "string",
-        minLength: 1
+        type: "string"
       }
-    },
-    required: []
+    }
   },
   launch: {
     type: "object",
     properties: {
       cwd: {
-        type: "string",
-        description: "The directory the session starts in, an absolute path. continue looks for the newest session there."
+        type: "string"
       },
       model: {
+        type: "string",
         enum: [
           "fable",
           "opus",
           "sonnet",
           "haiku"
-        ],
-        type: "string",
-        description: "claude --model. Required when neither continue nor resume is given (a new session); otherwise the launch command chooses when absent."
+        ]
       },
       effort: {
+        type: "string",
         enum: [
           "low",
           "medium",
           "high",
           "xhigh",
           "max"
-        ],
-        type: "string",
-        description: "claude --effort. Required when neither continue nor resume is given (a new session); otherwise the launch command chooses when absent."
+        ]
       },
       continue: {
-        type: "boolean",
-        description: "claude --continue: continue the newest session in cwd. Not with resume."
+        type: "boolean"
       },
       resume: {
         type: "string",
-        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        description: "claude --resume: the id of the session to continue, under its own id (or, with fork_session, to copy). Not with continue."
+        description: "Session id to resume"
       },
       fork_session: {
-        type: "boolean",
-        description: "claude --fork-session: start a new session holding a copy of the history of the session continue or resume names. Needs continue or resume."
+        type: "boolean"
       },
       name: {
-        type: "string",
-        minLength: 1,
-        description: "claude --name: the session's name. The launch command chooses when absent."
+        type: "string"
       },
       prompt: {
-        type: "string",
-        minLength: 1,
-        description: "The session's first prompt. The launch command chooses when absent."
+        type: "string"
       }
     },
     required: [
@@ -1927,25 +1909,25 @@ async function registerTools($) {
   const registered = await Promise.allSettled([
     $.tool.register({
       name: "send",
-      description: "Send a message to other Claude Code sessions (see the ccmsg skill).",
+      description: "Message other sessions",
       inputSchema: TOOL_INPUT_SCHEMAS.send,
       isDeferred: true
     }),
     $.tool.register({
       name: "say",
-      description: "Tell the person something by voice (see the ccmsg skill).",
+      description: "Speak to the person",
       inputSchema: TOOL_INPUT_SCHEMAS.say,
       isDeferred: true
     }),
     $.tool.register({
       name: "peers",
-      description: "List the sessions send can reach (see the ccmsg skill).",
+      description: "List reachable sessions",
       inputSchema: TOOL_INPUT_SCHEMAS.peers,
       isDeferred: true
     }),
     $.tool.register({
       name: "launch",
-      description: "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+      description: "Launch a Claude session",
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
       isDeferred: true
     })

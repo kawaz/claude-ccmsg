@@ -51,36 +51,34 @@ export const LAUNCH_TIMEOUT_MS = 65_000;
  * handlers read the inputs with when the module is bundled (a macro). */
 const TOOL_INPUT_SCHEMAS = toolInputSchemas();
 
-/** Register the tools. Deferred, with descriptions kept short: subagents and
- * teammates see them too, and how to use them is the plugin's skill's to say
- * (DR-0039 §3). A registration that fails is logged; the session goes on
- * without that tool. */
+/** Register the tools. Deferred, each described in a few words: they are
+ * not general tools to be found, but ccmsg's typed calls, which the skill
+ * names in full and tells how to use (DR-0039 §3, "mods の tool の作り方").
+ * Subagents and teammates see them too. A registration that fails is logged;
+ * the session goes on without that tool. */
 async function registerTools($: Engine): Promise<void> {
   const registered = await Promise.allSettled([
     $.tool.register({
       name: "send",
-      description: "Send a message to other Claude Code sessions (see the ccmsg skill).",
+      description: "Message other sessions",
       inputSchema: TOOL_INPUT_SCHEMAS.send,
       isDeferred: true,
     }),
     $.tool.register({
       name: "say",
-      description: "Tell the person something by voice (see the ccmsg skill).",
+      description: "Speak to the person",
       inputSchema: TOOL_INPUT_SCHEMAS.say,
       isDeferred: true,
     }),
     $.tool.register({
       name: "peers",
-      description: "List the sessions send can reach (see the ccmsg skill).",
+      description: "List reachable sessions",
       inputSchema: TOOL_INPUT_SCHEMAS.peers,
       isDeferred: true,
     }),
-    // The one sentence of use kept here: reading exit_code 0 as "the session
-    // is up" goes straight into a wrong report (DR-0018 §3.7).
     $.tool.register({
       name: "launch",
-      description:
-        "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+      description: "Launch a Claude session",
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
       isDeferred: true,
     }),

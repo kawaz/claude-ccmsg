@@ -1941,22 +1941,32 @@ describe("the ccmsg tools", () => {
     return fake;
   }
 
-  test("an interactive session.start registers send, say, peers and launch, deferred", async () => {
+  // The tools are ccmsg's typed calls, not general tools to be found: a few
+  // words each, and the skill names them in full (DR-0039 §3, "mods の tool
+  // の作り方").
+  test("an interactive session.start registers send, say, peers and launch, deferred, in a few words", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
-    expect(fake.tools.map((t) => [t.name, t.isDeferred])).toEqual([
-      ["send", true],
-      ["say", true],
-      ["peers", true],
-      ["launch", true],
+    expect(fake.tools.map((t) => [t.name, t.description, t.isDeferred])).toEqual([
+      ["send", "Message other sessions", true],
+      ["say", "Speak to the person", true],
+      ["peers", "List reachable sessions", true],
+      ["launch", "Launch a Claude session", true],
     ]);
-    // The model is shown the shape the handler reads: send's text required,
-    // the recipient fields beside it.
-    const send = fake.tools[0]?.inputSchema;
-    expect(send).toMatchObject({
+    // The model is shown the shape the handler reads, and no more: send's
+    // text required, the recipient fields beside it, each field its type
+    // alone (the finer rules are the handler's).
+    expect(fake.tools[0]?.inputSchema).toEqual({
       type: "object",
+      properties: {
+        session_id: { type: "string" },
+        cwd: { type: "string" },
+        name: { type: "string" },
+        pid: { type: "integer" },
+        agent_id: { type: "string", description: "Running subagent's id" },
+        text: { type: "string" },
+      },
       required: ["text"],
-      properties: { session_id: { type: "string" }, cwd: {}, name: {}, pid: { type: "integer" } },
     });
   });
 
@@ -2178,46 +2188,26 @@ describe("the ccmsg tools", () => {
   // launch (DR-0018 §3.7): the model is shown one flat object of claude's
   // options, since Claude Code leaves out a tool whose schema is a top-level
   // oneOf / anyOf (docs/findings/2026-10-25-launch-tool-input-schema.md).
-  test("launch is shown one flat object: cwd required, no resume_session_at", async () => {
+  // Which options go together is the skill's to say and the handler's to
+  // check, not the schema's.
+  test("launch is shown one flat object of types: cwd required, no resume_session_at", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
-    const launch = fake.tools.find((t) => t.name === "launch");
-    expect(launch?.description).toBe(
-      "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
-    );
-    expect(launch?.inputSchema).not.toHaveProperty("$schema");
-    const schema = launch?.inputSchema;
-    expect(schema).toMatchObject({
+    expect(fake.tools.find((t) => t.name === "launch")?.inputSchema).toEqual({
       type: "object",
+      properties: {
+        cwd: { type: "string" },
+        model: { type: "string", enum: ["fable", "opus", "sonnet", "haiku"] },
+        effort: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
+        continue: { type: "boolean" },
+        resume: { type: "string", description: "Session id to resume" },
+        fork_session: { type: "boolean" },
+        name: { type: "string" },
+        prompt: { type: "string" },
+      },
       required: ["cwd"],
       additionalProperties: false,
-      properties: {
-        continue: { type: "boolean" },
-        fork_session: { type: "boolean" },
-        resume: { type: "string" },
-      },
     });
-    expect(schema).not.toHaveProperty("oneOf");
-    expect(schema).not.toHaveProperty("anyOf");
-    expect(schema).not.toHaveProperty("properties.resume_session_at");
-    expect(schema).not.toHaveProperty("properties.type");
-    // The combinations the handler refuses are said in the descriptions.
-    const described = parseWith(
-      v.object({
-        properties: v.object({
-          model: v.object({ description: v.string() }),
-          fork_session: v.object({ description: v.string() }),
-        }),
-      }),
-      schema,
-    );
-    if (!described.ok) throw new Error(described.failure.summary);
-    expect(described.value.properties.model.description).toContain(
-      "Required when neither continue nor resume is given",
-    );
-    expect(described.value.properties.fork_session.description).toContain(
-      "Needs continue or resume.",
-    );
   });
 
   // The tool's wait holds the longest launch the daemon can make: the longest
