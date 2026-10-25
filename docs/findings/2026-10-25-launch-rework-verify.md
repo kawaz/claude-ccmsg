@@ -39,6 +39,10 @@
 
 `--session-id` の欄は最初の画面では打てる欄と同じ見た目だったので、入力を受けない欄の背景を落とし枠を破線にした (確認後の computed style は `border-style: dashed`)。
 
+## この記録の後の変更
+
+この確認の後の裁定で、依頼者は起動コマンドの stdin の field (`requested_by`) から環境変数 `CCMSG_LAUNCH_REQUESTED_BY` に移り、config のキーは `launch_timeout_seconds` / `launch_max_concurrency` になった ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.1、§3.5)。上の表の stdin の `requested_by` は確認した時点の形で、今は環境変数で届く (daemon の統合テストで固定)。
+
 ## 未観測
 
 - 本物の model が input schema の description に従って組み合わせを守るか (代役の API の台本なので見ていない)
