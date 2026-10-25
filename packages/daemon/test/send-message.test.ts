@@ -36,7 +36,8 @@ function run(sid: string, pid: number, fields: { cwd?: string; name?: string } =
   return { configDir: "/cfg", sid, pid, ...fields };
 }
 
-/** Deps over `runs`, where `/link` is a symlink to `/work`, `modules` have a
+/** Deps over `runs`, where `/link` is a symlink to `/work` (a realpath drops
+ * a trailing `/`, as the file system's does), `modules` have a
  * hooks module, and each run's delivery answers what `answers` says for its
  * pid (delivered when it says nothing). */
 function deps(
@@ -52,7 +53,10 @@ function deps(
   return {
     frames,
     runs: async () => runs,
-    realpath: async (dir) => (dir === "/link" ? "/work" : dir === "/gone" ? undefined : dir),
+    realpath: async (dir) => {
+      const bare = dir.length > 1 ? dir.replace(/\/+$/, "") : dir;
+      return bare === "/link" ? "/work" : bare === "/gone" ? undefined : bare;
+    },
     hasModule: (sid) => (options.modules ?? [A, B, ME]).includes(sid),
     readiness: () => options.readiness ?? { kind: "ended" },
     issueMid: () => `i/${String(++mid)}`,
@@ -181,7 +185,42 @@ describe("listPeers", () => {
       { sid: A, pids: [2], module: false, self: false },
       { sid: B, cwd: "/work", pids: [3, 5], module: true, self: false },
     ]);
-    expect((await listPeers(ME, { cwd: "/work" }, deps(runs))).map((p) => p.sid)).toEqual([B]);
+    expect((await listPeers(ME, { cwd_prefix: "/work" }, deps(runs))).map((p) => p.sid)).toEqual([
+      B,
+    ]);
+  });
+
+  // cwd_prefix picks every session under a directory at once (a repository's
+  // worktrees, a whole tree), both sides as realpaths; the directory itself
+  // is under its own prefix.
+  describe("cwd_prefix", () => {
+    const runs = [
+      run(A, 2, { cwd: "/work" }),
+      run(B, 3, { cwd: "/work/wt", name: "n" }),
+      run(ME, 1, { cwd: "/workshop" }),
+    ];
+    const listed = async (filter: { cwd_prefix?: string; name?: string }): Promise<string[]> =>
+      (await listPeers(ME, filter, deps(runs))).map((p) => p.sid);
+
+    test("a directory's prefix takes it and everything under it", async () => {
+      expect(await listed({ cwd_prefix: "/work/wt" })).toEqual([B]);
+      expect(await listed({ cwd_prefix: "/work/" })).toEqual([A, B]);
+    });
+
+    // Without the trailing `/` a prefix is a text prefix, so a sibling whose
+    // name starts the same is taken too.
+    test("without a trailing / a sibling of the same start is taken too", async () => {
+      expect(await listed({ cwd_prefix: "/work" })).toEqual([ME, A, B]);
+    });
+
+    test("the prefix is read as a realpath, keeping its trailing /", async () => {
+      expect(await listed({ cwd_prefix: "/link/" })).toEqual([A, B]);
+    });
+
+    test("a prefix nothing is under lists nothing, and name narrows it", async () => {
+      expect(await listed({ cwd_prefix: "/elsewhere/" })).toEqual([]);
+      expect(await listed({ cwd_prefix: "/work/", name: "n" })).toEqual([B]);
+    });
   });
 });
 

@@ -68,8 +68,11 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   peer_list: {
-    ok: { op: "peer_list", cwd: "/w", name: "n" },
-    bad: [{ op: "peer_list", cwd: 1 }],
+    ok: { op: "peer_list", cwd_prefix: "/w/", name: "n" },
+    bad: [
+      { op: "peer_list", cwd_prefix: 1 },
+      { op: "peer_list", cwd_prefix: "" },
+    ],
   },
   say: {
     ok: { op: "say", text: "hello" },

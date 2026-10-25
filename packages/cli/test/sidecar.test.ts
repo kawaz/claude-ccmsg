@@ -897,7 +897,7 @@ describe("ccmsg sidecar send-message / peer-list", () => {
         { sid: ended, outcome: "not_delivered", reason: "ended" },
       ]);
 
-      const listed = await runPeer("peer-list", JSON.stringify({ cwd: work }), env);
+      const listed = await runPeer("peer-list", JSON.stringify({ cwd_prefix: work }), env);
       const peers = parseWith(PeerListResponseTextSchema, listed.out);
       if (!peers.ok) throw new Error(peers.failure.summary);
       expect(peers.value.peers).toEqual([
@@ -939,6 +939,15 @@ describe("ccmsg sidecar send-message / peer-list", () => {
       expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
       expect(run.err).toContain("standard input must be { to, text }");
     }
+  });
+
+  // peer-list takes a prefix, not send's whole cwd: a cwd is refused rather
+  // than dropped, which would list every session.
+  test("peer-list refuses a cwd field before reaching the daemon", async () => {
+    const env = sidecarEnv(path.join(shortBase(), "s"));
+    const run = await runPeer("peer-list", '{"cwd":"/w"}', env);
+    expect({ code: run.code, out: run.out }).toEqual({ code: 1, out: "" });
+    expect(run.err).toContain("cwd");
   });
 });
 

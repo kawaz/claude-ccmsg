@@ -107,13 +107,38 @@ function spelled(peer: Peer): { sid: string; name?: string; cwd?: string } {
   };
 }
 
-/** The sessions a send could go to, as send_message matches them. */
+/** `prefix` as a realpath, keeping a trailing `/` (which says "under this
+ * directory", not "a name starting so"); the text as given when it does not
+ * resolve (a partial name). */
+async function realPrefix(prefix: string, deps: PeerDeps): Promise<string> {
+  const real = await deps.realpath(prefix);
+  if (real === undefined) return prefix;
+  return prefix.endsWith("/") && !real.endsWith("/") ? `${real}/` : real;
+}
+
+/** Whether a session working in `cwd` is under `prefix`: `cwd` starts with
+ * it, or is the directory `prefix` names with its trailing `/`. */
+function underPrefix(cwd: string, prefix: string): boolean {
+  return cwd.startsWith(prefix) || `${cwd}/` === prefix;
+}
+
+/** The sessions a send could go to, as send_message matches them, those
+ * whose directory starts with `cwd_prefix` and whose name is `name`. */
 export async function listPeers(
   from: string,
   filter: PeerListInput,
   deps: PeerDeps,
 ): Promise<PeerListEntry[]> {
-  const peers = await matching(await peersOf(await deps.runs(), deps), filter, deps);
+  const prefix =
+    filter.cwd_prefix !== undefined ? await realPrefix(filter.cwd_prefix, deps) : undefined;
+  const named = await matching(
+    await peersOf(await deps.runs(), deps),
+    filter.name !== undefined ? { name: filter.name } : {},
+    deps,
+  );
+  const peers = named.filter(
+    (peer) => prefix === undefined || (peer.cwd !== undefined && underPrefix(peer.cwd, prefix)),
+  );
   return peers
     .map((peer) => ({
       ...spelled(peer),

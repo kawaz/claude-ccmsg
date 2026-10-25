@@ -29,7 +29,13 @@ description: ccmsg の tool (send / say / peers / launch) で、別のセッシ�
 
 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」で返る。届いた宛先には送り直さない。確かめられなかった宛先に送り直すと二重に届くことがあるので、先に相手の返事を待つ。
 
-宛先が分からない時は、先に `mcp__ccmsg-v1__peers` で探す (`{}` で全部、`cwd` / `name` で絞れる)。返る `session_id`・`name`・`cwd` は、そのまま `send` に書ける綴りになっている。
+宛先が分からない時は、先に `mcp__ccmsg-v1__peers` で探す。`{}` で全部、`cwd_prefix` (前方一致) と `name` (完全一致) で絞れる:
+
+```json
+{ "cwd_prefix": "/path/to/repo/" }
+```
+
+`cwd_prefix` の末尾に `/` を付けると、`repo-old` のような同じ名前で始まる兄弟のディレクトリを混同しない。返る `session_id`・`name`・`cwd` は、そのまま `send` に書ける綴りになっている。複数のセッションに送る時は、`peers` で引いた `session_id` ごとに送る (`send` の `cwd` は完全一致)。
 
 ## 届いたメッセージに返す
 

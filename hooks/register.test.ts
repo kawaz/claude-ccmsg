@@ -2177,8 +2177,8 @@ describe("the ccmsg tools", () => {
         ],
       })();
     });
-    const result = await callTool(fake, "mcp__ccmsg-v1__peers", { cwd: "/w" });
-    expect(seen).toEqual([JSON.stringify({ cwd: "/w" })]);
+    const result = await callTool(fake, "mcp__ccmsg-v1__peers", { cwd_prefix: "/w/" });
+    expect(seen).toEqual([JSON.stringify({ cwd_prefix: "/w/" })]);
     expect(result.split("\n").slice(1)).toEqual([
       `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
       "- session_id: c (ccmsg の hooks module が動いていないので送れない)",

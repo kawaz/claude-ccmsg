@@ -542,13 +542,13 @@ async function runSidecarSendMessage(opts: Record<string, string | boolean>): Pr
 
 /** `ccmsg sidecar peer-list --sid <sid> < filter.json` (DR-0039 §3): print
  * the sessions a send from `<sid>` could go to (the daemon's peer_list
- * reply), those matching `{ cwd?, name? }` on standard input. */
+ * reply), those matching `{ cwd_prefix?, name? }` on standard input. */
 async function runSidecarPeerList(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar peer-list --sid <sid> < filter.json";
   const read = parseWith(PeerListInputTextSchema, await Bun.stdin.text());
   if (!read.ok) {
     throw new Error(
-      `standard input must be { cwd?, name? } as JSON: ${read.failure.summary}\n  usage: ${usage}`,
+      `standard input must be { cwd_prefix?, name? } as JSON: ${read.failure.summary}\n  usage: ${usage}`,
     );
   }
   const identity = resolveSessionIdentity(opts, "sidecar");

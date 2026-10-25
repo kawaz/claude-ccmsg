@@ -22,20 +22,18 @@ export type CcmsgToolName = (typeof CCMSG_TOOLS)[keyof typeof CCMSG_TOOLS];
 
 // --- which sessions -----------------------------------------------------------
 
-/** The fields that pick sessions out, by their spelling in the session's own
- * record (`<config dir>/sessions/<pid>.json`): the session id, the directory
- * it works in, the name it was given (`--name`, a rename) and a process of it.
- * Each is matched whole; a field given must match, a field left out matches
- * any session. */
-const PeerFilterEntries = {
-  /** The directory a session works in, compared as a realpath. */
-  cwd: v.optional(v.pipe(v.string(), v.nonEmpty("a cwd is not empty"))),
-  name: v.optional(v.pipe(v.string(), v.nonEmpty("a name is not empty"))),
-};
+/** The name a session was given (`--name`, a rename), matched whole. */
+const PeerNameSchema = v.optional(v.pipe(v.string(), v.nonEmpty("a name is not empty")));
 
+/** The fields that pick a send's recipients out, by their spelling in the
+ * session's own record (`<config dir>/sessions/<pid>.json`): the session id,
+ * the directory it works in (compared as a realpath), its name and a process
+ * of it. Each is matched whole, so one send reaches only the sessions it
+ * names; a field given must match, a field left out matches any session. */
 const PeerTargetEntries = {
   session_id: v.optional(v.pipe(v.string(), v.nonEmpty("a session id is not empty"))),
-  ...PeerFilterEntries,
+  cwd: v.optional(v.pipe(v.string(), v.nonEmpty("a cwd is not empty"))),
+  name: PeerNameSchema,
   pid: v.optional(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
 };
 
@@ -83,9 +81,20 @@ export const SendMessageInputSchema = v.object({
 export type SendMessageInput = Output<typeof SendMessageInputSchema>;
 export const SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 
+/** The fields that pick the sessions `peers` lists: a prefix of the directory
+ * a session works in (both compared as realpaths, so a whole repository's
+ * worktrees or a whole tree come at once; the directory itself is included),
+ * and its name, matched whole. */
+const PeerListEntries = {
+  cwd_prefix: v.optional(v.pipe(v.string(), v.nonEmpty("a cwd prefix is not empty"))),
+  name: PeerNameSchema,
+};
+
 /** What `ccmsg sidecar peer-list` takes on standard input: the sessions to
- * list, all of them when neither field is given. */
-export const PeerListInputSchema = v.object(PeerFilterEntries);
+ * list, all of them when neither field is given. Strict: a field it does not
+ * take (a whole `cwd`, which is send's) is refused rather than dropped, which
+ * would list every session. */
+export const PeerListInputSchema = v.strictObject(PeerListEntries);
 export type PeerListInput = Output<typeof PeerListInputSchema>;
 export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
 
@@ -196,6 +205,7 @@ export type SendToolInput = Output<typeof SendToolInputSchema>;
 export const SayToolInputSchema = v.object({ text: PeerTextSchema });
 export type SayToolInput = Output<typeof SayToolInputSchema>;
 
-/** `peers`' input: which sessions to list. */
-export const PeersToolInputSchema = PeerListInputSchema;
-export type PeersToolInput = PeerListInput;
+/** The `peers` tool's input: peer-list's fields, picked out of the call (the
+ * engine puts its own fields beside them). */
+export const PeersToolInputSchema = v.object(PeerListEntries);
+export type PeersToolInput = Output<typeof PeersToolInputSchema>;

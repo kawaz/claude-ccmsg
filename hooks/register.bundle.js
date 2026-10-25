@@ -1673,13 +1673,11 @@ var ErrorResponseSchema = object({
   error: ErrorBodySchema
 });
 
-var PeerFilterEntries = {
-  cwd: optional(pipe(string(), nonEmpty("a cwd is not empty"))),
-  name: optional(pipe(string(), nonEmpty("a name is not empty")))
-};
+var PeerNameSchema = optional(pipe(string(), nonEmpty("a name is not empty")));
 var PeerTargetEntries = {
   session_id: optional(pipe(string(), nonEmpty("a session id is not empty"))),
-  ...PeerFilterEntries,
+  cwd: optional(pipe(string(), nonEmpty("a cwd is not empty"))),
+  name: PeerNameSchema,
   pid: optional(pipe(number(), safeInteger(), minValue(1)))
 };
 function namesSomebody(to) {
@@ -1695,7 +1693,11 @@ var SendMessageInputSchema = object({
   text: PeerTextSchema
 });
 var SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
-var PeerListInputSchema = object(PeerFilterEntries);
+var PeerListEntries = {
+  cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty"))),
+  name: PeerNameSchema
+};
+var PeerListInputSchema = strictObject(PeerListEntries);
 var PeerListInputTextSchema = jsonText(PeerListInputSchema);
 var SendMessageReasonSchema = picklist([
   "self",
@@ -1741,7 +1743,7 @@ var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
 var RefusalTextSchema = jsonText(ErrorResponseSchema);
 var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
 var SayToolInputSchema = object({ text: PeerTextSchema });
-var PeersToolInputSchema = PeerListInputSchema;
+var PeersToolInputSchema = object(PeerListEntries);
 
 var UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
 var NOT_DELIVERED = {
@@ -1849,7 +1851,7 @@ var TOOL_INPUT_SCHEMAS = {
   peers: {
     type: "object",
     properties: {
-      cwd: {
+      cwd_prefix: {
         type: "string"
       },
       name: {
