@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)
+- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)。§3 の tool `launch` は未実装で、状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
 - Date: 2026-10-15
 
 ## Context
@@ -66,6 +66,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
   - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
 - **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
+- **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (4 つの type の variant)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
 - **名前と引数**: tool は `send` / `say` / `peers` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)
 - **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool を名前で名指し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
 - **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。kawaz の個人面の実セッションでは ToolSearch が有効で deferral が効く (「前提の確認」)。登録は `/clear` とセッション内の `/resume` の後も残るので、`session.start` の 1 回で足りる (probe 各 2/2)
@@ -80,7 +81,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 
 - **人の口**: `daemon` / `status` / `stop` / `origins` 等、人が端末で使うもの
-- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`) と、say の tool の handler が起こす `say`
+- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`、`launch` の tool が起こす `sidecar launch`) と、say の tool の handler が起こす `say`
 - `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`、transport は `ccmsg sidecar send-message`) に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
 - `subscribe` / `notify` は本 DR では残す
@@ -116,7 +117,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
 
 ### 8. やらないこと
 
-- 同一セッションの中の SendMessage (本体と subagent / teammate の間) には触らない。typed tool はセッション間の送信と say (と宛先の候補) に限る。同一セッションの中の連絡まで tool に寄せると、harness の SendMessage と経路が 2 本になる
+- 同一セッションの中の SendMessage (本体と subagent / teammate の間) には触らない。typed tool はセッション間の送信・say・宛先の候補・セッションの起動に限る。同一セッションの中の連絡まで tool に寄せると、harness の SendMessage と経路が 2 本になる
 - 同じ config home のセッション同士でも、セッション間の送信は送信の tool で行い、harness の SendMessage の名前での直接送信は案内しない (kawaz 2026-10-13 の裁定)
 - §7 のフォールバック経路を作らない。経路が 2 本あると、どちらで届いたか・どちらが壊れているかの切り分けが常に要り、no_module という状態の意味もぼやける
 - §6 の `agentId` 付き append を、permission の許可や classifier の判断材料の代わりに使わない

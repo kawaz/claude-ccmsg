@@ -19,7 +19,7 @@ kawaz 要望 (2026-07-18):
 
 ### daemon: 新 op `session_kill` (user role 限定・即時 reply)
 
-- `IDENTITY_OPS` に追加。`conn.identity?.role !== "user"` なら `bad_request` で拒否(session_launch と同一パターン)。session role のエージェントが互いを殺せてはいけない。
+- `IDENTITY_OPS` に追加。`conn.identity?.role !== "user"` なら `bad_request` で拒否。session role のエージェントが互いを殺せてはいけない。
 - pid 解決は **リクエスト時に `claude agents --json --all` を fresh 実行**してsessionId → pid を引く (`--all` で completed background も含む)。poller cache (最大 5 秒古い) を使わない: kill は stale pid が即誤殺につながる操作なので、多少の latency (数百 ms〜) を払って fresh に解決する。全 config dir を走査し、最初にマッチした行を採用。見つからなければ `not_found`。
 - **pid 実在検証 (pid 再利用ガード)**: 解決した pid に対し`ps -p <pid> -o command=` を実行し、コマンドラインに `claude` が含まれることを確認してから kill。`claude agents` の応答と kill 実行の間 (および CLI 側 registryの stale entry) で pid が別プロセスに再利用されるのを防ぐ。検証不一致は`not_found` (「もう居ない」と同じ扱いで十分)。
   - 実装追記 (2026-07-18): 判定は substring でなく **argv[0] の basename が`claude` と完全一致**。substring だと kawaz 環境では ccmsg daemon 自身(`bun .../.claude-personal/plugins/cache/ccmsg/...`) や Claude Code 起動のzsh (`source .../.claude-personal/shell-snapshots/...`) まで通過し、pid再利用時に daemon 自殺の経路になる (実測で確認)。
@@ -66,7 +66,7 @@ kawaz 要望 (2026-07-18):
 
 ## 関連
 
-- [DR-0018](./DR-0018-session-launcher.md) — session_launch (user 限定 op の先行例)
+- [DR-0018](./DR-0018-session-launcher.md) — セッションの起動 (停止と対になる操作)
 - [DR-0009](./DR-0009-session-transcript-access.md) — agents poll の出自
 
 ## Addendum: opt-in SIGKILL エスカレーション (kawaz)
