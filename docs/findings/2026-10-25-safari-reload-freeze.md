@@ -10,10 +10,10 @@
 
 原因は未確定。
 
-- 最有力は「こちら側の候補 1」: この Mac の Tailscale の経路では、IPv4 の UDP は DF を求めても EMSGSIZE にならず IP fragment に分けられる。quic-go の packet size の探索はそれを知らずに size を上げ、上げた size は data packet が失われても下げない。fragment が落ち続ける経路なら、その接続は大きい応答を運べなくなる
-- ただし、fragment が継続して落ちる仕組みは見えていない。新しい接続が 0.15 秒で 342KB を運ぶこと (packet size の探索は数 RTT で終わる) との整合も説明できていない
-- 接続全体の flow control の枠が尽きる (HTTP/3 で、`DATA_BLOCKED` が出る形) 可能性も否定していない
-- 決め手は本番の前段の Caddy の qlog (`QLOGDIR` を launchd の環境変数に足す)。次に止まった接続の `mtu_updated` / `packet_lost` / `DATA_BLOCKED` で分かれる
+- サーバ側で QUIC の packet が IP fragment に分けられていることは事実 (この Mac の Tailscale の interface では、IPv4 の UDP は DF を求めても EMSGSIZE にならず fragment になる。前段の Caddy の HTTP/3 の応答も、この Mac の中の往復では fragment になっていた)
+- それが iPhone のフリーズに効いているかは、iPhone との経路の観測が無い限り言えない。ここまでの観測は全部この Mac の中で完結していて、WireGuard のトンネル・relay・iPhone 側の netstack と組み立て直しを通っていない
+- 接続全体の flow control の枠が尽きる (`DATA_BLOCKED` が出る形) 可能性も、同じく否定していない
+- 決め手は、iPhone と通信している最中の観測 (「切り分けの実験」の pcap と前段の qlog)
 
 ## 症状の構造
 
@@ -106,11 +106,13 @@ Content-Length が 16KB を超える応答のうち、途中で止まったも�
 
 ## こちら側の候補
 
-### 候補 1. 経路の MTU と fragment: 最有力、未確定
+### 候補 1. 経路の MTU と fragment: 未確定
+
+**観測の射程**: 下のローカルの観測が言えるのは、「この Mac の Tailscale の interface から出る時に、1280 バイトを超える IPv4 の packet が fragment に分けられる」ことまで。この Mac から自分の Tailscale の address 宛ての通信は tailscaled の中で折り返すだけで、WireGuard のトンネル・relay・相手側の netstack・相手側での組み立て直しを通らない。iPhone との経路で fragment が落ちるか、そもそも iPhone 宛てに同じ大きさの packet が出ているかは観測していない。
 
 観測:
 
-- iPhone への経路はこの Mac の Tailscale の interface (`utun`、MTU 1280)。iPhone は Tailscale の IPv4 の address で繋いでいる。この Mac から自分の Tailscale の address 宛ても同じ interface を通る (`route -n get`。interface の受信と送信の packet 数はほぼ同じ)
+- iPhone への経路はこの Mac の Tailscale の interface (`utun`、MTU 1280)。iPhone は Tailscale の IPv4 の address で繋いでいる。この Mac から自分の Tailscale の address 宛ても `route -n get` では同じ interface になる (interface の受信と送信の packet 数はほぼ同じで、tailscaled が折り返している)
 - この Mac で、Tailscale の interface 宛てに UDP を 50 個ずつ送り、`netstat -s -p ip` の「output datagrams fragmented」の増えを見た:
 
 | socket | DF の指定 | UDP の本文 | 結果 |
@@ -126,12 +128,12 @@ Content-Length が 16KB を超える応答のうち、途中で止まったも�
 - 一時ベースの Caddy の qlog (loopback) で、`recovery:mtu_updated` が 1326 → 1389 → 1420 と上がった
 - 本番の前段の Caddy から、この Mac の Tailscale の IPv4 の address 宛てに 2,701,756 バイトのファイル (観測のために一時的に置き、観測後に消した) を `curl --http3-only` で 5 回取った。5 回とも全部届き 0.12 〜 0.27 秒。その間「output datagrams fragmented」は +9,262 (1 回あたり約 1,850 個。ファイルの大きさを割ると約 1,460 バイト / packet)。対照の `--http2` は 0.40 秒
   - 注意: 何もしていない 6 分間でも、この counter は +10,532 (毎秒約 29) 増える。+9,262 を HTTP/3 の転送に帰すのは、5 回で約 1 秒という時間窓の短さに依っている
-- 本番の前段への `curl --http3-only` (Tailscale の IPv4 宛て) を約 100 回出して、2 回止まった。617KB のうち 194,740 バイトで止まり 63.9 秒で打ち切られた回と、8 秒間 0 バイトの回。**2 回とも、しばらく間が空いた後の最初の要求**だった。loopback 宛ての 48 回では 0 回だが、間を空けた条件では試していない。10-25 06:52 〜 06:55 のこの Mac からの HTTP/3 の行と、06:53 の `deadline exceeded` は、この試験のもの
+- 本番の前段への `curl --http3-only` (Tailscale の IPv4 宛て) を約 100 回出して、2 回止まった。617KB のうち 194,740 バイトで止まり 63.9 秒で打ち切られた回と、8 秒間 0 バイトの回。**2 回とも、しばらく間が空いた後の最初の要求**だった。loopback 宛ての 48 回では 0 回だが、間を空けた条件では試していない。10-25 06:52 〜 06:55 のこの Mac からの HTTP/3 の行と、06:53 の `deadline exceeded` は、この試験のもの。これもこの Mac の中で折り返す通信なので、iPhone との経路については何も言っていない
 - Tailscale の metrics: `tstun_in_from_wg_drop` 176 / 27331。`tstun_out_to_wg_drop_filter` は、次に止まった時に前後の差を取る候補
 
 読み (未検証):
 
-- 前段の quic-go は、この経路で packet size を約 1,460 バイトまで上げ、その packet は kernel が 2 つの fragment に分けて Tailscale に渡している。fragment の一部が落ちる経路なら、その接続では大きい応答の packet が届かない。quic-go は損失で size を下げないので、その接続は運べないままになる。小さい応答は 1 packet に収まるので届く
+- iPhone との接続でも、前段の quic-go が packet size を約 1,460 バイトまで上げているなら、その packet は kernel が 2 つの fragment に分けて Tailscale に渡している。fragment の一部が落ちる経路なら、その接続では大きい応答の packet が届かない。quic-go は損失で size を下げないので、その接続は運べないままになる。小さい応答は 1 packet に収まるので届く
 - TCP (WebSocket、HTTP/2) は MSS が interface の MTU から決まり、fragment を使わない。HTTP/2 で止まった記録が 0 であることと合う
 - 説明できていないこと: fragment が継続して落ちる仕組み。新しい接続が 0.15 秒で 342KB を運ぶ (size の探索は数 RTT で終わるので、新しい接続もすぐ同じ size になるはず) こと。「間が空いた後の最初の要求」で止まること (NAT の UDP の状態や経路の再確立との関係は見ていない)
 
@@ -169,13 +171,49 @@ kawaz が見たのは Mac の Chrome。Caddy のログで画像の GET (`/attach
 | `/attachment/<id 2>` | 327613 / 680013 | `writing: deadline exceeded` |
 
 - 同じ接続はその後も使えた (04:40:09 の upload は通り、04:40:34 の `/app.css` 66742 バイトは全部届いた)。この 2 枚の取り直しの記録は無い
-- この Mac の Chrome から前段へも Tailscale の interface を通る (候補 1 と同じ経路)。HTTP/3 の応答が途中で止まった点は同じだが、接続が回復した点が iPhone の件と違い、原因が同じとは確定していない
+- この Mac の Chrome から前段へは自分の Tailscale の address 宛てで、tailscaled の中で折り返す (iPhone の経路とは違う)。HTTP/3 の応答が途中で止まった点は同じだが、接続が回復した点が iPhone の件と違い、原因が同じとは確定していない
 - PNG が途中まで届けば上の部分だけ描かれるのは見た目と合う (推測)
 
 ## 切り分けの実験
 
-- **間を空けた後の最初の要求**: この Mac から本番の前段へ、Tailscale の IPv4 の address 宛てと loopback 宛てを交互に、45 秒ずつ空けて 5 回ずつ `curl --http3-only` で大きいファイルを取る。Tailscale 宛てだけで止まれば経路 (候補 1 か、Tailscale の UDP の状態)、両方で止まれば Caddy / quic-go の側
-- 前段の Caddy の qlog (`QLOGDIR` を launchd の環境変数に足す、前段の持ち主の作業): 次に止まった接続の `mtu_updated` / `packet_lost` / `DATA_BLOCKED` で候補 1 と候補 2 が分かれる
+### iPhone と通信している最中の観測 (kawaz が iPhone を触れる時)
+
+daemon の版が上がった直後、青いボタンで固まらせる。その前から次の 2 つを回しておく。
+
+1. この Mac で、iPhone との packet を記録する。iPhone の Tailscale の address は `tailscale status` の iPhone の行で確かめる。interface は Tailscale の address を持つ `utun` (`ifconfig` で確かめる。この記録の時点では `utun4`):
+
+   ```bash
+   sudo tcpdump -i utun4 -w <pcap> host <iPhone の Tailscale の IPv4>
+   ```
+
+   固まらせた後、しばらく (Caddy の `deadline exceeded` が出る 1 分以上) 待ってから止める。集計は一時ベースに置いた `quic-pcap-summary.sh` で行う (`tcpdump -r` と awk だけで動く)。
+
+   ```bash
+   sh quic-pcap-summary.sh <pcap> <この Mac の Tailscale の IPv4> <iPhone の Tailscale の IPv4> 1
+   ```
+
+   向きごとに次を出す:
+   - IP の長さの分布 (UDP の本文が 1200 以下 / 1280 以下 / fragment)、IP fragment の数、DF の数
+   - 1 秒を超えて packet が途切れた時刻と長さ
+   - iPhone からの packet が途切れた後に、この Mac が送った packet の数
+
+   見るもの:
+   - Caddy → iPhone で fragment が出ているか (packet size が上がっているか)
+   - 固まった瞬間に、iPhone → Mac の packet (ACK) が途切れているか
+   - 途切れた後も Caddy が送り続けているか (再送。packet が届いていない側)、送るのを止めているか (flow control の待ち)
+2. 本番の前段の Caddy に `QLOGDIR` を付けて (launchd の環境変数、前段の持ち主の作業)、同じ瞬間の qlog を取る。見るのは `mtu_updated` (iPhone との接続で 1252 を超えたか)、`packet_lost`、`DATA_BLOCKED` / `STREAM_DATA_BLOCKED`
+3. 前後で Tailscale の metrics (`tstun_in_from_wg_drop`、`tstun_out_to_wg_drop_filter`) の差を取る
+
+pcap で「fragment が出ていて、iPhone からの ACK が途切れ、Caddy が再送を続けている」なら候補 1、「fragment が無いか、Caddy が送るのを止めて `DATA_BLOCKED` を出している」なら候補 2 の側。
+
+### この Mac の中でできる実験
+
+この Mac の中で折り返す通信なので、iPhone の経路の代わりにはならない。Caddy / quic-go の側だけで止まるかを見る用途。
+
+- **間を空けた後の最初の要求**: この Mac から本番の前段へ、Tailscale の IPv4 の address 宛てと loopback 宛てを交互に、45 秒ずつ空けて 5 回ずつ `curl --http3-only` で大きいファイルを取る。Tailscale 宛てだけで止まれば tailscaled の折り返しを含む経路の側、両方で止まれば Caddy / quic-go の側
+
+### その他
+
 - Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。止まらなくなれば、画像の件は HTTP/3 の経路の問題
 - iOS の Safari には利用者が HTTP/3 を切る設定が無い (kawaz が実機で確認) ので、iPhone の側からは切り分けられない
 
