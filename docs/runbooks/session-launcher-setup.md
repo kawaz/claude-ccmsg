@@ -98,7 +98,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
 2. **設定ファイルに `session_launcher` を書く**
 
-   キーは次の 7 つだけで、他のキーがあると daemon は起動しない。
+   キーは次の 7 つだけで、他のキーがあると daemon は起動しない。ただし旧版の ccmsg 用のキー `shell` / `templates` / `timeout_seconds` は、旧版のセッションが残っている間は消さずに残してよい (新しい daemon は無視し、起動時の daemon.log に `ignoring legacy keys` の 1 行を出す)。
 
    | キー | 必須 | 既定 | 意味 |
    |---|---|---|---|
@@ -160,7 +160,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | 「+ 新規」で未設定の案内が出る / `launcher_not_configured` | `session_launcher` を書いたファイルが読まれていない | 起動ログの `also present and being ignored` の warn を見て、優先順 (`config.ts` > `config.js` > `config.json`) で読まれているファイルを確かめる。書いた後に daemon を再起動したか確かめる |
-| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 7 つ以外のキー (別の方式の名残り等) があっても読めない。`launch_command.0: … is not found in PATH` / `… is not an executable file` は起動コマンドが daemon の起動時に見つからない (daemon の `PATH`、実行ビット、相対パスでないか) |
+| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 7 つ以外のキーがあっても読めない (旧版用の `shell` / `templates` / `timeout_seconds` だけは無視される)。`launch_command.0: … is not found in PATH` / `… is not an executable file` は起動コマンドが daemon の起動時に見つからない (daemon の `PATH`、実行ビット、相対パスでないか) |
 | `launch_command_unavailable` | daemon の起動の後で起動コマンドが消えた・実行できなくなった | 起動コマンドを置き直して daemon を再起動する (起動コマンドの path は daemon の起動時に固定される) |
 | `launch_busy` | `launch_max_concurrency` 個の起動が走っている、または daemon が終わりかけている | 走っている起動が終わってから依頼し直す。いつも当たるなら起動コマンドが速やかに終わっているか (`exit_code` が 143 / 137 で終わっていないか) を見る |
 | `invalid_args` | 起動の入力がスキーマに合わない、または `cwd` が存在するディレクトリでない | msg の最初の理由を読む。webui は送る前に欄ごとの理由を出す |

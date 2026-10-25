@@ -34,6 +34,7 @@ import {
   jsonText,
   parseWith,
   type Output,
+  type Parsed,
   type ParseFailure,
 } from "@ccmsg/protocol";
 import * as v from "valibot";
@@ -132,36 +133,79 @@ function defaultLaunchCommand(): [string, ...string[]] {
 
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
-const SessionLauncherSchema = v.strictObject({
-  launch_command: v.optional(LaunchCommandSchema, defaultLaunchCommand),
-  root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
-  dir_tree_depth: v.optional(
-    v.pipe(v.number(), v.integer(), v.minValue(1)),
-    DEFAULT_DIR_TREE_DEPTH,
+const SessionLauncherSchema = v.pipe(
+  v.strictObject({
+    launch_command: v.optional(LaunchCommandSchema, defaultLaunchCommand),
+    root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
+    dir_tree_depth: v.optional(
+      v.pipe(v.number(), v.integer(), v.minValue(1)),
+      DEFAULT_DIR_TREE_DEPTH,
+    ),
+    /** Kept within the `launch` tool's wait, with room for the kill grace and
+     * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
+    launch_timeout_seconds: v.optional(
+      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
+      DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+    ),
+    /** How many launches may run at once; one more is refused with
+     * `launch_busy`. Not per asker: the bound is on the processes the daemon
+     * holds. */
+    launch_max_concurrency: v.optional(
+      v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
+      DEFAULT_LAUNCH_MAX_CONCURRENCY,
+    ),
+    /** Patterns of the daemon's environment keys the launch command does not
+     * inherit: `*` is any run of characters, the rest literal and
+     * case-sensitive, matched against the whole key. The daemon is often
+     * started from a session's shell, and that session's variables would
+     * otherwise reach the new one. */
+    clean_env: v.optional(EnvPatternsSchema, []),
+    /** Keys kept even where a `clean_env` pattern matches them (same pattern
+     * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
+    keep_env: v.optional(EnvPatternsSchema, []),
+    /** The keys of the launcher an older ccmsg reads, accepted whatever they
+     * hold and dropped (DR-0018 §3.1, while sessions of an older ccmsg still
+     * read this config). Any other unknown key still does not read. */
+    shell: v.optional(v.unknown()),
+    templates: v.optional(v.unknown()),
+    timeout_seconds: v.optional(v.unknown()),
+  }),
+  v.transform(
+    ({ shell: _shell, templates: _templates, timeout_seconds: _timeout, ...launcher }) => launcher,
   ),
-  /** Kept within the `launch` tool's wait, with room for the kill grace and
-   * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
-  launch_timeout_seconds: v.optional(
-    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
-    DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+);
+
+/** The legacy keys of `session_launcher` (above) a configuration holds, read
+ * apart so the daemon can say which of its settings have no effect. */
+const LegacyLauncherKeysSchema = v.looseObject({
+  session_launcher: v.optional(
+    v.looseObject({
+      shell: v.optional(v.unknown()),
+      templates: v.optional(v.unknown()),
+      timeout_seconds: v.optional(v.unknown()),
+    }),
   ),
-  /** How many launches may run at once; one more is refused with
-   * `launch_busy`. Not per asker: the bound is on the processes the daemon
-   * holds. */
-  launch_max_concurrency: v.optional(
-    v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
-    DEFAULT_LAUNCH_MAX_CONCURRENCY,
-  ),
-  /** Patterns of the daemon's environment keys the launch command does not
-   * inherit: `*` is any run of characters, the rest literal and
-   * case-sensitive, matched against the whole key. The daemon is often
-   * started from a session's shell, and that session's variables would
-   * otherwise reach the new one. */
-  clean_env: v.optional(EnvPatternsSchema, []),
-  /** Keys kept even where a `clean_env` pattern matches them (same pattern
-   * grammar): a broad `CLAUDE*` with `CLAUDE_CONFIG_DIR` kept. */
-  keep_env: v.optional(EnvPatternsSchema, []),
 });
+const LegacyLauncherKeysTextSchema = jsonText(LegacyLauncherKeysSchema);
+
+/** Log the legacy `session_launcher` keys a configuration that read holds:
+ * they have no effect, and the log says so once at startup. */
+function noteLegacyLauncherKeys(
+  read: Parsed<Output<typeof LegacyLauncherKeysSchema>>,
+  file: string,
+  log: Log,
+): void {
+  const launcher = read.ok ? read.value.session_launcher : undefined;
+  if (launcher === undefined) return;
+  const present = [
+    ...(launcher.shell !== undefined ? ["shell"] : []),
+    ...(launcher.templates !== undefined ? ["templates"] : []),
+    ...(launcher.timeout_seconds !== undefined ? ["timeout_seconds"] : []),
+  ];
+  if (present.length > 0) {
+    warn(log, file, `session_launcher: ignoring legacy keys: ${present.join(", ")}`);
+  }
+}
 
 /** `session_launcher` as the daemon holds it. */
 export type SessionLauncherConfig = Output<typeof SessionLauncherSchema>;
@@ -374,7 +418,7 @@ function notLoaded(file: string, e: unknown): ConfigLoad {
  * module use top-level `await`: both are ordinary ESM evaluation, not something
  * a synchronous `require` can observe. Executing user configuration is not a
  * new exposure: this file already names the commands the launcher runs. */
-async function readJsConfig(file: string): Promise<ConfigLoad> {
+async function readJsConfig(file: string, log: Log): Promise<ConfigLoad> {
   let loaded: unknown;
   try {
     loaded = await import(pathToFileURL(file).href);
@@ -390,11 +434,13 @@ async function readJsConfig(file: string): Promise<ConfigLoad> {
     return refused(file, `default export rejected (${errorText(e)})`);
   }
   const config = parseWith(CcmsgConfigSchema, value);
-  return config.ok ? { ok: true, config: config.value } : failed(file, config.failure);
+  if (!config.ok) return failed(file, config.failure);
+  noteLegacyLauncherKeys(parseWith(LegacyLauncherKeysSchema, value), file, log);
+  return { ok: true, config: config.value };
 }
 
 /** Read `config.json`. A missing file is the unconfigured state. */
-function readJsonConfig(file: string): ConfigLoad {
+function readJsonConfig(file: string, log: Log): ConfigLoad {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -403,7 +449,9 @@ function readJsonConfig(file: string): ConfigLoad {
     return refused(file, `unreadable (${errorText(e)})`);
   }
   const config = parseWith(CcmsgConfigTextSchema, text);
-  return config.ok ? { ok: true, config: config.value } : failed(file, config.failure);
+  if (!config.ok) return failed(file, config.failure);
+  noteLegacyLauncherKeys(parseWith(LegacyLauncherKeysTextSchema, text), file, log);
+  return { ok: true, config: config.value };
 }
 
 /** Read daemon configuration once at startup (LN-Q4). Missing is the normal
@@ -430,5 +478,5 @@ export async function loadConfig(files: ConfigFiles, log: Log): Promise<ConfigLo
       `${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} also present and being ignored (delete ${ignored.length > 1 ? "them" : "it"}, or delete ${file} to fall back)`,
     );
   }
-  return hasTs || hasJs ? await readJsConfig(file) : readJsonConfig(file);
+  return hasTs || hasJs ? await readJsConfig(file, log) : readJsonConfig(file, log);
 }

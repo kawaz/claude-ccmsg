@@ -722,21 +722,50 @@ describe("session_launcher config at daemon startup", () => {
     return { stateDir, dataDir, proc: spawnDaemonProc(stateDir, dataDir) };
   }
 
-  // A launcher config of another shape (templates, a shell) does not read:
-  // the daemon stops at startup, saying where, rather than starting without
-  // a launcher.
-  test("a launcher config of templates stops the daemon", async () => {
+  // The keys an older ccmsg's launcher reads are ignored while its sessions
+  // still read this config (DR-0018 §3.1): the daemon starts, the new keys
+  // take effect, and daemon.log names what has no effect.
+  test("a launcher config with the legacy keys starts, the new keys in effect", async () => {
     const root = tmp("ccmsg-launch-root-");
+    const bin = writeMockBin(path.join(root, "slow"), "#!/bin/sh\nexec sleep 30\n");
     const { stateDir, dataDir, proc } = spawnWith({
       session_launcher: {
         root_dirs: [root],
+        shell: "bash",
         templates: [{ name: "default", command: "run", params: {} }],
+        timeout_seconds: 30,
+        launch_command: [bin],
+        launch_timeout_seconds: 1,
       },
+    });
+    try {
+      await waitConnectable(path.join(stateDir, "daemon.sock"));
+      const file = path.join(testConfigDir(dataDir), "config.json");
+      const log = fs.readFileSync(path.join(stateDir, "daemon.log"), "utf8");
+      expect(log).toContain(
+        `config: ${file}: session_launcher: ignoring legacy keys: shell, templates, timeout_seconds`,
+      );
+      // launch_timeout_seconds (1), not the legacy timeout_seconds (30).
+      const client = await userConn({ sock: path.join(stateDir, "daemon.sock") });
+      const reply = await launch(client, { cwd: root, continue: true });
+      expect(reply.exit_code).toBe(143);
+      client.close();
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+  });
+
+  // Any other unknown key still stops the daemon at startup, saying where.
+  test("an unknown launcher key other than the legacy ones stops the daemon", async () => {
+    const root = tmp("ccmsg-launch-root-");
+    const { stateDir, dataDir, proc } = spawnWith({
+      session_launcher: { root_dirs: [root], templates: [], recipes: [] },
     });
     expect(await proc.exited).toBe(1);
     const file = path.join(testConfigDir(dataDir), "config.json");
     const log = fs.readFileSync(path.join(stateDir, "daemon.log"), "utf8");
-    expect(log).toContain(`config: ${file}: session_launcher.templates: `);
+    expect(log).toContain(`config: ${file}: session_launcher.recipes: `);
     expect(fs.existsSync(path.join(stateDir, "daemon.sock"))).toBe(false);
   });
 

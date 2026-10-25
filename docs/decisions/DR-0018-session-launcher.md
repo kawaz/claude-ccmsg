@@ -60,8 +60,9 @@ session_launcher: {
 - **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。上限は tool の待ち (§3.7 の 65 秒) に、kill の猶予と出力の待ちと daemon の起動を待つ分が収まるように置く
 - **`launch_max_concurrency`** (既定 4、1〜16 の整数): 同時に走らせる起動コマンドの数の上限。超えた依頼は起動コマンドを走らせずに `launch_busy` で断る。依頼者ごとの頻度の制限はしない (上限は daemon が抱えるプロセスの数に置く)
 - **`clean_env` / `keep_env`** (既定 `[]`): 起動コマンドに渡す環境から落とすキーと、落とさずに残すキーのパターン。daemon はあるセッションの中の shell から起動されることがあり、そのセッション由来の変数 (`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_CHILD_SESSION` 等) を持っている。それが新しいセッションへ流れて動作を変えるのを防ぐ。パターンは `*` がキー名の中の任意の文字列 (改行を含む) で、それ以外はリテラル (大文字小文字を区別、キー名全体との一致)。両方に当たるキーは残す (`keep_env` が勝つ)。広い `CLAUDE*` で落としつつ、面の分離に要る `CLAUDE_CONFIG_DIR` を残すのがこの優先の用途。daemon が足す変数 (`CCMSG_LAUNCH_REQUESTED_BY`、§3.5) は clean / keep の判定の後に重ねるので、`CCMSG_*` を落とすパターンでも必ず届く
-- config は 1 つのスキーマで読み ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える。`session_launcher` に上の 7 つ以外のキーがあっても読めない。`session_launcher` の節が無ければ起動は設定されていない (`launcher_not_configured`、§3.4)。節があれば `launch_command` が無くても起動できる
+- config は 1 つのスキーマで読み ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える。`session_launcher` に上の 7 つ以外のキーがあっても読めない (次の移行期間の 3 つを除く)。`session_launcher` の節が無ければ起動は設定されていない (`launcher_not_configured`、§3.4)。節があれば `launch_command` が無くても起動できる
 - config の変更は daemon の再起動で反映する (LN-Q4)
+- **移行期間の扱い**: 同じ config を旧版の ccmsg のセッションがまだ読むので、旧版の launcher のキー `shell` / `templates` / `timeout_seconds` は、値の形を見ずに受けて捨てる (新しいキーと並べて書ける)。daemon は起動時に `config: <file>: session_launcher: ignoring legacy keys: <キー>` の 1 行で効いていないキーを示す。この 3 つ以外の知らないキーは従来どおり読めない。旧版のセッションが居なくなったらこの扱いを外す ([issue drop-legacy-session-launcher-keys](../issue/2026-10-25-drop-legacy-session-launcher-keys.md))
 
 ### 3.2 起動の入力 (op と webui で共通、tool はその部分)
 

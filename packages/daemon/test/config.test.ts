@@ -227,10 +227,10 @@ describe("loadConfig", () => {
     expect(fs.existsSync(DEFAULT_LAUNCH_COMMAND_SCRIPT)).toBe(true);
   });
 
-  // A launcher of another shape (templates of shell snippets, a shell) is
-  // not a launcher with parts missing: it does not read, naming what is
-  // unknown, and the daemon does not start.
-  test("a launcher with templates and a shell does not read", async () => {
+  // While sessions of an older ccmsg still read this config, the keys its
+  // launcher read (shell, templates, timeout_seconds) are dropped whatever
+  // they hold, beside the new keys, and startup says so once (DR-0018 §3.1).
+  test("the legacy launcher keys are ignored beside the new ones, and named once", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
@@ -238,14 +238,50 @@ describe("loadConfig", () => {
           root_dirs: [dir],
           shell: "bash",
           templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+          timeout_seconds: 5,
+          launch_command: ["sh"],
+          launch_timeout_seconds: 20,
+          launch_max_concurrency: 2,
         },
       }),
     );
-    // The first key it does not know is named (here `shell`, before
-    // `templates`).
-    expect(await refusal()).toEqual([
-      `config: ${file}: session_launcher.shell: Invalid key: Expected never but received "shell"`,
+    const launcherConfig = (await loaded()).session_launcher;
+    expect(launcherConfig).toEqual({
+      launch_command: [SH],
+      root_dirs: [path.resolve(dir)],
+      dir_tree_depth: DEFAULT_DIR_TREE_DEPTH,
+      launch_timeout_seconds: 20,
+      launch_max_concurrency: 2,
+      clean_env: [],
+      keep_env: [],
+    });
+    expect(warnings).toEqual([
+      `config: ${file}: session_launcher: ignoring legacy keys: shell, templates, timeout_seconds`,
     ]);
+  });
+
+  test("a config.ts with legacy launcher keys is read the same way", async () => {
+    fs.writeFileSync(
+      tsFile,
+      `export default { session_launcher: { root_dirs: [${JSON.stringify(dir)}], templates: [] } };`,
+    );
+    expect((await loaded()).session_launcher?.root_dirs).toEqual([dir]);
+    expect(warnings).toEqual([
+      `config: ${tsFile}: session_launcher: ignoring legacy keys: templates`,
+    ]);
+  });
+
+  // Only those three are let through: any other unknown key still does not
+  // read, and a config that does not read logs no legacy note.
+  test("an unknown key other than the legacy three still does not read", async () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ session_launcher: { root_dirs: [dir], shell: "bash", shel: "zsh" } }),
+    );
+    expect(await refusal()).toEqual([
+      `config: ${file}: session_launcher.shel: Invalid key: Expected never but received "shel"`,
+    ]);
+    expect(warnings).toEqual([]);
   });
 
   test("an unknown key beside launch_command does not read", async () => {
