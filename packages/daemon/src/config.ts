@@ -27,7 +27,7 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_DIR_TREE_DEPTH,
-  DEFAULT_LAUNCH_MAX_IN_FLIGHT,
+  DEFAULT_LAUNCH_MAX_CONCURRENCY,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
   LAUNCH_TIMEOUT_SECONDS_MAX,
   errorText,
@@ -119,10 +119,21 @@ const LaunchCommandSchema = v.tupleWithRest(
   v.pipe(v.string(), v.nonEmpty("must be a non-empty string")),
 );
 
+/** The launch command the daemon runs when the config names none: the
+ * built-in script beside this module, run by the bun running the daemon
+ * (default-launch-command.ts). */
+export const DEFAULT_LAUNCH_COMMAND_SCRIPT = fileURLToPath(
+  new URL("./default-launch-command.ts", import.meta.url),
+);
+
+function defaultLaunchCommand(): [string, ...string[]] {
+  return [process.execPath, DEFAULT_LAUNCH_COMMAND_SCRIPT];
+}
+
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field
  * left out; a value of the wrong shape does not read. */
 const SessionLauncherSchema = v.strictObject({
-  launch_command: LaunchCommandSchema,
+  launch_command: v.optional(LaunchCommandSchema, defaultLaunchCommand),
   root_dirs: v.pipe(v.array(RootDirSchema), v.minLength(1, "must list at least one root")),
   dir_tree_depth: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1)),
@@ -130,16 +141,16 @@ const SessionLauncherSchema = v.strictObject({
   ),
   /** Kept within the `launch` tool's wait, with room for the kill grace and
    * the output's (hooks/tools.ts LAUNCH_TIMEOUT_MS). */
-  timeout_seconds: v.optional(
+  launch_timeout_seconds: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(LAUNCH_TIMEOUT_SECONDS_MAX)),
     DEFAULT_LAUNCH_TIMEOUT_SECONDS,
   ),
   /** How many launches may run at once; one more is refused with
    * `launch_busy`. Not per asker: the bound is on the processes the daemon
    * holds. */
-  max_in_flight: v.optional(
+  launch_max_concurrency: v.optional(
     v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(16)),
-    DEFAULT_LAUNCH_MAX_IN_FLIGHT,
+    DEFAULT_LAUNCH_MAX_CONCURRENCY,
   ),
   /** Patterns of the daemon's environment keys the launch command does not
    * inherit: `*` is any run of characters, the rest literal and

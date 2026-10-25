@@ -178,7 +178,7 @@ export type DirTreeRequest = Output<typeof DirTreeRequestSchema>;
  * caller chooses only the launch.
  *
  * Slow reply: the reply comes once the launch command has finished (up to
- * timeout_seconds, the kill grace and the wait for its output). Requests of
+ * launch_timeout_seconds, the kill grace and the wait for its output). Requests of
  * one connection are answered concurrently (RequestEnvelope), so the wait
  * holds nothing else back. */
 export const SessionLaunchRequestSchema = v.object({

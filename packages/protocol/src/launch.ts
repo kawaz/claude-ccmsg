@@ -135,21 +135,25 @@ export const LaunchInputTextSchema = jsonText(LaunchInputSchema);
  * checks), from these fields alone. */
 export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_session_at"]);
 
-/** Who asked for a launch: the person (`user`), or the asking session's id. */
-const RequestedBySchema = v.union([v.literal("user"), SessionUuidSchema]);
+/** The environment variable the daemon names who asked for a launch in:
+ * `user` (the person, from the webui) or the asking session's id. It is put
+ * over the launch command's environment after clean_env / keep_env, so it
+ * always arrives. Who asked is not a claude option, so it is not a field of
+ * the command's input. */
+export const LAUNCH_REQUESTED_BY_ENV = "CCMSG_LAUNCH_REQUESTED_BY";
 
 /** What the launch command reads on standard input
  * (docs/design/launch-command.md): the launch with its `cwd` resolved to a
- * realpath, who asked, and, when the launch makes a session
- * (`launchMakesSession`), the id the daemon chose for it. */
+ * realpath and, when the launch makes a session (`launchMakesSession`), the
+ * id the daemon chose for it (`--session-id`). Every field is one of claude's
+ * options. */
 export const LaunchCommandInputSchema = v.pipe(
   v.strictObject({
     ...LaunchFieldsSchema.entries,
     session_id: v.optional(SessionUuidSchema),
-    requested_by: RequestedBySchema,
   }),
   v.check(
-    ({ session_id: _id, requested_by: _by, ...launch }) => v.is(LaunchInputSchema, launch),
+    ({ session_id: _id, ...launch }) => v.is(LaunchInputSchema, launch),
     "the launch does not read",
   ),
   v.forward(
@@ -183,7 +187,7 @@ export type SessionLaunchResponse = Output<typeof SessionLaunchResponseSchema>;
 /** The session_launch reply, as `ccmsg sidecar launch` prints it. */
 export const SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
 
-/** The launch command's longest wait (`timeout_seconds`, DR-0018 §3.1). */
+/** The launch command's longest wait (`launch_timeout_seconds`, DR-0018 §3.1). */
 export const LAUNCH_TIMEOUT_SECONDS_MAX = 50;
 /** After the timeout's SIGTERM, how long the command has before SIGKILL, and
  * after SIGKILL how long the daemon waits to see it exit (DR-0018 §3.5). */

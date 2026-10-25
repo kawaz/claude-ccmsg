@@ -11,6 +11,7 @@ import {
   errorText,
   LAUNCH_KILL_GRACE_MS,
   LAUNCH_PIPE_DRAIN_GRACE_MS,
+  LAUNCH_REQUESTED_BY_ENV,
   launchMakesSession,
   type LaunchCommandInput,
   type LaunchInput,
@@ -79,9 +80,10 @@ function envPatternToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`, "s");
 }
 
-/** The launch command's environment: `baseEnv` without the keys a clean_env
- * pattern matches, except those a keep_env pattern also matches (keep wins:
- * a broad `CLAUDE*` must not remove CLAUDE_CONFIG_DIR). Nothing is added. */
+/** The daemon's environment as the launch command inherits it: `baseEnv`
+ * without the keys a clean_env pattern matches, except those a keep_env
+ * pattern also matches (keep wins: a broad `CLAUDE*` must not remove
+ * CLAUDE_CONFIG_DIR). What the daemon adds (who asked) goes over this. */
 export function buildLaunchEnv(
   baseEnv: Readonly<Record<string, string | undefined>>,
   cleanEnv: readonly string[],
@@ -117,7 +119,7 @@ export interface LaunchCommandSpawn {
   stdin: string;
   /** Once aborted, SIGTERM to the command's process group, SIGKILL to it
    * LAUNCH_KILL_GRACE_MS later, and LAUNCH_KILL_GRACE_MS more to see the
-   * command exit. The daemon's is `AbortSignal.timeout` of timeout_seconds. */
+   * command exit. The daemon's is `AbortSignal.timeout` of launch_timeout_seconds. */
   deadline: AbortSignal;
 }
 
@@ -209,7 +211,8 @@ async function realDirectory(dir: string): Promise<string | undefined> {
 export interface SessionLaunchDeps {
   /** `session_launcher` of the config; undefined when there is none. */
   launcher: SessionLauncherConfig | undefined;
-  /** Who asked: `user`, or the asking session's sid. */
+  /** Who asked: `user`, or the asking session's sid. The log line names it,
+   * and the launch command reads it in LAUNCH_REQUESTED_BY_ENV. */
   requester: string;
   /** The daemon's environment, which the launch command inherits cleaned. */
   baseEnv: Readonly<Record<string, string | undefined>>;
@@ -225,9 +228,9 @@ export type SessionLaunchOutcome =
 /** The log line's fields for a launch: what it asked for, never the prompt's
  * text (its length only). Text that comes from the asker (`cwd`) is written
  * as a JSON string, so it cannot pose as another field of the line. */
-function logFieldsOf(input: LaunchCommandInput): string {
+function logFieldsOf(requester: string, input: LaunchCommandInput): string {
   return [
-    `by=${input.requested_by}`,
+    `by=${requester}`,
     `cwd=${JSON.stringify(input.cwd)}`,
     ...(input.continue === true ? ["continue=true"] : []),
     ...(input.resume !== undefined ? [`resume=${input.resume}`] : []),
@@ -269,9 +272,8 @@ export async function launchSession(
     ...launch,
     cwd,
     ...(sessionId !== undefined ? { session_id: sessionId } : {}),
-    requested_by: deps.requester,
   };
-  const logFields = logFieldsOf(input);
+  const logFields = logFieldsOf(deps.requester, input);
 
   // launch_command[0] is an absolute path, fixed when the config was read.
   const [program] = launcher.launch_command;
@@ -280,9 +282,14 @@ export async function launchSession(
     run = await runLaunchCommand({
       argv: launcher.launch_command,
       cwd,
-      env: buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+      // Who asked goes over the cleaned environment, so no clean_env
+      // pattern removes it.
+      env: {
+        ...buildLaunchEnv(deps.baseEnv, launcher.clean_env, launcher.keep_env),
+        [LAUNCH_REQUESTED_BY_ENV]: deps.requester,
+      },
       stdin: JSON.stringify(input),
-      deadline: AbortSignal.timeout(launcher.timeout_seconds * 1000),
+      deadline: AbortSignal.timeout(launcher.launch_timeout_seconds * 1000),
     });
   } catch (e) {
     const msg = `the launch command could not be started: ${program} in ${cwd}: ${errorText(e)}`;

@@ -165,32 +165,32 @@ describe("launchMakesSession", () => {
 describe("LaunchCommandInputSchema", () => {
   // The id the daemon chose rides with a launch that makes a session; a resume
   // that does not fork carries none, since claude refuses --session-id there.
-  test("a new session and a fork read with the new session's id and who asked", () => {
+  test("a new session and a fork read with the new session's id", () => {
     for (const input of [
-      { cwd: "/w", model: "opus", effort: "high", session_id: NEW_SID, requested_by: "user" },
-      { cwd: "/w", resume: SID, fork_session: true, session_id: NEW_SID, requested_by: SID },
-      { cwd: "/w", resume: SID, requested_by: "user" },
+      { cwd: "/w", model: "opus", effort: "high", session_id: NEW_SID },
+      { cwd: "/w", resume: SID, fork_session: true, session_id: NEW_SID },
+      { cwd: "/w", resume: SID },
     ] as const) {
       expect(parseWith(LaunchCommandInputSchema, input)).toEqual({ ok: true, value: input });
     }
   });
 
   test("a session id where the launch makes none, or none where it makes one, does not read", () => {
-    expect(
-      commandInputRefusal({ cwd: "/w", model: "opus", effort: "high", requested_by: "user" }),
-    ).toContain("session_id");
-    expect(
-      commandInputRefusal({ cwd: "/w", resume: SID, session_id: NEW_SID, requested_by: "user" }),
-    ).toContain("session_id");
+    expect(commandInputRefusal({ cwd: "/w", model: "opus", effort: "high" })).toContain(
+      "session_id",
+    );
+    expect(commandInputRefusal({ cwd: "/w", resume: SID, session_id: NEW_SID })).toContain(
+      "session_id",
+    );
   });
 
-  test("requested_by is the person or a session id, and the launch's checks hold", () => {
-    expect(commandInputRefusal({ cwd: "/w", resume: SID, requested_by: "someone" })).toContain(
+  // Every field is a claude option: who asked is the environment's
+  // (LAUNCH_REQUESTED_BY_ENV), not a field.
+  test("a field that is not a claude option does not read, and the launch's checks hold", () => {
+    expect(commandInputRefusal({ cwd: "/w", resume: SID, requested_by: "user" })).toContain(
       "requested_by",
     );
-    expect(
-      commandInputRefusal({ cwd: "/w", continue: true, resume: SID, requested_by: "user" }),
-    ).not.toBe("");
+    expect(commandInputRefusal({ cwd: "/w", continue: true, resume: SID })).not.toBe("");
   });
 });
 

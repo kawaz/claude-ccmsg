@@ -1642,12 +1642,10 @@ var NEEDS_SOURCE = "continue か resume と一緒に指定する";
 var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launchContinues(launch), NEEDS_SOURCE), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
 var LaunchInputTextSchema = jsonText(LaunchInputSchema);
 var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
-var RequestedBySchema = union([literal("user"), SessionUuidSchema]);
 var LaunchCommandInputSchema = pipe(strictObject({
   ...LaunchFieldsSchema.entries,
-  session_id: optional(SessionUuidSchema),
-  requested_by: RequestedBySchema
-}), check(({ session_id: _id, requested_by: _by, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
+  session_id: optional(SessionUuidSchema)
+}), check(({ session_id: _id, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
 var SessionLaunchResponseSchema = object({
   ok: literal(true),
   session_id: optional(SessionUuidSchema),

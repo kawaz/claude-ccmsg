@@ -41,7 +41,7 @@ export const PEERS_TIMEOUT_MS = 5_000;
  * when the speech ends, so a long text takes as long as it is to say. */
 export const SAY_TIMEOUT_MS = 120_000;
 /** `launch` budget (DR-0018 §3.7): the launch command's longest wait
- * (`timeout_seconds`, at most 50 s) + the kill grace (0.5 s) + the wait for
+ * (`launch_timeout_seconds`, at most 50 s) + the kill grace (0.5 s) + the wait for
  * its pipes' EOF (0.5 s) + a daemon `ccmsg sidecar launch` has to start (its
  * connect retries, about 10 s) + writing the output aside, with what is left
  * for the process itself. register.test.ts pins the sum below it. */

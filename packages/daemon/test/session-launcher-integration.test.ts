@@ -146,7 +146,6 @@ describe("session_launch: what the launch command reads", () => {
         name: "worker",
         prompt: "do the work",
         session_id: reply.session_id ?? "",
-        requested_by: "user",
       });
       expect(reply.stderr).toBe(`${real}\n`);
     });
@@ -164,7 +163,6 @@ describe("session_launch: what the launch command reads", () => {
           cwd: fs.realpathSync(dir),
           continue: true,
           prompt: "ends with\n",
-          requested_by: "user",
         }),
       );
       expect(reply.stdout.endsWith("}")).toBe(true);
@@ -189,7 +187,6 @@ describe("session_launch: what the launch command reads", () => {
         fork_session: true,
         resume_session_at: RECORD_UUID,
         session_id: reply.session_id ?? "",
-        requested_by: "user",
       });
     });
   });
@@ -206,7 +203,6 @@ describe("session_launch: what the launch command reads", () => {
         cwd: fs.realpathSync(dir),
         continue: true,
         model: "sonnet",
-        requested_by: "user",
       });
       const resume = await launch(client, { cwd: dir, resume: RESUME_SID, prompt: "go on" });
       expect(resume.session_id).toBeUndefined();
@@ -214,7 +210,6 @@ describe("session_launch: what the launch command reads", () => {
         cwd: fs.realpathSync(dir),
         resume: RESUME_SID,
         prompt: "go on",
-        requested_by: "user",
       });
     });
   });
@@ -246,12 +241,12 @@ describe("session_launch: what the launch command reads", () => {
 });
 
 describe("session_launch: how the run ends", () => {
-  // timeout_seconds sends SIGTERM; a command ended by it answers 143, and the
+  // launch_timeout_seconds sends SIGTERM; a command ended by it answers 143, and the
   // log line says the deadline did it.
-  test("a command past timeout_seconds is ended, answers 143, and is logged timed_out", async () => {
+  test("a command past launch_timeout_seconds is ended, answers 143, and is logged timed_out", async () => {
     const dir = tmp("ccmsg-launch-");
     const bin = writeMockBin(path.join(dir, "slow"), "#!/bin/sh\nexec sleep 30\n");
-    await withDaemon(launcherConfig([bin], dir, { timeout_seconds: 1 }), async (ctx) => {
+    await withDaemon(launcherConfig([bin], dir, { launch_timeout_seconds: 1 }), async (ctx) => {
       const client = await userConn(ctx);
       const reply = await launch(client, { cwd: dir, model: "opus", effort: "low" });
       expect(reply).toEqual({ ok: true, exit_code: 143, stdout: "", stderr: "" });
@@ -269,7 +264,7 @@ describe("session_launch: how the run ends", () => {
       // shell would report that on stderr.
       "#!/bin/sh\ntrap 'printf term-ignored >&2' TERM\nprintf started\nwhile :; do :; done\n",
     );
-    await withDaemon(launcherConfig([bin], dir, { timeout_seconds: 1 }), async (ctx) => {
+    await withDaemon(launcherConfig([bin], dir, { launch_timeout_seconds: 1 }), async (ctx) => {
       const client = await userConn(ctx);
       const reply = await launch(client, { cwd: dir, continue: true });
       expect(reply).toEqual({
@@ -361,6 +356,22 @@ describe("session_launch: how the run ends", () => {
     );
   });
 
+  // Who asked arrives in CCMSG_LAUNCH_REQUESTED_BY, put over the cleaned
+  // environment: a clean_env pattern that matches it does not remove it.
+  test("who asked arrives in CCMSG_LAUNCH_REQUESTED_BY even past clean_env", async () => {
+    const dir = tmp("ccmsg-launch-");
+    const bin = writeMockBin(
+      path.join(dir, "who"),
+      '#!/bin/sh\nprintf "%s" "${CCMSG_LAUNCH_REQUESTED_BY-absent}"\n',
+    );
+    await withDaemon(launcherConfig([bin], dir, { clean_env: ["CCMSG_*"] }), async (ctx) => {
+      const user = await userConn(ctx);
+      expect((await launch(user, { cwd: dir, continue: true })).stdout).toBe("user");
+      const session = await sessionConn(ctx, SID, { cwd: dir });
+      expect((await launch(session, { cwd: dir, continue: true })).stdout).toBe(SID);
+    });
+  });
+
   // The reply waits for the command; other requests of the same connection
   // do not wait for the reply. The command holds until the test opens its
   // gate, so the order is the test's, not a race.
@@ -402,13 +413,13 @@ describe("session_launch: how the run ends", () => {
 });
 
 describe("session_launch: how many run at once", () => {
-  // max_in_flight bounds the launch commands the daemon holds: one more is
+  // launch_max_concurrency bounds the launch commands the daemon holds: one more is
   // refused without running, and a launch is taken again once one ends.
-  test("a launch past max_in_flight is launch_busy, and is taken once one ends", async () => {
+  test("a launch past launch_max_concurrency is launch_busy, and is taken once one ends", async () => {
     const dir = tmp("ccmsg-launch-");
     const fifo = gate(dir);
     await withDaemon(
-      launcherConfig([gatedCommand(dir, fifo)], dir, { max_in_flight: 1 }),
+      launcherConfig([gatedCommand(dir, fifo)], dir, { launch_max_concurrency: 1 }),
       async (ctx) => {
         const client = await userConn(ctx);
         const running = launch(client, { cwd: dir, continue: true });
@@ -418,7 +429,7 @@ describe("session_launch: how many run at once", () => {
           launch: { cwd: dir, continue: true },
         });
         expect(busy.error.code).toBe("launch_busy");
-        expect(busy.error.msg).toContain("max_in_flight");
+        expect(busy.error.msg).toContain("launch_max_concurrency");
         // Refused before it ran: still the one command started.
         expect(await startedCount(dir, 1)).toBe(1);
         await fs.promises.writeFile(fifo, "go\n");
@@ -557,9 +568,9 @@ describe("session_launch: refusals", () => {
 
 describe("session_launch: who launches", () => {
   // A session may launch (§3.8): what runs is still the one configured
-  // command. The command reads which session asked; the log line names it
-  // and carries the prompt's length, never its text.
-  test("a session launches, the command reads who asked, and the log line has no prompt", async () => {
+  // command. The log line names the session that asked and carries the
+  // prompt's length, never its text.
+  test("a session launches, and the log line names it without the prompt", async () => {
     const dir = tmp("ccmsg-launch-");
     await withDaemon(launcherConfig([echoCommand(dir)], dir), async (ctx) => {
       const client = await sessionConn(ctx, SID, { cwd: dir });
@@ -571,7 +582,6 @@ describe("session_launch: who launches", () => {
         prompt,
       });
       expect(reply.exit_code).toBe(0);
-      expect(commandInput(reply).requested_by).toBe(SID);
       const lines = launchLogLines(ctx);
       expect(lines).toHaveLength(1);
       const [line] = lines;
@@ -715,7 +725,7 @@ describe("session_launcher config at daemon startup", () => {
   // A launcher config of another shape (templates, a shell) does not read:
   // the daemon stops at startup, saying where, rather than starting without
   // a launcher.
-  test("a launcher config without launch_command stops the daemon", async () => {
+  test("a launcher config of templates stops the daemon", async () => {
     const root = tmp("ccmsg-launch-root-");
     const { stateDir, dataDir, proc } = spawnWith({
       session_launcher: {
@@ -726,7 +736,6 @@ describe("session_launcher config at daemon startup", () => {
     expect(await proc.exited).toBe(1);
     const file = path.join(testConfigDir(dataDir), "config.json");
     const log = fs.readFileSync(path.join(stateDir, "daemon.log"), "utf8");
-    expect(log).toContain(`config: ${file}: session_launcher.launch_command: `);
     expect(log).toContain(`config: ${file}: session_launcher.templates: `);
     expect(fs.existsSync(path.join(stateDir, "daemon.sock"))).toBe(false);
   });

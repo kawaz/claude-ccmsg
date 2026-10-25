@@ -7,11 +7,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   DEFAULT_DIR_TREE_DEPTH,
-  DEFAULT_LAUNCH_MAX_IN_FLIGHT,
+  DEFAULT_LAUNCH_MAX_CONCURRENCY,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
 } from "@ccmsg/protocol";
 import {
   CONFIG_TYPES_BASENAME,
+  DEFAULT_LAUNCH_COMMAND_SCRIPT,
   loadConfig,
   type ResolvedCcmsgConfig,
   writeConfigTypesFile,
@@ -108,8 +109,8 @@ describe("loadConfig", () => {
           launch_command: [program, "--profile", "work"],
           root_dirs: [root],
           dir_tree_depth: 3,
-          timeout_seconds: 25,
-          max_in_flight: 2,
+          launch_timeout_seconds: 25,
+          launch_max_concurrency: 2,
           clean_env: ["CLAUDE_*", "AI_AGENT"],
           keep_env: ["CLAUDE_CONFIG_DIR"],
         },
@@ -121,8 +122,8 @@ describe("loadConfig", () => {
         launch_command: [program, "--profile", "work"],
         root_dirs: [path.resolve(root)],
         dir_tree_depth: 3,
-        timeout_seconds: 25,
-        max_in_flight: 2,
+        launch_timeout_seconds: 25,
+        launch_max_concurrency: 2,
         clean_env: ["CLAUDE_*", "AI_AGENT"],
         keep_env: ["CLAUDE_CONFIG_DIR"],
       },
@@ -138,8 +139,8 @@ describe("loadConfig", () => {
         launch_command: [SH],
         root_dirs: [path.resolve(dir)],
         dir_tree_depth: DEFAULT_DIR_TREE_DEPTH,
-        timeout_seconds: DEFAULT_LAUNCH_TIMEOUT_SECONDS,
-        max_in_flight: DEFAULT_LAUNCH_MAX_IN_FLIGHT,
+        launch_timeout_seconds: DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+        launch_max_concurrency: DEFAULT_LAUNCH_MAX_CONCURRENCY,
         clean_env: [],
         keep_env: [],
       },
@@ -207,24 +208,28 @@ describe("loadConfig", () => {
     ]);
   });
 
-  test("a missing, empty, or non-array launch_command does not read", async () => {
-    for (const launch_command of [undefined, [], "sh", [""], ["sh", ""], ["sh", 1]]) {
+  test("an empty or non-array launch_command does not read", async () => {
+    for (const launch_command of [[], "sh", [""], ["sh", ""], ["sh", 1]]) {
       fs.writeFileSync(
         file,
-        JSON.stringify({
-          session_launcher: {
-            root_dirs: [dir],
-            ...(launch_command === undefined ? {} : { launch_command }),
-          },
-        }),
+        JSON.stringify({ session_launcher: { root_dirs: [dir], launch_command } }),
       );
       expect(await refusal()).toEqual([expect.stringContaining("session_launcher.launch_command")]);
     }
   });
 
+  // Without launch_command the daemon runs the built-in launch command with
+  // the bun running it (DR-0018 §3.1), as a launch_command it fixed itself.
+  test("no launch_command is the built-in launch command run by the daemon's bun", async () => {
+    fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
+    const command = (await loaded()).session_launcher?.launch_command;
+    expect(command).toEqual([process.execPath, DEFAULT_LAUNCH_COMMAND_SCRIPT]);
+    expect(fs.existsSync(DEFAULT_LAUNCH_COMMAND_SCRIPT)).toBe(true);
+  });
+
   // A launcher of another shape (templates of shell snippets, a shell) is
   // not a launcher with parts missing: it does not read, naming what is
-  // unknown and what is missing, and the daemon does not start.
+  // unknown, and the daemon does not start.
   test("a launcher with templates and a shell does not read", async () => {
     fs.writeFileSync(
       file,
@@ -239,7 +244,6 @@ describe("loadConfig", () => {
     // The first key it does not know is named (here `shell`, before
     // `templates`).
     expect(await refusal()).toEqual([
-      `config: ${file}: session_launcher.launch_command: Invalid key: Expected "launch_command" but received undefined`,
       `config: ${file}: session_launcher.shell: Invalid key: Expected never but received "shell"`,
     ]);
   });
@@ -282,32 +286,34 @@ describe("loadConfig", () => {
     ]);
   });
 
-  // timeout_seconds is a whole number of seconds from 1 to 50: the launch
+  // launch_timeout_seconds is a whole number of seconds from 1 to 50: the launch
   // tool's wait has to hold the timeout, the kill grace and the output
   // (hooks/register.test.ts pins that). A value outside does not read rather
   // than being replaced.
-  test("timeout_seconds outside 1..50 or not whole does not read", async () => {
+  test("launch_timeout_seconds outside 1..50 or not whole does not read", async () => {
     for (const ok of [1, 50]) {
-      fs.writeFileSync(file, JSON.stringify(launcher({ timeout_seconds: ok })));
-      expect((await loaded()).session_launcher?.timeout_seconds).toBe(ok);
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_timeout_seconds: ok })));
+      expect((await loaded()).session_launcher?.launch_timeout_seconds).toBe(ok);
     }
     for (const invalid of ["abc", 0, 51, 1.5, -1]) {
-      fs.writeFileSync(file, JSON.stringify(launcher({ timeout_seconds: invalid })));
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_timeout_seconds: invalid })));
       expect(await refusal()).toEqual([
-        expect.stringContaining("session_launcher.timeout_seconds"),
+        expect.stringContaining("session_launcher.launch_timeout_seconds"),
       ]);
     }
   });
 
-  // max_in_flight is a whole number from 1 to 16.
-  test("max_in_flight outside 1..16 or not whole does not read", async () => {
+  // launch_max_concurrency is a whole number from 1 to 16.
+  test("launch_max_concurrency outside 1..16 or not whole does not read", async () => {
     for (const ok of [1, 16]) {
-      fs.writeFileSync(file, JSON.stringify(launcher({ max_in_flight: ok })));
-      expect((await loaded()).session_launcher?.max_in_flight).toBe(ok);
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_max_concurrency: ok })));
+      expect((await loaded()).session_launcher?.launch_max_concurrency).toBe(ok);
     }
     for (const invalid of ["4", 0, 17, 2.5]) {
-      fs.writeFileSync(file, JSON.stringify(launcher({ max_in_flight: invalid })));
-      expect(await refusal()).toEqual([expect.stringContaining("session_launcher.max_in_flight")]);
+      fs.writeFileSync(file, JSON.stringify(launcher({ launch_max_concurrency: invalid })));
+      expect(await refusal()).toEqual([
+        expect.stringContaining("session_launcher.launch_max_concurrency"),
+      ]);
     }
   });
 

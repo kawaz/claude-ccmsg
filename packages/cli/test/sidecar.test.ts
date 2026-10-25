@@ -1020,8 +1020,6 @@ describe("ccmsg sidecar launch", () => {
         effort: "low",
         prompt,
         session_id: defined(reply.session_id, "the new session's id"),
-        // The CLI asks as the session it names.
-        requested_by: SID,
       });
     });
   });

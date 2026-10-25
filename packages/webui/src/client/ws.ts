@@ -300,7 +300,7 @@ export interface WsHandle {
     opts?: { depth?: number; filter?: string },
   ): Promise<ReplyOf<"dir_tree">>;
   /** Launch a session through the configured launch command (DR-0018 §3.4).
-   * The daemon awaits the whole run (bounded by `timeout_seconds`, the kill
+   * The daemon awaits the whole run (bounded by `launch_timeout_seconds`, the kill
    * grace and the wait for its output, §3.5) before replying, so this call is
    * naturally slow — SessionCreator shows its own loading state while it's in
    * flight rather than relying on a generic pending indicator. */

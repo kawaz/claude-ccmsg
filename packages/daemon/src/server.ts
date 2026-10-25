@@ -257,7 +257,7 @@ export interface Daemon {
   shuttingDown: boolean;
   /** DaemonHost.env. */
   env: Readonly<Record<string, string | undefined>>;
-  /** The launch commands running now (DR-0018 §3.5): `max_in_flight` bounds
+  /** The launch commands running now (DR-0018 §3.5): `launch_max_concurrency` bounds
    * them, and a shutdown waits for them, each ending by its own deadline. */
   launches: Set<Promise<unknown>>;
   /** The agents rows, read from Claude Code's state files (agents.ts). */
@@ -1938,11 +1938,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         );
         return;
       }
-      if (launcher !== undefined && daemon.launches.size >= launcher.max_in_flight) {
+      if (launcher !== undefined && daemon.launches.size >= launcher.launch_max_concurrency) {
         sendErr(
           conn,
           ErrorCode.launch_busy,
-          `${String(daemon.launches.size)} launches are running (max_in_flight); ask again once one ends`,
+          `${String(daemon.launches.size)} launches are running (launch_max_concurrency); ask again once one ends`,
         );
         return;
       }
@@ -2859,7 +2859,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
   // The launches running are answered before anything stops: each ends by
-  // its own deadline (timeout_seconds, then SIGTERM), and its asker would
+  // its own deadline (launch_timeout_seconds, then SIGTERM), and its asker would
   // otherwise not know whether a session was started (DR-0018 §3.5).
   if (daemon.launches.size > 0) {
     daemon.log.info(`graceful shutdown: waiting for ${String(daemon.launches.size)} launches`);
