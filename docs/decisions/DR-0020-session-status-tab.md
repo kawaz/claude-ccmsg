@@ -78,3 +78,10 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 - **blockedBy / blocks は置換**: TaskUpdate は `addBlockedBy` の「足す」形だが attachment は両方向の完全な list を持つ (addBlockedBy しか呼ばれていないタスクに逆向きの `blocks` が入る)。attachment 側を権威として置換する。
 - **subagents/*.jsonl の全走査は採らない**: agent 数に比例した走査コストを毎 fold 払う必要がある一方、attachment だけで受け入れ条件 (worker タスクが Status / dump に出る) を満たせることを実 transcript で確認した。
 - **既知の限界**: attachment は生成から注入までに遅延があり、直後の tool_use が進めたstatus を一瞬巻き戻して見せうる。次の reminder か次の TaskUpdate が後勝ちで正すため収束する。
+
+## Addendum 2026-10-25: TODO 一覧を畳む、プロセスの稼働時間と Claude Code の版 (kawaz)
+
+- **TODO 一覧は既定で閉じる**: TODO が多いと Status タブの他の節を押し下げて邪魔になり、重要度も他の節より低い。節全体を `<details>` にし、見出しに全件数 (`TODO (n)`) を出す。開閉の状態は保持しない。開いた中身は従来どおり (in_progress、pending は開いた fold、completed は閉じた fold)。TODO が 1 件も無いセッションでは節を出さない (Background と同じ)。
+- **稼働時間**: そのプロセスの起動からの経過。データ源は Claude Code の `sessions/<pid>.json` の `startedAt` (agents の行に既に載っている)。resume は新しいプロセスなので、そこから数え直す。書式は webui が経過を出す既存の `formatDuration` (メッセージバブルの相対時間、応答中の経過と同じ `5s` / `1m12s` / `5h12m` / `2d15h`) に揃え、個別の書式を作らない。Status タブに `UPTIME` の行、TL 下ミニパネルの ctx 行の末尾に出す。Status タブはタブを開いた時点の値で、開いている間は更新しない。
+- **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せ、ctx 行の末尾に `claude v<version>` で出す。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
+- ctx 行は `ctx 120k/1M (12%) · fable-5[1m] · low · 2d15h · claude v2.1.310` の形になる。context の観測がまだ無い間も、プロセスの行があれば `35m20s · claude v2.1.310` だけの行を出す。

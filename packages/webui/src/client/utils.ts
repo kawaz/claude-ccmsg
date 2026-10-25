@@ -69,6 +69,19 @@ export function formatRelativeAge(iso: string | null, now: number = Date.now()):
   return `${Math.floor(totalHour / 24)}d${totalHour % 24}h`;
 }
 
+/** What a session's process has been running as, for the end of the
+ * Timeline's ctx line: how long since it started, in the same `formatDuration`
+ * the bubbles and the responding row use, and the Claude Code version it runs
+ * ("2d15h", "claude v2.1.310"). A record that names no version gives the
+ * uptime alone. */
+export function sessionProcessParts(
+  agent: Pick<AgentInfo, "startedAt" | "version">,
+  now: number,
+): string[] {
+  const uptime = formatDuration(now - agent.startedAt);
+  return agent.version ? [uptime, `claude v${agent.version}`] : [uptime];
+}
+
 /** HH:MM:SS in the viewer's local timezone, for a Timeline turn's timestamp
  * (DR-0009). Returns "" for a missing/unparseable timestamp (some transcript
  * line types, e.g. file-history-snapshot, carry none) rather than "Invalid

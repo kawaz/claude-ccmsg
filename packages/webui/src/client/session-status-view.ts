@@ -304,8 +304,8 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
 }
 
 /** 走行中 workflow 名 + in_progress TODO を要約した上に、context 消費
- * (issue 2026-07-17 #1) と活動中 teammates (issue 2026-07-17 #5) を追加行
- * として付与する。workflow/todo がゼロかつ context/teammates も無ければ
+ * (issue 2026-07-17 #1、末尾にプロセスの稼働時間と Claude Code の版) と活動中
+ * teammates (issue 2026-07-17 #5) を追加行として付与する。workflow/todo がゼロかつ context/teammates も無ければ
  * 空配列 (呼び出し側はこれをパネル非表示の合図にする、DR-0020 §2.1
  * "ゼロ件なら非表示")。workflow を todo より先に並べるのは「今まさに
  * 自走している大きい単位」を目立たせるため。
@@ -315,7 +315,10 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
  * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。todo に
  * `#{id}` を前置するのも同じ理由で、Status タブの TodoRow と同一表記にして
  * 両者を突き合わせられるようにしている。 */
-export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLine[] {
+export function miniSummaryLines(
+  snapshot: SessionStatusSnapshot,
+  processParts: readonly string[] = [],
+): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (Status タブの WORKFLOWS 表示と数値を一致させる)。
   const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
@@ -329,9 +332,14 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
   ];
 
   const extra: MiniSummaryLine[] = [];
-  if (snapshot.context) {
-    extra.push({ kind: "context", text: formatContextUsage(snapshot.context).text });
-  }
+  // The ctx line ends with what the session's process runs as (uptime,
+  // Claude Code version: `processParts`), which stands alone before the
+  // transcript has said anything of the context.
+  const contextParts = [
+    ...(snapshot.context ? [formatContextUsage(snapshot.context).text] : []),
+    ...processParts,
+  ];
+  if (contextParts.length > 0) extra.push({ kind: "context", text: contextParts.join(" · ") });
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
   if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });
 

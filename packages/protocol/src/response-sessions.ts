@@ -470,8 +470,12 @@ export const AgentInfoSchema = v.object({
   cwd: v.string(),
   /** "interactive" | "background" (upstream values, open set) */
   kind: v.string(),
-  /** epoch ms */
+  /** When the process started, epoch ms. A resume is a new process and
+   *  starts its own count. */
   startedAt: v.number(),
+  /** The Claude Code version the process runs, e.g. "2.1.310". Absent when
+   *  the record names none. */
+  version: v.optional(v.string()),
   sessionId: v.string(),
   name: v.optional(v.string()),
   /** Claude Code's own word for the process: "waiting" while a dialog waits

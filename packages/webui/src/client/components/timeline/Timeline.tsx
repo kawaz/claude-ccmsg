@@ -9,11 +9,12 @@ import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts
 import { pushNavigation } from "../../navigation.ts";
 import { forkPrefill, prefillSidebarState } from "../../session-creator.ts";
 import { useApp } from "../../context.ts";
-import { useStoreState } from "../../useStore.ts";
+import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayRecordBubble, TurnRespondingRow } from "../TimelineItem.tsx";
 import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
+import { sessionProcessParts } from "../../utils.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
@@ -98,6 +99,19 @@ export function Timeline({
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   const peers = useStoreState(store, (s) => s.peers);
+  // The session's process (uptime and Claude Code version for the ctx line).
+  const sessionProcess = useStoreState(
+    store,
+    (s) => {
+      const row = s.agents.find((candidate) => candidate.sessionId === sid);
+      if (!row) return undefined;
+      return {
+        startedAt: row.startedAt,
+        ...(row.version !== undefined ? { version: row.version } : {}),
+      };
+    },
+    sameJson,
+  );
   const rooms = useStoreState(store, (s) => s.rooms);
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
   const pin = usePositionPin({ sid, currentPosition, agentActive });
@@ -259,7 +273,12 @@ export function Timeline({
   // workflow + in_progress TODO の要約に加え、context 消費と活動中
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
-  const miniLines = sessionStatus ? miniSummaryLines(sessionStatus) : [];
+  const miniLines = sessionStatus
+    ? miniSummaryLines(
+        sessionStatus,
+        sessionProcess ? sessionProcessParts(sessionProcess, now) : [],
+      )
+    : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
   const agentTimelineHrefs = useMemo(() => {

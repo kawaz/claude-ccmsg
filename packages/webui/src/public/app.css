@@ -7066,11 +7066,13 @@ a.tl-attachment-file-path {
   margin-left: auto;
 }
 
-/* --- Status tab ENV panel (kawaz r55m132) --- */
+/* --- Status tab ENV panel (kawaz r55m132) and TODO list --- */
 
-/* Collapsed by default; the summary is the only thing visible until opened,
- * which is also what keeps a screen share from surfacing secrets by accident. */
-.status-env-summary {
+/* The heading of a Status section that starts closed (ENV, TODO), styled like
+ * the always-open sections' titles. Closed until opened: for ENV that keeps a
+ * screen share from surfacing secrets by accident, for TODO it keeps a long
+ * list from pushing the rest of the tab down. */
+.status-fold-summary {
   cursor: pointer;
   font-size: var(--font-size-sm);
   text-transform: uppercase;

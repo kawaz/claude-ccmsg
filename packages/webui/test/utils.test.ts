@@ -54,6 +54,7 @@ import {
   resolveSessionTopbar,
   sessionBadges,
   sessionLabel,
+  sessionProcessParts,
   sessionRowTitle,
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
@@ -422,6 +423,27 @@ describe("formatDuration", () => {
   // negative input (clock skew / stale snapshot) shouldn't render "-5s"
   test("clamps negative input to 0s", () => {
     expect(formatDuration(-500)).toBe("0s");
+  });
+});
+
+describe("sessionProcessParts", () => {
+  const now = Date.parse("2026-10-25T12:00:00.000Z");
+  const startedAt = now - (2 * 24 + 15) * 3_600_000;
+
+  test("uptime then the Claude Code version", () => {
+    expect(sessionProcessParts({ startedAt, version: "2.1.310" }, now)).toEqual([
+      "2d15h",
+      "claude v2.1.310",
+    ]);
+  });
+
+  // The same duration text as the bubbles and the responding row.
+  test("the uptime is formatDuration's", () => {
+    expect(sessionProcessParts({ startedAt: now - 72_000 }, now)).toEqual(["1m12s"]);
+  });
+
+  test("a record naming no version gives the uptime alone", () => {
+    expect(sessionProcessParts({ startedAt }, now)).toEqual(["2d15h"]);
   });
 });
 

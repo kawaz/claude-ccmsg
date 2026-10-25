@@ -115,7 +115,17 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] |
     return null;
   }
   const rows: AgentInfo[] = [];
-  for (const { pid, sessionId, cwd, kind, startedAt, name, status, waitingFor } of read.live) {
+  for (const {
+    pid,
+    sessionId,
+    cwd,
+    kind,
+    startedAt,
+    version,
+    name,
+    status,
+    waitingFor,
+  } of read.live) {
     if (cwd === undefined || kind === undefined || startedAt === undefined) {
       log.error(
         `agents poll: ${configDir} not read: sessions/${String(pid)}.json lacks cwd, kind or startedAt`,
@@ -129,6 +139,7 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] |
       startedAt,
       sessionId,
       config_dir: configDir,
+      ...(version !== undefined ? { version } : {}),
       ...(name !== undefined ? { name } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(waitingFor !== undefined ? { waitingFor } : {}),

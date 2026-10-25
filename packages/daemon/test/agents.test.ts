@@ -188,7 +188,14 @@ describe("agents: config dir detection", () => {
     const other = path.join(home, "not-claude-dir");
     writeRows(
       dirA,
-      [row("sA", "/a", { pid: process.pid, status: "waiting", waitingFor: "dialog open" })],
+      [
+        row("sA", "/a", {
+          pid: process.pid,
+          status: "waiting",
+          waitingFor: "dialog open",
+          version: "2.1.310",
+        }),
+      ],
       namedPid,
     );
     writeRows(dirB, [row("sB", "/b", { pid: process.ppid })], namedPid);
@@ -208,7 +215,10 @@ describe("agents: config dir detection", () => {
       startedAt: 1,
       status: "waiting",
       waitingFor: "dialog open",
+      version: "2.1.310",
     });
+    // A record that names no version carries none rather than a placeholder.
+    expect(agents.find((a) => a.sessionId === "sB")).not.toHaveProperty("version");
   });
 
   // DR-0034 §2: the sessions on the machine talk to the daemon at the default

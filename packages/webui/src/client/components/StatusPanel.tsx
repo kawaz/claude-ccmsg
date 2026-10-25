@@ -25,6 +25,7 @@ import {
   formatContextUsage,
   restartOffered,
   restartResultText,
+  type TodoSections,
 } from "../session-status-view.ts";
 import { pinForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
@@ -39,6 +40,7 @@ import { buildTerminalPageUrl } from "../terminal-gateway-store.ts";
 import {
   clientBuildLabel,
   formatClockTime,
+  formatDuration,
   resolveSessionTopbar,
   staleClientWarning,
 } from "../utils.ts";
@@ -149,6 +151,47 @@ function Section<T>({
           <ul class="status-list">{done.map((item) => renderRow(item, false))}</ul>
         </Fold>
       ) : null}
+    </section>
+  );
+}
+
+/** The session's TODO list, closed until opened with the count in its heading
+ * (kawaz 2026-10-25: a long list is in the way and matters less than the rest
+ * of the tab). Nothing when the session has no TODO, like Background. */
+function TodoSection({ todos }: { todos: TodoSections }) {
+  const count = todos.inProgress.length + todos.pending.length + todos.completed.length;
+  if (count === 0) return null;
+  return (
+    <section class="status-section">
+      <Fold class="status-todos" summaryClass="status-fold-summary" summary={`TODO (${count})`}>
+        {todos.inProgress.length > 0 ? (
+          <ul class="status-list">
+            {todos.inProgress.map((t) => (
+              <TodoRow key={t.id} todo={t} />
+            ))}
+          </ul>
+        ) : (
+          <p class="status-empty">in_progress の TODO なし</p>
+        )}
+        {todos.pending.length > 0 ? (
+          <Fold class="status-done" open summary={`pending (${todos.pending.length})`}>
+            <ul class="status-list">
+              {todos.pending.map((t) => (
+                <TodoRow key={t.id} todo={t} />
+              ))}
+            </ul>
+          </Fold>
+        ) : null}
+        {todos.completed.length > 0 ? (
+          <Fold class="status-done" summary={`completed (${todos.completed.length})`}>
+            <ul class="status-list">
+              {todos.completed.map((t) => (
+                <TodoRow key={t.id} todo={t} />
+              ))}
+            </ul>
+          </Fold>
+        ) : null}
+      </Fold>
     </section>
   );
 }
@@ -421,7 +464,7 @@ function EnvPanel({
     <section class="status-section">
       <Fold
         class="status-env"
-        summaryClass="status-env-summary"
+        summaryClass="status-fold-summary"
         key={sid}
         summary="ENV"
         onToggle={handleToggle}
@@ -631,6 +674,8 @@ export function StatusPanel({
         <dd title={agent ? new Date(agent.startedAt).toISOString() : undefined}>
           {agent ? new Date(agent.startedAt).toLocaleString() : "—"}
         </dd>
+        <dt>UPTIME</dt>
+        <dd>{agent ? formatDuration(Date.now() - agent.startedAt) : "—"}</dd>
         <dt>CTX</dt>
         <dd title={context?.title}>
           {context ? (
@@ -656,36 +701,7 @@ export function StatusPanel({
             )}
             emptyRunningText="走行中の background タスクなし"
           />
-          <section class="status-section">
-            <h3 class="status-section-title">TODO</h3>
-            {sections.todos.inProgress.length > 0 ? (
-              <ul class="status-list">
-                {sections.todos.inProgress.map((t) => (
-                  <TodoRow key={t.id} todo={t} />
-                ))}
-              </ul>
-            ) : (
-              <p class="status-empty">in_progress の TODO なし</p>
-            )}
-            {sections.todos.pending.length > 0 ? (
-              <Fold class="status-done" open summary={`pending (${sections.todos.pending.length})`}>
-                <ul class="status-list">
-                  {sections.todos.pending.map((t) => (
-                    <TodoRow key={t.id} todo={t} />
-                  ))}
-                </ul>
-              </Fold>
-            ) : null}
-            {sections.todos.completed.length > 0 ? (
-              <Fold class="status-done" summary={`completed (${sections.todos.completed.length})`}>
-                <ul class="status-list">
-                  {sections.todos.completed.map((t) => (
-                    <TodoRow key={t.id} todo={t} />
-                  ))}
-                </ul>
-              </Fold>
-            ) : null}
-          </section>
+          <TodoSection todos={sections.todos} />
         </>
       )}
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />

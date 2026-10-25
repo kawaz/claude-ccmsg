@@ -26,6 +26,10 @@ export const ClaudeSessionFileSchema = v.looseObject({
   kind: v.optional(v.string()),
   /** When the process started, epoch ms. */
   startedAt: v.optional(v.number()),
+  /** The Claude Code version the process runs, e.g. "2.1.310" (on every file
+   * of two config dirs observed 2026-10-25). Per process: a resume in a new
+   * process writes the version that process runs. */
+  version: v.optional(v.string()),
   /** What the process is doing, as Claude Code says it: "idle", "busy",
    * "waiting" (a dialog waits for the person, `waitingFor` says which),
    * "shell" (a background shell such as a Monitor runs, which `claude agents`

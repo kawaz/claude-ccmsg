@@ -190,6 +190,35 @@ describe("miniSummaryLines", () => {
     ]);
   });
 
+  // The ctx line ends with the session's process: uptime and Claude Code
+  // version (kawaz 2026-10-25), in the line's own " · " separation.
+  test("the process parts end the ctx line", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [],
+      context: {
+        tokens: 100_000,
+        window: 1_000_000,
+        model: "claude-fable-5[1m]",
+        effort: "low",
+        timestamp: "t",
+      },
+    };
+    expect(miniSummaryLines(snapshot, ["2d15h", "claude v2.1.310"])).toEqual([
+      { kind: "context", text: "ctx 100k/1M (10%) · fable-5[1m] · low · 2d15h · claude v2.1.310" },
+    ]);
+  });
+
+  // Before the transcript says anything of the context, what the process runs
+  // as is still known, so the line carries that alone.
+  test("process parts without context make the line on their own", () => {
+    expect(miniSummaryLines(EMPTY_SNAPSHOT, ["35m20s", "claude v2.1.310"])).toEqual([
+      { kind: "context", text: "35m20s · claude v2.1.310" },
+    ]);
+  });
+
   // issue 2026-07-17 #5: 活動中 (state === "active") の teammate だけを 1 行に
   // まとめる。spawned/idle/stopped は数えない (workflow の running 限定
   // フィルタと同じ厳密一致方針)。
