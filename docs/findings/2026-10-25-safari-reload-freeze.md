@@ -11,9 +11,9 @@
 原因は未確定。
 
 - サーバ側で QUIC の packet が IP fragment に分けられていることは事実 (この Mac の Tailscale の interface では、IPv4 の UDP は DF を求めても EMSGSIZE にならず fragment になる。前段の Caddy の HTTP/3 の応答も、この Mac の中の往復では fragment になっていた)
-- それが iPhone のフリーズに効いているかは、iPhone との経路の観測が無い限り言えない。ここまでの観測は全部この Mac の中で完結していて、WireGuard のトンネル・relay・iPhone 側の netstack と組み立て直しを通っていない
-- 接続全体の flow control の枠が尽きる (`DATA_BLOCKED` が出る形) 可能性も、同じく否定していない
-- 決め手は、iPhone と通信している最中の観測 (「切り分けの実験」の pcap と前段の qlog)
+- iPhone との実際の通信 (2 回のリロード、どちらも最後は開いた) を記録すると、前段から iPhone への大きい QUIC の packet はほぼ全部が fragment になっていた。転送の終わりには、fragment になった packet を再送の間隔を倍々に延ばしながら送り続け、iPhone からは 20 秒前後何も返らない区間があった (下の「iPhone との実際の経路の観測」)。fragment になった packet が iPhone に届いていない形に見えるが、どこで落ちているかは観測していない
+- この記録では固まりは数秒で解けたので、「永遠に待つ」状態そのものは記録できていない
+- 接続全体の flow control の枠が尽きる (`DATA_BLOCKED` が出る形) 可能性は、pcap では否定しきれない (暗号化されていて frame は読めない)。前段の qlog で分かる
 
 ## 症状の構造
 
@@ -104,11 +104,76 @@ Content-Length が 16KB を超える応答のうち、途中で止まったも�
 - **本文を読まない応答で、接続全体の受信の枠 (`MAX_DATA`) が尽きる**: webui の client に `fetch` / `EventSource` / streaming の読み出し / polling は無い。HTTP の経路は殻・CSS・`/assets` (`import()` の chunk を含む)、`POST /attachment` の XHR (`onload` で `responseText` を全部読む)、`<img>` (添付、`/fs-serve`)、Terminal タブの hyoui の `<iframe>` だけ。daemon の WebSocket 以外の endpoint (`/attachment`、`/fs-serve`、`/webhook/*`) は、長さの決まった本文を 1 回返して終わる
 - **WebSocket を HTTP/3 で張ろうとした**: Caddy のログに method `CONNECT` は 0 件。`/ws` は ccmsg も hyoui も全部 `HTTP/1.1`。前段の HTTP/3 の SETTINGS には `settings_enable_connect_protocol` が出ている (一時ベースの Caddy の qlog で確認)
 
+## iPhone との実際の経路の観測
+
+2026-10-25 07:40 〜 07:47 に、この Mac の Tailscale の interface で iPhone との packet を `tcpdump` で記録しながら、kawaz が iPhone でリロードした。2 回とも最後は開いた。kawaz の体感では、1 回目は数秒固まった後に開き、2 回目はそのまま開いた。
+
+### 観測
+
+全体 (UDP だけ。iPhone との WebSocket の TCP は除く):
+
+| 向き | packet | IP の長さ 1228 以下 | 1229 〜 1280 | IP fragment |
+|---|---|---|---|---|
+| Mac → iPhone | 2,228 | 255 | 1 | 1,972 (元の packet 986 個、最初の fragment の長さは全部 1276) |
+| iPhone → Mac | 634 | 631 | 3 | 0 |
+
+- Mac → iPhone の UDP の packet に DF は 1 つも無い。iPhone → Mac は全部 DF 付き
+- 1229 〜 1280 バイトの packet は、ほぼ全部が WebSocket の TCP (Mac → iPhone で 16,360 個) で、QUIC ではない。QUIC で大きい packet は、記録の初めから fragment になっていた (fragment にならずに 1229 〜 1280 で出た QUIC の packet は 1 個)
+- 07:40:42 に iPhone から ICMP の port unreachable が 1 件。前段が、iPhone 側ですでに閉じた UDP の port (前の QUIC の接続) に送った 338 バイトへの返事
+
+秒ごとの UDP の数 (Mac → iPhone の UDP の数 (そのうち fragment) | iPhone → Mac の UDP の数):
+
+| 時刻 | Mac → iPhone | iPhone → Mac |
+|---|---|---|
+| 07:41:23 | 439 (400) | 101 |
+| 07:41:24 | 185 (176) | 60 |
+| 07:41:25 | 152 (152) | 43 |
+| 07:41:26 | 21 (20) | 4 |
+| 07:41:27 | 6 (6) | 0 |
+| 07:41:28 | 4 (4) | 0 |
+| 07:41:31 | 4 (4) | 0 |
+| 07:41:36 | 4 (4) | 0 |
+| 07:41:47 | 18 (18) | 3 |
+| 07:45:47 | 329 (288) | 49 |
+| 07:45:48 〜 :51 | 94 〜 142 (ほぼ全部 fragment) | 17 〜 41 |
+| 07:45:52 | 8 (8) | 0 |
+| 07:45:53 / :54 | 4 (4) | 0 |
+| 07:46:36 | 89 (88) | 24 |
+| 07:46:37 〜 :40 | 22 → 8 → 4 → 4 (全部 fragment) | 2 → 0 → 0 → 0 |
+
+1 回目の転送の終わり (同じ QUIC の接続、前段の port 443 と iPhone の 1 つの port の間) を packet ごとに見ると:
+
+- 07:41:26.6 以降、前段は fragment になった packet を 2 個ずつ、07:41:26.6 / 27.3 / 28.7 / 31.4 / 36.8 に送った。間隔は 0.7 → 1.4 → 2.7 → 5.4 秒と倍々に延びている
+- その間、iPhone からの packet は 0 個
+- 07:41:46.3 に iPhone から 53 バイトの packet が来て、前段が 58 バイトの小さい packet を返した。その後の 07:41:47 から、fragment の送信と iPhone からの小さい packet が交互に流れた
+
+### 読み (未検証)
+
+- 前段の quic-go は、iPhone との接続でも packet size を 1280 バイトより上に上げていて、その packet は全部 fragment になって Tailscale に渡っている
+- 転送の終わりの「fragment になった packet を、倍々に延びる間隔で 2 個ずつ送り、iPhone は無言」は、QUIC の再送の timer (PTO) が切れるたびに試しの packet を送り、それに ACK が返らない形に見える。ACK が返らないのは、fragment になった packet が iPhone に届いていないからと読める。iPhone からの小さい packet と前段の小さい返事は、同じ時間帯に通っている
+- 体感の「数秒の固まり」は、この無言の区間 (07:41:26 〜 07:41:46) と時刻が合う。今回は再送が最後に通って開いたが、通らないまま続けば前回までの症状 (永遠に待つ) になる、と読める
+- 未観測のこと: fragment が落ちる場所 (Tailscale の WireGuard、relay、iPhone の側)、burst の中では fragment の多くが通るのに終わりでは通らない理由、今回は最後に通った理由
+
+### 集計のやり方
+
+記録:
+
+```bash
+sudo tcpdump -i <Tailscale の utun> -w <pcap> host <iPhone の Tailscale の IPv4>
+```
+
+集計の script (`quic-pcap-summary.sh`、一時ベースに置いた) は `tcpdump -r <pcap> -n -tt -v` の出力を awk で読む。要点:
+
+- IP の header の行で `proto UDP (17)` のものだけを数える (fragment の 2 個目以降も header の行は `proto UDP (17)` になる。2 行目には port が無い)
+- `flags [+]` か `offset` が 0 でないものを fragment とし、`offset 0` で `flags [+]` のものを元の packet の数として数える。それ以外は IP の長さで 1228 以下 / 1229 〜 1280 / 1280 超に分ける。`flags [DF]` を数える
+- 向きは 2 行目の送り元の address で分ける。向きごとに、1 秒を超えて packet が途切れた時刻と長さを出す
+- 秒ごとの表は、同じ出力を `int(時刻)` ごとに、向き別の UDP の数と fragment の数で数えたもの
+
 ## こちら側の候補
 
 ### 候補 1. 経路の MTU と fragment: 未確定
 
-**観測の射程**: 下のローカルの観測が言えるのは、「この Mac の Tailscale の interface から出る時に、1280 バイトを超える IPv4 の packet が fragment に分けられる」ことまで。この Mac から自分の Tailscale の address 宛ての通信は tailscaled の中で折り返すだけで、WireGuard のトンネル・relay・相手側の netstack・相手側での組み立て直しを通らない。iPhone との経路で fragment が落ちるか、そもそも iPhone 宛てに同じ大きさの packet が出ているかは観測していない。
+**観測の射程**: 下のローカルの観測が言えるのは、「この Mac の Tailscale の interface から出る時に、1280 バイトを超える IPv4 の packet が fragment に分けられる」ことまで。この Mac から自分の Tailscale の address 宛ての通信は tailscaled の中で折り返すだけで、WireGuard のトンネル・relay・相手側の netstack・相手側での組み立て直しを通らない。iPhone 宛てにも fragment になった packet が出ていることは、上の「iPhone との実際の経路の観測」で確かめた。その fragment が経路のどこで落ちるかは観測していない。
 
 観測:
 
@@ -219,7 +284,10 @@ pcap で「fragment が出ていて、iPhone からの ACK が途切れ、Caddy 
 
 ## 直し方の候補 (前段側の作業、確かめてから)
 
+狙いは、前段の Caddy が 1280 バイトを超える QUIC の packet を出さないようにすること、または HTTP/3 を使わせないこと。
+
 - **quic-go の packet size の探索を止める**: quic-go には `quic.Config.DisablePathMTUDiscovery` がある (v0.63.0 の型定義で確認)。止めれば packet size は `InitialPacketSize` (Caddy では 1200) のままで、IPv4 で MTU 1280 の interface に収まる。ただし Caddy v2.11.7 はこの項目を設定として出していない。`ListenQUIC` の `quic.Config` は `InitialPacketSize: 1200`、`Allow0RTT`、`Tracer` の 3 つだけで、利用者が変えられるのは `allow_0rtt` だけ。前段の binary に入っている quic-go の環境変数は `QUIC_GO_DISABLE_ECN` / `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` / `QUIC_GO_DISABLE_CLIENTHELLO_SCRAMBLING` / `QUIC_GO_LOG_LEVEL` で、size の探索を止めるものは無い。止めるには Caddy の source を変えた build が要る
+  - 前段の `bin/caddy` は、前段のリポの `just caddy-fetch` が Caddy の公式の build server (`caddyserver.com/api/download`、route53 と caddy-exec の plugin 入り) から取ってきて ad-hoc 署名したもので、手元では build していない。source を変えるには、手元で build する形 (xcaddy で Caddy の本体を手元で変えた source に差し替える等。手順は未確認) に切り替える必要がある
 - **Tailscale の IPv6 で繋ぐようにする**: IPv6 では DF が効き (上の表)、EMSGSIZE で interface の MTU に収まる大きさ (UDP の本文で 1232 バイト) に留まる。前段のホスト名の DNS の答え方の変更になる
 - **Tailscale を通る client に HTTP/3 を出さない**: 前段の site は tailnet からの接続しか受けず、この Mac の Chrome も自分の Tailscale の address 経由で繋いでいる。そのため実質は前段で HTTP/3 を止めること (`servers { protocols h1 h2 }`) と同じ。ホストを絞るなら `Alt-Svc` を落とす形 (この形を使った報告はあるが、ここでは試していない)
 
