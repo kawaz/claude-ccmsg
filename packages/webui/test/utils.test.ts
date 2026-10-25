@@ -31,7 +31,6 @@ import {
   favoritesStorageKey,
   formatBytes,
   formatDuration,
-  formatRelativeAge,
   groupSessionsBySection,
   inboxAutoFilename,
   indexAgentsBySid,
@@ -444,26 +443,6 @@ describe("sessionProcessParts", () => {
 
   test("a record naming no version gives the uptime alone", () => {
     expect(sessionProcessParts({ startedAt }, now)).toEqual(["2d15h"]);
-  });
-});
-
-describe("formatRelativeAge", () => {
-  const now = Date.parse("2026-07-20T12:00:00.000Z");
-
-  test("uses minute precision below one hour", () => {
-    expect(formatRelativeAge("2026-07-20T11:59:30.000Z", now)).toBe("<1m");
-    expect(formatRelativeAge("2026-07-20T11:55:00.000Z", now)).toBe("5m");
-  });
-
-  test("keeps two units for hours and days", () => {
-    expect(formatRelativeAge("2026-07-20T08:30:00.000Z", now)).toBe("3h30m");
-    expect(formatRelativeAge("2026-07-19T10:00:00.000Z", now)).toBe("1d2h");
-  });
-
-  test("handles missing, invalid, and future timestamps", () => {
-    expect(formatRelativeAge(null, now)).toBe("");
-    expect(formatRelativeAge("invalid", now)).toBe("");
-    expect(formatRelativeAge("2026-07-20T12:05:00.000Z", now)).toBe("<1m");
   });
 });
 

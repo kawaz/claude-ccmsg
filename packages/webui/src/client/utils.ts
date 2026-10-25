@@ -53,22 +53,6 @@ export function formatDuration(ms: number): string {
   return `${days}d${totalHour % 24}h`;
 }
 
-/** Coarse age of an ISO timestamp for periodically refreshed status labels.
- * The smallest bucket is one minute because `useNow()` intentionally ticks
- * every three minutes; displaying seconds would imply precision the UI does
- * not refresh often enough to maintain. */
-export function formatRelativeAge(iso: string | null, now: number = Date.now()): string {
-  if (!iso) return "";
-  const time = new Date(iso).getTime();
-  if (Number.isNaN(time)) return "";
-  const totalMin = Math.max(0, Math.floor((now - time) / 60_000));
-  if (totalMin < 1) return "<1m";
-  if (totalMin < 60) return `${totalMin}m`;
-  const totalHour = Math.floor(totalMin / 60);
-  if (totalHour < 24) return `${totalHour}h${totalMin % 60}m`;
-  return `${Math.floor(totalHour / 24)}d${totalHour % 24}h`;
-}
-
 /** What a session's process has been running as, for the end of the
  * Timeline's ctx line: how long since it started, in the same `formatDuration`
  * the bubbles and the responding row use, and the Claude Code version it runs
