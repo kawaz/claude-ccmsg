@@ -62,7 +62,7 @@
 | ccmsg メッセージ吹き出し | `CcmsgBubble` + `op:read` | DR-0027 | 移す | DR-0027 Accepted、daemon 一次情報での復元は現役 |
 | AI 発 post/reply の TL 表示 | `PeerCcmsgLineView` | DR-0027 | 移す | 同上 |
 | say バブルの配置 | `say-merge.ts` + `op:say_read` | — | 移す | daemon 側 op あり |
-| fork 境界の表示 | `fork-point.ts` / `fork-divider.ts` / `ForkDivider` / `op:fork_origin` | — | 移す | `forkAvailable` の hello フラグ付きで能力交渉済み |
+| fork 境界の表示 | `fork-point.ts` / `fork-divider.ts` / `ForkDivider` / `op:fork_origin` | — | 移す | hello の能力フラグに依らない (`fork_origin` だけで出る) |
 | 位置 pin と着地スクロール | `timeline-position.ts` + `navigation.ts` の `timelinePositions` | DR-0004 | 移す | URL で TL の一点を指せることは共有動線 |
 | 自動追随 (追記時の追尾) | `Timeline()` 内 | — | 移す | |
 | in-view 検索 (ハイライト + index 移動) | `in-view-search.ts` + `SearchBar.tsx` + `rendered-text-search.ts` | DR-0022 | 移す | DR-0022 Accepted |
@@ -212,8 +212,8 @@
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
-| 起動フォーム (4 つの type: `new` / `continue` / `resume` / `fork`、欄と必須は `LaunchInputSchema` から) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 §3.9 | 移す | DR-0018 Accepted |
-| cwd ツリーの根 (`root_dirs`) の取得 | `op:session_launcher_config` | DR-0018 §3.4 | 移す | |
+| 起動フォーム (claude のオプション名の欄を全部常に出す、組み合わせの理由は `LaunchInputSchema` から、model / effort の既定は `fable` と `default_effort`) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 §3.9 | 移す | DR-0018 Accepted |
+| cwd ツリーの根 (`root_dirs`) と effort の既定 (`default_effort`) の取得 | `op:session_launcher_config` | DR-0018 §3.4 | 移す | |
 | cwd ピッカー | `CwdTree.tsx` + `cwd-tree.ts` | DR-0018 | 移す | |
 | 起動結果パネル | `LaunchResultPanel` (`SessionCreator` 内) | DR-0018 | 移す | |
 | フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
@@ -405,8 +405,6 @@ Terminal タブ / 1on1 Composer と添付 / AgentTreePanel。
 - 旧 webui は並走する (DR-0032 §2.2 の 2) ので、**含まない機能は旧 webui で使い続けられる**。
   「移せる最小」は「全部揃う」ではなく「日常の主動線が新側で完結する」でよい。
 - 含む側は **hello の能力フラグに依存しない機能だけ**で構成した。能力交渉が要る機能(翻訳 / usage / status / sandbox / terminal / fork) はマイルストーン 2 へ回すことで、最初の版が protocol の能力交渉の設計を待たずに動く。
-  - 例外は fork 境界表示 (`forkAvailable`) — TL の読みやすさに直結するため含めた。
-    能力交渉が間に合わなければ、この 1 つだけを落とす。
 - 含む側に **保留項目を 1 つも入れていない** (§14 の 24 問はすべてマイルストーン 2 以降の判断)。
   裁定待ちでマイルストーン 1 が止まらないようにする。
 - 唯一の新規要件として「別 origin からの WS」を含む。これは DR-0032 §2.1 の前提そのもので、これが動かないと新 webui は 1 画面も出せない。

@@ -38,73 +38,71 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    fail() { echo "launch-claude: $*" >&2; exit 2; }
 
    # 知らない field は推測で補わずに断る
-   unknown=$(jq -r 'keys - ["type","cwd","session_id","model","effort","name","prompt","resume_session_id","resume_at"] | join(",")' <<<"$input")
+   unknown=$(jq -r 'keys - ["cwd","model","effort","continue","resume","resume_session_at","fork_session","session_id","name","prompt","requested_by"] | join(",")' <<<"$input")
    [[ -z "$unknown" ]] || fail "unknown field: $unknown"
-   need() { local k; for k in "$@"; do [[ -n "$(get "$k")" ]] || fail "missing $k"; done; }
 
-   # cwd の信頼判定 (daemon はしない)。ここでは ~/src の下だけを信頼する
+   # cwd の信頼判定 (daemon はしない)。ここでは ~/src の下だけを信頼する。
+   # 人とエージェントで判定を変えるなら requested_by ("user" か依頼したセッションの id) を見る
    cwd=$(get cwd)
    case "$cwd" in
      "$HOME"/src/*) ;;
      *) fail "cwd is not trusted: $cwd" ;;
    esac
 
+   # 起動の入力の field は claude のオプション名なので、同じ名前のオプションに写す。
+   # 空の配列の展開は ${a[@]+"${a[@]}"} で書く (macOS の bash 3.2 は set -u で "${a[@]}" を unbound にする)
+   source_args=()
+   [[ "$(get continue)" == true ]] && source_args+=(--continue)
+   [[ -n "$(get resume)" ]] && source_args+=(--resume "$(get resume)")
+
    args=()
-   case "$(get type)" in
-     new)
-       need session_id model effort
-       args+=(--session-id "$(get session_id)")
-       ;;
-     continue)
-       args+=(--continue)
-       ;;
-     resume)
-       need resume_session_id
-       args+=(--resume "$(get resume_session_id)")
-       ;;
-     fork)
-       need session_id resume_session_id
-       if [[ -n "$(get resume_at)" ]]; then
-         # --resume-session-at は -p でしか効かないので、切り詰めた fork を先に作る
-         claude -p --resume "$(get resume_session_id)" --fork-session \
-           --session-id "$(get session_id)" --resume-session-at "$(get resume_at)" \
-           --output-format json /exit >/dev/null
-         args+=(--resume "$(get session_id)")
-       else
-         args+=(--resume "$(get resume_session_id)" --fork-session --session-id "$(get session_id)")
-       fi
-       ;;
-     *) fail "unknown type: $(get type)" ;;
-   esac
+   if [[ -n "$(get resume_session_at)" ]]; then
+     [[ "$(get fork_session)" == true ]] || fail "resume_session_at without fork_session is not handled here"
+     # --resume-session-at は -p でしか効かないので、切り詰めた fork を先に作る
+     claude -p ${source_args[@]+"${source_args[@]}"} --fork-session --session-id "$(get session_id)" \
+       --resume-session-at "$(get resume_session_at)" --output-format json /exit >/dev/null
+     args+=(--resume "$(get session_id)")
+   else
+     args+=(${source_args[@]+"${source_args[@]}"})
+     [[ "$(get fork_session)" == true ]] && args+=(--fork-session)
+     # session_id は新規と fork_session の時だけ来る
+     [[ -n "$(get session_id)" ]] && args+=(--session-id "$(get session_id)")
+   fi
    for k in model effort name; do
      if [[ -n "$(get "$k")" ]]; then args+=("--$k" "$(get "$k")"); fi
    done
-   if [[ -n "$(get prompt)" ]]; then args+=(-- "$(get prompt)"); fi
+   # prompt は末尾の改行も本文のうち。$(…) が末尾の改行を落とさないよう x を足して外す
+   prompt=$(jq -j '.prompt // empty' <<<"$input"; printf x)
+   prompt=${prompt%x}
+   if [[ -n "$prompt" ]]; then args+=(-- "$prompt"); fi
 
    # 対話の claude は detached な端末に載せ、ここはすぐに 0 で終わる
-   hyoui run --detached -- claude "${args[@]}" </dev/null
+   hyoui run --detached -- claude ${args[@]+"${args[@]}"} </dev/null
    ```
 
    - `cwd` は daemon が realpath にした値で届き、起動コマンドの cwd もそのディレクトリになる。信頼判定のパターンも realpath で書く (`/var` と `/private/var` のような symlink の違いで外れないように)
-   - `prompt` は `--` の後ろに置く。`-` で始まる prompt も option として読まれずにそのまま claude に届く
+   - `prompt` は `--` の後ろに 1 つの引数で置く。`-` で始まる prompt も option として読まれずにそのまま claude に届く ([findings 2026-10-25-claude-prompt-after-double-dash](../findings/2026-10-25-claude-prompt-after-double-dash.md))
    - 非 0 で終わるのは対話の claude を起こす前だけにする。起こした後に非 0 で終わると、呼び手に新しいセッションの `session_id` が返らない (契約の「戻り方」)
+   - fork 地点のある fork の一段目 (`claude -p … /exit`) は `timeout_seconds` の中で終わる必要がある。plugin や hook の多い config dir では既定の 10 秒に収まる保証が無いので、使う config dir で一段目を手元で測り、足りなければ `timeout_seconds` を延ばす (上限 50)
+   - 載せる端末 (ここでは hyoui) は起動コマンドの process group から外れて動くものにする。timeout で止められた時、group に残ったものは一緒に止められる
 
    置く前に手元で試せる。`launch_command` と同じ argv を、cwd をそのディレクトリにして、標準入力に JSON を渡して叩く:
 
    ```bash
-   (cd ~/src/<repo> && printf '%s' '{"type":"continue","cwd":"'"$(pwd -P)"'"}' | ~/bin/launch-claude); echo "exit=$?"
+   (cd ~/src/<repo> && printf '%s' '{"cwd":"'"$(pwd -P)"'","continue":true,"requested_by":"user"}' | ~/bin/launch-claude); echo "exit=$?"
    ```
 
 2. **設定ファイルに `session_launcher` を書く**
 
-   キーは次の 6 つだけで、他のキーがあると daemon は起動しない。
+   キーは次の 7 つだけで、他のキーがあると daemon は起動しない。
 
    | キー | 必須 | 既定 | 意味 |
    |---|---|---|---|
-   | `launch_command` | 必須 | | 起動コマンドの argv (空でない文字列の配列)。先頭は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前 |
+   | `launch_command` | 必須 | | 起動コマンドの argv (空でない文字列の配列)。先頭は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前。daemon の起動時に実行できるファイルの絶対パスに固定し、見つからなければ daemon は起動しない |
    | `root_dirs` | 必須 | | webui の cwd ツリーの根 (絶対パスか `~/…`、1 つ以上)。起動の cwd をこの配下に限るものではない |
    | `dir_tree_depth` | | 2 | cwd ツリーを最初に読む深さ |
-   | `timeout_seconds` | | 10 | 起動コマンドを待つ秒数 (1〜50 の整数)。超えると SIGTERM、500 ms 後に SIGKILL |
+   | `timeout_seconds` | | 10 | 起動コマンドを待つ秒数 (1〜50 の整数)。超えると起動コマンドの process group に SIGTERM、500 ms 後に SIGKILL |
+   | `max_in_flight` | | 4 | 同時に走らせる起動コマンドの数 (1〜16 の整数)。超えた依頼は `launch_busy` で断る |
    | `clean_env` | | `[]` | 起動コマンドに渡す環境から落とすキーのパターン (`*` が任意の文字列、大文字小文字を区別、キー名全体と一致) |
    | `keep_env` | | `[]` | `clean_env` に当たっても残すキーのパターン |
 
@@ -149,21 +147,22 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
 4. **確かめる**
 
-   - webui のサイドバーの「+ 新規」を押し、type・cwd ツリー・model / effort・name・prompt の欄が出れば設定は読めている
-   - `type` を `new` にして起動すると、結果パネルに `exit_code`・`stdout`・`stderr` と、exit 0 なら新しいセッションへのリンク (`session_id`) が出る。セッションが hello で daemon に名乗るまでは、リンク先は空のまま
-   - daemon.log に `session_launch: by=user type=new cwd=… session_id=… exit_code=0 …` の行が残る (エージェントの起動なら `by=<依頼したセッションの id>`)
+   - webui のサイドバーの「+ 新規」を押し、cwd ツリーと `--model`・`--effort`・`--continue`・`--resume`・`--resume-session-at`・`--fork-session`・`--session-id`・`--name`・`PROMPT` の欄が出れば設定は読めている。`--model` は `fable`、`--effort` は daemon の `CLAUDE_CONFIG_DIR` の settings.json の `modelSettings.fable.effortLevel` (無ければ未選択) で開く
+   - `--continue` も `--resume` も入れずに起動すると新しいセッションで、結果パネルに `exit_code`・`stdout`・`stderr` と、exit 0 なら新しいセッションへのリンク (`session_id`) が出る。セッションが hello で daemon に名乗るまでは、リンク先は空のまま
+   - daemon.log に `session_launch: by=user cwd="…" session_id=… exit_code=0 …` の行が残る (エージェントの起動なら `by=<依頼したセッションの id>`。timeout で止めた起動には `timed_out=true` が付く)
 
 ## 失敗時の切り分け
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | 「+ 新規」で未設定の案内が出る / `launcher_not_configured` | `session_launcher` を書いたファイルが読まれていない | 起動ログの `also present and being ignored` の warn を見て、優先順 (`config.ts` > `config.js` > `config.json`) で読まれているファイルを確かめる。書いた後に daemon を再起動したか確かめる |
-| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 6 つ以外のキー (別の方式の名残り等) があっても読めない |
-| `launch_command_unavailable` | 起動コマンドを起こせない (見つからない、実行ビットが無い) | `launch_command` の先頭が絶対パスか、daemon の `PATH` にある名前かを確かめる。相対パスは受けない |
+| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 7 つ以外のキー (別の方式の名残り等) があっても読めない。`launch_command.0: … is not found in PATH` / `… is not an executable file` は起動コマンドが daemon の起動時に見つからない (daemon の `PATH`、実行ビット、相対パスでないか) |
+| `launch_command_unavailable` | daemon の起動の後で起動コマンドが消えた・実行できなくなった | 起動コマンドを置き直して daemon を再起動する (起動コマンドの path は daemon の起動時に固定される) |
+| `launch_busy` | `max_in_flight` 個の起動が走っている、または daemon が終わりかけている | 走っている起動が終わってから依頼し直す。いつも当たるなら起動コマンドが速やかに終わっているか (`exit_code` が 143 / 137 で終わっていないか) を見る |
 | `invalid_args` | 起動の入力がスキーマに合わない、または `cwd` が存在するディレクトリでない | msg の最初の理由を読む。webui は送る前に欄ごとの理由を出す |
 | `exit_code` が 0 でない | 起動コマンドが断った (信頼できない cwd、読めない入力、fork の一段目の失敗) | `stderr` の最初の行を読む。手順 1 の手元での叩き方で再現する |
-| `exit_code` が 143 か 137 | `timeout_seconds` を超えて SIGTERM / SIGKILL で止められた | 起動コマンドが対話の claude を待っていないか確かめる。claude は detached な端末に載せてすぐ終わる |
-| `stdout` / `stderr` が `output is <N> bytes, file: <path>` | 出力が 4096 bytes 以上で、state dir の `launches/` に退避された | その file を読む。7 日で消える |
+| `exit_code` が 143 か 137 | `timeout_seconds` を超えて SIGTERM / SIGKILL で止められた (daemon.log の行に `timed_out=true`) | 起動コマンドが対話の claude を待っていないか確かめる。claude は detached な端末に載せてすぐ終わる。fork 地点のある fork なら一段目の所要を測る |
+| `stdout` / `stderr` が `output is <N> bytes, file: <path>` | 出力が 4096 bytes 以上で、state dir の `launches/` に退避された | その file を読む。7 日で消える。`truncated to the first …` が付く時は 1 MiB を超えた分が捨てられている |
 | exit 0 なのにセッションが peers / サイドバーに出ない | 起動コマンドは終わったが、claude が立ち上がらなかった (端末の問題、trust ダイアログで止まっている等) | 起動コマンドが載せた端末を見る。exit 0 は到達を意味しない |
 
 ## 関連

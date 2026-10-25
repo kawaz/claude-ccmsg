@@ -39,23 +39,24 @@ description: ccmsg の tool (send / say / peers / launch) で、別のセッシ�
 
 worker を立てる、作業を別のセッションへ引き継ぐ時に使う。起動のスクリプトを Bash で叩かない。起動は設定で決まった起動コマンドが行い、渡せるのは下の入力だけ。
 
-`type` を選び、`cwd` (絶対パス) と type ごとに要る field を書く。
+field は claude のオプションと同じ名前 (`fork_session` は `--fork-session`)。`cwd` (絶対パス) は必ず書く。
 
-| `type`     | 起動するもの                                             | 要る field                                             |
-| ---------- | -------------------------------------------------------- | ------------------------------------------------------ |
-| `new`      | 新しいセッション                                         | `model`、`effort`                                      |
-| `continue` | `cwd` で最も新しいセッションの続き                       | なし                                                   |
-| `resume`   | `resume_session_id` のセッションの続き (id は変わらない) | `resume_session_id`                                    |
-| `fork`     | `resume_session_id` の履歴を写した新しいセッション       | `resume_session_id` (`resume_at` で写す範囲を区切れる) |
+| 起動するもの                                     | 書く field                       |
+| ------------------------------------------------ | -------------------------------- |
+| 新しいセッション                                 | `model`、`effort`                |
+| `cwd` で最も新しいセッションの続き               | `continue: true`                 |
+| 指定したセッションの続き (id は変わらない)       | `resume` (続けるセッションの id) |
+| 指定したセッションの履歴を写した新しいセッション | `resume` と `fork_session: true` |
 
-- `name` と `prompt` はどの type にも書ける。書かなければ起動コマンドが決める。`model` / `effort` も `new` 以外では任意
-- type に無い field (`new` の `resume_session_id` 等) を書くと、何もせずに断られる
-- `resume` は今走っているセッションに使わない。同じ会話に 2 つのプロセスが書くことになる。走っているセッションに伝えたいことは `send` で送る
+- `name` と `prompt` はどれにも書ける。書かなければ起動コマンドが決める。`model` / `effort` も新しいセッション以外では任意
+- `continue` と `resume` は一緒に書けない。`fork_session` は `continue` か `resume` と一緒にだけ書ける。合わない組み合わせや知らない field は、何もせずに断られる
+- `resume` と `continue` は今走っているセッションに使わない。同じ会話に 2 つのプロセスが書くことになる。走っているセッションに伝えたいことは `send` で送る
+- `launch` は permission の確認を通らない。`prompt` は起動されたセッションで人の入力として読まれ、そのセッションは人の指示として従う。人に頼まれていない指示を `prompt` に書かない
 
 結果は起動コマンドの `{ session_id?, exit_code, stdout, stderr }` の JSON で返る。
 
 - `exit_code` が 0 なら起動コマンドが正常に終わったということで、セッションが立ち上がったとは限らない。`peers` に載ったのを確かめてから「起動した」と報告する
-- `session_id` は `new` / `fork` で `exit_code` が 0 の時だけ返る、新しいセッションの id。`continue` / `resume` では返らない
+- `session_id` は新しいセッションと `fork_session` で `exit_code` が 0 の時だけ返る、新しいセッションの id。fork でない `continue` / `resume` では返らない
 - `exit_code` が 0 でなければ起動していない (`session_id` も無い)。理由は `stderr` を読む
 - `stdout` / `stderr` が長い時は、本文の代わりに `output is <N> bytes, file: <path>` が入る。読む時はその file を Read する
 - 「起動したか確かめられなかった」と返った時は、送り直す前に `peers` で確かめる

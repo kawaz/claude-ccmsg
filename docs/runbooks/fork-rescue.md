@@ -7,12 +7,12 @@
 - セッションのコンテキストが尽きかけていて、`/compact` で要約されると困る作業の記憶を、余裕のあった時点の会話から引き継ぎたい
 - 会話のある地点から先を無かったことにして、そこからやり直したい
 
-どちらも起動の `fork` で、元のセッションの履歴を指定した地点まで写した新しいセッションを起動する ([DR-0018](../decisions/DR-0018-session-launcher.md))。元のセッションは変わらない。
+どちらも起動の `fork_session` (`claude --resume <元> --fork-session`) で、元のセッションの履歴を指定した地点まで写した新しいセッションを起動する ([DR-0018](../decisions/DR-0018-session-launcher.md))。元のセッションは変わらない。
 
 ## 前提
 
 - daemon に `session_launcher` が設定されていること ([session-launcher-setup](./session-launcher-setup.md))。webui の Timeline のアクションに「daemon にセッション起動 (launcher) が設定されていません」と出る時は未設定
-- 起動コマンドが `fork` の `resume_at` を [launch-command](../design/launch-command.md) の二段の起動で扱うこと (`--resume-session-at` は対話の起動では黙って無視され、先端まで写される)
+- 起動コマンドが `fork_session` と `resume_session_at` を [launch-command](../design/launch-command.md) の二段の起動で扱うこと (`--resume-session-at` は対話の起動では黙って無視され、先端まで写される)
 
 ## fork で残るもの / 失うもの
 
@@ -26,27 +26,24 @@
 2. フロートパネルのアクションで、どちらかを押す
    - 「この項目まで残して fork」: 選んだ項目までが新しいセッションに残る
    - 「この項目から消して fork」: 選んだ項目より前までが残る (直前の項目が読み込まれていない時は出ない。older を読み込むと出る)
-3. 新規セッションのフォームが type `fork` で開き、`resume_session_id` (元のセッション) と `resume_at` (fork 地点) が埋まっている。cwd・model / effort・name も、webui が元のセッションについて知っている分だけ埋まる (知らない欄は空なので埋める)。prompt に「pre-clear を実行して状態を保存して」等を書いて起動する
+3. 新規セッションのフォームが `--resume` (元のセッション)、`--resume-session-at` (fork 地点)、`--fork-session` の入った状態で開く。cwd・model / effort・name も、webui が元のセッションについて知っている分だけ埋まる (知らない欄は空なので埋める)。prompt に「pre-clear を実行して状態を保存して」等を書いて起動する
 4. 結果パネルの `exit_code` が 0 なら、`session_id` のリンクが新しいセッションを指す。セッションが立ち上がって daemon に名乗ると中身が出る
 5. 新しいセッションはコンテキストに余裕のある状態で始まるので、そこで状態を書き出し、以後は通常の `/clear` からの復帰の流れに乗る
 
 ## 手順: エージェントから (tool `launch`)
 
-セッション自身や統括のエージェントが、tool `launch` を `type: "fork"` で呼ぶ。
+セッション自身や統括のエージェントが、tool `launch` を `resume` と `fork_session` で呼ぶ。tool は fork 地点 (`resume_session_at`) を受けないので、エージェントからの fork は元のセッションの先端までを写す。地点を選んだ fork は webui から起動する。
 
 ```json
 {
-  "type": "fork",
   "cwd": "<元のセッションの cwd>",
-  "resume_session_id": "<元のセッションの id>",
-  "resume_at": "<fork 地点の transcript の record の uuid>",
+  "resume": "<元のセッションの id>",
+  "fork_session": true,
   "prompt": "pre-clear を実行して状態を保存して"
 }
 ```
 
-- `resume_at` を書かなければ先端まで写す
 - 結果の `exit_code` が 0 なら起動コマンドが正常に終わったということで、`session_id` が新しいセッションの id。立ち上がったかは `peers` に載ったことで確かめる
-- `resume_at` の uuid は Timeline で選んだ項目の URL (`/timeline/<uuid>`) から取れる
 
 ## 手順: 元のセッションと両方生きている場合の引き継ぎ
 
@@ -58,7 +55,7 @@
 
 ## 関連
 
-- [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力 (`fork` と `resume_at`)、tool `launch`、webui のフォーム
-- [launch-command](../design/launch-command.md) — `fork` の二段の起動
+- [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力 (`fork_session` と `resume_session_at`)、tool `launch`、webui のフォーム
+- [launch-command](../design/launch-command.md) — fork 地点のある fork の二段の起動
 - [session-launcher-setup](./session-launcher-setup.md) — launcher の設定
 - [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` / `--resume-session-at` の併用の実測
