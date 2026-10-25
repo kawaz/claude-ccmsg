@@ -1877,6 +1877,26 @@ a {
   letter-spacing: 0.03em;
 }
 
+/* 起動フォームの見出しのうち claude のオプション名 (`--model` 等) は、
+ * 打つ時の綴りのまま見せる (大文字にせず等幅)。 */
+.session-creator-option-name {
+  text-transform: none;
+  font-family: ui-monospace, monospace;
+}
+
+/* 値の無いオプション (`--continue` / `--fork-session`) は見出しの横に
+ * チェックボックスを置く。理由の文は次の行に回る。 */
+.session-creator-option {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-7);
+}
+
+.session-creator-option .session-creator-issue {
+  flex-basis: 100%;
+}
+
 .session-creator-field input[type="text"],
 .session-creator-field select,
 .session-creator-prompt {
@@ -1911,8 +1931,9 @@ a {
   background: transparent;
 }
 
-/* resume_session_id / resume_at: 中身は uuid なので等幅で、桁の違いが
- * 目視で分かるように。入力自体の枠は .session-creator-field input と共通。 */
+/* --resume / --resume-session-at / --session-id: 中身は uuid なので等幅で、
+ * 桁の違いが目視で分かるように。入力自体の枠は .session-creator-field input
+ * と共通。 */
 .session-creator-uuid-input {
   font-family: ui-monospace, monospace;
   font-size: var(--font-size-xs);

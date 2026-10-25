@@ -1,10 +1,12 @@
-// DR-0018 §3.9: the launch form's model (session-creator.ts) — which fields
-// each launch type shows, what the form sends and what it refuses to send, the
-// two prefills, and the URL seed the form opens from.
+// DR-0018 §3.9: the launch form's model (session-creator.ts) — every field at
+// once, the model / effort the selects show by default, what the form sends
+// and what it refuses to send, the two prefills, and the URL seed the form
+// opens from.
 import { describe, expect, test } from "bun:test";
 import {
+  LAUNCH_CHOOSE_MESSAGE,
   LaunchEffortSchema,
-  LaunchInputSchema,
+  LaunchFieldsSchema,
   LaunchModelSchema,
   type LaunchInput,
 } from "@ccmsg/protocol";
@@ -12,17 +14,18 @@ import {
   checkSessionCreatorForm,
   commitCwdInput,
   forkPrefill,
+  formContinues,
+  formMakesSession,
   initialCwdPickerMode,
   initialSessionCreatorForm,
   launchCandidate,
   launchEffortFromTranscript,
-  launchFieldRule,
   launchModelFromTranscript,
   LAUNCH_EFFORTS,
   LAUNCH_MODELS,
-  LAUNCH_TEXT_FIELDS,
-  LAUNCH_TYPES,
   prefillSidebarState,
+  shownEffort,
+  shownModel,
   type SessionCreatorForm,
 } from "../src/client/session-creator.ts";
 import { LAUNCH_FORM_FIELDS, type LaunchSeed } from "../src/client/sidebar-url.ts";
@@ -32,12 +35,9 @@ import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const AT = "bbbbbbbb-0000-4000-8000-000000000002";
 
-/** A form on `type` with the given values and every other field blank. */
-function form(
-  type: SessionCreatorForm["type"],
-  values: Partial<SessionCreatorForm["values"]> = {},
-): SessionCreatorForm {
-  return { type, values: { ...initialSessionCreatorForm({}).values, ...values } };
+/** A form with the given fields and every other one blank. */
+function form(fields: Partial<SessionCreatorForm> = {}): SessionCreatorForm {
+  return { ...initialSessionCreatorForm({}), ...fields };
 }
 
 /** The form a prefill's link opens: the caller builds `sb.*`, the form reads
@@ -47,207 +47,202 @@ function formFromLink(seed: LaunchSeed): SessionCreatorForm {
 }
 
 describe("the vocabulary comes from the protocol", () => {
-  test("the four types, in the schema's order", () => {
-    expect(LAUNCH_TYPES).toEqual(["new", "continue", "resume", "fork"]);
-  });
-
   test("model / effort options are the picklists verbatim", () => {
     expect(LAUNCH_MODELS).toEqual(LaunchModelSchema.options);
     expect(LAUNCH_EFFORTS).toEqual(LaunchEffortSchema.options);
   });
 
-  // The form's field list is written by hand (it is also the URL grammar and the
-  // render order), so it is held to the schema here: a field added to a launch
-  // type fails this until the form has it.
-  test("the form's fields are exactly the union of the four types' fields", () => {
-    const schemaFields = new Set(
-      LaunchInputSchema.options.flatMap((option) => Object.keys(option.entries)),
+  // The form's field list is written by hand (it is also the URL grammar), so
+  // it is held to the schema here: a field added to a launch fails this until
+  // the form has it.
+  test("the form's fields are exactly the launch's fields", () => {
+    expect(new Set<string>(LAUNCH_FORM_FIELDS)).toEqual(
+      new Set(Object.keys(LaunchFieldsSchema.entries)),
     );
-    expect(new Set<string>(LAUNCH_FORM_FIELDS)).toEqual(schemaFields);
-  });
-});
-
-describe("launchFieldRule: which fields a type shows", () => {
-  const table = (type: SessionCreatorForm["type"]) =>
-    Object.fromEntries(LAUNCH_TEXT_FIELDS.map((field) => [field, launchFieldRule(type, field)]));
-
-  test("new requires cwd, model and effort, and takes no source session", () => {
-    expect(table("new")).toEqual({
-      resume_session_id: undefined,
-      resume_at: undefined,
-      cwd: "required",
-      model: "required",
-      effort: "required",
-      name: "optional",
-      prompt: "optional",
-    });
-  });
-
-  test("continue leaves model and effort to the launch command", () => {
-    expect(table("continue")).toEqual({
-      resume_session_id: undefined,
-      resume_at: undefined,
-      cwd: "required",
-      model: "optional",
-      effort: "optional",
-      name: "optional",
-      prompt: "optional",
-    });
-  });
-
-  test("resume requires the session, and has no fork point", () => {
-    expect(table("resume")).toMatchObject({
-      resume_session_id: "required",
-      resume_at: undefined,
-      model: "optional",
-    });
-  });
-
-  test("fork requires the session, and the fork point may be left out", () => {
-    expect(table("fork")).toMatchObject({
-      resume_session_id: "required",
-      resume_at: "optional",
-      model: "optional",
-    });
   });
 });
 
 describe("initialSessionCreatorForm: the URL seed", () => {
-  test("no seed opens new with every field blank", () => {
+  test("no seed opens with every field blank and nothing chosen", () => {
     expect(initialSessionCreatorForm({})).toEqual({
-      type: "new",
-      values: {
-        resume_session_id: "",
-        resume_at: "",
-        cwd: "",
-        model: "",
-        effort: "",
-        name: "",
-        prompt: "",
-      },
+      cwd: "",
+      model: undefined,
+      effort: undefined,
+      continue: false,
+      resume: "",
+      resume_session_at: "",
+      fork_session: false,
+      name: "",
+      prompt: "",
     });
   });
 
-  test("an unknown type opens new", () => {
-    expect(initialSessionCreatorForm({ type: "template" }).type).toBe("new");
+  test("an option is on only when its seed is true", () => {
+    expect(initialSessionCreatorForm({ continue: "true", fork_session: "yes" })).toMatchObject({
+      continue: true,
+      fork_session: false,
+    });
   });
 
-  // The select has no option to show such a value, so it opens on 指定しない
-  // rather than showing one value and sending another.
-  test("a model or effort outside the picklists opens blank", () => {
-    const opened = initialSessionCreatorForm({ type: "resume", model: "sol", effort: "turbo" });
-    expect(opened.values.model).toBe("");
-    expect(opened.values.effort).toBe("");
+  test("a model or effort outside the picklists opens on the default", () => {
+    expect(initialSessionCreatorForm({ model: "gpt", effort: "turbo" })).toMatchObject({
+      model: undefined,
+      effort: undefined,
+    });
   });
 
-  // Text fields are the user's to see and fix; the schema judges them on submit.
   test("text values open verbatim, even ones the schema will refuse", () => {
-    const opened = initialSessionCreatorForm({
-      type: "fork",
-      resume_session_id: "not-a-uuid",
-      cwd: "relative/dir",
-      prompt: "a\nb",
-    });
-    expect(opened.values).toMatchObject({
-      resume_session_id: "not-a-uuid",
-      cwd: "relative/dir",
-      prompt: "a\nb",
-    });
+    expect(
+      initialSessionCreatorForm({ cwd: "relative", resume: "not-a-uuid", model: "opus" }),
+    ).toMatchObject({ cwd: "relative", resume: "not-a-uuid", model: "opus" });
+  });
+});
+
+describe("shownModel / shownEffort: what the selects open on", () => {
+  const defaults = { fable: "xhigh", opus: "high" } as const;
+
+  // A new session must name both: fable, and its default effort from the
+  // daemon's settings.
+  test("a new session shows fable and its default effort", () => {
+    expect(shownModel(form())).toBe("fable");
+    expect(shownEffort(form(), defaults)).toBe("xhigh");
+  });
+
+  // Choosing a model leaves the effort to follow it (the component clears
+  // the effort's choice): the new model's default, or none to choose.
+  test("the effort is the shown model's default, or blank where it has none", () => {
+    expect(shownEffort(form({ model: "opus" }), defaults)).toBe("high");
+    expect(shownEffort(form({ model: "haiku" }), defaults)).toBe("");
+    expect(shownEffort(form(), {})).toBe("");
+  });
+
+  // Carrying on from a session leaves both to the launch command (指定しない).
+  test("a continue or resume shows 指定しない for both", () => {
+    for (const carrying of [form({ continue: true }), form({ resume: SID })]) {
+      expect(formContinues(carrying)).toBe(true);
+      expect(shownModel(carrying)).toBe("");
+      expect(shownEffort(carrying, defaults)).toBe("");
+    }
+    expect(formContinues(form({ resume: "  " }))).toBe(false);
+  });
+
+  test("a choice is shown as chosen, 指定しない included", () => {
+    expect(shownModel(form({ model: "sonnet", resume: SID }))).toBe("sonnet");
+    expect(shownEffort(form({ model: "", effort: "low" }), defaults)).toBe("low");
+  });
+});
+
+describe("formMakesSession: whether --session-id is generated", () => {
+  test("a new session and a fork, not a continue or resume alone", () => {
+    expect(formMakesSession(form())).toBe(true);
+    expect(formMakesSession(form({ resume: SID, fork_session: true }))).toBe(true);
+    expect(formMakesSession(form({ resume: SID }))).toBe(false);
+    expect(formMakesSession(form({ continue: true }))).toBe(false);
   });
 });
 
 describe("launchCandidate: what the form puts in front of the schema", () => {
-  test("a blank optional field is left out, a blank required one goes in as empty", () => {
-    expect(launchCandidate(form("new", { cwd: "/repo" }))).toEqual({
-      type: "new",
-      cwd: "/repo",
-      model: "",
-      effort: "",
-    });
+  test("a blank field and an option left off are left out; cwd goes in even blank", () => {
+    expect(launchCandidate(form({ continue: true }), {})).toEqual({ cwd: "", continue: true });
   });
 
-  // Switching type keeps the text (resume → fork → resume keeps the id), but a
-  // field the type does not take never travels.
-  test("a field the type does not take is not sent, whatever it holds", () => {
-    const values = { cwd: "/repo", resume_session_id: SID, resume_at: AT };
-    expect(launchCandidate(form("continue", values))).toEqual({ type: "continue", cwd: "/repo" });
-    expect(launchCandidate(form("resume", values))).toEqual({
-      type: "resume",
-      cwd: "/repo",
-      resume_session_id: SID,
+  test("a new session carries the shown model and effort", () => {
+    expect(launchCandidate(form({ cwd: "/r" }), { fable: "max" })).toEqual({
+      cwd: "/r",
+      model: "fable",
+      effort: "max",
     });
   });
 
   test("values are trimmed, except the prompt", () => {
     expect(
       launchCandidate(
-        form("resume", { cwd: " /repo ", resume_session_id: ` ${SID}\n`, prompt: "  go  " }),
+        form({ cwd: " /r ", resume: ` ${SID} `, name: " n ", prompt: "  keep\n" }),
+        {},
       ),
-    ).toEqual({ type: "resume", cwd: "/repo", resume_session_id: SID, prompt: "  go  " });
+    ).toEqual({ cwd: "/r", resume: SID, name: "n", prompt: "  keep\n" });
   });
 
   test("a whitespace-only name or prompt counts as not given", () => {
-    expect(launchCandidate(form("continue", { cwd: "/repo", name: "  ", prompt: "\n" }))).toEqual({
-      type: "continue",
-      cwd: "/repo",
-    });
+    expect(
+      launchCandidate(form({ cwd: "/r", continue: true, name: " ", prompt: "\n" }), {}),
+    ).toEqual({ cwd: "/r", continue: true });
   });
 });
 
 describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
   test("a complete new launch reads as the launch to send", () => {
+    const launch: LaunchInput = {
+      cwd: "/repos/app",
+      model: "opus",
+      effort: "high",
+      name: "n",
+      prompt: "p",
+    };
     expect(
       checkSessionCreatorForm(
-        form("new", { cwd: "/repo", model: "opus", effort: "high", name: "w", prompt: "hi" }),
+        form({ cwd: "/repos/app", model: "opus", effort: "high", name: "n", prompt: "p" }),
+        {},
       ),
-    ).toEqual({
-      ok: true,
-      launch: {
-        type: "new",
-        cwd: "/repo",
-        model: "opus",
-        effort: "high",
-        name: "w",
-        prompt: "hi",
-      },
+    ).toEqual({ ok: true, launch });
+  });
+
+  // The reason is the schema's: the webui holds no text of its own for it.
+  test("a new session without an effort is refused on the field, with the schema's reason", () => {
+    expect(checkSessionCreatorForm(form({ cwd: "/r" }), {})).toEqual({
+      ok: false,
+      issues: { effort: LAUNCH_CHOOSE_MESSAGE },
+      general: [],
     });
   });
 
-  test("new without a model or effort is refused, with the reason on each field", () => {
-    const check = checkSessionCreatorForm(form("new", { cwd: "/repo" }));
-    expect(check.ok).toBe(false);
-    if (check.ok) return;
-    expect(Object.keys(check.issues).sort()).toEqual(["effort", "model"]);
-    expect(check.general).toEqual([]);
+  test("continue and resume together are refused on resume", () => {
+    const check = checkSessionCreatorForm(form({ cwd: "/r", continue: true, resume: SID }), {});
+    expect(check).toMatchObject({
+      ok: false,
+      issues: { resume: "continue と resume は同時に指定できない" },
+    });
   });
 
-  test("a relative cwd and a malformed session id are refused with the schema's reasons", () => {
+  test("a fork or a fork point without continue or resume is refused on each", () => {
     const check = checkSessionCreatorForm(
-      form("fork", { cwd: "repo", resume_session_id: "abc", resume_at: "xyz" }),
+      form({ cwd: "/r", fork_session: true, resume_session_at: AT }),
+      { fable: "high" },
     );
     expect(check.ok).toBe(false);
     if (check.ok) return;
-    expect(check.issues).toEqual({
-      cwd: "must be an absolute path",
-      resume_session_id: "must be a uuid",
-      resume_at: "must be a uuid",
+    expect(Object.keys(check.issues).sort()).toEqual(["fork_session", "resume_session_at"]);
+  });
+
+  test("a blank or relative cwd and a malformed session id are refused with the schema's reasons", () => {
+    const check = checkSessionCreatorForm(form({ cwd: "", resume: "abc" }), {});
+    expect(check).toEqual({
+      ok: false,
+      issues: { cwd: "絶対パスで指定する", resume: "小文字の uuid で指定する" },
+      general: [],
     });
   });
 
-  test("a blank cwd is refused on the cwd field", () => {
-    const check = checkSessionCreatorForm(form("continue"));
-    expect(check.ok ? null : check.issues).toEqual({ cwd: "must be an absolute path" });
-  });
-
-  test("continue / resume / fork read without model, effort or a fork point", () => {
-    expect(checkSessionCreatorForm(form("continue", { cwd: "/r" }))).toEqual({
-      ok: true,
-      launch: { type: "continue", cwd: "/r" },
-    });
-    expect(checkSessionCreatorForm(form("fork", { cwd: "/r", resume_session_id: SID }))).toEqual({
-      ok: true,
-      launch: { type: "fork", cwd: "/r", resume_session_id: SID },
-    });
+  test("a continue, a resume and a fork read without a model or effort", () => {
+    for (const [fields, launch] of [
+      [
+        { cwd: "/r", continue: true },
+        { cwd: "/r", continue: true },
+      ],
+      [
+        { cwd: "/r", resume: SID },
+        { cwd: "/r", resume: SID },
+      ],
+      [
+        { cwd: "/r", resume: SID, fork_session: true, resume_session_at: AT },
+        { cwd: "/r", resume: SID, resume_session_at: AT, fork_session: true },
+      ],
+    ] as const) {
+      expect(checkSessionCreatorForm(form(fields), { fable: "high" })).toEqual({
+        ok: true,
+        launch,
+      });
+    }
   });
 });
 
@@ -275,7 +270,7 @@ describe("launchModelFromTranscript / launchEffortFromTranscript", () => {
 });
 
 describe("prefill: Session Search の「resume」", () => {
-  test("type resume with the session, its cwd, model / effort and its title as the name", () => {
+  test("--resume with the session, its cwd, model / effort and its title as the name", () => {
     const link = prefillSidebarState({
       kind: "resume",
       sessionId: SID,
@@ -286,16 +281,15 @@ describe("prefill: Session Search の「resume」", () => {
     });
     expect(link.panel).toBe("session-creator");
     expect(link.launch).toEqual({
-      type: "resume",
-      resume_session_id: SID,
       cwd: "/repos/app",
       model: "fable",
       effort: "medium",
+      resume: SID,
       name: "release prep",
     });
     expect(formFromLink(link.launch)).toEqual(
-      form("resume", {
-        resume_session_id: SID,
+      form({
+        resume: SID,
         cwd: "/repos/app",
         model: "fable",
         effort: "medium",
@@ -312,7 +306,7 @@ describe("prefill: Session Search の「resume」", () => {
       model: "gpt-5.6-sol",
       title: "",
     });
-    expect(link.launch).toEqual({ type: "resume", resume_session_id: SID });
+    expect(link.launch).toEqual({ resume: SID });
   });
 });
 
@@ -350,17 +344,25 @@ describe("prefill: Timeline の「ここから fork」", () => {
       sessionStatuses: opusHigh,
     };
     const link = prefillSidebarState(forkPrefill(state, SID, AT));
-    const expected: LaunchInput = {
-      type: "fork",
-      resume_session_id: SID,
-      resume_at: AT,
+    expect(link.launch).toEqual({
       cwd: "/repos/app/main",
       model: "opus",
       effort: "high",
+      resume: SID,
+      resume_session_at: AT,
+      fork_session: "true",
+      name: "release prep",
+    });
+    const expected: LaunchInput = {
+      cwd: "/repos/app/main",
+      model: "opus",
+      effort: "high",
+      resume: SID,
+      resume_session_at: AT,
+      fork_session: true,
       name: "release prep",
     };
-    expect(link.launch).toEqual(expected);
-    expect(checkSessionCreatorForm(formFromLink(link.launch))).toEqual({
+    expect(checkSessionCreatorForm(formFromLink(link.launch), {})).toEqual({
       ok: true,
       launch: expected,
     });
@@ -388,12 +390,12 @@ describe("prefill: Timeline の「ここから fork」", () => {
     });
     const state = { ...opened, sessionStatuses: opusHigh };
     expect(prefillSidebarState(forkPrefill(state, SID, AT)).launch).toEqual({
-      type: "fork",
-      resume_session_id: SID,
-      resume_at: AT,
       cwd: "/repos/app/feature",
       model: "opus",
       effort: "high",
+      resume: SID,
+      resume_session_at: AT,
+      fork_session: "true",
       name: "old work",
     });
   });
@@ -402,9 +404,9 @@ describe("prefill: Timeline の「ここから fork」", () => {
   // with the cwd picker empty for the user to choose.
   test("what the state does not know is left out", () => {
     expect(prefillSidebarState(forkPrefill(initialState(), SID, AT)).launch).toEqual({
-      type: "fork",
-      resume_session_id: SID,
-      resume_at: AT,
+      resume: SID,
+      resume_session_at: AT,
+      fork_session: "true",
     });
   });
 });

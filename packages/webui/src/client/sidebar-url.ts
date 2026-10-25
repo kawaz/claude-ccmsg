@@ -12,8 +12,8 @@
 //   これが無ければ他の `sb.*` は一切見ない (パネルが閉じている URL に、
 //   効かないフォーム値だけが残るのを避ける)。
 // - `sb.<field>=<value>` — 起動フォームの欄の初期値。名前は起動の入力
-//   (DR-0018 §3.2 の `LaunchInput`) の field 名そのもの (`type` / `cwd` /
-//   `resume_session_id` …、`LAUNCH_FORM_FIELDS`)。それ以外の名前は採用しない。
+//   (DR-0018 §3.2 の `LaunchInput`) の field 名そのもの (`cwd` / `resume` /
+//   `fork_session` …、`LAUNCH_FORM_FIELDS`)。それ以外の名前は採用しない。
 // - `sb.search=<query>` — Session Search の検索語。
 //
 // hash は使わない (Timeline のアンカーが既に使っている)。JSON 値も使わない —
@@ -38,23 +38,25 @@ const TOKEN_BY_PANEL: Readonly<Record<SidebarPanelKind, string>> = {
 
 const PREFIX = "sb.";
 
-/** 起動フォームの欄、表示の順。名前は起動の入力の field 名で、4 つの type の
- * field の和 (どの type がどれを取るかは session-creator.ts が schema から
- * 読む)。予約キー (`panel` / `search`) とは名前が重ならない。 */
+/** 起動フォームの欄、表示の順。名前は起動の入力の field 名 (claude のオプション
+ * 名の snake_case)。予約キー (`panel` / `search`) とは名前が重ならない。値の
+ * 無いオプション (`continue` / `fork_session`) は `true` で on を表す。 */
 export const LAUNCH_FORM_FIELDS = [
-  "type",
-  "resume_session_id",
-  "resume_at",
   "cwd",
   "model",
   "effort",
+  "continue",
+  "resume",
+  "resume_session_at",
+  "fork_session",
   "name",
   "prompt",
 ] as const;
 export type LaunchFormField = (typeof LAUNCH_FORM_FIELDS)[number];
 
 /** URL が運ぶ起動フォームの初期値。値は素の文字列のままで、欄として読める
- * か (type や model が語彙の中か) は開く側 (session-creator.ts) が決める。 */
+ * か (model が語彙の中か、オプションが `true` か) は開く側
+ * (session-creator.ts) が決める。 */
 export type LaunchSeed = Readonly<Partial<Record<LaunchFormField, string>>>;
 
 export interface SidebarUrlState {

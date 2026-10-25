@@ -26,7 +26,7 @@ describe("parseSidebarUrl", () => {
 
   // 本命: パネルが閉じている URL に、効かないフォーム値だけが残らない。
   test("sb.panel が無ければ他の sb.* は無視される", () => {
-    expect(parseSidebarUrl("?sb.type=fork&sb.resume_session_id=x&sb.search=foo")).toEqual(
+    expect(parseSidebarUrl("?sb.fork_session=true&sb.resume=x&sb.search=foo")).toEqual(
       CLOSED_SIDEBAR,
     );
   });
@@ -35,9 +35,13 @@ describe("parseSidebarUrl", () => {
   // 書き方も含む) は、見えない入力として紛れ込まない。
   test("sb.<field> は起動フォームの欄の名前だけを拾う", () => {
     const state = parseSidebarUrl(
-      "?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-1&sb.resume_at=u-9&sb.SESSION_ID=x&sb.command=y",
+      "?sb.panel=new&sb.fork_session=true&sb.resume=sid-1&sb.resume_session_at=u-9&sb.type=fork&sb.session_id=x&sb.command=y",
     );
-    expect(state.launch).toEqual({ type: "fork", resume_session_id: "sid-1", resume_at: "u-9" });
+    expect(state.launch).toEqual({
+      fork_session: "true",
+      resume: "sid-1",
+      resume_session_at: "u-9",
+    });
   });
 
   test("8 つの欄はどれも URL から読める", () => {
@@ -70,7 +74,7 @@ describe("withSidebarState / round-trip", () => {
   const opened: SidebarUrlState = {
     panel: "session-creator",
     search: null,
-    launch: { type: "fork", resume_session_id: "sid-1", resume_at: "u-9", prompt: "a\nb" },
+    launch: { fork_session: "true", resume: "sid-1", resume_session_at: "u-9", prompt: "a\nb" },
   };
 
   test("組み立てた URL を読み戻すと同じ状態になる", () => {
@@ -94,10 +98,10 @@ describe("withSidebarState / round-trip", () => {
 
   // 同じ状態が常に同じ文字列になる (欄は LAUNCH_FORM_FIELDS の順)。
   test("欄の並びは入力順に依存しない", () => {
-    const a = withSidebarState("/x", { ...opened, launch: { prompt: "p", type: "new" } });
-    const b = withSidebarState("/x", { ...opened, launch: { type: "new", prompt: "p" } });
+    const a = withSidebarState("/x", { ...opened, launch: { prompt: "p", continue: "true" } });
+    const b = withSidebarState("/x", { ...opened, launch: { continue: "true", prompt: "p" } });
     expect(a).toBe(b);
-    expect(a).toBe("/x?sb.panel=new&sb.type=new&sb.prompt=p");
+    expect(a).toBe("/x?sb.panel=new&sb.continue=true&sb.prompt=p");
   });
 });
 
@@ -119,7 +123,7 @@ describe("toggleSidebarPanel", () => {
     const forked: SidebarUrlState = {
       panel: "session-creator",
       search: null,
-      launch: { type: "fork", resume_session_id: "sid-1", resume_at: "u-9" },
+      launch: { fork_session: "true", resume: "sid-1", resume_session_at: "u-9" },
     };
     const closed = toggleSidebarPanel(forked, "session-creator");
     expect(closed).toEqual(CLOSED_SIDEBAR);

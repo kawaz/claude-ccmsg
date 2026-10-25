@@ -270,10 +270,10 @@ describe("Timeline renders each kind of row", () => {
     const url = new URL(defined(navigated.at(-1), "navigation"), "http://x");
     expect(Object.fromEntries(url.searchParams)).toEqual({
       "sb.panel": "new",
-      "sb.type": "fork",
-      "sb.resume_session_id": SID,
-      "sb.resume_at": uuidOf("a", 1),
       "sb.cwd": "/repos/app/main",
+      "sb.resume": SID,
+      "sb.resume_session_at": uuidOf("a", 1),
+      "sb.fork_session": "true",
     });
   });
 

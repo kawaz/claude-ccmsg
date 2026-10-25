@@ -4,21 +4,21 @@
 // by session-creator.test.ts, and nothing here does I/O (that's
 // SessionCreator.tsx's job, per DR-0005 §1).
 //
-// The form is one of the four launch types (DR-0018 §3.2). Which fields a type
-// takes, which of them it requires, and whether a value is acceptable are all
-// read off the protocol's LaunchInputSchema: the form holds text, builds the
-// launch the schema reads, and sends only what the schema accepted.
+// The form has every field of a launch at once, each one of claude's options
+// (DR-0018 §3.2). Which combinations are refused, and why, is read off the
+// protocol's LaunchInputSchema: the form holds what the user entered, builds
+// the launch the schema reads, and sends only what the schema accepted.
 import {
   LaunchEffortSchema,
   LaunchInputSchema,
   LaunchModelSchema,
+  launchContinues,
+  launchMakesSession,
   parseWith,
   type LaunchEffort,
   type LaunchInput,
   type LaunchModel,
-  type LaunchType,
 } from "@ccmsg/protocol";
-import * as v from "valibot";
 import {
   LAUNCH_FORM_FIELDS,
   type LaunchFormField,
@@ -27,119 +27,125 @@ import {
 } from "./sidebar-url.ts";
 import type { AppState } from "./store.ts";
 
-/** The launch types in the order the type select offers them, read off the
- * schema's options so the form offers exactly the types the daemon reads. */
-export const LAUNCH_TYPES: readonly LaunchType[] = LaunchInputSchema.options.map(
-  (option) => option.entries.type.literal,
-);
-const LaunchTypeSchema = v.picklist(LAUNCH_TYPES);
-
 /** The model / effort select options: the protocol's picklists, verbatim. */
 export const LAUNCH_MODELS: readonly LaunchModel[] = LaunchModelSchema.options;
 export const LAUNCH_EFFORTS: readonly LaunchEffort[] = LaunchEffortSchema.options;
 
-/** What each type does, shown under the type select (DR-0018 §3.2's table). */
-export const LAUNCH_TYPE_HINTS: Readonly<Record<LaunchType, string>> = {
-  new: "新しいセッションを起動する",
-  continue: "cwd で最も新しいセッションを続ける",
-  resume: "指定したセッションを続ける (id は変わらない)",
-  fork: "指定したセッションの履歴を写した新しいセッションを起動する",
-};
+/** The model a new session's select opens on. */
+export const DEFAULT_LAUNCH_MODEL: LaunchModel = "fable";
 
-/** Every field but the type: the ones the form holds as text. */
-export type LaunchTextField = Exclude<LaunchFormField, "type">;
-export const LAUNCH_TEXT_FIELDS: readonly LaunchTextField[] = LAUNCH_FORM_FIELDS.filter(
-  (field): field is LaunchTextField => field !== "type",
-);
-
-/** Whether a type takes a field, and if so whether it may be left out. */
-export type LaunchFieldRule = "required" | "optional";
-
-function fieldRules(entries: v.ObjectEntries): Partial<Record<LaunchTextField, LaunchFieldRule>> {
-  const rules: Partial<Record<LaunchTextField, LaunchFieldRule>> = {};
-  for (const field of LAUNCH_TEXT_FIELDS) {
-    const schema = entries[field];
-    if (schema !== undefined) rules[field] = schema.type === "optional" ? "optional" : "required";
-  }
-  return rules;
-}
-
-const FIELD_RULES: ReadonlyMap<
-  LaunchType,
-  Partial<Record<LaunchTextField, LaunchFieldRule>>
-> = new Map(
-  LaunchInputSchema.options.map((option) => [
-    option.entries.type.literal,
-    fieldRules(option.entries),
-  ]),
-);
-
-/** How `type` takes `field`; undefined when it does not, and the form then
- * shows no input for it. */
-export function launchFieldRule(
-  type: LaunchType,
-  field: LaunchTextField,
-): LaunchFieldRule | undefined {
-  return FIELD_RULES.get(type)?.[field];
-}
+/** Per model, the effort the daemon's settings preselect (session_launcher_config's
+ * `default_effort`). */
+export type DefaultEfforts = Readonly<Partial<Record<LaunchModel, LaunchEffort>>>;
 
 export interface SessionCreatorForm {
-  type: LaunchType;
-  /** The text of every field of every type. A field the current type does not
-   * take keeps its text, so switching resume → fork → resume does not lose the
-   * session id; it is neither shown nor sent while the type does not take it.
-   * `model` / `effort` hold a picklist value or "" (指定しない). */
-  values: Readonly<Record<LaunchTextField, string>>;
+  cwd: string;
+  /** The model / effort the user (or the link) chose: a picklist value, or ""
+   * for 指定しない. Undefined while nothing was chosen, and the select then
+   * shows the default (`shownModel` / `shownEffort`). Choosing a model clears
+   * the effort's choice, so the effort follows the new model's default. */
+  model: string | undefined;
+  effort: string | undefined;
+  continue: boolean;
+  resume: string;
+  resume_session_at: string;
+  fork_session: boolean;
+  name: string;
+  prompt: string;
 }
 
-/** A seed model / effort the select can show: a picklist value, or "" when
- * the seed names none the select offers. */
-function seededModel(value: string | undefined): string {
-  const read = parseWith(LaunchModelSchema, value);
-  return read.ok ? read.value : "";
-}
-
-function seededEffort(value: string | undefined): string {
-  const read = parseWith(LaunchEffortSchema, value);
-  return read.ok ? read.value : "";
-}
-
-/** The form a URL seed opens (`sb.<field>`). An absent or unknown `sb.type`
- * opens `new`; a model or effort outside the picklists opens as 指定しない,
- * since the select has no option to show it. Everything else is text the
- * user can see and edit, and the schema judges it on submit. */
-export function initialSessionCreatorForm(seed: LaunchSeed): SessionCreatorForm {
-  const type = parseWith(LaunchTypeSchema, seed.type);
+/** The form's options as a launch names them: `resume` only when written. */
+function optionsOf(form: SessionCreatorForm): {
+  continue: boolean;
+  resume?: string;
+  fork_session: boolean;
+} {
   return {
-    type: type.ok ? type.value : "new",
-    values: {
-      resume_session_id: seed.resume_session_id ?? "",
-      resume_at: seed.resume_at ?? "",
-      cwd: seed.cwd ?? "",
-      model: seededModel(seed.model),
-      effort: seededEffort(seed.effort),
-      name: seed.name ?? "",
-      prompt: seed.prompt ?? "",
-    },
+    continue: form.continue,
+    ...(form.resume.trim() !== "" ? { resume: form.resume } : {}),
+    fork_session: form.fork_session,
   };
 }
 
-/** The launch the form stands for, before the schema reads it: the type, and
- * each field the type takes. A blank optional field is left out — "not given"
- * is the field's absence (DR-0018 §3.2) — while a blank required one goes in
- * as "", so the schema says what is wrong with it rather than only that it is
- * missing. Values are trimmed except the prompt, whose spacing is the user's
- * text. */
-export function launchCandidate(form: SessionCreatorForm): Record<string, string> {
-  const candidate: Record<string, string> = { type: form.type };
-  for (const field of LAUNCH_TEXT_FIELDS) {
-    const rule = launchFieldRule(form.type, field);
-    if (rule === undefined) continue;
-    const text = form.values[field];
-    const trimmed = text.trim();
-    if (trimmed === "" && rule === "optional") continue;
-    candidate[field] = field === "prompt" ? text : trimmed;
-  }
+/** Whether the form carries on from a session (`--continue` or `--resume`).
+ * Only then may model and effort be left to the launch command. */
+export function formContinues(form: SessionCreatorForm): boolean {
+  return launchContinues(optionsOf(form));
+}
+
+/** Whether the daemon chooses the id of the session the form starts (a new
+ * session, or `--fork-session`), which the `--session-id` field says. */
+export function formMakesSession(form: SessionCreatorForm): boolean {
+  return launchMakesSession(optionsOf(form));
+}
+
+/** The model the select shows: the choice, or for a new session `fable`, and
+ * 指定しない ("") when the form carries on from a session. */
+export function shownModel(form: SessionCreatorForm): string {
+  return form.model ?? (formContinues(form) ? "" : DEFAULT_LAUNCH_MODEL);
+}
+
+/** The effort the select shows: the choice, or for a new session the shown
+ * model's default from the daemon's settings ("" — to choose — when it has
+ * none), and 指定しない ("") when the form carries on from a session. */
+export function shownEffort(form: SessionCreatorForm, defaults: DefaultEfforts): string {
+  if (form.effort !== undefined) return form.effort;
+  if (formContinues(form)) return "";
+  const model = parseWith(LaunchModelSchema, shownModel(form));
+  return (model.ok ? defaults[model.value] : undefined) ?? "";
+}
+
+/** A seed model / effort the select can show as a choice, or undefined (the
+ * default) when the seed names none the select offers. */
+function seededModel(value: string | undefined): string | undefined {
+  const read = parseWith(LaunchModelSchema, value);
+  return read.ok ? read.value : undefined;
+}
+
+function seededEffort(value: string | undefined): string | undefined {
+  const read = parseWith(LaunchEffortSchema, value);
+  return read.ok ? read.value : undefined;
+}
+
+/** The form a URL seed opens (`sb.<field>`). A model or effort outside the
+ * picklists opens on the default, since the select has no option to show it;
+ * an option is on when its seed is `true`. Everything else is text the user
+ * can see and edit, and the schema judges it on submit. */
+export function initialSessionCreatorForm(seed: LaunchSeed): SessionCreatorForm {
+  return {
+    cwd: seed.cwd ?? "",
+    model: seededModel(seed.model),
+    effort: seededEffort(seed.effort),
+    continue: seed.continue === "true",
+    resume: seed.resume ?? "",
+    resume_session_at: seed.resume_session_at ?? "",
+    fork_session: seed.fork_session === "true",
+    name: seed.name ?? "",
+    prompt: seed.prompt ?? "",
+  };
+}
+
+/** The launch the form stands for, before the schema reads it. A blank field
+ * and an option left off are left out — "not given" is the field's absence
+ * (DR-0018 §3.2) — except `cwd`, which goes in even blank so the schema says
+ * what is wrong with it. Values are trimmed except the prompt, whose spacing
+ * is the user's text. */
+export function launchCandidate(
+  form: SessionCreatorForm,
+  defaults: DefaultEfforts,
+): Record<string, string | boolean> {
+  const candidate: Record<string, string | boolean> = { cwd: form.cwd.trim() };
+  const text = (field: string, value: string): void => {
+    if (value.trim() !== "") candidate[field] = field === "prompt" ? value : value.trim();
+  };
+  text("model", shownModel(form));
+  text("effort", shownEffort(form, defaults));
+  if (form.continue) candidate.continue = true;
+  text("resume", form.resume);
+  text("resume_session_at", form.resume_session_at);
+  if (form.fork_session) candidate.fork_session = true;
+  text("name", form.name);
+  text("prompt", form.prompt);
   return candidate;
 }
 
@@ -154,8 +160,11 @@ export type LaunchFormCheck =
       general: readonly string[];
     };
 
-export function checkSessionCreatorForm(form: SessionCreatorForm): LaunchFormCheck {
-  const read = parseWith(LaunchInputSchema, launchCandidate(form));
+export function checkSessionCreatorForm(
+  form: SessionCreatorForm,
+  defaults: DefaultEfforts,
+): LaunchFormCheck {
+  const read = parseWith(LaunchInputSchema, launchCandidate(form, defaults));
   if (read.ok) return { ok: true, launch: read.value };
   const issues: Partial<Record<LaunchFormField, string>> = {};
   const general: string[] = [];
@@ -249,7 +258,9 @@ export function forkPrefill(state: AppState, sessionId: string, resumeAt: string
 /** The sidebar URL that opens the form on a session the user already chose.
  * Everything the opener knows goes into the link, so the link alone opens the
  * same form — pasted elsewhere, reloaded, or after the session disconnected.
- * A blank or unmappable value is left out, and its field opens blank. */
+ * A resume is `--resume <id>`; a fork adds `--fork-session` and the record to
+ * fork at (`--resume-session-at`). A blank or unmappable value is left out,
+ * and its field opens blank. */
 export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlState {
   const cwd = prefill.cwd?.trim();
   const model = prefill.model === undefined ? undefined : launchModelFromTranscript(prefill.model);
@@ -260,12 +271,13 @@ export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlS
     panel: "session-creator",
     search: null,
     launch: {
-      type: prefill.kind,
-      resume_session_id: prefill.sessionId,
-      ...(prefill.kind === "fork" ? { resume_at: prefill.resumeAt } : {}),
       ...(cwd ? { cwd } : {}),
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
+      resume: prefill.sessionId,
+      ...(prefill.kind === "fork"
+        ? { resume_session_at: prefill.resumeAt, fork_session: "true" }
+        : {}),
       ...(title ? { name: title } : {}),
     },
   };

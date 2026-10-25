@@ -301,12 +301,8 @@ describe("navigationTarget", () => {
       "/r/room-1",
     );
     expect(
-      navigationTarget(
-        "/s/s1/timeline/head",
-        "",
-        parseSidebarUrl("?sb.panel=new&sb.type=resume&sb.resume_session_id=x"),
-      ),
-    ).toBe("/s/s1/timeline/head?sb.panel=new&sb.type=resume&sb.resume_session_id=x");
+      navigationTarget("/s/s1/timeline/head", "", parseSidebarUrl("?sb.panel=new&sb.resume=x")),
+    ).toBe("/s/s1/timeline/head?sb.panel=new&sb.resume=x");
   });
 
   test("何も開いていなければ遷移先はそのまま", () => {

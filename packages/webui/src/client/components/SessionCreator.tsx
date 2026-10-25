@@ -1,6 +1,6 @@
 // New-session form (DR-0018 §3.9)。フォームはサイドバーの中に一覧と並んで
 // 出る (Sidebar.tsx)。開いているかどうかとフォームの初期値は URL の `sb.*`
-// が持つ — `?sb.panel=new&sb.type=resume&sb.resume_session_id=…` を開けば
+// が持つ — `?sb.panel=new&sb.resume=…` を開けば
 // このフォームがその値で立ち上がる (sidebar-url.ts、表は
 // docs/design/webui-url-grammar.md)。
 //
@@ -14,23 +14,22 @@
 // result renders once and nothing here polls, subscribes, or remembers past
 // launches.
 import { useEffect, useState } from "preact/hooks";
-import type { SessionLaunchResponse } from "@ccmsg/protocol";
+import { launchErrorText, type SessionLaunchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { sessionHref } from "../locator.ts";
 import {
   checkSessionCreatorForm,
   commitCwdInput,
+  formContinues,
+  formMakesSession,
   initialCwdPickerMode,
   initialSessionCreatorForm,
-  launchFieldRule,
   LAUNCH_EFFORTS,
   LAUNCH_MODELS,
-  LAUNCH_TEXT_FIELDS,
-  LAUNCH_TYPE_HINTS,
-  LAUNCH_TYPES,
+  shownEffort,
+  shownModel,
   type CwdPickerMode,
-  type LaunchFieldRule,
-  type LaunchTextField,
+  type DefaultEfforts,
   type SessionCreatorForm,
 } from "../session-creator.ts";
 import type { LaunchSeed } from "../sidebar-url.ts";
@@ -41,7 +40,7 @@ type LauncherProbe =
   | { status: "loading" }
   | { status: "unconfigured" }
   | { status: "error"; message: string }
-  | { status: "ready"; rootDirs: readonly string[] };
+  | { status: "ready"; rootDirs: readonly string[]; defaultEfforts: DefaultEfforts };
 
 type LaunchState =
   | { status: "idle" }
@@ -134,87 +133,93 @@ function FieldIssue({ issue }: { issue: string | undefined }) {
   return issue === undefined ? null : <span class="session-creator-issue">{issue}</span>;
 }
 
-/** What an optional field's blank means, as its placeholder. */
-const BLANK_MEANS: Readonly<Partial<Record<LaunchTextField, string>>> = {
-  name: "空なら起動コマンドが決める",
-  prompt: "空なら起動コマンドが決める",
-  resume_at: "空なら履歴の先端まで写す",
-};
-
-/** One text field of the current type: the uuids in a monospace input, the
- * prompt in a textarea that grows with its text, the rest in a plain input. */
+/** A text field, labelled with claude's option: the session ids in a
+ * monospace input, the rest in a plain one. */
 function TextField({
-  field,
-  rule,
+  label,
   value,
+  placeholder,
+  uuid,
   issue,
   onChange,
 }: {
-  field: Exclude<LaunchTextField, "cwd" | "model" | "effort">;
-  rule: LaunchFieldRule;
+  label: string;
   value: string;
+  placeholder: string;
+  uuid?: boolean;
   issue: string | undefined;
   onChange: (value: string) => void;
 }) {
-  const placeholder = rule === "optional" ? BLANK_MEANS[field] : undefined;
-  const invalid = issue === undefined ? undefined : true;
   return (
     <label class="session-creator-field">
-      <span class="session-creator-label">{field}</span>
-      {field === "prompt" ? (
-        <textarea
-          class="session-creator-prompt"
-          value={value}
-          placeholder={placeholder}
-          aria-invalid={invalid}
-          onInput={(e) => onChange(e.currentTarget.value)}
-        />
-      ) : (
-        <input
-          type="text"
-          class={
-            field === "resume_session_id" || field === "resume_at"
-              ? "session-creator-uuid-input"
-              : undefined
-          }
-          value={value}
-          placeholder={placeholder}
-          aria-invalid={invalid}
-          onInput={(e) => onChange(e.currentTarget.value)}
-        />
-      )}
+      <span class="session-creator-label session-creator-option-name">{label}</span>
+      <input
+        type="text"
+        class={uuid ? "session-creator-uuid-input" : undefined}
+        value={value}
+        placeholder={placeholder}
+        aria-invalid={issue === undefined ? undefined : true}
+        onInput={(e) => onChange(e.currentTarget.value)}
+      />
       <FieldIssue issue={issue} />
     </label>
   );
 }
 
-/** The model or effort select. A type that may leave it out offers 指定しない
- * (the launch command decides) and opens on it; `new` requires both, so its
- * blank is a prompt to choose rather than a choice. */
+/** An option without an argument (`--continue`, `--fork-session`). */
+function OptionField({
+  label,
+  checked,
+  issue,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  issue: string | undefined;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label class="session-creator-field session-creator-option">
+      <span class="session-creator-label session-creator-option-name">{label}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        aria-invalid={issue === undefined ? undefined : true}
+        onChange={(e) => onChange(e.currentTarget.checked)}
+      />
+      <FieldIssue issue={issue} />
+    </label>
+  );
+}
+
+/** The model or effort select. A form that carries on from a session
+ * (`--continue` / `--resume`) may leave it to the launch command, and offers
+ * 指定しない; a new session must name one, so its blank is a prompt to choose
+ * rather than a choice. */
 function PicklistField({
-  field,
+  label,
   options,
-  rule,
+  optional,
   value,
   issue,
   onChange,
 }: {
-  field: "model" | "effort";
+  label: string;
   options: readonly string[];
-  rule: LaunchFieldRule;
+  optional: boolean;
   value: string;
   issue: string | undefined;
   onChange: (value: string) => void;
 }) {
   return (
     <label class="session-creator-field">
-      <span class="session-creator-label">{field}</span>
+      <span class="session-creator-label session-creator-option-name">{label}</span>
       <select
         value={value}
         aria-invalid={issue === undefined ? undefined : true}
         onChange={(e) => onChange(e.currentTarget.value)}
       >
-        {rule === "optional" ? (
+        {optional ? (
           <option value="">指定しない</option>
         ) : (
           <option value="" disabled>
@@ -298,10 +303,14 @@ export function SessionCreator({
       .then((res) => {
         if (cancelled) return;
         if (res.ok) {
-          setProbe({ status: "ready", rootDirs: res.root_dirs });
+          setProbe({
+            status: "ready",
+            rootDirs: res.root_dirs,
+            defaultEfforts: res.default_effort,
+          });
           const initialForm = initialSessionCreatorForm(seed);
           setForm(initialForm);
-          setCwdPickerMode(initialCwdPickerMode(initialForm.values.cwd));
+          setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
           setShowIssues(false);
         } else if (res.error.code === "launcher_not_configured") {
           setProbe({ status: "unconfigured" });
@@ -322,8 +331,8 @@ export function SessionCreator({
 
   async function run(e: Event): Promise<void> {
     e.preventDefault();
-    if (!form) return;
-    const check = checkSessionCreatorForm(form);
+    if (!form || probe.status !== "ready") return;
+    const check = checkSessionCreatorForm(form, probe.defaultEfforts);
     if (!check.ok) {
       setShowIssues(true);
       return;
@@ -332,24 +341,21 @@ export function SessionCreator({
     try {
       const res = await ws.sessionLaunch({ launch: check.launch });
       if (res.ok) setLaunch({ status: "done", result: res });
-      else
-        setLaunch({
-          status: "error",
-          message: `daemon が起動を断ったので、起動していません (${res.error.code}): ${res.error.msg}`,
-        });
+      else setLaunch({ status: "error", message: launchErrorText(res.error).text });
     } catch (err) {
       setLaunch({
         status: "error",
-        message: `起動したか確かめられませんでした: ${errorMessage(err)}`,
+        message: `起動したか確かめられなかった: ${errorMessage(err)}`,
       });
     }
   }
 
-  const check = form && showIssues ? checkSessionCreatorForm(form) : null;
+  const defaults = probe.status === "ready" ? probe.defaultEfforts : {};
+  const check = form && showIssues ? checkSessionCreatorForm(form, defaults) : null;
   const issues = check && !check.ok ? check.issues : {};
 
-  function setValue(field: LaunchTextField, value: string): void {
-    if (form) setForm({ ...form, values: { ...form.values, [field]: value } });
+  function update(change: Partial<SessionCreatorForm>): void {
+    if (form) setForm({ ...form, ...change });
   }
 
   return (
@@ -374,68 +380,92 @@ export function SessionCreator({
         </div>
       ) : form ? (
         <form class="session-creator-form" onSubmit={(e) => void run(e)}>
+          <div class="session-creator-field">
+            <span class="session-creator-label">cwd</span>
+            <CwdPicker
+              cwd={form.cwd}
+              mode={cwdPickerMode}
+              setMode={setCwdPickerMode}
+              rootDirs={probe.rootDirs}
+              onCwdChange={(cwd) => update({ cwd })}
+            />
+            <FieldIssue issue={issues.cwd} />
+          </div>
+          <PicklistField
+            label="--model"
+            options={LAUNCH_MODELS}
+            optional={formContinues(form)}
+            value={shownModel(form)}
+            issue={issues.model}
+            // The effort follows the model chosen: its default, until chosen.
+            onChange={(model) => update({ model, effort: undefined })}
+          />
+          <PicklistField
+            label="--effort"
+            options={LAUNCH_EFFORTS}
+            optional={formContinues(form)}
+            value={shownEffort(form, probe.defaultEfforts)}
+            issue={issues.effort}
+            onChange={(effort) => update({ effort })}
+          />
+          <OptionField
+            label="--continue"
+            checked={form.continue}
+            issue={issues.continue}
+            onChange={(checked) => update({ continue: checked })}
+          />
+          <TextField
+            label="--resume"
+            value={form.resume}
+            placeholder="続けるセッションの id"
+            uuid
+            issue={issues.resume}
+            onChange={(resume) => update({ resume })}
+          />
+          <TextField
+            label="--resume-session-at"
+            value={form.resume_session_at}
+            placeholder="fork 地点の項目の uuid (空なら履歴の先端まで)"
+            uuid
+            issue={issues.resume_session_at}
+            onChange={(resumeSessionAt) => update({ resume_session_at: resumeSessionAt })}
+          />
+          <OptionField
+            label="--fork-session"
+            checked={form.fork_session}
+            issue={issues.fork_session}
+            onChange={(checked) => update({ fork_session: checked })}
+          />
           <label class="session-creator-field">
-            <span class="session-creator-label">type</span>
-            <select
-              value={form.type}
-              onChange={(e) => {
-                const type = LAUNCH_TYPES.find((t) => t === e.currentTarget.value);
-                if (type) setForm({ ...form, type });
-              }}
-            >
-              {LAUNCH_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-            <span class="session-creator-hint">{LAUNCH_TYPE_HINTS[form.type]}</span>
+            <span class="session-creator-label session-creator-option-name">--session-id</span>
+            <input
+              type="text"
+              class="session-creator-uuid-input"
+              disabled
+              value=""
+              placeholder={
+                formMakesSession(form) ? "自動生成" : "自動生成 (新規と --fork-session の時)"
+              }
+            />
           </label>
-          {LAUNCH_TEXT_FIELDS.map((field) => {
-            const rule = launchFieldRule(form.type, field);
-            if (rule === undefined) return null;
-            const value = form.values[field];
-            const issue = issues[field];
-            const onChange = (next: string) => setValue(field, next);
-            if (field === "cwd") {
-              return (
-                <div key={field} class="session-creator-field">
-                  <span class="session-creator-label">cwd</span>
-                  <CwdPicker
-                    cwd={value}
-                    mode={cwdPickerMode}
-                    setMode={setCwdPickerMode}
-                    rootDirs={probe.rootDirs}
-                    onCwdChange={onChange}
-                  />
-                  <FieldIssue issue={issue} />
-                </div>
-              );
-            }
-            if (field === "model" || field === "effort") {
-              return (
-                <PicklistField
-                  key={field}
-                  field={field}
-                  options={field === "model" ? LAUNCH_MODELS : LAUNCH_EFFORTS}
-                  rule={rule}
-                  value={value}
-                  issue={issue}
-                  onChange={onChange}
-                />
-              );
-            }
-            return (
-              <TextField
-                key={field}
-                field={field}
-                rule={rule}
-                value={value}
-                issue={issue}
-                onChange={onChange}
-              />
-            );
-          })}
+          <TextField
+            label="--name"
+            value={form.name}
+            placeholder="空なら起動コマンドが決める"
+            issue={issues.name}
+            onChange={(name) => update({ name })}
+          />
+          <label class="session-creator-field">
+            <span class="session-creator-label">PROMPT</span>
+            <textarea
+              class="session-creator-prompt"
+              value={form.prompt}
+              placeholder="空なら起動コマンドが決める"
+              aria-invalid={issues.prompt === undefined ? undefined : true}
+              onInput={(e) => update({ prompt: e.currentTarget.value })}
+            />
+            <FieldIssue issue={issues.prompt} />
+          </label>
           {check && !check.ok
             ? check.general.map((message) => (
                 <p key={message} class="session-creator-error">

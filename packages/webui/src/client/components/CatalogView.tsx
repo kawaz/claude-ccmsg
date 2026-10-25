@@ -703,20 +703,27 @@ function FormSection() {
     <Specimen name=".session-creator-field" note="ラベル + 入力の 1 組">
       <div class="session-creator-form">
         <label class="session-creator-field">
-          <span class="session-creator-label">type</span>
+          <span class="session-creator-label session-creator-option-name">--model</span>
           <select>
-            <option>resume</option>
-            <option>fork</option>
+            <option value="">指定しない</option>
+            <option>fable</option>
           </select>
-          <span class="session-creator-hint">指定したセッションを続ける (id は変わらない)</span>
+        </label>
+        <label class="session-creator-field session-creator-option">
+          <span class="session-creator-label session-creator-option-name">--continue</span>
+          <input type="checkbox" />
         </label>
         <label class="session-creator-field">
-          <span class="session-creator-label">resume_session_id</span>
+          <span class="session-creator-label session-creator-option-name">--resume</span>
           <input type="text" class="session-creator-uuid-input" aria-invalid value="a3f1c204" />
-          <span class="session-creator-issue">must be a uuid</span>
+          <span class="session-creator-issue">小文字の uuid で指定する</span>
         </label>
         <label class="session-creator-field">
-          <span class="session-creator-label">prompt</span>
+          <span class="session-creator-label session-creator-option-name">--session-id</span>
+          <input type="text" class="session-creator-uuid-input" disabled placeholder="自動生成" />
+        </label>
+        <label class="session-creator-field">
+          <span class="session-creator-label">PROMPT</span>
           <textarea class="session-creator-prompt" placeholder="空なら起動コマンドが決める">
             カタログの表示を確認する
           </textarea>

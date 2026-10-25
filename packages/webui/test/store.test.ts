@@ -2324,19 +2324,23 @@ describe("locator/changed の sb.* 反映", () => {
   });
 
   test("fork のリンクは launcher を fork 元ごと開く", () => {
-    const state = at("?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-9&sb.resume_at=uuid-1");
+    const state = at(
+      "?sb.panel=new&sb.resume=sid-9&sb.resume_session_at=uuid-1&sb.fork_session=true",
+    );
     expect(state.sidebar.panel).toBe("session-creator");
     expect(state.sidebar.launch).toEqual({
-      type: "fork",
-      resume_session_id: "sid-9",
-      resume_at: "uuid-1",
+      resume: "sid-9",
+      resume_session_at: "uuid-1",
+      fork_session: "true",
     });
   });
 
   // 「+ 新規」が組む URL は `sb.panel=new` だけ。前に fork で開いていても、
   // その `sb.*` は URL から消えている = 古い fork 元は蘇りようがない。
   test("「+ 新規」で開き直した launcher は fork 元を引き継がない", () => {
-    const forked = at("?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-9&sb.resume_at=uuid-1");
+    const forked = at(
+      "?sb.panel=new&sb.resume=sid-9&sb.resume_session_at=uuid-1&sb.fork_session=true",
+    );
     const plain = dispatch(forked, {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sid-1" },
