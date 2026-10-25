@@ -1,14 +1,15 @@
 // 許可依頼バブル (usePermitBubbles + PermitRequestBubble) を Timeline に
 // マウントして、読み手に見えるものと「許可する」が写すものを固定する。
 // - そのセッションの依頼だけが出る (別セッションの依頼、agent TL には出ない)
-// - 止められた行動・Attachments (読めたものは折り畳み、読めないものは理由)・
-//   許可してほしいこと (intent とコマンド) の節を出し、Attachments が無ければ
+// - 止められた行動・添付 (読めたものは折り畳み、読めないものは理由)・
+//   許可してほしいこと (intent とコマンド) の節を出し、添付が無ければ
 //   その節を出さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
-//   を出す。写せなければそう言う
-// - 後から届いた依頼 (ev:"permit_request") が同じ TL に足される
+//   を出して依頼を既読にする。写せなければそう言い、既読にしない
+// - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
+//   場所に入る
 // daemon の代わりに、store へ ev:"permit_requests" / ev:"permit_request" と
-// 同じ action を流す。
+// 同じ action を流し、permit_request_read で受けた id を既読にして返す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -70,6 +71,7 @@ const ASKED: PermitRequestRecord = {
   ],
   intents: ["`/w/a.ts` の編集"],
   commands: ["aws s3api put-bucket-policy --bucket b --policy file://policy.json"],
+  read: false,
 };
 
 async function openWith(
@@ -78,17 +80,31 @@ async function openWith(
 ): Promise<{
   root: HTMLElement;
   store: Store;
+  reads: Array<readonly string[]>;
 }> {
   const store = timelineStore(agent !== undefined ? { agent } : {});
   store.dispatch({ type: "permit-requests/loaded", requests: [...requests] });
   const ws = new FakeTranscriptWs(store);
+  const reads: Array<readonly string[]> = [];
+  const handle = {
+    ...ws.handle,
+    permitRequestRead: (ids: readonly string[]) => {
+      reads.push(ids);
+      for (const request of store.getState().permitRequests) {
+        if (ids.includes(request.id)) {
+          store.dispatch({ type: "permit-requests/updated", request: { ...request, read: true } });
+        }
+      }
+      return Promise.resolve({ ok: true as const, ids: [...ids] });
+    },
+  };
   const root = await mounted.mount(
     store,
-    ws.handle,
+    handle,
     h(TimelineOf, agent !== undefined ? { agent } : {}),
   );
   await ws.lastRead().answer(page([]));
-  return { root, store };
+  return { root, store, reads };
 }
 
 function stubClipboard(writeText: (text: string) => Promise<void>): void {
@@ -111,7 +127,7 @@ describe("permission request bubbles", () => {
     const shown = defined(bubble, "the session's bubble");
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
       "止められた行動",
-      "Attachments",
+      "添付",
       "許可してほしいこと",
     ]);
     expect(shown.querySelector(".permit-section .md")?.textContent).toContain(
@@ -139,7 +155,7 @@ describe("permission request bubbles", () => {
     expect(bubbles(root).length).toBe(0);
   });
 
-  test("leave out the Attachments section when there are none", async () => {
+  test("leave out the 添付 section when there are none", async () => {
     const { root } = await openWith([{ ...ASKED, attachments: [] }]);
     const shown = defined(bubbles(root)[0], "bubble");
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
@@ -148,12 +164,12 @@ describe("permission request bubbles", () => {
     ]);
   });
 
-  test("許可する copies the permission and says it did", async () => {
+  test("許可する copies the permission, says it did, and marks the request read", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root } = await openWith([ASKED]);
+    const { root, store, reads } = await openWith([ASKED]);
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     expect(button.classList.contains("copied")).toBe(false);
     await act(async () => {
@@ -164,36 +180,50 @@ describe("permission request bubbles", () => {
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
+    expect(reads).toEqual([[ASKED.id]]);
+    expect(store.getState().permitRequests.map((r) => r.read)).toEqual([true]);
+    // A request read already is not marked again.
+    await act(async () => {
+      grantButton(defined(bubbles(root)[0], "bubble")).click();
+      await Promise.resolve();
+    });
+    expect(reads).toEqual([[ASKED.id]]);
   });
 
   test("says so when the permission could not be copied", async () => {
     stubClipboard(async () => {
       throw new Error("denied");
     });
-    const { root } = await openWith([ASKED]);
+    const { root, reads } = await openWith([ASKED]);
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     await act(async () => {
       button.click();
       await Promise.resolve();
     });
     expect(button.classList.contains("copied")).toBe(false);
+    expect(reads).toEqual([]);
     expect(root.querySelector(".permit-grant-error")?.textContent).toContain(
       "コピーできませんでした",
     );
   });
 
   // A request recorded after the tab caught up arrives on its own, and one
-  // the catch-up already held is not drawn twice.
-  test("a request pushed later joins the Timeline once", async () => {
+  // the catch-up already held (here marked read since) takes its own place
+  // rather than being drawn twice.
+  test("a request pushed later joins the Timeline once, and a read one takes its place", async () => {
     const { root, store } = await openWith([ASKED]);
     const later = { ...ASKED, id: "i/3", ts: "2026-10-25T00:00:05.000Z", blocked: "later" };
     await act(() => {
-      store.dispatch({ type: "permit-requests/added", request: later });
-      store.dispatch({ type: "permit-requests/added", request: ASKED });
+      store.dispatch({ type: "permit-requests/updated", request: later });
+      store.dispatch({ type: "permit-requests/updated", request: { ...ASKED, read: true } });
     });
     expect(bubbles(root).map((b) => b.querySelector(".permit-section .md")?.textContent)).toEqual([
       "aws s3api put-bucket-policy が止められた",
       "later",
+    ]);
+    expect(store.getState().permitRequests.map((r) => [r.id, r.read])).toEqual([
+      [ASKED.id, true],
+      [later.id, false],
     ]);
   });
 });

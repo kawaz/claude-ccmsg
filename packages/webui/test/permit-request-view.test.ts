@@ -18,6 +18,7 @@ function request(fields: Partial<PermitRequestRecord>): PermitRequestRecord {
     attachments: [],
     intents: [],
     commands: [],
+    read: false,
     ...fields,
   };
 }

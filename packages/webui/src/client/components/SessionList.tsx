@@ -25,6 +25,7 @@ import {
   shortSid,
   toSessionRow,
   sayUnreadBySid,
+  permitUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
 import {
@@ -438,6 +439,7 @@ function SessionRowItem({
   modelEffort,
   cacheRequest,
   sayUnread,
+  permitUnread,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -459,6 +461,8 @@ function SessionRowItem({
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
    * ようにするためのもので、既読はセッションの TL の 📣 バブル側で付ける。 */
   sayUnread: number;
+  /** 未読の許可依頼の件数 (DR-0040)。0 = マーカーを出さない。 */
+  permitUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheRequest);
@@ -568,6 +572,7 @@ function SessionRowItem({
               📣{sayUnread > 1 ? sayUnread : ""}
             </span>
           ) : null}
+          <PermitUnreadMark count={permitUnread} />
           {/* 1 行目は repo@ws (kawaz r135m17 で title と入れ替え)。行の中で
            * 唯一の強い文字で、`@ws` は @ ごと別色 (r135m18) — worktree 名は
            * 同じ repo の行同士を見分ける唯一の手掛かりなので、repo 名の反復に
@@ -657,6 +662,7 @@ function PinnedSessionRow({
   agent,
   modelEffort,
   sayUnread,
+  permitUnread,
   onUnpin,
 }: {
   pin: Pin;
@@ -671,6 +677,8 @@ function PinnedSessionRow({
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
    * 📣 がどこにも出なくなる。 */
   sayUnread: number;
+  /** 未読の許可依頼の件数。ピンに出す理由は sayUnread と同じ。 */
+  permitUnread: number;
   onUnpin: () => void;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -723,6 +731,7 @@ function PinnedSessionRow({
               📣{sayUnread > 1 ? sayUnread : ""}
             </span>
           ) : null}
+          <PermitUnreadMark count={permitUnread} />
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
@@ -782,6 +791,7 @@ function PinnedSessionsSection({
   agentsBySid,
   currentSid,
   sayUnreadBy,
+  permitUnreadBy,
   resolveModelEffort,
 }: {
   pinnedSessions: Map<string, Pin>;
@@ -793,6 +803,8 @@ function PinnedSessionsSection({
   currentSid: string | null;
   /** sid → 未読 say 件数 (SessionList が says から引いたもの)。 */
   sayUnreadBy: Map<string, number>;
+  /** sid → 未読の許可依頼の件数 (SessionList が permitRequests から引いたもの)。 */
+  permitUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
   resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
@@ -821,6 +833,7 @@ function PinnedSessionsSection({
             agent={agentsBySid.get(pin.sid)}
             modelEffort={resolveModelEffort(pin.sid, pin)}
             sayUnread={sayUnreadBy.get(pin.sid) ?? 0}
+            permitUnread={permitUnreadBy.get(pin.sid) ?? 0}
             onUnpin={() => store.dispatch({ type: "pinned/removed", key })}
           />
         ))}
@@ -847,6 +860,22 @@ function sectionClass(key: string): string {
   return SESSION_SECTION_CLASS[key] ?? "session-section";
 }
 
+/** 未読の許可依頼の 🔐 (DR-0040)。say の 📣 の隣、同じ「アイコンと repo の
+ * 間」に出す: 許可依頼はエージェントが止まって人を待っている印で、say より
+ * 見落としたくない。既読はセッションの TL のバブルの「許可する」で付く。 */
+function PermitUnreadMark({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <span
+      class="session-permit-unread"
+      title={`未確認の許可依頼 ${count} 件 — セッションの TL のバブルの「許可する」で確認済みになります`}
+      aria-label={`未確認の許可依頼 ${count} 件`}
+    >
+      🔐{count > 1 ? count : ""}
+    </span>
+  );
+}
+
 function sessionListSlice(state: AppState) {
   return {
     agents: state.agents,
@@ -855,6 +884,7 @@ function sessionListSlice(state: AppState) {
     llmRequests: state.llmRequests,
     pinnedSessions: state.pinnedSessions,
     says: state.says,
+    permitRequests: state.permitRequests,
   };
 }
 
@@ -880,11 +910,19 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, says } =
-    useStoreState(store, sessionListSlice, shallowEqual);
+  const {
+    agents,
+    sessionStatuses,
+    sessionErrors,
+    llmRequests,
+    pinnedSessions,
+    says,
+    permitRequests,
+  } = useStoreState(store, sessionListSlice, shallowEqual);
   // say の記録は daemon が ev:"says" で全件 push するので、TL を開いていない
   // セッションの未読もここで数えられる。
   const sayUnreadBy = useMemo(() => sayUnreadBySid(says), [says]);
+  const permitUnreadBy = useMemo(() => permitUnreadBySid(permitRequests), [permitRequests]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [
@@ -923,6 +961,7 @@ export function SessionList({
         agentsBySid={agentsBySid}
         currentSid={currentSid}
         sayUnreadBy={sayUnreadBy}
+        permitUnreadBy={permitUnreadBy}
         resolveModelEffort={resolveModelEffort}
       />
       {sections.map((section) => (
@@ -956,6 +995,7 @@ export function SessionList({
                 modelEffort={resolveModelEffort(row.sid)}
                 cacheRequest={llmRequests.get(row.sid) ?? null}
                 sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+                permitUnread={permitUnreadBy.get(row.sid) ?? 0}
               />
             ))}
           </ul>

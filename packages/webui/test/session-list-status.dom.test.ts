@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, PermitRequestRecord } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
@@ -54,9 +54,14 @@ afterEach(async () => {
   roots = [];
 });
 
-async function mount(peers: PeerInfo[], agents: AgentInfo[]): Promise<HTMLElement> {
+async function mount(
+  peers: PeerInfo[],
+  agents: AgentInfo[],
+  permitRequests: PermitRequestRecord[] = [],
+): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
+  store.dispatch({ type: "permit-requests/loaded", requests: permitRequests });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);
@@ -119,5 +124,43 @@ describe("SessionList status from the module's turn", () => {
     expect(dot(WAITING)?.getAttribute("aria-label")).toBe("waiting (dialog open)");
     expect(dot(BARE)).toBeNull();
     expect(rowOf(root, BARE).title).toContain("hooks module 無し");
+  });
+});
+
+// A session waiting for the person's permission (DR-0040) is marked in the
+// list as a say is, with 🔐 and the count of the requests not yet acted on.
+describe("the Sessions list's unread requests for permission", () => {
+  const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
+    id,
+    sid,
+    ts: SINCE,
+    blocked: "x",
+    attachments: [],
+    intents: [],
+    commands: ["ls"],
+    read,
+  });
+
+  test("marks each session with its unread requests, counting past one", async () => {
+    const root = await mount(
+      [peer(RESPONDING), peer(IDLE), peer(BARE)],
+      [
+        agent(RESPONDING, { status: "idle", turn: { state: "idle", since: SINCE } }),
+        agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
+        agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
+      ],
+      [
+        request("i/1", RESPONDING, false),
+        request("i/2", IDLE, false),
+        request("i/3", IDLE, false),
+        request("i/4", IDLE, true),
+        request("i/5", BARE, true),
+      ],
+    );
+    const mark = (sid: string) => rowOf(root, sid).querySelector(".session-permit-unread");
+    expect(mark(RESPONDING)?.textContent).toBe("🔐");
+    expect(mark(IDLE)?.textContent).toBe("🔐2");
+    expect(mark(IDLE)?.getAttribute("aria-label")).toBe("未確認の許可依頼 2 件");
+    expect(mark(BARE)).toBeNull();
   });
 });

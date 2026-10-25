@@ -121,6 +121,10 @@ export interface WsHandle {
    * pushes the updated `ev:"says"` set to every tab and the store takes it
    * from there, so every open tab converges on the same badge. */
   sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;
+  /** Mark requests for permission read (DR-0040): the bubble's 許可する.
+   * Non-optimistic, like sayRead — the daemon pushes each record it changed
+   * as ev:"permit_request". */
+  permitRequestRead(ids: readonly string[]): Promise<ReplyOf<"permit_request_read">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
    * room message a past transcript shows. */
@@ -730,13 +734,13 @@ export function createWsClient(
     }
     // Requests for permission (DR-0040 §5): the full set on connect, which
     // replaces what the tab held (a restarted daemon starts with none), then
-    // each new one as it is recorded.
+    // each one as it is recorded or marked read, in place of the one held.
     if (streamEv.ev === "permit_requests") {
       dispatch({ type: "permit-requests/loaded", requests: streamEv.requests });
       return;
     }
     if (streamEv.ev === "permit_request") {
-      dispatch({ type: "permit-requests/added", request: streamEv.request });
+      dispatch({ type: "permit-requests/updated", request: streamEv.request });
       return;
     }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
@@ -917,6 +921,7 @@ export function createWsClient(
       ws?.close();
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
+    permitRequestRead: (ids) => send({ op: "permit_request_read", ids: [...ids] }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),

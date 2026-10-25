@@ -388,9 +388,10 @@ export interface AppState {
    * restarted daemon's empty set clears what the old one left here. */
   says: readonly SayRecord[];
   /** Every request for permission the daemon holds (DR-0040), oldest first:
-   * the permission bubbles in each session's Timeline. Replaced whole by the
-   * subscribe-time set (ev:"permit_requests") and added to one at a time
-   * (ev:"permit_request"); a recorded request never changes. */
+   * the permission bubbles in each session's Timeline and the unread 🔐
+   * marker in the Sessions list. Replaced whole by the subscribe-time set
+   * (ev:"permit_requests"), and one at a time (ev:"permit_request") as one
+   * is recorded or marked read. */
   permitRequests: readonly PermitRequestRecord[];
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
    * cwd: one entry per pinned directory, holding the record frozen when it
@@ -490,7 +491,7 @@ export type Action =
   // Full replacement, same as llm-requests/loaded (ev:"says").
   | { type: "says/loaded"; says: readonly SayRecord[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
-  | { type: "permit-requests/added"; request: PermitRequestRecord }
+  | { type: "permit-requests/updated"; request: PermitRequestRecord }
   | { type: "daemon-info/loaded"; version: string; exe?: string; home?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
@@ -1055,11 +1056,17 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, says: action.says };
     case "permit-requests/loaded":
       return { ...state, permitRequests: action.requests };
-    case "permit-requests/added":
-      // The catch-up of a subscribe may already hold the one pushed beside it.
-      return state.permitRequests.some((r) => r.id === action.request.id)
-        ? state
-        : { ...state, permitRequests: [...state.permitRequests, action.request] };
+    case "permit-requests/updated": {
+      // A record held already (marked read, or one the subscribe's catch-up
+      // carried too) is replaced where it is; a new one goes last.
+      const { request } = action;
+      return state.permitRequests.some((r) => r.id === request.id)
+        ? {
+            ...state,
+            permitRequests: state.permitRequests.map((r) => (r.id === request.id ? request : r)),
+          }
+        : { ...state, permitRequests: [...state.permitRequests, request] };
+    }
     case "llm-requests/loaded":
       return {
         ...state,

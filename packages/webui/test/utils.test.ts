@@ -60,6 +60,7 @@ import {
   sessionStatus,
   hasSessionTranscript,
   sayUnreadBySid,
+  permitUnreadBySid,
   PANE_MIN_PX,
   SESSION_PANE_DEFAULT_RATIO,
   shortSid,
@@ -183,6 +184,28 @@ function roomWithMember(m: MemberEvent): RoomState {
     history: "loaded",
   };
 }
+
+describe("permitUnreadBySid", () => {
+  // 未読の許可依頼は記録の sid に帰属し、既読は数えない。未読ゼロの sid は出さない。
+  test("counts each sid's unread requests", () => {
+    const request = (id: string, sid: string, read: boolean) => ({
+      id,
+      sid,
+      ts: "t",
+      blocked: "x",
+      attachments: [],
+      intents: [],
+      commands: ["ls"],
+      read,
+    });
+    const got = permitUnreadBySid([
+      request("i/1", "sid-a", false),
+      request("i/2", "sid-a", false),
+      request("i/3", "sid-b", true),
+    ]);
+    expect([...got]).toEqual([["sid-a", 2]]);
+  });
+});
 
 describe("sayUnreadBySid", () => {
   const record = (id: string, sid: string, read: boolean): SayRecord => ({
