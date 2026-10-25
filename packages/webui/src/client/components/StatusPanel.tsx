@@ -175,13 +175,24 @@ function Section<T>({
  *
  * confirm は force 時も必ず出し、文言に SIGKILL である旨と不可逆性を明記する
  * (kawaz の「-KILL モードに変化させて欲しい」= 表示だけでなく操作にも一段
- * 追加のガードを掛ける意)。 */
+ * 追加のガードを掛ける意)。
+ *
+ * 「再起動」(DR-0028 「restart」) sits beside it: stopping and restarting are
+ * one pair of operations. It looks like the kill button and, like it, is
+ * disabled while either of the two runs; it is shown only where the daemon
+ * can resume the session (`restartOffered`), and stays, disabled, while a
+ * restart runs. It asks no confirm — the person knows what a restart drops
+ * (background processes, teammates) when they press it. */
 function KillZone({
   sid,
   onKill,
+  restartOffered,
+  restart,
 }: {
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
+  restartOffered: boolean;
+  restart: SessionRestart;
 }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -236,13 +247,33 @@ function KillZone({
       ? "強制終了 (-KILL)"
       : "セッションを終了";
   const buttonCls = "status-kill-button" + (forceMode ? " status-kill-button-force" : "");
+  const anyBusy = busy || restart.busy;
   return (
     <section class="status-section status-kill-zone">
       <h3 class="status-section-title">危険ゾーン</h3>
-      <button type="button" class={buttonCls} disabled={busy} onClick={handleKill}>
-        {buttonLabel}
-      </button>
+      <div class="status-kill-buttons">
+        <button type="button" class={buttonCls} disabled={anyBusy} onClick={handleKill}>
+          {buttonLabel}
+        </button>
+        {restartOffered || restart.busy ? (
+          <button
+            type="button"
+            class="status-kill-button status-restart-button"
+            disabled={anyBusy}
+            onClick={restart.start}
+          >
+            {restart.busy ? "再起動中…" : "再起動"}
+          </button>
+        ) : null}
+      </div>
       {result ? <p class="status-kill-result">{result}</p> : null}
+      {restart.result ? (
+        <div class="status-kill-result status-restart-result">
+          <p>{restart.result.text}</p>
+          {restart.result.output?.stdout ? <pre>{restart.result.output.stdout}</pre> : null}
+          {restart.result.output?.stderr ? <pre>{restart.result.output.stderr}</pre> : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -283,31 +314,6 @@ export function useSessionRestart(
         );
     },
   };
-}
-
-/** The LIVE row's 再起動: stop the session's process and resume the same id
- * through the launch command. No confirm — the person knows what a restart
- * drops (background processes, teammates) when they press it. While it runs
- * the button stays, disabled, even if the agents row has gone with the old
- * process. */
-function RestartControl({ offered, restart }: { offered: boolean; restart: SessionRestart }) {
-  const { busy, result } = restart;
-  return (
-    <>
-      {offered || busy ? (
-        <button type="button" class="status-restart-button" disabled={busy} onClick={restart.start}>
-          {busy ? "再起動中…" : "再起動"}
-        </button>
-      ) : null}
-      {result ? (
-        <div class="status-restart-result">
-          <p>{result.text}</p>
-          {result.output?.stdout ? <pre>{result.output.stdout}</pre> : null}
-          {result.output?.stderr ? <pre>{result.output.stderr}</pre> : null}
-        </div>
-      ) : null}
-    </>
-  );
 }
 
 /** One value cell. A sensitive name (r55m134) renders as a button that swaps
@@ -618,10 +624,7 @@ export function StatusPanel({
           )}
         </dd>
         <dt>LIVE</dt>
-        <dd class="status-live">
-          <span>{liveState ?? "—"}</span>
-          <RestartControl offered={restartable} restart={restart} />
-        </dd>
+        <dd>{liveState ?? "—"}</dd>
         <dt>KIND</dt>
         <dd>{agent?.kind ?? "—"}</dd>
         <dt>STARTED</dt>
@@ -686,7 +689,13 @@ export function StatusPanel({
         </>
       )}
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
-      <KillZone key={sid} sid={sid} onKill={onKill} />
+      <KillZone
+        key={sid}
+        sid={sid}
+        onKill={onKill}
+        restartOffered={restartable}
+        restart={restart}
+      />
     </div>
   );
 }

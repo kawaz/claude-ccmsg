@@ -12,13 +12,17 @@
 
 | 確かめたこと | 結果 |
 |---|---|
-| ボタンの表示 | Status タブの LIVE の行 (`idle`) の横に「再起動」が出た |
+| ボタンの表示 | この時点では Status タブの LIVE の行 (`idle`) の横に「再起動」が出た (後で危険ゾーンの「セッションを終了」の隣に移した。下の「置き場を移した後」) |
 | 押した後の daemon.log | `session_launch: by=user cwd="<ws の realpath>" resume=<sid> prompt_bytes=425 exit_code=0 …` と `session_restart: session_id=<sid> pid=<旧 pid> terminated=true exit_code=0` |
 | 旧プロセス | 旧 pid は居なくなった (`kill -0` が `no such process`) |
 | resume | 同じ sid の `sessions/<pid>.json` が新しい pid で現れ、新しい hyoui の端末の argv は `claude --resume <sid> --model sonnet --effort low --name 🤖ccmsg-verify-restart -- "プロセス再起動 (resume) しました。…"` |
 | prompt | transcript の末尾に resume の prompt の本文そのままの user 行が足された |
 | resume したセッションの到達 | 新しいプロセスのサイドカーが daemon に名乗った (`sidecar <sid>.<run> is pid=<新 pid>`) |
-| 結果の表示 | 1 回目は結果の文が出なかった: restart の間にセッションの登録が外れて Status のパネルが一度消え、パネルの中に持っていた結果が消えた。結果をセッションの view に持たせる形に直し、daemon を立て直して 2 回目を押すと、resume したセッションが戻った後の LIVE の行の下に「再起動しました」が出た |
+| 結果の表示 | 1 回目は結果の文が出なかった: restart の間にセッションの登録が外れて Status のパネルが一度消え、パネルの中に持っていた結果が消えた。結果をセッションの view に持たせる形に直し、daemon を立て直して 2 回目を押すと、resume したセッションが戻った後のパネルに「再起動しました」が出た |
+
+## 置き場を移した後
+
+「再起動」を危険ゾーンの「セッションを終了」の隣に移した後、同じ手順 (別の試験セッション `🤖ccmsg-verify-restart-place`、`--model haiku`) でもう 1 度押した。危険ゾーンに「セッションを終了」「再起動」が同じ見た目で並び、daemon.log は `session_restart: session_id=<sid> pid=<旧 pid> terminated=true exit_code=0`、resume したセッションが戻った後にボタンの下に「再起動しました」が出た。
 
 ## 試験の環境に由来すること
 

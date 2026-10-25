@@ -9502,35 +9502,12 @@ circle.cache-ring-shape {
   margin-bottom: var(--space-3);
 }
 
-/* Status: LIVE row's restart (DR-0028 「restart」). An ordinary action, not a
- * danger-zone one: the person presses it knowing what it drops. */
-.status-live {
+/* Status: 「再起動」 beside 「セッションを終了」 (DR-0028 「restart」), the pair
+ * of operations in one row with the same chrome. */
+.status-kill-buttons {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-4) var(--space-7);
-}
-
-.status-restart-button {
-  font: inherit;
-  font-size: var(--font-size-sm);
-  color: var(--accent);
-  background: none;
-  border: 1px solid var(--accent);
-  border-radius: 0.3rem;
-  padding: 0 var(--space-7);
-  cursor: pointer;
-}
-
-.status-restart-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.status-restart-result {
-  flex-basis: 100%;
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
+  gap: var(--space-7);
 }
 
 .status-restart-result p {

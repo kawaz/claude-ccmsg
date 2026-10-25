@@ -138,10 +138,10 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 ### webui
 
-- Status タブの LIVE の行に「再起動」ボタン。`launch_available` で、そのセッションの agents の行があり (プロセスが居る)、行の `config_dir` が hello の `launch_config_dir` と同じ時だけ出す
+- Status タブの危険ゾーンの「セッションを終了」の隣に「再起動」ボタン (停止と再起動は対の操作なので並べる、kawaz 2026-10-25)。見た目は終了ボタンと同じで、どちらかが走っている間は両方を disabled にする。`launch_available` で、そのセッションの agents の行があり (プロセスが居る)、行の `config_dir` が hello の `launch_config_dir` と同じ時だけ出す
 - 確認ダイアログは出さない (ユーザが理解して押す)。押している間は disabled で、文言を「再起動中…」にする
 - restart の間はセッションの登録が外れて Status のパネルが一度消えるので、押している状態と結果はセッションの view が持ち、resume したセッションが戻った後のパネルに出す ([findings 2026-10-25-session-restart-verify](../findings/2026-10-25-session-restart-verify.md))
-- 結果は LIVE の行の下に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
+- 結果は危険ゾーンのボタンの下に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
 
 ### 却下した代替案
 

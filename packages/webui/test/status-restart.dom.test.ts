@@ -1,7 +1,8 @@
-// DR-0028 「restart」: the Status tab's 再起動 as mounted — offered only when
-// the daemon can launch, the session's process is there and it runs in the
-// config dir the launch command starts claude in; no confirm; disabled while
-// it runs; what it came to under the LIVE row.
+// DR-0028 「restart」: the Status tab's 再起動 as mounted — beside the kill
+// button in the danger zone, with its look; offered only when the daemon can
+// launch, the session's process is there and it runs in the config dir the
+// launch command starts claude in; no confirm; both buttons disabled while
+// either runs; what it came to under them.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -62,6 +63,8 @@ async function mount(options: {
   launchAvailable?: boolean;
   launchConfigDir?: string;
   agentConfigDir?: string | null;
+  /** The kill's reply never comes, so the kill stays running. */
+  killHangs?: boolean;
 }): Promise<Mounted> {
   const store = createStore(initialState());
   store.dispatch({
@@ -82,7 +85,9 @@ async function mount(options: {
     });
   };
   const onKill = (): Promise<SessionKillResponse | ErrorResponse> =>
-    Promise.resolve({ ok: true, terminated: true });
+    options.killHangs === true
+      ? new Promise(() => {})
+      : Promise.resolve({ ok: true, terminated: true });
   const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, pid: 4242, env: {} });
   const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
@@ -122,16 +127,24 @@ function restartButton(root: HTMLElement): HTMLButtonElement | null {
   return found === null ? null : instanceOf(found, HTMLButtonElement, "the restart button");
 }
 
+function killButton(root: HTMLElement): HTMLButtonElement | null {
+  const found = root.querySelector(".status-kill-button:not(.status-restart-button)");
+  return found === null ? null : instanceOf(found, HTMLButtonElement, "the kill button");
+}
+
 function resultText(root: HTMLElement): string {
   return root.querySelector(".status-restart-result")?.textContent ?? "";
 }
 
 describe("Status の再起動", () => {
-  test("offered in the LIVE row when the session runs in the launch command's config dir", async () => {
+  test("offered beside the kill button, with its look, when the session runs in the launch command's config dir", async () => {
     const { root } = await mount({ launchConfigDir: CONFIG_DIR });
     const button = restartButton(root);
     expect(button?.textContent).toBe("再起動");
-    expect(button?.closest("dd")?.classList.contains("status-live")).toBe(true);
+    expect(button?.classList.contains("status-kill-button")).toBe(true);
+    const zone = button?.closest(".status-kill-zone");
+    const labels = [...(zone?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
+    expect(labels).toEqual(["セッションを終了", "再起動"]);
   });
 
   test("not offered for a session in another config dir", async () => {
@@ -160,6 +173,7 @@ describe("Status の再起動", () => {
       expect(confirms).toEqual([]);
       expect(restartButton(mounted.root)?.disabled).toBe(true);
       expect(restartButton(mounted.root)?.textContent).toBe("再起動中…");
+      expect(killButton(mounted.root)?.disabled).toBe(true);
       await mounted.answer({
         ok: true,
         restarted: true,
@@ -169,7 +183,21 @@ describe("Status の再起動", () => {
         stderr: "",
       });
       expect(restartButton(mounted.root)?.disabled).toBe(false);
+      expect(killButton(mounted.root)?.disabled).toBe(false);
       expect(resultText(mounted.root)).toBe("再起動しました");
+    } finally {
+      restore();
+    }
+  });
+
+  test("while the kill runs, the restart is disabled too", async () => {
+    const restore = stubGlobal("confirm", () => true);
+    try {
+      const mounted = await mount({ launchConfigDir: CONFIG_DIR, killHangs: true });
+      await act(() => killButton(mounted.root)?.click());
+      expect(killButton(mounted.root)?.disabled).toBe(true);
+      expect(restartButton(mounted.root)?.disabled).toBe(true);
+      expect(mounted.restarts()).toBe(0);
     } finally {
       restore();
     }
