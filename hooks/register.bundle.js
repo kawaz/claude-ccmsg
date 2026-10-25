@@ -1838,8 +1838,7 @@ var TOOL_INPUT_SCHEMAS = {
     },
     required: [
       "text"
-    ],
-    $schema: "http://json-schema.org/draft-07/schema#"
+    ]
   },
   say: {
     type: "object",
@@ -1850,8 +1849,7 @@ var TOOL_INPUT_SCHEMAS = {
     },
     required: [
       "text"
-    ],
-    $schema: "http://json-schema.org/draft-07/schema#"
+    ]
   },
   peers: {
     type: "object",
@@ -1865,8 +1863,7 @@ var TOOL_INPUT_SCHEMAS = {
         minLength: 1
       }
     },
-    required: [],
-    $schema: "http://json-schema.org/draft-07/schema#"
+    required: []
   },
   launch: {
     type: "object",
@@ -1923,8 +1920,7 @@ var TOOL_INPUT_SCHEMAS = {
     required: [
       "cwd"
     ],
-    additionalProperties: false,
-    $schema: "http://json-schema.org/draft-07/schema#"
+    additionalProperties: false
   }
 };
 async function registerTools($) {
@@ -1949,7 +1945,7 @@ async function registerTools($) {
     }),
     $.tool.register({
       name: "launch",
-      description: "Start a Claude Code session through the configured launch command (see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+      description: "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
       isDeferred: true
     })

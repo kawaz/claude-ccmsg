@@ -43,8 +43,20 @@
 
 この確認の後の裁定で、依頼者は起動コマンドの stdin の field (`requested_by`) から環境変数 `CCMSG_LAUNCH_REQUESTED_BY` に移り、config のキーは `launch_timeout_seconds` / `launch_max_concurrency` になった ([DR-0018](../decisions/DR-0018-session-launcher.md) §3.1、§3.5)。上の表の stdin の `requested_by` は確認した時点の形で、今は環境変数で届く (daemon の統合テストで固定)。
 
+## 組み込みの起動コマンドを本物の hyoui で通す
+
+- 方法: hyoui 0.16.4 (`/opt/homebrew/bin/hyoui`) を、`HYOUI_STATE_DIR` / `XDG_CONFIG_HOME` を一時ディレクトリに向けて使った (手元の hyoui のセッション一覧に載せないため)。`PATH` の先頭に `claude` の代役 (受けた argv を 1 つずつ `[…]` でファイルに書き、`CCMSG_LAUNCH_REQUESTED_BY` と cwd も書いて exit 0) を置き、`env -i` の環境で `bun packages/daemon/src/default-launch-command.ts` に新規の入力を標準入力で渡した。cwd は一時ディレクトリ
+
+| 確かめたこと | 結果 |
+|---|---|
+| 新規の入力 `{"cwd":…,"model":"opus","effort":"high","name":"🤖ccmsg-verify-builtin","prompt":"-p hi<改行>line2","session_id":"11111111-…"}` | 組み込みは exit 0 で、標準出力に hyoui の session id が 1 行出た (`hyoui run --detached` の出力がそのまま) |
+| hyoui が detached で起こした代役が受けた argv | `[--session-id][11111111-…][--model][opus][--effort][high][--name][🤖ccmsg-verify-builtin][--][-p hi<改行>line2]`。契約の写し方どおりで、`-` で始まり改行を含む prompt も 1 つの引数のまま `--` の後ろに届いた |
+| 代役から見た環境と cwd | `CCMSG_LAUNCH_REQUESTED_BY=user` が届き、cwd は起動した一時ディレクトリ (realpath) |
+| 終了コードが hyoui のもの | `HYOUI_STATE_DIR` をファイルの下に向けて hyoui を失敗させると (`hyoui: socket path 解決失敗: Not a directory`)、組み込みは exit 1 で、同じ環境で `hyoui run --detached -- claude --continue` を直接叩いた時の exit 1 と同じ。代役は起こされなかった |
+| 後片付け | 代役はすぐ終わるので、hyoui のセッションは子の終了と一緒に消えた (`hyoui list` は `no sessions found`、残ったプロセスも無い)。`hyoui kill` は要らなかった |
+
 ## 未観測
 
 - 本物の model が input schema の description に従って組み合わせを守るか (代役の API の台本なので見ていない)
 - first-party の API に対する request の `tools` の形
-- 実際の起動コマンド (端末に claude を載せるもの) と、起動されたセッションが daemon に名乗るまで
+- 本物の claude を hyoui に載せた起動と、起動されたセッションが daemon に名乗るまで (上の節は claude の代役まで)

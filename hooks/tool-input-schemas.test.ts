@@ -11,7 +11,6 @@ describe("describedObjectSchema", () => {
 
   test("puts each description on its field and keeps the rest of the shape", () => {
     expect(describedObjectSchema(S, { x: "An x.", y: "A y." })).toEqual({
-      $schema: "http://json-schema.org/draft-07/schema#",
       type: "object",
       properties: {
         x: { type: "string", description: "An x." },
@@ -39,6 +38,8 @@ describe("toolInputSchemas: launch", () => {
     expect(schema.type).toBe("object");
     expect(schema).not.toHaveProperty("oneOf");
     expect(schema).not.toHaveProperty("anyOf");
+    // The model has no use for the dialect the converter names.
+    expect(schema).not.toHaveProperty("$schema");
     expect(Object.keys(schema.properties ?? {})).toEqual([
       "cwd",
       "model",

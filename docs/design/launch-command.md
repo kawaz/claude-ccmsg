@@ -91,7 +91,7 @@ config に `launch_command` が無い時、daemon は plugin に同梱の `packa
 
 - stdin の JSON を `LaunchCommandInputSchema` で読む。読めなければ非零 (2) で終わる
 - field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写し、`hyoui run --detached -- claude <オプション>` を shell を介さずに実行して、hyoui の終了コードで終わる。`hyoui` が `PATH` に無ければ非零 (2)
-- `fork_session` と `resume_session_at` がある時は二段で起動する (一段目の `claude -p` が非零なら非零 (2) で終わり、hyoui は起こさない)
+- `fork_session` と `resume_session_at` がある時は、上の「claude の引数への写し方」の二段で起動する。一段目の `claude -p` は hyoui を通さずに直接起こし、非零なら非零 (2) で終わって hyoui は起こさない。二段は契約どおりに fork 地点を効かせるための起動の仕方で、下の「加工」には当たらない
 
 加工はしない: direnv の適用、model 名への `[1m]` 等の付与、セッション名の装飾、trust ダイアログの吸収、cwd の信頼判定、`CCMSG_LAUNCH_REQUESTED_BY` による判定の切り替えはどれもしない。面ごとの環境の切替や trust ダイアログの吸収が要る環境は、自前の起動コマンドを書いて `launch_command` に置く。
 

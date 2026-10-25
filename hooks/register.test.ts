@@ -2182,7 +2182,10 @@ describe("the ccmsg tools", () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     const launch = fake.tools.find((t) => t.name === "launch");
-    expect(launch?.description).toContain("exit_code 0 means the launch command finished normally");
+    expect(launch?.description).toBe(
+      "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+    );
+    expect(launch?.inputSchema).not.toHaveProperty("$schema");
     const schema = launch?.inputSchema;
     expect(schema).toMatchObject({
       type: "object",

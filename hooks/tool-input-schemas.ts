@@ -14,9 +14,11 @@ import {
 
 /** What valibot checks beyond the shape (a text that is not only whitespace,
  * a send that names somebody, which of launch's options go together) has no
- * JSON Schema here; the handler answers it in text. */
+ * JSON Schema here; the handler answers it in text. The `$schema` the
+ * converter adds says nothing the model uses, so it is left out. */
 function inputSchemaOf(schema: v.GenericSchema): JsonSchema {
-  return toJsonSchema(schema, { errorMode: "ignore" });
+  const { $schema: _dialect, ...shape } = toJsonSchema(schema, { errorMode: "ignore" });
+  return shape;
 }
 
 /** What `launch`'s fields mean, as the model reads them, with the

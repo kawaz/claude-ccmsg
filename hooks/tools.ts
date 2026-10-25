@@ -2,7 +2,7 @@
 // session.start (DR-0039 §3): `send` (to other sessions, named by any of
 // their id, directory, name and process, in any config home), `say` (to the
 // person, by voice and in the webui), `peers` (who `send` can reach) and
-// `launch` (start a session through the configured launch command, DR-0018
+// `launch` (start a session through ccmsg's launch command, DR-0018
 // §3.7). Each is answered here without `next`: `send`, `peers` and `launch`
 // through `ccmsg sidecar send-message` / `peer-list` / `launch`, `say`
 // through `ccmsg say`, the result always a text the model reads. SendMessage
@@ -80,7 +80,7 @@ async function registerTools($: Engine): Promise<void> {
     $.tool.register({
       name: "launch",
       description:
-        "Start a Claude Code session through the configured launch command (see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
+        "Start a Claude Code session through ccmsg's launch command (built in, or the one configured; see the ccmsg skill). exit_code 0 means the launch command finished normally, not that the session is up; check that with peers.",
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
       isDeferred: true,
     }),
@@ -205,7 +205,7 @@ const LaunchToolCallSchema = v.object(LaunchToolFieldsSchema.entries);
 const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 
 /** The `launch` tool: start a session through `ccmsg sidecar launch`, which
- * asks the daemon to run the configured launch command, and answer what the
+ * asks the daemon to run its launch command, and answer what the
  * command did as JSON. Never rejects. */
 async function launchTool<E>($: Engine, e: E): Promise<string> {
   const call = parseWith(LaunchToolCallSchema, e);
