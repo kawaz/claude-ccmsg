@@ -5,7 +5,7 @@
 // the converter (`just build-hooks`).
 //
 // The schemas are kept to what a call needs to be written (DR-0039 §3, "mods
-// の tool の作り方"): each field's type, an enum's values, which fields are
+// の tool の作り方"): each field's type (an array's with its items' type), an enum's values, which fields are
 // required, and a few words only on a field whose name does not say what it
 // holds. No schema metadata (`$schema`, `additionalProperties` …). Every finer rule (a minimum length, a pattern, a range, which fields
 // go together) stays in the valibot schema the handler reads the input with,
@@ -19,12 +19,16 @@ import {
   SayToolInputSchema,
   SendToolInputSchema,
 } from "@ccmsg/protocol/peer-tools";
+import { PermitToolInputSchema } from "@ccmsg/protocol/permit-request";
 
-/** A field as the model is shown it: its type, and an enum's values. */
+/** A field as the model is shown it: its type, an enum's values, and an
+ * array's items shaped the same way (the type of a list is what it holds). */
 function fieldShape(field: JsonSchema): JsonSchema {
+  const items = field.items;
   return {
     ...(field.type !== undefined ? { type: field.type } : {}),
     ...(field.enum !== undefined ? { enum: field.enum } : {}),
+    ...(typeof items === "object" && !Array.isArray(items) ? { items: fieldShape(items) } : {}),
   };
 }
 
@@ -67,11 +71,13 @@ export function toolInputSchemas(): {
   say: JsonSchema;
   peers: JsonSchema;
   launch: JsonSchema;
+  permit: JsonSchema;
 } {
   return {
     send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Running subagent's id" }),
     say: toolInputSchemaOf(SayToolInputSchema),
     peers: toolInputSchemaOf(PeersToolInputSchema),
     launch: toolInputSchemaOf(LaunchToolFieldsSchema, { resume: "Session id to resume" }),
+    permit: toolInputSchemaOf(PermitToolInputSchema),
   };
 }

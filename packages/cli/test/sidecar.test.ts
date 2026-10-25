@@ -2,8 +2,9 @@
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
 // carries the module's reply to the daemon; `ccmsg sidecar send-message` /
-// `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools, and
-// `ccmsg sidecar launch` (DR-0018 §3.7) its `launch` tool.
+// `peer-list` (DR-0039 §3) carry the module's `send` and `peers` tools,
+// `ccmsg sidecar launch` (DR-0018 §3.7) its `launch` tool, and
+// `ccmsg sidecar permit` (DR-0040) its `permit` tool.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -16,6 +17,7 @@ import {
   SessionLaunchResponseTextSchema,
   type SendMessageResult,
   PeerListResponseTextSchema,
+  PermitRequestResponseTextSchema,
   SendMessageResponseTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
@@ -1106,5 +1108,139 @@ describe("ccmsg sidecar launch", () => {
     });
     expect({ code: run.code, out: run.out }).toEqual({ code: 3, out: "" });
     expect(run.err).toContain("ccmsg sidecar launch: the daemon could not be reached: ");
+  });
+});
+
+// `permit` (DR-0040): the request goes to the daemon as the session's
+// permit_request, and once the daemon recorded it the speakers say that a
+// session is asking, through the speech binary `ccmsg say` uses.
+describe("ccmsg sidecar permit", () => {
+  /** `ccmsg sidecar permit --sid SID` with `stdin` on its standard input. */
+  async function runPermit(
+    stdin: string,
+    env: Record<string, string | undefined>,
+  ): Promise<{ code: number; out: string; err: string }> {
+    const proc = Bun.spawn([process.execPath, CLI, "sidecar", "permit", "--sid", SID], {
+      env,
+      stdin: new TextEncoder().encode(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, out, err };
+  }
+
+  /** A daemon in this process, a speech binary that writes its arguments to
+   * a file and exits `speechExit`, and the CLI's environment for both. */
+  async function withDaemon(
+    speechExit: number,
+    run: (
+      env: Record<string, string | undefined>,
+      ctx: Awaited<ReturnType<typeof startInProcessDaemon>>,
+      spoken: () => string,
+      work: string,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const work = fs.realpathSync(shortBase());
+    const spokenFile = path.join(work, "spoken");
+    const speech = writeMockBin(
+      path.join(work, "say"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\nexit ${String(speechExit)}\n`,
+    );
+    const ctx = await startInProcessDaemon();
+    try {
+      const { stateDir, configDir, dataDir } = ctx.daemon.paths;
+      await run(
+        {
+          ...process.env,
+          CCMSG_STATE_DIR: stateDir,
+          CCMSG_CONFIG_DIR: configDir,
+          CCMSG_DATA_DIR: dataDir,
+          CCMSG_SAY_BIN: speech,
+        },
+        ctx,
+        () => (fs.existsSync(spokenFile) ? fs.readFileSync(spokenFile, "utf8") : ""),
+        work,
+      );
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  }
+
+  test("records the request as the session's, says one is asking, and prints the reply", async () => {
+    await withDaemon(0, async (env, ctx, spoken, work) => {
+      const script = path.join(work, "deploy.sh");
+      fs.writeFileSync(script, "#!/bin/sh\necho deploy\n");
+      const command = "sh deploy.sh \\\n  --prod";
+      const run = await runPermit(
+        JSON.stringify({
+          blocked: "deploy が止められた",
+          attachments: [script],
+          commands: [command],
+        }),
+        env,
+      );
+      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+      const reply = parseWith(PermitRequestResponseTextSchema, run.out);
+      if (!reply.ok) throw new Error(reply.failure.summary);
+      expect(reply.value.attachments).toEqual([{ path: script, read: true, truncated: false }]);
+      expect(ctx.daemon.permitRequests.snapshot()).toMatchObject([
+        { id: reply.value.id, sid: SID, commands: [command] },
+      ]);
+      expect(spoken()).toBe("許可を求めています\n");
+    });
+  });
+
+  // The request is what the person reads; a speech that fails costs the
+  // sound, not the request.
+  test("a speech that fails is said on stderr, and the request still stands", async () => {
+    await withDaemon(5, async (env, ctx) => {
+      const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
+      expect(run.code).toBe(0);
+      expect(run.err).toBe("ccmsg sidecar permit: the speech exited 5\n");
+      expect(ctx.daemon.permitRequests.snapshot()).toHaveLength(1);
+    });
+  });
+
+  test("input that asks for nothing is refused before reaching the daemon, with no speech", async () => {
+    await withDaemon(0, async (env, ctx, spoken) => {
+      for (const stdin of [
+        '{"blocked":"x"}',
+        '{"blocked":"x","commands":["ls"],"extra":1}',
+        "nope",
+      ]) {
+        const run = await runPermit(stdin, env);
+        expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
+        expect(run.err).toContain("standard input must be one request for permission as JSON");
+      }
+      expect(ctx.daemon.permitRequests.snapshot()).toEqual([]);
+      expect(spoken()).toBe("");
+    });
+  });
+
+  test("exits 3 when no daemon can be had, with no speech", async () => {
+    const base = shortBase();
+    const configDir = path.join(base, "c");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "config.json"), "{ not json");
+    const spokenFile = path.join(base, "spoken");
+    const speech = writeMockBin(
+      path.join(base, "say"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\n`,
+    );
+    const run = await runPermit(JSON.stringify({ blocked: "x", commands: ["ls"] }), {
+      ...process.env,
+      CCMSG_STATE_DIR: path.join(base, "s"),
+      CCMSG_CONFIG_DIR: configDir,
+      CCMSG_DATA_DIR: path.join(base, "d"),
+      CCMSG_SAY_BIN: speech,
+    });
+    expect({ code: run.code, out: run.out }).toEqual({ code: 3, out: "" });
+    expect(run.err).toContain("ccmsg sidecar permit: the daemon could not be reached: ");
+    expect(fs.existsSync(spokenFile)).toBe(false);
   });
 });

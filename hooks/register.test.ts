@@ -45,7 +45,7 @@ import {
 import { beginArgv } from "./session-lifecycle.ts";
 import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
-import { LAUNCH_TIMEOUT_MS, SEND_TIMEOUT_MS } from "./tools.ts";
+import { LAUNCH_TIMEOUT_MS, PERMIT_TIMEOUT_MS, SEND_TIMEOUT_MS } from "./tools.ts";
 import {
   LAUNCH_KILL_GRACE_MS,
   LAUNCH_PIPE_DRAIN_GRACE_MS,
@@ -200,7 +200,7 @@ function fakeEngine(
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
     /** What the ccmsg command a tool runs (`sidecar send-message`, `sidecar
-     * peer-list`, `sidecar launch`, `say`) does, given its argv and what it
+     * peer-list`, `sidecar launch`, `sidecar permit`, `say`) does, given its argv and what it
      * was run with. */
     command?: (
       argv: readonly string[],
@@ -314,7 +314,8 @@ function fakeEngine(
           argv[1] === "say" ||
           argv[2] === "send-message" ||
           argv[2] === "peer-list" ||
-          argv[2] === "launch"
+          argv[2] === "launch" ||
+          argv[2] === "permit"
         ) {
           if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
           return options.command(argv, init ?? {});
@@ -1944,7 +1945,7 @@ describe("the ccmsg tools", () => {
   // The tools are ccmsg's typed calls, not general tools to be found: a few
   // words each, and the skill names them in full (DR-0039 §3, "mods の tool
   // の作り方").
-  test("an interactive session.start registers send, say, peers and launch, deferred, in a few words", async () => {
+  test("an interactive session.start registers send, say, peers, launch and permit, deferred, in a few words", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     expect(fake.tools.map((t) => [t.name, t.description, t.isDeferred])).toEqual([
@@ -1952,6 +1953,7 @@ describe("the ccmsg tools", () => {
       ["say", "Speak to the person", true],
       ["peers", "List reachable sessions", true],
       ["launch", "Launch a Claude session", true],
+      ["permit", "Ask the person for permission", true],
     ]);
     // The model is shown the shape the handler reads, and no more: send's
     // text required, the recipient fields beside it, each field its type
@@ -1967,6 +1969,19 @@ describe("the ccmsg tools", () => {
         text: { type: "string" },
       },
       required: ["text"],
+    });
+    // A list field is shown with what it holds: permit's lists are of
+    // strings, and only blocked is required (which of intents and commands
+    // is the handler's rule).
+    expect(fake.tools[4]?.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        blocked: { type: "string" },
+        attachments: { type: "array", items: { type: "string" } },
+        intents: { type: "array", items: { type: "string" } },
+        commands: { type: "array", items: { type: "string" } },
+      },
+      required: ["blocked"],
     });
   });
 
@@ -2056,7 +2071,9 @@ describe("the ccmsg tools", () => {
     const fake = toolFake(printing({}));
     const answered: string[] = fake.hooks["tool.call"].map(([matcher]) => matcher.tool);
     expect(answered).toEqual(
-      ["send", "say", "peers", "launch"].map((tool) => `mcp__${read.value.name}__${tool}`),
+      ["send", "say", "peers", "launch", "permit"].map(
+        (tool) => `mcp__${read.value.name}__${tool}`,
+      ),
     );
     // A transcript's reader knows the tools by the same names.
     expect(answered).toEqual([
@@ -2064,6 +2081,7 @@ describe("the ccmsg tools", () => {
       CCMSG_TOOLS.say,
       CCMSG_TOOLS.peers,
       CCMSG_TOOLS.launch,
+      CCMSG_TOOLS.permit,
     ]);
   });
 
@@ -2379,6 +2397,123 @@ describe("the ccmsg tools", () => {
         continue: true,
       }),
     ).toBe("ccmsg の launch が途中で止まった。起動したか確かめられなかった。`peers` で確かめる");
+  });
+
+  // permit hands the request to `ccmsg sidecar permit` on standard input,
+  // the engine's own fields of the call left out (DR-0040 §2).
+  test("permit hands the request to ccmsg sidecar permit and says it was asked", async () => {
+    const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
+    const fake = toolFake(async (argv, init) => {
+      seen.push({ argv, ...init });
+      return printing({ ok: true, id: "0f0f/1", attachments: [] })();
+    });
+    const result = await callTool(fake, "mcp__ccmsg-v1__permit", {
+      blocked: "`git push` が止められた",
+      commands: ["git push origin main"],
+      tool: "mcp__ccmsg-v1__permit",
+      tool_use_id: "toolu_1",
+    });
+    expect(seen).toEqual([
+      {
+        argv: ["/plugin/bin/ccmsg", "sidecar", "permit", "--sid", fake.sid.value],
+        stdin: JSON.stringify({
+          blocked: "`git push` が止められた",
+          commands: ["git push origin main"],
+        }),
+        timeoutMs: PERMIT_TIMEOUT_MS,
+      },
+    ]);
+    expect(result).toBe("許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ");
+  });
+
+  // The agent learns which files the person could not read whole, so it can
+  // name them again or say what is in them.
+  test("permit says which attachments the person cannot see whole", async () => {
+    const fake = toolFake(
+      printing({
+        ok: true,
+        id: "0f0f/1",
+        attachments: [
+          { path: "/w/ok.json", read: true, truncated: false },
+          { path: "/w/long.log", read: true, truncated: true },
+          { path: "/w/gone", read: false, reason: "missing" },
+          { path: "/w/bin", read: false, reason: "not_text" },
+        ],
+      }),
+    );
+    const result = await callTool(fake, "mcp__ccmsg-v1__permit", {
+      blocked: "x",
+      attachments: ["/w/ok.json", "/w/long.log", "/w/gone", "/w/bin"],
+      intents: ["/w/a.ts の編集"],
+    });
+    expect(result).toContain("人に中身を全部は見せられなかった attachments:");
+    expect(result).toContain("- /w/long.log: 長いので先頭だけを見せている");
+    expect(result).toContain("- /w/gone: ファイルが無い");
+    expect(result).toContain("- /w/bin: テキストでない");
+    expect(result).not.toContain("/w/ok.json");
+  });
+
+  // Nothing to permit, a path that is not absolute, a field of another
+  // type: answered in text, and nothing runs.
+  test("an input that is not permit's is answered in text, and nothing runs", async () => {
+    const fake = toolFake(printing({ ok: true, id: "0f0f/1", attachments: [] }));
+    for (const input of [
+      { blocked: "x" },
+      { blocked: "x", intents: [], commands: [] },
+      { blocked: "", commands: ["ls"] },
+      { blocked: "x", commands: ["ls"], attachments: ["rel/a.ts"] },
+      { blocked: "x", commands: "ls" },
+      {},
+    ]) {
+      expect(await callTool(fake, "mcp__ccmsg-v1__permit", input)).toContain(
+        "permit の入力が形に合わない",
+      );
+    }
+    expect(fake.runs).toEqual([]);
+  });
+
+  // The person's permission is written to the session, which only the main
+  // thread reads: a subagent hands the stopped action to its delegator.
+  test("a subagent's permit is refused, and nothing runs", async () => {
+    const fake = toolFake(printing({ ok: true, id: "0f0f/1", attachments: [] }));
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__permit", {
+        blocked: "x",
+        commands: ["ls"],
+        agentId: "a1b2",
+      }),
+    ).toContain("permit は subagent からは使えない");
+    expect(fake.runs).toEqual([]);
+  });
+
+  test("a permit with no daemon, or one the daemon refused, says it was not asked", async () => {
+    const unreachable = toolFake(async () => ({
+      exitCode: 3,
+      stdout: "",
+      stderr: "ccmsg sidecar permit: the daemon could not be reached: ECONNREFUSED\n",
+    }));
+    expect(
+      await callTool(unreachable, "mcp__ccmsg-v1__permit", { blocked: "x", commands: ["ls"] }),
+    ).toBe(
+      "ccmsg の daemon に繋がらず、許可依頼を出していない: ccmsg sidecar permit: the daemon could not be reached: ECONNREFUSED",
+    );
+    const refused = toolFake(async () => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ ok: false, error: { code: "invalid_args", msg: "op: unknown op: permit_request" } })}\n`,
+    }));
+    expect(
+      await callTool(refused, "mcp__ccmsg-v1__permit", { blocked: "x", commands: ["ls"] }),
+    ).toBe("許可依頼を出せなかった: op: unknown op: permit_request");
+  });
+
+  test("a permit whose command did not end in time says it is unknown whether it was asked", async () => {
+    const fake = toolFake(async () => {
+      throw new Error("timed out");
+    });
+    expect(await callTool(fake, "mcp__ccmsg-v1__permit", { blocked: "x", commands: ["ls"] })).toBe(
+      `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: Error: timed out`,
+    );
   });
 
   test("peers the daemon refused says the daemon's reason, not its JSON", async () => {

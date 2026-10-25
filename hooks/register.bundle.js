@@ -1805,10 +1805,76 @@ function peersText(peers) {
 `);
 }
 
+var PERMIT_ATTACHMENT_MAX_BYTES = 64 * 1024;
+var PERMIT_ATTACHMENTS_MAX = 16;
+var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
+var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
+var PermitEntries = {
+  blocked: PermitTextSchema,
+  attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
+  intents: optional(array(PermitTextSchema)),
+  commands: optional(array(PermitTextSchema))
+};
+function asksForSomething(input) {
+  return (input.intents?.length ?? 0) + (input.commands?.length ?? 0) > 0;
+}
+var ASKS_FOR_SOMETHING = "ask for at least one of intents and commands";
+var PermitToolInputSchema = pipe(object(PermitEntries), check((input) => asksForSomething(input), ASKS_FOR_SOMETHING));
+var PermitInputSchema = pipe(strictObject(PermitEntries), check((input) => asksForSomething(input), ASKS_FOR_SOMETHING));
+var PermitInputTextSchema = jsonText(PermitInputSchema);
+var PermitAttachmentUnreadableSchema = picklist([
+  "missing",
+  "not_a_file",
+  "denied",
+  "not_text",
+  "failed"
+]);
+var PERMIT_ATTACHMENT_UNREADABLE_TEXT = {
+  missing: "ファイルが無い",
+  not_a_file: "通常のファイルでない",
+  denied: "読む権限が無い",
+  not_text: "テキストでない",
+  failed: "読めなかった"
+};
+var PermitAttachmentSchema = variant("read", [
+  object({
+    path: string(),
+    read: literal(true),
+    content: string(),
+    bytes: number(),
+    truncated: boolean()
+  }),
+  object({
+    path: string(),
+    read: literal(false),
+    reason: PermitAttachmentUnreadableSchema
+  })
+]);
+var PermitRequestRecordSchema = object({
+  id: string(),
+  sid: string(),
+  ts: string(),
+  blocked: string(),
+  attachments: array(PermitAttachmentSchema),
+  intents: array(string()),
+  commands: array(string())
+});
+var PermitAttachmentOutcomeSchema = variant("read", [
+  object({ path: string(), read: literal(true), truncated: boolean() }),
+  object({ path: string(), read: literal(false), reason: PermitAttachmentUnreadableSchema })
+]);
+var PermitRequestResponseSchema = object({
+  ok: literal(true),
+  id: string(),
+  attachments: array(PermitAttachmentOutcomeSchema)
+});
+var PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
+
 var SEND_TIMEOUT_MS = 1e4;
 var PEERS_TIMEOUT_MS = 5000;
 var SAY_TIMEOUT_MS = 120000;
 var LAUNCH_TIMEOUT_MS = 65000;
+var PERMIT_TIMEOUT_MS = 30000;
 var TOOL_INPUT_SCHEMAS = {
   send: {
     type: "object",
@@ -1904,6 +1970,35 @@ var TOOL_INPUT_SCHEMAS = {
     required: [
       "cwd"
     ]
+  },
+  permit: {
+    type: "object",
+    properties: {
+      blocked: {
+        type: "string"
+      },
+      attachments: {
+        type: "array",
+        items: {
+          type: "string"
+        }
+      },
+      intents: {
+        type: "array",
+        items: {
+          type: "string"
+        }
+      },
+      commands: {
+        type: "array",
+        items: {
+          type: "string"
+        }
+      }
+    },
+    required: [
+      "blocked"
+    ]
   }
 };
 async function registerTools($) {
@@ -1930,6 +2025,12 @@ async function registerTools($) {
       name: "launch",
       description: "Launch a Claude session",
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
+      isDeferred: true
+    }),
+    $.tool.register({
+      name: "permit",
+      description: "Ask the person for permission",
+      inputSchema: TOOL_INPUT_SCHEMAS.permit,
       isDeferred: true
     })
   ]);
@@ -2054,6 +2155,48 @@ async function launchTool($, e) {
   }
   return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
+var CallerSchema = object({ agentId: optional(string()) });
+function unshownAttachmentsText(attachments) {
+  const lines = attachments.flatMap((a) => {
+    if (!a.read)
+      return [`- ${a.path}: ${PERMIT_ATTACHMENT_UNREADABLE_TEXT[a.reason]}`];
+    if (a.truncated)
+      return [`- ${a.path}: 長いので先頭だけを見せている`];
+    return [];
+  });
+  return lines.length > 0 ? `
+人に中身を全部は見せられなかった attachments:
+${lines.join(`
+`)}` : "";
+}
+async function permitTool($, e) {
+  const caller = parseWith(CallerSchema, e);
+  if (caller.ok && caller.value.agentId !== undefined) {
+    return "permit は subagent からは使えない。止められた操作は委譲元に報告して止まる (委譲元が自分で実行し、止められたら委譲元が permit で許可を求める)";
+  }
+  const read = parseWith(PermitToolInputSchema, e);
+  if (!read.ok)
+    return notTheInput("permit", read.failure.summary);
+  let run;
+  try {
+    run = await $.process.run(toolArgv($.plugin.root, "permit", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: PERMIT_TIMEOUT_MS
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: permit failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: ${errorText(error)}`;
+  }
+  const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
+  if (answered.ok) {
+    return `許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ${unshownAttachmentsText(answered.value.attachments)}`;
+  }
+  $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  if (run.exitCode === 3) {
+    return `ccmsg の daemon に繋がらず、許可依頼を出していない: ${firstStderrLine(run.stderr)}`;
+  }
+  return `許可依頼を出せなかった: ${failureText(run.stderr)}`;
+}
 async function toolsAtStart($, state) {
   if (state.interactive)
     await registerTools($);
@@ -2073,6 +2216,11 @@ function registerToolCalls(on) {
   on("tool.call", { tool: "mcp__ccmsg-v1__launch" }, async ($, e) => ({
     result: await launchTool($, e)
   })).catch(async () => ({ result: `ccmsg の launch が途中で止まった。${LAUNCH_UNCONFIRMED}` }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__permit" }, async ($, e) => ({
+    result: await permitTool($, e)
+  })).catch(async () => ({
+    result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった"
+  }));
 }
 
 function concern(name, schema, parts) {

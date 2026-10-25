@@ -22,6 +22,7 @@ import {
   type RequestInput,
   LaunchInputTextSchema,
   PeerListInputTextSchema,
+  PermitInputTextSchema,
   SendMessageInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
@@ -306,12 +307,13 @@ what its tools send go to the daemon. Not for direct use.
 
 /** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
  * §3), `ccmsg sidecar begin` (DR-0039 §2), `ccmsg sidecar send-message` /
- * `peer-list` (DR-0039 §3) and `ccmsg sidecar launch` (DR-0018 §3.7). All are
- * the hooks module's: it starts the first for its session's life, runs the
- * second to answer a request the first copied to it, the third to hand the
- * daemon what it knows of its session, the fourth when the session starts or
- * changes its id, and the last three for its `send`, `peers` and `launch`
- * tools. The help says no more than that on purpose (DR-0035 §4). */
+ * `peer-list` (DR-0039 §3), `ccmsg sidecar launch` (DR-0018 §3.7) and
+ * `ccmsg sidecar permit` (DR-0040). All are the hooks module's: it starts the
+ * first for its session's life, runs the second to answer a request the
+ * first copied to it, the third to hand the daemon what it knows of its
+ * session, the fourth when the session starts or changes its id, and the
+ * last four for its `send`, `peers`, `launch` and `permit` tools. The help
+ * says no more than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -332,6 +334,10 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   }
   if (positionals[0] === "launch") {
     await runSidecarLaunch(opts);
+    return;
+  }
+  if (positionals[0] === "permit") {
+    await runSidecarPermit(opts);
     return;
   }
   if (positionals[0] === "facts") {
@@ -584,6 +590,59 @@ async function runSidecarLaunch(opts: Record<string, string | boolean>): Promise
   const res = await client.request({ op: "session_launch", launch: read.value });
   client.close();
   process.exit(output(res));
+}
+
+/** What the speakers say when a session asks for permission: that one is
+ * asking. The request itself (its commands, its files) is for reading in the
+ * webui, not for hearing. */
+const PERMIT_SPEECH = "許可を求めています";
+
+/** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the
+ * person, as session `<sid>`, for the permission the input on standard input
+ * describes. The daemon records it and shows it in the session's Timeline;
+ * then the speakers say that a session is asking, through the speech binary
+ * `ccmsg say` speaks with. Prints the daemon's permit_request reply, exiting
+ * 0, the speech having ended. The input comes on standard input for the
+ * reason a reply does: its commands may be long, and an argument is shown to
+ * every user by `ps`.
+ *
+ * Exits 3, nothing asked, when no daemon can be had; exits 1 with the
+ * daemon's refusal on standard error when it did not record the request. A
+ * speech that fails is said on standard error and does not change the exit:
+ * the request is recorded, and the Timeline shows it. */
+async function runSidecarPermit(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar permit --sid <sid> < permit.json";
+  const read = parseWith(PermitInputTextSchema, await Bun.stdin.text());
+  if (!read.ok) {
+    throw new Error(
+      `standard input must be one request for permission as JSON: ${read.failure.summary}\n  usage: ${usage}`,
+    );
+  }
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar permit");
+  const client = await daemonOrExit(identity, "sidecar permit");
+  const res = await client.request({ op: "permit_request", permit: read.value });
+  client.close();
+  if (res.ok) await speakPermitRequested();
+  process.exit(output(res));
+}
+
+/** Say PERMIT_SPEECH and wait for it to end. Never throws: a speech binary
+ * that cannot start or fails is said on standard error. */
+async function speakPermitRequested(): Promise<void> {
+  try {
+    const speech = Bun.spawn([process.env.CCMSG_SAY_BIN || SYSTEM_SAY, PERMIT_SPEECH], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const spoke = await speech.exited;
+    if (spoke !== 0) {
+      process.stderr.write(`ccmsg sidecar permit: the speech exited ${String(spoke)}\n`);
+    }
+  } catch (e) {
+    process.stderr.write(`ccmsg sidecar permit: the speech did not start: ${errorText(e)}\n`);
+  }
 }
 
 /** The daemon, started if none runs; exit 3 with why when none can be had. */
@@ -1076,8 +1135,9 @@ Environment Variables:
                                adopted only if the daemon accepts it (widens
                                fs_list/fs_read to sibling workspaces instead of
                                just cwd)
-  CCMSG_SAY_BIN                say: speech binary to exec instead of /usr/bin/say
-                               (test hook — exercise the path without audio)
+  CCMSG_SAY_BIN                say / sidecar permit: speech binary to exec instead
+                               of /usr/bin/say (test hook — exercise the path
+                               without audio)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
                                "off" to disable)

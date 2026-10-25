@@ -1,12 +1,14 @@
-// An agent uses ccmsg through four tools the module registers at
+// An agent uses ccmsg through five tools the module registers at
 // session.start (DR-0039 §3): `send` (to other sessions, named by any of
 // their id, directory, name and process, in any config home), `say` (to the
-// person, by voice and in the webui), `peers` (who `send` can reach) and
-// `launch` (start a session through ccmsg's launch command, DR-0018
-// §3.7). Each is answered here without `next`: `send`, `peers` and `launch`
-// through `ccmsg sidecar send-message` / `peer-list` / `launch`, `say`
-// through `ccmsg say`, the result always a text the model reads. SendMessage
-// is left to the harness.
+// person, by voice and in the webui), `peers` (who `send` can reach),
+// `launch` (start a session through ccmsg's launch command, DR-0018 §3.7)
+// and `permit` (ask the person for permission after the auto mode
+// classifier stopped an action, DR-0040). Each is answered here without
+// `next`: `send`, `peers`, `launch` and `permit` through `ccmsg sidecar
+// send-message` / `peer-list` / `launch` / `permit`, `say` through
+// `ccmsg say`, the result always a text the model reads. SendMessage is left
+// to the harness.
 import * as v from "valibot";
 import {
   LaunchInputSchema,
@@ -24,6 +26,12 @@ import {
   SendToolInputSchema,
 } from "@ccmsg/protocol/peer-tools";
 import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
+import {
+  PERMIT_ATTACHMENT_UNREADABLE_TEXT,
+  type PermitAttachmentOutcome,
+  PermitRequestResponseTextSchema,
+  PermitToolInputSchema,
+} from "@ccmsg/protocol/permit-request";
 import type { Engine, On } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
@@ -46,6 +54,10 @@ export const SAY_TIMEOUT_MS = 120_000;
  * connect retries, about 10 s) + writing the output aside, with what is left
  * for the process itself. register.test.ts pins the sum below it. */
 export const LAUNCH_TIMEOUT_MS = 65_000;
+/** `permit` budget: the process, a daemon it may have to start (its connect
+ * retries, about 10 s), the daemon reading the attachments, and the short
+ * speech that a session is asking (about 2 s). */
+export const PERMIT_TIMEOUT_MS = 30_000;
 
 /** The tools' input schemas for the model, derived from the schemas their
  * handlers read the inputs with when the module is bundled (a macro). */
@@ -82,6 +94,12 @@ async function registerTools($: Engine): Promise<void> {
       inputSchema: TOOL_INPUT_SCHEMAS.launch,
       isDeferred: true,
     }),
+    $.tool.register({
+      name: "permit",
+      description: "Ask the person for permission",
+      inputSchema: TOOL_INPUT_SCHEMAS.permit,
+      isDeferred: true,
+    }),
   ]);
   for (const outcome of registered) {
     if (outcome.status === "rejected") {
@@ -94,7 +112,7 @@ async function registerTools($: Engine): Promise<void> {
  * input goes on standard input, for the reason a reply does (sidecar.ts). */
 export function toolArgv(
   root: string,
-  command: "send-message" | "peer-list" | "launch",
+  command: "send-message" | "peer-list" | "launch" | "permit",
   sid: string,
 ): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
@@ -238,6 +256,60 @@ async function launchTool<E>($: Engine, e: E): Promise<string> {
   return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 
+/** The engine's field a subagent's call carries: the subagent's id. */
+const CallerSchema = v.object({ agentId: v.optional(v.string()) });
+
+/** What became of the attachments the person cannot read, in words, or ""
+ * when every one is shown. */
+function unshownAttachmentsText(attachments: readonly PermitAttachmentOutcome[]): string {
+  const lines = attachments.flatMap((a) => {
+    if (!a.read) return [`- ${a.path}: ${PERMIT_ATTACHMENT_UNREADABLE_TEXT[a.reason]}`];
+    if (a.truncated) return [`- ${a.path}: 長いので先頭だけを見せている`];
+    return [];
+  });
+  return lines.length > 0
+    ? `\n人に中身を全部は見せられなかった attachments:\n${lines.join("\n")}`
+    : "";
+}
+
+/** The `permit` tool: ask the person for permission through `ccmsg sidecar
+ * permit`, which shows the request in the session's Timeline and says that
+ * one is asking. Never rejects.
+ *
+ * Design rationale: a subagent's call is refused rather than shown. The
+ * person's permission reaches the main thread (the person writes to the
+ * session), and the classifier lets only the conversation the permission is
+ * written into run the action again, so a subagent hands what was stopped to
+ * whoever delegated to it, which runs it, and asks when stopped itself. */
+async function permitTool<E>($: Engine, e: E): Promise<string> {
+  const caller = parseWith(CallerSchema, e);
+  if (caller.ok && caller.value.agentId !== undefined) {
+    return "permit は subagent からは使えない。止められた操作は委譲元に報告して止まる (委譲元が自分で実行し、止められたら委譲元が permit で許可を求める)";
+  }
+  const read = parseWith(PermitToolInputSchema, e);
+  if (!read.ok) return notTheInput("permit", read.failure.summary);
+  let run: { exitCode: number; stdout: string; stderr: string };
+  try {
+    run = await $.process.run(toolArgv($.plugin.root, "permit", await $.session.id()), {
+      stdin: JSON.stringify(read.value),
+      timeoutMs: PERMIT_TIMEOUT_MS,
+    });
+  } catch (error) {
+    $.ui.log(`ccmsg: permit failed: ${errorText(error)}`, { to: "debug" });
+    return `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: ${errorText(error)}`;
+  }
+  const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
+  if (answered.ok) {
+    return `許可依頼を出した (web UI のバブルと音声)。人の許可の文を待つ${unshownAttachmentsText(answered.value.attachments)}`;
+  }
+  $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
+  // 3: no daemon could be had, so nothing was shown.
+  if (run.exitCode === 3) {
+    return `ccmsg の daemon に繋がらず、許可依頼を出していない: ${firstStderrLine(run.stderr)}`;
+  }
+  return `許可依頼を出せなかった: ${failureText(run.stderr)}`;
+}
+
 /** At session.start: register the tools, awaited so they are listed by the
  * first turn. `-p` and the SDK get none: talking with other sessions from
  * there is not a use ccmsg serves (DR-0039 §3). Registrations outlive /clear
@@ -268,4 +340,9 @@ export function registerToolCalls(on: On): void {
   on("tool.call", { tool: "mcp__ccmsg-v1__launch" }, async ($, e) => ({
     result: await launchTool($, e),
   })).catch(async () => ({ result: `ccmsg の launch が途中で止まった。${LAUNCH_UNCONFIRMED}` }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__permit" }, async ($, e) => ({
+    result: await permitTool($, e),
+  })).catch(async () => ({
+    result: "ccmsg の permit が途中で止まり、許可依頼が出たか確かめられなかった",
+  }));
 }

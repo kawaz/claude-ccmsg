@@ -45,6 +45,29 @@ describe("toolInputSchemaOf", () => {
     );
   });
 
+  // The type of a list is what it holds; the list's own rules (a length, a
+  // check) stay in the valibot schema, as each item's do.
+  test("shows a list field with its items' type, and drops the list's rules", () => {
+    const L = v.object({
+      paths: v.optional(
+        v.pipe(
+          v.array(v.pipe(v.string(), v.minLength(1))),
+          v.maxLength(3),
+          v.check((list) => new Set(list).size === list.length),
+        ),
+      ),
+      levels: v.array(v.picklist(["low", "high"])),
+    });
+    expect(toolInputSchemaOf(L)).toEqual({
+      type: "object",
+      properties: {
+        paths: { type: "array", items: { type: "string" } },
+        levels: { type: "array", items: { enum: ["low", "high"], type: "string" } },
+      },
+      required: ["levels"],
+    });
+  });
+
   // A schema with no required field says nothing of it.
   test("no required field leaves required out", () => {
     expect(toolInputSchemaOf(v.object({ a: v.optional(v.string()) }))).toEqual({
