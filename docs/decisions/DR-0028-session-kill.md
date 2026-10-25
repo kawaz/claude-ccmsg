@@ -130,11 +130,10 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 ### resume の prompt
 
 ```
-プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。ScheduleWakeup で入れた予定は消えたので、入れていたなら入れ直してください (CronCreate の予定は resume で戻っているので入れ直さない)。
+プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。cron/schedule があるなら貼り直してください。
 ```
 
-- kawaz の文面の cron の一文 (「cron/schedule は貼り直してください」) を、実測 ([findings 2026-10-25-cron-schedule-persistence](../findings/2026-10-25-cron-schedule-persistence.md)) に合わせて書き換えた。CronCreate の予定はディスクに書かれないが resume で transcript から戻り、ScheduleWakeup の予定は戻らない。「貼り直して」を CronCreate にも言うと戻った予定が二重になる
-- 一文は止める前の予定の有無で出し分けず、常に入れる。失われる予定 (ScheduleWakeup と、その発火の後に harness が tool の呼び出し無しで入れる wakeup) は transcript からは全部は分からず、harness の一覧 (`session_crons`) は Stop の hook の入力にしか出ない。module で取るには `classic.Stop` の hook が要り、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §1 が持たないと決めている。会話は続いているので、入れていた予定は model が覚えている前提で「入れていたなら」と言う
+- 固定文で、止める前にセッションの cron / schedule の有無を調べて出し分けることはしない (kawaz 2026-10-25)。予定の扱いは resume したセッションに任せる。resume の後に何が残るかの観測は [findings 2026-10-25-cron-schedule-persistence](../findings/2026-10-25-cron-schedule-persistence.md)
 - 内容 (会話の中身) には触れない。コンテキストは続く
 
 ### webui
@@ -147,9 +146,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 ### 却下した代替案
 
 - **webui が `session_kill` → 待ち → `session_launch` を 3 往復する**: 止まったことの観測と起動の順序が webui にあり、途中で接続が切れると止めたまま起動しない状態が残る。断る理由を止める前に揃えて確かめることも webui からはできない (config dir や record の cwd は daemon が読む)
-- **resume の後の一文を kawaz の文面のまま出す**: CronCreate の予定は戻るので、作り直させると二重になる (findings)
-- **予定の有無を module の `classic.Stop` の `session_crons` で取って出し分ける**: 正確な一覧はこれしか無いが、DR-0039 §1 が module に `classic.*` の hook を持たないと決めている (組織が管理する機械で飛ばされる hook を前提にしない)
-- **transcript の ScheduleWakeup の結果から予定の有無を決める**: harness が tool 無しで入れる wakeup を取りこぼし、「無い」と判断した時に一文を落とす
+- **止める前に cron / schedule の有無を調べ、ある時だけ一文を出す**: 調べない (kawaz 2026-10-25)。正確な一覧は Stop の hook の入力の `session_crons` にしか出ず、module で取るには [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §1 が持たないと決めた `classic.*` の hook が要る
 - **猶予を過ぎたら SIGKILL に上げて起動する**: 本 DR の原則 (daemon が自動で不可逆側に倒さない) のまま。止まらなければ `restart_timeout` を返し、人が危険ゾーンの強制終了を選ぶ
 
 ### Consequences

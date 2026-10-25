@@ -18,13 +18,11 @@ import { claudeConfigDir } from "./default-effort.ts";
 import { killSession, resolveRecord, verifyPid, type SessionKillDeps } from "./session-kill.ts";
 import { buildLaunchEnv, type SessionLaunchOutcome } from "./session-launch.ts";
 
-/** The prompt the resumed session starts with. A CronCreate job comes back
- * with the resume and a ScheduleWakeup does not
- * (docs/findings/2026-10-25-cron-schedule-persistence.md); which wakeups were
- * pending cannot be read before the stop, so the line is always there and
- * says which to put back. */
+/** The prompt the resumed session starts with: a fixed text (DR-0028
+ * 「restart」). Whether the session had cron / schedule jobs is not looked
+ * at; the line asks the session to put back whatever it had. */
 export const RESTART_PROMPT =
-  "プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。ScheduleWakeup で入れた予定は消えたので、入れていたなら入れ直してください (CronCreate の予定は resume で戻っているので入れ直さない)。";
+  "プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。cron/schedule があるなら貼り直してください。";
 
 /** The config dir the launch command starts claude in, as a realpath: that of
  * the environment it inherits (`baseEnv` cleaned by clean_env / keep_env,

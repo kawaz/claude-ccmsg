@@ -358,7 +358,7 @@ describe("restartSession", () => {
     expect(calls).toEqual({ launches: [], stopped: 0 });
   });
 
-  test("the resume always carries the line on what to schedule again", async () => {
+  test("the resume carries the fixed restart prompt", async () => {
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
     const outcome = await restartSession(SID, restartDeps(fakeKill(false, []), calls));
     expect(outcome.ok).toBe(true);
@@ -366,8 +366,9 @@ describe("restartSession", () => {
     expect(calls.launches).toEqual([
       { cwd: "/w", resume: SID, model: "sonnet", effort: "low", name: "n", prompt: RESTART_PROMPT },
     ]);
-    expect(RESTART_PROMPT).toContain("ScheduleWakeup で入れた予定は消えたので");
-    expect(RESTART_PROMPT).toContain("CronCreate の予定は resume で戻っているので入れ直さない");
+    expect(RESTART_PROMPT).toBe(
+      "プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。cron/schedule があるなら貼り直してください。",
+    );
   });
 
   test("a record without a cwd is restart_unavailable, before any signal", async () => {
