@@ -1,0 +1,101 @@
+# iPhone / iPad の Safari で、青いリロードボタンを押すと固まる
+
+- Date: 2026-10-25
+- 対象: ccmsg v0.193.3 〜 v0.195.1 の webui、前段の Caddy v2.11.7 (quic-go v0.63.0、`protocols h1 h2 h3`)、iPhone の Safari (UA は `Version/26.6.3 Mobile`、iOS 26 系)
+- 症状 (kawaz の報告): 青いリロードボタンを押すと読み込みが終わらない。× で止めてアドレスバーのリロードを押しても、タブを閉じて新しいタブで開いても同じ。Safari を終了して起動し直すと一瞬で開く。再現率はほぼ 100%
+- 方法:
+  - 実 daemon の `daemon.log` と、前段の Caddy のアクセスログ / エラーログを読んだ (読むだけ。どちらにも触っていない)。Caddy のログは 2026-10-19 〜 10-25 の分
+  - webui のコードを読んだ
+  - 一時ベースで、作業コピーの daemon と、同じ Caddy の binary を自前の設定 (自己署名の証明書、h1 h2 h3、`reverse_proxy` で daemon へ) で立て、Playwright の WebKit (macOS 版) と HTTP/3 対応の curl から叩いた
+
+## 結論
+
+固まっているのは ccmsg のページではなく、**Safari と前段の Caddy の間の HTTP/3 (QUIC) の接続**。
+
+- その接続では、小さい応答 (450 バイト前後の HTML の殻) は届くが、大きい応答 (bundle の約 154KB、CSS の約 67KB) は最初の 4KB 前後を書いたところで送れなくなる
+- 青いボタンが出るのは daemon が新しい版で起ち直した後なので、押すと、まだ手元に無い名前の bundle (`/assets/app.<hash>.js`) を取りに行く必要がある。そこで止まる。版が同じ時のリロードは bundle が cache から出る (immutable) ので、HTML だけで済み、壊れた接続の上でもたまたま通る
+- タブを閉じても直らないのは、Safari がその HTTP/3 の接続をタブではなく Safari 全体で持ち回しているから。新しいタブも同じ接続を使う。Safari を終了すると接続が捨てられ、次は新しい接続になって一瞬で開く
+
+## ボタンの実体と押した時の処理
+
+- topbar の `#app-reload` (`packages/webui/src/client/components/App.tsx`)。「青い」のは version 不一致の時に付く `app-reload-update` (`color: var(--accent)`、`#2563eb`)。不一致は daemon の hello の `version` が bundle に焼き込まれた版より新しい時 (`version-guard.ts`)
+- `onClick` は `window.location.reload()` だけ。青いかどうかで処理は変わらない
+- `navigation.ts` の `navigate` の listener は `navigationType === "reload"` を素通しにする (横取りしない)
+- `beforeunload` / `pagehide` / `unload` / `sendBeacon` / Service Worker の登録は webui の client に無い (grep で 0 件)
+- WebSocket はタブに 1 本 (`ws.ts` の `connect()`、`wss://<host>/ws`)。前段の Caddy では HTTP/1.1 の別の TCP 接続になる (アクセスログの `/ws` の行は全部 `HTTP/1.1`)
+
+## 実 daemon と Caddy のログで見えたこと
+
+固まった 3 回 (2026-10-25) は、どれも「daemon が upgrade で起ち直した → 開いていたタブが新しい daemon に hello して不一致 (青) → 押す」の順だった。daemon.log では、押した時の `http GET <path> (webui page load)` は出るが、その後の新しいページの `hello` が数十秒〜数分出ない。
+
+同じ時刻の Caddy のログ (時刻は UTC、接続は iPhone 側の UDP の port で区別):
+
+| 時刻 | 接続 | 要求 | 書いたバイト / 本来の長さ | Caddy のエラー |
+|---|---|---|---|---|
+| 05:09:53 | A | HTML の殻 | 450 / 450 | |
+| 05:09:55 | A | `/app.css` | 67217 / 67217 (1.7 秒) | |
+| 05:10:32 | A | `/assets/app.<hash>.js` | 87957 / 153845 | `writing: H3_REQUEST_CANCELLED` |
+| 05:10:53 | A | 同じ bundle / `/app.css` | 6703 / 153845、3933 / 67217 | `H3_REQUEST_CANCELLED` |
+| 05:11:17 | A | 同上 | 0 / 153845、8064 / 67217 | `H3_REQUEST_CANCELLED` |
+| 05:11:44 | B (新しい接続) | HTML / css / bundle | 全部そろう (bundle 218ms) | |
+| 05:12:10 | A | 同上 | 7075 / 153845、3933 / 67217 | `writing: timeout: no recent network activity` |
+
+- `writing: ...` は、Caddy が応答の本文を書き込もうとしたまま進めなかったことを示す。Safari が × / リロードで要求を取り消した時に `H3_REQUEST_CANCELLED`、Safari が接続ごと黙った (Safari の終了) 30 秒後に QUIC の idle timeout で終わった
+- 接続 B は Safari を起動し直した直後の新しい接続 (`favicon.ico` / `apple-touch-icon*.png` の要求が同時に来ている)。同じ時刻・同じ経路で、新しい接続は 150KB を 0.2 秒で運んだ。経路の帯域や Mac の負荷ではなく、接続 A の状態の問題
+- 05:23 の回 (接続 C) と 05:50 の回 (接続 D) も同じ形: HTML の殻は届き、CSS / bundle は 3873 〜 8064 バイトで止まり、新しい接続 (Safari の起動し直し) では一瞬でそろった
+- 接続 C は 11 分生きていて、hyoui の iframe の要求 (別のホスト名) も同じ接続に乗っていた (Caddy の記録で、TLS の `server_name` は ccmsg のホスト名のまま、要求の `host` が hyoui)。Safari は同じ wildcard 証明書のホスト同士で HTTP/3 の接続を共有する
+- **ccmsg 以外でも同じことが起きている**: 05:54 と 05:57 に hyoui の `/api/sessions/...` (約 93KB 〜 168KB) が 3975 / 3976 バイトで止まり、新しい接続では同じ要求が 1 秒前後で全部届いた。ccmsg の JS の問題ではない
+
+### 頻度 (Caddy のログ 2026-10-19 〜 10-25、HTTP/3 で Content-Length が 50KB を超える応答)
+
+| クライアント | 全部届いた | 途中で止まった |
+|---|---|---|
+| iPhone の Safari | 74 | 66 |
+| Mac の Chrome (この Mac) | 495 | 20 |
+| 別の Mac の Safari (26.6.2) | 8 | 3 |
+
+途中で止まった中には、ユーザが本当に途中で離れたもの (フォントの読み込み中の遷移など) も混ざる。それでも iPhone の Safari だけ桁が違う。
+
+iPhone で ccmsg の bundle / CSS が止まった接続の数は、10-20 に 6、10-22 に 1、10-25 に 3 (UTC の日付)。別の Mac の Safari でも 10-21 に 1 回止まったが、その時は約 10 秒後に Safari が自分で新しい接続を開いて読み込みを終えた (同じ bundle が新しい接続で 23ms)。iPhone では新しい接続に切り替わらず、止まったまま。
+
+## 仮説ごとの判定
+
+| 仮説 | コード / 設定で該当するか | 再現 | 根拠 |
+|---|---|---|---|
+| Service Worker が navigation を握る | 該当しない | (不要) | webui の client に `serviceWorker` の登録が無い。前段も ccmsg のホストには SW を足していない |
+| ホストあたりの接続の上限 (WebSocket が数を食う) | 該当しない | (不要) | WebSocket はタブに 1 本で、リロードの時に旧ページの分は閉じている (daemon.log の `ws closed` と Caddy の `/ws` の終了が押した瞬間)。止まった要求は Caddy まで届いて応答の書き込みに入っている。接続が取れずに待っているのではない |
+| `beforeunload` / `pagehide` / `unload` で待つ | 該当しない | (不要) | 該当する listener / `sendBeacon` が無い |
+| HTTP cache の revalidation で固まる | 該当しない | (不要) | 殻は `no-cache` + ETag、bundle は hash 付きの名前で immutable。止まった要求は Caddy まで来て 200 の本文を書いている途中。revalidation の待ちではない |
+| Safari と Caddy の HTTP/3 の接続が、大きい応答を運べない状態になる | 該当する (前段が h3 を出し、`Alt-Svc: h3=":443"; ma=2592000` で Safari は HTTP/3 を使う) | ローカルでは再現できていない (下) | 上のログ。同じ時刻に新しい接続では運べるので、接続ごとの状態 |
+
+## ローカルで試したこと
+
+- 一時ベースの Caddy (h1 h2 h3) + 作業コピーの daemon に、Playwright の WebKit (macOS 版、iOS の WebKit とは別物) で繋いだ。WebKit は `Alt-Svc` を受けても HTTP/2 のまま (自己署名の証明書を `ignoreHTTPSErrors` で通した構成。HTTP/3 を使わない理由は未確認)。この構成では HTTP/3 の経路を再現できない
+- 同じ構成で `#app-reload` を 5 回続けて押すと、5 回とも 88 〜 228ms で読み込みが終わり、毎回 daemon に `hello nav=reload` が来た。HTTP/2 の上では webui のリロード自体は固まらない
+- HTTP/3 対応の curl では、同じ Caddy から 540KB を HTTP/3 で取れた。この Caddy は環境変数 `QLOGDIR` を付けて起動すると、HTTP/3 の接続ごとに qlog (`*_server.sqlog`) を書いた
+
+## 確定したこと
+
+- 青いボタンで固まる時、止まっているのは Safari と前段の Caddy の HTTP/3 の接続で、ccmsg の daemon は全部の要求に即座に応答している
+- 青い時に限って起きるのは、新しい bundle (約 154KB) と CSS (約 67KB) を運ぶ必要があるため。殻 (約 450 バイト) は止まった接続でも届く
+- その接続はタブをまたいで使い回され、Safari を終了するまで捨てられない。新しい接続は同じ時刻に問題なく運ぶ
+- 同じ現象は同じ前段の別のアプリ (hyoui) でも起きている
+- `/app.css` は `cache-control` も ETag も付かずに配られ、リロードのたびに約 67KB を取り直している (Playwright の WebKit と Caddy のログの両方で、リロードごとに `/app.css` の要求がある)
+
+## 未確定のこと
+
+- 接続が「大きい応答を運べない」状態になる仕組み。候補は、Safari 側が受信の flow control の枠 (`MAX_DATA` / `MAX_STREAM_DATA`) を広げなくなる、送った packet が失われ続けて輻輳制御が送れなくなる、のどちらか (どちらも未検証)。Caddy が書けたのが毎回最初の約 4KB で止まること、小さい応答は届くことからは決めきれない
+- その状態に入るきっかけ。止まった接続には、作られた直後から遅いもの (CSS 67KB に 1.7 〜 2.2 秒、正常な接続では 0.03 〜 0.3 秒) と、長く生きた後で止まるものがある。iPhone の画面が消えていた後かどうかとの関係は未確認
+- `writing: deadline exceeded` (止まってから約 60 秒で出る) の deadline がどの設定から来るか
+- iOS の実機の観測 (qlog、packet の capture、Web Inspector) はしていない。上はすべてサーバ側のログからの推定を含む
+- Mac の Safari で同じボタンを押した時に固まるか (別の Mac の Safari では、ccmsg の bundle が 1 回止まり、約 10 秒で自分で回復した記録だけがある)
+
+## 直し方の候補
+
+前段の HTTP/3 の問題なので、直す場所は第一に前段のリバースプロキシ。ccmsg 側でできるのは、運ぶ量を減らして当たる場面を狭めることまで。
+
+1. **前段で ccmsg のホスト (または iOS の Safari) に HTTP/3 を出さない** (Caddy の `servers { protocols h1 h2 }`、またはホストを絞って `Alt-Svc` を落とす)。WebSocket はすでに HTTP/1.1 の TCP で安定しているので、TCP に寄せれば今回の経路から外れる。全ホストから外すと他のアプリの HTTP/3 も止まるので、範囲は前段の持ち主の判断。`Alt-Svc` の `ma=2592000` (30 日) を Safari が覚えているので、切り替えた直後は Safari を 1 度終了する必要があるかもしれない (未検証)
+2. **原因の切り分けの観測**: 前段の Caddy を `QLOGDIR=<dir>` 付きで起動しておき、次に固まった時の接続の qlog で、Safari が送ってくる `MAX_DATA` / `MAX_STREAM_DATA` と、Caddy 側の loss / PTO を見る。flow control なのか packet の喪失なのかがここで決まる
+3. (ccmsg 側、緩和) `/app.css` を bundle と同じく hash 付きの名前で immutable に配る。版が同じリロードでは CSS の 67KB も運ばずに済み、壊れた接続の上でも開ける場面が増える。版が変わった直後のリロードは bundle を運ぶ必要があるので、これでは直らない
+
+webui の JS から自力で回復する手は無い: 止まるのは bundle が届く前なので JS が動いておらず、ページから接続を捨てさせる API も無い。
