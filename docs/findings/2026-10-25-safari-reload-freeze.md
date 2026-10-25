@@ -94,6 +94,64 @@ Caddy のアクセスログとエラーログで、ccmsg のホストの画像�
 
 iOS 18 の Safari で Caddy の HTTP/3 が壊れるという報告 ([quic-go #4679](https://github.com/quic-go/quic-go/issues/4679)) は、2024-09-26 に closed になっている。閉じた時のコメントは「quic-go を最新に上げたら解消した」で、Caddy の forum の議論では v0.47.0 で直ったとされている。前段の Caddy は quic-go v0.63.0 なので、その修正は入っている。本件はそれとは別の問題で、既知の未解決の問題としては扱わない。
 
+## ccmsg 固有の原因の検討
+
+kawaz の体感では、この症状は ccmsg でしか出ない。経路や Caddy 全般の問題ならそうはならないはずなので、「ccmsg のページがその HTTP/3 の接続を壊している」可能性を検討した。原因は未確定のまま扱う。
+
+### 1. 本文を読まない応答で、接続全体の受信の枠が尽きる: ccmsg のコードには該当なし
+
+QUIC の接続全体の受信の枠 (`MAX_DATA`) は、クライアントが応答の本文を読まないと広がらない。webui が WebSocket 以外で HTTP を使う経路を全部挙げた (`packages/webui/src/client` を `fetch(` / `EventSource` / `ReadableStream` / `getReader` / `XMLHttpRequest` / `sendBeacon` / `<img` / `<iframe` / `import(` で grep した)。
+
+| 経路 | 本文の扱い |
+|---|---|
+| ページの殻、`/app.css`、`/assets/*` (entry と `import()` の chunk) | ブラウザが読み切る |
+| `POST /attachment` (`composer-upload.ts` の XHR) | `onload` で `responseText` を全部読む |
+| `<img src>`: 添付 (`markdown-view.tsx`、`ImageLightbox.tsx`)、`/fs-serve` (`FileViewer.tsx`) | ブラウザが読む |
+| Terminal タブの `<iframe>` (別ホストの hyoui の embed ページ) | iframe の中のページの責務 |
+
+- `fetch` / `EventSource` / streaming の読み出し / polling は webui の client に無い。本文を読まずに放置する経路は見つからなかった
+- daemon 側の WebSocket 以外の endpoint (`/attachment` の GET、`/fs-serve`、`POST /attachment`、`/webhook/*`) は、どれも長さの決まった本文を 1 回返して終わる。長く開いたままにする endpoint は無い
+
+### 2. WebSocket を HTTP/3 で張ろうとしたか: 記録なし
+
+Caddy のログ (10-19 〜 10-25) に、method `CONNECT` の要求は 1 件も無い。`/ws` は全部 `HTTP/1.1` で `101` (ccmsg 156 件)。hyoui の WebSocket も全部 `HTTP/1.1`。Safari が Extended CONNECT を試して失敗したのか、最初から試していないのかは、ログからは分からない (Caddy が CONNECT を受け付けずに記録しない場合もありうる。未確認)。
+
+### 3. 止まった接続の、止まる前の要求: 長命の stream も未完了の要求も居ない
+
+iPhone の Safari で途中で止まった HTTP/3 の接続ごとに、最初の要求の時刻、最初に止まった要求、それより前にその接続で完了した要求の数とホストを数えた。
+
+| 接続の始まり (UTC) | 最初に止まった要求 | それより前の要求 | 前の要求のホスト | 前に運んだバイト |
+|---|---|---|---|---|
+| 10-20 01:54:52 | ccmsg の bundle | 2 | ccmsg | 66424 |
+| 10-20 01:56:59 | ccmsg の bundle | 2 | ccmsg | 65976 |
+| 10-20 08:07:44 | ccmsg の bundle | 2 | ccmsg | 66425 |
+| 10-20 08:23:30 | ccmsg の bundle | 2 | ccmsg | 66573 |
+| 10-20 08:39:06 | ccmsg の `/app.css` | 8 | bark, ccmsg | 14429 |
+| 10-20 22:49:15 | ccmsg の bundle | 5 | ccmsg | 134399 |
+| 10-22 06:46:20 | hyoui の `xterm.js` | 12 | ccmsg, hyoui | 201488 |
+| 10-25 05:09:53 | ccmsg の bundle | 2 | ccmsg | 67667 |
+| 10-25 05:13:20 | hyoui のフォント | 27 | ccmsg, hyoui | 496908 |
+| 10-25 05:50:28 | ccmsg の bundle | 2 | ccmsg | 67784 |
+| 10-25 05:51:24 | hyoui のフォント | 13 | hyoui | 484585 |
+| 10-25 06:08:23 | hyoui の `/api/sessions/...` | 102 | hyoui | 1697923 |
+
+- ccmsg の bundle で止まった 7 接続のうち 6 つは、止まる前にその接続で記録された要求が HTML の殻と `/app.css` の 2 件 (合わせて約 66 〜 68KB) だけだった。その直後、3 件目の bundle で止まっている
+- 止まる前に、長く開いたままの要求や、完了しなかった要求は居ない。Caddy は要求が終わった時に 1 行書くので、接続が idle timeout で終わった時点で、まだ開いていた要求も記録に出る。そういう行は無かった
+- 前提: 接続を iPhone 側の UDP の port で見分けている。QUIC の接続が port を変えて移った (connection migration) 場合、1 つの接続が 2 つに見える。そのため「接続で最初の要求」が本当に新しい接続の最初かどうかは、ログだけでは確定しない
+
+### 4. hyoui の停滞は ccmsg のページが開いている時だけか: iPhone の hyoui の HTTP/3 は全部 ccmsg の中だった
+
+- iPhone の Safari が HTTP/3 で開いた hyoui のページ (`/sessions/...`) は、全部 `Sec-Fetch-Dest: iframe` かつ `embed=1` だった。ccmsg の Terminal タブの iframe で、hyoui を単独で開いた HTTP/3 の記録は無い。hyoui を単独で開いた記録は HTTP/2 の 1 件だけで、途中で止まったものは無い
+- ただし、hyoui で止まった接続のうち 10-25 05:51 と 06:08 の 2 つでは、止まるまでにその接続に乗っていたのは hyoui の要求だけで、ccmsg のページ自身の HTTP/3 の要求は乗っていない (ccmsg のページは WebSocket の HTTP/1.1 でしか喋っていない)
+- iPhone の Safari の HTTP/3 で、50KB を超える応答があったホストは ccmsg と hyoui だけ。bark は小さい応答 (72 件) しか無い。HTTP/2 では、50KB を超える 30 件 (ccmsg と hyoui) が全部届いている
+
+### まとめ (観測 / 推測)
+
+- 観測: webui に、本文を読まずに放置する HTTP の経路は無い。止まった接続にも、止まる前に長命・未完了の要求は居ない。WebSocket は全部 HTTP/1.1
+- 観測: iPhone の Safari が HTTP/3 で大きい応答を受けるのは、ccmsg のページか、その中の hyoui の iframe の時だけ。「ccmsg でしか出ない」という体感は、HTTP/3 で大きい応答を受ける場面が ccmsg の中にしか無いこととも矛盾しない
+- 推測 (未検証): ccmsg の bundle で止まる接続の多くが、殻と CSS の約 66 〜 68KB を運んだ直後に止まる。接続の初めの受信の枠の大きさと関係があるのかもしれない。ただし、正常な新しい接続 (同じ殻と CSS と bundle を全部運んだもの) との違いは、ログの項目からは見つからなかった
+- ccmsg のコードに該当する原因が見つからなかったので、ccmsg 側の直し方の候補 (本文を読む、abort する、WebSocket の扱い) は無い
+
 ## 仮説ごとの判定
 
 | 仮説 | コード / 設定で該当するか | 再現 | 根拠 |
