@@ -318,6 +318,10 @@ export interface WsHandle {
    * ~4s), like sessionLaunch. `terminated: false` in a successful response
    * means "signals sent, termination unconfirmed". */
   sessionKill(sessionId: string, opts?: { force?: boolean }): Promise<ReplyOf<"session_kill">>;
+  /** Stop a session's process and resume the same id through the launch
+   * command (DR-0028 「restart」, user role only — StatusPanel's 再起動). Slow:
+   * the kill grace and the launch command's wait. */
+  sessionRestart(sessionId: string): Promise<ReplyOf<"session_restart">>;
   /** Retitle a session by having the daemon type `/rename <title>` into that
    * session's own terminal (user role only, kawaz r135m16 — the Sessions
    * list's pencil button). Best-effort: a successful response means the
@@ -614,6 +618,7 @@ export function createWsClient(
         dispatch({
           type: "launch/availability",
           available: hello.launch_available === true,
+          ...(hello.launch_config_dir !== undefined ? { configDir: hello.launch_config_dir } : {}),
         });
       }
       await send({ op: "subscribe" });
@@ -973,6 +978,7 @@ export function createWsClient(
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
       }),
+    sessionRestart: (sessionId) => send({ op: "session_restart", session_id: sessionId }),
     sessionRename: (sessionId, title) =>
       send({
         op: "session_rename",

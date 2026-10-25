@@ -13,7 +13,9 @@ import {
   LaunchInputSchema,
   LaunchModelSchema,
   launchContinues,
+  launchEffortFromTranscript,
   launchMakesSession,
+  launchModelFromTranscript,
   parseWith,
   type LaunchEffort,
   type LaunchInput,
@@ -174,26 +176,6 @@ export function checkSessionCreatorForm(
     else issues[field] ??= issue.message;
   }
   return { ok: false, issues, general };
-}
-
-/** The picklist model a raw transcript model stands for, or undefined. A
- * transcript records the concrete model the API answered as
- * (`claude-fable-5[1m]`), the launch names a family (`fable`), so a
- * `claude-<family>-…` id is reduced to its family; a value already spelled as
- * a family (with or without a context suffix) is read as it is. Anything else
- * — `<synthetic>` rows, another vendor's model — has no honest answer. */
-export function launchModelFromTranscript(raw: string): LaunchModel | undefined {
-  const family = /^claude-([a-z]+)-/.exec(raw)?.[1] ?? raw.replace(/\[[^\]]*\]$/, "");
-  const read = parseWith(LaunchModelSchema, family);
-  return read.ok ? read.value : undefined;
-}
-
-/** The picklist effort a raw transcript effort stands for, or undefined. The
- * transcript uses the CLI's vocabulary, so this is a membership check: a level
- * the picklist does not have leaves the select at 指定しない. */
-export function launchEffortFromTranscript(raw: string): LaunchEffort | undefined {
-  const read = parseWith(LaunchEffortSchema, raw);
-  return read.ok ? read.value : undefined;
 }
 
 /** What the Session Search result row's "resume" hands to the form: the

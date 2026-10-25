@@ -14,6 +14,7 @@ import type {
   SessionBackgroundStatus,
   SessionEnvResponse,
   SessionKillResponse,
+  SessionRestartResponse,
   SessionStatusSnapshot,
   SessionTodo,
 } from "@ccmsg/protocol";
@@ -22,6 +23,8 @@ import {
   buildStatusSections,
   formatAgentLiveState,
   formatContextUsage,
+  restartOffered,
+  restartResultText,
 } from "../session-status-view.ts";
 import { pinForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
@@ -244,6 +247,69 @@ function KillZone({
   );
 }
 
+/** A restart of one session as it runs and what it came to (DR-0028
+ * 「restart」). Held by the session's view rather than the Status tab: the
+ * restart stops the process, and the tab's panel goes while the session is
+ * between its old process and the resumed one, which would take the result
+ * with it. */
+export interface SessionRestart {
+  busy: boolean;
+  result: ReturnType<typeof restartResultText> | null;
+  start: () => void;
+}
+
+/** The restart of `sid`, kept across the Status panel coming and going. A
+ * restart started for another sid is not this one's. */
+export function useSessionRestart(
+  sid: string,
+  restart: (sid: string) => Promise<SessionRestartResponse | ErrorResponse>,
+): SessionRestart {
+  const [state, setState] = useState<{
+    sid: string;
+    busy: boolean;
+    result: ReturnType<typeof restartResultText> | null;
+  }>({ sid, busy: false, result: null });
+  const own = state.sid === sid ? state : { sid, busy: false, result: null };
+  return {
+    busy: own.busy,
+    result: own.result,
+    start: () => {
+      setState({ sid, busy: true, result: null });
+      void restart(sid)
+        .then((reply) => restartResultText(reply))
+        .catch((e: unknown) => ({ text: `再起動できなかった: ${String(e)}` }))
+        .then((result) =>
+          setState((current) => (current.sid === sid ? { sid, busy: false, result } : current)),
+        );
+    },
+  };
+}
+
+/** The LIVE row's 再起動: stop the session's process and resume the same id
+ * through the launch command. No confirm — the person knows what a restart
+ * drops (background processes, teammates) when they press it. While it runs
+ * the button stays, disabled, even if the agents row has gone with the old
+ * process. */
+function RestartControl({ offered, restart }: { offered: boolean; restart: SessionRestart }) {
+  const { busy, result } = restart;
+  return (
+    <>
+      {offered || busy ? (
+        <button type="button" class="status-restart-button" disabled={busy} onClick={restart.start}>
+          {busy ? "再起動中…" : "再起動"}
+        </button>
+      ) : null}
+      {result ? (
+        <div class="status-restart-result">
+          <p>{result.text}</p>
+          {result.output?.stdout ? <pre>{result.output.stdout}</pre> : null}
+          {result.output?.stderr ? <pre>{result.output.stderr}</pre> : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 /** One value cell. A sensitive name (r55m134) renders as a button that swaps
  * between a fixed-width mask and the real value — fixed-width because the
  * mask's length would otherwise leak the secret's length. Non-sensitive
@@ -417,12 +483,14 @@ export function StatusPanel({
   snapshot,
   sid,
   onKill,
+  restart,
   onLoadEnv,
   onAgentInput,
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
+  restart: SessionRestart;
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
   onAgentInput: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
 }) {
@@ -434,6 +502,13 @@ export function StatusPanel({
     sameJson,
   );
   const liveState = formatAgentLiveState(agent);
+  const restartable = useStoreState(store, (s) =>
+    restartOffered(
+      s.agents.find((candidate) => candidate.sessionId === sid),
+      s.launchAvailable,
+      s.launchConfigDir,
+    ),
+  );
   // The session's own title — what `/rename` sets — resolved through the same
   // live-agent-first rule the pinned rows use, so the tab can't disagree with
   // the Sessions list about what a session is called. Unlike `sessionRowTitle`
@@ -543,7 +618,10 @@ export function StatusPanel({
           )}
         </dd>
         <dt>LIVE</dt>
-        <dd>{liveState ?? "—"}</dd>
+        <dd class="status-live">
+          <span>{liveState ?? "—"}</span>
+          <RestartControl offered={restartable} restart={restart} />
+        </dd>
         <dt>KIND</dt>
         <dd>{agent?.kind ?? "—"}</dd>
         <dt>STARTED</dt>

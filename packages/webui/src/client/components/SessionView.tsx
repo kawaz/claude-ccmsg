@@ -31,7 +31,7 @@ import { pausableStore, sameJson, shallowEqual, useStoreState } from "../useStor
 import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
-import { StatusPanel } from "./StatusPanel.tsx";
+import { StatusPanel, useSessionRestart } from "./StatusPanel.tsx";
 import { SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
@@ -259,6 +259,10 @@ export function SessionView({
   // 「読み込み中…」のまま固まらせずここで理由を出す。購読をやり直すたびに
   // null へ戻す。
   const [statusError, setStatusError] = useState<string | null>(null);
+  // The Status tab's 再起動 (DR-0028 「restart」), held here so its result
+  // outlives the Status panel, which goes while the session's old process is
+  // gone and the resumed one has not come back.
+  const restart = useSessionRestart(sid, (target) => ws.sessionRestart(target));
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (slice.connStatus !== "connected") return;
@@ -413,6 +417,7 @@ export function SessionView({
                 snapshot={sessionStatus}
                 sid={sid}
                 onKill={(opts) => ws.sessionKill(sid, opts)}
+                restart={restart}
                 onLoadEnv={() => ws.sessionEnv(sid)}
                 onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
               />

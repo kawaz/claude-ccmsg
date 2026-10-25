@@ -5,8 +5,10 @@
 // in isolation by session-status-view.test.ts — no store/DOM dependency.
 import type {
   AgentInfo,
+  ErrorResponse,
   SessionBackgroundStatus,
   SessionContextUsage,
+  SessionRestartResponse,
   SessionStatusSnapshot,
   SessionTeammate,
   SessionTodo,
@@ -165,6 +167,43 @@ export function formatAgentLiveState(agent: AgentInfo | undefined): string | nul
     return agent.waitingFor ? `waiting (${agent.waitingFor})` : "waiting";
   }
   return agent?.turn?.state ?? null;
+}
+
+/** Whether the Status tab offers a restart for the session whose agents row
+ * is `agent` (DR-0028 「restart」): the daemon can launch, the session's
+ * process is there, and it runs in the config dir the launch command starts
+ * claude in (hello's `launch_config_dir`) — resumed in any other, claude has
+ * no transcript of it. */
+export function restartOffered(
+  agent: AgentInfo | undefined,
+  launchAvailable: boolean,
+  launchConfigDir: string | null,
+): boolean {
+  return (
+    launchAvailable &&
+    agent !== undefined &&
+    launchConfigDir !== null &&
+    agent.config_dir === launchConfigDir
+  );
+}
+
+/** What a restart came to, as the Status tab says it under the LIVE row: the
+ * line, and the launch command's output when it did not resume. */
+export function restartResultText(reply: SessionRestartResponse | ErrorResponse): {
+  text: string;
+  output?: { stdout: string; stderr: string };
+} {
+  if (reply.ok) {
+    if (reply.exit_code === 0) return { text: "再起動しました" };
+    return {
+      text: `停止したが、起動コマンドが ${String(reply.exit_code)} で終わった (resume していない)`,
+      output: { stdout: reply.stdout, stderr: reply.stderr },
+    };
+  }
+  if (reply.error.code === "restart_timeout") {
+    return { text: "停止を確認できなかったので起動していない" };
+  }
+  return { text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
 }
 
 /** The ctx line: the fill over the window Claude Code reported through the

@@ -291,6 +291,12 @@ export interface AppState {
    * はこの時のみ出す。未設定の daemon では、押した先の起動フォームが「未設定」
    * しか返せない — sandboxAvailable と同じ姿勢。 */
   launchAvailable: boolean;
+  /** hello response の `launch_config_dir` (DR-0028 「restart」)。起動コマンドが
+   * claude を起こす config dir (realpath) で、agents の行の `config_dir` が
+   * これと同じセッションにだけ Status タブの「再起動」を出す。別の config dir
+   * で resume すると、claude はそのセッションの transcript を持たない。
+   * launch_available でなければ null。 */
+  launchConfigDir: string | null;
   /** 開いているフォームパネル (新規セッション / セッション検索) と、その
    * フォームに渡された初期値。2 つは排他 (sidebar-url.ts)。
    *
@@ -424,6 +430,7 @@ export function initialState(): AppState {
     llmStatus: null,
     sandboxAvailable: false,
     launchAvailable: false,
+    launchConfigDir: null,
     sidebar: CLOSED_SIDEBAR,
     peerSortKey: initialPeerSortKey(),
     usageTab: "quota",
@@ -492,7 +499,7 @@ export type Action =
   // being reported has stopped being configured.
   | { type: "llm-status/loaded"; report: LlmStatusReport }
   | { type: "sandbox/availability"; available: boolean }
-  | { type: "launch/availability"; available: boolean }
+  | { type: "launch/availability"; available: boolean; configDir?: string }
   | { type: "peers/sort-key"; key: PeerSortKey }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   // path と `sb.*` は 1 つの URL の別々の名前空間で、遷移のたびに両方が
@@ -1085,7 +1092,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case "sandbox/availability":
       return { ...state, sandboxAvailable: action.available };
     case "launch/availability":
-      return { ...state, launchAvailable: action.available };
+      return {
+        ...state,
+        launchAvailable: action.available,
+        launchConfigDir: action.available ? (action.configDir ?? null) : null,
+      };
     case "peers/sort-key":
       return { ...state, peerSortKey: action.key };
     // Merged rather than replaced: a probe that failed for one credential
