@@ -60,8 +60,8 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    [[ -n "$(get resume)" ]] && source_args+=(--resume "$(get resume)")
 
    args=()
+   # resume_session_at は fork_session と一緒にだけ来る (daemon が確かめ済み)
    if [[ -n "$(get resume_session_at)" ]]; then
-     [[ "$(get fork_session)" == true ]] || fail "resume_session_at without fork_session is not handled here"
      # --resume-session-at は -p でしか効かないので、切り詰めた fork を先に作る
      claude -p ${source_args[@]+"${source_args[@]}"} --fork-session --session-id "$(get session_id)" \
        --resume-session-at "$(get resume_session_at)" --output-format json /exit >/dev/null

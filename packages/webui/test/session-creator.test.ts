@@ -204,14 +204,26 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
     });
   });
 
-  test("a fork or a fork point without continue or resume is refused on each", () => {
+  test("a fork without continue or resume is refused on --fork-session", () => {
     const check = checkSessionCreatorForm(
       form({ cwd: "/r", fork_session: true, resume_session_at: AT }),
       { fable: "high" },
     );
     expect(check.ok).toBe(false);
     if (check.ok) return;
-    expect(Object.keys(check.issues).sort()).toEqual(["fork_session", "resume_session_at"]);
+    expect(Object.keys(check.issues)).toEqual(["fork_session"]);
+  });
+
+  test("a fork point without --fork-session is refused on --resume-session-at", () => {
+    const check = checkSessionCreatorForm(
+      form({ cwd: "/r", resume: SID, resume_session_at: AT }),
+      {},
+    );
+    expect(check).toEqual({
+      ok: false,
+      issues: { resume_session_at: "fork_session と一緒に指定する" },
+      general: [],
+    });
   });
 
   test("a blank or relative cwd and a malformed session id are refused with the schema's reasons", () => {

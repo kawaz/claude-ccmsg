@@ -186,11 +186,13 @@ describe("the built-in launch command, run as the daemon runs it", () => {
     );
     expect(forkFailed.code).toBe(2);
     expect(forkFailed.stderr).toContain("claude -p exited 1");
-    const unhandled = await runDefault(
+    // A fork point without a fork is not a launch command input.
+    const forkPointAlone = await runDefault(
       JSON.stringify({ cwd: "/w", resume: SID, resume_session_at: AT }),
       mock.bin,
     );
-    expect(unhandled.code).toBe(2);
+    expect(forkPointAlone.code).toBe(2);
+    expect(forkPointAlone.stderr).toContain("the input does not read");
     expect(read(mock.hyouiArgs)).toBe("");
   });
 });

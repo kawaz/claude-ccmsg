@@ -38,7 +38,7 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 
 - field は全部 claude のオプションと 1 対 1 (`session_id` は `--session-id`、`prompt` は位置引数)。オプションに無い名前の field は来ない
 - 無い field と、`false` の `continue` / `fork_session` は指定されていない
-- daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` と `resume_session_at` は `continue` か `resume` と一緒にだけ来る、新規には `model` と `effort` がある
+- daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` は `continue` か `resume` と一緒にだけ来る、`resume_session_at` は `fork_session` と一緒にだけ来る、新規には `model` と `effort` がある
 - 任意の field が無い時の値は起動コマンドが決める (例: model ごとの effort の既定、リポ名と日時からのセッション名、既定の prompt、元のセッションの model)
 - 読めない入力 (知らない field、型の違う値) には推測で補って起動せず、非零で終わって理由を stderr に書く。daemon が新しい field を足した時に、古い起動コマンドが黙って無視して別の起動をするのを避けるため
 
@@ -72,7 +72,6 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 守ること:
 
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
-- 二段の起動を確かめたのは `fork_session` のある `resume_session_at` だけ。`fork_session` の無い `resume_session_at` (daemon は `continue` か `resume` があれば渡す) で claude が元のセッションをどう扱うかは確かめていない
 - 二段の両方を同じ `CLAUDE_CONFIG_DIR` で起動する (一段目が書いた transcript を二段目が同じ `projects` ディレクトリから読むため)
 - `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰め、末尾の改行の除去をしない)
 - `resume_session_at` が user の record を指す時、claude は二段目の resume で `No response requested.` の synthetic な assistant 行を足してから続ける (同 findings)。これは claude の挙動で、起動コマンドが手を入れるものではない
@@ -92,7 +91,7 @@ config に `launch_command` が無い時、daemon は plugin に同梱の `packa
 
 - stdin の JSON を `LaunchCommandInputSchema` で読む。読めなければ非零 (2) で終わる
 - field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写し、`hyoui run --detached -- claude <オプション>` を shell を介さずに実行して、hyoui の終了コードで終わる。`hyoui` が `PATH` に無ければ非零 (2)
-- `fork_session` と `resume_session_at` がある時は二段で起動する (一段目の `claude -p` が非零なら非零 (2) で終わり、hyoui は起こさない)。`fork_session` の無い `resume_session_at` は claude の扱いが未観測なので断る (2)
+- `fork_session` と `resume_session_at` がある時は二段で起動する (一段目の `claude -p` が非零なら非零 (2) で終わり、hyoui は起こさない)
 
 加工はしない: direnv の適用、model 名への `[1m]` 等の付与、セッション名の装飾、trust ダイアログの吸収、cwd の信頼判定、`CCMSG_LAUNCH_REQUESTED_BY` による判定の切り替えはどれもしない。面ごとの環境の切替や trust ダイアログの吸収が要る環境は、自前の起動コマンドを書いて `launch_command` に置く。
 

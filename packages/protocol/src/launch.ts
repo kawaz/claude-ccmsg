@@ -79,7 +79,8 @@ const NEEDS_SOURCE = "continue か resume と一緒に指定する";
 
 /** A launch, as the `session_launch` op and the webui's form read it. The
  * checks are the combinations claude refuses or ignores
- * (docs/findings/2026-10-25-fork-with-session-id.md); each is placed on the
+ * (docs/findings/2026-10-25-fork-with-session-id.md), and a fork point
+ * without a fork, which has no meaning; each is placed on the
  * field to change, and runs as soon as the fields it reads are readable, so a
  * form shows every reason at once. */
 export const LaunchInputSchema = v.pipe(
@@ -102,9 +103,9 @@ export const LaunchInputSchema = v.pipe(
   ),
   v.forward(
     v.partialCheck(
-      [["continue"], ["resume"], ["resume_session_at"]],
-      (launch) => launch.resume_session_at === undefined || launchContinues(launch),
-      NEEDS_SOURCE,
+      [["fork_session"], ["resume_session_at"]],
+      (launch) => launch.resume_session_at === undefined || launch.fork_session === true,
+      "fork_session と一緒に指定する",
     ),
     ["resume_session_at"],
   ),

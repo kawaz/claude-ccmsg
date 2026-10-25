@@ -9,7 +9,8 @@
 // setup that needs any of these writes its own launch command. What it refuses
 // (an input that does not read, no hyoui, the first step of a fork at a
 // record failing) it refuses before claude starts, exiting non-zero with the
-// reason on standard error.
+// reason on standard error. A fork point without a fork does not read: the
+// schema requires `fork_session` with `resume_session_at`.
 //
 // The daemon runs it as `[<the bun running the daemon>, <this file>]`, so it
 // depends on nothing but bun and the protocol.
@@ -84,11 +85,6 @@ async function main(): Promise<never> {
   const read = parseWith(InputTextSchema, await Bun.stdin.text());
   if (!read.ok) refuse(`the input does not read: ${read.failure.summary}`);
   const input = read.value;
-  // A fork point without a fork passes the daemon's checks, but how claude
-  // takes it is unobserved (launch-command.md): refused rather than guessed.
-  if (input.resume_session_at !== undefined && input.fork_session !== true) {
-    refuse("resume_session_at without fork_session is not handled");
-  }
   const hyoui = Bun.which("hyoui");
   if (hyoui === null) refuse("hyoui is not found in PATH");
   let argv = claudeArgv(input);

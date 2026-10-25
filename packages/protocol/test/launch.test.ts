@@ -80,9 +80,9 @@ describe("LaunchInputSchema", () => {
     });
   });
 
-  // A fork and a fork point copy a session: without one to copy, claude
-  // starts a new session and ignores them.
-  test("fork_session and resume_session_at without continue or resume do not read", () => {
+  // A fork copies a session: without one to copy, claude starts a new
+  // session and ignores it.
+  test("fork_session without continue or resume does not read, on fork_session", () => {
     const issues = launchIssues({
       cwd: "/w",
       model: "opus",
@@ -90,8 +90,20 @@ describe("LaunchInputSchema", () => {
       fork_session: true,
       resume_session_at: AT,
     });
-    expect(Object.keys(issues).sort()).toEqual(["fork_session", "resume_session_at"]);
-    expect(issues.fork_session).toContain("continue か resume");
+    expect(issues).toEqual({ fork_session: "continue か resume と一緒に指定する" });
+  });
+
+  // A fork point is where a fork is cut; on a resume that does not fork it
+  // has no meaning (and claude's handling of it is unobserved).
+  test("resume_session_at without fork_session does not read, on resume_session_at", () => {
+    expect(launchIssues({ cwd: "/w", resume: SID, resume_session_at: AT })).toEqual({
+      resume_session_at: "fork_session と一緒に指定する",
+    });
+    expect(
+      launchIssues({ cwd: "/w", model: "opus", effort: "low", resume_session_at: AT }),
+    ).toEqual({
+      resume_session_at: "fork_session と一緒に指定する",
+    });
   });
 
   // The checks run once the fields they read are readable, so a form shows

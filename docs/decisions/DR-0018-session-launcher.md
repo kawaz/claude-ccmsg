@@ -94,7 +94,7 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 | `model` / `effort` | `--model` / `--effort` | 新規 (`continue` も `resume` も無い) では必須。それ以外で無ければ起動コマンドが決める |
 | `continue` | `--continue` | cwd で最も新しいセッションの続き |
 | `resume` | `--resume` | 指定したセッションの続き (id は変わらない) |
-| `resume_session_at` | `--resume-session-at` | fork 地点の transcript の record の uuid。その record までを写す。無ければ先端まで |
+| `resume_session_at` | `--resume-session-at` | fork 地点の transcript の record の uuid。その record までを写す。無ければ先端まで。`fork_session` と一緒にだけ指定できる |
 | `fork_session` | `--fork-session` | `continue` / `resume` の元の履歴を写した新しいセッションにする |
 | `name` | `--name` | セッション名。無ければ起動コマンドが決める |
 | `prompt` | (位置引数) | 最初の prompt。無ければ起動コマンドが決める |
@@ -105,7 +105,7 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 |---|---|
 | `continue` と `resume` の同時指定 | `resume` |
 | `fork_session` に `continue` も `resume` も無い | `fork_session` |
-| `resume_session_at` に `continue` も `resume` も無い | `resume_session_at` |
+| `resume_session_at` に `fork_session` が無い (fork しない resume に fork 地点は意味が無く、claude の扱いも未観測) | `resume_session_at` |
 | 新規 (`continue` も `resume` も無い) で `model` が無い | `model` |
 | 新規で `effort` が無い | `effort` |
 
@@ -233,6 +233,7 @@ session role (エージェント) からの `session_launch` を受ける。
 - **LN-Q4 = (a)** (kawaz 2026-07-16): config の変更は daemon の再起動で反映 — §3.1
 - **2026-10-25 (kawaz)**: エージェント向けの tool `launch` を足す。daemon が新しいセッションの `session_id` を生成して起動コマンドの入力に足す (tool の入力の型と起動コマンドの入力の型は別)。起動コマンドは config の `launch_command` 1 本で、daemon は JSON を stdin で渡すだけ。response は `{ session_id?, exit_code, stdout, stderr }` (`session_id` は新しいセッションを作る起動で exit 0 の時だけ。起動コマンドは失敗を全部セッションの起動より前に返す前提) で、4096 bytes 以上の出力はファイルに退避して置き場を返す。daemon は exit code を解釈しない。session role からの起動を許可する — §3.3〜§3.8
 - **2026-10-25 (kawaz、追加)**: 起動の入力の field 名を claude のオプション名の snake_case に揃え、起動の種類を表す `type` を持たない。引数の無いオプションは boolean。claude が拒む・無視する組み合わせはスキーマの組み合わせの検査で弾く。tool の入力は op の入力から `resume_session_at` を外したもの、起動コマンドの入力は op の入力に `session_id` を足したもの (field は claude のオプションと 1 対 1、依頼者は環境変数 `CCMSG_LAUNCH_REQUESTED_BY` で渡し、`clean_env` の判定の後に重ねる)。起動に関わる config のキーは `launch_` で揃える (`launch_timeout_seconds` / `launch_max_concurrency`)。`launch_command` は省略でき、無ければ同梱の組み込みの起動コマンド (`hyoui run --detached -- claude …` を加工せずに実行する) を使う。webui のフォームは全部の欄を常に出し、新規の model の既定は `fable`、effort の既定は daemon の settings.json の `modelSettings.<model>.effortLevel` (`session_launcher_config` の `default_effort`)。あわせてレビューの指摘から、`launch_max_concurrency` と `launch_busy`、daemon が終わる時の待ち、起動コマンドの絶対パスへの固定、process group への signal、出力の 1 MiB の上限、log の行の自由文の JSON の文字列化と `timed_out`、tool の待ちの 65 秒を入れる — §3.1〜§3.9
+- **2026-10-25 (kawaz、追加 2)**: `resume_session_at` は `fork_session` と一緒にだけ受ける (fork しない resume に付けた時の claude の挙動は未観測で、意味も無い) — §3.2
 
 ## 6. 不採用
 
