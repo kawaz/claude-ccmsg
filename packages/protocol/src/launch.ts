@@ -11,7 +11,7 @@
 // the protocol files that import nothing else.
 import * as v from "valibot";
 import { SESSION_ID_SHAPE } from "./ccmsg-address.ts";
-import { jsonText, type Output } from "./parse.ts";
+import { jsonText, parseWith, type Output } from "./parse.ts";
 
 /** The models a launch may name (`claude --model`). */
 export const LaunchModelSchema = v.picklist(["fable", "opus", "sonnet", "haiku"]);
@@ -20,6 +20,26 @@ export type LaunchModel = Output<typeof LaunchModelSchema>;
 /** The efforts a launch may name (`claude --effort`). */
 export const LaunchEffortSchema = v.picklist(["low", "medium", "high", "xhigh", "max"]);
 export type LaunchEffort = Output<typeof LaunchEffortSchema>;
+
+/** The picklist model a raw transcript model stands for, or undefined. A
+ * transcript records the concrete model the API answered as
+ * (`claude-fable-5[1m]`), the launch names a family (`fable`), so a
+ * `claude-<family>-…` id is reduced to its family; a value already spelled as
+ * a family (with or without a context suffix) is read as it is. Anything else
+ * — `<synthetic>` rows, another vendor's model — has no honest answer. */
+export function launchModelFromTranscript(raw: string): LaunchModel | undefined {
+  const family = /^claude-([a-z]+)-/.exec(raw)?.[1] ?? raw.replace(/\[[^\]]*\]$/, "");
+  const read = parseWith(LaunchModelSchema, family);
+  return read.ok ? read.value : undefined;
+}
+
+/** The picklist effort a raw transcript effort stands for, or undefined. The
+ * transcript uses the CLI's vocabulary, so this is a membership check: a level
+ * the picklist does not have names no effort. */
+export function launchEffortFromTranscript(raw: string): LaunchEffort | undefined {
+  const read = parseWith(LaunchEffortSchema, raw);
+  return read.ok ? read.value : undefined;
+}
 
 const LaunchCwdSchema = v.pipe(
   v.string(),

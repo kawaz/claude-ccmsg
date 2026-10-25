@@ -9,8 +9,10 @@ import {
   LaunchFieldsSchema,
   LaunchInputSchema,
   LaunchToolFieldsSchema,
+  launchEffortFromTranscript,
   launchErrorText,
   launchMakesSession,
+  launchModelFromTranscript,
 } from "../src/launch.ts";
 import { parseWith } from "../src/parse.ts";
 
@@ -218,5 +220,28 @@ describe("launchErrorText", () => {
       started: "unknown",
       text: "起動したか確かめられなかった: boom",
     });
+  });
+});
+
+describe("launchModelFromTranscript / launchEffortFromTranscript", () => {
+  test("a claude model id reduces to its family", () => {
+    expect(launchModelFromTranscript("claude-fable-5[1m]")).toBe("fable");
+    expect(launchModelFromTranscript("claude-opus-5-5")).toBe("opus");
+    expect(launchModelFromTranscript("claude-haiku-5-5")).toBe("haiku");
+  });
+
+  test("a family spelling reads as itself, with or without a context suffix", () => {
+    expect(launchModelFromTranscript("sonnet")).toBe("sonnet");
+    expect(launchModelFromTranscript("opus[1m]")).toBe("opus");
+  });
+
+  test("anything else has no model", () => {
+    expect(launchModelFromTranscript("gpt-5.6-sol")).toBeUndefined();
+    expect(launchModelFromTranscript("<synthetic>")).toBeUndefined();
+  });
+
+  test("an effort is a membership check", () => {
+    expect(launchEffortFromTranscript("xhigh")).toBe("xhigh");
+    expect(launchEffortFromTranscript("turbo")).toBeUndefined();
   });
 });

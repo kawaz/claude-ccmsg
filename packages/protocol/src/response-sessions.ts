@@ -6,7 +6,12 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
-import { LaunchEffortSchema, LaunchModelSchema } from "./launch.ts";
+import {
+  LaunchEffortSchema,
+  LaunchFieldsSchema,
+  LaunchModelSchema,
+  SessionLaunchResponseSchema,
+} from "./launch.ts";
 import type { Output } from "./parse.ts";
 import {
   SessionErrorEntrySchema,
@@ -73,6 +78,13 @@ export const HelloResponseSchema = v.object({
    * the webui offers neither the launch form nor a fork from the Timeline,
    * which could only answer launcher_not_configured. */
   launch_available: v.optional(v.boolean()),
+  /** With `launch_available`: the config dir (realpath) the launch command
+   * starts claude in, as far as the daemon knows it — the CLAUDE_CONFIG_DIR of
+   * the environment the command inherits, or `~/.claude` without one (DR-0028
+   * 「restart」). The webui offers a restart only for a session whose agents
+   * row is in this dir: resumed anywhere else, claude has no transcript of
+   * it. */
+  launch_config_dir: v.optional(v.string()),
 });
 export type HelloResponse = Output<typeof HelloResponseSchema>;
 
@@ -242,6 +254,18 @@ export const SessionKillResponseSchema = v.object({
   terminated: v.boolean(),
 });
 export type SessionKillResponse = Output<typeof SessionKillResponseSchema>;
+
+/** Payload of a completed session_restart (DR-0028 「restart」): the process
+ * was observed gone, and the launch command ran to resume `session_id` (the
+ * request's). `exit_code` / `stdout` / `stderr` are session_launch's: a
+ * non-zero code means the session was stopped and the command did not resume
+ * it. */
+export const SessionRestartResponseSchema = v.object({
+  ...SessionLaunchResponseSchema.entries,
+  restarted: v.literal(true),
+  session_id: LaunchFieldsSchema.entries.resume.wrapped,
+});
+export type SessionRestartResponse = Output<typeof SessionRestartResponseSchema>;
 
 /** Payload of a completed session_rename, delivered inside
  * the session_rename reply. `ok` here means "the `/rename <title>` keystrokes

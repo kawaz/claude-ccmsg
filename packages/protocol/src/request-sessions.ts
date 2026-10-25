@@ -231,6 +231,21 @@ export const SessionKillRequestSchema = v.object({
 });
 export type SessionKillRequest = Output<typeof SessionKillRequestSchema>;
 
+/** Restart a session (DR-0028 「restart」, user role only): stop its process as
+ * session_kill does, and once it is observed gone, resume the same id through
+ * the launch command (DR-0018), with the model / effort / name it runs as and
+ * a prompt saying it was restarted. Every reason to refuse is checked before
+ * the process is stopped.
+ *
+ * Slow reply like session_launch: up to the kill grace and the launch
+ * command's wait. */
+export const SessionRestartRequestSchema = v.object({
+  op: v.literal("session_restart"),
+  /** The session to restart. No pid, for the reason session_kill takes none. */
+  session_id: SessionIdSchema,
+});
+export type SessionRestartRequest = Output<typeof SessionRestartRequestSchema>;
+
 /** Retitle a running Claude Code session by typing its own `/rename` command
  * into the terminal that session lives in (user role only).
  *

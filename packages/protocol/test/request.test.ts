@@ -127,6 +127,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "session_kill", session_id: SID, force: "yes" },
     ],
   },
+  session_restart: {
+    ok: { op: "session_restart", session_id: SID },
+    bad: [{ op: "session_restart" }, { op: "session_restart", session_id: "" }],
+  },
   session_rename: {
     ok: { op: "session_rename", session_id: SID, title: "t" },
     bad: [

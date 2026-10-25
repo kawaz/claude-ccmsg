@@ -223,6 +223,13 @@ export const ErrorCode = {
   // session_launch: `launch_max_concurrency` launches are already running, or the
   // daemon is shutting down. Nothing was run; the caller may ask again.
   launch_busy: "launch_busy",
+  // session_restart (DR-0028 「restart」): the launch command cannot resume this
+  // session (it starts claude in another config dir, or the session's process
+  // records no cwd). Checked before the process is stopped.
+  restart_unavailable: "restart_unavailable",
+  // session_restart: the process was not observed gone within the kill grace,
+  // so the launch command was not run.
+  restart_timeout: "restart_timeout",
   // DR-0023 host translation: the daemon is not running on macOS, the helper
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",

@@ -207,6 +207,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       llm_keepalive_pause_available: true,
       sandbox_available: true,
       launch_available: true,
+      launch_config_dir: "/home/u/.claude",
     },
   ],
   user_message: [
@@ -296,6 +297,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, exit_code: 143, stdout: "", stderr: "" },
   ],
   session_kill: [{ ok: true, terminated: false }],
+  session_restart: [
+    { ok: true, restarted: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },
+    { ok: true, restarted: true, session_id: SID, exit_code: 2, stdout: "", stderr: "e" },
+  ],
   session_rename: [{ ok: true, hyoui_session_id: "h1", title: "t" }],
   user_prompt: [
     { ok: true, outcome: "accepted" },

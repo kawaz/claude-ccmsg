@@ -24,13 +24,24 @@ export const POLL_INTERVAL_MS = 200;
  * auto-choose an irreversible kill that can break transcript flush). */
 export const TOTAL_GRACE_MS = 3000;
 
+/** What a config dir's `sessions/<pid>.json` says of one session that the
+ * kill and a restart (DR-0028 「restart」) read. */
+export interface SessionRecord {
+  sessionId: string;
+  pid: number;
+  /** The process's working directory, as a realpath. */
+  cwd?: string;
+  /** The name the session was given (`--name`, a rename). */
+  name?: string;
+}
+
 /** Injectable effects. Production defaults in `productionKillDeps` below;
  * tests replace any subset (structural, no class needed). */
 export interface SessionKillDeps {
   /** The CLAUDE_CONFIG_DIRs to look the session up in. */
   configDirs(): string[];
   /** The live sessions one config dir records (`sessions/<pid>.json`). */
-  sessionsIn(configDir: string): Promise<readonly { sessionId: string; pid: number }[]>;
+  sessionsIn(configDir: string): Promise<readonly SessionRecord[]>;
   /** Run `ps -p <pid> -o command=` and return stdout. Must reject when ps
    * fails (which includes "no such pid"). */
   runPs(pid: number): Promise<string>;
@@ -58,21 +69,29 @@ export interface SessionKillDeps {
  * hypothetical duplicate. A dir that cannot be read skips that dir. Returns
  * null when no dir yields a match. */
 export async function resolvePid(sessionId: string, deps: SessionKillDeps): Promise<number | null> {
+  return (await resolveRecord(sessionId, deps))?.pid ?? null;
+}
+
+/** resolvePid's lookup, answering the whole record it matched. */
+export async function resolveRecord(
+  sessionId: string,
+  deps: SessionKillDeps,
+): Promise<SessionRecord | null> {
   for (const dir of deps.configDirs()) {
-    let rows: readonly { sessionId: string; pid: number }[];
+    let rows: readonly SessionRecord[];
     try {
       rows = await deps.sessionsIn(dir);
     } catch {
       continue;
     }
-    for (const { sessionId: rowSid, pid } of rows) {
+    for (const row of rows) {
       // pid must be an integer > 1: process.kill(0) signals the daemon's OWN
       // process group and negative pids signal whole groups — a corrupted
       // registry row must never be able to reach either (ps verification
       // would also refuse, but an irreversible op deserves the explicit
       // gate at the source).
-      if (rowSid === sessionId && Number.isInteger(pid) && pid > 1) {
-        return pid;
+      if (row.sessionId === sessionId && Number.isInteger(row.pid) && row.pid > 1) {
+        return row;
       }
     }
   }

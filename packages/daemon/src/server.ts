@@ -66,7 +66,8 @@ import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
-import { sessionSearch } from "./session-search.ts";
+import { readSessionLaunchContext, sessionSearch } from "./session-search.ts";
+import { launchConfigDir, restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
 import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
@@ -1370,6 +1371,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "dir_tree",
   "session_launch",
   "session_kill",
+  "session_restart",
   "session_rename",
   "user_prompt",
   "sidecar_reply",
@@ -1630,6 +1632,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // いなければ、新規フォームも Timeline の fork も launcher_not_configured
       // しか返せない。
       const launchAvailable = newId.role === "user" && !!daemon.config.session_launcher;
+      // Where the launch command starts claude, for the webui to offer a
+      // restart only to the sessions it can resume (DR-0028 「restart」).
+      const launcherForDir = newId.role === "user" ? daemon.config.session_launcher : undefined;
+      const launchDir =
+        launcherForDir !== undefined ? launchConfigDir(launcherForDir, daemon.env) : undefined;
       send(conn, {
         ok: true,
         version: daemon.version,
@@ -1641,6 +1648,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ...(llmKeepalivePauseAvailable ? { llm_keepalive_pause_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
         ...(launchAvailable ? { launch_available: true } : {}),
+        ...(launchDir !== undefined ? { launch_config_dir: launchDir } : {}),
       });
       return;
     }
@@ -2000,6 +2008,81 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         maybeBroadcastPeers(daemon);
       }
       send(conn, { ok: true, terminated: killed.terminated });
+      return;
+    }
+
+    case "session_restart": {
+      // DR-0028 「restart」: user role only, as session_kill. Counted as one of
+      // the launches from the first check to the reply, so the in-flight
+      // bound and a shutdown's wait cover the stop as well as the launch.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_restart' requires user role");
+        return;
+      }
+      const launcher = daemon.config.session_launcher;
+      if (launcher !== undefined && daemon.shuttingDown) {
+        sendErr(
+          conn,
+          ErrorCode.launch_busy,
+          "the daemon is shutting down; ask again once it is back",
+        );
+        return;
+      }
+      if (launcher !== undefined && daemon.launches.size >= launcher.launch_max_concurrency) {
+        sendErr(
+          conn,
+          ErrorCode.launch_busy,
+          `${String(daemon.launches.size)} launches are running (launch_max_concurrency); ask again once one ends`,
+        );
+        return;
+      }
+      const sid = req.session_id;
+      const entry = daemon.sessions.get(sid);
+      const running = restartSession(sid, {
+        launcher,
+        baseEnv: daemon.env,
+        sessionConfigDir: entry?.configDir,
+        kill: { ...productionKillDeps, configDirs: () => scopeDirsOf(daemon, sid) },
+        runsAs: async () => {
+          const facts = daemon.sessionFacts.get(sid);
+          const file = entry?.meta.transcript_path;
+          const tail = file !== undefined ? await readSessionLaunchContext(file) : {};
+          const model = facts?.model ?? tail.model;
+          const effort = facts?.effort ?? tail.effort;
+          return {
+            ...(model !== undefined ? { model } : {}),
+            ...(effort !== undefined ? { effort } : {}),
+          };
+        },
+        stopped: () => {
+          forgetSession(daemon, sid);
+          maybeBroadcastPeers(daemon);
+        },
+        launch: (launch) =>
+          launchSession(
+            {
+              launcher,
+              requester: "user",
+              baseEnv: daemon.env,
+              launchesDir: daemon.paths.launches,
+              log: daemon.log,
+            },
+            launch,
+          ),
+        log: daemon.log,
+      });
+      daemon.launches.add(running);
+      let outcome: Awaited<typeof running>;
+      try {
+        outcome = await running;
+      } finally {
+        daemon.launches.delete(running);
+      }
+      if (!outcome.ok) {
+        sendErr(conn, outcome.code, outcome.msg);
+        return;
+      }
+      send(conn, outcome.response);
       return;
     }
 

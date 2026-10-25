@@ -35,9 +35,9 @@ const SettingsTextSchema = jsonText(
 
 const EffortLevelSchema = v.looseObject({ effortLevel: LaunchEffortSchema });
 
-/** The config dir a claude started with the daemon's environment uses:
- * CLAUDE_CONFIG_DIR, or Claude Code's default `~/.claude` without it. */
-function claudeConfigDir(env: Readonly<Record<string, string | undefined>>): string {
+/** The config dir a claude started with `env` uses: CLAUDE_CONFIG_DIR, or
+ * Claude Code's default `~/.claude` without it. */
+export function claudeConfigDir(env: Readonly<Record<string, string | undefined>>): string {
   const named = env.CLAUDE_CONFIG_DIR;
   return named !== undefined && named !== "" ? named : path.join(os.homedir(), ".claude");
 }
