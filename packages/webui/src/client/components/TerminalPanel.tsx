@@ -52,7 +52,10 @@ export function TerminalPanel({ hyouiSessionId, gatewayUrl }: Props) {
         // allow-popups-to-escape-sandbox は不要 (実測: allow-popups 単独でも
         // 開いた先の外部ページは script/event とも正常に動作する)。
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        allow="clipboard-read; clipboard-write"
+        // publickey-credentials-get は hyoui 側の未認証時に iframe 内で passkey
+        // 認証 (navigator.credentials.get) を通すため。登録 (-create) は hyoui の
+        // 自前の画面で行うので委譲しない。
+        allow="clipboard-read; clipboard-write; publickey-credentials-get"
       />
     </div>
   );
