@@ -102,7 +102,6 @@ function getDotPath(issue) {
   }
   return null;
 }
-var UUID_REGEX = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/iu;
 function check(requirement, message$1) {
   return {
     kind: "validation",
@@ -204,6 +203,39 @@ function parseJson(config$1, message$1) {
     }
   };
 }
+function _isPartiallyTyped(dataset, paths) {
+  if (dataset.issues)
+    for (const path of paths)
+      for (const issue of dataset.issues) {
+        let typed = false;
+        const bound = Math.min(path.length, issue.path?.length ?? 0);
+        for (let index = 0;index < bound; index++)
+          if (path[index] !== issue.path[index].key && (path[index] !== "$" || issue.path[index].type !== "array")) {
+            typed = true;
+            break;
+          }
+        if (!typed)
+          return false;
+      }
+  return true;
+}
+function partialCheck(paths, requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "partial_check",
+    reference: partialCheck,
+    async: false,
+    expects: null,
+    paths,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if ((dataset.typed || /* @__PURE__ */ _isPartiallyTyped(dataset, paths)) && !this.requirement(dataset.value))
+        _addIssue(this, "input", dataset, config$1);
+      return dataset;
+    }
+  };
+}
 function regex(requirement, message$1) {
   return {
     kind: "validation",
@@ -236,28 +268,48 @@ function safeInteger(message$1) {
     }
   };
 }
-function uuid(message$1) {
-  return {
-    kind: "validation",
-    type: "uuid",
-    reference: uuid,
-    async: false,
-    expects: null,
-    requirement: UUID_REGEX,
-    message: message$1,
-    "~run"(dataset, config$1) {
-      if (dataset.typed && !this.requirement.test(dataset.value))
-        _addIssue(this, "UUID", dataset, config$1);
-      return dataset;
-    }
-  };
-}
 var ABORT_EARLY_CONFIG = { abortEarly: true };
 function getFallback(schema, dataset, config$1) {
   return typeof schema.fallback === "function" ? schema.fallback(dataset, config$1) : schema.fallback;
 }
+function forward(action, path) {
+  return {
+    ...action,
+    "~run"(dataset, config$1) {
+      const prevIssues = dataset.issues && [...dataset.issues];
+      dataset = action["~run"](dataset, config$1);
+      if (dataset.issues) {
+        for (const issue of dataset.issues)
+          if (!prevIssues?.includes(issue)) {
+            let pathInput = dataset.value;
+            for (const key of path) {
+              const pathValue = pathInput[key];
+              const pathItem = {
+                type: "unknown",
+                origin: "value",
+                input: pathInput,
+                key,
+                value: pathValue
+              };
+              if (issue.path)
+                issue.path.push(pathItem);
+              else
+                issue.path = [pathItem];
+              if (!pathValue)
+                break;
+              pathInput = pathValue;
+            }
+          }
+      }
+      return dataset;
+    }
+  };
+}
 function getDefault(schema, dataset, config$1) {
   return typeof schema.default === "function" ? schema.default(dataset, config$1) : schema.default;
+}
+function is(schema, input) {
+  return !schema["~run"]({ value: input }, ABORT_EARLY_CONFIG).issues;
 }
 function array(item, message$1) {
   return _standardSchema({
@@ -804,6 +856,15 @@ function variant(key, options, message$1) {
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
+  });
+}
+function omit(schema, keys) {
+  const entries$1 = { ...schema.entries };
+  for (const key of keys)
+    delete entries$1[key];
+  return _standardSchema({
+    ...schema,
+    entries: entries$1
   });
 }
 function pipe(...pipe$1) {
@@ -1552,56 +1613,41 @@ async function replaceSidecar($, state) {
   runSidecar($, state, sid, state.run);
 }
 
+var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 var LaunchModelSchema = picklist(["fable", "opus", "sonnet", "haiku"]);
 var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
-var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "must be an absolute path"));
-var NonEmptySchema = pipe(string(), minLength(1, "must not be empty"));
-var SessionUuidSchema = pipe(string(), uuid("must be a uuid"));
-var common = {
+var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
+var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
+var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
+var LaunchFieldsSchema = strictObject({
   cwd: LaunchCwdSchema,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema),
+  continue: optional(boolean()),
+  resume: optional(SessionUuidSchema),
+  resume_session_at: optional(SessionUuidSchema),
+  fork_session: optional(boolean()),
   name: optional(NonEmptySchema),
   prompt: optional(NonEmptySchema)
-};
-var NewLaunchSchema = strictObject({
-  type: literal("new"),
-  ...common,
-  model: LaunchModelSchema,
-  effort: LaunchEffortSchema
 });
-var ContinueLaunchSchema = strictObject({
-  type: literal("continue"),
-  ...common,
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema)
-});
-var ResumeLaunchSchema = strictObject({
-  type: literal("resume"),
-  ...common,
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema),
-  resume_session_id: SessionUuidSchema
-});
-var ForkLaunchSchema = strictObject({
-  type: literal("fork"),
-  ...common,
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema),
-  resume_session_id: SessionUuidSchema,
-  resume_at: optional(SessionUuidSchema)
-});
-var LaunchInputSchema = variant("type", [
-  NewLaunchSchema,
-  ContinueLaunchSchema,
-  ResumeLaunchSchema,
-  ForkLaunchSchema
-]);
+function launchContinues(launch) {
+  return launch.continue === true || launch.resume !== undefined;
+}
+function launchMakesSession(launch) {
+  return !launchContinues(launch) || launch.fork_session === true;
+}
+var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
+var NEEDS_SOURCE = "continue か resume と一緒に指定する";
+var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launchContinues(launch), NEEDS_SOURCE), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
 var LaunchInputTextSchema = jsonText(LaunchInputSchema);
-var LaunchCommandInputSchema = variant("type", [
-  strictObject({ ...NewLaunchSchema.entries, session_id: SessionUuidSchema }),
-  ContinueLaunchSchema,
-  ResumeLaunchSchema,
-  strictObject({ ...ForkLaunchSchema.entries, session_id: SessionUuidSchema })
-]);
+var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
+var RequestedBySchema = union([literal("user"), SessionUuidSchema]);
+var LaunchCommandInputSchema = pipe(strictObject({
+  ...LaunchFieldsSchema.entries,
+  session_id: optional(SessionUuidSchema),
+  requested_by: RequestedBySchema
+}), check(({ session_id: _id, requested_by: _by, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
 var SessionLaunchResponseSchema = object({
   ok: literal(true),
   session_id: optional(SessionUuidSchema),
@@ -1610,6 +1656,15 @@ var SessionLaunchResponseSchema = object({
   stderr: string()
 });
 var SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
+function launchErrorText(error) {
+  if (error.code === "internal") {
+    return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
+  }
+  return {
+    started: "no",
+    text: `ccmsg の daemon が起動を断ったので、起動していない (${error.code}): ${error.msg}`
+  };
+}
 
 var ErrorBodySchema = object({
   code: string(),
@@ -1753,7 +1808,7 @@ function peersText(peers) {
 var SEND_TIMEOUT_MS = 1e4;
 var PEERS_TIMEOUT_MS = 5000;
 var SAY_TIMEOUT_MS = 120000;
-var LAUNCH_TIMEOUT_MS = 60000;
+var LAUNCH_TIMEOUT_MS = 65000;
 var TOOL_INPUT_SCHEMAS = {
   send: {
     type: "object",
@@ -1816,32 +1871,11 @@ var TOOL_INPUT_SCHEMAS = {
     $schema: "http://json-schema.org/draft-07/schema#"
   },
   launch: {
-    $schema: "http://json-schema.org/draft-07/schema#",
     type: "object",
     properties: {
-      type: {
-        type: "string",
-        enum: [
-          "new",
-          "continue",
-          "resume",
-          "fork"
-        ],
-        description: "new: a new session. continue: the newest session in cwd, continued. resume: the session resume_session_id names, continued under its own id. fork: a new session holding a copy of the history of resume_session_id (up to resume_at when given)."
-      },
       cwd: {
         type: "string",
         description: "The directory the session starts in, an absolute path. continue looks for the newest session there."
-      },
-      name: {
-        type: "string",
-        minLength: 1,
-        description: "The session's name (claude --name). The launch command chooses when absent."
-      },
-      prompt: {
-        type: "string",
-        minLength: 1,
-        description: "The session's first prompt. The launch command chooses when absent."
       },
       model: {
         enum: [
@@ -1851,7 +1885,7 @@ var TOOL_INPUT_SCHEMAS = {
           "haiku"
         ],
         type: "string",
-        description: "claude --model. The launch command chooses when absent. Required when type is new. Optional when type is continue, resume or fork."
+        description: "claude --model. Required when neither continue nor resume is given (a new session); otherwise the launch command chooses when absent."
       },
       effort: {
         enum: [
@@ -1862,24 +1896,37 @@ var TOOL_INPUT_SCHEMAS = {
           "max"
         ],
         type: "string",
-        description: "claude --effort. The launch command chooses when absent. Required when type is new. Optional when type is continue, resume or fork."
+        description: "claude --effort. Required when neither continue nor resume is given (a new session); otherwise the launch command chooses when absent."
       },
-      resume_session_id: {
-        type: "string",
-        format: "uuid",
-        description: "The id of the session to continue or copy (claude --resume). Required when type is resume or fork. Not accepted when type is new or continue."
+      continue: {
+        type: "boolean",
+        description: "claude --continue: continue the newest session in cwd. Not with resume."
       },
-      resume_at: {
+      resume: {
         type: "string",
-        format: "uuid",
-        description: "The uuid of the transcript record the fork copies up to (claude --resume-session-at). The tip when absent. Optional when type is fork. Not accepted when type is new, continue or resume."
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        description: "claude --resume: the id of the session to continue, under its own id (or, with fork_session, to copy). Not with continue."
+      },
+      fork_session: {
+        type: "boolean",
+        description: "claude --fork-session: start a new session holding a copy of the history of the session continue or resume names. Needs continue or resume."
+      },
+      name: {
+        type: "string",
+        minLength: 1,
+        description: "claude --name: the session's name. The launch command chooses when absent."
+      },
+      prompt: {
+        type: "string",
+        minLength: 1,
+        description: "The session's first prompt. The launch command chooses when absent."
       }
     },
     required: [
-      "type",
       "cwd"
     ],
-    additionalProperties: false
+    additionalProperties: false,
+    $schema: "http://json-schema.org/draft-07/schema#"
   }
 };
 async function registerTools($) {
@@ -1995,18 +2042,13 @@ async function peersTool($, e) {
     return `一覧を返せなかった: ${errorText(error)}`;
   }
 }
-var ToolCallEnvelopeSchema = looseObject({
-  tool: optional(string()),
-  tool_use_id: optional(string()),
-  agentId: optional(string())
-});
+var LaunchToolCallSchema = object(LaunchToolFieldsSchema.entries);
 var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 async function launchTool($, e) {
-  const call = parseWith(ToolCallEnvelopeSchema, e);
+  const call = parseWith(LaunchToolCallSchema, e);
   if (!call.ok)
     return notTheInput("launch", call.failure.summary);
-  const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = call.value;
-  const read = parseWith(LaunchInputSchema, input);
+  const read = parseWith(LaunchInputSchema, call.value);
   if (!read.ok)
     return notTheInput("launch", read.failure.summary);
   let run;
@@ -2029,11 +2071,11 @@ async function launchTool($, e) {
   if (run.exitCode === 3)
     return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
   const refusal = parseWith(RefusalTextSchema, said);
-  if (refusal.ok && refusal.value.error.code !== "internal") {
-    return `ccmsg の daemon が起動を断ったので、起動していない: ${refusal.value.error.msg}`;
+  if (refusal.ok) {
+    const failed = launchErrorText(refusal.value.error);
+    return failed.started === "no" ? failed.text : `${failed.text}。\`peers\` で確かめる`;
   }
-  const why = refusal.ok ? refusal.value.error.msg : said;
-  return `ccmsg が起動の結果を返さなかった${why !== "" ? `: ${why}` : ""}。${LAUNCH_UNCONFIRMED}`;
+  return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 async function toolsAtStart($, state) {
   if (state.interactive)

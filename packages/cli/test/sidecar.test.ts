@@ -1006,7 +1006,7 @@ describe("ccmsg sidecar launch", () => {
     await withLauncher(0, async (env, work) => {
       const prompt = "line 1\n`not run` $HOME 'quoted'";
       const run = await runLaunch(
-        JSON.stringify({ type: "new", cwd: work, model: "haiku", effort: "low", prompt }),
+        JSON.stringify({ cwd: work, model: "haiku", effort: "low", prompt }),
         env,
       );
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
@@ -1015,12 +1015,13 @@ describe("ccmsg sidecar launch", () => {
       const read = parseWith(jsonText(LaunchCommandInputSchema), reply.stdout);
       if (!read.ok) throw new Error(read.failure.summary);
       expect(read.value).toEqual({
-        type: "new",
         cwd: work,
         model: "haiku",
         effort: "low",
         prompt,
         session_id: defined(reply.session_id, "the new session's id"),
+        // The CLI asks as the session it names.
+        requested_by: SID,
       });
     });
   });
@@ -1028,7 +1029,7 @@ describe("ccmsg sidecar launch", () => {
   test("a launch command that exits non-zero is printed as it came, with no session id", async () => {
     await withLauncher(4, async (env, work) => {
       const run = await runLaunch(
-        JSON.stringify({ type: "fork", cwd: work, resume_session_id: SID }),
+        JSON.stringify({ cwd: work, resume: SID, fork_session: true }),
         env,
       );
       expect(run.code).toBe(0);
@@ -1041,7 +1042,7 @@ describe("ccmsg sidecar launch", () => {
   test("a launch the daemon refused prints its refusal on stderr and exits 1", async () => {
     await withLauncher(0, async (env, work) => {
       const run = await runLaunch(
-        JSON.stringify({ type: "continue", cwd: path.join(work, "missing") }),
+        JSON.stringify({ cwd: path.join(work, "missing"), continue: true }),
         env,
       );
       expect({ code: run.code, out: run.out }).toEqual({ code: 1, out: "" });
@@ -1057,7 +1058,7 @@ describe("ccmsg sidecar launch", () => {
         CCMSG_CONFIG_DIR: configDir,
         CCMSG_DATA_DIR: dataDir,
       };
-      const run = await runLaunch(JSON.stringify({ type: "continue", cwd: "/" }), env);
+      const run = await runLaunch(JSON.stringify({ cwd: "/", continue: true }), env);
       expect(run.code).toBe(1);
       expect(JSON.parse(run.err)).toMatchObject({
         ok: false,
@@ -1071,13 +1072,32 @@ describe("ccmsg sidecar launch", () => {
   test("input that is not one launch is refused before reaching the daemon", async () => {
     const env = sidecarEnv(path.join(shortBase(), "s"));
     for (const stdin of [
-      '{"type":"new","cwd":"/w"}',
-      '{"type":"continue","cwd":"/w","extra":1}',
+      '{"cwd":"/w"}',
+      '{"cwd":"/w","continue":true,"extra":1}',
+      '{"cwd":"/w","continue":true,"resume":"' + SID + '"}',
       "not json",
     ]) {
       const run = await runLaunch(stdin, env);
       expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
       expect(run.err).toContain("standard input must be one launch as JSON");
     }
+  });
+
+  // No daemon can be had (here, the one it starts stops at its config): exit
+  // 3, and nothing was asked to start. The tool tells this apart from a
+  // refusal by the code (hooks/tools.ts).
+  test("exits 3 when no daemon can be had", async () => {
+    const base = shortBase();
+    const configDir = path.join(base, "c");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "config.json"), "{ not json");
+    const run = await runLaunch(JSON.stringify({ cwd: "/", continue: true }), {
+      ...process.env,
+      CCMSG_STATE_DIR: path.join(base, "s"),
+      CCMSG_CONFIG_DIR: configDir,
+      CCMSG_DATA_DIR: path.join(base, "d"),
+    });
+    expect({ code: run.code, out: run.out }).toEqual({ code: 3, out: "" });
+    expect(run.err).toContain("ccmsg sidecar launch: the daemon could not be reached: ");
   });
 });

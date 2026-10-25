@@ -8,7 +8,12 @@
 // through `ccmsg say`, the result always a text the model reads. SendMessage
 // is left to the harness.
 import * as v from "valibot";
-import { LaunchInputSchema, SessionLaunchResponseTextSchema } from "@ccmsg/protocol/launch";
+import {
+  LaunchInputSchema,
+  LaunchToolFieldsSchema,
+  launchErrorText,
+  SessionLaunchResponseTextSchema,
+} from "@ccmsg/protocol/launch";
 import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   PeerListResponseTextSchema,
@@ -35,10 +40,12 @@ export const PEERS_TIMEOUT_MS = 5_000;
 /** `say` budget: `ccmsg say` records the say and then speaks, and returns
  * when the speech ends, so a long text takes as long as it is to say. */
 export const SAY_TIMEOUT_MS = 120_000;
-/** `launch` budget: the launch command's longest wait (`timeout_seconds`,
- * at most 50 s), its kill grace and output wait, writing its output aside,
- * and a daemon the command has to start (DR-0018 §3.7). */
-export const LAUNCH_TIMEOUT_MS = 60_000;
+/** `launch` budget (DR-0018 §3.7): the launch command's longest wait
+ * (`timeout_seconds`, at most 50 s) + the kill grace (0.5 s) + the wait for
+ * its pipes' EOF (0.5 s) + a daemon `ccmsg sidecar launch` has to start (its
+ * connect retries, about 10 s) + writing the output aside, with what is left
+ * for the process itself. register.test.ts pins the sum below it. */
+export const LAUNCH_TIMEOUT_MS = 65_000;
 
 /** The tools' input schemas for the model, derived from the schemas their
  * handlers read the inputs with when the module is bundled (a macro). */
@@ -183,19 +190,17 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
   }
 }
 
-/** What the engine puts beside a tool's input in a `tool.call`: the tool's
- * name, the call's id, and on a subagent's call its agent id. The input's
- * fields come at the same level.
+/** A `tool.call` of `launch`, read for the tool's fields alone. The engine
+ * puts its own fields beside the input (the tool's name, the call's id, on a
+ * subagent's call its agent id, and whatever it adds later); a non-strict
+ * object of the tool's fields leaves every other field out.
  *
- * Design rationale: these are taken off by name rather than the input picked
- * out by launch's fields. Each type of a launch is strict, so a field the
- * model wrote that the type has no use for is refused rather than dropped
- * (DR-0018 §3.2); picking would drop it. */
-const ToolCallEnvelopeSchema = v.looseObject({
-  tool: v.optional(v.string()),
-  tool_use_id: v.optional(v.string()),
-  agentId: v.optional(v.string()),
-});
+ * Design rationale: the input is picked out by the tool's fields rather than
+ * the engine's fields taken off by name, so a field the engine adds does not
+ * make every call unreadable. A field the model wrote outside the tool's
+ * fields is dropped with them; the schema it is shown refuses one
+ * (`additionalProperties: false`). */
+const LaunchToolCallSchema = v.object(LaunchToolFieldsSchema.entries);
 
 const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 
@@ -203,10 +208,10 @@ const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers`
  * asks the daemon to run the configured launch command, and answer what the
  * command did as JSON. Never rejects. */
 async function launchTool<E>($: Engine, e: E): Promise<string> {
-  const call = parseWith(ToolCallEnvelopeSchema, e);
+  const call = parseWith(LaunchToolCallSchema, e);
   if (!call.ok) return notTheInput("launch", call.failure.summary);
-  const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = call.value;
-  const read = parseWith(LaunchInputSchema, input);
+  // The combinations claude refuses are LaunchInputSchema's checks.
+  const read = parseWith(LaunchInputSchema, call.value);
   if (!read.ok) return notTheInput("launch", read.failure.summary);
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
@@ -227,14 +232,12 @@ async function launchTool<E>($: Engine, e: E): Promise<string> {
   const said = firstStderrLine(run.stderr);
   // 3: no daemon could be had, so nothing was asked to start.
   if (run.exitCode === 3) return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
-  // The daemon refuses a launch before it runs the command; only an op that
-  // threw (`internal`) may have run it.
   const refusal = parseWith(RefusalTextSchema, said);
-  if (refusal.ok && refusal.value.error.code !== "internal") {
-    return `ccmsg の daemon が起動を断ったので、起動していない: ${refusal.value.error.msg}`;
+  if (refusal.ok) {
+    const failed = launchErrorText(refusal.value.error);
+    return failed.started === "no" ? failed.text : `${failed.text}。\`peers\` で確かめる`;
   }
-  const why = refusal.ok ? refusal.value.error.msg : said;
-  return `ccmsg が起動の結果を返さなかった${why !== "" ? `: ${why}` : ""}。${LAUNCH_UNCONFIRMED}`;
+  return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
 }
 
 /** At session.start: register the tools, awaited so they are listed by the

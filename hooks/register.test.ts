@@ -46,6 +46,12 @@ import { beginArgv } from "./session-lifecycle.ts";
 import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
 import { LAUNCH_TIMEOUT_MS, SEND_TIMEOUT_MS } from "./tools.ts";
+import {
+  LAUNCH_KILL_GRACE_MS,
+  LAUNCH_PIPE_DRAIN_GRACE_MS,
+  LAUNCH_TIMEOUT_SECONDS_MAX,
+} from "@ccmsg/protocol/launch";
+import { SPAWN_RETRY_DELAYS_MS } from "../packages/cli/src/client.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
 /** A command.run as the engine raises it for `/<command>`. */
@@ -2169,10 +2175,10 @@ describe("the ccmsg tools", () => {
     ]);
   });
 
-  // launch (DR-0018 §3.7): the model is shown one object, since Claude Code
-  // leaves out a tool whose schema is a top-level oneOf / anyOf
-  // (docs/findings/2026-10-25-launch-tool-input-schema.md).
-  test("launch is shown one object: type and cwd required, the rest said per type", async () => {
+  // launch (DR-0018 §3.7): the model is shown one flat object of claude's
+  // options, since Claude Code leaves out a tool whose schema is a top-level
+  // oneOf / anyOf (docs/findings/2026-10-25-launch-tool-input-schema.md).
+  test("launch is shown one flat object: cwd required, no resume_session_at", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     const launch = fake.tools.find((t) => t.name === "launch");
@@ -2180,37 +2186,56 @@ describe("the ccmsg tools", () => {
     const schema = launch?.inputSchema;
     expect(schema).toMatchObject({
       type: "object",
-      required: ["type", "cwd"],
+      required: ["cwd"],
       additionalProperties: false,
       properties: {
-        type: { type: "string", enum: ["new", "continue", "resume", "fork"] },
-        resume_session_id: { format: "uuid" },
+        continue: { type: "boolean" },
+        fork_session: { type: "boolean" },
+        resume: { type: "string" },
       },
     });
     expect(schema).not.toHaveProperty("oneOf");
     expect(schema).not.toHaveProperty("anyOf");
-    // What the fold loses is said in the fields' descriptions.
+    expect(schema).not.toHaveProperty("properties.resume_session_at");
+    expect(schema).not.toHaveProperty("properties.type");
+    // The combinations the handler refuses are said in the descriptions.
     const described = parseWith(
       v.object({
         properties: v.object({
           model: v.object({ description: v.string() }),
-          resume_session_id: v.object({ description: v.string() }),
+          fork_session: v.object({ description: v.string() }),
         }),
       }),
       schema,
     );
     if (!described.ok) throw new Error(described.failure.summary);
-    expect(described.value.properties.model.description).toContain("Required when type is new.");
-    expect(described.value.properties.resume_session_id.description).toContain(
-      "Not accepted when type is new or continue.",
+    expect(described.value.properties.model.description).toContain(
+      "Required when neither continue nor resume is given",
     );
+    expect(described.value.properties.fork_session.description).toContain(
+      "Needs continue or resume.",
+    );
+  });
+
+  // The tool's wait holds the longest launch the daemon can make: the longest
+  // timeout_seconds, the kill grace, the wait for the pipes' EOF and a daemon
+  // the CLI has to start (its connect retries), with room left over.
+  test("the launch wait holds the longest launch and a daemon start", () => {
+    const daemonStart = SPAWN_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0);
+    const longest =
+      LAUNCH_TIMEOUT_SECONDS_MAX * 1000 +
+      LAUNCH_KILL_GRACE_MS * 2 +
+      LAUNCH_PIPE_DRAIN_GRACE_MS +
+      daemonStart;
+    expect(LAUNCH_TIMEOUT_MS).toBeGreaterThan(longest);
   });
 
   const RESUMED = "cccccccc-0000-4000-8000-000000000003";
   const launched = { ok: true, session_id: OTHER, exit_code: 0, stdout: "started\n", stderr: "" };
 
-  // The engine puts the tool's name, the call's id and a subagent's agent id
-  // beside the input; only the input goes to the command.
+  // The engine puts the tool's name, the call's id, a subagent's agent id and
+  // whatever it adds later beside the input; only the input goes to the
+  // command.
   test("launch hands the launch to ccmsg sidecar launch and answers its reply as JSON", async () => {
     const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
     const fake = toolFake(async (argv, init) => {
@@ -2218,12 +2243,13 @@ describe("the ccmsg tools", () => {
       return printing(launched)();
     });
     // In the schema's order, which is the order the handler writes it in.
-    const input = { type: "new", cwd: "/w", prompt: "a\n`b` $c", model: "opus", effort: "high" };
+    const input = { cwd: "/w", model: "opus", effort: "high", prompt: "a\n`b` $c" };
     const result = await callTool(fake, "mcp__ccmsg-v1__launch", {
       ...input,
       tool: "mcp__ccmsg-v1__launch",
       tool_use_id: "toolu_1",
       agentId: "a1",
+      engine_field_of_tomorrow: { any: "shape" },
     });
     expect(seen).toEqual([
       {
@@ -2239,29 +2265,42 @@ describe("the ccmsg tools", () => {
     const failed = toolFake(
       printing({ ok: true, exit_code: 2, stdout: "", stderr: "no such dir\n" }),
     );
-    expect(
-      await callTool(failed, "mcp__ccmsg-v1__launch", {
-        type: "resume",
-        cwd: "/w",
-        resume_session_id: RESUMED,
-      }),
-    ).toBe(JSON.stringify({ exit_code: 2, stdout: "", stderr: "no such dir\n" }));
+    expect(await callTool(failed, "mcp__ccmsg-v1__launch", { cwd: "/w", resume: RESUMED })).toBe(
+      JSON.stringify({ exit_code: 2, stdout: "", stderr: "no such dir\n" }),
+    );
   });
 
-  // Each type is strict: what a type requires missing, or a field it has no
-  // use for, is answered in text, and nothing runs.
+  // A fork point names a transcript record the agent cannot see: the tool
+  // has no such field, and one written anyway does not reach the command.
+  test("a resume_session_at written anyway does not reach the command", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing(launched)();
+    });
+    await callTool(fake, "mcp__ccmsg-v1__launch", {
+      cwd: "/w",
+      resume: RESUMED,
+      fork_session: true,
+      resume_session_at: RESUMED,
+    });
+    expect(seen).toEqual([JSON.stringify({ cwd: "/w", resume: RESUMED, fork_session: true })]);
+  });
+
+  // What a new session requires missing, a combination claude refuses, or a
+  // field that does not read is answered in text, and nothing runs.
   test("an input that is not a launch is answered in text, and nothing runs", async () => {
     const fake = toolFake(printing(launched));
     for (const input of [
       {},
-      { tool: 1, type: "new", cwd: "/w", model: "opus", effort: "high" },
-      { type: "new", cwd: "/w" },
-      { type: "new", cwd: "/w", model: "opus", effort: "high", resume_session_id: RESUMED },
-      { type: "continue", cwd: "w" },
-      { type: "resume", cwd: "/w" },
-      { type: "fork", cwd: "/w", resume_session_id: "not-a-uuid" },
-      { type: "continue", cwd: "/w", prompt: "" },
-      { type: "restart", cwd: "/w" },
+      { cwd: "/w" },
+      { cwd: "/w", model: "opus" },
+      { cwd: "/w", continue: true, resume: RESUMED },
+      { cwd: "/w", model: "opus", effort: "high", fork_session: true },
+      { cwd: "w", continue: true },
+      { cwd: "/w", resume: "not-a-uuid" },
+      { cwd: "/w", continue: "yes" },
+      { cwd: "/w", continue: true, prompt: "" },
     ]) {
       const result = await callTool(fake, "mcp__ccmsg-v1__launch", {
         tool: "mcp__ccmsg-v1__launch",
@@ -2276,6 +2315,12 @@ describe("the ccmsg tools", () => {
       });
     }
     expect(fake.runs).toEqual([]);
+    // The reason names the field to change.
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__launch", { cwd: "/w", continue: true, resume: RESUMED }),
+    ).toBe(
+      "launch の入力が形に合わないので何もしていない: resume: continue と resume は同時に指定できない",
+    );
   });
 
   test("a launch the daemon refused or could not be asked was not started; else it is unconfirmed", async () => {
@@ -2285,27 +2330,30 @@ describe("the ccmsg tools", () => {
         stdout: "",
         stderr: `${JSON.stringify({ ok: false, error: { code, msg } })}\n`,
       }));
-    const input = { tool: "mcp__ccmsg-v1__launch", type: "continue", cwd: "/w" };
+    const input = { tool: "mcp__ccmsg-v1__launch", cwd: "/w", continue: true };
     expect(
       await callTool(
         refusing("invalid_args", "cwd: not a directory"),
         "mcp__ccmsg-v1__launch",
         input,
       ),
-    ).toBe("ccmsg の daemon が起動を断ったので、起動していない: cwd: not a directory");
+    ).toBe(
+      "ccmsg の daemon が起動を断ったので、起動していない (invalid_args): cwd: not a directory",
+    );
     expect(
       await callTool(
-        refusing("launcher_not_configured", "no session_launcher"),
+        refusing("launch_busy", "4 launches are running"),
         "mcp__ccmsg-v1__launch",
         input,
       ),
-    ).toBe("ccmsg の daemon が起動を断ったので、起動していない: no session_launcher");
-    // An op that threw may have run the command.
+    ).toBe(
+      "ccmsg の daemon が起動を断ったので、起動していない (launch_busy): 4 launches are running",
+    );
+    // An op that threw may have run the command: the same words the webui
+    // shows (launchErrorText), with what to do next.
     expect(
       await callTool(refusing("internal", "spawn broke"), "mcp__ccmsg-v1__launch", input),
-    ).toBe(
-      "ccmsg が起動の結果を返さなかった: spawn broke。起動したか確かめられなかった。`peers` で確かめる",
-    );
+    ).toBe("起動したか確かめられなかった: spawn broke。`peers` で確かめる");
     const nodaemon = toolFake(async () => ({ exitCode: 3, stdout: "", stderr: "no daemon\n" }));
     expect(await callTool(nodaemon, "mcp__ccmsg-v1__launch", input)).toBe(
       "ccmsg の daemon に繋がらず、起動していない: no daemon",
@@ -2316,10 +2364,10 @@ describe("the ccmsg tools", () => {
     );
     // The wait ran out (or the command could not be run): it may have started.
     const overran = toolFake(async () => {
-      throw new Error("aborted: still running after 60000ms");
+      throw new Error("aborted: still running after 65000ms");
     });
     expect(await callTool(overran, "mcp__ccmsg-v1__launch", input)).toBe(
-      "ccmsg sidecar launch が 60 秒以内に終わらなかったか起動できなかった: Error: aborted: still running after 60000ms。起動したか確かめられなかった。`peers` で確かめる",
+      "ccmsg sidecar launch が 65 秒以内に終わらなかったか起動できなかった: Error: aborted: still running after 65000ms。起動したか確かめられなかった。`peers` で確かめる",
     );
   });
 
@@ -2335,8 +2383,8 @@ describe("the ccmsg tools", () => {
     expect(
       await callTool(fake, "mcp__ccmsg-v1__launch", {
         tool: "mcp__ccmsg-v1__launch",
-        type: "continue",
         cwd: "/w",
+        continue: true,
       }),
     ).toBe("ccmsg の launch が途中で止まった。起動したか確かめられなかった。`peers` で確かめる");
   });

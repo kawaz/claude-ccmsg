@@ -295,7 +295,7 @@ function logSince(file: string, from: number): string {
 // Exponential backoff schedule for reconnecting to a freshly spawned daemon.
 // This is connection retry (each attempt is a real connect, not a blind sleep):
 // the daemon usually answers within the first few hundred ms.
-const SPAWN_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 400, 600, 800, 1000, 1500, 2000, 3000];
+export const SPAWN_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 400, 600, 800, 1000, 1500, 2000, 3000];
 
 /** Connect, spawning the daemon when none answers. A spawned daemon that
  * exits with a failure before it answers (a configuration that does not read,
