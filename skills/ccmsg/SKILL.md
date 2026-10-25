@@ -96,7 +96,10 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
   "attachments": ["/abs/path/policy.json"],
   "intents": ["`/abs/path/src/a.ts` の編集"],
   "commands": [
-    "aws s3api put-bucket-policy --bucket <bucket> --policy file:///abs/path/policy.json"
+    {
+      "command": "aws s3api put-bucket-policy --bucket <bucket> --policy file:///abs/path/policy.json",
+      "description": "公開読み取りの policy を当てる"
+    }
   ]
 }
 ```
@@ -104,10 +107,10 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
 auto mode の classifier に操作を止められた直後に、その操作を書き換えずに再実行する許可を人に求める時に使う。止められた操作を別のコマンドや別の tool で言い換えて通そうとしない。
 
 - `blocked` に止められた行動を 1〜2 文で書く (markdown)
-- `commands` には Bash に渡す内容をそのまま書く。1 つのコマンドが要素 1 つで、複数行 (行末の `\` や `&&` で整形したもの) でもよい。人が許可するのはここに書いた全文
+- `commands` の各要素の `command` には Bash に渡す内容をそのまま書く。1 つのコマンドが要素 1 つで、複数行 (行末の `\` や `&&` で整形したもの) でもよい。人が許可するのはここに書いた全文。`description` には何をするコマンドかを短く書く (任意)
 - `intents` にはコマンドでない操作 (Edit / Write 等) を 1 文ずつ書く。`intents` と `commands` のどちらか 1 つ以上は必ず書く
-- `attachments` にはコマンドが読むファイル (script、policy の JSON、patch 等) の絶対パスを書く (16 個まで)。中身は web UI が人に見せるので、本文に貼らない
-- 依頼は web UI のそのセッションに許可依頼として出て、音声でも知らせる。結果に「人に中身を全部は見せられなかった attachments」が返ったら、パスを直すか、見せられない理由を本文で人に伝える
-- 人が許可の文 (「以下を許可します。」で始まり、許可した intents と commands を並べたもの) を送ってきたら、許可された `commands` を書いてあるとおり 1 つずつ実行し、`intents` の操作をする。許可されていない操作に広げない
+- `attachments` にはコマンドが読むファイル (script、policy の JSON、patch 等) の絶対パスを書く (16 個まで)。人が web UI で開いた時に中身が読まれるので、本文に貼らない
+- 依頼は web UI のそのセッションに許可依頼として出て、音声でも知らせる。結果は「許可依頼を出した」だけ
+- 人が許可の文 (「以下の操作を許可します。」の後に、許可した intents と「以下コマンドの実行」のコマンドを並べたもの) を送ってきたら、許可されたコマンドを書いてあるとおり 1 つずつ実行し、`intents` の操作をする。許可されていない操作に広げない
 - 依頼を出せなかった (daemon に繋がらない等) と返ったら、その結果の文を本文に書いて止まる
 - subagent / teammate からは使えない (断られる)。止められた操作は委譲元に報告して止まる。委譲元が自分で実行し、止められたら委譲元が `permit` で許可を求める
