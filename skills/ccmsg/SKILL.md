@@ -1,11 +1,11 @@
 ---
 name: ccmsg
-description: ccmsg の tool (send / say / peers / launch) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する時に読む。
+description: ccmsg の tool (send / say / peers / launch / permit) で、別のセッションに送る・届いたメッセージに返す・見ている人に知らせる・別のセッションを起動する・auto mode の classifier に止められた操作の許可を求める時に読む。
 ---
 
 # ccmsg
 
-同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動する。使う tool は 4 つで、どれも下のフルネームで直接呼べる (ToolSearch で探さなくてよい)。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。
+同じ人が動かしている別の Claude Code セッションとメッセージをやり取りし、見ている人に知らせ、別のセッションを起動し、止められた操作の許可を求める。使う tool は 5 つで、どれも下のフルネームで直接呼べる (ToolSearch で探さなくてよい)。tool の説明と input schema は型だけを持ち、使い方と field の決まりはこの skill に書いてある。
 
 | tool                    | 使い所                           |
 | ----------------------- | -------------------------------- |
@@ -13,6 +13,7 @@ description: ccmsg の tool (send / say / peers / launch) で、別のセッシ�
 | `mcp__ccmsg-v1__peers`  | 送れる相手のセッションを探す     |
 | `mcp__ccmsg-v1__say`    | 見ている人に知らせる             |
 | `mcp__ccmsg-v1__launch` | 別のセッションを起動する         |
+| `mcp__ccmsg-v1__permit` | 止められた操作の許可を求める     |
 
 ## 送る (`mcp__ccmsg-v1__send`)
 
@@ -86,3 +87,27 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
 - `exit_code` が 0 でなければ起動していない (`session_id` も無い)。理由は `stderr` を読む
 - `stdout` / `stderr` が長い時は、本文の代わりに `output is <N> bytes, file: <path>` が入る。読む時はその file を Read する
 - 「起動したか確かめられなかった」と返った時は、送り直す前に `peers` で確かめる
+
+## 止められた操作の許可を求める (`mcp__ccmsg-v1__permit`)
+
+```json
+{
+  "blocked": "`aws s3api put-bucket-policy` が auto mode の classifier に止められた",
+  "attachments": ["/abs/path/policy.json"],
+  "intents": ["`/abs/path/src/a.ts` の編集"],
+  "commands": [
+    "aws s3api put-bucket-policy --bucket <bucket> --policy file:///abs/path/policy.json"
+  ]
+}
+```
+
+auto mode の classifier に操作を止められた直後に、その操作を書き換えずに再実行する許可を人に求める時に使う。止められた操作を別のコマンドや別の tool で言い換えて通そうとしない。
+
+- `blocked` に止められた行動を 1〜2 文で書く (markdown)
+- `commands` には Bash に渡す内容をそのまま書く。1 つのコマンドが要素 1 つで、複数行 (行末の `\` や `&&` で整形したもの) でもよい。人が許可するのはここに書いた全文
+- `intents` にはコマンドでない操作 (Edit / Write 等) を 1 文ずつ書く。`intents` と `commands` のどちらか 1 つ以上は必ず書く
+- `attachments` にはコマンドが読むファイル (script、policy の JSON、patch 等) の絶対パスを書く (16 個まで)。中身は web UI が人に見せるので、本文に貼らない
+- 依頼は web UI のそのセッションに許可依頼として出て、音声でも知らせる。結果に「人に中身を全部は見せられなかった attachments」が返ったら、パスを直すか、見せられない理由を本文で人に伝える
+- 人が許可の文 (「以下を許可します。」で始まり、許可した intents と commands を並べたもの) を送ってきたら、許可された `commands` を書いてあるとおり 1 つずつ実行し、`intents` の操作をする。許可されていない操作に広げない
+- 依頼を出せなかった (daemon に繋がらない等) と返ったら、その結果の文を本文に書いて止まる
+- subagent / teammate からは使えない (断られる)。止められた操作は委譲元に報告して止まる。委譲元が自分で実行し、止められたら委譲元が `permit` で許可を求める
