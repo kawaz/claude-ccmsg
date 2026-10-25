@@ -20,6 +20,7 @@ import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
 import { forkActionState, liveChain } from "../../fork-point.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
+import { inTimeOrder } from "../../say-merge.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { ErrorView } from "../ErrorView.tsx";
 import { useAutoOpenSettings } from "./useAutoOpenSettings.ts";
@@ -29,6 +30,8 @@ import { useForkOrigin } from "./useForkOrigin.ts";
 import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayBubbles } from "./useSayBubbles.ts";
+import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
+import { usePermitBubbles } from "./usePermitBubbles.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -161,16 +164,27 @@ export function Timeline({
   const folds = useTimelineFolds(autoOpen.revision, groups);
   const sayBubbles = useSayBubbles({ sid, agentTimeline: !!agent, groups });
   const says = sayBubbles.says;
-  const sayNodes = (slot: number) =>
-    (sayBubbles.slots[slot] ?? []).map((record) => (
-      <SayRecordBubble
-        key={`say-${record.id}`}
-        record={record}
-        now={now}
-        readIds={sayBubbles.readTargets(record.id)}
-        onRead={sayBubbles.markRead}
-      />
-    ));
+  const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
+  // The say and permission bubbles of one slot, in the order they happened.
+  const bubbleNodes = (slot: number) =>
+    inTimeOrder([
+      ...(sayBubbles.slots[slot] ?? []).map((record) => ({
+        ts: record.ts,
+        node: (
+          <SayRecordBubble
+            key={`say-${record.id}`}
+            record={record}
+            now={now}
+            readIds={sayBubbles.readTargets(record.id)}
+            onRead={sayBubbles.markRead}
+          />
+        ),
+      })),
+      ...(permitBubbles.slots[slot] ?? []).map((request) => ({
+        ts: request.ts,
+        node: <PermitRequestBubble key={`permit-${request.id}`} request={request} now={now} />,
+      })),
+    ]).map((bubble) => bubble.node);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -462,7 +476,9 @@ export function Timeline({
                       />
                     ) : (
                       <div class="tl-lines" ref={tlLinesRef}>
-                        {parsed.length === 0 && says.length === 0 ? (
+                        {parsed.length === 0 &&
+                        says.length === 0 &&
+                        permitBubbles.requests.length === 0 ? (
                           <p class="tl-empty">(空の transcript)</p>
                         ) : (
                           <>
@@ -646,14 +662,14 @@ export function Timeline({
                               // history, and each slot's say bubbles ahead of the
                               // first group that is newer than them.
                               .flatMap((node, i) => [
-                                ...sayNodes(i),
+                                ...bubbleNodes(i),
                                 ...(i === forkDividerIndex && forkOrigin
                                   ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
                                   : [node]),
                               ])}
                             {/* 読み込み済み window より新しい say (= 喋った turn の行が
                                 まだ jsonl に無い live のケース) は末尾に出す。 */}
-                            {sayNodes(groups.length)}
+                            {bubbleNodes(groups.length)}
                             {respondingAt !== null ? (
                               <TurnRespondingRow since={respondingAt} />
                             ) : null}

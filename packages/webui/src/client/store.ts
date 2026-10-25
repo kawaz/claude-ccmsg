@@ -18,6 +18,7 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
+  type PermitRequestRecord,
   type SayRecord,
   type SessionApiError,
   type SessionErrorEntry,
@@ -386,6 +387,11 @@ export interface AppState {
    * always sends the full set, and keeps it in memory only (DR-0036 §3), so a
    * restarted daemon's empty set clears what the old one left here. */
   says: readonly SayRecord[];
+  /** Every request for permission the daemon holds (DR-0040), oldest first:
+   * the permission bubbles in each session's Timeline. Replaced whole by the
+   * subscribe-time set (ev:"permit_requests") and added to one at a time
+   * (ev:"permit_request"); a recorded request never changes. */
+  permitRequests: readonly PermitRequestRecord[];
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
    * cwd: one entry per pinned directory, holding the record frozen when it
    * was pinned (Pin, the webui's own stored shape). Which sessions a pin lists is derived at render time
@@ -450,6 +456,7 @@ export function initialState(): AppState {
     sessionErrors: new Map(),
     llmRequests: new Map(),
     says: [],
+    permitRequests: [],
     pinnedSessions: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
@@ -482,6 +489,8 @@ export type Action =
   | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
   // Full replacement, same as llm-requests/loaded (ev:"says").
   | { type: "says/loaded"; says: readonly SayRecord[] }
+  | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
+  | { type: "permit-requests/added"; request: PermitRequestRecord }
   | { type: "daemon-info/loaded"; version: string; exe?: string; home?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
@@ -1044,6 +1053,13 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "says/loaded":
       return { ...state, says: action.says };
+    case "permit-requests/loaded":
+      return { ...state, permitRequests: action.requests };
+    case "permit-requests/added":
+      // The catch-up of a subscribe may already hold the one pushed beside it.
+      return state.permitRequests.some((r) => r.id === action.request.id)
+        ? state
+        : { ...state, permitRequests: [...state.permitRequests, action.request] };
     case "llm-requests/loaded":
       return {
         ...state,

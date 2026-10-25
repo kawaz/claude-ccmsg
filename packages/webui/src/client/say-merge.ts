@@ -45,8 +45,9 @@ function toMillis(ts: string): number {
 
 /** The says in the order the Timeline draws them. Two says sharing a stamp
  * keep the order they came in (the daemon's record order):
- * Array.prototype.sort is stable. */
-function inTimeOrder<T extends SayPlacement>(says: readonly T[]): T[] {
+ * Array.prototype.sort is stable. Also orders the bubbles of one slot when
+ * says and requests for permission (DR-0040) share it. */
+export function inTimeOrder<T extends SayPlacement>(says: readonly T[]): T[] {
   return [...says].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
 }
 

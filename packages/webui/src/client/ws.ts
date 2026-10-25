@@ -728,6 +728,17 @@ export function createWsClient(
       dispatch({ type: "says/loaded", says: streamEv.says });
       return;
     }
+    // Requests for permission (DR-0040 §5): the full set on connect, which
+    // replaces what the tab held (a restarted daemon starts with none), then
+    // each new one as it is recorded.
+    if (streamEv.ev === "permit_requests") {
+      dispatch({ type: "permit-requests/loaded", requests: streamEv.requests });
+      return;
+    }
+    if (streamEv.ev === "permit_request") {
+      dispatch({ type: "permit-requests/added", request: streamEv.request });
+      return;
+    }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
     // event stream — the full non-expired set, both on connect (catch-up for
     // windows that opened before this tab existed) and on every new request.

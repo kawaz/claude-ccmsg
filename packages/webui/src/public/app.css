@@ -2580,6 +2580,119 @@ a {
   line-height: var(--md-leading-tight);
 }
 
+/* 許可依頼 (DR-0040)。say と同じく TL の流れに挟まる吹き出しで、止まって
+ * 人を待っている印として info の面と枠で say (warn の面) と見分ける。中身に
+ * コードブロックと折り畳みを持つので、幅は say より広く取る。 */
+.permit {
+  border-radius: 0.5rem;
+  padding: var(--space-7) var(--space-9);
+  align-self: flex-start;
+  width: fit-content;
+  min-width: min(28rem, 100%);
+  max-width: 85%;
+  background: var(--info-surface);
+  border-left: 3px solid var(--info-border);
+}
+
+.permit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--fg-info);
+}
+
+.permit-section {
+  margin-top: var(--space-7);
+}
+
+.permit-heading {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+.permit-attachment {
+  margin: var(--space-3) 0;
+  min-width: 0;
+}
+
+.permit-attachment summary {
+  cursor: pointer;
+}
+
+.permit-attachment code {
+  word-break: break-all;
+}
+
+.permit-attachment-note {
+  margin-left: var(--space-6);
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  color: var(--fg-warn);
+}
+
+.permit-asks {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.permit-asks > li {
+  margin: var(--space-3) 0;
+}
+
+/* コマンドはコードブロックの下に「の実行」を添える。li は block のまま
+ * にして箇条書きの印を残す (flex にすると印が消える)。 */
+.permit-command > span {
+  display: block;
+}
+
+.permit-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-7);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
+/* 2 つのラベルを同じ升目に重ね、幅を広い方に固定する: 押した後に
+ * 「コピーしました」へ切り替わってもボタンの幅が動かない。 */
+.permit-grant {
+  display: inline-grid;
+  font-size: var(--font-size-md);
+  padding: var(--space-3) var(--space-9);
+  border-radius: 999px;
+  border: 1px solid var(--info-border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.permit-grant > span {
+  grid-area: 1 / 1;
+  text-align: center;
+}
+
+.permit-grant-copied {
+  visibility: hidden;
+  color: var(--fg-success);
+}
+
+.permit-grant.copied .permit-grant-label {
+  visibility: hidden;
+}
+
+.permit-grant.copied .permit-grant-copied {
+  visibility: visible;
+}
+
+.permit-grant-error {
+  color: var(--danger);
+}
+
 .event {
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
