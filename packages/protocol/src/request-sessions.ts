@@ -123,7 +123,7 @@ export const SayRequestSchema = v.object({
 export type SayRequest = Output<typeof SayRequestSchema>;
 
 /** Ask the person for permission (DR-0040, session role only): the caller's
- * `permit` tool. The daemon reads the attachments, records the request, and
+ * `permit` tool. The daemon records the request (its attachments by path), and
  * shows it in the caller's Timeline; the caller is the one asking, so the
  * request names no session. */
 export const PermitRequestRequestSchema = v.object({
@@ -140,6 +140,17 @@ export const PermitRequestReadRequestSchema = v.object({
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one request id")),
 });
 export type PermitRequestReadRequest = Output<typeof PermitRequestReadRequestSchema>;
+
+/** Read one attachment of a request for permission, as it is now (DR-0040
+ * §3): the webui's opening it. User role only. `path` must be one the
+ * request named, so the person reads only what the asking session put in
+ * front of them. */
+export const PermitAttachmentReadRequestSchema = v.object({
+  op: v.literal("permit_attachment_read"),
+  id: v.string(),
+  path: v.string(),
+});
+export type PermitAttachmentReadRequest = Output<typeof PermitAttachmentReadRequestSchema>;
 
 /** Mark say records as read (the webui's 既読 button). User role only: the
  * unread count exists for the person watching the session list, and a session

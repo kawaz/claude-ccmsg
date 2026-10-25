@@ -120,6 +120,7 @@ import { createSayLog, type SayLog } from "./say-log.ts";
 import {
   createPermitRequestLog,
   permitRequestFields,
+  readPermitAttachment,
   type PermitRequestLog,
 } from "./permit-requests.ts";
 import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
@@ -1390,6 +1391,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "say_read",
   "permit_request",
   "permit_request_read",
+  "permit_attachment_read",
   "subscribe",
   "rooms",
   "room_history",
@@ -1790,27 +1792,44 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     case "permit_request": {
       // 許可依頼は止められたエージェント自身が出す (session role 限定)。
       // 依頼は caller 自身のものなので、caller がセッションを名指す余地はない。
-      // attachments はここで読み、その時点の中身を記録に写す (DR-0040 §3)。
+      // attachments はパスだけを記録し、人が開いた時に読む (DR-0040 §3)。
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
       const record = daemon.permitRequests.add(
-        await permitRequestFields(conn.identity.sid, req.permit, nowIso()),
+        permitRequestFields(conn.identity.sid, req.permit, nowIso()),
       );
       broadcastPermitRequest(daemon, record);
       daemon.log.info(
         `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)}`,
       );
-      send(conn, {
-        ok: true,
-        id: record.id,
-        attachments: record.attachments.map((a) =>
-          a.read
-            ? { path: a.path, read: true, truncated: a.truncated }
-            : { path: a.path, read: false, reason: a.reason },
-        ),
-      });
+      send(conn, { ok: true, id: record.id });
+      return;
+    }
+
+    case "permit_attachment_read": {
+      // 添付は人がバブルで開いた時に読む (user role 限定)。読めるのは依頼した
+      // セッションがその依頼で名指したパスだけで、webui から任意のパスは
+      // 読めない (DR-0040 §3、DR-0024 §3.2 と同じ信頼の形)。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_attachment_read' requires user role");
+        return;
+      }
+      const record = daemon.permitRequests.find(req.id);
+      if (record === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+        return;
+      }
+      if (!record.attachments.includes(req.path)) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.id} names no attachment ${req.path}`,
+        );
+        return;
+      }
+      send(conn, { ok: true, attachment: await readPermitAttachment(req.path) });
       return;
     }
 

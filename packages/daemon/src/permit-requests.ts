@@ -1,7 +1,8 @@
 // Requests for the person's permission (DR-0040): what an agent the auto mode
-// classifier stopped asked for, with the files it named as the daemon read
-// them then. Held in memory only and pushed to the webui as
-// `ev:"permit_requests"` / `ev:"permit_request"` (stream-event.ts).
+// classifier stopped asked for, with the paths of the files it named. Held in
+// memory only and pushed to the webui as `ev:"permit_requests"` /
+// `ev:"permit_request"` (stream-event.ts); a file is read when the person
+// opens it (permit_attachment_read).
 import { open } from "node:fs/promises";
 import {
   PERMIT_ATTACHMENT_MAX_BYTES,
@@ -14,10 +15,10 @@ import {
 /** How many requests the daemon keeps. The oldest goes first once a new one
  * would exceed this.
  *
- * Design rationale: smaller than the say log's bound because a request holds
- * its attachments (up to PERMIT_ATTACHMENTS_MAX files of
- * PERMIT_ATTACHMENT_MAX_BYTES), and a request matters while its agent waits
- * for the permission, which is far shorter than the daemon lives. */
+ * Design rationale: smaller than the say log's bound because a request
+ * matters while its agent waits for the permission, which is far shorter
+ * than the daemon lives, and the set is what a tab is sent when it
+ * subscribes. */
 export const PERMIT_REQUEST_LOG_LIMIT = 50;
 
 /** What `markRead` did: the records it changed (none when every one was
@@ -31,6 +32,8 @@ export type MarkPermitReadResult =
 export interface PermitRequestLog {
   /** Record one request and return it (unread). */
   add(record: Omit<PermitRequestRecord, "id" | "read">): PermitRequestRecord;
+  /** The record `id`, or undefined when none is held. */
+  find(id: string): PermitRequestRecord | undefined;
   /** Mark the records `ids` read, all of them or none. */
   markRead(ids: readonly string[]): MarkPermitReadResult;
   /** Every request held, oldest first. */
@@ -47,6 +50,9 @@ export function createPermitRequestLog(
       const record: PermitRequestRecord = { id: issueId(), ...fields, read: false };
       records = [...records, record].slice(-limit);
       return record;
+    },
+    find(id) {
+      return records.find((r) => r.id === id);
     },
     markRead(ids) {
       const held = new Set(records.map((r) => r.id));
@@ -98,9 +104,9 @@ function textOf(bytes: Uint8Array, cut: boolean): string | null {
   }
 }
 
-/** Read one attachment as the person is to see it: the first
+/** Read one attachment as the person is to see it now: the first
  * PERMIT_ATTACHMENT_MAX_BYTES of a regular file at `path`, or why not. The
- * path is opened as given (a symlink is followed); the daemon reads only the
+ * path is opened as given (a symlink is followed); the caller reads only the
  * paths the asking session named (DR-0040 §3). Never rejects. */
 export async function readPermitAttachment(path: string): Promise<PermitAttachment> {
   let handle;
@@ -125,20 +131,18 @@ export async function readPermitAttachment(path: string): Promise<PermitAttachme
   }
 }
 
-/** A request as the daemon records it for session `sid`: its attachments
- * read, in the order named, and the fields an absent list leaves out as
- * empty lists. */
-export async function permitRequestFields(
+/** A request as the daemon records it for session `sid`: the fields an
+ * absent list leaves out as empty lists. */
+export function permitRequestFields(
   sid: string,
   permit: PermitInput,
   ts: string,
-): Promise<Omit<PermitRequestRecord, "id" | "read">> {
-  const attachments = await Promise.all((permit.attachments ?? []).map(readPermitAttachment));
+): Omit<PermitRequestRecord, "id" | "read"> {
   return {
     sid,
     ts,
     blocked: permit.blocked,
-    attachments,
+    attachments: permit.attachments ?? [],
     intents: permit.intents ?? [],
     commands: permit.commands ?? [],
   };

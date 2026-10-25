@@ -94,7 +94,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
         blocked: "`git push` が止められた",
         attachments: ["/w/policy.json"],
         intents: ["`/w/a.ts` の編集"],
-        commands: ["git push origin main"],
+        commands: [
+          { command: "git push origin main", description: "main を公開する" },
+          { command: "git push origin v1" },
+        ],
       },
     },
     bad: [
@@ -102,23 +105,46 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       // Neither intents nor commands: nothing to permit.
       { op: "permit_request", permit: { blocked: "x" } },
       { op: "permit_request", permit: { blocked: "x", intents: [], commands: [] } },
-      { op: "permit_request", permit: { blocked: " ", commands: ["ls"] } },
-      { op: "permit_request", permit: { blocked: "x", commands: ["\n"] } },
-      { op: "permit_request", permit: { blocked: "x", commands: ["ls"], attachments: ["a.ts"] } },
+      { op: "permit_request", permit: { blocked: " ", commands: [{ command: "ls" }] } },
+      { op: "permit_request", permit: { blocked: "x", commands: [{ command: "\n" }] } },
+      // A command is an object now; its text alone is not one.
+      { op: "permit_request", permit: { blocked: "x", commands: ["ls"] } },
       {
         op: "permit_request",
-        permit: { blocked: "x", commands: ["ls"], attachments: ["/a", "/a"] },
+        permit: { blocked: "x", commands: [{ command: "ls", description: " " }] },
+      },
+      {
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "ls" }], attachments: ["a.ts"] },
+      },
+      {
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "ls" }], attachments: ["/a", "/a"] },
       },
       {
         op: "permit_request",
         permit: {
           blocked: "x",
-          commands: ["ls"],
+          commands: [{ command: "ls" }],
           attachments: Array.from({ length: 17 }, (_, i) => `/a${i}`),
         },
       },
       // The module writes exactly the fields; another is the writer's mistake.
-      { op: "permit_request", permit: { blocked: "x", commands: ["ls"], agent_id: "a1" } },
+      {
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "ls" }], agent_id: "a1" },
+      },
+      {
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "ls", cwd: "/w" }] },
+      },
+    ],
+  },
+  permit_attachment_read: {
+    ok: { op: "permit_attachment_read", id: "0f0f/1", path: "/w/policy.json" },
+    bad: [
+      { op: "permit_attachment_read", id: "0f0f/1" },
+      { op: "permit_attachment_read", path: "/w/policy.json" },
     ],
   },
   permit_request_read: {

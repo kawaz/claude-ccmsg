@@ -234,18 +234,15 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   ],
   say: [{ ok: true, id: "0f0f/1" }],
   say_read: [{ ok: true, ids: ["0f0f/1"] }],
-  permit_request: [
-    { ok: true, id: "0f0f/1", attachments: [] },
+  permit_request: [{ ok: true, id: "0f0f/1" }],
+  permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
+  permit_attachment_read: [
     {
       ok: true,
-      id: "0f0f/2",
-      attachments: [
-        { path: "/w/a.json", read: true, truncated: false },
-        { path: "/w/b", read: false, reason: "missing" },
-      ],
+      attachment: { path: "/w/a.json", read: true, content: "{}", bytes: 2, truncated: false },
     },
+    { ok: true, attachment: { path: "/w/b", read: false, reason: "not_text" } },
   ],
-  permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

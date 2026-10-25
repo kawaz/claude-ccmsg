@@ -81,10 +81,9 @@ export type PermitRequestsStreamEvent = Output<typeof PermitRequestsStreamEventS
 
 /** One request for permission the daemon has just recorded, or just marked
  * read, to the same subscribers; a tab puts it in place of the one of the
- * same id, or adds it. One rather than the whole set as ev:"says" sends: a
- * request carries its attachments, up to PERMIT_ATTACHMENTS_MAX files of
- * PERMIT_ATTACHMENT_MAX_BYTES, and only its `read` ever changes, so the
- * catch-up above and these single records are all a tab needs. */
+ * same id, or adds it. One rather than the whole set as ev:"says" sends:
+ * only a request's `read` ever changes, so the catch-up above and these
+ * single records are all a tab needs. */
 export const PermitRequestStreamEventSchema = v.object({
   ev: v.literal("permit_request"),
   request: PermitRequestRecordSchema,

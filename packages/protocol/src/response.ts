@@ -37,7 +37,11 @@ import {
 } from "./response-rooms.ts";
 import { SessionLaunchResponseSchema } from "./launch.ts";
 import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
-import { PermitRequestReadResponseSchema, PermitRequestResponseSchema } from "./permit-request.ts";
+import {
+  PermitAttachmentReadResponseSchema,
+  PermitRequestReadResponseSchema,
+  PermitRequestResponseSchema,
+} from "./permit-request.ts";
 import {
   UserMessageResponseSchema,
   AgentsResponseSchema,
@@ -92,6 +96,7 @@ export const RESPONSE_SCHEMAS = {
   say_read: SayReadResponseSchema,
   permit_request: PermitRequestResponseSchema,
   permit_request_read: PermitRequestReadResponseSchema,
+  permit_attachment_read: PermitAttachmentReadResponseSchema,
   subscribe: SubscribeAckSchema,
   read: ReadResponseSchema,
   room_history: RoomHistoryResponseSchema,

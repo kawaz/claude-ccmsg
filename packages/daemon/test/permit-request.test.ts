@@ -1,13 +1,16 @@
 // 許可依頼 (DR-0040) の daemon 側の契約。
 //
 // 何を保証するか (各 test の doc comment 参照):
-//   - permit_request は依頼を daemon のメモリに記録し、attachments をその時点で
-//     読んで記録に写す。読めなかったものは理由を、長いものは先頭だけを持つ
+//   - permit_request は依頼を daemon のメモリに記録する。attachments はパス
+//     だけを持ち、依頼の時点では読まない
 //   - 記録は user role にだけ届く: subscribe 時に全件 (空でも)
 //     ev:"permit_requests"、記録のたびに 1 件の ev:"permit_request"。session
 //     には流さない
-//   - 応答は記録の id と attachments ごとの結果 (中身は返さない)
-//   - role gate: permit_request は session 限定
+//   - 応答は記録の id だけ
+//   - permit_attachment_read は、その依頼が名指したパスだけを、呼ばれた時点の
+//     中身で読む。読めない理由を区別し、長いものは先頭だけを返す
+//   - role gate: permit_request は session、permit_request_read と
+//     permit_attachment_read は user 限定
 //   - 記録の数には上限があり、古いものから消える
 //
 // wire 越しに確かめる op なので、同じプロセスに立てた daemon に UDS で繋ぐ。
@@ -57,10 +60,13 @@ describe("permit_request op", () => {
         op: "permit_request",
         permit: {
           blocked: "`git push` が止められた",
-          commands: ["git push origin main", "git push origin v1 \\\n  --tags"],
+          commands: [
+            { command: "git push origin main", description: "main を公開する" },
+            { command: "git push origin v1 \\\n  --tags" },
+          ],
         },
       });
-      expect(answered.attachments).toEqual([]);
+      expect(answered).toEqual({ ok: true, id: answered.id });
       const { ev } = await u.readEventUntil("permit_request");
       expect(ev.request).toMatchObject({
         id: answered.id,
@@ -68,7 +74,10 @@ describe("permit_request op", () => {
         blocked: "`git push` が止められた",
         attachments: [],
         intents: [],
-        commands: ["git push origin main", "git push origin v1 \\\n  --tags"],
+        commands: [
+          { command: "git push origin main", description: "main を公開する" },
+          { command: "git push origin v1 \\\n  --tags" },
+        ],
         read: false,
       });
       u.close();
@@ -78,39 +87,22 @@ describe("permit_request op", () => {
     }
   });
 
-  // 何を保証するか: attachments は依頼の時点で daemon が読み、記録はその時の
-  // 中身を持つ (後でファイルが変わっても記録は変わらない)。応答は中身を
-  // 返さず、読めたか・切り詰めたかだけを返す。
-  test("reads each attachment when the request comes, and answers without the contents", async () => {
+  // 何を保証するか: attachments は依頼の時点では読まず、記録はパスだけを
+  // 持つ (依頼の配送を軽くする)。後から subscribe したタブにも同じ記録が届く。
+  test("records the attachments by path, without reading them", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const dir = tmpDir("permit-att-");
       const policy = path.join(dir, "policy.json");
-      fs.writeFileSync(policy, '{"allow":["s3:GetObject"]}\n');
       const gone = path.join(dir, "gone.sh");
       const s = await sessionConn(ctx, SID_A);
       const { u } = await subscribedUser(ctx);
-      const answered = await s.requestOk({
+      await s.requestOk({
         op: "permit_request",
         permit: { blocked: "x", attachments: [policy, gone], intents: ["policy を当てる"] },
       });
-      expect(answered.attachments).toEqual([
-        { path: policy, read: true, truncated: false },
-        { path: gone, read: false, reason: "missing" },
-      ]);
-      fs.writeFileSync(policy, "changed later\n");
       const { ev } = await u.readEventUntil("permit_request");
-      expect(ev.request.attachments).toEqual([
-        {
-          path: policy,
-          read: true,
-          content: '{"allow":["s3:GetObject"]}\n',
-          bytes: 27,
-          truncated: false,
-        },
-        { path: gone, read: false, reason: "missing" },
-      ]);
-      // A tab that subscribes later catches up with the same record.
+      expect(ev.request.attachments).toEqual([policy, gone]);
       const { u: later, requests } = await subscribedUser(ctx);
       expect(requests).toEqual([ev.request]);
       later.close();
@@ -129,7 +121,10 @@ describe("permit_request op", () => {
       const asker = await sessionConn(ctx, SID_B);
       await asker.request({ op: "subscribe" });
       const { u } = await subscribedUser(ctx);
-      await asker.requestOk({ op: "permit_request", permit: { blocked: "x", commands: ["ls"] } });
+      await asker.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "ls" }] },
+      });
       await u.readEventUntil("permit_request");
       // 順序の確定した round trip の後で、asker の stream に無いことを見る。
       await asker.request({ op: "ping" });
@@ -151,7 +146,7 @@ describe("permit_request op", () => {
       const u = await userConn(ctx);
       const res = await u.requestError({
         op: "permit_request",
-        permit: { blocked: "x", commands: ["ls"] },
+        permit: { blocked: "x", commands: [{ command: "ls" }] },
       });
       expect(res.error).toEqual({
         code: "bad_request",
@@ -187,7 +182,7 @@ describe("permit_request_read op", () => {
     const ctx = await startInProcessDaemon();
     try {
       const s = await sessionConn(ctx, SID_A);
-      const permit = { blocked: "x", commands: ["ls"] };
+      const permit = { blocked: "x", commands: [{ command: "ls" }] };
       const a = await s.requestOk({ op: "permit_request", permit });
       const b = await s.requestOk({ op: "permit_request", permit });
       const { u, requests } = await subscribedUser(ctx);
@@ -228,7 +223,7 @@ describe("permit_request_read op", () => {
       const s = await sessionConn(ctx, SID_A);
       const a = await s.requestOk({
         op: "permit_request",
-        permit: { blocked: "x", commands: ["ls"] },
+        permit: { blocked: "x", commands: [{ command: "ls" }] },
       });
       const u = await userConn(ctx);
       const res = await u.requestError({ op: "permit_request_read", ids: [a.id, "0000/9"] });
@@ -239,6 +234,80 @@ describe("permit_request_read op", () => {
       expect(ctx.daemon.permitRequests.snapshot().map((r) => r.read)).toEqual([false]);
       const bySession = await s.requestError({ op: "permit_request_read", ids: [a.id] });
       expect(bySession.error.code).toBe("bad_request");
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+});
+
+describe("permit_attachment_read op", () => {
+  // 何を保証するか: 人が開いた時点の中身を返す (依頼の後に変わったファイルは
+  // 変わった後の中身)。読めないファイルは理由で答える。
+  test("reads a named attachment as it is when the person opens it", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const dir = tmpDir("permit-open-");
+      const policy = path.join(dir, "policy.json");
+      fs.writeFileSync(policy, "at the request\n");
+      const gone = path.join(dir, "gone.sh");
+      const s = await sessionConn(ctx, SID_A);
+      const { id } = await s.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", attachments: [policy, gone], commands: [{ command: "ls" }] },
+      });
+      fs.writeFileSync(policy, '{"allow":["s3:GetObject"]}\n');
+      const u = await userConn(ctx);
+      expect(await u.requestOk({ op: "permit_attachment_read", id, path: policy })).toEqual({
+        ok: true,
+        attachment: {
+          path: policy,
+          read: true,
+          content: '{"allow":["s3:GetObject"]}\n',
+          bytes: 27,
+          truncated: false,
+        },
+      });
+      expect(
+        (await u.requestOk({ op: "permit_attachment_read", id, path: gone })).attachment,
+      ).toEqual({ path: gone, read: false, reason: "missing" });
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
+  // 何を保証するか: 読めるのはその依頼が名指したパスだけで、webui から任意の
+  // パスは読めない。持っていない依頼の id も断る。読むのは人で、session は
+  // 読めない。
+  test("refuses a path the request did not name, an unknown id, and a session", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const dir = tmpDir("permit-deny-");
+      const named = path.join(dir, "named.txt");
+      const other = path.join(dir, "other.txt");
+      fs.writeFileSync(named, "n");
+      fs.writeFileSync(other, "secret");
+      const s = await sessionConn(ctx, SID_A);
+      const { id } = await s.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", attachments: [named], commands: [{ command: "ls" }] },
+      });
+      const u = await userConn(ctx);
+      expect(
+        (await u.requestError({ op: "permit_attachment_read", id, path: other })).error,
+      ).toEqual({
+        code: "invalid_args",
+        msg: `permit request ${id} names no attachment ${other}`,
+      });
+      expect(
+        (await u.requestError({ op: "permit_attachment_read", id: "0000/9", path: named })).error,
+      ).toEqual({ code: "invalid_args", msg: "no permit request with id 0000/9" });
+      expect(
+        (await s.requestError({ op: "permit_attachment_read", id, path: named })).error.code,
+      ).toBe("bad_request");
       u.close();
       s.close();
     } finally {
@@ -325,7 +394,7 @@ describe("permit request log", () => {
       blocked,
       attachments: [],
       intents: [],
-      commands: ["ls"],
+      commands: [{ command: "ls" }],
     });
     log.add(fields("one"));
     log.add(fields("two"));
