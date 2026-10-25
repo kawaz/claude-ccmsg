@@ -7,7 +7,7 @@ import { type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
 import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
 import { pushNavigation } from "../../navigation.ts";
-import { prefillSidebarState } from "../../session-creator.ts";
+import { forkPrefill, prefillSidebarState } from "../../session-creator.ts";
 import { useApp } from "../../context.ts";
 import { useStoreState } from "../../useStore.ts";
 import { SayBubble, SayRecordBubble, TurnRespondingRow } from "../TimelineItem.tsx";
@@ -96,7 +96,7 @@ export function Timeline({
     s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
   );
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
-  const forkAvailable = useStoreState(store, (s) => s.forkAvailable);
+  const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   const peers = useStoreState(store, (s) => s.peers);
   const rooms = useStoreState(store, (s) => s.rooms);
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
@@ -199,19 +199,18 @@ export function Timeline({
             sid,
             position: currentPosition,
             forkAction,
-            forkAvailable,
-            // fork 元はこの画面に出ているセッション = 生きているので、
-            // cwd/model/effort はランチャー側が live state から補える
-            // (SessionCreator の forkSourceDefaults)。リンクには「どの
-            // セッションの、どの地点か」だけを載せる。
+            launchAvailable,
+            // cwd / model / effort は押した瞬間のこのセッションの値をリンクに
+            // 載せる (forkPrefill)。リンクだけで同じフォームが開くように —
+            // 貼っても、セッションが切れた後に開き直しても。
             onFork: (resumeAt: string) =>
               pushNavigation(
                 `${location.pathname}${location.search}`,
-                prefillSidebarState({ kind: "fork", sessionId: sid, resumeAt }),
+                prefillSidebarState(forkPrefill(store.getState(), sid, resumeAt)),
               ),
             onSelect: pin.selectPosition,
           },
-    [sid, currentPosition, forkAction, forkAvailable, pin.selectPosition, agentActive],
+    [sid, currentPosition, forkAction, launchAvailable, pin.selectPosition, agentActive, store],
   );
 
   // 末尾追従と位置への着地は、位置の状態 (pin.tracker) を戻り値で共有する。

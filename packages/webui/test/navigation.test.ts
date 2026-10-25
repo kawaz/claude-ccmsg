@@ -297,12 +297,16 @@ describe("navigationTarget", () => {
   // パネルを変える側は明示する。「閉じる」と「触らない」が同じ引数にならない
   // ように、url が sb.* を持つかどうかからは何も推測しない。
   test("sidebar を渡した側が勝つ (閉じる指定を含む)", () => {
-    expect(navigationTarget("/r/room-1", "?sb.panel=new&sb.CWD=/a", CLOSED_SIDEBAR)).toBe(
+    expect(navigationTarget("/r/room-1", "?sb.panel=new&sb.cwd=/a", CLOSED_SIDEBAR)).toBe(
       "/r/room-1",
     );
     expect(
-      navigationTarget("/s/s1/timeline/head", "", parseSidebarUrl("?sb.panel=new&sb.SESSION_ID=x")),
-    ).toBe("/s/s1/timeline/head?sb.panel=new&sb.SESSION_ID=x");
+      navigationTarget(
+        "/s/s1/timeline/head",
+        "",
+        parseSidebarUrl("?sb.panel=new&sb.type=resume&sb.resume_session_id=x"),
+      ),
+    ).toBe("/s/s1/timeline/head?sb.panel=new&sb.type=resume&sb.resume_session_id=x");
   });
 
   test("何も開いていなければ遷移先はそのまま", () => {

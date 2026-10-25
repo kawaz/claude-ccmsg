@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CLOSED_SIDEBAR,
+  LAUNCH_FORM_FIELDS,
   parsePeerSortKey,
   parseSidebarUrl,
   sameSidebarState,
@@ -25,46 +26,51 @@ describe("parseSidebarUrl", () => {
 
   // 本命: パネルが閉じている URL に、効かないフォーム値だけが残らない。
   test("sb.panel が無ければ他の sb.* は無視される", () => {
-    expect(parseSidebarUrl("?sb.template=fork&sb.SESSION_ID=x&sb.search=foo")).toEqual(
+    expect(parseSidebarUrl("?sb.type=fork&sb.resume_session_id=x&sb.search=foo")).toEqual(
       CLOSED_SIDEBAR,
     );
   });
 
-  test("sb.<PARAM> は大文字名だけを拾い、予約キーとは混ざらない", () => {
+  // 欄の名前は起動の入力の field 名だけ。それ以外の名前 (大文字の旧来の
+  // 書き方も含む) は、見えない入力として紛れ込まない。
+  test("sb.<field> は起動フォームの欄の名前だけを拾う", () => {
     const state = parseSidebarUrl(
-      "?sb.panel=new&sb.template=fork&sb.SESSION_ID=sid-1&sb.RESUME_AT=u-9&sb.lower=x&sb.Mixed=y",
+      "?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-1&sb.resume_at=u-9&sb.SESSION_ID=x&sb.command=y",
     );
-    expect(state.template).toBe("fork");
-    expect(state.params).toEqual({ SESSION_ID: "sid-1", RESUME_AT: "u-9" });
+    expect(state.launch).toEqual({ type: "fork", resume_session_id: "sid-1", resume_at: "u-9" });
+  });
+
+  test("8 つの欄はどれも URL から読める", () => {
+    const query = LAUNCH_FORM_FIELDS.map((field) => `sb.${field}=v-${field}`).join("&");
+    const state = parseSidebarUrl(`?sb.panel=new&${query}`);
+    expect(Object.keys(state.launch)).toEqual([...LAUNCH_FORM_FIELDS]);
   });
 
   // ページ固有の query (`/usage?days=`) は別の名前空間で、こちらは触らない。
-  test("sb. の付かない query は params に混ざらない", () => {
+  test("sb. の付かない query は起動フォームの欄に混ざらない", () => {
     expect(parseSidebarUrl("?days=7&sb.panel=search&sb.search=foo")).toEqual({
       panel: "session-search",
-      template: null,
       search: "foo",
-      params: {},
+      launch: {},
     });
   });
 
-  // 複数行 PROMPT は %0A で運ぶ (JSON 値を使わない理由でもある)。
+  // 複数行の prompt は %0A で運ぶ (JSON 値を使わない理由でもある)。
   test("複数行の値は URL エンコードのまま往復する", () => {
-    expect(parseSidebarUrl("?sb.panel=new&sb.PROMPT=a%0Ab").params.PROMPT).toBe("a\nb");
+    expect(parseSidebarUrl("?sb.panel=new&sb.prompt=a%0Ab").launch.prompt).toBe("a\nb");
   });
 
   // 壊れたエスケープを含む URL でフォームを中途半端に開かない。
   test("壊れた percent エスケープは閉じた状態", () => {
-    expect(parseSidebarUrl("?sb.panel=new&sb.CWD=%zz")).toEqual(CLOSED_SIDEBAR);
+    expect(parseSidebarUrl("?sb.panel=new&sb.cwd=%zz")).toEqual(CLOSED_SIDEBAR);
   });
 });
 
 describe("withSidebarState / round-trip", () => {
   const opened: SidebarUrlState = {
     panel: "session-creator",
-    template: "fork",
     search: null,
-    params: { SESSION_ID: "sid-1", RESUME_AT: "u-9", PROMPT: "a\nb" },
+    launch: { type: "fork", resume_session_id: "sid-1", resume_at: "u-9", prompt: "a\nb" },
   };
 
   test("組み立てた URL を読み戻すと同じ状態になる", () => {
@@ -86,11 +92,12 @@ describe("withSidebarState / round-trip", () => {
     expect(withSidebarState("/r/room-1?sb.panel=search", CLOSED_SIDEBAR)).toBe("/r/room-1");
   });
 
-  // 同じ状態が常に同じ文字列になる (params は名前順)。
-  test("params の並びは入力順に依存しない", () => {
-    const a = withSidebarState("/x", { ...opened, params: { B: "2", A: "1" } });
-    const b = withSidebarState("/x", { ...opened, params: { A: "1", B: "2" } });
+  // 同じ状態が常に同じ文字列になる (欄は LAUNCH_FORM_FIELDS の順)。
+  test("欄の並びは入力順に依存しない", () => {
+    const a = withSidebarState("/x", { ...opened, launch: { prompt: "p", type: "new" } });
+    const b = withSidebarState("/x", { ...opened, launch: { type: "new", prompt: "p" } });
     expect(a).toBe(b);
+    expect(a).toBe("/x?sb.panel=new&sb.type=new&sb.prompt=p");
   });
 });
 
@@ -111,17 +118,15 @@ describe("toggleSidebarPanel", () => {
   test("トグルで開く panel は前の sb.* を持たない", () => {
     const forked: SidebarUrlState = {
       panel: "session-creator",
-      template: "fork",
       search: null,
-      params: { SESSION_ID: "sid-1", RESUME_AT: "u-9" },
+      launch: { type: "fork", resume_session_id: "sid-1", resume_at: "u-9" },
     };
     const closed = toggleSidebarPanel(forked, "session-creator");
     expect(closed).toEqual(CLOSED_SIDEBAR);
     expect(toggleSidebarPanel(closed, "session-creator")).toEqual({
       panel: "session-creator",
-      template: null,
       search: null,
-      params: {},
+      launch: {},
     });
   });
 });
@@ -130,26 +135,25 @@ describe("sameSidebarState", () => {
   // 同値なら store が参照を据え置く = フォームの seed をやり直さない。
   test("値が同じなら true (別インスタンスでも)", () => {
     expect(
-      sameSidebarState(parseSidebarUrl("?sb.panel=new&sb.CWD=/a"), {
+      sameSidebarState(parseSidebarUrl("?sb.panel=new&sb.cwd=/a"), {
         panel: "session-creator",
-        template: null,
         search: null,
-        params: { CWD: "/a" },
+        launch: { cwd: "/a" },
       }),
     ).toBe(true);
   });
 
-  test("params が 1 つでも違えば false", () => {
+  test("欄が 1 つでも違えば false", () => {
     expect(
       sameSidebarState(
-        parseSidebarUrl("?sb.panel=new&sb.CWD=/a"),
+        parseSidebarUrl("?sb.panel=new&sb.cwd=/a"),
         parseSidebarUrl("?sb.panel=new"),
       ),
     ).toBe(false);
     expect(
       sameSidebarState(
-        parseSidebarUrl("?sb.panel=new&sb.CWD=/a"),
-        parseSidebarUrl("?sb.panel=new&sb.CWD=/b"),
+        parseSidebarUrl("?sb.panel=new&sb.cwd=/a"),
+        parseSidebarUrl("?sb.panel=new&sb.cwd=/b"),
       ),
     ).toBe(false);
   });

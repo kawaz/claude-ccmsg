@@ -1888,32 +1888,40 @@ a {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
-  /* 複数行の値 (shell スニペット等) は折り返すと行の構造が読めなくなるので、
-   * 横は折り返さずスクロール (kawaz r259m63)。rows 制御 (行数+2) と対で、
-   * 縦は内容ぶん、横ははみ出しをスクロールで見る。 */
-  white-space: pre;
-  overflow-x: auto;
+}
+
+/* 読めずに送れない欄 (aria-invalid) は枠で示し、理由は下の
+ * .session-creator-issue が言う。 */
+.session-creator-field [aria-invalid="true"] {
+  border-color: var(--danger);
 }
 
 .session-creator-prompt {
-  /* rows (行数+2) が高さを決めるので固定の min-height は置かない —
-   * 1 行値のフォームまで 4.5rem に伸びてしまう。 */
+  /* 高さは中身に合わせて伸び縮みし (field-sizing、Chrome / Safari の最新で
+   * 使える)、空でも 3 行ぶんは見せる。手で広げる resize も残す。 */
+  field-sizing: content;
+  min-block-size: calc(3lh + 2 * var(--space-5));
   resize: vertical;
 }
 
 /* クラシックスクロールバー (kawaz 環境は常時表示) で縦横 2 本が出た時に
- * 塗られる角。既定が白なので、横スクロールを許した textarea
- * (.session-creator-prompt) では dark テーマで白い四角として浮き、その上に
- * resize グリップが重なって目立っていた (kawaz r273m3/m21)。 */
+ * 塗られる角。既定が白なので dark テーマで白い四角として浮き、その上に
+ * resize グリップが重なって目立つ (kawaz r273m3/m21)。 */
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-/* resume_sid / resume_at: 中身は sid と uuid なので等幅で、桁の違いが
+/* resume_session_id / resume_at: 中身は uuid なので等幅で、桁の違いが
  * 目視で分かるように。入力自体の枠は .session-creator-field input と共通。 */
-.session-creator-resume-input {
+.session-creator-uuid-input {
   font-family: ui-monospace, monospace;
   font-size: var(--font-size-xs);
+}
+
+/* 欄の値をスキーマが読めなかった理由。 */
+.session-creator-issue {
+  font-size: var(--font-size-xs);
+  color: var(--danger);
 }
 
 /* 入力の下に添える淡色の但し書き (エラーではないので error 色は使わない)。 */
@@ -1959,27 +1967,6 @@ a {
   color: var(--fg);
 }
 
-.session-creator-prompt-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.session-creator-default-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--font-size-2xs);
-  line-height: 1;
-  padding: var(--space-2) var(--space-7);
-}
-
-.session-creator-default-btn:hover {
-  color: var(--fg);
-}
-
 .session-creator-submit {
   align-self: flex-start;
   background: var(--accent);
@@ -2008,9 +1995,9 @@ a {
   margin: 0;
 }
 
-/* DR-0018 §2.1: the result panel is deliberately the whole post-launch UI
- * (§2.3 "プロセス管理はしない") — stdout/stderr/exit_code render once and
- * nothing here refreshes or polls. */
+/* DR-0018 §3.9: the result panel is deliberately the whole post-launch UI
+ * (§2.3 "プロセス管理をしない") — session_id / exit_code / stdout / stderr
+ * render once and nothing here refreshes or polls. */
 .session-creator-result {
   display: flex;
   flex-direction: column;

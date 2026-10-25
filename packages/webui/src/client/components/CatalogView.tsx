@@ -703,22 +703,23 @@ function FormSection() {
     <Specimen name=".session-creator-field" note="ラベル + 入力の 1 組">
       <div class="session-creator-form">
         <label class="session-creator-field">
-          <span class="session-creator-label">template</span>
+          <span class="session-creator-label">type</span>
           <select>
-            <option>plain</option>
-            <option>worker</option>
+            <option>resume</option>
+            <option>fork</option>
           </select>
+          <span class="session-creator-hint">指定したセッションを続ける (id は変わらない)</span>
         </label>
         <label class="session-creator-field">
-          <span class="session-creator-label">resume_sid</span>
-          <input type="text" placeholder="a3f1c204" />
+          <span class="session-creator-label">resume_session_id</span>
+          <input type="text" class="session-creator-uuid-input" aria-invalid value="a3f1c204" />
+          <span class="session-creator-issue">must be a uuid</span>
         </label>
         <label class="session-creator-field">
           <span class="session-creator-label">prompt</span>
-          <textarea class="session-creator-prompt" rows={3}>
+          <textarea class="session-creator-prompt" placeholder="空なら起動コマンドが決める">
             カタログの表示を確認する
           </textarea>
-          <span class="session-creator-hint">空にすると既定のプロンプトを使う。</span>
         </label>
         <div class="catalog-row">
           <button type="button">起動</button>

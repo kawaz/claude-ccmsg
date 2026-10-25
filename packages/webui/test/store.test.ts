@@ -2324,31 +2324,35 @@ describe("locator/changed の sb.* 反映", () => {
   });
 
   test("fork のリンクは launcher を fork 元ごと開く", () => {
-    const state = at("?sb.panel=new&sb.SESSION_ID=sid-9&sb.RESUME_AT=uuid-1");
+    const state = at("?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-9&sb.resume_at=uuid-1");
     expect(state.sidebar.panel).toBe("session-creator");
-    expect(state.sidebar.params).toEqual({ SESSION_ID: "sid-9", RESUME_AT: "uuid-1" });
+    expect(state.sidebar.launch).toEqual({
+      type: "fork",
+      resume_session_id: "sid-9",
+      resume_at: "uuid-1",
+    });
   });
 
   // 「+ 新規」が組む URL は `sb.panel=new` だけ。前に fork で開いていても、
   // その `sb.*` は URL から消えている = 古い fork 元は蘇りようがない。
   test("「+ 新規」で開き直した launcher は fork 元を引き継がない", () => {
-    const forked = at("?sb.panel=new&sb.SESSION_ID=sid-9&sb.RESUME_AT=uuid-1");
+    const forked = at("?sb.panel=new&sb.type=fork&sb.resume_session_id=sid-9&sb.resume_at=uuid-1");
     const plain = dispatch(forked, {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sid-1" },
       sidebar: parseSidebarUrl("?sb.panel=new"),
     });
-    expect(plain.sidebar.params).toEqual({});
+    expect(plain.sidebar.launch).toEqual({});
   });
 
   // 同値なら参照を据え置く。ランチャーを開いたまま別セッションへ移っても、
   // フォームの seed をやり直させないため (SessionCreator の effect の依存)。
   test("sb.* が同じなら sidebar の参照は変わらない", () => {
-    const opened = at("?sb.panel=new&sb.CWD=/repos/app");
+    const opened = at("?sb.panel=new&sb.cwd=/repos/app");
     const moved = dispatch(opened, {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sid-2" },
-      sidebar: parseSidebarUrl("?sb.panel=new&sb.CWD=/repos/app"),
+      sidebar: parseSidebarUrl("?sb.panel=new&sb.cwd=/repos/app"),
     });
     expect(moved.sidebar).toBe(opened.sidebar);
     expect(moved.currentSid).toBe("sid-2");
@@ -2364,13 +2368,15 @@ describe("peers/sort-key", () => {
   });
 });
 
-describe("fork availability", () => {
+describe("launch availability", () => {
   // hello 由来の capability。daemon の launcher 設定が変わって再接続すれば
   // 値も入れ替わる。
-  test("fork availability follows the latest hello", () => {
-    const on = dispatch(initialState(), { type: "fork/availability", available: true });
-    expect(on.forkAvailable).toBe(true);
-    expect(dispatch(on, { type: "fork/availability", available: false }).forkAvailable).toBe(false);
+  test("launch availability follows the latest hello", () => {
+    const on = dispatch(initialState(), { type: "launch/availability", available: true });
+    expect(on.launchAvailable).toBe(true);
+    expect(dispatch(on, { type: "launch/availability", available: false }).launchAvailable).toBe(
+      false,
+    );
   });
 });
 

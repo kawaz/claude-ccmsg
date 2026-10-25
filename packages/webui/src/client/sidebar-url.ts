@@ -11,16 +11,13 @@
 // - `sb.panel=new|search` — どれが開いているか。2 つは排他なので単一値。
 //   これが無ければ他の `sb.*` は一切見ない (パネルが閉じている URL に、
 //   効かないフォーム値だけが残るのを避ける)。
-// - `sb.template=<name>` — ランチャーのテンプレ名。省略時は宣言済みパラメータ
-//   から選ぶ (session-creator.ts の `initialTemplate`)。
-// - `sb.<PARAM>=<value>` — ランチャーの params 初期値。名前は大文字
-//   (`SESSION_ID` / `RESUME_AT` / `CWD` / `MODEL` …)。予約キーが小文字なのは
-//   この 2 つの名前空間を衝突なく同居させるためで、テンプレが宣言していない
-//   名前は採用されない (session-creator.ts 側で落とす)。
+// - `sb.<field>=<value>` — 起動フォームの欄の初期値。名前は起動の入力
+//   (DR-0018 §3.2 の `LaunchInput`) の field 名そのもの (`type` / `cwd` /
+//   `resume_session_id` …、`LAUNCH_FORM_FIELDS`)。それ以外の名前は採用しない。
 // - `sb.search=<query>` — Session Search の検索語。
 //
 // hash は使わない (Timeline のアンカーが既に使っている)。JSON 値も使わない —
-// 値は素の文字列で、複数行の PROMPT も URL エンコード (`%0A`) で足りる。
+// 値は素の文字列で、複数行の prompt も URL エンコード (`%0A`) で足りる。
 import { parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 
@@ -41,19 +38,29 @@ const TOKEN_BY_PANEL: Readonly<Record<SidebarPanelKind, string>> = {
 
 const PREFIX = "sb.";
 
-/** 予約キー (小文字)。`sb.<PARAM>` は大文字なので、両者は名前で見分けられる。 */
-const RESERVED = new Set(["panel", "template", "search"]);
+/** 起動フォームの欄、表示の順。名前は起動の入力の field 名で、4 つの type の
+ * field の和 (どの type がどれを取るかは session-creator.ts が schema から
+ * 読む)。予約キー (`panel` / `search`) とは名前が重ならない。 */
+export const LAUNCH_FORM_FIELDS = [
+  "type",
+  "resume_session_id",
+  "resume_at",
+  "cwd",
+  "model",
+  "effort",
+  "name",
+  "prompt",
+] as const;
+export type LaunchFormField = (typeof LAUNCH_FORM_FIELDS)[number];
 
-/** ランチャー params として採用する名前の形。config の author が決める名前
- * なので webui は一覧を持てず、形だけで判定する。 */
-const PARAM_NAME = /^[A-Z][A-Z0-9_]*$/;
+/** URL が運ぶ起動フォームの初期値。値は素の文字列のままで、欄として読める
+ * か (type や model が語彙の中か) は開く側 (session-creator.ts) が決める。 */
+export type LaunchSeed = Readonly<Partial<Record<LaunchFormField, string>>>;
 
 export interface SidebarUrlState {
   panel: SidebarPanelKind | null;
-  /** `sb.template`。null = URL が指定していない (params から導出する)。 */
-  template: string | null;
-  /** `sb.<PARAM>` の集合。大文字名のみ。 */
-  params: Readonly<Record<string, string>>;
+  /** `sb.<field>` の集合。`LAUNCH_FORM_FIELDS` の名前だけ。 */
+  launch: LaunchSeed;
   /** `sb.search`。null = URL が指定していない。 */
   search: string | null;
 }
@@ -61,8 +68,7 @@ export interface SidebarUrlState {
 /** パネルが閉じている状態。`sb.*` を 1 つも持たない URL がこれになる。 */
 export const CLOSED_SIDEBAR: SidebarUrlState = {
   panel: null,
-  template: null,
-  params: {},
+  launch: {},
   search: null,
 };
 
@@ -78,31 +84,24 @@ export function parseSidebarUrl(search: string): SidebarUrlState {
   const query = new URLSearchParams(search);
   const panel = panelFromToken(query.get(`${PREFIX}panel`));
   if (!panel) return CLOSED_SIDEBAR;
-  const params: Record<string, string> = {};
-  for (const [key, value] of query) {
-    if (!key.startsWith(PREFIX)) continue;
-    const name = key.slice(PREFIX.length);
-    if (RESERVED.has(name) || !PARAM_NAME.test(name)) continue;
-    params[name] = value;
+  const launch: Partial<Record<LaunchFormField, string>> = {};
+  for (const field of LAUNCH_FORM_FIELDS) {
+    const value = query.get(`${PREFIX}${field}`);
+    if (value !== null) launch[field] = value;
   }
-  return {
-    panel,
-    template: query.get(`${PREFIX}template`),
-    params,
-    search: query.get(`${PREFIX}search`),
-  };
+  return { panel, launch, search: query.get(`${PREFIX}search`) };
 }
 
-/** 書き出す `sb.*` の並び。params を名前順にするのは、同じ状態が常に同じ
- * 文字列になるようにするため (URL の異同で比較する箇所があるのと、貼られた
- * URL が入力順に依存してばらつくと差分が読めない)。 */
+/** 書き出す `sb.*` の並び。欄を `LAUNCH_FORM_FIELDS` の順にするのは、同じ
+ * 状態が常に同じ文字列になるようにするため (URL の異同で比較する箇所がある
+ * のと、貼られた URL が入力順に依存してばらつくと差分が読めない)。 */
 function sidebarEntries(state: SidebarUrlState): [string, string][] {
   if (!state.panel) return [];
   const entries: [string, string][] = [[`${PREFIX}panel`, TOKEN_BY_PANEL[state.panel]]];
-  if (state.template !== null) entries.push([`${PREFIX}template`, state.template]);
   if (state.search !== null) entries.push([`${PREFIX}search`, state.search]);
-  for (const name of Object.keys(state.params).sort()) {
-    entries.push([`${PREFIX}${name}`, state.params[name] ?? ""]);
+  for (const field of LAUNCH_FORM_FIELDS) {
+    const value = state.launch[field];
+    if (value !== undefined) entries.push([`${PREFIX}${field}`, value]);
   }
   return entries;
 }
@@ -126,10 +125,8 @@ export function withSidebarState(url: string, state: SidebarUrlState): string {
  * seed effect が張り直され、入力中の値が初期値に戻ってしまう。 */
 export function sameSidebarState(a: SidebarUrlState, b: SidebarUrlState): boolean {
   if (a === b) return true;
-  if (a.panel !== b.panel || a.template !== b.template || a.search !== b.search) return false;
-  const names = Object.keys(a.params);
-  if (names.length !== Object.keys(b.params).length) return false;
-  return names.every((name) => a.params[name] === b.params[name]);
+  if (a.panel !== b.panel || a.search !== b.search) return false;
+  return LAUNCH_FORM_FIELDS.every((field) => a.launch[field] === b.launch[field]);
 }
 
 /** パネルのトグル: 開いていれば閉じ、そうでなければそれを開く。開くときは
@@ -141,7 +138,7 @@ export function toggleSidebarPanel(
   kind: SidebarPanelKind,
 ): SidebarUrlState {
   if (state.panel === kind) return CLOSED_SIDEBAR;
-  return { panel: kind, template: null, params: {}, search: null };
+  return { panel: kind, launch: {}, search: null };
 }
 
 /** SESSIONS のソート順。localStorage に永続する。URL には載せない — 「今どう並べて見て

@@ -64,10 +64,22 @@ function TimelineOf() {
 
 async function openWith(
   lines: readonly string[],
-  options: { origin?: ForkOrigin; position?: string; forkAvailable?: boolean } = {},
+  options: {
+    origin?: ForkOrigin;
+    position?: string;
+    launchAvailable?: boolean;
+    /** The session's own peers row, for what a fork reads off it. */
+    cwd?: string;
+  } = {},
 ): Promise<HTMLElement> {
   const store = timelineStore(options.position === undefined ? {} : { position: options.position });
-  if (options.forkAvailable) store.dispatch({ type: "fork/availability", available: true });
+  if (options.launchAvailable) store.dispatch({ type: "launch/availability", available: true });
+  if (options.cwd !== undefined) {
+    store.dispatch({
+      type: "peers/loaded",
+      peers: [{ sid: SID, repo: "app", ws: "main", cwd: options.cwd }],
+    });
+  }
   const ws = new FakeTranscriptWs(store);
   ws.origin = options.origin ?? null;
   const root = await mounted.mount(store, ws.handle, h(TimelineOf, null));
@@ -226,7 +238,7 @@ describe("Timeline renders each kind of row", () => {
         jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
         jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) })),
       ],
-      { position: uuidOf("a", 1), forkAvailable: true },
+      { position: uuidOf("a", 1), launchAvailable: true },
     );
     const menu = root.querySelector(".tl-msg-menu-toggle");
     await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
@@ -235,5 +247,44 @@ describe("Timeline renders each kind of row", () => {
     expect(text).not.toContain("launcher) が設定されていません");
     expect(text).toContain("fork");
     expect(text).toContain("この項目以降を dump");
+  });
+
+  // The link carries everything the form opens with (DR-0018 §3.9's fork
+  // prefill), so it opens the same fork when pasted or reopened later.
+  test("ここから fork opens the form as a fork of this session at the selected record", async () => {
+    const navigated: string[] = [];
+    restores.push(stubGlobal("navigation", { navigate: (url: string) => navigated.push(url) }));
+    const root = await openWith(
+      [
+        jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
+        jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) })),
+      ],
+      { position: uuidOf("a", 1), launchAvailable: true, cwd: "/repos/app/main" },
+    );
+    const menu = root.querySelector(".tl-msg-menu-toggle");
+    await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
+    const keep = [...root.querySelectorAll(".tl-float-action")].find((b) =>
+      b.textContent?.includes("まで残して fork"),
+    );
+    await act(() => instanceOf(keep, HTMLElement, "fork button").click());
+    const url = new URL(defined(navigated.at(-1), "navigation"), "http://x");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      "sb.panel": "new",
+      "sb.type": "fork",
+      "sb.resume_session_id": SID,
+      "sb.resume_at": uuidOf("a", 1),
+      "sb.cwd": "/repos/app/main",
+    });
+  });
+
+  test("without launch_available the menu offers no fork", async () => {
+    const root = await openWith(
+      [jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) }))],
+      { position: uuidOf("a", 1) },
+    );
+    const menu = root.querySelector(".tl-msg-menu-toggle");
+    await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
+    expect(root.textContent).toContain("launcher) が設定されていません");
+    expect(root.querySelector(".tl-float-fork")).toBeNull();
   });
 });

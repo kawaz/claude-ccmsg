@@ -82,7 +82,7 @@ export interface BubbleActions {
   /** 現在の選択位置 (URL の position、無選択なら "head")。 */
   position: string;
   forkAction: ForkActionState;
-  forkAvailable: boolean;
+  launchAvailable: boolean;
   onFork: (resumeAt: string) => void;
   /** この項目を選択位置にする (選択済みなら呼ばない — toggle なので外れる)。 */
   onSelect: (uuid: string) => void;
@@ -96,7 +96,7 @@ function BubbleActionsMenu({ actions }: { actions: BubbleActions }) {
     <div class="tl-msg-menu" onClick={(e) => e.stopPropagation()}>
       <ForkAction
         state={actions.forkAction}
-        available={actions.forkAvailable}
+        available={actions.launchAvailable}
         onFork={actions.onFork}
       />
       <DumpFileAction sid={actions.sid} position={actions.position} />

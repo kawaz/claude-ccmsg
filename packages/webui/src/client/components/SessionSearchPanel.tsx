@@ -70,7 +70,9 @@ function SearchResultRow({
   active: boolean;
   words: SearchWord[];
   onSelect: () => void;
-  onResume: () => void;
+  /** Absent when the daemon cannot launch (`launch_available`), and the row
+   * then offers no resume. */
+  onResume: (() => void) | undefined;
   onTogglePin: () => void;
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
@@ -116,23 +118,25 @@ function SearchResultRow({
           {/* Sits inside the whole-block click target, so its own click has to
            * stop there — opening the launcher and navigating to the Timeline
            * are two different answers to "what did the user ask for". */}
-          <button
-            type="button"
-            class="session-search-hit-resume"
-            title="このセッションを resume で再開"
-            onClick={(e) => {
-              e.stopPropagation();
-              onResume();
-            }}
-            onKeyDown={(e) => {
-              // The block's own Enter/Space handler would otherwise also fire
-              // from this button's bubbling keydown and navigate away; the
-              // button's native activation still produces the click above.
-              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-            }}
-          >
-            resume
-          </button>
+          {onResume === undefined ? null : (
+            <button
+              type="button"
+              class="session-search-hit-resume"
+              title="このセッションを resume で再開"
+              onClick={(e) => {
+                e.stopPropagation();
+                onResume();
+              }}
+              onKeyDown={(e) => {
+                // The block's own Enter/Space handler would otherwise also fire
+                // from this button's bubbling keydown and navigate away; the
+                // button's native activation still produces the click above.
+                if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+              }}
+            >
+              resume
+            </button>
+          )}
         </div>
         {/* A session never renamed has no title (protocol: `null` rather than a
          * guessed fallback), and nothing is shown in its place. */}
@@ -192,6 +196,7 @@ export function SessionSearchPanel({
 }) {
   const { store, ws } = useApp();
   const currentSid = useStoreState(store, selectedSid);
+  const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   const pinnedSessions = useStoreState(store, selectPinnedSessions);
   const agentConfigDirs = useStoreState(store, agentConfigDirsOf, sameJson);
   const [form, setForm] = useState<SessionSearchForm>(() =>
@@ -276,20 +281,19 @@ export function SessionSearchPanel({
     pushNavigation(timelineHref(hit.sid));
   }
 
-  /** Open the launcher on this session rather than viewing it: the form lands
-   * on the resume recipe with the session and its cwd filled in. A hit with no
-   * cwd still opens the form — the cwd picker starts empty and the run button
-   * stays disabled until one is picked, which is the same state a plain open
-   * has. The title travels too: `claude --resume` does not restore one, so a
-   * relaunch that did not carry it would come back under a derived name and
-   * lose the name the row is showing right here. */
+  /** Open the launch form on this session rather than viewing it: type
+   * `resume` with the session, its cwd, the model / effort the end of its
+   * transcript ran as, and its title as the name — `claude --resume` does not
+   * restore a title, so a resume that did not carry it would come back under a
+   * derived name. A hit with no cwd still opens the form with the cwd picker
+   * empty. */
   function resumeResult(hit: SessionSearchHit): void {
     pushNavigation(
       `${location.pathname}${location.search}`,
       prefillSidebarState({
         kind: "resume",
-        cwd: hit.cwd ?? "",
         sessionId: hit.sid,
+        ...(hit.cwd ? { cwd: hit.cwd } : {}),
         ...(hit.model ? { model: hit.model } : {}),
         ...(hit.effort ? { effort: hit.effort } : {}),
         ...(hit.title ? { title: hit.title } : {}),
@@ -407,7 +411,7 @@ export function SessionSearchPanel({
                   active={hit.sid === currentSid}
                   words={resultWords}
                   onSelect={() => openResult(hit)}
-                  onResume={() => resumeResult(hit)}
+                  onResume={launchAvailable ? () => resumeResult(hit) : undefined}
                   onTogglePin={() => {
                     if (pin) store.dispatch({ type: "pinned/toggled", pin });
                   }}

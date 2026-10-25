@@ -82,13 +82,11 @@ function SearchToggleButton({ open, onToggle }: { open: boolean; onToggle: () =>
   );
 }
 
-/** DR-0018 §2.1 "+ 新規" affordance — same chromeless toggle-button family as
+/** DR-0018 §3.9 "+ 新規" affordance — same chromeless toggle-button family as
  * SearchToggleButton (see its sibling doc comment on Sidebar for why this is
- * a panel toggle, not a `state.view`). Always rendered regardless of whether
- * session_launcher is configured (DR-0018 §2.1's "launcher 未設定時" branch
- * (b) — SessionCreator itself probes on open and shows setup guidance
- * instead of the form, rather than this button disappearing/needing its own
- * probe just to decide whether to render at all). */
+ * a panel toggle, not a `state.view`). Rendered only while the daemon's hello
+ * says `launch_available`: without a session_launcher the form could only
+ * answer "未設定". */
 function CreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <button
@@ -109,6 +107,7 @@ function sidebarSlice(state: AppState) {
     peerSortKey: state.peerSortKey,
     sidebar: state.sidebar,
     sidebarOpen: state.sidebarOpen,
+    launchAvailable: state.launchAvailable,
     currentSid: selectedSid(state),
   };
 }
@@ -215,10 +214,14 @@ export function Sidebar() {
           <section id="sessions-panel">
             <h2>
               Sessions{" "}
-              <CreatorToggleButton
-                open={panel === "session-creator"}
-                onToggle={() => togglePanel("session-creator")}
-              />{" "}
+              {slice.launchAvailable ? (
+                <>
+                  <CreatorToggleButton
+                    open={panel === "session-creator"}
+                    onToggle={() => togglePanel("session-creator")}
+                  />{" "}
+                </>
+              ) : null}
               <SearchToggleButton
                 open={panel === "session-search"}
                 onToggle={() => togglePanel("session-search")}
@@ -267,11 +270,7 @@ export function Sidebar() {
             />
             <aside id="sidebar-form" ref={formRef}>
               {panel === "session-creator" ? (
-                <SessionCreator
-                  onClose={closePanel}
-                  template={slice.sidebar.template}
-                  params={slice.sidebar.params}
-                />
+                <SessionCreator onClose={closePanel} seed={slice.sidebar.launch} />
               ) : (
                 <SessionSearchPanel onClose={closePanel} query={slice.sidebar.search} />
               )}

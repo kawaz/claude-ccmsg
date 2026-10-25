@@ -609,10 +609,10 @@ export function createWsClient(
           type: "sandbox/availability",
           available: hello.sandbox_available === true,
         });
-        // 起動の capability も同じ扱い。daemon に launcher が無ければ fork の
+        // 起動の capability も同じ扱い。daemon に launcher が無ければ起動の
         // 導線は押した先で行き止まりになるので、そこでは出さない。
         dispatch({
-          type: "fork/availability",
+          type: "launch/availability",
           available: hello.launch_available === true,
         });
       }

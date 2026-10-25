@@ -48,7 +48,7 @@ describe("useStoreState mounted", () => {
     const afterMount = renders.count;
 
     await act(() => {
-      store.dispatch({ type: "fork/availability", available: true });
+      store.dispatch({ type: "launch/availability", available: true });
       store.dispatch({ type: "llm-requests/loaded", requests: [] });
       store.dispatch({ type: "peers/loaded", peers: [] });
     });
@@ -80,7 +80,7 @@ describe("useStoreState mounted", () => {
     const root = await mount(h(Parent, { tick: 0 }));
     const afterMount = renders.count;
 
-    await act(() => store.dispatch({ type: "fork/availability", available: true }));
+    await act(() => store.dispatch({ type: "launch/availability", available: true }));
     expect(renders.count).toBe(afterMount);
 
     // 親の再描画で selector が作り直されても、等しい slice は同じ参照のまま。

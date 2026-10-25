@@ -34,7 +34,7 @@ describe("selectionReader", () => {
     const store = createStore(initialState());
     const read = selectionReader(store, headerSlice, shallowEqual, noCommit);
     const first = read();
-    store.dispatch({ type: "fork/availability", available: true });
+    store.dispatch({ type: "launch/availability", available: true });
     store.dispatch({ type: "llm-requests/loaded", requests: [] });
     expect(read()).toBe(first);
   });
@@ -128,7 +128,7 @@ describe("pausableStore", () => {
     });
     store.pause();
     store.dispatch({ type: "conn/status", status: "connected" });
-    store.dispatch({ type: "fork/availability", available: true });
+    store.dispatch({ type: "launch/availability", available: true });
     expect(notified).toBe(0);
     // 止めている間も state は進む。
     expect(store.getState()).toBe(base.getState());

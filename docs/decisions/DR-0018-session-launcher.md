@@ -202,7 +202,7 @@ session role (エージェント) からの `session_launch` を受ける。
 
 ### 3.9 webui
 
-- サイドバーの SESSIONS 見出しの右に「+ 新規」ボタン (`launch_available` の時)。押すと view `session-creator` に切り替わる
+- サイドバーの SESSIONS 見出しの右に「+ 新規」ボタン。押すと view `session-creator` に切り替わる。「+ 新規」、Timeline の「ここから fork」、Session Search の「resume」は `launch_available` の時だけ出す
 - フォーム (`SessionCreator`):
   - type の選択 (`new` / `continue` / `resume` / `fork`)。type に無い入力欄は出さない
   - cwd: `CwdTree` (`dir_tree`) で選ぶ。検索フィルタ欄はパス名の部分一致
@@ -211,7 +211,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - 送る前に `LaunchInputSchema` で読み、読めなければ欄ごとの理由を出して送らない
 - prefill:
   - Session Search の結果の「resume」: type `resume`、`resume_session_id` = その id、cwd、model / effort は transcript の末尾から、name は既存の title
-  - Timeline の「ここから fork」: type `fork`、`resume_session_id` = 見ているセッション、`resume_at` = 選んだ record の uuid、cwd / model / effort は見ているセッションのもの
+  - Timeline の「ここから fork」: type `fork`、`resume_session_id` = 見ているセッション、`resume_at` = 選んだ record の uuid、cwd / model / effort は見ているセッションのもの、name は元の title
 - 結果パネル: `session_id` (`new` / `fork` で exit 0 の時だけある。セッションの view へのリンクで、hello が来るまでは開いても空)、`exit_code`、`stdout`、`stderr` (退避の文はそのまま出す)
 - フォームの値の URL 同期 (`sb.*`) は上の欄に揃える
 

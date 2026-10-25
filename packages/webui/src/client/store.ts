@@ -285,12 +285,12 @@ export interface AppState {
    * 「HTML として開く」/「生ダウンロード」はこの時のみ出す。未設定環境 (=
    * 前段に sandbox ドメインが無い) では押せば必ず失敗するので導線ごと隠す。 */
   sandboxAvailable: boolean;
-  /** hello response の `launch_available`。daemon に session_launcher が設定
-   * されている時だけ true で、Timeline の「ここから fork」導線はこの時のみ
-   * 出す (fork は launcher の起動そのものなので、未設定 daemon では
-   * 押した先の起動フォームが「未設定」しか返せない — sandboxAvailable と
-   * 同じ姿勢)。 */
-  forkAvailable: boolean;
+  /** hello response の `launch_available` (DR-0018 §3.4)。daemon に
+   * session_launcher が設定されている時だけ true で、起動の導線 (サイドバー
+   * の「+ 新規」、Timeline の「ここから fork」、Session Search の「resume」)
+   * はこの時のみ出す。未設定の daemon では、押した先の起動フォームが「未設定」
+   * しか返せない — sandboxAvailable と同じ姿勢。 */
+  launchAvailable: boolean;
   /** 開いているフォームパネル (新規セッション / セッション検索) と、その
    * フォームに渡された初期値。2 つは排他 (sidebar-url.ts)。
    *
@@ -423,7 +423,7 @@ export function initialState(): AppState {
     llmKeepalivePauseAvailable: false,
     llmStatus: null,
     sandboxAvailable: false,
-    forkAvailable: false,
+    launchAvailable: false,
     sidebar: CLOSED_SIDEBAR,
     peerSortKey: initialPeerSortKey(),
     usageTab: "quota",
@@ -492,7 +492,7 @@ export type Action =
   // being reported has stopped being configured.
   | { type: "llm-status/loaded"; report: LlmStatusReport }
   | { type: "sandbox/availability"; available: boolean }
-  | { type: "fork/availability"; available: boolean }
+  | { type: "launch/availability"; available: boolean }
   | { type: "peers/sort-key"; key: PeerSortKey }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   // path と `sb.*` は 1 つの URL の別々の名前空間で、遷移のたびに両方が
@@ -1084,8 +1084,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, llmKeepalivePauseAvailable: action.available };
     case "sandbox/availability":
       return { ...state, sandboxAvailable: action.available };
-    case "fork/availability":
-      return { ...state, forkAvailable: action.available };
+    case "launch/availability":
+      return { ...state, launchAvailable: action.available };
     case "peers/sort-key":
       return { ...state, peerSortKey: action.key };
     // Merged rather than replaced: a probe that failed for one credential

@@ -9,7 +9,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 |---|---|---|
 | **path** | メインペインの中身 (どこを見ているか) | `/r/<room>`、`/s/<sid>/<tab>`、`/usage/…` |
 | **ページ固有 query** | その path が持つ引数 | `?path=` `?lines=` `?from=` `?days=` |
-| **`sb.` 付き query** | サイドバー由来のフォームパネル | `?sb.panel=` `?sb.template=` `?sb.<PARAM>=` `?sb.search=` |
+| **`sb.` 付き query** | サイドバー由来のフォームパネル | `?sb.panel=` `?sb.<field>=` `?sb.search=` |
 
 **hash は使わない** — Timeline のレコードアンカー (`#msg-…`) が既に使っており、アプリの状態表現に重ねると衝突する。**JSON 値も使わない** — 値は素の文字列で、複数行の値も URL エンコード (`%0A`) で足りる。
 
@@ -51,25 +51,23 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | キー | 値 | 意味 |
 |---|---|---|
 | `sb.panel` | `new` / `search` | どのパネルが開いているか (2 つは排他) |
-| `sb.template` | テンプレ名 | ランチャーのテンプレを名指しで固定 |
-| `sb.<PARAM>` | 任意の文字列 | ランチャー params の初期値。名前は**大文字** |
+| `sb.<field>` | 任意の文字列 | 新規セッションのフォームの欄の初期値。名前は起動の入力 (DR-0018 §3.2) の field 名: `type` / `resume_session_id` / `resume_at` / `cwd` / `model` / `effort` / `name` / `prompt` |
 | `sb.search` | 検索語 | Session Search の検索語 |
 
 規則:
 
 - **`sb.panel` が無ければ他の `sb.*` は一切見ない**。閉じたパネルの値だけがURL に残る状態を作らない。未知の `sb.panel` 値も「閉じている」扱い。
-- **予約キーは小文字** (`panel` / `template` / `search`)、**params は大文字**。
-  この形の違いだけで 2 つの名前空間が衝突なく同居する。
-- **`sb.template` を省くと、載っている params から recipe を選ぶ**:
-  `RESUME_AT` があれば fork 用、`SESSION_ID` だけなら resume 用、どちらも無ければ通常起動用。アプリ内のボタンはどれも `sb.template` を書かない — config が recipe を何と呼んでいるかを呼び出し元は知らないため。名指しはブックマークや手打ちのためのもので、存在しない名前は無視される。
-- **テンプレが宣言していない `sb.<PARAM>` は採用されない**。見えない入力が起動内容を決めない。
+- **`sb.<field>` は上の 8 つの名前だけを読む**。それ以外の名前は見えない入力として紛れ込まないよう捨てる。
+- **`sb.type` が無い・4 つの type のどれでもなければ `new` で開く**。`sb.model` / `sb.effort` が選択肢に無い値なら「指定しない」で開く (select がその値を出せないため)。他の欄は値をそのまま入れ、読めるかどうかは送る時にスキーマが判定する。
+- **選んだ type が取らない欄は、値があっても出さず、送らない**。type を切り替えて戻れば値は残っている。
+- **アプリ内の導線は知っている値を全部リンクに載せる** (Session Search の「resume」、Timeline の「ここから fork」)。リンクだけで同じフォームが開く — 貼っても、元のセッションが切れた後に開き直しても。
 - **path 遷移では `sb.*` が引き継がれる**。検索結果を選んで Timeline へ移ってもパネルは開いたまま (DR-0021)。閉じる側は明示的に指定する。
 - **パネルの開閉自体が遷移** (push)。戻るで閉じられる。
 
 例:
 
 ```
-/s/<sid>/timeline/head?sb.panel=new&sb.SESSION_ID=<sid>&sb.RESUME_AT=<uuid>
+/s/<sid>/timeline/head?sb.panel=new&sb.type=fork&sb.resume_session_id=<sid>&sb.resume_at=<uuid>&sb.cwd=<dir>
   Timeline を見ながら、そのセッションのその地点から fork するフォームを開く
 
 /r/<room>?sb.panel=search&sb.search=deploy
