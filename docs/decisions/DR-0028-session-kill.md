@@ -110,12 +110,12 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 1. user role でなければ `bad_request`。launcher が無ければ `launcher_not_configured`、daemon が終わりかけているか起動が `launch_max_concurrency` 個走っていれば `launch_busy`
 2. その sid の登録 (peers) の config dir が、起動コマンドが claude を起こす config dir (下記) と同じでなければ `restart_unavailable`
 3. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、ps で claude のプロセスであることを確かめる。通らなければ `not_found`
-4. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 3 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable`
+4. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 3 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable` (未検証: EnterWorktree で cwd が変わったセッションで、record の cwd から resume が transcript を見つけられるか)
    - `resume`: その sid
    - `model` / `effort`: Status タブの CTX と同じ値 (hooks module の facts の model / effort を、transcript の末尾の main context の assistant 行の model / effort に重ねたもの) を、起動の入力の選択肢に写す (`claude-fable-5[1m]` → `fable`、Session Search の resume の prefill と同じ写し方)。写せないものと値の無いものは入れない (起動コマンドが決める)
    - `name`: 3 で読んだ record の `name`。無ければ入れない
    - `prompt`: 下の文面
-5. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
+5. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ (未検証: turn の最中など、止まるまでに 3 秒を超える claude で `restart_timeout` になるか)。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
 6. 消滅を観測したら `session_kill` と同じくその sid の登録を忘れて peers を配る (resume したセッションは hello か agents の poll で戻る)
 7. DR-0018 §3.5 の手順 4〜11 で起動する (依頼者は `user`。daemon.log にはその手順の `session_launch: …` の行も残る)
 8. daemon.log に 1 行: `session_restart: session_id=<sid> pid=<pid> terminated=<true|false> [exit_code=<N>] [error=<code>]`
@@ -125,7 +125,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 組み込みの起動コマンドは direnv を通さず、面 (`CLAUDE_CONFIG_DIR`) を切り替えない (DR-0018 §3.1)。起こされる claude の config dir は、起動コマンドが継ぐ環境 (daemon の環境に `clean_env` / `keep_env` を当てたもの、DR-0018 §3.5 の 6) の `CLAUDE_CONFIG_DIR`、無ければ `~/.claude` で、daemon はこれを realpath にしてセッションの config dir と比べる。違う config dir のセッションを resume すると、起こされた claude はその transcript を持たない config dir で起動する。
 
 - hello の response に `launch_config_dir` (上の realpath) を `launch_available` と一緒に返す。webui は agents の行の `config_dir` がこれと同じセッションにだけ restart ボタンを出す
-- 自前の `launch_command` が config dir を切り替える環境では、daemon はどの config dir で起こされるかを知らない。その時も daemon が比べるのは上の値だけで、別の面のセッションには restart を出さない
+- 自前の `launch_command` で面を切り替える環境でも、ボタンの条件は daemon の config dir (上の値) との一致のまま。daemon は起動コマンドがどの config dir で claude を起こすかを知らないので、別の面のセッションには restart を出さない
 
 ### resume の prompt
 
@@ -153,4 +153,5 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 - 旧プロセスを載せていた端末 (hyoui 等) はプロセスと一緒に終わり、resume したセッションは起動コマンドが起こす新しい端末に載る
 - 起動時に付いていた起動の引数のうち、起動の入力に無いもの (`--settings`、`--plugin-dir`、permission mode 等) は起動コマンドの既定になる。model の文脈の接尾辞 (`[1m]` 等) は起動の入力の選択肢に無いので落ちる
+- model の接尾辞の付与は起動コマンドの責務 ([launch-command](../design/launch-command.md) の「加工」)。組み込みの起動コマンドは付けない
 - `restart_timeout` の後もプロセスはシグナルを受けて終わることがある。終わればそのセッションの agents の行が消えて restart は出なくなるので、resume は Session Search の resume からする

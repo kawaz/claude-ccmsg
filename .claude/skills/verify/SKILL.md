@@ -20,6 +20,8 @@ CCMSG_HTTP_BIND=127.0.0.1:18642 \
 
 Also point the daemon's `HOME` at a directory under the temp base (`HOME=$(mktemp -d) …`). Session Search looks for `~/.claude*` under `$HOME`, so with the real `HOME` the isolated daemon reads the real config dirs' transcripts.
 
+When the verify has the daemon start a real `claude` (the launch command, a restart), an isolated `HOME` breaks that claude's authentication (`apiKeyHelper` fails). If the isolated `HOME` is only there to keep Session Search off the real config dirs, first check whether narrowing it on the daemon's `CCMSG_CLAUDE_CONFIG_DIRS` side is enough instead of `HOME`. When the two cannot both hold, write in the findings which one the run kept.
+
 2. Open `http://127.0.0.1:18642/` with `playwright-cli` in a fresh named session.
 3. Drive the affected user flow through the browser. For Session Search, verify the form, daemon response, result click, Timeline state, and localStorage-backed pin state.
 4. Capture a focused snapshot or screenshot plus browser-visible state (`aria-pressed`, counters, highlights, and error text).
