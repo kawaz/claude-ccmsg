@@ -1,248 +1,173 @@
-# Runbook: session launcher (webui の「+ 新規」)のセットアップ
+# Runbook: session launcher のセットアップ
 
-- Last Updated: 2026-08-12
+- Last Updated: 2026-10-25
 
 ## 適用ケース
 
-webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタンを押すと「session launcher が未設定です」という案内が出る場合。DR-0018 の機能(webui から新規 Claude Code セッションを起動する) を使うための設定手順。
+ccmsg から Claude Code のセッションを起動できるようにする ([DR-0018](../decisions/DR-0018-session-launcher.md))。起動の口は 2 つある。
+
+- 人が webui から: サイドバーの「+ 新規」、Session Search の結果の「resume」、Timeline の「ここから fork」
+- エージェントが tool `launch` から (使い方は plugin の skill ccmsg)
+
+webui の「+ 新規」を押して「daemon にセッションの起動が設定されていません」と出る時、またはエージェントの `launch` が「ccmsg の daemon が起動を断ったので、起動していない: …」(`launcher_not_configured`) で返る時に、この手順で設定する。
 
 ## 前提
 
-- daemon の設定ファイル (`<configDir>/config.ts` / `config.js` / `config.json`、通常 `~/.config/ccmsg/`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を設定していればそのディレクトリ) を編集できること
-- 設定変更後に daemon を再起動できること (LN-Q4 裁定: config はホットリロードされない、明示的な再起動が必要)
+- daemon の設定ファイルを編集できること。置き場は `<configDir>` (`CCMSG_CONFIG_DIR`、無ければ `$XDG_CONFIG_HOME/ccmsg`、通常 `~/.config/ccmsg/`) の `config.ts` / `config.js` / `config.json` のどれか 1 つ
+- 設定を変えた後に daemon を再起動できること (config は daemon の起動時に 1 度だけ読まれる)
+- 起動コマンド (下記) を自分の環境に合わせて書けること
+
+## 仕組み
+
+daemon は claude の引数を組み立てない。config の `launch_command` に書いた 1 つのコマンド (起動コマンド) を、shell を介さずに起動の依頼ごとに 1 回実行し、標準入力に起動の入力の JSON を 1 つ渡して、終わりを待ってその終了コードと出力を呼び手に返す。どの claude をどの端末に載せるか、cwd を信頼してよいか、任意の field の既定は、起動コマンドが全部持つ。取り決めの正本は [launch-command](../design/launch-command.md)。
 
 ## 手順
 
-1. **設定ファイルに `session_launcher` キーを追加する**
+1. **起動コマンドを置く**
 
-   設定ファイルは 3 形式あり、**優先順は `config.ts` > `config.js` >
-   `config.json`**。複数あれば最優先の 1 つだけが読まれ、残りは無視されて起動ログに 1 行 warn が出る。既存ファイルに他のキーがあればマージする、無ければ新規作成する。
+   [launch-command](../design/launch-command.md) の契約に従うコマンドを書き、実行ビットを付けて置く。下は bash と `jq` の例で、claude を hyoui の detached 端末で起こす。cwd の信頼判定は `~/src` の下だけを通す。trust ダイアログの吸収 (契約の「起動コマンドが持つ責務」) は入れていない。
 
-   YAML は使えない (このリポの daemon 設定は JSON / JS / TS、DR-0018 §3.1 のYAML 表記は設計時のスケッチ)。
+   ```bash
+   #!/usr/bin/env bash
+   # ccmsg の起動コマンドの例 (docs/design/launch-command.md の契約)。
+   # stdin の JSON を読み、claude を hyoui の detached 端末で起こす。
+   set -euo pipefail
 
-   **`<configDir>/config.ts`** — `config.js` と受け付ける形は同一 (ES moduleの default export)。差は default export に型注釈を当てられること。daemon は `import()` (dynamic import) で読み、Bun の ESM loader がビルドなしで型を剥がして評価するので、動かすためだけなら `.js` と同じ書き方で足りる。
+   input=$(cat)
+   get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$input"; }
+   fail() { echo "launch-claude: $*" >&2; exit 2; }
 
-   型を当てるための `<configDir>/ccmsg-config.d.ts` は **daemon が起動するたびに自動生成・上書き**する (手で編集するファイルではない — ヘッダに generatedと書いてある)。中身は daemon が実際に読んでいる `CcmsgConfig` 型への1 行の re-export で、独立生成物ではなく実装への直接参照なので daemon のバージョンと乖離しない。`config.ts` から同じディレクトリの相対パスで`import type` すればよい:
+   # 知らない field は推測で補わずに断る
+   unknown=$(jq -r 'keys - ["type","cwd","session_id","model","effort","name","prompt","resume_session_id","resume_at"] | join(",")' <<<"$input")
+   [[ -z "$unknown" ]] || fail "unknown field: $unknown"
+   need() { local k; for k in "$@"; do [[ -n "$(get "$k")" ]] || fail "missing $k"; done; }
 
-   ```ts
-   import type { CcmsgConfig } from "./ccmsg-config.d.ts";
+   # cwd の信頼判定 (daemon はしない)。ここでは ~/src の下だけを信頼する
+   cwd=$(get cwd)
+   case "$cwd" in
+     "$HOME"/src/*) ;;
+     *) fail "cwd is not trusted: $cwd" ;;
+   esac
 
-   export default {
-     session_launcher: {
-       root_dirs: ["~/.local/share/repos/github.com/kawaz/"],
-       shell: "zsh",
-       timeout_seconds: 10,
-       dir_tree_depth: 2,
-       templates: [
-         {
-           name: "new",
-           command: `
-             name="\${$(bump-semver vcs get repository):t1}@$(date +%Y%m%dT%H%M)"
-             direnv exec "$CWD" hyoui run --detached -- \\
-               claude --model "$MODEL" --effort "$EFFORT" --name "$name" "$PROMPT"
-           `,
-           params: {
-             CWD: "",
-             MODEL: "fable",
-             EFFORT: "low",
-             PROMPT: "ccmsg subscribe起動。pre-clear出力があればロード",
-           },
-         },
-       ],
-     },
-   } satisfies CcmsgConfig;
+   args=()
+   case "$(get type)" in
+     new)
+       need session_id model effort
+       args+=(--session-id "$(get session_id)")
+       ;;
+     continue)
+       args+=(--continue)
+       ;;
+     resume)
+       need resume_session_id
+       args+=(--resume "$(get resume_session_id)")
+       ;;
+     fork)
+       need session_id resume_session_id
+       if [[ -n "$(get resume_at)" ]]; then
+         # --resume-session-at は -p でしか効かないので、切り詰めた fork を先に作る
+         claude -p --resume "$(get resume_session_id)" --fork-session \
+           --session-id "$(get session_id)" --resume-session-at "$(get resume_at)" \
+           --output-format json /exit >/dev/null
+         args+=(--resume "$(get session_id)")
+       else
+         args+=(--resume "$(get resume_session_id)" --fork-session --session-id "$(get session_id)")
+       fi
+       ;;
+     *) fail "unknown type: $(get type)" ;;
+   esac
+   for k in model effort name; do
+     if [[ -n "$(get "$k")" ]]; then args+=("--$k" "$(get "$k")"); fi
+   done
+   if [[ -n "$(get prompt)" ]]; then args+=(-- "$(get prompt)"); fi
+
+   # 対話の claude は detached な端末に載せ、ここはすぐに 0 で終わる
+   hyoui run --detached -- claude "${args[@]}" </dev/null
    ```
 
-   `: CcmsgConfig` ではなく `satisfies CcmsgConfig` を使うと、command の文字列リテラル等の型を保ったまま構造チェックだけがかかる。
-   `CcmsgConfig` は手書き設定がそのまま満たせる **入力側**の型(`params` はこの例のような `{ 名前: 初期値 }` の record。必須は`root_dirs` と `templates`、各テンプレートは `name` / `command` / `params`) — daemon が起動時に検証・正規化した後の内部表現(`ResolvedCcmsgConfig`。`params` が resolved な配列になる等) とは別物なので、`CcmsgConfig` の方を使う。他ファイルへの分割は普通の相対 import でできる (下記は `params` の宣言だけ別ファイルに出す例):
+   - `cwd` は daemon が realpath にした値で届き、起動コマンドの cwd もそのディレクトリになる。信頼判定のパターンも realpath で書く (`/var` と `/private/var` のような symlink の違いで外れないように)
+   - `prompt` は `--` の後ろに置く。`-` で始まる prompt も option として読まれずにそのまま claude に届く
+   - 非 0 で終わるのは対話の claude を起こす前だけにする。起こした後に非 0 で終わると、呼び手に新しいセッションの `session_id` が返らない (契約の「戻り方」)
 
-   ```ts
-   // launcher.ts
-   export const templates = [
-     {
-       name: "new",
-       command: `direnv exec "$CWD" hyoui run --detached -- claude --model "$MODEL" --effort "$EFFORT" "$PROMPT"`,
-       params: { CWD: "", MODEL: "fable", EFFORT: "low", PROMPT: "" },
-     },
-   ];
+   置く前に手元で試せる。`launch_command` と同じ argv を、cwd をそのディレクトリにして、標準入力に JSON を渡して叩く:
+
+   ```bash
+   (cd ~/src/<repo> && printf '%s' '{"type":"continue","cwd":"'"$(pwd -P)"'"}' | ~/bin/launch-claude); echo "exit=$?"
    ```
 
-   ```ts
-   // config.ts
-   import type { CcmsgConfig } from "./ccmsg-config.d.ts";
-   import { templates } from "./launcher.ts";
+2. **設定ファイルに `session_launcher` を書く**
 
-   export default {
-     session_launcher: { root_dirs: ["~/.local/share/repos/github.com/kawaz/"], templates },
-   } satisfies CcmsgConfig;
-   ```
+   キーは次の 6 つだけで、他のキーがあると daemon は起動しない。
 
-   型チェックを手元でも走らせたい場合 (エディタの補完は `.d.ts` があればdaemon 未起動でも効くが、明示的な `tsc --noEmit` にはビルド設定が要る) は`node:*` の型を `@types/node` ではなく `bun-types` (`"types": ["bun"]`) から引く必要がある — このリポの daemon 自体がその構成 (`tsconfig.json`)。
-   型チェックをしないなら `.d.ts` の存在を無視してよく、`config.ts` は`config.js` と同じ書き方のままで動く。
+   | キー | 必須 | 既定 | 意味 |
+   |---|---|---|---|
+   | `launch_command` | 必須 | | 起動コマンドの argv (空でない文字列の配列)。先頭は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前 |
+   | `root_dirs` | 必須 | | webui の cwd ツリーの根 (絶対パスか `~/…`、1 つ以上)。起動の cwd をこの配下に限るものではない |
+   | `dir_tree_depth` | | 2 | cwd ツリーを最初に読む深さ |
+   | `timeout_seconds` | | 10 | 起動コマンドを待つ秒数 (1〜50 の整数)。超えると SIGTERM、500 ms 後に SIGKILL |
+   | `clean_env` | | `[]` | 起動コマンドに渡す環境から落とすキーのパターン (`*` が任意の文字列、大文字小文字を区別、キー名全体と一致) |
+   | `keep_env` | | `[]` | `clean_env` に当たっても残すキーのパターン |
 
-   `default export` は Promise でもよい (`export default fetchConfig()` のように非同期に組み立てる、またはモジュール先頭で `await` する top-level await も可)。
-   daemon は起動時に `import()` (dynamic import) で評価するため、Promise は`await` してから同じ検証にかける。reject した場合は他の壊れ方と同様にdaemon が起動せず、理由がエラーとして出る。関数 (`() => object`) を default export にする形は受け付けない — 非同期構築が要るなら Promise を直接返す。
+   daemon はあるセッションの中の shell から起動されることがあり、そのセッションの変数 (`CLAUDE_CODE_SESSION_ID` 等) を持っている。`clean_env` に `CLAUDE*` を入れて新しいセッションへ流れないようにし、面の分離に要る `CLAUDE_CONFIG_DIR` を `keep_env` で残す。
 
-   **`<configDir>/config.js`** — ES module の default export でオブジェクトを返す (vite / eslint flat config / prettier と同じ形)。`command` が複数行になる場合はテンプレートリテラルでそのまま書けるので、JSON のように改行を`\n` へエスケープする必要がない。こちらを推奨:
-
-   ```js
-   export default {
-     session_launcher: {
-       root_dirs: ["~/.local/share/repos/github.com/kawaz/"],
-       shell: "zsh",
-       timeout_seconds: 10,
-       dir_tree_depth: 2,
-       templates: [
-         {
-           name: "new",
-           // テンプレートリテラルなので改行も引用符もそのまま書ける
-           command: `
-             name="\${$(bump-semver vcs get repository):t1}@$(date +%Y%m%dT%H%M)"
-             direnv exec "$CWD" hyoui run --detached -- \\
-               claude --model "$MODEL" --effort "$EFFORT" --name "$name" "$PROMPT"
-           `,
-           params: {
-             CWD: "",
-             MODEL: "fable",
-             EFFORT: "low",
-             PROMPT: "ccmsg subscribe起動。pre-clear出力があればロード",
-           },
-         },
-       ],
-     },
-   };
-   ```
-
-   注意点 (`config.ts` にも同様に適用される):
-   - `export default` は**プレーンなオブジェクト、または Promise でオブジェクトに解決するもの**であること (`default` が無い / オブジェクトでない /
-     Promise が reject した場合は daemon が起動せず、理由がエラーとして出る)
-   - **top-level `await` は使える** (daemon は起動時に dynamic import で評価するため)。関数 (`() => object`) を default export にする形は受け付けない
-   - シェル変数の `$CWD` / `$MODEL` はテンプレートリテラル内でもそのまま書ける(JS が展開するのは `${...}` の形だけ)。`${` を含むシェル記法 (zsh のmodifier 展開等) を書くときは **`\${` とエスケープ**する。シェルの行継続`\` も JS 側で `\\` と書く必要がある — 展開の衝突を避けたいならテンプレートリテラルをやめて通常の文字列リテラル (`'...'`) でもよい
-   - このファイルは daemon 起動時に 1 回だけ評価される (LN-Q4)。設定形式であってプラグイン機構ではないので、副作用のあるコードは書かない
-
-   **`<configDir>/config.json`** — 従来形式。JSON のみ (コメント・末尾カンマ不可):
+   `config.json` の例:
 
    ```json
    {
      "session_launcher": {
-       "root_dirs": [
-         "~/.local/share/repos/github.com/kawaz/",
-         "~/.local/share/repos/github.com/zunsystem/"
-       ],
-       "shell": "zsh",
+       "launch_command": ["~/bin/launch-claude"],
+       "root_dirs": ["~/src/"],
        "timeout_seconds": 10,
-       "dir_tree_depth": 2,
-       "templates": [
-         {
-           "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" --name \"${$(bump-semver vcs get repository):t1}@$(bump-semver vcs get worktree-name) $(date +%Y%m%dT%H%M)\" \"$PROMPT\"",
-           "params": {
-             "CWD": "",
-             "MODEL": "fable",
-             "EFFORT": "low",
-             "PROMPT": "ccmsg subscribe起動。pre-clear出力があればロード"
-           }
-         }
-       ]
+       "clean_env": ["CLAUDE*", "ANTHROPIC_*"],
+       "keep_env": ["CLAUDE_CONFIG_DIR"]
      }
    }
    ```
 
-   フィールドの意味 (詳細は `docs/decisions/DR-0018-session-launcher.md` §3.1):
-   - `root_dirs`: cwd ピッカー (CwdTree) が表示するルート一覧。`~/` プレフィクスまたは絶対パスのみ。相対パスがあると daemon は起動しない
-   - `shell`: `"bash"` または `"zsh"` のみ (暗黙の `sh -c` はしない、LN-Q2 裁定)。それ以外の値なら daemon は起動しない。
-     上の `command` 例は `${...:t1}` (zsh の modifier 展開) を使うため `"zsh"`
-     必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
-     `"bash"` で良い
-   - `timeout_seconds`: 省略時 10。超過で SIGTERM → 少し待って SIGKILL。正の数でなければ daemon は起動しない
-   - `dir_tree_depth`: cwd ツリーの初期一括ロード深さ。省略時 2。正の数でなければ daemon は起動しない
-   - `templates`: 名前付きの起動レシピ一覧。`templates[0]` が既定のレシピ
-   - `templates[].command`: 実行するコマンド。文字列置換ではなく **変数渡し**
-     なので quote は書き手の責務
-   - `templates[].params`: そのレシピが受け取る変数の宣言 (**変数名 →
-     フォーム初期値**)。宣言した変数だけが command から見える。宣言していない
-     変数は shell に定義すらされない
+   `config.ts` / `config.js` は、同じオブジェクトを ES module の default export にする (Promise でもよい。top-level await も使える。関数は受けない)。複数あれば `config.ts` > `config.js` > `config.json` の順で 1 つだけが読まれ、残りは起動ログに warn が 1 行出る。`config.ts` には daemon が起動のたびに `<configDir>/ccmsg-config.d.ts` を生成するので、型を当てられる:
 
-### params — フォームは宣言そのもの
+   ```ts
+   import type { CcmsgConfig } from "./ccmsg-config.d.ts";
 
-`params` に書いた変数が、そのまま SessionCreator の入力欄になる:
+   export default {
+     session_launcher: {
+       launch_command: ["~/bin/launch-claude"],
+       root_dirs: ["~/src/"],
+       clean_env: ["CLAUDE*", "ANTHROPIC_*"],
+       keep_env: ["CLAUDE_CONFIG_DIR"],
+     },
+   } satisfies CcmsgConfig;
+   ```
 
-| 変数名 | 出る入力欄 |
-|---|---|
-| `CWD` | ディレクトリピッカー (CwdTree)。**全レシピ必須** — 書かなければ先頭に自動追加される |
-| `MODEL` | model ドロップダウン |
-| `EFFORT` | effort ドロップダウン |
-| それ以外 (`SESSION_ID` / `PROMPT` / `BRANCH` など任意の名前) | テキスト入力。**値に改行が含まれていれば** textarea (高さは行数 + 2)、無ければ 1 行の input |
-
-入力欄の並び順は `CWD` / `MODEL` / `EFFORT` (宣言していれば、この順) が先頭、`COMMAND` があれば末尾、残りは **宣言順**。
-
-- 値は **export されていないシェル変数** として渡る — command が起動するプロセス (= claude セッションとその子孫) には引き継がれない
-- 宣言した変数は必ず定義される (未入力なら空文字。`set -u` で落ちない)
-- 変数名はシェル識別子 (`[A-Za-z_][A-Za-z0-9_]*`) のみ。それ以外 (と`__proto__` / `constructor` / `prototype`) があると daemon は起動しない
-- `CWD` の値は `root_dirs` に対して realpath で封じ込め検査される唯一の値
-
-### 複数テンプレート (fork 等の起動形を並べる)
-
-`templates` が 2 件以上なら SessionCreator に template ドロップダウンが出る。
-
-```json
-   {
-     "session_launcher": {
-       "root_dirs": ["~/.local/share/repos/github.com/kawaz/"],
-       "shell": "zsh",
-       "templates": [
-         {
-           "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
-           "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "ccmsg subscribe起動" }
-         },
-         {
-           "name": "fork",
-           "command": "fork_args=(--resume \"$SESSION_ID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
-           "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "", "SESSION_ID": "", "RESUME_AT": "" }
-         }
-       ]
-     }
-   }
-```
-
-- 各テンプレートは `command` と `params` を自分で全部書く (継承は `shell` のデフォルトのみ)
-- エントリが 1 つでも壊れていると (name が空 / 重複 / `command` や `params` が無い / 知らないキーがある) daemon は起動せず、壊れた場所を全部エラーに出す
-- **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
-- **resume テンプレの判定は `SESSION_ID` を宣言し `RESUME_AT` を宣言しないこと**: 分岐先を持たない = そのセッションを続けるしかない、という消去法で選ぶ (fork テンプレも同じ `SESSION_ID` を受け取るため)。宣言している最初のものを Session Search / 前回稼働中の resume 導線が開く
-- 「+ 新規」は **どちらも宣言していない** 最初のテンプレートを開く (どちらもユーザが別の場所で選んだセッションを前提にするので、新規起動ではない)
-- `--resume-session-at` は `claude --help` に出ない非公開オプション。webui のfork 導線は launcher が設定されているかだけで決まる (hello の`fork_available`)
-- fork テンプレが **二段** なのは `--resume-session-at` が print mode 専用で、対話起動では黙って無視されるため (DR-0018 §3.3.1)。1 段目の`claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、その `session_id` を 2 段目が対話で resume する。`RESUME_AT` が空なら`--resume-session-at` を付けない (空文字は 1 段目のエラーになる)
-
-2. **daemon を再起動する**
+3. **daemon を再起動する**
 
    ```bash
    ccmsg daemon restart
    ```
 
-   設定は daemon 起動時に 1 度だけ読まれるので、編集を反映する手段はrestart しかない (`config.ts` は動的 `import()` 経由で読まれ、module cache が同一プロセス内での読み直しを許さない)。接続中の webui /
-   `ccmsg subscribe` は自動再接続で復帰する。
+   期待結果: エラーが出ない。設定が読めない (構文エラー、知らないキー、型の合わない値) と daemon は起動せず、`config: <file>: <場所>: <理由>` の行を daemon.log に書いて終わる。CLI から daemon を起動した時は同じ行が CLI のエラーとして出る。接続中の webui と `ccmsg subscribe` は自動で繋ぎ直す。
 
-   期待結果: 起動ログにエラーが出ない。設定が読めない (構文エラー、知らないキー、型の合わない値、絶対パスでない `root_dirs` 等) と daemon は起動せず、`config: <file>: <場所>: <理由>` の行を daemon.log に残して終了する。
-   CLI から daemon を立ち上げた場合 (`ccmsg daemon restart` 等) は同じ行がCLI のエラーとして出る。
+4. **確かめる**
 
-3. **webui で確認する**
-
-   サイドバー SESSIONS 見出しの「+ 新規」ボタンを押す → cwd 選択ツリー・
-   model/effort ドロップダウン・プロンプト欄が表示されれば設定成功。
-   まだ「未設定」の案内が出る場合は手順4へ。
+   - webui のサイドバーの「+ 新規」を押し、type・cwd ツリー・model / effort・name・prompt の欄が出れば設定は読めている
+   - `type` を `new` にして起動すると、結果パネルに `exit_code`・`stdout`・`stderr` と、exit 0 なら新しいセッションへのリンク (`session_id`) が出る。セッションが hello で daemon に名乗るまでは、リンク先は空のまま
+   - daemon.log に `session_launch: by=user type=new cwd=… session_id=… exit_code=0 …` の行が残る (エージェントの起動なら `by=<依頼したセッションの id>`)
 
 ## 失敗時の切り分け
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
-| 「+ 新規」を押しても未設定の案内のまま | `session_launcher` を書いた設定ファイルが読まれていない (`config.ts` > `config.js` > `config.json` の優先順で、別のファイルが読まれている) | daemon の起動ログの `config: <file>: ... also present and being ignored` の warn 行を確認 |
-| daemon が起動しない (`daemon exited with code 1 while starting`) | `config.ts` / `config.js` / `config.json` が読めない (構文エラー、知らないキー、型の合わない値) | エラーの `config: <file>: <場所>: <理由>` の行が壊れた場所を指す。`root_dirs` は非空の絶対パス配列、各 template は非空の `name` / `command` と `params` を持つ必要がある |
-| cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
-| 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に 宣言した各変数への代入 (`CWD=...; MODEL=...; ...`) を書いた状態で手元で試して構文を確認 |
-| テンプレートで起動した shell / REPL がすぐ終わる、外からの入力が届かない | daemon は端末の無い起動元で、`hyoui run` は呼び出し元の stdin が端末でないとき、それを子の stdin にそのまま渡す (hyoui DR-0042)。shell / REPL は stdin (`/dev/null`) の EOF を読んで終わる | shell / REPL を起動するテンプレートだけ `hyoui run` に `--pty-stdin` を付ける。claude などの TUI はキーを `/dev/tty` (hyoui の PTY) から読むので付けない (付けると pipe で渡した最初の入力が使われない) |
-| 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--detached` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |
+| 「+ 新規」で未設定の案内が出る / `launcher_not_configured` | `session_launcher` を書いたファイルが読まれていない | 起動ログの `also present and being ignored` の warn を見て、優先順 (`config.ts` > `config.js` > `config.json`) で読まれているファイルを確かめる。書いた後に daemon を再起動したか確かめる |
+| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 6 つ以外のキー (別の方式の名残り等) があっても読めない |
+| `launch_command_unavailable` | 起動コマンドを起こせない (見つからない、実行ビットが無い) | `launch_command` の先頭が絶対パスか、daemon の `PATH` にある名前かを確かめる。相対パスは受けない |
+| `invalid_args` | 起動の入力がスキーマに合わない、または `cwd` が存在するディレクトリでない | msg の最初の理由を読む。webui は送る前に欄ごとの理由を出す |
+| `exit_code` が 0 でない | 起動コマンドが断った (信頼できない cwd、読めない入力、fork の一段目の失敗) | `stderr` の最初の行を読む。手順 1 の手元での叩き方で再現する |
+| `exit_code` が 143 か 137 | `timeout_seconds` を超えて SIGTERM / SIGKILL で止められた | 起動コマンドが対話の claude を待っていないか確かめる。claude は detached な端末に載せてすぐ終わる |
+| `stdout` / `stderr` が `output is <N> bytes, file: <path>` | 出力が 4096 bytes 以上で、state dir の `launches/` に退避された | その file を読む。7 日で消える |
+| exit 0 なのにセッションが peers / サイドバーに出ない | 起動コマンドは終わったが、claude が立ち上がらなかった (端末の問題、trust ダイアログで止まっている等) | 起動コマンドが載せた端末を見る。exit 0 は到達を意味しない |
 
 ## 関連
 
-- `docs/decisions/DR-0018-session-launcher.md` — 本機能の設計正本 (LN-Q1..4 裁定含む)
+- [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力、op、daemon の手順、tool `launch`、webui
+- [launch-command](../design/launch-command.md) — 起動コマンドの契約
+- [fork-rescue](./fork-rescue.md) — fork でコンテキストの尽きたセッションを救う

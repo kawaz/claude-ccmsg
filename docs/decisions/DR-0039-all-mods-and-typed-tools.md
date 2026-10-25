@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)。§3 の tool `launch` は未実装で、状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
+- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)。§3 の tool `launch` の状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
 - Date: 2026-10-15
 
 ## Context

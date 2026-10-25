@@ -1,6 +1,6 @@
 # DR-0018: Session Launcher (エージェントの tool `launch` と webui のフォームから、config で固定した 1 つの起動コマンドでセッションを起動する)
 
-Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ⬜ 未実装 (cwd ツリーの `dir_tree` と webui の `CwdTree` は実装済み。§3 の入力・op・起動コマンドの契約・tool `launch`・フォームの 4 type は未実装)
+Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームの 4 type と prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)
 Date: 2026-07-15
 Sponsor: kawaz
 
@@ -255,6 +255,7 @@ session role (エージェント) からの `session_launch` を受ける。
 ## 8. 関連
 
 - [launch-command](../design/launch-command.md) — 起動コマンドの契約 (stdin の JSON、claude の引数への写し方、終了コード)
+- [runbook session-launcher-setup](../runbooks/session-launcher-setup.md) / [runbook fork-rescue](../runbooks/fork-rescue.md) — 設定の手順と、fork による救出の手順
 - [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id`・`--resume-session-at` の併用の実測
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) — typed tool (`send` / `say` / `peers` と `launch`) の登録の形
 - [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と config をスキーマで読む

@@ -212,12 +212,13 @@
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
-| 起動フォーム (テンプレ + params) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 | 移す | DR-0018 Accepted |
-| テンプレ設定の取得 | `op:session_launcher_config` | DR-0018 | 移す | |
+| 起動フォーム (4 つの type: `new` / `continue` / `resume` / `fork`、欄と必須は `LaunchInputSchema` から) | `SessionCreator.tsx` + `session-creator.ts` + `op:session_launch` | DR-0018 §3.9 | 移す | DR-0018 Accepted |
+| cwd ツリーの根 (`root_dirs`) の取得 | `op:session_launcher_config` | DR-0018 §3.4 | 移す | |
 | cwd ピッカー | `CwdTree.tsx` + `cwd-tree.ts` | DR-0018 | 移す | |
 | 起動結果パネル | `LaunchResultPanel` (`SessionCreator` 内) | DR-0018 | 移す | |
 | フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
-| `session-creator` の 4 export | `RESUME_AT_PARAM` / `TITLE_PARAM` / `cwdWithinRoots` / `launchDefaultsFromTranscript` | DR-0018 | 保留 | 参照 0 だが `cwdWithinRoots` は cwd の許可範囲判定、`launchDefaultsFromTranscript` は「このセッションから再開」の種。**機能として意図されて未接続の可能性が高い** |
+| Session Search の「resume」・Timeline の「ここから fork」の prefill | `forkPrefill` / `prefillSidebarState` (`session-creator.ts`) | DR-0018 §3.9 | 移す | |
+| 「+ 新規」・fork・resume の導線を出す条件 | hello の `launch_available` | DR-0018 §3.4 | 移す | |
 | 起動先 instance の選択 | — | DR-0032 §2.3 | 保留 | **新規要件**。クラスタ化で「どの instance で起動するか」が要る |
 
 ---

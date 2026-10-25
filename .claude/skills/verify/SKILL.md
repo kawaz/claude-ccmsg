@@ -18,6 +18,8 @@ CCMSG_HTTP_BIND=127.0.0.1:18642 \
   bun packages/daemon/src/index.ts --foreground
 ```
 
+Also point the daemon's `HOME` at a directory under the temp base (`HOME=$(mktemp -d) …`). Session Search looks for `~/.claude*` under `$HOME`, so with the real `HOME` the isolated daemon reads the real config dirs' transcripts.
+
 2. Open `http://127.0.0.1:18642/` with `playwright-cli` in a fresh named session.
 3. Drive the affected user flow through the browser. For Session Search, verify the form, daemon response, result click, Timeline state, and localStorage-backed pin state.
 4. Capture a focused snapshot or screenshot plus browser-visible state (`aria-pressed`, counters, highlights, and error text).
