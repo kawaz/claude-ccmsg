@@ -74,8 +74,11 @@ function row(sessionId: string, cwd: string, extra: Partial<Row> = {}): Row {
 
 /** Make `dir`'s `sessions/` hold exactly `rows`, each as Claude Code writes
  * it, and nothing else. A row without a pid is the process `pidOf` gives its
- * session. `"FAIL"` leaves a record that does not read, which keeps the dir
- * from being read whole. */
+ * session. `"FAIL"` adds a record that does not read beside the records
+ * already there, which keeps the dir from being read whole. It does not
+ * remove them: a round that listed the dir before the bad record was written
+ * and read a record after it was removed would read the dir whole without
+ * that session, and end it. */
 function writeRows(
   dir: string,
   rows: readonly Row[] | "FAIL",
@@ -98,6 +101,7 @@ function writeRows(
     fs.writeFileSync(path.join(sessionsDir, `${name}.tmp`), text);
     fs.renameSync(path.join(sessionsDir, `${name}.tmp`), path.join(sessionsDir, name));
   }
+  if (rows === "FAIL") return;
   for (const name of fs.readdirSync(sessionsDir)) {
     if (!files.has(name)) fs.rmSync(path.join(sessionsDir, name));
   }
