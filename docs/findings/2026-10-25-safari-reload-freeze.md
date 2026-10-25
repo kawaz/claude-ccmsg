@@ -13,6 +13,7 @@
 - サーバ側で QUIC の packet が IP fragment に分けられていることは事実 (この Mac の Tailscale の interface では、IPv4 の UDP は DF を求めても EMSGSIZE にならず fragment になる。前段の Caddy の HTTP/3 の応答も、この Mac の中の往復では fragment になっていた)
 - iPhone との実際の通信 (2 回のリロード、どちらも最後は開いた) を記録すると、前段から iPhone への大きい QUIC の packet はほぼ全部が fragment になっていた。転送の終わりには、fragment になった packet を再送の間隔を倍々に延ばしながら送り続け、iPhone からは 20 秒前後何も返らない区間があった (下の「iPhone との実際の経路の観測」)。fragment になった packet が iPhone に届いていない形に見えるが、どこで落ちているかは観測していない
 - この記録では固まりは数秒で解けたので、「永遠に待つ」状態そのものは記録できていない
+- Mac 側で取れる観測は出尽くした。この Mac の tailscaled は fragment を落とさずに WireGuard で送り出しているので、落ち所は Mac の外 (経路か iPhone 側)
 - 接続全体の flow control の枠が尽きる (`DATA_BLOCKED` が出る形) 可能性は、pcap では否定しきれない (暗号化されていて frame は読めない)。前段の qlog で分かる
 
 ## 症状の構造
@@ -147,12 +148,39 @@ Content-Length が 16KB を超える応答のうち、途中で止まったも�
 - その間、iPhone からの packet は 0 個
 - 07:41:46.3 に iPhone から 53 バイトの packet が来て、前段が 58 バイトの小さい packet を返した。その後の 07:41:47 から、fragment の送信と iPhone からの小さい packet が交互に流れた
 
+3 回目のリロード (08:29:13、kawaz の体感では 4 〜 5 秒固まった後に開いた):
+
+| 時刻 | Mac → iPhone | iPhone → Mac |
+|---|---|---|
+| 08:29:13 | 55 (27) | 14 |
+| 08:29:14 | 5 (2) | 1 |
+| 08:29:15 | 4 (2) | 0 |
+| 08:29:18 | 4 (2) | 0 |
+| 08:29:23 | 4 (2) | 0 |
+| 08:29:33 | 221 (110) | 70 |
+| 08:29:34 | 16 (8) | 0 |
+| 08:29:35 | 4 (2) | 0 |
+
+3 回とも、「burst の直後に fragment になった packet の再送 (間隔が倍々に延びる) だけが残り、iPhone は無言 → しばらくして大きい転送が通る」の形だった。
+
+Tailscale の metrics (`tailscale debug metrics`) を 3 回目の前後 (08:27:04 と 08:29:58) で比べた。この Mac の tailscaled の全部の peer の合計で、iPhone だけの値ではない:
+
+| metric | 差 |
+|---|---|
+| `tstun_out_to_wg_drop_filter` | 0 (差に出ない) |
+| `magicsock_send_data_ipv4` | +5,242 packet |
+| `magicsock_send_data_bytes_ipv4` | +3,159,220 バイト |
+| `magicsock_send_derp` | 0 (`magicsock_disco_send_derp` は +3、経路の探索の分) |
+| `tstun_in_from_wg_drop` | +3 |
+| `tstun_out_to_wg_drop` | +7,759,516 (`packet_reflect_to_os` の +7,759,507 とほぼ同じ数。この Mac 自身宛ての折り返しの分) |
+
 ### 読み (未検証)
 
 - 前段の quic-go は、iPhone との接続でも packet size を 1280 バイトより上に上げていて、その packet は全部 fragment になって Tailscale に渡っている
 - 転送の終わりの「fragment になった packet を、倍々に延びる間隔で 2 個ずつ送り、iPhone は無言」は、QUIC の再送の timer (PTO) が切れるたびに試しの packet を送り、それに ACK が返らない形に見える。ACK が返らないのは、fragment になった packet が iPhone に届いていないからと読める。iPhone からの小さい packet と前段の小さい返事は、同じ時間帯に通っている
 - 体感の「数秒の固まり」は、この無言の区間 (07:41:26 〜 07:41:46) と時刻が合う。今回は再送が最後に通って開いたが、通らないまま続けば前回までの症状 (永遠に待つ) になる、と読める
-- 未観測のこと: fragment が落ちる場所 (Tailscale の WireGuard、relay、iPhone の側)、burst の中では fragment の多くが通るのに終わりでは通らない理由、今回は最後に通った理由
+- metrics の差からは、この Mac の tailscaled の filter では fragment は落ちておらず、relay (DERP) も通らずに WireGuard で直接送り出されている。残る落ち所は、WireGuard で包んだ後の UDP (約 1,340 バイト) が通る経路か、iPhone 側の Tailscale (iOS の側での fragment の組み立て直し)
+- 未観測のこと: そのどちらで落ちているか、burst の中では fragment の多くが通るのに終わりでは通らない理由、最後に通る理由
 
 ### 集計のやり方
 
@@ -278,6 +306,8 @@ pcap で「fragment が出ていて、iPhone からの ACK が途切れ、Caddy 
 - **間を空けた後の最初の要求**: この Mac から本番の前段へ、Tailscale の IPv4 の address 宛てと loopback 宛てを交互に、45 秒ずつ空けて 5 回ずつ `curl --http3-only` で大きいファイルを取る。Tailscale 宛てだけで止まれば tailscaled の折り返しを含む経路の側、両方で止まれば Caddy / quic-go の側
 
 ### その他
+
+- **iPhone を Tailscale の IPv6 で繋がせる**: IPv6 では DF が効くので fragment が出ない (候補 1 の表)。固まらなくなれば fragment が原因の側。この Mac の Tailscale の名前は AAAA を持つが、iPhone は IPv4 で繋いでいる。iPhone 側の MagicDNS が AAAA を返すか、iOS の Tailscale が IPv6 を使えるかは、Mac からは分からない
 
 - Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。止まらなくなれば、画像の件は HTTP/3 の経路の問題
 - iOS の Safari には利用者が HTTP/3 を切る設定が無い (kawaz が実機で確認) ので、iPhone の側からは切り分けられない
