@@ -35,7 +35,7 @@
 | [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | webui へ移管 | プロジェクト外セクション (セッションが触った cwd 外ファイルの表示 + allowlist 読み出し) |
 | [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | webui へ移管 | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
-| [DR-0028](./DR-0028-session-kill.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) |
+| [DR-0028](./DR-0028-session-kill.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) と session_restart (止めて同じ id で resume する、Status タブの再起動ボタン) |
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | 契約に吸収 | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
 | [DR-0030](./DR-0030-sandbox-origin-serving.md) | Accepted | 据え置き | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
 | [DR-0031](./DR-0031-webui-design-tokens-and-catalog.md) | Accepted | webui へ移管 | webui デザイントークンと自作コンポーネントカタログ |

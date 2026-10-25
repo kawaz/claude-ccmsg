@@ -266,6 +266,6 @@ session role (エージェント) からの `session_launch` を受ける。
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) — typed tool (`send` / `say` / `peers` と `launch`) の登録の形
 - [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と config をスキーマで読む
 - [DR-0034](./DR-0034-peer-socket-injection.md) — peer 注入 (§3.8 の比較の相手)
-- [DR-0028](./DR-0028-session-kill.md) — セッションの停止 (起動と対になる webui の操作)
+- [DR-0028](./DR-0028-session-kill.md) — セッションの停止 (起動と対になる webui の操作) と、止めて同じ id で resume する restart (起動はこの DR の手順)
 - [DR-0008](./DR-0008-workspace-file-access.md) — `fs_list` (`dir_tree` はその subset)
 - [DR-0009](./DR-0009-session-transcript-access.md) — 起動したセッションが hello で peers に載る既存の経路

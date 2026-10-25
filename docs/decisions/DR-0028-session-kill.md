@@ -85,3 +85,75 @@ kawaz 要望 (2026-07-18):
 - **原案通り SIGKILL を認めない**: 実運用で 2 発 SIGTERM に耐える TUI 挙動が観測されており、UI が「シグナル送信済み・未確認」を表示するだけでユーザー
   は次の手を打てない (daemon 側に手段が無いため kill -9 を shell で打つ必要がある)。opt-in 明示 + 2 段確認 (通常押下 → force ボタン化 → confirm) で、「daemon が自動で不可逆側に倒す」原則は保ちつつ、ユーザーの明示的意思で最終手段が届く形に緩和する
 - **daemon 側で自動エスカレーション** (SIGTERM 失敗後に SIGKILL): 原案の却下理由がそのまま生きる (transcript/state flush を破壊するのは自動化してよい判断ではない)。継続不採用
+
+## Addendum: restart (止めて同じ id で resume する)
+
+kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart ボタンを置き、そのセッションを停止 (本 DR の `session_kill` と同じ手順) してから同じ sid で resume (DR-0018 の `session_launch`、`resume: <sid>`) する。用途は plugin の更新と claude 本体の更新をワンタッチで反映すること。background のプロセスとチームメートが死ぬことはユーザが理解して押すので、daemon も webui もケアしない。
+
+### op `session_restart` (user role)
+
+- request: `{ op: "session_restart", session_id }`
+- response: `{ ok: true, restarted: true, session_id, exit_code, stdout, stderr }`。`session_id` は resume したセッションの id (request と同じ)、`exit_code` / `stdout` / `stderr` は `session_launch` と同じ (起動コマンドの終了コードと出力、DR-0018 §3.4)。`exit_code` が 0 でなければ、セッションは止まったが起動コマンドは resume を起こしていない
+- error (どれも、断った時はプロセスを止めていない。`internal` だけは止めた後かもしれない):
+  - `bad_request`: user role でない
+  - `launcher_not_configured` / `launch_busy`: `session_launch` と同じ (DR-0018 §3.4)。restart は走っている間ずっと起動の 1 つに数え、daemon の終わり方の待ち (DR-0018 §3.5) にも入る
+  - `not_found`: その sid のプロセスが居ない (本 DR の pid の解決と ps の検証に通らない)
+  - `restart_unavailable`: 起動コマンドがそのセッションを resume できる条件 (下の config dir、cwd) を満たさない
+  - `restart_timeout`: 停止の手順の猶予の中でプロセスの終わりを観測できなかった。起動コマンドは走らせていない (シグナルは届いているので、後でプロセスが終わることはある)
+  - `invalid_args` / `launch_command_unavailable`: `session_launch` と同じ。前者は起動の入力がスキーマに合わない時で、止める前に読むので止めていない。後者は止めた後に起動コマンドを起こせなかった時
+- 返事は停止の猶予 (最長 3 秒) と起動コマンドの待ち (`launch_timeout_seconds` + 猶予) の和まで遅れる。同じ接続の他の依頼は待たせない (2-phase)
+
+### daemon の手順
+
+止めた後に、止める前から分かっていた理由で起動を断ることが無いよう、断る理由は全部止める前に確かめる。
+
+1. user role でなければ `bad_request`。launcher が無ければ `launcher_not_configured`、daemon が終わりかけているか起動が `launch_max_concurrency` 個走っていれば `launch_busy`
+2. その sid の登録 (peers) の config dir が、起動コマンドが claude を起こす config dir (下記) と同じでなければ `restart_unavailable`
+3. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、ps で claude のプロセスであることを確かめる。通らなければ `not_found`
+4. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 3 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable`
+   - `resume`: その sid
+   - `model` / `effort`: Status タブの CTX と同じ値 (hooks module の facts の model / effort を、transcript の末尾の main context の assistant 行の model / effort に重ねたもの) を、起動の入力の選択肢に写す (`claude-fable-5[1m]` → `fable`、Session Search の resume の prefill と同じ写し方)。写せないものと値の無いものは入れない (起動コマンドが決める)
+   - `name`: 3 で読んだ record の `name`。無ければ入れない
+   - `prompt`: 下の文面
+5. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
+6. 消滅を観測したら `session_kill` と同じくその sid の登録を忘れて peers を配る (resume したセッションは hello か agents の poll で戻る)
+7. DR-0018 §3.5 の手順 4〜11 で起動する (依頼者は `user`。daemon.log にはその手順の `session_launch: …` の行も残る)
+8. daemon.log に 1 行: `session_restart: session_id=<sid> pid=<pid> terminated=<true|false> [exit_code=<N>] [error=<code>]`
+
+### 起動コマンドが claude を起こす config dir
+
+組み込みの起動コマンドは direnv を通さず、面 (`CLAUDE_CONFIG_DIR`) を切り替えない (DR-0018 §3.1)。起こされる claude の config dir は、起動コマンドが継ぐ環境 (daemon の環境に `clean_env` / `keep_env` を当てたもの、DR-0018 §3.5 の 6) の `CLAUDE_CONFIG_DIR`、無ければ `~/.claude` で、daemon はこれを realpath にしてセッションの config dir と比べる。違う config dir のセッションを resume すると、起こされた claude はその transcript を持たない config dir で起動する。
+
+- hello の response に `launch_config_dir` (上の realpath) を `launch_available` と一緒に返す。webui は agents の行の `config_dir` がこれと同じセッションにだけ restart ボタンを出す
+- 自前の `launch_command` が config dir を切り替える環境では、daemon はどの config dir で起こされるかを知らない。その時も daemon が比べるのは上の値だけで、別の面のセッションには restart を出さない
+
+### resume の prompt
+
+```
+プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。ScheduleWakeup で入れた予定は消えたので、入れていたなら入れ直してください (CronCreate の予定は resume で戻っているので入れ直さない)。
+```
+
+- kawaz の文面の cron の一文 (「cron/schedule は貼り直してください」) を、実測 ([findings 2026-10-25-cron-schedule-persistence](../findings/2026-10-25-cron-schedule-persistence.md)) に合わせて書き換えた。CronCreate の予定はディスクに書かれないが resume で transcript から戻り、ScheduleWakeup の予定は戻らない。「貼り直して」を CronCreate にも言うと戻った予定が二重になる
+- 一文は止める前の予定の有無で出し分けず、常に入れる。失われる予定 (ScheduleWakeup と、その発火の後に harness が tool の呼び出し無しで入れる wakeup) は transcript からは全部は分からず、harness の一覧 (`session_crons`) は Stop の hook の入力にしか出ない。module で取るには `classic.Stop` の hook が要り、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §1 が持たないと決めている。会話は続いているので、入れていた予定は model が覚えている前提で「入れていたなら」と言う
+- 内容 (会話の中身) には触れない。コンテキストは続く
+
+### webui
+
+- Status タブの LIVE の行に「再起動」ボタン。`launch_available` で、そのセッションの agents の行があり (プロセスが居る)、行の `config_dir` が hello の `launch_config_dir` と同じ時だけ出す
+- 確認ダイアログは出さない (ユーザが理解して押す)。押している間は disabled で、文言を「再起動中…」にする
+- restart の間はセッションの登録が外れて Status のパネルが一度消えるので、押している状態と結果はセッションの view が持ち、resume したセッションが戻った後のパネルに出す ([findings 2026-10-25-session-restart-verify](../findings/2026-10-25-session-restart-verify.md))
+- 結果は LIVE の行の下に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
+
+### 却下した代替案
+
+- **webui が `session_kill` → 待ち → `session_launch` を 3 往復する**: 止まったことの観測と起動の順序が webui にあり、途中で接続が切れると止めたまま起動しない状態が残る。断る理由を止める前に揃えて確かめることも webui からはできない (config dir や record の cwd は daemon が読む)
+- **resume の後の一文を kawaz の文面のまま出す**: CronCreate の予定は戻るので、作り直させると二重になる (findings)
+- **予定の有無を module の `classic.Stop` の `session_crons` で取って出し分ける**: 正確な一覧はこれしか無いが、DR-0039 §1 が module に `classic.*` の hook を持たないと決めている (組織が管理する機械で飛ばされる hook を前提にしない)
+- **transcript の ScheduleWakeup の結果から予定の有無を決める**: harness が tool 無しで入れる wakeup を取りこぼし、「無い」と判断した時に一文を落とす
+- **猶予を過ぎたら SIGKILL に上げて起動する**: 本 DR の原則 (daemon が自動で不可逆側に倒さない) のまま。止まらなければ `restart_timeout` を返し、人が危険ゾーンの強制終了を選ぶ
+
+### Consequences
+
+- 旧プロセスを載せていた端末 (hyoui 等) はプロセスと一緒に終わり、resume したセッションは起動コマンドが起こす新しい端末に載る
+- 起動時に付いていた起動の引数のうち、起動の入力に無いもの (`--settings`、`--plugin-dir`、permission mode 等) は起動コマンドの既定になる。model の文脈の接尾辞 (`[1m]` 等) は起動の入力の選択肢に無いので落ちる
+- `restart_timeout` の後もプロセスはシグナルを受けて終わることがある。終わればそのセッションの agents の行が消えて restart は出なくなるので、resume は Session Search の resume からする
