@@ -187,9 +187,10 @@ iPhone の Safari で途中で止まった HTTP/3 の接続ごとに、最初の
 
 ## 切り分け (前段を触らずにできる実験)
 
-- (a) iPhone の 設定 → Safari → 詳細 → 機能フラグ で HTTP/3 を切り、daemon の upgrade の後に青いボタンを押す (項目の名前と場所は iOS の版で違うかもしれない、未確認)。固まらなくなれば HTTP/3 の経路の問題。それでも固まるなら、Caddy の内部 (上流からの読み、圧縮の stream、write timeout) か daemon 側の問題で、本 findings の読みは外れている
-- (b) Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。半分で止まることが無くなれば、画像の件も HTTP/3 の経路の問題。HTTP/2 でも止まるなら、HTTP/3 とは別の原因
-- (c) 前段の Caddy を `QLOGDIR` 付きで起動する (前段の持ち主の作業)。次に止まった接続の qlog で、flow control の枠が尽きたのか packet の喪失なのかが分かる
+iOS の Safari には、利用者が HTTP/3 を切る設定が無い (kawaz が 設定 → Safari → 詳細 → 機能フラグ を実機で確認した)。iPhone の側から HTTP/3 を外す実験はできないので、前段を触らずにできる切り分けは Mac の Chrome で QUIC を切る (a) だけになる。
+
+- (a) Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。半分で止まることが無くなれば、画像の件も HTTP/3 の経路の問題。HTTP/2 でも止まるなら、HTTP/3 とは別の原因
+- (b) 前段を触る実験として、前段の Caddy を `QLOGDIR` 付きで起動する (前段の持ち主の作業)。次に止まった接続の qlog で、flow control の枠が尽きたのか packet の喪失なのかが分かる
 
 ## 直し方の候補
 
