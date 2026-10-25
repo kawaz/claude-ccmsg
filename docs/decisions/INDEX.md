@@ -26,7 +26,7 @@
 | [DR-0009](./DR-0009-session-transcript-access.md) | Accepted | 契約に吸収 | Session transcript access (transcript_read op) — control 面 |
 | [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | webui へ移管 | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker) |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) — 移送可否は [webui-rebuild-checklist](../design/webui-rebuild-checklist.md) の未決 3 件 |
-| [DR-0018](./DR-0018-session-launcher.md) | Accepted (✅ 実装済み) | webui へ移管 | Session Launcher — エージェントの tool `launch` と webui のフォームから、4 つの type (`new` / `continue` / `resume` / `fork`) の入力で、config で固定した 1 つの起動コマンドにセッションを起動させる。daemon は入力を JSON で渡して結果を返すだけで、session role からも起動できる |
+| [DR-0018](./DR-0018-session-launcher.md) | Accepted (✅ 実装済み) | webui へ移管 | Session Launcher — エージェントの tool `launch` と webui のフォームから、claude のオプション名を field にした入力で、config で固定した 1 つの起動コマンドにセッションを起動させる。daemon は入力を JSON で渡して結果を返すだけで、session role からも起動できる |
 | [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | 契約に吸収 + webui へ移管 | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) — op は control 面、UI は webui リポ |
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | webui へ移管 | Status タブ (workflow / background / TODO の可視化、transcript fold) |
 | [DR-0021](./DR-0021-session-search.md) | Accepted | webui へ移管 | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |

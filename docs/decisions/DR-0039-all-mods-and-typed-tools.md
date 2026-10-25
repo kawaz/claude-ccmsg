@@ -66,7 +66,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
   - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
 - **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
-- **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (4 つの type の variant)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
+- **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (claude のオプション名を field にした 1 つの object)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
 - **名前と引数**: tool は `send` / `say` / `peers` (model からは `mcp__<plugin>__<name>` で見え、plugin 名が接頭辞になるので tool 名に `ccmsg_` は付けない)。`send` の引数は `{ session_id?, cwd?, name?, pid?, text }`、`say` は `{ text }`、`peers` は `{ cwd?, name? }` (kawaz 2026-10-15)
 - **skill**: plugin に ccmsg の skill (SKILL.md) を足す。skill は tool を名前で名指し、`from` が `ccmsg:` で始まる相手への返信の仕方 (送信の tool の `session_id` にその id を渡す) と、say の使い所を書く。tool の使い方の正本は skill に置き、tool の description と §5 の注入文には置かない
 - **登録の形**: tool は subagent / teammate にも見えるので、`isDeferred: true` で登録し、description は短くする。どの tool を使うかは skill が tool 名で名指し、§5 の注入文は skill へ誘導するので、model が ToolSearch で探す必要は無い (kawaz 2026-10-15)。未ロードの deferred tool を名前で直接呼んでも plugin の tool なら handler に届いた (event-matrix 実測 1 回)。kawaz の個人面の実セッションでは ToolSearch が有効で deferral が効く (「前提の確認」)。登録は `/clear` とセッション内の `/resume` の後も残るので、`session.start` の 1 回で足りる (probe 各 2/2)
