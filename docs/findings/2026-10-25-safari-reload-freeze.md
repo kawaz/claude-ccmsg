@@ -15,7 +15,7 @@
 - その接続では、小さい応答 (約 450 バイトの殻 HTML) は届くが、大きい応答 (bundle の約 154KB、CSS の約 67KB) は Caddy が最初の約 4KB を書いたところで送れなくなる
 - 青いボタンが出るのは daemon が新しい版で起ち直した後で、押すとまだ手元に無い名前の bundle (`/assets/app.<hash>.js`) を運ぶ必要がある。版が同じ時のリロードは bundle が cache から出る (immutable) ので殻だけで済み、止まった接続の上でも開く
 - 止まった接続は Safari の中でタブをまたいで使われ続け、Safari を終了すると捨てられる。終了後に張られた新しい接続は、同じ時刻・同じ経路で bundle を 0.2 秒前後で運んだ
-- **こちら側の候補として、この Mac は Tailscale の interface (MTU 1280) で IPv4 の UDP を送る時、DF を求めても EMSGSIZE を返さず、kernel が IP fragment に分ける**ことを確かめた (下の「候補 1」)。quic-go の packet size の探索 (DPLPMTUD) は EMSGSIZE を前提に上限を見つけるので、この経路では 1252 バイトより大きい packet を fragment にして送りうる。それが今回の停止の原因かどうかは、まだ確かめていない
+- **こちら側の候補として、この Mac は Tailscale の interface (MTU 1280) で IPv4 の UDP を送る時、DF を求めても EMSGSIZE を返さず、kernel が IP fragment に分ける**ことを確かめた (下の「候補 1」)。quic-go の packet size の探索 (DPLPMTUD) は EMSGSIZE を前提に上限を見つけるので、この経路では 1252 バイトより大きい packet を fragment にして送りうる。本物の前段の Caddy でも、この経路の HTTP/3 の応答は約 1,460 バイトの packet で送られ、fragment に分けられていた。iPhone 宛てでその fragment が落ちているか、それが今回の停止の原因かは、まだ確かめていない
 
 ## ボタンの実体と押した時の処理
 
@@ -117,23 +117,26 @@ iPhone の Safari で途中で止まった HTTP/3 の接続ごとに、最初に
 | dual-stack、IPv6 (Tailscale の IPv6) 宛て | `IPV6_DONTFRAG=1` | 1252 / 1300 | EMSGSIZE (IPv6 は DF が効く) |
 
 - この Mac の起動以来の累計で、IPv4 の「output datagrams fragmented」は約 218 万、「fragments received」は約 1.1 万。どの process が fragment を出しているかは分けていない
-- quic-go は macOS では `IP_DONTFRAG` / `IPV6_DONTFRAG` を立て、送れない大きさは EMSGSIZE で知る前提で packet size を 1252 から上げていく (quic-go の `sys_conn_df_darwin.go`)。一時ベースの Caddy の qlog では、loopback で `recovery:mtu_updated` が 1326 → 1389 → 1420 と上がった
+- quic-go は macOS では `IP_DONTFRAG` / `IPV6_DONTFRAG` を立て、送れない大きさは EMSGSIZE で知る前提で packet size を上げていく (quic-go の `sys_conn_df_darwin.go`)。Caddy v2.11.7 は初めの packet size (`InitialPacketSize`) を 1200 に固定している (Caddy の `listeners.go` の `ListenQUIC`)。一時ベースの Caddy の qlog では、loopback で `recovery:mtu_updated` が 1326 → 1389 → 1420 と上がった
+- **本物の前段の Caddy でも、QUIC の packet が fragment に分けられていた** (統括が観測)。この Mac から自分の Tailscale の IPv4 の address 宛て (iPhone と同じ Tailscale の interface を通る) に、前段が配る 2,701,756 バイトのファイル (観測のために一時的に置き、観測後に消した) を `curl --http3-only` で 5 回取った:
+  - 5 回とも 200 / 2,701,756 バイト、0.12 〜 0.27 秒
+  - `netstat -s -p ip` の「output datagrams fragmented」は 2,185,270 → 2,194,532 (+9,262。1 回あたり約 1,850 個。ファイルの大きさを割ると約 1,460 バイト / packet)
+  - 対照の `--http2` は 200、0.40 秒
+  - 同じ Mac の中で往復するので、fragment は組み立て直されて止まらなかった
 
 読み (未検証):
 
-- この Mac の IPv4 の Tailscale の経路では EMSGSIZE が返らないので、quic-go が 1252 バイトより大きい packet を試すと、kernel がそれを 2 つの fragment に分けて送る。iPhone 側でその試しの packet が組み立て直されて届けば、quic-go は packet size を上げ、以後の大きい packet は全部 fragment になる。そうなった後で fragment が落ちる経路なら、その接続は大きい応答を運べなくなる。小さい応答 (殻) は 1 packet に収まるので届く。新しい接続は 1252 から始め直すので、size を上げる前に運び終えれば届く
+- 前段の quic-go は、この経路で packet size を 1452 付近まで上げていて、その packet は kernel が 2 つの fragment に分けて Tailscale に渡している (上の観測と数が合う)。iPhone 宛てでは、fragment が Tailscale の経路 (WireGuard、relay、iOS の側) を通る。そこで fragment の一部が落ちれば、その接続は大きい応答を運べなくなる。小さい応答 (殻) は 1 packet に収まるので届く。新しい接続は小さい packet から始め直すので、size を上げる前に運び終えれば届く
 - TCP (WebSocket) は MSS が interface の MTU から決まり、fragment を使わないので影響を受けない。これは「WebSocket は同じ時刻に問題なく流れていた」ことと合う
-- まだ確かめていないこと: iPhone 宛ての実際の QUIC の packet の大きさ、`mtu_updated` が iPhone との接続で 1252 を超えたか、fragment が経路のどこで落ちるか
+- まだ確かめていないこと: iPhone 宛ての fragment が経路のどこかで落ちているか、iPhone との接続で `mtu_updated` が 1252 を超えたか
 
-確かめ方 (前段か Tailscale の経路を使う作業):
-
-- 一時ベースの Caddy をこの Mac の Tailscale の IPv4 の address に bind し、同じ Mac から HTTP/3 で大きいファイルを取る。自分の Tailscale の address 宛ても Tailscale の interface を通る (`route -n get` で確認)。fragment の数と qlog の `mtu_updated`、止まるかどうかを見る。この bind は auto mode の classifier に止められたので、まだ実行していない
-- 前段の Caddy を `QLOGDIR` 付きで起動し、次に止まった接続の qlog で `mtu_updated` と `packet_lost` を見る
+確かめ方: 前段の Caddy を `QLOGDIR` 付きで起動し、次に止まった接続の qlog で `mtu_updated` と `packet_lost` を見る (前段の持ち主の作業)。
 
 直し方の候補 (前段側の作業、確かめてから):
 
-- iPhone が Tailscale の IPv6 で繋ぐようにする (IPv6 では DF が効き、EMSGSIZE で 1252 以下に留まる)、または前段の HTTP/3 で packet size の探索を止める (quic-go の `DisablePathMTUDiscovery`。Caddy が設定として出しているかは未確認)
-- 当面の回避として、前段で ccmsg のホストに HTTP/3 を出さない (`protocols h1 h2`、またはホストを絞って `Alt-Svc` を落とす)
+- **quic-go の packet size の探索を止める**: quic-go には `quic.Config.DisablePathMTUDiscovery` がある (v0.63.0 の型定義で確認)。止めれば packet size は `InitialPacketSize` (Caddy では 1200) のままで、IPv4 で MTU 1280 の interface に収まる。ただし Caddy v2.11.7 はこの項目を設定として出していない。`ListenQUIC` の `quic.Config` で設定しているのは `InitialPacketSize: 1200`、`Allow0RTT`、`Tracer` の 3 つだけで、利用者が変えられるのは `allow_0rtt` だけ。前段の binary に入っている quic-go の環境変数は `QUIC_GO_DISABLE_ECN` / `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` / `QUIC_GO_DISABLE_CLIENTHELLO_SCRAMBLING` / `QUIC_GO_LOG_LEVEL` で、packet size の探索を止めるものは無い。止めるには Caddy の source を変えた build が要る
+- **iPhone が Tailscale の IPv6 で繋ぐようにする**: IPv6 では DF が効き (上の表)、EMSGSIZE で interface の MTU に収まる大きさ (UDP の本文で 1232 バイト) に留まる。前段のホスト名の DNS の答え方の変更になる
+- **Tailscale を通る client に HTTP/3 を出さない**: 前段の site は tailnet からの接続しか受けず、この Mac の Chrome も自分の Tailscale の address 経由で繋いでいる。そのため実質は前段で HTTP/3 を止めること (`servers { protocols h1 h2 }`) と同じになる。ホストを絞るなら `Alt-Svc` を落とす形 (この形を使った報告はあるが、ここでは試していない)
 
 ### 候補 2. UDP の buffer: 該当しない
 
@@ -172,7 +175,7 @@ kawaz が見たのは Mac の Chrome。Caddy のログで画像の GET (`/attach
 ## 切り分けの実験
 
 - Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。止まらなくなれば、画像の件は HTTP/3 の経路の問題
-- 候補 1 の「確かめ方」の 2 つ。iOS の Safari には利用者が HTTP/3 を切る設定が無い (kawaz が実機で確認) ので、iPhone の側からは切り分けられない
+- 候補 1 の「確かめ方」(前段の qlog)。iOS の Safari には利用者が HTTP/3 を切る設定が無い (kawaz が実機で確認) ので、iPhone の側からは切り分けられない
 
 ## ローカルで試したこと
 
