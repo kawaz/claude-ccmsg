@@ -32,7 +32,7 @@ kawaz の長期 vision [kawaz]: webui はメッセージング UI にとどま�
 ### 3. 配信: Bun.build によるサーブ時トランスパイル、ビルド成果物を持たない [提案]
 
 - リポに bundler 設定・dist を持たない方針 (DR-0004 §4) は維持する。daemon は webui の起動時に `Bun.build` (target: browser、minify、splitting) で TSX をトランスパイル + バンドルし、圧縮 (br / gzip) まで済ませてメモリに持つ。起動直後に来たリクエストはそのビルドの完了を待つ
-- 成果物は Bun の内容ハッシュ付きの名前 (entry は `app.[hash].js`、dynamic import の先は `[name]-[hash].js` の chunk) で `/assets/` から immutable で配信する。HTML シェルは entry のハッシュ付きの名前を埋めて返す。初回の描画に要らないもの (シンタックスハイライタと言語文法) は chunk に分かれ、使う時に読まれる
+- 成果物は Bun の内容ハッシュ付きの名前 (entry は `app.[hash].js`、dynamic import の先は `[name]-[hash].js` の chunk) で `/assets/` から immutable で配信する。スタイルシート (`app.css`) は Bun.build に通さず書いたまま配り (Bun の CSS bundler は書き換えを伴い、素の CSS に build は要らない)、名前だけ内容の hash から `app.<hash>.css` を作って同じく `/assets/` から immutable で配信する。HTML シェルは entry とスタイルシートのハッシュ付きの名前を埋めて返す。初回の描画に要らないもの (シンタックスハイライタと言語文法) は chunk に分かれ、使う時に読まれる
 - 成立根拠: 配布は `bin/ccmsg` → `bun run` 前提で bun runtime が必ずある。外部依存 (hono / preact) は plugin cache に node_modules 実体なしで bun auto-install により解決される (配布物で実機確認済み)
 - ビルド失敗はページ表示時にエラーとして可視化する (500 + メッセージ)。silent fallback はしない
 

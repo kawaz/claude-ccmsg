@@ -89,35 +89,50 @@ function loadOnce<T>(load: () => Promise<T>): () => Promise<T> {
 // silent fallback to stale or missing content.
 const getBundle = loadOnce(bundleClient);
 
-// The shell is index.html with the bundle's hashed path filled in, so it is
-// complete (and compressed) once the bundle is.
-const getShell = loadOnce(async () => {
-  const [template, bundle] = await Promise.all([
-    Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
-    getBundle(),
-  ]);
-  return encodeAsset(template.replace("/assets/app.js", bundle.path));
+interface Stylesheet {
+  /** Where the shell links it: named by its content, like the bundle. */
+  path: string;
+  asset: EncodedAsset;
+}
+
+// Design rationale: app.css is not given to Bun.build. Bun's CSS bundler
+// rewrites the stylesheet (it reports `::highlight()` as an invalid selector
+// while keeping it), and the stylesheet is plain CSS that needs no build, so
+// it is served as written. Only its name follows the bundle: a hash of its
+// content under /assets/, so it is cached as immutable like the bundle and a
+// reload of the same version does not fetch it again.
+const getStylesheet = loadOnce(async (): Promise<Stylesheet> => {
+  const text = await Bun.file(new URL("app.css", PUBLIC_DIR)).text();
+  const hash = new Bun.CryptoHasher("sha256").update(text).digest("hex").slice(0, 16);
+  return { path: `/assets/app.${hash}.css`, asset: await encodeAsset(text) };
 });
 
-interface StaticFile {
-  contentType: string;
-  /** null when the file is not there to serve. */
-  load: () => Promise<EncodedAsset | null>;
-}
+// The shell is index.html with the bundle's and the stylesheet's hashed paths
+// filled in, so it is complete (and compressed) once both are.
+const getShell = loadOnce(async () => {
+  const [template, bundle, stylesheet] = await Promise.all([
+    Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
+    getBundle(),
+    getStylesheet(),
+  ]);
+  return encodeAsset(
+    template.replace("/app.css", stylesheet.path).replace("/assets/app.js", bundle.path),
+  );
+});
 
-function staticFile(file: string, contentType: string): StaticFile {
-  return {
-    contentType,
-    load: loadOnce(async () => {
-      const source = Bun.file(new URL(file, PUBLIC_DIR));
-      return (await source.exists()) ? encodeAsset(await source.text()) : null;
-    }),
-  };
+/** The asset served at `path` under /assets/, with its content type. */
+async function findAsset(
+  path: string,
+): Promise<{ asset: EncodedAsset; contentType: string } | null> {
+  const [bundle, stylesheet] = await Promise.all([getBundle(), getStylesheet()]);
+  if (path === stylesheet.path) {
+    return { asset: stylesheet.asset, contentType: "text/css; charset=utf-8" };
+  }
+  const script = bundle.assets.get(path);
+  return script === undefined
+    ? null
+    : { asset: script, contentType: "text/javascript; charset=utf-8" };
 }
-
-const STATIC_FILES: ReadonlyMap<string, StaticFile> = new Map([
-  ["/app.css", staticFile("app.css", "text/css; charset=utf-8")],
-]);
 
 export function createWebuiApp(): WebuiApp {
   // Start reading, building and compressing every asset now, while the daemon
@@ -125,28 +140,26 @@ export function createWebuiApp(): WebuiApp {
   // (brotli alone takes ~1.7s on the bundle). A request that comes earlier
   // awaits the same load. A failure is dropped here because it is not cached:
   // the request that asks next loads again and gets that failure as its 500.
-  for (const load of [getShell, ...Array.from(STATIC_FILES.values(), (f) => f.load)]) {
-    load().catch(() => {});
-  }
+  getShell().catch(() => {});
 
   const app = new Hono();
 
   app.get("/assets/*", async (c) => {
     try {
-      const asset = (await getBundle()).assets.get(c.req.path);
-      if (asset === undefined) return c.notFound();
+      const found = await findAsset(c.req.path);
+      if (found === null) return c.notFound();
       return encodedResponse(
-        asset,
+        found.asset,
         c.req.raw,
         {
-          "content-type": "text/javascript; charset=utf-8",
+          "content-type": found.contentType,
           "cache-control": "public, max-age=31536000, immutable",
         },
         { etag: false },
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return c.text(`webui client build failed:\n\n${message}`, 500);
+      return c.text(`webui assets failed to load:\n\n${message}`, 500);
     }
   });
 
@@ -162,18 +175,6 @@ export function createWebuiApp(): WebuiApp {
   // シェルを返せば少なくともアプリが立ち上がり、サイドバーから復帰できる。
   // 未知パスをどう扱うか (SPA 側でのエラー表示) は URL 再設計側の担当。
   app.get("*", async (c) => {
-    const staticEntry = STATIC_FILES.get(c.req.path);
-    if (staticEntry) {
-      const asset = await staticEntry.load();
-      if (asset === null) return c.notFound();
-      return encodedResponse(
-        asset,
-        c.req.raw,
-        { "content-type": staticEntry.contentType },
-        { etag: false },
-      );
-    }
-
     let shell: EncodedAsset;
     try {
       shell = await getShell();

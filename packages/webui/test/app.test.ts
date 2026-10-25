@@ -6,12 +6,15 @@ import { isUnknownAppPath } from "../src/client/utils.ts";
 async function shellAndBundlePath(): Promise<{
   app: ReturnType<typeof createWebuiApp>;
   path: string;
+  stylesheetPath: string;
 }> {
   const app = createWebuiApp();
   const body = await (await app.fetch(new Request("http://localhost/"))).text();
   const path = body.match(/src="([^"]+)"/)?.[1];
   if (!path) throw new Error("shell did not contain a script src");
-  return { app, path };
+  const stylesheetPath = body.match(/<link rel="stylesheet" href="([^"]+)"/)?.[1];
+  if (!stylesheetPath) throw new Error("shell did not contain a stylesheet link");
+  return { app, path, stylesheetPath };
 }
 
 describe("createWebuiApp", () => {
@@ -70,11 +73,29 @@ describe("createWebuiApp", () => {
     expect(Array.from(bodies.values()).some((body) => body.includes('"source.tsx"'))).toBe(true);
   });
 
-  test("GET /app.css returns the stylesheet as CSS", async () => {
+  test("the shell links a content-hashed stylesheet that is served as written and immutable", async () => {
+    const { app, stylesheetPath } = await shellAndBundlePath();
+    expect(stylesheetPath).toMatch(/^\/assets\/app\.[0-9a-f]{16}\.css$/);
+    const res = await app.fetch(new Request(`http://localhost${stylesheetPath}`));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/css; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    const source = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    expect(await res.text()).toBe(source);
+    const hash = new Bun.CryptoHasher("sha256").update(source).digest("hex").slice(0, 16);
+    expect(stylesheetPath).toBe(`/assets/app.${hash}.css`);
+
+    const missing = await app.fetch(
+      new Request("http://localhost/assets/app.deadbeefdeadbeef.css"),
+    );
+    expect(missing.status).toBe(404);
+  });
+
+  test("an unhashed /app.css is not a stylesheet path, so it gets the shell", async () => {
     const app = createWebuiApp();
     const res = await app.fetch(new Request("http://localhost/app.css"));
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/css");
+    expect(res.headers.get("content-type")).toContain("text/html");
   });
 
   test("real SPA paths and unknown paths both serve the recoverable shell", async () => {
@@ -103,8 +124,8 @@ describe("compressed assets", () => {
     new Uint8Array(coding === "br" ? brotliDecompressSync(bytes) : gunzipSync(bytes));
 
   test("bundle, stylesheet and shell come in the coding Accept-Encoding asks for and decode to the uncompressed body", async () => {
-    const { app, path } = await shellAndBundlePath();
-    for (const assetPath of [path, "/app.css", "/"]) {
+    const { app, path, stylesheetPath } = await shellAndBundlePath();
+    for (const assetPath of [path, stylesheetPath, "/"]) {
       const plain = await fetchBytes(app, assetPath, null);
       expect(plain.res.headers.get("content-encoding")).toBeNull();
       expect(plain.res.headers.get("vary")).toBe("accept-encoding");
@@ -120,11 +141,13 @@ describe("compressed assets", () => {
     }
   });
 
-  test("the hashed bundle stays immutable in every coding", async () => {
-    const { app, path } = await shellAndBundlePath();
-    for (const acceptEncoding of [null, "gzip", "gzip, deflate, br"]) {
-      const { res } = await fetchBytes(app, path, acceptEncoding);
-      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+  test("the hashed bundle and stylesheet stay immutable in every coding", async () => {
+    const { app, path, stylesheetPath } = await shellAndBundlePath();
+    for (const assetPath of [path, stylesheetPath]) {
+      for (const acceptEncoding of [null, "gzip", "gzip, deflate, br"]) {
+        const { res } = await fetchBytes(app, assetPath, acceptEncoding);
+        expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+      }
     }
   });
 
