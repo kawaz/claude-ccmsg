@@ -25,6 +25,7 @@ export * from "./workflow-run.ts";
 export * from "./sidecar.ts";
 export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
+export * from "./permit-request.ts";
 export * from "./launch.ts";
 export * from "./request.ts";
 export * from "./storage-event.ts";

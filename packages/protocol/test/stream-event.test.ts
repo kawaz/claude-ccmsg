@@ -30,6 +30,40 @@ const PUSHES: {
       ],
     },
   ],
+  permit_requests: [
+    { ev: "permit_requests", requests: [] },
+    {
+      ev: "permit_requests",
+      requests: [
+        {
+          id: "0f0f/1",
+          sid: SID,
+          ts: "t",
+          blocked: "`git push` が止められた",
+          attachments: [
+            { path: "/w/a.json", read: true, content: "{}", bytes: 2, truncated: false },
+            { path: "/w/b", read: false, reason: "not_text" },
+          ],
+          intents: [],
+          commands: ["git push"],
+        },
+      ],
+    },
+  ],
+  permit_request: [
+    {
+      ev: "permit_request",
+      request: {
+        id: "0f0f/2",
+        sid: SID,
+        ts: "t",
+        blocked: "x",
+        attachments: [],
+        intents: ["`/w/a.ts` の編集"],
+        commands: [],
+      },
+    },
+  ],
   restarting: [{ ev: "restarting" }, { ev: "restarting", reason: "upgrade" }],
   subscribe_superseded: [{ ev: "subscribe_superseded", sid: SID }],
   agents: [

@@ -23,6 +23,7 @@
       "@ccmsg/protocol/parse": ["./packages/protocol/src/parse.ts"],
       "@ccmsg/protocol/peer-tools": ["./packages/protocol/src/peer-tools.ts"],
       "@ccmsg/protocol/peer-tools-text": ["./packages/protocol/src/peer-tools-text.ts"],
+      "@ccmsg/protocol/permit-request": ["./packages/protocol/src/permit-request.ts"],
       "@ccmsg/protocol/sidecar": ["./packages/protocol/src/sidecar.ts"],
       "@ccmsg/daemon": ["./packages/daemon/src/server.ts"],
       "@ccmsg/daemon/run": ["./packages/daemon/src/run.ts"],

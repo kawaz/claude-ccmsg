@@ -10,6 +10,7 @@ import * as v from "valibot";
 import { LaunchInputSchema } from "./launch.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
+import { PermitInputSchema } from "./permit-request.ts";
 import {
   AgentAppendArgsSchema,
   SessionFactsSchema,
@@ -120,6 +121,16 @@ export const SayRequestSchema = v.object({
   text: v.string(),
 });
 export type SayRequest = Output<typeof SayRequestSchema>;
+
+/** Ask the person for permission (DR-0040, session role only): the caller's
+ * `permit` tool. The daemon reads the attachments, records the request, and
+ * shows it in the caller's Timeline; the caller is the one asking, so the
+ * request names no session. */
+export const PermitRequestRequestSchema = v.object({
+  op: v.literal("permit_request"),
+  permit: PermitInputSchema,
+});
+export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
 /** Mark say records as read (the webui's 既読 button). User role only: the
  * unread count exists for the person watching the session list, and a session

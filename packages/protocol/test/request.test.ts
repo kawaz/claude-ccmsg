@@ -87,6 +87,40 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "say_read", id: "0f0f/1" },
     ],
   },
+  permit_request: {
+    ok: {
+      op: "permit_request",
+      permit: {
+        blocked: "`git push` が止められた",
+        attachments: ["/w/policy.json"],
+        intents: ["`/w/a.ts` の編集"],
+        commands: ["git push origin main"],
+      },
+    },
+    bad: [
+      { op: "permit_request" },
+      // Neither intents nor commands: nothing to permit.
+      { op: "permit_request", permit: { blocked: "x" } },
+      { op: "permit_request", permit: { blocked: "x", intents: [], commands: [] } },
+      { op: "permit_request", permit: { blocked: " ", commands: ["ls"] } },
+      { op: "permit_request", permit: { blocked: "x", commands: ["\n"] } },
+      { op: "permit_request", permit: { blocked: "x", commands: ["ls"], attachments: ["a.ts"] } },
+      {
+        op: "permit_request",
+        permit: { blocked: "x", commands: ["ls"], attachments: ["/a", "/a"] },
+      },
+      {
+        op: "permit_request",
+        permit: {
+          blocked: "x",
+          commands: ["ls"],
+          attachments: Array.from({ length: 17 }, (_, i) => `/a${i}`),
+        },
+      },
+      // The module writes exactly the fields; another is the writer's mistake.
+      { op: "permit_request", permit: { blocked: "x", commands: ["ls"], agent_id: "a1" } },
+    ],
+  },
   subscribe: { ok: { op: "subscribe" }, bad: [] },
   read: {
     ok: { op: "read", room: "r1", mids: [1, 2] },

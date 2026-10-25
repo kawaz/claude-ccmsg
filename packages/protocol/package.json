@@ -11,6 +11,7 @@
     "./parse": "./src/parse.ts",
     "./peer-tools": "./src/peer-tools.ts",
     "./peer-tools-text": "./src/peer-tools-text.ts",
+    "./permit-request": "./src/permit-request.ts",
     "./sidecar": "./src/sidecar.ts"
   },
   "dependencies": {

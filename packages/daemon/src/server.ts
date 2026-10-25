@@ -23,6 +23,7 @@ import {
   type NotifyFrom,
   type Paths,
   type PeerInfo,
+  type PermitRequestRecord,
   type HelloRequest,
   type OtherGenerationHelloRequest,
   type RequestOp,
@@ -116,6 +117,11 @@ import { normalizeConfigDir } from "./config-dir.ts";
 import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
 import { createSayLog, type SayLog } from "./say-log.ts";
+import {
+  createPermitRequestLog,
+  permitRequestFields,
+  type PermitRequestLog,
+} from "./permit-requests.ts";
 import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
 import { listPeers, type PeerDeps, sendToPeers } from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
@@ -348,6 +354,9 @@ export interface Daemon {
   issueDirectMid: () => string;
   /** `ccmsg say` records, memory only (say-log.ts, DR-0036 §3). */
   says: SayLog;
+  /** Requests for the person's permission, memory only (permit-requests.ts,
+   * DR-0040). */
+  permitRequests: PermitRequestLog;
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
@@ -432,6 +441,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     sendOrder: createSerial(),
     issueDirectMid: createMidIssuer(),
     says: createSayLog(createMidIssuer()),
+    permitRequests: createPermitRequestLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sidecarRuns: new SidecarRuns({
@@ -1065,6 +1075,21 @@ function broadcastSays(daemon: Daemon): void {
   }
 }
 
+/** Push every request for permission the daemon holds to one connection
+ * (ev:"permit_requests"), a fresh subscriber's catch-up. */
+function sendPermitRequests(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "permit_requests", requests: daemon.permitRequests.snapshot() });
+}
+
+/** Push one request for permission just recorded to every user-role
+ * subscriber (ev:"permit_request"). Never to a session: the asking session
+ * knows it asked. */
+function broadcastPermitRequest(daemon: Daemon, request: PermitRequestRecord): void {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "permit_request", request });
+  }
+}
+
 /** Push one status report to every user-role subscriber. Unsolicited, like
  * ev:"llm_requests": the report only ever changes because the daemon just
  * re-read it, and the screens that draw it (the header badge, the service
@@ -1363,6 +1388,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "user_message",
   "say",
   "say_read",
+  "permit_request",
   "subscribe",
   "rooms",
   "room_history",
@@ -1760,6 +1786,33 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
+    case "permit_request": {
+      // 許可依頼は止められたエージェント自身が出す (session role 限定)。
+      // 依頼は caller 自身のものなので、caller がセッションを名指す余地はない。
+      // attachments はここで読み、その時点の中身を記録に写す (DR-0040 §3)。
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
+        return;
+      }
+      const record = daemon.permitRequests.add(
+        await permitRequestFields(conn.identity.sid, req.permit, nowIso()),
+      );
+      broadcastPermitRequest(daemon, record);
+      daemon.log.info(
+        `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)}`,
+      );
+      send(conn, {
+        ok: true,
+        id: record.id,
+        attachments: record.attachments.map((a) =>
+          a.read
+            ? { path: a.path, read: true, truncated: a.truncated }
+            : { path: a.path, read: false, reason: a.reason },
+        ),
+      });
+      return;
+    }
+
     case "say_read": {
       // 既読は webui の 📣 バブル上のボタンからだけ立つ (user role 限定):
       // 未読数は「kawaz がまだ見ていない say」の数であって、喋った session が
@@ -1809,6 +1862,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         // Sent even when empty: a tab reconnecting to a restarted daemon still
         // holds the old daemon's says, and only this replaces them.
         sendSays(daemon, conn);
+        // Same reason as the says: sent even when empty.
+        sendPermitRequests(daemon, conn);
       }
       return;
     }

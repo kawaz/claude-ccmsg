@@ -6,6 +6,7 @@
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
+import { PermitRequestRecordSchema } from "./permit-request.ts";
 import { LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
@@ -67,6 +68,27 @@ export const SaysStreamEventSchema = v.object({
   says: v.array(SayRecordSchema),
 });
 export type SaysStreamEvent = Output<typeof SaysStreamEventSchema>;
+
+/** Every request for permission the daemon holds, oldest first (DR-0040 §5,
+ * user-role subscribers only, like ev:"says"). Sent at subscribe time, even
+ * when empty, so a tab that reconnects to a restarted daemon drops what the
+ * old one held. */
+export const PermitRequestsStreamEventSchema = v.object({
+  ev: v.literal("permit_requests"),
+  requests: v.array(PermitRequestRecordSchema),
+});
+export type PermitRequestsStreamEvent = Output<typeof PermitRequestsStreamEventSchema>;
+
+/** One request for permission the daemon has just recorded, to the same
+ * subscribers. One rather than the whole set as ev:"says" sends: a request
+ * carries its attachments, up to PERMIT_ATTACHMENTS_MAX files of
+ * PERMIT_ATTACHMENT_MAX_BYTES, and a recorded one never changes, so the
+ * catch-up above and this addition are all a tab needs. */
+export const PermitRequestStreamEventSchema = v.object({
+  ev: v.literal("permit_request"),
+  request: PermitRequestRecordSchema,
+});
+export type PermitRequestStreamEvent = Output<typeof PermitRequestStreamEventSchema>;
 
 export const RestartingStreamEventSchema = v.object({
   ev: v.literal("restarting"),
@@ -270,6 +292,8 @@ export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 export const StreamEventSchema = v.variant("ev", [
   NotifyStreamEventSchema,
   SaysStreamEventSchema,
+  PermitRequestsStreamEventSchema,
+  PermitRequestStreamEventSchema,
   RestartingStreamEventSchema,
   SubscribeSupersededStreamEventSchema,
   AgentsStreamEventSchema,
