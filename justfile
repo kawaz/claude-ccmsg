@@ -78,7 +78,8 @@ lint:
 [script]
 docs-lint:
     command -v docs-lint >/dev/null || { echo "docs-lint: not installed, skipped" >&2; exit 0; }
-    out=$(docs-lint --machine-only . 2>/dev/null)
+    outdir=$(mktemp -d "${TMPDIR:-/tmp}/ccmsg-docs-lint.XXXXXX")
+    out=$(docs-lint --machine-only --out "$outdir" . 2>/dev/null); rm -rf "$outdir"
     hits=$(printf '%s' "$out" | jq '[.machine.checks[]] | add')
     if [ "$hits" != "0" ]; then printf '%s' "$out" | jq '.machine.checks | with_entries(select(.value > 0)), .machine.aggregates'; exit 1; fi
 
