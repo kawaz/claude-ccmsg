@@ -32,6 +32,12 @@ Caddy を tsnet (caddy-tailscale plugin) で独立した tailnet ノードにす
    - 接続元から実験ノードへの tcp/443 と udp/443 を許す tailnet の ACL / Grants が要る
    - `module.go#L267-L295` が、Ephemeral / StateDir / 認証を `tsnet.Server` に渡す
 
+### 認証と state (source のみ)
+
+- `auth_key` は文字列 (plugin `app.go:115-120,183-187`)。node → global → 環境変数 `TS_AUTHKEY_<NODE 大文字>` → `TS_AUTHKEY` の順に選び (`module.go:309-330`)、tsnet 側で `TS_AUTH_KEY` にも fallback する (`tsnet.go:722-729`)。明示した値には Caddy の placeholder 展開が効くので `{env.TS_AUTHKEY}` と `{file./absolute/path}` が使える (Caddy v2.11.7 `replacer.go:350-385`、file は 1 MiB まで・末尾の改行を除く)。素のパスや `file://` は展開されずそのまま key の文字列になる。コマンドや pipe から値を得る口は無い
+- `state_dir` の `tailscaled.state` に登録済みのノードがあれば auth key 無しで起動できる (README:156-163、`module.go:291-295,372-393`、`tsnet.go:219-251,918-968`)。初回登録を別プロセスで済ませて Caddy の常時起動には auth key を渡さない構成は source 上は可能。別プロセス間の引き継ぎと同時起動の禁止は実機未検証
+- `ephemeral true` は global か node block (`app.go:126-135,193-202`、node が優先 `module.go:342-349`)。tailnet 上のノードは切断後に消えるが、ローカルの `tailscaled.state` は ephemeral でも作られ、停止時に消す実装は見つからない (`tsnet.go:918-932`)。消えた ephemeral ノードの state を次回に auth key 無しで再利用できるかは未検証
+
 ## 未確認
 
 - 事実 1 〜 5 の実通信と実機での挙動 (HTTP/3 の疎通、packet size、wire 上の fragment、Mac 自身からの到達)
