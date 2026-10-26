@@ -1174,7 +1174,7 @@ describe("requests the module answers without running prompt.send", () => {
     const reply = await replyTo(fake, '{"v":1,"op":"describe","id":"d1","args":{}}');
     const result: DescribeResult = {
       v: [1],
-      ops: ["describe", "prompt.send", "session.facts", "agent.append"],
+      ops: ["describe", "prompt.send", "session.facts", "agent.append", "request.override"],
       version: "1.2.3",
     };
     expect(reply).toEqual({ id: "d1", ok: true, result });
@@ -1666,6 +1666,257 @@ describe("the concerns of one event", () => {
     expect(
       fake.logs.some((l) => l.startsWith("ccmsg: prompt.submit not read (reads text): text")),
     ).toBe(true);
+  });
+});
+
+/** Run the module's turn.step hook over request `e` and take the request it
+ * passed on beneath (whose stream is one chunk). */
+async function stepSent<E>(fake: Fake, e: E): Promise<E> {
+  const hook = fake.hooks["turn.step"][0]?.[0];
+  if (hook === undefined) throw new Error("no hook on turn.step");
+  const sent: E[] = [];
+  const beneath = async function* (input: E): AsyncGenerator<string, object> {
+    sent.push(input);
+    yield "chunk";
+    return {};
+  };
+  const stream = hook(fake.$, e, beneath);
+  while ((await stream.next()).done !== true);
+  const [only, ...rest] = sent;
+  if (only === undefined || rest.length > 0) throw new Error(`passed on ${sent.length} times`);
+  return only;
+}
+
+// DR-0041: what a person overrides the requests with from the web UI.
+describe("the overrides of the session's requests", () => {
+  const MAIN = {
+    turnId: "t1",
+    index: 0,
+    model: "claude-opus-5-5[1m]",
+    effort: "high",
+    messageCount: 1,
+  };
+  const SUB = { ...MAIN, model: "claude-haiku-5-5", effort: "medium", agentId: "a1" };
+  const turn = (agentId?: string) => ({
+    text: "",
+    turnId: "t1",
+    ...(agentId !== undefined ? { agentId } : {}),
+  });
+  /** The daemon hands the session override over the sidecar. */
+  async function session(fake: Fake, override: object): Promise<SidecarReply> {
+    const at = fake.runs.length;
+    spawned(fake, 0).stream.push(
+      `${JSON.stringify({ v: 1, op: "request.override", id: `o${at}`, args: override })}\n`,
+    );
+    const isReply = (argv: string[]) => argv[2] === "reply";
+    for (let i = 0; i < 20 && !fake.runs.slice(at).some(isReply); i++) await settle();
+    const found = fake.runs.findIndex((argv, i) => i >= at && isReply(argv));
+    expect(found).toBeGreaterThanOrEqual(0);
+    return stdinReply(fake, found);
+  }
+  /** What a request is sent with, as far as the override changes it. */
+  const sentWith = async (fake: Fake, e: object) => {
+    const sent = await stepSent(fake, e);
+    return parseWith(v.looseObject({ model: v.string(), effort: v.string() }), sent);
+  };
+  async function started(): Promise<{ fake: Fake; state: ModuleState }> {
+    const fake = fakeEngine({ onEnter: submitComposer });
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    return { fake, state };
+  }
+  /** A prompt from the web UI with the one-shot override `override`. */
+  const prompt = (fake: Fake, state: ModuleState, text: string, override: object) =>
+    handlePromptSend(fake.$, state, { ...queued(fake, state, text), override });
+  /** The overrides' values the latest facts carry. */
+  const values = (fake: Fake) => lastFacts(fake).request_override;
+
+  test("the session override: every main-thread request from the next one on, until cleared", async () => {
+    const { fake } = await started();
+    expect(await session(fake, { model: "sonnet", effort: "low" })).toEqual({
+      id: "o0",
+      ok: true,
+      result: { outcome: "applied" },
+    });
+    // The alias goes to the engine, with the request's own [1m].
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      ok: true,
+      value: { ...MAIN, model: "sonnet[1m]", effort: "low" },
+    });
+    expect(await sentWith(fake, { ...MAIN, index: 1 })).toMatchObject({
+      value: { model: "sonnet[1m]", effort: "low" },
+    });
+    // Only the effort: the model goes as it came.
+    await session(fake, { effort: "max" });
+    expect(await sentWith(fake, MAIN)).toMatchObject({ value: { ...MAIN, effort: "max" } });
+    await session(fake, {});
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+  });
+
+  // A subagent is started with the model and the effort it is meant to run
+  // on: neither override touches its requests.
+  test("a subagent's request goes as it came", async () => {
+    const { fake, state } = await started();
+    await session(fake, { model: "sonnet", effort: "low" });
+    await prompt(fake, state, "go", { effort: "max" });
+    expect(await stepSent(fake, SUB)).toBe(SUB);
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      value: { model: "sonnet[1m]", effort: "max" },
+    });
+  });
+
+  // The session override's values are the session's own wherever a person
+  // set none: the model as the session names it, the effort once a request
+  // named it, and what /model in the terminal moves them to.
+  test("the facts carry the values: the session's own under the session override", async () => {
+    const { fake } = await started();
+    await untilLastFacts(fake, (f) => f.request_override !== undefined);
+    expect(values(fake)).toEqual({
+      session: { model: "claude-opus-5-5[1m]", effort: null },
+      once: { model: null, effort: null },
+    });
+    await stepSent(fake, MAIN);
+    await untilLastFacts(fake, (f) => f.request_override?.session.effort === "high");
+    fake.session.model = "claude-sonnet-5-5[1m]";
+    await fire(fake, "command.run", command("model"), async () => ({}));
+    await untilLastFacts(
+      fake,
+      (f) => f.request_override?.session.model === "claude-sonnet-5-5[1m]",
+    );
+    await session(fake, { effort: "low" });
+    await untilLastFacts(fake, (f) => f.request_override?.session.effort === "low");
+    expect(values(fake)?.session).toEqual({ model: "claude-sonnet-5-5[1m]", effort: "low" });
+    // The facts' own model and effort stay the session's.
+    expect(lastFacts(fake).effort).toBe("high");
+  });
+
+  // Facts go when the values move, and not for a change that moves none.
+  test("a session override that moves no value sends no facts", async () => {
+    const { fake } = await started();
+    await session(fake, { effort: "low" });
+    await untilLastFacts(fake, (f) => f.request_override?.session.effort === "low");
+    const sent = fake.factsSent.length;
+    await session(fake, { effort: "low" });
+    await settle();
+    expect(fake.factsSent.length).toBe(sent);
+  });
+
+  // Armed ahead of the submit, so the turn's first request, which may come
+  // before the submit's next settles, carries it; it lasts to that turn's end.
+  test("the one-shot override: from its prompt's turn's first request to that turn's end", async () => {
+    const firstSent: Awaited<ReturnType<typeof sentWith>>[] = [];
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        const text = f.composer.text;
+        await fire(f, "prompt.submit", submitted(text), async (e) => {
+          f.composer.text = "";
+          await fire(f, "turn.start", turn(), async () => ({}));
+          firstSent.push(await sentWith(f, MAIN));
+          return entered(e);
+        });
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    await session(fake, { model: "fable", effort: "high" });
+    expect(await prompt(fake, state, "go easy", { effort: "low" })).toEqual({
+      outcome: "accepted",
+    });
+    // The one-shot beats the session override field by field.
+    expect(firstSent).toMatchObject([{ value: { model: "fable[1m]", effort: "low" } }]);
+    expect(await sentWith(fake, { ...MAIN, index: 1 })).toMatchObject({
+      value: { model: "fable[1m]", effort: "low" },
+    });
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === "low");
+    // A subagent's turn ending is not the main thread's.
+    await fire(fake, "turn.complete", turn("a1"), async () => ({}));
+    expect(await sentWith(fake, MAIN)).toMatchObject({ value: { effort: "low" } });
+    await fire(fake, "turn.complete", turn(), async () => ({}));
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      value: { model: "fable[1m]", effort: "high" },
+    });
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === null);
+  });
+
+  // A prompt typed while a turn runs joins that turn's next request; a turn
+  // that ends before a request took it leaves it for the next turn.
+  test("sent while a turn runs: from its next request; a turn ending first leaves it for the next", async () => {
+    const { fake, state } = await started();
+    await fire(fake, "turn.start", turn(), async () => ({}));
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+    await prompt(fake, state, "stop", { effort: "low" });
+    expect(await sentWith(fake, { ...MAIN, index: 1 })).toMatchObject({ value: { effort: "low" } });
+    await fire(fake, "turn.complete", turn(), async () => ({}));
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+
+    await fire(fake, "turn.start", turn(), async () => ({}));
+    await stepSent(fake, MAIN);
+    await prompt(fake, state, "next", { model: "haiku" });
+    await fire(fake, "turn.complete", turn(), async () => ({}));
+    await fire(fake, "turn.start", turn(), async () => ({}));
+    expect(await sentWith(fake, MAIN)).toMatchObject({ value: { model: "haiku[1m]" } });
+    await fire(fake, "turn.complete", turn(), async () => ({}));
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+  });
+
+  // DR-0041 裁定: a change of the session override updates the one-shot too,
+  // so it is in force from the next request even while a one-shot override
+  // is; the one-shot keeps the fields the change did not touch.
+  test("a session override change is in force from the next request over the one-shot", async () => {
+    const { fake, state } = await started();
+    await session(fake, { effort: "high" });
+    await fire(fake, "turn.start", turn(), async () => ({}));
+    await prompt(fake, state, "x", { model: "haiku", effort: "max" });
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      value: { model: "haiku[1m]", effort: "max" },
+    });
+    await session(fake, { effort: "low" });
+    expect(await sentWith(fake, { ...MAIN, index: 1 })).toMatchObject({
+      value: { model: "haiku[1m]", effort: "low" },
+    });
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === null);
+    expect(values(fake)?.once).toEqual({ model: "haiku", effort: null });
+    await fire(fake, "turn.complete", turn(), async () => ({}));
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      value: { model: "claude-opus-5-5[1m]", effort: "low" },
+    });
+  });
+
+  test("a dropped submit takes its one-shot override back; a prompt without one arms nothing", async () => {
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        await fire(f, "prompt.submit", submitted(f.composer.text), async () => ({ drop: "no" }));
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    const sending = prompt(fake, state, "x", { effort: "max" });
+    await expireAcceptWait(fake);
+    expect(await sending).toMatchObject({ outcome: "not_delivered" });
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+    // It was armed ahead of the submit, and went with the drop.
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === null);
+    expect(fake.factsSent.some(({ facts }) => facts.request_override?.once.effort === "max")).toBe(
+      true,
+    );
+
+    const plain = await started();
+    await handlePromptSend(plain.fake.$, plain.state, queued(plain.fake, plain.state, "x"));
+    expect(await stepSent(plain.fake, MAIN)).toBe(MAIN);
+  });
+
+  // The daemon holds the session override by session id.
+  test("the session changing its id drops the overrides", async () => {
+    const { fake } = await started();
+    await session(fake, { effort: "low" });
+    await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
+    expect(await stepSent(fake, MAIN)).toBe(MAIN);
+    await untilLastFacts(fake, (f) => f.request_override?.session.effort !== "low");
   });
 });
 

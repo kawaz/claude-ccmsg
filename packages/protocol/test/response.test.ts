@@ -317,6 +317,11 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "not_delivered", reason: "dialog" },
     { ok: true, outcome: "unconfirmed" },
   ],
+  request_override: [
+    { ok: true, delivery: "no_module" },
+    { ok: true, delivery: "applied" },
+    { ok: true, delivery: "unconfirmed" },
+  ],
   sidecar_reply: [{ ok: true }],
   sidecar_hello: [{ ok: true }],
   session_facts: [{ ok: true }],

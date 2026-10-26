@@ -27,6 +27,7 @@ export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
 export * from "./permit-request.ts";
 export * from "./launch.ts";
+export * from "./request-override.ts";
 export * from "./request.ts";
 export * from "./storage-event.ts";
 export * from "./session-status.ts";

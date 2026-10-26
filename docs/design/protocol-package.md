@@ -27,7 +27,7 @@
 |---|---|---|
 | `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest`、別世代の hello を見分ける `isOtherGenerationHello` | daemon |
 | `request-rooms.ts` | room のログを読む依頼 (room は読み取り専用、[DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) §2): `read` `room_history` `rooms` | daemon |
-| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say` `say_read` `send_message` `peer_list` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_restart` `session_rename` `user_prompt` `user_message` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
+| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say` `say_read` `send_message` `peer_list` `dir_tree` `session_launch` `session_launcher_config` `session_kill` `session_restart` `session_rename` `user_prompt` `user_message` `request_override` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` | daemon |
@@ -43,12 +43,13 @@
 
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
-| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send` と `session.facts`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。run id の形 (`SidecarRunIdSchema`) と引き方 (`sidecarRunId`)。hooks module が Claude Code から読んだセッションの事実 (`SessionFactsSchema`、`session.facts` の result と `session_facts` の中身) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。run id は hooks module が引き、CLI (`ccmsg sidecar`) と daemon (`sidecar_hello`) が読む。セッションの事実は hooks module が書き、CLI (`ccmsg sidecar facts`) と daemon が読む |
+| `sidecar.ts` | daemon がセッションのサイドカー socket に書く依頼 (`SidecarRequestSchema`、`op` は `describe` と `prompt.send` と `session.facts` と `agent.append` と `request.override`) と、hooks module の返事 (`SidecarReplySchema`、op ごとの result は `sidecarReplySchema(result)`)。依頼を読む `readSidecarRequest`。run id の形 (`SidecarRunIdSchema`) と引き方 (`sidecarRunId`)。hooks module が Claude Code から読んだセッションの事実 (`SessionFactsSchema`、`session.facts` の result と `session_facts` の中身) | 依頼は hooks module、返事は CLI (`ccmsg sidecar reply`) と hooks module。run id は hooks module が引き、CLI (`ccmsg sidecar`) と daemon (`sidecar_hello`) が読む。セッションの事実は hooks module が書き、CLI (`ccmsg sidecar facts`) と daemon が読む |
 | `peer-tools.ts` | ccmsg の tool (`send` / `say` / `peers`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) の名前と入力 (`launch` は名前だけで、入力は `launch.ts`)、hooks module が `ccmsg sidecar send-message` / `peer-list` に標準入力で渡す形、その出力 (daemon の `send_message` / `peer_list` の返事) | hooks module、CLI、daemon |
 | `peer-tools-text.ts` | tool の結果として model が読む文面と、transcript の読み手 (webui、dump) が `send` の結果を読み戻す処理。書く形と読む形を 1 か所で定義する | hooks module、daemon、webui |
+| `request-override.ts` | webui からセッションの main thread の request の model / effort を上書きする形 ([DR-0041](../decisions/DR-0041-request-model-effort-override.md)): `RequestOverrideSchema` (launch と同じ語彙)、変更 (`RequestOverridePatchSchema`、merge patch) とその対象 (`RequestOverrideTargetSchema`、`session` / `once`)、上書きが request に載せる値 (`RequestOverrideStateSchema`、facts と push が運ぶ)、`patchOverride` / `overrideInForce` / `overrideModel` | daemon、webui、hooks module |
 | `launch.ts` | セッションの起動 ([DR-0018](../decisions/DR-0018-session-launcher.md) §3) の入力 (`LaunchInputSchema`、`type` で 4 つに分かれる variant)、起動コマンドが標準入力で読む形 (`LaunchCommandInputSchema`)、`session_launch` の返事 (`SessionLaunchResponseSchema`)、hooks module が `ccmsg sidecar launch` に標準入力で渡す形とその出力 (`LaunchInputTextSchema` / `SessionLaunchResponseTextSchema`) | daemon、webui、hooks module (tool `launch`)、CLI |
 
-hooks module は実行時に import できないので、このファイルは valibot と `parse.ts` 以外を import せず、bundle して使う。
+hooks module は実行時に import できないので、これらのファイルは valibot と、同じ制約を守る protocol のファイル (`parse.ts` 等) 以外を import せず、bundle して使う。
 
 #### Claude Code 由来のファイル・コマンド出力
 

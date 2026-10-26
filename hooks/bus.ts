@@ -1,6 +1,6 @@
 // The module's one engine registration per event it observes. Each concern
 // (session-lifecycle, sidecar, session-facts, subagents, prompt-send,
-// guidance, tools) states its part in an event here: the fields it reads,
+// request-override, guidance, tools) states its part in an event here: the fields it reads,
 // which inputs concern it, and what it runs ahead of the event and once it
 // went through. The hook of the event reads the input for each concern, runs
 // their parts in the order listed around one `next`, and passes the event on
@@ -42,6 +42,16 @@ import {
 import type { FactsState } from "./facts.ts";
 import { guide, sweepGuided, unguide } from "./guidance.ts";
 import { type PromptSendState, PromptSubmitInputSchema, promptSubmitted } from "./prompt-send.ts";
+import {
+  mainTurnEnded,
+  mainTurnMoved,
+  overriddenStep,
+  overridesDropped,
+  OverrideStepInputSchema,
+  OverrideTurnInputSchema,
+  promptSubmitSettled,
+  promptSubmitting,
+} from "./request-override.ts";
 import {
   readModelAndWindow,
   sessionBegan,
@@ -209,6 +219,10 @@ export function registerBus(on: On, state: BusState): void {
         when: (input) => changesSessionId(input.reason),
         before: () => sessionCleared(state),
       }),
+      concern("request-override", SessionEndInputSchema, {
+        when: (input) => changesSessionId(input.reason),
+        before: () => overridesDropped($, state),
+      }),
     ]),
   ).catch(async (_$, e, next) => next(e));
   // /clear and /resume start no session.start: once the command went
@@ -252,17 +266,23 @@ export function registerBus(on: On, state: BusState): void {
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));
-  // A streaming event: the parts run before the stream beneath is passed on.
-  // A subagent's request is not the session's.
+  // A streaming event: the parts run before the stream beneath is passed on,
+  // and they read the request as it came. A subagent's request is not the
+  // session's. A main-thread request goes on with the overrides laid over it
+  // (DR-0041 §1).
   on("turn.step", async function* ($, e, next) {
     const parts = readAll($, e, "turn.step", [
       concern("session-facts", TurnStepInputSchema, {
         when: mainThread,
         before: (input) => stepRequested($, state, input),
       }),
+      concern("request-override", OverrideStepInputSchema, {
+        when: mainThread,
+        before: () => mainTurnMoved(state),
+      }),
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(e);
+    return yield* next(overriddenStep($, state, e));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });
@@ -273,6 +293,10 @@ export function registerBus(on: On, state: BusState): void {
       concern("session-facts", TurnInputSchema, {
         when: mainThread,
         before: () => turnStarted($, state),
+      }),
+      concern("request-override", OverrideTurnInputSchema, {
+        when: mainThread,
+        before: () => mainTurnMoved(state),
       }),
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
@@ -286,6 +310,10 @@ export function registerBus(on: On, state: BusState): void {
         when: mainThread,
         after: () => turnCompleted($, state),
       }),
+      concern("request-override", OverrideTurnInputSchema, {
+        when: mainThread,
+        after: () => mainTurnEnded($, state),
+      }),
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
         after: (input) => subagentTurnCompleted($, state, input),
@@ -296,6 +324,14 @@ export function registerBus(on: On, state: BusState): void {
     fanOut($, e, next, "prompt.submit", [
       // Before the prompt goes in, so its request carries the guidance.
       concern("guidance", AnyInputSchema, { before: () => guide($, state) }),
+      // Ahead of the submit, so the turn's first request, which may come
+      // before the submit settles, carries the one-shot override; taken back
+      // when the submit is dropped.
+      concern("request-override", PromptSubmitInputSchema, {
+        when: (input) => input.origin?.kind === "composer",
+        before: (input) => promptSubmitting($, state, input),
+        after: (input, result) => promptSubmitSettled($, state, input, result),
+      }),
       // A filled prompt is accepted once its submit from the composer went
       // through; the person gets their draft back then.
       concern("prompt-send", PromptSubmitInputSchema, {

@@ -207,10 +207,28 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   user_prompt: {
-    ok: { op: "user_prompt", session_id: SID, text: " two\nlines " },
+    ok: {
+      op: "user_prompt",
+      session_id: SID,
+      text: " two\nlines ",
+      model: "sonnet",
+      effort: "low",
+    },
     bad: [
       { op: "user_prompt", session_id: SID, text: " \n " },
       { op: "user_prompt", text: "x" },
+      { op: "user_prompt", session_id: SID, text: "x", effort: "minimal" },
+      { op: "user_prompt", session_id: SID, text: "x", model: "claude-opus-5-5" },
+      { op: "user_prompt", session_id: SID, text: "x", effort: null },
+    ],
+  },
+  request_override: {
+    ok: { op: "request_override", session_id: SID, model: null, effort: "max" },
+    bad: [
+      { op: "request_override", model: "opus" },
+      { op: "request_override", session_id: SID, effort: "minimal" },
+      { op: "request_override", session_id: SID, model: "opus[1m]" },
+      { op: "request_override", session_id: SID, effort: 3 },
     ],
   },
   sidecar_reply: {

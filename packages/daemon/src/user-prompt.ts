@@ -8,8 +8,10 @@
 // and its reply go through sidecar-call.ts; what this file owns is which run
 // is asked, what a reply means for the person, and the deadline.
 import {
+  overridesAnything,
   type Parsed,
   type PromptSendResult,
+  type RequestOverride,
   type UserPromptModuleReason,
   type SessionInputReadiness,
   type UserPromptReason,
@@ -83,18 +85,30 @@ export interface UserPromptTry {
     | `not_delivered:${UserPromptModuleReason}`;
 }
 
+/** What a person wrote for session `sid`, with the one-shot override of the
+ * turn it starts or joins (DR-0041 §4), `{}` or absent for none. */
+export interface SessionPrompt {
+  sid: string;
+  text: string;
+  override?: RequestOverride;
+}
+
 export async function userPrompt(
-  sid: string,
-  text: string,
+  prompt: SessionPrompt,
   deps: UserPromptDeps,
 ): Promise<UserPromptOutcome & { tries: UserPromptTry[] }> {
+  const { sid, text, override } = prompt;
+  const args = {
+    text,
+    ...(override !== undefined && overridesAnything(override) ? { override } : {}),
+  };
   const until = deps.now() + deps.deadlineMs;
   const tries: UserPromptTry[] = [];
   let unable: UserPromptModuleReason | undefined;
   for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
-    const call = await callSidecar(socket, sid, "prompt.send", { text }, remaining, deps);
+    const call = await callSidecar(socket, sid, "prompt.send", args, remaining, deps);
     const { id } = call;
     // Only a line the sidecar has none of may go to the next run. One that
     // went in part-way (`uncertain`) and got no reply may still have reached

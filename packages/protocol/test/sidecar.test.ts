@@ -15,6 +15,7 @@ import {
   SidecarReplySchema,
   sidecarRunId,
   SidecarRunIdSchema,
+  RequestOverrideResultSchema,
 } from "../src/sidecar.ts";
 
 const line = (value: object): string => JSON.stringify(value);
@@ -145,6 +146,20 @@ describe("the ops' results", () => {
           { id: "a2", description: "d", type: "Explore", since: 6 },
         ],
       },
+      {
+        at: 7,
+        request_override: {
+          session: { model: "claude-opus-5-5[1m]", effort: null },
+          once: { model: null, effort: null },
+        },
+      },
+      {
+        at: 7,
+        request_override: {
+          session: { model: "sonnet", effort: "low" },
+          once: { model: "haiku", effort: "max" },
+        },
+      },
     ] as const) {
       expect(parseWith(SessionFactsSchema, facts)).toEqual({ ok: true, value: facts });
     }
@@ -164,6 +179,14 @@ describe("the ops' results", () => {
       { at: 1, context: { window: 1, tokens: 1.5, at: 1 } },
       { at: 1, subagents: [{ id: "", since: 1 }] },
       { at: 1, subagents: [{ id: "a1", since: 0 }] },
+      { at: 1, request_override: { session: { model: null, effort: null } } },
+      {
+        at: 1,
+        request_override: {
+          session: { model: "", effort: null },
+          once: { model: null, effort: null },
+        },
+      },
     ]) {
       expect(parseWith(SessionFactsSchema, facts).ok).toBe(false);
     }
@@ -214,6 +237,37 @@ describe("the ops' results", () => {
     expect(parseWith(AgentAppendResultSchema, { outcome: "not_delivered", reason: "x" }).ok).toBe(
       false,
     );
+  });
+
+  // DR-0041 §3: the session override, whole; {} is none.
+  test("request.override: the session override whole, applied", () => {
+    for (const args of [{}, { model: "sonnet" }, { model: "fable", effort: "max" }] as const) {
+      const request = { v: 1, op: "request.override", id: "o", args } as const;
+      expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    }
+    for (const args of [{ effort: "minimal" }, { model: "claude-opus-5-5" }, { model: null }]) {
+      expect(readSidecarRequest(line({ v: 1, op: "request.override", id: "o", args })).ok).toBe(
+        false,
+      );
+    }
+    expect(parseWith(RequestOverrideResultSchema, { outcome: "applied" }).ok).toBe(true);
+    expect(parseWith(RequestOverrideResultSchema, { outcome: "ignored" }).ok).toBe(false);
+  });
+
+  // DR-0041 §4: a prompt.send carries the one-shot override of its turn.
+  test("prompt.send: the one-shot override rides along, in the launch's vocabulary", () => {
+    const request = {
+      v: 1,
+      op: "prompt.send",
+      id: "p",
+      args: { text: "hi", override: { effort: "low" } },
+    } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    expect(
+      readSidecarRequest(
+        line({ ...request, args: { text: "hi", override: { effort: "minimal" } } }),
+      ).ok,
+    ).toBe(false);
   });
 
   test("session.facts is asked with no arguments", () => {

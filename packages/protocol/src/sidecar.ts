@@ -7,10 +7,11 @@
 // request names an operation (`op`), so what the module can be asked grows by
 // adding ops, not by changing the line.
 //
-// The hooks module bundles this file, so it imports nothing but valibot and
-// parse.ts.
+// The hooks module bundles this file, so it imports nothing but valibot,
+// parse.ts and request-override.ts.
 import * as v from "valibot";
 import { jsonText, type Parsed, parseWith, type Output } from "./parse.ts";
+import { RequestOverrideSchema, RequestOverrideStateSchema } from "./request-override.ts";
 
 /** The version of the request line. A module reads a line of this version
  * only. */
@@ -51,13 +52,15 @@ export function sidecarRunId(startedAt: number, random: number): string {
 /** `prompt.send`: put `text` into the session as the person's own prompt —
  * fill the composer, press Enter on the session's terminal, and keep the
  * person's half-typed draft (DR-0035 §1, §5). The text is taken verbatim and
- * must hold something other than whitespace. Fields beside `text` are left
- * out rather than refused. */
+ * must hold something other than whitespace. `override` is the one-shot
+ * override of the turn the prompt starts or joins (DR-0041 §4), absent for
+ * none. Fields beside these are left out rather than refused. */
 export const PromptSendArgsSchema = v.object({
   text: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
   ),
+  override: v.optional(RequestOverrideSchema),
 });
 export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
 
@@ -191,6 +194,11 @@ export const SessionFactsSchema = v.object({
   /** The subagents running a turn now, in no particular order; absent until
    * the module has read them. */
   subagents: v.optional(v.array(SessionFactsSubagentSchema)),
+  /** The model and the effort the overrides put on the main thread's
+   * requests (DR-0041 §5): the session override over the session's own
+   * values, and the one-shot override. Absent from a module without the
+   * overrides. `model` and `effort` above stay the session's own. */
+  request_override: v.optional(RequestOverrideStateSchema),
 });
 export type SessionFacts = Output<typeof SessionFactsSchema>;
 
@@ -236,6 +244,18 @@ export const AgentAppendResultSchema = v.variant("outcome", [
 ]);
 export type AgentAppendResult = Output<typeof AgentAppendResultSchema>;
 
+// --- request.override ------------------------------------------------------
+
+/** `request.override` (DR-0041 §3): the session override of the session's
+ * main-thread requests, whole (`{}` is none). The daemon holds it and sends it
+ * again to a run that names itself; the module updates the one-shot
+ * override's fields it changes too. */
+export const RequestOverrideArgsSchema = RequestOverrideSchema;
+export type RequestOverrideArgs = Output<typeof RequestOverrideArgsSchema>;
+
+export const RequestOverrideResultSchema = v.object({ outcome: v.literal("applied") });
+export type RequestOverrideResult = Output<typeof RequestOverrideResultSchema>;
+
 // --- the ops ---------------------------------------------------------------
 
 /** Each op's arguments and result. */
@@ -244,6 +264,7 @@ export const SIDECAR_OPS = {
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
+  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
@@ -255,6 +276,7 @@ export const SIDECAR_OP_NAMES = [
   "prompt.send",
   "session.facts",
   "agent.append",
+  "request.override",
 ] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
@@ -290,6 +312,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
+  requestSchema("request.override", SIDECAR_OPS["request.override"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;

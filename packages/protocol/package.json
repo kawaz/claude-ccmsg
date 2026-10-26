@@ -12,6 +12,7 @@
     "./peer-tools": "./src/peer-tools.ts",
     "./peer-tools-text": "./src/peer-tools-text.ts",
     "./permit-request": "./src/permit-request.ts",
+    "./request-override": "./src/request-override.ts",
     "./sidecar": "./src/sidecar.ts"
   },
   "dependencies": {

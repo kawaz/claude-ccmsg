@@ -48,6 +48,23 @@ const PUSHES: {
       ],
     },
   ],
+  request_overrides: [
+    { ev: "request_overrides", sessions: [] },
+    {
+      ev: "request_overrides",
+      sessions: [
+        {
+          session_id: SID,
+          session: { model: "claude-opus-5-5[1m]", effort: "high" },
+          once: { model: "haiku", effort: null },
+        },
+      ],
+    },
+  ],
+  request_override: [
+    { ev: "request_override", session_id: SID, target: "session", model: "sonnet", effort: "low" },
+    { ev: "request_override", session_id: SID, target: "once", model: null, effort: null },
+  ],
   permit_request: [
     {
       ev: "permit_request",

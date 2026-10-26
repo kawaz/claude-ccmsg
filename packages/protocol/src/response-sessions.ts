@@ -316,6 +316,21 @@ export const UserPromptResponseSchema = v.variant("outcome", [
 ]);
 export type UserPromptResponse = Output<typeof UserPromptResponseSchema>;
 
+/** Payload of a request_override (DR-0041 §3): whether a hooks module took
+ * the change — `applied` (a live run's module applied it), `unconfirmed`
+ * (written to the runs, and none answered in time), or `no_module` (no live
+ * run of the session has a module). The daemon holds the session override
+ * either way, and sends it again to a run that names itself. What the
+ * requests are sent with afterwards comes as ev:"request_override". */
+export const RequestOverrideDeliverySchema = v.picklist(["applied", "unconfirmed", "no_module"]);
+export type RequestOverrideDelivery = Output<typeof RequestOverrideDeliverySchema>;
+
+export const RequestOverrideResponseSchema = v.object({
+  ok: v.literal(true),
+  delivery: RequestOverrideDeliverySchema,
+});
+export type RequestOverrideResponse = Output<typeof RequestOverrideResponseSchema>;
+
 /** Why an user_message did not reach the subagent (DR-0039 §6): the module's
  * AgentAppendReason, or as for user_prompt, `no_module` (no run's module
  * took the request), `session_changed` (/clear, /resume) or `ended`. */

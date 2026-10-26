@@ -1041,7 +1041,11 @@ async function handlePromptSend($, state, request) {
     return await putBackUnsent($, request.text, draft) ? SESSION_CHANGED : UNCONFIRMED;
   }
   const accepted = Promise.withResolvers();
-  state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
+  state.awaiting = {
+    text: request.text,
+    accept: () => accepted.resolve(true),
+    ...request.override !== undefined ? { override: request.override } : {}
+  };
   state.restoring = { text: request.text, draft };
   let entered;
   try {
@@ -1118,15 +1122,116 @@ async function promptSubmitted($, state, input, result) {
     await putBackDraft($, restoring.text, restoring.draft);
 }
 
+var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+var LaunchModelSchema = picklist(["fable", "opus", "sonnet", "haiku"]);
+var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
+var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
+var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
+var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
+var LaunchFieldsSchema = strictObject({
+  cwd: LaunchCwdSchema,
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema),
+  continue: optional(boolean()),
+  resume: optional(SessionUuidSchema),
+  resume_session_at: optional(SessionUuidSchema),
+  fork_session: optional(boolean()),
+  name: optional(NonEmptySchema),
+  prompt: optional(NonEmptySchema)
+});
+function launchContinues(launch) {
+  return launch.continue === true || launch.resume !== undefined;
+}
+function launchMakesSession(launch) {
+  return !launchContinues(launch) || launch.fork_session === true;
+}
+var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
+var NEEDS_SOURCE = "continue か resume と一緒に指定する";
+var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["fork_session"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launch.fork_session === true, "fork_session と一緒に指定する"), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
+var LaunchInputTextSchema = jsonText(LaunchInputSchema);
+var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
+var LaunchCommandInputSchema = pipe(strictObject({
+  ...LaunchFieldsSchema.entries,
+  session_id: optional(SessionUuidSchema)
+}), check(({ session_id: _id, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
+var SessionLaunchResponseSchema = object({
+  ok: literal(true),
+  session_id: optional(SessionUuidSchema),
+  exit_code: pipe(number(), safeInteger()),
+  stdout: string(),
+  stderr: string()
+});
+var SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
+function launchErrorText(error) {
+  if (error.code === "internal") {
+    return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
+  }
+  return {
+    started: "no",
+    text: `ccmsg の daemon が起動を断ったので、起動していない (${error.code}): ${error.msg}`
+  };
+}
+
+var RequestOverrideSchema = object({
+  model: optional(LaunchModelSchema),
+  effort: optional(LaunchEffortSchema)
+});
+var RequestOverridePatchSchema = object({
+  model: optional(nullable(LaunchModelSchema)),
+  effort: optional(nullable(LaunchEffortSchema))
+});
+var RequestOverrideTargetSchema = picklist(["session", "once"]);
+var RequestValuesSchema = object({
+  model: nullable(pipe(string(), nonEmpty())),
+  effort: nullable(pipe(string(), nonEmpty()))
+});
+var RequestOverrideStateSchema = object({
+  session: RequestValuesSchema,
+  once: RequestValuesSchema
+});
+function overridesAnything(override) {
+  return override.model !== undefined || override.effort !== undefined;
+}
+function overrideModel(requestModel, family) {
+  return requestModel?.endsWith("[1m]") === true ? `${family}[1m]` : family;
+}
+function overrideInForce(overrides) {
+  const model = overrides.once?.model ?? overrides.session.model;
+  const effort = overrides.once?.effort ?? overrides.session.effort;
+  return {
+    ...model !== undefined ? { model } : {},
+    ...effort !== undefined ? { effort } : {}
+  };
+}
+
 var REPLY_TIMEOUT_MS = 3000;
 function newFactsState() {
-  return { facts: {}, factsSend: { chain: Promise.resolve(), queued: false } };
+  return {
+    facts: {},
+    overrides: { session: {} },
+    factsSend: { chain: Promise.resolve(), queued: false }
+  };
 }
 function factsArgv(root, sid) {
   return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
 }
+function requestOverrideState(state) {
+  const { session, once } = state.overrides;
+  return {
+    session: {
+      model: session.model ?? state.facts.model ?? null,
+      effort: session.effort ?? state.facts.effort ?? null
+    },
+    once: { model: once?.override.model ?? null, effort: once?.override.effort ?? null }
+  };
+}
 async function currentFacts($, state) {
-  return { at: Math.floor(await $.clock.now()), ...state.facts };
+  return {
+    at: Math.floor(await $.clock.now()),
+    ...state.facts,
+    request_override: requestOverrideState(state)
+  };
 }
 function sendFacts($, state) {
   const send = state.factsSend;
@@ -1148,6 +1253,105 @@ function sendFacts($, state) {
     send.queued = false;
     $.ui.log(`ccmsg: facts not sent: ${errorText(e)}`, { to: "debug" });
   });
+}
+
+var OverrideStepInputSchema = looseObject({
+  agentId: optional(string()),
+  model: optional(string())
+});
+var OverrideTurnInputSchema = looseObject({ agentId: optional(string()) });
+function changeOverrides($, state, change) {
+  const before = JSON.stringify(requestOverrideState(state));
+  change();
+  if (JSON.stringify(requestOverrideState(state)) !== before)
+    sendFacts($, state);
+}
+function without(override, changed) {
+  const kept = {
+    ...override.model !== undefined && !changed.model ? { model: override.model } : {},
+    ...override.effort !== undefined && !changed.effort ? { effort: override.effort } : {}
+  };
+  return overridesAnything(kept) ? kept : undefined;
+}
+function requestOverrideSet($, state, override) {
+  changeOverrides($, state, () => {
+    const { session, once } = state.overrides;
+    const changed = {
+      model: override.model !== session.model,
+      effort: override.effort !== session.effort
+    };
+    const kept = once === undefined ? undefined : without(once.override, changed);
+    state.overrides = {
+      session: override,
+      ...once !== undefined && kept !== undefined ? { once: { ...once, override: kept } } : {}
+    };
+  });
+  return { outcome: "applied" };
+}
+function promptSubmitting($, state, input) {
+  const awaiting = state.awaiting;
+  if (input.text === undefined || awaiting?.override === undefined)
+    return;
+  if (!samePrompt(input.text, awaiting.text))
+    return;
+  const override = awaiting.override;
+  changeOverrides($, state, () => {
+    state.overrides = {
+      session: state.overrides.session,
+      once: { override, bound: false, text: awaiting.text }
+    };
+  });
+}
+var SubmitResultSchema = looseObject({ drop: optional(string()) });
+function promptSubmitSettled($, state, input, result) {
+  const once = state.overrides.once;
+  if (input.text === undefined || once === undefined || once.bound)
+    return;
+  if (!samePrompt(input.text, once.text))
+    return;
+  const settled = parseWith(SubmitResultSchema, result);
+  if (settled.ok && settled.value.drop === undefined)
+    return;
+  changeOverrides($, state, () => {
+    state.overrides = { session: state.overrides.session };
+  });
+}
+function overridesDropped($, state) {
+  changeOverrides($, state, () => {
+    state.overrides = { session: {} };
+  });
+}
+function mainTurnMoved(state) {
+  const once = state.overrides.once;
+  if (once !== undefined)
+    once.bound = true;
+}
+function mainTurnEnded($, state) {
+  if (state.overrides.once?.bound !== true)
+    return;
+  changeOverrides($, state, () => {
+    state.overrides = { session: state.overrides.session };
+  });
+}
+function overriddenStep($, state, e) {
+  const read = parseWith(OverrideStepInputSchema, e);
+  if (!read.ok) {
+    $.ui.log(`ccmsg: turn.step not overridden: ${read.failure.summary}`, { to: "debug" });
+    return e;
+  }
+  if (read.value.agentId !== undefined)
+    return e;
+  const wanted = overrideInForce({
+    session: state.overrides.session,
+    ...state.overrides.once !== undefined ? { once: state.overrides.once.override } : {}
+  });
+  if (!overridesAnything(wanted))
+    return e;
+  return {
+    ...e,
+    ...wanted.model !== undefined ? { model: overrideModel(read.value.model, wanted.model) } : {},
+    ...wanted.effort !== undefined ? { effort: wanted.effort } : {}
+  };
 }
 
 var SubagentTurnInputSchema = looseObject({ agentId: optional(string()) });
@@ -1348,7 +1552,8 @@ function sidecarRunId(startedAt, random) {
   return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
 }
 var PromptSendArgsSchema = object({
-  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
+  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace")),
+  override: optional(RequestOverrideSchema)
 });
 var UserPromptModuleReasonSchema = picklist([
   "dialog",
@@ -1394,7 +1599,8 @@ var SessionFactsSchema = object({
   effort: optional(pipe(string(), nonEmpty())),
   context: optional(SessionFactsContextSchema),
   turn: optional(SessionFactsTurnSchema),
-  subagents: optional(array(SessionFactsSubagentSchema))
+  subagents: optional(array(SessionFactsSubagentSchema)),
+  request_override: optional(RequestOverrideStateSchema)
 });
 var SessionFactsTextSchema = jsonText(SessionFactsSchema);
 var SessionFactsArgsSchema = NoArgsSchema;
@@ -1408,17 +1614,21 @@ var AgentAppendResultSchema = variant("outcome", [
   object({ outcome: literal("appended") }),
   object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
 ]);
+var RequestOverrideArgsSchema = RequestOverrideSchema;
+var RequestOverrideResultSchema = object({ outcome: literal("applied") });
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
-  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema }
+  "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
+  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema }
 };
 var SIDECAR_OP_NAMES = [
   "describe",
   "prompt.send",
   "session.facts",
-  "agent.append"
+  "agent.append",
+  "request.override"
 ];
 function requestSchema(op, args) {
   return object({
@@ -1432,7 +1642,8 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
-  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args)
+  requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
+  requestSchema("request.override", SIDECAR_OPS["request.override"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -1516,13 +1727,22 @@ async function replyTo($, state, sid, generation, request) {
       case "describe":
         return { id, ok: true, result: await describe($) };
       case "prompt.send": {
-        const queued = { id, text: request.args.text, sid, generation };
+        const { text, override } = request.args;
+        const queued = {
+          id,
+          text,
+          sid,
+          generation,
+          ...override !== undefined ? { override } : {}
+        };
         return await queuePromptSend($, state, queued);
       }
       case "session.facts":
         return { id, ok: true, result: await currentFacts($, state) };
       case "agent.append":
         return { id, ok: true, result: await appendToAgent($, request.args) };
+      case "request.override":
+        return { id, ok: true, result: requestOverrideSet($, state, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -1611,57 +1831,6 @@ async function replaceSidecar($, state) {
   if (old !== undefined)
     await old.child.return(undefined);
   runSidecar($, state, sid, state.run);
-}
-
-var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-var LaunchModelSchema = picklist(["fable", "opus", "sonnet", "haiku"]);
-var LaunchEffortSchema = picklist(["low", "medium", "high", "xhigh", "max"]);
-var LaunchCwdSchema = pipe(string(), check((p) => p.startsWith("/"), "絶対パスで指定する"));
-var NonEmptySchema = pipe(string(), minLength(1, "空にはできない (指定しない時は field ごと書かない)"));
-var SessionUuidSchema = pipe(string(), regex(SESSION_ID_SHAPE, "小文字の uuid で指定する"));
-var LaunchFieldsSchema = strictObject({
-  cwd: LaunchCwdSchema,
-  model: optional(LaunchModelSchema),
-  effort: optional(LaunchEffortSchema),
-  continue: optional(boolean()),
-  resume: optional(SessionUuidSchema),
-  resume_session_at: optional(SessionUuidSchema),
-  fork_session: optional(boolean()),
-  name: optional(NonEmptySchema),
-  prompt: optional(NonEmptySchema)
-});
-function launchContinues(launch) {
-  return launch.continue === true || launch.resume !== undefined;
-}
-function launchMakesSession(launch) {
-  return !launchContinues(launch) || launch.fork_session === true;
-}
-var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
-var NEEDS_SOURCE = "continue か resume と一緒に指定する";
-var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["fork_session"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launch.fork_session === true, "fork_session と一緒に指定する"), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
-var LaunchInputTextSchema = jsonText(LaunchInputSchema);
-var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
-var LaunchCommandInputSchema = pipe(strictObject({
-  ...LaunchFieldsSchema.entries,
-  session_id: optional(SessionUuidSchema)
-}), check(({ session_id: _id, ...launch }) => is(LaunchInputSchema, launch), "the launch does not read"), forward(partialCheck([["continue"], ["resume"], ["fork_session"], ["session_id"]], (input) => launchMakesSession(input) === (input.session_id !== undefined), "present exactly when the launch makes a session"), ["session_id"]));
-var SessionLaunchResponseSchema = object({
-  ok: literal(true),
-  session_id: optional(SessionUuidSchema),
-  exit_code: pipe(number(), safeInteger()),
-  stdout: string(),
-  stderr: string()
-});
-var SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
-function launchErrorText(error) {
-  if (error.code === "internal") {
-    return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
-  }
-  return {
-    started: "no",
-    text: `ccmsg の daemon が起動を断ったので、起動していない (${error.code}): ${error.msg}`
-  };
 }
 
 var ErrorBodySchema = object({
@@ -2297,6 +2466,10 @@ function registerBus(on, state) {
     concern("session-lifecycle", SessionEndInputSchema, {
       when: (input) => changesSessionId(input.reason),
       before: () => sessionCleared(state)
+    }),
+    concern("request-override", SessionEndInputSchema, {
+      when: (input) => changesSessionId(input.reason),
+      before: () => overridesDropped($, state)
     })
   ])).catch(async (_$, e, next) => next(e));
   on("command.run", async ($, e, next) => fanOut($, e, next, "command.run", [
@@ -2336,10 +2509,14 @@ function registerBus(on, state) {
       concern("session-facts", TurnStepInputSchema, {
         when: mainThread,
         before: (input) => stepRequested($, state, input)
+      }),
+      concern("request-override", OverrideStepInputSchema, {
+        when: mainThread,
+        before: () => mainTurnMoved(state)
       })
     ]);
     await runAll($, "turn.step", "before", parts, (part) => part.before());
-    return yield* next(e);
+    return yield* next(overriddenStep($, state, e));
   }).catch(async function* (_$, e, next) {
     return yield* next(e);
   });
@@ -2347,6 +2524,10 @@ function registerBus(on, state) {
     concern("session-facts", TurnInputSchema, {
       when: mainThread,
       before: () => turnStarted($, state)
+    }),
+    concern("request-override", OverrideTurnInputSchema, {
+      when: mainThread,
+      before: () => mainTurnMoved(state)
     }),
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
@@ -2358,6 +2539,10 @@ function registerBus(on, state) {
       when: mainThread,
       after: () => turnCompleted($, state)
     }),
+    concern("request-override", OverrideTurnInputSchema, {
+      when: mainThread,
+      after: () => mainTurnEnded($, state)
+    }),
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
       after: (input) => subagentTurnCompleted($, state, input)
@@ -2365,6 +2550,11 @@ function registerBus(on, state) {
   ])).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => fanOut($, e, next, "prompt.submit", [
     concern("guidance", AnyInputSchema, { before: () => guide($, state) }),
+    concern("request-override", PromptSubmitInputSchema, {
+      when: (input) => input.origin?.kind === "composer",
+      before: (input) => promptSubmitting($, state, input),
+      after: (input, result) => promptSubmitSettled($, state, input, result)
+    }),
     concern("prompt-send", PromptSubmitInputSchema, {
       when: (input) => input.origin?.kind === "composer",
       after: (input, result) => promptSubmitted($, state, input, result)

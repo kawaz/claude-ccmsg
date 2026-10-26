@@ -8,6 +8,7 @@
 // request.ts for why.
 import * as v from "valibot";
 import { LaunchInputSchema } from "./launch.ts";
+import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-override.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import { PermitInputSchema } from "./permit-request.ts";
@@ -345,8 +346,29 @@ export const UserPromptRequestSchema = v.object({
     v.string(),
     v.check((text) => text.trim() !== "", "Expected text with something other than whitespace"),
   ),
+  /** The one-shot override (DR-0041 §4): the model and the effort of the
+   * main-thread requests of the turn the prompt starts or joins, to that
+   * turn's end. It goes with the prompt, so it is in force only when the
+   * prompt is. Each absent for the session override's. */
+  model: RequestOverrideSchema.entries.model,
+  effort: RequestOverrideSchema.entries.effort,
 });
 export type UserPromptRequest = Output<typeof UserPromptRequestSchema>;
+
+/** Change the session override of a session's main-thread requests (user
+ * role only, DR-0041 §3): the model and the effort they carry instead of the
+ * session's own until changed again. It updates the one-shot override's
+ * fields it changes too, so it is in force from the next request. `model` /
+ * `effort` are read as in a JSON Merge Patch: absent keeps, `null` clears, a
+ * value sets. The daemon holds the override and sends it to every live run's
+ * hooks module, and again to a run that names itself later. */
+export const RequestOverrideRequestSchema = v.object({
+  op: v.literal("request_override"),
+  session_id: SessionIdSchema,
+  model: RequestOverridePatchSchema.entries.model,
+  effort: RequestOverridePatchSchema.entries.effort,
+});
+export type RequestOverrideRequest = Output<typeof RequestOverrideRequestSchema>;
 
 /** Add what a person wrote to the conversation of a running subagent of a
  * session (user role only, DR-0039 §6). The daemon hands it to a run's hooks

@@ -233,9 +233,21 @@ describe("userMessage", () => {
 });
 
 describe("userPrompt asks one run at a time", () => {
+  // DR-0041 §4: the one-shot override rides on the prompt.send; none is no
+  // field at all.
+  test("the one-shot override goes with the text, and nothing when it overrides nothing", async () => {
+    const { deps, written } = scripted({ run100: ACCEPTED });
+    await userPrompt({ sid: SID, text: "hi", override: { effort: "low" } }, deps);
+    await userPrompt({ sid: SID, text: "hi", override: {} }, deps);
+    expect(written.map((w) => w.line.args)).toEqual([
+      { text: "hi", override: { effort: "low" } },
+      { text: "hi" },
+    ]);
+  });
+
   test("no live run: not_delivered no_module", async () => {
     const { deps } = scripted({});
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
     });
@@ -245,7 +257,7 @@ describe("userPrompt asks one run at a time", () => {
   // The person is told the session changed, not to update the plugin.
   test("no run of the id, its run serving another id: session_changed", async () => {
     const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "session_changed",
     });
@@ -256,7 +268,7 @@ describe("userPrompt asks one run at a time", () => {
       run100: notDelivered("session_changed"),
       run200: ACCEPTED,
     });
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({ outcome: "accepted" });
     expect(written.length).toBe(2);
   });
 
@@ -266,7 +278,7 @@ describe("userPrompt asks one run at a time", () => {
       run200: ACCEPTED,
     });
     const text = "two\nlines  ";
-    expect(await userPrompt(SID, text, deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt({ sid: SID, text }, deps)).toMatchObject({ outcome: "accepted" });
     expect(written).toEqual([
       {
         socket: `${SID}.run100.sock`,
@@ -281,13 +293,13 @@ describe("userPrompt asks one run at a time", () => {
 
   test("a run that did not take the line is passed over", async () => {
     const { deps, written } = scripted({ run100: "unwritten", run200: ACCEPTED });
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({ outcome: "accepted" });
     expect(written.map((w) => w.socket)).toEqual([`${SID}.run200.sock`]);
   });
 
   test("no run that takes the line: not_delivered no_module", async () => {
     const { deps } = scripted({ run100: "unwritten", run200: "unwritten" });
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
     });
@@ -298,7 +310,7 @@ describe("userPrompt asks one run at a time", () => {
   for (const reason of ["dialog", "refused", "not_submitted", "enter_failed"] as const) {
     test(`${reason} stops at that run`, async () => {
       const { deps, written } = scripted({ run100: notDelivered(reason), run200: ACCEPTED });
-      expect(await userPrompt(SID, "hi", deps)).toMatchObject({
+      expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
         outcome: "not_delivered",
         reason,
       });
@@ -325,7 +337,9 @@ describe("userPrompt asks one run at a time", () => {
         { run100: behaviour, run200: ACCEPTED },
         { deadlineMs: 30 },
       );
-      expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+      expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
+        outcome: "unconfirmed",
+      });
       expect(written.length).toBe(1);
     });
   }
@@ -335,7 +349,7 @@ describe("userPrompt asks one run at a time", () => {
       run100: notDelivered("no_terminal"),
       run200: notDelivered("no_composer"),
     });
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_composer",
     });
@@ -362,7 +376,9 @@ describe("userPrompt asks one run at a time", () => {
         },
       },
     );
-    expect(await userPrompt(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+    expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
+      outcome: "unconfirmed",
+    });
     expect(written.length).toBe(1);
   });
 });
@@ -396,7 +412,7 @@ test("a write that stopped part-way is unconfirmed and goes to no other run", as
       ...productionInputDeps(new SidecarReplies(), { liveOf: () => runs, movedOn: () => false }),
       deadlineMs: 400,
     };
-    const res = await userPrompt(SID, "x".repeat(4 * 1024 * 1024), deps);
+    const res = await userPrompt({ sid: SID, text: "x".repeat(4 * 1024 * 1024) }, deps);
     expect(res.outcome).toBe("unconfirmed");
     expect(res.tries.map((t) => t.result)).toEqual(["write_uncertain"]);
     expect(reached).toBe(0);
@@ -816,6 +832,128 @@ describe("user_prompt over the wire", () => {
       await reply;
     } finally {
       sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+});
+
+// DR-0041 §3, §4: the session override goes to every live run's module, held
+// by the daemon and handed again to a run that names itself; the one-shot
+// override goes with the prompt.
+describe("request_override over the wire", () => {
+  test("the session override: held, handed to the run, and again to a run that names itself", async () => {
+    const ctx = await startShortDaemon();
+    const sidecars: { close(): void }[] = [];
+    try {
+      const module = await sessionConn(ctx, SID);
+      const user = await userConn(ctx);
+      // No run yet: held, and no module has it.
+      expect(
+        await user.request({
+          op: "request_override",
+          session_id: SID,
+          effort: "low",
+        }),
+      ).toEqual({ ok: true, delivery: "no_module" });
+
+      const first = await fakeSidecar(ctx, SID, "run1", "hy-1");
+      sidecars.push(first);
+      const resent = await nextRequest(first);
+      expect(resent).toEqual({
+        v: 1,
+        op: "request.override",
+        id: resent.id,
+        args: { effort: "low" },
+      });
+
+      const reply = user.request({
+        op: "request_override",
+        session_id: SID,
+        model: "sonnet",
+      });
+      const changed = await nextRequest(first);
+      expect(changed.args).toEqual({ model: "sonnet", effort: "low" });
+      await module.request(
+        sidecarReply({ id: changed.id, ok: true, result: { outcome: "applied" } }),
+      );
+      expect(await reply).toEqual({ ok: true, delivery: "applied" });
+
+      // Cleared field by field; the whole override comes to nothing.
+      const cleared = user.request({
+        op: "request_override",
+        session_id: SID,
+        model: null,
+        effort: null,
+      });
+      const clearing = await nextRequest(first);
+      expect(clearing.args).toEqual({});
+      await module.request(
+        sidecarReply({ id: clearing.id, ok: true, result: { outcome: "applied" } }),
+      );
+      expect(await cleared).toEqual({ ok: true, delivery: "applied" });
+      // A run named after the clear is handed nothing but the facts' ask.
+      const second = await fakeSidecar(ctx, SID, "run2", "hy-2");
+      sidecars.push(second);
+      const asked = await second.lines.next();
+      if (asked.done === true) throw new Error("the sidecar closed");
+      expect(requestIn(asked.value).op).toBe("session.facts");
+      user.close();
+      module.close();
+    } finally {
+      for (const sidecar of sidecars) sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // DR-0041 §4: the one-shot override goes with the prompt.
+  test("user_prompt's model and effort go with the prompt.send", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
+    try {
+      const module = await sessionConn(ctx, SID);
+      const user = await userConn(ctx);
+      const reply = user.request({
+        op: "user_prompt",
+        session_id: SID,
+        text: "hi",
+        model: "haiku",
+        effort: "low",
+      });
+      const line = await nextRequest(sidecar);
+      expect(line.args).toEqual({ text: "hi", override: { model: "haiku", effort: "low" } });
+      await module.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
+      );
+      expect(await reply).toEqual({ ok: true, outcome: "accepted" });
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("request_override is the user role's, in the launch's vocabulary", async () => {
+    const ctx = await startShortDaemon();
+    try {
+      const session = await sessionConn(ctx, SID);
+      const asSession = await session.requestError({
+        op: "request_override",
+        session_id: SID,
+        effort: "low",
+      });
+      expect(asSession.error.code).toBe("bad_request");
+      const user = await userConn(ctx);
+      for (const body of [
+        { op: "request_override", session_id: SID, effort: "minimal" },
+        { op: "request_override", session_id: SID, model: "opus[1m]" },
+        { op: "request_override", effort: "low" },
+      ]) {
+        expect((await user.requestRefusal(body)).error.code).toBe("invalid_args");
+      }
+      user.close();
+      session.close();
+    } finally {
       await stopTestDaemon(ctx);
     }
   });

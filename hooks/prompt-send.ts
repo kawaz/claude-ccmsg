@@ -7,6 +7,7 @@
 // submit.
 import * as v from "valibot";
 import { type Output, parseWith } from "@ccmsg/protocol/parse";
+import type { RequestOverride } from "@ccmsg/protocol/request-override";
 import type { PromptSendResult, SidecarReplyOf } from "@ccmsg/protocol/sidecar";
 import type { Engine } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
@@ -23,18 +24,21 @@ export const HYOUI_TIMEOUT_MS = 3_000;
 export const ACCEPT_WAIT_MS = 3_000;
 
 /** A prompt.send, as the module queues it: under which session id and which
- * generation of it the line arrived. */
+ * generation of it the line arrived, and the one-shot override that comes
+ * with it (DR-0041 §4), absent for none. */
 export interface QueuedSend {
   id: string;
   text: string;
   sid: string;
   generation: number;
+  override?: RequestOverride;
 }
 
 /** The prompt.sends in flight. */
 export interface PromptSendState {
-  /** The text whose submit from the composer is awaited, and who to tell. */
-  awaiting?: { text: string; accept: () => void };
+  /** The text whose submit from the composer is awaited, who to tell, and
+   * the one-shot override its submit arms (request-override.ts). */
+  awaiting?: { text: string; accept: () => void; override?: RequestOverride };
   /** The text whose submit puts the draft back, and the draft. */
   restoring?: { text: string; draft: string };
   /** prompt.sends run one at a time: two at once would trade drafts. */
@@ -118,7 +122,11 @@ export async function handlePromptSend(
     return (await putBackUnsent($, request.text, draft)) ? SESSION_CHANGED : UNCONFIRMED;
   }
   const accepted = Promise.withResolvers<boolean>();
-  state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
+  state.awaiting = {
+    text: request.text,
+    accept: () => accepted.resolve(true),
+    ...(request.override !== undefined ? { override: request.override } : {}),
+  };
   state.restoring = { text: request.text, draft };
   let entered: boolean;
   try {

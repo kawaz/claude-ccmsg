@@ -5,7 +5,8 @@
 // up later asks for them with the `session.facts` request when the run's
 // sidecar names the run. Sessions without a composer send them too: they
 // have no sidecar, but the daemon still shows them. The parts are read by
-// session-facts.ts (the main thread) and subagents.ts.
+// session-facts.ts (the main thread), subagents.ts and request-override.ts
+// (the overrides in force).
 import { errorText } from "@ccmsg/protocol/parse";
 import type {
   SessionFacts,
@@ -13,6 +14,7 @@ import type {
   SessionFactsSubagent,
   SessionFactsTurn,
 } from "@ccmsg/protocol/sidecar";
+import type { RequestOverride, RequestOverrideState } from "@ccmsg/protocol/request-override";
 import type { Engine } from "./engine.ts";
 
 /** A `ccmsg` command that is one process and one round trip to the daemon (a
@@ -29,6 +31,21 @@ export interface FactsState {
     turn?: SessionFactsTurn;
     subagents?: SessionFactsSubagent[];
   };
+  /** The overrides of the main thread's requests (request-override.ts,
+   * DR-0041): the session override's fields a person set, and the one-shot
+   * override with whether a main-thread turn has taken it. The facts carry
+   * the values they put on the requests (requestOverrideState).
+   *
+   * Design rationale: kept here, beside the facts, rather than in
+   * request-override.ts: the session override's values are the facts' own
+   * model and effort wherever a person set none, so the facts are put
+   * together from both, and request-override.ts sends the facts. */
+  overrides: {
+    session: RequestOverride;
+    /** The one-shot override, the prompt it came with, and whether a
+     * main-thread turn has taken it. */
+    once?: { override: RequestOverride; bound: boolean; text: string };
+  };
   /** Facts are sent one at a time; `queued` is whether a send waits its turn,
    * which then sends what the module knows when it starts, so any number of
    * changes meanwhile cost one send. */
@@ -36,7 +53,11 @@ export interface FactsState {
 }
 
 export function newFactsState(): FactsState {
-  return { facts: {}, factsSend: { chain: Promise.resolve(), queued: false } };
+  return {
+    facts: {},
+    overrides: { session: {} },
+    factsSend: { chain: Promise.resolve(), queued: false },
+  };
 }
 
 /** `ccmsg sidecar facts` for session `sid`. The facts go on standard input,
@@ -45,9 +66,27 @@ export function factsArgv(root: string, sid: string): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
 }
 
+/** The values the overrides put on the main thread's requests: the session
+ * override's fields over the session's own model and effort, and the
+ * one-shot override's. */
+export function requestOverrideState(state: FactsState): RequestOverrideState {
+  const { session, once } = state.overrides;
+  return {
+    session: {
+      model: session.model ?? state.facts.model ?? null,
+      effort: session.effort ?? state.facts.effort ?? null,
+    },
+    once: { model: once?.override.model ?? null, effort: once?.override.effort ?? null },
+  };
+}
+
 /** The facts as the module knows them now. */
 export async function currentFacts($: Engine, state: FactsState): Promise<SessionFacts> {
-  return { at: Math.floor(await $.clock.now()), ...state.facts };
+  return {
+    at: Math.floor(await $.clock.now()),
+    ...state.facts,
+    request_override: requestOverrideState(state),
+  };
 }
 
 /** Send the facts to the daemon, behind any send still running. A send that

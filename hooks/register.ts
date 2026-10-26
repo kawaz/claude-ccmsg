@@ -10,6 +10,8 @@
 //   session-facts.ts      the main thread's facts: model, effort, window, turn
 //   subagents.ts          the running subagents, and agent.append
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
+//   request-override.ts   the model and effort a person overrides the
+//                         requests with from the web UI
 //   guidance.ts           what the model is told of ccmsg before its first turn
 //   tools.ts              the send / say / peers / launch tools
 //

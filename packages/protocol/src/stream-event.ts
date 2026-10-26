@@ -7,6 +7,11 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { PermitRequestRecordSchema } from "./permit-request.ts";
+import {
+  RequestOverrideStateSchema,
+  RequestOverrideTargetSchema,
+  RequestValuesSchema,
+} from "./request-override.ts";
 import { LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
@@ -89,6 +94,31 @@ export const PermitRequestStreamEventSchema = v.object({
   request: PermitRequestRecordSchema,
 });
 export type PermitRequestStreamEvent = Output<typeof PermitRequestStreamEventSchema>;
+
+/** The overrides of every session the daemon knows them of (DR-0041 §5,
+ * user-role subscribers only, like ev:"permit_requests"): what each session's
+ * main-thread requests are sent with, as its hooks module last reported.
+ * Sent at subscribe time, even when empty, so a tab that reconnects to a
+ * restarted daemon drops what the old one held. */
+export const RequestOverridesStreamEventSchema = v.object({
+  ev: v.literal("request_overrides"),
+  sessions: v.array(v.object({ session_id: v.string(), ...RequestOverrideStateSchema.entries })),
+});
+export type RequestOverridesStreamEvent = Output<typeof RequestOverridesStreamEventSchema>;
+
+/** One override of a session whose values just changed, to the same
+ * subscribers: a person changed it (request_override), the module learned
+ * the session's own values (its start, `/model` or `/effort` typed in the
+ * terminal), or a one-shot override ended with its turn (`target: "once"`,
+ * both values null). Sent only when the values change, so every tab holds
+ * the same state. */
+export const RequestOverrideStreamEventSchema = v.object({
+  ev: v.literal("request_override"),
+  session_id: v.string(),
+  target: RequestOverrideTargetSchema,
+  ...RequestValuesSchema.entries,
+});
+export type RequestOverrideStreamEvent = Output<typeof RequestOverrideStreamEventSchema>;
 
 export const RestartingStreamEventSchema = v.object({
   ev: v.literal("restarting"),
@@ -294,6 +324,8 @@ export const StreamEventSchema = v.variant("ev", [
   SaysStreamEventSchema,
   PermitRequestsStreamEventSchema,
   PermitRequestStreamEventSchema,
+  RequestOverridesStreamEventSchema,
+  RequestOverrideStreamEventSchema,
   RestartingStreamEventSchema,
   SubscribeSupersededStreamEventSchema,
   AgentsStreamEventSchema,

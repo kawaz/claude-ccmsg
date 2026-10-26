@@ -136,6 +136,12 @@ import {
 import { type AgentRow, type SidecarRun, SidecarRuns } from "./sidecar-runs.ts";
 import { SessionFactsStore } from "./session-facts.ts";
 import {
+  productionRequestOverrideDeps,
+  RequestOverrideStates,
+  SessionOverrides,
+  sendRequestOverride,
+} from "./request-override.ts";
+import {
   adoptTranscriptPath,
   createTranscriptTailStore,
   resolveTranscript,
@@ -368,6 +374,12 @@ export interface Daemon {
   /** What each session's hooks module last said of its session
    * (session-facts.ts, session_facts). */
   sessionFacts: SessionFactsStore;
+  /** The session override a person set for each session, memory only
+   * (request-override.ts, request_override, DR-0041 §3). */
+  sessionOverrides: SessionOverrides;
+  /** What each session's hooks module last said its overrides put on the
+   * main thread's requests (request-override.ts, DR-0041 §5). */
+  requestOverrides: RequestOverrideStates;
   /** When the agents poll last finished a round: the next round began after
    * this, which is what lets it say a run named before it has no process. */
   agentsRoundAt: number;
@@ -445,6 +457,8 @@ export function createDaemon(host: DaemonHost): Daemon {
     permitRequests: createPermitRequestLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
+    sessionOverrides: new SessionOverrides(),
+    requestOverrides: new RequestOverrideStates(),
     sidecarRuns: new SidecarRuns({
       sidecarDir: paths.sidecars,
       isAlive: isProcessAlive,
@@ -610,6 +624,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
   daemon.sessionFacts.forget(sid);
+  daemon.requestOverrides.forget(sid);
   refreshReadiness(daemon);
 }
 
@@ -621,6 +636,7 @@ const SESSION_FACTS_ASK_MS = 5_000;
  * the session's status for them. */
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
   if (!daemon.sessionFacts.take(sid, facts)) return;
+  takeRequestOverrides(daemon, sid, facts);
   refreshSessionFacts(daemon.sessionStatus, sid, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
   maybeBroadcastAgents(daemon, agents, polledAt);
@@ -646,6 +662,49 @@ async function askSessionFacts(daemon: Daemon, run: SidecarRun): Promise<void> {
     return;
   }
   if (call.reply.value.ok) takeSessionFacts(daemon, run.sid, call.reply.value.result);
+}
+
+/** Hand the session override held for `run`'s session to the run's module
+ * (DR-0041 §3): a module started again, or one the daemon did not know of,
+ * has none of it. A session without one sends nothing, and a module that
+ * does not know the op answers nothing, which leaves the run as it was. */
+async function resendSessionOverride(daemon: Daemon, run: SidecarRun): Promise<void> {
+  if (!daemon.sessionOverrides.has(run.sid)) return;
+  const sent = await sendRequestOverride(
+    run.sid,
+    daemon.sessionOverrides.get(run.sid),
+    [run],
+    productionRequestOverrideDeps(productionSidecarDeps(daemon.sidecarReplies)),
+  );
+  daemon.log.info(
+    `request-override -> ${run.sid}.${run.runId} (named): ${sent.delivery}` +
+      ` tries=[${sent.tries.map((t) => `${t.id} ${t.result}`).join(", ")}]`,
+  );
+}
+
+/** Push the overrides of every session to one connection
+ * (ev:"request_overrides"), a fresh subscriber's catch-up. */
+function sendRequestOverrides(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "request_overrides", sessions: daemon.requestOverrides.snapshot() });
+}
+
+/** Take what `sid`'s module says its overrides put on the requests, and push
+ * each override whose values changed to every user-role subscriber
+ * (ev:"request_override"). Never to a session. */
+function takeRequestOverrides(daemon: Daemon, sid: string, facts: SessionFacts): void {
+  if (facts.request_override === undefined) return;
+  for (const change of daemon.requestOverrides.take(sid, facts.request_override)) {
+    for (const sub of daemon.subscribers) {
+      if (sub.identity?.role !== "user") continue;
+      send(sub, {
+        ev: "request_override",
+        session_id: change.sid,
+        target: change.target,
+        model: change.model,
+        effort: change.effort,
+      });
+    }
+  }
 }
 
 /** Push whether a person's input can reach each session, where it moved:
@@ -1403,6 +1462,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "session_restart",
   "session_rename",
   "user_prompt",
+  "request_override",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -1902,6 +1962,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendSays(daemon, conn);
         // Same reason as the says: sent even when empty.
         sendPermitRequests(daemon, conn);
+        sendRequestOverrides(daemon, conn);
       }
       return;
     }
@@ -2238,8 +2299,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // USER_PROMPT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
       const { tries, ...outcome } = await userPrompt(
-        req.session_id,
-        req.text,
+        {
+          sid: req.session_id,
+          text: req.text,
+          override: {
+            ...(req.model !== undefined ? { model: req.model } : {}),
+            ...(req.effort !== undefined ? { effort: req.effort } : {}),
+          },
+        },
         productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
       );
       daemon.log.info(
@@ -2248,6 +2315,34 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );
       send(conn, { ok: true, ...outcome });
+      return;
+    }
+
+    case "request_override": {
+      // user role only (DR-0041 §3): what a session's requests run on is the
+      // person's to change, not a session's, for itself or another.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'request_override' requires user role");
+        return;
+      }
+      const sid = req.session_id;
+      const override = daemon.sessionOverrides.change(sid, {
+        ...(req.model !== undefined ? { model: req.model } : {}),
+        ...(req.effort !== undefined ? { effort: req.effort } : {}),
+      });
+      // Slow reply: it waits for the modules' replies, up to
+      // REQUEST_OVERRIDE_DEADLINE_MS (DR-0029).
+      const { delivery, tries } = await sendRequestOverride(
+        sid,
+        override,
+        daemon.sidecarRuns.liveOf(sid),
+        productionRequestOverrideDeps(productionSidecarDeps(daemon.sidecarReplies)),
+      );
+      daemon.log.info(
+        `request-override -> ${sid}: ${JSON.stringify(override)} ${delivery}` +
+          ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
+      );
+      send(conn, { ok: true, delivery });
       return;
     }
 
@@ -2332,6 +2427,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // A daemon that started after the module has none of the facts it sent
       // before; one that had them loses nothing by asking again.
       void askSessionFacts(daemon, run);
+      void resendSessionOverride(daemon, run);
       return;
     }
 

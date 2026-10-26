@@ -14,8 +14,8 @@
 // not a request this module runs is logged and not answered: the daemon,
 // getting no reply, takes the request as unconfirmed at its deadline. The ops
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
-// (facts.ts), `agent.append` (subagents.ts); `describe` says which ops the
-// module has.
+// (facts.ts), `agent.append` (subagents.ts), `request.override`
+// (request-override.ts); `describe` says which ops the module has.
 import { errorText } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
@@ -31,6 +31,7 @@ import {
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
 import { currentFacts, type FactsState, REPLY_TIMEOUT_MS } from "./facts.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
+import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { appendToAgent } from "./subagents.ts";
 
@@ -67,7 +68,8 @@ export type Reply =
   | SidecarReplyOf<"describe">
   | SidecarReplyOf<"prompt.send">
   | SidecarReplyOf<"session.facts">
-  | SidecarReplyOf<"agent.append">;
+  | SidecarReplyOf<"agent.append">
+  | SidecarReplyOf<"request.override">;
 
 function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
@@ -141,13 +143,22 @@ async function replyTo(
       case "describe":
         return { id, ok: true, result: await describe($) };
       case "prompt.send": {
-        const queued: QueuedSend = { id, text: request.args.text, sid, generation };
+        const { text, override } = request.args;
+        const queued: QueuedSend = {
+          id,
+          text,
+          sid,
+          generation,
+          ...(override !== undefined ? { override } : {}),
+        };
         return await queuePromptSend($, state, queued);
       }
       case "session.facts":
         return { id, ok: true, result: await currentFacts($, state) };
       case "agent.append":
         return { id, ok: true, result: await appendToAgent($, request.args) };
+      case "request.override":
+        return { id, ok: true, result: requestOverrideSet($, state, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
