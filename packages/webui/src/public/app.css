@@ -407,7 +407,9 @@ a {
 #app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* dvh: iOS Safari の 100vh はブラウザ UI が畳まれた時の高さなので、UI が出ている間は
+   * ページが可視領域より高くなり全体が縦スクロールする。dvh は UI の出入りに追従する。 */
+  height: 100dvh;
 }
 
 #topbar {
