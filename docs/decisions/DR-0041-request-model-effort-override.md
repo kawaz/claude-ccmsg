@@ -1,6 +1,6 @@
 # DR-0041: webui から走行中のセッションの model / effort を request 単位で上書きする
 
-- Status: Accepted (2026-10-26) — ✅ 実装済み (protocol の `RequestOverrideSchema`・op `session_override`・`user_prompt` の `model` / `effort`・サイドカーの `session.override`、daemon の保持と名乗り直しでの再送、module の関心 `request-override`、webui の状態行の picker・FAB の単発の選択・Status の行。実機の確認は [findings 2026-10-26-request-override-verify](../findings/2026-10-26-request-override-verify.md))
+- Status: Proposed (2026-10-26) — 実装済み (未 push)。下の「裁定待ち」の 6 点は統括の推しの形で実装してあり、kawaz の裁定で確定する。実機の確認は [findings 2026-10-26-request-override-verify](../findings/2026-10-26-request-override-verify.md)
 - Date: 2026-10-26
 
 ## Context
@@ -68,6 +68,46 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `ctx … · <model> · <effort> · …`) は model / effort を実効値で出し、上書きが効いている field には印 (`⁺` と色) を付ける。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと小さな picker が開き、通しの上書きを変更・解除できる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた picker だけにする
 - FAB のプロンプトフォームに単発の上書きの選択 (model / effort、既定は「上書きなし」) を置く。送信が受け付けられたら「上書きなし」に戻す
 - Status タブに通しの上書きの行を出す。daemon が持つ上書きと module が効かせている上書きが違う時 (module がまだ受け取っていない) は、その旨を添える
+
+## 裁定待ち
+
+どれも「推し」(統括の推しで、今の実装の形) と「代替」、実装と実測で分かったことを書く。実測は findings 2026-10-26-request-override-verify (2.1.310、代役の API)。
+
+### 1. 通しの上書きを daemon が保持するか
+
+- 推し: daemon が session id ごとにメモリに持ち、run のサイドカーが名乗った時に送り直す (§3)。消すのは明示の解除か daemon の再起動だけ
+- 代替: module の変数だけに持ち、daemon は中継だけにする。daemon の状態は増えないが、restart や `--resume` で module が上がり直すと意図が消え、webui も今の値を module の facts からしか知れない
+- 分かったこと: 上書きを持ったまま `--resume` で起動し直すと、名乗り直した run に `applied` で再送され、次の request が sonnet / medium になった。止めている最中に変えた時の応答は `unconfirmed` だったが、上書きは daemon に残って再送された
+
+### 2. subagent / teammate の request にも効かせるか
+
+- 推し: 効かせる (§1)。止めたい tool の連鎖は subagent を含むため
+- 代替: main thread の request だけにする。subagent の model を agent 定義どおりに保てるが、subagent が回す高い effort の連鎖は止められない
+- 分かったこと: 通しの sonnet / low が、Agent が起こした subagent の request にも載った。model の上書きは、subagent の agent 定義が決めた model も変える
+
+### 3. 単発の上書きは prompt 送信に相乗りするか
+
+- 推し: `user_prompt` に `model?` / `effort?` を足し、サイドカーの `prompt.send` の `override` で運ぶ。submit の前に有効にし、結び付いた turn の終わりで消す (§4)
+- 代替: 単発用の op を別に設け、送信の前に送る。送信と上書きの組が 2 回の往復に分かれ、どちらかだけが届く場合を扱う必要が出る
+- 分かったこと: 単発 haiku / max を付けた送信は、その turn の 1 つ目と tool の後の request が haiku / max になり、次の turn では消えた。webui の FAB からの送信でも同じだった。上書きを知らない古い module は `override` を黙って読み飛ばす (Consequences)
+
+### 4. 実効値の表示と印
+
+- 推し: 状態行の model / effort を実効値で出し、上書きの効いた field に `⁺` と警告色を付け、hover に元の値とどちらの上書きかを書く。model / effort を押すと picker が開く。状態行のパネルは FAB と重なる位置での誤クリックを避けるために押せなくしてあり (`pointer-events: none`)、押せるのはこの 2 つと開いた picker だけにする (この判断の例外)。FAB に単発の選択、Status タブに通しの上書きの行を出す (§5)
+- 代替: (a) 状態行は元の値のまま、上書き中だけ別の行や印を足す。(b) 状態行は押せないままにし、変更は Status タブだけで行う (誤クリックの判断は崩れないが、咄嗟に落とすまでの手数が増える)
+- 分かったこと: `… · low⁺ · …` と表示され、picker から変えた値が request に効いた。ただし webui の session_status の購読が読み込み直後に切れる既存の不具合があり、変えた結果は読み込み直すまで表示に出ない (issue `session-status-subscribe-dropped-on-load`)
+
+### 5. model の上書きを含めるか、`[1m]` の付け方
+
+- 推し: 含める。family の別名を engine に渡し、元の request の `e.model` に `[1m]` があれば付ける (§2)
+- 代替: (a) effort だけにする。(b) module が別名を具体的な id に写す表を持つ (版が出るたびに古くなる)。(c) `[1m]` を付けない (長い会話で 200k を超えると request が通らない)
+- 分かったこと: `sonnet[1m]` / `haiku[1m]` は engine が `claude-sonnet-5-5` / `claude-haiku-5-5` に解決し、`anthropic-beta` に `context-1m-…` が付いた。1M の context を持たない model に付いた時に本物の API がどう答えるかは確かめていない。model を付け外しすると prompt cache は効かない
+
+### 6. `/clear` / `/resume` で通しの上書きを捨てるか
+
+- 推し: 捨てる。module は session id が変わった時に上書きを捨て、daemon は新しい id に上書きを持たない (§3)
+- 代替: 同じ run が仕える新しい id に引き継ぐ。daemon が run の仕えた id の対応 (`SidecarRuns` の served) をもとに移し替える。人から見ると同じ端末の続きなので意図に近いが、daemon の状態の移し替えが要る
+- 分かったこと: 捨てる振る舞いは unit test でだけ確かめた (実機では未確認)
 
 ## Alternatives Considered
 

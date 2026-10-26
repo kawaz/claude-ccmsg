@@ -47,7 +47,7 @@
 | [DR-0038](./DR-0038-json-is-parsed-by-schema.md) | Accepted (✅ 実装済み) | 据え置き | データの形は valibot のスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す。`as` (`as const` 以外)・`any`・非 null の主張は使わず lint で検査する |
 | [DR-0039](./DR-0039-all-mods-and-typed-tools.md) | Accepted (✅ 実装済み) | 据え置き | classic hook (command hook の SessionStart と module の `classic.*`) を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口 (セッション間の送信・say・宛先の候補) を `$.tool.register` の typed tool にする。CLI は人の口と module の transport に縮め、module の無いセッションは no_module の 1 状態でフォールバックを持たない |
 | [DR-0040](./DR-0040-permit-request-tool.md) | Accepted (✅ 実装済み) | 据え置き | auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`。webui の TL に許可依頼のバブルを出して音声で知らせ、添付は人が開いた時に daemon が読む。「許可する」で許可の文 (添付のパスと、許可する intents / commands の全文) をクリップボードに写して依頼を既読にする。未読の依頼は Sessions 一覧に 🔐 で出す。許可の状態は持たない |
-| [DR-0041](./DR-0041-request-model-effort-override.md) | Accepted (✅ 実装済み) | 据え置き | webui から走行中のセッションの model / effort を request 単位で上書きする。通しの上書きは daemon が持って module に送り、単発の上書きは webui の入力 1 回に付けて、その turn の終わりまで効かせる。差し替えは module の `turn.step` で行い、engine の既定も表示も変えないので、ccmsg が実効値を出す |
+| [DR-0041](./DR-0041-request-model-effort-override.md) | Proposed (実装済み、裁定待ち 6 点) | 据え置き | webui から走行中のセッションの model / effort を request 単位で上書きする。通しの上書きは daemon が持って module に送り、単発の上書きは webui の入力 1 回に付けて、その turn の終わりまで効かせる。差し替えは module の `turn.step` で行い、engine の既定も表示も変えないので、ccmsg が実効値を出す |
 
 ## Superseded (一部)
 
