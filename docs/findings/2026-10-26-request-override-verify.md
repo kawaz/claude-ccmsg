@@ -5,6 +5,21 @@
 - 操作: 通しの上書きは user role の op `session_override` (wire と webui の状態行の picker)、単発の上書きは op `user_prompt` の `model` / `effort` (wire と webui の FAB)。人の入力は `hyoui input` で打った
 - 代役は、最後の user の文に `RUN_TOOL` があれば合図のファイルができるまで待つ Bash の tool_use を、`RUN_AGENT` があれば Agent の tool_use を返し、それ以外は短い文を返す
 
+## この記録の範囲
+
+下のマトリクスは、kawaz の裁定 (DR-0041 の「裁定」の節) の**前**の実装で取った。当時との違い:
+
+- 変更の op: 当時は通しが op `session_override`。今は `request_override` (target 無し、通しだけ)。単発は当時も今も `user_prompt` の `model` / `effort` に乗る
+- subagent: 当時は上書きを subagent の request にも効かせた。今は素通し
+- 通しの変更: 当時は効いている単発を更新しなかった。今は通しで変わった field を単発からも外す
+- 表示: 当時は status snapshot の欄で状態を持った。今は daemon の `ev: "request_override"` で全タブに配る。picker と FAB は effort を主、model を一段奥に置く
+
+単発の寿命 (その turn の終わりまで) と、通しの差し替え・解除・再送、別名と `[1m]` の解決は当時と同じ。
+
+- 今の実装でも成り立つ行: subagent の行以外のすべて (op の名と経路は変わったが、request に載る値は同じになるはず)
+- 今の実装で変わる行: 「その subagent の request」(通し sonnet / low → 今は subagent 自身の値のまま渡るはず)。単発が効いている最中に通しを変える場合と、変更のイベントの配送は、この表に無い
+- **今の実装での実機の取り直しは未実施**。試験用の claude を起動するコマンドが auto mode の classifier に止められたため。取り直しの手順は委譲元が持つ。今の振る舞いは unit test (`hooks/register.test.ts` の「the overrides of the session's requests」、`packages/daemon/test/request-override.test.ts`、`packages/daemon/test/user-prompt.test.ts` の「request_override over the wire」) で確かめている
+
 ## 結論
 
 - 通し・単発・両方・解除のどれも、代役が受けた request の `model` と `output_config.effort` が DR-0041 §1・§4 のとおりに変わった。settings も `/model` の表示も変わらない (DR の前提の findings と同じ)
