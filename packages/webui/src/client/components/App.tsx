@@ -105,7 +105,6 @@ function appFrame(state: AppState) {
     connStatus: state.connStatus,
     usageAvailable: state.llmUsageAvailable || state.llmStatsAvailable || state.llmStatusAvailable,
     versionMismatch: state.versionMismatch,
-    daemonInfo: state.daemonInfo,
     documentTitle: documentTitleFor(state),
   };
 }
@@ -349,11 +348,6 @@ export function App() {
           <RoomView />
         ) : null}
       </div>
-      <footer id="app-footer">
-        {frame.daemonInfo ? (
-          <span title={frame.daemonInfo.exe ?? undefined}>daemon v{frame.daemonInfo.version}</span>
-        ) : null}
-      </footer>
       <ImageLightboxHost />
     </div>
   );
