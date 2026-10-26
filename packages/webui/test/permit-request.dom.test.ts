@@ -179,8 +179,8 @@ describe("permission request bubbles", () => {
     const [bubble, ...others] = bubbles(root);
     expect(others.length).toBe(0);
     const shown = defined(bubble, "the session's bubble");
-    // The same frame as the Timeline's other bubbles: body, then time and
-    // button on the footer row.
+    // The same frame as the Timeline's other bubbles: the body, then the
+    // footer row with the time alone. The button is the body's last row.
     expect(shown.classList.contains("tl-bubble")).toBe(true);
     expect(shown.classList.contains("tl-bubble-left")).toBe(true);
     expect([...shown.children].map((el) => el.className)).toEqual([
@@ -190,8 +190,14 @@ describe("permission request bubbles", () => {
     expect(shown.querySelector(".tl-bubble-body > .tl-bubble-from")?.textContent).toBe(
       "🔐許可依頼",
     );
-    expect(shown.querySelector(".tl-bubble-footer > .tl-bubble-time")).not.toBeNull();
-    expect(shown.querySelector(".tl-bubble-footer > button.permit-grant")).not.toBeNull();
+    expect(
+      [...defined(shown.querySelector(".tl-bubble-footer"), "footer").children].map(
+        (el) => el.className,
+      ),
+    ).toEqual(["tl-bubble-time"]);
+    expect(
+      shown.querySelector(".tl-bubble-body > :last-child > button.permit-grant"),
+    ).not.toBeNull();
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
       "止められた行動",
       "添付",

@@ -2636,6 +2636,17 @@ a {
   color: var(--fg-warn);
 }
 
+/* 本文の最後の行。ボタンと、その横に出る写せなかった・既読にできなかった
+ * 理由を並べる。 */
+.permit-grant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-7);
+  font-size: var(--font-size-xs);
+}
+
 /* 2 つのラベルを同じ升目に重ね、幅を広い方に固定する: 押した後に
  * 「コピーしました」へ切り替わってもボタンの幅が動かない。 */
 .permit-grant {
