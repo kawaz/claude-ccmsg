@@ -420,6 +420,7 @@ export function SessionView({
                 restart={restart}
                 onLoadEnv={() => ws.sessionEnv(sid)}
                 onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
+                onOverride={(patch) => ws.requestOverride(sid, patch)}
               />
             ) : hasTranscript ? (
               <p id="empty-state">Status を読み込めません: {statusError}</p>

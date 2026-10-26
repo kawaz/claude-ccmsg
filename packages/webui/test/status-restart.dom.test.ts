@@ -14,6 +14,7 @@ import type {
   SessionRestartResponse,
   SessionStatusSnapshot,
   UserMessageResponse,
+  RequestOverrideResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
@@ -92,13 +93,23 @@ async function mount(options: {
     Promise.resolve({ ok: true, pid: 4242, env: {} });
   const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, outcome: "appended" });
+  const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
+    Promise.resolve({ ok: true, delivery: "applied" });
   const ws = createWsClient((action) => store.dispatch(action));
   /** The session's view as far as the restart goes: it holds the restart,
    * and the Status panel inside it may go (no snapshot while the session is
    * between processes). */
   function Host({ snapshot }: { snapshot: SessionStatusSnapshot | undefined }) {
     const restart = useSessionRestart(SID, onRestart);
-    return h(StatusPanel, { snapshot, sid: SID, onKill, restart, onLoadEnv, onAgentInput });
+    return h(StatusPanel, {
+      snapshot,
+      sid: SID,
+      onKill,
+      restart,
+      onLoadEnv,
+      onAgentInput,
+      onOverride,
+    });
   }
   const root = document.createElement("div");
   document.body.append(root);

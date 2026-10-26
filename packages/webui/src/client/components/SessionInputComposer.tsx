@@ -17,6 +17,11 @@
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
 // daemon が peers の行と session_status に載せる input_readiness の理由と対処を
 // 先に示す。
+// 送信には単発の上書き (DR-0041 §4: その送信で始まる、または加わる turn の
+// 終わりまでの effort / model) を選んで付けられ、`user_prompt` に乗って文と一緒に
+// 届く。既定は「上書きなし」で、`accepted` になったら戻す。届かなかった・未確認の
+// 時は文と同じく選択も残す。
+import type { RequestOverride } from "@ccmsg/protocol";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
@@ -66,6 +71,8 @@ import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
+import { OverrideFields } from "./RequestOverridePicker.tsx";
+import { withPicked } from "../request-override-view.ts";
 
 export function SessionInputComposer({ sid }: { sid: string }) {
   const { ws, store } = useApp();
@@ -79,6 +86,7 @@ export function SessionInputComposer({ sid }: { sid: string }) {
   const [sends, setSends] = useState(() => loadSends(sid));
   const [sending, setSending] = useState(() => isSending(sid));
   const [failure, setFailure] = useState(() => lastFailure(sid));
+  const [single, setSingle] = useState<RequestOverride>({});
   // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
   // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
   const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
@@ -358,12 +366,14 @@ export function SessionInputComposer({ sid }: { sid: string }) {
     // 送った文のままか」を比べる相手になる。
     saveDraft(sid, text, attachments);
     const outcome = await sendSessionInput(sid, { text, attachments }, finalText, (t) =>
-      ws.userPrompt(sid, t),
+      ws.userPrompt(sid, t, single),
     );
+    // 単発の上書きはその送信のもの: 受け付けられたら次の送信に持ち越さない。
+    if (outcome.kind === "accepted") setSingle({});
     // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
     // 別タブで書き換わっていれば、その文を見せたまま残す。
     if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
-  }, [ws, sid, text, attachments, closePanel]);
+  }, [ws, sid, text, attachments, single, closePanel]);
 
   if (!open) {
     // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
@@ -560,6 +570,14 @@ export function SessionInputComposer({ sid }: { sid: string }) {
             </div>
           ))
         : null}
+      <div class="session-input-override">
+        <OverrideFields
+          value={single}
+          onPick={(field, picked) => setSingle((now) => withPicked(now, field, picked))}
+          disabled={sending}
+          label="この送信だけの上書き"
+        />
+      </div>
       <div class="session-input-actions">
         <div class="composer-attach-buttons">
           {/* 画像/ファイルボタンの区別は不要、クリップマーク 1 個に統一。

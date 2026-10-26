@@ -19,6 +19,9 @@ import {
   type RoomKind,
   type RoomSummary,
   type PermitRequestRecord,
+  type RequestOverrideState,
+  type RequestOverrideTarget,
+  type RequestValues,
   type SayRecord,
   type SessionApiError,
   type SessionErrorEntry,
@@ -393,6 +396,12 @@ export interface AppState {
    * (ev:"permit_requests"), and one at a time (ev:"permit_request") as one
    * is recorded or marked read. */
   permitRequests: readonly PermitRequestRecord[];
+  /** What the overrides put on each session's main-thread requests (DR-0041
+   * §5), by session id: replaced whole by the subscribe-time set
+   * (ev:"request_overrides"), and one override of one session at a time
+   * (ev:"request_override") as its values change. Every tab gets the same
+   * pushes, so every tab shows the same. */
+  requestOverrides: ReadonlyMap<string, RequestOverrideState>;
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
    * cwd: one entry per pinned directory, holding the record frozen when it
    * was pinned (Pin, the webui's own stored shape). Which sessions a pin lists is derived at render time
@@ -458,6 +467,7 @@ export function initialState(): AppState {
     llmRequests: new Map(),
     says: [],
     permitRequests: [],
+    requestOverrides: new Map(),
     pinnedSessions: new Map(),
     connStatus: "connecting",
     sidebarOpen: initialSidebarOpen(),
@@ -492,6 +502,16 @@ export type Action =
   | { type: "says/loaded"; says: readonly SayRecord[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
   | { type: "permit-requests/updated"; request: PermitRequestRecord }
+  | {
+      type: "request-overrides/loaded";
+      sessions: readonly ({ session_id: string } & RequestOverrideState)[];
+    }
+  | {
+      type: "request-overrides/changed";
+      sid: string;
+      target: RequestOverrideTarget;
+      values: RequestValues;
+    }
   | { type: "daemon-info/loaded"; version: string; exe?: string; home?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
@@ -1066,6 +1086,25 @@ export function reducer(state: AppState, action: Action): AppState {
             permitRequests: state.permitRequests.map((r) => (r.id === request.id ? request : r)),
           }
         : { ...state, permitRequests: [...state.permitRequests, request] };
+    }
+    case "request-overrides/loaded":
+      return {
+        ...state,
+        requestOverrides: new Map(
+          action.sessions.map(({ session_id, session, once }) => [session_id, { session, once }]),
+        ),
+      };
+    case "request-overrides/changed": {
+      const none = { model: null, effort: null };
+      const held = state.requestOverrides.get(action.sid) ?? { session: none, once: none };
+      const requestOverrides = new Map(state.requestOverrides);
+      requestOverrides.set(
+        action.sid,
+        action.target === "session"
+          ? { ...held, session: action.values }
+          : { ...held, once: action.values },
+      );
+      return { ...state, requestOverrides };
     }
     case "llm-requests/loaded":
       return {

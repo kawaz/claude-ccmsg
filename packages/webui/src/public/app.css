@@ -7578,6 +7578,110 @@ a.tl-attachment-file-path {
   color: var(--accent);
 }
 
+/* DR-0041 §5: the model and the effort of the ctx line open the session
+ * override's pickers. The panel is not clickable (pointer-events: none
+ * above); these two buttons and the pickers they open are the only parts
+ * that take a click. */
+.ctx-value {
+  pointer-events: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.ctx-value-overridden {
+  color: var(--fg-warn);
+  font-weight: 600;
+}
+
+.ctx-override-popover {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  border: 1px solid var(--warn-border);
+  border-radius: 0.4rem;
+  background: var(--warn-surface);
+}
+
+.ctx-override-close {
+  padding: 0 var(--space-4);
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.override-fields {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.override-select {
+  font: inherit;
+  font-size: var(--font-size-sm);
+}
+
+/* The model is a step further in than the effort (DR-0041 §5). */
+.override-model {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
+.override-model > summary {
+  cursor: pointer;
+}
+
+.override-model[open] {
+  color: inherit;
+}
+
+.override-editor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.override-notice {
+  color: var(--fg-warn);
+  font-size: var(--font-size-sm);
+  white-space: normal;
+}
+
+.status-override {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.status-override-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.status-override-label {
+  color: var(--fg-muted);
+}
+
+.session-input-override {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .tl-status-mini-teammate::before {
   content: "◆ ";
   color: var(--fg-muted);

@@ -48,6 +48,8 @@ import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
+import { SessionOverrideEditor, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
+import { onceOverride, overrideText, sessionPickerValue } from "../request-override-view.ts";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
  * 追加しうる) は default で pending と同じ空マーカー扱い、独自分岐は生やさない
@@ -535,6 +537,7 @@ export function StatusPanel({
   restart,
   onLoadEnv,
   onAgentInput,
+  onOverride,
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
@@ -542,6 +545,7 @@ export function StatusPanel({
   restart: SessionRestart;
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
   onAgentInput: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
+  onOverride: SessionOverrideChange;
 }) {
   const { store } = useApp();
   const daemonVersion = useStoreState(store, (s) => s.daemonInfo?.version ?? null);
@@ -582,6 +586,9 @@ export function StatusPanel({
     sameJson,
   );
   const staleClient = peer ? staleClientWarning(peer) : null;
+  // What the overrides put on the main thread's requests (DR-0041 §5), the
+  // same in every tab.
+  const overrides = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const clientBuild = peer ? clientBuildLabel(peer) : "—";
   if (!snapshot) {
     return (
@@ -591,7 +598,8 @@ export function StatusPanel({
     );
   }
   const sections = buildStatusSections(snapshot);
-  const context = snapshot.context ? formatContextUsage(snapshot.context) : null;
+  const once = onceOverride(overrides);
+  const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
   // Context is nearly always present, so the empty-state predicate stays
   // scoped to the operational axes this tab renders.
   const nothingAtAll =
@@ -686,6 +694,23 @@ export function StatusPanel({
           ) : (
             "—"
           )}
+        </dd>
+        <dt>OVERRIDE</dt>
+        <dd class="status-override">
+          <span class="status-override-row">
+            <span class="status-override-label">通し</span>
+            <SessionOverrideEditor
+              value={sessionPickerValue(overrides, snapshot.context)}
+              onChange={onOverride}
+            />
+          </span>
+          {once.model !== undefined || once.effort !== undefined ? (
+            <span class="status-override-row">
+              <span class="status-override-label">単発</span>
+              <span>{overrideText(once)}</span>
+              <span class="status-context-note">この turn の終わりまで</span>
+            </span>
+          ) : null}
         </dd>
       </dl>
       <SubagentInput key={sid} subagents={snapshot?.subagents} onSend={onAgentInput} />

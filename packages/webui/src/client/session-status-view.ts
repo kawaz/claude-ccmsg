@@ -7,6 +7,7 @@ import type {
   AgentInfo,
   ErrorResponse,
   SessionBackgroundStatus,
+  RequestOverrideState,
   SessionContextUsage,
   SessionRestartResponse,
   SessionStatusSnapshot,
@@ -14,6 +15,7 @@ import type {
   SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
+import { requestValueViews, type RequestValueView } from "./request-override-view.ts";
 
 /** TODO items split by status (DR-0020 §2.1: "pending / in_progress /
  * completed 別に表示"). Order within each bucket is preserved from the
@@ -206,31 +208,52 @@ export function restartResultText(reply: SessionRestartResponse | ErrorResponse)
   return { text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
 }
 
+/** The ctx line, in its parts: the fill (`ctx 100k/1M (10%)`) and the model
+ * and the effort the requests are sent with (DR-0041 §5). */
+export interface ContextUsageView {
+  text: string;
+  title: string;
+  fill: string;
+  model: RequestValueView;
+  effort: RequestValueView | null;
+}
+
 /** The ctx line: the fill over the window Claude Code reported through the
  * session's hooks module. Without that window (a session without the module)
  * the fill stands alone: the window depends on the model's default and on
  * environment overrides the transcript does not record, so it is not guessed.
- * Before the first response there is no fill, shown as `—`. */
-export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {
+ * Before the first response there is no fill, shown as `—`. The model and the
+ * effort are the ones the requests are sent with: an override's, marked, else
+ * the session's own (`overrides` is what ev:"request_override" says of the
+ * session). */
+export function formatContextUsage(
+  ctx: SessionContextUsage,
+  overrides?: RequestOverrideState,
+): ContextUsageView {
   const { tokens, window } = ctx;
-  const fill = tokens !== undefined ? `${Math.round(tokens / 1000)}k` : "—";
+  const used = tokens !== undefined ? `${Math.round(tokens / 1000)}k` : "—";
   const limit = window !== undefined ? `/${formatContextWindow(window)}` : "";
   const percentage =
     tokens !== undefined && window !== undefined
       ? ` (${Math.round((tokens / window) * 100)}%)`
       : "";
+  const fill = `ctx ${used}${limit}${percentage}`;
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
-  // the transcript row carried one (older CC rows lack the field).
-  const effortSuffix = ctx.effort ? ` · ${ctx.effort}` : "";
+  // the transcript row carried one (older CC rows lack the field) or an
+  // override names one.
+  const { model, effort } = requestValueViews(ctx, overrides, shortModel);
   return {
-    text: `ctx ${fill}${limit}${percentage} · ${shortModel(ctx.model)}${effortSuffix}`,
+    text: [fill, model.text, ...(effort ? [effort.text] : [])].join(" · "),
     title:
       (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
       (window !== undefined
         ? ` / context window ${window.toLocaleString("en-US")}`
         : " / context window unknown (the session has no ccmsg hooks module)") +
-      ` / model ${ctx.model}` +
-      (ctx.effort ? ` / effort ${ctx.effort}` : ""),
+      ` / ${model.title}` +
+      (effort ? ` / ${effort.title}` : ""),
+    fill,
+    model,
+    effort,
   };
 }
 
@@ -288,6 +311,15 @@ export type MiniSummaryLineKind = "workflow" | "todo" | "context" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
+  /** The ctx line's parts, when it has the context: the model and the effort
+   * are drawn apart from the rest so a person can change the session
+   * override from them (DR-0041 §5). `tail` is what follows them. */
+  context?: {
+    fill: string;
+    model: RequestValueView;
+    effort: RequestValueView | null;
+    tail: string;
+  };
 }
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
@@ -318,6 +350,7 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,
   processParts: readonly string[] = [],
+  overrides?: RequestOverrideState,
 ): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (Status タブの WORKFLOWS 表示と数値を一致させる)。
@@ -335,11 +368,24 @@ export function miniSummaryLines(
   // The ctx line ends with what the session's process runs as (uptime,
   // Claude Code version: `processParts`), which stands alone before the
   // transcript has said anything of the context.
-  const contextParts = [
-    ...(snapshot.context ? [formatContextUsage(snapshot.context).text] : []),
-    ...processParts,
-  ];
-  if (contextParts.length > 0) extra.push({ kind: "context", text: contextParts.join(" · ") });
+  const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
+  const contextParts = [...(context ? [context.text] : []), ...processParts];
+  if (contextParts.length > 0) {
+    extra.push({
+      kind: "context",
+      text: contextParts.join(" · "),
+      ...(context
+        ? {
+            context: {
+              fill: context.fill,
+              model: context.model,
+              effort: context.effort,
+              tail: processParts.join(" · "),
+            },
+          }
+        : {}),
+    });
+  }
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
   if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });
 

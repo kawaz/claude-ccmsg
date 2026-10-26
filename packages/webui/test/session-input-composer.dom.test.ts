@@ -19,7 +19,8 @@ import {
 } from "../src/client/components/session-input-store.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
-import { createWsClient } from "../src/client/ws.ts";
+import type { RequestOverride } from "@ccmsg/protocol";
+import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { Mounted, SID } from "./timeline-harness.ts";
@@ -115,5 +116,89 @@ describe("SessionInputComposer draft", () => {
     // 別タブは「前からの下書き」を見ていて、それを書き換えた。
     await otherTabWrites("別タブで書いた文", before);
     expect(textarea(root).value).toBe("このタブで直した文");
+  });
+});
+
+// DR-0041 §4: the one-shot override of one send, carried by the user_prompt.
+describe("SessionInputComposer one-shot override", () => {
+  /** The composer, opened, over a ws whose userPrompt answers `outcome` and
+   * records what it was asked. */
+  async function openWith(
+    outcome: "accepted" | "unconfirmed",
+  ): Promise<{ root: HTMLElement; sent: { text: string; override?: RequestOverride }[] }> {
+    const store = createStore(initialState());
+    const sent: { text: string; override?: RequestOverride }[] = [];
+    const ws: WsHandle = {
+      ...createWsClient((action) => store.dispatch(action)),
+      userPrompt: async (_sid, text, override) => {
+        sent.push({ text, ...(override !== undefined ? { override } : {}) });
+        return { ok: true, outcome };
+      },
+    };
+    const root = await mounted.mount(store, ws, h(SessionInputComposer, { sid: SID }));
+    const fab = instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the FAB");
+    await act(() => fab.click());
+    return { root, sent };
+  }
+  function select(root: HTMLElement, field: "model" | "effort"): HTMLSelectElement {
+    return instanceOf(
+      root.querySelector(`select[aria-label="この送信だけの上書き: ${field}"]`),
+      HTMLSelectElement,
+      `the one-shot ${field}`,
+    );
+  }
+  async function pick(root: HTMLElement, field: "model" | "effort", value: string): Promise<void> {
+    const el = select(root, field);
+    await act(() => {
+      el.value = value;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+  async function send(root: HTMLElement): Promise<void> {
+    const button = instanceOf(
+      root.querySelector(".session-input-send"),
+      HTMLButtonElement,
+      "the send button",
+    );
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+  }
+
+  // The effort is at hand; the model is a step further in.
+  test("the effort first; the model behind a disclosure that names it once picked", async () => {
+    const { root } = await openWith("accepted");
+    const fields = instanceOf(root.querySelector(".override-fields"), HTMLElement, "the fields");
+    expect(fields.firstElementChild).toBe(select(root, "effort"));
+    const model = instanceOf(root.querySelector(".override-model"), HTMLDetailsElement, "model");
+    expect(model.open).toBe(false);
+    expect(model.contains(select(root, "model"))).toBe(true);
+    await pick(root, "model", "haiku");
+    expect(model.querySelector("summary")?.textContent).toBe("model: haiku");
+  });
+
+  test("none by default; what is picked goes with the send, and goes back to none once accepted", async () => {
+    const { root, sent } = await openWith("accepted");
+    expect(select(root, "model").value).toBe("");
+    expect(select(root, "effort").value).toBe("");
+    await type(root, "軽く答えて");
+    await pick(root, "effort", "low");
+    await pick(root, "model", "haiku");
+    await send(root);
+    expect(sent).toEqual([{ text: "軽く答えて", override: { model: "haiku", effort: "low" } }]);
+    const fab = instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the FAB");
+    await act(() => fab.click());
+    expect(select(root, "model").value).toBe("");
+    expect(select(root, "effort").value).toBe("");
+  });
+
+  test("kept with the text when the send is not confirmed", async () => {
+    const { root, sent } = await openWith("unconfirmed");
+    await type(root, "x");
+    await pick(root, "effort", "max");
+    await send(root);
+    expect(sent).toEqual([{ text: "x", override: { effort: "max" } }]);
+    expect(select(root, "effort").value).toBe("max");
   });
 });

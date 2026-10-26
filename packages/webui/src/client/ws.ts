@@ -20,6 +20,8 @@ import type {
   ParseFailure,
   ReplyOf,
   RequestInput,
+  RequestOverride,
+  RequestOverridePatch,
   SessionDumpFileRequest,
   SessionLaunchRequest,
   SessionSearchRequest,
@@ -53,6 +55,9 @@ export const USER_PROMPT_REPLY_TIMEOUT_MS = 15_000;
 /** How long userMessage waits for its reply: the daemon's USER_MESSAGE_DEADLINE_MS
  * (5 s) and the same margin as USER_PROMPT_REPLY_TIMEOUT_MS. */
 export const USER_MESSAGE_REPLY_TIMEOUT_MS = 8_000;
+/** How long requestOverride waits for its reply: the daemon's
+ * REQUEST_OVERRIDE_DEADLINE_MS (5 s) and the same margin. */
+export const REQUEST_OVERRIDE_REPLY_TIMEOUT_MS = 8_000;
 
 /** The time the client reads and the waits it sets: how long a socket has
  * been idle, when to reconnect, when a reply is overdue. The same seam as the
@@ -346,8 +351,22 @@ export interface WsHandle {
    * this call can take several seconds. An `error.code` of `connection_closed`
    * or `request_timeout` (no answer within USER_PROMPT_REPLY_TIMEOUT_MS)
    * means the request was written but its answer was lost: the text may be in
-   * the session. */
-  userPrompt(sessionId: string, text: string): Promise<ReplyOf<"user_prompt">>;
+   * the session. `override` is the one-shot override of the turn the prompt
+   * starts or joins (DR-0041 §4); `{}` or absent for none. */
+  userPrompt(
+    sessionId: string,
+    text: string,
+    override?: RequestOverride,
+  ): Promise<ReplyOf<"user_prompt">>;
+  /** Change the session override of a session's main-thread requests
+   * (DR-0041 §3, user role only): a field of `patch` absent keeps it, `null`
+   * clears it, a value sets it. The daemon answers whether a hooks module
+   * took it, after waiting for the modules, so this can take seconds; what
+   * the requests are sent with afterwards comes as ev:"request_override". */
+  requestOverride(
+    sessionId: string,
+    patch: RequestOverridePatch,
+  ): Promise<ReplyOf<"request_override">>;
   userMessage(sessionId: string, agentId: string, text: string): Promise<ReplyOf<"user_message">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
@@ -742,6 +761,20 @@ export function createWsClient(
       dispatch({ type: "permit-requests/loaded", requests: streamEv.requests });
       return;
     }
+    if (streamEv.ev === "request_overrides") {
+      dispatch({ type: "request-overrides/loaded", sessions: streamEv.sessions });
+      return;
+    }
+    if (streamEv.ev === "request_override") {
+      const { session_id, target, model, effort } = streamEv;
+      dispatch({
+        type: "request-overrides/changed",
+        sid: session_id,
+        target,
+        values: { model, effort },
+      });
+      return;
+    }
     if (streamEv.ev === "permit_request") {
       dispatch({ type: "permit-requests/updated", request: streamEv.request });
       return;
@@ -1005,14 +1038,26 @@ export function createWsClient(
         session_id: sessionId,
         title,
       }),
-    userPrompt: (sessionId, text) =>
+    userPrompt: (sessionId, text, override) =>
       send(
         {
           op: "user_prompt",
           session_id: sessionId,
           text,
+          ...(override?.model !== undefined ? { model: override.model } : {}),
+          ...(override?.effort !== undefined ? { effort: override.effort } : {}),
         },
         { timeoutMs: USER_PROMPT_REPLY_TIMEOUT_MS },
+      ),
+    requestOverride: (sessionId, patch) =>
+      send(
+        {
+          op: "request_override",
+          session_id: sessionId,
+          ...(patch.model !== undefined ? { model: patch.model } : {}),
+          ...(patch.effort !== undefined ? { effort: patch.effort } : {}),
+        },
+        { timeoutMs: REQUEST_OVERRIDE_REPLY_TIMEOUT_MS },
       ),
     userMessage: (sessionId, agentId, text) =>
       send(

@@ -2411,3 +2411,39 @@ describe("version-mismatch/detected", () => {
     ).toBeNull();
   });
 });
+
+// DR-0041 §5: the overrides of each session, as the daemon's pushes say them.
+describe("request-overrides", () => {
+  const SID = "11111111-2222-4333-8444-555555555555";
+  const NONE = { model: null, effort: null };
+  test("replaced whole at subscribe, then one override of one session at a time", () => {
+    let state = dispatch(initialState(), {
+      type: "request-overrides/loaded",
+      sessions: [{ session_id: SID, session: { model: "m", effort: "high" }, once: NONE }],
+    });
+    state = dispatch(state, {
+      type: "request-overrides/changed",
+      sid: SID,
+      target: "once",
+      values: { model: "haiku", effort: null },
+    });
+    expect(state.requestOverrides.get(SID)).toEqual({
+      session: { model: "m", effort: "high" },
+      once: { model: "haiku", effort: null },
+    });
+    // A session the subscribe-time set did not have: the other override none.
+    state = dispatch(state, {
+      type: "request-overrides/changed",
+      sid: "other",
+      target: "session",
+      values: { model: "m2", effort: "low" },
+    });
+    expect(state.requestOverrides.get("other")).toEqual({
+      session: { model: "m2", effort: "low" },
+      once: NONE,
+    });
+    // A restarted daemon's set replaces what the old one left.
+    state = dispatch(state, { type: "request-overrides/loaded", sessions: [] });
+    expect(state.requestOverrides.size).toBe(0);
+  });
+});

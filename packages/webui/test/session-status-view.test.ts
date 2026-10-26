@@ -173,7 +173,16 @@ describe("miniSummaryLines", () => {
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "todo", text: "#t1 fix bug" },
-      { kind: "context", text: "ctx 640k/1M (64%) · fable-5" },
+      {
+        kind: "context",
+        text: "ctx 640k/1M (64%) · fable-5",
+        context: {
+          fill: "ctx 640k/1M (64%)",
+          model: { text: "fable-5", title: "model claude-fable-5" },
+          effort: null,
+          tail: "",
+        },
+      },
     ]);
   });
 
@@ -186,7 +195,16 @@ describe("miniSummaryLines", () => {
       context: { tokens: 100_000, window: 200_000, model: "m", timestamp: "t" },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "context", text: "ctx 100k/200k (50%) · m" },
+      {
+        kind: "context",
+        text: "ctx 100k/200k (50%) · m",
+        context: {
+          fill: "ctx 100k/200k (50%)",
+          model: { text: "m", title: "model m" },
+          effort: null,
+          tail: "",
+        },
+      },
     ]);
   });
 
@@ -207,7 +225,16 @@ describe("miniSummaryLines", () => {
       },
     };
     expect(miniSummaryLines(snapshot, ["2d15h", "claude v2.1.310"])).toEqual([
-      { kind: "context", text: "ctx 100k/1M (10%) · fable-5[1m] · low · 2d15h · claude v2.1.310" },
+      {
+        kind: "context",
+        text: "ctx 100k/1M (10%) · fable-5[1m] · low · 2d15h · claude v2.1.310",
+        context: {
+          fill: "ctx 100k/1M (10%)",
+          model: { text: "fable-5[1m]", title: "model claude-fable-5[1m]" },
+          effort: { text: "low", title: "effort low" },
+          tail: "2d15h · claude v2.1.310",
+        },
+      },
     ]);
   });
 
@@ -278,7 +305,16 @@ describe("miniSummaryLines", () => {
       { kind: "workflow", text: "wf" },
       { kind: "todo", text: "#t1 a" },
       { kind: "todo", text: "#t2 b" },
-      { kind: "context", text: "ctx 522k/1M (52%) · m" },
+      {
+        kind: "context",
+        text: "ctx 522k/1M (52%) · m",
+        context: {
+          fill: "ctx 522k/1M (52%)",
+          model: { text: "m", title: "model m" },
+          effort: null,
+          tail: "",
+        },
+      },
       { kind: "teammate", text: "researcher" },
     ]);
   });

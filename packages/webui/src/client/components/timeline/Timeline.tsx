@@ -14,6 +14,8 @@ import { SayBubble, SayRecordBubble, TurnRespondingRow } from "../TimelineItem.t
 import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
+import { ContextLine } from "../RequestOverridePicker.tsx";
+import { sessionPickerValue } from "../../request-override-view.ts";
 import { sessionProcessParts } from "../../utils.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -287,10 +289,14 @@ export function Timeline({
   // workflow + in_progress TODO の要約に加え、context 消費と活動中
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
+  // What the overrides put on the session's main-thread requests (DR-0041
+  // §5), the same in every tab.
+  const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const miniLines = sessionStatus
     ? miniSummaryLines(
         sessionStatus,
         sessionProcess ? sessionProcessParts(sessionProcess, now) : [],
+        requestOverride,
       )
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
@@ -743,14 +749,23 @@ export function Timeline({
                        * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
                       {miniLines.length > 0 ? (
                         <div class="tl-status-mini">
-                          {miniLines.map((line) => (
-                            <span
-                              key={`${line.kind}-${line.text}`}
-                              class={`tl-status-mini-line tl-status-mini-${line.kind}`}
-                            >
-                              {line.text}
-                            </span>
-                          ))}
+                          {miniLines.map((line) =>
+                            line.context ? (
+                              <ContextLine
+                                key={line.kind}
+                                context={line.context}
+                                value={sessionPickerValue(requestOverride, sessionStatus?.context)}
+                                onChange={(patch) => ws.requestOverride(sid, patch)}
+                              />
+                            ) : (
+                              <span
+                                key={`${line.kind}-${line.text}`}
+                                class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+                              >
+                                {line.text}
+                              </span>
+                            ),
+                          )}
                         </div>
                       ) : null}
                     </div>
