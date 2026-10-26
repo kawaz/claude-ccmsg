@@ -7,8 +7,8 @@
 //   理由を差し込む。読めた後は開き直しても読み直さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
-// - 許可の文の「確認しました」には、開いて読めた添付だけを並べる。開いて
-//   いない・読めなかった添付が残っていれば「未確認の添付 N 件」を添える
+// - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
+// - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
 // - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
 //   場所に入る
 // daemon の代わりに、store へ ev:"permit_requests" / ev:"permit_request" と
@@ -140,7 +140,7 @@ function stubClipboard(writeText: (text: string) => Promise<void>): void {
 }
 
 function bubbles(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(".permit")];
+  return [...root.querySelectorAll<HTMLElement>(".tl-bubble-permit")];
 }
 
 function foldsOf(root: HTMLElement): HTMLDetailsElement[] {
@@ -179,6 +179,19 @@ describe("permission request bubbles", () => {
     const [bubble, ...others] = bubbles(root);
     expect(others.length).toBe(0);
     const shown = defined(bubble, "the session's bubble");
+    // The same frame as the Timeline's other bubbles: body, then time and
+    // button on the footer row.
+    expect(shown.classList.contains("tl-bubble")).toBe(true);
+    expect(shown.classList.contains("tl-bubble-left")).toBe(true);
+    expect([...shown.children].map((el) => el.className)).toEqual([
+      "tl-bubble-body",
+      "tl-bubble-footer",
+    ]);
+    expect(shown.querySelector(".tl-bubble-body > .tl-bubble-from")?.textContent).toBe(
+      "🔐許可依頼",
+    );
+    expect(shown.querySelector(".tl-bubble-footer > .tl-bubble-time")).not.toBeNull();
+    expect(shown.querySelector(".tl-bubble-footer > button.permit-grant")).not.toBeNull();
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
       "止められた行動",
       "添付",
@@ -262,10 +275,7 @@ describe("permission request bubbles", () => {
       button.click();
       await Promise.resolve();
     });
-    // Nothing opened: no file is listed as checked, and the 3 are said.
-    expect(written).toEqual([permitGrantText(ASKED, [])]);
-    expect(written[0]).not.toContain("確認しました");
-    expect(root.querySelector(".permit-grant-unconfirmed")?.textContent).toBe("未確認の添付 3 件");
+    expect(written).toEqual([permitGrantText(ASKED)]);
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
@@ -279,39 +289,23 @@ describe("permission request bubbles", () => {
     expect(reads).toEqual([[ASKED.id]]);
   });
 
-  // 何を保証するか: 許可の文は人自身の「確認した」という発話になるので、
-  // 開いて中身を読めた添付だけを並べる。読めなかった・開いていない添付は
-  // 並べず、その数を押した後に添える。全部確認していれば何も添えない。
-  test("lists as checked only the files opened and read", async () => {
+  // 何を保証するか: 許可の文には添付を全部並べる。開いていない添付も、開いて
+  // 読めなかった添付 (無い、daemon が答えなかった) も並べる。確認したかは人が
+  // 判断することで、バブルは開いたかを追わない。
+  test("lists every file, opened or not, read or not", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
     });
     const { root } = await openWith([ASKED]);
     const folds = foldsOf(root);
-    await toggle(folds[0], true);
     await toggle(folds[1], true);
+    await toggle(folds[2], true);
     await press(grantButton(defined(bubbles(root)[0], "bubble")));
-    expect(written).toEqual([permitGrantText(ASKED, ["/w/policy.json"])]);
+    expect(written).toEqual([permitGrantText(ASKED)]);
     expect(written[0]).toContain(
-      "以下ファイルの内容を確認しました。問題無し。\n- /w/policy.json\n\n",
+      "以下ファイルの内容を確認しました。問題無し。\n- /w/policy.json\n- /w/gone.sh\n- /w/offline.txt\n\n",
     );
-    expect(written[0]).not.toContain("/w/gone.sh");
-    expect(root.querySelector(".permit-grant-unconfirmed")?.textContent).toBe("未確認の添付 2 件");
-  });
-
-  test("adds nothing beside the button once every file is checked", async () => {
-    const written: string[] = [];
-    stubClipboard(async (text) => {
-      written.push(text);
-    });
-    const { root: whole } = await openWith([
-      { ...ASKED, id: "i/9", attachments: ["/w/policy.json"] },
-    ]);
-    await toggle(foldsOf(whole)[0], true);
-    await press(grantButton(defined(bubbles(whole)[0], "bubble")));
-    expect(written.at(-1)).toContain("- /w/policy.json");
-    expect(whole.querySelector(".permit-grant-unconfirmed")).toBeNull();
   });
 
   test("says so when the permission could not be copied", async () => {

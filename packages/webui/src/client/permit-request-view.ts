@@ -57,19 +57,15 @@ function commandItem(command: PermitCommand): string {
   return `- ${commandHeading(command)}\n${fence}\n${command.command}\n${fence}`;
 }
 
-/** The text the 許可する button copies: the files the person opened and
- * read (`confirmed`, in the request's order), then what is permitted, each
- * intent and each command whole. A file not opened, or one that could not be
- * read, is not listed: the text is the person's own word that they checked
- * it. */
-export function permitGrantText(
-  request: PermitRequestRecord,
-  confirmed: readonly string[],
-): string {
-  const checked = request.attachments.filter((path) => confirmed.includes(path));
+/** The text the 許可する button copies: every attached file (in the
+ * request's order), then what is permitted, each intent and each command
+ * whole. Each file is listed whether or not the person opened it, and
+ * whether or not it could be read: whether they checked it is theirs to
+ * judge before they send the text. */
+export function permitGrantText(request: PermitRequestRecord): string {
   const files =
-    checked.length > 0
-      ? `以下ファイルの内容を確認しました。問題無し。\n${checked.map((path) => `- ${path}`).join("\n")}\n\n`
+    request.attachments.length > 0
+      ? `以下ファイルの内容を確認しました。問題無し。\n${request.attachments.map((path) => `- ${path}`).join("\n")}\n\n`
       : "";
   const granted = [
     ...request.intents.map((intent) => `- ${intent}`),

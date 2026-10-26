@@ -2581,27 +2581,15 @@ a {
   line-height: var(--md-leading-tight);
 }
 
-/* 許可依頼 (DR-0040)。say と同じく TL の流れに挟まる吹き出しで、止まって
- * 人を待っている印として info の面と枠で say (warn の面) と見分ける。中身に
- * コードブロックと折り畳みを持つので、幅は say より広く取る。 */
-.permit {
-  border-radius: 0.5rem;
-  padding: var(--space-7) var(--space-9);
-  align-self: flex-start;
-  width: fit-content;
+/* 許可依頼 (DR-0040)。外枠は TL の吹き出し (.tl-bubble-*) をそのまま使い、
+ * 止まって人を待っている印として本文の面と枠だけを info にする (say は warn
+ * の面)。中身にコードブロックと折り畳みを持つので、本文は中身なりより広く
+ * 取る。 */
+.tl-bubble-permit .tl-bubble-body {
   min-width: min(28rem, 100%);
-  max-width: 85%;
   background: var(--info-surface);
-  border-left: 3px solid var(--info-border);
-}
-
-.permit-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--fg-info);
+  border: 1px solid var(--info-border);
+  --md-surface: var(--info-surface);
 }
 
 .permit-section {
@@ -2648,16 +2636,6 @@ a {
   color: var(--fg-warn);
 }
 
-.permit-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-  margin-top: var(--space-7);
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-}
-
 /* 2 つのラベルを同じ升目に重ね、幅を広い方に固定する: 押した後に
  * 「コピーしました」へ切り替わってもボタンの幅が動かない。 */
 .permit-grant {
@@ -2691,10 +2669,6 @@ a {
 
 .permit-grant-error {
   color: var(--danger);
-}
-
-.permit-grant-unconfirmed {
-  color: var(--fg-warn);
 }
 
 .event {

@@ -81,12 +81,10 @@ function Attachment({
 
 /** 添付ごとの読み取りの状態。開いた時に daemon から読み、読めた後は閉じて
  * 開き直しても読み直さない。daemon が答えなかった時は、次に開いた時に読み
- * 直す。`confirmed` は人が開いて中身を読めた添付 (許可の文の「内容を確認
- * しました」に並べてよいもの)。 */
+ * 直す。 */
 function useAttachmentLoads(request: PermitRequestRecord): {
   loadOf: (path: string) => AttachmentLoad;
   open: (path: string) => void;
-  confirmed: readonly string[];
 } {
   const { ws } = useApp();
   const [loads, setLoads] = useState<ReadonlyMap<string, AttachmentLoad>>(new Map());
@@ -109,32 +107,20 @@ function useAttachmentLoads(request: PermitRequestRecord): {
       )
       .catch(() => settle(path, { kind: "failed", message: "接続エラーのため読めませんでした" }));
   };
-  const confirmed = request.attachments.filter((path) => {
-    const load = loads.get(path);
-    return load?.kind === "loaded" && load.attachment.read;
-  });
-  return { loadOf, open, confirmed };
+  return { loadOf, open };
 }
 
-/** 「許可する」。押すと許可の文 (`confirmed` を確認したファイルとして並べる)
- * を写し、写せたら「コピーしました」を短く出して、未読なら既読にする (写せ
- * なかった時は人がまだ何もできていないので未読のまま)。開いていない・読め
- * なかった添付が残っていれば、写した上で「未確認の添付 N 件」を添える (押せ
- * なくはしない)。2 つのラベルを同じ升目に重ねて幅を広い方に固定するので、
+/** 「許可する」。押すと許可の文 (添付のパスを全部並べる。開いたかは追わ
+ * ない: 確認したかは人が判断する) を写し、写せたら「コピーしました」を短く
+ * 出して、未読なら既読にする (写せなかった時は人がまだ何もできていないので
+ * 未読のまま)。2 つのラベルを同じ升目に重ねて幅を広い方に固定するので、
  * 表示が切り替わってもボタンの幅は変わらない。既読は非楽観で、daemon が
  * 変えた記録を ev:"permit_request" で全タブに送る。 */
-function GrantButton({
-  request,
-  confirmed,
-}: {
-  request: PermitRequestRecord;
-  confirmed: readonly string[];
-}) {
+function GrantButton({ request }: { request: PermitRequestRecord }) {
   const { ws } = useApp();
   const { copied, copy } = useClipboardCopy();
   const [failed, setFailed] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
-  const [unconfirmed, setUnconfirmed] = useState(0);
   const markRead = (): void => {
     if (request.read) return;
     void ws
@@ -149,9 +135,8 @@ function GrantButton({
         class={copied ? "permit-grant copied" : "permit-grant"}
         title="許可の文をコピーする (このセッションの入力欄に貼って送る)"
         onClick={() => {
-          void copy(permitGrantText(request, confirmed)).then((ok) => {
+          void copy(permitGrantText(request)).then((ok) => {
             setFailed(!ok);
-            setUnconfirmed(ok ? request.attachments.length - confirmed.length : 0);
             if (ok) markRead();
           });
         }}
@@ -161,11 +146,6 @@ function GrantButton({
           コピーしました
         </span>
       </button>
-      {unconfirmed > 0 ? (
-        <span class="permit-grant-unconfirmed" role="status">
-          未確認の添付 {unconfirmed} 件
-        </span>
-      ) : null}
       {failed ? (
         <span class="permit-grant-error" role="alert">
           コピーできませんでした (ブラウザがクリップボードへの書き込みを許していない)
@@ -180,6 +160,9 @@ function GrantButton({
   );
 }
 
+/** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
+ * .tl-bubble-from / .tl-bubble-footer / .tl-bubble-time) で組み、中身の節と
+ * 「許可する」だけをこのバブルのものにする。 */
 export function PermitRequestBubble({
   request,
   now,
@@ -189,49 +172,49 @@ export function PermitRequestBubble({
 }) {
   const attachments = useAttachmentLoads(request);
   return (
-    <div class="permit">
-      <div class="permit-meta">
-        <span class="permit-icon" aria-hidden="true">
-          🔐
-        </span>
-        <span class="permit-title">許可依頼</span>
-      </div>
-      <section class="permit-section">
-        <h4 class="permit-heading">止められた行動</h4>
-        <MarkdownView source={request.blocked} />
-      </section>
-      {request.attachments.length > 0 ? (
+    <div class="tl-bubble tl-bubble-left tl-bubble-permit">
+      <div class="tl-bubble-body">
+        <div class="tl-bubble-from">
+          <span aria-hidden="true">🔐</span>
+          許可依頼
+        </div>
         <section class="permit-section">
-          <h4 class="permit-heading">添付</h4>
-          {request.attachments.map((path) => (
-            <Attachment
-              key={path}
-              path={path}
-              load={attachments.loadOf(path)}
-              onOpen={() => attachments.open(path)}
-            />
-          ))}
+          <h4 class="permit-heading">止められた行動</h4>
+          <MarkdownView source={request.blocked} />
         </section>
-      ) : null}
-      <section class="permit-section">
-        <h4 class="permit-heading">許可してほしいこと</h4>
-        <ul class="permit-asks">
-          {request.intents.map((intent, i) => (
-            <li key={`i${String(i)}`}>
-              <MarkdownView source={intent} />
-            </li>
-          ))}
-          {request.commands.map((command, i) => (
-            <li key={`c${String(i)}`} class="permit-command">
-              <span>{commandHeading(command)}</span>
-              <CodeBlock code={command.command} lang="sh" />
-            </li>
-          ))}
-        </ul>
-      </section>
-      <div class="permit-footer">
-        <span class="say-time">{formatMsgTime(request.ts, now)}</span>
-        <GrantButton request={request} confirmed={attachments.confirmed} />
+        {request.attachments.length > 0 ? (
+          <section class="permit-section">
+            <h4 class="permit-heading">添付</h4>
+            {request.attachments.map((path) => (
+              <Attachment
+                key={path}
+                path={path}
+                load={attachments.loadOf(path)}
+                onOpen={() => attachments.open(path)}
+              />
+            ))}
+          </section>
+        ) : null}
+        <section class="permit-section">
+          <h4 class="permit-heading">許可してほしいこと</h4>
+          <ul class="permit-asks">
+            {request.intents.map((intent, i) => (
+              <li key={`i${String(i)}`}>
+                <MarkdownView source={intent} />
+              </li>
+            ))}
+            {request.commands.map((command, i) => (
+              <li key={`c${String(i)}`} class="permit-command">
+                <span>{commandHeading(command)}</span>
+                <CodeBlock code={command.command} lang="sh" />
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+      <div class="tl-bubble-footer">
+        <span class="tl-bubble-time">{formatMsgTime(request.ts, now)}</span>
+        <GrantButton request={request} />
       </div>
     </div>
   );
