@@ -544,6 +544,7 @@ export function StatusPanel({
   onAgentInput: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
 }) {
   const { store } = useApp();
+  const daemonVersion = useStoreState(store, (s) => s.daemonInfo?.version ?? null);
   const cwd = useStoreState(store, (s) => resolveSessionTopbar(s, sid).cwd);
   const agent = useStoreState(
     store,
@@ -712,6 +713,7 @@ export function StatusPanel({
         restartOffered={restartable}
         restart={restart}
       />
+      {daemonVersion ? <p class="status-daemon-version">daemon v{daemonVersion}</p> : null}
     </div>
   );
 }

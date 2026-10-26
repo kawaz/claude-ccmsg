@@ -6587,6 +6587,14 @@ a.tl-attachment-file-path {
  * room/session content above it. Empty (no daemonInfo yet, e.g. still
  * connecting) collapses to 0 height via :empty rather than reserving a
  * blank bar before the first successful ping. */
+.status-daemon-version {
+  margin: var(--space-11) 0 0;
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+  opacity: 0.6;
+  text-align: center;
+}
+
 /* SessionView のセッション宛の入力欄 (DR-0035) の FAB。position:fixed で
  * bottom-right pin。位置・寸法値は :root の --composer-fab-* 変数 1 箇所で管理。 */
 .session-input-fab {
