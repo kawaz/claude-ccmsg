@@ -1,6 +1,6 @@
 # DR-0041: webui から走行中のセッションの model / effort を request 単位で上書きする
 
-- Status: Accepted (2026-10-26) — 実装中
+- Status: Accepted (2026-10-26) — ✅ 実装済み (protocol の `RequestOverrideSchema`・op `session_override`・`user_prompt` の `model` / `effort`・サイドカーの `session.override`、daemon の保持と名乗り直しでの再送、module の関心 `request-override`、webui の状態行の picker・FAB の単発の選択・Status の行。実機の確認は [findings 2026-10-26-request-override-verify](../findings/2026-10-26-request-override-verify.md))
 - Date: 2026-10-26
 
 ## Context
@@ -31,7 +31,7 @@ kawaz 2026-10-26 の裁定:
 ### 2. 値の語彙
 
 - effort は `low` / `medium` / `high` / `xhigh` / `max`、model は `fable` / `opus` / `sonnet` / `haiku`。launch の picklist (`LaunchEffortSchema` / `LaunchModelSchema`、[DR-0018](./DR-0018-session-launcher.md) §3) と同じ語彙で、どちらも protocol の `RequestOverrideSchema` が持つ
-- model は family の別名のまま engine に渡し、その request の `e.model` が `[1m]` で終わる時だけ `[1m]` を付ける (例: `e.model` が `claude-opus-5-5[1m]` の request を sonnet にすると `sonnet[1m]`)。別名から具体的な model id への解決は engine に任せる。module が `claude-sonnet-5-5` のような id を表で持つと、新しい版が出るたびに古くなり、環境変数で別名の行き先を変えている環境 (`ANTHROPIC_DEFAULT_*_MODEL`) とも食い違う
+- model は family の別名のまま engine に渡し、その request の `e.model` が `[1m]` で終わる時だけ `[1m]` を付ける (例: `e.model` が `claude-opus-5-5[1m]` の request を sonnet にすると `sonnet[1m]`)。別名から具体的な model id への解決は engine に任せる (`sonnet[1m]` は request の `model: claude-sonnet-5-5` と `anthropic-beta` の `context-1m-…` になった。2.1.310、代役の API で確認)。module が `claude-sonnet-5-5` のような id を表で持つと、新しい版が出るたびに古くなり、環境変数で別名の行き先を変えている環境 (`ANTHROPIC_DEFAULT_*_MODEL`) とも食い違う
 - 合わない値は daemon が `invalid_args` で断る (wire の request のスキーマで読む)
 
 ### 3. 通しの上書きの経路
@@ -57,6 +57,7 @@ webui → daemon の op `user_prompt` (`model?` / `effort?` を足す) → サ�
   - 実行中の turn が、送った後に request をせずに終わった時は、その turn には結び付かず、queue された prompt で始まる次の turn に結び付く
 - 単発の上書きは、それが有効な間の subagent の request にも効く (§1)
 - 同じ field では単発が通しに勝つ。field が違えば両方が効く (単発で effort、通しで model 等)
+- 単発の上書きが効いている間に、上書きを付けた次の送信が受け付けられると、新しい方に置き換わる
 
 ### 5. 表示
 
@@ -64,7 +65,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 
 - module は facts ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) に今効いている上書き (`override: { session?, single? }`) を足し、変わるたびに送る。facts の `model` / `effort` は元の値のまま (`$.session.model()` と `turn.step` の差し替える前の `e.effort`)
 - daemon は session status の snapshot に `request_override` (`held`: daemon が持つ通しの上書き、`session` / `single`: module が今効かせている上書き) を載せる。daemon が持つ上書きが変わった時も push する
-- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `ctx … · <model> · <effort> · …`) は model / effort を実効値で出し、上書きが効いている field には印 (`⁺` と色) を付ける。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと小さな picker が開き、通しの上書きを変更・解除できる
+- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `ctx … · <model> · <effort> · …`) は model / effort を実効値で出し、上書きが効いている field には印 (`⁺` と色) を付ける。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと小さな picker が開き、通しの上書きを変更・解除できる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた picker だけにする
 - FAB のプロンプトフォームに単発の上書きの選択 (model / effort、既定は「上書きなし」) を置く。送信が受け付けられたら「上書きなし」に戻す
 - Status タブに通しの上書きの行を出す。daemon が持つ上書きと module が効かせている上書きが違う時 (module がまだ受け取っていない) は、その旨を添える
 
@@ -84,7 +85,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - 上書きは engine の状態を変えないので、ccmsg の外 (端末の `/model`、Claude Code の status line) からは見えない。人が端末で `/model` を打つと、その切替は元の値を変えるが、上書きのある field は上書きが勝つ
 - 上書きの無い (古い) module は `session.override` に答えず (`unconfirmed`)、`prompt.send` の `override` を黙って読み飛ばす。どちらも facts に上書きが出ないので、webui の状態行に印が付かないことで分かる。セッションを再起動すると新しい module が載る
 - 単発の上書きを付けた文が turn を始めない時 (`/compact` のような組み込みの command 等) は、上書きは次に始まる turn に結び付く
-- model の `[1m]` は元の request の `e.model` に従う。1M の context を持たない model (haiku 等) に `[1m]` を付けた時の engine と API の扱いは確かめていない
+- model の `[1m]` は元の request の `e.model` に従う。`haiku[1m]` も request の `anthropic-beta` に `context-1m-…` が付いた (代役の API で確認)。1M の context を持たない model に付いた時に本物の API がどう答えるかは確かめていない
 - prompt cache は model ごとなので、model の上書きを付け外しすると、その request の cache は効かない
 
 ## 関連
