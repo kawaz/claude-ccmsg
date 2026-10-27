@@ -25,6 +25,7 @@ describe("resolvePaths (DR-0002 §1)", () => {
     expect(p.configJs).toBe("/c/config.js");
     expect(p.configTs).toBe("/c/config.ts");
     expect(p.allowedOrigins).toBe("/c/allowed-origins.json");
+    expect(p.sayDictionary).toBe("/c/say-dictionary.tsv");
     expect(p.dumps).toBe("/d/dumps");
   });
 

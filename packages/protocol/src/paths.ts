@@ -8,6 +8,7 @@
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
 //             allowed-origins.json
+//             say-dictionary.tsv
 //   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //             rooms/<room-id>.jsonl
 //             dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
@@ -37,6 +38,10 @@ export interface Paths {
    * survive daemon restarts — unlike CCMSG_HTTP_ALLOW_ORIGIN, which vanishes
    * whenever a client respawns the daemon without that env set. */
   allowedOrigins: string;
+  /** The readings `ccmsg say` speaks words as (`word<TAB>reading` lines,
+   * DR-0042), edited by hand and read by the CLI just before each speech,
+   * laid over the dictionary shipped with the CLI. */
+  sayDictionary: string;
   /** DR-0018 session launcher and the rest of the daemon's user configuration
    * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
    * disposable runtime state and data/ holds only what must not be lost. */
@@ -121,6 +126,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     log: path.join(stateDir, "daemon.log"),
     trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
+    sayDictionary: path.join(configDir, "say-dictionary.tsv"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),

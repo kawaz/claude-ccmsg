@@ -4,7 +4,8 @@
 // モックの記録の方が正確に読める。
 //
 // 何を保証するか:
-//   - 引数は一切解釈されずそのまま say へ渡る (say のオプションが生きる)
+//   - 引数はその位置のまま say へ渡る (say のオプションが生きる)。本文の語だけが
+//     読み上げ辞書で置き換わる (DR-0042、置換の規則は say-dictionary.test.ts)
 //   - 終了コードは say のものが伝播する
 //   - daemon がいない / sid が無い場合でも発声は必ず起きる (観測は諦める)
 //   - sid + daemon がある場合は daemon に say が記録される (room には書かない)
@@ -113,7 +114,8 @@ describe("ccmsg say", () => {
         CCMSG_SID: "5a000000-0000-4000-8000-000000000000",
       });
       expect(res2.code).toBe(0);
-      expect(sayInvocations(f)[1]).toEqual(["daemon down"]);
+      // 本文の daemon は同梱の読み上げ辞書で置き換わる (DR-0042)。
+      expect(sayInvocations(f)[1]).toEqual(["デーモン down"]);
       expect(fs.existsSync(path.join(f.env.CCMSG_STATE_DIR, "daemon.sock"))).toBe(false);
     } finally {
       f.cleanup();

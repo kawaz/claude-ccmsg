@@ -7,6 +7,8 @@ import * as path from "node:path";
 import {
   AllowedOriginsTextSchema,
   VERSION,
+  applySayDictionary,
+  type SayDictionary,
   errorText,
   isSessionIdShape,
   migrateLegacyConfigFiles,
@@ -52,6 +54,7 @@ import {
   writeSessionFile,
 } from "./session-begin.ts";
 import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
+import { loadSayDictionary, speechTextOf } from "./say-dictionary.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -631,11 +634,14 @@ async function runSidecarPermit(opts: Record<string, string | boolean>): Promise
  * that cannot start or fails is said on standard error. */
 async function speakPermitRequested(): Promise<void> {
   try {
-    const speech = Bun.spawn([process.env.CCMSG_SAY_BIN || SYSTEM_SAY, PERMIT_SPEECH], {
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "inherit",
-    });
+    const speech = Bun.spawn(
+      [process.env.CCMSG_SAY_BIN || SYSTEM_SAY, ...spokenArgs([PERMIT_SPEECH], "sidecar permit")],
+      {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "inherit",
+      },
+    );
     const spoke = await speech.exited;
     if (spoke !== 0) {
       process.stderr.write(`ccmsg sidecar permit: the speech exited ${String(spoke)}\n`);
@@ -675,11 +681,21 @@ Usage:
   ccmsg say [say-options] [text...]
   echo <text> | ccmsg say [say-options]
 
-Every argument is forwarded to ${SYSTEM_SAY} verbatim — ccmsg defines no options
+Every argument is forwarded to ${SYSTEM_SAY} in place — ccmsg defines no options
 of its own here, so \`say\`'s own flags (-v, -r, -o, ...) work unchanged and a
 PATH shim can delegate to this command without altering behaviour. The one
 exception is a lone --help / -h, which prints this text (${SYSTEM_SAY} has no
 --help of its own to shadow).
+
+The words of the text to speak are first put as the reading dictionary says:
+the one shipped with ccmsg, with <config dir>/say-dictionary.tsv laid over it
+(one "word<TAB>reading" per line, "#" starts a comment; a word there wins over
+the same word shipped), read afresh by every speech. A word matches without regard to case, only where
+neither side is a letter or a digit ("daemon" in "_daemon_" and "の daemon で",
+not in "daemonize"), the longest word first. Options and their values are not
+touched, nor is a file given with -f. Text on standard input is replaced too,
+unless standard input is a terminal. The session's timeline records the text
+as it was written.
 
 Before speaking, the session id in CCMSG_SID / CLAUDE_CODE_SESSION_ID is used to
 tell the running daemon which session spoke, so the webui can answer "which
@@ -693,6 +709,8 @@ Environment Variables:
   CCMSG_SAY_BIN                Speech binary to exec instead of ${SYSTEM_SAY}
                                (test hook — lets the say path be exercised
                                without producing audio)
+  CCMSG_CONFIG_DIR             The config dir say-dictionary.tsv, the
+                               reading dictionary, is read from
 `);
 }
 
@@ -746,12 +764,36 @@ async function runSay(args: string[]): Promise<never> {
   }
   await recordSayEvent(args);
   const bin = process.env.CCMSG_SAY_BIN || SYSTEM_SAY;
-  const proc = Bun.spawn([bin, ...args], {
-    stdin: "inherit",
+  // Text on standard input is read here only when it is not a terminal: on
+  // a terminal say speaks it line by line as it is typed, which reading it
+  // all first would take away.
+  const stdinText = speechTextOf(args).fromStdin && process.stdin.isTTY !== true;
+  const dict = stdinText ? sayDictionaryFor("say") : null;
+  const proc = Bun.spawn([bin, ...spokenArgs(args, "say")], {
+    stdin: dict === null ? "inherit" : new Blob([applySayDictionary(dict, await Bun.stdin.text())]),
     stdout: "inherit",
     stderr: "inherit",
   });
   process.exit(await proc.exited);
+}
+
+/** The reading dictionary (DR-0042), its problems said on standard error as
+ * `ccmsg <command>: …`. */
+function sayDictionaryFor(command: string): SayDictionary {
+  return loadSayDictionary(resolvePaths().sayDictionary, (m) =>
+    process.stderr.write(`ccmsg ${command}: ${m}\n`),
+  );
+}
+
+/** `args` for the speech binary, the words of the text to speak put as the
+ * reading dictionary says (DR-0042). Options and their values pass
+ * unchanged. */
+function spokenArgs(args: readonly string[], command: string): string[] {
+  const { words } = speechTextOf(args);
+  if (words.length === 0) return [...args];
+  const dict = sayDictionaryFor(command);
+  const text = new Set(words);
+  return args.map((a, i) => (text.has(i) ? applySayDictionary(dict, a) : a));
 }
 
 async function runSubscribe(identity: Identity): Promise<never> {
@@ -1029,8 +1071,11 @@ Commands:
   say [args...]                Speak via /usr/bin/say, first telling the daemon
                                which session spoke so the webui can show it in
                                that session's timeline. Every argument is
-                               forwarded verbatim (say's own -v/-r/-o keep
-                               working); speech still happens when there is no
+                               forwarded in place (say's own -v/-r/-o keep
+                               working), the words of the text put as the
+                               reading dictionary (say-dictionary.tsv) says;
+                               speech
+                               still happens when there is no
                                session id or no running daemon. Run
                                "ccmsg say --help" for the full description
   status                       Show daemon liveness / version / uptime / pid.
@@ -1113,7 +1158,8 @@ Notes:
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_CONFIG_DIR             Override config dir (config.ts, config.js, or
-                               config.json, allowed-origins.json)
+                               config.json, allowed-origins.json,
+                               say-dictionary.tsv)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl read-only,
                                dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.

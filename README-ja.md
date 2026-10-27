@@ -39,7 +39,7 @@ daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間�
 
 ## `say` での発声
 
-`ccmsg say` は引数をそのまま macOS の `/usr/bin/say` に渡して発声し、その前にどのセッションが喋ったかを daemon に知らせる。Claude Code セッションを複数走らせていると音声通知は「どれが鳴らしたか」が分からないため、web UI の Sessions 一覧では喋ったセッションに 📣 が付き、そのセッションの TL で発話内容と既読ボタン (押すとマーカーが消える) を確認できる。発話の記録と未読は daemon のメモリだけに持つので、daemon を再起動すると消える。
+`ccmsg say` は引数をその位置のまま macOS の `/usr/bin/say` に渡して発声し、その前にどのセッションが喋ったかを daemon に知らせる。Claude Code セッションを複数走らせていると音声通知は「どれが鳴らしたか」が分からないため、web UI の Sessions 一覧では喋ったセッションに 📣 が付き、そのセッションの TL で発話内容と既読ボタン (押すとマーカーが消える) を確認できる。発話の記録と未読は daemon のメモリだけに持つので、daemon を再起動すると消える。発声の前に本文の単語を読み上げ辞書の読みに置き換え、`daemon` や `1Password` のような語を正しく読ませる。辞書は `${XDG_CONFIG_HOME:-~/.config}/ccmsg/say-dictionary.tsv` (`CCMSG_CONFIG_DIR` があれば `$CCMSG_CONFIG_DIR/say-dictionary.tsv`) で、1 行に `単語<TAB>読み`、`#` 始まりはコメント。ファイルを直接編集し、発声のたびに読み直す。辞書は同梱の `packages/cli/src/say-dictionary.default.tsv` にこのファイルを重ねたもので、同じ語はファイルが勝つ。1 行足すだけで始められる ([DR-0042](./docs/decisions/DR-0042-say-reading-dictionary.md))。
 
 発声は記録に依存しない: session id が無くても、daemon が動いていなくても、daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` をこのコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に置けばマシン上のすべての `say` (自分・スクリプト・エージェント) がどのセッションのものか分かるようになる。PATH 上の `ccmsg` と同じ dir に**コピー** で置く (symlink にしないのは、参照先が version 付き plugin cache dir でupdate のたびに消えるため)。
 

@@ -74,6 +74,7 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 | `storage-event.ts` | room の jsonl の 1 行 (`StorageEventSchema`、`type` の variant: member / leave / msg / next / prev / title / archive / kind / say / say_read)。room のログは読み取り専用で、同じ event が `room_history` の返事に入る | daemon、webui (`room_history` の返事として) |
 | `session-files.ts` | `ccmsg sidecar begin` が書く `<state dir>/sessions/<sid>.json` (`SessionStateFileSchema`) | CLI |
 | `allowed-origins.ts` | `<config dir>/allowed-origins.json` | CLI (`ccmsg origins`)、daemon |
+| `say-dictionary.ts` | `<config dir>/say-dictionary.tsv` の行 (`word<TAB>読み`) と、発声の前の置換 ([DR-0042](../decisions/DR-0042-say-reading-dictionary.md))。人が手で書くファイルなので JSON でなく TSV。行の読みと置換は純関数で、ファイルの読み込みと発声は CLI | CLI (`ccmsg say` / `sidecar permit` の音声) |
 | `attachment-upload.ts` | `POST /attachment` の返事 (multipart HTTP で、wire の返事ではない) | webui |
 | `paths.ts` | state / config / data の各ディレクトリの解決 (`resolvePaths` 等) と、サイドカー socket の名前 (`<sid>.<run id>.sock`) の組み立て | CLI、daemon |
 

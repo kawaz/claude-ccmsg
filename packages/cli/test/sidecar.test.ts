@@ -1193,6 +1193,19 @@ describe("ccmsg sidecar permit", () => {
     });
   });
 
+  // The speech goes through the reading dictionary like `ccmsg say` does
+  // (DR-0042): one dictionary for everything the speakers say.
+  test("says that one is asking with the reading dictionary applied", async () => {
+    await withDaemon(0, async (env, ctx, spoken) => {
+      const { configDir } = ctx.daemon.paths;
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "許可\tきょか\n");
+      const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
+      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+      expect(spoken()).toBe("きょかを求めています\n");
+    });
+  });
+
   // The request is what the person reads; a speech that fails costs the
   // sound, not the request.
   test("a speech that fails is said on stderr, and the request still stands", async () => {
