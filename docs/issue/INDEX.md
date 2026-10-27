@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-10-27 | design | open | [say-reading-dictionary](./2026-10-27-say-reading-dictionary.md) | say の読み上げ前に辞書 (TSV) で単語を置換し、エージェント側のカタカナ変換ルールを無くす |
 | 2026-10-26 | bug | open | [session-status-subscribe-dropped-on-load](./2026-10-26-session-status-subscribe-dropped-on-load.md) | webui の session_status の購読が読み込み直後の subscribe ×2 → unsubscribe ×1 で切れ、以後 push が来ない |
 | 2026-10-25 | task | open | [drop-legacy-session-launcher-keys](./2026-10-25-drop-legacy-session-launcher-keys.md) | 新 daemon は session_launcher の旧キー shell / templates / timeout_seconds を移行期間として無視して読む (DR-0018 §3.1…  |
 | 2026-10-18 | bug | open | [send-message-served-dir-test-flaky-macos-ci](./2026-10-18-send-message-served-dir-test-flaky-macos-ci.md) | served dir への send_message のテストが macOS CI で確率的に no_peer_socket になる |

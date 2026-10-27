@@ -1,6 +1,6 @@
 ---
 title: say の読み上げ前に辞書 (TSV) で単語を置換する
-status: open
+status: resolved
 category: design
 created: 2026-10-27T10:30:43+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-27T11:53:45+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0042","implemented"]
 blocked_by:
 origin: workboard-personal
 ---
