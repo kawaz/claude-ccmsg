@@ -48,6 +48,7 @@
 | [DR-0039](./DR-0039-all-mods-and-typed-tools.md) | Accepted (✅ 実装済み) | 据え置き | classic hook (command hook の SessionStart と module の `classic.*`) を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口 (セッション間の送信・say・宛先の候補) を `$.tool.register` の typed tool にする。CLI は人の口と module の transport に縮め、module の無いセッションは no_module の 1 状態でフォールバックを持たない |
 | [DR-0040](./DR-0040-permit-request-tool.md) | Accepted (✅ 実装済み) | 据え置き | auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`。webui の TL に許可依頼のバブルを出して音声で知らせ、添付は人が開いた時に daemon が読む。「許可する」で許可の文 (添付のパスと、許可する intents / commands の全文) をクリップボードに写して依頼を既読にする。未読の依頼は Sessions 一覧に 🔐 で出す。許可の状態は持たない |
 | [DR-0041](./DR-0041-request-model-effort-override.md) | Accepted (✅ 実装済み) | 据え置き | webui から走行中のセッションの main thread の request の effort / model を上書きする。通しは op `request_override` で変え (daemon が持って module に送り、単発も更新する)、単発は `user_prompt` に乗せてその turn の終わりまで効かせる。実効値の変化は daemon が `ev: request_override` で全タブに配る。subagent の request は素通し。主役は effort で、model は prompt cache を切るので一段奥 |
+| [DR-0042](./DR-0042-say-reading-dictionary.md) | Accepted (✅ 実装済み) | 据え置き | say は発声の直前に読み上げ辞書 (`<config dir>/say-dictionary.tsv`、`word<TAB>読み`) で本文の単語を読みに置き換える。大文字小文字を無視し、両側が英数字でない所でだけ、長い語を先に当てる。置き換えは発声する CLI の 1 か所 (`ccmsg say` と `sidecar permit` の音声)。辞書は同梱の初期辞書にファイルを重ねたもの (同じ語はファイルが勝つ)。編集はファイルの直編集で、発声のたびに読むので次の発声から効く |
 
 ## Superseded (一部)
 
