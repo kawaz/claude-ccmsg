@@ -1,5 +1,5 @@
-// The client's attaches that never spawn a daemon (a sidecar naming its run,
-// the hooks module sending facts): what each gives
+// The client's attaches that never spawn a daemon (a sidecar naming its run):
+// what each gives
 // back when no daemon listens, when the daemon refuses a step, and when the
 // connection drops mid-handshake. The end-to-end tests drive these against a
 // real daemon, which accepts; a refusal or a drop needs a peer that answers
@@ -16,7 +16,7 @@ import {
   type SessionIdentity,
   VERSION,
 } from "@ccmsg/protocol";
-import { connectIfRunning, nameRunNoSpawn, sendFactsNoSpawn } from "../src/client.ts";
+import { connectIfRunning, nameRunNoSpawn } from "../src/client.ts";
 import { type FakeAnswer, type FakeDaemon, fakeDaemon } from "./fake-daemon.ts";
 
 let cleanup: Array<() => void> = [];
@@ -100,35 +100,5 @@ describe("nameRunNoSpawn", () => {
   test("a connection dropped mid-handshake is null", async () => {
     const { paths } = daemon(acceptingBut("sidecar_hello", () => "hang up"));
     expect(await nameRunNoSpawn(paths, SESSION, RUN)).toBeNull();
-  });
-});
-
-describe("sendFactsNoSpawn", () => {
-  const facts = { at: 1, model: "m" };
-
-  test("facts taken are true, sent after the session's hello", async () => {
-    const { peer, paths } = daemon((req) => [accepted(req)]);
-    expect(await sendFactsNoSpawn(paths, SESSION, facts)).toBe(true);
-    expect(opsOf(peer)).toEqual(["hello", "session_facts"]);
-  });
-
-  test("with no daemon listening it is false", async () => {
-    expect(await sendFactsNoSpawn(nobodyListening(), SESSION, facts)).toBe(false);
-  });
-
-  test("a refused hello is false, and the facts are not sent", async () => {
-    const { peer, paths } = daemon(acceptingBut("hello", (req) => [refused(req)]));
-    expect(await sendFactsNoSpawn(paths, SESSION, facts)).toBe(false);
-    expect(opsOf(peer)).toEqual(["hello"]);
-  });
-
-  test("refused facts are false", async () => {
-    const { paths } = daemon(acceptingBut("session_facts", (req) => [refused(req)]));
-    expect(await sendFactsNoSpawn(paths, SESSION, facts)).toBe(false);
-  });
-
-  test("a connection dropped mid-request is false", async () => {
-    const { paths } = daemon(acceptingBut("session_facts", () => "hang up"));
-    expect(await sendFactsNoSpawn(paths, SESSION, facts)).toBe(false);
   });
 });

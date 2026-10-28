@@ -30,12 +30,16 @@ import {
   sidecarRunId,
 } from "@ccmsg/protocol/sidecar";
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
-import { currentFacts, type FactsState, REPLY_TIMEOUT_MS } from "./facts.ts";
+import { currentFacts, type FactsState } from "./facts.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { appendToAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
+
+/** A `ccmsg` command that is one process and one round trip to the daemon (a
+ * reply, the version), measured at about 0.3 s. */
+export const REPLY_TIMEOUT_MS = 3_000;
 
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar

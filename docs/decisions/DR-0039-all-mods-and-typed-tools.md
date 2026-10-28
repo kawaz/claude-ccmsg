@@ -58,7 +58,7 @@ kawaz 2026-10-15 の方針: エージェントに使わせる口は CLI でな�
 module が `session.start` で `$.tool.register` により tool を登録し、`tool.call` の handler で答える。登録した tool は対話・`-p`・subagent の request の `tools` に載り、handler では呼び手の session id (`$.session.id()`、subagent からの呼び出しでも本体の id)、cwd (`$.session.cwd()`)、subagent なら `e.agentId` が取れる (event-matrix の `$.tool.register` の「結論」)。
 
 - **セッション間の送信**: 入力は `{ session_id?, cwd?, name?, pid?, text }` のような宛先の部分指定と本文。daemon が部分指定を生きているセッションに解決し、config dir が違うセッションにも peer 注入 ([DR-0034](./DR-0034-peer-socket-injection.md)) で届ける。config dir を跨ぐことを利用者に意識させず、宛先の綴りの規約 (`ccmsg:` 接頭辞) を持たない
-  - daemon の op は `send_message` (宛先の候補は `peer_list`) で、module は `ccmsg sidecar send-message` / `peer-list` を transport にする。wire の op の名は本家の SendMessage / user prompt / user message と対照させ、composer を通る本物の prompt (`user_prompt`、DR-0035 §1) と文脈を足すだけの message (`user_message`、§6) の違いを名前で表す (kawaz 2026-10-18)
+  - daemon の op は `send_message` (宛先の候補は `peer_list`) で、module は daemon の `POST /op` ([DR-0046](./DR-0046-module-op-over-http.md)) で頼む。wire の op の名は本家の SendMessage / user prompt / user message と対照させ、composer を通る本物の prompt (`user_prompt`、DR-0035 §1) と文脈を足すだけの message (`user_message`、§6) の違いを名前で表す (kawaz 2026-10-18)
   - `send` の入力に `agent_id?` を足し、指定した時は部分指定で解決したセッション (複数に当たれば全部) の走行中の subagent `agent_id` に届ける。経路は §6 の直送と同じ (daemon がそのセッションの module にサイドカーの `agent.append` を渡し、module が `$.session.append({ agentId })` で足す) で、本文の頭に送り主の分かる印 `ccmsg:<送り主の session_id> から:` を付ける (§6 の人の印と対称)。宛先は subagent で送り主のセッションそのものではないので、送り主自身のセッションも宛先から除かない。結果は宛先ごとに `delivered` / `unconfirmed` / `not_delivered` (`not_running`・`no_module`・`refused`・`session_changed`・`ended`) で、他の宛先と同じ文面で返す。用途は、組み込みの SendMessage が使えない時に人の意思で subagent に届ける道で、skill には「subagent への連絡は通常 SendMessage、`agent_id` は SendMessage が使えない時」と書く (kawaz 2026-10-18)
   - 面 (config dir) で絞らない。一覧 (`peers`) と送信 (`send`) は同じ解決元で、daemon が検出した config dir と hello で名乗られた config dir の全部のセッションを対象にする (kawaz 2026-10-18)
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
@@ -92,8 +92,8 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 
 - **人の口**: `daemon` / `status` / `stop` / `origins` 等、人が端末で使うもの
-- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`、`launch` の tool が起こす `sidecar launch`)
-- `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`、transport は `ccmsg sidecar send-message`) に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
+- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar begin`、`launch` の tool が起こす `sidecar launch`)。module が自分から daemon に頼むもののうち `send` / `peers` / 事実 / 案内の URL は CLI を挟まず daemon の `POST /op` で話す ([DR-0046](./DR-0046-module-op-over-http.md))
+- `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`) に置き換える。宛先の候補の tool の op は `peer_list`。どちらも module は daemon の `POST /op` で頼む ([DR-0046](./DR-0046-module-op-over-http.md))
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
 - `subscribe` を廃止し、`notify` の配送をセッションへの注入に付け替える (§9)
 - サブコマンドごとの最終の振り分けは実装時に行い、判断の軸は「エージェントが呼ぶ口か」とする
@@ -107,7 +107,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 - `$.state` の印は `prompt.submit` 以降に読む。`/clear` の直後の hook の入口では前の session の値が見えることがある (同 findings の「`$.state` と module の生死」)
 - `$.state` の key は plugin の `types/index.d.ts` の `PluginState` に宣言する (無いと `claude plugin validate` が落ちて module が読み込まれない、同 findings の「実験の作り方」)
 - `-p` (`session.start` の `isInteractive: false`) のセッションには案内を入れない。§3 で `-p` を送受信の対象外にしているため (E 自体は `-p` でも届く、event-matrix 実測)
-- 案内には、webui を外から開く URL を `ccmsg_url: <url>` の 1 行で添える (エージェントが人を webui のセッションへ案内するリンクの先頭に使う、kawaz 2026-10-23)。値は案内を足す時に `ccmsg status` で daemon に聞いた `webui_url` で、daemon が信頼する proxy の Origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve の自動許可、`ccmsg origins add` の file の順) のうち loopback でない最初の http(s) のもの。HTTP の listener が無い時、該当が無い時、daemon に聞けない時は行を出さない
+- 案内には、webui を外から開く URL を `ccmsg_url: <url>` の 1 行で添える (エージェントが人を webui のセッションへ案内するリンクの先頭に使う、kawaz 2026-10-23)。値は案内を足す時に daemon の `POST /op` の `ping` で聞いた `webui_url` で ([DR-0046](./DR-0046-module-op-over-http.md))、daemon が信頼する proxy の Origin (`CCMSG_HTTP_ALLOW_ORIGIN`、tailscale serve の自動許可、`ccmsg origins add` の file の順) のうち loopback でない最初の http(s) のもの。HTTP の listener が無い時、該当が無い時、daemon に聞けない時は行を出さない
 - 注入する案内は skill (§3) への誘導に留め、tool の使い方そのものは書かない。文面は実装時に決める。DR-0035 §4 のとおり、サイドカーの socket path と依頼の形式は案内にも skill にも書かない
 
 ### 6. webui から走行中の subagent へ文脈を直送する
@@ -202,7 +202,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 | 案内を `prompt.context` の独自 block で入れる (口 D) | resume で作り直されず古いまま。組織が管理する機械では飛ばされる |
 | 案内を `turn.start` の before で append する (口 F) | その turn の request に間に合わず、後から prefix を変えて prompt cache を切る |
 | `tool.describe` で SendMessage の説明に案内を足す (B3 の第 1 案) | セッション間の送信は SendMessage でなく送信の tool で行う (§3) ので、SendMessage の説明は案内の置き場にならない。返信の案内は skill と §5 に置く |
-| tool の handler から daemon へ `$.http.fetch` (`socketPath`) で直接話す (B10) | daemon に HTTP の op の endpoint と session role の名乗り方の設計が要り、`socketPath` が任意の UDS に繋がるかはリファレンス自身が未確認。transport は今の CLI (`sidecar` 系) のままにする (Consequences にコスト) |
+| tool の handler から daemon へ `$.http.fetch` (`socketPath`) で直接話す (B10) | [DR-0046](./DR-0046-module-op-over-http.md) で採った。この DR の時点の見送りの理由: daemon に HTTP の op の endpoint と session role の名乗り方の設計が要り、`socketPath` が任意の UDS に繋がるかはリファレンス自身が未確認。transport は今の CLI (`sidecar` 系) のままにする (Consequences にコスト) |
 
 ## Consequences
 
@@ -220,7 +220,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin は今 skill を持たないので、§3 の skill が初めての skill になる。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
 - `turn.step` を hook する (§2) ことで、DR-0035 §3 の「`turn.step` を hook すると応答の断片がすべて module を通るので使わない」は撤回になる。断片が module を通るコストは測っていない (B17。context-notify は同じ形で本番で使っている)
 - module は API error を事実として送らなくなり、daemon は module のあるセッションも transcript の API error の行を tail する (§2)。今は module のあるセッションを tail から外している (`session-errors.ts`) ので、tail の対象が全セッションに戻る
-- tool の呼び出し 1 回ごとに CLI の process が 1 つ乗る (handler が `$.process.run` で `sidecar` 系を起こす。bun の起動を含む往復は約 0.3 秒、B7)
+- `launch` / `permit` / `say` の tool の呼び出しでは CLI の process が 1 つ乗る (`send` / `peers` は [DR-0046](./DR-0046-module-op-over-http.md) の `POST /op` で乗らない。handler が `$.process.run` で `sidecar` 系を起こす。bun の起動を含む往復は約 0.3 秒、B7)
 - `$.state` を使うので、plugin の `types/index.d.ts` の `PluginState` の宣言が `claude plugin validate` の必須になる。validate は push の依存 (`just ci` の `validate`) で担保し、GitHub CI では runner に `claude` が無いので検査されない
 - hooks.json を `modules` だけにすると、Mods に対応しない古い Claude Code の build が `modules` を含む hooks.json を丸ごと捨てるかは未確認 (reference `claude-mods/overview` の未確認)。本 DR の前提の実測は 2.1.299 で行った。plugin が要る Claude Code の最低版をどこに示すかは実装時に決める
 - DR-0035 §4 のとおりサイドカーには認証が無いので、§6 の直送の依頼も同じ uid のプロセスが規約 path に書けば通る。足されるのは文脈であって権限ではない (§6) ので、DR-0035 §4 の切り分け (抜け道は classifier に任せる) をそのまま適用する

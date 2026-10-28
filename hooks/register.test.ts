@@ -7,12 +7,15 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
+import { type JsonObject, JsonObjectSchema } from "@ccmsg/protocol";
+import { stateDirOf } from "@ccmsg/protocol/module-op";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
+import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import {
   type DescribeResult,
   type SessionFacts,
-  SessionFactsTextSchema,
+  SessionFactsSchema,
   SIDECAR_OP_NAMES,
   type SidecarReply,
   SidecarReplyTextSchema,
@@ -33,7 +36,7 @@ import {
   type ToolAnswer,
   type ToolName,
 } from "./engine.ts";
-import { GUIDANCE, guidanceText, GUIDED_TTL_MS } from "./guidance.ts";
+import { GUIDANCE, guidanceText, GUIDED_TTL_MS, PING_TIMEOUT_MS } from "./guidance.ts";
 import {
   ACCEPT_WAIT_MS,
   handlePromptSend,
@@ -45,7 +48,7 @@ import {
 import { beginArgv } from "./session-lifecycle.ts";
 import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
-import { LAUNCH_TIMEOUT_MS, PERMIT_TIMEOUT_MS, SEND_TIMEOUT_MS } from "./tools.ts";
+import { LAUNCH_TIMEOUT_MS, PERMIT_TIMEOUT_MS } from "./tools.ts";
 import {
   LAUNCH_KILL_GRACE_MS,
   LAUNCH_PIPE_DRAIN_GRACE_MS,
@@ -135,23 +138,39 @@ function emptyTable(): HookTable & CatchTable {
 /** What a ccmsg command the module runs answers. */
 type CommandRun = { exitCode: number; stdout: string; stderr: string };
 
+/** What the daemon's `POST /op` answers (DR-0046). */
+type OpAnswer = { status: number; text: string };
+
+/** A `POST /op` body, as far as the fake daemon tells requests apart: the
+ * op, and the session the hello names. */
+const OpRequestSchema = v.object({
+  op: v.string(),
+  hello: v.object({ sid: v.string() }),
+});
+const FactsRequestSchema = v.object({ facts: SessionFactsSchema });
+const OpBodyTextSchema = jsonText(JsonObjectSchema);
+
 interface Fake {
   $: Engine;
   composer: { text: string };
   /** What the session says of itself through `$.session`. */
   session: { model: string; window: number; root: string };
-  /** The facts each `ccmsg sidecar facts` was given, with the sid it named,
-   * in order. Kept apart from `runs`: they go with every session event, and
-   * what a test of the other commands runs is told without them. */
+  /** The facts each `session_facts` to the daemon carried, with the sid its
+   * hello named, in order. Kept apart from `asked`: they go with every
+   * session event, and what a test of the other requests asks is told
+   * without them. */
   factsSent: { sid: string; facts: SessionFacts }[];
+  /** Each `POST /op` the module made other than `session_facts` and `ping`:
+   * the socket and the body, in order. */
+  asked: { socketPath: string | undefined; body: JsonObject }[];
+
   /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
    * named, in order. Kept apart from `runs` as the facts are. */
   begins: { sid: string; cwd: string }[];
-  /** The commands the module ran other than `ccmsg sidecar facts`,
-   * `ccmsg sidecar begin` and `ccmsg status`. */
+  /** The commands the module ran other than `ccmsg sidecar begin`. */
   runs: string[][];
-  /** How many times the module ran `ccmsg status`. Kept apart from `runs` as
-   * the facts are: it goes with the guidance, before a prompt. */
+  /** How many times the module asked the daemon `ping`. Kept apart from
+   * `asked` as the facts are: it goes with the guidance, before a prompt. */
   statuses: { count: number };
   /** The runs that asked the harness pid. */
   /** What each run got on standard input, by the index of the run. */
@@ -201,26 +220,37 @@ function fakeEngine(
     onEnter?: (fake: Fake) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
-    /** What the ccmsg command a tool runs (`sidecar send-message`, `sidecar
-     * peer-list`, `sidecar launch`, `sidecar permit`, `say`) does, given its argv and what it
-     * was run with. */
+    /** What the ccmsg command a tool runs (`sidecar launch`, `sidecar permit`,
+     * `say`) does, given its argv and what it was run with. */
     command?: (
       argv: readonly string[],
       init: { stdin?: string; timeoutMs?: number; env?: Record<string, string> },
     ) => Promise<CommandRun>;
     /** The plugin's store as an earlier process left it. */
     store?: Map<string, unknown>;
-    /** What `ccmsg status` does: print a running daemon's status with this
-     * `webui_url` (none when undefined), or throw. */
+    /** What the daemon's `ping` answers: a reply with this `webui_url`
+     * (none when undefined), or the fetch rejects. */
     webuiUrl?: string | Error;
+    /** What the daemon answers a `POST /op` other than `session_facts` and
+     * `ping` with, given the body. */
+    daemon?: (body: JsonObject) => Promise<OpAnswer>;
+    /** The daemon's sockets in the state dir: both (`up`, the default), none
+     * (`none`), or the wire's alone (`old`, a daemon from before `POST /op`).
+     * Without `http.sock` every fetch rejects as the engine's does. */
+    sockets?: "up" | "none" | "old";
     /** What `$.turn.abort` does with the id it is given: resolve when
      * absent. */
     abort?: (turnId: string) => Promise<void>;
+    /** The files `$.fs` holds, by absolute path: a text is the file's, an
+     * Error is what reading it rejects with. The plugin's package.json is
+     * there unless given. */
+    files?: Record<string, string | Error>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
   // the default env carries it so every Enter below shows it is not passed on.
   const env: Record<string, string | undefined> = options.env ?? {
+    HOME: "/home/k",
     HYOUI_SESSION_ID: "term-1",
     HYOUI_NAMESPACE: "ns-1",
   };
@@ -243,6 +273,26 @@ function fakeEngine(
   const agents: Fake["agents"] = [];
   const aborts: string[] = [];
   const store = options.store ?? new Map<string, unknown>();
+  const files: Record<string, string | Error> = {
+    "/plugin/package.json": '{ "name": "ccmsg", "version": "9.9.9" }',
+    ...options.files,
+  };
+  const asked: Fake["asked"] = [];
+  const sockets = options.sockets ?? "up";
+  const stateDir = (): string =>
+    stateDirOf(
+      { CCMSG_STATE_DIR: env.CCMSG_STATE_DIR, XDG_STATE_HOME: env.XDG_STATE_HOME },
+      env.HOME ?? "",
+    );
+  const socketThere = (file: string): boolean =>
+    (sockets === "up" && file === `${stateDir()}/http.sock`) ||
+    (sockets !== "none" && file === `${stateDir()}/daemon.sock`);
+  const answering = (status: number, reply: object) => ({
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { "content-type": "application/json" },
+    text: JSON.stringify(reply),
+  });
   const $: Engine = {
     plugin: { root: "/plugin" },
     session: {
@@ -295,26 +345,9 @@ function fakeEngine(
     },
     process: {
       run: async (argv, init) => {
-        if (argv[1] === "sidecar" && argv[2] === "facts") {
-          const read = parseWith(SessionFactsTextSchema, init?.stdin ?? "");
-          if (!read.ok) throw new Error(`facts not readable: ${read.failure.summary}`);
-          factsSent.push({ sid: flagOf(argv, "--sid"), facts: read.value });
-          return { exitCode: 0, stdout: "", stderr: "" };
-        }
         if (argv[1] === "sidecar" && argv[2] === "begin") {
           begins.push({ sid: flagOf(argv, "--sid"), cwd: flagOf(argv, "--cwd") });
           return { exitCode: 0, stdout: "", stderr: "" };
-        }
-        if (argv[1] === "status") {
-          statuses.count += 1;
-          const url = options.webuiUrl;
-          if (url instanceof Error) throw url;
-          const status = { running: true, ok: true, pong: true, http: ["127.0.0.1:8642"] };
-          return {
-            exitCode: 0,
-            stdout: `${JSON.stringify(url === undefined ? status : { ...status, webui_url: url })}\n`,
-            stderr: "",
-          };
         }
         runs.push([...argv]);
         stdins.push(init?.stdin);
@@ -322,13 +355,7 @@ function fakeEngine(
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
-        if (
-          argv[1] === "say" ||
-          argv[2] === "send-message" ||
-          argv[2] === "peer-list" ||
-          argv[2] === "launch" ||
-          argv[2] === "permit"
-        ) {
+        if (argv[1] === "say" || argv[2] === "launch" || argv[2] === "permit") {
           if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
           return options.command(argv, init ?? {});
         }
@@ -351,6 +378,49 @@ function fakeEngine(
       },
     },
     env: { get: async (name) => env[name] },
+    http: {
+      fetch: async (url, init) => {
+        if (!socketThere(init?.socketPath ?? "")) {
+          throw new Error(
+            `HooksError: ccmsg: $.http.fetch(${url}) over ${init?.socketPath ?? "?"} failed: ENOENT: ENOENT`,
+          );
+        }
+        const body = parseWith(OpBodyTextSchema, init?.body ?? "");
+        if (!body.ok) throw new Error(`not a body of POST /op: ${body.failure.summary}`);
+        const request = parseWith(OpRequestSchema, body.value);
+        if (!request.ok) throw new Error(`not a request of POST /op: ${request.failure.summary}`);
+        if (request.value.op === "session_facts") {
+          const read = parseWith(FactsRequestSchema, body.value);
+          if (!read.ok) throw new Error(`facts not readable: ${read.failure.summary}`);
+          factsSent.push({ sid: request.value.hello.sid, facts: read.value.facts });
+          return answering(200, { ok: true, request_id: "op" });
+        }
+        if (request.value.op === "ping") {
+          statuses.count += 1;
+          const webuiUrl = options.webuiUrl;
+          if (webuiUrl instanceof Error) throw webuiUrl;
+          const pong = { ok: true, request_id: "op", pong: true, http: ["127.0.0.1:8642"] };
+          return answering(200, webuiUrl === undefined ? pong : { ...pong, webui_url: webuiUrl });
+        }
+        asked.push({ socketPath: init?.socketPath, body: body.value });
+        if (options.daemon === undefined) throw new Error(`no daemon here for ${request.value.op}`);
+        const answered = await options.daemon(body.value);
+        return {
+          ...answered,
+          ok: answered.status >= 200 && answered.status < 300,
+          headers: { "content-type": "application/json" },
+        };
+      },
+    },
+    fs: {
+      exists: async (path) => path in files || socketThere(path),
+      read: async (path) => {
+        const file = files[path];
+        if (file === undefined) throw new Error(`HooksError: $.fs.read(${path}) failed: ENOENT`);
+        if (file instanceof Error) throw file;
+        return file;
+      },
+    },
     clock: {
       now: async () => (now += 1),
       after: (ms, fn) => {
@@ -374,6 +444,7 @@ function fakeEngine(
     composer,
     session,
     factsSent,
+    asked,
     begins,
     runs,
     statuses,
@@ -1225,7 +1296,7 @@ async function untilFacts(fake: Fake, count: number): Promise<void> {
   expect(fake.factsSent.length).toBe(count);
 }
 
-/** The facts the latest `ccmsg sidecar facts` was given. */
+/** The facts the latest `session_facts` carried. */
 function lastFacts(fake: Fake): SessionFacts {
   const sent = fake.factsSent.at(-1);
   if (sent === undefined) throw new Error("no facts sent");
@@ -1242,7 +1313,7 @@ async function untilLastFacts(fake: Fake, pred: (facts: SessionFacts) => boolean
   expect(holds()).toBe(true);
 }
 
-/** The facts the `index`th `ccmsg sidecar facts` was given. */
+/** The facts the `index`th `session_facts` carried. */
 function factsAt(fake: Fake, index: number): { sid: string; facts: SessionFacts } {
   const sent = fake.factsSent[index];
   if (sent === undefined) throw new Error(`no facts #${index}`);
@@ -1380,7 +1451,7 @@ describe("the facts the module sends of its session (session.facts)", () => {
     registerOn(fake);
     const reply = await replyTo(fake, '{"v":1,"op":"session.facts","id":"f1","args":{}}');
     if (!reply.ok) throw new Error("session.facts failed");
-    const read = parseWith(SessionFactsTextSchema, JSON.stringify(reply.result));
+    const read = parseWith(SessionFactsSchema, reply.result);
     if (!read.ok) throw new Error(read.failure.summary);
     expect(read.value.model).toBe("claude-opus-5-5[1m]");
     expect(read.value.context?.window).toBe(1_000_000);
@@ -1391,13 +1462,14 @@ describe("the facts the module sends of its session (session.facts)", () => {
   test("changes during a send are sent once, as they stand when it starts", async () => {
     const fake = fakeEngine();
     const gate = Promise.withResolvers<void>();
-    const process = fake.$.process;
+    const http = fake.$.http;
     let held = 0;
-    fake.$.process = {
-      ...process,
-      run: async (argv, init) => {
-        if (argv[2] === "facts" && held++ === 0) await gate.promise;
-        return process.run(argv, init);
+    fake.$.http = {
+      fetch: async (url, init) => {
+        if (init?.body?.includes('"op":"session_facts"') === true && held++ === 0) {
+          await gate.promise;
+        }
+        return http.fetch(url, init);
       },
     };
     registerOn(fake);
@@ -1463,12 +1535,9 @@ describe("the facts the module sends of its session (session.facts)", () => {
 
   test("a facts send that fails is logged, and the event goes on once", async () => {
     const fake = fakeEngine();
-    const process = fake.$.process;
-    fake.$.process = {
-      ...process,
-      run: async (argv, init) => {
-        if (argv[2] === "facts") throw new Error("spawn failed");
-        return process.run(argv, init);
+    fake.$.http = {
+      fetch: async () => {
+        throw new Error("aborted: no complete answer within 30000ms");
       },
     };
     registerOn(fake);
@@ -1478,7 +1547,43 @@ describe("the facts the module sends of its session (session.facts)", () => {
     for (let i = 0; i < 10 && !fake.logs.some((l) => l.includes("facts not sent")); i++) {
       await settle();
     }
-    expect(fake.logs.some((l) => l === "ccmsg: facts not sent: Error: spawn failed")).toBe(true);
+    expect(fake.logs).toContain(
+      "ccmsg: facts not sent: Error: aborted: no complete answer within 30000ms",
+    );
+  });
+
+  // The facts start no daemon (DR-0035 §3): with none running they are
+  // dropped without a word, and the next daemon asks for them. One the daemon
+  // refuses is logged.
+  test("facts with no daemon running are dropped quietly; facts refused are logged", async () => {
+    const stopped = fakeEngine({ sockets: "none" });
+    registerOn(stopped);
+    await fire(stopped, "session.measure", { context: { window: 1 } }, async () => ({}));
+    await settle();
+    await settle();
+    expect(stopped.factsSent).toEqual([]);
+    expect(stopped.logs.filter((l) => l.includes("facts"))).toEqual([]);
+    const refusing = fakeEngine();
+    const http = refusing.$.http;
+    refusing.$.http = {
+      fetch: async (url, init) =>
+        init?.body?.includes('"op":"session_facts"') === true
+          ? {
+              status: 200,
+              ok: true,
+              headers: {},
+              text: '{"ok":false,"error":{"code":"bad_request","msg":"no"},"request_id":"op"}',
+            }
+          : http.fetch(url, init),
+    };
+    registerOn(refusing);
+    await fire(refusing, "session.measure", { context: { window: 1 } }, async () => ({}));
+    for (let i = 0; i < 10 && !refusing.logs.some((l) => l.includes("facts refused")); i++) {
+      await settle();
+    }
+    expect(refusing.logs).toContain(
+      'ccmsg: facts refused: {"ok":false,"error":{"code":"bad_request","msg":"no"},"request_id":"op"}',
+    );
   });
 });
 
@@ -2271,7 +2376,32 @@ describe("the guidance", () => {
     const failing = await started({ webuiUrl: new Error("timed out") });
     await prompt(failing, "one");
     expect(failing.appended).toEqual([GUIDANCE]);
-    expect(failing.logs).toContain("ccmsg: status failed: Error: timed out");
+    expect(failing.logs).toContain("ccmsg: ping not answered: Error: timed out");
+    // No daemon running is no URL to tell, and nothing to log.
+    const stopped = await started({ sockets: "none" });
+    await prompt(stopped, "one");
+    expect(stopped.appended).toEqual([GUIDANCE]);
+    expect(stopped.logs.filter((l) => l.includes("ping"))).toEqual([]);
+  });
+
+  // The prompt waits on the ping, once per conversation: a daemon that does
+  // not answer holds it PING_TIMEOUT_MS at most.
+  test("a ping with no reply holds the prompt no longer than its wait", async () => {
+    const fake = await started({ webuiUrl: undefined });
+    fake.$.http = {
+      fetch: () => new Promise(() => {}),
+    };
+    const prompting = prompt(fake, "one");
+    let timer: Timer | undefined;
+    for (let i = 0; i < 20 && timer === undefined; i++) {
+      await settle();
+      timer = fake.timers.find((t) => t.ms === PING_TIMEOUT_MS && !t.cancelled);
+    }
+    if (timer === undefined) throw new Error("no ping wait");
+    timer.fn();
+    await prompting;
+    expect(fake.appended).toEqual([GUIDANCE]);
+    expect(fake.logs).toContain("ccmsg: ping not answered: no reply within 3 s");
   });
 
   test("a session with no composer (-p) gets none", async () => {
@@ -2399,18 +2529,39 @@ describe("the ccmsg tools", () => {
     expect(fake.tools).toEqual([]);
   });
 
-  test("send hands { to, text } to ccmsg sidecar send-message and reads each result", async () => {
-    const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
-    const fake = toolFake(async (argv, init) => {
-      seen.push({ argv, ...init });
-      return printing({
+  /** A module whose daemon answers each `POST /op` with `reply` as JSON,
+   * status 200. */
+  const replying = (reply: object) => async (): Promise<OpAnswer> => ({
+    status: 200,
+    text: JSON.stringify({ ...reply, request_id: "op" }),
+  });
+
+  function daemonFake(
+    daemon: NonNullable<Parameters<typeof fakeEngine>[0]>["daemon"],
+    options: Parameters<typeof fakeEngine>[0] = {},
+  ): Fake {
+    const fake = fakeEngine({ ...options, daemon });
+    registerOn(fake);
+    return fake;
+  }
+
+  /** What the module says of who asks: the session it means, the plugin's
+   * version and the wire's generation. The daemon names the session by the
+   * asking process (DR-0046 §3), so nothing else is said. */
+  const HELLO = { sid: fake0, protocol: 1, client_version: "9.9.9" };
+
+  // The tools ask the daemon over its socket (DR-0046): no ccmsg process is
+  // started for them.
+  test("send asks the daemon's POST /op send_message under the session's hello, and reads each result", async () => {
+    const fake = daemonFake(
+      replying({
         ok: true,
         results: [
           { sid: OTHER, name: "n", cwd: "/w", outcome: "delivered" },
           { sid: "c", outcome: "not_delivered", reason: "no_module" },
         ],
-      })();
-    });
+      }),
+    );
     const text = "long\nmessage `with` $chars";
     const result = await callTool(fake, "mcp__ccmsg-v1__send", {
       cwd: "/w",
@@ -2418,32 +2569,30 @@ describe("the ccmsg tools", () => {
       tool: "mcp__ccmsg-v1__send",
       tool_use_id: "toolu_1",
     });
-    expect(seen).toEqual([
+    expect(fake.asked).toEqual([
       {
-        argv: ["/plugin/bin/ccmsg", "sidecar", "send-message", "--sid", fake.sid.value],
-        stdin: JSON.stringify({ to: { cwd: "/w" }, text }),
-        timeoutMs: SEND_TIMEOUT_MS,
+        socketPath: "/home/k/.local/state/ccmsg/http.sock",
+        body: { op: "send_message", to: { cwd: "/w" }, text, hello: HELLO },
       },
     ]);
+    expect(fake.runs).toEqual([]);
     expect(result).toContain("2 件の宛先のうち 1 件に届いた");
     expect(result).toContain(`- session_id: ${OTHER}, name: "n", cwd: "/w": 届いた`);
     expect(result).toContain("- session_id: c: 届かなかった。ccmsg の hooks module が動いていない");
   });
 
   // A send that names a running subagent hands its agent_id on with the rest.
-  test("send with agent_id hands it to ccmsg sidecar send-message", async () => {
-    const seen: (string | undefined)[] = [];
-    const fake = toolFake(async (_argv, init) => {
-      seen.push(init?.stdin);
-      return printing({ ok: true, results: [{ sid: OTHER, outcome: "delivered" }] })();
-    });
+  test("send with agent_id hands it on in send_message", async () => {
+    const fake = daemonFake(
+      replying({ ok: true, results: [{ sid: OTHER, outcome: "delivered" }] }),
+    );
     const result = await callTool(fake, "mcp__ccmsg-v1__send", {
       session_id: OTHER,
       agent_id: "a1b2",
       text: "hi",
     });
-    expect(seen).toEqual([
-      JSON.stringify({ to: { session_id: OTHER }, agent_id: "a1b2", text: "hi" }),
+    expect(fake.asked.map((a) => a.body)).toEqual([
+      { op: "send_message", to: { session_id: OTHER }, agent_id: "a1b2", text: "hi", hello: HELLO },
     ]);
     expect(result).toContain(`- session_id: ${OTHER}: 届いた`);
     expect(
@@ -2451,15 +2600,45 @@ describe("the ccmsg tools", () => {
     ).toContain("send の入力が形に合わない");
   });
 
+  // The socket is where the daemon binds it, by the rule the daemon's state
+  // dir follows: CCMSG_STATE_DIR, else XDG_STATE_HOME, else HOME.
+  test("the socket is the daemon's state dir's", async () => {
+    const asking = async (env: Record<string, string>) => {
+      const fake = daemonFake(replying({ ok: true, results: [] }), { env });
+      await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+      return fake.asked.map((a) => a.socketPath);
+    };
+    expect(await asking({ HOME: "/h", CCMSG_STATE_DIR: "/s", XDG_STATE_HOME: "/x" })).toEqual([
+      "/s/http.sock",
+    ]);
+    expect(await asking({ HOME: "/h", XDG_STATE_HOME: "/x/" })).toEqual(["/x/ccmsg/http.sock"]);
+    expect(await asking({ HOME: "/h", CCMSG_STATE_DIR: "" })).toEqual([
+      "/h/.local/state/ccmsg/http.sock",
+    ]);
+  });
+
+  // The plugin's version is read from its package.json, as `ccmsg version`
+  // prints it; one that cannot be read leaves the field out and is logged.
+  test("a plugin version that cannot be read is left out of the hello", async () => {
+    const fake = daemonFake(replying({ ok: true, results: [] }), {
+      files: { "/plugin/package.json": new Error("EACCES") },
+    });
+    await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    const { client_version: _version, ...rest } = HELLO;
+    expect(fake.asked.map((a) => a.body.hello)).toEqual([rest]);
+    expect(fake.logs).toContain("ccmsg: the plugin's version is not read: Error: EACCES");
+  });
+
   // engine does not check the input against the schema (DR-0039 §3): the
-  // handler reads it and answers what does not read, running nothing.
-  test("an input that is not send's is answered in text, and nothing runs", async () => {
-    const fake = toolFake(printing({ ok: true, results: [] }));
+  // handler reads it and answers what does not read, asking nothing.
+  test("an input that is not send's is answered in text, and nothing is asked", async () => {
+    const fake = daemonFake(replying({ ok: true, results: [] }));
     for (const input of [{ text: 1, cwd: "/w" }, { text: "hi" }, { cwd: "/w", text: "  " }, {}]) {
       expect(await callTool(fake, "mcp__ccmsg-v1__send", input)).toContain(
         "send の入力が形に合わない",
       );
     }
+    expect(fake.asked).toEqual([]);
     expect(fake.runs).toEqual([]);
   });
 
@@ -2489,8 +2668,8 @@ describe("the ccmsg tools", () => {
   });
 
   test("a send that matched only the sender says so", async () => {
-    const fake = toolFake(
-      printing({
+    const fake = daemonFake(
+      replying({
         ok: true,
         results: [{ sid: fake0, outcome: "not_delivered", reason: "self" }],
       }),
@@ -2501,61 +2680,65 @@ describe("the ccmsg tools", () => {
   });
 
   test("a send that matched nobody says so", async () => {
-    const fake = toolFake(printing({ ok: true, results: [] }));
+    const fake = daemonFake(replying({ ok: true, results: [] }));
     expect(await callTool(fake, "mcp__ccmsg-v1__send", { name: "x", text: "hi" })).toContain(
       "宛先に当たる生きているセッションが無い",
     );
   });
 
-  test("a send whose result cannot be told is unconfirmed; one with no daemon was not sent", async () => {
-    const thrown = toolFake(async () => {
-      throw new Error("aborted: still running after 10000ms");
+  // Nothing went out when there was no socket to send to; what went to the
+  // socket and got no reply may have reached someone.
+  test("a send with no daemon, or one too old, was not sent; one with no reply is unconfirmed", async () => {
+    const send = (fake: Fake) => callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    expect(await send(daemonFake(replying({}), { sockets: "none" }))).toBe(
+      "ccmsg の daemon が居ないので、送っていない。daemon を起こす (`ccmsg daemon start`)",
+    );
+    expect(await send(daemonFake(replying({}), { sockets: "old" }))).toBe(
+      "ccmsg の daemon がこの plugin より古いので、送っていない。daemon を更新する (`ccmsg daemon restart`)",
+    );
+    const aborted = daemonFake(async () => {
+      throw new Error("HooksError: ccmsg: aborted: no complete answer within 30000ms");
     });
-    expect(await callTool(thrown, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
-      "届いたか確かめられなかった: Error: aborted",
+    expect(await send(aborted)).toBe(
+      `ccmsg の daemon から返事が無く、届いたか確かめられなかった: Error: HooksError: ccmsg: aborted: no complete answer within 30000ms。${UNCONFIRMED_ADVICE}`,
     );
-    const silent = toolFake(async () => ({ exitCode: 1, stdout: "", stderr: "broke\n  detail\n" }));
-    expect(await callTool(silent, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
-      "届いたか確かめられなかった: broke。",
+    const other = daemonFake(async () => ({ status: 502, text: "Bad Gateway" }));
+    expect(await send(other)).toContain(
+      "届いたか確かめられなかった: the socket answered HTTP 502。",
     );
-    const nodaemon = toolFake(async () => ({ exitCode: 3, stdout: "", stderr: "no daemon\n" }));
-    expect(await callTool(nodaemon, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" })).toContain(
-      "daemon に繋がらず、送っていない: no daemon",
+    const unread = daemonFake(async () => ({ status: 200, text: "{}" }));
+    expect(await send(unread)).toBe(
+      `ccmsg が送信の結果を返さず、届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`,
     );
   });
 
-  // The daemon's refusal is printed as its JSON; the tool says its msg in
-  // words. A refusal comes before any session is written to, so nothing went;
-  // one from an op that threw part way leaves the send unconfirmed.
+  // A refusal comes before any session is written to, so nothing went; one
+  // from an op that threw part way leaves the send unconfirmed. The tool says
+  // the refusal's msg in words, not its JSON.
   test("a send the daemon refused says the daemon's reason, not its JSON", async () => {
-    const refusing = (code: string) =>
-      toolFake(async () => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: `${JSON.stringify({ ok: false, error: { code, msg: "op: `peer_send` は `send_message` に改名された" } })}\n`,
+    const refusing = (code: string, status = 200) =>
+      daemonFake(async () => ({
+        status,
+        text: JSON.stringify({ ok: false, error: { code, msg: "the body is not JSON" } }),
       }));
-    const refused = await callTool(refusing("invalid_args"), "mcp__ccmsg-v1__send", {
-      cwd: "/w",
-      text: "hi",
-    });
-    expect(refused).toBe(
-      "ccmsg の daemon が送信を断ったので、送っていない: op: `peer_send` は `send_message` に改名された",
+    const send = (fake: Fake) => callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
+    expect(await send(refusing("invalid_args"))).toBe(
+      "ccmsg の daemon が送信を断ったので、送っていない: the body is not JSON",
     );
-    const threw = await callTool(refusing("internal"), "mcp__ccmsg-v1__send", {
-      cwd: "/w",
-      text: "hi",
-    });
-    expect(threw).toContain(
-      "届いたか確かめられなかった: op: `peer_send` は `send_message` に改名された。",
+    expect(await send(refusing("bad_request", 400))).toBe(
+      "ccmsg の daemon が送信を断ったので、送っていない: the body is not JSON",
     );
-    expect(threw).not.toContain("{");
+    const threw = await send(refusing("internal"));
+    expect(threw).toBe(
+      `ccmsg が送信の結果を返さず、届いたか確かめられなかった: the body is not JSON。${UNCONFIRMED_ADVICE}`,
+    );
   });
 
   // A handler that throws (here its log) is answered by the `.catch`, never
   // by `next`, which would only reach core's "no tool.call hook answered".
   test("a send whose handler fails is answered by its .catch", async () => {
-    const fake = toolFake(async () => {
-      throw new Error("run broke");
+    const fake = daemonFake(async () => {
+      throw new Error("fetch broke");
     });
     fake.$.ui = {
       log: () => {
@@ -2586,20 +2769,21 @@ describe("the ccmsg tools", () => {
   });
 
   test("peers lists the sessions send can reach, spelled as send takes them", async () => {
-    const seen: (string | undefined)[] = [];
-    const fake = toolFake(async (_argv, init) => {
-      seen.push(init.stdin);
-      return printing({
+    const fake = daemonFake(
+      replying({
         ok: true,
         peers: [
-          { sid: fake.sid.value, pids: [1], module: true, self: true },
+          { sid: fake0, pids: [1], module: true, self: true },
           { sid: OTHER, name: "n", cwd: "/w", pids: [2, 3], module: true, self: false },
           { sid: "c", pids: [4], module: false, self: false },
         ],
-      })();
-    });
+      }),
+    );
     const result = await callTool(fake, "mcp__ccmsg-v1__peers", { cwd_prefix: "/w/" });
-    expect(seen).toEqual([JSON.stringify({ cwd_prefix: "/w/" })]);
+    expect(fake.asked.map((a) => a.body)).toEqual([
+      { op: "peer_list", cwd_prefix: "/w/", hello: HELLO },
+    ]);
+    expect(fake.runs).toEqual([]);
     expect(result.split("\n").slice(1)).toEqual([
       `- session_id: ${OTHER}, name: "n", cwd: "/w", pid: 2 / 3`,
       "- session_id: c (ccmsg の hooks module が動いていないので送れない)",
@@ -2910,13 +3094,27 @@ describe("the ccmsg tools", () => {
   });
 
   test("peers the daemon refused says the daemon's reason, not its JSON", async () => {
-    const fake = toolFake(async () => ({
-      exitCode: 1,
-      stdout: "",
-      stderr: `${JSON.stringify({ ok: false, error: { code: "invalid_args", msg: "op: unknown op: peer_list" } })}\n`,
-    }));
+    const fake = daemonFake(
+      replying({ ok: false, error: { code: "invalid_args", msg: "op: unknown op: peer_list" } }),
+    );
     expect(await callTool(fake, "mcp__ccmsg-v1__peers", {})).toBe(
       "一覧を返せなかった: op: unknown op: peer_list",
+    );
+  });
+
+  test("peers with no daemon, one too old, or no reply says why there is no list", async () => {
+    const peers = (fake: Fake) => callTool(fake, "mcp__ccmsg-v1__peers", {});
+    expect(await peers(daemonFake(replying({}), { sockets: "none" }))).toBe(
+      "一覧を返せなかった: ccmsg の daemon が居ない。daemon を起こす (`ccmsg daemon start`)",
+    );
+    expect(await peers(daemonFake(replying({}), { sockets: "old" }))).toBe(
+      "一覧を返せなかった: ccmsg の daemon がこの plugin より古い。daemon を更新する (`ccmsg daemon restart`)",
+    );
+    const aborted = daemonFake(async () => {
+      throw new Error("aborted: no complete answer within 30000ms");
+    });
+    expect(await peers(aborted)).toBe(
+      "一覧を返せなかった: Error: aborted: no complete answer within 30000ms",
     );
   });
 });

@@ -8,10 +8,12 @@
     ".": "./src/index.ts",
     "./address": "./src/ccmsg-address.ts",
     "./launch": "./src/launch.ts",
+    "./module-op": "./src/module-op.ts",
     "./parse": "./src/parse.ts",
     "./peer-tools": "./src/peer-tools.ts",
     "./peer-tools-text": "./src/peer-tools-text.ts",
     "./permit-request": "./src/permit-request.ts",
+    "./protocol-version": "./src/protocol-version.ts",
     "./request-override": "./src/request-override.ts",
     "./sidecar": "./src/sidecar.ts"
   },

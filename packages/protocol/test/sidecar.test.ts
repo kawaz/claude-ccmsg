@@ -8,7 +8,6 @@ import {
   PromptSendResultSchema,
   readSidecarRequest,
   SessionFactsSchema,
-  SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
   TurnAbortResultSchema,
   type TurnAbortResult,
@@ -314,15 +313,6 @@ describe("the ops' results", () => {
     expect(
       readSidecarRequest(line({ v: 1, op: "session.facts", id: "f", args: { x: 1 } })).ok,
     ).toBe(false);
-  });
-
-  // What `ccmsg sidecar facts` reads on standard input.
-  test("the facts as text are JSON of that shape", () => {
-    expect(parseWith(SessionFactsTextSchema, '{"at":3,"model":"m"}')).toEqual({
-      ok: true,
-      value: { at: 3, model: "m" },
-    });
-    expect(parseWith(SessionFactsTextSchema, "{").ok).toBe(false);
   });
 });
 

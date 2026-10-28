@@ -13,7 +13,6 @@ import {
   isSessionIdShape,
   migrateLegacyConfigFiles,
   parseWith,
-  SessionFactsTextSchema,
   SessionStateFileTextSchema,
   SidecarReplyTextSchema,
   SidecarRunIdSchema,
@@ -23,9 +22,7 @@ import {
   type ReplyOf,
   type RequestInput,
   LaunchInputTextSchema,
-  PeerListInputTextSchema,
   PermitInputTextSchema,
-  SendMessageInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
@@ -36,14 +33,7 @@ import {
   formatTextDump,
   writeSessionDumpFile,
 } from "@ccmsg/daemon/session-dump";
-import {
-  Client,
-  connectIfRunning,
-  helloRequest,
-  ensureDaemon,
-  sendFactsNoSpawn,
-  waitDaemonGone,
-} from "./client.ts";
+import { Client, connectIfRunning, helloRequest, ensureDaemon, waitDaemonGone } from "./client.ts";
 import {
   getRepoWsFromVcs,
   pruneOldSessionFiles,
@@ -299,19 +289,18 @@ async function runNotify(identity: Identity, req: RequestInput & { op: "notify" 
 // --- sidecar ---------------------------------------------------------------
 
 const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
-session, and the way the module's replies, what it knows of its session, and
-what its tools send go to the daemon. Not for direct use.
+session, and the way the module's replies and some of its tools go to the
+daemon. Not for direct use.
 `;
 
-/** `ccmsg sidecar`, `ccmsg sidecar reply`, `ccmsg sidecar facts` (DR-0035
- * §3), `ccmsg sidecar begin` (DR-0039 §2), `ccmsg sidecar send-message` /
- * `peer-list` (DR-0039 §3), `ccmsg sidecar launch` (DR-0018 §3.7) and
- * `ccmsg sidecar permit` (DR-0040). All are the hooks module's: it starts the
- * first for its session's life, runs the second to answer a request the
- * first copied to it, the third to hand the daemon what it knows of its
- * session, the fourth when the session starts or changes its id, and the
- * last four for its `send`, `peers`, `launch` and `permit` tools. The help
- * says no more than that on purpose (DR-0035 §4). */
+/** `ccmsg sidecar`, `ccmsg sidecar reply` (DR-0035 §3), `ccmsg sidecar
+ * begin` (DR-0039 §2), `ccmsg sidecar launch` (DR-0018 §3.7) and `ccmsg
+ * sidecar permit` (DR-0040). All are the hooks module's: it starts the first
+ * for its session's life, runs the second to answer a request the first
+ * copied to it, the third when the session starts or changes its id, and the
+ * last two for its `launch` and `permit` tools. What else the module asks the
+ * daemon goes over the daemon's `POST /op` (DR-0046). The help says no more
+ * than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
@@ -322,24 +311,12 @@ async function runSidecarCommand(args: string[]): Promise<void> {
     await runSidecarReply(opts);
     return;
   }
-  if (positionals[0] === "send-message") {
-    await runSidecarSendMessage(opts);
-    return;
-  }
-  if (positionals[0] === "peer-list") {
-    await runSidecarPeerList(opts);
-    return;
-  }
   if (positionals[0] === "launch") {
     await runSidecarLaunch(opts);
     return;
   }
   if (positionals[0] === "permit") {
     await runSidecarPermit(opts);
-    return;
-  }
-  if (positionals[0] === "facts") {
-    await runSidecarFacts(opts);
     return;
   }
   if (positionals[0] === "begin") {
@@ -458,28 +435,6 @@ async function runSidecarReply(opts: Record<string, string | boolean>): Promise<
   return runOnce(identity, { op: "sidecar_reply", reply: read.value });
 }
 
-/** `ccmsg sidecar facts --sid <sid> < facts.json`: hand the daemon what the
- * hooks module knows of its session (session_facts), read from standard input
- * for the reason a reply is. No daemon is started: facts that find none
- * listening are dropped, and exit 0 says so on stderr — the module has
- * nothing to do about it, and the next daemon asks the module for its facts
- * when the run's sidecar names the run. */
-async function runSidecarFacts(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar facts --sid <sid> < facts.json";
-  const read = parseWith(SessionFactsTextSchema, await Bun.stdin.text());
-  if (!read.ok) {
-    throw new Error(
-      `standard input must be the session's facts as JSON: ${read.failure.summary}\n  usage: ${usage}`,
-    );
-  }
-  const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar facts");
-  if (!(await sendFactsNoSpawn(resolvePaths(), identity, read.value))) {
-    process.stderr.write("ccmsg sidecar facts: no daemon took the facts; dropped\n");
-  }
-  process.exit(0);
-}
-
 /** `ccmsg sidecar begin --sid <sid> --cwd <dir>`: the session `<sid>` began
  * (its start, or the id it has after /clear or /resume) in `<dir>`, its
  * project root. Writes the session's state file, which every CLI hello of the
@@ -516,51 +471,6 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
     process.exit(1);
   }
   process.exit(0);
-}
-
-/** `ccmsg sidecar send-message --sid <sid> < input.json` (DR-0039 §3): send a
- * message as session `<sid>` to the sessions `{ to, text }` on standard input
- * picks out, and print the daemon's send_message reply (one result per session
- * matched), exiting 0. The input comes on standard input for the reason a
- * reply does: a message may be long, and an argument is bounded in size and
- * shown to every user by `ps`.
- *
- * Exits 3, nothing sent, when no daemon can be had; exits 1 when the daemon
- * took the request and its reply did not come, which leaves unknown whether
- * the message went. */
-async function runSidecarSendMessage(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar send-message --sid <sid> < input.json";
-  const read = parseWith(SendMessageInputTextSchema, await Bun.stdin.text());
-  if (!read.ok) {
-    throw new Error(
-      `standard input must be { to, text } as JSON: ${read.failure.summary}\n  usage: ${usage}`,
-    );
-  }
-  const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar send-message");
-  const client = await daemonOrExit(identity, "sidecar send-message");
-  const res = await client.request({ op: "send_message", ...read.value });
-  client.close();
-  process.exit(output(res));
-}
-
-/** `ccmsg sidecar peer-list --sid <sid> < filter.json` (DR-0039 §3): print
- * the sessions a send from `<sid>` could go to (the daemon's peer_list
- * reply), those matching `{ cwd_prefix?, name? }` on standard input. */
-async function runSidecarPeerList(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar peer-list --sid <sid> < filter.json";
-  const read = parseWith(PeerListInputTextSchema, await Bun.stdin.text());
-  if (!read.ok) {
-    throw new Error(
-      `standard input must be { cwd_prefix?, name? } as JSON: ${read.failure.summary}\n  usage: ${usage}`,
-    );
-  }
-  const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar peer-list");
-  const client = await daemonOrExit(identity, "sidecar peer-list");
-  const res = await client.request({ op: "peer_list", ...read.value });
-  client.close();
-  process.exit(output(res));
 }
 
 /** `ccmsg sidecar launch --sid <sid> < launch.json` (DR-0018 §3.7): ask the

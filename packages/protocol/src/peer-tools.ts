@@ -1,7 +1,7 @@
 // The ccmsg tools an agent uses (DR-0039 §3) — send, say, peers — as
 // schemas (DR-0038): what the model writes into each tool, what the hooks
-// module hands `ccmsg sidecar send-message` / `peer-list` on standard input, and
-// what those print, which is the daemon's send_message / peer_list reply.
+// module asks the daemon with them (send_message / peer_list over `POST /op`,
+// DR-0046), and the daemon's reply.
 //
 // The hooks module bundles this file, so it imports nothing but valibot,
 // parse.ts and response-error.ts.
@@ -74,14 +74,14 @@ const PeerTextSchema = v.pipe(
  * (DR-0039 §3). */
 const AgentIdSchema = v.optional(v.pipe(v.string(), v.nonEmpty("an agent id is not empty")));
 
-/** What `ccmsg sidecar send-message` takes on standard input. */
+/** send_message's fields: who to, the running subagent of theirs when one is
+ * named, and the text. */
 export const SendMessageInputSchema = v.object({
   to: PeerTargetSchema,
   agent_id: AgentIdSchema,
   text: PeerTextSchema,
 });
 export type SendMessageInput = Output<typeof SendMessageInputSchema>;
-export const SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 
 /** The fields that pick the sessions `peers` lists: a prefix of the directory
  * a session works in (both compared as realpaths, so a whole repository's
@@ -92,13 +92,12 @@ const PeerListEntries = {
   name: PeerNameSchema,
 };
 
-/** What `ccmsg sidecar peer-list` takes on standard input: the sessions to
- * list, all of them when neither field is given. Strict: a field it does not
+/** peer_list's fields: the sessions to list, all of them when neither field
+ * is given. Strict: a field it does not
  * take (a whole `cwd`, which is send's) is refused rather than dropped, which
  * would list every session. */
 export const PeerListInputSchema = v.strictObject(PeerListEntries);
 export type PeerListInput = Output<typeof PeerListInputSchema>;
-export const PeerListInputTextSchema = jsonText(PeerListInputSchema);
 
 // --- what came of it ------------------------------------------------------------
 
@@ -160,8 +159,8 @@ export const SendMessageResultSchema = v.variant("outcome", [
 ]);
 export type SendMessageResult = Output<typeof SendMessageResultSchema>;
 
-/** send_message's reply, and what `ccmsg sidecar send-message` prints: one result
- * per session the send matched, none when it matched none. */
+/** send_message's reply: one result per session the send matched, none when
+ * it matched none. */
 export const SendMessageResponseSchema = v.object({
   ok: v.literal(true),
   results: v.array(SendMessageResultSchema),
@@ -179,7 +178,7 @@ export const PeerListEntrySchema = v.object({
 });
 export type PeerListEntry = Output<typeof PeerListEntrySchema>;
 
-/** peer_list's reply, and what `ccmsg sidecar peer-list` prints. */
+/** peer_list's reply. */
 export const PeerListResponseSchema = v.object({
   ok: v.literal(true),
   peers: v.array(PeerListEntrySchema),
@@ -187,9 +186,9 @@ export const PeerListResponseSchema = v.object({
 export type PeerListResponse = Output<typeof PeerListResponseSchema>;
 export const PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
 
-/** What `ccmsg sidecar send-message` / `peer-list` and `ccmsg say` print on
- * standard error, exiting 1, when the daemon did not serve the request: its
- * refusal, whose `msg` says why in words a reader can act on. */
+/** The daemon's refusal of a request, as `POST /op` answers it and as `ccmsg
+ * sidecar launch` / `permit` print it on standard error, exiting 1: its `msg`
+ * says why in words a reader can act on. */
 export const RefusalTextSchema = jsonText(ErrorResponseSchema);
 
 // --- the tools ------------------------------------------------------------------

@@ -5,10 +5,10 @@
 // `launch` (start a session through ccmsg's launch command, DR-0018 §3.7)
 // and `permit` (ask the person for permission after the auto mode
 // classifier stopped an action, DR-0040). Each is answered here without
-// `next`: `send`, `peers`, `launch` and `permit` through `ccmsg sidecar
-// send-message` / `peer-list` / `launch` / `permit`, `say` through
-// `ccmsg say`, the result always a text the model reads. SendMessage is left
-// to the harness.
+// `next`: `send` and `peers` by asking the daemon (daemon-op.ts, DR-0046),
+// `launch` and `permit` through `ccmsg sidecar launch` / `permit`, `say`
+// through `ccmsg say`, the result always a text the model reads. SendMessage
+// is left to the harness.
 import * as v from "valibot";
 import {
   LaunchInputSchema,
@@ -30,19 +30,11 @@ import {
   PermitRequestResponseTextSchema,
   PermitToolInputSchema,
 } from "@ccmsg/protocol/permit-request";
+import { daemonOp } from "./daemon-op.ts";
 import type { Engine, On } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
 
-/** `send` budget: the `ccmsg sidecar send-message` process, the daemon reading
- * the runs (within 1 s), and every run's write (2 s) and refusal window
- * (0.25 s), the runs in parallel — about 5 s at worst, with the rest left for
- * a daemon the command has to start. The wait is the process's, which the
- * hook's budget does not count (DR-0039 §3); past it the send is answered as
- * unconfirmed. */
-export const SEND_TIMEOUT_MS = 10_000;
-/** `peers` budget: the process and the daemon reading the runs. */
-export const PEERS_TIMEOUT_MS = 5_000;
 /** `say` budget: `ccmsg say` records the say and then speaks, and returns
  * when the speech ends, so a long text takes as long as it is to say. */
 export const SAY_TIMEOUT_MS = 120_000;
@@ -106,13 +98,9 @@ async function registerTools($: Engine): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar send-message` / `peer-list` / `launch` for session `sid`: the
- * input goes on standard input, for the reason a reply does (sidecar.ts). */
-export function toolArgv(
-  root: string,
-  command: "send-message" | "peer-list" | "launch" | "permit",
-  sid: string,
-): string[] {
+/** `ccmsg sidecar launch` / `permit` for session `sid`: the input goes on
+ * standard input, for the reason a reply does (sidecar.ts). */
+export function toolArgv(root: string, command: "launch" | "permit", sid: string): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
 }
 
@@ -121,38 +109,50 @@ function notTheInput(tool: string, summary: string): string {
   return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
 }
 
+/** What to do about no daemon running (daemon-op.ts `no_daemon`): a tool
+ * starts none (DR-0046 §6). */
+const START_DAEMON = "daemon を起こす (`ccmsg daemon start`)";
+/** What to do about a daemon from before the way the module asks it
+ * (daemon-op.ts `outdated`). */
+const UPDATE_DAEMON = "daemon を更新する (`ccmsg daemon restart`)";
+
 /** The `send` tool: send the text to the sessions the input names, and say
- * what came of it for each. Never rejects. */
+ * what came of it for each. Never rejects.
+ *
+ * The daemon answers when every run's write (2 s) and refusal window
+ * (0.25 s) are over, the runs in parallel: about 5 s at worst. */
 async function sendTool<E>($: Engine, e: E): Promise<string> {
   const read = parseWith(SendToolInputSchema, e);
   if (!read.ok) return notTheInput("send", read.failure.summary);
   const { text, agent_id, ...to } = read.value;
-  let run: { exitCode: number; stdout: string; stderr: string };
-  try {
-    run = await $.process.run(toolArgv($.plugin.root, "send-message", await $.session.id()), {
-      stdin: JSON.stringify({ to, ...(agent_id !== undefined ? { agent_id } : {}), text }),
-      timeoutMs: SEND_TIMEOUT_MS,
-    });
-  } catch (error) {
-    $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar send-message が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+  const asked = await daemonOp($, {
+    op: "send_message",
+    to,
+    ...(agent_id !== undefined ? { agent_id } : {}),
+    text,
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、送っていない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、送っていない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: send unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無く、届いたか確かめられなかった: ${asked.reason}。${UNCONFIRMED_ADVICE}`;
+    case "answered":
+      break;
   }
-  const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
+  const answered = parseWith(SendMessageResponseTextSchema, asked.text);
   if (answered.ok) return sendResultText(answered.value.results);
-  $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
-  const said = firstStderrLine(run.stderr);
-  // 3: no daemon could be had, so nothing went out.
-  if (run.exitCode === 3) {
-    return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
-  }
   // The daemon refuses a send before it writes to any session; only an op
   // that threw (`internal`) may have stopped part way.
-  const refusal = parseWith(RefusalTextSchema, said);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok && refusal.value.error.code !== "internal") {
     return `ccmsg の daemon が送信を断ったので、送っていない: ${refusal.value.error.msg}`;
   }
-  const why = refusal.ok ? refusal.value.error.msg : said;
-  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why !== "" ? `: ${why}` : ""}。${UNCONFIRMED_ADVICE}`;
+  $.ui.log(`ccmsg: send answered what is not its reply: ${asked.text}`, { to: "debug" });
+  const why = refusal.ok ? `: ${refusal.value.error.msg}` : "";
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why}。${UNCONFIRMED_ADVICE}`;
 }
 
 /** The first line a ccmsg command wrote to standard error. */
@@ -191,17 +191,21 @@ async function sayTool<E>($: Engine, e: E): Promise<string> {
 async function peersTool<E>($: Engine, e: E): Promise<string> {
   const read = parseWith(PeersToolInputSchema, e);
   if (!read.ok) return notTheInput("peers", read.failure.summary);
-  try {
-    const run = await $.process.run(toolArgv($.plugin.root, "peer-list", await $.session.id()), {
-      stdin: JSON.stringify(read.value),
-      timeoutMs: PEERS_TIMEOUT_MS,
-    });
-    const answered = parseWith(PeerListResponseTextSchema, run.stdout);
-    if (answered.ok) return peersText(answered.value.peers);
-    return `一覧を返せなかった: ${failureText(run.stderr)}`;
-  } catch (error) {
-    return `一覧を返せなかった: ${errorText(error)}`;
+  const asked = await daemonOp($, { op: "peer_list", ...read.value });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `一覧を返せなかった: ccmsg の daemon が居ない。${START_DAEMON}`;
+    case "outdated":
+      return `一覧を返せなかった: ccmsg の daemon がこの plugin より古い。${UPDATE_DAEMON}`;
+    case "unanswered":
+      return `一覧を返せなかった: ${asked.reason}`;
+    case "answered":
+      break;
   }
+  const answered = parseWith(PeerListResponseTextSchema, asked.text);
+  if (answered.ok) return peersText(answered.value.peers);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
+  return `一覧を返せなかった: ${refusal.ok ? refusal.value.error.msg : asked.text}`;
 }
 
 /** A `tool.call` of `launch`, read for the tool's fields alone. The engine

@@ -7,6 +7,7 @@
 export { VERSION, PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
+export * from "./module-op.ts";
 export * from "./config-migration.ts";
 export * from "./search-query.ts";
 export * from "./file-search-query.ts";
@@ -207,6 +208,10 @@ export const DEFAULT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 
 export const ErrorCode = {
   bad_request: "bad_request",
+  // POST /op (DR-0046): the process at the other end of the socket is not a
+  // Claude Code session this daemon reaches, or runs another session than the
+  // one its request names.
+  unknown_peer: "unknown_peer",
   hello_required: "hello_required",
   room_not_found: "room_not_found",
   invalid_args: "invalid_args",

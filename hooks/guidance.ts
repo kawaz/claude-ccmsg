@@ -3,6 +3,7 @@
 // and again after a compaction, which summarizes it away.
 import * as v from "valibot";
 import { errorText, jsonText, type Output, parseWith } from "@ccmsg/protocol/parse";
+import { daemonOp } from "./daemon-op.ts";
 import type { Engine } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 
@@ -19,30 +20,29 @@ export function guidanceText(webuiUrl: string | undefined): string {
   return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}\nccmsg_url: ${webuiUrl}`;
 }
 
-/** `ccmsg status`, which asks a running daemon and starts none. */
-export function statusArgv(root: string): string[] {
-  return [`${root}/bin/ccmsg`, "status"];
-}
+/** How long the prompt waits for the daemon's `ping`, once per
+ * conversation. */
+export const PING_TIMEOUT_MS = 3_000;
 
-/** `ccmsg status` budget: the process and one ping. The prompt waits on it,
- * once per conversation. */
-export const STATUS_TIMEOUT_MS = 3_000;
-
-/** The part of `ccmsg status` the guidance reads: the daemon's `webui_url`,
- * absent when it knows none or when no daemon runs. */
-const StatusTextSchema = jsonText(v.looseObject({ webui_url: v.optional(v.string()) }));
+/** The part of `ping`'s reply the guidance reads: the daemon's `webui_url`,
+ * absent when it knows none. */
+const PongTextSchema = jsonText(
+  v.object({ ok: v.literal(true), webui_url: v.optional(v.string()) }),
+);
 
 /** The URL the webui is opened at, as the running daemon says, or undefined
- * when it says none or cannot be asked. Never rejects. */
+ * when it says none, none runs, or it cannot be asked. Never rejects. */
 async function webuiUrl($: Engine): Promise<string | undefined> {
-  try {
-    const run = await $.process.run(statusArgv($.plugin.root), { timeoutMs: STATUS_TIMEOUT_MS });
-    const read = parseWith(StatusTextSchema, run.stdout);
-    if (read.ok) return read.value.webui_url;
-    $.ui.log(`ccmsg: status not read: ${read.failure.summary}`, { to: "debug" });
-  } catch (e) {
-    $.ui.log(`ccmsg: status failed: ${errorText(e)}`, { to: "debug" });
+  const asked = await daemonOp($, { op: "ping" }, { timeoutMs: PING_TIMEOUT_MS });
+  if (asked.kind === "no_daemon") return undefined;
+  if (asked.kind !== "answered") {
+    const why = asked.kind === "outdated" ? "the daemon is older than this plugin" : asked.reason;
+    $.ui.log(`ccmsg: ping not answered: ${why}`, { to: "debug" });
+    return undefined;
   }
+  const read = parseWith(PongTextSchema, asked.text);
+  if (read.ok) return read.value.webui_url;
+  $.ui.log(`ccmsg: ping not read: ${read.failure.summary}`, { to: "debug" });
   return undefined;
 }
 

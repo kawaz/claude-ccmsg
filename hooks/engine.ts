@@ -76,6 +76,27 @@ export interface Engine {
     }): Promise<void>;
   };
   env: { get(name: string): Promise<string | undefined> };
+  http: {
+    /** One request through the host, resolved once the body is read; over
+     * the Unix socket `socketPath` (absolute) instead of TCP when given.
+     * Rejects when nothing answers: no socket, a refused connection, no
+     * complete answer within 30 s (2.1.312). */
+    fetch(
+      url: string,
+      init?: {
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+        socketPath?: string;
+      },
+    ): Promise<{ status: number; ok: boolean; headers: Record<string, string>; text: string }>;
+  };
+  /** Files as UTF-8 text, an absolute path read as it is. `read` rejects a
+   * path that is not a readable file (its message names the errno). */
+  fs: {
+    exists(path: string): Promise<boolean>;
+    read(path: string): Promise<string>;
+  };
   clock: {
     now(): Promise<number>;
     after(ms: number, fn: () => void): { cancel(): void };

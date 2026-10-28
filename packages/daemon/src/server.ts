@@ -184,6 +184,7 @@ import {
   type ClaudeUpdateDeps,
 } from "./claude-update.ts";
 import { startHttpListener, webuiUrlsOf, type HttpFallback, type HttpListener } from "./http.ts";
+import { listenOpHttp, type OpHttpListener } from "./op-http.ts";
 import {
   compileSandboxOrigin,
   createSandboxGrants,
@@ -272,6 +273,8 @@ export interface Daemon {
   lock: LockHandle;
   server: Listener | null;
   httpListeners: HttpListener[];
+  /** The hooks module's `POST /op` on `paths.httpSock` (op-http.ts, DR-0046). */
+  opHttp: OpHttpListener | null;
   /** The origins the webui is opened at from elsewhere, the first being the
    * one links use (http.ts webuiUrlsOf), read when asked; empty while no HTTP
    * listener serves it. */
@@ -440,6 +443,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     lock: host.lock,
     server: null,
     httpListeners: [],
+    opHttp: null,
     webuiUrls: async () => [],
     httpAllow: host.httpAllow,
     shuttingDown: false,
@@ -1079,7 +1083,7 @@ function servedDirs(daemon: Daemon): string[] {
  * of the kind, so a daemon started for a test reaches the test's session and
  * not the ones someone is working in. Each dir as a realpath, as the registry
  * keeps them, so one dir is read once. */
-function sessionScope(daemon: Daemon): AgentsScope {
+export function sessionScope(daemon: Daemon): AgentsScope {
   const every = new Set(servedDirs(daemon));
   const alone = new Map<string, Set<string>>();
   for (const { configDir, meta } of daemon.sessions.values()) {
@@ -1514,6 +1518,13 @@ export function handleRequest(
   });
 }
 
+/** Handle one request line and settle once its reply is written: handleRequest
+ * awaited, for a transport that answers each request on its own
+ * (op-http.ts). */
+export function serveRequest(daemon: Daemon, conn: Conn, line: string): Promise<void> {
+  return handleOneRequest(daemon, conn, line, (hello) => hello);
+}
+
 async function handleOneRequest(
   daemon: Daemon,
   conn: Conn,
@@ -1640,11 +1651,23 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         // names as well as the detected ones: a session's hello names no
         // transcript (nothing tells the hooks module its path, DR-0039
         // Consequences), and its config dir need not be one of `~/.claude*`.
-        const transcriptPath = await adoptTranscriptPath(
-          req.sid,
-          req.transcript_path,
-          configDir !== undefined ? [configDir, ...detectConfigDirs()] : undefined,
-        );
+        //
+        // Design rationale: a hello that announces none keeps the path already
+        // adopted for this sid (registerSession keeps it too) without searching
+        // again. The search reads the `projects/` of every config dir, about
+        // 30 ms with a real home's, and a hooks module hellos with every
+        // request it makes (DR-0046), each change of its facts among them.
+        const adopted =
+          req.transcript_path === undefined
+            ? daemon.sessions.get(req.sid)?.meta.transcript_path
+            : undefined;
+        const transcriptPath =
+          adopted ??
+          (await adoptTranscriptPath(
+            req.sid,
+            req.transcript_path,
+            configDir !== undefined ? [configDir, ...detectConfigDirs()] : undefined,
+          ));
         // A session names its own cwd, so the spelling is whatever its shell
         // had (`/tmp/x` where the real directory is `/private/tmp/x`).
         // `repo_root` is realpath'd by validateRepoRoot before adoption, and
@@ -2461,8 +2484,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "session_facts": {
-      // The sender is the session the facts are of: its hooks module runs
-      // `ccmsg sidecar facts`, which hellos as that session.
+      // The sender is the session the facts are of: its hooks module asks
+      // `POST /op` (op-http.ts) under that session's hello.
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_facts' requires session role");
         return;
@@ -3223,7 +3246,10 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   // socket; the next lock holder owns the existing stale-socket cleanup at startup.
   await releaseDaemonResources({
     stopHttp: async () => {
-      await Promise.allSettled(daemon.httpListeners.map((listener) => listener.stop()));
+      await Promise.allSettled([
+        ...daemon.httpListeners.map((listener) => listener.stop()),
+        ...(daemon.opHttp !== null ? [daemon.opHttp.stop()] : []),
+      ]);
     },
     removePid: () => {
       try {
@@ -3524,6 +3550,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   fs.chmodSync(paths.sock, 0o600);
   log.info(`listening on ${paths.sock} (v${VERSION})`);
+  daemon.opHttp = listenOpHttp(daemon);
+  log.info(`op http listening on ${paths.httpSock}`);
 
   const httpAllowOrigin = resolveHttpAllowOrigin();
   // Persisted extra origins (`ccmsg origins add`, origins-file.ts) — read

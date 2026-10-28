@@ -1,13 +1,14 @@
 // What the module knows of its session through Claude Code itself and the
 // transcript cannot tell (`session.facts`), and how it hands that to the
-// daemon. Each time a part changes, it sends the whole of what it knows
-// through `ccmsg sidecar facts`, which starts no daemon. A daemon that comes
-// up later asks for them with the `session.facts` request when the run's
-// sidecar names the run. Sessions without a composer send them too: they
+// daemon. Each time a part changes, it sends the whole of what it knows with
+// the op `session_facts` (daemon-op.ts, DR-0046), which starts no daemon. A
+// daemon that comes up later asks for them with the `session.facts` request
+// when the run's sidecar names the run. Sessions without a composer send them too: they
 // have no sidecar, but the daemon still shows them. The parts are read by
 // session-facts.ts (the main thread), subagents.ts and request-override.ts
 // (the overrides in force).
-import { errorText } from "@ccmsg/protocol/parse";
+import * as v from "valibot";
+import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import type {
   SessionFacts,
   SessionFactsContext,
@@ -15,11 +16,8 @@ import type {
   SessionFactsTurn,
 } from "@ccmsg/protocol/sidecar";
 import type { RequestOverride, RequestOverrideState } from "@ccmsg/protocol/request-override";
+import { daemonOp } from "./daemon-op.ts";
 import type { Engine } from "./engine.ts";
-
-/** A `ccmsg` command that is one process and one round trip to the daemon (a
- * reply, the facts), measured at about 0.3 s. */
-export const REPLY_TIMEOUT_MS = 3_000;
 
 export interface FactsState {
   /** What the module knows of the session through Claude Code (session.facts):
@@ -60,12 +58,6 @@ export function newFactsState(): FactsState {
   };
 }
 
-/** `ccmsg sidecar facts` for session `sid`. The facts go on standard input,
- * for the reason a reply does (sidecar.ts). */
-export function factsArgv(root: string, sid: string): string[] {
-  return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
-}
-
 /** The values the overrides put on the main thread's requests: the session
  * override's fields over the session's own model and effort, and the
  * one-shot override's. */
@@ -89,10 +81,15 @@ export async function currentFacts($: Engine, state: FactsState): Promise<Sessio
   };
 }
 
+/** session_facts' reply, as far as the module reads it: whether the daemon
+ * took the facts. */
+const TakenTextSchema = jsonText(v.object({ ok: v.literal(true) }));
+
 /** Send the facts to the daemon, behind any send still running. A send that
  * waits its turn already sends what the module will know by then, so no
  * second one is queued behind it. Never rejects: a failed send is logged, and
- * the next change or the daemon's `session.facts` request makes up for it. */
+ * the next change or the daemon's `session.facts` request makes up for it. No
+ * daemon running is not a failure: the next one asks. */
 export function sendFacts($: Engine, state: FactsState): void {
   const send = state.factsSend;
   if (send.queued) return;
@@ -101,13 +98,14 @@ export function sendFacts($: Engine, state: FactsState): void {
     .then(async () => {
       send.queued = false;
       const facts = await currentFacts($, state);
-      const sid = await $.session.id();
-      const done = await $.process.run(factsArgv($.plugin.root, sid), {
-        stdin: JSON.stringify(facts),
-        timeoutMs: REPLY_TIMEOUT_MS,
-      });
-      if (done.exitCode !== 0) {
-        $.ui.log(`ccmsg: facts exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+      const asked = await daemonOp($, { op: "session_facts", facts });
+      if (asked.kind === "answered" && !parseWith(TakenTextSchema, asked.text).ok) {
+        $.ui.log(`ccmsg: facts refused: ${asked.text}`, { to: "debug" });
+      } else if (asked.kind === "outdated" || asked.kind === "unanswered") {
+        $.ui.log(
+          `ccmsg: facts not sent: ${asked.kind === "outdated" ? "the daemon is older than this plugin" : asked.reason}`,
+          { to: "debug" },
+        );
       }
     })
     .catch((e: unknown) => {

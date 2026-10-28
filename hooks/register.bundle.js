@@ -920,26 +920,107 @@ function errorText(e) {
 var CommandRunInputSchema = looseObject({ command: optional(string()) });
 var AnyInputSchema = looseObject({});
 
+var DAEMON_SOCKET = "daemon.sock";
+var OP_HTTP_SOCKET = "http.sock";
+var OP_HTTP_PATH = "/op";
+function stateDirOf(env, home) {
+  if (env.CCMSG_STATE_DIR)
+    return env.CCMSG_STATE_DIR;
+  const base = env.XDG_STATE_HOME || `${home.replace(/\/+$/u, "")}/.local/state`;
+  return `${base.replace(/\/+$/u, "")}/ccmsg`;
+}
+
+var PROTOCOL_VERSION = 1;
+
+var PackageVersionTextSchema = jsonText(object({ version: string() }));
+async function helloOf($) {
+  const [sid, version] = await Promise.all([$.session.id(), pluginVersion($)]);
+  return {
+    sid,
+    protocol: PROTOCOL_VERSION,
+    ...version !== undefined ? { client_version: version } : {}
+  };
+}
+async function pluginVersion($) {
+  try {
+    const read = parseWith(PackageVersionTextSchema, await $.fs.read(`${$.plugin.root}/package.json`));
+    if (read.ok)
+      return read.value.version;
+    $.ui.log(`ccmsg: the plugin's version is not read: ${read.failure.summary}`, { to: "debug" });
+  } catch (e) {
+    $.ui.log(`ccmsg: the plugin's version is not read: ${errorText(e)}`, { to: "debug" });
+  }
+  return;
+}
+async function exists($, path) {
+  try {
+    return await $.fs.exists(path);
+  } catch {
+    return;
+  }
+}
+async function daemonOp($, request, options = {}) {
+  const [stateHome, xdgStateHome, home] = await Promise.all([
+    $.env.get("CCMSG_STATE_DIR"),
+    $.env.get("XDG_STATE_HOME"),
+    $.env.get("HOME")
+  ]);
+  const stateDir = stateDirOf({ CCMSG_STATE_DIR: stateHome, XDG_STATE_HOME: xdgStateHome }, home ?? "");
+  const socketPath = `${stateDir}/${OP_HTTP_SOCKET}`;
+  const body = { ...request, hello: await helloOf($) };
+  const fetching = $.http.fetch(`http://ccmsg${OP_HTTP_PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    socketPath
+  });
+  let fetched;
+  try {
+    const { timeoutMs } = options;
+    if (timeoutMs === undefined) {
+      fetched = await fetching;
+    } else {
+      let timer;
+      const late = new Promise((resolve) => {
+        timer = $.clock.after(timeoutMs, () => resolve(undefined));
+      });
+      const first = await Promise.race([fetching, late]).finally(() => timer?.cancel());
+      if (first === undefined) {
+        return { kind: "unanswered", reason: `no reply within ${String(timeoutMs / 1000)} s` };
+      }
+      fetched = first;
+    }
+  } catch (error) {
+    if (await exists($, socketPath) === false) {
+      return await exists($, `${stateDir}/${DAEMON_SOCKET}`) === true ? { kind: "outdated" } : { kind: "no_daemon" };
+    }
+    return { kind: "unanswered", reason: errorText(error) };
+  }
+  if (fetched.status === 200 || fetched.status === 400)
+    return { kind: "answered", text: fetched.text };
+  return { kind: "unanswered", reason: `the socket answered HTTP ${String(fetched.status)}` };
+}
+
 var GUIDANCE = 'このセッションでは ccmsg が使える。別のセッションへの送信、届いた <cross-session-message from="ccmsg:…"> への返信、見ている人への知らせ、別のセッションの起動は、先に skill ccmsg-v1:ccmsg を読んでから行う。';
 function guidanceText(webuiUrl) {
   return webuiUrl === undefined ? GUIDANCE : `${GUIDANCE}
 ccmsg_url: ${webuiUrl}`;
 }
-function statusArgv(root) {
-  return [`${root}/bin/ccmsg`, "status"];
-}
-var STATUS_TIMEOUT_MS = 3000;
-var StatusTextSchema = jsonText(looseObject({ webui_url: optional(string()) }));
+var PING_TIMEOUT_MS = 3000;
+var PongTextSchema = jsonText(object({ ok: literal(true), webui_url: optional(string()) }));
 async function webuiUrl($) {
-  try {
-    const run = await $.process.run(statusArgv($.plugin.root), { timeoutMs: STATUS_TIMEOUT_MS });
-    const read = parseWith(StatusTextSchema, run.stdout);
-    if (read.ok)
-      return read.value.webui_url;
-    $.ui.log(`ccmsg: status not read: ${read.failure.summary}`, { to: "debug" });
-  } catch (e) {
-    $.ui.log(`ccmsg: status failed: ${errorText(e)}`, { to: "debug" });
+  const asked = await daemonOp($, { op: "ping" }, { timeoutMs: PING_TIMEOUT_MS });
+  if (asked.kind === "no_daemon")
+    return;
+  if (asked.kind !== "answered") {
+    const why = asked.kind === "outdated" ? "the daemon is older than this plugin" : asked.reason;
+    $.ui.log(`ccmsg: ping not answered: ${why}`, { to: "debug" });
+    return;
   }
+  const read = parseWith(PongTextSchema, asked.text);
+  if (read.ok)
+    return read.value.webui_url;
+  $.ui.log(`ccmsg: ping not read: ${read.failure.summary}`, { to: "debug" });
   return;
 }
 var GuidedRecordSchema = object({ guided: boolean(), at: number() });
@@ -1206,16 +1287,12 @@ function overrideInForce(overrides) {
   };
 }
 
-var REPLY_TIMEOUT_MS = 3000;
 function newFactsState() {
   return {
     facts: {},
     overrides: { session: {} },
     factsSend: { chain: Promise.resolve(), queued: false }
   };
-}
-function factsArgv(root, sid) {
-  return [`${root}/bin/ccmsg`, "sidecar", "facts", "--sid", sid];
 }
 function requestOverrideState(state) {
   const { session, once } = state.overrides;
@@ -1234,6 +1311,7 @@ async function currentFacts($, state) {
     request_override: requestOverrideState(state)
   };
 }
+var TakenTextSchema = jsonText(object({ ok: literal(true) }));
 function sendFacts($, state) {
   const send = state.factsSend;
   if (send.queued)
@@ -1242,13 +1320,11 @@ function sendFacts($, state) {
   send.chain = send.chain.then(async () => {
     send.queued = false;
     const facts = await currentFacts($, state);
-    const sid = await $.session.id();
-    const done = await $.process.run(factsArgv($.plugin.root, sid), {
-      stdin: JSON.stringify(facts),
-      timeoutMs: REPLY_TIMEOUT_MS
-    });
-    if (done.exitCode !== 0) {
-      $.ui.log(`ccmsg: facts exited ${done.exitCode}: ${done.stderr.trim()}`, { to: "debug" });
+    const asked = await daemonOp($, { op: "session_facts", facts });
+    if (asked.kind === "answered" && !parseWith(TakenTextSchema, asked.text).ok) {
+      $.ui.log(`ccmsg: facts refused: ${asked.text}`, { to: "debug" });
+    } else if (asked.kind === "outdated" || asked.kind === "unanswered") {
+      $.ui.log(`ccmsg: facts not sent: ${asked.kind === "outdated" ? "the daemon is older than this plugin" : asked.reason}`, { to: "debug" });
     }
   }).catch((e) => {
     send.queued = false;
@@ -1604,7 +1680,6 @@ var SessionFactsSchema = object({
   subagents: optional(array(SessionFactsSubagentSchema)),
   request_override: optional(RequestOverrideStateSchema)
 });
-var SessionFactsTextSchema = jsonText(SessionFactsSchema);
 var SessionFactsArgsSchema = NoArgsSchema;
 var AgentAppendArgsSchema = object({
   agentId: pipe(string(), nonEmpty("an agent id is not empty")),
@@ -1709,6 +1784,7 @@ async function abortMainTurn($, state) {
   }
 }
 
+var REPLY_TIMEOUT_MS = 3000;
 var RESPAWN_MIN_MS = 500;
 var RESPAWN_MAX_MS = 30000;
 var STABLE_MS = 1e4;
@@ -1904,13 +1980,11 @@ var SendMessageInputSchema = object({
   agent_id: AgentIdSchema,
   text: PeerTextSchema
 });
-var SendMessageInputTextSchema = jsonText(SendMessageInputSchema);
 var PeerListEntries = {
   cwd_prefix: optional(pipe(string(), nonEmpty("a cwd prefix is not empty"))),
   name: PeerNameSchema
 };
 var PeerListInputSchema = strictObject(PeerListEntries);
-var PeerListInputTextSchema = jsonText(PeerListInputSchema);
 var SendMessageReasonSchema = picklist([
   "self",
   "no_module",
@@ -2090,8 +2164,6 @@ var PermitAttachmentReadResponseSchema = object({
   attachment: PermitAttachmentSchema
 });
 
-var SEND_TIMEOUT_MS = 1e4;
-var PEERS_TIMEOUT_MS = 5000;
 var SAY_TIMEOUT_MS = 120000;
 var LAUNCH_TIMEOUT_MS = 65000;
 var PERMIT_TIMEOUT_MS = 30000;
@@ -2277,35 +2349,40 @@ function toolArgv(root, command, sid) {
 function notTheInput(tool, summary) {
   return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
 }
+var START_DAEMON = "daemon を起こす (`ccmsg daemon start`)";
+var UPDATE_DAEMON = "daemon を更新する (`ccmsg daemon restart`)";
 async function sendTool($, e) {
   const read = parseWith(SendToolInputSchema, e);
   if (!read.ok)
     return notTheInput("send", read.failure.summary);
   const { text, agent_id, ...to } = read.value;
-  let run;
-  try {
-    run = await $.process.run(toolArgv($.plugin.root, "send-message", await $.session.id()), {
-      stdin: JSON.stringify({ to, ...agent_id !== undefined ? { agent_id } : {}, text }),
-      timeoutMs: SEND_TIMEOUT_MS
-    });
-  } catch (error) {
-    $.ui.log(`ccmsg: send failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar send-message が ${String(SEND_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、届いたか確かめられなかった: ${errorText(error)}。${UNCONFIRMED_ADVICE}`;
+  const asked = await daemonOp($, {
+    op: "send_message",
+    to,
+    ...agent_id !== undefined ? { agent_id } : {},
+    text
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、送っていない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、送っていない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: send unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無く、届いたか確かめられなかった: ${asked.reason}。${UNCONFIRMED_ADVICE}`;
+    case "answered":
+      break;
   }
-  const answered = parseWith(SendMessageResponseTextSchema, run.stdout);
+  const answered = parseWith(SendMessageResponseTextSchema, asked.text);
   if (answered.ok)
     return sendResultText(answered.value.results);
-  $.ui.log(`ccmsg: send exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
-  const said = firstStderrLine(run.stderr);
-  if (run.exitCode === 3) {
-    return `ccmsg の daemon に繋がらず、送っていない: ${said}。少し置いて一度だけ送り直す`;
-  }
-  const refusal = parseWith(RefusalTextSchema, said);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok && refusal.value.error.code !== "internal") {
     return `ccmsg の daemon が送信を断ったので、送っていない: ${refusal.value.error.msg}`;
   }
-  const why = refusal.ok ? refusal.value.error.msg : said;
-  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why !== "" ? `: ${why}` : ""}。${UNCONFIRMED_ADVICE}`;
+  $.ui.log(`ccmsg: send answered what is not its reply: ${asked.text}`, { to: "debug" });
+  const why = refusal.ok ? `: ${refusal.value.error.msg}` : "";
+  return `ccmsg が送信の結果を返さず、届いたか確かめられなかった${why}。${UNCONFIRMED_ADVICE}`;
 }
 function firstStderrLine(stderr) {
   return stderr.trim().split(`
@@ -2338,18 +2415,22 @@ async function peersTool($, e) {
   const read = parseWith(PeersToolInputSchema, e);
   if (!read.ok)
     return notTheInput("peers", read.failure.summary);
-  try {
-    const run = await $.process.run(toolArgv($.plugin.root, "peer-list", await $.session.id()), {
-      stdin: JSON.stringify(read.value),
-      timeoutMs: PEERS_TIMEOUT_MS
-    });
-    const answered = parseWith(PeerListResponseTextSchema, run.stdout);
-    if (answered.ok)
-      return peersText(answered.value.peers);
-    return `一覧を返せなかった: ${failureText(run.stderr)}`;
-  } catch (error) {
-    return `一覧を返せなかった: ${errorText(error)}`;
+  const asked = await daemonOp($, { op: "peer_list", ...read.value });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `一覧を返せなかった: ccmsg の daemon が居ない。${START_DAEMON}`;
+    case "outdated":
+      return `一覧を返せなかった: ccmsg の daemon がこの plugin より古い。${UPDATE_DAEMON}`;
+    case "unanswered":
+      return `一覧を返せなかった: ${asked.reason}`;
+    case "answered":
+      break;
   }
+  const answered = parseWith(PeerListResponseTextSchema, asked.text);
+  if (answered.ok)
+    return peersText(answered.value.peers);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
+  return `一覧を返せなかった: ${refusal.ok ? refusal.value.error.msg : asked.text}`;
 }
 var LaunchToolCallSchema = object(LaunchToolFieldsSchema.entries);
 var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";

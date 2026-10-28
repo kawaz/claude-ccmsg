@@ -4,6 +4,7 @@
 //
 //   state:  ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
+//             http.sock (a hooks module's `POST /op`, DR-0046)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
@@ -18,6 +19,7 @@
 import * as os from "node:os";
 import * as path from "node:path";
 import { isSessionIdShape } from "./ccmsg-address.ts";
+import { DAEMON_SOCKET, OP_HTTP_SOCKET, stateDirOf } from "./module-op.ts";
 import { parseWith } from "./parse.ts";
 import { SidecarRunIdSchema } from "./sidecar.ts";
 
@@ -27,6 +29,8 @@ export interface Paths {
   dataDir: string;
   roomsDir: string;
   sock: string;
+  /** Where the daemon answers a hooks module's `POST /op` (DR-0046). */
+  httpSock: string;
   lock: string;
   pid: string;
   log: string;
@@ -94,9 +98,10 @@ function home(): string {
 }
 
 export function resolveStateDir(env: NodeJS.ProcessEnv = process.env): string {
-  if (env.CCMSG_STATE_DIR) return env.CCMSG_STATE_DIR;
-  const base = env.XDG_STATE_HOME || path.join(home(), ".local", "state");
-  return path.join(base, "ccmsg");
+  return stateDirOf(
+    { CCMSG_STATE_DIR: env.CCMSG_STATE_DIR, XDG_STATE_HOME: env.XDG_STATE_HOME },
+    home(),
+  );
 }
 
 export function resolveConfigDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -120,7 +125,8 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     configDir,
     dataDir,
     roomsDir: path.join(dataDir, "rooms"),
-    sock: path.join(stateDir, "daemon.sock"),
+    sock: path.join(stateDir, DAEMON_SOCKET),
+    httpSock: path.join(stateDir, OP_HTTP_SOCKET),
     lock: path.join(stateDir, "daemon.lock"),
     pid: path.join(stateDir, "daemon.pid"),
     log: path.join(stateDir, "daemon.log"),

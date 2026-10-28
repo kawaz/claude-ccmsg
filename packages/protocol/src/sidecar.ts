@@ -206,10 +206,6 @@ export const SessionFactsSchema = v.object({
 });
 export type SessionFacts = Output<typeof SessionFactsSchema>;
 
-/** The facts as `ccmsg sidecar facts` takes them on standard input: JSON
- * text. */
-export const SessionFactsTextSchema = jsonText(SessionFactsSchema);
-
 /** `session.facts`: the module's facts as they are now. The daemon asks it
  * when a run's sidecar names the run, which is when a daemon that started
  * after the module has none of what the module sent before. It takes no
