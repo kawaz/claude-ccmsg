@@ -1,4 +1,4 @@
-# DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替えと版を置く
+# DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
 - Status: Proposed
 - Date: 2026-10-28
@@ -14,10 +14,12 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - サイドバーは `Sidebar.tsx` の `#sidebar-lists` に `#sessions-panel` (`<h2>` に Sessions の文字と、+New・🔍・並び順・↻ のボタンが入る) と `#rooms-panel` が縦に並び、`#sidebar-lists` 全体が 1 つの縦スクロールを持つ (app.css の `#sidebar-lists, #sidebar-form` の規則)
 - ROOMS は既に閉じた状態で始まる `Fold` (`<details>`) で、開いた時に room の一覧を取る (`RoomList.tsx`)。`Fold.tsx` はこの UI の開閉部品の共通形で、`<details>` / `<summary>` をブラウザに任せる。SessionList の中の Pinned 等の区分 (`groupSessionsBySection`、`.session-section`) も `Fold`
 - Status タブに出ている版は最下部の `daemon v<version>` の 1 行だけ (`StatusPanel.tsx` の `.status-daemon-version`)。値は webui が接続のたびに送る `ping` の返事の `version` (`ws.ts` の handshake の最後、store の `daemonInfo`)
-- Claude Code の版は、セッションごとのプロセスの版 (agents の行の optional の `version`、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) が TL 下ミニパネルの ctx 行の末尾に `claude v<version>` で出るだけ (`utils.ts` の `sessionProcessParts`)。Status タブには無く、配布されている最新版を調べる処理も daemon に無い (論点 6)
+- Claude Code の版は、セッションごとのプロセスの版 (agents の行の optional の `version`、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) が TL 下ミニパネルの ctx 行の末尾に `claude v<version>` で出るだけ (`utils.ts` の `sessionProcessParts`)。Status タブには無い。agents の行はプロセスの起動の時刻 `startedAt` も持つ
+- daemon は今 `claude` の binary を自分では起こさない。起動コマンドの組み込み (`default-launch-command.ts`) は、起動コマンドが継ぐ環境の PATH の `claude` を使う ([DR-0018](./DR-0018-session-launcher.md) §3.5、`clean_env` / `keep_env` を当てた環境)
+- この Mac の `claude` は native installer の形 (`~/.local/bin/claude` が `~/.local/share/claude/versions/<version>` への symlink、binary は 264 MB)。`claude --version` は `2.1.312 (Claude Code)` の 1 行を出す (2026-10-28 観測)
 - `webui_url` は hello ではなく `ping` の返事に載る (`response-host.ts` の `PingResponseSchema`)。daemon の `webuiUrlOf` (`http.ts`) が、`CCMSG_HTTP_ALLOW_ORIGIN` → tailscale serve の自動許可 → `allowed-origins.json` (`ccmsg origins add`) の順に並べた Origin のうち、正しい origin の形で、http(s) で、host が loopback でない最初の 1 つを返す。hooks module はこれを `ccmsg status` で読み、最初の turn の前の案内の `ccmsg_url: <url>` に使う ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §5)
 - env の Origin と tailscale の自動許可は同じ `Set` (`httpAllowOrigin`) に入り、tailscale の分は起動の後に非同期で足される。file の Origin は mtime で読み直される (`origins-file.ts`)
-- セッションへの操作 (終了・再起動) は Status タブの危険ゾーンに置く ([DR-0028](./DR-0028-session-kill.md))。本 DR の GLOBALS はセッションに属さないもの (daemon と、webui を開いている origin) だけを持ち、セッションの操作はそちらのまま
+- セッションへの操作 (終了・再起動) は Status タブの危険ゾーンに置く ([DR-0028](./DR-0028-session-kill.md))。本 DR の GLOBALS はセッションに属さないもの (daemon、このホストの Claude Code、webui を開いている origin) だけを持ち、セッションの操作はそちらのまま
 
 ## Decision
 
@@ -58,9 +60,35 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - `daemon v<version>` の 1 行。値は今と同じ `ping` の返事の `version` (store の `daemonInfo`)
 - Status タブから移す。Status タブの最下部の行は消し、2 か所に出さない
 
-#### 4.3 Claude Code の版
+#### 4.3 Claude Code の版と更新 (kawaz 裁定 2026-10-28)
 
-- kawaz の要求は「claude の最新版の表示を Status タブから GLOBALS へ移す」だが、上の前提のとおり既存の Status タブにその表示は無い。何を出すかは論点 6
+- `claude v<version> [↻]` の 1 行。出す版は **最後に起動したセッションのプロセスの版** (agents の行のうち `startedAt` が最も新しく `version` を持つ行の `version`)。版の最大は取らない: 自動更新が有効なら新しいセッションは起動の時に最新へ上がるので、最後に起動したセッションの版がこのホストの今の版を言う
+- 版の横にリロードのアイコンボタンを置く。押すと daemon が `claude update` を実行する (op は下記)。binary は上がるが、走っているプロセスには再起動 ([DR-0028](./DR-0028-session-kill.md) の restart) まで効かない
+- `claude update` が終わったら、daemon は `claude --version` を実行し直して版を覚え直し、表示にはその版を使う。`claude update` の出力は解釈しない (kawaz 実測)。`claude --version` の出力は先頭の版の語だけを読む (`2.1.312 (Claude Code)` → `2.1.312`)
+- [提案] 2 つの源の組み合わせは「後に観測した方が勝つ」: 最後に起動したセッションの `startedAt` と、daemon が覚え直した時刻を比べ、新しい方の版を出す。update の後に起動したセッションがあれば、その版が出る。どちらも無ければ (走っているセッションが無く、update もしていない) 行は `claude —` とボタンだけにする
+- 失敗した時は、`claude update` (または `claude --version`) の stderr の要点 (空でない末尾の行を 1〜2 行、長ければ切り詰める) を GLOBALS の版の下に短く出す。次の成功で消える。webui の state に持ち、保存しない
+- [提案] 押している間はボタンを disabled にして「更新中…」を出す。確認のダイアログは出さない (走っているプロセスに影響しない操作なので)
+
+daemon が叩く `claude` について (統括の注記):
+
+- daemon が起こすのは **daemon の環境の PATH の `claude`** (`Bun.which("claude")`)。起動コマンド (`launch_command`、組み込みでも自前でも) が claude を起こす binary と同じとは限らない (起動コマンドは `clean_env` / `keep_env` を当てた環境の PATH を引き、自前の起動コマンドは別の binary を名指せる)。表示している版 (最後に起動したセッション) と update した binary がずれることがある
+- `claude update` は install の経路で振る舞いが違う。native installer では自己更新するが、npm / Homebrew 等の経路では上がらない (その経路の更新は各パッケージ管理の責務)。その場合も daemon は `claude update` の終了コードと stderr を返すだけで、経路ごとの更新手段を持たない
+- `claude update` が config dir (`CLAUDE_CONFIG_DIR`) によって振る舞いを変えるかは未検証。daemon は自分の環境のまま起こす
+
+#### 4.4 op `claude_update` (user role)
+
+- request: `{ op: "claude_update" }`
+- response: `{ ok: true, version, exit_code: 0 }`。`version` は覚え直した版 (`claude --version` の先頭の語)
+- error:
+  - `bad_request`: user role でない (session role のエージェントがホストの binary を更新できてはいけない)
+  - `claude_not_found`: daemon の PATH に `claude` が無い
+  - `claude_update_failed`: `claude update` が 0 以外で終わった。msg に終了コードと stderr の要点
+  - `claude_version_unreadable`: `claude update` は 0 で終わったが、`claude --version` が 0 以外で終わったか、先頭の語が版の形でない。msg に stderr の要点か出力の先頭
+  - `claude_update_busy`: 前の `claude_update` がまだ走っている (同時に 2 つ起こさない)
+  - `claude_update_timeout`: [提案] 300 秒で打ち切る。根拠: native の binary は 264 MB (上の観測) で、2 MB/s の回線でも取得は約 130 秒、その倍強の余裕。実測した所要時間ではないので、実装の時に測って直す
+- 返事は update の所要時間まで遅れるので 2-phase にし、同じ接続の他の依頼を待たせない ([DR-0028](./DR-0028-session-kill.md) の `session_kill` と同じ理由)
+- daemon.log に 1 行: `claude_update: exit_code=<N> version=<v> [error=<code>]`
+- 覚え直した版と時刻は daemon のメモリに持つ (daemon が起こし直されると消え、表示は最後に起動したセッションの版に戻る)。webui への渡し方は論点 6
 
 ### 5. 繋ぎ先の候補と、リンクに使う名前の規則
 
@@ -136,13 +164,19 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 見出しの文字は Sessions / Rooms (読み取り専用) / Globals (今と同じく CSS で大文字にする)
 - 論点 1 で案 A を取る場合も名前は同じで、`SidebarFold` が中で `Fold` を使う
 
-### 論点 6. GLOBALS に出す Claude Code の版は何か
+### 論点 6. daemon が覚え直した Claude Code の版を webui へ渡す経路
 
-推し: **案 a (このホストで走っているセッションのプロセスの版のうち、最も新しいもの)**。
+推し: **案 A (`claude_update` の返事と、`ping` の返事の optional の `claude_version`)**。
 
-- 案 a: agents の行の `version` (セッションのプロセスの版、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) の最大を `compareVersions` (`@ccmsg/protocol`) で取り、`claude v<version>` で出す。webui が既に持っている agents の行から導くので、protocol の変更は無い。版の古いセッションを見つけて再起動する ([DR-0028](./DR-0028-session-kill.md) の restart) きっかけになる
-- 案 b: 配布されている最新版を daemon が外に問い合わせる。daemon に外部への通信と、その失敗・cache の扱いが新しく入る。本 DR の範囲 (置き場の整理) を超えるので、採るなら別の DR に切り出す (GLOBALS はその表示の置き場になるだけで、本 DR の他の決定は変わらない)
-- 悪い面 (案 a): 走っているどのセッションよりも新しい版が入っていても分からない (「最新」はこのホストで観測できた中での最新)。走っているセッションが 1 つも無ければ出せない
+| 案 | 内容 | 評価 |
+|---|---|---|
+| A (推し) | 押したタブは `claude_update` の返事の `version` で表示を変える。`ping` の返事に `claude_version: { version, observed_at }` (daemon が覚え直した版と時刻、覚えていなければ無し) を足し、他のタブは次の handshake で受け取る | 増えるのは op 1 つと `ping` の field 1 つ。`ping` は webui が handshake で既に呼んでいて `daemonInfo` (daemon の版) の源でもあるので、ホストの版の源が 1 か所に並ぶ。`observed_at` は 4.3 の「後に観測した方が勝つ」の比較に使う |
+| B | A に加え、覚え直した時に全タブへ push する (`ev: "claude_version"`、`ev: "llm_status"` と同じ user role の購読者向け) | 開いている全タブ・全端末がすぐ揃う。stream event の種類が 1 つ増える |
+| C | `ev: "agents"` の push に載せる | agents の行はプロセスごとの記録で、ホストの binary の版は性格が違う。押した時に agents の行は変わらないので、push を起こす契機も合わない |
+
+- 推しの理由: update は人がたまに押す操作で、押した端末は返事ですぐ変わる。他のタブが古い版を出し続けるのは再読み込みか再接続までで、そこで押し直しても `claude update` は同じ版のまま終わるだけで害が無い
+- 悪い面 (案 A): 別の端末で開いている GLOBALS は、再接続までは update の前の版 (最後に起動したセッションの版) を出す。全タブが揃うことを要件にするなら B
+- `observed_at` は daemon の時計の epoch ms (agents の行の `startedAt` と同じ単位)
 
 ## Alternatives Considered
 
@@ -158,6 +192,12 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 不採用理由: daemon が信頼する Origin の一覧が既に「人が webui を開く名前」の集合で、同じ名前を 2 か所に書くことになる。信頼しない Origin を候補に載せられてしまう (kawaz: キーを足さない)
 - 案: 切り替えの時に localStorage 等を移った先の origin へ引き継ぐ
   - 不採用理由: origin で閉じているものはそれで正しい (kawaz)。引き継ぐには origin をまたぐ受け渡しの口が要る
+- 案: 走っているセッションのプロセスの版の最大を Claude Code の版として出す
+  - 不採用理由: 自動更新で新しいセッションは起動の時に最新へ上がるので、最後に起動したセッションの版で足りる (kawaz 2026-10-28)
+- 案: 配布されている最新版を daemon が外に問い合わせて出す
+  - 不採用理由: 4.3 の update のボタンで上げて `claude --version` で覚え直せば、外部への問い合わせとその失敗・cache の扱いを持たずに済む (kawaz 2026-10-28)
+- 案: `claude update` の出力を解釈して上がった版を得る
+  - 不採用理由: 出力は表示用で、版は `claude --version` で直接聞ける (kawaz 実測)
 
 ## Consequences
 
@@ -165,7 +205,8 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - サイドバーの一覧の段は、1 本の縦スクロールから区画ごとのスクロールに変わる
 - 縦積み (フォームが上・一覧が下) の時の一覧の既定の高さ (`SIDEBAR_LIST_DEFAULT_PX` = 220px) は「一覧の上端から 1 行目まで 75px」の実測を根拠にしているが、見出しが 3 つ (SESSIONS・ROOMS・GLOBALS) 並ぶと 1 行目までが変わり、見える行が減る。実装の時に測り直す
 - リンクの名前は設定の並びで決まる、が明文になる。tailscale serve の自動許可は file の Origin より前に並ぶので、tailscale serve が動いている間は file の Origin をリンクの名前にできない (`CCMSG_HTTP_ALLOW_ORIGIN` は env なので先頭に置けるが、env を持たずに daemon が起こし直されると消える、`origins-file.ts` の冒頭)
-- protocol は `ping` の返事に optional の field が 1 つ増える (論点 3 の推しの場合)。知らない client は落とす (`v.object`)
+- protocol は op `claude_update` が 1 つ増え、`ping` の返事に optional の field が 2 つ (`webui_urls`、`claude_version`) 増える (論点 3・論点 6 の推しの場合)。知らない client は落とす (`v.object`)
+- daemon に「ホストの Claude Code の binary を更新する」能力が入る。user role 限定で、走っているプロセスには触らない。上がった binary が効くのは、その binary で起こされる以後のセッション (daemon の PATH の `claude` と起動コマンドの `claude` が同じ場合)
 - 自作コンポーネントカタログ ([DR-0031](./DR-0031-webui-design-tokens-and-catalog.md)) に `SidebarFold` の見本を足す
 - 「持たない」ことを壊す変更を止める試験の観点:
   - 見出しのボタンを押しても区画の開閉が変わらない (SESSIONS の 4 つのボタンそれぞれ)
@@ -174,11 +215,15 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - 候補に loopback と http(s) 以外が入らない
   - 切り替えで path・query・hash が変わらず origin だけが変わる
   - 初期表示で SESSIONS だけが開いている
+  - `claude_update` は user role 以外を断る
+  - 覚え直す版は `claude --version` の先頭の語から取り、`claude update` の出力を読まない (update が版らしい文を出しても、`--version` の値が使われる)
+  - 出す版は最大でなく、後に観測した方 (最後に起動したセッション / 覚え直した時刻)
 
 ## 関連
 
 - [DR-0020](./DR-0020-session-status-tab.md) — Status タブ。Addendum 2026-10-25 のプロセスの版
 - [DR-0028](./DR-0028-session-kill.md) — セッションの終了・再起動は Status タブの危険ゾーンに置く
+- [DR-0018](./DR-0018-session-launcher.md) §3.5 — 起動コマンドが継ぐ環境 (起動コマンドの `claude` の解決)
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §5 — `ccmsg_url` (= `webui_url`)
 - [DR-0005](./DR-0005-webui-frontend-architecture.md) — webui のコンポーネントの器
 - [DR-0031](./DR-0031-webui-design-tokens-and-catalog.md) — 自作コンポーネントカタログ
