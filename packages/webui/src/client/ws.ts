@@ -32,6 +32,7 @@ import type { Action } from "./store.ts";
 import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { summarizeUserAgent } from "./utils.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
+import { orderSubscriptions } from "./subscription-order.ts";
 
 /** How long after an unexpected close each reconnect attempt waits, by
  * attempt; attempts past the end keep the last. */
@@ -261,7 +262,13 @@ export interface WsHandle {
    * snapshot (unlike transcriptSubscribe, which only returns a size) —
    * callers dispatch `session-status/loaded` from the resolved response,
    * then again for every subsequent `ev:"session_status"` push (handled in
-   * onMessage below) until sessionStatusUnsubscribe or disconnect. */
+   * onMessage below) until sessionStatusUnsubscribe or disconnect.
+   *
+   * The two are written in the order they are called for the same sid, each
+   * after the previous one's reply, and an unsubscribe not yet written when
+   * a subscribe of the sid is called is dropped (subscription-order.ts) — so a
+   * caller undoes its subscribe with a plain unsubscribe, and a re-subscribe
+   * of the same sid keeps the connection following it. */
   sessionStatusSubscribe(sid: string): Promise<ReplyOf<"session_status_subscribe">>;
   sessionStatusUnsubscribe(sid: string): Promise<ReplyOf<"session_status_unsubscribe">>;
   /** One-shot fetch of the latest agents rows (U1).
@@ -945,6 +952,15 @@ export function createWsClient(
     }
   }
 
+  const sessionStatusSubscriptions = orderSubscriptions<
+    ReplyOf<"session_status_subscribe">,
+    ReplyOf<"session_status_unsubscribe">
+  >({
+    subscribe: (sid) => send({ op: "session_status_subscribe", sid }),
+    unsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
+    superseded: (sid) => ({ ok: true, sid }),
+  });
+
   return {
     connect,
     close() {
@@ -1007,8 +1023,8 @@ export function createWsClient(
     transcriptSubscribe: (sid) => send({ op: "transcript_subscribe", sid }),
     transcriptUnsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
     sessionStatus: (sid) => send({ op: "session_status", sid }),
-    sessionStatusSubscribe: (sid) => send({ op: "session_status_subscribe", sid }),
-    sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
+    sessionStatusSubscribe: (sid) => sessionStatusSubscriptions.subscribe(sid),
+    sessionStatusUnsubscribe: (sid) => sessionStatusSubscriptions.unsubscribe(sid),
     agents: () => send({ op: "agents" }),
     sessionErrors: () => send({ op: "session_errors" }),
     sessionSearch: (params) => send({ op: "session_search", ...params }),

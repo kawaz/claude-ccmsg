@@ -1592,6 +1592,142 @@ describe("createWsClient session_status push (DR-0020)", () => {
   });
 });
 
+// The daemon follows a sid once per connection (a second subscribe changes
+// nothing, an unsubscribe drops it) and acts on a connection's requests
+// concurrently, so the client keeps the order of one sid's subscribe /
+// unsubscribe (subscription-order.ts). Without it, SessionView's effect
+// re-running for the same sid wrote subscribe, subscribe, unsubscribe and the
+// page stopped receiving ev:"session_status" (issue
+// 2026-10-26-session-status-subscribe-dropped-on-load).
+describe("createWsClient session_status subscription order", () => {
+  const SID = "sess-1";
+
+  /** Run every promise job already queued, so a request whose turn has come
+   * is written before the test looks at the wire. */
+  async function flush(): Promise<void> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  function openClient(): { handle: ReturnType<typeof createWsClient>; ws: MockWebSocket } {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws = defined(instances.at(-1), "the socket");
+    ws.readyState = MockWebSocket.OPEN;
+    return { handle, ws };
+  }
+
+  function answerSubscribe(ws: MockWebSocket, sid = SID): void {
+    ws.replyTo("session_status_subscribe", { ok: true, sid, ...fullSessionStatusSnapshot() });
+  }
+
+  test("an unsubscribe is written only after the subscribe it undoes is answered", async () => {
+    const { handle, ws } = openClient();
+    const subscribed = handle.sessionStatusSubscribe(SID);
+    const unsubscribed = handle.sessionStatusUnsubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe"]);
+
+    answerSubscribe(ws);
+    expect((await subscribed).ok).toBe(true);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_unsubscribe"]);
+
+    ws.replyTo("session_status_unsubscribe", { ok: true, sid: SID });
+    expect(await unsubscribed).toEqual({ ok: true, sid: SID });
+  });
+
+  test("unsubscribe then subscribe of the same sid, called together, writes only the subscribe", async () => {
+    // The effect's cleanup and its re-run happen in one commit: the cleanup's
+    // unsubscribe must not reach the daemon after the re-run's subscribe.
+    const { handle, ws } = openClient();
+    void handle.sessionStatusSubscribe(SID);
+    await flush();
+    answerSubscribe(ws);
+    await flush();
+
+    const unsubscribed = handle.sessionStatusUnsubscribe(SID);
+    const resubscribed = handle.sessionStatusSubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_subscribe"]);
+    expect(await unsubscribed).toEqual({ ok: true, sid: SID });
+
+    answerSubscribe(ws);
+    expect((await resubscribed).ok).toBe(true);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_subscribe"]);
+  });
+
+  test("a re-subscribe while the first subscribe is unanswered waits for it and drops the unsubscribe", async () => {
+    // The order the issue observed: the re-run came before the first reply.
+    const { handle, ws } = openClient();
+    void handle.sessionStatusSubscribe(SID);
+    void handle.sessionStatusUnsubscribe(SID);
+    void handle.sessionStatusSubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe"]);
+
+    answerSubscribe(ws);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_subscribe"]);
+    answerSubscribe(ws);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_subscribe"]);
+  });
+
+  test("a subscribe after an unsubscribe already written waits for its reply", async () => {
+    const { handle, ws } = openClient();
+    void handle.sessionStatusSubscribe(SID);
+    await flush();
+    answerSubscribe(ws);
+    void handle.sessionStatusUnsubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_unsubscribe"]);
+
+    const resubscribed = handle.sessionStatusSubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["session_status_subscribe", "session_status_unsubscribe"]);
+
+    ws.replyTo("session_status_unsubscribe", { ok: true, sid: SID });
+    await flush();
+    expect(opsSent(ws)).toEqual([
+      "session_status_subscribe",
+      "session_status_unsubscribe",
+      "session_status_subscribe",
+    ]);
+    answerSubscribe(ws);
+    expect((await resubscribed).ok).toBe(true);
+  });
+
+  test("requests for different sids are not held behind each other", async () => {
+    const { handle, ws } = openClient();
+    void handle.sessionStatusSubscribe("sess-a");
+    void handle.sessionStatusSubscribe("sess-b");
+    await flush();
+    expect(sentRequests(ws, "session_status_subscribe").map((r) => r.sid)).toEqual([
+      "sess-a",
+      "sess-b",
+    ]);
+  });
+
+  test("a subscribe the closed socket never answered does not hold the next one back", async () => {
+    const { handle, ws: ws1 } = openClient();
+    const lost = handle.sessionStatusSubscribe(SID);
+    await flush();
+    ws1.triggerClose();
+    expect((await lost).ok).toBe(false);
+
+    handle.connect();
+    const ws2 = defined(instances[1], "the reconnected socket");
+    ws2.readyState = MockWebSocket.OPEN;
+    const again = handle.sessionStatusSubscribe(SID);
+    await flush();
+    expect(opsSent(ws2)).toEqual(["session_status_subscribe"]);
+    answerSubscribe(ws2);
+    expect((await again).ok).toBe(true);
+  });
+});
+
 // 古い bundle のまま新 daemon と喋り続けるタブを畳む (issue 2026-09-03)。
 // 判定そのものの分岐は version-guard.test.ts が持つので、ここで見るのは
 // 「onOpen の hello 応答が判定に繋がっていて、接続のたびに通る」こと。

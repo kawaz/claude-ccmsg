@@ -274,12 +274,11 @@ export function SessionView({
     // in sessionStatuses that violates its "absence = not subscribed"
     // contract (store.ts) with no owner left to ever clear it.
     let cancelled = false;
-    // The daemon answers this connection's requests concurrently, and
-    // session_status_subscribe awaits IO while session_status_unsubscribe does
-    // not — so the cleanup below waits for this Promise instead of racing it,
-    // or a fast tab switch could tear down the subscription before it exists
-    // and leave the watch installed with no reader.
-    const subscribed = ws
+    // The cleanup's unsubscribe goes out after this subscribe is answered, and
+    // a re-run for the same sid (statusSource changed) replaces it with the
+    // re-run's subscribe: ws.ts orders the two per sid, so neither a fast tab
+    // switch nor a re-run can leave the connection following the wrong state.
+    void ws
       .sessionStatusSubscribe(sid)
       .then((res) => {
         if (cancelled) return;
@@ -300,7 +299,7 @@ export function SessionView({
       });
     return () => {
       cancelled = true;
-      void subscribed.then(() => ws.sessionStatusUnsubscribe(sid).catch(() => {}));
+      void ws.sessionStatusUnsubscribe(sid).catch(() => {});
       store.dispatch({ type: "session-status/cleared", sid });
     };
   }, [active, sid, needsStatus, hasTranscript, statusSource, slice.connStatus, store, ws]);
