@@ -35,7 +35,7 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 - response: `{ ok: true }`。どれかの run の module が `aborted` と答えた
 - error:
   - `bad_request`: user role でない。session role のエージェントが自分や他のセッションの turn を止める口にしない (DR-0028 の `session_kill` と同じ姿勢)
-  - `invalid_args`: `session_id` が sid の形でない
+  - `invalid_args`: `session_id` が無いか空
   - `session_not_found`: その sid の生きている run が無く、daemon がその sid を走っているセッションに数えていないか、その sid の run が /clear・/resume で別の sid に移っている
   - `no_module`: セッションは走っているが、その sid の生きている run (サイドカー) が無い。module の無いセッションに、CLI・端末への Esc の送鍵・signal 等の別経路は作らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §7)
   - `abort_failed`: どれも `aborted` でなく、どれかの module が `refused` と答えた (msg に module の文言)、または答えが期限までに無かった・op の形で読めなかった (msg でそう言い、止まったかは分からないと書く)。古い plugin の module は `turn.abort` の行を読めずに答えないので、後者になる

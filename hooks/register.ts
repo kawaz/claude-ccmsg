@@ -12,6 +12,8 @@
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
 //   request-override.ts   the model and effort a person overrides the
 //                         requests with from the web UI
+//   turn-abort.ts         the main loop's running turn, and turn.abort,
+//                         which stops it from the web UI
 //   guidance.ts           what the model is told of ccmsg before its first turn
 //   tools.ts              the send / say / peers / launch tools
 //
@@ -38,6 +40,7 @@ import { newPromptSendState, type PromptSendState } from "./prompt-send.ts";
 import { type LifecycleState, newLifecycleState } from "./session-lifecycle.ts";
 import { newSidecarState, type SidecarState } from "./sidecar.ts";
 import { registerToolCalls } from "./tools.ts";
+import { newTurnAbortState, type TurnAbortState } from "./turn-abort.ts";
 
 /** The module's state for one load: one object, each concern's part
  * declared by that concern, and each concern given the parts it reads.
@@ -47,7 +50,11 @@ import { registerToolCalls } from "./tools.ts";
  * session's id and generation; a new generation drops the awaited
  * prompt.send), and each concern's functions are typed by the parts they
  * read, so what a concern touches is still stated by its types. */
-export type ModuleState = LifecycleState & SidecarState & PromptSendState & FactsState;
+export type ModuleState = LifecycleState &
+  SidecarState &
+  PromptSendState &
+  FactsState &
+  TurnAbortState;
 
 export function newState(): ModuleState {
   return {
@@ -55,6 +62,7 @@ export function newState(): ModuleState {
     ...newSidecarState(),
     ...newPromptSendState(),
     ...newFactsState(),
+    ...newTurnAbortState(),
   };
 }
 

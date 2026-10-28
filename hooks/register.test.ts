@@ -178,6 +178,8 @@ interface Fake {
   sid: { value: string };
   fills: string[];
   logs: string[];
+  /** The turn ids the module asked `$.turn.abort` to stop, in order. */
+  aborts: string[];
 }
 
 /** The value given after `flag` in a sidecar's argv. */
@@ -211,6 +213,9 @@ function fakeEngine(
     /** What `ccmsg status` does: print a running daemon's status with this
      * `webui_url` (none when undefined), or throw. */
     webuiUrl?: string | Error;
+    /** What `$.turn.abort` does with the id it is given: resolve when
+     * absent. */
+    abort?: (turnId: string) => Promise<void>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -236,6 +241,7 @@ function fakeEngine(
   const appended: string[] = [];
   const agentAppends: Fake["agentAppends"] = [];
   const agents: Fake["agents"] = [];
+  const aborts: string[] = [];
   const store = options.store ?? new Map<string, unknown>();
   const $: Engine = {
     plugin: { root: "/plugin" },
@@ -256,6 +262,12 @@ function fakeEngine(
         }
         agentAppends.push({ agentId, text });
         return {};
+      },
+    },
+    turn: {
+      abort: async ({ turnId }) => {
+        aborts.push(turnId);
+        await options.abort?.(turnId);
       },
     },
     agent: { list: async () => agents.map((a) => ({ ...a })) },
@@ -379,6 +391,7 @@ function fakeEngine(
     agentAppends,
     agents,
     store,
+    aborts,
   };
   return fake;
 }
@@ -1174,7 +1187,14 @@ describe("requests the module answers without running prompt.send", () => {
     const reply = await replyTo(fake, '{"v":1,"op":"describe","id":"d1","args":{}}');
     const result: DescribeResult = {
       v: [1],
-      ops: ["describe", "prompt.send", "session.facts", "agent.append", "request.override"],
+      ops: [
+        "describe",
+        "prompt.send",
+        "session.facts",
+        "agent.append",
+        "request.override",
+        "turn.abort",
+      ],
       version: "1.2.3",
     };
     expect(reply).toEqual({ id: "d1", ok: true, result });
@@ -1957,6 +1977,94 @@ describe("the overrides of the session's requests", () => {
 });
 
 // The subagents a person can add a message to from the web UI (DR-0039 §6).
+describe("stopping the main loop's turn (turn.abort)", () => {
+  const ABORT = '{"v":1,"op":"turn.abort","id":"x1","args":{}}';
+  const turn = (turnId: string, agentId?: string) => ({
+    text: "",
+    turnId,
+    ...(agentId !== undefined ? { agentId } : {}),
+  });
+  async function started(
+    options: Parameters<typeof fakeEngine>[0] = {},
+  ): Promise<{ fake: Fake; state: ModuleState }> {
+    const fake = fakeEngine(options);
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    return { fake, state };
+  }
+  /** The daemon asks turn.abort over the sidecar; the module's reply. */
+  async function abort(fake: Fake): Promise<SidecarReply> {
+    const at = fake.runs.length;
+    spawned(fake, 0).stream.push(`${ABORT}\n`);
+    const isReply = (argv: string[]) => argv[2] === "reply";
+    for (let i = 0; i < 20 && !fake.runs.slice(at).some(isReply); i++) await settle();
+    const found = fake.runs.findIndex((argv, i) => i >= at && isReply(argv));
+    expect(found).toBeGreaterThanOrEqual(0);
+    return stdinReply(fake, found);
+  }
+
+  test("the main loop's running turn is stopped by the id its turn.start carried", async () => {
+    const { fake } = await started();
+    await fire(fake, "turn.start", turn("t1"), async () => ({}));
+    expect(await abort(fake)).toEqual({ id: "x1", ok: true, result: { outcome: "aborted" } });
+    expect(fake.aborts).toEqual(["t1"]);
+  });
+
+  // Nothing is asked of the engine when no main-loop turn runs: before the
+  // first turn, and once the turn ended — an ended turn's id is not used.
+  test("no turn running: no_turn, and the engine is not asked", async () => {
+    const { fake } = await started();
+    expect(await abort(fake)).toEqual({ id: "x1", ok: true, result: { outcome: "no_turn" } });
+    await fire(fake, "turn.start", turn("t1"), async () => ({}));
+    await fire(fake, "turn.complete", { reason: "answer", turnId: "t1" }, async () => ({}));
+    expect(await abort(fake)).toMatchObject({ result: { outcome: "no_turn" } });
+    expect(fake.aborts).toEqual([]);
+  });
+
+  // A subagent's or teammate's turn is not the main loop's: its turn.start
+  // does not replace the main loop's id, its turn.complete does not clear it,
+  // and with only a subagent running there is no turn to stop.
+  test("a subagent's turns neither replace nor clear the main loop's", async () => {
+    const { fake } = await started();
+    await fire(fake, "turn.start", turn("s1", "a1"), async () => ({}));
+    expect(await abort(fake)).toMatchObject({ result: { outcome: "no_turn" } });
+    await fire(fake, "turn.start", turn("t1"), async () => ({}));
+    await fire(fake, "turn.start", turn("s2", "a1"), async () => ({}));
+    await fire(fake, "turn.complete", { reason: "answer", ...turn("s2", "a1") }, async () => ({}));
+    expect(await abort(fake)).toMatchObject({ result: { outcome: "aborted" } });
+    expect(fake.aborts).toEqual(["t1"]);
+  });
+
+  test("the next main-loop turn is the one stopped", async () => {
+    const { fake } = await started();
+    await fire(fake, "turn.start", turn("t1"), async () => ({}));
+    await fire(fake, "turn.complete", { reason: "answer", turnId: "t1" }, async () => ({}));
+    await fire(fake, "turn.start", turn("t2"), async () => ({}));
+    await abort(fake);
+    expect(fake.aborts).toEqual(["t2"]);
+  });
+
+  // The engine rejects an id that is not the running turn's; what it said
+  // goes back to the daemon, for the person.
+  test("the engine refusing: refused, with its words", async () => {
+    const { fake } = await started({
+      abort: async (turnId) => {
+        throw new Error(`HooksError: $.turn.abort: ${turnId} is not the running turn t9`);
+      },
+    });
+    await fire(fake, "turn.start", turn("t1"), async () => ({}));
+    expect(await abort(fake)).toEqual({
+      id: "x1",
+      ok: true,
+      result: {
+        outcome: "refused",
+        message: "Error: HooksError: $.turn.abort: t1 is not the running turn t9",
+      },
+    });
+  });
+});
+
 describe("the subagents", () => {
   /** The subagents in `facts`, each saying whether its turn's start is known
    * rather than when (the fake's clock is a counter). */

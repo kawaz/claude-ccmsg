@@ -231,6 +231,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "request_override", session_id: SID, effort: 3 },
     ],
   },
+  turn_abort: {
+    ok: { op: "turn_abort", session_id: SID },
+    bad: [{ op: "turn_abort" }, { op: "turn_abort", session_id: "" }],
+  },
   sidecar_reply: {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],

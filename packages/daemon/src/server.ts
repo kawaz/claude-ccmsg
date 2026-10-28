@@ -134,6 +134,7 @@ import {
   sendToPeers,
 } from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
+import { abortTurn, productionTurnAbortDeps } from "./turn-abort.ts";
 import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
 import {
   callSidecar,
@@ -1456,6 +1457,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "session_rename",
   "user_prompt",
   "request_override",
+  "turn_abort",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -2340,6 +2342,37 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );
       send(conn, { ok: true, delivery });
+      return;
+    }
+
+    case "turn_abort": {
+      // user role only (DR-0044 §2): stopping a session's turn is the
+      // person's, as Esc in its terminal is, not a session's, for itself or
+      // another.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'turn_abort' requires user role");
+        return;
+      }
+      const sid = req.session_id;
+      // Slow reply: it waits for the modules' replies, up to
+      // TURN_ABORT_DEADLINE_MS (DR-0029).
+      const { outcome, tries } = await abortTurn(
+        sid,
+        productionTurnAbortDeps(
+          productionSidecarDeps(daemon.sidecarReplies),
+          daemon.sidecarRuns,
+          (s) => daemon.sessions.has(s),
+        ),
+      );
+      daemon.log.info(
+        `turn_abort: session_id=${sid} result=${outcome.ok ? "aborted" : outcome.code}` +
+          ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
+      );
+      if (!outcome.ok) {
+        sendErr(conn, outcome.code, outcome.msg);
+        return;
+      }
+      send(conn, { ok: true });
       return;
     }
 

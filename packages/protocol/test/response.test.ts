@@ -320,6 +320,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "not_delivered", reason: "dialog" },
     { ok: true, outcome: "unconfirmed" },
   ],
+  turn_abort: [{ ok: true }],
   request_override: [
     { ok: true, delivery: "no_module" },
     { ok: true, delivery: "applied" },

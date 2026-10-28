@@ -10,6 +10,8 @@ import {
   SessionFactsSchema,
   SessionFactsTextSchema,
   SIDECAR_OP_NAMES,
+  TurnAbortResultSchema,
+  type TurnAbortResult,
   AgentAppendResultSchema,
   SIDECAR_OPS,
   SidecarReplySchema,
@@ -265,6 +267,27 @@ describe("the ops' results", () => {
     }
     expect(parseWith(RequestOverrideResultSchema, { outcome: "applied" }).ok).toBe(true);
     expect(parseWith(RequestOverrideResultSchema, { outcome: "ignored" }).ok).toBe(false);
+  });
+
+  // DR-0044 §1: turn.abort takes nothing, and answers what came of the turn;
+  // a refusal carries the engine's words.
+  test("turn.abort: no arguments, and aborted / no_turn / refused", () => {
+    const request = { v: 1, op: "turn.abort", id: "t", args: {} } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    for (const args of [{ turnId: "x" }, []]) {
+      expect(readSidecarRequest(line({ v: 1, op: "turn.abort", id: "t", args })).ok).toBe(false);
+    }
+    const results: TurnAbortResult[] = [
+      { outcome: "aborted" },
+      { outcome: "no_turn" },
+      { outcome: "refused", message: "turn a is not the running turn b" },
+    ];
+    for (const result of results) {
+      expect(parseWith(TurnAbortResultSchema, result)).toEqual({ ok: true, value: result });
+    }
+    for (const result of [{ outcome: "refused" }, { outcome: "stopped" }]) {
+      expect(parseWith(TurnAbortResultSchema, result).ok).toBe(false);
+    }
   });
 
   // DR-0041 §4: a prompt.send carries the one-shot override of its turn.

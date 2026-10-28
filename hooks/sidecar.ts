@@ -15,7 +15,8 @@
 // getting no reply, takes the request as unconfirmed at its deadline. The ops
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
 // (facts.ts), `agent.append` (subagents.ts), `request.override`
-// (request-override.ts); `describe` says which ops the module has.
+// (request-override.ts), `turn.abort` (turn-abort.ts); `describe` says which
+// ops the module has.
 import { errorText } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
@@ -34,6 +35,7 @@ import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { appendToAgent } from "./subagents.ts";
+import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
 
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar
@@ -61,7 +63,7 @@ export function newSidecarState(): SidecarState {
 
 /** What the sidecar reads and writes: its own state, the session it serves,
  * and what the ops it answers run on. */
-type SidecarHost = SidecarState & LifecycleState & PromptSendState & FactsState;
+type SidecarHost = SidecarState & LifecycleState & PromptSendState & FactsState & TurnAbortState;
 
 /** The reply to one request this module runs. */
 export type Reply =
@@ -69,7 +71,8 @@ export type Reply =
   | SidecarReplyOf<"prompt.send">
   | SidecarReplyOf<"session.facts">
   | SidecarReplyOf<"agent.append">
-  | SidecarReplyOf<"request.override">;
+  | SidecarReplyOf<"request.override">
+  | SidecarReplyOf<"turn.abort">;
 
 function failed(id: string, code: SidecarErrorCode, message: string): FailedSidecarReply {
   return { id, ok: false, error: { code, message } };
@@ -159,6 +162,8 @@ async function replyTo(
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
+      case "turn.abort":
+        return { id, ok: true, result: await abortMainTurn($, state) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });

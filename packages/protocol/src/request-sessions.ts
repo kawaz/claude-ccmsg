@@ -373,6 +373,18 @@ export const RequestOverrideRequestSchema = v.object({
 });
 export type RequestOverrideRequest = Output<typeof RequestOverrideRequestSchema>;
 
+/** Stop the turn a session's main loop is running now, as Esc in its
+ * terminal would (user role only, DR-0044 §2). The daemon hands it to every
+ * live run's hooks module as a `turn.abort` request and answers once one
+ * stopped it (`{ ok: true }`) or none could: `session_not_found`,
+ * `no_module`, `no_turn` (it had ended), `abort_failed`. A subagent's turn is
+ * not stopped. */
+export const TurnAbortRequestSchema = v.object({
+  op: v.literal("turn_abort"),
+  session_id: SessionIdSchema,
+});
+export type TurnAbortRequest = Output<typeof TurnAbortRequestSchema>;
+
 /** Add what a person wrote to the conversation of a running subagent of a
  * session (user role only, DR-0039 §6). The daemon hands it to a run's hooks
  * module as an `agent.append` request; the subagent's next request carries

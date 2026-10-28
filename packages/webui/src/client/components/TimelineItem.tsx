@@ -273,8 +273,15 @@ export function SayBubble({
  * said the moment the turn started (DR-0035 §3). It sits at the end of the
  * Timeline, where the answer will land: the transcript writes an answer's row
  * only once the answer is done, so without this nothing there would show the
- * turn running. */
-export function TurnRespondingRow({ since }: { since: string }) {
+ * turn running. `abort` is the × beside it that stops the turn (DR-0044 §4),
+ * absent where there is none to offer. */
+export function TurnRespondingRow({
+  since,
+  abort,
+}: {
+  since: string;
+  abort?: { disabled: boolean; onPress: () => void };
+}) {
   const now = useSecondTick();
   const elapsed = formatDuration(now - new Date(since).getTime());
   return (
@@ -282,6 +289,18 @@ export function TurnRespondingRow({ since }: { since: string }) {
       <span class="tl-turn-responding-dot" aria-hidden="true" />
       <span>応答中</span>
       <span class="tl-turn-responding-since">…{elapsed}</span>
+      {abort !== undefined ? (
+        <button
+          type="button"
+          class="tl-turn-abort"
+          aria-label="応答を中断"
+          title="応答を中断 (Esc 相当)"
+          disabled={abort.disabled}
+          onClick={abort.onPress}
+        >
+          ×
+        </button>
+      ) : null}
     </div>
   );
 }

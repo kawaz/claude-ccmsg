@@ -35,6 +35,12 @@ export interface Engine {
       agentId?: string;
     }): Promise<unknown>;
   };
+  turn: {
+    /** Stop the main loop's running turn, its tools with it, leaving no
+     * interruption marker. `turnId` is the id the main loop's turn.start
+     * carried; the engine rejects any other, naming both. */
+    abort(input: { turnId: string }): Promise<void>;
+  };
   agent: {
     /** The session's subagents and teammates, `status` where each loop stands. */
     list(): Promise<readonly { id: string; description: string; type: string; status: string }[]>;

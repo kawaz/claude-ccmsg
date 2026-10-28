@@ -294,5 +294,15 @@ export const ErrorCode = {
   // claude_update: the run did not end within CLAUDE_UPDATE_TIMEOUT_MS and was
   // stopped.
   claude_update_timeout: "claude_update_timeout",
+  // turn_abort (DR-0044 §2): the session runs, but no live run of it has a
+  // hooks module to ask. No other route (a key sent to the terminal, a
+  // signal) is tried (DR-0039 §7).
+  no_module: "no_module",
+  // turn_abort: the modules asked run no main-loop turn (it had ended).
+  no_turn: "no_turn",
+  // turn_abort: no module stopped the turn — the engine refused
+  // `$.turn.abort`, or no answer came in time, so whether it stopped is not
+  // known. The msg says which.
+  abort_failed: "abort_failed",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

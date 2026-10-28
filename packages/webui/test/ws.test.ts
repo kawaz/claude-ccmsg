@@ -1526,6 +1526,24 @@ describe("createWsClient agents/ping (U1)", () => {
   });
 });
 
+// DR-0044 §2: turn_abort names the session, and the daemon's answer (or its
+// error) is the reply.
+describe("createWsClient turn_abort (DR-0044)", () => {
+  test("turnAbort sends {op:'turn_abort', session_id} and resolves the reply", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const sid = "11111111-2222-4333-8444-555555555555";
+    const req = handle.turnAbort(sid);
+    expect(sentBody(ws1, "turn_abort")).toEqual({ op: "turn_abort", session_id: sid });
+    ws1.replyTo("turn_abort", { ok: true });
+    expect(await req).toEqual({ ok: true });
+  });
+});
+
 // DR-0043 §6/§8: claude_update is a plain request (no client-side timeout,
 // the daemon bounds it), and the version the daemon re-reads reaches every
 // tab as ev:"claude_version".

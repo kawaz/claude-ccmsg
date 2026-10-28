@@ -1,6 +1,6 @@
 // The module's one engine registration per event it observes. Each concern
 // (session-lifecycle, sidecar, session-facts, subagents, prompt-send,
-// request-override, guidance, tools) states its part in an event here: the fields it reads,
+// request-override, turn-abort, guidance, tools) states its part in an event here: the fields it reads,
 // which inputs concern it, and what it runs ahead of the event and once it
 // went through. The hook of the event reads the input for each concern, runs
 // their parts in the order listed around one `next`, and passes the event on
@@ -79,6 +79,12 @@ import {
   subagentTurnStarted,
 } from "./subagents.ts";
 import { toolsAtStart } from "./tools.ts";
+import {
+  AbortTurnInputSchema,
+  mainTurnBegan,
+  mainTurnFinished,
+  type TurnAbortState,
+} from "./turn-abort.ts";
 
 /** One concern's part in an event: the input read by the concern's schema,
  * what runs ahead of the event and what runs once it went through. */
@@ -181,7 +187,7 @@ export async function fanOut<E, R>(
 }
 
 /** What the concerns observing the events read and write. */
-type BusState = LifecycleState & SidecarState & PromptSendState & FactsState;
+type BusState = LifecycleState & SidecarState & PromptSendState & FactsState & TurnAbortState;
 
 const mainThread = (input: { agentId?: string }): boolean => input.agentId === undefined;
 const subagent = (input: { agentId?: string }): boolean => input.agentId !== undefined;
@@ -298,6 +304,10 @@ export function registerBus(on: On, state: BusState): void {
         when: mainThread,
         before: () => mainTurnMoved(state),
       }),
+      concern("turn-abort", AbortTurnInputSchema, {
+        when: mainThread,
+        before: (input) => mainTurnBegan(state, input),
+      }),
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
         before: (input) => subagentTurnStarted($, state, input),
@@ -313,6 +323,11 @@ export function registerBus(on: On, state: BusState): void {
       concern("request-override", OverrideTurnInputSchema, {
         when: mainThread,
         after: () => mainTurnEnded($, state),
+      }),
+      // Ahead of the event: once the turn ends there is nothing to stop.
+      concern("turn-abort", AbortTurnInputSchema, {
+        when: mainThread,
+        before: () => mainTurnFinished(state),
       }),
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,

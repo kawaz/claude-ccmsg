@@ -335,6 +335,11 @@ export const RequestOverrideResponseSchema = v.object({
 });
 export type RequestOverrideResponse = Output<typeof RequestOverrideResponseSchema>;
 
+/** Payload of a turn_abort (DR-0044 §2): a live run's hooks module stopped
+ * the main loop's running turn. Every other outcome is an error. */
+export const TurnAbortResponseSchema = v.object({ ok: v.literal(true) });
+export type TurnAbortResponse = Output<typeof TurnAbortResponseSchema>;
+
 /** Why an user_message did not reach the subagent (DR-0039 §6): the module's
  * AgentAppendReason, or as for user_prompt, `no_module` (no run's module
  * took the request), `session_changed` (/clear, /resume) or `ended`. */

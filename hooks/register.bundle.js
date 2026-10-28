@@ -1621,19 +1621,27 @@ var RequestOverrideArgsSchema = object({
   clear_once: optional(array(RequestOverrideFieldSchema))
 });
 var RequestOverrideResultSchema = object({ outcome: literal("applied") });
+var TurnAbortArgsSchema = NoArgsSchema;
+var TurnAbortResultSchema = variant("outcome", [
+  object({ outcome: literal("aborted") }),
+  object({ outcome: literal("no_turn") }),
+  object({ outcome: literal("refused"), message: string() })
+]);
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
-  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema }
+  "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
+  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema }
 };
 var SIDECAR_OP_NAMES = [
   "describe",
   "prompt.send",
   "session.facts",
   "agent.append",
-  "request.override"
+  "request.override",
+  "turn.abort"
 ];
 function requestSchema(op, args) {
   return object({
@@ -1648,7 +1656,8 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
-  requestSchema("request.override", SIDECAR_OPS["request.override"].args)
+  requestSchema("request.override", SIDECAR_OPS["request.override"].args),
+  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -1671,6 +1680,33 @@ var SidecarReplyTextSchema = jsonText(SidecarReplySchema);
 var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
+}
+
+function newTurnAbortState() {
+  return {};
+}
+var AbortTurnInputSchema = looseObject({
+  agentId: optional(string()),
+  turnId: optional(string())
+});
+function mainTurnBegan(state, input) {
+  state.mainTurnId = input.turnId;
+}
+function mainTurnFinished(state) {
+  state.mainTurnId = undefined;
+}
+async function abortMainTurn($, state) {
+  const turnId = state.mainTurnId;
+  if (turnId === undefined)
+    return { outcome: "no_turn" };
+  try {
+    await $.turn.abort({ turnId });
+    return { outcome: "aborted" };
+  } catch (e) {
+    const message = errorText(e);
+    $.ui.log(`ccmsg: turn.abort of ${turnId} refused: ${message}`, { to: "debug" });
+    return { outcome: "refused", message };
+  }
 }
 
 var RESPAWN_MIN_MS = 500;
@@ -1748,6 +1784,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await appendToAgent($, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
+      case "turn.abort":
+        return { id, ok: true, result: await abortMainTurn($, state) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
@@ -2534,6 +2572,10 @@ function registerBus(on, state) {
       when: mainThread,
       before: () => mainTurnMoved(state)
     }),
+    concern("turn-abort", AbortTurnInputSchema, {
+      when: mainThread,
+      before: (input) => mainTurnBegan(state, input)
+    }),
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
       before: (input) => subagentTurnStarted($, state, input)
@@ -2547,6 +2589,10 @@ function registerBus(on, state) {
     concern("request-override", OverrideTurnInputSchema, {
       when: mainThread,
       after: () => mainTurnEnded($, state)
+    }),
+    concern("turn-abort", AbortTurnInputSchema, {
+      when: mainThread,
+      before: () => mainTurnFinished(state)
     }),
     concern("subagents", SubagentTurnInputSchema, {
       when: subagent,
@@ -2572,7 +2618,8 @@ function newState() {
     ...newLifecycleState(),
     ...newSidecarState(),
     ...newPromptSendState(),
-    ...newFactsState()
+    ...newFactsState(),
+    ...newTurnAbortState()
   };
 }
 function register(on) {

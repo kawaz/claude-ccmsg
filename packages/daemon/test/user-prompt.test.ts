@@ -971,6 +971,86 @@ describe("request_override over the wire", () => {
   });
 });
 
+// DR-0044 §2: turn_abort is handed to the run's module as turn.abort, and
+// what the module says is the op's answer.
+describe("turn_abort over the wire", () => {
+  test("the module stopping the turn is ok; its no_turn is the error no_turn", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
+    try {
+      const module = await sessionConn(ctx, SID);
+      const user = await userConn(ctx);
+      const reply = user.request({ op: "turn_abort", session_id: SID });
+      const line = await nextRequest(sidecar);
+      expect(line).toEqual({ v: 1, op: "turn.abort", id: line.id, args: {} });
+      await module.request(sidecarReply({ id: line.id, ok: true, result: { outcome: "aborted" } }));
+      expect(await reply).toEqual({ ok: true });
+
+      const again = user.requestError({ op: "turn_abort", session_id: SID });
+      const second = await nextRequest(sidecar);
+      await module.request(
+        sidecarReply({ id: second.id, ok: true, result: { outcome: "no_turn" } }),
+      );
+      expect((await again).error.code).toBe("no_turn");
+      const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
+      expect(log).toContain(`turn_abort: session_id=${SID} result=aborted tries=[${line.id} `);
+      expect(log).toContain(`turn_abort: session_id=${SID} result=no_turn`);
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // DR-0039 §7: a session with no module is told so; nothing else is tried.
+  test("a running session with no run: no_module; an unknown session: session_not_found", async () => {
+    const ctx = await startShortDaemon();
+    try {
+      const session = await sessionConn(ctx, SID);
+      const user = await userConn(ctx);
+      expect((await user.requestError({ op: "turn_abort", session_id: SID })).error.code).toBe(
+        "no_module",
+      );
+      const other = "99999999-2222-4333-8444-555555555555";
+      expect((await user.requestError({ op: "turn_abort", session_id: other })).error.code).toBe(
+        "session_not_found",
+      );
+      user.close();
+      session.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // A session's agent does not stop its own turn or another's: nothing is
+  // written to the run.
+  test("turn_abort is the user role's", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
+    try {
+      const session = await sessionConn(ctx, SID);
+      const asSession = await session.requestError({ op: "turn_abort", session_id: SID });
+      expect(asSession.error.code).toBe("bad_request");
+      const user = await userConn(ctx);
+      expect((await user.requestRefusal({ op: "turn_abort" })).error.code).toBe("invalid_args");
+      // The next line the run gets is a later request's, not the session's.
+      const reply = user.request({ op: "turn_abort", session_id: SID });
+      const line = await nextRequest(sidecar);
+      expect(line.op).toBe("turn.abort");
+      await session.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "aborted" } }),
+      );
+      expect(await reply).toEqual({ ok: true });
+      user.close();
+      session.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+});
+
 describe("session.facts asked of a run that names itself", () => {
   // A daemon that started after the module has none of the facts the module
   // sent before: it asks the run as soon as the run names itself, and takes

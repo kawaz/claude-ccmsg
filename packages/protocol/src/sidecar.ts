@@ -268,6 +268,26 @@ export type RequestOverrideArgs = Output<typeof RequestOverrideArgsSchema>;
 export const RequestOverrideResultSchema = v.object({ outcome: v.literal("applied") });
 export type RequestOverrideResult = Output<typeof RequestOverrideResultSchema>;
 
+// --- turn.abort ------------------------------------------------------------
+
+/** `turn.abort` (DR-0044 §1): stop the turn the session's main loop is
+ * running now, as Esc in the terminal would, with `$.turn.abort` on the id
+ * its `turn.start` carried. A subagent's or teammate's turn is not stopped.
+ * It takes no arguments. */
+export const TurnAbortArgsSchema = NoArgsSchema;
+export type TurnAbortArgs = Output<typeof TurnAbortArgsSchema>;
+
+/** What a `turn.abort` came to: `aborted` (`$.turn.abort` resolved),
+ * `no_turn` (the main loop runs no turn the module knows of, so nothing was
+ * asked of the engine), or `refused` (`$.turn.abort` rejected; `message` is
+ * what it said). */
+export const TurnAbortResultSchema = v.variant("outcome", [
+  v.object({ outcome: v.literal("aborted") }),
+  v.object({ outcome: v.literal("no_turn") }),
+  v.object({ outcome: v.literal("refused"), message: v.string() }),
+]);
+export type TurnAbortResult = Output<typeof TurnAbortResultSchema>;
+
 // --- the ops ---------------------------------------------------------------
 
 /** Each op's arguments and result. */
@@ -277,6 +297,7 @@ export const SIDECAR_OPS = {
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
+  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
@@ -289,6 +310,7 @@ export const SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "request.override",
+  "turn.abort",
 ] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
@@ -325,6 +347,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
+  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;
