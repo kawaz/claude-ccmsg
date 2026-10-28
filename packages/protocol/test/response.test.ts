@@ -577,6 +577,19 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       httpAllow: ["127.0.0.0/8"],
       network: "online",
     },
+    {
+      ok: true,
+      pong: true,
+      version: "0.200.0",
+      uptime: 1.5,
+      pid: 2,
+      clients: 4,
+      http: ["127.0.0.1:8642"],
+      httpAllow: ["127.0.0.0/8"],
+      webui_url: "https://ccmsg.a.example.com",
+      webui_urls: ["https://ccmsg.a.example.com", "https://ccmsg.v6.example.com"],
+      network: "online",
+    },
   ],
   translate: [
     {

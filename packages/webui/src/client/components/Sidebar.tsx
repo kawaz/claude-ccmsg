@@ -32,6 +32,8 @@ import { paneAxisMetrics, readPaneAxis, usePaneAxis } from "../pane-axis.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
+import { SidebarFold } from "./SidebarFold.tsx";
+import { SidebarGlobals } from "./SidebarGlobals.tsx";
 
 function PeersRefreshButton() {
   const { store, ws } = useApp();
@@ -112,8 +114,9 @@ function sidebarSlice(state: AppState) {
   };
 }
 
-/** サイドバーの SESSIONS / ROOMS セクションと、そこから開く 2 つのフォーム
- * パネル (新規セッション / Session Search) のトグル。
+/** サイドバーの SESSIONS / ROOMS / GLOBALS の区画 (DR-0043) と、SESSIONS の
+ * 見出しから開く 2 つのフォームパネル (新規セッション / Session Search) の
+ * トグル。
  *
  * **2 つは 1 本の排他トグル**: `state.sidebar.panel` が高々 1 つを持つ
  * (`null` = どれも開いていない)。単一の値がそれを構造として保証する
@@ -210,39 +213,45 @@ export function Sidebar() {
        * フォーム、縦積み = フォーム → 一覧)。サイドバー自体の右端に立つ
        * splitter はこの外なので、軸が変わるのはこの中だけ。 */}
       <div id="sidebar-panes" ref={panesRef}>
+        {/* 一覧の段は開閉できる区画の列 (DR-0043 §1)。SESSIONS が日常の主動線
+         * なので上で、開いて始まる (kawaz r76m52)。ROOMS は過去の読み取り専用の
+         * ログで参照頻度が低いので閉じて始まり、開いた時に一覧を取る。GLOBALS は
+         * セッションに属さないものの置き場で、下端に付く (app.css)。 */}
         <div id="sidebar-lists">
-          <section id="sessions-panel">
-            <h2>
-              Sessions{" "}
-              {slice.launchAvailable ? (
-                <>
+          <SidebarFold
+            id="sidebar-sessions"
+            title="Sessions"
+            defaultOpen
+            tools={
+              <>
+                {slice.launchAvailable ? (
                   <CreatorToggleButton
                     open={panel === "session-creator"}
                     onToggle={() => togglePanel("session-creator")}
-                  />{" "}
-                </>
-              ) : null}
-              <SearchToggleButton
-                open={panel === "session-search"}
-                onToggle={() => togglePanel("session-search")}
-              />{" "}
-              <PeersSortButton
-                sortKey={sortKey}
-                onCycle={() => {
-                  const next = nextPeerSortKey(sortKey);
-                  store.dispatch({ type: "peers/sort-key", key: next });
-                  writeStorage(SORT_KEY_STORAGE, next);
-                }}
-              />{" "}
-              <PeersRefreshButton />
-            </h2>
+                  />
+                ) : null}
+                <SearchToggleButton
+                  open={panel === "session-search"}
+                  onToggle={() => togglePanel("session-search")}
+                />
+                <PeersSortButton
+                  sortKey={sortKey}
+                  onCycle={() => {
+                    const next = nextPeerSortKey(sortKey);
+                    store.dispatch({ type: "peers/sort-key", key: next });
+                    writeStorage(SORT_KEY_STORAGE, next);
+                  }}
+                />
+                <PeersRefreshButton />
+              </>
+            }
+          >
             <SessionList peers={sortedPeers} currentSid={slice.currentSid} />
-          </section>
-          {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は過去の
-           * 読み取り専用のログで参照頻度が低いので、畳んでおき開いた時に読む */}
-          <section id="rooms-panel">
-            <RoomList />
-          </section>
+          </SidebarFold>
+          <RoomList />
+          <SidebarFold id="sidebar-globals" title="Globals">
+            <SidebarGlobals />
+          </SidebarFold>
         </div>
         {panel !== null ? (
           <>

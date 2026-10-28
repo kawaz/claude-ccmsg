@@ -9,6 +9,10 @@
 // had, so this is a structural union (one `<details>`/`<summary>` shape) and
 // not a visual one. `summary` takes children rather than a string because the
 // usage rows put a bar and two numbers in theirs.
+//
+// The summary is one button as a whole, so nothing in it can be a button of
+// its own. A heading that carries buttons (the sidebar's SESSIONS) is a
+// `SidebarFold` instead.
 import type { ComponentChildren, JSX } from "preact";
 
 export function Fold({

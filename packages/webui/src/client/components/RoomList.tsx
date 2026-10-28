@@ -1,9 +1,9 @@
-import type { JSX } from "preact";
 import type { AppState, RoomState } from "../store.ts";
 import { selectedRoomId } from "../store.ts";
 import { roomHref } from "../locator.ts";
 import { activeRoomsSorted, relTime, splitRoomsByArchived, splitRoomsByKind } from "../utils.ts";
 import { Fold } from "./Fold.tsx";
+import { SidebarFold } from "./SidebarFold.tsx";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
 
@@ -53,16 +53,17 @@ function RoomRows({
   );
 }
 
-/** The past rooms, read-only (DR-0036 §2), folded away until opened: opening
- * the fold is what fetches the list (`rooms`), since the logs no longer
- * change and nothing has to be kept current. Inside, the rooms go newest
- * first, with 1on1 rooms and archived rooms in their own folds (an archived
- * 1on1 room lands under アーカイブ — `splitRoomsByArchived` runs first). */
+/** The sidebar's ROOMS fold (DR-0043 §1): the past rooms, read-only (DR-0036
+ * §2), closed until opened. Opening the fold is what fetches the list
+ * (`rooms`), since the logs no longer change and nothing has to be kept
+ * current. Inside, the rooms go newest first, with 1on1 rooms and archived
+ * rooms in their own folds (an archived 1on1 room lands under アーカイブ —
+ * `splitRoomsByArchived` runs first). */
 export function RoomList() {
   const { store, ws } = useApp();
   const state = useStoreState(store, roomListSlice, shallowEqual);
-  const onToggle = (e: JSX.TargetedEvent<HTMLDetailsElement, Event>): void => {
-    if (!e.currentTarget.open || store.getState().roomList !== "idle") return;
+  const onToggle = (open: boolean): void => {
+    if (!open || store.getState().roomList !== "idle") return;
     store.dispatch({ type: "rooms/loading" });
     void ws
       .rooms()
@@ -76,12 +77,7 @@ export function RoomList() {
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
   const { flat, oneOnOne } = splitRoomsByKind(active);
   return (
-    <Fold
-      id="room-list-fold"
-      summary="Rooms (読み取り専用)"
-      summaryClass="room-list-summary"
-      onToggle={onToggle}
-    >
+    <SidebarFold id="sidebar-rooms" title="Rooms (読み取り専用)" onToggle={onToggle}>
       {state.roomList === "loading" ? <p class="room-list-status">読み込み中…</p> : null}
       {state.roomList === "error" ? (
         <p class="room-list-status">room の一覧を読み込めませんでした</p>
@@ -102,6 +98,6 @@ export function RoomList() {
           <RoomRows rooms={archived} currentRoomId={state.currentRoomId} />
         </Fold>
       )}
-    </Fold>
+    </SidebarFold>
   );
 }

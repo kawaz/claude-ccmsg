@@ -164,10 +164,13 @@ describe("RoomList (read-only, DR-0036 §2)", () => {
     const root = await mount(store, ws, RoomList);
     expect(ws.lists).toEqual([]);
 
-    const fold = instanceOf(root.querySelector("details"), HTMLDetailsElement, "the room fold");
+    const toggle = instanceOf(
+      root.querySelector("#sidebar-rooms button.sidebar-fold-toggle"),
+      HTMLButtonElement,
+      "the room fold's toggle",
+    );
     await act(() => {
-      fold.open = true;
-      fold.dispatchEvent(new Event("toggle"));
+      toggle.click();
     });
     expect(ws.lists).toHaveLength(1);
     expect(root.textContent).toContain("読み込み中");
@@ -182,11 +185,12 @@ describe("RoomList (read-only, DR-0036 §2)", () => {
 
     // 閉じて開き直しても取り直さない (ログはもう変わらない)。
     await act(() => {
-      fold.open = false;
-      fold.dispatchEvent(new Event("toggle"));
-      fold.open = true;
-      fold.dispatchEvent(new Event("toggle"));
+      toggle.click();
     });
+    await act(() => {
+      toggle.click();
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(ws.lists).toHaveLength(1);
   });
 });

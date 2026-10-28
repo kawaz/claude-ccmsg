@@ -680,6 +680,7 @@ export function createWsClient(
           version: ping.version,
           exe: ping.exe,
           home: ping.home,
+          webuiUrls: ping.webui_urls,
         });
       // DR-0023 host capability probe. An empty batch verifies the daemon can
       // find/build its helper without starting TranslationSession or translating

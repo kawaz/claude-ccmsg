@@ -175,7 +175,7 @@ import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./l
 import { type WebhookSource } from "./webhook.ts";
 import { releaseDaemonResources } from "./daemon-shutdown.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
-import { startHttpListener, webuiUrlOf, type HttpFallback, type HttpListener } from "./http.ts";
+import { startHttpListener, webuiUrlsOf, type HttpFallback, type HttpListener } from "./http.ts";
 import {
   compileSandboxOrigin,
   createSandboxGrants,
@@ -264,9 +264,10 @@ export interface Daemon {
   lock: LockHandle;
   server: Listener | null;
   httpListeners: HttpListener[];
-  /** The URL the webui is opened at from elsewhere (http.ts webuiUrlOf), read
-   * when asked; undefined while no HTTP listener serves it. */
-  webuiUrl: () => Promise<string | undefined>;
+  /** The origins the webui is opened at from elsewhere, the first being the
+   * one links use (http.ts webuiUrlsOf), read when asked; empty while no HTTP
+   * listener serves it. */
+  webuiUrls: () => Promise<string[]>;
   /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
   httpAllow: string[];
   shuttingDown: boolean;
@@ -422,7 +423,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     lock: host.lock,
     server: null,
     httpListeners: [],
-    webuiUrl: async () => undefined,
+    webuiUrls: async () => [],
     httpAllow: host.httpAllow,
     shuttingDown: false,
     env: host.env,
@@ -1707,7 +1708,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "ping": {
-      const webuiUrl = await daemon.webuiUrl();
+      const webuiUrls = await daemon.webuiUrls();
+      const webuiUrl = webuiUrls[0];
       send(conn, {
         ok: true,
         pong: true,
@@ -1724,6 +1726,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
         ...(webuiUrl !== undefined ? { webui_url: webuiUrl } : {}),
+        webui_urls: webuiUrls,
         network: networkState(daemon),
       });
       return;
@@ -3446,7 +3449,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   }
   daemon.httpListeners = httpListeners;
   if (httpListeners.length > 0) {
-    daemon.webuiUrl = async () => webuiUrlOf(httpAllowOrigin, await originsFile.get());
+    daemon.webuiUrls = async () => webuiUrlsOf(httpAllowOrigin, await originsFile.get());
   }
 
   // Zero-config tailscale serve origin auto-allow (DR-0004 §3): best-effort, async,

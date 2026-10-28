@@ -26,6 +26,7 @@ import { ColorSystemSection } from "./CatalogColorSystem.tsx";
 import { MemberChip } from "./MemberChip.tsx";
 import { NO_TRANSCRIPT_MESSAGE } from "./SessionView.tsx";
 import { Fold } from "./Fold.tsx";
+import { SidebarFold } from "./SidebarFold.tsx";
 import { Tabs } from "./Tabs.tsx";
 
 interface SectionDef {
@@ -55,6 +56,11 @@ const SECTIONS: SectionDef[] = [
   },
   { id: "chip", title: "メンバーチップ", note: "ルーム参加者。接続状態と選択状態を持つ。" },
   { id: "fold", title: "折り畳み", note: "見出しで畳める区画。開閉は browser 側が持つ。" },
+  {
+    id: "sidebar-fold",
+    title: "サイドバーの区画",
+    note: "見出しにボタン群を持てる折り畳み (DR-0043)。ボタンは開閉の要素の外。",
+  },
   { id: "tabs", title: "タブ", note: "排他的な表示切替。行ごとにクラスが違う。" },
   { id: "status", title: "接続ステータス", note: "daemon との WebSocket の状態、全 4 種。" },
   { id: "badge", title: "バッジ・ドット", note: "行内の小さな状態表示。" },
@@ -477,6 +483,37 @@ function FoldSection() {
   );
 }
 
+/** Open and closed side by side, and a heading with tools: pressing a tool
+ * leaves the fold as it was, which is the point of this component over Fold. */
+function SidebarFoldSection() {
+  return (
+    <>
+      <Specimen name="<SidebarFold defaultOpen tools />" note="見出しのボタンを押しても開閉しない">
+        <SidebarFold
+          id="catalog-sidebar-fold-open"
+          title="Sessions"
+          defaultOpen
+          tools={
+            <>
+              <button type="button">🔍</button>
+              <button type="button">&#8635;</button>
+            </>
+          }
+        >
+          <ul class="session-section-list">
+            <li class="session-row">claude-ccmsg/main</li>
+          </ul>
+        </SidebarFold>
+      </Specimen>
+      <Specimen name="<SidebarFold />" note="初期状態で閉じている。見出しだけが残る">
+        <SidebarFold id="catalog-sidebar-fold-closed" title="Globals">
+          <p class="sidebar-globals-row">開くとここが見える</p>
+        </SidebarFold>
+      </Specimen>
+    </>
+  );
+}
+
 /** The three rows are one component with three sets of classes. Seeing them
  * stacked is what makes that visible — and what makes a fourth spelling
  * obviously the wrong move. */
@@ -780,6 +817,7 @@ const SECTION_BODIES: Record<string, () => ComponentChildren> = {
   avatar: AvatarSection,
   chip: ChipSection,
   fold: FoldSection,
+  "sidebar-fold": SidebarFoldSection,
   tabs: TabsSection,
   status: StatusSection,
   badge: BadgeSection,

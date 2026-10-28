@@ -94,11 +94,12 @@ describe("loadDrawerWidth / saveDrawerWidth", () => {
 
 describe("clampSidebarListHeight / loadSidebarListHeight", () => {
   // 縦積みはフォームが上・一覧が下。一覧は「今どの
-  // セッションを見ているか」が分かる行数だけ残す。実測 (390x844) で一覧の
-  // 上端から 1 行目までが 75px、行ピッチが 59px。
+  // セッションを見ているか」が分かる行数だけ残す。実測 (390x844、DR-0043 の
+  // 区画の列) で一覧の上端から 1 行目までが 71px、行ピッチが 59px、SESSIONS の
+  // 本体の下に ROOMS と GLOBALS の見出しと段の余白で 80px。
   test("既定は行が 2〜3 本見える高さ", () => {
     expect(loadSidebarListHeight()).toBe(SIDEBAR_LIST_DEFAULT_PX);
-    const rows = (SIDEBAR_LIST_DEFAULT_PX - 75) / 59;
+    const rows = (SIDEBAR_LIST_DEFAULT_PX - 71 - 80) / 59;
     expect(rows).toBeGreaterThanOrEqual(2);
     expect(rows).toBeLessThanOrEqual(3);
   });

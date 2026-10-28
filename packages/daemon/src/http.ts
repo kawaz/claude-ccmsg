@@ -187,31 +187,31 @@ async function frameAncestorsFor(
 }
 
 /**
- * The URL the webui is opened at from elsewhere (DR-0039 §5): the first of the
+ * The origins the webui is opened at from elsewhere (DR-0043 §7): of the
  * origins this daemon trusts besides its own binds — `CCMSG_HTTP_ALLOW_ORIGIN`
  * and the tailscale auto-allow additions (`extraOrigins`, in that order), then
- * the persisted `origins add` file — that is an http(s) origin of a host other
- * than this machine's loopback. Each of these is an origin a person opens the
- * webui at through a proxy in front of this daemon, so none is a guess.
- * Undefined when there is none: a daemon reached only at its own bind.
+ * the persisted `origins add` file — those that are an http(s) origin of a
+ * host other than this machine's loopback, in that order, each at the place
+ * it first appears. Each of these is an origin a person opens the webui at
+ * through a proxy in front of this daemon, so none is a guess.
+ *
+ * The first is the URL links are written with (`webui_url`, the agent's
+ * `ccmsg_url`, DR-0039 §5): to change the name links use, put its origin first.
+ * Empty for a daemon reached only at its own bind.
  */
-export function webuiUrlOf(
+export function webuiUrlsOf(
   extraOrigins: Iterable<string>,
   fileOrigins: Iterable<string>,
-): string | undefined {
+): string[] {
+  const urls = new Set<string>();
   for (const origin of [...extraOrigins, ...fileOrigins]) {
-    let url: URL;
-    try {
-      url = new URL(origin);
-    } catch {
-      continue;
-    }
-    if (url.origin !== origin) continue;
+    const url = URL.parse(origin);
+    if (url === null || url.origin !== origin) continue;
     if (url.protocol !== "https:" && url.protocol !== "http:") continue;
     if (isLoopbackHost(url.hostname)) continue;
-    return origin;
+    urls.add(origin);
   }
-  return undefined;
+  return [...urls];
 }
 
 function isLoopbackHost(hostname: string): boolean {

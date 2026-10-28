@@ -31,9 +31,15 @@ export const PingResponseSchema = v.object({
   /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */
   httpAllow: v.array(v.string()),
   /** The URL the webui is opened at from elsewhere (scheme://host[:port]): the
-   * first trusted proxy origin that is not this machine's loopback. Absent
-   * when the daemon is reached only at its own binds (DR-0039 §5). */
+   * first of `webui_urls`. Absent when that list is empty: the daemon is
+   * reached only at its own binds (DR-0039 §5, DR-0043 §7). */
   webui_url: v.optional(v.string()),
+  /** Every origin the webui is opened at from elsewhere, in the order the
+   * daemon trusts them (DR-0043 §7): `CCMSG_HTTP_ALLOW_ORIGIN`, then the
+   * tailscale serve auto-allow, then `allowed-origins.json`, each an http(s)
+   * origin of a host other than this machine's loopback, each once. The
+   * webui offers them as the endpoints to move to; the first is `webui_url`. */
+  webui_urls: v.optional(v.array(v.string())),
   /** The daemon's current view of the host link, which decides whether a
    * recovery can wake sessions stopped on an API error: `"off"` when no
    * network watch is running, `"unknown"` before its first probe settles,
