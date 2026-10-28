@@ -3,7 +3,7 @@ title: webui の session_status の購読が読み込み直後の subscribe ×2 
 status: open
 category: bug
 created: 2026-10-26T18:04:59+09:00
-last_read:
+last_read: 2026-10-28T09:14:00+09:00
 open_entered: 2026-10-26T18:04:59+09:00
 wip_entered:
 blocked_entered:
