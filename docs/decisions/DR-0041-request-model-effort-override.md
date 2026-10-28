@@ -197,6 +197,7 @@ low
 
 - 上書きは engine の状態を変えないので、ccmsg の外 (端末の `/model`、Claude Code の status line) からは見えない。人が端末で `/model` を打つと、その切替は元の値を変え、通しの設定されていない field はそれに従う。設定された field は上書きが勝つ
 - 上書きを知らない (古い) module は `request.override` に答えない (`unconfirmed`)。facts に `request_override` が無いので、webui には変更のイベントが来ず、状態行に印も付かない。セッションを再起動すると新しい module が載る
+- Claude Code 2.1.312 では、セッションで最初に tool を使う turn の中の tool_result を運ぶ request に、`turn.step` の hook が返した effort が効かず、その turn の前の request の値で送られる (2 回目以降の turn では効く。[findings 2026-10-28-dr-0041-ui-verify](../findings/2026-10-28-dr-0041-ui-verify.md))。その turn の途中で通しを変えたり 🏛️ で外したりしても、その request は前の値のままになる。hook の返り値では直せないので、ccmsg 側では手当てしていない
 - FAB で単発を選んで送ったが文が turn を始めなかった時 (`/compact` のような組み込みの command 等) は、単発は次に始まる turn に結び付く
 - model の `[1m]` は元の request の `e.model` に従う。`haiku[1m]` も request の `anthropic-beta` に `context-1m-…` が付いた (代役の API で確認)。1M の context を持たない model に付いた時に本物の API がどう答えるかは確かめていない
 - prompt cache は model ごとなので、model の上書きを付け外しすると、その request で cache が効かなくなり、会話の全体を読み直す分だけ高くつく。このため model の切替は滅多に使わない操作とし、UI では effort を先に置き、FAB には model を置かない (裁定 10、13)。effort は cache を切らないので気軽に変えてよい
