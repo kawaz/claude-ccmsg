@@ -1,4 +1,4 @@
-// The × beside the Timeline's 応答中 (DR-0044 §4): offered only while the
+// The 中断 button beside the Timeline's 応答中 (DR-0044 §4): offered only while the
 // main loop answers a turn, it asks turn_abort once, stays disabled until the
 // reply, and says what came of it in this tab alone.
 import { afterEach, describe, expect, jest, test } from "bun:test";
@@ -70,18 +70,21 @@ async function mount(since: string | null): Promise<Mounted> {
 
 function abortButton(root: HTMLElement): HTMLButtonElement | null {
   const found = root.querySelector(".tl-turn-abort");
-  return found === null ? null : instanceOf(found, HTMLButtonElement, "the × button");
+  return found === null ? null : instanceOf(found, HTMLButtonElement, "the 中断 button");
 }
 
 function resultText(root: HTMLElement): string {
   return [...root.querySelectorAll(".tl-turn-abort-result")].map((e) => e.textContent).join("|");
 }
 
-describe("the 応答中 row's ×", () => {
+describe("the 応答中 row's 中断 button", () => {
   test("beside 応答中 while a turn runs, and nowhere when none does", async () => {
     const running = await mount(SINCE);
     const button = abortButton(running.root);
-    expect(button?.getAttribute("aria-label")).toBe("応答を中断");
+    // A text label, not an icon: what it says is its accessible name.
+    expect(button?.textContent).toBe("中断");
+    expect(button?.hasAttribute("aria-label")).toBe(false);
+    expect(button?.getAttribute("title")).toBe("応答を中断");
     expect(button?.closest(".tl-turn-responding")?.textContent).toContain("応答中");
     expect(button?.disabled).toBe(false);
     const idle = await mount(null);
@@ -99,7 +102,7 @@ describe("the 応答中 row's ×", () => {
     expect(resultText(m.root)).toBe("");
   });
 
-  // The row and its × go with the turn's end (the module's facts); the line
+  // The row and its button go with the turn's end (the module's facts); the line
   // that says the press worked stays a while longer, then goes.
   test("stopped: 中断しました, which outlives the row and then goes", async () => {
     jest.useFakeTimers();
@@ -117,7 +120,7 @@ describe("the 応答中 row's ×", () => {
     expect(resultText(m.root)).toBe("");
   });
 
-  test("not stopped: what the error says, and the × can be pressed again", async () => {
+  test("not stopped: what the error says, and the button can be pressed again", async () => {
     const m = await mount(SINCE);
     await act(() => abortButton(m.root)?.click());
     await m.answer({ ok: false, error: { code: "abort_failed", msg: "no answer within 5s" } });

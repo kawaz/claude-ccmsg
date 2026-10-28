@@ -273,8 +273,8 @@ export function SayBubble({
  * said the moment the turn started (DR-0035 §3). It sits at the end of the
  * Timeline, where the answer will land: the transcript writes an answer's row
  * only once the answer is done, so without this nothing there would show the
- * turn running. `abort` is the × beside it that stops the turn (DR-0044 §4),
- * absent where there is none to offer. */
+ * turn running. `abort` is the 中断 button beside it that stops the turn
+ * (DR-0044 §4), absent where there is none to offer. */
 export function TurnRespondingRow({
   since,
   abort,
@@ -293,12 +293,11 @@ export function TurnRespondingRow({
         <button
           type="button"
           class="tl-turn-abort"
-          aria-label="応答を中断"
           title="応答を中断"
           disabled={abort.disabled}
           onClick={abort.onPress}
         >
-          ×
+          中断
         </button>
       ) : null}
     </div>

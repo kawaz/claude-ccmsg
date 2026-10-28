@@ -1,13 +1,13 @@
 # DR-0044: webui から走行中のセッションの main loop の turn を中断する (`turn_abort`)
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (protocol の op `turn_abort` と ErrorCode `no_module` / `no_turn` / `abort_failed`、サイドカーの依頼 `turn.abort`、daemon の `abortTurn`、module の関心 `turn-abort`、webui の `TurnResponding` の ×)。実機の確認は [findings 2026-10-28-turn-abort-verify](../findings/2026-10-28-turn-abort-verify.md)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (protocol の op `turn_abort` と ErrorCode `no_module` / `no_turn` / `abort_failed`、サイドカーの依頼 `turn.abort`、daemon の `abortTurn`、module の関心 `turn-abort`、webui の `TurnResponding` の `中断` ボタン)。実機の確認は [findings 2026-10-28-turn-abort-verify](../findings/2026-10-28-turn-abort-verify.md)
 - Date: 2026-10-28
 
 ## Context
 
 端末 (TUI) では Esc で走っている turn を止められる。webui から見ている時 (スマホ等で端末に行けない時) には、長い応答や tool の連鎖を止める手段が無い。あるのは Status タブの終了・再起動 ([DR-0028](./DR-0028-session-kill.md)) だけで、これはプロセスごと止める。turn を止めたいだけの時には過大で、background のプロセスとチームメートも一緒に止まる。
 
-kawaz 提案 (2026-10-28): TL の「応答中…12s」の横に × ボタンを置き、押すとそのセッションの走行中の turn を中断する (TUI の Esc 相当)。
+kawaz 提案 (2026-10-28): TL の「応答中…12s」の横にボタンを置き、押すとそのセッションの走行中の turn を中断する (TUI の Esc 相当)。ボタンはアイコン (×) でなく、文字ラベル `中断` のボタンにする (kawaz 2026-10-28 追加)。
 
 ### 読んで分かった前提
 
@@ -47,19 +47,19 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 ### 3. 中断の痕跡
 
 - `$.turn.abort` は中断マーカーを残さない。transcript に人の中断の行は出ず、model は次の request で中断されたことを知らない (続きを頼むなら人が prompt で伝える)。応答の途中で止めた時は、そこまでの文が `stop_reason` の無い assistant 行として transcript に残る
-- tool の実行中に止めると、走っていた Bash は止まらずに background の shell に移り、その tool_result は「Command running in background with ID: …」になる (TUI に「1 shell still running」)。TUI の Esc はその Bash を kill し、`[Request interrupted by user for tool use]` を残す。× は turn を止めるが、走っていた Bash を止めるのは Esc と違う (findings の比較)。移った shell はセッションの他の background の shell と同じく、人か model が止める
+- tool の実行中に止めると、走っていた Bash は止まらずに background の shell に移り、その tool_result は「Command running in background with ID: …」になる (TUI に「1 shell still running」)。TUI の Esc はその Bash を kill し、`[Request interrupted by user for tool use]` を残す。`中断` ボタンは turn を止めるが、走っていた Bash を止めるのは Esc と違う (findings の比較)。移った shell はセッションの他の background の shell と同じく、人か model が止める
 - `turn.complete` は `reason: 'aborted'` で来て、module の facts の `turn` は idle になる。webui の応答中の表示はこれで消える
 - 中断したことの記録は daemon も webui も持たない。webui は押したタブだけで「中断しました」を短く出し、保存しない (他のタブ・読み込み直しでは出ない)
 
 ### 4. webui
 
-- × は TL の末尾の「応答中…12s」の行の中、表示のすぐ横に置く。出るのはその行が出ている間 (module が main の turn を走らせていると言っている間) だけ。accessible name は「応答を中断」
-- 押したらその × を disabled にする。確認ダイアログは出さない (Esc と同じく、会話は続き、次の prompt で続けられる操作なので)
+- ボタンは文字ラベル `中断` (アイコンにしない) で、TL の末尾の「応答中…12s」の行の中、表示のすぐ横に置く。出るのはその行が出ている間 (module が main の turn を走らせていると言っている間) だけ。accessible name は見えているラベルのまま `中断`、hover の説明は「応答を中断」
+- 押したらその `中断` ボタンを disabled にする。確認ダイアログは出さない (Esc と同じく、会話は続き、次の prompt で続けられる操作なので)
 - 返事の後:
-  - `ok`: 応答中の行の位置に「中断しました」を 4 秒出す。応答中の行は module の `turn.complete` で facts が idle になった時に、× ごと消える
-  - error: code ごとの短い文を応答中の行の位置に出す (`no_turn` は「中断する応答がありませんでした (既に終わっていた)」、`no_module` は「このセッションには hooks module が無いので中断できません」、`session_not_found` は「セッションが見つかりません」、`abort_failed` と他の code は msg を添える)。次に × を押すか、別のセッションに移るまで出しておく
+  - `ok`: 応答中の行の位置に「中断しました」を 4 秒出す。応答中の行は module の `turn.complete` で facts が idle になった時に、`中断` ボタンごと消える
+  - error: code ごとの短い文を応答中の行の位置に出す (`no_turn` は「中断する応答がありませんでした (既に終わっていた)」、`no_module` は「このセッションには hooks module が無いので中断できません」、`session_not_found` は「セッションが見つかりません」、`abort_failed` と他の code は msg を添える)。次に `中断` ボタンを押すか、別のセッションに移るまで出しておく
 - 押したセッションの view を離れると、出していた結果も消える (保存しない)
-- module の無いセッションには応答中の行が出ないので × も出ない。`no_module` の文が出るのは、facts の responding が残ったまま run が消えた時などに限られる
+- module の無いセッションには応答中の行が出ないので `中断` ボタンも出ない。`no_module` の文が出るのは、facts の responding が残ったまま run が消えた時などに限られる
 
 ### 5. 対象外
 
@@ -86,9 +86,10 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 ## Consequences
 
 - protocol は op `turn_abort` が 1 つ、ErrorCode が 3 つ (`no_module`、`no_turn`、`abort_failed`)、サイドカーの依頼の op が 1 つ (`turn.abort`) 増える。module の `describe` の `ops` に `turn.abort` が並ぶ
-- この DR より前の plugin で起動したセッションの module は `turn.abort` を知らず、× を押すと 5 秒待って `abort_failed` (答えが無い) になる。plugin を上げて起動し直したセッションから効く
+- この DR より前の plugin で起動したセッションの module は `turn.abort` を知らず、`中断` ボタンを押すと 5 秒待って `abort_failed` (答えが無い) になる。plugin を上げて起動し直したセッションから効く
 - 人が webui から止めたことは会話にも transcript にも残らない。後から transcript を読む人やエージェントには、turn が途中で終わったことしか分からない
-- tool の実行中に × で止めると、その Bash は background で走り続ける (§3)。Esc と同じく kill されることを期待して押すと、止まったつもりの処理が残る
+- **制約: tool の実行中に止めると、turn は止まるが、走っていた Bash は kill されずに background の shell に移って走り続ける** (engine の `$.turn.abort` の振る舞い、§3)。TUI の Esc はその Bash を kill する。`中断` ボタンは turn を止める操作で、走っている処理を止める操作ではない
+- module から走っている tool のプロセスを止める `$` の口は無い。`$.process.run` / `$.process.spawn` が kill できるのは module が自分で起こした子だけで、`tool.call` の hook の `next.signal` は中断を知らせるだけで、`next(e)` の下で engine が走らせる tool の子には届かない
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `turn_abort` は `bad_request` で、module に何も送らない
   - module は subagent・teammate の `turn.start` の id で main の turnId を上書きせず、subagent の `turn.complete` で忘れない
@@ -97,7 +98,7 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
   - 生きている run が無い時、daemon は走っているセッションに `no_module`、そうでないセッションに `session_not_found` を返し、別の経路を試さない
   - 2 つの run のうち 1 つが `aborted` なら `ok`
   - module の答えが無い時は `no_turn` でなく `abort_failed`
-  - × は応答中の行がある時だけ出て、押すと `turn_abort` が 1 回だけ飛び、返事まで disabled
+  - `中断` ボタンは応答中の行がある時だけ出て、押すと `turn_abort` が 1 回だけ飛び、返事まで disabled
   - 「中断しました」は押したタブだけに出て、store に入らない
 
 ## 関連

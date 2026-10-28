@@ -1,6 +1,6 @@
 // The end of the session's Timeline while its main loop answers a turn: the
-// 応答中 row, with the × that stops the turn (DR-0044 §4), and what the press
-// came to.
+// 応答中 row, with the 中断 button that stops the turn (DR-0044 §4), and what
+// the press came to.
 import type { ErrorBody, ErrorResponse, TurnAbortResponse } from "@ccmsg/protocol";
 import { useEffect, useState } from "preact/hooks";
 import { TurnRespondingRow } from "../TimelineItem.tsx";
@@ -9,7 +9,7 @@ import { TurnRespondingRow } from "../TimelineItem.tsx";
  * end, so the line only has to say the press worked. */
 export const TURN_ABORTED_NOTICE_MS = 4_000;
 
-/** What the press of the × came to, for the turn (its start, `since`) it was
+/** What the press of 中断 came to, for the turn (its start, `since`) it was
  * pressed on. */
 type AbortState =
   | { kind: "idle" }
