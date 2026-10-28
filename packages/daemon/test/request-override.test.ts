@@ -15,6 +15,7 @@ import {
   userConn,
 } from "./helpers.ts";
 import {
+  namedFields,
   type RequestOverrideDeps,
   RequestOverrideStates,
   SessionOverrides,
@@ -38,6 +39,17 @@ describe("SessionOverrides", () => {
     // An override that comes to nothing is let go.
     expect(held.change(SID, { model: null, effort: null })).toEqual({});
     expect(held.has(SID)).toBe(false);
+  });
+});
+
+describe("namedFields", () => {
+  // DR-0041 §6.5: what the change names, a value or null, goes out of the
+  // one-shot override too; what it leaves out stays.
+  test("the fields a patch names, a value or null", () => {
+    expect(namedFields({})).toEqual([]);
+    expect(namedFields({ effort: null })).toEqual(["effort"]);
+    expect(namedFields({ model: "sonnet" })).toEqual(["model"]);
+    expect(namedFields({ model: null, effort: "low" })).toEqual(["model", "effort"]);
   });
 });
 

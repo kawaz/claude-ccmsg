@@ -1177,6 +1177,7 @@ var RequestOverrideSchema = object({
   model: optional(LaunchModelSchema),
   effort: optional(LaunchEffortSchema)
 });
+var RequestOverrideFieldSchema = picklist(["model", "effort"]);
 var RequestOverridePatchSchema = object({
   model: optional(nullable(LaunchModelSchema)),
   effort: optional(nullable(LaunchEffortSchema))
@@ -1273,12 +1274,13 @@ function without(override, changed) {
   };
   return overridesAnything(kept) ? kept : undefined;
 }
-function requestOverrideSet($, state, override) {
+function requestOverrideSet($, state, args) {
+  const { clear_once: named = [], ...override } = args;
   changeOverrides($, state, () => {
     const { session, once } = state.overrides;
     const changed = {
-      model: override.model !== session.model,
-      effort: override.effort !== session.effort
+      model: override.model !== session.model || named.includes("model"),
+      effort: override.effort !== session.effort || named.includes("effort")
     };
     const kept = once === undefined ? undefined : without(once.override, changed);
     state.overrides = {
@@ -1614,7 +1616,10 @@ var AgentAppendResultSchema = variant("outcome", [
   object({ outcome: literal("appended") }),
   object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
 ]);
-var RequestOverrideArgsSchema = RequestOverrideSchema;
+var RequestOverrideArgsSchema = object({
+  ...RequestOverrideSchema.entries,
+  clear_once: optional(array(RequestOverrideFieldSchema))
+});
 var RequestOverrideResultSchema = object({ outcome: literal("applied") });
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },

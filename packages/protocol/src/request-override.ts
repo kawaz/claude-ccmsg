@@ -19,6 +19,10 @@ export const RequestOverrideSchema = v.object({
 });
 export type RequestOverride = Output<typeof RequestOverrideSchema>;
 
+/** A field an override has. */
+export const RequestOverrideFieldSchema = v.picklist(["model", "effort"]);
+export type RequestOverrideField = Output<typeof RequestOverrideFieldSchema>;
+
 /** A change to an override, read as a JSON Merge Patch: a field absent keeps
  * it, `null` clears it, a value sets it. */
 export const RequestOverridePatchSchema = v.object({

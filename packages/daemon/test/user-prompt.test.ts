@@ -872,8 +872,10 @@ describe("request_override over the wire", () => {
         session_id: SID,
         model: "sonnet",
       });
+      // The change names the fields it changed (DR-0041 §6.5); the resend
+      // above names none.
       const changed = await nextRequest(first);
-      expect(changed.args).toEqual({ model: "sonnet", effort: "low" });
+      expect(changed.args).toEqual({ model: "sonnet", effort: "low", clear_once: ["model"] });
       await module.request(
         sidecarReply({ id: changed.id, ok: true, result: { outcome: "applied" } }),
       );
@@ -887,11 +889,20 @@ describe("request_override over the wire", () => {
         effort: null,
       });
       const clearing = await nextRequest(first);
-      expect(clearing.args).toEqual({});
+      expect(clearing.args).toEqual({ clear_once: ["model", "effort"] });
       await module.request(
         sidecarReply({ id: clearing.id, ok: true, result: { outcome: "applied" } }),
       );
       expect(await cleared).toEqual({ ok: true, delivery: "applied" });
+      // 🏛️: a field cleared where the session override has none still names
+      // it, so the module takes it out of the one-shot override.
+      const reset = user.request({ op: "request_override", session_id: SID, effort: null });
+      const resetting = await nextRequest(first);
+      expect(resetting.args).toEqual({ clear_once: ["effort"] });
+      await module.request(
+        sidecarReply({ id: resetting.id, ok: true, result: { outcome: "applied" } }),
+      );
+      expect(await reset).toEqual({ ok: true, delivery: "applied" });
       // A run named after the clear is handed nothing but the facts' ask.
       const second = await fakeSidecar(ctx, SID, "run2", "hy-2");
       sidecars.push(second);

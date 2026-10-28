@@ -11,7 +11,11 @@
 // parse.ts and request-override.ts.
 import * as v from "valibot";
 import { jsonText, type Parsed, parseWith, type Output } from "./parse.ts";
-import { RequestOverrideSchema, RequestOverrideStateSchema } from "./request-override.ts";
+import {
+  RequestOverrideFieldSchema,
+  RequestOverrideSchema,
+  RequestOverrideStateSchema,
+} from "./request-override.ts";
 
 /** The version of the request line. A module reads a line of this version
  * only. */
@@ -249,8 +253,16 @@ export type AgentAppendResult = Output<typeof AgentAppendResultSchema>;
 /** `request.override` (DR-0041 §3): the session override of the session's
  * main-thread requests, whole (`{}` is none). The daemon holds it and sends it
  * again to a run that names itself; the module updates the one-shot
- * override's fields it changes too. */
-export const RequestOverrideArgsSchema = RequestOverrideSchema;
+ * override's fields it changes too. `clear_once` names the fields a person's
+ * change named (DR-0041 §6.5): the module takes them out of the one-shot
+ * override as well, even where the session override's value stays, so a
+ * field cleared to the session's own value is that from the next request.
+ * Absent when the daemon sends the override again to a run that names
+ * itself. */
+export const RequestOverrideArgsSchema = v.object({
+  ...RequestOverrideSchema.entries,
+  clear_once: v.optional(v.array(RequestOverrideFieldSchema)),
+});
 export type RequestOverrideArgs = Output<typeof RequestOverrideArgsSchema>;
 
 export const RequestOverrideResultSchema = v.object({ outcome: v.literal("applied") });

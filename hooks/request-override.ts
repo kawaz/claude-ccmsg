@@ -1,6 +1,7 @@
 // What a person overrides the session's main-thread requests with from the
 // web UI (DR-0041): the session override, which the daemon hands over whole
-// (`request.override`), and the one-shot override that comes with a prompt
+// (`request.override`, with the fields the person's change named), and the
+// one-shot override that comes with a prompt
 // (`prompt.send`). Each main-thread request is
 // sent with `one-shot ?? session ?? its own` (turn.step). A subagent's
 // request goes as it came: a subagent is started with the model and the
@@ -29,7 +30,7 @@ import {
   overridesAnything,
   type RequestOverride,
 } from "@ccmsg/protocol/request-override";
-import type { RequestOverrideResult } from "@ccmsg/protocol/sidecar";
+import type { RequestOverrideArgs, RequestOverrideResult } from "@ccmsg/protocol/sidecar";
 import type { Engine } from "./engine.ts";
 import { type FactsState, requestOverrideState, sendFacts } from "./facts.ts";
 import { type PromptSendState, PromptSubmitInputSchema, samePrompt } from "./prompt-send.ts";
@@ -69,18 +70,22 @@ function without(
 }
 
 /** `request.override`: the daemon's session override, whole, from the next
- * request on. The fields it changes are taken out of the one-shot override,
- * which would otherwise win the rest of the turn over the change. */
+ * request on. The fields it changes, and the fields the person's change named
+ * (`clear_once`), are taken out of the one-shot override, which would
+ * otherwise win the rest of the turn over the change: a field cleared to the
+ * session's own value leaves the session override as it was, but is the
+ * session's own from the next request. */
 export function requestOverrideSet(
   $: Engine,
   state: FactsState,
-  override: RequestOverride,
+  args: RequestOverrideArgs,
 ): RequestOverrideResult {
+  const { clear_once: named = [], ...override } = args;
   changeOverrides($, state, () => {
     const { session, once } = state.overrides;
     const changed = {
-      model: override.model !== session.model,
-      effort: override.effort !== session.effort,
+      model: override.model !== session.model || named.includes("model"),
+      effort: override.effort !== session.effort || named.includes("effort"),
     };
     const kept = once === undefined ? undefined : without(once.override, changed);
     state.overrides = {

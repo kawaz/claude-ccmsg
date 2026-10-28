@@ -4,9 +4,10 @@
 // A person changes the session override with request_override. The daemon
 // holds it (the fields a person set) and hands it, whole, to the hooks module
 // of every live run of the session as a `request.override` request: when it
-// changes, and again when a run names itself (a module started again, or a
-// run the daemon did not know of); it goes only when the person clears it, or
-// with the daemon. The one-shot override comes with a prompt (user_prompt,
+// changes (with the fields the change named, which the module takes out of
+// the one-shot override too), and again when a run names itself (a module
+// started again, or a run the daemon did not know of); it goes only when the
+// person clears it, or with the daemon. The one-shot override comes with a prompt (user_prompt,
 // user-prompt.ts) and is the module's to hold.
 //
 // What the overrides put on the requests is the module's to say: it sends it
@@ -17,7 +18,9 @@
 import {
   patchOverride,
   type RequestOverride,
+  type RequestOverrideArgs,
   type RequestOverrideDelivery,
+  type RequestOverrideField,
   type RequestOverridePatch,
   type RequestOverrideState,
   type RequestOverrideTarget,
@@ -87,6 +90,13 @@ export class RequestOverrideStates {
   }
 }
 
+/** The fields `patch` names, a value or `null` (DR-0041 §6.5): what a
+ * person's change takes out of the one-shot override too. */
+export function namedFields(patch: RequestOverridePatch): RequestOverrideField[] {
+  const fields: RequestOverrideField[] = ["model", "effort"];
+  return fields.filter((field) => patch[field] !== undefined);
+}
+
 function sameValues(a: RequestValues, b: RequestValues): boolean {
   return a.model === b.model && a.effort === b.effort;
 }
@@ -106,27 +116,21 @@ export interface RequestOverrideTry {
   result: "unwritten" | "write_uncertain" | "applied" | "unconfirmed";
 }
 
-/** Hand the session override `override` to the hooks module behind each of
- * `runs` (runs of `sid`), all at once: a run applying it twice changes nothing, so unlike a prompt
- * there is nothing to keep from going in twice. `applied` when one module
- * applied it, `no_module` when there was no run to write to (or none took the
- * line), `unconfirmed` otherwise. */
+/** Hand the session override in `args` (with the fields a person's change
+ * named, for a change) to the hooks module behind each of `runs` (runs of
+ * `sid`), all at once: a run applying it twice changes nothing, so unlike a
+ * prompt there is nothing to keep from going in twice. `applied` when one
+ * module applied it, `no_module` when there was no run to write to (or none
+ * took the line), `unconfirmed` otherwise. */
 export async function sendRequestOverride(
   sid: string,
-  override: RequestOverride,
+  args: RequestOverrideArgs,
   runs: readonly SidecarRun[],
   deps: RequestOverrideDeps,
 ): Promise<{ delivery: RequestOverrideDelivery; tries: RequestOverrideTry[] }> {
   const tries = await Promise.all(
     runs.map(async ({ socket }): Promise<RequestOverrideTry> => {
-      const call = await callSidecar(
-        socket,
-        sid,
-        "request.override",
-        override,
-        deps.deadlineMs,
-        deps,
-      );
+      const call = await callSidecar(socket, sid, "request.override", args, deps.deadlineMs, deps);
       const { id } = call;
       if (call.write === "not_written") return { id, socket, result: "unwritten" };
       if (call.reply?.ok === true && call.reply.value.ok) return { id, socket, result: "applied" };

@@ -1885,6 +1885,42 @@ describe("the overrides of the session's requests", () => {
     });
   });
 
+  // DR-0041 §6.5 (🏛️): the fields a person's change named go out of the
+  // one-shot override too, even where the session override has none to
+  // change; the fields it did not name stay.
+  test("a field the change names goes out of the one-shot override, the session override's or not", async () => {
+    const { fake, state } = await started();
+    await stepSent(fake, MAIN);
+    await fire(fake, "turn.start", turn(), async () => ({}));
+    await prompt(fake, state, "x", { model: "haiku", effort: "max" });
+    expect(await sentWith(fake, MAIN)).toMatchObject({
+      value: { model: "haiku[1m]", effort: "max" },
+    });
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === "max");
+    // No session override: the session's own effort, from the next request.
+    await session(fake, { clear_once: ["effort"] });
+    expect(await sentWith(fake, { ...MAIN, index: 1 })).toMatchObject({
+      value: { model: "haiku[1m]", effort: "high" },
+    });
+    await untilLastFacts(fake, (f) => f.request_override?.once.effort === null);
+    expect(values(fake)).toEqual({
+      session: { model: "claude-opus-5-5[1m]", effort: "high" },
+      once: { model: "haiku", effort: null },
+    });
+    // A session override that stays as it was, named: out of the one-shot.
+    await session(fake, { effort: "low" });
+    await prompt(fake, state, "y", { model: "haiku", effort: "max" });
+    await session(fake, { effort: "low", clear_once: ["effort"] });
+    expect(await sentWith(fake, { ...MAIN, index: 2 })).toMatchObject({
+      value: { model: "haiku[1m]", effort: "low" },
+    });
+    // Both fields named: the request goes as it came.
+    await session(fake, { clear_once: ["model", "effort"] });
+    expect(await stepSent(fake, { ...MAIN, index: 3 })).toEqual({ ...MAIN, index: 3 });
+    await untilLastFacts(fake, (f) => f.request_override?.once.model === null);
+    expect(values(fake)?.once).toEqual({ model: null, effort: null });
+  });
+
   test("a dropped submit takes its one-shot override back; a prompt without one arms nothing", async () => {
     const fake = fakeEngine({
       onEnter: async (f) => {

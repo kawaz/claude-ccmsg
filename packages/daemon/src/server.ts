@@ -144,6 +144,7 @@ import {
 import { type AgentRow, type SidecarRun, SidecarRuns } from "./sidecar-runs.ts";
 import { SessionFactsStore } from "./session-facts.ts";
 import {
+  namedFields,
   productionRequestOverrideDeps,
   RequestOverrideStates,
   SessionOverrides,
@@ -2317,20 +2318,25 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       const sid = req.session_id;
-      const override = daemon.sessionOverrides.change(sid, {
+      const patch = {
         ...(req.model !== undefined ? { model: req.model } : {}),
         ...(req.effort !== undefined ? { effort: req.effort } : {}),
-      });
+      };
+      const override = daemon.sessionOverrides.change(sid, patch);
+      // The fields the change named go out of the one-shot override too
+      // (DR-0041 §6.5): `null` returns a field to the session's own value.
+      const named = namedFields(patch);
+      const args = { ...override, ...(named.length > 0 ? { clear_once: named } : {}) };
       // Slow reply: it waits for the modules' replies, up to
       // REQUEST_OVERRIDE_DEADLINE_MS (DR-0029).
       const { delivery, tries } = await sendRequestOverride(
         sid,
-        override,
+        args,
         daemon.sidecarRuns.liveOf(sid),
         productionRequestOverrideDeps(productionSidecarDeps(daemon.sidecarReplies)),
       );
       daemon.log.info(
-        `request-override -> ${sid}: ${JSON.stringify(override)} ${delivery}` +
+        `request-override -> ${sid}: ${JSON.stringify(args)} ${delivery}` +
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );
       send(conn, { ok: true, delivery });

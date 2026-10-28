@@ -239,13 +239,26 @@ describe("the ops' results", () => {
     );
   });
 
-  // DR-0041 §3: the session override, whole; {} is none.
+  // DR-0041 §3: the session override, whole; {} is none. §6.5: with the
+  // fields the person's change named, which go out of the one-shot override.
   test("request.override: the session override whole, applied", () => {
-    for (const args of [{}, { model: "sonnet" }, { model: "fable", effort: "max" }] as const) {
+    for (const args of [
+      {},
+      { model: "sonnet" },
+      { model: "fable", effort: "max" },
+      { clear_once: ["effort"] },
+      { model: "sonnet", clear_once: ["model", "effort"] },
+    ] as const) {
       const request = { v: 1, op: "request.override", id: "o", args } as const;
       expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
     }
-    for (const args of [{ effort: "minimal" }, { model: "claude-opus-5-5" }, { model: null }]) {
+    for (const args of [
+      { effort: "minimal" },
+      { model: "claude-opus-5-5" },
+      { model: null },
+      { clear_once: ["context"] },
+      { clear_once: "effort" },
+    ]) {
       expect(readSidecarRequest(line({ v: 1, op: "request.override", id: "o", args })).ok).toBe(
         false,
       );
