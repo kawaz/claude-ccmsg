@@ -178,6 +178,12 @@ async function settledNow(promise: Promise<unknown>): Promise<boolean> {
   return settled;
 }
 
+/** Run every promise job already queued, so a request whose turn has come
+ * is written before the test looks at the wire. */
+async function flush(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 let instances: MockWebSocket[] = [];
 let storage: Record<string, string> = {};
 
@@ -509,6 +515,9 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptUnsubscribe("sess-1");
+    // An unsubscribe waits out the promise jobs already queued, so a
+    // subscribe of the same sid in the same commit can take its place.
+    await flush();
     expect(sentBody(ws1, "transcript_unsubscribe")).toEqual({
       op: "transcript_unsubscribe",
       sid: "sess-1",
@@ -1602,12 +1611,6 @@ describe("createWsClient session_status push (DR-0020)", () => {
 describe("createWsClient session_status subscription order", () => {
   const SID = "sess-1";
 
-  /** Run every promise job already queued, so a request whose turn has come
-   * is written before the test looks at the wire. */
-  async function flush(): Promise<void> {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-
   function openClient(): { handle: ReturnType<typeof createWsClient>; ws: MockWebSocket } {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
@@ -1725,6 +1728,61 @@ describe("createWsClient session_status subscription order", () => {
     expect(opsSent(ws2)).toEqual(["session_status_subscribe"]);
     answerSubscribe(ws2);
     expect((await again).ok).toBe(true);
+  });
+});
+
+// The live tail has the same per-connection set on the daemon, and Timeline's
+// tail effect undoes its subscribe on leaving the view: leaving and coming
+// back before the first subscribe is answered used to write subscribe,
+// subscribe, unsubscribe, and the view stopped receiving ev:"transcript".
+describe("createWsClient transcript subscription order", () => {
+  const SID = "sess-1";
+
+  function openClient(): { handle: ReturnType<typeof createWsClient>; ws: MockWebSocket } {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws = defined(instances.at(-1), "the socket");
+    ws.readyState = MockWebSocket.OPEN;
+    return { handle, ws };
+  }
+
+  test("a subscribe of a sid with nothing in flight is written at once", () => {
+    const { handle, ws } = openClient();
+    void handle.transcriptSubscribe(SID);
+    expect(opsSent(ws)).toEqual(["transcript_subscribe"]);
+  });
+
+  test("leaving and coming back before the subscribe is answered writes no unsubscribe", async () => {
+    const { handle, ws } = openClient();
+    void handle.transcriptSubscribe(SID);
+    const left = handle.transcriptUnsubscribe(SID);
+    await flush();
+    const back = handle.transcriptSubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["transcript_subscribe"]);
+
+    ws.replyTo("transcript_subscribe", { ok: true, sid: SID, size: 10 });
+    await flush();
+    expect(opsSent(ws)).toEqual(["transcript_subscribe", "transcript_subscribe"]);
+    expect(await left).toEqual({ ok: true, sid: SID });
+
+    ws.replyTo("transcript_subscribe", { ok: true, sid: SID, size: 10 });
+    expect((await back).ok).toBe(true);
+    await flush();
+    expect(opsSent(ws)).toEqual(["transcript_subscribe", "transcript_subscribe"]);
+  });
+
+  test("leaving after the subscribe is answered writes the unsubscribe", async () => {
+    const { handle, ws } = openClient();
+    void handle.transcriptSubscribe(SID);
+    ws.replyTo("transcript_subscribe", { ok: true, sid: SID, size: 10 });
+    await flush();
+    const left = handle.transcriptUnsubscribe(SID);
+    await flush();
+    expect(opsSent(ws)).toEqual(["transcript_subscribe", "transcript_unsubscribe"]);
+    ws.replyTo("transcript_unsubscribe", { ok: true, sid: SID });
+    expect(await left).toEqual({ ok: true, sid: SID });
   });
 });
 

@@ -247,7 +247,8 @@ export interface WsHandle {
   /** Follow a connected session's transcript live (DR-0009 live-tail
    * addendum): appended complete lines arrive as `ev:"transcript"` pushes
    * (handled in onMessage below, folded into store as `timeline/tail`) until
-   * transcriptUnsubscribe or disconnect. */
+   * transcriptUnsubscribe or disconnect. Ordered per sid like
+   * sessionStatusSubscribe below. */
   transcriptSubscribe(sid: string): Promise<ReplyOf<"transcript_subscribe">>;
   transcriptUnsubscribe(sid: string): Promise<ReplyOf<"transcript_unsubscribe">>;
   /** One-shot fetch of a connected session's folded status snapshot (DR-0020
@@ -952,6 +953,14 @@ export function createWsClient(
     }
   }
 
+  const transcriptSubscriptions = orderSubscriptions<
+    ReplyOf<"transcript_subscribe">,
+    ReplyOf<"transcript_unsubscribe">
+  >({
+    subscribe: (sid) => send({ op: "transcript_subscribe", sid }),
+    unsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
+    superseded: (sid) => ({ ok: true, sid }),
+  });
   const sessionStatusSubscriptions = orderSubscriptions<
     ReplyOf<"session_status_subscribe">,
     ReplyOf<"session_status_unsubscribe">
@@ -1020,8 +1029,8 @@ export function createWsClient(
         ...(opts?.run_id !== undefined ? { run_id: opts.run_id } : {}),
         ...(opts?.teammate !== undefined ? { teammate: opts.teammate } : {}),
       }),
-    transcriptSubscribe: (sid) => send({ op: "transcript_subscribe", sid }),
-    transcriptUnsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
+    transcriptSubscribe: (sid) => transcriptSubscriptions.subscribe(sid),
+    transcriptUnsubscribe: (sid) => transcriptSubscriptions.unsubscribe(sid),
     sessionStatus: (sid) => send({ op: "session_status", sid }),
     sessionStatusSubscribe: (sid) => sessionStatusSubscriptions.subscribe(sid),
     sessionStatusUnsubscribe: (sid) => sessionStatusSubscriptions.unsubscribe(sid),

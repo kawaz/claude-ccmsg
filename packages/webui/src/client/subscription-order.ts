@@ -1,10 +1,11 @@
 // The order one connection's subscribe / unsubscribe of a per-sid stream go out
-// in (session_status_subscribe / _unsubscribe).
+// in (transcript_subscribe / _unsubscribe, session_status_subscribe /
+// _unsubscribe).
 //
 // The daemon keeps such a subscription per connection as a set: a subscribe
 // of a sid the connection already follows changes nothing (beyond re-checking
-// what the fold is built from), and an unsubscribe drops the sid whoever on
-// this connection asked for it. It also answers a connection's requests
+// what a status fold is built from), and an unsubscribe drops the sid whoever
+// on this connection asked for it. It also answers a connection's requests
 // concurrently, so two of these in flight for the same sid can be acted on in
 // either order. What the connection ends up following is therefore decided by
 // the order the requests are acted on, and only this client sees every caller
@@ -13,12 +14,15 @@
 //
 // - a request for a sid is written only once the previous one for that sid has
 //   been answered (or failed), so the daemon acts on them in the order they
-//   were made;
-// - an unsubscribe still waiting for its turn when a subscribe of the same sid
-//   is made is never written. Unsubscribe-then-subscribe leaves the connection
-//   following the sid, which the subscribe alone also does — and writing both
-//   would make the daemon drop the fold when its last subscriber left and
-//   rebuild it by scanning the whole transcript again.
+//   were made. A subscribe of a sid with nothing in flight is written at once;
+// - an unsubscribe is written no earlier than after the promise jobs already
+//   queued, and one still waiting for its turn when a subscribe of the same
+//   sid is made is never written. Unsubscribe-then-subscribe leaves the
+//   connection following the sid, which the subscribe alone also does — and
+//   writing both would make the daemon drop the stream when its last
+//   subscriber left and set it up again (for a status fold, by scanning the
+//   whole transcript). The wait is what lets a Preact effect's cleanup and its
+//   re-run, which happen in one commit, collapse into the re-run's subscribe.
 
 /** The two requests of one per-sid subscription, as sent on the wire. */
 export interface SubscriptionRequests<Sub, Unsub> {
@@ -45,10 +49,11 @@ export function orderSubscriptions<Sub, Unsub>(
     /** The unsubscribe that has not been written yet, if any. */
     waiting: Waiting | null;
   }
+  /** Only the sids with a request made and not yet settled. */
   const bySid = new Map<string, SidOrder>();
 
-  function enqueue<T>(sid: string, order: SidOrder, run: () => Promise<T>): Promise<T> {
-    const result = order.last.then(run);
+  /** Track `result` as the sid's latest request. */
+  function track<T>(sid: string, order: SidOrder, result: Promise<T>): Promise<T> {
     const settled = result.then(
       () => {},
       () => {},
@@ -70,22 +75,31 @@ export function orderSubscriptions<Sub, Unsub>(
 
   return {
     subscribe(sid) {
-      const order = orderOf(sid);
-      if (order.waiting) {
-        order.waiting.superseded = true;
-        order.waiting = null;
+      const known = bySid.get(sid);
+      if (!known) return track(sid, orderOf(sid), requests.subscribe(sid));
+      if (known.waiting) {
+        known.waiting.superseded = true;
+        known.waiting = null;
       }
-      return enqueue(sid, order, () => requests.subscribe(sid));
+      return track(
+        sid,
+        known,
+        known.last.then(() => requests.subscribe(sid)),
+      );
     },
     unsubscribe(sid) {
       const order = orderOf(sid);
       const waiting: Waiting = { superseded: false };
       order.waiting = waiting;
-      return enqueue(sid, order, () => {
-        if (waiting.superseded) return Promise.resolve(requests.superseded(sid));
-        if (order.waiting === waiting) order.waiting = null;
-        return requests.unsubscribe(sid);
-      });
+      return track(
+        sid,
+        order,
+        order.last.then(() => {
+          if (waiting.superseded) return requests.superseded(sid);
+          if (order.waiting === waiting) order.waiting = null;
+          return requests.unsubscribe(sid);
+        }),
+      );
     },
   };
 }

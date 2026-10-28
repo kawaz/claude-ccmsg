@@ -70,7 +70,29 @@ SessionView の後始末は subscribe の Promise を待たず unsubscribe を�
 | `/` から同じセッションの Timeline へ戻る | `transcript_subscribe`、`session_status_subscribe` | 1 |
 | Status タブを開いて追記 | (なし) | 1、サイドバーのバッジが `todo:0/56` → `todo:0/57` に変わった |
 
+## Timeline の live tail (transcript_subscribe) の同じ欠陥
+
+`useLiveTailSubscription.ts` の effect も後始末の unsubscribe を `subscribed.then(...)` で遅らせていた。daemon は transcript の購読者も接続の集合で持つ (`watch.subscribers`)。この effect の deps (active / sid / connStatus / agentActive) は、1 回の変化では「前も後も購読する」状態にならない。そのため欠陥が出るのは、1 回目の subscribe の応答が来る前に購読を外す状態へ行き、また戻った場合になる。
+
+再現は、中継で daemon の transcript_subscribe の応答を 1500 ms 保留して起こした。Timeline を読み込み、1 回目の transcript_subscribe が書かれたら SPA 内で `/` へ移る。100 ms 後に同じ Timeline へ戻り、jsonl に追記して 4 秒間 app の接続を見る。ピン留めは無し。
+
+| | 回 | app の送信列 (transcript) | 追記後の `ev:"transcript"` |
+|---|---|---|---|
+| 修正前 | 1 | subscribe q5 → subscribe q13 → unsubscribe q16 | 0 |
+| 修正前 | 2 | subscribe q6 → subscribe q13 → unsubscribe q16 | 0 |
+| 修正前 | 3 | subscribe q5 → subscribe q13 → unsubscribe q16 | 0 |
+| 修正前 | 4 | subscribe q8 → subscribe q13 → unsubscribe q16 | 0 |
+| 修正後 | 1 | subscribe q5 → subscribe q15 | 1 |
+| 修正後 | 2 | subscribe q8 → subscribe q15 | 1 |
+| 修正後 | 3 | subscribe q7 → subscribe q15 | 1 |
+| 修正後 | 4 | subscribe q6 → subscribe q15 | 1 |
+
+- transcript_subscribe は daemon で IO を待たないので、修正前は 4 回とも切れた。この場合、張り直しの subscribe は unsubscribe が届く前に処理されている
+- 修正後は、張り直しの subscribe が 1 回目の応答を待ってから書かれ、後始末の unsubscribe は書かれない
+- 修正では、何も要求が出ていない sid の subscribe は待たずにその場で書くようにした。session_status の上の手順もこの形で取り直し、4 回とも「subscribe → subscribe」で push が届いた
+- 修正後も、セッションの view から `/` へ移ると transcript_unsubscribe と session_status_unsubscribe が書かれ、追記しても両方の push は来なかった。戻ると両方の subscribe が書かれ、両方届いた
+
 ## この記録で確かめていないこと
 
 - issue の元の観測の契機 (恐らく agents の行が peers より先に届く場合)。隔離 daemon には agents の行が無いので、ピン留めと peers の遅延で同じ effect の経路 (`statusSource` が null から文字列に変わる張り直し) を作った
-- Timeline の live tail (`useLiveTailSubscription.ts` の transcript_subscribe) も後始末を `subscribed.then(...)` で遅らせており、deps (`agentActive` 等) の変化で同じ sid に張り直すと同じ送信順になる。daemon の transcript の購読者も接続の集合で持つ。この記録の範囲外で、実機での再現はしていない
+- live tail の欠陥が保留の無い実環境でどれだけ起きるか。daemon の応答は loopback では数 ms で返るので、離れて戻る操作がその間に収まる必要がある

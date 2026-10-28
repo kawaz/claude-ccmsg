@@ -33,13 +33,12 @@ export function useLiveTailSubscription({
   useEffect(() => {
     if (!active || agentActive) return;
     if (connStatus !== "connected") return;
-    // Wait for the subscribe before undoing it: the daemon runs this
-    // connection's requests concurrently, so an unsubscribe sent while the
-    // subscribe is still in flight could be answered first and leave the tail
-    // watch installed with nobody reading it.
-    const subscribed = ws.transcriptSubscribe(sid).catch(() => {});
+    // ws.ts orders the two per sid: the cleanup's unsubscribe goes out after
+    // this subscribe is answered, and a re-entry before then replaces it with
+    // the new run's subscribe instead of following it.
+    void ws.transcriptSubscribe(sid).catch(() => {});
     return () => {
-      void subscribed.then(() => ws.transcriptUnsubscribe(sid).catch(() => {}));
+      void ws.transcriptUnsubscribe(sid).catch(() => {});
     };
   }, [active, sid, connStatus, agentActive, ws]);
 
