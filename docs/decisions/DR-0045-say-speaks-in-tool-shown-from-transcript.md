@@ -44,27 +44,42 @@ kawaz 2026-10-28 の裁定:
 - 送りが届かない (`no_daemon` / `outdated` / `unanswered`) 時は、その行を捨てて debug log に 1 行書く。module は再送しない。抜けた行は、daemon が次の初期登録の追いつき (§3) で拾う
 - subagent / teammate の行 (`agentId` 付き) も送る。daemon は `agentId` で main の行と分けて扱う
 
-**未検証で、段階 1 の最初に実機で確かめること**:
-- transcript の jsonl に書かれる行の全種 (assistant の content block ごとの行、tool_result、attachment、system、summary、queue-operation 等) が `session.append` を通るか
-- `e.message` は jsonl の行と同じ形か
-- 行の書き込みと `session.append` はどちらが先か
-- compaction の前後の行はどう流れるか
+**観測 (段階 0、[findings](../findings/2026-10-28-session-append-vs-jsonl.md)、Claude Code 2.1.312、`claude -p`)**:
+- uuid を持つ jsonl の行は、全種が append で来る。user、assistant、attachment の各種、`system` の compact_boundary、subagent の行 (`agentId` 付き) のすべて
+- uuid を持たない行は来ない。`queue-operation`、`api-request*`、`atis-latch`、`tools-used`、`last-prompt`、`cost-state`、`mode`
+- jsonl に行の無い append がある: `door: "queue"` の user。compaction の後には、残した行が同じ uuid でもう一度来る
+- `e.message` は jsonl の行ではない。API の message の形 (`{ type, role?, name?, content }`) で、次が含まれない:
+  - timestamp
+  - `parentUuid` / `isMeta` / `promptSource` / `origin`
+  - assistant の `usage` / `model`
+  - tool_result の `toolUseResult`
+  - attachment の構造 (`e` は描画された文だけ)
+- assistant と tool_result の `content` は jsonl と同じ
+- append の順は、jsonl の行の順と同じ (main と各 subagent のそれぞれで)
+- append の時点 (`next(e)` の後も) では jsonl にまだ行が無い。書き込みは 20〜200 ms 後
 
-jsonl の行と一致しない種がある場合の扱いはこの観測で決める。決め方は下の (a)〜(c) のどれかで、この DR を改める:
-- (a) daemon が行の形に直す
-- (b) 一致する種だけを push の正本にする
-- (c) push を合図に jsonl の続きを読む
+**決め方**: 用途ごとに源を分ける。(a)〜(c) は次のとおり:
+- (a) daemon が `e.message` を行の形に直す: attachment の構造・usage・timestamp が `e` に無いので、直せない
+- (b) push の `e.message` を正本にする: 副作用 (§6) と既読 (§7) はこれで足りる。必要なのは tool_use の `id` / `name` / `input` で、jsonl と同じものが来る
+- (c) push を合図に jsonl の続きを読む: 中継 (§4) と fold (§5) は jsonl の行が要るので、これを採る
+
+推しは、副作用と既読を (b)、中継と fold を (c) にする分け方。用途ごとに要るものが違い、互いに独立している。(c) の実装:
+- daemon はセッションごとに jsonl の読み終わりの位置を持つ。push が来たら、そこから続きを読む
+- 行は append より後に書かれるので、push で受けた uuid の行がまだファイルに無ければ、その間だけそのファイルの変更を待って読み直す (待つ uuid が無くなれば待ちをやめる。常時の Watch は持たない)
+- 読んだ行を uuid で重ねて §4・§5 に流す。`door: "queue"` の append と、uuid の重なる二度目の append は読みの対象にしない
+
+対話のセッションでの同じ突き合わせ (人の入力、queue された prompt、peer の封筒の行) は未観測で、段階 1 の最初に確かめる
 
 ### 3. 正本と追いつき
 
 - daemon は、module の初期登録 (サイドカーの `sidecar_hello` で run が名乗った時) に、そのセッションの jsonl を頭から 1 回読んで追いつく。以後はそのセッションの行の正本を push とする
-- 重複は行の `uuid` で除く。追いつきの読みと push は重なりうる (読み始めた後に書かれた行が両方から来る)。uuid を持たない種の行の扱いは、§2 の観測で決める
-- daemon は会話の全文をメモリに持たない。受けた行は、その場で §5 の fold と §6・§7 に通し、§4 の中継に流す。持つのは各 fold の状態と、重複を除くための uuid の集合 (ライブのセッションの分) だけ
+- 重複は行の `uuid` で除く。追いつきの読みと push は重なりうる (読み始めた後に書かれた行が両方から来る)。compaction の後には同じ uuid の append がもう一度来る (§2)。uuid を持たない行は push で来ない。中継と fold が要る分 (今の fold は `queue-operation` 等を読まない) は、§2 の (c) の読みで jsonl から得る
+- daemon は会話の全文をメモリに持たない。push の `e.message` は §6・§7 に通し、§2 の (c) で読んだ jsonl の行は §5 の fold に通して §4 の中継に流す。持つのは各 fold の状態と、重複を除くための uuid の集合 (ライブのセッションの分) だけ
 - 閉じたセッション (module の run が去った) の uuid の集合と fold は捨てる。履歴は `transcript_read` がファイルから読む
 
 ### 4. webui への中継
 
-- `ev:"transcript"` の形 (`{ ev, sid, lines, ... }`、行は jsonl の 1 行の文字列) は保つ。daemon は push で受けた行を、そのセッションの Timeline を購読しているタブへ送る (`transcript_subscribe` は購読の登録として残し、tail の Watch とは切り離す)
+- `ev:"transcript"` の形 (`{ ev, sid, lines, ... }`、行は jsonl の 1 行の文字列) は保つ。daemon は §2 の (c) で読んだ行を、そのセッションの Timeline を購読しているタブへ送る (`transcript_subscribe` は購読の登録として残し、tail の Watch とは切り離す)
 - 継ぎ目を byte offset (`start` / `end` / `size`) から行の uuid に置き換える: 各 push は `prev_uuid` (送る行の直前の行の uuid) と行を持つ。webui は、読み込み済みの最後の行の uuid が `prev_uuid` と違えば、間が抜けたとみなす。その時は `transcript_read` で末尾を読み直し、uuid で重ねる
 - `transcript_read` (DR-0009 §3) は、履歴のページング (older と、訪れた時の末尾の読み) のために byte offset を保つ。読みの結果の行には uuid があるので、webui は push の行と読みの行を uuid で重ねられる
 
@@ -78,7 +93,7 @@ jsonl の行と一致しない種がある場合の扱いはこの観測で決�
 
 ### 6. 副作用
 
-daemon は push で受けた行だけで副作用を起こす。追いつきの読みの行では起こさない (古い行で発声・起動をやり直さない)。同じ tool_use の id の副作用は 1 度だけ (id の集合をメモリに持ち、二重の push を除く)。
+daemon は push で受けた `e.message` だけで副作用を起こす (§2 の (b))。追いつきの読みの行では起こさない (古い行で発声・起動をやり直さない)。同じ tool_use の id の副作用は 1 度だけ (id の集合をメモリに持ち、二重の push を除く)。
 
 **say** (`mcp__ccmsg-v1__say` の tool_use、input `{ text }`):
 
@@ -139,7 +154,7 @@ daemon は push で受けた行だけで副作用を起こす。追いつきの�
 
 | 段階 | 入れるもの | 前提 |
 |---|---|---|
-| 0 | §2 の未検証の観測 (`session.append` が運ぶ行の種と形、順) | — |
+| 0 | §2 の観測 (`claude -p` で済み。対話のセッションでの突き合わせは段階 1 の最初に) | — |
 | 1 | push の op と module の転送、daemon の受け口 (uuid の重複除去、§3 の追いつき)、§4 の中継と uuid の継ぎ目 | DR-0046 の `POST /op` |
 | 2 | §5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
 | 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
