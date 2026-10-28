@@ -68,8 +68,83 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
 - webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `ctx … · <model> · <effort> · …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値 (status snapshot の context) と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと小さな picker が開き、通しを変更・解除できる (picker は元の値と違う field だけを選択済みで出す)。picker は effort を先に、すぐ選べる形で出し、model は一段奥 (小さな開閉の中) に置く。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた picker だけにする
-- FAB のプロンプトフォームに単発の選択 (既定は「上書きなし」) を置き、送信の `user_prompt` に乗せる。effort を先にすぐ選べる形で、model は一段奥に置く。送信が受け付けられたら「上書きなし」に戻し、届かなかった・未確認の時は文と同じく選択も残す
-- Status タブに通しの picker と、単発が効いている間はその値の行を出す
+- FAB のプロンプトフォームと Status タブの選択は §6
+
+### 6. FAB と Status タブの選択 ⬜ 未実装 (2026-10-28 改訂)
+
+FAB と Status タブは、どちらも 1 つの field を 1 つのネイティブ `<select>` (`<optgroup>` で群に分ける) で出す。
+
+#### 6.1 印と選択
+
+選択肢と畳んだ表示は、値の前に印を付ける。印はその値が何であるかのラベルで、選んだ時の意味は選択肢ごとに決まる。
+
+| 印 | 印が表すもの | その選択肢を選んだ時の意味 |
+|---|---|---|
+| (無印) | 今の実効値 | 何もしない。ラベルは今の実効値 (`単発 ?? 通し ?? 元` の値に、効いている層の印を付けたもの) |
+| ⏱️ | 単発 (once) の値 | これから送る turn の間だけ、その値にする (§4) |
+| 📌 | 通し (session) の値 | turn が終わっても残る値にする (§3) |
+| 🏛️ | その値がセッション自身の値 (engine の値) であること | その field の単発と通しを両方リセットする |
+
+- 🏛️ は操作の種類を表す印ではない。🏛️ の付いた選択肢を選ぶ操作が「両方のリセット」で、その結果 field はセッション自身の値に戻る
+
+- 畳んだ表示は今効いている層と値を出す。上書きが無ければ `low` のように値だけ、単発が効いていれば `⏱️high`、通しが効いていれば `📌high`。通しの値がセッション自身の値と同じ時は上書きが無い時と同じく値だけにする (§5 の印と同じ判定)
+- 🏛️ は通しの群の中で、セッション自身の値の位置に 📌 の代わりに出る。セッション自身の値と同じ値を 📌 で選ぶ席は無い
+
+#### 6.2 select の中身
+
+群は先頭から default (無印 1 つ)、turn (⏱️)、session (📌 と 🏛️) の順で、各群の中は launch の語彙の順 (§2)。fable / low のセッションで上書きが無い時の effort の例:
+
+```
+-- default --
+low
+-- turn --
+⏱️low ⏱️medium ⏱️high ⏱️xhigh ⏱️max
+-- session --
+🏛️low 📌medium 📌high 📌xhigh 📌max
+```
+
+- turn 群はセッション自身の値も ⏱️ で並べる (通しが効いている時に、この turn だけ元の値で送るため)
+- model の select も同じ構成で、値は model の語彙 (`fable` / `opus` / `sonnet` / `haiku`)。🏛️ の位置はセッション自身の model の family
+
+#### 6.3 FAB (SessionInputComposer)
+
+- effort の select だけを置く。model は FAB では変えない (model の変更は Status タブで行う。Consequences の prompt cache)
+- 群は default / turn / session の 3 つ
+- 送信が適用を兼ねる。選んだだけでは何も送らず、プロンプトの送信の時に送る
+  - ⏱️: 送信の `user_prompt` の `effort` に乗せる (§4)
+  - 📌: 送信の時に `request_override { effort: <値> }` を送り、続けて `user_prompt` を送る
+  - 🏛️ の選択肢: 送信の時に effort の単発と通しの両方のリセット (§6.5) を送り、続けて `user_prompt` を送る
+- 送信が受け付けられたら default に戻す。届かなかった・未確認の時は文と同じく選択も残す
+
+#### 6.4 Status タブ
+
+- model と effort の select を、同じ形で 1 つずつ出す
+- 群は default と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (default) が `⏱️high` のようにそれを示す
+- select を default 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
+- 適用の後、select は default に戻り、畳んだ表示は変更のイベント (§5) で届いた値で出し直す
+
+#### 6.5 🏛️ の選択肢を選んだ時のリセットの流れ
+
+1. webui が `request_override` で、その field を `null` にする (例: `{ effort: null }`)
+2. daemon は通しのその field を消して module に送る (§3)
+3. module は通しのその field を外し、単発のその field も外す。通しのその field が既に無かった時も、単発のその field を外す
+4. 実効値が動いたので module が facts を送り、daemon は変わった上書きごとに `ev: "request_override"` を全 webui に配る (§5)。通しは `target: "session"` でセッション自身の値、単発は `target: "once"` で `null`
+5. webui は単発が無く、通しがセッション自身の値と同じなので、畳んだ表示を `🏛️low` ではなく `low` にする
+
+#### 6.6 実装への影響
+
+- protocol
+  - webui → daemon の op は増やさない。🏛️ の選択肢を選んだ時のリセットは既存の `request_override` の `null` で表す
+  - サイドカーの `request.override` は通しの全体だけを運ぶので、「通しのその field は既に無いが単発のその field を外す」を module に伝えられない。daemon が op の patch で名指しされた field (`null` を含む) を module に渡す欄が要る (例: `RequestOverrideArgsSchema` に「単発から外す field」を足す)。名乗り直しの再送 (§3) はこの欄を付けない
+- module (`hooks/request-override.ts` の `requestOverrideSet`)
+  - 単発から外す field を、通しの値が変わった field に加えて、上の欄で名指しされた field にも広げる
+- daemon (`packages/daemon/src/request-override.ts`、server の `request_override`)
+  - op の patch で名指しされた field を `request.override` に付けて送る
+- webui
+  - `RequestOverridePicker.tsx` の `OverrideFields`: 「上書きなし」の option と model の開閉を廃し、§6.2 の `<optgroup>` の select にする (群の有無を FAB と Status で切り替える)。畳んだ表示とラベルは `request-override-view.ts` に、実効値・層・印を返す純関数として足す (`requestValueViews` の `by` と同じ判定)
+  - `SessionInputComposer.tsx`: model の選択を外し、effort の 1 つの select にする。今の `single` (`RequestOverride`) は ⏱️ / 📌 / 🏛️ のどれを選んだかを持つ形に変え、送信の時に 📌 / 🏛️ なら `ws.requestOverride` を先に送ってから `ws.userPrompt` を送る
+  - `StatusPanel.tsx` の OVERRIDE 行: 今の選ぶとすぐ送る `SessionOverrideEditor` と単発の値の行を、model と effort の select と [適用] ボタンに置き換える
+  - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない
 
 ## 裁定 (kawaz 2026-10-26)
 
@@ -82,7 +157,14 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 7. **model の上書きと `[1m]` の付け方**: 採用 (§2)
 8. **`/clear` / `/resume` で上書きを捨てる**: 採用 (§3)
 9. **通しの初期値はセッションの元の値**: 設定されていない field はセッション自身の値に従う (端末の `/model` / `/effort` も効く) (§1)
-10. **主役は effort**: model の変更も置くが、picker と FAB では effort を一等に、model を一段奥にする (§5、Consequences)
+10. **主役は effort**: model の変更も置くが、状態行の picker では effort を一等に、model を一段奥にする (§5、Consequences)
+
+## 裁定 (kawaz 2026-10-28)
+
+11. **選択の表示は今効いている層と値**: 畳んだ表示は印 (⏱️ 単発、📌 通し) と値で、上書きが無ければ値だけ。選択肢は default / turn / session の群に分けたネイティブ `<select>` (§6.1、§6.2)
+12. **🏛️ は engine の値のラベル、選ぶと単発と通しの両方をリセットする**: 🏛️ はその値がセッション自身の値であることを表す印で、通しの群のその値の位置に出る。その選択肢を選ぶ操作は、その field の単発と通しの両方のリセット。変更のイベントを受けた webui は値だけの表示に戻る (§6.5)
+13. **FAB は effort だけ**: FAB では送信が適用を兼ねる (§6.3)
+14. **Status タブは model と effort を同じ形の select で出す**: 群は session (🏛️ を含む) だけで、変えた時だけ出る [適用] で通しの変更を送る (§6.4)
 
 ## Alternatives Considered
 
@@ -103,7 +185,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - 上書きを知らない (古い) module は `request.override` に答えない (`unconfirmed`)。facts に `request_override` が無いので、webui には変更のイベントが来ず、状態行に印も付かない。セッションを再起動すると新しい module が載る
 - FAB で単発を選んで送ったが文が turn を始めなかった時 (`/compact` のような組み込みの command 等) は、単発は次に始まる turn に結び付く
 - model の `[1m]` は元の request の `e.model` に従う。`haiku[1m]` も request の `anthropic-beta` に `context-1m-…` が付いた (代役の API で確認)。1M の context を持たない model に付いた時に本物の API がどう答えるかは確かめていない
-- prompt cache は model ごとなので、model の上書きを付け外しすると、その request で cache が効かなくなり、会話の全体を読み直す分だけ高くつく。このため model の切替は滅多に使わない操作とし、UI では effort を主、model を一段奥に置く (裁定 10)。effort は cache を切らないので気軽に変えてよい
+- prompt cache は model ごとなので、model の上書きを付け外しすると、その request で cache が効かなくなり、会話の全体を読み直す分だけ高くつく。このため model の切替は滅多に使わない操作とし、UI では effort を主、model を一段奥に置き、FAB には model を置かない (裁定 10、13)。effort は cache を切らないので気軽に変えてよい
 
 ## 関連
 
