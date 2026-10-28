@@ -67,10 +67,10 @@ export function buildStatusSections(snapshot: SessionStatusSnapshot): StatusSect
   };
 }
 
-/** A context window as the ctx line spells it: whole millions as `1M`,
- * anything else in thousands (`200k`, `300k`). */
+/** A context window as the ctx line spells it, in square brackets after the
+ * fill: whole millions as `[1m]`, anything else in thousands (`[200K]`). */
 export function formatContextWindow(window: number): string {
-  return window % 1_000_000 === 0 ? `${window / 1_000_000}M` : `${Math.round(window / 1000)}k`;
+  return window % 1_000_000 === 0 ? `[${window / 1_000_000}m]` : `[${Math.round(window / 1000)}K]`;
 }
 
 /** Display shortening for model names: drops the redundant `claude-` prefix
@@ -208,8 +208,8 @@ export function restartResultText(reply: SessionRestartResponse | ErrorResponse)
   return { text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
 }
 
-/** The ctx line, in its parts: the fill (`ctx 100k/1M (10%)`) and the model
- * and the effort the requests are sent with (DR-0041 §5). */
+/** The ctx line, in its parts: the fill (`10%[1m]`) and the model and the
+ * effort the requests are sent with (DR-0041 §5). */
 export interface ContextUsageView {
   text: string;
   title: string;
@@ -218,32 +218,34 @@ export interface ContextUsageView {
   effort: RequestValueView | null;
 }
 
-/** The ctx line: the fill over the window Claude Code reported through the
- * session's hooks module. Without that window (a session without the module)
- * the fill stands alone: the window depends on the model's default and on
+/** The ctx line: the percentage of the window Claude Code reported through
+ * the session's hooks module, with the window in brackets (`28%[1m]`).
+ * Without that window (a session without the module) the token count stands
+ * alone (`280k`): the window depends on the model's default and on
  * environment overrides the transcript does not record, so it is not guessed.
- * Before the first response there is no fill, shown as `—`. The model and the
- * effort are the ones the requests are sent with: an override's, marked, else
- * the session's own (`overrides` is what ev:"request_override" says of the
- * session). */
+ * Before the first response there is no fill, shown as `—`. The model (the
+ * transcript's ID without `claude-`, `fable-5-1`; the window's `[1m]` is not
+ * its) and the effort are the ones the requests are sent with: an override's,
+ * marked, else the session's own (`overrides` is what ev:"request_override"
+ * says of the session). Parts are joined with ` / `. */
 export function formatContextUsage(
   ctx: SessionContextUsage,
   overrides?: RequestOverrideState,
 ): ContextUsageView {
   const { tokens, window } = ctx;
-  const used = tokens !== undefined ? `${Math.round(tokens / 1000)}k` : "—";
-  const limit = window !== undefined ? `/${formatContextWindow(window)}` : "";
-  const percentage =
-    tokens !== undefined && window !== undefined
-      ? ` (${Math.round((tokens / window) * 100)}%)`
-      : "";
-  const fill = `ctx ${used}${limit}${percentage}`;
+  const used =
+    tokens === undefined
+      ? "—"
+      : window !== undefined
+        ? `${Math.round((tokens / window) * 100)}%`
+        : `${Math.round(tokens / 1000)}k`;
+  const fill = `${used}${window !== undefined ? formatContextWindow(window) : ""}`;
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
   const { model, effort } = requestValueViews(ctx, overrides, shortModel);
   return {
-    text: [fill, model.text, ...(effort ? [effort.text] : [])].join(" · "),
+    text: [fill, model.text, ...(effort ? [effort.text] : [])].join(" / "),
     title:
       (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
       (window !== undefined
@@ -307,7 +309,7 @@ export function formatSessionModelEffort(
 }
 
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
-export type MiniSummaryLineKind = "workflow" | "todo" | "context" | "teammate";
+export type MiniSummaryLineKind = "workflow" | "context" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
@@ -335,18 +337,15 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
     .join(", ")} 他 ${active.length - 2} 名`;
 }
 
-/** 走行中 workflow 名 + in_progress TODO を要約した上に、context 消費
- * (issue 2026-07-17 #1、末尾にプロセスの稼働時間と Claude Code の版) と活動中
- * teammates (issue 2026-07-17 #5) を追加行として付与する。workflow/todo がゼロかつ context/teammates も無ければ
- * 空配列 (呼び出し側はこれをパネル非表示の合図にする、DR-0020 §2.1
- * "ゼロ件なら非表示")。workflow を todo より先に並べるのは「今まさに
- * 自走している大きい単位」を目立たせるため。
+/** 走行中 workflow 名を要約した上に、context 消費 (issue 2026-07-17 #1、
+ * 末尾にプロセスの稼働時間と Claude Code の版) と活動中 teammates
+ * (issue 2026-07-17 #5) を追加行として付与する。workflow がゼロかつ
+ * context/teammates も無ければ空配列 (呼び出し側はこれをパネル非表示の合図
+ * にする、DR-0020 §2.1 "ゼロ件なら非表示")。
  *
  * 走行中のものは件数によらず全件出す (kawaz r135m44: 「小出しにする必要性
  * ゼロ」) — このパネルの用途は「今このセッションが何を抱えているか」を一目で
- * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。todo に
- * `#{id}` を前置するのも同じ理由で、Status タブの TodoRow と同一表記にして
- * 両者を突き合わせられるようにしている。 */
+ * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。 */
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,
   processParts: readonly string[] = [],
@@ -355,32 +354,28 @@ export function miniSummaryLines(
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (Status タブの WORKFLOWS 表示と数値を一致させる)。
   const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
-  const items: MiniSummaryLine[] = [
-    ...dedupedWorkflows
-      .filter((w) => w.status === "running")
-      .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name })),
-    ...snapshot.todos
-      .filter((t) => t.status === "in_progress")
-      .map((t): MiniSummaryLine => ({ kind: "todo", text: `#${t.id} ${t.subject}` })),
-  ];
+  const items = dedupedWorkflows
+    .filter((w) => w.status === "running")
+    .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name }));
 
   const extra: MiniSummaryLine[] = [];
   // The ctx line ends with what the session's process runs as (uptime,
   // Claude Code version: `processParts`), which stands alone before the
   // transcript has said anything of the context.
-  const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
+  const context =
+    snapshot.context?.tokens !== undefined ? formatContextUsage(snapshot.context, overrides) : null;
   const contextParts = [...(context ? [context.text] : []), ...processParts];
   if (contextParts.length > 0) {
     extra.push({
       kind: "context",
-      text: contextParts.join(" · "),
+      text: contextParts.join(" / "),
       ...(context
         ? {
             context: {
               fill: context.fill,
               model: context.model,
               effort: context.effort,
-              tail: processParts.join(" · "),
+              tail: processParts.join(" / "),
             },
           }
         : {}),

@@ -105,7 +105,7 @@ describe("buildStatusSections", () => {
 });
 
 describe("miniSummaryLines", () => {
-  test("zero running workflows and zero in_progress todos: empty (panel hidden)", () => {
+  test("zero running workflows: empty (panel hidden)", () => {
     expect(miniSummaryLines(EMPTY_SNAPSHOT)).toEqual([]);
     // completed todos / done workflows alone must not surface a line.
     const snapshot: SessionStatusSnapshot = {
@@ -117,23 +117,19 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  // todo は Status タブの TodoRow と同じ "#{id} {subject}" 表記で出す
-  // (両者を突き合わせられるように)。
-  test("running workflow before in_progress todo, todo prefixed with its id", () => {
+  test("in_progress todos never make a line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [workflow({ task_id: "w1", status: "running", name: "release" })],
       background: [],
       teammates: [],
     };
-    expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "workflow", text: "release" },
-      { kind: "todo", text: "#t1 fix bug" },
-    ]);
+    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "workflow", text: "release" }]);
+    expect(miniSummaryLines({ ...snapshot, workflows: [] })).toEqual([]);
   });
 
   // 走行中のものは件数によらず全件出す (残数への畳み込みなし)。
-  test("every running workflow and in_progress todo is listed, however many", () => {
+  test("every running workflow is listed, however many", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
@@ -150,15 +146,12 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "wf1" },
       { kind: "workflow", text: "wf2" },
-      { kind: "todo", text: "#t1 a" },
-      { kind: "todo", text: "#t2 b" },
-      { kind: "todo", text: "#t3 c" },
     ]);
   });
 
   // issue 2026-07-17 #1: context 消費は「今動いているタスク」とは別枠の
   // 追加行として、その後ろに必ず出る。
-  test("context usage is appended after the workflow/todo lines", () => {
+  test("context usage is appended after the workflow lines", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [],
@@ -172,12 +165,11 @@ describe("miniSummaryLines", () => {
       },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "todo", text: "#t1 fix bug" },
       {
         kind: "context",
-        text: "ctx 640k/1M (64%) · fable-5",
+        text: "64%[1m] / fable-5",
         context: {
-          fill: "ctx 640k/1M (64%)",
+          fill: "64%[1m]",
           model: { text: "fable-5", title: "model claude-fable-5" },
           effort: null,
           tail: "",
@@ -197,9 +189,9 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([
       {
         kind: "context",
-        text: "ctx 100k/200k (50%) · m",
+        text: "50%[200K] / m",
         context: {
-          fill: "ctx 100k/200k (50%)",
+          fill: "50%[200K]",
           model: { text: "m", title: "model m" },
           effort: null,
           tail: "",
@@ -209,7 +201,7 @@ describe("miniSummaryLines", () => {
   });
 
   // The ctx line ends with the session's process: uptime and Claude Code
-  // version (kawaz 2026-10-25), in the line's own " · " separation.
+  // version (kawaz 2026-10-25), in the line's own " / " separation.
   test("the process parts end the ctx line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [],
@@ -219,30 +211,40 @@ describe("miniSummaryLines", () => {
       context: {
         tokens: 100_000,
         window: 1_000_000,
-        model: "claude-fable-5[1m]",
+        model: "claude-fable-5-1",
         effort: "low",
         timestamp: "t",
       },
     };
-    expect(miniSummaryLines(snapshot, ["2d15h", "claude v2.1.310"])).toEqual([
+    expect(miniSummaryLines(snapshot, ["2d15h"])).toEqual([
       {
         kind: "context",
-        text: "ctx 100k/1M (10%) · fable-5[1m] · low · 2d15h · claude v2.1.310",
+        text: "10%[1m] / fable-5-1 / low / 2d15h",
         context: {
-          fill: "ctx 100k/1M (10%)",
-          model: { text: "fable-5[1m]", title: "model claude-fable-5[1m]" },
+          fill: "10%[1m]",
+          model: { text: "fable-5-1", title: "model claude-fable-5-1" },
           effort: { text: "low", title: "effort low" },
-          tail: "2d15h · claude v2.1.310",
+          tail: "2d15h",
         },
       },
     ]);
   });
 
+  // Without a fill (no response yet) the line is the process alone, even when
+  // the window is known: no `—` placeholder.
+  test("a context without tokens leaves the uptime alone on the line", () => {
+    const snapshot: SessionStatusSnapshot = {
+      ...EMPTY_SNAPSHOT,
+      context: { window: 1_000_000, model: "claude-fable-5-1", timestamp: "t" },
+    };
+    expect(miniSummaryLines(snapshot, ["4h27m"])).toEqual([{ kind: "context", text: "4h27m" }]);
+  });
+
   // Before the transcript says anything of the context, what the process runs
   // as is still known, so the line carries that alone.
   test("process parts without context make the line on their own", () => {
-    expect(miniSummaryLines(EMPTY_SNAPSHOT, ["35m20s", "claude v2.1.310"])).toEqual([
-      { kind: "context", text: "35m20s · claude v2.1.310" },
+    expect(miniSummaryLines(EMPTY_SNAPSHOT, ["35m20s"])).toEqual([
+      { kind: "context", text: "35m20s" },
     ]);
   });
 
@@ -303,13 +305,11 @@ describe("miniSummaryLines", () => {
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "wf" },
-      { kind: "todo", text: "#t1 a" },
-      { kind: "todo", text: "#t2 b" },
       {
         kind: "context",
-        text: "ctx 522k/1M (52%) · m",
+        text: "52%[1m] / m",
         context: {
-          fill: "ctx 522k/1M (52%)",
+          fill: "52%[1m]",
           model: { text: "m", title: "model m" },
           effort: null,
           tail: "",
@@ -368,46 +368,46 @@ describe("context usage display", () => {
     const formatted = formatContextUsage({
       tokens: 100_000,
       window: 1_000_000,
-      model: "claude-opus-5-5[1m]",
+      model: "claude-opus-5-5",
       timestamp: "2026-07-17T00:00:00.000Z",
     });
-    expect(formatted.text).toBe("ctx 100k/1M (10%) · opus-5-5[1m]");
+    expect(formatted.text).toBe("10%[1m] / opus-5-5");
     expect(formatted.title).toContain("100,000 tokens");
     expect(formatted.title).toContain("context window 1,000,000");
   });
 
   // window はモデルの既定と環境変数の上書きで決まり、transcript には残らない。
   // module の無いセッションでは分母を推定せず、使用量だけを出す。
-  test("window が無ければ分母も % も出さない", () => {
+  test("window が無ければ % も括弧の window も出さず token 数だけを出す", () => {
     const formatted = formatContextUsage({
       tokens: 522_000,
       model: "claude-fable-5",
       timestamp: "2026-07-17T00:00:00.000Z",
     });
-    expect(formatted.text).toBe("ctx 522k · fable-5");
+    expect(formatted.text).toBe("522k / fable-5");
     expect(formatted.title).toContain("context window unknown");
   });
 
   // 最初の応答の前は使用量が無い。window と model は module が起動直後に送る。
   test("使用量の無い window は — で出す", () => {
     const formatted = formatContextUsage({ window: 1_000_000, model: "m", timestamp: "t" });
-    expect(formatted.text).toBe("ctx —/1M · m");
+    expect(formatted.text).toBe("—[1m] / m");
     expect(formatted.title).toContain("no response yet");
   });
 
-  test("100 万の倍数でない window は k で出す", () => {
+  test("window は 100 万の倍数なら m、そうでなければ K で括弧に入れて出す", () => {
     // DISABLE_COMPACT + CLAUDE_CODE_MAX_CONTEXT_TOKENS の上書きで 300,000 になる実測がある。
-    expect(formatContextWindow(200_000)).toBe("200k");
-    expect(formatContextWindow(300_000)).toBe("300k");
-    expect(formatContextWindow(1_000_000)).toBe("1M");
-    expect(formatContextWindow(2_000_000)).toBe("2M");
+    expect(formatContextWindow(200_000)).toBe("[200K]");
+    expect(formatContextWindow(300_000)).toBe("[300K]");
+    expect(formatContextWindow(1_000_000)).toBe("[1m]");
+    expect(formatContextWindow(2_000_000)).toBe("[2m]");
   });
 
   test("100% 超を丸め込まず表示する", () => {
     // clamp すると「window より多く使っている」という診断情報を失う。
     expect(
       formatContextUsage({ tokens: 1_100_000, window: 1_000_000, model: "m", timestamp: "t" }).text,
-    ).toBe("ctx 1100k/1M (110%) · m");
+    ).toBe("110%[1m] / m");
   });
 
   test("formatSessionModelEffort は model を持つ最初の候補だけを採用する", () => {
@@ -453,7 +453,21 @@ describe("context usage display", () => {
     expect(shortModel("gpt-5.6-sol")).toBe("gpt-5.6-sol");
   });
 
-  test("effort ありの context は「· model · effort」の順で text に付く", () => {
+  // The model is the one that answered (the transcript's ID without
+  // `claude-`); the window's `[1m]` belongs to the fill, never to the model.
+  test("model は claude- を落とした実 ID で、[1m] は分母側だけに付く", () => {
+    const formatted = formatContextUsage({
+      tokens: 280_000,
+      window: 1_000_000,
+      model: "claude-fable-5-1",
+      effort: "low",
+      timestamp: "t",
+    });
+    expect(formatted.text).toBe("28%[1m] / fable-5-1 / low");
+    expect(formatted.model.text).toBe("fable-5-1");
+  });
+
+  test("effort ありの context は「/ model / effort」の順で text に付く", () => {
     // DR-0020 addendum 2026-07-18 の表示形を仕様として厳密固定する。
     const formatted = formatContextUsage({
       tokens: 331_000,
@@ -462,12 +476,12 @@ describe("context usage display", () => {
       effort: "low",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("ctx 331k/1M (33%) · fable-5 · low");
+    expect(formatted.text).toBe("33%[1m] / fable-5 / low");
     expect(formatted.title).toContain("effort low");
   });
 
   test("effort なし (旧 CC transcript) の context は effort 節を出さない", () => {
-    // effort は CC ≤2.1.211 の行に無い optional。欠落時に「· undefined」等を
+    // effort は CC ≤2.1.211 の行に無い optional。欠落時に「/ undefined」等を
     // 出さない境界を固定する。
     const formatted = formatContextUsage({
       tokens: 100_000,
@@ -475,7 +489,7 @@ describe("context usage display", () => {
       model: "claude-fable-5",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("ctx 100k/200k (50%) · fable-5");
+    expect(formatted.text).toBe("50%[200K] / fable-5");
     expect(formatted.title).not.toContain("effort");
   });
 });

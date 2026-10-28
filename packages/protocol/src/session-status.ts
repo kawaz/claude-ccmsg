@@ -109,8 +109,8 @@ export type SessionBackgroundStatus = Output<typeof SessionBackgroundStatusSchem
  * non-sidechain, non-synthetic assistant row of the transcript, and the facts
  * the session's hooks module sends (SessionFacts, DR-0035 §3), which say what
  * the transcript cannot — the window Claude Code uses, environment overrides
- * included, and the model with its launch-time `[1m]`. Where the module sent
- * a part, it is the module's. A session without the module has no `window`,
+ * included. Where the module sent the window or the effort, it is the
+ * module's; the model is always the transcript's. A session without the module has no `window`,
  * and a client shows the fill without one rather than guess it. */
 export const SessionContextUsageSchema = v.object({
   /** input_tokens + cache_read_input_tokens + cache_creation_input_tokens of
@@ -119,15 +119,15 @@ export const SessionContextUsageSchema = v.object({
   /** The context window Claude Code uses for the session's model, from the
    * hooks module. Absent without the module. */
   window: v.optional(v.number()),
-  /** The model as the hooks module reads it off the session (`[1m]` kept),
-   * else the transcript's raw message.model (which drops `[1m]`). */
+  /** The transcript's raw message.model: the model that answered
+   * (`claude-fable-5-1`), without the launch-time `[1m]`. */
   model: v.string(),
   /** Top-level `effort` of the transcript assistant row. Rows from older CC
    * versions (observed absent at ≤2.1.211) do not carry it, so it stays
    * optional. Latest observed value, taken from the same row as `model`. */
   effort: v.optional(v.string()),
-  /** When `tokens` was observed (the assistant row's timestamp); without
-   * `tokens`, when the hooks module read the window. */
+  /** When `tokens` was observed: the assistant row's timestamp, or the
+   * module's measure when that is newer. */
   timestamp: v.string(),
 });
 export type SessionContextUsage = Output<typeof SessionContextUsageSchema>;

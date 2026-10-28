@@ -20,7 +20,7 @@ import {
 const CTX: SessionContextUsage = {
   tokens: 100_000,
   window: 1_000_000,
-  model: "claude-opus-5-5[1m]",
+  model: "claude-opus-5-5",
   effort: "high",
   timestamp: "t",
 };
@@ -34,7 +34,7 @@ const OWN: RequestOverrideState = {
 describe("requestValueViews", () => {
   test("without an override: the session's own, shortened, unmarked", () => {
     const own = {
-      model: { text: "opus-5-5[1m]", title: "model claude-opus-5-5[1m]" },
+      model: { text: "opus-5-5", title: "model claude-opus-5-5" },
       effort: { text: "high", title: "effort high" },
     };
     expect(requestValueViews(CTX, undefined, shortModel)).toEqual(own);
@@ -50,7 +50,7 @@ describe("requestValueViews", () => {
     expect(views.model).toEqual({
       text: "sonnet⁺",
       by: "session",
-      title: "model sonnet (通しの上書き。セッション自身は claude-opus-5-5[1m])",
+      title: "model sonnet (通しの上書き。セッション自身は claude-opus-5-5)",
     });
     expect(views.effort).toEqual({
       text: "max⁺",
@@ -91,14 +91,14 @@ describe("requestValueViews", () => {
       session: { model: CTX.model, effort: "low" },
       once: NONE,
     });
-    expect(formatted.text).toBe("ctx 100k/1M (10%) · opus-5-5[1m] · low⁺");
+    expect(formatted.text).toBe("10%[1m] / opus-5-5 / low⁺");
     expect(formatted.title).toContain("effort low (通しの上書き。セッション自身は high)");
     const [line] = miniSummaryLines(
       { todos: [], workflows: [], background: [], context: CTX },
       [],
       { ...OWN, once: { model: "haiku", effort: null } },
     );
-    expect(line?.text).toBe("ctx 100k/1M (10%) · haiku⁺ · high");
+    expect(line?.text).toBe("10%[1m] / haiku⁺ / high");
     expect(line?.context?.model.by).toBe("once");
   });
 });

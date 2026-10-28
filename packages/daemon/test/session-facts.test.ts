@@ -1,6 +1,6 @@
 // What a session's hooks module says of its session (session_facts, DR-0035
 // §3) and how the daemon lays it over the transcript's fold: the window is
-// only ever the module's, the model the module read names the session, and
+// only ever the module's, the model is the transcript's, and
 // facts older than the ones held are dropped.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { PROTOCOL_VERSION, type SessionFacts, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { SessionFactsStore } from "../src/session-facts.ts";
 import { contextWithFacts, withFacts } from "../src/session-status.ts";
+import { assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import { connect, startTestDaemon, stopTestDaemon, userConn } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -53,26 +54,22 @@ describe("the context with the module's facts laid over the transcript's", () =>
     expect(contextWithFacts(undefined, undefined)).toBeUndefined();
   });
 
-  // The transcript's message.model drops the `[1m]` the session was started
-  // with; the module's keeps it, and the window is the module's alone.
-  test("the module's window and model, the transcript's fill and effort", () => {
-    expect(contextWithFacts(FOLDED, FACTS)).toEqual({
+  // The module names the model the session was started with (`[1m]` kept,
+  // or an alias); the context shows the one the transcript says answered.
+  test("the module's window, the transcript's model, fill and effort", () => {
+    expect(contextWithFacts(FOLDED, { ...FACTS, model: "opus[1m]" })).toEqual({
       tokens: 120_000,
       window: 1_000_000,
-      model: "claude-opus-5-5[1m]",
+      model: "claude-opus-5-5",
       effort: "high",
       timestamp: "2026-10-14T00:00:00.000Z",
     });
   });
 
-  // Right after the start: no response yet, so no fill, but the window and
-  // the model are known.
-  test("before the first response: the window and the model, no fill", () => {
-    expect(contextWithFacts(undefined, FACTS)).toEqual({
-      window: 1_000_000,
-      model: "claude-opus-5-5[1m]",
-      timestamp: "2026-10-14T00:00:05.000Z",
-    });
+  // Right after the start no response has named the model that answers, so
+  // there is no context to show yet.
+  test("before the first response: no context, whatever the module says", () => {
+    expect(contextWithFacts(undefined, FACTS)).toBeUndefined();
   });
 
   test("facts without a model leave the transcript's", () => {
@@ -103,7 +100,6 @@ describe("the context with the module's facts laid over the transcript's", () =>
 
   test("the module's effort over the transcript's", () => {
     expect(contextWithFacts(FOLDED, { ...FACTS, effort: "xhigh" })?.effort).toBe("xhigh");
-    expect(contextWithFacts(undefined, { ...FACTS, effort: "low" })?.effort).toBe("low");
   });
 
   test("facts that know nothing yet add nothing", () => {
@@ -119,7 +115,7 @@ describe("the context with the module's facts laid over the transcript's", () =>
     };
     expect(withFacts(snapshot, FACTS)).toEqual({
       ...snapshot,
-      context: { ...FOLDED, window: 1_000_000, model: "claude-opus-5-5[1m]" },
+      context: { ...FOLDED, window: 1_000_000 },
     });
     expect(withFacts(snapshot, undefined)).toBe(snapshot);
   });
@@ -184,7 +180,8 @@ describe("session_facts over the wire", () => {
   test("a session's facts reach the status of that session, and are pushed", async () => {
     const ctx = await startTestDaemon();
     const transcript = path.join(ctx.base, `${SID}.jsonl`);
-    fs.writeFileSync(transcript, "");
+    // The model that answered, as the transcript has it: the context's model.
+    fs.writeFileSync(transcript, `${line(assistantRow())}\n`);
     try {
       const session = await connect(ctx.sock);
       await session.requestOk({
@@ -197,11 +194,12 @@ describe("session_facts over the wire", () => {
       });
       const user = await userConn(ctx);
       const initial = await user.requestOk({ op: "session_status_subscribe", sid: SID });
-      expect(initial.context).toBeUndefined();
+      expect(initial.context?.model).toBe("claude-opus-5-5");
+      expect(initial.context?.window).toBeUndefined();
 
       const facts = {
         at: Date.now(),
-        model: "claude-opus-5-5[1m]",
+        model: "opus[1m]",
         context: { window: 1_000_000, at: Date.now() },
       };
       expect(await session.requestOk({ op: "session_facts", facts })).toEqual({ ok: true });
@@ -210,8 +208,8 @@ describe("session_facts over the wire", () => {
         (ev) => ev.context?.window === 1_000_000,
       );
       expect(pushed.ev.sid).toBe(SID);
-      expect(pushed.ev.context?.model).toBe("claude-opus-5-5[1m]");
-      expect(pushed.ev.context?.tokens).toBeUndefined();
+      expect(pushed.ev.context?.model).toBe("claude-opus-5-5");
+      expect(pushed.ev.context?.tokens).toBe(60);
 
       // Older facts change nothing; the status still says the newer ones.
       await session.requestOk({
@@ -219,7 +217,8 @@ describe("session_facts over the wire", () => {
         facts: { at: facts.at - 1, model: "older", context: { window: 200_000, at: 1 } },
       });
       const after = await user.requestOk({ op: "session_status", sid: SID });
-      expect(after.context?.model).toBe("claude-opus-5-5[1m]");
+      expect(after.context?.model).toBe("claude-opus-5-5");
+      expect(after.context?.window).toBe(1_000_000);
       user.close();
       session.close();
     } finally {

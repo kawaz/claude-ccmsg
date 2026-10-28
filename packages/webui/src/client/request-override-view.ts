@@ -44,13 +44,21 @@ export interface RequestValueView {
 
 const OVERRIDE_NAME = { session: "通しの上書き", once: "単発の上書き" } as const;
 
-/** Whether `value` puts other than the session's own `own` on the requests:
- * a model family against the family of the session's model, anything else
- * as it is spelled. */
+/** Whether `value` puts other than the session's own `own` on the requests.
+ * `own` is the transcript's model ID (`claude-opus-5-5`), while the module
+ * spells the session's model as the session names it (`opus[1m]`,
+ * `claude-opus-5-5[1m]`): a model name that is not an ID is read as the
+ * family it names, an ID is compared as it is without the `[1m]` suffix,
+ * anything else as it is spelled. */
 function differs(field: OverrideField, value: string, own: string | undefined): boolean {
   if (own === undefined) return true;
-  if (field === "model" && parseWith(LaunchModelSchema, value).ok) {
-    return launchModelFromTranscript(own) !== value;
+  if (field === "model") {
+    const unsuffixed = (model: string) => model.replace(/\[[^\]]*\]$/, "");
+    if (!value.startsWith("claude-")) {
+      const family = launchModelFromTranscript(value);
+      if (family !== undefined) return launchModelFromTranscript(own) !== family;
+    }
+    return unsuffixed(value) !== unsuffixed(own);
   }
   return value !== own;
 }

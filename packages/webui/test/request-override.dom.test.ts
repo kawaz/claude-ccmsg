@@ -49,7 +49,7 @@ const SNAPSHOT: SessionStatusSnapshot = {
   context: {
     tokens: 1000,
     window: 1_000_000,
-    model: "claude-opus-5-5[1m]",
+    model: "claude-opus-5-5",
     effort: "high",
     timestamp: "t",
   },
@@ -106,7 +106,7 @@ describe("the ctx line's pickers", () => {
     const { onChange } = recorder({ ok: true, delivery: "applied" });
     const root = await mountRoot(h(ContextLine, { context, value: { effort: "low" }, onChange }));
     const buttons = [...root.querySelectorAll("button.ctx-value")];
-    expect(buttons.map((b) => b.textContent)).toEqual(["opus-5-5[1m]", "low⁺"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(["opus-5-5", "low⁺"]);
     expect(buttons[1]?.classList.contains("ctx-value-overridden")).toBe(true);
     expect(root.querySelector(".ctx-override-popover")).toBeNull();
     await act(() => instanceOf(buttons[1], HTMLButtonElement, "the effort").click());

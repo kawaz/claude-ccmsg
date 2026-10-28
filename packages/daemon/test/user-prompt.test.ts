@@ -30,6 +30,7 @@ import {
 import { SidecarReplies } from "../src/sidecar-call.ts";
 import { userMessage } from "../src/user-message.ts";
 import type { SidecarRun } from "../src/sidecar-runs.ts";
+import { assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
@@ -966,7 +967,7 @@ describe("session.facts asked of a run that names itself", () => {
   test("the module's answer is taken as its facts", async () => {
     const ctx = await startShortDaemon();
     const transcript = path.join(ctx.base, `${SID}.jsonl`);
-    fs.writeFileSync(transcript, "");
+    fs.writeFileSync(transcript, `${line(assistantRow())}\n`);
     let sidecar: { close(): void } | undefined;
     try {
       const session = await connect(ctx.sock);
@@ -994,7 +995,7 @@ describe("session.facts asked of a run that names itself", () => {
         "session_status",
         (ev) => ev.context?.window === 1_000_000,
       );
-      expect(pushed.ev.context?.model).toBe("claude-opus-5-5[1m]");
+      expect(pushed.ev.context?.model).toBe("claude-opus-5-5");
       user.close();
       session.close();
     } finally {

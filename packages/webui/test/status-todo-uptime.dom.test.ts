@@ -1,7 +1,7 @@
 // The Status tab's TODO list and the session's uptime, as mounted (kawaz
 // 2026-10-25): the TODO list starts closed with its count in the heading and
 // opens to the rows; UPTIME says how long the process has run; the Timeline's
-// ctx line ends with the uptime and the Claude Code version the process runs.
+// ctx line ends with the uptime and shows no Claude Code version the process runs.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -200,13 +200,13 @@ describe("Timeline ctx line", () => {
     context: {
       tokens: 120_000,
       window: 1_000_000,
-      model: "claude-fable-5[1m]",
+      model: "claude-fable-5-1",
       effort: "low",
       timestamp: "2026-10-25T00:00:00.000Z",
     },
   };
 
-  test("ends with the uptime and the Claude Code version", async () => {
+  test("ends with the uptime and shows no Claude Code version", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();
@@ -216,7 +216,7 @@ describe("Timeline ctx line", () => {
       });
       const root = await mountTimeline(store, SNAPSHOT);
       expect(root.querySelector(".tl-status-mini-context")?.textContent).toBe(
-        "ctx 120k/1M (12%) · fable-5[1m] · low · 2d15h · claude v2.1.310",
+        "12%[1m] / fable-5-1 / low / 2d15h",
       );
     } finally {
       restore();
@@ -228,7 +228,7 @@ describe("Timeline ctx line", () => {
     try {
       const root = await mountTimeline(timelineStore(), SNAPSHOT);
       expect(root.querySelector(".tl-status-mini-context")?.textContent).toBe(
-        "ctx 120k/1M (12%) · fable-5[1m] · low",
+        "12%[1m] / fable-5-1 / low",
       );
     } finally {
       restore();

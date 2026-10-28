@@ -17,7 +17,7 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
 
 - **表示場所 (ST-Q2 裁定 = 両方、kawaz)**:
   - **Status タブ**: SessionView のタブ列を Files / Timeline / Rooms / Status に増やし、詳細・全体一覧はこちら
-  - **TL 下余白の常駐ミニパネル**: 走行中 workflow と in_progress TODO だけの要約1-2 行。タップで Status タブへ遷移
+  - **TL 下余白の常駐ミニパネル**: 走行中 workflow の要約。タップで Status タブへ遷移
 - **抽出** (daemon 側、§ 3.1): transcript jsonl から status 関連イベントを全量抽出し、畳み込んで現在ステータスを導出
   - **TODO リスト**: TaskCreate / TaskUpdate の tool call から task id → {subject, status, owner} を再生。pending / in_progress / completed 別に表示 (TUI 同等)
   - **workflow**: Workflow tool call (起動) と task-notification (完了) を突合して走行中 / 完了を判定。meta.name / phases があれば表示
@@ -83,5 +83,5 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 
 - **TODO 一覧は既定で閉じる**: TODO が多いと Status タブの他の節を押し下げて邪魔になり、重要度も他の節より低い。節全体を `<details>` にし、見出しに全件数 (`TODO (n)`) を出す。開閉の状態は保持しない。開いた中身は従来どおり (in_progress、pending は開いた fold、completed は閉じた fold)。TODO が 1 件も無いセッションでは節を出さない (Background と同じ)。
 - **稼働時間**: そのプロセスの起動からの経過。データ源は Claude Code の `sessions/<pid>.json` の `startedAt` (agents の行に既に載っている)。resume は新しいプロセスなので、そこから数え直す。書式は webui が経過を出す既存の `formatDuration` (メッセージバブルの相対時間、応答中の経過と同じ `5s` / `1m12s` / `5h12m` / `2d15h`) に揃え、個別の書式を作らない。Status タブに `UPTIME` の行、TL 下ミニパネルの ctx 行の末尾に出す。Status タブはタブを開いた時点の値で、開いている間は更新しない。
-- **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せ、ctx 行の末尾に `claude v<version>` で出す。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
-- ctx 行は `ctx 120k/1M (12%) · fable-5[1m] · low · 2d15h · claude v2.1.310` の形になる。context の観測がまだ無い間も、プロセスの行があれば `35m20s · claude v2.1.310` だけの行を出す。
+- **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せる。表示は DR-0043 §5.3 (GLOBALS)。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
+- ctx 行は `12%[1m] / fable-5-1 / low / 2d15h` の形になる (先頭は context の使用率と、直後の角括弧に context window の大きさ `[1m]` / `[200K]`。次に model、effort、稼働時間。区切りは ` / `。model は transcript の最新の assistant 行 (非 sidechain・非 synthetic) の `message.model` から `claude-` を落とした実際に適用された model ID `fable-5-1` で、hooks module が名乗る起動時の別名 (`fable[1m]`) は使わない。`[1m]` は model には付けず分母側だけ)。window が分からない間は率の代わりに token 数 (`120k`) を出す。assistant 行がまだ無い間 (context の観測が無い間) も、プロセスの行があれば `35m20s` だけの行を出す。

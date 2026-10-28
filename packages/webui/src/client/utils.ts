@@ -56,15 +56,10 @@ export function formatDuration(ms: number): string {
 
 /** What a session's process has been running as, for the end of the
  * Timeline's ctx line: how long since it started, in the same `formatDuration`
- * the bubbles and the responding row use, and the Claude Code version it runs
- * ("2d15h", "claude v2.1.310"). A record that names no version gives the
- * uptime alone. */
-export function sessionProcessParts(
-  agent: Pick<AgentInfo, "startedAt" | "version">,
-  now: number,
-): string[] {
-  const uptime = formatDuration(now - agent.startedAt);
-  return agent.version ? [uptime, `claude v${agent.version}`] : [uptime];
+ * the bubbles and the responding row use ("2d15h"). The Claude Code version
+ * is not part of it (the sidebar's GLOBALS shows it, DR-0043 §5.3). */
+export function sessionProcessParts(agent: Pick<AgentInfo, "startedAt">, now: number): string[] {
+  return [formatDuration(now - agent.startedAt)];
 }
 
 /** HH:MM:SS in the viewer's local timezone, for a Timeline turn's timestamp

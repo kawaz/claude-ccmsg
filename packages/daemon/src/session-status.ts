@@ -1858,21 +1858,23 @@ function newerFill(
 }
 
 /** The context as the transcript's fold has it, with what the hooks module
- * said laid over it: the window is only ever the module's; the model the
- * module read (`[1m]` kept) and the effort it saw name it over the
- * transcript's; the fill is the newer of the two (newerFill). Without facts
- * the fold stands as it is. */
+ * said laid over it: the window is only ever the module's; the effort it saw
+ * names it over the transcript's; the fill is the newer of the two
+ * (newerFill). The model stays the transcript's: it is the model that
+ * answered (`claude-fable-5-1`), where the module's is the name the session
+ * was started or switched with (`fable[1m]`). Without a response in the
+ * transcript there is no context, and without facts the fold stands as it
+ * is. */
 export function contextWithFacts(
   context: SessionContextUsage | undefined,
   facts: SessionFacts | undefined,
 ): SessionContextUsage | undefined {
-  if (facts === undefined) return context;
-  const model = facts.model ?? context?.model;
-  if (model === undefined) return context;
+  if (facts === undefined || context === undefined) return context;
+  const { model } = context;
   const window = facts.context?.window;
-  const effort = facts.effort ?? context?.effort;
+  const effort = facts.effort ?? context.effort;
   const fill = newerFill(context, facts);
-  const timestamp = fill?.timestamp ?? context?.timestamp ?? isoAt(facts.context?.at ?? facts.at);
+  const timestamp = fill?.timestamp ?? context.timestamp;
   return {
     ...(fill !== undefined ? { tokens: fill.tokens } : {}),
     ...(window !== undefined ? { window } : {}),

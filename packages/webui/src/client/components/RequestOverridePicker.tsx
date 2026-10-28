@@ -151,9 +151,9 @@ export function ContextLine({
   return (
     <>
       <span class="tl-status-mini-line tl-status-mini-context">
-        {fill} · {button(model)}
-        {effort ? <> · {button(effort)}</> : null}
-        {tail !== "" ? ` · ${tail}` : null}
+        {fill} / {button(model)}
+        {effort ? <> / {button(effort)}</> : null}
+        {tail !== "" ? ` / ${tail}` : null}
       </span>
       {open ? (
         <span

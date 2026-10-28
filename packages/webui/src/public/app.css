@@ -7719,11 +7719,6 @@ a.tl-attachment-file-path {
   color: var(--accent);
 }
 
-.tl-status-mini-todo::before {
-  content: "☐ ";
-  color: var(--fg-muted);
-}
-
 .tl-status-mini-context {
   font-family: ui-monospace, monospace;
   color: var(--accent);

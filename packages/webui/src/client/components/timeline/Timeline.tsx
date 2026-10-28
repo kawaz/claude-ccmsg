@@ -286,7 +286,7 @@ export function Timeline({
   }
 
   // TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張): 走行中
-  // workflow + in_progress TODO の要約に加え、context 消費と活動中
+  // 走行中 workflow の要約に加え、context 消費と活動中
   // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
   // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
   // What the overrides put on the session's main-thread requests (DR-0041
