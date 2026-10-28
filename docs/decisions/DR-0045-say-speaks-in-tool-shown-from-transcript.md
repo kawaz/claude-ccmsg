@@ -1,6 +1,6 @@
 # DR-0045: hooks module はセッションの会話の行を daemon に流すだけにし、daemon が行を正本として webui への中継・say と launch の副作用・既読を持つ
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ⬜ 未実装 (§9 の段階に分けて入れる。段階 1 は [DR-0046](./DR-0046-module-op-over-http.md) の口が入ってから)
+- Status: Accepted (2026-10-28、kawaz 裁定) — 🟡 部分実装 (§9 の段階 1: module の push (`hooks/transcript-push.ts`)、op `transcript_push`、daemon の relay (`transcript-relay.ts`) と `transcript_subscribe` の付け替え。実機の観測は [findings](../findings/2026-10-28-transcript-push-live-verify.md))
 - Date: 2026-10-28
 
 ## Context
@@ -157,8 +157,8 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 | 段階 | 入れるもの | 前提 |
 |---|---|---|
 | 0 | §2 の観測 (済み: `claude -p` と対話のセッション) | — |
-| 1 | push の op と module の転送、daemon の受け口 (uuid の重複除去、§3 の追いつき)、§4 の中継と uuid の継ぎ目 | DR-0046 の `POST /op` |
-| 2 | §5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
+| 1 (済み) | push の op と module の転送、daemon の受け口、§4 の中継 (`transcript_subscribe` を push 起点の読みに付け替える)。`ev:"transcript"` の継ぎ目は byte offset のまま入れた (§4 の uuid への置き換えは統括に確認中) | DR-0046 の `POST /op` |
+| 2 | §3 の追いつきと uuid の重複除去、§5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
 | 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
 
 ## Alternatives Considered
