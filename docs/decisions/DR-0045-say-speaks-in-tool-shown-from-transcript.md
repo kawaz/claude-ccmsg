@@ -41,6 +41,7 @@ kawaz 2026-10-28 の裁定:
 ### 2. 口: 行の push
 
 - module は `session.append` の hook で、受けた `e` から `message` / `uuid` / `agentId` / `door` / `origin` をそのまま daemon に送る。中身は読まない (say や launch の tool_use かを module は判断しない)
+- content が空の行は送らない。jsonl に行が書かれないため (送ると daemon が書かれない行を待つ)。content が空でも書かれる行 (`hook_non_blocking_error`) は、後に続く行の読みで jsonl から来る
 - 経路は DR-0046 の `POST /op` に op を 1 つ足す (名前と body は mod-http-op と合わせて決める。仮に `transcript_push { rows: [...] }`)。session role で、行は名乗った session の会話として受ける
 - 送る順は発生の順。module は送りを 1 本の直列に並べ、前の送りの返事を待ってから次を送る (行の順を daemon 側で並べ直さない)。返事を待つ間に溜まった行は 1 回の要求にまとめる
 - 送りが届かない (`no_daemon` / `outdated` / `unanswered`) 時は、その行を捨てて debug log に 1 行書く。module は再送しない。抜けた行は、daemon が次の初期登録の追いつき (§3) で拾う
@@ -49,7 +50,10 @@ kawaz 2026-10-28 の裁定:
 **観測 (段階 0、[findings](../findings/2026-10-28-session-append-vs-jsonl.md)、Claude Code 2.1.312、`claude -p`)**:
 - uuid を持つ jsonl の行は、全種が append で来る。user、assistant、attachment の各種、`system` の compact_boundary、subagent の行 (`agentId` 付き) のすべて
 - uuid を持たない行は来ない。`queue-operation`、`api-request*`、`atis-latch`、`tools-used`、`last-prompt`、`cost-state`、`mode`
-- jsonl に行の無い append がある: `door: "queue"` の user。compaction の後には、残した行が同じ uuid でもう一度来る
+- jsonl に行の無い append がある:
+  - `door: "queue"` の user
+  - content が空の `hook_success` の attachment (`door: "hook-context"`)。何も言わずに終わった hook が走るたびに 1 件 ([findings](../findings/2026-10-28-session-append-vs-jsonl.md) の §6)
+  - compaction の後には、残した行が同じ uuid でもう一度来る
 - `e.message` は jsonl の行ではない。API の message の形 (`{ type, role?, name?, content }`) で、次が含まれない:
   - timestamp
   - `parentUuid` / `isMeta` / `promptSource` / `origin`

@@ -40,6 +40,7 @@ jsonl に行の無い append もあった:
 
 - `door: "queue"` の user (prompt が queue に入った時。jsonl ではこれに当たるのは uuid の無い `queue-operation`): 各 run の prompt ごとに 1 つ
 - compaction の後、残した assistant の行が、前と同じ `uuid` で append にもう一度来た (run 4 の `a885be6a`、run 1 で書かれた行)。jsonl には二度目は書かれていない
+- content が空の `hook_success` の attachment (`door: "hook-context"`)。§6 (追記) で観測した
 
 ### 2. 形
 
@@ -97,6 +98,35 @@ jsonl に行の無い append もあった:
 - `e.message` に `promptSource` と `origin` の構造 (peer の名前・本文・pid) は無い。人の入力と peer の区別は `e.origin.kind` (`composer` / `peer`) でできる
 - stream の最中に打った prompt が `queued_command` の attachment になる場面 (tool の実行中に打った時) は、この観測では出なかった
 
+### 6. hook の出力の attachment (追記)
+
+動機: DR-0045 の段階 2 の daemon で、tool を使う turn のたびに `transcript relay: gave up waiting ... rows=N after 5000ms` が出た (push で受けた uuid の行が、5 秒待っても jsonl に現れない)。
+
+方法:
+- 一時的に workspace を切り出し、daemon の `transcript_push` の受け口で、受けた各行の `uuid` / `door` / `agent_id` と、`message` の `type` / `role` / `name` / `content` の先頭を daemon.log に書くようにした (確認の後に workspace ごと捨てた)
+- その workspace の daemon と、`--plugin-dir` でその module を読む対話のセッション (tmux、代役の model、`--allowedTools Bash`) を起動した
+- 次の 3 つの turn を進め、push で受けた uuid を jsonl の uuid と突き合わせた
+  - 文だけの turn
+  - TaskCreate の turn
+  - Bash の turn (`echo`)
+- hook は、試験用の config home に入った plugin の hook が走った (下の「試験の環境に由来すること」)
+
+| 場面 | jsonl に行の無い append | jsonl の側 |
+|---|---|---|
+| 起動 (SessionStart の hook 5 つ) | `door: "hook-context"`、`message: { type: "attachment", role: "user", name: "hook_success", content: [] }` が 3 件 | content のある `hook_success` (content は `<system-reminder>` の text) と、`hook_non_blocking_error` (append の content は `[]`) は、同じ uuid で書かれていた |
+| 文だけの turn | 無し (`queue` を除く) | — |
+| TaskCreate の turn (PreToolUse の hook 1 つ) | 上と同じ形の `hook_success` が 1 件。tool_result の append の直前に来た | 無し |
+| Bash の turn (PreToolUse の hook 5 つ、PostToolUse の hook 1 つ) | 同じ形の `hook_success` が 6 件。tool_result の append の直前と直後にまとめて来た (5 件が前、1 件が後) | 無し |
+
+- jsonl に書かれる hook の行は、起動時の 2 行 (content のある `hook_success`、`hook_non_blocking_error`) だけだった。tool の turn の hook の行は、別の uuid でも書かれていない (jsonl に `hook_*` の attachment がこの 2 行のほか無い)
+- jsonl に行の無い append を見分けられる形: `door: "hook-context"`、`message.name: "hook_success"`、`message.content` が空の配列。`door: "hook-context"` だけでは足りない (content のある `hook_success` と `hook_non_blocking_error` は jsonl に行がある)
+- daemon が待って諦めた行の数は、この append の数と一致した (TaskCreate の turn で 1、Bash の turn で 6)
+- 起動の時の 3 件は、module の run が名乗る前に送られたので、daemon は待たなかった
+
+扱い (統括 2026-10-28): module は `message.content` が空の配列の append を送らない (`hooks/transcript-push.ts`)。door や name で名指ししない一般則にした。
+- 送らない理由: 何も言わずに終わった hook の `hook_success` は jsonl に行が書かれず、送ると daemon が書かれない行を上限まで待つ
+- 例外も同じ扱いで足りる: content が空でも jsonl に書かれる行がある (起動時の `hook_non_blocking_error`)。daemon はこの行の push を受けないが、後に続く行の push で、byte offset の続きとして読む
+
 ## DR-0045 への含み
 
 `e.message` で足りる用途と、足りない用途に分かれる。
@@ -111,15 +141,19 @@ jsonl に行の無い append もあった:
 
 - uuid の重複除去は要る。compaction の後に同じ uuid の行がもう一度来る
 - `queue` の append は jsonl に行が無いので、行の正本からは外す
+- content が空の `hook_success` の append (§6) も jsonl に行が無い。push を合図に jsonl を読む側がこの uuid を待つと、hook の走る tool の turn のたびに上限まで待つ
 
 ## 試験の環境に由来すること
 
 - §1〜§4 は `claude -p`、§5 は対話のセッションでの観測
 - model は代役で、thinking の block、API error の行、画像を含む行は出していない
 - 書き込みの遅れは、行の少ない短い turn での値
+- §6 の hook は、試験用の config home の settings (普段の設定から認証の値を抜いたもの) が読む marketplace から入った plugin のもの (SessionStart、PreToolUse、PostToolUse)。§6 の tool の turn の hook と、起動の時の `hook_success` になった hook は、どれも終了の status 0 で終わっていた。content が空なのが hook の出力が空だったためかは、hook の stdout を直接見ていないので確かめていない
 
 ## 未検証
 
 - tool の実行中に打った prompt (`queued_command` の attachment になる場面)。ccmsg の daemon が書く peer の封筒そのもの (この観測は reference の送信の script の frame)
 - thinking を含む assistant、API error の行 (`isApiErrorMessage`)、`/clear` と `/resume` の後の append
 - 長い turn で書き込みの遅れがどこまで伸びるか
+- tool の turn で出力を返す hook (`additionalContext` 等) の `hook_success` が jsonl に書かれるか。§6 の tool の turn の hook はどれも出力が無かった
+- hook が終了の status 0 以外 (blocking の error 等) で終わった時の append と jsonl
