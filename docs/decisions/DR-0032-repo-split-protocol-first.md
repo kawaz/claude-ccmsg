@@ -39,7 +39,15 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
    - **決定 (2026-10-18、実装済み)**: launcher (`bin/ccmsg`) は自分の plugin の CLI だけを起動する。PATH の `ccmsg` へ self-exec せず、PATH の symlink も書き換えない (DR-0007 §2 の自己更新と §4 の注記の self-exec を止める)。v2 の有無に依らない v1 自身の理由で決める:
      - hook と skill は plugin root の絶対パスで launcher を起動するので、どの版が動くかは Claude Code が解決した plugin root で決まる。PATH の `ccmsg` は利用者が置くもので、名前が同じ別の配布物 (別の plugin の CLI や手書きの wrapper) が占めることもある。版を比べて PATH 側へ exec すると、plugin の外にある物が hook の動作を決め、名前が同じだけの別物に hook を渡しうる
      - 版は cache のパスの形 (`<marketplace>/<plugin>/<version>`) から読むしかなく、marketplace や plugin の名前が変わると黙って読めなくなる (regex を今の名前に合わせても次の改名で同じことが起きる)
-     - shell から使う時は、使いたい版の launcher を alias か PATH 上の symlink で指し、plugin を update したら指し直す。この手動の張り直しが正規の手順 (README の Install)
+     - shell や launchd のスクリプトから使う口は、PATH に置く別の launcher にする (次の決定)
+   - **決定 (2026-10-28)**: PATH に置く launcher (`packages/cli/path-launcher.sh`) は、Claude Code が今 install している ccmsg-v1 の版の `bin/ccmsg` に毎回 exec する。plugin を update しても PATH 側には何もしない。launchd のように plugin cache が PATH に乗らない所から `ccmsg` を呼ぶための口で、hook と module の経路 (上の決定) は変えない
+     - 版は Claude Code の記録 `<config dir>/plugins/installed_plugins.json` の `plugins["ccmsg-v1@ccmsg-v1"]` のうち user scope の項目の `installPath` で決める。版の比較も cache のパスの形の解釈もしない (install 中の版と cache の最大の版は、update 前の版の残りや downgrade で一致しない)。plugin か marketplace を改名すると key が合わなくなるが、黙らず「install されていない」と言って止まり、key と plugin.json / marketplace.json の名前の一致はテストが固定する。project / local scope の項目はどの project の claude の物かで決まり、PATH から呼ばれる launcher はどの project にも居ないので見ない
+     - config dir は `CLAUDE_CONFIG_DIR`、未設定か空なら Claude Code の既定の `~/.claude`。CLI (hello の `config_dir`) と daemon (起動の既定の effort を読む config dir) と同じ規則にして、launcher が選ぶ版と、その CLI が自分の config dir と思う所をずらさない。`~/.claude*` を探して選ぶことはしない (§2.3 の「instance は自分の config home だけを見る」と同じで、版の違う config dir が複数ある時にどれを選ぶかの規則を持ち込まない)。`~/.claude` を config dir にしない環境で `CLAUDE_CONFIG_DIR` を引き継がない呼び出し元 (launchd) は、呼び出し側が `CLAUDE_CONFIG_DIR` を渡す
+     - 委譲先を決められない時 (記録が無い・JSON として読めない・user scope の項目が無い・`installPath` に `bin/ccmsg` が無い・jq が無い) は、原因と対処を 1 行 stderr に出して exit 1。委譲先は起動しない
+     - POSIX sh で書き、bun 無しで起動する (bun は委譲先の `bin/ccmsg` が要り、無ければそちらが言う)。記録は jq で読む。sh だけで JSON を正しく読む手段は無く、自前の解析は記録の書式 (改行・escape) に依存する。macOS は `/usr/bin/jq` を持ち、launchd の PATH に乗る
+     - plugin の `bin/` には置かない。Claude Code は plugin の `bin/` をセッションの PATH に足す (2026-10-28 観測: セッションの PATH に `<cache>/ccmsg-v1/ccmsg-v1/<version>/bin`) ので、そこに置くと全セッションの PATH に 2 つ目の名前として乗る
+     - `just install-launcher [dest]` (既定 `~/.local/bin/ccmsg`) が **copy** で置く。symlink にしない: cache の版ディレクトリを指すと update で古い版が消えた時に切れ、repo の checkout を指すと作業中の未 commit の編集が launchd の動作に即座に効き、checkout の移動で切れる。launcher 自身が変わった時は install-launcher を打ち直す
+     - dest に既にある物は、launcher の copy (2 行目の目印の行が同じ) なら置き換え、それ以外 (symlink を含む) は上書きせず止める。利用者が置いた wrapper や手張りの symlink をどかすのは利用者の判断
 5. **切替は config home (= instance) 単位で一気に**行う: その config home で旧 marketplace の plugin を
    disable し、`ccmsg plugin install claude --config-home <dir>` を入れる。同じ config home に 2 種類のplugin が同時に有効な期間を作らない。走行中の旧セッションは subscribe の Monitor と絶対パスで寿命まで旧系と話せる。gateway の通知先 (webhook) は新 instance を追加登録する
 6. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の

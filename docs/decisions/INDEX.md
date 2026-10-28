@@ -39,7 +39,7 @@
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | 契約に吸収 | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
 | [DR-0030](./DR-0030-sandbox-origin-serving.md) | Accepted | 据え置き | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
 | [DR-0031](./DR-0031-webui-design-tokens-and-catalog.md) | Accepted | webui へ移管 | webui デザイントークンと自作コンポーネントカタログ |
-| [DR-0032](./DR-0032-repo-split-protocol-first.md) | Accepted | 据え置き (v2 の起点) | リポ分離と規約ファーストの作り直し (daemon / protocol / webui) |
+| [DR-0032](./DR-0032-repo-split-protocol-first.md) | Accepted | 据え置き (v2 の起点) | リポ分離と規約ファーストの作り直し (daemon / protocol / webui)。§2.2-4: plugin の launcher (`bin/ccmsg`) は自分の plugin の CLI だけを起動し、PATH には Claude Code の `installed_plugins.json` から install 中の版を引いて exec する別の launcher を `just install-launcher` で copy して置く |
 | [DR-0033](./DR-0033-webui-color-system.md) | Proposed | webui へ移管 | webui カラーシステム (少数の入力から全色を導出する 3 層構造 + テーマエディタ) |
 | [DR-0034](./DR-0034-peer-socket-injection.md) | Accepted / 実装済 | 置き換わる予定 | v1 daemon による room msg の peer messaging socket 直接注入 — v2 の配送経路は protocol-v2 が別途定める |
 | [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (✅ 実装済み) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を作らず既存の 1on1 room を読み取り専用にする — v2 (kawaz/ccmsg) と同じ方式で、Enter は module が自分の端末に送る |

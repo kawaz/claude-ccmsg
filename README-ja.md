@@ -25,13 +25,14 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では shell の `PATH` に無い。shell から使う時は、使いたい版の launcher を alias か、`PATH` 上の安定パスに置いた symlink で指す:
+plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では shell の `PATH` に無い。shell や launchd のスクリプトから `ccmsg` を使う時は、本リポの checkout から PATH 用の launcher を `PATH` に置く (`jq` が必要):
 
 ```
-ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
+just install-launcher            # packages/cli/path-launcher.sh を ~/.local/bin/ccmsg に copy
+just install-launcher <dest>     # 別のパスに置く
 ```
 
-launcher は自分の版の CLI だけを動かし、`PATH` の `ccmsg` には触らない。plugin を update したら symlink を新しい版へ張り直す (古い版の cache が消えると symlink は切れる)。[DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4 参照。
+launcher は実行のたびに Claude Code が install している plugin の版を読み (`$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`、`CLAUDE_CONFIG_DIR` が未設定なら `~/.claude`)、その版の `bin/ccmsg` に exec するので、plugin を update しても `PATH` 側には何もしなくてよい。`CLAUDE_CONFIG_DIR` を引き継がない呼び出し元 (launchd) は、config dir が `~/.claude` でなければ `CLAUDE_CONFIG_DIR` を設定する。`install-launcher` は置き先にある物を、launcher の以前の copy 以外は上書きしない。plugin の `bin/ccmsg` 自身は自分の版の CLI だけを動かし、`PATH` の `ccmsg` には触らない。[DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4 参照。
 
 ## Web UI
 

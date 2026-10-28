@@ -25,13 +25,14 @@ claude plugin marketplace update ccmsg-v1
 claude plugin update ccmsg-v1@ccmsg-v1
 ```
 
-The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't on your shell `PATH` by default. To use it from a shell, point an alias or a symlink in a stable dir on `PATH` at the version you want:
+The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't on your shell `PATH` by default. To use `ccmsg` from a shell or a launchd script, put the PATH launcher on `PATH` from a checkout of this repo (requires `jq`):
 
 ```
-ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
+just install-launcher            # copies packages/cli/path-launcher.sh to ~/.local/bin/ccmsg
+just install-launcher <dest>     # or to another path
 ```
 
-The launcher runs the CLI of the version it belongs to and never touches the `ccmsg` on `PATH`, so after a plugin update, point the symlink at the new version yourself (it breaks once the old version's cache is removed). See [DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4.
+On every run it reads which version of the plugin Claude Code has installed (`$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json`, `~/.claude` when `CLAUDE_CONFIG_DIR` is unset) and execs that version's `bin/ccmsg`, so a plugin update needs nothing done to `PATH`. A caller that does not pass on `CLAUDE_CONFIG_DIR` (launchd) has to set it when your config dir is not `~/.claude`. `install-launcher` refuses to overwrite anything at the destination but an earlier copy of the launcher. The plugin's own `bin/ccmsg` runs the CLI of the version it belongs to and never touches the `ccmsg` on `PATH`. See [DR-0032](./docs/decisions/DR-0032-repo-split-protocol-first.md) §2.2-4.
 
 ## Web UI
 

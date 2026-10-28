@@ -4,8 +4,9 @@
 # so bun is a hard requirement; both the Claude Code hooks and shell users invoke
 # this one script.
 #
-# Alias it from your shell (e.g. `alias ccmsg=/path/to/bin/ccmsg`) to use it
-# without polluting PATH.
+# From a shell or a launchd script, call it through the PATH launcher
+# (packages/cli/path-launcher.sh, placed by `just install-launcher`), which
+# execs this file of the version Claude Code has installed.
 #
 # The launcher runs the CLI of the plugin it belongs to and nothing else: it
 # neither hands over to a `ccmsg` found on PATH nor rewrites one (DR-0032

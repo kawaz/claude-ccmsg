@@ -159,6 +159,30 @@ check-hooks-bundle:
 version:
     @bump-semver get {{ version-files }} --no-hint
 
+# PATH の launcher (packages/cli/path-launcher.sh) を dest に copy する (DR-0032 §2.2-4)。
+# symlink でなく copy なのは、launcher が plugin の版を毎回 installed_plugins.json から
+# 引くので置き場が plugin cache に縛られる理由が無く、cache の版ディレクトリは update で消えるから。
+# dest に launcher 以外の物 (symlink を含む) があれば上書きせず止める。launcher の古い copy は置き換える
+[script]
+install-launcher dest=(env("HOME") / ".local/bin/ccmsg"):
+    src=packages/cli/path-launcher.sh
+    marker=$(sed -n 2p "$src")
+    dest={{ quote(dest) }}
+    if [ -L "$dest" ] || { [ -e "$dest" ] && [ "$(sed -n 2p "$dest" 2>/dev/null)" != "$marker" ]; }; then
+        echo "install-launcher: $dest exists and is not the ccmsg launcher; move it away first" >&2
+        exit 1
+    fi
+    if cmp -s "$src" "$dest"; then
+        echo "install-launcher: $dest is up to date"
+        exit 0
+    fi
+    mkdir -p "$(dirname "$dest")"
+    tmp=$(mktemp "$dest.XXXXXX")
+    cp "$src" "$tmp"
+    chmod 755 "$tmp"
+    mv -f "$tmp" "$dest"
+    echo "install-launcher: installed $dest"
+
 # ---------- check recipes (push の sanity 検証、基本は push 経由でしか叩かない) ----------
 
 # 現在の bookmark/branch が default (= main) 上にあるか確認 (DR-0038 dogfood)。
