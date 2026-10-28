@@ -33,7 +33,7 @@ fs_read の containment は root 配下限定のまま。プロジェクト外�
 ### 3.3 webui
 
 - FileTree に第 3 セクション。行はフルパス表示 + ★。クリックで FileViewer (認可は § 3.2 経由)
-- セクション毎に overflow-x: auto (既存セクションにも適用)
+- セクション毎に overflow-x: auto (既存セクションにも適用、スクロールバーは出さない)
 
 ## 4. Phase 分割
 

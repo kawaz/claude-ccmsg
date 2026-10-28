@@ -3342,9 +3342,11 @@ button.session-tab {
 
 /* DR-0024: each top-level section owns its horizontal scroll. Nested children
  * stay in the same scroll coordinate space, so deep indentation and full
- * external paths remain reachable without moving the whole Files pane. */
+ * external paths remain reachable without moving the whole Files pane. The
+ * scrollbar itself is hidden (it only got in the way); the scroll stays. */
 .tree-root {
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .tree-row {
@@ -3583,8 +3585,10 @@ button.session-tab {
   margin: 0;
   padding: 0;
   /* 長いパスは省略せず横スクロールで見せる (kawaz r55m76 / m78)。行 (li) を
-   * 内容幅にするため min-content を敷き、はみ出し分をここでスクロールする。 */
+   * 内容幅にするため min-content を敷き、はみ出し分をここでスクロールする。
+   * スクロールバーは邪魔なので出さない (スクロールはできる)。 */
   overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .file-search-list > li {
