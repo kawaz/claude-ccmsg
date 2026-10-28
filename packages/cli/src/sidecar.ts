@@ -40,7 +40,7 @@ export interface Sidecar {
  * them would need changing whenever they add an op, and it is a process
  * started once per session and kept for its life. Nothing is answered on the
  * connection either: a line written is a line taken, and the module's reply
- * goes back by `ccmsg sidecar reply`.
+ * goes back over the daemon's `POST /op` (DR-0046).
  *
  * The path is unlinked before binding because whatever is there is this run's
  * own: the run id is the run's, so another run's socket has another name, and

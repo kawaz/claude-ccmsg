@@ -1,11 +1,11 @@
 # DR-0046: hooks module から daemon への依頼を、daemon の Unix socket 上の HTTP の 1 endpoint で行い、頼み手を socket の相手の process で決める
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (daemon の `http.sock` の `POST /op` (`op-http.ts`、`http1.ts`、`peer-pid.ts`)、protocol の `module-op.ts` (socket の名前・`stateDirOf`・body の型)・`protocol-version.ts`・ErrorCode `unknown_peer`、module の `daemon-op.ts` と `send` / `peers` / 事実 / 案内の差し替え、CLI の `sidecar send-message` / `peer-list` / `facts` の削除)。実機の確認は [findings 2026-10-28-mod-http-op](../findings/2026-10-28-mod-http-op.md)
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (daemon の `http.sock` の `POST /op` (`op-http.ts`、`http1.ts`、`peer-pid.ts`)、protocol の `module-op.ts` (socket の名前・`stateDirOf`・body の型)・`protocol-version.ts`・ErrorCode `unknown_peer`、module の `daemon-op.ts` と `send` / `peers` / 事実 / 案内 / サイドカーの依頼への返事の差し替え、CLI の `sidecar send-message` / `peer-list` / `facts` / `reply` の削除)。実機の確認は [findings 2026-10-28-mod-http-op](../findings/2026-10-28-mod-http-op.md)
 - Date: 2026-10-28
 
 ## Context
 
-hooks module が daemon に何かを頼む時は、呼び出しのたびに `$.process.run([<plugin root>/bin/ccmsg, ...])` で CLI を 1 つ起こしている。tool の `send` / `peers` は `ccmsg sidecar send-message` / `peer-list`、セッションの事実は `ccmsg sidecar facts`、最初の turn の前の案内の URL は `ccmsg status`。bun の起動を含めて 1 回 0.1〜0.3 秒かかり ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) Consequences、findings の表)、事実は turn や計測のたびに送るので、そのたびに process が 1 つ起きる。
+hooks module が daemon に何かを頼む時は、呼び出しのたびに `$.process.run([<plugin root>/bin/ccmsg, ...])` で CLI を 1 つ起こしている。tool の `send` / `peers` は `ccmsg sidecar send-message` / `peer-list`、セッションの事実は `ccmsg sidecar facts`、サイドカーが渡した依頼への返事は `ccmsg sidecar reply`、最初の turn の前の案内の URL は `ccmsg status`。bun の起動を含めて 1 回 0.1〜0.3 秒かかり ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) Consequences、findings の表)、事実は turn や計測のたびに送るので、そのたびに process が 1 つ起きる。
 
 DR-0039 は `$.http.fetch` の `socketPath` で daemon と直接話す案 (Alternatives の B10) を、2 つの理由で見送った: daemon に HTTP の op の endpoint と session role の名乗り方の設計が要ること、`socketPath` が任意の Unix socket に繋がるかがリファレンス自身で未確認だったこと。
 
@@ -49,6 +49,7 @@ kawaz 2026-10-28 の裁定:
 - 見つからなければ ErrorCode `unknown_peer` で断り、op は走らせない (msg は「process <pid> is not a Claude Code session in a config dir this daemon reaches」)。pid が読めなかった時も同じ
 - body の `hello` は pid から引けないものだけを持つ:
   - `sid`: module が頼むつもりのセッション (`$.session.id()`)。daemon は §3 で決めた session id と比べ、違えば `unknown_peer` で断る (「process <pid> runs session <a>, not <b> (its id may have just changed: /clear, /resume)」)。identity は pid が決め、この欄は食い違いを見つけるためだけに使う。`/clear` の直後に module と state file の id がずれた要求を、別のセッションの名で通さない
+  - 例外はサイドカーの依頼への返事 (`sidecar_reply`) で、同じ process が以前に走らせていた id なら通す (kawaz 2026-10-28)。返事は依頼が届いた id で送る (daemon はその id の依頼と返事を突き合わせる) ので、`/clear` / `/resume` の前に届いた依頼 (`prompt.send` の `session_changed` 等) への返事は古い id を名乗る。daemon は相手の pid ごとに、その state file に見つけた session id を、その process が生きている間覚えておき (`PeerSessions`)、返事が名乗る id がその中にあれば、その id で hello を作る。覚えるのは daemon の process の中だけで、daemon を起こし直すと忘れる
   - `client_version`: plugin の root の `package.json` の `version` (`ccmsg version` と同じ値)。bundle に版を焼き込むと release の bump のたびに bundle が古くなる (`bun hooks/bundle.ts --check`) ので、`$.fs.read` で読む。読めなければ欄を省き、debug の log に残す
   - `protocol`: `PROTOCOL_VERSION`。版 (`package.json` を import する `version.ts`) と分けて `protocol-version.ts` に置き、bundle は世代だけを持つ。世代の違う値は hello の世代の検査が断る
 - daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`client_version` / `protocol` (body のもの)。所在 (`cwd` / `repo` / `ws` / `repo_root` / `branch`) と `transcript_path` は入れない
@@ -106,15 +107,15 @@ kawaz 2026-10-28 の裁定:
 | tool `send` | `send_message` | `ccmsg sidecar send-message` |
 | tool `peers` | `peer_list` | `ccmsg sidecar peer-list` |
 | セッションの事実 | `session_facts` | `ccmsg sidecar facts` |
+| サイドカーの依頼への返事 (DR-0035 §3) | `sidecar_reply` | `ccmsg sidecar reply` |
 | 案内の URL (DR-0039 §5) | `ping` (`webui_url`) | なし (`ccmsg status` は人の口として残る) |
 
 この DR では移さないもの:
 
 - `ccmsg sidecar begin`: state file を書き、daemon が無ければ起こし、古ければ置き換える。HTTP の口は daemon が居ないと話せない
 - `ccmsg sidecar launch` (tool `launch`): 起動の待ちは最大約 61 秒 ([DR-0018](./DR-0018-session-launcher.md) §3.7) で、host が fetch を 30 秒で打ち切る
-- `ccmsg sidecar reply` (サイドカーの依頼への返事): 返事は依頼が届いた sid で送る。`/clear` の後に古い sid で届いた依頼 (`prompt.send` の `session_changed` 等) に答える時、相手の process の state file はもう新しい sid を名指すので、§3 の照合で断られる。ある process がどの sid の依頼に答えてよいか (同じ run が名乗ったことのある sid) を §3 に足すかの判断が要り、この DR では決めない
 - `ccmsg sidecar say-mark` (tool `say`)、`ccmsg sidecar permit` (tool `permit`)、request override、turn abort: 別の作業 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md)、DR-0041、DR-0044) が CLI 経由で仕上げた後に、この口へ移す
-- daemon → module の向き: サイドカー (`ccmsg sidecar`) が daemon の依頼を module に渡す経路と、`describe` の版 (`ccmsg version`) は DR-0035 §3 のまま
+- daemon → module の向き: サイドカー (`ccmsg sidecar`) が daemon の依頼を module に渡す経路と、`describe` の版 (`ccmsg version`) は DR-0035 §3 のまま。依頼への返事だけがこの口に移る
 
 ### 8. 互換
 
@@ -139,17 +140,18 @@ kawaz 2026-10-28 の裁定:
 
 ## Consequences
 
-- tool の `send` / `peers` と事実の送信と案内で CLI の process が起きない。host の中から測った往復は、旧 CLI の約 0.1 秒 (中央値 97〜117 ms、初回は 578 ms) から 1〜4 ms になった (findings の表)
+- tool の `send` / `peers`、事実の送信、案内、サイドカーの依頼への返事で CLI の process が起きない。host の中から測った往復は、旧 CLI の約 0.1 秒 (中央値 97〜117 ms、初回は 578 ms) から 1〜4 ms になった (findings の表)
 - 1 要求 1 接続の負荷の見積もり (daemon を同じ process に置き、`session_facts` を流した): transcript の path が採用済みのセッションで、直列 1000 回が 450 ms (1 回 0.45 ms、daemon の処理だけなら 0.23 ms)、同時 200 本が 28 ms。同時 500 本は接続が張れずに失敗した (listen の backlog)。1 MiB の body は 73 ms。module が `session.append` の全行を 1 行 1 POST で流す (DR-0045 の作り直し) と、1 つのセッションの送信は 1 本ずつ並ぶので同時の本数はセッションの数ほどで、行の数 × 0.5 ms 程度の負荷になる。同時に数百本を超える使い方、1 行ごとの往復の費用が問題になる場合は、keep-alive か複数行をまとめる op を足す
 - transcript の path がまだ無いセッション (最初の transcript が書かれる前) は、hello ごとに全 config dir の `projects/` を探すので 1 要求約 30 ms (実の home) かかる。module が密に頼むほどこの間の費用が増える
 - daemon が動いていない時、`send` / `peers` は daemon を起こさずに `no_daemon` を返す。人が止めた daemon を tool が蘇らせなくなり、DR-0039 Consequences の「daemon が立つ契機は module の `session.start` と人の CLI」がそのとおりになる。tool による古い daemon の置き換え (`ensureDaemon` の upgrade) も無くなり、置き換えはセッションの開始だけが行う
 - 頼み手の state file が daemon の届く config dir に無い間は断られる。既定の daemon は `$HOME/.claude*` を serve するので起きない。serve しない config dir のセッション (試験の daemon 等) は、サイドカーの hello がその dir を名乗るまで (セッションの開始の直後) の要求が `unknown_peer` になる。事実は次の変化か daemon の `session.facts` の問いで埋まる
 - `/clear` の直後に module と state file の id がずれている間の要求は `unknown_peer` で断られる (別のセッションの名では通らない)。観測した 1 回では state file が先に変わり、新しい id の事実は通った
+- 古い id への返事が通るのは、daemon がその process をその id で見たことがある時だけ。daemon を起こし直した後は、その process がこの daemon に一度も頼まないうちに id が変わると、古い id への返事は `unknown_peer` で断られ、その依頼は期限で未確認になる。依頼はその id のサイドカーが名乗った daemon からしか来ず、名乗りの時に daemon が問う `session.facts` の返事がその id で届くので、ふつうはその前に覚えている
 - daemon がまだその sid を知らない時 (daemon の再起動の直後、サイドカーが名乗り直す前) に module の要求が来ると、所在の無い登録ができ、サイドカーの名乗りで所在が付くまで webui の一覧の repo / ws の欄が空になる
 - `ping` の `clients` は、要求の間だけ開いている接続も数える
 - `peer-pid.ts` は macOS と Linux (glibc の `libc.so.6`) の呼び方だけを持つ。他の OS では相手の pid が読めず、すべての要求が `unknown_peer` になる
 - bun-types (1.3.14、1.4.4) の `Socket` に `fd` が無いので、`Bun.listen` の socket の `fd` はスキーマで読む
-- 置き換わる判断: DR-0039 Alternatives の B10 の行 (この DR で採る)、DR-0039 §4 の「module の transport」(sidecar 系のうち `send-message` / `peer-list` / `facts` はこの口に移る)、DR-0035 §3 の事実の送り方、DR-0039 §5 の URL の聞き方 (`ccmsg status`)
+- 置き換わる判断: DR-0039 Alternatives の B10 の行 (この DR で採る)、DR-0039 §4 の「module の transport」(sidecar 系のうち `send-message` / `peer-list` / `facts` / `reply` はこの口に移る)、DR-0035 §3 の返事と事実の送り方、DR-0039 §5 の URL の聞き方 (`ccmsg status`)
 
 ## 関連
 

@@ -98,8 +98,9 @@ async function registerTools($: Engine): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar launch` / `permit` for session `sid`: the input goes on
- * standard input, for the reason a reply does (sidecar.ts). */
+/** `ccmsg sidecar launch` / `permit` for session `sid`. The input goes on
+ * standard input: a launch's prompt and a request's commands may be long, and
+ * an argument is bounded in size and shown to every user by `ps`. */
 export function toolArgv(root: string, command: "launch" | "permit", sid: string): string[] {
   return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
 }

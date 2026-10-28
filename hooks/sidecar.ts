@@ -10,14 +10,16 @@
 //
 // A line is a request naming an op (`{ v, op, id, args }`); every request
 // with an id gets one reply (`{ id, ok, result }` or `{ id, ok: false, error }`),
-// which goes back to the daemon through `ccmsg sidecar reply`. A line that is
+// which goes back to the daemon as the op `sidecar_reply` (daemon-op.ts,
+// DR-0046). A line that is
 // not a request this module runs is logged and not answered: the daemon,
 // getting no reply, takes the request as unconfirmed at its deadline. The ops
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
 // (facts.ts), `agent.append` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts); `describe` says which
 // ops the module has.
-import { errorText } from "@ccmsg/protocol/parse";
+import * as v from "valibot";
+import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
   type FailedSidecarReply,
@@ -29,6 +31,7 @@ import {
   type SidecarRequest,
   sidecarRunId,
 } from "@ccmsg/protocol/sidecar";
+import { daemonOp } from "./daemon-op.ts";
 import type { Engine, SpawnChunk, SpawnEnd } from "./engine.ts";
 import { currentFacts, type FactsState } from "./facts.ts";
 import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt-send.ts";
@@ -37,8 +40,7 @@ import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { appendToAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
 
-/** A `ccmsg` command that is one process and one round trip to the daemon (a
- * reply, the version), measured at about 0.3 s. */
+/** `ccmsg version`, one process (describe), measured at about 0.3 s. */
 export const REPLY_TIMEOUT_MS = 3_000;
 
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
@@ -92,27 +94,31 @@ export function lineSplitter(onLine: (line: string) => void): (piece: string) =>
   };
 }
 
-/** `ccmsg sidecar reply` for a reply to a request that arrived under `sid`.
- * The reply itself goes on standard input (see `sendReply`). */
-export function replyArgv(root: string, sid: string): string[] {
-  return [`${root}/bin/ccmsg`, "sidecar", "reply", "--sid", sid];
-}
+/** sidecar_reply's reply, as far as the module reads it: whether the daemon
+ * took the reply. */
+const TakenTextSchema = jsonText(v.object({ ok: v.literal(true) }));
 
-/** Hand `reply` to the daemon. On standard input rather than as an argument:
- * a reply carries whatever its op returns, an argument is bounded in size and
- * shown to every user by `ps`, and `$.process.run` writes `stdin` once and
- * closes it, which is all one reply needs. */
+/** Hand `reply` to the daemon, as session `sid`: the id the request came
+ * under, which the daemon pairs the reply with even when the session has
+ * changed its id since (/clear, /resume, DR-0046 §3). Never rejects: a reply
+ * that does not land is logged, and the daemon takes its request as
+ * unconfirmed at the deadline. */
 async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
   try {
-    const done = await $.process.run(replyArgv($.plugin.root, sid), {
-      stdin: JSON.stringify(reply),
-      timeoutMs: REPLY_TIMEOUT_MS,
-    });
-    if (done.exitCode !== 0) {
-      $.ui.log(`ccmsg: reply ${reply.id} exited ${done.exitCode}: ${done.stderr.trim()}`, {
-        to: "debug",
-      });
+    const asked = await daemonOp($, { op: "sidecar_reply", reply }, { sid });
+    if (asked.kind === "answered") {
+      if (!parseWith(TakenTextSchema, asked.text).ok) {
+        $.ui.log(`ccmsg: reply ${reply.id} refused: ${asked.text}`, { to: "debug" });
+      }
+      return;
     }
+    const why =
+      asked.kind === "unanswered"
+        ? asked.reason
+        : asked.kind === "outdated"
+          ? "the daemon is older than this plugin"
+          : "no daemon runs";
+    $.ui.log(`ccmsg: reply ${reply.id} not sent: ${why}`, { to: "debug" });
   } catch (e) {
     $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }

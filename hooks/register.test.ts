@@ -18,7 +18,7 @@ import {
   SessionFactsSchema,
   SIDECAR_OP_NAMES,
   type SidecarReply,
-  SidecarReplyTextSchema,
+  SidecarReplySchema,
   SidecarRunIdSchema,
 } from "@ccmsg/protocol/sidecar";
 import { concern, fanOut } from "./bus.ts";
@@ -46,7 +46,7 @@ import {
   samePrompt,
 } from "./prompt-send.ts";
 import { beginArgv } from "./session-lifecycle.ts";
-import { answer, lineSplitter, replyArgv, RESPAWN_MIN_MS } from "./sidecar.ts";
+import { answer, lineSplitter, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
 import { LAUNCH_TIMEOUT_MS, PERMIT_TIMEOUT_MS } from "./tools.ts";
 import {
@@ -148,6 +148,7 @@ const OpRequestSchema = v.object({
   hello: v.object({ sid: v.string() }),
 });
 const FactsRequestSchema = v.object({ facts: SessionFactsSchema });
+const ReplyRequestSchema = v.object({ reply: SidecarReplySchema });
 const OpBodyTextSchema = jsonText(JsonObjectSchema);
 
 interface Fake {
@@ -160,9 +161,12 @@ interface Fake {
    * session event, and what a test of the other requests asks is told
    * without them. */
   factsSent: { sid: string; facts: SessionFacts }[];
-  /** Each `POST /op` the module made other than `session_facts` and `ping`:
-   * the socket and the body, in order. */
+  /** Each `POST /op` the module made other than `session_facts`,
+   * `sidecar_reply` and `ping`: the socket and the body, in order. */
   asked: { socketPath: string | undefined; body: JsonObject }[];
+  /** Each reply the module handed the daemon (`sidecar_reply`), with the sid
+   * its hello named, in order. Kept apart from `asked` as the facts are. */
+  replies: { sid: string; reply: SidecarReply }[];
 
   /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
    * named, in order. Kept apart from `runs` as the facts are. */
@@ -278,6 +282,7 @@ function fakeEngine(
     ...options.files,
   };
   const asked: Fake["asked"] = [];
+  const replies: Fake["replies"] = [];
   const sockets = options.sockets ?? "up";
   const stateDir = (): string =>
     stateDirOf(
@@ -395,6 +400,12 @@ function fakeEngine(
           factsSent.push({ sid: request.value.hello.sid, facts: read.value.facts });
           return answering(200, { ok: true, request_id: "op" });
         }
+        if (request.value.op === "sidecar_reply") {
+          const read = parseWith(ReplyRequestSchema, body.value);
+          if (!read.ok) throw new Error(`reply not readable: ${read.failure.summary}`);
+          replies.push({ sid: request.value.hello.sid, reply: read.value.reply });
+          return answering(200, { ok: true, request_id: "op" });
+        }
         if (request.value.op === "ping") {
           statuses.count += 1;
           const webuiUrl = options.webuiUrl;
@@ -445,6 +456,7 @@ function fakeEngine(
     session,
     factsSent,
     asked,
+    replies,
     begins,
     runs,
     statuses,
@@ -578,13 +590,13 @@ function lastTimer(fake: Fake): Timer {
   return timer;
 }
 
-/** What the `index`th run got on standard input, read as a reply. */
-function stdinReply(fake: Fake, index: number): SidecarReply {
-  const stdin = fake.stdins[index];
-  if (stdin === undefined) throw new Error(`run #${index} got no standard input`);
-  const read = parseWith(SidecarReplyTextSchema, stdin);
-  if (!read.ok) throw new Error(`run #${index} got no reply: ${read.failure.summary}`);
-  return read.value;
+/** The reply the module handed the daemon after the first `from`, once it
+ * has. */
+async function nextReply(fake: Fake, from = 0): Promise<SidecarReply> {
+  for (let i = 0; i < 20 && fake.replies.length <= from; i++) await settle();
+  const sent = fake.replies[from];
+  if (sent === undefined) throw new Error(`no reply after #${String(from)}`);
+  return sent.reply;
 }
 
 /** What the harness does on Enter with text in the composer: prompt.submit
@@ -899,16 +911,13 @@ describe("the sidecar the module keeps", () => {
     expect(Number.isSafeInteger(Number(flagOf(argv, "--started-at")))).toBe(true);
     spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"r9",');
     spawned(fake, 0).stream.push('"args":{"text":"hello"}}\n');
-    for (let i = 0; i < 10 && fake.runs.length < 2; i++) await settle();
-    expect(fake.runs).toEqual([
-      ["hyoui", "input", "term-1", "key:Enter"],
-      ["/plugin/bin/ccmsg", "sidecar", "reply", "--sid", fake.sid.value],
-    ]);
-    expect(stdinReply(fake, 1)).toEqual({
+    expect(await nextReply(fake)).toEqual({
       id: "r9",
       ok: true,
       result: { outcome: "accepted" },
     });
+    expect(fake.replies.map((r) => r.sid)).toEqual([fake.sid.value]);
+    expect(fake.runs).toEqual([["hyoui", "input", "term-1", "key:Enter"]]);
   });
 
   // The sidecar names the run to the daemon with what the module itself
@@ -1167,28 +1176,27 @@ describe("a session that changes its id (/clear)", () => {
     const oldSid = fake.sid.value;
     spawned(fake, 0).stream.push('{"v":1,"op":"prompt.send","id":"old","args":{"text":"late"}}\n');
     await fire(fake, "session.end", { reason: "clear" }, async () => ({}));
-    for (let i = 0; i < 10 && fake.runs.length < 1; i++) await settle();
-    expect(fake.fills).toEqual([]);
-    expect(fake.runs).toEqual([["/plugin/bin/ccmsg", "sidecar", "reply", "--sid", oldSid]]);
-    expect(stdinReply(fake, 0)).toEqual({
+    expect(await nextReply(fake)).toEqual({
       id: "old",
       ok: true,
       result: { outcome: "not_delivered", reason: "session_changed" },
     });
+    expect(fake.fills).toEqual([]);
+    // Answered under the id the request came to, which the daemon pairs it
+    // with: the same process ran it (DR-0046 §3).
+    expect(fake.replies.map((r) => r.sid)).toEqual([oldSid]);
+    expect(fake.runs).toEqual([]);
   });
 });
 
-/** Start a sidecar, write `line` to the module, and return the reply it ran
- * `ccmsg sidecar reply` with. */
+/** Start a sidecar, write `line` to the module, and return the reply it
+ * handed the daemon. */
 async function replyTo(fake: Fake, line: string): Promise<SidecarReply> {
   await fire(fake, "session.start", START, async () => ({}));
   await settle();
+  const from = fake.replies.length;
   spawned(fake, 0).stream.push(`${line}\n`);
-  const isReply = (argv: string[]) => argv[2] === "reply";
-  for (let i = 0; i < 20 && !fake.runs.some(isReply); i++) await settle();
-  const at = fake.runs.findIndex(isReply);
-  expect(at).toBeGreaterThanOrEqual(0);
-  return stdinReply(fake, at);
+  return nextReply(fake, from);
 }
 
 describe("requests the module answers without running prompt.send", () => {
@@ -1235,21 +1243,18 @@ describe("requests the module answers without running prompt.send", () => {
 
   test("a reply that cannot be sent is logged, and answering does not throw", async () => {
     const fake = fakeEngine();
-    const process = fake.$.process;
-    fake.$.process = {
-      ...process,
-      run: async (argv, init) => {
-        if (argv[2] === "reply") throw new Error("spawn failed");
-        return process.run(argv, init);
+    fake.$.http = {
+      fetch: async () => {
+        throw new Error("aborted: no complete answer within 30000ms");
       },
     };
     const state = registerOn(fake);
     expect(
       await answer(fake.$, state, fake.sid.value, 0, '{"v":1,"op":"describe","id":"q6","args":{}}'),
     ).toBeUndefined();
-    expect(
-      fake.logs.some((l) => l.includes("reply q6 failed: ") && l.includes("spawn failed")),
-    ).toBe(true);
+    expect(fake.logs).toContain(
+      "ccmsg: reply q6 not sent: Error: aborted: no complete answer within 30000ms",
+    );
   });
 
   test("describe lists the ops and the ccmsg version beside the module", async () => {
@@ -1829,15 +1834,11 @@ describe("the overrides of the session's requests", () => {
   });
   /** The daemon hands the session override over the sidecar. */
   async function session(fake: Fake, override: object): Promise<SidecarReply> {
-    const at = fake.runs.length;
+    const at = fake.replies.length;
     spawned(fake, 0).stream.push(
       `${JSON.stringify({ v: 1, op: "request.override", id: `o${at}`, args: override })}\n`,
     );
-    const isReply = (argv: string[]) => argv[2] === "reply";
-    for (let i = 0; i < 20 && !fake.runs.slice(at).some(isReply); i++) await settle();
-    const found = fake.runs.findIndex((argv, i) => i >= at && isReply(argv));
-    expect(found).toBeGreaterThanOrEqual(0);
-    return stdinReply(fake, found);
+    return nextReply(fake, at);
   }
   /** What a request is sent with, as far as the override changes it. */
   const sentWith = async (fake: Fake, e: object) => {
@@ -2100,13 +2101,9 @@ describe("stopping the main loop's turn (turn.abort)", () => {
   }
   /** The daemon asks turn.abort over the sidecar; the module's reply. */
   async function abort(fake: Fake): Promise<SidecarReply> {
-    const at = fake.runs.length;
+    const at = fake.replies.length;
     spawned(fake, 0).stream.push(`${ABORT}\n`);
-    const isReply = (argv: string[]) => argv[2] === "reply";
-    for (let i = 0; i < 20 && !fake.runs.slice(at).some(isReply); i++) await settle();
-    const found = fake.runs.findIndex((argv, i) => i >= at && isReply(argv));
-    expect(found).toBeGreaterThanOrEqual(0);
-    return stdinReply(fake, found);
+    return nextReply(fake, at);
   }
 
   test("the main loop's running turn is stopped by the id its turn.start carried", async () => {
@@ -2232,13 +2229,11 @@ describe("the subagents", () => {
     await settle();
     // Each request on the sidecar, and the reply the module sent for it.
     const append = async (agentId: string, text: string) => {
-      const isReply = (argv: string[]) => argv[2] === "reply";
-      const before = fake.runs.filter(isReply).length;
+      const before = fake.replies.length;
       spawned(fake, 0).stream.push(
         `${JSON.stringify({ v: 1, op: "agent.append", id: "g1", args: { agentId, text } })}\n`,
       );
-      for (let i = 0; i < 20 && fake.runs.filter(isReply).length === before; i++) await settle();
-      return stdinReply(fake, fake.runs.findLastIndex(isReply));
+      return nextReply(fake, before);
     };
     expect(await append(A, "その方針で")).toEqual({
       id: "g1",
@@ -3145,10 +3140,6 @@ describe("putting the draft back", () => {
 describe("pure helpers", () => {
   test("hyouiEnterArgv names the terminal by its session id alone", () => {
     expect(hyouiEnterArgv("t")).toEqual(["hyoui", "input", "t", "key:Enter"]);
-  });
-
-  test("replyArgv names the session and carries nothing of the reply", () => {
-    expect(replyArgv("/p", "s")).toEqual(["/p/bin/ccmsg", "sidecar", "reply", "--sid", "s"]);
   });
 
   // As measured for UserPromptSubmit: the harness hands on the prompt with

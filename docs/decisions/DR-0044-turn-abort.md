@@ -40,7 +40,7 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
   - `no_module`: セッションは走っているが、その sid の生きている run (サイドカー) が無い。module の無いセッションに、CLI・端末への Esc の送鍵・signal 等の別経路は作らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §7)
   - `abort_failed`: どれも `aborted` でなく、どれかの module が `refused` と答えた (msg に module の文言)、または答えが期限までに無かった・op の形で読めなかった (msg でそう言い、止まったかは分からないと書く)。古い plugin の module は `turn.abort` の行を読めずに答えないので、後者になる
   - `no_turn`: 答えた module がどれも `no_turn` だった (押した時には turn が終わっていた)
-- 期限は `TURN_ABORT_DEADLINE_MS` = 5 秒 (書き込みと `ccmsg sidecar reply` 1 回で約 0.3 秒、`request.override` と同じ値)
+- 期限は `TURN_ABORT_DEADLINE_MS` = 5 秒 (書き込みと module の返事 1 回。返事は `POST /op` で数 ms ([DR-0046](./DR-0046-module-op-over-http.md))、`request.override` と同じ値)
 - 返事は module の答えを待つので遅い op で、1 応答の相関 RPC で答える。同じ接続の他の依頼を待たせない (DR-0029 追補、`session_kill` と同じ理由)
 - daemon.log に 1 行: `turn_abort: session_id=<sid> result=<aborted|error code> tries=[<id> <socket> <run の結果>, ...]`
 

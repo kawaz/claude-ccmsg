@@ -573,7 +573,7 @@ async function nextRequest(sidecar: {
   }
 }
 
-/** A module's reply as `ccmsg sidecar reply` hands it to the daemon. */
+/** A module's reply as the daemon takes it (sidecar_reply). */
 function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar_reply" }> {
   return { op: "sidecar_reply", reply };
 }

@@ -30,7 +30,7 @@ import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
 import type { SidecarRun } from "./sidecar-runs.ts";
 
 /** How long the daemon waits for a module to answer `request.override`: the
- * write, then one `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3). */
+ * write, then the module's reply over `POST /op` (a few ms, DR-0046). */
 export const REQUEST_OVERRIDE_DEADLINE_MS = 5_000;
 
 /** The session overrides the daemon holds, by session id. */

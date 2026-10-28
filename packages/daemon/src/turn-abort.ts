@@ -9,7 +9,7 @@ import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
 import type { SessionRunsView } from "./user-prompt.ts";
 
 /** How long the daemon waits for the modules to answer `turn.abort`: the
- * write, then one `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3) —
+ * write, then the module's reply over `POST /op` (a few ms, DR-0046) —
  * the bound request.override has. */
 export const TURN_ABORT_DEADLINE_MS = 5_000;
 

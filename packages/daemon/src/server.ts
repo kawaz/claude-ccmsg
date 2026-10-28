@@ -652,7 +652,7 @@ function forgetSession(daemon: Daemon, sid: string): void {
 }
 
 /** How long the daemon waits for a module to answer `session.facts`: the
- * write, then one `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3). */
+ * write, then the module's reply over `POST /op` (a few ms, DR-0046). */
 const SESSION_FACTS_ASK_MS = 5_000;
 
 /** Hold `facts` as `sid`'s unless they are older than the ones held, and push
@@ -2425,7 +2425,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
     case "sidecar_reply": {
       // The replier is the session the request went to: its hooks module
-      // runs `ccmsg sidecar reply`, which hellos as that session.
+      // asks `POST /op` as that session (op-http.ts), the same process even
+      // when the session has changed its id since.
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'sidecar_reply' requires session role");
         return;

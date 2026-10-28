@@ -3,7 +3,7 @@
 // The daemon writes one request per line to a session run's sidecar socket;
 // the sidecar copies the line to the session's hooks module unread. The module
 // answers every request it can name (one with an `id`) with one reply, which
-// `ccmsg sidecar reply` carries to the daemon as a SidecarReplyRequest. A
+// it hands the daemon as a SidecarReplyRequest over `POST /op` (DR-0046). A
 // request names an operation (`op`), so what the module can be asked grows by
 // adding ops, not by changing the line.
 //
@@ -393,8 +393,8 @@ export function sidecarReplySchema<R extends v.GenericSchema>(result: R): Sideca
   ]);
 }
 
-/** A reply as it travels: from the module, through `ccmsg sidecar reply`, to
- * the daemon. Its `result` is the op's, and which op a reply answers is known
+/** A reply as it travels: from the module, over `POST /op` (DR-0046), to the
+ * daemon. Its `result` is the op's, and which op a reply answers is known
  * only to whoever sent the request, so the result is read there, by the op's
  * schema (`SIDECAR_OPS[op].result`), and not on the way. That keeps a result
  * of a shape one side does not know (another ccmsg version) an answer the
@@ -402,9 +402,6 @@ export function sidecarReplySchema<R extends v.GenericSchema>(result: R): Sideca
  * for in vain. */
 export const SidecarReplySchema = sidecarReplySchema(v.unknown());
 export type SidecarReply = Output<typeof SidecarReplySchema>;
-
-/** A reply as `ccmsg sidecar reply` takes it on standard input: JSON text. */
-export const SidecarReplyTextSchema = jsonText(SidecarReplySchema);
 
 /** The reply to a request of `Op`, with its result read. */
 export type SidecarReplyOf<Op extends SidecarOp> =

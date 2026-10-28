@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { BODY_MAX_BYTES, HEAD_MAX_BYTES, readHttp1 } from "../src/http1.ts";
-import { listenOpHttp } from "../src/op-http.ts";
+import { listenOpHttp, PeerSessions } from "../src/op-http.ts";
 import {
   fixtureDir,
   type InProcessDaemon,
@@ -174,6 +174,47 @@ describe("POST /op", () => {
     }
   });
 
+  // A reply goes under the id its request came to. After /clear the process
+  // runs a new id, and still answers what came to the old one: a reply may
+  // name an id the same process was found running. Nothing else may, and no
+  // reply may name an id the process never ran.
+  test("a reply may name an id the same process ran before; nothing else may", async () => {
+    const ctx = await startInProcessDaemon();
+    ctx.daemon.opHttp = listenOpHttp(ctx.daemon);
+    const configDir = path.join(ctx.base, "claude-config");
+    const NEW = "0b000000-0000-4000-8000-000000000003";
+    const NEVER = "0b000000-0000-4000-8000-000000000004";
+    const reply = { op: "sidecar_reply", reply: { id: "r1", ok: true, result: {} } };
+    try {
+      recordSession(configDir, process.pid, SID);
+      const sidecar = await sessionConn(ctx, SID, { config_dir: configDir });
+      await post(ctx, asked({ op: "ping" }));
+      // The id changes (/clear): the file names NEW, whose sidecar names it.
+      recordSession(configDir, process.pid, NEW);
+      const moved = await sessionConn(ctx, NEW, { config_dir: configDir });
+      // The reply under the old id reaches sidecar_reply as SID's: refused
+      // there only because no request of SID waits under r1.
+      const earlier = refusedReply(
+        "a reply under the old id",
+        (await post(ctx, asked(reply))).text,
+      );
+      expect(earlier.error).toEqual({
+        code: "not_found",
+        msg: "no request to this session's module is waiting under id r1",
+      });
+      // Not a reply: the old id is not the process's.
+      const notReply = await post(ctx, asked({ op: "session_facts", facts: { at: 1 } }));
+      expect(refusedReply("facts under the old id", notReply.text).error.code).toBe("unknown_peer");
+      // A reply under an id the process never ran.
+      const never = await post(ctx, asked(reply, { ...HELLO, sid: NEVER }));
+      expect(refusedReply("an id never run", never.text).error.code).toBe("unknown_peer");
+      sidecar.close();
+      moved.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
   // The generation is checked as on daemon.sock.
   test("a hello of another generation is refused with the generation spoken", async () => {
     const run = await started();
@@ -308,6 +349,29 @@ describe("POST /op", () => {
     } finally {
       await stopped(run);
     }
+  });
+});
+
+describe("PeerSessions", () => {
+  test("keeps the ids a running process was found with, and forgets ended ones", () => {
+    const alive = new Set([10, 20]);
+    const peers = new PeerSessions((pid) => alive.has(pid));
+    peers.note(10, "a");
+    peers.note(10, "b");
+    peers.note(20, "c");
+    expect([
+      peers.ran(10, "a"),
+      peers.ran(10, "b"),
+      peers.ran(10, "c"),
+      peers.ran(20, "c"),
+    ]).toEqual([true, true, false, true]);
+    alive.delete(10);
+    peers.note(20, "d");
+    expect([peers.ran(10, "a"), peers.ran(20, "c"), peers.ran(20, "d")]).toEqual([
+      false,
+      true,
+      true,
+    ]);
   });
 });
 

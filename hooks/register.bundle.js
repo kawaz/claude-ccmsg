@@ -933,8 +933,8 @@ function stateDirOf(env, home) {
 var PROTOCOL_VERSION = 1;
 
 var PackageVersionTextSchema = jsonText(object({ version: string() }));
-async function helloOf($) {
-  const [sid, version] = await Promise.all([$.session.id(), pluginVersion($)]);
+async function helloOf($, asked) {
+  const [sid, version] = await Promise.all([asked ?? $.session.id(), pluginVersion($)]);
   return {
     sid,
     protocol: PROTOCOL_VERSION,
@@ -967,7 +967,7 @@ async function daemonOp($, request, options = {}) {
   ]);
   const stateDir = stateDirOf({ CCMSG_STATE_DIR: stateHome, XDG_STATE_HOME: xdgStateHome }, home ?? "");
   const socketPath = `${stateDir}/${OP_HTTP_SOCKET}`;
-  const body = { ...request, hello: await helloOf($) };
+  const body = { ...request, hello: await helloOf($, options.sid) };
   const fetching = $.http.fetch(`http://ccmsg${OP_HTTP_PATH}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1751,7 +1751,6 @@ function sidecarReplySchema(result) {
   ]);
 }
 var SidecarReplySchema = sidecarReplySchema(unknown());
-var SidecarReplyTextSchema = jsonText(SidecarReplySchema);
 var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
@@ -1805,20 +1804,18 @@ function lineSplitter(onLine) {
         onLine(part);
   };
 }
-function replyArgv(root, sid) {
-  return [`${root}/bin/ccmsg`, "sidecar", "reply", "--sid", sid];
-}
+var TakenTextSchema2 = jsonText(object({ ok: literal(true) }));
 async function sendReply($, sid, reply) {
   try {
-    const done = await $.process.run(replyArgv($.plugin.root, sid), {
-      stdin: JSON.stringify(reply),
-      timeoutMs: REPLY_TIMEOUT_MS
-    });
-    if (done.exitCode !== 0) {
-      $.ui.log(`ccmsg: reply ${reply.id} exited ${done.exitCode}: ${done.stderr.trim()}`, {
-        to: "debug"
-      });
+    const asked = await daemonOp($, { op: "sidecar_reply", reply }, { sid });
+    if (asked.kind === "answered") {
+      if (!parseWith(TakenTextSchema2, asked.text).ok) {
+        $.ui.log(`ccmsg: reply ${reply.id} refused: ${asked.text}`, { to: "debug" });
+      }
+      return;
     }
+    const why = asked.kind === "unanswered" ? asked.reason : asked.kind === "outdated" ? "the daemon is older than this plugin" : "no daemon runs";
+    $.ui.log(`ccmsg: reply ${reply.id} not sent: ${why}`, { to: "debug" });
   } catch (e) {
     $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }

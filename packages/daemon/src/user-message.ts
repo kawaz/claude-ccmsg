@@ -10,7 +10,7 @@ import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
 import type { SessionRunsView } from "./user-prompt.ts";
 
 /** The longest an user_message takes to answer: the write and one
- * `ccmsg sidecar reply` (about 0.3 s measured, DR-0035 §3), with room for a
+ * the module's reply over `POST /op` (a few ms, DR-0046), with room for a
  * second run after a first whose subagent was not its. */
 export const USER_MESSAGE_DEADLINE_MS = 5_000;
 

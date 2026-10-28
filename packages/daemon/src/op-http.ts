@@ -10,8 +10,8 @@
 // Its `<config dir>/sessions/<pid>.json`, in a config dir this daemon reaches,
 // names the session; a process no such file names is refused. The body's
 // `hello` carries only what the process does not tell: the session id the
-// module means (checked against the file), its build and the wire's
-// generation.
+// module means (checked against the file; a reply may name an id the same
+// process ran before), its build and the wire's generation.
 //
 // Design rationale: no Origin or source-address check, unlike http.ts. The
 // socket is the daemon's uid's alone (0600), as `daemon.sock` is, and a
@@ -146,12 +146,58 @@ async function sessionOf(
   };
 }
 
+/** The session ids each process was found running (`sessionOf`), while it
+ * runs. A reply to a request goes under the id the request came to, which
+ * may be one the process ran before its id changed (/clear, /resume): the
+ * request reached the run under that id, so the same process answers it. */
+export class PeerSessions {
+  readonly #sids = new Map<number, Set<string>>();
+  readonly #isAlive: (pid: number) => boolean;
+
+  constructor(isAlive: (pid: number) => boolean) {
+    this.#isAlive = isAlive;
+  }
+
+  /** Process `pid` runs session `sid` now. Processes that no longer run are
+   * forgotten here, so the record holds the live ones alone. */
+  note(pid: number, sid: string): void {
+    for (const known of this.#sids.keys()) {
+      if (known !== pid && !this.#isAlive(known)) this.#sids.delete(known);
+    }
+    const sids = this.#sids.get(pid) ?? new Set<string>();
+    sids.add(sid);
+    this.#sids.set(pid, sids);
+  }
+
+  /** Whether process `pid` was found running session `sid`. */
+  ran(pid: number, sid: string): boolean {
+    return this.#sids.get(pid)?.has(sid) === true;
+  }
+}
+
+/** Whether process `pid` runs. */
+export function processRuns(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // A process of another user runs, and is not one to signal.
+    return e instanceof Error && "code" in e && e.code === "EPERM";
+  }
+}
+
+/** The op that answers a request the daemon sent the session's module: it
+ * may name an id the process ran before (PeerSessions). */
+const ReplyOpSchema = v.object({ op: v.literal("sidecar_reply") });
+
 /** Answer one request to the socket, from the process `pid` (undefined when
- * the socket did not say). */
+ * the socket did not say). `peers` are the ids the processes were found
+ * running, which a reply may go under. */
 export async function answerOp(
   daemon: Daemon,
   request: Http1Request,
   pid: number | undefined,
+  peers: PeerSessions,
 ): Promise<Http1Response> {
   if (request.path !== OP_HTTP_PATH) {
     return { status: 404, contentType: "text/plain", body: "Not Found: the one path is POST /op" };
@@ -198,7 +244,9 @@ export async function answerOp(
   }
   const session = await sessionOf(daemon, pid);
   if ("why" in session) return refusal(200, ErrorCode.unknown_peer, session.why);
-  if (session.sid !== named.value.sid) {
+  peers.note(pid, session.sid);
+  const answersEarlierId = parseWith(ReplyOpSchema, op).ok && peers.ran(pid, named.value.sid);
+  if (session.sid !== named.value.sid && !answersEarlierId) {
     return refusal(
       200,
       ErrorCode.unknown_peer,
@@ -208,7 +256,7 @@ export async function answerOp(
   const greeting: JsonObject = {
     op: "hello",
     role: "session",
-    sid: session.sid,
+    sid: named.value.sid,
     config_dir: session.configDir,
     ...(named.value.client_version !== undefined
       ? { client_version: named.value.client_version }
@@ -277,6 +325,7 @@ function flush(socket: { data: OpConnState; write(bytes: Uint8Array): number; en
  * session_launch for its launch command). */
 export function listenOpHttp(daemon: Daemon): OpHttpListener {
   const socketPath = daemon.paths.httpSock;
+  const peers = new PeerSessions(processRuns);
   try {
     fs.unlinkSync(socketPath);
   } catch {
@@ -304,7 +353,7 @@ export function listenOpHttp(daemon: Daemon): OpHttpListener {
         const responding: Promise<Http1Response> =
           read.kind === "refused"
             ? Promise.resolve({ status: read.status, contentType: "text/plain", body: read.reason })
-            : answerOp(daemon, read.request, state.pid);
+            : answerOp(daemon, read.request, state.pid, peers);
         void responding
           .catch((e: unknown): Http1Response => {
             daemon.log.error(`POST /op failed: ${String(e)}`);

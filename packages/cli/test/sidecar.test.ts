@@ -1,7 +1,7 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, name the run to the
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
-// leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
-// carries the module's reply to the daemon; `ccmsg sidecar launch` (DR-0018
+// leave on a signal or when stdout's reader is gone; the module's reply to
+// what it copied goes back over POST /op; `ccmsg sidecar launch` (DR-0018
 // §3.7) carries its `launch` tool, and `ccmsg sidecar permit` (DR-0040) its
 // `permit` tool.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -12,6 +12,7 @@ import {
   jsonText,
   LaunchCommandInputSchema,
   parseWith,
+  PROTOCOL_VERSION,
   resolvePaths,
   SessionLaunchResponseTextSchema,
   PermitRequestResponseTextSchema,
@@ -472,17 +473,6 @@ describe("ccmsg sidecar (process)", () => {
   }
 });
 
-/** `ccmsg sidecar reply --sid SID` with `stdin` on its standard input, as the
- * module's `$.process.run` runs it. */
-function runReply(stdin: string, env: Record<string, string>) {
-  return Bun.spawn([process.execPath, CLI, "sidecar", "reply", "--sid", SID], {
-    env: { ...process.env, ...env },
-    stdin: new TextEncoder().encode(stdin),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
-
 async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<DaemonCtx> {
   const base = shortBase();
   const stateDir = path.join(base, "s");
@@ -508,11 +498,25 @@ async function startShortDaemon(extraEnv: Record<string, string> = {}): Promise<
   };
 }
 
-describe("ccmsg sidecar reply", () => {
+describe("a request the sidecar copied out, and its reply", () => {
   // The whole route the module uses: the daemon writes to the sidecar, the
-  // sidecar copies the request out, and `sidecar reply` answers it.
+  // sidecar copies the request out, and the reply goes back over POST /op
+  // (DR-0046) from the session's process, here this test process, recorded
+  // as session SID in a config dir the daemon serves.
   test("answers the user_prompt request the sidecar copied out", async () => {
-    const ctx = await startShortDaemon();
+    const claudeConfig = path.join(shortBase(), "claude-config");
+    fs.mkdirSync(path.join(claudeConfig, "sessions"), { recursive: true });
+    fs.writeFileSync(
+      path.join(claudeConfig, "sessions", `${String(process.pid)}.json`),
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: SID,
+        cwd: "/tmp",
+        startedAt: 1,
+        kind: "interactive",
+      }),
+    );
+    const ctx = await startShortDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: claudeConfig });
     const sidecar = Bun.spawn(sidecarArgv("--hyoui-session-id", "hy-1"), {
       env: { ...process.env, ...ctx.env },
       stdin: "ignore",
@@ -544,15 +548,20 @@ describe("ccmsg sidecar reply", () => {
         id: line.id,
         args: { text: "from the web" },
       });
-      const reply = runReply(
-        JSON.stringify({
-          id: line.id,
-          ok: true,
-          result: { outcome: "not_delivered", reason: "no_terminal" },
+      const reply = await fetch("http://ccmsg/op", {
+        unix: path.join(ctx.stateDir, "http.sock"),
+        method: "POST",
+        body: JSON.stringify({
+          op: "sidecar_reply",
+          reply: {
+            id: line.id,
+            ok: true,
+            result: { outcome: "not_delivered", reason: "no_terminal" },
+          },
+          hello: { sid: SID, protocol: PROTOCOL_VERSION },
         }),
-        ctx.env,
-      );
-      expect(await reply.exited).toBe(0);
+      });
+      expect([reply.status, await reply.text()]).toEqual([200, '{"ok":true,"request_id":"op"}']);
       expect(await answer).toEqual({ ok: true, outcome: "not_delivered", reason: "no_terminal" });
       user.close();
     } finally {
@@ -561,23 +570,6 @@ describe("ccmsg sidecar reply", () => {
       await stopTestDaemon(ctx);
     }
   });
-
-  // Refused before a daemon is looked for: the state dir has none.
-  for (const [name, stdin, says] of [
-    ["input that is not JSON", "accepted", "must be one JSON reply"],
-    ["a reply without an id", '{"ok":true,"result":{}}', "id: Invalid key"],
-    [
-      "an error code nobody defined",
-      '{"id":"x","ok":false,"error":{"code":"bogus","message":""}}',
-      'error.code: Invalid type: Expected "internal"',
-    ],
-  ] as const) {
-    test(`${name} is refused before reaching the daemon`, async () => {
-      const proc = runReply(stdin, sidecarEnv(path.join(shortBase(), "s")));
-      expect(await proc.exited).toBe(1);
-      expect(await new Response(proc.stderr).text()).toContain(says);
-    });
-  }
 });
 
 /** A `ps` that records being run: naming the run needs none, and a sidecar

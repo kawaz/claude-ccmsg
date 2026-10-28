@@ -43,8 +43,8 @@ const PackageVersionTextSchema = jsonText(v.object({ version: v.string() }));
  *
  * Design rationale: the build's version is read from package.json rather
  * than bundled, so a release's bump leaves the bundle as it is. */
-async function helloOf($: Engine): Promise<OpHello> {
-  const [sid, version] = await Promise.all([$.session.id(), pluginVersion($)]);
+async function helloOf($: Engine, asked: string | undefined): Promise<OpHello> {
+  const [sid, version] = await Promise.all([asked ?? $.session.id(), pluginVersion($)]);
   return {
     sid,
     protocol: PROTOCOL_VERSION,
@@ -83,7 +83,9 @@ async function exists($: Engine, path: string): Promise<boolean | undefined> {
  * The wait is bounded by the host, which gives up on a fetch with no
  * complete answer after 30 s, and by the op's own deadlines in the daemon.
  * `timeoutMs` bounds it further for a caller that holds something up (a
- * prompt): past it the outcome is `unanswered`. It must stay well inside a
+ * prompt): past it the outcome is `unanswered`. `sid` is the session the
+ * request is asked as when it is not the session's id now: a reply to a
+ * request that came under an earlier id (/clear, /resume). It must stay well inside a
  * hook's 10 s budget, which a timer's wait may count against.
  *
  * The state dir is found from `HOME` unless CCMSG_STATE_DIR or
@@ -92,7 +94,7 @@ async function exists($: Engine, path: string): Promise<boolean | undefined> {
 export async function daemonOp(
   $: Engine,
   request: RequestInput,
-  options: { readonly timeoutMs?: number } = {},
+  options: { readonly timeoutMs?: number; readonly sid?: string } = {},
 ): Promise<DaemonOpOutcome> {
   const [stateHome, xdgStateHome, home] = await Promise.all([
     $.env.get("CCMSG_STATE_DIR"),
@@ -104,7 +106,7 @@ export async function daemonOp(
     home ?? "",
   );
   const socketPath = `${stateDir}/${OP_HTTP_SOCKET}`;
-  const body: OpBody = { ...request, hello: await helloOf($) };
+  const body: OpBody = { ...request, hello: await helloOf($, options.sid) };
   const fetching = $.http.fetch(`http://ccmsg${OP_HTTP_PATH}`, {
     method: "POST",
     headers: { "content-type": "application/json" },

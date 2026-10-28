@@ -2,7 +2,7 @@
 // (DR-0035 §3), whatever the op.
 //
 // The daemon writes one SidecarRequest line to a run's sidecar socket; the
-// sidecar copies it to the module, which answers with `ccmsg sidecar reply`,
+// sidecar copies it to the module, which answers over `POST /op` (DR-0046),
 // arriving here as sidecar_reply. What this file owns is writing a request and
 // matching a reply to the request it names; which runs a session has is
 // sidecar-runs.ts's. What an op's result means belongs to whoever asked for

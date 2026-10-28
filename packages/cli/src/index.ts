@@ -14,7 +14,6 @@ import {
   migrateLegacyConfigFiles,
   parseWith,
   SessionStateFileTextSchema,
-  SidecarReplyTextSchema,
   SidecarRunIdSchema,
   resolvePaths,
   sessionProjectDir,
@@ -265,14 +264,6 @@ function output<R extends { readonly ok?: boolean }>(res: R): number {
 
 // --- commands --------------------------------------------------------------
 
-async function runOnce(identity: Identity, req: RequestInput): Promise<never> {
-  const paths = resolvePaths();
-  const client = await ensureDaemon(paths, identity);
-  const res = await client.request(req);
-  client.close();
-  process.exit(output(res));
-}
-
 /** `ccmsg notify`: the result printed on stdout as it came, and the exit
  * status saying whether the notice arrived — a caller that has to know (a
  * justfile step) need not read the JSON. */
@@ -289,26 +280,22 @@ async function runNotify(identity: Identity, req: RequestInput & { op: "notify" 
 // --- sidecar ---------------------------------------------------------------
 
 const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
-session, and the way the module's replies and some of its tools go to the
-daemon. Not for direct use.
+session, and the way some of the module's tools go to the daemon. Not for
+direct use.
 `;
 
-/** `ccmsg sidecar`, `ccmsg sidecar reply` (DR-0035 §3), `ccmsg sidecar
- * begin` (DR-0039 §2), `ccmsg sidecar launch` (DR-0018 §3.7) and `ccmsg
- * sidecar permit` (DR-0040). All are the hooks module's: it starts the first
- * for its session's life, runs the second to answer a request the first
- * copied to it, the third when the session starts or changes its id, and the
- * last two for its `launch` and `permit` tools. What else the module asks the
- * daemon goes over the daemon's `POST /op` (DR-0046). The help says no more
- * than that on purpose (DR-0035 §4). */
+/** `ccmsg sidecar` (DR-0035 §3), `ccmsg sidecar begin` (DR-0039 §2), `ccmsg
+ * sidecar launch` (DR-0018 §3.7) and `ccmsg sidecar permit` (DR-0040). All
+ * are the hooks module's: it starts the first for its session's life, the
+ * second when the session starts or changes its id, and the last two for its
+ * `launch` and `permit` tools. What else the module asks the daemon, the
+ * replies to the requests the first copies to it among them, goes over the
+ * daemon's `POST /op` (DR-0046). The help says no more than that on purpose
+ * (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
     process.stdout.write(SIDECAR_HELP);
-    return;
-  }
-  if (positionals[0] === "reply") {
-    await runSidecarReply(opts);
     return;
   }
   if (positionals[0] === "launch") {
@@ -417,24 +404,6 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
   process.exit(0);
 }
 
-/** The reply is read from standard input, not taken as an argument: a reply
- * carries whatever its op returns, which may be long, and an argument is
- * bounded by the system's argument size and shown to every user by `ps`. The
- * module writes it there with `$.process.run`'s `stdin`, which is written once
- * and closed, so the end of input is the end of the reply. */
-async function runSidecarReply(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar reply --sid <sid> < reply.json";
-  const read = parseWith(SidecarReplyTextSchema, await Bun.stdin.text());
-  if (!read.ok) {
-    throw new Error(
-      `standard input must be one JSON reply: ${read.failure.summary}\n  usage: ${usage}`,
-    );
-  }
-  const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar reply");
-  return runOnce(identity, { op: "sidecar_reply", reply: read.value });
-}
-
 /** `ccmsg sidecar begin --sid <sid> --cwd <dir>`: the session `<sid>` began
  * (its start, or the id it has after /clear or /resume) in `<dir>`, its
  * project root. Writes the session's state file, which every CLI hello of the
@@ -477,8 +446,8 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
  * daemon, as session `<sid>`, to start a session through its configured
  * launch command with the launch on standard input, and print the daemon's
  * session_launch reply (what the command did, uninterpreted), exiting 0. The
- * launch comes on standard input for the reason a reply does: its prompt may
- * be long, and an argument is shown to every user by `ps`.
+ * launch comes on standard input: its prompt may be long, and an argument is
+ * bounded in size and shown to every user by `ps`.
  *
  * The reply waits for the launch command to end; nothing here times it out,
  * the module's wait does. Exits 3, nothing started, when no daemon can be
@@ -510,8 +479,8 @@ const PERMIT_SPEECH = "許可を求めています";
  * describes. The daemon records it and shows it in the session's Timeline;
  * then the speakers say that a session is asking, through the speech binary
  * `ccmsg say` speaks with. Prints the daemon's permit_request reply, exiting
- * 0, the speech having ended. The input comes on standard input for the
- * reason a reply does: its commands may be long, and an argument is shown to
+ * 0, the speech having ended. The input comes on standard input: its
+ * commands may be long, and an argument is bounded in size and shown to
  * every user by `ps`.
  *
  * Exits 3, nothing asked, when no daemon can be had; exits 1 with the

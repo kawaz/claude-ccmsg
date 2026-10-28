@@ -71,6 +71,18 @@
 
 daemon を止めると `daemon.sock` と `http.sock` はどちらも消えていた。
 
+## サイドカーの依頼への返事を `POST /op` に移した後
+
+返事を `sidecar_reply` で `POST /op` から渡す実装 (同じ process が以前に走らせた id を名乗れる、DR-0046 §3) で、試験セッション B を起こし直して確かめた。
+
+| 場面 | 結果 |
+|---|---|
+| B の起動 | CLI の起動の記録は `sidecar begin` と常駐の `sidecar` の 2 行だけ。daemon がサイドカーの名乗りで問う `session.facts` への返事の `sidecar reply` は無くなった |
+| user role で B に `user_prompt` | 5 ms で `{ ok: true, outcome: "not_delivered", reason: "no_terminal" }` (試験セッションに hyoui の端末が無いので、module が `prompt.send` に答えた結果)。返事は `POST /op` で届いた |
+| B で 1 turn | `session_status` に module の事実 (`window: 1000000`、`turn: idle`) |
+
+`/clear` の前に届いた依頼への古い id での返事は、実機で起こす手順を作っておらず、daemon の endpoint のテスト (`op-http.test.ts`) でだけ確かめた。
+
 ## 往復時間 (同じ daemon、host の中から 10 回ずつ、ms)
 
 | 呼び出し | 旧 CLI (`$.process.run`) | `POST /op` (`$.http.fetch`) |
@@ -110,3 +122,4 @@ daemon を止めると `daemon.sock` と `http.sock` はどちらも消えてい
 - 長い state dir (`daemon.sock` の path が 104 byte を超える環境) での `http.sock` への fetch。上の表で 189 byte まで繋がったので、Bun が bind できる長さなら繋がると読める
 - Linux で Claude Code の `$.http.fetch` の相手の pid (Linux で見たのは Bun の子の process まで)
 - `/clear` の直後に module の id が state file より先に変わる順になるか (観測した 1 回は state file が先)
+- `/clear` の前に届いた依頼に古い id で答える返事 (endpoint のテストだけ)
