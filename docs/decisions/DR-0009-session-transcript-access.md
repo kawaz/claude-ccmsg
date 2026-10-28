@@ -1,6 +1,6 @@
 # DR-0009: Session transcript access (transcript_read op)
 
-- **Status**: Accepted (2026-07-10、kawaz 裁定「どんどん進めてくれて構わないです」による一任)
+- **Status**: Accepted (2026-07-10、kawaz 裁定「どんどん進めてくれて構わないです」による一任)。live の行の届け方と継ぎ目 (§3 の「live tail の push」) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §4 / §5 が定める
 - **Date**: 2026-07-10
 - **Author**: AI agent (一次資料の kawaz 発言に基づく)
 - **一次資料**: `docs/research/2026-07-09-kawaz-webui-vision-statement.md`、`docs/issue/2026-07-09-webui-workspace-roadmap.md`
@@ -50,10 +50,10 @@ DR-0008 でファイルツリー + コードビューアは実装済みだが、
   - `before` 付き (older) は `TRANSCRIPT_READ_OLDER_MAX_BYTES` (5 MB)。遡る読み手は過去ログを読み込んでページ内検索することが多く、1 回が小さいと older を何度も押すことになる
 - webui の Timeline は older を `max_bytes` 無しで送り、daemon の上限で 1 回の量を決める。先頭まで読み込んだ (返事の `start` が 0) 後は older のボタンを出さない
 - `TranscriptReadResponse.size` (現在のファイルサイズ) を毎回返す。session 実行中は transcript が伸び続けるため、webui はこれを見て「新着があるか」を判定できる
-- `TranscriptReadRequest.after` (`before` とは併用しない) は、その offset **以後に始まる行**を古い順に cap まで返す。前の読み (または live tail の push) の `end` を渡すと、その後に書かれた分だけが届く。返事の `end` が `size` に届かなければ続きがあり、`end` を次の `after` に渡して読み進める
+- `TranscriptReadRequest.after` (`before` とは併用しない) は、その offset **以後に始まる行**を古い順に cap まで返す。前の読みの `end` を渡すと、その後に書かれた分だけが届く。返事の `end` が `size` に届かなければ続きがあり、`end` を次の `after` に渡して読み進める
   - `after` から続きにならない時 (ファイルの末尾より後 = 差し替え・切り詰め、行の途中、cap と走査の予算を超える 1 行で始まる) は、行を返さず `start` をファイルの末尾に置く。`start` が `after` と違うことで、読み手はキャッシュを続けられないと知り、tail を読み直す
   - 書きかけの最後の行 (改行がまだ無い) は返さず、`end` は行の境界に留まる。cap を超える 1 行は、`before` 側の soft cap と同じく、その行を丸ごと返す
-- webui の Timeline は、訪れた時と live tail の push が読み込み済みの `end` に続かなかった時に、`after` で `end` から後を読み足す。画面を消さず、読み込み済みの行 (older で読んだ分を含む) を残し、新しく書かれた分だけを運ぶ。「更新」は読み手が明示する読み直しなので、tail を読んで置き換える
+- webui の Timeline は、訪れた時に `after` で読み込み済みの `end` から後を読み足す (live の行が抜けた時の読み直しは [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §4)。画面を消さず、読み込み済みの行 (older で読んだ分を含む) を残し、新しく書かれた分だけを運ぶ。「更新」は読み手が明示する読み直しなので、tail を読んで置き換える
 
 ### 4. hello を transcript_read の必須前提にする (IDENTITY_OPS へ追加) [提案]
 

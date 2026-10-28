@@ -11,4 +11,4 @@
 | [DR-0016](DR-0016-storage-event-seq.md) | room の全 event 型をまたぐ per-room の連番 `seq` (subscribe の再接続 cursor) | [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §2 |
 | [DR-0017](DR-0017-reply-command.md) | daemon が宛先を組み立てる room の返信 `ccmsg reply rNmM` と返信行の指示 | [DR-0036](../DR-0036-retire-rooms-for-p2p.md) §1 / §2 |
 | [DR-0037](DR-0037-agent-messages-ride-sendmessage.md) | エージェント間のメッセージを SendMessage に乗せ、`ccmsg:` 宛を hooks module が横取りして peer 注入で届ける | [DR-0039](../DR-0039-all-mods-and-typed-tools.md) §3 / §4 |
-| [DR-0042](DR-0042-say-reading-dictionary.md) | say の読み上げ辞書 (`<config dir>/say-dictionary.tsv`) を、発声する CLI (`ccmsg say` と `sidecar permit` の音声) で当てる | [DR-0045](../DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2 / §3 |
+| [DR-0042](DR-0042-say-reading-dictionary.md) | say の読み上げ辞書 (`<config dir>/say-dictionary.tsv`) を、発声する CLI (`ccmsg say` と `sidecar permit` の音声) で当てる | [DR-0045](../DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 |

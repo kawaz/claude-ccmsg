@@ -1,6 +1,6 @@
 # DR-0042: say は発声の直前に読み上げ辞書 (TSV) で単語を読みに置き換える
 
-- Status: Superseded by [DR-0045](../DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2 / §3
+- Status: Superseded by [DR-0045](../DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6
 - Date: 2026-10-27
 
 ## Context

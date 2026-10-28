@@ -1,6 +1,6 @@
 # DR-0020: Status タブ (セッションの workflow / background / TODO 可視化)
 
-Status: Accepted (ST-Q1..2 裁定 2026-07-16)
+Status: Accepted (ST-Q1..2 裁定 2026-07-16)。§3.1 の fold が読む行の源 (tail から push へ) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §5 が定める
 Date: 2026-07-16
 Sponsor: kawaz
 
@@ -38,7 +38,7 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
 webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**daemon が transcript jsonl を grep 相当で絞り込み → jsonl parse → strict フィルタで status 関連イベント(TaskCreate / TaskUpdate / Workflow / Monitor / Agent / task-notification) だけを全量抽出**して返す。ファイル全走査でも対象行の抽出は一瞬で終わる想定 (kawaz)。
 
 - 新 op (例 `session_status`): 初回は全量スキャンして畳み込み済み or 生イベント列を返す
-- **追加分は逐次 push**: 既存の transcript_subscribe と同様の tail 追跡で、新しいstatus イベントが現れたら subscribe 中の webui へ push (詳細設計は Phase 1)
+- **追加分は逐次 push**: 新しい status イベントが現れたら subscribe 中の webui へ push する。行の源は module から push される会話の行 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §5)
 - これにより webui の読み込み範囲問題 (旧 ST-Q1) は消滅。畳み込み (イベント列 →
   現在状態) を daemon / webui どちらでやるかは Phase 1 の実装時判断 (protocol を薄く保つなら webui 側 fold、転送量を絞るなら daemon 側)
 

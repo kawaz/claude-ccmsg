@@ -1,6 +1,6 @@
 # DR-0018: Session Launcher (エージェントの tool `launch` と webui のフォームから、config で固定した 1 つの起動コマンドでセッションを起動する)
 
-Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)
+Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)。§3.7 の tool `launch` の transport と結果の文は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 (daemon が tool_use の行から起動し、結果は notify で会話に戻す) で置き換わる
 Date: 2026-07-15
 Sponsor: kawaz
 

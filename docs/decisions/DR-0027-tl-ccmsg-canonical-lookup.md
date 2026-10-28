@@ -1,6 +1,6 @@
 # DR-0027: TL の ccmsg メッセージを daemon 一次情報で完全復元 (断片復元の廃止)
 
-Status: Accepted (kawaz が方針を直接指定)。§2.1 のうち、harness に切り詰められた event の行から r / mid / 本文を読み直す部分 (救済 parse) は [DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6 が止めた: JSON として読めない行は ccmsg のメッセージにせず、その行はふつうの表示のまま見せる。§6.3 の say のバブルの出し方は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §4 が定める
+Status: Accepted (kawaz が方針を直接指定)。§2.1 のうち、harness に切り詰められた event の行から r / mid / 本文を読み直す部分 (救済 parse) は [DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6 が止めた: JSON として読めない行は ccmsg のメッセージにせず、その行はふつうの表示のまま見せる。§6.3 の say のバブルの出し方と既読は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7 が定める
 Date: 2026-07-18
 Sponsor: kawaz
 
@@ -72,6 +72,6 @@ lazy read にそのまま乗る。
 
 ### 6.3 PushNotification
 
-- tool_use `{name:"PushNotification", input:{message}}` を、say と同じ見た目の 🔔 バブルとして境界行に出す (`say` の代替となる通知)。既読ボタンは持たない (既読管理の対象外)。say のバブルも transcript の tool_use から描き、既読の印は daemon の未読の集合が持つ ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §4 / §5)
+- tool_use `{name:"PushNotification", input:{message}}` を、say と同じ見た目の 🔔 バブルとして境界行に出す (`say` の代替となる通知)。既読ボタンは持たない (既読管理の対象外)。say のバブルも transcript の tool_use から描き、既読の印は daemon の未読の集合が持つ ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7)
 - 既読ボタンは、未読が複数ある時に最新の未読のものだけ「N 件すべて既読」になり、その TL の未読を全部既読にする。ほかのボタンと未読が 1 件の時は「既読」で、その say だけを既読にする (kawaz 2026-10-25)。`say_read` は既読にする id の列を受け (押した時に TL に出ていたもの、後から届いた say は未読のまま)、無い id が混ざれば何も既読にしない
 - 🔔 バブルは人への呼びかけで、エージェント間の msg (色の付いた面だけの吹き出し) と形で分ける: 角の丸い札の左の列に、地の色の円に抜いたアイコンを立て、琥珀の面と琥珀の枠 2px で囲む。未読と既読で見た目は変えず、アイコン (未読 🔔 / 既読 🔕) と既読ボタンの有無で見分ける。既読を持たない PushNotification は 🔔

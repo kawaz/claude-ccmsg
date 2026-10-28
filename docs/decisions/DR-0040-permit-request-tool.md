@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節)。§6 の音声を `permit` の handler が鳴らす形は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §3 の実装で入る
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節)。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -35,7 +35,7 @@ commands:    { command: string, description?: string }[]   # Bash に渡す内�
 
 module の handler → CLI の transport → daemon の op → 記録 → 全タブへの配送 → TL のバブル。
 
-- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)。依頼が記録されたら handler が音声 (§6) を鳴らす
+- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)。音声は daemon が記録した時に鳴らす (§6)
 - `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が記録したら daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
 - op `permit_request` は session role だけが送れる。依頼するのは止められたエージェント自身なので、依頼はセッションを名指さず、送ったセッションの sid で記録する
 - 応答は記録の id だけ。handler は「許可依頼を出した」とだけ返す。添付の中身を人が読めるかは人が開いた時に分かることで、model に返すものは無い
@@ -66,10 +66,10 @@ module の handler → CLI の transport → daemon の op → 記録 → 全タ
 
 ### 6. 音声
 
-`permit` の handler は `ccmsg sidecar permit` が依頼の記録を返した後、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §1 / §3) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
+daemon は `permit_request` を記録した時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
-- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、tool の結果は「許可依頼を出した」のまま、鳴らなかった理由を添える
+- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、daemon.log に 1 行書くだけで返事は変えない
 - daemon が依頼を記録しなかった時 (daemon が無い、断られた) は鳴らさない。見に行っても何も無いため
 
 ### 7. webui のバブル
