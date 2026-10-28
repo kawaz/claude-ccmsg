@@ -1861,8 +1861,10 @@ function newerFill(
  * said laid over it: the window is only ever the module's; the effort it saw
  * names it over the transcript's; the fill is the newer of the two
  * (newerFill). The model stays the transcript's: it is the model that
- * answered (`claude-fable-5-1`), where the module's is the name the session
- * was started or switched with (`fable[1m]`). Without a response in the
+ * answered (`claude-fable-5-1`), an override's included, where the module's
+ * is the name the session was started or switched with (`fable[1m]`). The
+ * module's model and effort go as `engine`, the session's own values the
+ * overrides are read against (DR-0041 §5, §6). Without a response in the
  * transcript there is no context, and without facts the fold stands as it
  * is. */
 export function contextWithFacts(
@@ -1875,12 +1877,17 @@ export function contextWithFacts(
   const effort = facts.effort ?? context.effort;
   const fill = newerFill(context, facts);
   const timestamp = fill?.timestamp ?? context.timestamp;
+  const engine = {
+    ...(facts.model !== undefined ? { model: facts.model } : {}),
+    ...(facts.effort !== undefined ? { effort: facts.effort } : {}),
+  };
   return {
     ...(fill !== undefined ? { tokens: fill.tokens } : {}),
     ...(window !== undefined ? { window } : {}),
     model,
     ...(effort !== undefined ? { effort } : {}),
     timestamp,
+    ...(engine.model !== undefined || engine.effort !== undefined ? { engine } : {}),
   };
 }
 

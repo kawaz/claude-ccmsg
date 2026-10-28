@@ -7808,6 +7808,36 @@ a.tl-attachment-file-path {
   font-size: var(--font-size-sm);
 }
 
+/* A field's value at rest (DR-0041 §6): text that reads as pressable, the
+ * same dotted underline as the ctx line's values. Pressed, it becomes the
+ * field's select. */
+.override-value {
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: 0.3rem;
+  background: none;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
+.override-value:hover:not(:disabled) {
+  background: color-mix(in oklch, currentColor 10%, transparent);
+}
+
+.override-value:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.override-value:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* The session override's editor (DR-0041 §6.4): each field's select with its
  * [適用] and what became of the last change, side by side. */
 .override-editor {

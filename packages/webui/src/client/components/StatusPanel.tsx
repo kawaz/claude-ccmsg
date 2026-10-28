@@ -694,7 +694,11 @@ export function StatusPanel({
         </dd>
         <dt>OVERRIDE</dt>
         <dd class="status-override">
-          <SessionOverrideEditor state={overrides} own={snapshot.context} onChange={onOverride} />
+          <SessionOverrideEditor
+            state={overrides}
+            context={snapshot.context}
+            onChange={onOverride}
+          />
         </dd>
       </dl>
       <SubagentInput key={sid} subagents={snapshot?.subagents} onSend={onAgentInput} />

@@ -23,6 +23,7 @@ const CTX: SessionContextUsage = {
   model: "claude-opus-5-5",
   effort: "high",
   timestamp: "t",
+  engine: { model: "claude-opus-5-5[1m]", effort: "high" },
 };
 const NONE = { model: null, effort: null };
 /** The state a module reports with nothing set: the session's own values. */
@@ -50,7 +51,7 @@ describe("requestValueViews", () => {
     expect(views.model).toEqual({
       text: "sonnet⁺",
       by: "session",
-      title: "model sonnet (通しの上書き。セッション自身は claude-opus-5-5)",
+      title: "model sonnet (通しの上書き。セッション自身は claude-opus-5-5[1m])",
     });
     expect(views.effort).toEqual({
       text: "max⁺",
@@ -71,7 +72,8 @@ describe("requestValueViews", () => {
   });
 
   test("an effort only an override names, for a session that names none", () => {
-    const { effort: _own, ...noEffort } = CTX;
+    const { effort: _own, ...ran } = CTX;
+    const noEffort = { ...ran, engine: { model: "claude-opus-5-5[1m]" } };
     expect(requestValueViews(noEffort, undefined, shortModel).effort).toBeNull();
     expect(
       requestValueViews(
@@ -111,7 +113,12 @@ const shownGroups = (groups: readonly OverrideGroup[]) =>
 // session, each value marked with what it is.
 describe("the selects", () => {
   /** A fable / low session (the example of §6.2). */
-  const FABLE_LOW: SessionContextUsage = { ...CTX, model: "claude-fable-5-1", effort: "low" };
+  const FABLE_LOW: SessionContextUsage = {
+    ...CTX,
+    model: "claude-fable-5-1",
+    effort: "low",
+    engine: { model: "claude-fable-5-1", effort: "low" },
+  };
   const FAB = { turn: true, shorten: shortModel };
   const STATUS = { turn: false, shorten: shortModel };
 
@@ -161,7 +168,7 @@ describe("the selects", () => {
   // §6.1 (kawaz 2026-10-28): a session's own value outside the vocabulary
   // has no 🏛️ to stand for it, so every value is offered with 📌.
   test("a session's own value outside the vocabulary: no 🏛️, every value 📌", () => {
-    const other = { ...CTX, model: "gpt-9", effort: "minimal" };
+    const other = { ...CTX, engine: { model: "gpt-9", effort: "minimal" } };
     expect(shownGroups(overrideGroups("model", undefined, other, STATUS))[1]).toEqual([
       "session",
       ["📌fable", "📌opus", "📌sonnet", "📌haiku"],
@@ -170,15 +177,57 @@ describe("the selects", () => {
       "session",
       ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"],
     ]);
-    const { effort: _, ...noEffort } = CTX;
+    const { effort: _, ...ran } = CTX;
+    const noEffort = { ...ran, engine: { model: "claude-opus-5-5[1m]" } };
     expect(shownGroups(overrideGroups("effort", undefined, noEffort, STATUS))).toEqual([
       ["default", ["—"]],
+      ["session", ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"]],
+    ]);
+    // No module's facts (no module, or one just loaded again): the session's
+    // own is not known, so no 🏛️; the default shows what the requests ran on.
+    const { engine: _engine, ...noFacts } = FABLE_LOW;
+    expect(shownGroups(overrideGroups("effort", undefined, noFacts, STATUS))).toEqual([
+      ["default", ["low"]],
       ["session", ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
     expect(shownGroups(overrideGroups("effort", undefined, undefined, STATUS))[1]).toEqual([
       "session",
       ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"],
     ]);
+  });
+
+  // The transcript's model is the one that answered: under 📌sonnet it is
+  // sonnet, while the session's own (the engine) stays fable.
+  test("after a response under an override: 🏛️ and the default stay on the session's own", () => {
+    const answered = { ...FABLE_LOW, model: "claude-sonnet-5-5", effort: "max" };
+    const sonnet: RequestOverrideState = {
+      session: { model: "sonnet", effort: "low" },
+      once: NONE,
+    };
+    expect(shownGroups(overrideGroups("model", sonnet, answered, STATUS))).toEqual([
+      ["default", ["📌sonnet"]],
+      ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
+    ]);
+    // Cleared: the default is the session's own, not the model that answered
+    // last, and nothing is marked.
+    const cleared: RequestOverrideState = {
+      session: { model: "claude-fable-5-1", effort: "low" },
+      once: NONE,
+    };
+    expect(overrideGroups("model", cleared, answered, STATUS)[0]?.options[0]?.label).toBe(
+      "fable-5-1",
+    );
+    expect(overrideGroups("effort", cleared, answered, STATUS)[0]?.options[0]?.label).toBe("low");
+    // The ctx line shows what the requests ran on, marked only against the
+    // session's own.
+    expect(requestValueViews(answered, sonnet, shortModel).model).toMatchObject({
+      text: "sonnet⁺",
+      by: "session",
+    });
+    expect(requestValueViews(answered, cleared, shortModel)).toEqual({
+      model: { text: "sonnet-5-5", title: "model claude-sonnet-5-5" },
+      effort: { text: "max", title: "effort max" },
+    });
   });
 
   test("what each choice sends: ⏱️ with the prompt, 📌 the value, 🏛️ null; the default nothing", () => {

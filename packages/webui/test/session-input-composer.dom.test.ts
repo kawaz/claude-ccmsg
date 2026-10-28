@@ -151,7 +151,12 @@ describe("SessionInputComposer effort", () => {
         todos: [],
         workflows: [],
         background: [],
-        context: { model: "claude-fable-5-1", effort: "low", timestamp: "t" },
+        context: {
+          model: "claude-fable-5-1",
+          effort: "low",
+          timestamp: "t",
+          engine: { model: "claude-fable-5-1", effort: "low" },
+        },
       },
     });
     if (overrides !== undefined) {
@@ -186,17 +191,28 @@ describe("SessionInputComposer effort", () => {
     };
     return { root, calls, answerOverride };
   }
-  function select(root: HTMLElement): HTMLSelectElement {
+  /** The effort at rest: the text that opens its select. */
+  function text(root: HTMLElement): HTMLButtonElement {
+    return instanceOf(
+      root.querySelector('button.override-value[aria-label="送信の effort"]'),
+      HTMLButtonElement,
+      "the effort at rest",
+    );
+  }
+  /** Press the effort's text: its select is drawn in its place. */
+  async function select(root: HTMLElement): Promise<HTMLSelectElement> {
+    const at = text(root);
+    await act(() => at.click());
     return instanceOf(
       root.querySelector('select[aria-label="送信の effort"]'),
       HTMLSelectElement,
       "the effort select",
     );
   }
-  /** What the closed select shows: its selected option's label. */
-  const collapsed = (root: HTMLElement) => select(root).selectedOptions[0]?.textContent ?? "";
+  /** What the effort shows at rest: the chosen option's label. */
+  const collapsed = (root: HTMLElement) => text(root).textContent ?? "";
   async function choose(root: HTMLElement, label: string): Promise<void> {
-    const el = select(root);
+    const el = await select(root);
     const option = [...el.options].find((o) => o.textContent === label);
     if (option === undefined) throw new Error(`no option ${label}`);
     await act(() => {
@@ -222,9 +238,14 @@ describe("SessionInputComposer effort", () => {
 
   test("the effort alone, in the default, turn and session groups (§6.2's example)", async () => {
     const { root } = await openWith("accepted");
+    // At rest the text, no select; pressed, the one select of the effort.
+    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(0);
+    expect(collapsed(root)).toBe("low");
+    const el = await select(root);
     expect(root.querySelectorAll(".session-input-override select")).toHaveLength(1);
+    expect(document.activeElement).toBe(el);
     expect(
-      [...select(root).querySelectorAll("optgroup")].map((group) => [
+      [...el.querySelectorAll("optgroup")].map((group) => [
         group.label,
         [...group.querySelectorAll("option")].map((option) => option.textContent),
       ]),
@@ -233,8 +254,14 @@ describe("SessionInputComposer effort", () => {
       ["turn", ["⏱️low", "⏱️medium", "⏱️high", "⏱️xhigh", "⏱️max"]],
       ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
     ]);
-    // Chosen and not sent yet: the select shows what was chosen.
+    // Escape: back to the text, which takes the focus.
+    await act(() => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.activeElement).toBe(text(root));
+    // Chosen and not sent yet: the text shows what was chosen.
     await choose(root, "📌high");
+    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(0);
     expect(collapsed(root)).toBe("📌high");
   });
 

@@ -67,12 +67,16 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - module は facts ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) に、上書きが main thread の request に載せる値 (`request_override: { session, once }`、各 `{ model, effort }`) を付けて送る。`session` は通しの field をセッション自身の値に重ねたもの (model はセッションの綴りのまま `[1m]` 付き、人が設定すると family)、`once` は単発の値で、無い field は `null`。上書きでこの値が変わらない時は送らない。facts の `model` / `effort` はセッション自身の値のまま
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
-- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `<率>[<window>] / <model> / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値 (status snapshot の context) と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、Status タブと同じ通しの select (§6.4) が状態行の下に開く。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた select だけにする
+- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `<率>[<window>] / <model> / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。上書きが効いていない field は、request が実際に走った値 (status snapshot の context の `model` / `effort`。`model` は transcript の応答した model の実 ID で、上書きで走った応答ならその model) を出す。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、Status タブと同じ通しの選択 (§6.4) が状態行の下に開き、押した field の select が開いた状態で出る。
+- 印と §6 の 🏛️・default の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた select だけにする
 - FAB のプロンプトフォーム、Status タブと状態行の選択は §6
 
 ### 6. FAB、Status タブと状態行の選択
 
-FAB、Status タブ、状態行 (§5) は、どれも 1 つの field を 1 つのネイティブ `<select>` (`<optgroup>` で群に分ける) で出す。
+FAB、Status タブ、状態行 (§5) は、どれも 1 つの field を 1 つのネイティブ `<select>` (`<optgroup>` で群に分ける) で選ぶ。
+
+- 静止している間は select を見せず、畳んだ表示の値 (§6.1、`low` / `⏱️high` / `📌high`) を押せると分かる見た目のテキスト (点線の下線) で出す。押すとその場で select を描いて focus し、`showPicker()` で一覧を開く (`showPicker` が無い・断られたブラウザでは focus した select が残る)。option を選ぶ、focus が外れる、Esc のどれかでテキストに戻る (選んだ時と Esc の時はテキストに focus を戻す)
+- 未送信・未適用の選択がある間は、テキストが選んだ option の値を出す (Status タブと状態行は、その横に [適用])
 
 #### 6.1 印と選択
 
@@ -89,7 +93,8 @@ FAB、Status タブ、状態行 (§5) は、どれも 1 つの field を 1 つ�
 
 - 畳んだ表示は今効いている層と値を出す。上書きが無ければ `low` のように値だけ、単発が効いていれば `⏱️high`、通しが効いていれば `📌high`。通しの値がセッション自身の値と同じ時は上書きが無い時と同じく値だけにする (§5 の印と同じ判定)。この表示は default の群の option のラベルで、default 以外の option を選んで適用する前の間は、畳んだ表示はネイティブ `<select>` のとおり選んだ option になる
 - 🏛️ は通しの群の中で、セッション自身の値の位置に 📌 の代わりに出る。セッション自身の値と同じ値を 📌 で選ぶ席は無い
-- セッション自身の値が語彙 (§2) に無い時 (effort が分からない、model の family が別名の外) は 🏛️ を出さず、全部の値を 📌 で出す
+- セッション自身の値 (§5 の `engine`) が分からない時 (module の facts が無い、effort をまだ知らない) と、語彙 (§2) に無い時 (model の family が別名の外) は 🏛️ を出さず、全部の値を 📌 で出す
+- 上書きが効いていない時の default のラベルはセッション自身の値 (`engine`、model は `claude-` を落とした綴り)。`engine` が無い間は request が実際に走った値 (context の `model` / `effort`)
 
 #### 6.2 select の中身
 
@@ -105,7 +110,7 @@ low
 ```
 
 - turn 群はセッション自身の値も ⏱️ で並べる (通しが効いている時に、この turn だけ元の値で送るため)
-- model の select も同じ構成で、値は model の語彙 (`fable` / `opus` / `sonnet` / `haiku`)。🏛️ の位置は、セッション自身の model の実 ID (status snapshot の context、`claude-fable-5-1`) から family を切り出して語彙と照合して決める。default の option は状態行と同じく実 ID から `claude-` を落とした綴り (`fable-5-1`) で出す
+- model の select も同じ構成で、値は model の語彙 (`fable` / `opus` / `sonnet` / `haiku`)。🏛️ の位置は、セッション自身の model (§5 の `engine.model`、`claude-fable-5-1` や `fable[1m]`) から family を切り出して語彙と照合して決める。model の上書きで走った応答の後も、🏛️ はセッション自身の family の位置に残る
 
 #### 6.3 FAB (SessionInputComposer)
 
@@ -142,9 +147,11 @@ low
   - 単発から外す field を、通しの値が変わった field に加えて、`clear_once` で名指しされた field にも広げる
 - daemon (`packages/daemon/src/request-override.ts` の `namedFields`、server の `request_override`)
   - op の patch で名指しされた field を `clear_once` に入れて `request.override` で送る (名指しが無ければ欄を付けない)
+- protocol / daemon (§5 の元の値)
+  - `SessionContextUsageSchema` の `engine: { model?, effort? }`。daemon の `contextWithFacts` が module の facts の `model` / `effort` を入れ、facts に無い field は省き、どちらも無ければ `engine` ごと省く。context の `model` は transcript の応答した model のまま
 - webui
   - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。default のラベルは状態行の印と同じ判定 (`requestValueViews` の `by`)
-  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field の select)、`SessionOverrideEditor` (effort と model の select と [適用]、Status タブと状態行の両方)
+  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideEditor` (effort と model の select と [適用]、Status タブと状態行の両方)
   - `SessionInputComposer.tsx`: effort の 1 つの select。選んだ option を持ち、送信の時に 📌 / 🏛️ なら `ws.requestOverride` の返事を待ってから `ws.userPrompt` を送る
   - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない
 
@@ -170,7 +177,8 @@ low
 15. **状態行の選択も Status タブと同じ select にする**: 同じ部品を状態行と Status タブの両方で使う。状態行で model を一段奥 (開閉の中) に置く形 (裁定 10) は、これに置き換わる。単発の値を別に出す Status タブの行は無くし、畳んだ表示 (`⏱️high`) で示す (§5、§6.4)
 16. **FAB の 📌 / 🏛️ は `request_override` → `user_prompt` の順に送る**: 通しは送信と独立に残るので、`user_prompt` が届かなくても通しだけが変わるのは許容する (§6.3)
 17. **セッション自身の値が語彙に無い時は 🏛️ を出さない**: 全部の値を 📌 で出す (§6.1)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、そのまま送ってよい (冪等、§6.4)
-18. **model の select の候補は別名、🏛️ の位置は実 ID の family**: 候補は launch の語彙 (`fable` / `opus` / `sonnet` / `haiku`)、🏛️ は engine の実 ID (`fable-5-1`) から切り出した family の位置 (§6.2)
+18. **model の select の候補は別名、🏛️ の位置は engine の model の family**: 候補は launch の語彙 (`fable` / `opus` / `sonnet` / `haiku`)、🏛️ は engine の model (`fable-5-1`) から切り出した family の位置 (§6.2)。engine の値は module の facts から取り、状態行の表示 (request が実際に走った値) とは分ける (§5)
+19. **静止時は select を見せない**: FAB、状態行、Status タブのどれも、静止時は押せると分かるテキストで畳んだ表示の値を出し、押した間だけ select にする。選択の確定・blur・Esc でテキストに戻る。select の中身と、FAB は送信が適用・Status と状態行は変えた時だけ [適用] の規則は変えない (§6)
 
 ## Alternatives Considered
 

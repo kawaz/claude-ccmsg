@@ -6,9 +6,13 @@
 // not change under an override, so the ctx line shows the values the main
 // thread's requests are sent with — the one-shot override, else the session
 // override (whose unset fields are the session's own) — and marks the ones
-// that differ from the session's own. The values come from the daemon's
-// ev:"request_override" (RequestOverrideState), the session's own from the
-// status snapshot's context.
+// that differ from the session's own. Two values of a field are apart here:
+// what the requests ran on (the status snapshot's context `model` / `effort`;
+// the transcript's model is the one that answered, an override's included),
+// which the ctx line shows where no override is in force, and the session's
+// own (the context's `engine`, from the session's hooks module), which the
+// marks, the selects' default and their 🏛️ are read against. The overrides'
+// values come from the daemon's ev:"request_override" (RequestOverrideState).
 import {
   LaunchEffortSchema,
   launchEffortFromTranscript,
@@ -46,63 +50,60 @@ export interface RequestValueView {
 const OVERRIDE_NAME = { session: "通しの上書き", once: "単発の上書き" } as const;
 
 /** Whether `value` puts other than the session's own `own` on the requests.
- * `own` is the transcript's model ID (`claude-opus-5-5`), while the module
- * spells the session's model as the session names it (`opus[1m]`,
- * `claude-opus-5-5[1m]`): a model name that is not an ID is read as the
- * family it names, an ID is compared as it is without the `[1m]` suffix,
- * anything else as it is spelled. */
+ * A model is spelled as an alias (`opus[1m]`, an override's `sonnet`) or as
+ * an ID (`claude-opus-5-5[1m]`): two IDs are compared without the `[1m]`
+ * suffix, otherwise as the families they name, and as they are spelled when
+ * either names none. An own value not known yet differs from everything. */
 function differs(field: OverrideField, value: string, own: string | undefined): boolean {
   if (own === undefined) return true;
   if (field === "model") {
     const unsuffixed = (model: string) => model.replace(/\[[^\]]*\]$/, "");
-    if (!value.startsWith("claude-")) {
-      const family = launchModelFromTranscript(value);
-      if (family !== undefined) return launchModelFromTranscript(own) !== family;
+    if (value.startsWith("claude-") && own.startsWith("claude-")) {
+      return unsuffixed(value) !== unsuffixed(own);
     }
+    const family = launchModelFromTranscript(value);
+    const ownFamily = launchModelFromTranscript(own);
+    if (family !== undefined && ownFamily !== undefined) return family !== ownFamily;
     return unsuffixed(value) !== unsuffixed(own);
   }
   return value !== own;
 }
 
-/** The value one field's requests are sent with, and which override it is
- * when an override sets it to other than the session's own (`by`); null
- * when neither the session nor an override names one. The same judgment
- * marks the ctx line (§5) and labels the selects (§6.1). */
-function inForce(
+/** The override in force on one field, when it sets the field to other than
+ * the session's own `engine` value: its value and which override it is. The
+ * same judgment marks the ctx line (§5) and labels the selects (§6.1). */
+function overrideInForceOn(
   field: OverrideField,
-  own: string | undefined,
+  engine: string | undefined,
   state: RequestOverrideState | undefined,
-): { value: string; by?: "session" | "once" } | null {
+): { value: string; by: "session" | "once" } | null {
   const once = state?.once[field] ?? null;
   const session = state?.session[field] ?? null;
-  const by =
-    once !== null
-      ? "once"
-      : session !== null && differs(field, session, own)
-        ? "session"
-        : undefined;
-  const value = by === "once" ? once : by === "session" ? session : null;
-  if (value === null || by === undefined || !differs(field, value, own)) {
-    return own === undefined ? null : { value: own };
-  }
-  return { value, by };
+  const value = once ?? session;
+  if (value === null || !differs(field, value, engine)) return null;
+  return { value, by: once !== null ? "once" : "session" };
 }
 
 function valueView(
   field: OverrideField,
-  own: string | undefined,
+  ctx: SessionContextUsage,
   state: RequestOverrideState | undefined,
   shorten: (value: string) => string,
 ): RequestValueView | null {
-  const now = inForce(field, own, state);
-  if (now === null) return null;
-  if (now.by === undefined) return { text: shorten(now.value), title: `${field} ${now.value}` };
+  const engine = ctx.engine?.[field];
+  const over = overrideInForceOn(field, engine, state);
+  if (over === null) {
+    const ran = ctx[field] ?? engine;
+    return ran === undefined ? null : { text: shorten(ran), title: `${field} ${ran}` };
+  }
   return {
-    text: `${shorten(now.value)}${OVERRIDE_MARK}`,
-    by: now.by,
+    text: `${shorten(over.value)}${OVERRIDE_MARK}`,
+    by: over.by,
     title:
-      `${field} ${now.value} (${OVERRIDE_NAME[now.by]}。` +
-      (own !== undefined ? `セッション自身は ${own})` : "セッション自身の値はまだ分からない)"),
+      `${field} ${over.value} (${OVERRIDE_NAME[over.by]}。` +
+      (engine !== undefined
+        ? `セッション自身は ${engine})`
+        : "セッション自身の値はまだ分からない)"),
   };
 }
 
@@ -114,11 +115,11 @@ export function requestValueViews(
   state: RequestOverrideState | undefined,
   shorten: (model: string) => string,
 ): { model: RequestValueView; effort: RequestValueView | null } {
-  const model = valueView("model", ctx.model, state, shorten) ?? {
+  const model = valueView("model", ctx, state, shorten) ?? {
     text: shorten(ctx.model),
     title: `model ${ctx.model}`,
   };
-  return { model, effort: valueView("effort", ctx.effort, state, (e) => e) };
+  return { model, effort: valueView("effort", ctx, state, (e) => e) };
 }
 
 /** The marks the selects put before a value (DR-0041 §6.1): what the value
@@ -159,35 +160,44 @@ function vocabulary(field: OverrideField): { value: string; set: RequestOverride
     : OVERRIDE_EFFORTS.map((effort) => ({ value: effort, set: { effort } }));
 }
 
-/** The session's own value of `field` in the vocabulary: the family of the
- * model ID (`claude-fable-5-1` is `fable`), the effort as it is. Undefined
- * when it is not known or outside the vocabulary, where the session group
- * has no 🏛️ and offers every value with 📌. */
+/** The session's own value of `field` (the context's `engine`) in the
+ * vocabulary: the family of the model (`claude-fable-5-1` and `fable[1m]`
+ * are `fable`), the effort as it is. Undefined when it is not known (no
+ * module's facts) or outside the vocabulary, where the session group has no
+ * 🏛️ and offers every value with 📌. */
 function engineValue(
   field: OverrideField,
-  own: SessionContextUsage | undefined,
+  ctx: SessionContextUsage | undefined,
 ): string | undefined {
-  if (own === undefined) return undefined;
-  if (field === "model") return launchModelFromTranscript(own.model);
-  return own.effort !== undefined ? launchEffortFromTranscript(own.effort) : undefined;
+  const engine = ctx?.engine?.[field];
+  if (engine === undefined) return undefined;
+  return field === "model" ? launchModelFromTranscript(engine) : launchEffortFromTranscript(engine);
 }
 
 /** The groups of the select of `field` (DR-0041 §6.2): default (the value in
- * force, marked with the override it is), turn (⏱️, when `turn`), and
- * session (📌, with 🏛️ in place of the session's own value). `own` is the
- * session's own model and effort (the status snapshot's context); `shorten`
- * how a model ID is shown. */
+ * force: the override's, marked with which one, else the session's own),
+ * turn (⏱️, when `turn`), and session (📌, with 🏛️ in place of the session's
+ * own value). `ctx` is the status snapshot's context, whose `engine` is the
+ * session's own; `shorten` how a model name is shown. */
 export function overrideGroups(
   field: OverrideField,
   state: RequestOverrideState | undefined,
-  own: SessionContextUsage | undefined,
+  ctx: SessionContextUsage | undefined,
   { turn, shorten }: { turn: boolean; shorten: (model: string) => string },
 ): OverrideGroup[] {
-  const now = inForce(field, own?.[field], state);
+  const own = ctx?.engine?.[field];
+  const over = overrideInForceOn(field, own, state);
   const shown = (value: string) => (field === "model" ? shorten(value) : value);
+  // Without the module's facts the session's own is not known: what the
+  // requests ran on stands in for it.
+  const plain = own ?? ctx?.[field];
   const current =
-    now === null ? "—" : `${now.by !== undefined ? LAYER_MARK[now.by] : ""}${shown(now.value)}`;
-  const engine = engineValue(field, own);
+    over !== null
+      ? `${LAYER_MARK[over.by]}${shown(over.value)}`
+      : plain !== undefined
+        ? shown(plain)
+        : "—";
+  const engine = engineValue(field, ctx);
   const cleared: RequestOverridePatch = field === "model" ? { model: null } : { effort: null };
   const values = vocabulary(field);
   return [

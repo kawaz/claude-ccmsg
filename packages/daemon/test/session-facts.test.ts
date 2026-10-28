@@ -63,6 +63,24 @@ describe("the context with the module's facts laid over the transcript's", () =>
       model: "claude-opus-5-5",
       effort: "high",
       timestamp: "2026-10-14T00:00:00.000Z",
+      engine: { model: "opus[1m]" },
+    });
+  });
+
+  // DR-0041 §5, §6: the transcript's model is the one that answered, an
+  // override's included; the session's own values, which the overrides are
+  // read against, are the module's, beside it.
+  test("the module's model and effort as the session's own, beside the model that answered", () => {
+    const answeredOverridden = { ...FOLDED, model: "claude-sonnet-5-5", effort: "max" };
+    expect(
+      contextWithFacts(answeredOverridden, { ...FACTS, model: "claude-fable-5-1", effort: "low" }),
+    ).toMatchObject({
+      model: "claude-sonnet-5-5",
+      engine: { model: "claude-fable-5-1", effort: "low" },
+    });
+    // A module that has not seen a request yet knows the model only.
+    expect(contextWithFacts(answeredOverridden, FACTS)?.engine).toEqual({
+      model: "claude-opus-5-5[1m]",
     });
   });
 
@@ -72,6 +90,7 @@ describe("the context with the module's facts laid over the transcript's", () =>
     expect(contextWithFacts(undefined, FACTS)).toBeUndefined();
   });
 
+  // No engine either: the module does not know the session's own values.
   test("facts without a model leave the transcript's", () => {
     expect(contextWithFacts(FOLDED, { at: 1, context: { window: 200_000, at: 1 } })).toEqual({
       ...FOLDED,
@@ -115,7 +134,7 @@ describe("the context with the module's facts laid over the transcript's", () =>
     };
     expect(withFacts(snapshot, FACTS)).toEqual({
       ...snapshot,
-      context: { ...FOLDED, window: 1_000_000 },
+      context: { ...FOLDED, window: 1_000_000, engine: { model: "claude-opus-5-5[1m]" } },
     });
     expect(withFacts(snapshot, undefined)).toBe(snapshot);
   });

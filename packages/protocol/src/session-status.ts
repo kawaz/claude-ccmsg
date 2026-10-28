@@ -129,6 +129,21 @@ export const SessionContextUsageSchema = v.object({
   /** When `tokens` was observed: the assistant row's timestamp, or the
    * module's measure when that is newer. */
   timestamp: v.string(),
+  /** The session's own model and effort, as its hooks module has them
+   * (DR-0041 §5, §6): what the session runs on where no override is in
+   * force. `model` is the name the session was started or switched with
+   * (`fable[1m]`, `claude-fable-5-1`), `effort` that of the main thread's
+   * requests before an override replaced it. The overrides' marks and the
+   * selects' 🏛️ are read against these, while `model` and `effort` above
+   * are what the requests ran on (the transcript's `model` is the model that
+   * answered, an override's included). Absent without the module's facts,
+   * and each field until the module knows it. */
+  engine: v.optional(
+    v.object({
+      model: v.optional(v.pipe(v.string(), v.nonEmpty())),
+      effort: v.optional(v.pipe(v.string(), v.nonEmpty())),
+    }),
+  ),
 });
 export type SessionContextUsage = Output<typeof SessionContextUsageSchema>;
 

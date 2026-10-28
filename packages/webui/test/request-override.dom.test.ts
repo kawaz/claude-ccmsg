@@ -53,6 +53,7 @@ const SNAPSHOT: SessionStatusSnapshot = {
     model: "claude-opus-5-5",
     effort: "high",
     timestamp: "t",
+    engine: { model: "claude-opus-5-5[1m]", effort: "high" },
   },
 };
 
@@ -76,12 +77,31 @@ async function mountRoot(vnode: Parameters<typeof render>[0]): Promise<HTMLEleme
   return root;
 }
 
-function selectOf(root: HTMLElement, field: "model" | "effort"): HTMLSelectElement {
+type Field = "model" | "effort";
+
+/** A field's value at rest: the text that opens its select. */
+function textOf(root: HTMLElement, field: Field): HTMLButtonElement {
+  return instanceOf(
+    root.querySelector(`button.override-value[aria-label="通しの上書き: ${field}"]`),
+    HTMLButtonElement,
+    `the session override's ${field} at rest`,
+  );
+}
+
+/** A field's select, drawn while it is open. */
+function selectOf(root: HTMLElement, field: Field): HTMLSelectElement {
   return instanceOf(
     root.querySelector(`select[aria-label="通しの上書き: ${field}"]`),
     HTMLSelectElement,
-    `the session override's ${field}`,
+    `the session override's ${field} select`,
   );
+}
+
+/** Press a field's text: its select is drawn in its place. */
+async function press(root: HTMLElement, field: Field): Promise<HTMLSelectElement> {
+  const text = textOf(root, field);
+  await act(() => text.click());
+  return selectOf(root, field);
 }
 
 /** A select's groups as their labels and their options' labels. */
@@ -92,21 +112,17 @@ function groupsOf(select: HTMLSelectElement): (string | string[])[][] {
   ]);
 }
 
-/** What the closed select shows: its selected option's label. */
-function collapsed(select: HTMLSelectElement): string {
-  return select.selectedOptions[0]?.textContent ?? "";
+async function escape(el: HTMLElement): Promise<void> {
+  await act(() => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
 }
 
-/** The [適用] of a field, or null when none is shown. */
-function applyOf(root: HTMLElement, field: "model" | "effort"): HTMLButtonElement | null {
-  const button = selectOf(root, field).parentElement?.querySelector("button.override-apply");
-  return button === null || button === undefined
-    ? null
-    : instanceOf(button, HTMLButtonElement, "the [適用]");
-}
-
-async function choose(root: HTMLElement, field: "model" | "effort", label: string): Promise<void> {
-  const el = selectOf(root, field);
+/** Choose the option labelled `label` of a field, opening its select first
+ * when it is at rest. */
+async function choose(root: HTMLElement, field: Field, label: string): Promise<void> {
+  const open = root.querySelector(`select[aria-label="通しの上書き: ${field}"]`);
+  const el = open instanceof HTMLSelectElement ? open : await press(root, field);
   const option = [...el.options].find((o) => o.textContent === label);
   if (option === undefined) throw new Error(`no option ${label}`);
   await act(() => {
@@ -115,7 +131,15 @@ async function choose(root: HTMLElement, field: "model" | "effort", label: strin
   });
 }
 
-async function apply(root: HTMLElement, field: "model" | "effort"): Promise<void> {
+/** The [適用] of a field, or null when none is shown. */
+function applyOf(root: HTMLElement, field: Field): HTMLButtonElement | null {
+  const button = textOf(root, field).parentElement?.querySelector("button.override-apply");
+  return button === null || button === undefined
+    ? null
+    : instanceOf(button, HTMLButtonElement, "the [適用]");
+}
+
+async function apply(root: HTMLElement, field: Field): Promise<void> {
   const button = applyOf(root, field);
   if (button === null) throw new Error(`no [適用] for ${field}`);
   await act(async () => {
@@ -131,78 +155,107 @@ const LOW: RequestOverrideState = {
 };
 
 describe("the ctx line's editor", () => {
-  const context = (() => {
-    const line = miniSummaryLines(SNAPSHOT, [], LOW).find((l) => l.context !== undefined);
-    if (line?.context === undefined) throw new Error("no ctx line");
-    return line.context;
+  const line = (() => {
+    const found = miniSummaryLines(SNAPSHOT, [], LOW).find((l) => l.context !== undefined);
+    if (found?.context === undefined) throw new Error("no ctx line");
+    return found.context;
   })();
-  const own = SNAPSHOT.context;
+  const context = SNAPSHOT.context;
 
-  test("the overridden effort is marked; its button opens the selects of the session group, at the default", async () => {
+  async function mountLine(
+    onChange: (p: Patch) => Promise<RequestOverrideResponse | ErrorResponse>,
+  ) {
+    return mountRoot(h(ContextLine, { line, state: LOW, context, onChange }));
+  }
+  const ctxButton = (root: HTMLElement, at: number) =>
+    instanceOf(root.querySelectorAll("button.ctx-value")[at], HTMLButtonElement, "a ctx value");
+
+  test("the overridden effort is marked; pressing it opens the editor with the effort's select open", async () => {
     const { onChange } = recorder({ ok: true, delivery: "applied" });
-    const root = await mountRoot(h(ContextLine, { context, state: LOW, own, onChange }));
+    const root = await mountLine(onChange);
     const buttons = [...root.querySelectorAll("button.ctx-value")];
     expect(buttons.map((b) => b.textContent)).toEqual(["opus-5-5", "low⁺"]);
     expect(buttons[1]?.classList.contains("ctx-value-overridden")).toBe(true);
     expect(root.querySelector(".ctx-override-popover")).toBeNull();
-    await act(() => instanceOf(buttons[1], HTMLButtonElement, "the effort").click());
-    // The effort first, then the model; each the default and the session
-    // group, the session's own value 🏛️ in place of its 📌.
-    expect([...root.querySelectorAll("select")]).toEqual([
-      selectOf(root, "effort"),
-      selectOf(root, "model"),
-    ]);
-    expect(groupsOf(selectOf(root, "effort"))).toEqual([
+    await act(() => ctxButton(root, 1).click());
+    // The pressed field's select is open and focused; the other is text.
+    const effort = selectOf(root, "effort");
+    expect(document.activeElement).toBe(effort);
+    expect(textOf(root, "model").textContent).toBe("opus-5-5[1m]");
+    // The default and the session group, the session's own value 🏛️ in
+    // place of its 📌.
+    expect(groupsOf(effort)).toEqual([
       ["default", ["📌low"]],
       ["session", ["📌low", "📌medium", "🏛️high", "📌xhigh", "📌max"]],
     ]);
-    expect(groupsOf(selectOf(root, "model"))).toEqual([
-      ["default", ["opus-5-5"]],
+    // Pressing the model moves the focus there: the effort goes back to text.
+    const model = await press(root, "model");
+    expect(textOf(root, "effort").textContent).toBe("📌low");
+    expect(groupsOf(model)).toEqual([
+      ["default", ["opus-5-5[1m]"]],
       ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
-    expect(collapsed(selectOf(root, "effort"))).toBe("📌low");
-    expect([applyOf(root, "effort"), applyOf(root, "model")]).toEqual([null, null]);
+    expect(root.querySelectorAll("button.override-apply")).toHaveLength(0);
   });
 
-  test("[適用] only while an option other than the default is chosen; it sends that field alone", async () => {
-    const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
-    const root = await mountRoot(h(ContextLine, { context, state: LOW, own, onChange }));
-    await act(() =>
-      instanceOf(root.querySelector("button.ctx-value"), HTMLButtonElement, "the model").click(),
+  test("at rest the text; pressed the select; Escape and blur take it back to the text", async () => {
+    const { onChange } = recorder({ ok: true, delivery: "applied" });
+    const root = await mountLine(onChange);
+    await act(() => ctxButton(root, 0).click());
+    expect(document.activeElement).toBe(selectOf(root, "model"));
+    // Escape is the select's: the text takes the focus, the editor stays.
+    await escape(selectOf(root, "model"));
+    expect(root.querySelector('select[aria-label="通しの上書き: model"]')).toBeNull();
+    expect(document.activeElement).toBe(textOf(root, "model"));
+    expect(root.querySelector(".ctx-override-popover")).not.toBeNull();
+    const effort = await press(root, "effort");
+    // The focus going elsewhere: back to the text, which does not take it.
+    const close = instanceOf(
+      root.querySelector(".ctx-override-close"),
+      HTMLButtonElement,
+      "the editor's close",
     );
-    await choose(root, "model", "📌sonnet");
-    expect(applyOf(root, "model")).not.toBeNull();
-    expect(applyOf(root, "effort")).toBeNull();
-    // Back to the default: nothing to apply.
-    await choose(root, "model", "opus-5-5");
-    expect(applyOf(root, "model")).toBeNull();
-    await choose(root, "model", "📌sonnet");
-    await apply(root, "model");
-    expect(patches).toEqual([{ model: "sonnet" }]);
-    // Applied, the select is at the default again, nothing said.
-    expect(collapsed(selectOf(root, "model"))).toBe("opus-5-5");
-    expect(applyOf(root, "model")).toBeNull();
-    expect(root.querySelector(".override-notice")).toBeNull();
-    // Escape closes the editor.
+    expect(document.activeElement).toBe(effort);
+    await act(() => close.focus());
+    expect(document.activeElement).toBe(close);
+    expect(textOf(root, "effort").textContent).toBe("📌low");
+    // Escape outside a select closes the editor.
     const popover = instanceOf(
       root.querySelector(".ctx-override-popover"),
       HTMLElement,
       "the editor",
     );
-    await act(() => {
-      popover.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    });
+    await escape(popover);
     expect(root.querySelector(".ctx-override-popover")).toBeNull();
+  });
+
+  test("[適用] only while an option other than the default is chosen; it sends that field alone", async () => {
+    const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
+    const root = await mountLine(onChange);
+    await act(() => ctxButton(root, 0).click());
+    await choose(root, "model", "📌sonnet");
+    // Chosen: the select is text again, the chosen value with [適用].
+    expect(textOf(root, "model").textContent).toBe("📌sonnet");
+    expect(applyOf(root, "model")).not.toBeNull();
+    expect(applyOf(root, "effort")).toBeNull();
+    // Back to the default: nothing to apply.
+    await choose(root, "model", "opus-5-5[1m]");
+    expect(applyOf(root, "model")).toBeNull();
+    await choose(root, "model", "📌sonnet");
+    await apply(root, "model");
+    expect(patches).toEqual([{ model: "sonnet" }]);
+    // Applied, the field is at the default again, nothing said.
+    expect(textOf(root, "model").textContent).toBe("opus-5-5[1m]");
+    expect(applyOf(root, "model")).toBeNull();
+    expect(root.querySelector(".override-notice")).toBeNull();
   });
 
   // §6.5: 🏛️ clears the field's session and one-shot overrides, as null.
   // With no override at all, it is offered and sent all the same.
   test("🏛️ sends null; with no override too", async () => {
     const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
-    const root = await mountRoot(h(ContextLine, { context, state: LOW, own, onChange }));
-    await act(() =>
-      instanceOf(root.querySelector("button.ctx-value"), HTMLButtonElement, "the model").click(),
-    );
+    const root = await mountLine(onChange);
+    await act(() => ctxButton(root, 0).click());
     await choose(root, "effort", "🏛️high");
     await apply(root, "effort");
     await choose(root, "model", "🏛️opus");
@@ -210,35 +263,27 @@ describe("the ctx line's editor", () => {
     expect(patches).toEqual([{ effort: null }, { model: null }]);
   });
 
-  test("a reply other than applied is said beside the select; one that failed keeps the choice", async () => {
+  test("a reply other than applied is said beside the field; one that failed keeps the choice", async () => {
     const noModule = recorder({ ok: true, delivery: "no_module" });
-    const root = await mountRoot(
-      h(ContextLine, { context, state: LOW, own, onChange: noModule.onChange }),
-    );
-    await act(() =>
-      instanceOf(root.querySelector("button.ctx-value"), HTMLButtonElement, "the model").click(),
-    );
+    const root = await mountLine(noModule.onChange);
+    await act(() => ctxButton(root, 0).click());
     await choose(root, "effort", "📌max");
     await apply(root, "effort");
     expect(root.querySelector(".override-notice")?.textContent).toContain(
       "受け口 (hooks module) が無い",
     );
-    // The daemon holds it: the select is back at the default.
-    expect(collapsed(selectOf(root, "effort"))).toBe("📌low");
+    // The daemon holds it: the field is back at the default.
+    expect(textOf(root, "effort").textContent).toBe("📌low");
 
     const refused = recorder({ ok: false, error: { code: "invalid_args", msg: "effort: x" } });
-    const other = await mountRoot(
-      h(ContextLine, { context, state: LOW, own, onChange: refused.onChange }),
-    );
-    await act(() =>
-      instanceOf(other.querySelector("button.ctx-value"), HTMLButtonElement, "the model").click(),
-    );
+    const other = await mountLine(refused.onChange);
+    await act(() => ctxButton(other, 0).click());
     await choose(other, "effort", "📌max");
     await apply(other, "effort");
     expect(other.querySelector(".override-notice")?.textContent).toBe(
       "変更できなかった (invalid_args): effort: x",
     );
-    expect(collapsed(selectOf(other, "effort"))).toBe("📌max");
+    expect(textOf(other, "effort").textContent).toBe("📌max");
     expect(applyOf(other, "effort")).not.toBeNull();
   });
 });
@@ -277,7 +322,7 @@ describe("the Status tab's override row", () => {
     };
   }
 
-  test("the same editor, from the store: the one-shot in force shows in the default", async () => {
+  test("the same editor at rest, from the store: the one-shot in force shows in the default", async () => {
     const { onChange, patches } = recorder({ ok: true, delivery: "applied" });
     const { store, root } = await mountStatus(SNAPSHOT, onChange, [
       {
@@ -287,13 +332,15 @@ describe("the Status tab's override row", () => {
       },
     ]);
     const row = instanceOf(root.querySelector(".status-override"), HTMLElement, "the override row");
-    expect(collapsed(selectOf(row, "model"))).toBe("📌fable");
-    expect(collapsed(selectOf(row, "effort"))).toBe("⏱️max");
+    expect(row.querySelector("select")).toBeNull();
+    expect(textOf(row, "model").textContent).toBe("📌fable");
+    expect(textOf(row, "effort").textContent).toBe("⏱️max");
     expect(row.textContent).not.toContain("単発");
-    expect(groupsOf(selectOf(row, "effort")).map(([label]) => label)).toEqual([
+    expect(groupsOf(await press(row, "effort")).map(([label]) => label)).toEqual([
       "default",
       "session",
     ]);
+    await escape(selectOf(row, "effort"));
     await choose(row, "model", "📌haiku");
     await apply(row, "model");
     expect(patches).toEqual([{ model: "haiku" }]);
@@ -308,6 +355,28 @@ describe("the Status tab's override row", () => {
         values: { model: null, effort: null },
       }),
     );
-    expect(collapsed(selectOf(row, "effort"))).toBe("high");
+    expect(textOf(row, "effort").textContent).toBe("high");
+  });
+
+  // DR-0041 §5, §6: after a response under 📌sonnet the transcript's model is
+  // sonnet; 🏛️ and the default stay on the session's own (the engine).
+  test("after a response under 📌sonnet, 🏛️ stays on the session's own family", async () => {
+    const { onChange } = recorder({ ok: true, delivery: "applied" });
+    const context = SNAPSHOT.context;
+    if (context === undefined) throw new Error("no context");
+    const answered = { ...SNAPSHOT, context: { ...context, model: "claude-sonnet-5-5" } };
+    const { root } = await mountStatus(answered, onChange, [
+      {
+        session_id: SID,
+        session: { model: "sonnet", effort: "high" },
+        once: { model: null, effort: null },
+      },
+    ]);
+    const row = instanceOf(root.querySelector(".status-override"), HTMLElement, "the override row");
+    expect(textOf(row, "model").textContent).toBe("📌sonnet");
+    expect(groupsOf(await press(row, "model"))).toEqual([
+      ["default", ["📌sonnet"]],
+      ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
+    ]);
   });
 });

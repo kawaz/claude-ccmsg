@@ -757,9 +757,9 @@ export function Timeline({
                             line.context ? (
                               <ContextLine
                                 key={line.kind}
-                                context={line.context}
+                                line={line.context}
                                 state={requestOverride}
-                                own={sessionStatus?.context}
+                                context={sessionStatus?.context}
                                 onChange={(patch) => ws.requestOverride(sid, patch)}
                               />
                             ) : (
