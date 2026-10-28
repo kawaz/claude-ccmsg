@@ -2633,7 +2633,7 @@ select.sidebar-globals-endpoint {
   font-size: var(--font-size-xl);
 }
 
-/* `ccmsg say` の発話バブル (kawaz r244 m5-m6)。人に向けた呼びかけなので、
+/* say の発話バブル (kawaz r244 m5-m6)。人に向けた呼びかけなので、
  * エージェント間の msg (色の付いた面だけの吹き出し) とは形で分ける: 角の
  * 丸い札の左に丸いアイコンの印を立て、琥珀の面と枠 2px で囲む。未読と既読で
  * 見た目は変えず、アイコン (🔔 / 🔕) と既読ボタンの有無で見分ける。
@@ -9883,7 +9883,7 @@ circle.cache-ring-shape {
   gap: var(--space-8);
 }
 
-/* say_read 失敗の表示 (kawaz r244m14)。TL に差し込んだ say バブルの既読は
+/* say_read 失敗の表示 (kawaz r244m14)。TL の say バブルの既読は
  * RoomView と同じ非楽観なので、失敗がどこにも出ないと「押しても何も起きない」
  * ように見える。次の試行まで残る 1 行。 */
 .tl-say-error {

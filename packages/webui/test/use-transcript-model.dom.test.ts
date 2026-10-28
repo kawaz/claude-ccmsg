@@ -4,18 +4,19 @@
 //   fold group にまとまる。追記では手を付けていない group をそのまま引き継ぎ
 //   (memo された FoldGroup が描き直されない)、older で前に足しても既存の行の
 //   offset は変わらない。項目ごとの元 jsonl を offset で引ける
-// - useSayBubbles: このセッションの say だけを時刻の位置に差し込み (agent TL
-//   には出さない)、既読にできなかった理由を次に成功するまで残す
+// - useSayRead: このセッションの未読の say だけが既読ボタンを持ち、TL に出て
+//   いる未読の最新のボタンがその全部を既読にする (agent TL の say は既読の管理
+//   の外)。既読にできなかった理由を次に成功するまで残す
 import { afterEach, describe, expect, test } from "bun:test";
 import { defined } from "./helpers.ts";
 import { h, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { SayRecord } from "@ccmsg/protocol";
+import type { UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import type { WsHandle } from "../src/client/ws.ts";
-import { useSayBubbles } from "../src/client/components/timeline/useSayBubbles.ts";
+import { useSayRead } from "../src/client/components/timeline/useSayRead.ts";
 import { useTranscriptModel } from "../src/client/components/timeline/useTranscriptModel.ts";
-import type { TimelineGroup } from "../src/client/transcript-model.ts";
+import type { BoundaryKind, TimelineGroup } from "../src/client/transcript-model.ts";
 import {
   assistantContentRow,
   line as jsonl,
@@ -103,73 +104,111 @@ describe("useTranscriptModel", () => {
   });
 });
 
-describe("useSayBubbles", () => {
-  function sayAt(id: string, sid: string, ts: string): SayRecord {
-    return { id, sid, text: `said ${id}`, ts, read: false };
+describe("useSayRead", () => {
+  function unread(id: string, sid: string): UnreadSay {
+    return { session_id: sid, tool_use_id: id, ts: "2026-10-09T01:00:00.000Z" };
   }
+  const say = (id: string): BoundaryKind => ({ kind: "say", text: `said ${id}`, toolUseId: id });
+  // TL の並び: toolu_1 (未読)、境界でない group、toolu_2 (既読)、toolu_3 (未読)。
+  const BOUNDARIES: ReadonlyArray<BoundaryKind | null> = [
+    say("toolu_1"),
+    null,
+    say("toolu_2"),
+    say("toolu_3"),
+  ];
 
-  async function mountSays(
+  async function mountRead(
     sayRead: WsHandle["sayRead"],
-    props: { agentTimeline: boolean; groups: readonly TimelineGroup[] },
+    props: { agentTimeline: boolean; boundaries: ReadonlyArray<BoundaryKind | null> },
   ) {
     const store = timelineStore();
     const fake = new FakeTranscriptWs(store);
     const ws: WsHandle = { ...fake.handle, sayRead };
     store.dispatch({
-      type: "says/loaded",
-      says: [
-        sayAt("i/1", SID, "2026-10-09T01:00:00.000Z"),
-        sayAt("i/2", "someone-else", "2026-10-09T01:00:00.000Z"),
-        sayAt("i/3", SID, "2027-01-01T00:00:00.000Z"),
-      ],
+      type: "say-unread/loaded",
+      says: [unread("toolu_1", SID), unread("toolu_9", "someone-else"), unread("toolu_3", SID)],
     });
     const wrap = (child: ComponentChild) => h(AppContext.Provider, { value: { store, ws } }, child);
     return track(
-      await renderHook((p: typeof props) => useSayBubbles({ sid: SID, ...p }), props, { wrap }),
+      await renderHook((p: typeof props) => useSayRead({ sid: SID, ...p }), props, { wrap }),
     );
   }
 
   const noReply: WsHandle["sayRead"] = () => Promise.reject(new Error("no socket"));
 
-  test("only this session's says, each in the slot before the first newer group", async () => {
-    const hook = await mountSays(noReply, { agentTimeline: false, groups: [] });
-    expect(hook.current().says.map((r) => r.id)).toEqual(["i/1", "i/3"]);
-    // group が無ければ slot は末尾の 1 つだけで、全部そこに入る。
-    expect(hook.current().slots.map((slot) => slot.map((r) => r.id))).toEqual([["i/1", "i/3"]]);
+  type SayRead = ReturnType<typeof useSayRead>;
+
+  /** say ごとの既読の状態を、比べられる形 (未読なら既読にする id) にしたもの。 */
+  function states(hook: { current: () => SayRead }, ids: string[]) {
+    return ids.map((id) => {
+      const state = hook.current().readState(id);
+      return state.kind === "unread" ? [id, state.ids] : [id, state.kind];
+    });
+  }
+
+  test("this session's unread says carry their 既読 targets; the rest are read", async () => {
+    const hook = await mountRead(noReply, { agentTimeline: false, boundaries: BOUNDARIES });
+    expect(states(hook, ["toolu_1", "toolu_2", "toolu_3", "toolu_9"])).toEqual([
+      ["toolu_1", ["toolu_1"]],
+      ["toolu_2", "read"],
+      ["toolu_3", ["toolu_1", "toolu_3"]],
+      // 別セッションの未読は、この TL では未読ではない。
+      ["toolu_9", "read"],
+    ]);
   });
 
-  test("an agent Timeline shows none", async () => {
-    const hook = await mountSays(noReply, { agentTimeline: true, groups: [] });
-    expect(hook.current().says).toEqual([]);
+  // 読み込み済みの window に無い未読は「すべて既読」に入れない (押した時に TL
+  // に出ているものだけ)。
+  test("an unread say outside the loaded window is not among the targets", async () => {
+    const hook = await mountRead(noReply, {
+      agentTimeline: false,
+      boundaries: [say("toolu_3")],
+    });
+    expect(states(hook, ["toolu_3"])).toEqual([["toolu_3", ["toolu_3"]]]);
   });
+
+  test("an agent Timeline keeps its says out of read tracking", async () => {
+    const hook = await mountRead(noReply, { agentTimeline: true, boundaries: BOUNDARIES });
+    expect(states(hook, ["toolu_1", "toolu_2", "toolu_3"])).toEqual([
+      ["toolu_1", "untracked"],
+      ["toolu_2", "untracked"],
+      ["toolu_3", "untracked"],
+    ]);
+  });
+
+  function press(hook: { current: () => SayRead }, id: string): void {
+    const state = hook.current().readState(id);
+    if (state.kind !== "unread") throw new Error(`${id} is not unread`);
+    state.onRead(state.ids);
+  }
 
   test("a failed read is reported until a later read succeeds", async () => {
     let reply: Awaited<ReturnType<WsHandle["sayRead"]>> = {
       ok: false,
-      error: { code: "not_found", msg: "no such say" },
+      error: { code: "invalid_args", msg: "no such say" },
     };
-    const hook = await mountSays(() => Promise.resolve(reply), {
+    const hook = await mountRead(() => Promise.resolve(reply), {
       agentTimeline: false,
-      groups: [],
+      boundaries: BOUNDARIES,
     });
     await act(async () => {
-      hook.current().markRead(["i/1"]);
+      press(hook, "toolu_1");
       await Promise.resolve();
     });
     expect(hook.current().readError).toBe("no such say");
 
-    reply = { ok: true, ids: ["i/1"] };
+    reply = { ok: true, ids: ["toolu_1"] };
     await act(async () => {
-      hook.current().markRead(["i/1"]);
+      press(hook, "toolu_1");
       await Promise.resolve();
     });
     expect(hook.current().readError).toBeNull();
   });
 
   test("a read that cannot be sent says the connection failed", async () => {
-    const hook = await mountSays(noReply, { agentTimeline: false, groups: [] });
+    const hook = await mountRead(noReply, { agentTimeline: false, boundaries: BOUNDARIES });
     await act(async () => {
-      hook.current().markRead(["i/1"]);
+      press(hook, "toolu_1");
       await Promise.resolve();
       await Promise.resolve();
     });

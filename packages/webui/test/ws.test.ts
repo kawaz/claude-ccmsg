@@ -1503,10 +1503,10 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(actions).toEqual([{ type: "session-errors/loaded", errors: [] }]);
   });
 
-  // The say records (DR-0036 §3) come as the full set, and an empty set is
-  // what a restarted daemon sends: it must still reach the reducer, or the old
-  // daemon's unread 🔔 would stay on the sidebar.
-  test("ev:'says' push dispatches says/loaded, an empty set included", () => {
+  // The unread says (DR-0045 §7) come as the full set, and an empty set is
+  // what the daemon sends once the last one is read: it must still reach the
+  // reducer, or the read say's 🔔 would stay on the sidebar.
+  test("ev:'say_unread' push dispatches say-unread/loaded, an empty set included", () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));
     openHandles.push(handle);
@@ -1515,13 +1515,13 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
     actions.length = 0;
 
-    const say = { id: "i/1", sid: "s2", text: "hello", ts: "2026-10-13T00:00:00Z", read: false };
-    ws1.triggerMessage(JSON.stringify({ ev: "says", says: [say] }));
-    ws1.triggerMessage(JSON.stringify({ ev: "says", says: [] }));
+    const say = { session_id: "s2", tool_use_id: "toolu_1", ts: "2026-10-13T00:00:00Z" };
+    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [say] }));
+    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [] }));
 
     expect(actions).toEqual([
-      { type: "says/loaded", says: [say] },
-      { type: "says/loaded", says: [] },
+      { type: "say-unread/loaded", says: [say] },
+      { type: "say-unread/loaded", says: [] },
     ]);
   });
 });

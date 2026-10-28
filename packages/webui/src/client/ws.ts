@@ -125,10 +125,10 @@ function invalidReply(op: string, failure: ParseFailure): ErrorResponse {
 export interface WsHandle {
   connect(): void;
   close(): void;
-  /** Ack say records as read (kawaz r244 m5-m6): the 既読 button on a
-   * 🔔 bubble. `ids` are the SayRecords' ids. Non-optimistic — the daemon
-   * pushes the updated `ev:"says"` set to every tab and the store takes it
-   * from there, so every open tab converges on the same badge. */
+  /** Mark says read (DR-0045 §7): the 既読 button on a 🔔 bubble. `ids` are
+   * the ids of the says' tool_use. Non-optimistic — the daemon pushes the
+   * updated `ev:"say_unread"` set to every tab and the store takes it from
+   * there, so every open tab converges on the same bell and badge. */
   sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;
   /** Mark requests for permission read (DR-0040): the bubble's 許可する.
    * Non-optimistic, like sayRead — the daemon pushes each record it changed
@@ -777,12 +777,12 @@ export function createWsClient(
       dispatch({ type: "peers/loaded", peers: streamEv.peers });
       return;
     }
-    // Every `ccmsg say` record the daemon holds (memory only, DR-0036 §3) —
-    // the full set, both on connect and after every say or ack. Replacing
-    // rather than merging is what drops the old daemon's says after a
-    // restart. Same "replace the set" shape as ev:"peers" above.
-    if (streamEv.ev === "says") {
-      dispatch({ type: "says/loaded", says: streamEv.says });
+    // Every say the person has not read (DR-0045 §7) — the full set, both on
+    // connect and whenever it changes. Replacing rather than merging is what
+    // turns a say read in another tab to 🔕 here. Same "replace the set" shape
+    // as ev:"peers" above.
+    if (streamEv.ev === "say_unread") {
+      dispatch({ type: "say-unread/loaded", says: streamEv.says });
       return;
     }
     // Requests for permission (DR-0040 §5): the full set on connect, which

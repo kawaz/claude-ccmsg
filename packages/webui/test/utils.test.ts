@@ -8,8 +8,8 @@ import type {
   SessionTurn,
   MemberEvent,
   PeerInfo,
-  SayRecord,
   SessionSearchHit,
+  UnreadSay,
 } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
@@ -208,30 +208,26 @@ describe("permitUnreadBySid", () => {
 });
 
 describe("sayUnreadBySid", () => {
-  const record = (id: string, sid: string, read: boolean): SayRecord => ({
-    id,
-    sid,
-    text: `say ${id}`,
+  const unread = (id: string, sid: string): UnreadSay => ({
+    session_id: sid,
+    tool_use_id: id,
     ts: "2026-10-13T00:00:00.000Z",
-    read,
   });
 
-  // 輪郭: 未読は記録の sid に帰属し、同じ sid の分は合算される。既読は数えない。
-  test("counts each sid's unread records", () => {
+  // 輪郭: 未読は session_id に帰属し、同じセッションの分は合算される。
+  test("counts each session's unread says", () => {
     const got = sayUnreadBySid([
-      record("i/1", "sid-a", false),
-      record("i/2", "sid-a", false),
-      record("i/3", "sid-a", true),
-      record("i/4", "sid-b", false),
-      record("i/5", "sid-c", true),
+      unread("toolu_1", "sid-a"),
+      unread("toolu_2", "sid-a"),
+      unread("toolu_3", "sid-b"),
     ]);
     expect(got.get("sid-a")).toBe(2);
     expect(got.get("sid-b")).toBe(1);
-    // 未読ゼロの sid はエントリごと出さない (呼び出し側は ?? 0 で読む)。
+    // 未読ゼロのセッションはエントリごと出さない (呼び出し側は ?? 0 で読む)。
     expect(got.has("sid-c")).toBe(false);
   });
 
-  test("no records, no entries", () => {
+  test("no unread says, no entries", () => {
     expect([...sayUnreadBySid([]).keys()]).toEqual([]);
   });
 });

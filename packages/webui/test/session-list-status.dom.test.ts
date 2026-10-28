@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { AgentInfo, PeerInfo, PermitRequestRecord, SayRecord } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
@@ -58,12 +58,12 @@ async function mount(
   peers: PeerInfo[],
   agents: AgentInfo[],
   permitRequests: PermitRequestRecord[] = [],
-  says: SayRecord[] = [],
+  unreadSays: UnreadSay[] = [],
 ): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
   store.dispatch({ type: "permit-requests/loaded", requests: permitRequests });
-  store.dispatch({ type: "says/loaded", says });
+  store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);
@@ -168,14 +168,12 @@ describe("the Sessions list's unread requests for permission", () => {
 });
 
 // A session that spoke to the person (say) and is not yet read is marked with
-// 🔔 and the count of its unread says.
+// 🔔 and the count of its unread says, as ev:"say_unread" lists them.
 describe("the Sessions list's unread says", () => {
-  const say = (id: string, sid: string, read: boolean): SayRecord => ({
-    id,
-    sid,
-    text: "x",
+  const say = (id: string, sid: string): UnreadSay => ({
+    session_id: sid,
+    tool_use_id: id,
     ts: SINCE,
-    read,
   });
 
   test("marks each session with its unread says, counting past one", async () => {
@@ -187,12 +185,7 @@ describe("the Sessions list's unread says", () => {
         agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
       ],
       [],
-      [
-        say("s/1", RESPONDING, false),
-        say("s/2", IDLE, false),
-        say("s/3", IDLE, false),
-        say("s/4", BARE, true),
-      ],
+      [say("toolu_1", RESPONDING), say("toolu_2", IDLE), say("toolu_3", IDLE)],
     );
     const mark = (sid: string) => rowOf(root, sid).querySelector(".session-say-unread");
     expect(mark(RESPONDING)?.textContent).toBe("🔔");

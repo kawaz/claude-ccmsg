@@ -10,7 +10,7 @@ import { pushNavigation } from "../../navigation.ts";
 import { forkPrefill, prefillSidebarState } from "../../session-creator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
-import { SayBubble, SayRecordBubble } from "../TimelineItem.tsx";
+import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
 import { TurnResponding } from "./TurnResponding.tsx";
 import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
@@ -22,7 +22,6 @@ import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
 import { forkActionState, liveChain } from "../../fork-point.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
-import { inTimeOrder } from "../../say-merge.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { ErrorView } from "../ErrorView.tsx";
 import { useAutoOpenSettings } from "./useAutoOpenSettings.ts";
@@ -31,7 +30,7 @@ import { useTimelineFolds } from "./useTimelineFolds.ts";
 import { useForkOrigin } from "./useForkOrigin.ts";
 import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
-import { useSayBubbles } from "./useSayBubbles.ts";
+import { useSayRead } from "./useSayRead.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { usePermitBubbles } from "./usePermitBubbles.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
@@ -164,29 +163,13 @@ export function Timeline({
     [groups, forkOrigin?.boundary_uuid],
   );
   const folds = useTimelineFolds(autoOpen.revision, groups);
-  const sayBubbles = useSayBubbles({ sid, agentTimeline: !!agent, groups });
-  const says = sayBubbles.says;
+  const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries });
   const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
-  // The say and permission bubbles of one slot, in the order they happened.
+  // The permission bubbles of one slot, in the order they were made.
   const bubbleNodes = (slot: number) =>
-    inTimeOrder([
-      ...(sayBubbles.slots[slot] ?? []).map((record) => ({
-        ts: record.ts,
-        node: (
-          <SayRecordBubble
-            key={`say-${record.id}`}
-            record={record}
-            now={now}
-            readIds={sayBubbles.readTargets(record.id)}
-            onRead={sayBubbles.markRead}
-          />
-        ),
-      })),
-      ...(permitBubbles.slots[slot] ?? []).map((request) => ({
-        ts: request.ts,
-        node: <PermitRequestBubble key={`permit-${request.id}`} request={request} now={now} />,
-      })),
-    ]).map((bubble) => bubble.node);
+    (permitBubbles.slots[slot] ?? []).map((request) => (
+      <PermitRequestBubble key={`permit-${request.id}`} request={request} now={now} />
+    ));
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -484,14 +467,12 @@ export function Timeline({
                       />
                     ) : (
                       <div class="tl-lines" ref={tlLinesRef}>
-                        {parsed.length === 0 &&
-                        says.length === 0 &&
-                        permitBubbles.requests.length === 0 ? (
+                        {parsed.length === 0 && permitBubbles.requests.length === 0 ? (
                           <p class="tl-empty">(空の transcript)</p>
                         ) : (
                           <>
-                            {sayBubbles.readError !== null ? (
-                              <p class="tl-say-error">{sayBubbles.readError}</p>
+                            {sayRead.readError !== null ? (
+                              <p class="tl-say-error">{sayRead.readError}</p>
                             ) : null}
                             {groups
                               .map((group, i) => {
@@ -619,6 +600,23 @@ export function Timeline({
                                         />
                                       </ItemRawToggle>
                                     );
+                                  case "say":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={pin.selectPosition}
+                                      >
+                                        <SayCallBubble
+                                          text={boundary.text}
+                                          ts={line.ts ?? ""}
+                                          now={now}
+                                          read={sayRead.readState(boundary.toolUseId)}
+                                        />
+                                      </ItemRawToggle>
+                                    );
                                   case "ccmsg": {
                                     // raw タブ用の「この行に何が書いてあったか」:
                                     // extractCcmsgMessages が読むのと同じ text segment 結合
@@ -667,15 +665,15 @@ export function Timeline({
                               })
                               // Index-aligned with `groups` on both counts: the seam
                               // splices in ahead of the first group of forked-off
-                              // history, and each slot's say bubbles ahead of the
-                              // first group that is newer than them.
+                              // history, and each slot's permission bubbles ahead of
+                              // the first group that is newer than them.
                               .flatMap((node, i) => [
                                 ...bubbleNodes(i),
                                 ...(i === forkDividerIndex && forkOrigin
                                   ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
                                   : [node]),
                               ])}
-                            {/* 読み込み済み window より新しい say (= 喋った turn の行が
+                            {/* 読み込み済み window より新しい許可依頼 (= 依頼した turn の行が
                                 まだ jsonl に無い live のケース) は末尾に出す。 */}
                             {bubbleNodes(groups.length)}
                             <TurnResponding

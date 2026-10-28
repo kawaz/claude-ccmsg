@@ -1,12 +1,12 @@
 // 許可依頼バブル (DR-0040) の差し込み。
 //
 // 許可依頼は daemon がメモリに持つ記録 (ev:"permit_requests" /
-// ev:"permit_request") で、say と同じく transcript の行とは別の記録なので、
-// TL には時刻で合流させる (say-merge.ts の saySlots を共用する)。
+// ev:"permit_request") で、transcript の行とは別の記録なので、TL には時刻で
+// 合流させる (permit-merge.ts)。
 import { useMemo } from "preact/hooks";
 import type { PermitRequestRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
-import { saySlots } from "../../say-merge.ts";
+import { permitSlots } from "../../permit-merge.ts";
 import type { TimelineGroup } from "../../transcript-model.ts";
 import { useStoreState } from "../../useStore.ts";
 
@@ -33,6 +33,6 @@ export function usePermitBubbles({
     () => (agentTimeline ? [] : all.filter((r) => r.sid === sid)),
     [all, sid, agentTimeline],
   );
-  const slots = useMemo(() => saySlots(groups, requests), [groups, requests]);
+  const slots = useMemo(() => permitSlots(groups, requests), [groups, requests]);
   return { requests, slots };
 }

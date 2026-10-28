@@ -457,7 +457,7 @@ function SessionRowItem({
    * リング非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで
    * 示す。 */
   cacheRequest: LlmRequestInfo | null;
-  /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
+  /** 未読の say 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
    * ようにするためのもので、既読はセッションの TL の 🔔 バブル側で付ける。 */
   sayUnread: number;
@@ -673,7 +673,7 @@ function PinnedSessionRow({
    * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
   modelEffort: ModelEffortInfo | null;
-  /** 未読の `ccmsg say` 件数。ピンは下の status セクションから除外されている
+  /** 未読の say 件数。ピンは下の status セクションから除外されている
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
    * 🔔 がどこにも出なくなる。 */
   sayUnread: number;
@@ -801,7 +801,7 @@ function PinnedSessionsSection({
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
-  /** sid → 未読 say 件数 (SessionList が says から引いたもの)。 */
+  /** sid → 未読 say 件数 (SessionList が unreadSays から数えたもの)。 */
   sayUnreadBy: Map<string, number>;
   /** sid → 未読の許可依頼の件数 (SessionList が permitRequests から引いたもの)。 */
   permitUnreadBy: Map<string, number>;
@@ -883,7 +883,7 @@ function sessionListSlice(state: AppState) {
     sessionErrors: state.sessionErrors,
     llmRequests: state.llmRequests,
     pinnedSessions: state.pinnedSessions,
-    says: state.says,
+    unreadSays: state.unreadSays,
     permitRequests: state.permitRequests,
   };
 }
@@ -916,12 +916,12 @@ export function SessionList({
     sessionErrors,
     llmRequests,
     pinnedSessions,
-    says,
+    unreadSays,
     permitRequests,
   } = useStoreState(store, sessionListSlice, shallowEqual);
-  // say の記録は daemon が ev:"says" で全件 push するので、TL を開いていない
-  // セッションの未読もここで数えられる。
-  const sayUnreadBy = useMemo(() => sayUnreadBySid(says), [says]);
+  // 未読の say は daemon が ev:"say_unread" で全件 push するので、TL を開いて
+  // いないセッションの未読もここで数えられる。
+  const sayUnreadBy = useMemo(() => sayUnreadBySid(unreadSays), [unreadSays]);
   const permitUnreadBy = useMemo(() => permitUnreadBySid(permitRequests), [permitRequests]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(

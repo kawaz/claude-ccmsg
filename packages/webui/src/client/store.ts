@@ -22,7 +22,6 @@ import {
   type RequestOverrideState,
   type RequestOverrideTarget,
   type RequestValues,
-  type SayRecord,
   type SessionApiError,
   type SessionErrorEntry,
   type ForkOrigin,
@@ -30,6 +29,7 @@ import {
   type SessionStatusSnapshot,
   type StorageEvent,
   type TranscriptReadResponse,
+  type UnreadSay,
   parseWith,
 } from "@ccmsg/protocol";
 import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
@@ -395,12 +395,11 @@ export interface AppState {
    * gateway does not post to, which is what makes the ring absent rather than
    * stuck at zero. */
   llmRequests: Map<string, LlmRequestInfo>;
-  /** Every `ccmsg say` record the daemon holds (ev:"says", kawaz r244 m5-m6),
-   * oldest first: the 🔔 bubbles in each session's Timeline and the unread
-   * 🔔 marker in the Sessions list. Replaced whole on every push — the daemon
-   * always sends the full set, and keeps it in memory only (DR-0036 §3), so a
-   * restarted daemon's empty set clears what the old one left here. */
-  says: readonly SayRecord[];
+  /** Every say the person has not read (ev:"say_unread", DR-0045 §7), oldest
+   * first: which say bubbles in each session's Timeline are 🔔 with a 既読
+   * button, and the unread 🔔 marker in the Sessions list. Replaced whole on
+   * every push — the daemon always sends the full set. */
+  unreadSays: readonly UnreadSay[];
   /** Every request for permission the daemon holds (DR-0040), oldest first:
    * the permission bubbles in each session's Timeline and the unread 🔐
    * marker in the Sessions list. Replaced whole by the subscribe-time set
@@ -477,7 +476,7 @@ export function initialState(): AppState {
     sessionStatuses: new Map(),
     sessionErrors: new Map(),
     llmRequests: new Map(),
-    says: [],
+    unreadSays: [],
     permitRequests: [],
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -510,8 +509,8 @@ export type Action =
   // Full replacement, same as session-errors/loaded: the daemon sends the
   // whole non-expired set on both the live push and the subscribe catch-up.
   | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
-  // Full replacement, same as llm-requests/loaded (ev:"says").
-  | { type: "says/loaded"; says: readonly SayRecord[] }
+  // Full replacement, same as llm-requests/loaded (ev:"say_unread").
+  | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
   | { type: "permit-requests/updated"; request: PermitRequestRecord }
   | {
@@ -1096,8 +1095,8 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         sessionErrors: new Map(action.errors.map(({ sid, ...error }) => [sid, error])),
       };
-    case "says/loaded":
-      return { ...state, says: action.says };
+    case "say-unread/loaded":
+      return { ...state, unreadSays: action.says };
     case "permit-requests/loaded":
       return { ...state, permitRequests: action.requests };
     case "permit-requests/updated": {

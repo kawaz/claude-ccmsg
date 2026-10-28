@@ -44,6 +44,7 @@ import {
   segmentSearchText,
   userNavTargets,
   pushNotificationOf,
+  sayCallOf,
   stripAnsiEscapes,
   type CcmsgMessage,
   type ParsedLine,
@@ -5113,6 +5114,55 @@ describe("standalone ccmsg in the transcript", () => {
       toolUseId: "p2",
       name: "PushNotification",
       input: { message: 3 },
+      result: null,
+    });
+  });
+
+  // say (DR-0045 §7) は PushNotification と同じ境界の 🔔。既読は tool_use の
+  // id で引くので、境界がその id を持つ。
+  test("a say call is its own boundary with the said text and its tool_use id", () => {
+    const [parsed] = parse([
+      jsonl(
+        assistantContentRow(
+          [
+            {
+              type: "tool_use",
+              id: "toolu_s1",
+              name: CCMSG_TOOLS.say,
+              input: { text: "終わった" },
+            },
+          ],
+          { timestamp: "2026-10-28T07:48:00.000Z" },
+        ),
+      ),
+    ]);
+    const line = defined(parsed, "the say line");
+    expect(sayCallOf(line)).toEqual({ text: "終わった", toolUseId: "toolu_s1" });
+    expect(classifyBoundaryLine(line)).toEqual({
+      kind: "say",
+      text: "終わった",
+      toolUseId: "toolu_s1",
+    });
+  });
+
+  // module が断った (input が say のものでない) 呼び出しは何も言っていない:
+  // 境界にせず、書かれたままの input の汎用 tool_use として fold に残す。
+  test("a say call whose input is not the tool's is no say", () => {
+    const [parsed] = parse([
+      jsonl(
+        assistantContentRow([
+          { type: "tool_use", id: "toolu_s2", name: CCMSG_TOOLS.say, input: { text: 3 } },
+        ]),
+      ),
+    ]);
+    const line = defined(parsed, "the say line");
+    expect(sayCallOf(line)).toBeNull();
+    expect(classifyBoundaryLine(line)).toBeNull();
+    expect(line.kind === "turn" ? line.segments[0] : null).toEqual({
+      kind: "tool-use",
+      toolUseId: "toolu_s2",
+      name: CCMSG_TOOLS.say,
+      input: { text: 3 },
       result: null,
     });
   });

@@ -6,10 +6,10 @@ import { describe, expect, test } from "bun:test";
 import type {
   MemberEvent,
   RoomSummary,
-  SayRecord,
   SessionSearchHit,
   StorageEvent,
   TranscriptReadResponse,
+  UnreadSay,
 } from "@ccmsg/protocol";
 import {
   ADMIN_ID,
@@ -216,8 +216,8 @@ describe("reducer / room-history/loaded folds the whole log", () => {
   });
 
   // A 1on1 room's say rows show as bubbles; the ack is state, not
-  // conversation, so it adds no line. The daemon's own says stay apart.
-  test("a 1on1 room's say joins its timeline, its say_read adds no line, says stay apart", () => {
+  // conversation, so it adds no line. The daemon's unread says stay apart.
+  test("a 1on1 room's say joins its timeline, its say_read adds no line, unread says stay apart", () => {
     const say: StorageEvent = {
       type: "say",
       sid: "sid-abcdefgh",
@@ -228,31 +228,29 @@ describe("reducer / room-history/loaded folds the whole log", () => {
     const state = log([say, { type: "say_read", ref: 7, ts: "2026-08-31T00:00:01.000Z", seq: 8 }]);
     expect(state.rooms.get("r1")?.timeline).toEqual([say]);
     expect(state.rooms.get("r1")?.lastTs).toBe("2026-08-31T00:00:01.000Z");
-    expect(state.says).toEqual([]);
+    expect(state.unreadSays).toEqual([]);
   });
 });
 
-describe("reducer / says (DR-0036 §3)", () => {
-  const record = (id: string, read: boolean): SayRecord => ({
-    id,
-    sid: "sid-abcdefgh",
-    text: `say ${id}`,
+describe("reducer / say-unread (DR-0045 §7)", () => {
+  const unread = (id: string): UnreadSay => ({
+    session_id: "sid-abcdefgh",
+    tool_use_id: id,
     ts: "2026-08-31T00:00:00.000Z",
-    read,
   });
 
-  // 輪郭: ev:"says" は daemon が持つ全件なので、置き換える (merge しない)。
-  // 再起動した daemon の空の全件で、前の daemon の say (未読含む) が消える。
-  test("says/loaded replaces the whole set", () => {
+  // 輪郭: ev:"say_unread" は daemon が持つ未読の全件なので、置き換える (merge
+  // しない)。既読になった say は次の全件に居ないことで消え、空の全件で全部消える。
+  test("say-unread/loaded replaces the whole set", () => {
     let state = dispatch(initialState(), {
-      type: "says/loaded",
-      says: [record("i/1", false), record("i/2", false)],
+      type: "say-unread/loaded",
+      says: [unread("toolu_1"), unread("toolu_2")],
     });
-    expect(state.says.map((r) => r.id)).toEqual(["i/1", "i/2"]);
-    state = dispatch(state, { type: "says/loaded", says: [record("i/1", true)] });
-    expect(state.says).toEqual([record("i/1", true)]);
-    state = dispatch(state, { type: "says/loaded", says: [] });
-    expect(state.says).toEqual([]);
+    expect(state.unreadSays.map((r) => r.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
+    state = dispatch(state, { type: "say-unread/loaded", says: [unread("toolu_2")] });
+    expect(state.unreadSays).toEqual([unread("toolu_2")]);
+    state = dispatch(state, { type: "say-unread/loaded", says: [] });
+    expect(state.unreadSays).toEqual([]);
   });
 });
 

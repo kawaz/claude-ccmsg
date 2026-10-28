@@ -7,12 +7,12 @@ import type {
   ExternalFileOrigin,
   PeerInfo,
   PermitRequestRecord,
-  SayRecord,
   SessionApiError,
   SessionSearchHit,
   SessionSearchMatch,
   SessionSearchRequest,
   StaleClientInfo,
+  UnreadSay,
 } from "@ccmsg/protocol";
 import { jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
@@ -140,14 +140,11 @@ export function splitRoomsByKind(rooms: RoomState[]): {
   return { flat, oneOnOne };
 }
 
-/** Unread `say` count per session sid (kawaz r244 m5-m6), for the Sessions
- * list's 🔔 marker. A sid with nothing unread is absent. */
-export function sayUnreadBySid(says: readonly SayRecord[]): Map<string, number> {
+/** Unread say count per session sid (DR-0045 §7), for the Sessions list's 🔔
+ * marker. A sid with nothing unread is absent. */
+export function sayUnreadBySid(says: readonly UnreadSay[]): Map<string, number> {
   const out = new Map<string, number>();
-  for (const say of says) {
-    if (say.read) continue;
-    out.set(say.sid, (out.get(say.sid) ?? 0) + 1);
-  }
+  for (const say of says) out.set(say.session_id, (out.get(say.session_id) ?? 0) + 1);
   return out;
 }
 

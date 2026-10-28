@@ -1,6 +1,7 @@
 import {
   type AssistantRow,
   type Attachment,
+  ccmsgSayText,
   ccmsgSendCall,
   classifyCcmsgSendResult,
   type ContentBlock,
@@ -1353,7 +1354,8 @@ export type BoundaryKind =
   | { kind: "bash-command"; segment: Extract<Segment, { kind: "bash-command" }> }
   | { kind: "bash-command-output"; segment: Extract<Segment, { kind: "bash-command-output" }> }
   | { kind: "ccmsg"; messages: CcmsgMessage[] }
-  | { kind: "push-notification"; text: string };
+  | { kind: "push-notification"; text: string }
+  | { kind: "say"; text: string; toolUseId: string };
 
 /**
  * Classifies a boundary line (kawaz spec order, first match wins): a real
@@ -1403,6 +1405,8 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
     return { kind: "assistant-response" };
   const pushText = pushNotificationOf(line);
   if (pushText !== null) return { kind: "push-notification", text: pushText };
+  const say = sayCallOf(line);
+  if (say !== null) return { kind: "say", ...say };
   const ccmsgMessages = extractCcmsgMessages(line);
   if (ccmsgMessages.length === 0) return null;
   // r55 m14: peer 発 ccmsg のみの line は boundary にせず fold group へ流す。
@@ -2223,6 +2227,19 @@ export function pushNotificationOf(line: ParsedLine): string | null {
     if (segment.kind !== "tool-use") continue;
     const text = pushNotificationText(segment.name, segment.input);
     if (text !== null) return text;
+  }
+  return null;
+}
+
+/** The `say` call on an assistant line (DR-0045 §7): what was said, as the
+ * model wrote it, and the id of its tool_use, which is what the person reads
+ * it by. Null for a line that makes no such call. */
+export function sayCallOf(line: ParsedLine): { text: string; toolUseId: string } | null {
+  if (line.kind !== "turn" || line.role !== "assistant") return null;
+  for (const segment of line.segments) {
+    if (segment.kind !== "tool-use") continue;
+    const text = ccmsgSayText(segment.name, segment.input);
+    if (text !== null) return { text, toolUseId: segment.toolUseId };
   }
   return null;
 }
