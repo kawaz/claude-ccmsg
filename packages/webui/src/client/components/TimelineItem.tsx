@@ -190,7 +190,7 @@ function MsgItem({
 /** A `ccmsg say` record's bubble in its session's Timeline (kawaz r244
  * m5-m6). Reads as a message rather than as a thin status line because it
  * carries what the machine actually said. The 既読 button is the only way the
- * unread 📣 in the Sessions list goes away, so it stays visible until acked
+ * unread 🔔 in the Sessions list goes away, so it stays visible until acked
  * and then reports the ack rather than vanishing (a disappearing control
  * leaves the reader unsure whether the click landed). `readIds` are what the
  * button acks: this say alone, or on the newest unread say every unread one
@@ -212,7 +212,7 @@ export function SayRecordBubble({
       text={record.text}
       ts={record.ts}
       now={now}
-      unread={!record.read}
+      acked={record.read}
       read={
         record.read ? (
           <span class="say-read-done">既読</span>
@@ -226,30 +226,31 @@ export function SayRecordBubble({
   );
 }
 
-/** The 📣 bubble itself, shared by `ccmsg say` (a say record, or the `say`
+/** The 🔔 bubble itself, shared by `ccmsg say` (a say record, or the `say`
  * row an existing 1on1 room holds) and the transcript's PushNotification
- * call. `read` is the footer's read control; a bubble outside read tracking
- * passes none. */
+ * call. `acked` turns the bell into 🔕 once the person has read the say; the
+ * bubble looks the same either way. `read` is the footer's read control; a
+ * bubble outside read tracking passes neither. */
 export function SayBubble({
   label,
   text,
   ts,
   now,
-  unread = false,
+  acked = false,
   read,
 }: {
   label: string;
   text: string;
   ts: string;
   now: number;
-  unread?: boolean;
+  acked?: boolean;
   read?: ComponentChildren;
 }) {
   return (
-    <div class={unread ? "say say-unread" : "say"}>
+    <div class="say">
       <div class="say-meta">
         <span class="say-icon" aria-hidden="true">
-          📣
+          {acked ? "🔕" : "🔔"}
         </span>
         <span class="say-from">{label}</span>
       </div>

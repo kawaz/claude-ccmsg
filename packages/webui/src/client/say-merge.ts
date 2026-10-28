@@ -59,7 +59,7 @@ export function inTimeOrder<T extends SayPlacement>(says: readonly T[]): T[] {
  *
  * Says older than the whole window land in slot 0 rather than being dropped:
  * "load older" is what moves them into place, and hiding them until then would
- * make the 📣 in the Sessions list point at a bubble that is nowhere.
+ * make the 🔔 in the Sessions list point at a bubble that is nowhere.
  */
 export function saySlots<T extends SayPlacement>(
   groups: readonly TimelineGroup[],

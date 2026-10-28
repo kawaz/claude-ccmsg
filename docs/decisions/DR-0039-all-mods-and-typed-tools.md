@@ -64,7 +64,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
   - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
   - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
-- **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 📣 を出す (DR-0036 §3)
+- **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 🔔 を出す (DR-0036 §3)
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (claude のオプション名を field にした 1 つの object)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
 - **許可の依頼**: auto mode の classifier に止められたエージェントが人に許可を求める口も tool `permit` にする。入力、経路、記録、webui のバブルは [DR-0040](./DR-0040-permit-request-tool.md) が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
@@ -216,7 +216,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 - daemon が立つ契機は module の `session.start` と人の CLI になる。module の無いセッションは daemon を起こさない
 - state file は、CLI が session として hello する時に repo / ws / transcript_path 等の名乗りのために読む。エージェント向けの CLI が無くなった後もこの名乗りを state file 経由で渡すか、サイドカーの名乗りやセッションの事実に載せ替えるかを実装時に決める
 - protocol から消えるもの: `hook-input.ts` (SessionStart の stdin)、`ccmsg-address.ts` の宛先の文法のうち `ccmsg:<sid>.<pid>` と `ccmsg:path:<dir>` (`ccmsg:<sid>` は封筒の `from` の綴りとして残る)、op `message_send` / `address_send` (移行の順序のとおり次のリリースで)。足すもの: tool の入力のスキーマ、部分指定の宛先と本文を受ける送信の op、webui から subagent への直送の依頼 (サイドカーの op)、セッションの事実の subagent の節 (走行中の `agentId` の一覧、§6)
-- 案内の追従: CLI の help (「人に知らせるには PushNotification を使う」「SendMessage で `peers` の address に送る」)、rules 側でエージェントに PushNotification を案内している記述を、say の tool と送信の tool に合わせる。PushNotification の 📣 表示 (DR-0027 §6.3、transcript の tool_use の読み取り) は残すが、エージェントには案内しない
+- 案内の追従: CLI の help (「人に知らせるには PushNotification を使う」「SendMessage で `peers` の address に送る」)、rules 側でエージェントに PushNotification を案内している記述を、say の tool と送信の tool に合わせる。PushNotification の 🔔 表示 (DR-0027 §6.3、transcript の tool_use の読み取り) は残すが、エージェントには案内しない
 - 外部の案内: rules リポで `ccmsg` の CLI をエージェントに案内している記述は、plugin の skill と §5 の案内に合わせて追従させる。正本は plugin 側 (skill と §5) に置き、issue `2026-10-13-agent-guidance-for-ccmsg-addresses` の候補 (a) skill と (b) 起動時の案内 (classic でなく §5 の形) を取り、(c) rules 側は正本にしない。v1 の plugin は今 skill を持たないので、§3 の skill が初めての skill になる。v2 の plugin の `ccmsg:ccmsg` skill は v2 の口の案内で、本 DR では触らない
 - `turn.step` を hook する (§2) ことで、DR-0035 §3 の「`turn.step` を hook すると応答の断片がすべて module を通るので使わない」は撤回になる。断片が module を通るコストは測っていない (B17。context-notify は同じ形で本番で使っている)
 - module は API error を事実として送らなくなり、daemon は module のあるセッションも transcript の API error の行を tail する (§2)。今は module のあるセッションを tail から外している (`session-errors.ts`) ので、tail の対象が全セッションに戻る

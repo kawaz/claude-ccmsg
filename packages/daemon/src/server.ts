@@ -1901,7 +1901,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "say_read": {
-      // 既読は webui の 📣 バブル上のボタンからだけ立つ (user role 限定):
+      // 既読は webui の 🔔 バブル上のボタンからだけ立つ (user role 限定):
       // 未読数は「kawaz がまだ見ていない say」の数であって、喋った session が
       // 自分で消せる意味の数ではない。
       if (conn.identity?.role !== "user") {

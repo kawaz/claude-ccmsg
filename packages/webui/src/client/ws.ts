@@ -123,7 +123,7 @@ export interface WsHandle {
   connect(): void;
   close(): void;
   /** Ack say records as read (kawaz r244 m5-m6): the 既読 button on a
-   * 📣 bubble. `ids` are the SayRecords' ids. Non-optimistic — the daemon
+   * 🔔 bubble. `ids` are the SayRecords' ids. Non-optimistic — the daemon
    * pushes the updated `ev:"says"` set to every tab and the store takes it
    * from there, so every open tab converges on the same badge. */
   sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;

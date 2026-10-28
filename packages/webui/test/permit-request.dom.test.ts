@@ -7,6 +7,8 @@
 //   理由を差し込む。読めた後は開き直しても読み直さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
+// - 未読は閉じた錠 🔐、既読は開いた錠 🔓。既読になってもバブルは消えず、
+//   見た目は変えない
 // - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
 // - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
 // - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
@@ -286,8 +288,11 @@ describe("permission request bubbles", () => {
       written.push(text);
     });
     const { root, store, reads, composerOpens } = await openWith([ASKED]);
-    const button = grantButton(defined(bubbles(root)[0], "bubble"));
+    const bubble = defined(bubbles(root)[0], "bubble");
+    const button = grantButton(bubble);
     expect(button.classList.contains("copied")).toBe(false);
+    // Unread: the closed lock.
+    expect(bubble.querySelector(".tl-bubble-from")?.textContent).toBe("🔐許可依頼");
     await act(async () => {
       button.click();
       await Promise.resolve();
@@ -298,6 +303,10 @@ describe("permission request bubbles", () => {
     expect(root.querySelector(".permit-grant-error")).toBeNull();
     expect(reads).toEqual([[ASKED.id]]);
     expect(store.getState().permitRequests.map((r) => r.read)).toEqual([true]);
+    // Read: the open lock, in the same bubble with the same look.
+    const settled = defined(bubbles(root)[0], "bubble");
+    expect(settled.className).toBe(bubble.className);
+    expect(settled.querySelector(".tl-bubble-from")?.textContent).toBe("🔓許可依頼");
     // DR-0040 §7: the session's input box opens to paste the text into.
     expect(composerOpens()).toBe(1);
     // A request read already is not marked again.

@@ -1505,7 +1505,7 @@ describe("createWsClient agents/ping (U1)", () => {
 
   // The say records (DR-0036 §3) come as the full set, and an empty set is
   // what a restarted daemon sends: it must still reach the reducer, or the old
-  // daemon's unread 📣 would stay on the sidebar.
+  // daemon's unread 🔔 would stay on the sidebar.
   test("ev:'says' push dispatches says/loaded, an empty set included", () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));

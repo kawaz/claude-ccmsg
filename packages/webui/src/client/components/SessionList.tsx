@@ -459,7 +459,7 @@ function SessionRowItem({
   cacheRequest: LlmRequestInfo | null;
   /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
-   * ようにするためのもので、既読はセッションの TL の 📣 バブル側で付ける。 */
+   * ようにするためのもので、既読はセッションの TL の 🔔 バブル側で付ける。 */
   sayUnread: number;
   /** 未読の許可依頼の件数 (DR-0040)。0 = マーカーを出さない。 */
   permitUnread: number;
@@ -547,7 +547,7 @@ function SessionRowItem({
             <Avatar seed={row.sid} size={16} />
             {ring ? <CacheRing shape="rect" /> : null}
           </span>
-          {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
+          {/* 未読 say の 🔔 は repo 名の直前 (kawaz r244m13: 行末の弱い
            * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと
            * repo の間に割り込ませて、鳴ったことを見逃させない。 */}
           {/* 古い ccmsg クライアント (典型的には upgrade 前から回り続けている
@@ -569,7 +569,7 @@ function SessionRowItem({
               title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
               aria-label={`未読の say ${sayUnread} 件`}
             >
-              📣{sayUnread > 1 ? sayUnread : ""}
+              🔔{sayUnread > 1 ? sayUnread : ""}
             </span>
           ) : null}
           <PermitUnreadMark count={permitUnread} />
@@ -675,7 +675,7 @@ function PinnedSessionRow({
   modelEffort: ModelEffortInfo | null;
   /** 未読の `ccmsg say` 件数。ピンは下の status セクションから除外されている
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
-   * 📣 がどこにも出なくなる。 */
+   * 🔔 がどこにも出なくなる。 */
   sayUnread: number;
   /** 未読の許可依頼の件数。ピンに出す理由は sayUnread と同じ。 */
   permitUnread: number;
@@ -720,7 +720,7 @@ function PinnedSessionRow({
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
         <a href={sessionHref(pin.sid)} class="session-main-link">
           <Avatar seed={pin.sid} size={16} />
-          {/* 📣 の位置は SessionRowItem と同じ「アイコンと repo の間」
+          {/* 🔔 の位置は SessionRowItem と同じ「アイコンと repo の間」
            * (kawaz r244m13)。 */}
           {sayUnread > 0 ? (
             <span
@@ -728,7 +728,7 @@ function PinnedSessionRow({
               title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
               aria-label={`未読の say ${sayUnread} 件`}
             >
-              📣{sayUnread > 1 ? sayUnread : ""}
+              🔔{sayUnread > 1 ? sayUnread : ""}
             </span>
           ) : null}
           <PermitUnreadMark count={permitUnread} />
@@ -860,7 +860,7 @@ function sectionClass(key: string): string {
   return SESSION_SECTION_CLASS[key] ?? "session-section";
 }
 
-/** 未読の許可依頼の 🔐 (DR-0040)。say の 📣 の隣、同じ「アイコンと repo の
+/** 未読の許可依頼の 🔐 (DR-0040)。say の 🔔 の隣、同じ「アイコンと repo の
  * 間」に出す: 許可依頼はエージェントが止まって人を待っている印で、say より
  * 見落としたくない。既読はセッションの TL のバブルの「許可する」で付く。 */
 function PermitUnreadMark({ count }: { count: number }) {

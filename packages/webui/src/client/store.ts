@@ -396,8 +396,8 @@ export interface AppState {
    * stuck at zero. */
   llmRequests: Map<string, LlmRequestInfo>;
   /** Every `ccmsg say` record the daemon holds (ev:"says", kawaz r244 m5-m6),
-   * oldest first: the 📣 bubbles in each session's Timeline and the unread
-   * 📣 marker in the Sessions list. Replaced whole on every push — the daemon
+   * oldest first: the 🔔 bubbles in each session's Timeline and the unread
+   * 🔔 marker in the Sessions list. Replaced whole on every push — the daemon
    * always sends the full set, and keeps it in memory only (DR-0036 §3), so a
    * restarted daemon's empty set clears what the old one left here. */
   says: readonly SayRecord[];

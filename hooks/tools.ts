@@ -169,7 +169,7 @@ function failureText(stderr: string): string {
 }
 
 /** The `say` tool: say the text to the person through `ccmsg say`, which
- * records it for the webui (📣) and speaks it. Never rejects. */
+ * records it for the webui (🔔) and speaks it. Never rejects. */
 async function sayTool<E>($: Engine, e: E): Promise<string> {
   const read = parseWith(SayToolInputSchema, e);
   if (!read.ok) return notTheInput("say", read.failure.summary);
@@ -179,7 +179,7 @@ async function sayTool<E>($: Engine, e: E): Promise<string> {
       env: { CCMSG_SID: sid },
       timeoutMs: SAY_TIMEOUT_MS,
     });
-    if (run.exitCode === 0) return "伝えた (音声と webui の 📣)";
+    if (run.exitCode === 0) return "伝えた (音声と webui の 🔔)";
     return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split("\n")[0] ?? ""}`;
   } catch (error) {
     return `say を起こせなかったか ${String(SAY_TIMEOUT_MS / 1000)} 秒以内に終わらなかった: ${errorText(error)}`;

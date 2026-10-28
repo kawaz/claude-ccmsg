@@ -3,7 +3,7 @@
 // say はセッション transcript には echo されない (喋った本人の context を
 // 食うだけなので意図的に切ってある) ので、TL に出すには daemon がメモリに
 // 持つ say の記録 (ev:"says"、DR-0036 §3) から時刻で合流させるしかない
-// (say-merge.ts)。見た目は PushNotification と同じ 📣 バブル。
+// (say-merge.ts)。見た目は PushNotification と同じ 🔔 バブル。
 import { useCallback, useMemo, useState } from "preact/hooks";
 import type { SayRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";

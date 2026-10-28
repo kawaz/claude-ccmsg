@@ -210,6 +210,11 @@
   --fg-info: var(--info-11);
   --overlay: oklch(from var(--gray-12) l c h / 85%);
   --shadow: oklch(from var(--gray-12) l c h / 25%);
+  /* TL の地 (--bg-alt) より一段明るい札の面と、その札を浮かせる影 (許可依頼の
+   * バブル)。ダークでは --bg が地より暗く沈むので明るい側の段を取り、影は
+   * --gray-12 が光の側に反転するので黒を明示する。 */
+  --card-surface: light-dark(var(--bg), var(--gray-4));
+  --elevation-shadow: light-dark(oklch(0 0 0 / 22%), oklch(0 0 0 / 60%));
 
   /* markdown 装飾が基準にする「いま自分が載っている面の色」。inline code の
    * 地や blockquote の罫のような装飾は、絶対色で持つと面ごとに効き方が変わる —
@@ -2628,15 +2633,17 @@ select.sidebar-globals-endpoint {
   font-size: var(--font-size-xl);
 }
 
-/* `ccmsg say` の発話バブル (kawaz r244 m5-m6)。msg でも event でもない
- * 第 3 の種別: 中身は「実際に喋った文字列」なので event の 1 行より厚く、
- * かといって room の会話ではないので msg の色分け (member hue) には乗せず、
- * スピーカー色として琥珀系を 1 色だけ使う。未読は左ボーダーで強め、既読に
- * なると淡く沈む — 一覧を上から流し見た時に「まだ見ていないやつ」だけが
- * 目に留まるようにするため。 */
+/* `ccmsg say` の発話バブル (kawaz r244 m5-m6)。人に向けた呼びかけなので、
+ * エージェント間の msg (色の付いた面だけの吹き出し) とは形で分ける: 角の
+ * 丸い札の左に丸いアイコンの印を立て、琥珀の面と枠 2px で囲む。未読と既読で
+ * 見た目は変えず、アイコン (🔔 / 🔕) と既読ボタンの有無で見分ける。
+ * PushNotification (既読を持たない) も同じ形で出る。 */
 .say {
-  border-radius: 0.5rem;
-  padding: var(--space-7) var(--space-9);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-8);
+  border-radius: 0.9rem;
+  padding: var(--space-7) var(--space-11) var(--space-7) var(--space-7);
   /* 幅は中身なり (kawaz r244 m16): 親 (.timeline / .tl-lines) が
    * flex-direction:column なので、指定なしだと stretch して短い一言でも
    * 行いっぱいに伸び、TL の吹き出し (.tl-bubble-body の width:fit-content)
@@ -2644,30 +2651,34 @@ select.sidebar-globals-endpoint {
   align-self: flex-start;
   width: fit-content;
   max-width: 85%;
-  background: oklch(0.96 0.03 80);
-  border-left: 3px solid oklch(0.75 0.05 80);
+  background: var(--warn-3);
+  border: 2px solid var(--warn-8);
 }
 
-.say-unread {
-  border-left: 3px solid oklch(0.7 0.16 80);
-}
-
-@media (prefers-color-scheme: dark) {
-  .say {
-    background: oklch(0.24 0.025 80);
-    border-left-color: oklch(0.45 0.05 80);
-  }
-  .say-unread {
-    border-left-color: oklch(0.72 0.14 80);
-  }
-}
-
+/* アイコンを左の列に、送り手・本文・足元を右の列に並べる。.say-meta は箱を
+ * 作らず子を .say の格子に直に置く (送り手の字の大きさと色は .say-meta から
+ * 継ぐ)。 */
 .say-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
+  display: contents;
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
+}
+
+/* 琥珀の面の上に地の色の円を抜き、絵文字を面から切り離す。 */
+.say-icon {
+  grid-row: 1 / span 3;
+  align-self: start;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  font-size: var(--font-size-2xl);
+  background: var(--bg);
+  box-shadow: 0 0 0 2px var(--warn-8);
+}
+
+.say-from {
   margin-bottom: var(--space-2);
 }
 
@@ -2691,7 +2702,7 @@ select.sidebar-globals-endpoint {
   line-height: 1;
   padding: var(--space-2) var(--space-6);
   border-radius: 999px;
-  border: 1px solid oklch(0.7 0.16 80);
+  border: 1px solid var(--warn-8);
   background: var(--bg);
   color: var(--fg);
   cursor: pointer;
@@ -2713,17 +2724,41 @@ select.sidebar-globals-endpoint {
    * 吹き出しとして同じ密度で読めるよう明示する (kawaz r244 m16
    * 「行間がつまりすぎ」)。 */
   line-height: var(--md-leading-tight);
+  color: var(--fg-strong);
 }
 
 /* 許可依頼 (DR-0040)。外枠は TL の吹き出し (.tl-bubble-*) をそのまま使い、
- * 止まって人を待っている印として本文の面と枠だけを info にする (say は warn
- * の面)。中身にコードブロックと折り畳みを持つので、本文は中身なりより広く
- * 取る。 */
+ * 人の操作を待って止まっている印を形で出す: 送り手の行を本文の幅いっぱいの
+ * 帯にして墨 (--gray-11) で塗り、面は TL の地より明るい札にし、同じ墨の枠
+ * 2px と影で浮かせ、「許可する」を塗りのボタンにする — 色の付いた面だけの
+ * エージェント間の msg とも、琥珀の say とも、色相でなく明度の差で分かれる。
+ * 墨を文字色 (--fg) より 1 段明るくするのは、依頼が何件も並んだ時に帯と枠
+ * が画面を占めて「許可する」より重くならないようにするため。未読と既読で
+ * 見た目は変えず、帯のアイコン (🔐 / 🔓) で見分ける。中身にコードブロックと
+ * 折り畳みを持つので、本文は中身なりより広く取る。 */
 .tl-bubble-permit .tl-bubble-body {
   min-width: min(28rem, 100%);
-  background: var(--info-surface);
-  border: 1px solid var(--info-border);
-  --md-surface: var(--info-surface);
+  /* 帯を角丸の内側で切る。 */
+  overflow: clip;
+  background: var(--card-surface);
+  border: 2px solid var(--gray-11);
+  box-shadow: 0 0.3rem 1rem -0.3rem var(--elevation-shadow);
+  --md-surface: var(--card-surface);
+}
+
+/* 帯は本文の余白を打ち消して端まで伸ばす。 */
+.tl-bubble-permit .tl-bubble-from {
+  margin: calc(-1 * var(--space-5)) calc(-1 * var(--space-9)) var(--space-3);
+  padding: var(--space-5) var(--space-9);
+  gap: var(--space-6);
+  font-size: var(--font-size-md);
+  background: var(--gray-11);
+  color: var(--bg);
+}
+
+.permit-icon {
+  font-size: var(--font-size-3xl);
+  line-height: 1;
 }
 
 .permit-section {
@@ -2786,11 +2821,12 @@ select.sidebar-globals-endpoint {
 .permit-grant {
   display: inline-grid;
   font-size: var(--font-size-md);
-  padding: var(--space-3) var(--space-9);
+  font-weight: 600;
+  padding: var(--space-5) var(--space-11);
   border-radius: 999px;
-  border: 1px solid var(--info-border);
-  background: var(--bg);
-  color: var(--fg);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
   cursor: pointer;
 }
 
@@ -2799,9 +2835,9 @@ select.sidebar-globals-endpoint {
   text-align: center;
 }
 
+/* 塗りのボタンの上では成功の色が地に沈むので、ボタンの文字色のまま出す。 */
 .permit-grant-copied {
   visibility: hidden;
-  color: var(--fg-success);
 }
 
 .permit-grant.copied .permit-grant-label {

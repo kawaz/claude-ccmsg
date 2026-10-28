@@ -2284,7 +2284,7 @@ async function sayTool($, e) {
       timeoutMs: SAY_TIMEOUT_MS
     });
     if (run.exitCode === 0)
-      return "伝えた (音声と webui の \uD83D\uDCE3)";
+      return "伝えた (音声と webui の \uD83D\uDD14)";
     return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split(`
 `)[0] ?? ""}`;
   } catch (error) {

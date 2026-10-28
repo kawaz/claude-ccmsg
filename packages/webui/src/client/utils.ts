@@ -146,7 +146,7 @@ export function splitRoomsByKind(rooms: RoomState[]): {
 }
 
 /** Unread `say` count per session sid (kawaz r244 m5-m6), for the Sessions
- * list's 📣 marker. A sid with nothing unread is absent. */
+ * list's 🔔 marker. A sid with nothing unread is absent. */
 export function sayUnreadBySid(says: readonly SayRecord[]): Map<string, number> {
   const out = new Map<string, number>();
   for (const say of says) {

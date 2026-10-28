@@ -3,6 +3,7 @@
 // - 未読が複数ある時、最新の未読のボタンだけ「N 件すべて既読」
 // - 古いものを押すとその 1 件だけ、最新を押すと未読の全部が既読になる
 // - 未読が 1 件だけなら従来の「既読」
+// - アイコンは未読 🔔、既読 🔕。既読になってもバブルの見た目 (class) は同じ
 // daemon の代わりに、say_read で受けた id を既読にした全件を ev:"says" と同じ
 // 経路 (says/loaded) で store に戻す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -105,7 +106,30 @@ function readFlags(store: Store): Array<[string, boolean]> {
   return store.getState().says.map((r) => [r.id, r.read]);
 }
 
+/** 各 say バブルの本文とアイコン。 */
+function icons(root: HTMLElement): Array<[string, string]> {
+  return [...root.querySelectorAll(".say")].map((bubble) => [
+    bubble.querySelector(".say-body")?.textContent ?? "",
+    bubble.querySelector(".say-icon")?.textContent ?? "",
+  ]);
+}
+
 describe("say read buttons", () => {
+  test("show a bell while unread and a muted bell once read, in the same bubble", async () => {
+    const { root } = await openWith([sayAt(1), sayAt(2)]);
+    expect(icons(root)).toEqual([
+      ["said 1", "🔔"],
+      ["said 2", "🔔"],
+    ]);
+    const before = [...root.querySelectorAll(".say")].map((el) => el.className);
+    await press(root, "said 1");
+    expect(icons(root)).toEqual([
+      ["said 1", "🔕"],
+      ["said 2", "🔔"],
+    ]);
+    expect([...root.querySelectorAll(".say")].map((el) => el.className)).toEqual(before);
+  });
+
   // 別セッションの未読は数に入らない (この TL に出ていない say を既読にしない)。
   test("with three unread, only the newest button acks them all", async () => {
     const { root } = await openWith([sayAt(1), sayAt(2), sayAt(4, "someone-else"), sayAt(3)]);

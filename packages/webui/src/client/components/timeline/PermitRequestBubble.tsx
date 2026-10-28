@@ -168,7 +168,8 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
 
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
  * .tl-bubble-from / .tl-bubble-footer / .tl-bubble-time) で組み、中身の節と
- * 「許可する」だけをこのバブルのものにする。「許可する」は本文の最後に置く
+ * 「許可する」だけをこのバブルのものにする。未読と既読で
+ * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「許可する」は本文の最後に置く
  * (足元の行は他の吹き出しと同じく時刻だけ)。 */
 export function PermitRequestBubble({
   request,
@@ -182,7 +183,10 @@ export function PermitRequestBubble({
     <div class="tl-bubble tl-bubble-left tl-bubble-permit">
       <div class="tl-bubble-body">
         <div class="tl-bubble-from">
-          <span aria-hidden="true">🔐</span>
+          {/* 未読は閉じた錠、人が「許可する」を押した (既読) 後は開いた錠。 */}
+          <span class="permit-icon" aria-hidden="true">
+            {request.read ? "🔓" : "🔐"}
+          </span>
           許可依頼
         </div>
         <section class="permit-section">
