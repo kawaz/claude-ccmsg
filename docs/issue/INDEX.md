@@ -5,7 +5,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-10-28 | design | open | [retire-subscribe-stream](./2026-10-28-retire-subscribe-stream.md) | subscribe (Monitor 常駐の受信経路) と notify を module 経由に付け替えて廃止する |
-| 2026-10-26 | bug | open | [session-status-subscribe-dropped-on-load](./2026-10-26-session-status-subscribe-dropped-on-load.md) | webui の session_status の購読が読み込み直後の subscribe ×2 → unsubscribe ×1 で切れ、以後 push が来ない |
 | 2026-10-25 | task | open | [drop-legacy-session-launcher-keys](./2026-10-25-drop-legacy-session-launcher-keys.md) | 新 daemon は session_launcher の旧キー shell / templates / timeout_seconds を移行期間として無視して読む (DR-0018 §3.1…  |
 | 2026-10-18 | bug | open | [send-message-served-dir-test-flaky-macos-ci](./2026-10-18-send-message-served-dir-test-flaky-macos-ci.md) | served dir への send_message のテストが macOS CI で確率的に no_peer_socket になる |
 | 2026-10-18 | design | open | [translate-queue-cancel](./2026-10-18-translate-queue-cancel.md) | daemon の翻訳は helper に直列送信で、詰まった request が watchdog 期限 (最大 240 s) まで後続を止め、webui から取り消せない |
@@ -19,3 +18,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | ccmsg メッセージを WebRTC DataChannel に載せ、静的ホスティング + ICE candidate URL + passkey 認証で tailnet 非依存の transport を実現する構想 |
 | 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
+| 2026-10-26 | bug | wip | [session-status-subscribe-dropped-on-load](./2026-10-26-session-status-subscribe-dropped-on-load.md) | webui の session_status の購読が読み込み直後の subscribe ×2 → unsubscribe ×1 で切れ、以後 push が来ない |
