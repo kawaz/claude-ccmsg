@@ -77,6 +77,7 @@ function initialPeerSortKey(): PeerSortKey {
   return parsePeerSortKey(readStorage(SORT_KEY_STORAGE));
 }
 import type { StatsPeriod } from "./llm-stats-view.ts";
+import type { ObservedClaudeVersion } from "./sidebar-globals.ts";
 
 export { ADMIN_ID };
 
@@ -246,6 +247,12 @@ export interface AppState {
   agents: readonly AgentInfo[];
   agentsLoaded: boolean;
   daemonInfo: DaemonInfo | null;
+  /** This host's Claude Code version as the daemon last read it after a
+   * claude_update (DR-0043 §8): ping's `claude_version` on each connect, then
+   * `ev:"claude_version"` and the update's own reply. Null while the daemon
+   * holds none. GLOBALS shows it or the version of the session started last,
+   * whichever was seen later (sidebar-globals.ts). */
+  hostClaudeVersion: ObservedClaudeVersion | null;
   /** hello が名乗った daemon version が、この bundle より新しかったときの
    * その version と、次の画面遷移をフルリロードに差し替えてよいか
    * (navigation.ts が読む)。値がある間は topbar が「新しい版」の導線を出す。
@@ -439,6 +446,7 @@ export function initialState(): AppState {
     agents: [],
     agentsLoaded: false,
     daemonInfo: null,
+    hostClaudeVersion: null,
     versionMismatch: null,
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
@@ -522,7 +530,13 @@ export type Action =
       exe?: string;
       home?: string;
       webuiUrls?: readonly string[];
+      /** The connected daemon's `claude_version`; absent when it holds none,
+       * which clears what a previous connection said. */
+      claudeVersion?: ObservedClaudeVersion;
     }
+  // The daemon re-read this host's Claude Code version (ev:"claude_version",
+  // or the reply to this tab's own claude_update).
+  | { type: "claude-version/observed"; observed: ObservedClaudeVersion }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
   // bundle と揃っていれば導線を引っ込める。
@@ -1136,7 +1150,15 @@ export function reducer(state: AppState, action: Action): AppState {
           home: action.home,
           webuiUrls: action.webuiUrls,
         },
+        hostClaudeVersion: action.claudeVersion ?? null,
       };
+    case "claude-version/observed": {
+      // A push and this tab's own reply carry the same reading; an older
+      // reading arriving late does not replace a newer one.
+      const held = state.hostClaudeVersion;
+      if (held !== null && held.at > action.observed.at) return state;
+      return { ...state, hostClaudeVersion: action.observed };
+    }
     case "version-mismatch/detected": {
       // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を
       // 据え置いて、立っている導線をそのまま使い回す。

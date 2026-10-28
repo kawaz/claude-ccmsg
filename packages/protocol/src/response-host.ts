@@ -9,6 +9,16 @@
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
 
+/** A Claude Code version the daemon read from `claude --version` (its first
+ * word, e.g. "2.1.312"), and `observed_at`, when it read it (epoch ms of the
+ * daemon's clock, the unit of an agents row's `startedAt`, so the webui can
+ * tell which of the two was seen later, DR-0043 §5.3). */
+export const ClaudeVersionSchema = v.object({
+  version: v.string(),
+  observed_at: v.number(),
+});
+export type ClaudeVersion = Output<typeof ClaudeVersionSchema>;
+
 export const PingResponseSchema = v.object({
   ok: v.literal(true),
   pong: v.literal(true),
@@ -40,6 +50,10 @@ export const PingResponseSchema = v.object({
    * origin of a host other than this machine's loopback, each once. The
    * webui offers them as the endpoints to move to; the first is `webui_url`. */
   webui_urls: v.optional(v.array(v.string())),
+  /** This host's Claude Code version as the daemon last read it from
+   * `claude --version` after a `claude_update`, and when (DR-0043 §8).
+   * Absent until one has run in this daemon's lifetime. */
+  claude_version: v.optional(ClaudeVersionSchema),
   /** The daemon's current view of the host link, which decides whether a
    * recovery can wake sessions stopped on an API error: `"off"` when no
    * network watch is running, `"unknown"` before its first probe settles,
@@ -426,3 +440,15 @@ export const LlmKeepalivePauseResponseSchema = v.object({
   ok: v.literal(true),
 });
 export type LlmKeepalivePauseResponse = Output<typeof LlmKeepalivePauseResponseSchema>;
+
+// --- claude_update -----------------------------------------------------------
+
+/** `claude update` exited 0 and `claude --version` named `version`, which the
+ * daemon now holds as this host's version (DR-0043 §6). `exit_code` is the
+ * update's, always 0 here: a non-zero one is `claude_update_failed`. */
+export const ClaudeUpdateResponseSchema = v.object({
+  ok: v.literal(true),
+  version: v.string(),
+  exit_code: v.literal(0),
+});
+export type ClaudeUpdateResponse = Output<typeof ClaudeUpdateResponseSchema>;

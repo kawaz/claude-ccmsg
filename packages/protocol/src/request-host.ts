@@ -105,3 +105,16 @@ export const LlmKeepalivePauseRequestSchema = v.object({
   sid: v.string(),
 });
 export type LlmKeepalivePauseRequest = Output<typeof LlmKeepalivePauseRequestSchema>;
+
+/** Update this host's Claude Code by running `claude update` with the
+ * daemon's PATH, then re-read its version with `claude --version` (DR-0043
+ * §6, user role only: a session's agent must not be able to replace the
+ * binary every session runs). Running processes keep the binary they started
+ * with; the update reaches the sessions started after it.
+ *
+ * Slow reply (same rationale as SessionKillRequest): the reply waits for the
+ * download, and the other requests of the connection are not held behind it. */
+export const ClaudeUpdateRequestSchema = v.object({
+  op: v.literal("claude_update"),
+});
+export type ClaudeUpdateRequest = Output<typeof ClaudeUpdateRequestSchema>;

@@ -159,6 +159,7 @@ const PUSHES: {
       ],
     },
   ],
+  claude_version: [{ ev: "claude_version", version: "2.1.312", observed_at: 1_793_000_000_000 }],
   llm_status: [
     {
       ev: "llm_status",

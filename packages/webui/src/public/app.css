@@ -767,6 +767,32 @@ a {
   min-width: 0;
 }
 
+/* 版の横の更新ボタン: SESSIONS の見出しの ↻ (#peers-refresh) と同じ
+ * chromeless なアイコンボタン。押している間 (disabled) は薄くする。 */
+.sidebar-globals-claude-update {
+  background: none;
+  border: none;
+  padding: 0 var(--space-2);
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  line-height: 1;
+}
+
+.sidebar-globals-claude-update:disabled {
+  cursor: progress;
+  opacity: 0.5;
+}
+
+/* update の失敗の要点 (stderr の末尾 1〜2 行)。改行はそのまま、長い語は
+ * 折り返して段の幅に収める。 */
+.sidebar-globals-failure {
+  color: var(--danger);
+  font-size: var(--font-size-xs);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 select.sidebar-globals-endpoint {
   min-width: 0;
   max-width: 100%;

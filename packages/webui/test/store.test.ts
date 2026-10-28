@@ -685,6 +685,44 @@ describe("reducer / agents/loaded and daemon-info/loaded (U1)", () => {
   });
 });
 
+// DR-0043 §8: the daemon's reading of the host's Claude Code version comes
+// with each connect's ping (replacing what a previous connection said, a
+// restarted daemon holding none), and after an update as a push or the reply.
+describe("reducer / hostClaudeVersion (DR-0043)", () => {
+  test("starts with none", () => {
+    expect(initialState().hostClaudeVersion).toBeNull();
+  });
+
+  test("daemon-info/loaded takes the connected daemon's reading, and clears it when absent", () => {
+    const held = dispatch(initialState(), {
+      type: "daemon-info/loaded",
+      version: "0.200.0",
+      claudeVersion: { version: "2.1.312", at: 5 },
+    });
+    expect(held.hostClaudeVersion).toEqual({ version: "2.1.312", at: 5 });
+    const restarted = dispatch(held, { type: "daemon-info/loaded", version: "0.200.0" });
+    expect(restarted.hostClaudeVersion).toBeNull();
+  });
+
+  test("claude-version/observed keeps the later reading", () => {
+    const first = dispatch(initialState(), {
+      type: "claude-version/observed",
+      observed: { version: "2.1.312", at: 10 },
+    });
+    expect(first.hostClaudeVersion).toEqual({ version: "2.1.312", at: 10 });
+    const later = dispatch(first, {
+      type: "claude-version/observed",
+      observed: { version: "2.1.313", at: 20 },
+    });
+    expect(later.hostClaudeVersion).toEqual({ version: "2.1.313", at: 20 });
+    const stale = dispatch(later, {
+      type: "claude-version/observed",
+      observed: { version: "2.1.312", at: 10 },
+    });
+    expect(stale).toBe(later);
+  });
+});
+
 // Sessions stopped on a harness API error: the one-shot op:"session_errors"
 // reply and the pushed ev:"session_errors" stream event both fold in through
 // this one action (same pairing as agents/loaded above, see ws.ts).

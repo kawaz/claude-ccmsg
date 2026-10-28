@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   endpointChoices,
   endpointLabel,
+  hostClaudeVersion,
   lastSessionClaudeVersion,
   switchedHref,
 } from "../src/client/sidebar-globals.ts";
@@ -94,5 +95,31 @@ describe("lastSessionClaudeVersion", () => {
   test("none when no row names a version", () => {
     expect(lastSessionClaudeVersion([])).toBeNull();
     expect(lastSessionClaudeVersion([{ startedAt: 1 }])).toBeNull();
+  });
+});
+
+describe("hostClaudeVersion", () => {
+  const session = { version: "2.1.310", at: 1_000 };
+
+  // Whichever was seen later: an update after the last start shows what the
+  // daemon read, a session started after the update shows its own version.
+  test("the later of the session started last and the daemon's reading", () => {
+    expect(hostClaudeVersion(session, { version: "2.1.312", at: 2_000 })).toBe("2.1.312");
+    expect(
+      hostClaudeVersion({ version: "2.1.313", at: 3_000 }, { version: "2.1.312", at: 2_000 }),
+    ).toBe("2.1.313");
+  });
+
+  // Not the higher version: a later reading of an older version still wins.
+  test("the later one even when it names the lower version", () => {
+    expect(
+      hostClaudeVersion({ version: "2.1.400", at: 1_000 }, { version: "2.1.312", at: 2_000 }),
+    ).toBe("2.1.312");
+  });
+
+  test("either alone, or none", () => {
+    expect(hostClaudeVersion(session, null)).toBe("2.1.310");
+    expect(hostClaudeVersion(null, { version: "2.1.312", at: 2_000 })).toBe("2.1.312");
+    expect(hostClaudeVersion(null, null)).toBeNull();
   });
 });

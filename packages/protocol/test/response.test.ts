@@ -400,6 +400,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   llm_keepalive_pause: [{ ok: true }],
+  claude_update: [{ ok: true, version: "2.1.312", exit_code: 0 }],
   llm_status: [
     {
       ok: true,
@@ -588,6 +589,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       httpAllow: ["127.0.0.0/8"],
       webui_url: "https://ccmsg.a.example.com",
       webui_urls: ["https://ccmsg.a.example.com", "https://ccmsg.v6.example.com"],
+      claude_version: { version: "2.1.312", observed_at: 1_793_000_000_000 },
       network: "online",
     },
   ],
@@ -637,6 +639,14 @@ describe("a reply that is not the op's", () => {
   test("a field of another type names the field", () => {
     expect(failure("read", { ok: true, room: 1, msgs: [] })).toStartWith("room: ");
     expect(failure("ping", { ...SAMPLES.ping[0], network: "flaky" })).toStartWith("network: ");
+    expect(
+      failure("ping", { ...SAMPLES.ping[0], claude_version: { version: "2.1.312" } }),
+    ).toStartWith("claude_version.observed_at");
+    // The update's exit code is 0 on a success reply; anything else is
+    // claude_update_failed, never this reply.
+    expect(failure("claude_update", { ok: true, version: "2.1.312", exit_code: 1 })).toStartWith(
+      "exit_code",
+    );
     expect(failure("room_history", { ok: true, room: "r1" })).toStartWith("events: ");
     expect(
       failure("room_history", { ok: true, room: "r1", events: [{ type: "link", ts: "t" }] }),

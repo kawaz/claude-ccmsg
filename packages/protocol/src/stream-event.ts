@@ -12,7 +12,7 @@ import {
   RequestOverrideTargetSchema,
   RequestValuesSchema,
 } from "./request-override.ts";
-import { LlmStatusReportSchema } from "./response-host.ts";
+import { ClaudeVersionSchema, LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
@@ -271,6 +271,16 @@ export const LlmStatusStreamEventSchema = v.object({
 });
 export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 
+/** This host's Claude Code version, just re-read by the daemon after a
+ * `claude_update` (DR-0043 §8), to every user-role subscriber (same posture
+ * as ev:"llm_status"): every tab and device shows the new version at once,
+ * not only the one whose button was pressed. Never to a session. */
+export const ClaudeVersionStreamEventSchema = v.object({
+  ev: v.literal("claude_version"),
+  ...ClaudeVersionSchema.entries,
+});
+export type ClaudeVersionStreamEvent = Output<typeof ClaudeVersionStreamEventSchema>;
+
 /** Every push, told apart by `ev`. */
 export const StreamEventSchema = v.variant("ev", [
   SaysStreamEventSchema,
@@ -286,5 +296,6 @@ export const StreamEventSchema = v.variant("ev", [
   SessionErrorsStreamEventSchema,
   LlmRequestsStreamEventSchema,
   LlmStatusStreamEventSchema,
+  ClaudeVersionStreamEventSchema,
 ]);
 export type StreamEvent = Output<typeof StreamEventSchema>;

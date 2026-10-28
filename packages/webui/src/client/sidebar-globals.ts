@@ -63,3 +63,17 @@ export function lastSessionClaudeVersion(
   }
   return latest;
 }
+
+/** The Claude Code version GLOBALS shows (DR-0043 §5.3): whichever of the two
+ * sources was seen later — the session started last, or the daemon's own
+ * reading after an update. A session started after the update shows its
+ * version; an update after the last start shows what it read. Null when
+ * neither has anything. */
+export function hostClaudeVersion(
+  lastSession: ObservedClaudeVersion | null,
+  daemonReading: ObservedClaudeVersion | null,
+): string | null {
+  if (lastSession === null) return daemonReading?.version ?? null;
+  if (daemonReading === null) return lastSession.version;
+  return daemonReading.at >= lastSession.at ? daemonReading.version : lastSession.version;
+}

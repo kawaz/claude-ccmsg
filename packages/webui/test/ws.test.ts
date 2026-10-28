@@ -1303,6 +1303,9 @@ describe("createWsClient agents/ping (U1)", () => {
       script: "entry.ts",
       http: [],
       httpAllow: [],
+      webui_url: "https://ccmsg.a.example.com",
+      webui_urls: ["https://ccmsg.a.example.com", "https://ccmsg.v6.example.com"],
+      claude_version: { version: "2.1.312", observed_at: 7 },
       network: "online",
     });
     await tick();
@@ -1330,8 +1333,16 @@ describe("createWsClient agents/ping (U1)", () => {
     if (agentsAction?.type === "agents/loaded") expect(agentsAction.agents).toHaveLength(1);
     if (errorsAction?.type === "session-errors/loaded")
       expect(errorsAction.errors.map((e) => e.sid)).toEqual(["s1"]);
-    if (daemonAction?.type === "daemon-info/loaded")
+    if (daemonAction?.type === "daemon-info/loaded") {
       expect(daemonAction.exe).toBe("/usr/local/bin/bun");
+      // DR-0043 §8: the endpoints GLOBALS offers and the daemon's reading of
+      // the host's Claude Code version come with the same ping.
+      expect(daemonAction.webuiUrls).toEqual([
+        "https://ccmsg.a.example.com",
+        "https://ccmsg.v6.example.com",
+      ]);
+      expect(daemonAction.claudeVersion).toEqual({ version: "2.1.312", at: 7 });
+    }
   });
 
   // Subscribe carries no room traffic and the room list is read only when the
@@ -1511,6 +1522,45 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(actions).toEqual([
       { type: "says/loaded", says: [say] },
       { type: "says/loaded", says: [] },
+    ]);
+  });
+});
+
+// DR-0043 §6/§8: claude_update is a plain request (no client-side timeout,
+// the daemon bounds it), and the version the daemon re-reads reaches every
+// tab as ev:"claude_version".
+describe("createWsClient claude_update / ev:'claude_version' (DR-0043)", () => {
+  test("claudeUpdate sends {op:'claude_update'} and resolves the reply", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.claudeUpdate();
+    expect(sentBody(ws1, "claude_update")).toEqual({ op: "claude_update" });
+    ws1.replyTo("claude_update", { ok: true, version: "2.1.312", exit_code: 0 });
+    expect(await req).toEqual({ ok: true, version: "2.1.312", exit_code: 0 });
+  });
+
+  test("ev:'claude_version' push dispatches claude-version/observed", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({ ev: "claude_version", version: "2.1.312", observed_at: 1_793_000_000_000 }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "claude-version/observed",
+        observed: { version: "2.1.312", at: 1_793_000_000_000 },
+      },
     ]);
   });
 });

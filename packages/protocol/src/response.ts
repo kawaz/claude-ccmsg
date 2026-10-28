@@ -23,6 +23,7 @@ import {
 } from "./response-files.ts";
 import {
   LlmKeepalivePauseResponseSchema,
+  ClaudeUpdateResponseSchema,
   LlmStatsResponseSchema,
   LlmStatusResponseSchema,
   LlmUsageResponseSchema,
@@ -120,6 +121,7 @@ export const RESPONSE_SCHEMAS = {
   llm_stats: LlmStatsResponseSchema,
   llm_status: LlmStatusResponseSchema,
   llm_keepalive_pause: LlmKeepalivePauseResponseSchema,
+  claude_update: ClaudeUpdateResponseSchema,
   fs_list: FsListResponseSchema,
   fs_read: FsReadResponseSchema,
   fs_read_external: FsReadResponseSchema,

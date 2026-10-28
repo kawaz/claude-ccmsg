@@ -404,6 +404,12 @@ export interface WsHandle {
    * same report unsolicited (ev:"llm_status") after a 529, so a client that
    * has asked once stays current without asking again. */
   llmStatus(opts?: { refresh?: boolean }): Promise<ReplyOf<"llm_status">>;
+  /** Have the daemon run `claude update` with its PATH and read the version
+   * back from `claude --version` (DR-0043 §6, user role only). Slow: the reply
+   * waits for the download, up to the daemon's own bound, so no
+   * client-side timeout is set (like sessionKill). Every tab, this one
+   * included, also gets the new version as ev:"claude_version". */
+  claudeUpdate(): Promise<ReplyOf<"claude_update">>;
   /** Stop session `sid`'s prompt-cache keepalive at the gateway (user role
    * only). The daemon then pushes the session's request events marked
    * `cache_paused` until the session's next request starts it again. */
@@ -681,6 +687,14 @@ export function createWsClient(
           exe: ping.exe,
           home: ping.home,
           webuiUrls: ping.webui_urls,
+          ...(ping.claude_version !== undefined
+            ? {
+                claudeVersion: {
+                  version: ping.claude_version.version,
+                  at: ping.claude_version.observed_at,
+                },
+              }
+            : {}),
         });
       // DR-0023 host capability probe. An empty batch verifies the daemon can
       // find/build its helper without starting TranslationSession or translating
@@ -806,6 +820,15 @@ export function createWsClient(
       dispatch({
         type: "llm-status/loaded",
         report: streamEv.report,
+      });
+      return;
+    }
+    // This host's Claude Code version, re-read by the daemon after a
+    // claude_update from any tab (DR-0043 §8): every tab shows it at once.
+    if (streamEv.ev === "claude_version") {
+      dispatch({
+        type: "claude-version/observed",
+        observed: { version: streamEv.version, at: streamEv.observed_at },
       });
       return;
     }
@@ -1110,5 +1133,6 @@ export function createWsClient(
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
     llmKeepalivePause: (sid) => send({ op: "llm_keepalive_pause", sid }),
+    claudeUpdate: () => send({ op: "claude_update" }),
   };
 }

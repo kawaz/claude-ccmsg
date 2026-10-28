@@ -85,6 +85,7 @@ import {
   TranscriptUnsubscribeRequestSchema,
 } from "./request-transcripts.ts";
 import {
+  ClaudeUpdateRequestSchema,
   LlmKeepalivePauseRequestSchema,
   LlmStatsRequestSchema,
   LlmStatusRequestSchema,
@@ -152,6 +153,7 @@ const OP_REQUEST_SCHEMAS = [
   LlmStatsRequestSchema,
   LlmStatusRequestSchema,
   LlmKeepalivePauseRequestSchema,
+  ClaudeUpdateRequestSchema,
   FsListRequestSchema,
   FsReadRequestSchema,
   FsReadExternalRequestSchema,

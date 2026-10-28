@@ -18,6 +18,7 @@ import {
   readRequest,
   resolvePaths,
   type AgentInfo,
+  type ClaudeVersion,
   type Identity,
   type LlmStatusReport,
   type PingResponse,
@@ -175,6 +176,11 @@ import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./l
 import { type WebhookSource } from "./webhook.ts";
 import { releaseDaemonResources } from "./daemon-shutdown.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
+import {
+  productionClaudeUpdateDeps,
+  runClaudeUpdate,
+  type ClaudeUpdateDeps,
+} from "./claude-update.ts";
 import { startHttpListener, webuiUrlsOf, type HttpFallback, type HttpListener } from "./http.ts";
 import {
   compileSandboxOrigin,
@@ -385,6 +391,15 @@ export interface Daemon {
   /** When the agents poll last finished a round: the next round began after
    * this, which is what lets it say a run named before it has no process. */
   agentsRoundAt: number;
+  /** This host's Claude Code version as the last claude_update read it, and
+   * when (DR-0043 §6, §8). Memory only: a restarted daemon has none, and the
+   * webui falls back to the version of the session started last. */
+  claudeVersion: ClaudeVersion | null;
+  /** The claude_update running now, if any: a second one is refused rather
+   * than started beside it. */
+  claudeUpdateRunning: boolean;
+  /** Where claude_update finds and runs `claude` (claude-update.ts). */
+  claudeUpdateDeps: ClaudeUpdateDeps;
   /** Ends the host once a graceful shutdown (the `shutdown` op, a signal) has
    * released everything: the daemon process exits. */
   exit: () => void;
@@ -467,6 +482,9 @@ export function createDaemon(host: DaemonHost): Daemon {
       now: Date.now,
     }),
     agentsRoundAt: Date.now(),
+    claudeVersion: null,
+    claudeUpdateRunning: false,
+    claudeUpdateDeps: productionClaudeUpdateDeps(host.env),
     exit: host.exit,
   };
   return daemon;
@@ -1173,6 +1191,15 @@ export function broadcastLlmStatus(daemon: Daemon, report: LlmStatusReport): voi
   }
 }
 
+/** Push the Claude Code version the daemon just read to every user-role
+ * subscriber (DR-0043 §8): every tab shows it at once, not only the one that
+ * asked for the update. Never to a session. */
+function broadcastClaudeVersion(daemon: Daemon, observed: ClaudeVersion): void {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "claude_version", ...observed });
+  }
+}
+
 /** Wire the webhook-driven re-read to the configured endpoint, or leave it
  * off when there is none. Not a refresh: the gateway refreshes its own
  * sources on the same 529 it reported (gateway DR-0021 §5), so asking it to
@@ -1727,6 +1754,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         httpAllow: daemon.httpAllow,
         ...(webuiUrl !== undefined ? { webui_url: webuiUrl } : {}),
         webui_urls: webuiUrls,
+        ...(daemon.claudeVersion !== null ? { claude_version: daemon.claudeVersion } : {}),
         network: networkState(daemon),
       });
       return;
@@ -3066,6 +3094,40 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       unsubscribeSessionStatus(daemon.sessionStatus, daemon.transcriptTail, req.sid, conn);
       send(conn, { ok: true, sid: req.sid });
+      return;
+    }
+
+    // DR-0043 §6: user role only — a session's agent must not be able to
+    // replace the binary every session on this host runs. Slow (the
+    // download), and the connection's other requests run beside it.
+    case "claude_update": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'claude_update' requires user role");
+        return;
+      }
+      if (daemon.claudeUpdateRunning) {
+        daemon.log.info(
+          `claude_update: exit_code=- version=- error=${ErrorCode.claude_update_busy}`,
+        );
+        sendErr(conn, ErrorCode.claude_update_busy, "a claude update is already running");
+        return;
+      }
+      daemon.claudeUpdateRunning = true;
+      const outcome = await runClaudeUpdate(daemon.claudeUpdateDeps).finally(() => {
+        daemon.claudeUpdateRunning = false;
+      });
+      if (!outcome.ok) {
+        daemon.log.info(
+          `claude_update: exit_code=${outcome.exitCode ?? "-"} version=- error=${outcome.code}`,
+        );
+        sendErr(conn, outcome.code, outcome.msg);
+        return;
+      }
+      daemon.log.info(`claude_update: exit_code=0 version=${outcome.version}`);
+      const observed = { version: outcome.version, observed_at: outcome.observedAt };
+      daemon.claudeVersion = observed;
+      send(conn, { ok: true, version: outcome.version, exit_code: 0 });
+      broadcastClaudeVersion(daemon, observed);
       return;
     }
 

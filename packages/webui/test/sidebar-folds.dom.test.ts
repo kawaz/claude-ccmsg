@@ -43,12 +43,14 @@ afterEach(async () => {
   restores = [];
 });
 
-/** What the mounted sidebar asked the daemon and the navigation for. */
+/** What the mounted sidebar asked the daemon and the navigation for. Each
+ * claude_update waits on its own entry of `updates` until the test answers. */
 interface Calls {
   rooms: number;
   peers: number;
   navigations: string[];
   assigned: string[];
+  updates: PromiseWithResolvers<ReplyOf<"claude_update">>[];
 }
 
 function agentRow(startedAt: number, version?: string): AgentInfo {
@@ -65,8 +67,8 @@ function agentRow(startedAt: number, version?: string): AgentInfo {
 
 async function mountSidebar(
   prepare: (store: Store) => void = () => {},
-): Promise<{ root: HTMLElement; calls: Calls }> {
-  const calls: Calls = { rooms: 0, peers: 0, navigations: [], assigned: [] };
+): Promise<{ root: HTMLElement; calls: Calls; store: Store }> {
+  const calls: Calls = { rooms: 0, peers: 0, navigations: [], assigned: [], updates: [] };
   const store = createStore(initialState());
   store.dispatch({ type: "launch/availability", available: true });
   prepare(store);
@@ -79,6 +81,11 @@ async function mountSidebar(
     peers: (): Promise<ReplyOf<"peers">> => {
       calls.peers++;
       return Promise.resolve({ ok: true, peers: [] });
+    },
+    claudeUpdate: (): Promise<ReplyOf<"claude_update">> => {
+      const reply = Promise.withResolvers<ReplyOf<"claude_update">>();
+      calls.updates.push(reply);
+      return reply.promise;
     },
   };
   // The panel toggles navigate (the URL is their state); the endpoint moves
@@ -97,7 +104,7 @@ async function mountSidebar(
   document.body.append(root);
   roots.push(root);
   await act(() => render(h(AppContext.Provider, { value: { store, ws } }, h(Sidebar, null)), root));
-  return { root, calls };
+  return { root, calls, store };
 }
 
 function toggleOf(root: HTMLElement, fold: string): HTMLButtonElement {
@@ -125,6 +132,12 @@ function openFolds(root: HTMLElement): string[] {
     expect(shown).toBe(expanded);
     return expanded;
   });
+}
+
+/** Let a resolved reply run through its `.then` / `.finally` and the render
+ * that follows. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
 }
 
 async function click(el: HTMLElement): Promise<void> {
@@ -250,12 +263,12 @@ describe("GLOBALS", () => {
         agents: [agentRow(300, "2.1.312"), agentRow(100, "2.1.400"), agentRow(400)],
       });
     });
-    expect(rows(root).slice(1)).toEqual(["daemon v0.200.0", "claude v2.1.312"]);
+    expect(rows(root).slice(1)).toEqual(["daemon v0.200.0", "claude v2.1.312↻"]);
   });
 
   test("a dash for a version nothing has told yet", async () => {
     const { root } = await mountSidebar();
-    expect(rows(root).slice(1)).toEqual(["daemon —", "claude —"]);
+    expect(rows(root).slice(1)).toEqual(["daemon —", "claude —↻"]);
   });
 
   test("the endpoint is plain text when there is nowhere else to go", async () => {
@@ -298,6 +311,126 @@ describe("GLOBALS", () => {
     expect(calls.assigned).toEqual([
       `https://ccmsg.v6.example.com${location.pathname}${location.search}${location.hash}`,
     ]);
+  });
+});
+
+describe("GLOBALS' Claude Code update", () => {
+  function claudeRow(root: HTMLElement): string {
+    const row = [...root.querySelectorAll("#sidebar-globals .sidebar-globals-row")].find((r) =>
+      r.textContent?.startsWith("claude "),
+    );
+    return defined(row, "the claude line").textContent ?? "";
+  }
+
+  function updateButton(root: HTMLElement): HTMLButtonElement {
+    return instanceOf(
+      root.querySelector("#sidebar-globals button.sidebar-globals-claude-update"),
+      HTMLButtonElement,
+      "the update button",
+    );
+  }
+
+  function failure(root: HTMLElement): string | null {
+    return root.querySelector("#sidebar-globals .sidebar-globals-failure")?.textContent ?? null;
+  }
+
+  test("the button is held while the update runs, and the new version shows after", async () => {
+    const { root, calls, store } = await mountSidebar((s) => {
+      s.dispatch({ type: "agents/loaded", agents: [agentRow(300, "2.1.310")] });
+    });
+    expect(claudeRow(root)).toBe("claude v2.1.310↻");
+    await click(updateButton(root));
+    expect(calls.updates).toHaveLength(1);
+    expect(updateButton(root).disabled).toBe(true);
+    expect(claudeRow(root)).toContain("更新中…");
+    // Pressing again while it runs asks nothing more.
+    await click(updateButton(root));
+    expect(calls.updates).toHaveLength(1);
+    // The daemon pushes its reading to every tab, then answers this one.
+    await act(() => {
+      store.dispatch({
+        type: "claude-version/observed",
+        observed: { version: "2.1.312", at: 400 },
+      });
+      defined(calls.updates[0], "the update").resolve({
+        ok: true,
+        version: "2.1.312",
+        exit_code: 0,
+      });
+    });
+    await settle();
+    expect(updateButton(root).disabled).toBe(false);
+    expect(claudeRow(root)).toBe("claude v2.1.312↻");
+    expect(failure(root)).toBeNull();
+  });
+
+  test("a failure's gist shows under the line until the next update succeeds", async () => {
+    const { root, calls } = await mountSidebar();
+    await click(updateButton(root));
+    await act(() => {
+      defined(calls.updates[0], "the first update").resolve({
+        ok: false,
+        error: {
+          code: "claude_update_failed",
+          msg: "claude update exited 1: Error: network unreachable",
+        },
+      });
+    });
+    await settle();
+    expect(failure(root)).toBe("claude update exited 1: Error: network unreachable");
+    expect(updateButton(root).disabled).toBe(false);
+    await click(updateButton(root));
+    await act(() => {
+      defined(calls.updates[1], "the second update").resolve({
+        ok: true,
+        version: "2.1.312",
+        exit_code: 0,
+      });
+    });
+    await settle();
+    expect(failure(root)).toBeNull();
+  });
+
+  // The update touches no running session, so it is not asked about.
+  test("asks for no confirmation", async () => {
+    const { root, calls } = await mountSidebar();
+    const confirmed: string[] = [];
+    restores.push(
+      stubProperty(window, "confirm", {
+        value: (text: string) => {
+          confirmed.push(text);
+          return true;
+        },
+        configurable: true,
+      }),
+    );
+    await click(updateButton(root));
+    expect(confirmed).toEqual([]);
+    expect(calls.updates).toHaveLength(1);
+  });
+
+  test("shows whichever was seen later: the session started last, or the daemon's reading", async () => {
+    const { root, store } = await mountSidebar((s) => {
+      s.dispatch({ type: "agents/loaded", agents: [agentRow(300, "2.1.312")] });
+    });
+    await act(() => {
+      store.dispatch({
+        type: "claude-version/observed",
+        observed: { version: "2.1.400", at: 200 },
+      });
+    });
+    expect(claudeRow(root)).toBe("claude v2.1.312↻");
+    await act(() => {
+      store.dispatch({
+        type: "claude-version/observed",
+        observed: { version: "2.1.305", at: 500 },
+      });
+    });
+    expect(claudeRow(root)).toBe("claude v2.1.305↻");
+    await act(() => {
+      store.dispatch({ type: "agents/loaded", agents: [agentRow(600, "2.1.313")] });
+    });
+    expect(claudeRow(root)).toBe("claude v2.1.313↻");
   });
 });
 

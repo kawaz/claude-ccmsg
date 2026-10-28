@@ -1,16 +1,25 @@
 // The body of the sidebar's GLOBALS fold (DR-0043 §5): what belongs to no
 // session — the endpoint this page is opened at, the daemon's version, and
 // the Claude Code version of this host.
+import { useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
-import { endpointChoices, lastSessionClaudeVersion, switchedHref } from "../sidebar-globals.ts";
+import {
+  endpointChoices,
+  hostClaudeVersion,
+  lastSessionClaudeVersion,
+  switchedHref,
+} from "../sidebar-globals.ts";
 
 function globalsSlice(state: AppState) {
   return {
     daemonVersion: state.daemonInfo?.version ?? null,
     webuiUrls: state.daemonInfo?.webuiUrls,
-    claudeVersion: lastSessionClaudeVersion(state.agents)?.version ?? null,
+    claudeVersion: hostClaudeVersion(
+      lastSessionClaudeVersion(state.agents),
+      state.hostClaudeVersion,
+    ),
   };
 }
 
@@ -51,6 +60,51 @@ function EndpointLine({ candidates }: { candidates: readonly string[] | undefine
   );
 }
 
+/** `claude v<version> [↻]` (§5.3). The button has the daemon run `claude
+ * update`; the version shown changes when the daemon's reading arrives (the
+ * reply here, ev:"claude_version" in every tab). No confirmation: the update
+ * touches no running session, only the sessions started after it. A failure's
+ * gist stays under the line until the next update succeeds, and is kept
+ * nowhere else. */
+function ClaudeLine({ version }: { version: string | null }) {
+  const { ws } = useApp();
+  const [updating, setUpdating] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const update = (): void => {
+    setUpdating(true);
+    void ws
+      .claudeUpdate()
+      .then(
+        (res) => setFailure(res.ok ? null : res.error.msg),
+        (e: unknown) => setFailure(e instanceof Error ? e.message : "更新を依頼できませんでした"),
+      )
+      .finally(() => setUpdating(false));
+  };
+  return (
+    <>
+      <p class="sidebar-globals-row">
+        claude {version !== null ? `v${version}` : "—"}
+        <button
+          type="button"
+          class="sidebar-globals-claude-update"
+          title="Claude Code を更新 (claude update)"
+          aria-label="Claude Code を更新"
+          disabled={updating}
+          onClick={update}
+        >
+          &#8635;
+        </button>
+        {updating ? <span class="sidebar-globals-note">更新中…</span> : null}
+      </p>
+      {failure !== null ? (
+        <p class="sidebar-globals-row sidebar-globals-failure" role="alert">
+          {failure}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
 export function SidebarGlobals() {
   const { store } = useApp();
   const slice = useStoreState(store, globalsSlice, shallowEqual);
@@ -60,9 +114,7 @@ export function SidebarGlobals() {
       <p class="sidebar-globals-row">
         daemon {slice.daemonVersion !== null ? `v${slice.daemonVersion}` : "—"}
       </p>
-      <p class="sidebar-globals-row">
-        claude {slice.claudeVersion !== null ? `v${slice.claudeVersion}` : "—"}
-      </p>
+      <ClaudeLine version={slice.claudeVersion} />
     </div>
   );
 }

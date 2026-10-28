@@ -274,5 +274,19 @@ export const ErrorCode = {
   // this way" is a standing property of how the session was started, whereas
   // not_found would suggest retrying against a session that is simply gone.
   terminal_unavailable: "terminal_unavailable",
+  // claude_update (DR-0043 §6): `claude` is not on the daemon's PATH.
+  claude_not_found: "claude_not_found",
+  // claude_update: `claude update` exited non-zero; the msg carries the exit
+  // code and the gist of its stderr.
+  claude_update_failed: "claude_update_failed",
+  // claude_update: the update exited 0, but `claude --version` failed or its
+  // first word is not a version. The update may have happened; the version
+  // the daemon holds is unchanged.
+  claude_version_unreadable: "claude_version_unreadable",
+  // claude_update: an earlier claude_update is still running. Nothing was run.
+  claude_update_busy: "claude_update_busy",
+  // claude_update: the run did not end within CLAUDE_UPDATE_TIMEOUT_MS and was
+  // stopped.
+  claude_update_timeout: "claude_update_timeout",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
