@@ -41,11 +41,14 @@ DR-0008 でファイルツリー + コードビューアは実装済みだが、
 - transcript 申告はあくまで「あれば便利な追加情報」であり、hook の実装ミスや将来の Claude Code バージョン差異で transcript_path の形式が想定と違っても、hello という基本機能(メッセージング)自体を壊さないため。fail-open (機能は使えないが実害もない) を選ぶ
 - basename 一致を要求するのは、他セッションの transcript_path を騙って読める余地を potential でも残さないため。仮に daemon がパスの中身を信用して「申告されたものは何でも読む」とすると、hello を偽装して任意 sid の任意ファイルを覗く経路になりかねない (実際には他コンポーネントが sid をランダム発行するため悪用は困難だが、契約として明示的に閉じておく)
 
-### 3. transcript_read は byte-offset ページング、行境界アライン、TRANSCRIPT_READ_MAX_BYTES (256 KiB) clamp [提案]
+### 3. transcript_read は byte-offset ページング、行境界アライン、読みの種類ごとの上限で clamp [提案]
 
 - `TranscriptReadRequest.before` (省略時 = ファイル末尾) を起点に、その offset **以前で終わる行**を集めて返す。初回呼び出し (`before` 省略) は tail から読むため、webui は「開いたら直近ログが見える」を実現できる
 - 返却は必ず**完全な行**の集合 (`TranscriptReadResponse.lines: string[]`、各行は生 jsonl 文字列)。行の途中で切れた断片を返さない — クライアントは各行をそのまま `JSON.parse` すればよく、部分行の結合処理を持たない
-- `max_bytes` は `TRANSCRIPT_READ_MAX_BYTES` (256 KiB) で clamp する。数十〜数百 MB の transcript を一度に読み切ることを防ぎ、webui 側は「もっと読む (`start` を次の `before` に渡す)」の pull 型ページングで遡る
+- 1 回に返す量は上限で clamp する。数十〜数百 MB の transcript を一度に読み切ることを防ぎ、webui 側は older (`start` を次の `before` に渡す) の pull 型ページングで遡る。`max_bytes` を省くと上限いっぱいまで返す
+  - `before` 無し (tail) と `after` は `TRANSCRIPT_READ_MAX_BYTES` (1 MB)。開いた時に描く量で、大きいと初回の描画が重い
+  - `before` 付き (older) は `TRANSCRIPT_READ_OLDER_MAX_BYTES` (5 MB)。遡る読み手は過去ログを読み込んでページ内検索することが多く、1 回が小さいと older を何度も押すことになる
+- webui の Timeline は older を `max_bytes` 無しで送り、daemon の上限で 1 回の量を決める。先頭まで読み込んだ (返事の `start` が 0) 後は older のボタンを出さない
 - `TranscriptReadResponse.size` (現在のファイルサイズ) を毎回返す。session 実行中は transcript が伸び続けるため、webui はこれを見て「新着があるか」を判定できる
 - `TranscriptReadRequest.after` (`before` とは併用しない) は、その offset **以後に始まる行**を古い順に cap まで返す。前の読み (または live tail の push) の `end` を渡すと、その後に書かれた分だけが届く。返事の `end` が `size` に届かなければ続きがあり、`end` を次の `after` に渡して読み進める
   - `after` から続きにならない時 (ファイルの末尾より後 = 差し替え・切り詰め、行の途中、cap と走査の予算を超える 1 行で始まる) は、行を返さず `start` をファイルの末尾に置く。`start` が `after` と違うことで、読み手はキャッシュを続けられないと知り、tail を読み直す
@@ -108,6 +111,6 @@ Claude Code の transcript jsonl のフォーマットは、Claude Code 自体�
 
 ## Next steps
 
-1. daemon: `transcript_read` ハンドラ実装 (hello 時の basename/拡張子/絶対パス検証、`IDENTITY_OPS` へ追加、byte-offset ページングと行境界アライン、`TRANSCRIPT_READ_MAX_BYTES` clamp)、テスト
+1. daemon: `transcript_read` ハンドラ実装 (hello 時の basename/拡張子/絶対パス検証、`IDENTITY_OPS` へ追加、byte-offset ページングと行境界アライン、読みの種類ごとの上限で clamp)、テスト
 2. cli: SessionStart hook で stdin transcript_path を取得し `CCMSG_TRANSCRIPT_PATH` env prefix 経由で `resolveIdentity` に渡す実装
 3. packages/webui: jsonl リッチタイムラインビューア (未知 type のフォールバック表示含む)

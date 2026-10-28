@@ -6,7 +6,11 @@
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { TRANSCRIPT_READ_MAX_BYTES, PROTOCOL_VERSION } from "@ccmsg/protocol";
+import {
+  TRANSCRIPT_READ_MAX_BYTES,
+  TRANSCRIPT_READ_OLDER_MAX_BYTES,
+  PROTOCOL_VERSION,
+} from "@ccmsg/protocol";
 import {
   connect,
   startInProcessDaemon,
@@ -458,6 +462,58 @@ describe("transcript_read pagination", () => {
     }
   });
 
+  // The two clamps differ by what the read is for: the tail is what a viewer
+  // renders on open (kept light), a `before` read is the reader paging back,
+  // usually to search the history, so it moves more per request. 11-byte
+  // lines make a full window land within one line of its clamp, so each test
+  // tells "clamped at its own cap" apart from "clamped at the other one".
+  test("before 無しの読み (tail) は TRANSCRIPT_READ_MAX_BYTES まで返す", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      const lineCount = Math.ceil((TRANSCRIPT_READ_OLDER_MAX_BYTES * 1.2) / 11);
+      fs.writeFileSync(file, "0123456789\n".repeat(lineCount));
+      const size = lineCount * 11;
+      const c = await sessionConn(ctx, sid, { transcript_path: file });
+
+      for (const req of [{}, { max_bytes: size }]) {
+        const res = await c.requestOk({ op: "transcript_read", sid, ...req });
+        expect(res.end).toBe(size);
+        expect(res.end - res.start).toBeLessThanOrEqual(TRANSCRIPT_READ_MAX_BYTES);
+        expect(res.end - res.start).toBeGreaterThan(TRANSCRIPT_READ_MAX_BYTES - 11);
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("before 付きの読み (older) は TRANSCRIPT_READ_OLDER_MAX_BYTES まで返す", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      const lineCount = Math.ceil((TRANSCRIPT_READ_OLDER_MAX_BYTES * 1.2) / 11);
+      fs.writeFileSync(file, "0123456789\n".repeat(lineCount));
+      const size = lineCount * 11;
+      const c = await sessionConn(ctx, sid, { transcript_path: file });
+
+      for (const req of [{}, { max_bytes: size }]) {
+        const res = await c.requestOk({ op: "transcript_read", sid, before: size, ...req });
+        expect(res.end).toBe(size);
+        expect(res.end - res.start).toBeLessThanOrEqual(TRANSCRIPT_READ_OLDER_MAX_BYTES);
+        expect(res.end - res.start).toBeGreaterThan(TRANSCRIPT_READ_OLDER_MAX_BYTES - 11);
+        expect(res.lines.every((l) => l === "0123456789")).toBe(true);
+      }
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("UTF-8 マルチバイト境界: clamp がマルチバイト文字の途中に落ちても壊れた文字は返らない", async () => {
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("transcript");
@@ -500,14 +556,15 @@ describe("transcript_read pagination", () => {
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
-      // giant line body must exceed TRANSCRIPT_READ_MAX_BYTES: the bug this
+      // giant line body must exceed the `before` read's cap
+      // (TRANSCRIPT_READ_OLDER_MAX_BYTES; page2 is a `before` read): the bug this
       // guards against only shows up once a page boundary lands exactly at
       // this line's own end, so a small line follows it (page1 = tail read
       // picks up only that trailing small line, page2 = "older" from
       // page1.start is the exact repro window). Size derived from the
       // protocol constant so raising the cap (e.g. 256KB→2MB)
       // doesn't break this test's cap-crossing invariant.
-      const giantContent = "H".repeat(TRANSCRIPT_READ_MAX_BYTES + 1024 - 1);
+      const giantContent = "H".repeat(TRANSCRIPT_READ_OLDER_MAX_BYTES + 1024 - 1);
       fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
       const c = await sessionConn(ctx, sid, { transcript_path: file });
 
@@ -557,11 +614,12 @@ describe("transcript_read pagination", () => {
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
-      // Must comfortably exceed TRANSCRIPT_READ_MAX_BYTES + transcript.ts's
+      // Must comfortably exceed the `before` read's cap
+      // (TRANSCRIPT_READ_OLDER_MAX_BYTES) + transcript.ts's
       // internal 4 MiB backward-scan budget — the scan must give up rather
       // than buffer this whole line unbounded. Size derived from the
       // protocol cap so raising it doesn't accidentally shrink the fixture below the scan-give-up threshold.
-      const giantContent = "H".repeat(TRANSCRIPT_READ_MAX_BYTES + 5 * 1024 * 1024 - 1);
+      const giantContent = "H".repeat(TRANSCRIPT_READ_OLDER_MAX_BYTES + 5 * 1024 * 1024 - 1);
       fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
       const c = await sessionConn(ctx, sid, { transcript_path: file });
 

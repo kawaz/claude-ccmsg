@@ -200,6 +200,9 @@ export function useTranscriptLoader({
     revalidateOnArrival();
   }, [active, sid, connStatus]);
 
+  // max_bytes is left out, as on the tail read: a `before` read is sized by
+  // the daemon's clamp for it (TRANSCRIPT_READ_OLDER_MAX_BYTES), so the page
+  // size is stated once, in protocol.
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
     void readTranscriptIntoStore(store, ws, sid, {

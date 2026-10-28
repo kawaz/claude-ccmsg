@@ -397,13 +397,15 @@ export function Timeline({
                       </div>
                     ) : null}
                     <div class="tl-toolbar">
-                      <button
-                        type="button"
-                        disabled={timeline.atStart || timeline.status === "loading"}
-                        onClick={loader.loadOlder}
-                      >
-                        {timeline.atStart ? "先頭まで" : "older"}
-                      </button>
+                      {timeline.atStart ? null : (
+                        <button
+                          type="button"
+                          disabled={timeline.status === "loading"}
+                          onClick={loader.loadOlder}
+                        >
+                          older
+                        </button>
+                      )}
                       <>
                         <SearchBar
                           words={inViewSearch.words}

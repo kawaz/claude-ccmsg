@@ -9,6 +9,7 @@ import {
   ErrorCode,
   parseWith,
   TRANSCRIPT_READ_MAX_BYTES,
+  TRANSCRIPT_READ_OLDER_MAX_BYTES,
   TranscriptRowTimestampLineSchema,
   type TranscriptReadResponse,
   type TranscriptSubscribeResponse,
@@ -276,7 +277,8 @@ function readForward(
  *  - target end = `before` (clamped to the current file size) or file size
  *    when `before` is absent (tail read).
  *  - raw window = [max(0, end - cap), end), cap = max_bytes clamped to
- *    TRANSCRIPT_READ_MAX_BYTES.
+ *    TRANSCRIPT_READ_OLDER_MAX_BYTES when `before` is given (paging older)
+ *    and to TRANSCRIPT_READ_MAX_BYTES otherwise (the tail, and `after`).
  *  - leading trim: unless the window starts at true byte 0, its first bytes
  *    may be the tail of a line that began earlier — drop up to and including
  *    the first newline.
@@ -320,7 +322,8 @@ export interface TranscriptReadAgentOptions {
 
 /** Which slice of the transcript to read: lines ending at or before `before`
  * (absent: the file's end), or lines starting at or after `after`. At most
- * `maxBytes` (clamped to TRANSCRIPT_READ_MAX_BYTES) of them. */
+ * `maxBytes` of them, clamped to TRANSCRIPT_READ_OLDER_MAX_BYTES with `before`
+ * and to TRANSCRIPT_READ_MAX_BYTES otherwise. */
 export interface TranscriptReadRange {
   before?: number;
   after?: number;
@@ -396,7 +399,8 @@ export async function transcriptRead(
   }
 
   const size = stat.size;
-  const cap = Math.min(maxBytes ?? TRANSCRIPT_READ_MAX_BYTES, TRANSCRIPT_READ_MAX_BYTES);
+  const limit = before === undefined ? TRANSCRIPT_READ_MAX_BYTES : TRANSCRIPT_READ_OLDER_MAX_BYTES;
+  const cap = Math.min(maxBytes ?? limit, limit);
   if (after !== undefined) return readForward(readFile, sid, after, cap, size);
   const targetEnd = before === undefined ? size : Math.min(before, size);
   const rawStart = Math.max(0, targetEnd - cap);

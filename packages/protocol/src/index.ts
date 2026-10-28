@@ -77,6 +77,12 @@ export const DEFAULT_LAUNCH_MAX_CONCURRENCY = 4;
  * small, 2 MB too heavy). */
 export const TRANSCRIPT_READ_MAX_BYTES = 1024 * 1024;
 
+/** transcript_read's cap for a read with `before` (the viewer's "older").
+ * Larger than the tail's: a reader going back is usually loading history to
+ * search it with the browser's find-in-page, and a small page only means
+ * pressing "older" over and over. */
+export const TRANSCRIPT_READ_OLDER_MAX_BYTES = 5 * 1024 * 1024;
+
 /** Historical session search response caps (DR-0021 Phase 1). These are wire
  * contract limits so every client can render truncation consistently. */
 export const SESSION_SEARCH_RESULT_MAX = 50;

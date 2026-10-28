@@ -32,7 +32,9 @@ export const TranscriptReadRequestSchema = v.object({
    * `size` means more follows: pass it as the next `after`. Not with
    * `before`. */
   after: v.optional(v.number()),
-  /** cap on returned line bytes; clamped to TRANSCRIPT_READ_MAX_BYTES */
+  /** cap on returned line bytes; absent = the clamp itself, which is
+   * TRANSCRIPT_READ_OLDER_MAX_BYTES with `before` and TRANSCRIPT_READ_MAX_BYTES
+   * otherwise */
   max_bytes: v.optional(v.number()),
   /** DR-0025 Phase 1: read a subagent / workflow-agent / teammate transcript
    * that lives under `<sid>`'s sibling directory instead of `<sid>`'s own

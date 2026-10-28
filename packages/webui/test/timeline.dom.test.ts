@@ -302,7 +302,21 @@ describe("Timeline loading", () => {
     const text = view.root.textContent ?? "";
     expect(text.indexOf("question 1")).toBeGreaterThanOrEqual(0);
     expect(text.indexOf("question 1")).toBeLessThan(text.indexOf("question 2"));
-    expect(buttonTitledText(view.root, "先頭まで").disabled).toBe(true);
+    expect(buttonsTitledText(view.root, "older")).toHaveLength(0);
+  });
+
+  test("a transcript read from its first byte has no older button", async () => {
+    const view = await open();
+    await view.ws.lastRead().answer(page(exchange(1), 0));
+    expect(buttonsTitledText(view.root, "older")).toHaveLength(0);
+    // The rest of the toolbar is still there.
+    expect(element(view.root, ".tl-toolbar").querySelectorAll("button").length).toBeGreaterThan(0);
+  });
+
+  test("a transcript with more before its loaded start shows an enabled older button", async () => {
+    const view = await open();
+    await view.ws.lastRead().answer(page(exchange(1), 100));
+    expect(buttonTitledText(view.root, "older").disabled).toBe(false);
   });
 
   test("a failed read offers a retry that reads the tail again", async () => {
@@ -340,11 +354,18 @@ describe("Timeline loading", () => {
 });
 
 /** 文言で引くボタン (title を持たないもの)。 */
-function buttonTitledText(root: HTMLElement, text: string): HTMLButtonElement {
-  const found = [...root.querySelectorAll("button")].find(
+function buttonsTitledText(root: HTMLElement, text: string): HTMLButtonElement[] {
+  return [...root.querySelectorAll("button")].filter(
     (button) => button.textContent?.trim() === text,
   );
-  return instanceOf(found ?? null, HTMLButtonElement, `button "${text}"`);
+}
+
+function buttonTitledText(root: HTMLElement, text: string): HTMLButtonElement {
+  return instanceOf(
+    buttonsTitledText(root, text)[0] ?? null,
+    HTMLButtonElement,
+    `button "${text}"`,
+  );
 }
 
 describe("Timeline follows the bottom", () => {
