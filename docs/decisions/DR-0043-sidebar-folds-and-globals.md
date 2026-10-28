@@ -1,6 +1,6 @@
 # DR-0043: サイドバーを開閉できる区画 (SESSIONS / ROOMS / GLOBALS) の列にし、GLOBALS に繋ぎ先の切り替え・版・Claude Code の更新を置く
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ⬜ 未実装
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (§1〜§5 のサイドバーの区画の列 (`SidebarFold`) と GLOBALS、§6 の op `claude_update`、§7 の `webuiUrlsOf`、§8 の `ping` の `webui_urls` / `claude_version` と `ev: "claude_version"`)
 - Date: 2026-10-28
 
 ## Context
@@ -94,7 +94,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
   - `claude_update_failed`: `claude update` が 0 以外で終わった。msg に終了コードと stderr の要点
   - `claude_version_unreadable`: `claude update` は 0 で終わったが、`claude --version` が 0 以外で終わったか、先頭の語が版の形でない。msg に stderr の要点か出力の先頭
   - `claude_update_busy`: 前の `claude_update` がまだ走っている (同時に 2 つ起こさない)
-  - `claude_update_timeout`: 300 秒で打ち切る。根拠: native の binary は 264 MB (上の観測) で、2 MB/s の回線でも取得は約 130 秒、その倍強の余裕。実測した所要時間ではないので、実装の時に測って直す
+  - `claude_update_timeout`: `claude update` と `claude --version` を合わせて 300 秒で打ち切る (`CLAUDE_UPDATE_TIMEOUT_MS`、プロセスグループごと止める)。根拠: native の binary は 264 MB (上の観測) で、2 MB/s の回線でも取得は約 130 秒、その倍強の余裕。実測 (2026-10-28、この Mac の PATH の claude、隔離 daemon から): 既に最新 (2.1.312) で取得の無い回は押してから返事まで 1.6 秒。取得のある回は新しい版が出ていなかったので測れておらず、300 秒は取得の見積もりのまま
 - 返事は update の所要時間まで遅れるので 2-phase にし、同じ接続の他の依頼を待たせない ([DR-0028](./DR-0028-session-kill.md) の `session_kill` と同じ理由)
 - daemon.log に 1 行: `claude_update: exit_code=<N> version=<v> [error=<code>]`
 - 覚え直した版と時刻は daemon のメモリに持つ (daemon が起こし直されると消え、表示は最後に起動したセッションの版に戻る)
