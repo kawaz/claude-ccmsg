@@ -157,11 +157,18 @@ import {
   resolveTranscript,
   stopAllTailWatches,
   transcriptRead,
-  transcriptSubscribe,
-  transcriptUnsubscribe,
-  transcriptUnsubscribeAll,
   type TranscriptTailStore,
 } from "./transcript.ts";
+import {
+  createTranscriptRelayStore,
+  relayPushed,
+  relayRetarget,
+  relaySubscribe,
+  relayUnsubscribe,
+  relayUnsubscribeAll,
+  stopAllRelays,
+  type TranscriptRelayStore,
+} from "./transcript-relay.ts";
 import {
   agentsKey,
   agentsPollEnabled,
@@ -295,8 +302,12 @@ export interface Daemon {
    * registered is forgotten once a round begun after the hello does not list
    * it (forgetUnlistedHellos). */
   agentsSeen: Map<string, string>;
-  /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
+  /** The jsonl Watches the daemon's own folds read (session_status,
+   * session errors, user input). */
   transcriptTail: TranscriptTailStore;
+  /** The live Timelines the webui follows, read on the module's pushes
+   * (transcript-relay.ts, DR-0045 §2 / §4). */
+  transcriptRelay: TranscriptRelayStore;
   /** component-boundary timestamps for transcript latency diagnosis, from the
    * daemon's own file check through the browser points posted via
    * `client_trace`. See docs/runbooks/transcript-latency-trace.md. */
@@ -452,6 +463,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
+    transcriptRelay: createTranscriptRelayStore(log, trace),
     trace,
     sessionStatus: createSessionStatusStore({
       inputReadiness: (sid) => readinessOf(daemon, sid),
@@ -612,6 +624,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
     daemon.log.info(
       `session hello: transcript_path changed sid=${id.sid} from=${previousTranscriptPath} to=${transcriptPath}`,
     );
+    relayRetarget(daemon.transcriptRelay, id.sid, transcriptPath);
   }
   if (!entry) {
     entry = { meta, ...(configDir ? { configDir } : {}), connectedAt: nowIso() };
@@ -913,7 +926,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   syncSessionErrors(daemon);
   syncSessionUserInputs(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
-  transcriptUnsubscribeAll(daemon.transcriptTail, conn);
+  relayUnsubscribeAll(daemon.transcriptRelay, conn);
 }
 
 /** File the "this sid has an out-of-date ccmsg client" record the session list
@@ -1484,6 +1497,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
+  "transcript_push",
   "client_trace",
   "session_status",
   "session_status_subscribe",
@@ -3053,13 +3067,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_subscribe' requires user role");
         return;
       }
-      const result = transcriptSubscribe(
-        daemon.transcriptTail,
-        daemon.sessions,
-        req.sid,
-        conn,
-        daemon.log,
-      );
+      const result = relaySubscribe(daemon.transcriptRelay, daemon.sessions, req.sid, conn);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -3073,8 +3081,27 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_unsubscribe' requires user role");
         return;
       }
-      const result = transcriptUnsubscribe(daemon.transcriptTail, req.sid, conn);
-      send(conn, { ok: true, ...result.data });
+      relayUnsubscribe(daemon.transcriptRelay, req.sid, conn);
+      send(conn, { ok: true, sid: req.sid });
+      return;
+    }
+
+    // The rows its hooks module saw go into the caller's conversation (DR-0045
+    // §2). The jsonl is read on for the Timelines that follow it: the main
+    // thread's rows only (a subagent's are in its own file, which no
+    // Timeline follows live), and not a `queue` row, which has no line.
+    case "transcript_push": {
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'transcript_push' requires session role");
+        return;
+      }
+      const uuids = req.rows.flatMap((row) =>
+        row.agent_id === undefined && row.door !== "queue" ? [row.uuid] : [],
+      );
+      if (uuids.length > 0) {
+        relayPushed(daemon.transcriptRelay, conn.identity.sid, uuids);
+      }
+      send(conn, { ok: true });
       return;
     }
 
@@ -3233,6 +3260,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
   stopAllTailWatches(daemon.transcriptTail);
+  stopAllRelays(daemon.transcriptRelay);
   daemon.peerInjector.close();
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before

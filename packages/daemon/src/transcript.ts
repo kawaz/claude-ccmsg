@@ -12,13 +12,10 @@ import {
   TRANSCRIPT_READ_OLDER_MAX_BYTES,
   TranscriptRowTimestampLineSchema,
   type TranscriptReadResponse,
-  type TranscriptSubscribeResponse,
-  type TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 import { resolveAgentTranscript } from "./agent-transcripts.ts";
 import type { TraceWriter } from "./trace.ts";
-import { wireLine } from "./wire-line.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -454,11 +451,12 @@ export async function transcriptRead(
 }
 
 // ---------------------------------------------------------------------------
-// Live tail (DR-0009 live-tail addendum): follow a connected session's
-// transcript, pushing complete-line-only ev:"transcript" events to every
-// subscriber of that sid. Distinct storage from transcriptRead above — a
-// Watch tracks one fs.watch/poll timer + one subscriber set per sid, keyed
+// Watch: follow a session's transcript for the daemon's own folds
+// (session_status, session errors, user input), handing complete lines to
+// each listener. One fs.watch/poll timer + one listener set per sid, keyed
 // off the same hello-validated transcript_path (no separate trust boundary).
+// The webui's live Timeline is not read here: transcript-relay.ts reads it on
+// the hooks module's pushes (DR-0045 §4).
 // ---------------------------------------------------------------------------
 
 export interface TailLog {
@@ -493,10 +491,10 @@ const TAIL_POLL_FALLBACK_MS = 1000;
  */
 const TAIL_BACKUP_POLL_MS = 2000;
 
-/** Internal line-listener payload: same shape checkNow broadcasts to wire
- *  subscribers. `start < previous end` never happens for growth; a reset
- *  (truncate or file replacement) arrives as lines=[] with start===end===size,
- *  letting a folding consumer detect it and rescan (see session-status.ts). */
+/** Internal line-listener payload: what checkNow hands each listener.
+ *  `start < previous end` never happens for growth; a reset (truncate or file
+ *  replacement) arrives as lines=[] with start===end===size, letting a
+ *  folding consumer detect it and rescan (see session-status.ts). */
 export type TranscriptLineListener = (payload: {
   lines: string[];
   start: number;
@@ -507,7 +505,7 @@ export type TranscriptLineListener = (payload: {
 interface Watch {
   sid: string;
   file: string;
-  /** byte offset up to which complete lines have already been emitted to subscribers. */
+  /** byte offset up to which complete lines have already been emitted to listeners. */
   lastEnd: number;
   /** inode of `file` as of the last successful checkNow (or Watch creation).
    *  Lets checkNow tell "the same file grew/shrank" apart from "this path
@@ -528,7 +526,6 @@ interface Watch {
    *  and came back is a different file by definition, even if the new file
    *  reuses the inode AND lands in the same birthtime tick. */
   sawMissing: boolean;
-  subscribers: Set<TailConn>;
   lineListeners: Set<TranscriptLineListener>;
   fsWatcher: fs.FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
@@ -545,33 +542,10 @@ export function createTranscriptTailStore(trace?: TraceWriter): TranscriptTailSt
   return { watches: new Map(), trace };
 }
 
-function sendTail(
-  conn: TailConn,
-  payload: { sid: string; lines: string[]; start: number; end: number; size: number },
-): void {
-  conn.write(wireLine({ ev: "transcript", ...payload }));
-}
-
 function broadcast(
   watch: Watch,
   payload: { lines: string[]; start: number; end: number; size: number },
 ): void {
-  let subscriber = 0;
-  const entryTs = extractEntryTimestamp(payload.lines);
-  for (const sub of watch.subscribers) {
-    void watch.trace?.write({
-      comp: "daemon",
-      edge: "out",
-      kind: "wire_write",
-      sid: watch.sid,
-      start: payload.start,
-      end: payload.end,
-      size: payload.size,
-      ...(entryTs ? { entry_ts: entryTs } : {}),
-      subscriber: subscriber++,
-    });
-    sendTail(sub, { sid: watch.sid, ...payload });
-  }
   for (const listener of watch.lineListeners) listener(payload);
 }
 
@@ -592,7 +566,7 @@ export function extractEntryTimestamp(lines: readonly string[]): string | undefi
  * line (the writer mid-append) is dropped and left for the next check
  * (`end` stays at `from` in that case, signaling "nothing complete yet").
  */
-function readLinesForTail(
+export function readLinesForTail(
   file: string,
   from: number,
   to: number,
@@ -630,7 +604,7 @@ function readLinesForTail(
  *    past the size<lastEnd check and read garbage from the wrong content at
  *    a stale offset.
  *  - size < lastEnd (truncate, same inode): reset the offset to the new size
- *    and tell subscribers with an empty-lines event carrying the new size,
+ *    and tell listeners with an empty-lines event carrying the new size,
  *    so a client watching for stale content knows to drop what it had
  *    (DR-0009 live-tail addendum: safe-side reset, no attempt to diff
  *    against content that no longer exists).
@@ -775,7 +749,7 @@ function startWatching(watch: Watch, log: TailLog): void {
     });
     w.on("error", (e) => {
       log.info(
-        `transcript tail: fs.watch error sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
+        `transcript tail: fs.watch error sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
       );
       stopFsWatcher(watch);
       stopPolling(watch); // drop the backup-frequency timer before restarting at fallback frequency
@@ -785,7 +759,7 @@ function startWatching(watch: Watch, log: TailLog): void {
     startPolling(watch, log, TAIL_BACKUP_POLL_MS);
   } catch (e) {
     log.info(
-      `transcript tail: fs.watch unavailable sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
+      `transcript tail: fs.watch unavailable sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
     );
     startPolling(watch, log, TAIL_POLL_FALLBACK_MS);
   }
@@ -793,7 +767,7 @@ function startWatching(watch: Watch, log: TailLog): void {
 
 function teardownWatch(watch: Watch, reason: string): void {
   watch.log.info(
-    `transcript tail: teardown sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} reason=${reason}`,
+    `transcript tail: teardown sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} reason=${reason}`,
   );
   stopFsWatcher(watch);
   stopPolling(watch);
@@ -834,15 +808,13 @@ function getOrCreateWatch(
   if (!resolved.ok) return resolved;
 
   let watch = store.watches.get(sid);
-  let migratedSubscribers: Set<TailConn> | undefined;
   let migratedListeners: Set<TranscriptLineListener> | undefined;
   let replacedFrom: string | undefined;
   if (watch && watch.file !== resolved.file) {
     replacedFrom = watch.file;
-    migratedSubscribers = watch.subscribers;
     migratedListeners = watch.lineListeners;
     log.info(
-      `transcript tail: path replace sid=${sid} from=${watch.file} to=${resolved.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size}`,
+      `transcript tail: path replace sid=${sid} from=${watch.file} to=${resolved.file} listeners=${watch.lineListeners.size}`,
     );
     teardownWatch(watch, "path-replaced");
     store.watches.delete(sid);
@@ -862,7 +834,6 @@ function getOrCreateWatch(
       ino: stat.ino,
       birthtimeMs: stat.birthtimeMs,
       sawMissing: false,
-      subscribers: migratedSubscribers ?? new Set(),
       lineListeners: migratedListeners ?? new Set(),
       fsWatcher: null,
       pollTimer: null,
@@ -872,7 +843,7 @@ function getOrCreateWatch(
     store.watches.set(sid, watch);
     startWatching(watch, log);
     log.info(
-      `transcript tail: create sid=${sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size}`,
+      `transcript tail: create sid=${sid} file=${watch.file} listeners=${watch.lineListeners.size}`,
     );
     if (replacedFrom !== undefined) {
       broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
@@ -882,33 +853,9 @@ function getOrCreateWatch(
 }
 
 function maybeTeardownWatch(store: TranscriptTailStore, watch: Watch): void {
-  if (watch.subscribers.size !== 0 || watch.lineListeners.size !== 0) return;
+  if (watch.lineListeners.size !== 0) return;
   teardownWatch(watch, "unused");
   store.watches.delete(watch.sid);
-}
-
-/**
- * Subscribe `conn` to `sid`'s transcript tail. First subscriber for a sid
- * creates the Watch (anchored at the file's current size — only bytes
- * appended *after* this call are ever tailed, matching transcript_read's own
- * "viewer starts from the tail" model); later subscribers for the same sid
- * join the existing Watch and its already-current `lastEnd`. If the sid's
- * accepted transcript_path changed since an existing Watch was created (a
- * later hello re-validated a different file, DR-0009 addendum), the stale
- * Watch is torn down and replaced.
- */
-export function transcriptSubscribe(
-  store: TranscriptTailStore,
-  sessions: SessionLookup,
-  sid: string,
-  conn: TailConn,
-  log: TailLog,
-): TranscriptResult<Omit<TranscriptSubscribeResponse, "ok">> {
-  const result = getOrCreateWatch(store, sessions, sid, log);
-  if (!result.ok) return result;
-  const watch = result.data;
-  watch.subscribers.add(conn);
-  return { ok: true, data: { sid, size: watch.lastEnd } };
 }
 
 /** Internal consumers can share the transcript Watch without opening a second
@@ -942,31 +889,6 @@ export function unsubscribeTranscriptLines(
   if (!watch) return;
   watch.lineListeners.delete(listener);
   maybeTeardownWatch(store, watch);
-}
-
-/** Unsubscribe `conn` from `sid`'s tail; tears the Watch down once its last
- *  subscriber leaves. Always ok:true — unsubscribing a sid this conn was
- *  never watching (or that no longer exists) is a no-op, not an error. */
-export function transcriptUnsubscribe(
-  store: TranscriptTailStore,
-  sid: string,
-  conn: TailConn,
-): { ok: true; data: Omit<TranscriptUnsubscribeResponse, "ok"> } {
-  const watch = store.watches.get(sid);
-  if (watch) {
-    watch.subscribers.delete(conn);
-    maybeTeardownWatch(store, watch);
-  }
-  return { ok: true, data: { sid } };
-}
-
-/** Remove `conn` from every sid it's tailing — call on connection close so a
- *  disconnected client's dead handle doesn't linger in a Watch's subscriber
- *  set forever. */
-export function transcriptUnsubscribeAll(store: TranscriptTailStore, conn: TailConn): void {
-  for (const watch of store.watches.values()) {
-    if (watch.subscribers.delete(conn)) maybeTeardownWatch(store, watch);
-  }
 }
 
 /** Unconditional stop of every Watch, for daemon shutdown. */

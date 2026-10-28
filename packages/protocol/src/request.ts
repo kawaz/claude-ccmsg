@@ -84,6 +84,7 @@ import {
   TranscriptReadRequestSchema,
   TranscriptSubscribeRequestSchema,
   TranscriptUnsubscribeRequestSchema,
+  TranscriptPushRequestSchema,
 } from "./request-transcripts.ts";
 import {
   ClaudeUpdateRequestSchema,
@@ -176,6 +177,7 @@ const OP_REQUEST_SCHEMAS = [
   AgentsRequestSchema,
   TranscriptSubscribeRequestSchema,
   TranscriptUnsubscribeRequestSchema,
+  TranscriptPushRequestSchema,
   ClientTraceRequestSchema,
   SessionStatusRequestSchema,
   SessionStatusSubscribeRequestSchema,

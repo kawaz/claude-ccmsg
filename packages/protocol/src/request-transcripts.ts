@@ -6,6 +6,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import { JsonValueSchema } from "./json-value.ts";
 import type { Output } from "./parse.ts";
 
 /**
@@ -71,6 +72,33 @@ export const TranscriptUnsubscribeRequestSchema = v.object({
   sid: v.string(),
 });
 export type TranscriptUnsubscribeRequest = Output<typeof TranscriptUnsubscribeRequestSchema>;
+
+/** One row of the session's conversation as the hooks module saw it go in
+ * (the engine's `session.append`), passed on unread (DR-0045 §2). */
+export const TranscriptPushRowSchema = v.object({
+  /** The row's uuid: the jsonl line of the same row carries it. */
+  uuid: v.pipe(v.string(), v.nonEmpty("Expected the row's uuid")),
+  /** How the row went in (`prompt`, `response`, `tool-result`, `attachment`,
+   * `queue`, …). A `queue` row has no line in the jsonl. */
+  door: v.string(),
+  /** The subagent or teammate whose conversation the row is in; absent on
+   * the main thread. */
+  agent_id: v.optional(v.string()),
+  /** The row as the engine handed it (`{ type, role?, name?, content }`),
+   * which is not the jsonl line (DR-0045 §2). */
+  message: JsonValueSchema,
+});
+export type TranscriptPushRow = Output<typeof TranscriptPushRowSchema>;
+
+/** The rows that went into the caller's conversation, in the order they went
+ * in (session role only, DR-0045 §2): what its hooks module saw through
+ * `session.append`. The daemon reads the jsonl's continuation on them, for
+ * the Timelines that follow the session (`ev:"transcript"`). */
+export const TranscriptPushRequestSchema = v.object({
+  op: v.literal("transcript_push"),
+  rows: v.pipe(v.array(TranscriptPushRowSchema), v.nonEmpty("Expected at least one row")),
+});
+export type TranscriptPushRequest = Output<typeof TranscriptPushRequestSchema>;
 
 /** One boundary the browser timed: when a transcript delivery reached the
  * socket (`ws_receive`), the store (`store_dispatch`) and the DOM

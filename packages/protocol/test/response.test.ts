@@ -555,6 +555,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   ],
   transcript_subscribe: [{ ok: true, sid: SID, size: 100 }],
   transcript_unsubscribe: [{ ok: true, sid: SID }],
+  transcript_push: [{ ok: true }],
   client_trace: [{ ok: true, sid: SID, written: 3 }],
   session_status: [
     { ok: true, sid: SID, ...SNAPSHOT },

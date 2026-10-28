@@ -39,6 +39,9 @@ export const TranscriptUnsubscribeResponseSchema = v.object({
 });
 export type TranscriptUnsubscribeResponse = Output<typeof TranscriptUnsubscribeResponseSchema>;
 
+export const TranscriptPushResponseSchema = v.object({ ok: v.literal(true) });
+export type TranscriptPushResponse = Output<typeof TranscriptPushResponseSchema>;
+
 export const ClientTraceResponseSchema = v.object({
   ok: v.literal(true),
   sid: v.string(),

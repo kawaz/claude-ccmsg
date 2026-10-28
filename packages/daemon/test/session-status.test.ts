@@ -2444,8 +2444,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
     }
   });
 
-  test("transcript/status subscribe は同一 Watch で共存し、片方の解除後も他方が生きる", async () => {
-    // 2 種の subscriber 集合が両方空になるまで fs Watch を teardown しない。
+  test("transcript/status subscribe は独立し、片方の解除後も他方が生きる", async () => {
+    // status は daemon の fold の Watch から、Timeline は module の push を合図に
+    // した読み (DR-0045 §4) から届く。片方を解除しても他方は止まらない。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
     try {
@@ -2457,7 +2458,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           .map((line) => `${line}\n`)
           .join(""),
       );
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const session = await sessionConn(ctx, sid, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       await user.request({ op: "transcript_subscribe", sid });
@@ -2481,6 +2482,10 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           .map((line) => `${line}\n`)
           .join(""),
       );
+      await session.requestOk({
+        op: "transcript_push",
+        rows: [{ uuid: "tu-after-unsubscribe", door: "response", message: {} }],
+      });
       const transcript = await user.readEventUntil("transcript");
       expect(transcript.ev.lines).toHaveLength(2);
       expect(transcript.seen.some(isKind("session_status"))).toBe(false);

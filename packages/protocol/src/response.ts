@@ -77,6 +77,7 @@ import {
   TranscriptReadResponseSchema,
   TranscriptSubscribeResponseSchema,
   TranscriptUnsubscribeResponseSchema,
+  TranscriptPushResponseSchema,
 } from "./response-transcripts.ts";
 
 export * from "./response-rooms.ts";
@@ -144,6 +145,7 @@ export const RESPONSE_SCHEMAS = {
   agents: AgentsResponseSchema,
   transcript_subscribe: TranscriptSubscribeResponseSchema,
   transcript_unsubscribe: TranscriptUnsubscribeResponseSchema,
+  transcript_push: TranscriptPushResponseSchema,
   client_trace: ClientTraceResponseSchema,
   session_status: SessionStatusResponseSchema,
   session_status_subscribe: SessionStatusSubscribeResponseSchema,

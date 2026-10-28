@@ -21,6 +21,7 @@ import {
   sessionConn,
   userConn,
   fixtureDir,
+  type TestClient,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -775,7 +776,16 @@ describe("transcript_read after (DR-0009 §3: 差分取得)", () => {
   });
 });
 
-describe("transcript live tail (DR-0009 live-tail addendum)", () => {
+describe("transcript live Timeline (DR-0045 §2 / §4)", () => {
+  /** What the session's hooks module does as a row goes in: push it. The
+   * daemon reads the jsonl on, as far as its complete lines go. */
+  async function push(s: TestClient, uuid: string): Promise<void> {
+    await s.requestOk({
+      op: "transcript_push",
+      rows: [{ uuid, door: "response", message: { type: "assistant", content: [] } }],
+    });
+  }
+
   test("session role からの transcript_subscribe / transcript_unsubscribe は bad_request (user role only)", async () => {
     const ctx = await startInProcessDaemon();
     try {
@@ -823,7 +833,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "L0\n"); // 3 bytes already on disk before subscribing
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u = await userConn(ctx);
       const sub = await u.requestOk({ op: "transcript_subscribe", sid });
@@ -831,6 +841,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       expect(sub.size).toBe(3); // anchored at current size — pre-existing content is not replayed
 
       fs.appendFileSync(file, "L1\nL2\n"); // 6 bytes appended, both lines complete
+      await push(s, "u1");
       const { ev } = await u.readEventUntil("transcript");
       expect(ev.sid).toBe(sid);
       expect(ev.lines).toEqual(["L1", "L2"]);
@@ -850,7 +861,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "");
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u = await userConn(ctx);
       const sub = await u.requestOk({ op: "transcript_subscribe", sid });
@@ -858,6 +869,9 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
       // Partial write with no trailing newline — must not surface as a line.
       fs.appendFileSync(file, "partial-no-newline-yet");
+      // The row is pushed before its line is complete: the daemon reads
+      // again while it waits for the row, and sends the line once whole.
+      await push(s, "u-partial");
       // Complete the line, then append one more full line — the first event
       // must contain BOTH as whole, uncorrupted lines (proves the partial
       // fragment was deferred rather than dropped or split wrongly).
@@ -880,7 +894,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u = await userConn(ctx);
       const sub = await u.requestOk({ op: "transcript_subscribe", sid });
@@ -888,6 +902,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
       // Simulate a log rotation / rewrite: file shrinks to 4 bytes.
       fs.writeFileSync(file, "X0\n\n"); // deliberately not a clean jsonl line, tests the reset itself
+      await push(s, "u-shrunk");
       const { ev } = await u.readEventUntil("transcript");
       expect(ev.lines).toEqual([]); // safe-side reset never tries to diff stale content
       expect(ev.start).toBe(4);
@@ -896,6 +911,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
       // Tail resumes correctly from the new offset for content appended after the reset.
       fs.appendFileSync(file, "Y0\n");
+      await push(s, "u-after-reset");
       const { ev: ev2 } = await u.readEventUntil("transcript", (e) => e.lines.length > 0);
       expect(ev2.lines).toEqual(["Y0"]);
       expect(ev2.start).toBe(4);
@@ -920,7 +936,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u = await userConn(ctx);
       const sub = await u.requestOk({ op: "transcript_subscribe", sid });
@@ -932,6 +948,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       // as ordinary growth and try to read [9, 12) of the new file.
       fs.rmSync(file);
       fs.writeFileSync(file, "Y0\nY1\nY2\nY3\n"); // 12 bytes, new inode
+      await push(s, "u-replaced");
       const { ev } = await u.readEventUntil("transcript");
       expect(ev.lines).toEqual([]); // safe-side reset, no attempt to diff stale content
       expect(ev.start).toBe(12);
@@ -940,6 +957,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
       // Tail resumes correctly from the new offset for content appended after the reset.
       fs.appendFileSync(file, "Y4\n");
+      await push(s, "u-after-replace");
       const { ev: ev2 } = await u.readEventUntil("transcript", (e) => e.lines.length > 0);
       expect(ev2.lines).toEqual(["Y4"]);
       expect(ev2.start).toBe(12);
@@ -950,7 +968,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
     }
   });
 
-  test("transcript_path 変更で Watch を置換しても既存 wire subscriber を新しいファイルへ移行する", async () => {
+  test("transcript_path が変わったら、購読しているタブは新しいファイルをその末尾から追う", async () => {
     const ctx = await startInProcessDaemon();
     const dir1 = fixtureDir("transcript");
     const dir2 = fixtureDir("transcript");
@@ -963,14 +981,12 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       await sessionConn(ctx, sid, { transcript_path: file1 });
 
       const u = await userConn(ctx);
-      // session-errors の内部 line listener を有効にする。path 変更時にこの
-      // listener が新 Watch を要求しても、同じ Watch を共有する Timeline の
-      // wire subscriber は失われず、新 path の追記を受け続ける必要がある。
       await u.request({ op: "subscribe" });
       await u.requestOk({ op: "transcript_subscribe", sid });
 
-      await sessionConn(ctx, sid, { transcript_path: file2 });
+      const s2 = await sessionConn(ctx, sid, { transcript_path: file2 });
       fs.appendFileSync(file2, "after-path-change\n");
+      await push(s2, "u-new-file");
       const { ev } = await u.readEventUntil("transcript", (event) => event.lines.length > 0);
       expect(ev.lines).toEqual(["after-path-change"]);
       expect(ev.start).toBe(Buffer.byteLength("new\n"));
@@ -988,7 +1004,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "");
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u = await userConn(ctx);
       // The push subscribe too (distinct from transcript_subscribe): the
@@ -999,7 +1015,8 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       await u.request({ op: "subscribe" });
       await u.requestOk({ op: "transcript_subscribe", sid });
       fs.appendFileSync(file, "L0\n");
-      await u.readEventUntil("transcript"); // confirm the tail really was live
+      await push(s, "u0");
+      await u.readEventUntil("transcript"); // confirm the Timeline really was live
 
       const unsub = await u.requestOk({
         op: "transcript_unsubscribe",
@@ -1008,6 +1025,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       expect(unsub.ok).toBe(true);
 
       fs.appendFileSync(file, "L1\n");
+      await push(s, "u1");
       // Drive a distinguishable event through the SAME connection's stream (a
       // say from a fresh session) and confirm no "transcript" event snuck in
       // among the events collected while waiting for it.
@@ -1027,30 +1045,109 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, "");
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
 
       const u1 = await userConn(ctx);
       await u1.requestOk({ op: "transcript_subscribe", sid });
       fs.appendFileSync(file, "L0\n");
+      await push(s, "u0");
       await u1.readEventUntil("transcript");
       u1.close();
 
       // A second subscriber re-subscribing to the same sid after the first's
-      // disconnect must still work: the last subscriber leaving tears the
-      // Watch down (fs.watch .close()d), and this new subscribe recreates it
-      // from scratch. This guards a real bug found empirically (macOS/Bun,
-      // 2026-07): re-opening `fs.watch()` on the exact same FILE path right
-      // after closing a prior watcher on it silently never fires again — no
-      // error, just permanent silence — whereas watching the parent
-      // directory (what startWatching actually does) survives the same
-      // close/reopen cycle cleanly. This test would hang forever on the
-      // regression.
+      // disconnect follows on from the file's end: the last subscriber
+      // leaving drops the relay, and this subscribe opens it again.
       const u2 = await userConn(ctx);
       const sub2 = await u2.requestOk({ op: "transcript_subscribe", sid });
       expect(sub2.ok).toBe(true);
       fs.appendFileSync(file, "L1\n");
+      await push(s, "u1");
       const { ev } = await u2.readEventUntil("transcript");
       expect(ev.lines).toEqual(["L1"]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 何を保証するか: 行は append より後に書かれる。push の時に jsonl にまだ
+  // 無い行は、短い間隔で読み直して書かれた時に届く (常時の監視は持たない)。
+  test("a row pushed before its line is written arrives once the line is written", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      fs.writeFileSync(file, "");
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
+      const u = await userConn(ctx);
+      await u.requestOk({ op: "transcript_subscribe", sid });
+
+      await push(s, "late-row");
+      const line = JSON.stringify({ type: "assistant", uuid: "late-row" });
+      setTimeout(() => fs.appendFileSync(file, `${line}\n`), 150);
+      const { ev } = await u.readEventUntil("transcript");
+      expect(ev.lines).toEqual([line]);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 何を保証するか: push が無ければ、ファイルが伸びても何も届かない (tail は
+  // 持たない。module の無いセッションの Timeline はライブにならない)。
+  test("nothing arrives for lines written with no push", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      fs.writeFileSync(file, "");
+      await sessionConn(ctx, sid, { transcript_path: file });
+      const u = await userConn(ctx);
+      await u.request({ op: "subscribe" });
+      await u.requestOk({ op: "transcript_subscribe", sid });
+      fs.appendFileSync(file, "L0\n");
+      const s2 = await sessionConn(ctx, SID_B);
+      const seen = await sayMarker(s2, u, "marker");
+      expect(seen.some(isKind("transcript"))).toBe(false);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 何を保証するか: transcript_push は session role だけ。queue の行と
+  // subagent の行は読み直しの合図にしない (queue には jsonl の行が無く、
+  // subagent の行は別のファイル)。
+  test("transcript_push is the session's, and its queue and subagent rows read nothing", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("transcript");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      fs.writeFileSync(file, "");
+      const s = await sessionConn(ctx, sid, { transcript_path: file });
+      const u = await userConn(ctx);
+      const refused = await u.requestError({
+        op: "transcript_push",
+        rows: [{ uuid: "x", door: "prompt", message: {} }],
+      });
+      expect(refused.error.code).toBe("bad_request");
+
+      await u.request({ op: "subscribe" });
+      await u.requestOk({ op: "transcript_subscribe", sid });
+      fs.appendFileSync(file, "L0\n");
+      await s.requestOk({
+        op: "transcript_push",
+        rows: [
+          { uuid: "q", door: "queue", message: {} },
+          { uuid: "a", door: "response", agent_id: "a0ea5ee99e172bc5c", message: {} },
+        ],
+      });
+      const s2 = await sessionConn(ctx, SID_B);
+      const seen = await sayMarker(s2, u, "marker");
+      expect(seen.some(isKind("transcript"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(dir, { recursive: true, force: true });

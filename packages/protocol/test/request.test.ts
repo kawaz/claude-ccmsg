@@ -396,6 +396,29 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "transcript_unsubscribe", sid: SID },
     bad: [{ op: "transcript_unsubscribe" }],
   },
+  transcript_push: {
+    ok: {
+      op: "transcript_push",
+      rows: [
+        {
+          uuid: "0fffe202-9b1e-4313-86b2-479d24bd37b0",
+          door: "response",
+          message: {
+            type: "assistant",
+            role: "assistant",
+            content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }],
+          },
+        },
+        { uuid: "u2", door: "prompt", agent_id: "a0ea5ee99e172bc5c", message: { type: "user" } },
+      ],
+    },
+    bad: [
+      { op: "transcript_push" },
+      { op: "transcript_push", rows: [] },
+      { op: "transcript_push", rows: [{ uuid: "", door: "prompt", message: {} }] },
+      { op: "transcript_push", rows: [{ uuid: "u", message: {} }] },
+    ],
+  },
   client_trace: {
     ok: {
       op: "client_trace",
