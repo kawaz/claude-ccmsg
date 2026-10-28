@@ -1,16 +1,16 @@
 # DR-0042: say は発声の直前に読み上げ辞書 (TSV) で単語を読みに置き換える
 
-- Status: Accepted (2026-10-27、kawaz 裁定) — ✅ 実装済み (`<config dir>/say-dictionary.tsv` を同梱の初期辞書に重ねる、`ccmsg say` と `ccmsg sidecar permit` の音声への適用)
+- Status: Superseded by [DR-0045](../DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2 / §3
 - Date: 2026-10-27
 
 ## Context
 
-音声通知 (`say`) は英単語・頭字語の読みがぶれる。実測で `1Password` は「いちぱすわーど」、`daemon` は「ディーマン」、`sidecar` は「シデカー」、`plugin` は「プルージン」と読まれる。これまでは「エージェントがカタカナに直してから渡す」決まりで避けていたが、決まりを読んだセッションしか守れず、新しい単語は毎回初出の扱いで、同じ誤読を各セッションが別々に踏む ([issue](../issue/archive/2026-10-27-say-reading-dictionary.md))。
+音声通知 (`say`) は英単語・頭字語の読みがぶれる。実測で `1Password` は「いちぱすわーど」、`daemon` は「ディーマン」、`sidecar` は「シデカー」、`plugin` は「プルージン」と読まれる。これまでは「エージェントがカタカナに直してから渡す」決まりで避けていたが、決まりを読んだセッションしか守れず、新しい単語は毎回初出の扱いで、同じ誤読を各セッションが別々に踏む ([issue](../../issue/archive/2026-10-27-say-reading-dictionary.md))。
 
 音声の経路は 2 つあり、どちらも CLI が発声の binary (`/usr/bin/say`、試験では `CCMSG_SAY_BIN`) を起こす:
 
 - `ccmsg say` (mods の tool `say` も `bin/ccmsg say <text>` を起こす)。daemon には「どのセッションが喋ったか」の記録を送るだけで、session id が無い・daemon が居ない時は記録を飛ばして発声する
-- `ccmsg sidecar permit` の「許可を求めています」([DR-0040](./DR-0040-permit-request-tool.md) §6)
+- `ccmsg sidecar permit` の「許可を求めています」([DR-0040](../DR-0040-permit-request-tool.md) §6)
 
 ## Decision
 
@@ -43,7 +43,7 @@
 - 語は空白を含まない 1 語、読みはタブと改行を含まず空白だけでない文字列。タブがちょうど 1 つでない行・語や読みが規則に合わない行は、ファイル名と行番号と理由を 1 行で警告し、その行だけ飛ばす (残りの行は効く)。警告は発声した CLI の標準エラー (`ccmsg say: <file>:<line>: <理由> — line skipped`) に出す。daemon を介さない経路なので daemon.log には書かない
 - 同じ語 (大文字小文字を無視) が 2 度あれば後の行が勝つ
 - ファイルそのものが読めない (権限・ディレクトリ等) 時は 1 行警告し、同梱の辞書だけで話す。発声は止めない
-- 行の形はスキーマで読む ([DR-0038](./DR-0038-json-is-parsed-by-schema.md)。人が手で書くファイルなので JSON でなく TSV にし、行をタブで分けた配列をスキーマに通す)。スキーマと置き換えの関数は `packages/protocol/src/say-dictionary.ts` に置く (純関数。ファイルの読み書きと発声は CLI)
+- 行の形はスキーマで読む ([DR-0038](../DR-0038-json-is-parsed-by-schema.md)。人が手で書くファイルなので JSON でなく TSV にし、行をタブで分けた配列をスキーマに通す)。スキーマと置き換えの関数は `packages/protocol/src/say-dictionary.ts` に置く (純関数。ファイルの読み書きと発声は CLI)
 
 ### 5. 初期値
 
@@ -93,5 +93,5 @@ ccmsg の skill の `say` の節から「英字の略語はカタカナで書く
 
 ## 関連
 
-- [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 外から来るデータはスキーマで読む
-- [DR-0040](./DR-0040-permit-request-tool.md) §6 — 許可依頼の音声
+- [DR-0038](../DR-0038-json-is-parsed-by-schema.md) — 外から来るデータはスキーマで読む
+- [DR-0040](../DR-0040-permit-request-tool.md) §6 — 許可依頼の音声

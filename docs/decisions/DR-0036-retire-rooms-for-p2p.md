@@ -1,6 +1,6 @@
 # DR-0036: room を廃止し、セッション間メッセージを p2p (sid 宛の直送) にする
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ✅ 実装済み (§1 の直送、§2 の room の書き込み・配送・room storage・webui の room 操作の削除と読み取り専用の閲覧 (`rooms` / `room_history` / `read`、user role)、§3 の say の記録と未読のメモリ化)
+- Status: Accepted (2026-10-09、kawaz 裁定) — ✅ 実装済み (§1 の直送、§2 の room の書き込み・配送・room storage・webui の room 操作の削除と読み取り専用の閲覧 (`rooms` / `room_history` / `read`、user role))。§3 の say の記録と未読は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) が定める
 - Date: 2026-10-06
 
 ## Context
@@ -35,7 +35,7 @@ v2 (kawaz/ccmsg と契約 kawaz/ccmsg-protocol) は room を持たず、sid 宛�
 - 届かなかった直送は、理由を送り主に返すだけで daemon は預からない。送り主の agent が理由を見て再送か断念を決める。v2 の inbox (永続・再提示) は v1 に持ち込まない (v1 だけの永続状態を増やさない)
 - セッションから人へ送る経路は新しく作らない。人の入力は DR-0035 で composer から入り、その返事はセッションの TL に出る。セッションから人へ自発的に知らせるのは PushNotification (TL に 🔔 で出る、DR-0027 §6.3) で足りる
 - 全セッションへの一斉送信 (broadcast の代わり) は持たない。必要な時は送り主が `ccmsg peers` の結果に順に送る
-- `ccmsg say` の記録と未読は、1on1 room から外して notify の流れに載せ、未読は daemon のメモリだけで持つ (daemon の再起動で未読が消えるのは許容)
+- say は room に載せない。発声・表示・既読は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) が定める
 - 既存の room データ (`rooms/r*.jsonl`) は消さず、webui に読み取り専用の最小の閲覧 (room の一覧と本文) を残す。作成・投稿・招待・archive などの操作の UI とコードは削る
 - room 一覧に代わる横断ビューは作らない。セッション間のやり取りは各セッションの TL (送受信の封筒の描画) で見る
 

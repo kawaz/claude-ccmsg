@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節)
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節)。§6 の音声を `permit` の handler が鳴らす形は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §3 の実装で入る
 - Date: 2026-10-25
 
 ## Context
@@ -33,10 +33,10 @@ commands:    { command: string, description?: string }[]   # Bash に渡す内�
 
 ### 2. 経路
 
-say と同じ流儀で、module の handler → CLI の transport → daemon の op → 記録 → 全タブへの配送 → TL のバブル。
+module の handler → CLI の transport → daemon の op → 記録 → 全タブへの配送 → TL のバブル。
 
-- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行と、短い音声の分)
-- `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が記録したら音声 (§6) を鳴らして終わるのを待ち、daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
+- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)。依頼が記録されたら handler が音声 (§6) を鳴らす
+- `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が記録したら daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
 - op `permit_request` は session role だけが送れる。依頼するのは止められたエージェント自身なので、依頼はセッションを名指さず、送ったセッションの sid で記録する
 - 応答は記録の id だけ。handler は「許可依頼を出した」とだけ返す。添付の中身を人が読めるかは人が開いた時に分かることで、model に返すものは無い
 - handler は `next` を呼ばずに答えるので、`permit` 自体は permission の判定 (classifier を含む) を通らない (DR-0039 §3)。止められた直後でも呼べる。`permit` がするのは記録と表示と音声だけで、権限は何も変えない
@@ -52,29 +52,29 @@ say と同じ流儀で、module の handler → CLI の transport → daemon の
 
 ### 4. 記録
 
-- say の記録 (say-log) とは別の記録 (`PermitRequestLog`) にする。形が違い (添付・intents・commands を持つ)、上限の根拠も違う
-- daemon のメモリだけに持つ。v1 だけの永続状態を増やさない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3) のは say と同じで、daemon を再起動すると消える
-- 上限は 50 件で、超えたら古いものから消える。依頼が意味を持つのはエージェントが許可を待つ間だけで daemon の寿命よりずっと短く、全件は subscribe したタブに送るものなので、say の上限 (200) より小さくする
+- 記録は `PermitRequestLog` に持つ
+- daemon のメモリだけに持つ。v1 だけの永続状態を増やさない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3)。daemon を再起動すると消える
+- 上限は 50 件で、超えたら古いものから消える。依頼が意味を持つのはエージェントが許可を待つ間だけで daemon の寿命よりずっと短く、全件は subscribe したタブに送るものなので小さく持つ
 - 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, read }`。無い list は空の list で持つ。記録した後に変わるのは `read` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
-- `read` は人がまだ手を付けていないかの印で、say の既読と同じ仕組みにする。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (daemon の再起動で消えた依頼への既読もここに来る)
+- `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (daemon の再起動で消えた依頼への既読もここに来る)
 
 ### 5. 配送
 
-- user role の subscriber だけに送る。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い。say と同じ)
+- user role の subscriber だけに送る。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)
 - subscribe の時に全件を `ev:"permit_requests"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い依頼を捨てられるように)。記録した時と既読にした時に、その 1 件だけを `ev:"permit_request"` で送る
-- say は記録が変わるたびに全件を送るが、許可依頼で変わるのは `read` だけなので、変わった 1 件だけで足りる。webui は全件で置き換え、1 件は同じ id のものと差し替える (無ければ足す)
+- 許可依頼で変わるのは `read` だけなので、変わった 1 件だけで足りる。webui は全件で置き換え、1 件は同じ id のものと差し替える (無ければ足す)
 
 ### 6. 音声
 
-`ccmsg sidecar permit` は daemon が記録した後、`ccmsg say` と同じ音声のコマンド (`/usr/bin/say`、試験では `CCMSG_SAY_BIN`) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
+`permit` の handler は `ccmsg sidecar permit` が依頼の記録を返した後、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §1 / §3) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
-- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、標準エラーにその旨を出すだけで exit は変えない
+- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、tool の結果は「許可依頼を出した」のまま、鳴らなかった理由を添える
 - daemon が依頼を記録しなかった時 (daemon が無い、断られた) は鳴らさない。見に行っても何も無いため
 
 ### 7. webui のバブル
 
-そのセッションの Timeline に、say と同じく時刻で合流させて出す (say-merge.ts の `saySlots` を共用し、同じ slot の say と許可依頼は時刻順に並べる)。subagent の Timeline には出さない。外枠 (角丸・余白・送り手の行・時刻の行) は TL の他の吹き出しと同じ部品 (`.tl-bubble` / `.tl-bubble-body` / `.tl-bubble-from` / `.tl-bubble-footer` / `.tl-bubble-time`) をそのまま使い、専用にするのは中身 (止められた行動 / 添付 / 許可してほしいこと / 「許可する」) と見た目だけにする。エージェント間の msg (色の付いた面だけ) とも say (琥珀の札) とも色相でなく明度と形で分ける: 送り手の行を本文の幅いっぱいの帯にして墨 (文字色より 1 段明るい `--gray-11`。依頼が何件も並んでも帯と枠が「許可する」より重くならない明度) で塗り、TL の地より明るい面・同じ墨の枠 2px・影で浮かせ、「許可する」を accent の塗りにする。未読と既読で見た目は変えず、帯のアイコン (未読 🔐 / 既読 🔓) で見分ける。既読になってもバブルは消えない。
+そのセッションの Timeline に、記録の時刻で合流させて出す (読み込み済みの行の間の、その時刻の位置に差し込む)。subagent の Timeline には出さない。外枠 (角丸・余白・送り手の行・時刻の行) は TL の他の吹き出しと同じ部品 (`.tl-bubble` / `.tl-bubble-body` / `.tl-bubble-from` / `.tl-bubble-footer` / `.tl-bubble-time`) をそのまま使い、専用にするのは中身 (止められた行動 / 添付 / 許可してほしいこと / 「許可する」) と見た目だけにする。エージェント間の msg (色の付いた面だけ) とも say (琥珀の札) とも色相でなく明度と形で分ける: 送り手の行を本文の幅いっぱいの帯にして墨 (文字色より 1 段明るい `--gray-11`。依頼が何件も並んでも帯と枠が「許可する」より重くならない明度) で塗り、TL の地より明るい面・同じ墨の枠 2px・影で浮かせ、「許可する」を accent の塗りにする。未読と既読で見た目は変えず、帯のアイコン (未読 🔐 / 既読 🔓) で見分ける。既読になってもバブルは消えない。
 
 ```
 🔐 許可依頼                       ← 帯 (既読は 🔓)

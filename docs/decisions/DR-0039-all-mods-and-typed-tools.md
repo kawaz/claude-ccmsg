@@ -64,7 +64,7 @@ module が `session.start` で `$.tool.register` により tool を登録し、`
   - 部分指定が複数のセッションに当たったら、当たった全部に届ける (kawaz 2026-10-15)
   - 送り主自身は宛先から除く。送り主だけに当たった時は送らず、理由 (`self`) を返す
   - 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」(DR-0036 §1 の区別) を model が読める文で返す。複数に当たった時は一部が届かなくても内訳を返す。SendMessage の結果は 1 値で内訳を返せなかったが、tool の結果にはその制約が無い。送り直しで二重に届くのを避けるため、届いた宛先と届かなかった宛先を区別して示す
-- **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。今の `ccmsg say` と同じく、人に音声で知らせ、daemon に記録して webui に 🔔 を出す (DR-0036 §3)
+- **人への知らせ**: say を tool にし、これをエージェントが人に知らせる口の正とする。発声・webui の 🔔・既読は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) が定める
 - **宛先の候補**: 相手を探す口 (今の `ccmsg peers` の役割) も、エージェントが使う口なので tool にする
 - **セッションの起動**: 別のセッションを起動する口も tool `launch` にする。入力 (claude のオプション名を field にした 1 つの object)、権限 (session role から起動できる)、結果の形、description は [DR-0018](./DR-0018-session-launcher.md) §3 が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
 - **許可の依頼**: auto mode の classifier に止められたエージェントが人に許可を求める口も tool `permit` にする。入力、経路、記録、webui のバブルは [DR-0040](./DR-0040-permit-request-tool.md) が正本で、登録の形と handler の流儀はこの節に従う (kawaz 2026-10-25)
@@ -92,7 +92,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 
 - **人の口**: `daemon` / `status` / `stop` / `origins` 等、人が端末で使うもの
-- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`、`launch` の tool が起こす `sidecar launch`) と、say の tool の handler が起こす `say`
+- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`、`launch` の tool が起こす `sidecar launch`)
 - `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`、transport は `ccmsg sidecar send-message`) に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
 - `subscribe` を廃止し、`notify` の配送をセッションへの注入に付け替える (§9)
