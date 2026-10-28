@@ -36,7 +36,7 @@ import {
   RoomHistoryResponseSchema,
   RoomsResponseSchema,
 } from "./response-rooms.ts";
-import { SessionLaunchResponseSchema } from "./launch.ts";
+import { LaunchToolResponseSchema, SessionLaunchResponseSchema } from "./launch.ts";
 import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
 import {
   PermitAttachmentReadResponseSchema,
@@ -107,6 +107,7 @@ export const RESPONSE_SCHEMAS = {
   notify: NotifyResponseSchema,
   dir_tree: DirTreeResponseSchema,
   session_launch: SessionLaunchResponseSchema,
+  launch_tool: LaunchToolResponseSchema,
   session_kill: SessionKillResponseSchema,
   session_restart: SessionRestartResponseSchema,
   session_rename: SessionRenameResponseSchema,

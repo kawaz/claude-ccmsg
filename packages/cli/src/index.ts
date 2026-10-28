@@ -18,7 +18,6 @@ import {
   type Identity,
   type ReplyOf,
   type RequestInput,
-  LaunchInputTextSchema,
   PermitInputTextSchema,
   type SessionStateFile,
 } from "@ccmsg/protocol";
@@ -281,11 +280,10 @@ session, and the way some of the module's tools go to the daemon. Not for
 direct use.
 `;
 
-/** `ccmsg sidecar` (DR-0035 §3), `ccmsg sidecar begin` (DR-0039 §2), `ccmsg
- * sidecar launch` (DR-0018 §3.7) and `ccmsg sidecar permit` (DR-0040). All
- * are the hooks module's: it starts the first for its session's life, the
- * second when the session starts or changes its id, and the last two for its
- * `launch` and `permit` tools. What else the module asks the daemon, the
+/** `ccmsg sidecar` (DR-0035 §3), `ccmsg sidecar begin` (DR-0039 §2) and
+ * `ccmsg sidecar permit` (DR-0040). All are the hooks module's: it starts the
+ * first for its session's life, the second when the session starts or changes
+ * its id, and the last for its `permit` tool. What else the module asks the daemon, the
  * replies to the requests the first copies to it among them, goes over the
  * daemon's `POST /op` (DR-0046). The help says no more than that on purpose
  * (DR-0035 §4). */
@@ -293,10 +291,6 @@ async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
     process.stdout.write(SIDECAR_HELP);
-    return;
-  }
-  if (positionals[0] === "launch") {
-    await runSidecarLaunch(opts);
     return;
   }
   if (positionals[0] === "permit") {
@@ -437,33 +431,6 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
     process.exit(1);
   }
   process.exit(0);
-}
-
-/** `ccmsg sidecar launch --sid <sid> < launch.json` (DR-0018 §3.7): ask the
- * daemon, as session `<sid>`, to start a session through its configured
- * launch command with the launch on standard input, and print the daemon's
- * session_launch reply (what the command did, uninterpreted), exiting 0. The
- * launch comes on standard input: its prompt may be long, and an argument is
- * bounded in size and shown to every user by `ps`.
- *
- * The reply waits for the launch command to end; nothing here times it out,
- * the module's wait does. Exits 3, nothing started, when no daemon can be
- * had; exits 1 with the daemon's refusal on standard error when it did not
- * run the command. */
-async function runSidecarLaunch(opts: Record<string, string | boolean>): Promise<never> {
-  const usage = "ccmsg sidecar launch --sid <sid> < launch.json";
-  const read = parseWith(LaunchInputTextSchema, await Bun.stdin.text());
-  if (!read.ok) {
-    throw new Error(
-      `standard input must be one launch as JSON: ${read.failure.summary}\n  usage: ${usage}`,
-    );
-  }
-  const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar launch");
-  const client = await daemonOrExit(identity, "sidecar launch");
-  const res = await client.request({ op: "session_launch", launch: read.value });
-  client.close();
-  process.exit(output(res));
 }
 
 /** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the

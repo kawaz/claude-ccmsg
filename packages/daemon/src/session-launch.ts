@@ -12,6 +12,7 @@ import {
   LAUNCH_KILL_GRACE_MS,
   LAUNCH_PIPE_DRAIN_GRACE_MS,
   LAUNCH_REQUESTED_BY_ENV,
+  launchErrorText,
   launchMakesSession,
   type LaunchCommandInput,
   type LaunchInput,
@@ -315,4 +316,18 @@ export async function launchSession(
       stderr: texts.stderr,
     },
   };
+}
+
+/** What a launch that ended after the `launch` tool's reply came to, as the
+ * notice put into the asking conversation (DR-0018 §3.7): the same words the
+ * tool answers with when the launch ends in time (the reply's fields as
+ * JSON, or launchErrorText), after which launch they are. */
+export function launchOutcomeNotice(cwd: string, outcome: SessionLaunchOutcome): string {
+  const head = `ccmsg の launch (cwd: ${cwd}) が終わった`;
+  if (outcome.ok) {
+    const { ok: _ok, ...result } = outcome.response;
+    return `${head}: ${JSON.stringify(result)}`;
+  }
+  const failed = launchErrorText(outcome);
+  return `${head}: ${failed.text}${failed.started === "no" ? "" : "。`peers` で確かめる"}`;
 }

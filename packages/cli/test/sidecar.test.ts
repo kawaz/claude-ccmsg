@@ -1,20 +1,17 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, name the run to the
 // daemon and keep naming it to whichever daemon runs, copy lines to stdout,
 // leave on a signal or when stdout's reader is gone; the module's reply to
-// what it copied goes back over POST /op; `ccmsg sidecar launch` (DR-0018
-// §3.7) carries its `launch` tool, and `ccmsg sidecar permit` (DR-0040) its
-// `permit` tool.
+// what it copied goes back over POST /op; `ccmsg sidecar permit` (DR-0040)
+// carries its `permit` tool.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   jsonText,
-  LaunchCommandInputSchema,
   parseWith,
   PROTOCOL_VERSION,
   resolvePaths,
-  SessionLaunchResponseTextSchema,
   PermitRequestResponseTextSchema,
   type SidecarRequest,
   SidecarRequestSchema,
@@ -754,167 +751,9 @@ describe("keepNamed", () => {
   });
 });
 
-// `launch` (DR-0018 §3.7): the launch goes to the daemon as the session's
-// session_launch, the daemon runs the configured launch command, and its
-// reply is printed as it came.
-describe("ccmsg sidecar launch", () => {
-  /** `ccmsg sidecar launch --sid SID` with `stdin` on its standard input. */
-  async function runLaunch(
-    stdin: string,
-    env: Record<string, string | undefined>,
-  ): Promise<{ code: number; out: string; err: string }> {
-    const proc = Bun.spawn([process.execPath, CLI, "sidecar", "launch", "--sid", SID], {
-      env,
-      stdin: new TextEncoder().encode(stdin),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { code, out, err };
-  }
-
-  /** A daemon in this process whose launch command is a script that prints
-   * its standard input and exits `exit`; `run` gets the CLI's environment
-   * for it and a directory to launch in. */
-  async function withLauncher(
-    exit: number,
-    run: (env: Record<string, string | undefined>, work: string) => Promise<void>,
-  ): Promise<void> {
-    const work = fs.realpathSync(shortBase());
-    const command = writeMockBin(
-      path.join(work, "launch"),
-      `#!/bin/sh\ncat\necho launched >&2\nexit ${String(exit)}\n`,
-    );
-    const ctx = await startInProcessDaemon({
-      config: { session_launcher: { launch_command: [command], root_dirs: [work] } },
-    });
-    try {
-      const { stateDir, configDir, dataDir } = ctx.daemon.paths;
-      await run(
-        {
-          ...process.env,
-          CCMSG_STATE_DIR: stateDir,
-          CCMSG_CONFIG_DIR: configDir,
-          CCMSG_DATA_DIR: dataDir,
-        },
-        work,
-      );
-    } finally {
-      await stopInProcessDaemon(ctx);
-    }
-  }
-
-  function launchReply(out: string) {
-    const read = parseWith(SessionLaunchResponseTextSchema, out);
-    if (!read.ok) throw new Error(`not a session_launch reply: ${read.failure.summary}: ${out}`);
-    return read.value;
-  }
-
-  test("prints the daemon's reply: what the launch command read, and the new session's id", async () => {
-    await withLauncher(0, async (env, work) => {
-      const prompt = "line 1\n`not run` $HOME 'quoted'";
-      const run = await runLaunch(
-        JSON.stringify({ cwd: work, model: "haiku", effort: "low", prompt }),
-        env,
-      );
-      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      const reply = launchReply(run.out);
-      expect(reply).toMatchObject({ ok: true, exit_code: 0, stderr: "launched\n" });
-      const read = parseWith(jsonText(LaunchCommandInputSchema), reply.stdout);
-      if (!read.ok) throw new Error(read.failure.summary);
-      expect(read.value).toEqual({
-        cwd: work,
-        model: "haiku",
-        effort: "low",
-        prompt,
-        session_id: defined(reply.session_id, "the new session's id"),
-      });
-    });
-  });
-
-  test("a launch command that exits non-zero is printed as it came, with no session id", async () => {
-    await withLauncher(4, async (env, work) => {
-      const run = await runLaunch(
-        JSON.stringify({ cwd: work, resume: SID, fork_session: true }),
-        env,
-      );
-      expect(run.code).toBe(0);
-      const reply = launchReply(run.out);
-      expect(reply.exit_code).toBe(4);
-      expect(reply).not.toHaveProperty("session_id");
-    });
-  });
-
-  test("a launch the daemon refused prints its refusal on stderr and exits 1", async () => {
-    await withLauncher(0, async (env, work) => {
-      const run = await runLaunch(
-        JSON.stringify({ cwd: path.join(work, "missing"), continue: true }),
-        env,
-      );
-      expect({ code: run.code, out: run.out }).toEqual({ code: 1, out: "" });
-      expect(JSON.parse(run.err)).toMatchObject({ ok: false, error: { code: "invalid_args" } });
-    });
-    // No session_launcher in the config: nothing can be launched.
-    const ctx = await startInProcessDaemon();
-    try {
-      const { stateDir, configDir, dataDir } = ctx.daemon.paths;
-      const env = {
-        ...process.env,
-        CCMSG_STATE_DIR: stateDir,
-        CCMSG_CONFIG_DIR: configDir,
-        CCMSG_DATA_DIR: dataDir,
-      };
-      const run = await runLaunch(JSON.stringify({ cwd: "/", continue: true }), env);
-      expect(run.code).toBe(1);
-      expect(JSON.parse(run.err)).toMatchObject({
-        ok: false,
-        error: { code: "launcher_not_configured" },
-      });
-    } finally {
-      await stopInProcessDaemon(ctx);
-    }
-  });
-
-  test("input that is not one launch is refused before reaching the daemon", async () => {
-    const env = sidecarEnv(path.join(shortBase(), "s"));
-    for (const stdin of [
-      '{"cwd":"/w"}',
-      '{"cwd":"/w","continue":true,"extra":1}',
-      '{"cwd":"/w","continue":true,"resume":"' + SID + '"}',
-      "not json",
-    ]) {
-      const run = await runLaunch(stdin, env);
-      expect({ stdin, code: run.code, out: run.out }).toEqual({ stdin, code: 1, out: "" });
-      expect(run.err).toContain("standard input must be one launch as JSON");
-    }
-  });
-
-  // No daemon can be had (here, the one it starts stops at its config): exit
-  // 3, and nothing was asked to start. The tool tells this apart from a
-  // refusal by the code (hooks/tools.ts).
-  test("exits 3 when no daemon can be had", async () => {
-    const base = shortBase();
-    const configDir = path.join(base, "c");
-    fs.mkdirSync(configDir);
-    fs.writeFileSync(path.join(configDir, "config.json"), "{ not json");
-    const run = await runLaunch(JSON.stringify({ cwd: "/", continue: true }), {
-      ...process.env,
-      CCMSG_STATE_DIR: path.join(base, "s"),
-      CCMSG_CONFIG_DIR: configDir,
-      CCMSG_DATA_DIR: path.join(base, "d"),
-    });
-    expect({ code: run.code, out: run.out }).toEqual({ code: 3, out: "" });
-    expect(run.err).toContain("ccmsg sidecar launch: the daemon could not be reached: ");
-  });
-});
-
 // `permit` (DR-0040): the request goes to the daemon as the session's
-// permit_request, and once the daemon recorded it the speakers say that a
-// session is asking, through the speech binary `ccmsg say` uses.
+// permit_request, and once the daemon recorded it, it says that a session is
+// asking (DR-0045 §6).
 describe("ccmsg sidecar permit", () => {
   /** `ccmsg sidecar permit --sid SID` with `stdin` on its standard input. */
   async function runPermit(

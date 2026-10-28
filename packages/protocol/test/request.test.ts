@@ -184,6 +184,14 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "session_launch", cwd: "/w", params: { MODEL: "m" } },
     ],
   },
+  launch_tool: {
+    ok: { op: "launch_tool", launch: { cwd: "/w", continue: true }, agent_id: "a1" },
+    bad: [
+      { op: "launch_tool" },
+      { op: "launch_tool", launch: { cwd: "/w", model: "opus" } },
+      { op: "launch_tool", launch: { cwd: "/w", continue: true }, agent_id: "" },
+    ],
+  },
   session_kill: {
     ok: { op: "session_kill", session_id: SID, force: true },
     bad: [

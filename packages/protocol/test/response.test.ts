@@ -307,6 +307,11 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },
     { ok: true, exit_code: 143, stdout: "", stderr: "" },
   ],
+  launch_tool: [
+    { ok: true, outcome: "done", session_id: SID, exit_code: 0, stdout: "o", stderr: "" },
+    { ok: true, outcome: "done", exit_code: 143, stdout: "", stderr: "" },
+    { ok: true, outcome: "running" },
+  ],
   session_kill: [{ ok: true, terminated: false }],
   session_restart: [
     { ok: true, restarted: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },

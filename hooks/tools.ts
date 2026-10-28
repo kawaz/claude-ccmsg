@@ -5,17 +5,17 @@
 // `launch` (start a session through ccmsg's launch command, DR-0018 §3.7)
 // and `permit` (ask the person for permission after the auto mode
 // classifier stopped an action, DR-0040). Each is answered here without
-// `next`: `send` and `peers` by asking the daemon (daemon-op.ts, DR-0046),
-// `launch` and `permit` through `ccmsg sidecar launch` / `permit`, the result
-// always a text the model reads. `say` is the daemon's to speak: it finds the
+// `next`: `send`, `peers` and `launch` by asking the daemon (daemon-op.ts,
+// DR-0046), `permit` through `ccmsg sidecar permit`, the result always a text
+// the model reads. `say` is the daemon's to speak: it finds the
 // call in the rows the module pushes (DR-0045 §6), so the tool only reads
 // the input. SendMessage is left to the harness.
 import * as v from "valibot";
 import {
   LaunchInputSchema,
   LaunchToolFieldsSchema,
+  LaunchToolResponseTextSchema,
   launchErrorText,
-  SessionLaunchResponseTextSchema,
 } from "@ccmsg/protocol/launch";
 import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
@@ -36,15 +36,8 @@ import type { Engine, On } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
 
-/** `launch` budget (DR-0018 §3.7): the launch command's longest wait
- * (`launch_timeout_seconds`, at most 50 s) + the kill grace (0.5 s) + the wait for
- * its pipes' EOF (0.5 s) + a daemon `ccmsg sidecar launch` has to start (its
- * connect retries, about 10 s) + writing the output aside, with what is left
- * for the process itself. register.test.ts pins the sum below it. */
-export const LAUNCH_TIMEOUT_MS = 65_000;
 /** `permit` budget: the process, a daemon it may have to start (its connect
- * retries, about 10 s), the daemon reading the attachments, and the short
- * speech that a session is asking (about 2 s). */
+ * retries, about 10 s), and the daemon reading the attachments. */
 export const PERMIT_TIMEOUT_MS = 30_000;
 
 /** The tools' input schemas for the model, derived from the schemas their
@@ -96,11 +89,11 @@ async function registerTools($: Engine): Promise<void> {
   }
 }
 
-/** `ccmsg sidecar launch` / `permit` for session `sid`. The input goes on
- * standard input: a launch's prompt and a request's commands may be long, and
- * an argument is bounded in size and shown to every user by `ps`. */
-export function toolArgv(root: string, command: "launch" | "permit", sid: string): string[] {
-  return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
+/** `ccmsg sidecar permit` for session `sid`. The input goes on standard
+ * input: a request's commands may be long, and an argument is bounded in size
+ * and shown to every user by `ps`. */
+export function toolArgv(root: string, sid: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", "permit", "--sid", sid];
 }
 
 /** What a tool says when its input is not the tool's. */
@@ -212,44 +205,54 @@ const LaunchToolCallSchema = v.object(LaunchToolFieldsSchema.entries);
 
 const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 
-/** The `launch` tool: start a session through `ccmsg sidecar launch`, which
- * asks the daemon to run its launch command, and answer what the
- * command did as JSON. Never rejects. */
+/** The engine's field a subagent's call carries: the subagent's id. */
+const CallerSchema = v.object({ agentId: v.optional(v.string()) });
+
+/** The `launch` tool: ask the daemon to run its launch command
+ * (`launch_tool`, DR-0018 §3.7), and answer what the command did as JSON, or,
+ * for a launch still running when the daemon answers, that its result comes
+ * later into this conversation (a subagent's own, for a subagent's call).
+ * Never rejects. */
 async function launchTool<E>($: Engine, e: E): Promise<string> {
   const call = parseWith(LaunchToolCallSchema, e);
   if (!call.ok) return notTheInput("launch", call.failure.summary);
   // The combinations claude refuses are LaunchInputSchema's checks.
   const read = parseWith(LaunchInputSchema, call.value);
   if (!read.ok) return notTheInput("launch", read.failure.summary);
-  let run: { exitCode: number; stdout: string; stderr: string };
-  try {
-    run = await $.process.run(toolArgv($.plugin.root, "launch", await $.session.id()), {
-      stdin: JSON.stringify(read.value),
-      timeoutMs: LAUNCH_TIMEOUT_MS,
-    });
-  } catch (error) {
-    $.ui.log(`ccmsg: launch failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar launch が ${String(LAUNCH_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できなかった: ${errorText(error)}。${LAUNCH_UNCONFIRMED}`;
+  const caller = parseWith(CallerSchema, e);
+  const agentId = caller.ok ? caller.value.agentId : undefined;
+  const asked = await daemonOp($, {
+    op: "launch_tool",
+    launch: read.value,
+    ...(agentId !== undefined ? { agent_id: agentId } : {}),
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、起動していない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、起動していない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: launch unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無かった: ${asked.reason}。${LAUNCH_UNCONFIRMED}`;
+    case "answered":
+      break;
   }
-  const answered = parseWith(SessionLaunchResponseTextSchema, run.stdout);
+  const answered = parseWith(LaunchToolResponseTextSchema, asked.text);
   if (answered.ok) {
-    const { ok: _ok, ...result } = answered.value;
+    if (answered.value.outcome === "running") {
+      return "起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く";
+    }
+    const { ok: _ok, outcome: _outcome, ...result } = answered.value;
     return JSON.stringify(result);
   }
-  $.ui.log(`ccmsg: launch exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
-  const said = firstStderrLine(run.stderr);
-  // 3: no daemon could be had, so nothing was asked to start.
-  if (run.exitCode === 3) return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
-  const refusal = parseWith(RefusalTextSchema, said);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok) {
     const failed = launchErrorText(refusal.value.error);
     return failed.started === "no" ? failed.text : `${failed.text}。\`peers\` で確かめる`;
   }
-  return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
+  $.ui.log(`ccmsg: launch answered what is not its reply: ${asked.text}`, { to: "debug" });
+  return `ccmsg が起動の結果を返さなかった。${LAUNCH_UNCONFIRMED}`;
 }
-
-/** The engine's field a subagent's call carries: the subagent's id. */
-const CallerSchema = v.object({ agentId: v.optional(v.string()) });
 
 /** The `permit` tool: ask the person for permission through `ccmsg sidecar
  * permit`, which shows the request in the session's Timeline and says that
@@ -269,7 +272,7 @@ async function permitTool<E>($: Engine, e: E): Promise<string> {
   if (!read.ok) return notTheInput("permit", read.failure.summary);
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
-    run = await $.process.run(toolArgv($.plugin.root, "permit", await $.session.id()), {
+    run = await $.process.run(toolArgv($.plugin.root, await $.session.id()), {
       stdin: JSON.stringify(read.value),
       timeoutMs: PERMIT_TIMEOUT_MS,
     });

@@ -1348,7 +1348,6 @@ function launchMakesSession(launch) {
 var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
 var NEEDS_SOURCE = "continue か resume と一緒に指定する";
 var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["fork_session"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launch.fork_session === true, "fork_session と一緒に指定する"), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
-var LaunchInputTextSchema = jsonText(LaunchInputSchema);
 var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
 var LaunchCommandInputSchema = pipe(strictObject({
   ...LaunchFieldsSchema.entries,
@@ -1361,7 +1360,14 @@ var SessionLaunchResponseSchema = object({
   stdout: string(),
   stderr: string()
 });
-var SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
+var LaunchToolResponseSchema = variant("outcome", [
+  object({
+    ...SessionLaunchResponseSchema.entries,
+    outcome: literal("done")
+  }),
+  object({ ok: literal(true), outcome: literal("running") })
+]);
+var LaunchToolResponseTextSchema = jsonText(LaunchToolResponseSchema);
 function launchErrorText(error) {
   if (error.code === "internal") {
     return { started: "unknown", text: `起動したか確かめられなかった: ${error.msg}` };
@@ -2282,7 +2288,6 @@ var PermitAttachmentReadResponseSchema = object({
   attachment: PermitAttachmentSchema
 });
 
-var LAUNCH_TIMEOUT_MS = 65000;
 var PERMIT_TIMEOUT_MS = 30000;
 var TOOL_INPUT_SCHEMAS = {
   send: {
@@ -2463,8 +2468,8 @@ async function registerTools($) {
     }
   }
 }
-function toolArgv(root, command, sid) {
-  return [`${root}/bin/ccmsg`, "sidecar", command, "--sid", sid];
+function toolArgv(root, sid) {
+  return [`${root}/bin/ccmsg`, "sidecar", "permit", "--sid", sid];
 }
 function notTheInput(tool, summary) {
   return `${tool} の入力が形に合わないので何もしていない: ${summary}`;
@@ -2542,6 +2547,7 @@ async function peersTool($, e) {
 }
 var LaunchToolCallSchema = object(LaunchToolFieldsSchema.entries);
 var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
+var CallerSchema = object({ agentId: optional(string()) });
 async function launchTool($, e) {
   const call = parseWith(LaunchToolCallSchema, e);
   if (!call.ok)
@@ -2549,33 +2555,40 @@ async function launchTool($, e) {
   const read = parseWith(LaunchInputSchema, call.value);
   if (!read.ok)
     return notTheInput("launch", read.failure.summary);
-  let run;
-  try {
-    run = await $.process.run(toolArgv($.plugin.root, "launch", await $.session.id()), {
-      stdin: JSON.stringify(read.value),
-      timeoutMs: LAUNCH_TIMEOUT_MS
-    });
-  } catch (error) {
-    $.ui.log(`ccmsg: launch failed: ${errorText(error)}`, { to: "debug" });
-    return `ccmsg sidecar launch が ${String(LAUNCH_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できなかった: ${errorText(error)}。${LAUNCH_UNCONFIRMED}`;
+  const caller = parseWith(CallerSchema, e);
+  const agentId = caller.ok ? caller.value.agentId : undefined;
+  const asked = await daemonOp($, {
+    op: "launch_tool",
+    launch: read.value,
+    ...agentId !== undefined ? { agent_id: agentId } : {}
+  });
+  switch (asked.kind) {
+    case "no_daemon":
+      return `ccmsg の daemon が居ないので、起動していない。${START_DAEMON}`;
+    case "outdated":
+      return `ccmsg の daemon がこの plugin より古いので、起動していない。${UPDATE_DAEMON}`;
+    case "unanswered":
+      $.ui.log(`ccmsg: launch unanswered: ${asked.reason}`, { to: "debug" });
+      return `ccmsg の daemon から返事が無かった: ${asked.reason}。${LAUNCH_UNCONFIRMED}`;
+    case "answered":
+      break;
   }
-  const answered = parseWith(SessionLaunchResponseTextSchema, run.stdout);
+  const answered = parseWith(LaunchToolResponseTextSchema, asked.text);
   if (answered.ok) {
-    const { ok: _ok, ...result } = answered.value;
+    if (answered.value.outcome === "running") {
+      return "起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く";
+    }
+    const { ok: _ok, outcome: _outcome, ...result } = answered.value;
     return JSON.stringify(result);
   }
-  $.ui.log(`ccmsg: launch exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
-  const said = firstStderrLine(run.stderr);
-  if (run.exitCode === 3)
-    return `ccmsg の daemon に繋がらず、起動していない: ${said}`;
-  const refusal = parseWith(RefusalTextSchema, said);
+  const refusal = parseWith(RefusalTextSchema, asked.text);
   if (refusal.ok) {
     const failed = launchErrorText(refusal.value.error);
     return failed.started === "no" ? failed.text : `${failed.text}。\`peers\` で確かめる`;
   }
-  return `ccmsg が起動の結果を返さなかった${said !== "" ? `: ${said}` : ""}。${LAUNCH_UNCONFIRMED}`;
+  $.ui.log(`ccmsg: launch answered what is not its reply: ${asked.text}`, { to: "debug" });
+  return `ccmsg が起動の結果を返さなかった。${LAUNCH_UNCONFIRMED}`;
 }
-var CallerSchema = object({ agentId: optional(string()) });
 async function permitTool($, e) {
   const caller = parseWith(CallerSchema, e);
   if (caller.ok && caller.value.agentId !== undefined) {
@@ -2586,7 +2599,7 @@ async function permitTool($, e) {
     return notTheInput("permit", read.failure.summary);
   let run;
   try {
-    run = await $.process.run(toolArgv($.plugin.root, "permit", await $.session.id()), {
+    run = await $.process.run(toolArgv($.plugin.root, await $.session.id()), {
       stdin: JSON.stringify(read.value),
       timeoutMs: PERMIT_TIMEOUT_MS
     });

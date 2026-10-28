@@ -49,13 +49,7 @@ import {
 import { beginArgv } from "./session-lifecycle.ts";
 import { answer, lineSplitter, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
-import { LAUNCH_TIMEOUT_MS, PERMIT_TIMEOUT_MS } from "./tools.ts";
-import {
-  LAUNCH_KILL_GRACE_MS,
-  LAUNCH_PIPE_DRAIN_GRACE_MS,
-  LAUNCH_TIMEOUT_SECONDS_MAX,
-} from "@ccmsg/protocol/launch";
-import { SPAWN_RETRY_DELAYS_MS } from "../packages/cli/src/client.ts";
+import { PERMIT_TIMEOUT_MS } from "./tools.ts";
 
 const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
 /** A command.run as the engine raises it for `/<command>`. */
@@ -2829,31 +2823,21 @@ describe("the ccmsg tools", () => {
     });
   });
 
-  // The tool's wait holds the longest launch the daemon can make: the longest
-  // timeout_seconds, the kill grace, the wait for the pipes' EOF and a daemon
-  // the CLI has to start (its connect retries), with room left over.
-  test("the launch wait holds the longest launch and a daemon start", () => {
-    const daemonStart = SPAWN_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0);
-    const longest =
-      LAUNCH_TIMEOUT_SECONDS_MAX * 1000 +
-      LAUNCH_KILL_GRACE_MS * 2 +
-      LAUNCH_PIPE_DRAIN_GRACE_MS +
-      daemonStart;
-    expect(LAUNCH_TIMEOUT_MS).toBeGreaterThan(longest);
-  });
-
   const RESUMED = "cccccccc-0000-4000-8000-000000000003";
-  const launched = { ok: true, session_id: OTHER, exit_code: 0, stdout: "started\n", stderr: "" };
+  const launched = {
+    ok: true,
+    outcome: "done",
+    session_id: OTHER,
+    exit_code: 0,
+    stdout: "started\n",
+    stderr: "",
+  };
 
   // The engine puts the tool's name, the call's id, a subagent's agent id and
   // whatever it adds later beside the input; only the input goes to the
-  // command.
-  test("launch hands the launch to ccmsg sidecar launch and answers its reply as JSON", async () => {
-    const seen: { argv: readonly string[]; stdin?: string; timeoutMs?: number }[] = [];
-    const fake = toolFake(async (argv, init) => {
-      seen.push({ argv, ...init });
-      return printing(launched)();
-    });
+  // daemon, with the subagent's id the daemon tells a late result to.
+  test("launch asks the daemon's launch_tool and answers what the command did as JSON", async () => {
+    const fake = daemonFake(replying(launched));
     // In the schema's order, which is the order the handler writes it in.
     const input = { cwd: "/w", model: "opus", effort: "high", prompt: "a\n`b` $c" };
     const result = await callTool(fake, "mcp__ccmsg-v1__launch", {
@@ -2863,46 +2847,57 @@ describe("the ccmsg tools", () => {
       agentId: "a1",
       engine_field_of_tomorrow: { any: "shape" },
     });
-    expect(seen).toEqual([
-      {
-        argv: ["/plugin/bin/ccmsg", "sidecar", "launch", "--sid", fake.sid.value],
-        stdin: JSON.stringify(input),
-        timeoutMs: LAUNCH_TIMEOUT_MS,
-      },
+    expect(fake.asked.map((a) => a.body)).toEqual([
+      { op: "launch_tool", launch: input, agent_id: "a1", hello: HELLO },
     ]);
+    expect(fake.runs).toEqual([]);
     expect(result).toBe(
       JSON.stringify({ session_id: OTHER, exit_code: 0, stdout: "started\n", stderr: "" }),
     );
     // A non-zero exit carries no session_id, and is answered as it came.
-    const failed = toolFake(
-      printing({ ok: true, exit_code: 2, stdout: "", stderr: "no such dir\n" }),
+    const failed = daemonFake(
+      replying({ ok: true, outcome: "done", exit_code: 2, stdout: "", stderr: "no such dir\n" }),
     );
     expect(await callTool(failed, "mcp__ccmsg-v1__launch", { cwd: "/w", resume: RESUMED })).toBe(
       JSON.stringify({ exit_code: 2, stdout: "", stderr: "no such dir\n" }),
     );
+    expect(failed.asked.map((a) => a.body)).toEqual([
+      { op: "launch_tool", launch: { cwd: "/w", resume: RESUMED }, hello: HELLO },
+    ]);
+  });
+
+  // 何を保証するか: 起動コマンドが daemon の待ちの内に終わらなかった launch は、
+  // 結果が後でこの会話に届くと答える (DR-0018 §3.7)。
+  test("a launch still running when the daemon answers says its result comes later", async () => {
+    const fake = daemonFake(replying({ ok: true, outcome: "running" }));
+    expect(await callTool(fake, "mcp__ccmsg-v1__launch", { cwd: "/w", continue: true })).toBe(
+      "起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く",
+    );
   });
 
   // A fork point names a transcript record the agent cannot see: the tool
-  // has no such field, and one written anyway does not reach the command.
-  test("a resume_session_at written anyway does not reach the command", async () => {
-    const seen: (string | undefined)[] = [];
-    const fake = toolFake(async (_argv, init) => {
-      seen.push(init?.stdin);
-      return printing(launched)();
-    });
+  // has no such field, and one written anyway does not reach the daemon.
+  test("a resume_session_at written anyway does not reach the daemon", async () => {
+    const fake = daemonFake(replying(launched));
     await callTool(fake, "mcp__ccmsg-v1__launch", {
       cwd: "/w",
       resume: RESUMED,
       fork_session: true,
       resume_session_at: RESUMED,
     });
-    expect(seen).toEqual([JSON.stringify({ cwd: "/w", resume: RESUMED, fork_session: true })]);
+    expect(fake.asked.map((a) => a.body)).toEqual([
+      {
+        op: "launch_tool",
+        launch: { cwd: "/w", resume: RESUMED, fork_session: true },
+        hello: HELLO,
+      },
+    ]);
   });
 
   // What a new session requires missing, a combination claude refuses, or a
-  // field that does not read is answered in text, and nothing runs.
-  test("an input that is not a launch is answered in text, and nothing runs", async () => {
-    const fake = toolFake(printing(launched));
+  // field that does not read is answered in text, and nothing is asked.
+  test("an input that is not a launch is answered in text, and nothing is asked", async () => {
+    const fake = daemonFake(replying(launched));
     for (const input of [
       {},
       { cwd: "/w" },
@@ -2926,7 +2921,7 @@ describe("the ccmsg tools", () => {
         answer: true,
       });
     }
-    expect(fake.runs).toEqual([]);
+    expect(fake.asked).toEqual([]);
     // The reason names the field to change.
     expect(
       await callTool(fake, "mcp__ccmsg-v1__launch", { cwd: "/w", continue: true, resume: RESUMED }),
@@ -2937,10 +2932,9 @@ describe("the ccmsg tools", () => {
 
   test("a launch the daemon refused or could not be asked was not started; else it is unconfirmed", async () => {
     const refusing = (code: string, msg: string) =>
-      toolFake(async () => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: `${JSON.stringify({ ok: false, error: { code, msg } })}\n`,
+      daemonFake(async () => ({
+        status: 200,
+        text: JSON.stringify({ ok: false, error: { code, msg }, request_id: "op" }),
       }));
     const input = { tool: "mcp__ccmsg-v1__launch", cwd: "/w", continue: true };
     expect(
@@ -2966,26 +2960,30 @@ describe("the ccmsg tools", () => {
     expect(
       await callTool(refusing("internal", "spawn broke"), "mcp__ccmsg-v1__launch", input),
     ).toBe("起動したか確かめられなかった: spawn broke。`peers` で確かめる");
-    const nodaemon = toolFake(async () => ({ exitCode: 3, stdout: "", stderr: "no daemon\n" }));
-    expect(await callTool(nodaemon, "mcp__ccmsg-v1__launch", input)).toBe(
-      "ccmsg の daemon に繋がらず、起動していない: no daemon",
+    expect(
+      await callTool(daemonFake(replying({}), { sockets: "none" }), "mcp__ccmsg-v1__launch", input),
+    ).toBe("ccmsg の daemon が居ないので、起動していない。daemon を起こす (`ccmsg daemon start`)");
+    expect(
+      await callTool(daemonFake(replying({}), { sockets: "old" }), "mcp__ccmsg-v1__launch", input),
+    ).toBe(
+      "ccmsg の daemon がこの plugin より古いので、起動していない。daemon を更新する (`ccmsg daemon restart`)",
     );
-    const silent = toolFake(async () => ({ exitCode: 1, stdout: "", stderr: "" }));
+    const silent = daemonFake(async () => ({ status: 200, text: "{}" }));
     expect(await callTool(silent, "mcp__ccmsg-v1__launch", input)).toBe(
       "ccmsg が起動の結果を返さなかった。起動したか確かめられなかった。`peers` で確かめる",
     );
-    // The wait ran out (or the command could not be run): it may have started.
-    const overran = toolFake(async () => {
-      throw new Error("aborted: still running after 65000ms");
+    // The fetch failed with the socket there: it may have started.
+    const broken = daemonFake(async () => {
+      throw new Error("socket hang up");
     });
-    expect(await callTool(overran, "mcp__ccmsg-v1__launch", input)).toBe(
-      "ccmsg sidecar launch が 65 秒以内に終わらなかったか起動できなかった: Error: aborted: still running after 65000ms。起動したか確かめられなかった。`peers` で確かめる",
+    expect(await callTool(broken, "mcp__ccmsg-v1__launch", input)).toBe(
+      "ccmsg の daemon から返事が無かった: Error: socket hang up。起動したか確かめられなかった。`peers` で確かめる",
     );
   });
 
   test("a launch whose handler fails is answered by its .catch", async () => {
-    const fake = toolFake(async () => {
-      throw new Error("run broke");
+    const fake = daemonFake(async () => {
+      throw new Error("fetch broke");
     });
     fake.$.ui = {
       log: () => {

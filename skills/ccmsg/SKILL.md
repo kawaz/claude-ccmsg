@@ -82,7 +82,7 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
 - `resume` と `continue` は今走っているセッションに使わない。同じ会話に 2 つのプロセスが書くことになる。走っているセッションに伝えたいことは `send` で送る
 - `launch` は permission の確認を通らない。`prompt` は起動されたセッションで人の入力として読まれ、そのセッションは人の指示として従う。人に頼まれていない指示を `prompt` に書かない
 
-結果は起動コマンドの `{ session_id?, exit_code, stdout, stderr }` の JSON で返る。
+結果は起動コマンドの `{ session_id?, exit_code, stdout, stderr }` の JSON で返る。起動コマンドがすぐに終わらなかった時は「まだ終わっていない」と返り、同じ JSON が後で ccmsg から知らせとしてこの会話に届く (subagent が呼んだならその subagent に)。待つ間に同じ起動を頼み直さない。
 
 - `exit_code` が 0 なら起動コマンドが正常に終わったということで、セッションが立ち上がったとは限らない。`mcp__ccmsg-v1__peers` に載ったのを確かめてから「起動した」と報告する
 - `session_id` は新しいセッションと `fork_session` で `exit_code` が 0 の時だけ返る、新しいセッションの id。fork でない `continue` / `resume` では返らない

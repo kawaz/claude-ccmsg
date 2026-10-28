@@ -211,6 +211,19 @@ export const SessionLaunchRequestSchema = v.object({
 });
 export type SessionLaunchRequest = Output<typeof SessionLaunchRequestSchema>;
 
+/** A launch asked by a session's `launch` tool (DR-0018 §3.7, session role
+ * only): the same launch as session_launch, answered with its outcome when
+ * the launch command ends within LAUNCH_TOOL_WAIT_MS, and otherwise with
+ * `running`, the outcome then going into the asking conversation by notify:
+ * to the subagent `agent_id` when a subagent asked, to the session's main
+ * thread otherwise. */
+export const LaunchToolRequestSchema = v.object({
+  op: v.literal("launch_tool"),
+  launch: LaunchInputSchema,
+  agent_id: v.optional(v.pipe(v.string(), v.nonEmpty("an agent id is not empty"))),
+});
+export type LaunchToolRequest = Output<typeof LaunchToolRequestSchema>;
+
 /** What the webui's launch form needs before anything is picked: `root_dirs`,
  * the roots of its cwd tree, and `default_effort`, the effort to preselect for
  * each model (DR-0018 §3.4, user role). The models and efforts offered come

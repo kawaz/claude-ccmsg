@@ -13,6 +13,8 @@ import {
   VERSION,
   PROTOCOL_VERSION,
   DIRECT_DELIVERY_DAEMON_SENDER,
+  LAUNCH_TOOL_WAIT_MS,
+  type LaunchInput,
   isOtherGenerationHello,
   isSessionIdShape,
   readRequest,
@@ -61,7 +63,7 @@ import {
   validateRepoRoot,
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
-import { launchSession } from "./session-launch.ts";
+import { launchOutcomeNotice, launchSession, type SessionLaunchOutcome } from "./session-launch.ts";
 import { pruneLaunchOutputs } from "./launch-output.ts";
 import { defaultEfforts } from "./default-effort.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
@@ -140,6 +142,7 @@ import {
   listPeers,
   type NoticeDeps,
   type PeerDeps,
+  type SendMessageDeps,
   sendNotice,
   sendToPeers,
 } from "./send-message.ts";
@@ -301,6 +304,10 @@ export interface Daemon {
   /** The launch commands running now (DR-0018 §3.5): `launch_max_concurrency` bounds
    * them, and a shutdown waits for them, each ending by its own deadline. */
   launches: Set<Promise<unknown>>;
+  /** The outcomes of `launch_tool` launches that ended after their reply,
+   * on their way into the asking conversations (DR-0018 §3.7): a shutdown
+   * waits for them after the launches. */
+  launchNotices: Set<Promise<void>>;
   /** The agents rows, read from Claude Code's state files (agents.ts). */
   agentsPoller: AgentsPoller;
   /** Sessions the agents poll has listed, keyed by sid, valued by the config
@@ -390,6 +397,9 @@ export interface Daemon {
   /** The daemon's voice: the says and the requests for permission are
    * spoken one after another (say-speech.ts, DR-0045 §6). */
   speaker: Speaker;
+  /** How long a `launch_tool` waits for its launch command before it
+   * answers `running` (LAUNCH_TOOL_WAIT_MS; shorter in tests). */
+  launchToolWaitMs: number;
   /** The tool calls acted on, from the rows the modules push (row-effects.ts,
    * DR-0045 §6). */
   rowEffects: RowEffects;
@@ -474,6 +484,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     shuttingDown: false,
     env: host.env,
     launches: new Set(),
+    launchNotices: new Set(),
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
     transcriptRelay: createTranscriptRelayStore(log, {
@@ -516,6 +527,7 @@ export function createDaemon(host: DaemonHost): Daemon {
       log,
     }),
     rowEffects: createRowEffects(),
+    launchToolWaitMs: LAUNCH_TOOL_WAIT_MS,
     sayUnread: loadSayUnreadStore(paths.sayRead, log, () => new Date()),
     sayUnreadSnapshot: "",
     permitRequests: createPermitRequestLog(createMidIssuer()),
@@ -538,6 +550,75 @@ export function createDaemon(host: DaemonHost): Daemon {
 }
 
 const nowIso = (): string => new Date().toISOString();
+
+/** Start a launch for `requester` (`user` or a session's sid), held in
+ * `daemon.launches` until it ends, or say why it is not started: the daemon
+ * is shutting down (a shutdown waits for the launches running and takes no
+ * more), or launch_max_concurrency launches are running. With no launcher
+ * there is nothing to hold back: launchSession says so. */
+function startLaunch(
+  daemon: Daemon,
+  requester: string,
+  launch: LaunchInput,
+):
+  | { ok: true; running: Promise<SessionLaunchOutcome> }
+  | { ok: false; code: ErrorCode; msg: string } {
+  const launcher = daemon.config.session_launcher;
+  if (launcher !== undefined && daemon.shuttingDown) {
+    return {
+      ok: false,
+      code: ErrorCode.launch_busy,
+      msg: "the daemon is shutting down; ask again once it is back",
+    };
+  }
+  if (launcher !== undefined && daemon.launches.size >= launcher.launch_max_concurrency) {
+    return {
+      ok: false,
+      code: ErrorCode.launch_busy,
+      msg: `${String(daemon.launches.size)} launches are running (launch_max_concurrency); ask again once one ends`,
+    };
+  }
+  const running = launchSession(
+    {
+      launcher,
+      requester,
+      baseEnv: daemon.env,
+      launchesDir: daemon.paths.launches,
+      log: daemon.log,
+    },
+    launch,
+  );
+  daemon.launches.add(running);
+  return { ok: true, running: running.finally(() => daemon.launches.delete(running)) };
+}
+
+/** What a `launch` tool's launch that ended after its reply came to, into
+ * the asking conversation (DR-0018 §3.7): the subagent `agentId` when a
+ * subagent asked, the session's main thread otherwise, from the daemon. A
+ * notice that does not arrive (the subagent ended) is logged. */
+async function tellLaunchOutcome(
+  daemon: Daemon,
+  to: { sid: string; agentId?: string },
+  cwd: string,
+  outcome: SessionLaunchOutcome,
+): Promise<void> {
+  const text = launchOutcomeNotice(cwd, outcome);
+  const from = DIRECT_DELIVERY_DAEMON_SENDER;
+  const results =
+    to.agentId === undefined
+      ? [await sendNotice({ from, sid: to.sid, text }, noticeDeps(daemon))]
+      : await sendToPeers(
+          { from, to: { session_id: to.sid }, agentId: to.agentId, text },
+          sendMessageDeps(daemon),
+        );
+  for (const result of results) {
+    daemon.log.info(
+      `launch_tool: told ${to.sid}${to.agentId !== undefined ? ` agent ${to.agentId}` : ""}: ${result.outcome}` +
+        (result.outcome === "not_delivered" ? ` (${result.reason})` : ""),
+    );
+  }
+  if (results.length === 0) daemon.log.info(`launch_tool: ${to.sid} is not running: not told`);
+}
 
 /** The request `dispatch` is currently answering, for the connection it came
  * in on. Async-local rather than a parameter because every reply already flows
@@ -1120,6 +1201,26 @@ function noticeDeps(daemon: Daemon): NoticeDeps {
     deliver: (run, frame) => daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
     inOrder: daemon.sendOrder,
     log: (line) => daemon.log.info(line),
+  };
+}
+
+/** What a send needs besides a notice's: adding to a running subagent
+ * through the session's module, as user_message does (DR-0039 §3). */
+function sendMessageDeps(daemon: Daemon): SendMessageDeps {
+  return {
+    ...noticeDeps(daemon),
+    appendToAgent: async (sid, agentId, text, from) => {
+      const { tries: _tries, ...outcome } = await userMessage(
+        { sid, agentId, text, from },
+        {
+          ...productionSidecarDeps(daemon.sidecarReplies),
+          deadlineMs: USER_MESSAGE_DEADLINE_MS,
+          runs: daemon.sidecarRuns,
+          isRunning: (running) => daemon.sessions.has(running),
+        },
+      );
+      return outcome;
+    },
   };
 }
 
@@ -1825,21 +1926,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           ...(req.agent_id !== undefined ? { agentId: req.agent_id } : {}),
           text: req.text,
         },
-        {
-          ...noticeDeps(daemon),
-          appendToAgent: async (sid, agentId, text, from) => {
-            const { tries: _tries, ...outcome } = await userMessage(
-              { sid, agentId, text, from },
-              {
-                ...productionSidecarDeps(daemon.sidecarReplies),
-                deadlineMs: USER_MESSAGE_DEADLINE_MS,
-                runs: daemon.sidecarRuns,
-                isRunning: (running) => daemon.sessions.has(running),
-              },
-            );
-            return outcome;
-          },
-        },
+        sendMessageDeps(daemon),
       );
       send(conn, { ok: true, results });
       return;
@@ -2102,47 +2189,59 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.hello_required, "op 'session_launch' requires hello first");
         return;
       }
-      const launcher = daemon.config.session_launcher;
-      // A shutdown waits for the launches running; it takes no more. (With no
-      // launcher there is nothing to take: launchSession says so.)
-      if (launcher !== undefined && daemon.shuttingDown) {
-        sendErr(
-          conn,
-          ErrorCode.launch_busy,
-          "the daemon is shutting down; ask again once it is back",
-        );
+      const started = startLaunch(daemon, id.role === "user" ? "user" : id.sid, req.launch);
+      if (!started.ok) {
+        sendErr(conn, started.code, started.msg);
         return;
       }
-      if (launcher !== undefined && daemon.launches.size >= launcher.launch_max_concurrency) {
-        sendErr(
-          conn,
-          ErrorCode.launch_busy,
-          `${String(daemon.launches.size)} launches are running (launch_max_concurrency); ask again once one ends`,
-        );
-        return;
-      }
-      const running = launchSession(
-        {
-          launcher,
-          requester: id.role === "user" ? "user" : id.sid,
-          baseEnv: daemon.env,
-          launchesDir: daemon.paths.launches,
-          log: daemon.log,
-        },
-        req.launch,
-      );
-      daemon.launches.add(running);
-      let outcome: Awaited<typeof running>;
-      try {
-        outcome = await running;
-      } finally {
-        daemon.launches.delete(running);
-      }
+      const outcome = await started.running;
       if (!outcome.ok) {
         sendErr(conn, outcome.code, outcome.msg);
         return;
       }
       send(conn, outcome.response);
+      return;
+    }
+
+    case "launch_tool": {
+      // A session's `launch` tool (DR-0018 §3.7): answered within
+      // LAUNCH_TOOL_WAIT_MS, which a module's fetch outlives; a launch that
+      // takes longer goes on, and its outcome goes into the asking
+      // conversation when it ends.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'launch_tool' requires session role");
+        return;
+      }
+      const started = startLaunch(daemon, id.sid, req.launch);
+      if (!started.ok) {
+        sendErr(conn, started.code, started.msg);
+        return;
+      }
+      const late = Promise.withResolvers<null>();
+      const timer = setTimeout(() => late.resolve(null), daemon.launchToolWaitMs);
+      const outcome = await Promise.race([started.running, late.promise]);
+      clearTimeout(timer);
+      if (outcome === null) {
+        const to = {
+          sid: id.sid,
+          ...(req.agent_id !== undefined ? { agentId: req.agent_id } : {}),
+        };
+        const told = started.running.then((ended) =>
+          tellLaunchOutcome(daemon, to, req.launch.cwd, ended),
+        );
+        daemon.launchNotices.add(told);
+        void told
+          .catch((e: unknown) => daemon.log.error(`launch_tool: telling failed: ${errorText(e)}`))
+          .finally(() => daemon.launchNotices.delete(told));
+        send(conn, { ok: true, outcome: "running" });
+        return;
+      }
+      if (!outcome.ok) {
+        sendErr(conn, outcome.code, outcome.msg);
+        return;
+      }
+      send(conn, { ...outcome.response, outcome: "done" });
       return;
     }
 
@@ -3237,6 +3336,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   if (daemon.launches.size > 0) {
     daemon.log.info(`graceful shutdown: waiting for ${String(daemon.launches.size)} launches`);
     await Promise.allSettled(daemon.launches);
+  }
+  if (daemon.launchNotices.size > 0) {
+    await Promise.allSettled(daemon.launchNotices);
   }
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);

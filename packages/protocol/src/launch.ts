@@ -147,8 +147,6 @@ export const LaunchInputSchema = v.pipe(
   ),
 );
 export type LaunchInput = Output<typeof LaunchInputSchema>;
-/** What `ccmsg sidecar launch` takes on standard input: one launch. */
-export const LaunchInputTextSchema = jsonText(LaunchInputSchema);
 
 /** The `launch` tool's fields, as the model is shown them: the launch's
  * without `resume_session_at`, which names a transcript record an agent has
@@ -205,8 +203,27 @@ export const SessionLaunchResponseSchema = v.object({
   stderr: v.string(),
 });
 export type SessionLaunchResponse = Output<typeof SessionLaunchResponseSchema>;
-/** The session_launch reply, as `ccmsg sidecar launch` prints it. */
-export const SessionLaunchResponseTextSchema = jsonText(SessionLaunchResponseSchema);
+
+/** How long the daemon waits for the launch command of a `launch_tool`
+ * before it answers that the launch is still running and tells the result
+ * later (DR-0018 §3.7). Well inside the 30 s a hooks module's fetch is given
+ * up after; above the launch command's usual time (measured:
+ * docs/findings/2026-10-28-dr-0045-stage3-verify.md). */
+export const LAUNCH_TOOL_WAIT_MS = 15_000;
+
+/** The `launch_tool` reply: the launch command's outcome when it ended within
+ * LAUNCH_TOOL_WAIT_MS (`done`, the session_launch reply's fields), or
+ * `running` when it had not, the result then coming into the asking
+ * conversation by notify. */
+export const LaunchToolResponseSchema = v.variant("outcome", [
+  v.object({
+    ...SessionLaunchResponseSchema.entries,
+    outcome: v.literal("done"),
+  }),
+  v.object({ ok: v.literal(true), outcome: v.literal("running") }),
+]);
+export type LaunchToolResponse = Output<typeof LaunchToolResponseSchema>;
+export const LaunchToolResponseTextSchema = jsonText(LaunchToolResponseSchema);
 
 /** The launch command's longest wait (`launch_timeout_seconds`, DR-0018 §3.1). */
 export const LAUNCH_TIMEOUT_SECONDS_MAX = 50;
