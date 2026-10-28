@@ -1,6 +1,6 @@
 ---
 title: webui の session_status の購読が読み込み直後の subscribe ×2 → unsubscribe ×1 で切れ、以後 push が来ない
-status: wip
+status: resolved
 category: bug
 created: 2026-10-26T18:04:59+09:00
 last_read: 2026-10-28T09:14:00+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-10-28T09:15:21+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-28T10:07:30+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","finding/2026-10-28-session-status-subscribe-order"]
 blocked_by:
 origin: 自リポ TODO
 ---
