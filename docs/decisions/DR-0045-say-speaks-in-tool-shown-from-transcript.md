@@ -69,7 +69,7 @@ kawaz 2026-10-28 の裁定:
 - 読んだ行を uuid で重ねて §4・§5 に流す。`door: "queue"` の append と、uuid の重なる二度目の append は読みの対象にしない
 - 上限で諦めた行は、次の push の読みで拾われる (読み終わりの位置から続きを読むので)
 
-対話のセッションでの同じ突き合わせ (人の入力、queue された prompt、peer の封筒の行) は未観測で、段階 1 の最初に確かめる
+対話のセッションでも、同じ結果だった (findings の §5)。composer の prompt、stream の最中に打った prompt、peer のメッセージ (stream の最中と idle の時) を見た。tool の実行中に打った prompt が `queued_command` の attachment になる場面は未観測
 
 ### 3. 正本と追いつき
 
@@ -156,7 +156,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 | 段階 | 入れるもの | 前提 |
 |---|---|---|
-| 0 | §2 の観測 (`claude -p` で済み。対話のセッションでの突き合わせは段階 1 の最初に) | — |
+| 0 | §2 の観測 (済み: `claude -p` と対話のセッション) | — |
 | 1 | push の op と module の転送、daemon の受け口 (uuid の重複除去、§3 の追いつき)、§4 の中継と uuid の継ぎ目 | DR-0046 の `POST /op` |
 | 2 | §5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
 | 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |

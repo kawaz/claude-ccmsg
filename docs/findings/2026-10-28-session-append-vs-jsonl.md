@@ -75,6 +75,28 @@ jsonl に行の無い append もあった:
 6. `command` の user 3 行 (caveat、`<command-name>`、stdout)
 7. 続く attachment の各種
 
+### 5. 対話のセッション (追記)
+
+方法: `--plugin-dir` の観測 mod で、tmux の中の対話のセッション (`--permission-mode default`、代役の model) を起動した。次の 4 つの turn を観測した:
+- composer に打った prompt
+- 25 行を 200 ms ずつ stream する応答の最中に、composer で打った 2 つ目の prompt
+- 同じ stream の最中に、セッションの peer の socket へ直接書いたメッセージ (reference `claude-mods/scripts/uds-send.py`)
+- idle の時の同じ peer のメッセージ
+
+| 場面 | append (`door` / `origin`) | jsonl の行 |
+|---|---|---|
+| composer の prompt | `prompt` / `{kind:"composer"}` | user (`promptSource: "typed"`、`origin: {kind:"human"}`) |
+| stream の最中に打った prompt | `prompt` / `{kind:"composer"}`。いまの turn が終わった後に来た | user (`promptSource: "queued"`、`origin: {kind:"human"}`)。`queued_command` の attachment にはならず、次の turn の prompt になった |
+| stream の最中の peer のメッセージ | 先に `queue` / `{kind:"engine"}` (jsonl に行は無い)。turn が終わった後に `prompt` / `{kind:"peer"}` | user (`promptSource: "system"`、`isMeta: true`、`origin: {kind:"peer", name, body, verifiedPeerPid, …}`) |
+| idle の時の peer のメッセージ | `prompt` / `{kind:"peer"}`、その後に `queue` | 同上 |
+| 各 turn の終わり | `notice` / `{kind:"engine"}` の system (`name: "turn_duration"`、content は空) | system (`isMeta: false`) |
+
+- uuid を持つ jsonl の行は、全部 append で来た。順も同じだった (28 行)
+- jsonl に行の無い append は、peer の 2 件の `queue` だけ
+- 書き込みの時機: 20 ms 後に見つかったのは 5 / 28 件。200 ms 後には 28 / 28 件。`-p` と同じ傾向
+- `e.message` に `promptSource` と `origin` の構造 (peer の名前・本文・pid) は無い。人の入力と peer の区別は `e.origin.kind` (`composer` / `peer`) でできる
+- stream の最中に打った prompt が `queued_command` の attachment になる場面 (tool の実行中に打った時) は、この観測では出なかった
+
 ## DR-0045 への含み
 
 `e.message` で足りる用途と、足りない用途に分かれる。
@@ -92,12 +114,12 @@ jsonl に行の無い append もあった:
 
 ## 試験の環境に由来すること
 
-- 全部 `claude -p` での観測。対話のセッションでは見ていない。対話では、人の composer の prompt の `door` / `origin`、queue された prompt の `queued_command` の attachment、PushNotification 等が変わりうる
+- §1〜§4 は `claude -p`、§5 は対話のセッションでの観測
 - model は代役で、thinking の block、API error の行、画像を含む行は出していない
 - 書き込みの遅れは、行の少ない短い turn での値
 
 ## 未検証
 
-- 対話のセッションでの同じ突き合わせ (特に人の入力、queue された prompt、peer の封筒の行)
+- tool の実行中に打った prompt (`queued_command` の attachment になる場面)。ccmsg の daemon が書く peer の封筒そのもの (この観測は reference の送信の script の frame)
 - thinking を含む assistant、API error の行 (`isApiErrorMessage`)、`/clear` と `/resume` の後の append
 - 長い turn で書き込みの遅れがどこまで伸びるか
