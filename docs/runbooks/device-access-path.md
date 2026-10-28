@@ -21,6 +21,10 @@
 
 `route -n get` では自分の IPv6 は `lo0` (flags LOCAL)。読み (未確定): macOS の Tailscale (network extension) が自分の tailnet IPv6 宛てを折り返さない。
 
+## 経過観察の結果
+
+- 2026-10-28 (kawaz、iPhone): `ccmsg.v6-sandbox.kawaz.jp` に切り替えてから、青いボタンの再読み込みでほぼ待たされなくなった。IPv4 経路でだけ止まる、という観測が 1 端末で積み上がった。切り分けとしては findings の候補 1 (IPv4 経路での QUIC packet の fragment) の側が濃い
+
 ## 経過観察で見るもの
 
 - iPhone / iPad で `ccmsg.v6-sandbox.kawaz.jp` を使い続けて、daemon の版が上がった直後の青いボタン (再読み込み) で固まるかどうか

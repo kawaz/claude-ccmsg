@@ -13,6 +13,7 @@
 - サーバ側で QUIC の packet が IP fragment に分けられていることは事実 (この Mac の Tailscale の interface では、IPv4 の UDP は DF を求めても EMSGSIZE にならず fragment になる。前段の Caddy の HTTP/3 の応答も、この Mac の中の往復では fragment になっていた)
 - iPhone との実際の通信 (2 回のリロード、どちらも最後は開いた) を記録すると、前段から iPhone への大きい QUIC の packet はほぼ全部が fragment になっていた。転送の終わりには、fragment になった packet を再送の間隔を倍々に延ばしながら送り続け、iPhone からは 20 秒前後何も返らない区間があった (下の「iPhone との実際の経路の観測」)。fragment になった packet が iPhone に届いていない形に見えるが、どこで落ちているかは観測していない
 - この記録では固まりは数秒で解けたので、「永遠に待つ」状態そのものは記録できていない
+- 運用の観測 (2026-10-28、kawaz の iPhone): 繋ぎ先を Tailscale の IPv6 だけの名前 (runbook `device-access-path.md`) に変えてから、再読み込みでほぼ待たされなくなった。IPv6 では DF が効いて fragment が出ないので、候補 1 (fragment) の側が濃くなった。1 端末・短期間の観測で、原因の確定ではない
 - Mac 側で取れる観測は出尽くした。この Mac の tailscaled は fragment を落とさずに WireGuard で送り出しているので、落ち所は Mac の外 (経路か iPhone 側)
 - 接続全体の flow control の枠が尽きる (`DATA_BLOCKED` が出る形) 可能性は、pcap では否定しきれない (暗号化されていて frame は読めない)。前段の qlog で分かる
 
