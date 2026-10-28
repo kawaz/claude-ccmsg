@@ -1221,8 +1221,11 @@ function sendSayUnread(daemon: Daemon, conn: Conn): void {
 }
 
 /** Push the unread says to every user-role subscriber when they moved.
- * Never to a session: see SayUnreadStreamEvent. */
+ * Never to a session: see SayUnreadStreamEvent. Not while shutting down:
+ * closing the folds empties the set, which the tabs would show until the
+ * next daemon sends its own. */
 function broadcastSayUnread(daemon: Daemon): void {
+  if (daemon.shuttingDown) return;
   const says = unreadSays(daemon.sayUnread);
   const key = JSON.stringify(says);
   if (key === daemon.sayUnreadSnapshot) return;

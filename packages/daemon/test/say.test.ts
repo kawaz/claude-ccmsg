@@ -22,6 +22,7 @@ import { assistantContentRow, line, toolUseBlock } from "../../protocol/test/tra
 import { loadSayUnreadStore, markSaysRead, unreadSays } from "../src/say-unread.ts";
 import {
   fixtureDir,
+  isKind,
   liveSessionConn,
   sessionConn,
   stampRows,
@@ -272,6 +273,31 @@ describe("say: what the person has not read", () => {
       const { ev } = await user.readEventUntil("say_unread", (e) => e.says.length === 1);
       expect(ev.says.map((s) => s.tool_use_id)).toEqual(["toolu_b"]);
     });
+  });
+});
+
+describe("say: a daemon that shuts down", () => {
+  // 何を保証するか: 終了の時に fold を閉じても、空の未読をタブに配らない
+  // (タブは次の daemon が自分の未読を送るまで、空を 🔕 として見せてしまう)。
+  test("sends no emptied unread on its way down", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("say");
+    try {
+      const file = path.join(dir, `${A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "subscribe" });
+      await writeAndPushSay(session, file, "one", "toolu_1");
+      await user.readEventUntil("say_unread", (e) => e.says.length === 1);
+      // The relays close before every connection is told it is restarting.
+      const stopped = stopInProcessDaemon(ctx);
+      const { seen } = await user.readEventUntil("restarting");
+      await stopped;
+      expect(seen.filter(isKind("say_unread"))).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
