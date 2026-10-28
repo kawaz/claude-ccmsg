@@ -379,11 +379,11 @@ export interface WsHandle {
     patch: RequestOverridePatch,
   ): Promise<ReplyOf<"request_override">>;
   userMessage(sessionId: string, agentId: string, text: string): Promise<ReplyOf<"user_message">>;
-  /** Stop the turn the session's main loop is running now, as Esc in its
-   * terminal would (DR-0044, user role only — the Timeline's 応答中 row). The
-   * daemon waits for the session's hooks modules, so this can take seconds.
-   * An error says why it was not stopped: `no_turn` (it had ended),
-   * `no_module`, `session_not_found`, `abort_failed`. */
+  /** Stop the turn the session's main loop is running now (DR-0044, user
+   * role only — the Timeline's 応答中 row). The daemon waits for the
+   * session's hooks modules, so this can take seconds. An error says why it
+   * was not stopped: `no_turn` (it had ended), `no_module`,
+   * `session_not_found`, `abort_failed`. */
   turnAbort(sessionId: string): Promise<ReplyOf<"turn_abort">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as

@@ -6574,6 +6574,42 @@ a.tl-attachment-file-path {
   font-size: 0.85em;
 }
 
+/* The × beside 応答中 (DR-0044 §4): quiet like the row, a finger's width on
+ * a phone, the danger colour only under the pointer. */
+.tl-turn-abort {
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--fg-muted);
+  font-size: var(--font-size-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tl-turn-abort:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.tl-turn-abort:disabled {
+  cursor: progress;
+  opacity: 0.5;
+}
+
+/* What the press of the × came to, where the row is (or was). */
+.tl-turn-abort-result {
+  padding: var(--space-6) var(--space-13);
+  color: var(--fg-muted);
+}
+
+.tl-turn-abort-failure {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 @keyframes tl-turn-responding-pulse {
   0%,
   100% {

@@ -1,6 +1,6 @@
 // The end of the session's Timeline while its main loop answers a turn: the
-// 応答中 row, with the × that stops the turn as Esc in the terminal would
-// (DR-0044 §4), and what the press came to.
+// 応答中 row, with the × that stops the turn (DR-0044 §4), and what the press
+// came to.
 import type { ErrorBody, ErrorResponse, TurnAbortResponse } from "@ccmsg/protocol";
 import { useEffect, useState } from "preact/hooks";
 import { TurnRespondingRow } from "../TimelineItem.tsx";

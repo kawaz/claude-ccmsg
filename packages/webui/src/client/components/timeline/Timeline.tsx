@@ -10,7 +10,8 @@ import { pushNavigation } from "../../navigation.ts";
 import { forkPrefill, prefillSidebarState } from "../../session-creator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
-import { SayBubble, SayRecordBubble, TurnRespondingRow } from "../TimelineItem.tsx";
+import { SayBubble, SayRecordBubble } from "../TimelineItem.tsx";
+import { TurnResponding } from "./TurnResponding.tsx";
 import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
@@ -678,9 +679,11 @@ export function Timeline({
                             {/* 読み込み済み window より新しい say (= 喋った turn の行が
                                 まだ jsonl に無い live のケース) は末尾に出す。 */}
                             {bubbleNodes(groups.length)}
-                            {respondingAt !== null ? (
-                              <TurnRespondingRow since={respondingAt} />
-                            ) : null}
+                            <TurnResponding
+                              key={sid}
+                              since={respondingAt}
+                              onAbort={() => ws.turnAbort(sid)}
+                            />
                           </>
                         )}
                       </div>

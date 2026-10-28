@@ -1,8 +1,9 @@
 // Stopping the main loop's running turn from the web UI (DR-0044): the turn
 // the main loop runs now, by the id its turn.start carried, and `turn.abort`,
-// which stops it with `$.turn.abort` as Esc in the terminal would. A
-// subagent's or teammate's turn is neither held nor stopped: `$.turn.abort`
-// takes the main loop's id only.
+// which stops it with `$.turn.abort` (no interruption marker; a Bash it ran
+// goes on in the background, where Esc would kill it). A subagent's or
+// teammate's turn is neither held nor stopped: `$.turn.abort` takes the main
+// loop's id only.
 import * as v from "valibot";
 import { errorText, type Output } from "@ccmsg/protocol/parse";
 import type { TurnAbortResult } from "@ccmsg/protocol/sidecar";

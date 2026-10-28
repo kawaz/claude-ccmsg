@@ -271,9 +271,8 @@ export type RequestOverrideResult = Output<typeof RequestOverrideResultSchema>;
 // --- turn.abort ------------------------------------------------------------
 
 /** `turn.abort` (DR-0044 §1): stop the turn the session's main loop is
- * running now, as Esc in the terminal would, with `$.turn.abort` on the id
- * its `turn.start` carried. A subagent's or teammate's turn is not stopped.
- * It takes no arguments. */
+ * running now with `$.turn.abort` on the id its `turn.start` carried. A
+ * subagent's or teammate's turn is not stopped. It takes no arguments. */
 export const TurnAbortArgsSchema = NoArgsSchema;
 export type TurnAbortArgs = Output<typeof TurnAbortArgsSchema>;
 

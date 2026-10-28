@@ -2347,8 +2347,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
 
     case "turn_abort": {
       // user role only (DR-0044 §2): stopping a session's turn is the
-      // person's, as Esc in its terminal is, not a session's, for itself or
-      // another.
+      // person's, not a session's, for itself or another.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'turn_abort' requires user role");
         return;

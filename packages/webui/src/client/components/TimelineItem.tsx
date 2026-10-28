@@ -294,7 +294,7 @@ export function TurnRespondingRow({
           type="button"
           class="tl-turn-abort"
           aria-label="応答を中断"
-          title="応答を中断 (Esc 相当)"
+          title="応答を中断"
           disabled={abort.disabled}
           onClick={abort.onPress}
         >

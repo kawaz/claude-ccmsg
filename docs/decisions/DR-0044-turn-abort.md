@@ -1,6 +1,6 @@
 # DR-0044: webui から走行中のセッションの main loop の turn を中断する (`turn_abort`)
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — ⬜ 未実装
+- Status: Accepted (2026-10-28、kawaz 裁定) — ✅ 実装済み (protocol の op `turn_abort` と ErrorCode `no_module` / `no_turn` / `abort_failed`、サイドカーの依頼 `turn.abort`、daemon の `abortTurn`、module の関心 `turn-abort`、webui の `TurnResponding` の ×)。実機の確認は [findings 2026-10-28-turn-abort-verify](../findings/2026-10-28-turn-abort-verify.md)
 - Date: 2026-10-28
 
 ## Context
@@ -11,8 +11,8 @@ kawaz 提案 (2026-10-28): TL の「応答中…12s」の横に × ボタンを�
 
 ### 読んで分かった前提
 
-- mods の `$.turn.abort({ turnId })` は、main loop の実行中の turn を中断マーカー無しで止め、その turn で走っている tool も止める。`turnId` は main loop の `turn.start` がその plugin に渡した id で、実行中の turn の id でなければ両方の id を名指して reject する (型定義 `.claude-plugin/types/claude-code/index.d.ts` の `turn.abort`、reference の `claude-mods/dollar-api`)
-- 人が Esc で止めた turn の `turn.complete` は `reason: 'aborted'` で来る (reference の `claude-mods/dollar-api` の `process` 節の実測)。`$.turn.abort` で止めた turn でも同じかは、この DR の実装の実機確認で見る
+- mods の `$.turn.abort({ turnId })` は、main loop の実行中の turn を中断マーカー無しで止める。型定義は「its running tools stopped」と書くが、実機 (2.1.312) では走っていた Bash は止まらずに background の shell に移った (下の §3)。`turnId` は main loop の `turn.start` がその plugin に渡した id で、実行中の turn の id でなければ両方の id を名指して reject する (型定義 `.claude-plugin/types/claude-code/index.d.ts` の `turn.abort`、reference の `claude-mods/dollar-api`)
+- 人が Esc で止めた turn の `turn.complete` は `reason: 'aborted'` で来る (reference の `claude-mods/dollar-api` の `process` 節の実測)。`$.turn.abort` で止めた turn も `reason: 'aborted'`、`isAborted: true` で来た (findings)
 - `turn.start` / `turn.complete` は subagent・teammate の turn でも起き、main loop のものは `e.agentId` が無い (reference の `claude-mods/events`)
 - TL の「応答中」は module の facts の `turn` (main の `turn.start` / `turn.complete`、[DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) から出る (`session-status-view.ts` の `respondingSince`)。module の無いセッションには出ない
 - daemon から module への依頼はサイドカーの経路 (DR-0035 §3) で、[DR-0041](./DR-0041-request-model-effort-override.md) §3 の `request.override` が同じ形の前例 (op ごとに args と result のスキーマ、生きている全 run に同時に送る)
@@ -46,7 +46,8 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 
 ### 3. 中断の痕跡
 
-- `$.turn.abort` は中断マーカーを残さない。transcript に人の中断の行は出ず、model は次の request で中断されたことを知らない (続きを頼むなら人が prompt で伝える)
+- `$.turn.abort` は中断マーカーを残さない。transcript に人の中断の行は出ず、model は次の request で中断されたことを知らない (続きを頼むなら人が prompt で伝える)。応答の途中で止めた時は、そこまでの文が `stop_reason` の無い assistant 行として transcript に残る
+- tool の実行中に止めると、走っていた Bash は止まらずに background の shell に移り、その tool_result は「Command running in background with ID: …」になる (TUI に「1 shell still running」)。TUI の Esc はその Bash を kill し、`[Request interrupted by user for tool use]` を残す。× は turn を止めるが、走っていた Bash を止めるのは Esc と違う (findings の比較)。移った shell はセッションの他の background の shell と同じく、人か model が止める
 - `turn.complete` は `reason: 'aborted'` で来て、module の facts の `turn` は idle になる。webui の応答中の表示はこれで消える
 - 中断したことの記録は daemon も webui も持たない。webui は押したタブだけで「中断しました」を短く出し、保存しない (他のタブ・読み込み直しでは出ない)
 
@@ -62,7 +63,7 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 
 ### 5. 対象外
 
-- subagent・teammate の turn。`$.turn.abort` は main loop の turn を止める口で、subagent の turn の id は受け付けない。main の turn を止めると、その turn の中で走っている tool (前景の Agent を含む) は止まる (型定義の `its running tools stopped`)。background で起きた subagent・teammate が止まるかは未確認
+- subagent・teammate の turn。`$.turn.abort` は main loop の turn を止める口で、subagent の turn の id は受け付けない。main の turn を止めた時に、その turn の中で走っている前景の Agent と、background で起きた subagent・teammate がどうなるかは未確認 (Bash は §3 のとおり background に移った)
 - 中断の後に自動で何かを送ること (「中断しました」の prompt 等)。中断の後にどうするかは人が決める
 
 ## Alternatives Considered
@@ -87,6 +88,7 @@ webui (user role) → daemon の op `turn_abort { session_id }` → daemon が�
 - protocol は op `turn_abort` が 1 つ、ErrorCode が 3 つ (`no_module`、`no_turn`、`abort_failed`)、サイドカーの依頼の op が 1 つ (`turn.abort`) 増える。module の `describe` の `ops` に `turn.abort` が並ぶ
 - この DR より前の plugin で起動したセッションの module は `turn.abort` を知らず、× を押すと 5 秒待って `abort_failed` (答えが無い) になる。plugin を上げて起動し直したセッションから効く
 - 人が webui から止めたことは会話にも transcript にも残らない。後から transcript を読む人やエージェントには、turn が途中で終わったことしか分からない
+- tool の実行中に × で止めると、その Bash は background で走り続ける (§3)。Esc と同じく kill されることを期待して押すと、止まったつもりの処理が残る
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `turn_abort` は `bad_request` で、module に何も送らない
   - module は subagent・teammate の `turn.start` の id で main の turnId を上書きせず、subagent の `turn.complete` で忘れない
