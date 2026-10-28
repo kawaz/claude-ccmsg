@@ -58,15 +58,16 @@ kawaz 2026-10-28 の裁定:
 - append の順は、jsonl の行の順と同じ (main と各 subagent のそれぞれで)
 - append の時点 (`next(e)` の後も) では jsonl にまだ行が無い。書き込みは 20〜200 ms 後
 
-**決め方**: 用途ごとに源を分ける。(a)〜(c) は次のとおり:
+**決め方** (kawaz 2026-10-28): 用途ごとに源を分ける。会話の行の正本は、セッションの transcript の jsonl。(a)〜(c) は次のとおり:
 - (a) daemon が `e.message` を行の形に直す: attachment の構造・usage・timestamp が `e` に無いので、直せない
 - (b) push の `e.message` を正本にする: 副作用 (§6) と既読 (§7) はこれで足りる。必要なのは tool_use の `id` / `name` / `input` で、jsonl と同じものが来る
 - (c) push を合図に jsonl の続きを読む: 中継 (§4) と fold (§5) は jsonl の行が要るので、これを採る
 
-推しは、副作用と既読を (b)、中継と fold を (c) にする分け方。用途ごとに要るものが違い、互いに独立している。(c) の実装:
+副作用と既読を (b)、中継と fold を (c) にする。用途ごとに要るものが違い、互いに独立している。(c) の読み方:
 - daemon はセッションごとに jsonl の読み終わりの位置を持つ。push が来たら、そこから続きを読む
-- 行は append より後に書かれるので、push で受けた uuid の行がまだファイルに無ければ、その間だけそのファイルの変更を待って読み直す (待つ uuid が無くなれば待ちをやめる。常時の Watch は持たない)
+- 行は append より後に書かれる (実測で 20〜200 ms 後)。そこで、push で受けた uuid の行が jsonl に現れるまで、そのファイルだけを短い間隔で読み直す。上限 (例 5 秒) を過ぎたら 1 回最終読みをして諦める。待ちは push ごとの局所的な再試行で、待つ uuid が無ければ何も読まない。常時の Watch も FSEvents も使わない
 - 読んだ行を uuid で重ねて §4・§5 に流す。`door: "queue"` の append と、uuid の重なる二度目の append は読みの対象にしない
+- 上限で諦めた行は、次の push の読みで拾われる (読み終わりの位置から続きを読むので)
 
 対話のセッションでの同じ突き合わせ (人の入力、queue された prompt、peer の封筒の行) は未観測で、段階 1 の最初に確かめる
 
@@ -79,13 +80,14 @@ kawaz 2026-10-28 の裁定:
 
 ### 4. webui への中継
 
-- `ev:"transcript"` の形 (`{ ev, sid, lines, ... }`、行は jsonl の 1 行の文字列) は保つ。daemon は §2 の (c) で読んだ行を、そのセッションの Timeline を購読しているタブへ送る (`transcript_subscribe` は購読の登録として残し、tail の Watch とは切り離す)
+- `ev:"transcript"` の形 (`{ ev, sid, lines, ... }`、行は jsonl の 1 行の文字列) は保つ。daemon は §2 の (c) で読んだ jsonl の行を、そのセッションの Timeline を購読しているタブへ送る。push の `e.message` は中継しない (`transcript_subscribe` は購読の登録として残し、tail の Watch とは切り離す)
 - 継ぎ目を byte offset (`start` / `end` / `size`) から行の uuid に置き換える: 各 push は `prev_uuid` (送る行の直前の行の uuid) と行を持つ。webui は、読み込み済みの最後の行の uuid が `prev_uuid` と違えば、間が抜けたとみなす。その時は `transcript_read` で末尾を読み直し、uuid で重ねる
 - `transcript_read` (DR-0009 §3) は、履歴のページング (older と、訪れた時の末尾の読み) のために byte offset を保つ。読みの結果の行には uuid があるので、webui は push の行と読みの行を uuid で重ねられる
 
 ### 5. tail の廃止と利用者の付け替え
 
-- `transcript.ts` の Watch (fs.watch と poll、`subscribeTranscriptLines`) を削る。行の源は §3 の「追いつきの 1 回の読み + push」になる
+- `transcript.ts` の Watch (fs.watch と poll、`subscribeTranscriptLines`) を削る。行の源は §3 の「追いつきの 1 回の読み + push を合図にした読み (§2 の (c))」になる
+- tail・fs.watch・ポーリングの口は残さない (kawaz 2026-10-28)。残すと、module の無いセッションへの暗黙のフォールバックになる。module の無いセッションの行は `transcript_read` で読めるだけ
 - 付け替え:
   - Status の fold (`session-status.ts`): 購読の時の冷えた走査 (cold scan) は §3 の追いつきの読みと同じ形で行い、以後は push の行を `foldLine` に通す。購読の無い閉じたセッションの `session_status` は、今の `getSessionStatus` と同じくファイルの 1 回の走査で答える
   - API error (`session-errors.ts`) と最後のユーザ入力 (`session-user-input.ts`): 接続中の全セッションの push の行を、それぞれの候補の検査と fold に通す。今は webui のタブが開いている時だけ tail していたが、push は常に届くので、タブの有無の gate は要らなくなる
@@ -174,6 +176,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 - module → daemon の要求は、行の数だけ増える (1 turn に数行〜数十行)。DR-0046 の口の往復は 1 ms 前後 (実測) で、直列の送りは返事を待つ間の行をまとめる
 - daemon の副作用は daemon の環境で起きる (`CCMSG_SAY_BIN`、`<config dir>` は daemon の側の値)
+- Timeline の live の反応: 今の tail は fs.watch (FSEvents) で即時に拾い、2 秒の backup の poll で取りこぼしを拾う (最悪 2 秒)。新しい形は push の後に jsonl に行が現れるのを待って読むので、書き込みの遅れ (実測 ≈ 200 ms) の分だけ遅れ、常時のポーリングは無い
 - daemon が止まっている間の行は、副作用を起こさない (発声も起動もされない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
 - 発声の成否と launch の結果は tool の結果に入らない。launch の結果は notify で会話に届く
 - 触る範囲: hooks (`session.append` の転送、say / launch の handler の返事)、protocol (push の op、`ev:"transcript"` の継ぎ目、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、既読のファイル)、webui (継ぎ目、say のバブル、Sessions 一覧の数)、CLI (`ccmsg say` と permit の発声の削除)
