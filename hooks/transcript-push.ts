@@ -25,6 +25,10 @@ export const SessionAppendInputSchema = v.looseObject({
  * the row: it is not in the conversation. */
 const RefusedSchema = v.looseObject({ deny: v.unknown() });
 
+/** A row with nothing in it (a hook that ran and said nothing): Claude Code
+ * writes it no line, so its push would only have the daemon wait for one. */
+const EmptyRowSchema = v.looseObject({ content: v.pipe(v.array(v.unknown()), v.length(0)) });
+
 /** The daemon's answer to a push. */
 const PushedTextSchema = jsonText(v.looseObject({ ok: v.literal(true) }));
 
@@ -40,8 +44,8 @@ export function newTranscriptPushState(): TranscriptPushState {
 }
 
 /** A row went into the conversation (`result` is what the event settled
- * to): push it, or let the push that is out take it next. A refused row is
- * not pushed. Never rejects. */
+ * to): push it, or let the push that is out take it next. A refused row, and
+ * a row with no content, are not pushed. Never rejects. */
 export function rowAppended<R>(
   $: Engine,
   state: TranscriptPushState,
@@ -49,6 +53,7 @@ export function rowAppended<R>(
   result: R,
 ): void {
   if (parseWith(RefusedSchema, result).ok) return;
+  if (parseWith(EmptyRowSchema, input.message).ok) return;
   state.unpushed.push({
     uuid: input.uuid,
     door: input.door,

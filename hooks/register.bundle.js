@@ -118,6 +118,22 @@ function check(requirement, message$1) {
     }
   };
 }
+function length(requirement, message$1) {
+  return {
+    kind: "validation",
+    type: "length",
+    reference: length,
+    async: false,
+    expects: `${requirement}`,
+    requirement,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && dataset.value.length !== this.requirement)
+        _addIssue(this, "length", dataset, config$1, { received: `${dataset.value.length}` });
+      return dataset;
+    }
+  };
+}
 function maxLength(requirement, message$1) {
   return {
     kind: "validation",
@@ -2651,12 +2667,15 @@ var SessionAppendInputSchema = looseObject({
   message: JsonValueSchema
 });
 var RefusedSchema = looseObject({ deny: unknown() });
+var EmptyRowSchema = looseObject({ content: pipe(array(unknown()), length(0)) });
 var PushedTextSchema = jsonText(looseObject({ ok: literal(true) }));
 function newTranscriptPushState() {
   return { unpushed: [], pushing: false };
 }
 function rowAppended($, state, input, result) {
   if (parseWith(RefusedSchema, result).ok)
+    return;
+  if (parseWith(EmptyRowSchema, input.message).ok)
     return;
   state.unpushed.push({
     uuid: input.uuid,

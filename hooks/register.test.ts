@@ -3253,6 +3253,26 @@ describe("transcript_push", () => {
     expect(fake.pushes).toEqual([]);
   });
 
+  // 何を保証するか: content が空の行 (何も言わずに終わった hook の hook_success)
+  // は jsonl に行が書かれないので渡さない。content のある同じ種類の行は渡す。
+  test("a row with empty content is not pushed, one with content is", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    const hook = (uuid: string, content: JsonObject[]) => ({
+      uuid,
+      door: "hook-context",
+      message: { type: "attachment", role: "user", name: "hook_success", content },
+    });
+    await fire(fake, "session.append", hook("h-empty", []), async () => ({}));
+    await settle();
+    const said = [{ type: "text", text: "hook said this" }];
+    await fire(fake, "session.append", hook("h-said", said), async () => ({}));
+    await settle();
+    expect(fake.pushes.map(rowsOf)).toEqual([
+      [{ uuid: "h-said", door: "hook-context", message: hook("h-said", said).message }],
+    ]);
+  });
+
   // 何を保証するか: 送りは 1 本ずつ。送りの返事を待つ間に入った行は、次の
   // 1 回にまとめて入った順に送る (行の順を daemon が並べ直さずに済む)。
   test("rows that go in while a push is out go together in the next, in order", async () => {
