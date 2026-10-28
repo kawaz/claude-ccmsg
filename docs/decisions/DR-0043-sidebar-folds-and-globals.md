@@ -153,7 +153,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 
 - Status タブから daemon の版の行 (`.status-daemon-version`) が消える。Status タブはセッションに属するものだけになる
 - サイドバーの一覧の段は、1 本の縦スクロールから区画ごとのスクロールに変わる
-- 縦積み (フォームが上・一覧が下) の時の一覧の既定の高さ (`SIDEBAR_LIST_DEFAULT_PX` = 220px) は「一覧の上端から 1 行目まで 75px」の実測を根拠にしているが、見出しが 3 つ (SESSIONS・ROOMS・GLOBALS) 並ぶと 1 行目までが変わり、見える行が減る。実装の時に測り直す
+- 縦積み (フォームが上・一覧が下) の時の一覧の既定の高さ (`SIDEBAR_LIST_DEFAULT_PX`) は 292px。ROOMS と GLOBALS の見出しが SESSIONS の本体の下に並ぶぶん、行が 2 本見えて 3 本目が覗く高さが区画の列の前より高い (390x844 の実測: 一覧の上端から 1 行目まで 71px、行のピッチ 59px、SESSIONS の本体の下に 80px、[findings](../findings/2026-10-28-dr-0043-verify.md))
 - リンクの名前は設定の並びで決まる、が明文になる。tailscale serve の自動許可は file の Origin より前に並ぶので、tailscale serve が動いている間は file の Origin をリンクの名前にできない (`CCMSG_HTTP_ALLOW_ORIGIN` は env なので先頭に置けるが、env を持たずに daemon が起こし直されると消える、`origins-file.ts` の冒頭)
 - protocol は op `claude_update` が 1 つ、`ping` の返事の optional の field が 2 つ (`webui_urls`、`claude_version`)、stream event が 1 つ (`ev: "claude_version"`) 増える。知らない client は field を落とす (`v.object`)
 - daemon に「ホストの Claude Code の binary を更新する」能力が入る。user role 限定で、走っているプロセスには触らない。上がった binary が効くのは、以後に起動するセッション
