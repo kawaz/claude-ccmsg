@@ -22,6 +22,8 @@ import {
 import {
   startInProcessDaemon,
   stopInProcessDaemon,
+  appendPushed,
+  liveSessionConn,
   sessionConn,
   userConn,
   fixtureDir,
@@ -29,6 +31,7 @@ import {
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
+const C = "cccccccc-0000-4000-8000-000000000003";
 const T1 = "2026-08-31T10:00:00.000Z";
 const T2 = "2026-08-31T10:05:00.000Z";
 const T3 = "2026-08-31T10:09:00.000Z";
@@ -293,7 +296,7 @@ describe("isUserInputCandidate", () => {
 });
 
 describe("last_user_input_at on peers", () => {
-  test("接続中セッションの transcript から最終ユーザ入力時刻が peers に載る", async () => {
+  test("module の run があるセッションの transcript から最終ユーザ入力時刻が peers に載る", async () => {
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-user-input");
     try {
@@ -301,12 +304,18 @@ describe("last_user_input_at on peers", () => {
       // 最後の行はアシスタント発話 = ユーザ入力より後。ソートキーは
       // 「最後のユーザ入力」であって「最後の行」ではない。
       fs.writeFileSync(file, typedPromptLine("やって", T1) + assistantLine(T2) + assistantLine(T3));
-      await sessionConn(ctx, A, { transcript_path: file });
+      await liveSessionConn(ctx, A, { transcript_path: file });
+      // run の無いセッションは fold を持たないので、入力があっても値を持たない。
+      const unmoduled = path.join(dir, `${C}.jsonl`);
+      fs.writeFileSync(unmoduled, typedPromptLine("やって", T1));
+      await sessionConn(ctx, C, { transcript_path: unmoduled });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
 
       const res = await user.requestOk({ op: "peers" });
       expect(inputAt(res.peers, A)).toBe(T1);
+      expect(res.peers.some((p) => p.sid === C)).toBe(true);
+      expect(inputAt(res.peers, C)).toBeUndefined();
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(dir, { recursive: true, force: true });
@@ -319,13 +328,13 @@ describe("last_user_input_at on peers", () => {
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, typedPromptLine("やって", T1));
-      await sessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
-      // tail 駆動 (ポーリングではない): 届いた瞬間に ev:"peers" が飛ぶ。
-      fs.appendFileSync(file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
+      // push 駆動 (ポーリングではない): module が行を送った瞬間に ev:"peers" が飛ぶ。
+      await appendPushed(session, file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
       const pushed = await user.readEventUntil("peers", (event) => inputAt(event.peers, A) === T2);
       expect(inputAt(pushed.ev.peers, A)).toBe(T2);
     } finally {
@@ -342,12 +351,14 @@ describe("last_user_input_at on peers", () => {
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, typedPromptLine("やって", T1));
-      await sessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
-      fs.appendFileSync(
+      // push は答える前にファイルを読むので、行は fold に入り終えている。
+      await appendPushed(
+        session,
         file,
         assistantLine(T2) + teammateRelayLine(T2) + ccmsgDeliveryLine("a3", "できました", T3),
       );
@@ -367,8 +378,8 @@ describe("last_user_input_at on peers", () => {
       const empty = path.join(dir, `${B}.jsonl`);
       fs.writeFileSync(withPrompt, typedPromptLine("やって", T1));
       fs.writeFileSync(empty, assistantLine(T2));
-      await sessionConn(ctx, A, { transcript_path: withPrompt });
-      await sessionConn(ctx, B, { transcript_path: empty });
+      await liveSessionConn(ctx, A, { transcript_path: withPrompt });
+      await liveSessionConn(ctx, B, { transcript_path: empty });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
 

@@ -78,17 +78,13 @@ import { pauseLlmKeepalive } from "./llm-keepalive-pause.ts";
 import {
   createSessionErrorsStore,
   sessionErrorEntries,
-  stopAllSessionErrors,
-  sessionErrorsReady,
-  syncSessionErrorWatches,
+  sessionErrorFold,
   type SessionErrorsStore,
 } from "./session-errors.ts";
 import {
   createSessionUserInputStore,
   lastUserInputAt,
-  sessionUserInputsReady,
-  stopAllUserInputs,
-  syncUserInputWatches,
+  sessionUserInputFold,
   userInputEntries,
   type SessionUserInputStore,
 } from "./session-user-input.ts";
@@ -108,6 +104,7 @@ import {
   refreshInputReadiness,
   refreshSessionFacts,
   turnOf,
+  sessionStatusFold,
   sessionStatusUnsubscribeAll,
   stopAllSessionStatus,
   subscribeSessionStatus,
@@ -151,22 +148,18 @@ import {
   SessionOverrides,
   sendRequestOverride,
 } from "./request-override.ts";
-import {
-  adoptTranscriptPath,
-  createTranscriptTailStore,
-  resolveTranscript,
-  stopAllTailWatches,
-  transcriptRead,
-  type TranscriptTailStore,
-} from "./transcript.ts";
+import { adoptTranscriptPath, resolveTranscript, transcriptRead } from "./transcript.ts";
 import {
   createTranscriptRelayStore,
   relayPushed,
+  relayRefold,
   relayRetarget,
   relaySubscribe,
   relayUnsubscribe,
   relayUnsubscribeAll,
+  relaysCaughtUp,
   stopAllRelays,
+  syncLiveRelays,
   type TranscriptRelayStore,
 } from "./transcript-relay.ts";
 import {
@@ -302,11 +295,9 @@ export interface Daemon {
    * registered is forgotten once a round begun after the hello does not list
    * it (forgetUnlistedHellos). */
   agentsSeen: Map<string, string>;
-  /** The jsonl Watches the daemon's own folds read (session_status,
-   * session errors, user input). */
-  transcriptTail: TranscriptTailStore;
-  /** The live Timelines the webui follows, read on the module's pushes
-   * (transcript-relay.ts, DR-0045 §2 / §4). */
+  /** The daemon's reading of each session's jsonl on its module's pushes,
+   * for the Timelines the webui follows and the daemon's own folds
+   * (transcript-relay.ts, DR-0045 §2 – §5). */
   transcriptRelay: TranscriptRelayStore;
   /** component-boundary timestamps for transcript latency diagnosis, from the
    * daemon's own file check through the browser points posted via
@@ -314,9 +305,8 @@ export interface Daemon {
   trace: TraceWriter;
   /** folded transcript status subscriptions per sid (DR-0020 Phase 1). */
   sessionStatus: SessionStatusStore;
-  /** api_error fold across every connected peer, for the sidebar's error
-   * section. Independent of `sessionStatus`, which only follows the sids a
-   * client explicitly subscribed to. */
+  /** api_error fold across every live session, for the sidebar's error
+   * section. */
   sessionErrors: SessionErrorsStore;
   sessionUserInputs: SessionUserInputStore;
   /** sessionErrorEntries() as of the last `ev:"session_errors"` broadcast —
@@ -462,8 +452,15 @@ export function createDaemon(host: DaemonHost): Daemon {
     launches: new Set(),
     agentsPoller: createAgentsPoller(),
     agentsSeen: new Map(),
-    transcriptTail: createTranscriptTailStore(trace),
-    transcriptRelay: createTranscriptRelayStore(log, trace),
+    transcriptRelay: createTranscriptRelayStore(log, {
+      trace,
+      folds: [
+        (sid) => sessionStatusFold(daemon.sessionStatus, daemon.sessions, sid, log),
+        (sid) => sessionErrorFold(daemon.sessionErrors, sid, () => broadcastSessionErrors(daemon)),
+        (sid) =>
+          sessionUserInputFold(daemon.sessionUserInputs, sid, () => maybeBroadcastPeers(daemon)),
+      ],
+    }),
     trace,
     sessionStatus: createSessionStatusStore({
       inputReadiness: (sid) => readinessOf(daemon, sid),
@@ -615,6 +612,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // injection mid-session).
   const configDir = id.config_dir ?? entry?.configDir;
   const isNewEntry = !entry;
+  const previousLocation = { cwd: entry?.meta.cwd, repo_root: entry?.meta.repo_root };
   const previousTranscriptPath = entry?.meta.transcript_path;
   if (
     previousTranscriptPath !== undefined &&
@@ -639,7 +637,14 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // connection's answer as if it were this one's.
   entry.clientVersion = client.version;
   entry.clientProtocol = client.protocol;
-  if (isNewEntry) refreshInputReadiness(daemon.sessionStatus, daemon.log);
+  if (
+    !isNewEntry &&
+    (location.cwd !== previousLocation.cwd || location.repo_root !== previousLocation.repo_root)
+  ) {
+    // What the Status fold classifies external files against moved.
+    relayRefold(daemon.transcriptRelay, id.sid);
+  }
+  if (isNewEntry) refreshInputReadiness(daemon.sessionStatus, daemon.sessions, daemon.log);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
@@ -673,7 +678,7 @@ const SESSION_FACTS_ASK_MS = 5_000;
 function takeSessionFacts(daemon: Daemon, sid: string, facts: SessionFacts): void {
   if (!daemon.sessionFacts.take(sid, facts)) return;
   takeRequestOverrides(daemon, sid, facts);
-  refreshSessionFacts(daemon.sessionStatus, sid, daemon.log);
+  refreshSessionFacts(daemon.sessionStatus, daemon.sessions, sid, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
   maybeBroadcastAgents(daemon, agents, polledAt);
 }
@@ -743,13 +748,21 @@ function takeRequestOverrides(daemon: Daemon, sid: string, facts: SessionFacts):
   }
 }
 
+/** The sessions whose hooks module has a run named: those the daemon reads
+ * the lines of (DR-0045 §3). */
+function liveSids(daemon: Daemon): string[] {
+  return [...daemon.sessions.keys()].filter((sid) => daemon.sidecarRuns.liveOf(sid).length > 0);
+}
+
 /** Push whether a person's input can reach each session, where it moved:
  * the peer rows and the session statuses being followed, and the terminals
  * the agents rows carry, which come from the same runs. Called when a run is
- * named or goes, and when a session is registered or forgotten. */
+ * named or goes, and when a session is registered or forgotten. The same
+ * moments make a session live or not (DR-0045 §3). */
 function refreshReadiness(daemon: Daemon): void {
+  syncLiveRelays(daemon.transcriptRelay, daemon.sessions, liveSids(daemon));
   maybeBroadcastPeers(daemon);
-  refreshInputReadiness(daemon.sessionStatus, daemon.log);
+  refreshInputReadiness(daemon.sessionStatus, daemon.sessions, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
   maybeBroadcastAgents(daemon, agents, polledAt);
 }
@@ -921,11 +934,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.subscribers.delete(conn);
   // A sidecar's connection closing is its run going.
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
-  // The departing conn may have been the last user-role subscriber, in which
-  // case syncSessionErrors drops every watch (see its doc comment).
-  syncSessionErrors(daemon);
-  syncSessionUserInputs(daemon);
-  sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
+  sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
   relayUnsubscribeAll(daemon.transcriptRelay, conn);
 }
 
@@ -1327,11 +1336,9 @@ function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSo
  * repo/ws/branch/transcript_path/repo_root must not spam a push (issue
  * 2026-07-12-peers-live-update-protocol). No polling: called only from the two
  * registry mutation points (registerSession, removeConn) that can change the
- * result, plus the user-input fold's onChange when a transcript tail moves
+ * result, plus the user-input fold's onChange when a relay read moves
  * `last_user_input_at` — all three are events, so this stays purely
- * event-driven, unlike the agents poller. Re-entry through that third caller
- * terminates: the snapshot is stamped before the syncs below run, and a sync
- * that changes nothing fires no onChange. */
+ * event-driven, unlike the agents poller. */
 function maybeBroadcastPeers(daemon: Daemon): void {
   const key = peersCompareKey(daemon);
   if (key === daemon.peersSnapshot) return;
@@ -1340,17 +1347,6 @@ function maybeBroadcastPeers(daemon: Daemon): void {
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
   }
-  // The connected set just changed, so the set of transcripts worth folding
-  // for api_error — and for last_user_input_at — did too.
-  syncSessionErrors(daemon);
-  syncSessionUserInputs(daemon);
-}
-
-function hasUserSubscriber(daemon: Daemon): boolean {
-  for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") return true;
-  }
-  return false;
 }
 
 /** Push ev:"session_errors" when the list actually differs from the last one
@@ -1364,47 +1360,6 @@ function broadcastSessionErrors(daemon: Daemon): void {
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "session_errors", errors });
   }
-}
-
-/** Follow every connected session's transcript for api_error, with or
- * without a hooks module (DR-0039 §2) — but only while a user-role subscriber
- * is connected: webui-only work costs nothing when no webui is watching. With
- * no such subscriber the wanted set is empty, which tears every watch down.
- * Called from the three places that can change either input: peers changing
- * (maybeBroadcastPeers), a user subscribing, and a subscriber leaving. */
-function syncSessionErrors(daemon: Daemon): void {
-  // The network watch is a second consumer of the same fold: it needs to know
-  // which sessions are stopped at the moment the link returns, and a stall
-  // that happened while no webui was open is exactly the one worth waking.
-  const wanted = hasUserSubscriber(daemon) || daemon.networkWatch?.enabled === true;
-  const sids = wanted ? [...daemon.sessions.values()].map((s) => s.meta.sid) : [];
-  syncSessionErrorWatches(
-    daemon.sessionErrors,
-    daemon.transcriptTail,
-    daemon.sessions,
-    sids,
-    daemon.log,
-    () => broadcastSessionErrors(daemon),
-  );
-}
-
-/** Watch exactly the connected sessions, and only while a webui is open to
- * read the result — the same gate as syncSessionErrors, for the same reason
- * (no work on behalf of nobody). Unlike syncSessionErrors this
- * has no second consumer: nothing but the sidebar's ordering reads it, so it
- * stops folding the moment the last tab closes. */
-function syncSessionUserInputs(daemon: Daemon): void {
-  const sids = hasUserSubscriber(daemon)
-    ? [...daemon.sessions.values()].map((s) => s.meta.sid)
-    : [];
-  syncUserInputWatches(
-    daemon.sessionUserInputs,
-    daemon.transcriptTail,
-    daemon.sessions,
-    sids,
-    daemon.log,
-    () => maybeBroadcastPeers(daemon),
-  );
 }
 
 /** The link state `ping` reports: whether a recovery could wake anything, and
@@ -1988,10 +1943,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           polled_at: polledAt,
         });
       }
-      // This conn may be the first user subscriber, which is what makes the
-      // per-peer api_error and user-input watches worth holding.
-      syncSessionErrors(daemon);
-      syncSessionUserInputs(daemon);
       // Catch-up for the windows that opened before this tab connected. Sent
       // only when something is live: an empty push would make a daemon with
       // no gateway configured look like one whose sessions all went cold.
@@ -2046,10 +1997,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "peers": {
-      // Same settled-answer contract as `session_errors`: a watch started when
-      // this tab subscribed moments ago may still be folding, and a peers list
+      // Same settled-answer contract as `session_errors`: a session that
+      // became live moments ago may still be catching up, and a peers list
       // whose ordering key fills in afterwards would sort wrong on first paint.
-      if (conn.identity?.role === "user") await sessionUserInputsReady(daemon.sessionUserInputs);
+      if (conn.identity?.role === "user") await relaysCaughtUp(daemon.transcriptRelay);
       send(conn, { ok: true, peers: currentPeers(daemon) });
       return;
     }
@@ -2931,7 +2882,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       // A watch started moments ago may still be folding; the op contract is a
       // settled list, so wait for the scans already under way.
-      await sessionErrorsReady(daemon.sessionErrors);
+      await relaysCaughtUp(daemon.transcriptRelay);
       send(conn, { ok: true, errors: sessionErrorEntries(daemon.sessionErrors) });
       return;
     }
@@ -3099,7 +3050,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         row.agent_id === undefined && row.door !== "queue" ? [row.uuid] : [],
       );
       if (uuids.length > 0) {
-        relayPushed(daemon.transcriptRelay, conn.identity.sid, uuids);
+        relayPushed(daemon.transcriptRelay, daemon.sessions, conn.identity.sid, uuids);
       }
       send(conn, { ok: true });
       return;
@@ -3162,11 +3113,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       const result = await subscribeSessionStatus(
         daemon.sessionStatus,
-        daemon.transcriptTail,
         daemon.sessions,
         req.sid,
         conn,
-        daemon.log,
       );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
@@ -3181,7 +3130,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'session_status_unsubscribe' requires user role");
         return;
       }
-      unsubscribeSessionStatus(daemon.sessionStatus, daemon.transcriptTail, req.sid, conn);
+      unsubscribeSessionStatus(daemon.sessionStatus, req.sid, conn);
       send(conn, { ok: true, sid: req.sid });
       return;
     }
@@ -3254,13 +3203,10 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.translator.stop();
-  stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
-  stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
-  stopAllUserInputs(daemon.sessionUserInputs, daemon.transcriptTail);
+  stopAllRelays(daemon.transcriptRelay);
+  stopAllSessionStatus(daemon.sessionStatus);
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
-  stopAllTailWatches(daemon.transcriptTail);
-  stopAllRelays(daemon.transcriptRelay);
   daemon.peerInjector.close();
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
@@ -3549,9 +3495,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
         ? { debounceMs: Number(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS) }
         : {}),
     });
-    // Enabling the watch adds a consumer of the api-error fold, so the watched
-    // set has to be recomputed with it in place.
-    if (daemon.networkWatch.enabled) syncSessionErrors(daemon);
   }
 
   // A daemon a test run spawned holds that run's lifeline before it accepts

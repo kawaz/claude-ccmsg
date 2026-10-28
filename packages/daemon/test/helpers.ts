@@ -187,6 +187,66 @@ export async function userConn(ctx: { sock: string }): Promise<TestClient> {
   return c;
 }
 
+/** Name a run of the session `c` said hello as, on `c`, as its sidecar does
+ * (sidecar_hello): the session's hooks module is then live, and the daemon
+ * folds its transcript until `c` closes (DR-0045 §3). Resolves once the folds
+ * have caught up with the file as it stands (a user's `peers` waits for
+ * that), so what the test writes next is read as what came after. */
+export async function nameRun(ctx: { sock: string }, c: TestClient): Promise<void> {
+  await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+  const observer = await userConn(ctx);
+  try {
+    await observer.requestOk({ op: "peers" });
+  } finally {
+    await observer.end();
+  }
+}
+
+/** sessionConn, with a run of the session named on the same connection
+ * (nameRun): a live session whose module pushes its rows on it. */
+export async function liveSessionConn(
+  ctx: { sock: string },
+  sid: string,
+  fields: SessionHelloFields = {},
+): Promise<TestClient> {
+  const c = await sessionConn(ctx, sid, fields);
+  await nameRun(ctx, c);
+  return c;
+}
+
+/** Transcript lines (`text`, each ending in a newline) given a uuid of their
+ * own each, as Claude Code writes every row: `text` is what to write, `uuids`
+ * what the module pushes for them. */
+export function stampRows(text: string): { text: string; uuids: string[] } {
+  const rows = text
+    .split("\n")
+    .filter((row) => row !== "")
+    .map((row) => ({ ...jsonObjectOf(row), uuid: crypto.randomUUID() }));
+  return {
+    text: rows.map((row) => `${JSON.stringify(row)}\n`).join(""),
+    uuids: rows.map((row) => row.uuid),
+  };
+}
+
+/** Push rows that went into `session`'s conversation, as its hooks module
+ * does (transcript_push): the daemon reads the jsonl on at the push. */
+export async function pushRows(session: TestClient, uuids: readonly string[]): Promise<void> {
+  await session.requestOk({
+    op: "transcript_push",
+    rows: uuids.map((uuid) => ({ uuid, door: "response", message: {} })),
+  });
+}
+
+/** Append `text` (transcript lines, each ending in a newline) to `file`
+ * under uuids of their own (stampRows), and push them on `session`
+ * (pushRows). Resolves once the daemon has read them: the push reads the file
+ * before it is answered. */
+export async function appendPushed(session: TestClient, file: string, text: string): Promise<void> {
+  const rows = stampRows(text);
+  fs.appendFileSync(file, rows.text);
+  await pushRows(session, rows.uuids);
+}
+
 /** A daemon hosted in this test process: the same daemon state and UNIX
  * socket listener a spawned daemon runs, so its clients go through the wire
  * (hello, identity, replies read by TestClient) without a process start. It

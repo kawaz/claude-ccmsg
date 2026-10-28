@@ -15,7 +15,7 @@ import {
 } from "@ccmsg/protocol";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 import { resolveAgentTranscript } from "./agent-transcripts.ts";
-import type { TraceWriter } from "./trace.ts";
+import { yieldToEventLoop } from "./event-loop.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -451,15 +451,11 @@ export async function transcriptRead(
 }
 
 // ---------------------------------------------------------------------------
-// Watch: follow a session's transcript for the daemon's own folds
-// (session_status, session errors, user input), handing complete lines to
-// each listener. One fs.watch/poll timer + one listener set per sid, keyed
-// off the same hello-validated transcript_path (no separate trust boundary).
-// The webui's live Timeline is not read here: transcript-relay.ts reads it on
-// the hooks module's pushes (DR-0045 §4).
+// Reading a live session's lines on (transcript-relay.ts, DR-0045 §2 / §3):
+// the pieces of the file read the relay shares with the one-shot reads.
 // ---------------------------------------------------------------------------
 
-export interface TailLog {
+export interface TranscriptLog {
   info(msg: string): void;
   error(msg: string): void;
 }
@@ -468,85 +464,52 @@ export interface TailLog {
  *  (same rationale as SessionLookup above) so this module has no dependency
  *  edge back to server.ts. Transport-level Conn.write() implementations
  *  (UDS/WS) already guard against a closing socket, so no try/catch here. */
-export interface TailConn {
+export interface TranscriptConn {
   write(line: string): void;
 }
 
-/** Stat-poll period used as the SOLE mechanism when fs.watch is unavailable
- *  for a given file (see startWatching). Not a protocol constant — purely an
- *  internal fallback knob. */
-const TAIL_POLL_FALLBACK_MS = 1000;
+const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 
-/**
- * Stat-poll period used as a low-frequency BACKUP alongside a working
- * fs.watch (as opposed to TAIL_POLL_FALLBACK_MS's sole-mechanism role).
- * Verified empirically (macOS/Bun, 2026-07): fs.watch/FSEvents delivery is
- * usually near-instant, but under heavy concurrent system load (observed:
- * many daemon subprocesses spawned across a parallel `bun test` run) it can
- * lag by tens of seconds before firing — never silently drops the event
- * outright in this scenario (unlike the close/reopen bug documented on
- * startWatching), just delivers it very late. This backup poll bounds
- * staleness to ~this interval regardless of how late FSEvents gets, without
- * giving up fs.watch's normal near-instant path.
- */
-const TAIL_BACKUP_POLL_MS = 2000;
-
-/** Internal line-listener payload: what checkNow hands each listener.
- *  `start < previous end` never happens for growth; a reset (truncate or file
- *  replacement) arrives as lines=[] with start===end===size, letting a
- *  folding consumer detect it and rescan (see session-status.ts). */
-export type TranscriptLineListener = (payload: {
-  lines: string[];
-  start: number;
-  end: number;
-  size: number;
-}) => void;
-
-interface Watch {
-  sid: string;
-  file: string;
-  /** byte offset up to which complete lines have already been emitted to listeners. */
-  lastEnd: number;
-  /** inode of `file` as of the last successful checkNow (or Watch creation).
-   *  Lets checkNow tell "the same file grew/shrank" apart from "this path
-   *  now names a DIFFERENT file" (rewrite via unlink+recreate, or a rename
-   *  swap) — a same-or-larger-size replacement is invisible to the
-   *  size<lastEnd truncate check alone (see checkNow's doc comment).
-   *  NOT sufficient alone: ext4 (GitHub Actions runners) eagerly reuses the
-   *  just-freed inode number for the next create, so an unlink+recreate can
-   *  come back with the SAME ino — hence the birthtime and sawMissing belts
-   *  below (a CI-only failure observed on v0.19.0's run #29160237229). */
-  ino: number;
-  /** birthtime (ms) captured alongside `ino` — second identity belt for the
-   *  ino-reuse case above. Compared only when both sides are > 0, because
-   *  filesystems without creation-time support report 0/epoch. */
-  birthtimeMs: number;
-  /** true once a checkNow saw the path missing (statSync ENOENT). The next
-   *  successful stat then resets unconditionally: a path that disappeared
-   *  and came back is a different file by definition, even if the new file
-   *  reuses the inode AND lands in the same birthtime tick. */
-  sawMissing: boolean;
-  lineListeners: Set<TranscriptLineListener>;
-  fsWatcher: fs.FSWatcher | null;
-  pollTimer: ReturnType<typeof setInterval> | null;
-  log: TailLog;
-  trace?: TraceWriter;
-}
-
-export interface TranscriptTailStore {
-  watches: Map<string, Watch>;
-  trace?: TraceWriter;
-}
-
-export function createTranscriptTailStore(trace?: TraceWriter): TranscriptTailStore {
-  return { watches: new Map(), trace };
-}
-
-function broadcast(
-  watch: Watch,
-  payload: { lines: string[]; start: number; end: number; size: number },
-): void {
-  for (const listener of watch.lineListeners) listener(payload);
+/** Scan complete lines from the start of a transcript up to `endOffset`
+ * (the file's size when omitted) without loading the file whole: the relay's
+ * catch-up read and session_status's one-shot read.
+ *
+ * A scan walks the whole transcript, so it hands the event loop a turn per
+ * chunk (DR-0029): one session's catch-up must not stall every other
+ * client's WS delivery. */
+export async function scanTranscriptLines(
+  file: string,
+  endOffset: number | undefined,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const limit = endOffset ?? (await fs.promises.stat(file)).size;
+  const handle = await fs.promises.open(file, "r");
+  let offset = 0;
+  let carry = Buffer.alloc(0);
+  try {
+    while (offset < limit) {
+      // Splitting and folding a chunk is pure CPU, so the loop has to re-enter
+      // the loop itself rather than relying on the read's IO wait.
+      await yieldToEventLoop();
+      const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
+      const chunk = Buffer.allocUnsafe(toRead);
+      const { bytesRead: n } = await handle.read(chunk, 0, toRead, offset);
+      if (n === 0) break;
+      offset += n;
+      const data =
+        carry.length === 0 ? chunk.subarray(0, n) : Buffer.concat([carry, chunk.subarray(0, n)]);
+      let start = 0;
+      for (;;) {
+        const newline = data.indexOf(0x0a, start);
+        if (newline < 0) break;
+        onLine(data.toString("utf-8", start, newline));
+        start = newline + 1;
+      }
+      carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
+    }
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The timestamp of the last of `lines` that carries one, for the trace. */
@@ -566,7 +529,7 @@ export function extractEntryTimestamp(lines: readonly string[]): string | undefi
  * line (the writer mid-append) is dropped and left for the next check
  * (`end` stays at `from` in that case, signaling "nothing complete yet").
  */
-export function readLinesForTail(
+export function readCompleteLines(
   file: string,
   from: number,
   to: number,
@@ -588,311 +551,4 @@ export function readLinesForTail(
   } finally {
     fs.closeSync(fd);
   }
-}
-
-/**
- * Re-check `watch.file` against `watch.lastEnd` and broadcast whatever
- * changed. All I/O here is synchronous (statSync/openSync/readSync/
- * closeSync) so this never yields mid-check — no reentrancy guard needed
- * even though it's invoked from both an fs.watch callback and a poll timer.
- *
- * Four cases:
- *  - inode changed (rewrite: unlink+recreate, or a rename swap): the offset
- *    bookkeeping was for a file that no longer exists at this path, even if
- *    the new file happens to be the same size or larger — reset exactly like
- *    a truncate (below), since a same-or-larger size would otherwise slip
- *    past the size<lastEnd check and read garbage from the wrong content at
- *    a stale offset.
- *  - size < lastEnd (truncate, same inode): reset the offset to the new size
- *    and tell listeners with an empty-lines event carrying the new size,
- *    so a client watching for stale content knows to drop what it had
- *    (DR-0009 live-tail addendum: safe-side reset, no attempt to diff
- *    against content that no longer exists).
- *  - size === lastEnd: no growth, nothing to do.
- *  - size > lastEnd: read the new window, keep only complete lines (a
- *    trailing partial line is deferred to the next check), broadcast if at
- *    least one full line was found.
- */
-function checkNow(watch: Watch, log: TailLog, source: "fs_watch" | "poll"): void {
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(watch.file);
-  } catch {
-    // vanished; leave lastEnd as-is but remember we saw the gap — if the
-    // path comes back it is a different file even when ext4 hands the new
-    // file the just-freed inode number (see Watch.ino / Watch.sawMissing).
-    watch.sawMissing = true;
-    return;
-  }
-  const identityChanged =
-    stat.ino !== watch.ino ||
-    watch.sawMissing ||
-    (stat.birthtimeMs > 0 && watch.birthtimeMs > 0 && stat.birthtimeMs !== watch.birthtimeMs);
-  // Only a check that found something records a detect: idle poll ticks outnumber
-  // real events by orders of magnitude and would rotate the interesting history
-  // out of trace.jsonl. `mtime_ms` vs `ts` is the file-write-to-detect gap, the
-  // first boundary of the path this trace exists to measure.
-  if (identityChanged || stat.size !== watch.lastEnd) {
-    void watch.trace?.write({
-      comp: "daemon",
-      edge: "in",
-      kind: "transcript_detect",
-      sid: watch.sid,
-      start: watch.lastEnd,
-      end: stat.size,
-      size: stat.size,
-      mtime_ms: stat.mtimeMs,
-      source,
-      ...(identityChanged ? { identity_changed: true } : {}),
-    });
-  }
-  if (identityChanged) {
-    watch.ino = stat.ino;
-    watch.birthtimeMs = stat.birthtimeMs;
-    watch.sawMissing = false;
-    watch.lastEnd = stat.size;
-    broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
-    return;
-  }
-  if (stat.size < watch.lastEnd) {
-    watch.lastEnd = stat.size;
-    broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
-    return;
-  }
-  if (stat.size === watch.lastEnd) return;
-
-  let result: { lines: string[]; end: number };
-  try {
-    result = readLinesForTail(watch.file, watch.lastEnd, stat.size);
-  } catch (e) {
-    log.error(`transcript tail: read failed for ${watch.sid}: ${String(e)}`);
-    return;
-  }
-  if (result.lines.length === 0) return; // trailing partial line only; wait for more
-  const start = watch.lastEnd;
-  const entryTs = extractEntryTimestamp(result.lines);
-  void watch.trace?.write({
-    comp: "daemon",
-    edge: "out",
-    kind: "transcript_read",
-    sid: watch.sid,
-    start,
-    end: result.end,
-    size: stat.size,
-    bytes: result.end - start,
-    lines: result.lines.length,
-    ...(entryTs ? { entry_ts: entryTs } : {}),
-    source,
-  });
-  watch.lastEnd = result.end;
-  broadcast(watch, { lines: result.lines, start, end: result.end, size: stat.size });
-}
-
-function startPolling(watch: Watch, log: TailLog, intervalMs: number): void {
-  if (watch.pollTimer !== null) return;
-  watch.pollTimer = setInterval(() => checkNow(watch, log, "poll"), intervalMs);
-  watch.pollTimer.unref?.();
-}
-
-function stopPolling(watch: Watch): void {
-  if (watch.pollTimer !== null) {
-    clearInterval(watch.pollTimer);
-    watch.pollTimer = null;
-  }
-}
-
-function stopFsWatcher(watch: Watch): void {
-  if (watch.fsWatcher !== null) {
-    try {
-      watch.fsWatcher.close();
-    } catch {
-      // already closing
-    }
-    watch.fsWatcher = null;
-  }
-}
-
-/**
- * fs.watch on the transcript's PARENT DIRECTORY, filtered to its basename —
- * NOT `fs.watch(watch.file)` directly. Confirmed empirically (macOS/Bun,
- * 2026-07): watching the file itself works for the *first* Watch on a given
- * sid, but once that fs.FSWatcher is `.close()`d (last subscriber leaves,
- * see teardownWatch) and a *later* subscribe re-opens `fs.watch()` on the
- * very same file path, the new watcher silently never fires again — no
- * thrown error, no "error" event, just permanent silence (reproduced with a
- * minimal standalone script, not specific to this module's code path).
- * Watching the parent directory instead survives repeated close/reopen
- * cycles without issue (also verified standalone), at the cost of checkNow
- * running on every change to any sibling file in that directory too — cheap
- * (a stat + maybe a bounded read), so not worth avoiding via inotify-style
- * directory-level filtering complexity.
- *
- * Falls back ENTIRELY to a 1s stat-poll (TAIL_POLL_FALLBACK_MS, the sole
- * mechanism) if fs.watch throws synchronously (e.g. an exotic filesystem, or
- * the directory itself is gone) or emits an "error" event later.
- *
- * When fs.watch DOES start successfully, a low-frequency backup poll
- * (TAIL_BACKUP_POLL_MS) runs alongside it unconditionally — not just on
- * failure. See TAIL_BACKUP_POLL_MS's doc comment for why: fs.watch alone
- * isn't a strong enough latency guarantee under heavy system load. checkNow
- * is naturally idempotent (a no-op once caught up), so having both the
- * fs.watch callback and the backup timer able to trigger it is never
- * redundant work beyond an extra stat() call every couple seconds.
- */
-function startWatching(watch: Watch, log: TailLog): void {
-  const dir = path.dirname(watch.file);
-  const base = path.basename(watch.file);
-  try {
-    const w = fs.watch(dir, { persistent: false }, (_eventType, filename) => {
-      if (filename !== null && filename !== base) return; // unrelated sibling file
-      checkNow(watch, log, "fs_watch");
-    });
-    w.on("error", (e) => {
-      log.info(
-        `transcript tail: fs.watch error sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
-      );
-      stopFsWatcher(watch);
-      stopPolling(watch); // drop the backup-frequency timer before restarting at fallback frequency
-      startPolling(watch, log, TAIL_POLL_FALLBACK_MS);
-    });
-    watch.fsWatcher = w;
-    startPolling(watch, log, TAIL_BACKUP_POLL_MS);
-  } catch (e) {
-    log.info(
-      `transcript tail: fs.watch unavailable sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
-    );
-    startPolling(watch, log, TAIL_POLL_FALLBACK_MS);
-  }
-}
-
-function teardownWatch(watch: Watch, reason: string): void {
-  watch.log.info(
-    `transcript tail: teardown sid=${watch.sid} file=${watch.file} listeners=${watch.lineListeners.size} reason=${reason}`,
-  );
-  stopFsWatcher(watch);
-  stopPolling(watch);
-}
-
-/** Which file a tail Watch should follow for `sid`.
- *
- * The connected session's announced path always wins, so a session that
- * connects (or re-hellos onto another file) keeps driving the Watch. Only when
- * no connection announces a transcript at all does `fallbackFile` — a path the
- * caller already resolved with {@link resolveTranscript}'s allowVirtual pass,
- * i.e. `<configDir>/projects/<project>/<sid>.jsonl` — take over, which is what
- * lets a historical sid be tailed and folded.
- *
- * Design rationale: the fallback is passed in rather than resolved here so
- * this stays synchronous. The Watch lifecycle runs from fs.watch/poll
- * callbacks and must not yield (see `resolveConnectedTranscript`); async
- * resolution belongs to the op handler, which is already async. */
-function resolveTailTarget(
-  sessions: SessionLookup,
-  sid: string,
-  fallbackFile: string | undefined,
-): TranscriptResolveResult {
-  const connected = resolveConnectedTranscript(sessions, sid);
-  if (connected.ok || fallbackFile === undefined) return connected;
-  if (connected.code !== ErrorCode.session_not_found) return connected;
-  return { ok: true, file: fallbackFile };
-}
-
-function getOrCreateWatch(
-  store: TranscriptTailStore,
-  sessions: SessionLookup,
-  sid: string,
-  log: TailLog,
-  fallbackFile?: string,
-): TranscriptResult<Watch> {
-  const resolved = resolveTailTarget(sessions, sid, fallbackFile);
-  if (!resolved.ok) return resolved;
-
-  let watch = store.watches.get(sid);
-  let migratedListeners: Set<TranscriptLineListener> | undefined;
-  let replacedFrom: string | undefined;
-  if (watch && watch.file !== resolved.file) {
-    replacedFrom = watch.file;
-    migratedListeners = watch.lineListeners;
-    log.info(
-      `transcript tail: path replace sid=${sid} from=${watch.file} to=${resolved.file} listeners=${watch.lineListeners.size}`,
-    );
-    teardownWatch(watch, "path-replaced");
-    store.watches.delete(sid);
-    watch = undefined;
-  }
-  if (!watch) {
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(resolved.file);
-    } catch {
-      return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
-    }
-    watch = {
-      sid,
-      file: resolved.file,
-      lastEnd: stat.size,
-      ino: stat.ino,
-      birthtimeMs: stat.birthtimeMs,
-      sawMissing: false,
-      lineListeners: migratedListeners ?? new Set(),
-      fsWatcher: null,
-      pollTimer: null,
-      log,
-      trace: store.trace,
-    };
-    store.watches.set(sid, watch);
-    startWatching(watch, log);
-    log.info(
-      `transcript tail: create sid=${sid} file=${watch.file} listeners=${watch.lineListeners.size}`,
-    );
-    if (replacedFrom !== undefined) {
-      broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
-    }
-  }
-  return { ok: true, data: watch };
-}
-
-function maybeTeardownWatch(store: TranscriptTailStore, watch: Watch): void {
-  if (watch.lineListeners.size !== 0) return;
-  teardownWatch(watch, "unused");
-  store.watches.delete(watch.sid);
-}
-
-/** Internal consumers can share the transcript Watch without opening a second
- * fs.watch/poll loop. The returned size is the exact scan boundary: bytes after
- * it are delivered through `listener`, while callers synchronously scan [0,size).
- *
- * `fallbackFile` lets a caller that already resolved a historical transcript
- * (allowVirtual) tail a sid with no connected session; see
- * {@link resolveTailTarget}. */
-export function subscribeTranscriptLines(
-  store: TranscriptTailStore,
-  sessions: SessionLookup,
-  sid: string,
-  listener: TranscriptLineListener,
-  log: TailLog,
-  fallbackFile?: string,
-): TranscriptResult<{ sid: string; file: string; size: number }> {
-  const result = getOrCreateWatch(store, sessions, sid, log, fallbackFile);
-  if (!result.ok) return result;
-  const watch = result.data;
-  watch.lineListeners.add(listener);
-  return { ok: true, data: { sid, file: watch.file, size: watch.lastEnd } };
-}
-
-export function unsubscribeTranscriptLines(
-  store: TranscriptTailStore,
-  sid: string,
-  listener: TranscriptLineListener,
-): void {
-  const watch = store.watches.get(sid);
-  if (!watch) return;
-  watch.lineListeners.delete(listener);
-  maybeTeardownWatch(store, watch);
-}
-
-/** Unconditional stop of every Watch, for daemon shutdown. */
-export function stopAllTailWatches(store: TranscriptTailStore): void {
-  for (const watch of store.watches.values()) teardownWatch(watch, "shutdown");
-  store.watches.clear();
 }

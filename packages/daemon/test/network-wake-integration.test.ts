@@ -9,7 +9,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  appendPushed,
   connect,
+  nameRun,
   startTestDaemon,
   stopTestDaemon,
   type DaemonCtx,
@@ -80,6 +82,8 @@ interface Fixture {
    * `timestamp` — the input the wake reads, built asynchronously from the
    * transcript. */
   waitStall(sid: string, timestamp: string): Promise<void>;
+  /** The sessions session_errors lists now. */
+  listed(): Promise<string[]>;
 }
 
 async function startFixture(): Promise<Fixture> {
@@ -124,6 +128,8 @@ async function startFixture(): Promise<Fixture> {
         return res.errors.some((e) => e.sid === sid && e.timestamp === timestamp);
       });
     },
+    listed: async () =>
+      (await observer.requestOk({ op: "session_errors" })).errors.map((e) => e.sid),
   };
 }
 
@@ -141,7 +147,8 @@ async function waitFor(what: string, ready: () => Promise<boolean>): Promise<voi
 
 /** Say hello as `sid`, running in `harness`'s config dir with `transcript`,
  * and, with `module`, name a run of it as its sidecar does: the session then
- * has a hooks module. The connection stays open for the run to stay live. */
+ * has a hooks module, and the daemon folds its transcript. The connection
+ * stays open for the run to stay live. */
 async function stalledSession(
   ctx: DaemonCtx,
   sid: string,
@@ -161,12 +168,8 @@ async function stalledSession(
     transcript_path: transcript,
     config_dir: harness.configDir,
   });
-  if (module) await nameRun(c);
+  if (module) await nameRun(ctx, c);
   return c;
-}
-
-async function nameRun(c: TestClient): Promise<void> {
-  await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
 }
 
 /** The wakes `harness` has been sent so far. */
@@ -190,7 +193,8 @@ describe("network online wake", () => {
     const hc = fakeHarness(C, { pid: third.pid });
     const conns: TestClient[] = [];
     try {
-      conns.push(await stalledSession(f.ctx, A, ha, stuck, true));
+      const a = await stalledSession(f.ctx, A, ha, stuck, true);
+      conns.push(a);
       conns.push(await stalledSession(f.ctx, B, hb, healthy, true));
       const c = await stalledSession(f.ctx, C, hc, unmoduled, false);
       conns.push(c);
@@ -198,8 +202,10 @@ describe("network online wake", () => {
       // The wake reads the api-error fold, which is built asynchronously from
       // the transcript. Recovering before it lands would be a race the
       // feature loses silently, so wait until the daemon reports the stall.
+      // C has no hooks module, so the daemon holds no fold of its transcript
+      // and its stall is not listed.
       await f.waitStall(A, ERR_TS);
-      await f.waitStall(C, ERR_TS);
+      expect(await f.listed()).toEqual([A]);
       await f.setLink("online");
 
       const woken = await ha.nextUser();
@@ -211,20 +217,22 @@ describe("network online wake", () => {
         body: WAKE_TEXT,
       });
 
-      // C has no hooks module, so nothing reached it — and the stall is not
-      // taken as woken: once C has a module, the next recovery wakes it, and
-      // A's unchanged stall is not poked again.
-      await nameRun(c);
+      // Nothing reached C, and its stall is not taken as woken: once C has a
+      // module, its transcript is read from the first byte, the stall is
+      // listed, and the next recovery wakes it — and A's unchanged stall is
+      // not poked again.
+      await nameRun(f.ctx, c);
+      await f.waitStall(C, ERR_TS);
       await f.setLink("offline");
       await f.setLink("online");
       expect(parseEnvelope(await hc.nextContent()).body).toBe(WAKE_TEXT);
       expect(wakesIn(hc)).toBe(1);
 
-      // A new stall of A is woken again. Deliveries to one session go in
-      // order, so a duplicate for the old stall would have to arrive before
-      // this one.
+      // A new stall of A, pushed by its module as the rows go in, is woken
+      // again. Deliveries to one session go in order, so a duplicate for the
+      // old stall would have to arrive before this one.
       const NEW_TS = "2026-08-12T04:00:00.000Z";
-      fs.appendFileSync(stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
+      await appendPushed(a, stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
       await f.waitStall(A, NEW_TS);
       await f.setLink("offline");
       await f.setLink("online");

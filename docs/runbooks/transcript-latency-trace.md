@@ -1,6 +1,6 @@
 # Runbook: Timeline 更新遅延の切り分け (trace.jsonl)
 
-- Last Updated: 2026-07-29
+- Last Updated: 2026-10-28
 
 ## 適用ケース
 
@@ -13,9 +13,8 @@ transcript の 1 行が file に書かれてからブラウザの DOM に載る�
 
 | kind | comp | 意味 |
 |---|---|---|
-| `transcript_detect` | daemon | file の変化を検知 (`source` が `fs_watch` / `poll`、`mtime_ms` が file の書き込み時刻) |
-| `transcript_read` | daemon | 完全な行を読み終えた (`bytes` / `lines` / `entry_ts`) |
-| `wire_write` | daemon | 購読者へ送信 (`subscriber` は購読者の連番) |
+| `transcript_read` | daemon | module の push を合図に完全な行を読み終えた (`bytes` / `lines`。`source` が `push` = push の時の読み、`retry` = まだ書かれていない行を待つ読み直し、[DR-0045](../decisions/DR-0045-say-speaks-in-tool-shown-from-transcript.md) §2) |
+| `wire_write` | daemon | 購読者へ送信 (`subscriber` は購読者の連番、`entry_ts`) |
 | `ws_receive` | webui | タブが WS で受信 |
 | `store_dispatch` | webui | reducer が反映し終えた |
 | `dom_commit` | webui | 追記行が document に載った |
@@ -31,7 +30,7 @@ transcript の 1 行が file に書かれてからブラウザの DOM に載る�
 - **daemon 側は全配信を記録**する。**ブラウザ側は間引かれる**: 受信→DOM が1 秒を超えた配信は必ず記録、それ以外は 20 件に 1 件(`packages/webui/src/client/trace.ts` の `SLOW_DELIVERY_MS` /
   `HEALTHY_SAMPLE_EVERY`)。**遅い配信は取り逃さない**設計なので、「遅かったのに webui の行が無い」は「タブに届いていない」を意味する
 - ブラウザ側 3 点の時刻は**タブの時計**で打つ。daemon と時計がずれている環境では daemon↔webui をまたぐ差分に下駄が乗る (webui 3 点どうしの差分は無事)
-- 変化を検知した時だけ記録する。無変化の poll tick は残らない
+- 行が読めた時だけ記録する。まだ書かれていない行を待つ読み直しのうち、何も読めなかった回は残らない
 
 ## 手順
 
@@ -54,50 +53,46 @@ jq -s --arg sid "$sid" '
   | map({
       end: .[0].end,
       t: (map({key: .kind, value: (.ts | ms)}) | from_entries),
-      mtime: (map(.mtime_ms // empty) | first)
+      entry: (map(.entry_ts // empty) | first | if . == null then null else ms end),
+      source: (map(.source // empty) | first)
     })
   | map(select(.t.dom_commit))
   | map({
       end,
-      write_to_detect: ((.t.transcript_detect - .mtime) | round),
-      detect_to_read:  (.t.transcript_read - .t.transcript_detect),
-      read_to_wire:    (.t.wire_write - .t.transcript_read),
-      wire_to_ws:      (.t.ws_receive - .t.wire_write),
-      ws_to_store:     (.t.store_dispatch - .t.ws_receive),
-      store_to_dom:    (.t.dom_commit - .t.store_dispatch),
-      total_ms:        ((.t.dom_commit - .mtime) | round)
+      source,
+      entry_to_read: ((.t.transcript_read - .entry) | round),
+      read_to_wire:  (.t.wire_write - .t.transcript_read),
+      wire_to_ws:    (.t.ws_receive - .t.wire_write),
+      ws_to_store:   (.t.store_dispatch - .t.ws_receive),
+      store_to_dom:  (.t.dom_commit - .t.store_dispatch),
+      total_ms:      ((.t.dom_commit - .entry) | round)
     })
 ' ~/.local/state/ccmsg/trace.jsonl
 ```
 
-健全時の実測 (macOS、隔離 daemon + Chrome、2026-07-29):
-
-```json
-{ "end": 155, "write_to_detect": 8, "detect_to_read": 1, "read_to_wire": 0,
-  "wire_to_ws": 1, "ws_to_store": 0, "store_to_dom": 2, "total_ms": 12 }
-```
+`entry_to_read` は、Claude Code が行を書いた時刻 (`entry_ts`) から daemon が読むまで。行は module の push より 20〜200 ms 後に書かれ、daemon はそれを 50 ms 間隔の読み直しで拾うので、健全時もこの程度は乗る (実測は [findings](../findings/2026-10-28-transcript-push-live-verify.md))。
 
 ### 3. 遅い境界から原因を絞る
 
 | 大きい境界 | 意味 | 次に見るもの |
 |---|---|---|
-| `write_to_detect` | file 書き込みの検知が遅い | 同じ配信の `source`。`poll` なら `fs_watch` が死んでいる (下記 4) |
-| `detect_to_read` / `read_to_wire` | daemon 内の読み取り・送信が遅い | 配信サイズ (`bytes`)、daemon の負荷 |
+| `entry_to_read` | 行が書かれてから読むまでが遅い | push が届いているか (下記 4)。daemon.log の `gave up waiting` (待つ上限の 5 秒を過ぎた行は、次の push の読みまで届かない) |
+| `read_to_wire` | daemon 内の送信が遅い | 配信サイズ (`bytes`)、daemon の負荷 |
 | `wire_to_ws` | daemon が送ってからタブが受けるまでが遅い | ネットワーク経路、WS のバックプレッシャ、タブの背景スロットリング |
 | `ws_to_store` | reducer が遅い | 配信サイズ、`needsResync` による再取得の有無 |
 | `store_to_dom` | 再レンダーが遅い | Timeline の行数、fold/highlight のコスト |
 | **`dom_commit` の行が無い** | タブまで届いていない or 描画されていない | 下記 5 |
 
-### 4. 検知経路が poll に落ちていないか
+### 4. module の push が届いているか
 
-`fs_watch` が失われると poll 間隔ぶんの遅延が固定的に乗る:
+daemon は module の push を合図にしか jsonl を読まない。対象 sid の `transcript_read` が 1 行も無いなら、そのセッションから push が来ていない:
 
 ```bash
-jq -r 'select(.kind == "transcript_detect") | .source' ~/.local/state/ccmsg/trace.jsonl \
-  | sort | uniq -c
+jq -r --arg sid "$sid" 'select(.sid == $sid and .kind == "transcript_read") | .source' \
+  ~/.local/state/ccmsg/trace.jsonl | sort | uniq -c
 ```
 
-`poll` が支配的なら、daemon の再起動で `fs.watch` を張り直す。
+push が来ないのは、セッションに hooks module が無い (module の無いセッションに live の Timeline は無い)、または module が push を持たない古い版のとき。後者はセッションの再起動で新しい版の module になる。
 
 ### 5. daemon は送ったのにブラウザの行が無い場合
 

@@ -21,6 +21,7 @@ import {
   type InProcessDaemon,
   type TestClient,
   defined,
+  liveSessionConn,
   sessionConn,
   userConn,
   fixtureDir,
@@ -39,7 +40,9 @@ async function sessionAtWithTranscript(
 ): Promise<{ session: TestClient; transcript: string }> {
   const transcript = path.join(cwd, `${sid}.jsonl`);
   fs.writeFileSync(transcript, transcriptLines.map((line) => `${line}\n`).join(""));
-  const session = await sessionConn(ctx, sid, { cwd, transcript_path: transcript });
+  // A live session (its module has a run named): its Status fold holds the
+  // allowlist as the transcript named it when it was folded.
+  const session = await liveSessionConn(ctx, sid, { cwd, transcript_path: transcript });
   return { session, transcript };
 }
 

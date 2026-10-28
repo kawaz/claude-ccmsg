@@ -15,10 +15,11 @@
 //      @ccmsg/protocol's ccmsg-direct-transcript.
 //
 // Structurally this is session-errors.ts' twin: the same one-pattern fold over
-// the same shared transcript tail, for the same reason (DR-0020 §2.1 (a) — the
-// sidebar needs a field for *every* peer, so a per-sid session_status
-// subscription is too expensive a source). It tails rather than polls: a
-// prompt lands in the list as it is typed.
+// the lines the transcript relay reads (DR-0045 §5), for the same reason
+// (DR-0020 §2.1 (a) — the sidebar needs a field for *every* peer, so a per-sid
+// session_status subscription is too expensive a source). A session is folded
+// while its hooks module has a run named, so a prompt lands in the list as it
+// is typed.
 import {
   DIRECT_DELIVERY_USER_SENDER,
   isKnownTranscriptRow,
@@ -29,16 +30,7 @@ import {
   TranscriptRowLineSchema,
   type TranscriptRow,
 } from "@ccmsg/protocol";
-import { scanTranscriptLines } from "./session-status.ts";
-import {
-  resolveConnectedTranscript,
-  subscribeTranscriptLines,
-  unsubscribeTranscriptLines,
-  type SessionLookup,
-  type TailLog,
-  type TranscriptLineListener,
-  type TranscriptTailStore,
-} from "./transcript.ts";
+import type { LineFold } from "./transcript-relay.ts";
 
 /** A ccmsg `type:"msg"` subscribe event authored by the User admin, as it
  * appears *inside* the `<event>` body of a `<task-notification>` row — so the
@@ -156,56 +148,31 @@ function isFromUser(text: string): boolean {
   return parseDirectDeliveries(text).some((d) => d.from === DIRECT_DELIVERY_USER_SENDER);
 }
 
-/** The folded state itself, separable from the watch so a rescan can build a
- * detached one and swap it in only when it completes. */
 interface UserInputFold {
   lastAt?: string;
 }
 
-interface UserInputWatch extends UserInputFold {
-  /** Transcript path this watch and its folded state describe. A re-hello
-   * pointing the sid at a different file invalidates both. */
-  file: string;
-  listener: TranscriptLineListener;
-  /** Bumped per rescan; a scan that finds its generation stale on completion
-   * was superseded by a later reset and drops its result. */
-  rescanGen: number;
-  /** True while a rescan is walking the file. Tail lines are buffered rather
-   * than folded, since the scan is about to replace the state wholesale. */
-  scanning: boolean;
-  /** Lines the tail delivered during a rescan, folded in order once it lands. */
-  pending: string[];
-}
-
 export interface SessionUserInputStore {
-  watches: Map<string, UserInputWatch>;
-  /** Rescans still walking their transcript, so a caller that needs a settled
-   * answer (the `peers` op, tests) can wait for the initial fold instead of
-   * reading a list that fills in moments later. */
-  inflight: Set<Promise<void>>;
+  /** The settled fold of each live session. */
+  folds: Map<string, UserInputFold>;
 }
 
 export function createSessionUserInputStore(): SessionUserInputStore {
-  return { watches: new Map(), inflight: new Set() };
-}
-
-/** Resolve once every rescan started so far has folded. */
-export async function sessionUserInputsReady(store: SessionUserInputStore): Promise<void> {
-  await Promise.all(store.inflight);
+  return { folds: new Map() };
 }
 
 /** Last user-input time for `sid`, or undefined while the fold has found none
- * (no watch, a transcript too old to carry the wire fields, or a session
- * nobody has typed into yet). */
+ * (the session is not live, a transcript too old to carry the wire fields,
+ * or a session nobody has typed into yet). */
 export function lastUserInputAt(store: SessionUserInputStore, sid: string): string | undefined {
-  return store.watches.get(sid)?.lastAt;
+  return store.folds.get(sid)?.lastAt;
 }
 
 /** Every known value, sid-sorted, for snapshot comparison by value. */
 export function userInputEntries(store: SessionUserInputStore): [string, string][] {
   const entries: [string, string][] = [];
-  for (const [sid, watch] of store.watches) {
-    if (watch.lastAt) entries.push([sid, watch.lastAt]);
+  for (const [sid, fold] of store.folds) {
+    if (fold.lastAt) entries.push([sid, fold.lastAt]);
   }
   return entries.sort((a, b) => a[0].localeCompare(b[0]));
 }
@@ -224,124 +191,42 @@ function foldLine(fold: UserInputFold, line: string): boolean {
   return true;
 }
 
-/** Refold `file` from the start, up to `endOffset` when the caller knows how
- * far the tail has already delivered. Mirrors session-errors.ts' rescan: it
- * folds into a detached state, swaps that in on completion and only then fires
- * `onChange`, so the watch keeps serving its previous value meanwhile. */
-function rescan(
+/** `sid`'s last-user-input fold, for the transcript relay. Like
+ * session-errors.ts' fold, a catch-up folds into a detached state that
+ * replaces the settled one only when it lands. `onChange` is told when the
+ * session's value may have moved. */
+export function sessionUserInputFold(
   store: SessionUserInputStore,
-  watch: UserInputWatch,
-  endOffset: number | undefined,
+  sid: string,
   onChange: () => void,
-  log: TailLog,
-): void {
-  watch.rescanGen += 1;
-  const gen = watch.rescanGen;
-  watch.scanning = true;
-  watch.pending = [];
-  const fold: UserInputFold = {};
-  const scan = (async () => {
-    try {
-      await scanTranscriptLines(watch.file, endOffset, (line) => {
-        if (isUserInputCandidate(line)) foldLine(fold, line);
-      });
-    } catch {
-      // leave empty
-    }
-    if (gen !== watch.rescanGen) return;
-    watch.lastAt = fold.lastAt;
-    watch.scanning = false;
-    const pending = watch.pending;
-    watch.pending = [];
-    for (const line of pending) {
-      if (isUserInputCandidate(line)) foldLine(watch, line);
-    }
-    onChange();
-  })();
-  const tracked = scan.catch((e: unknown) => {
-    watch.scanning = false;
-    log.error(`session_user_input rescan failed file=${watch.file}: ${String(e)}`);
-  });
-  store.inflight.add(tracked);
-  void tracked.finally(() => store.inflight.delete(tracked));
-}
-
-/**
- * Bring the watched set in line with `sids` (the currently connected peers):
- * start folding newly connected sessions, drop gone ones, and rebuild any
- * whose transcript path changed. Fires `onChange` at most once synchronously,
- * and only when the resulting entry list differs — including the "a watched
- * session disconnected" case, where it shrinks with no transcript event. A
- * newly started watch folds asynchronously and fires `onChange` again when
- * that lands.
- *
- * Sessions with no resolvable transcript are skipped rather than recorded with
- * no value: not knowing is the same outcome either way, and a skipped sid costs
- * nothing to retry on the next sync.
- */
-export function syncUserInputWatches(
-  store: SessionUserInputStore,
-  transcriptTail: TranscriptTailStore,
-  sessions: SessionLookup,
-  sids: Iterable<string>,
-  log: TailLog,
-  onChange: () => void,
-): void {
-  const before = JSON.stringify(userInputEntries(store));
-  const wanted = new Set(sids);
-
-  for (const [sid, watch] of store.watches) {
-    const resolved = resolveConnectedTranscript(sessions, sid);
-    const stillValid = wanted.has(sid) && resolved.ok && resolved.file === watch.file;
-    if (stillValid) continue;
-    unsubscribeTranscriptLines(transcriptTail, sid, watch.listener);
-    store.watches.delete(sid);
-  }
-
-  for (const sid of wanted) {
-    if (store.watches.has(sid)) continue;
-    const resolved = resolveConnectedTranscript(sessions, sid);
-    if (!resolved.ok) continue;
-    const watch: UserInputWatch = {
-      file: resolved.file,
-      rescanGen: 0,
-      scanning: false,
-      pending: [],
-      listener(payload) {
-        if (payload.lines.length === 0) {
-          // Watch reset (truncate / replacement file): the folded state
-          // describes bytes that no longer exist.
-          rescan(store, watch, payload.size, onChange, log);
-          return;
-        }
-        if (watch.scanning) {
-          watch.pending.push(...payload.lines);
-          return;
-        }
-        let changed = false;
-        for (const line of payload.lines) {
-          if (isUserInputCandidate(line) && foldLine(watch, line)) changed = true;
-        }
-        if (changed) onChange();
-      },
-    };
-    const subscribed = subscribeTranscriptLines(transcriptTail, sessions, sid, watch.listener, log);
-    if (!subscribed.ok) continue;
-    watch.file = subscribed.data.file;
-    rescan(store, watch, subscribed.data.size, onChange, log);
-    store.watches.set(sid, watch);
-  }
-
-  if (JSON.stringify(userInputEntries(store)) !== before) onChange();
-}
-
-/** Drop every watch (daemon shutdown). */
-export function stopAllUserInputs(
-  store: SessionUserInputStore,
-  transcriptTail: TranscriptTailStore,
-): void {
-  for (const [sid, watch] of store.watches) {
-    unsubscribeTranscriptLines(transcriptTail, sid, watch.listener);
-  }
-  store.watches.clear();
+): LineFold {
+  let settled: UserInputFold | undefined;
+  let next: UserInputFold | undefined;
+  let moved = false;
+  return {
+    restart() {
+      next = {};
+    },
+    take(line) {
+      const fold = next ?? settled;
+      if (fold !== undefined && isUserInputCandidate(line) && foldLine(fold, line)) moved = true;
+    },
+    settle() {
+      if (next !== undefined) {
+        moved ||= next.lastAt !== settled?.lastAt;
+        settled = next;
+        next = undefined;
+        store.folds.set(sid, settled);
+      }
+      if (!moved) return;
+      moved = false;
+      onChange();
+    },
+    close() {
+      if (store.folds.get(sid) === settled) store.folds.delete(sid);
+      if (settled?.lastAt !== undefined) onChange();
+      settled = undefined;
+      next = undefined;
+    },
+  };
 }

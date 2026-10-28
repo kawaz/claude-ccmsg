@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as v from "valibot";
-import { yieldToEventLoop } from "./event-loop.ts";
 import {
   AgentMetaTextSchema,
   AgentToolResultSchema,
@@ -59,15 +58,13 @@ import {
 } from "@ccmsg/protocol";
 import {
   resolveTranscript,
-  subscribeTranscriptLines,
-  unsubscribeTranscriptLines,
+  scanTranscriptLines,
   type SessionLookup as TranscriptSessionLookup,
-  type TailConn,
-  type TailLog,
-  type TranscriptLineListener,
+  type TranscriptConn,
+  type TranscriptLog,
   type TranscriptResult,
-  type TranscriptTailStore,
 } from "./transcript.ts";
+import type { LineFold } from "./transcript-relay.ts";
 import { RUN_ID_RE } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 import { discoverWorkspaceFolders } from "./workspace-folders.ts";
@@ -1665,48 +1662,6 @@ function deriveSidDir(file: string): string | undefined {
   return file.endsWith(".jsonl") ? file.slice(0, -".jsonl".length) : undefined;
 }
 
-/** Scan complete lines from the start of a transcript without loading the file
- * whole. Shared by the full status fold (scanTranscript) and session-errors.ts,
- * which folds a single pattern and needs the same bounded-memory read.
- *
- * A cold scan walks the whole transcript, so it hands the event loop a turn
- * per chunk (DR-0029): one client's first `session_status` must not stall
- * every other client's WS delivery. */
-export async function scanTranscriptLines(
-  file: string,
-  endOffset: number | undefined,
-  onLine: (line: string) => void,
-): Promise<void> {
-  const limit = endOffset ?? (await fs.promises.stat(file)).size;
-  const handle = await fs.promises.open(file, "r");
-  let offset = 0;
-  let carry = Buffer.alloc(0);
-  try {
-    while (offset < limit) {
-      // Splitting and folding a chunk is pure CPU, so the loop has to re-enter
-      // the loop itself rather than relying on the read's IO wait.
-      await yieldToEventLoop();
-      const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
-      const chunk = Buffer.allocUnsafe(toRead);
-      const { bytesRead: n } = await handle.read(chunk, 0, toRead, offset);
-      if (n === 0) break;
-      offset += n;
-      const data =
-        carry.length === 0 ? chunk.subarray(0, n) : Buffer.concat([carry, chunk.subarray(0, n)]);
-      let start = 0;
-      for (;;) {
-        const newline = data.indexOf(0x0a, start);
-        if (newline < 0) break;
-        onLine(data.toString("utf-8", start, newline));
-        start = newline + 1;
-      }
-      carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
-    }
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function scanTranscript(
   file: string,
   state: SessionStatusState,
@@ -1717,10 +1672,12 @@ export async function scanTranscript(
   });
 }
 
+/** A live session's settled Status fold (DR-0045 §5). */
 interface LiveSessionStatus {
-  /** Transcript path and containment root this fold was built from. A re-hello
-   * that changes either invalidates the fold: the same transcript classified
-   * against a different root would otherwise retain a stale DR-0024 allowlist. */
+  /** Transcript path and containment root this fold was built from. A
+   * session that names another of either is answered by a one-shot read
+   * until its refold lands: the same transcript classified against a
+   * different root would otherwise retain a stale DR-0024 allowlist. */
   file: string;
   root?: string;
   /** DR-0025 Phase 1: sibling directory (`file` minus `.jsonl`) used to load
@@ -1728,82 +1685,21 @@ interface LiveSessionStatus {
   sidDir?: string;
   /** DR-0026 workspace anchor: session cwd realpath used to discover
    * `*.code-workspace` folders at snapshot time. Unlike `file`/`root` it is
-   * NOT part of the fold-invalidation key — the fold has no cwd-derived state
+   * NOT part of the fold's identity — the fold has no cwd-derived state
    * (workspace discovery re-reads disk each snapshot) — so a cwd-only
-   * re-hello just refreshes this field in place (getSessionStatus /
-   * subscribeSessionStatus) instead of forcing a refold. */
+   * re-hello just refreshes this field in place (getSessionStatus). */
   cwd?: string;
   state: SessionStatusState;
-  statusConns: Set<TailConn>;
-  listener: TranscriptLineListener;
-  /** Resolves when the in-flight cold scan / refold finishes; `undefined` when
-   * the fold is current. Readers (getSessionStatus, subscribeSessionStatus)
-   * await it so a snapshot is never taken from a half-scanned prefix. */
-  ready?: Promise<void>;
-  /** Bumped per scan. A scan whose generation is stale by the time it finishes
-   * was superseded by a later reset and drops its result instead of publishing
-   * a fold of bytes that have since been replaced. */
-  scanGen: number;
-  /** Tail of the serialized push queue for this session (see pushSnapshot).
-   * Building a snapshot reads the filesystem, so a push cannot complete inside
-   * the fs.watch callback that triggered it; chaining keeps concurrent pushes
-   * from writing to a subscriber out of order. */
-  pushChain: Promise<void>;
-  /** Lines delivered by the tail while a scan was in flight. The Watch resets
-   * its own offset to the scanned size first, so these are strictly the bytes
-   * after the scanned window and fold in order once the scan lands. */
-  pendingLines: string[];
-  /** The input readiness the last snapshot of this fold carried, so
+}
+
+/** The tabs following one session's Status. */
+interface StatusSubscription {
+  conns: Set<TranscriptConn>;
+  /** The input readiness the last snapshot to them carried, so
    * refreshInputReadiness pushes only when it changed. */
   inputReadiness?: SessionInputReadiness["kind"];
-}
-
-/** Fold everything the tail delivered during a scan, then forget it. */
-function drainPendingLines(live: LiveSessionStatus): void {
-  const pending = live.pendingLines;
-  live.pendingLines = [];
-  for (const line of pending) {
-    if (isSessionStatusCandidate(line)) foldLine(live.state, line);
-  }
-}
-
-/** Refold the transcript from scratch up to `size` after a Watch reset
- * (truncate or replacement file). The scan runs off the fs.watch callback
- * rather than inside it: it builds a detached state and swaps it in on
- * completion, so the previous fold — a coherent view of an earlier moment —
- * stays readable meanwhile instead of a half-filled one. */
-function startRefold(
-  store: SessionStatusStore,
-  sid: string,
-  live: LiveSessionStatus,
-  size: number,
-  log: TailLog,
-): void {
-  live.scanGen += 1;
-  const gen = live.scanGen;
-  live.pendingLines = [];
-  const state = createSessionStatusState(live.root);
-  // Nothing necessarily awaits this promise (the Watch callback that starts it
-  // returns immediately), so it must not be able to reject: an unhandled
-  // rejection here would take the daemon down over one unreadable transcript.
-  live.ready = (async () => {
-    try {
-      await scanTranscript(live.file, state, size);
-    } catch {
-      // vanished between the reset broadcast and our rescan; empty state
-      // is the honest answer until the next Watch event.
-    }
-    if (gen !== live.scanGen) return;
-    live.state = state;
-    live.ready = undefined;
-    drainPendingLines(live);
-    pushSnapshot(store, sid, live, log);
-  })().catch((e: unknown) => {
-    // Only the publish half can land here (the scan has its own catch); leave
-    // `ready` cleared so readers aren't stuck waiting on a fold that failed.
-    if (gen === live.scanGen) live.ready = undefined;
-    log.error(`session_status refold failed sid=${sid}: ${String(e)}`);
-  });
+  /** Tail of the serialized push queue for this session (see pushSnapshot). */
+  pushChain: Promise<void>;
 }
 
 export interface SessionStatusSnapshotSources {
@@ -1818,13 +1714,88 @@ export interface SessionStatusSnapshotSources {
 
 /** Each source is absent where nothing can tell (tests of the fold alone). */
 export interface SessionStatusStore extends SessionStatusSnapshotSources {
-  sessions: Map<string, LiveSessionStatus>;
+  /** The settled fold of each live session. */
+  folds: Map<string, LiveSessionStatus>;
+  /** By sid, independent of the folds: a session that is not live is
+   * followed too, and is pushed when it becomes live. */
+  subscriptions: Map<string, StatusSubscription>;
 }
 
 export function createSessionStatusStore(
   sources: SessionStatusSnapshotSources = {},
 ): SessionStatusStore {
-  return { sessions: new Map(), ...sources };
+  return { folds: new Map(), subscriptions: new Map(), ...sources };
+}
+
+function realpathOrUndefined(base: string | undefined): string | undefined {
+  if (!base || !path.isAbsolute(base)) return undefined;
+  try {
+    return fs.realpathSync(base);
+  } catch {
+    return undefined;
+  }
+}
+
+/** `sid`'s Status fold, for the transcript relay. A catch-up folds into a
+ * detached state that replaces the settled one only when it lands, so a
+ * snapshot never describes a prefix of the transcript; meanwhile the
+ * previous fold stays served, or, for the first catch-up, a one-shot read.
+ * Each settle that moved the fold pushes it to the session's subscribers.
+ *
+ * The root and anchor are resolved synchronously here: a restart runs inside
+ * the relay's read, and the catch-up that follows is what costs. */
+export function sessionStatusFold(
+  store: SessionStatusStore,
+  sessions: SessionStatusLookup,
+  sid: string,
+  log: TranscriptLog,
+): LineFold {
+  let settled: LiveSessionStatus | undefined;
+  let next: LiveSessionStatus | undefined;
+  let moved = false;
+  const forget = (): void => {
+    if (settled !== undefined && store.folds.get(sid) === settled) store.folds.delete(sid);
+    settled = undefined;
+  };
+  return {
+    restart(file) {
+      if (file === undefined) {
+        forget();
+        next = undefined;
+        return;
+      }
+      const meta = sessions.get(sid)?.meta;
+      const root = realpathOrUndefined(meta?.repo_root ?? meta?.cwd);
+      next = {
+        file,
+        root,
+        sidDir: deriveSidDir(file),
+        cwd: realpathOrUndefined(meta?.cwd),
+        state: createSessionStatusState(root),
+      };
+    },
+    take(line) {
+      const fold = next ?? settled;
+      if (fold !== undefined && isSessionStatusCandidate(line) && foldLine(fold.state, line)) {
+        moved = true;
+      }
+    },
+    settle() {
+      if (next !== undefined) {
+        settled = next;
+        next = undefined;
+        store.folds.set(sid, settled);
+        moved = true;
+      }
+      if (!moved) return;
+      moved = false;
+      pushSnapshot(store, sessions, sid, log);
+    },
+    close() {
+      forget();
+      next = undefined;
+    },
+  };
 }
 
 function isoAt(ms: number): string {
@@ -1923,85 +1894,77 @@ export function turnOf(facts: SessionFacts | undefined): SessionTurn | undefined
 }
 
 /** The snapshot of a fold with the session's input readiness and its hooks
- * module's facts beside it. A `live` fold remembers the readiness it
- * published, for refreshInputReadiness. */
+ * module's facts beside it. */
 async function fullSnapshot(
   store: SessionStatusStore,
   sid: string,
   state: SessionStatusState,
   sidDir: string | undefined,
   cwd: string | undefined,
-  live?: LiveSessionStatus,
 ): Promise<SessionStatusSnapshot> {
   const data = withFacts(await snapshot(state, sidDir, cwd), store.facts?.(sid));
   const readiness = store.inputReadiness?.(sid);
   if (readiness === undefined) return data;
-  if (live) live.inputReadiness = readiness.kind;
   return { ...data, input_readiness: readiness };
-}
-
-function liveSnapshot(
-  store: SessionStatusStore,
-  sid: string,
-  live: LiveSessionStatus,
-): Promise<SessionStatusSnapshot> {
-  return fullSnapshot(store, sid, live.state, live.sidDir, live.cwd, live);
-}
-
-/** The push of `sid`'s current fold, as one line for every subscriber. */
-async function statusEventLine(
-  store: SessionStatusStore,
-  sid: string,
-  live: LiveSessionStatus,
-): Promise<string> {
-  const data = await liveSnapshot(store, sid, live);
-  return wireLine({ ev: "session_status", sid, ...data });
 }
 
 /** Push the followed sessions whose input readiness moved since their last
  * snapshot. Called on what can move it without a transcript line: a run named
  * or gone, a session registered or forgotten, a poll that found a run's
  * harness gone. */
-export function refreshInputReadiness(store: SessionStatusStore, log?: TailLog): void {
+export function refreshInputReadiness(
+  store: SessionStatusStore,
+  sessions: SessionStatusLookup,
+  log?: TranscriptLog,
+): void {
   const readinessOf = store.inputReadiness;
   if (readinessOf === undefined) return;
-  for (const [sid, live] of store.sessions) {
-    if (live.statusConns.size === 0) continue;
-    if (readinessOf(sid).kind !== live.inputReadiness) pushSnapshot(store, sid, live, log);
+  for (const [sid, subscription] of store.subscriptions) {
+    if (readinessOf(sid).kind !== subscription.inputReadiness) {
+      pushSnapshot(store, sessions, sid, log);
+    }
   }
 }
 
 /** Push `sid`'s status to its subscribers, for what its hooks module said of
  * it: the facts are not a transcript line, so nothing else would. */
-export function refreshSessionFacts(store: SessionStatusStore, sid: string, log?: TailLog): void {
-  const live = store.sessions.get(sid);
-  if (live !== undefined && live.statusConns.size > 0) pushSnapshot(store, sid, live, log);
+export function refreshSessionFacts(
+  store: SessionStatusStore,
+  sessions: SessionStatusLookup,
+  sid: string,
+  log?: TranscriptLog,
+): void {
+  pushSnapshot(store, sessions, sid, log);
 }
 
-/** Publish the current fold to every subscriber of `sid`.
+/** Publish `sid`'s status to every subscriber of it.
  *
- * Callers are fs.watch callbacks and the refold completion, neither of which
- * can await: they must return before the snapshot's filesystem reads finish.
- * Each push is therefore queued behind the previous one for the same session,
- * so two lines arriving back to back can never have their writes interleave or
- * land reversed. This is ordering only — every push still builds and delivers
- * its own snapshot, nothing is coalesced into a window or made to wait on
- * another session (DR-0029). A push that lands after a later fold simply
- * publishes the newer state, which is what a subscriber wants anyway. */
+ * Callers are the relay's reads and the facts and readiness changes, none of
+ * which can await: they must return before the snapshot's filesystem reads
+ * finish. Each push is therefore queued behind the previous one for the same
+ * session, so two lines arriving back to back can never have their writes
+ * interleave or land reversed. This is ordering only — every push still
+ * builds and delivers its own snapshot, nothing is coalesced into a window or
+ * made to wait on another session (DR-0029). A push that lands after a later
+ * fold simply publishes the newer state, which is what a subscriber wants
+ * anyway. */
 function pushSnapshot(
   store: SessionStatusStore,
+  sessions: SessionStatusLookup,
   sid: string,
-  live: LiveSessionStatus,
-  log?: TailLog,
+  log?: TranscriptLog,
 ): void {
-  live.pushChain = live.pushChain.then(async () => {
-    // The session may have been dropped (unsubscribe, re-hello onto another
-    // file) while this push waited its turn; publishing then would describe a
-    // fold nobody is following.
-    if (live.statusConns.size === 0) return;
+  const subscription = store.subscriptions.get(sid);
+  if (subscription === undefined) return;
+  subscription.pushChain = subscription.pushChain.then(async () => {
+    // Every subscriber may have left while this push waited its turn.
+    if (subscription.conns.size === 0) return;
     try {
-      const line = await statusEventLine(store, sid, live);
-      for (const conn of live.statusConns) conn.write(line);
+      const result = await getSessionStatus(store, sessions, sid);
+      if (!result.ok) return;
+      subscription.inputReadiness = result.data.input_readiness?.kind;
+      const line = wireLine({ ev: "session_status", sid, ...result.data });
+      for (const conn of subscription.conns) conn.write(line);
     } catch (e: unknown) {
       // One unreadable snapshot must not break the chain for later pushes, and
       // an unhandled rejection here would take the daemon down.
@@ -2010,6 +1973,10 @@ function pushSnapshot(
   });
 }
 
+/** `sid`'s status: its live fold while it describes the transcript and root
+ * the session names now, otherwise one read of the transcript (a session
+ * with no module, a closed one, or a live one whose first catch-up has not
+ * landed). */
 export async function getSessionStatus(
   store: SessionStatusStore,
   sessions: SessionStatusLookup,
@@ -2019,29 +1986,15 @@ export async function getSessionStatus(
   if (!resolved.ok) return resolved;
   const root = await resolveExternalRoot(sessions, sid);
   const cwd = await resolveWorkspaceAnchor(sessions, sid);
-  // Serve the live fold only while it still describes both the current
-  // transcript and the root used to classify DR-0024 external files.
-  const live = store.sessions.get(sid);
+  const live = store.folds.get(sid);
   if (live && live.file === resolved.file && live.root === root) {
     // The fold itself is cwd-independent (workspace discovery re-reads disk
     // at snapshot time), so a re-hello that moved the cwd while keeping the
     // same transcript+root doesn't need a refold — just refresh the anchor
-    // so this snapshot and later stream pushes probe the new cwd. Keep the
-    // old anchor when the fresh resolve fails (session momentarily connless).
+    // so this snapshot and later pushes probe the new cwd. Keep the old
+    // anchor when the fresh resolve fails (session momentarily connless).
     live.cwd = cwd ?? live.cwd;
-    // A cold scan / refold may still be in flight (the fold is only published
-    // when it lands); waiting for it keeps this response from describing a
-    // prefix of the transcript. Looped rather than awaited once: a truncate
-    // landing during the wait supersedes that scan with another one, and the
-    // state between them is the half-published fold this guard exists to hide.
-    while (live.ready) await live.ready;
-    // That scan may have failed while we waited (transcript vanished): its
-    // owner unsubscribes and drops the entry, so this fold describes nothing.
-    // Answering `ok` here would contradict the not_found the owner returns.
-    if (store.sessions.get(sid) !== live) {
-      return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
-    }
-    return { ok: true, data: await liveSnapshot(store, sid, live) };
+    return { ok: true, data: await fullSnapshot(store, sid, live.state, live.sidDir, live.cwd) };
   }
   const state = createSessionStatusState(root);
   try {
@@ -2055,164 +2008,46 @@ export async function getSessionStatus(
   };
 }
 
+/** Follow `sid`'s status on `conn`: the answer is its status now, and each
+ * change is pushed while the session is live. The conn is counted before the
+ * answer is read, so a change landing meanwhile is pushed rather than lost. */
 export async function subscribeSessionStatus(
   store: SessionStatusStore,
-  transcriptTail: TranscriptTailStore,
   sessions: SessionStatusLookup,
   sid: string,
-  conn: TailConn,
-  log: TailLog,
+  conn: TranscriptConn,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = await resolveTranscript(sessions, sid, { allowVirtual: true });
-  if (!resolved.ok) return resolved;
-  const root = await resolveExternalRoot(sessions, sid);
-  const cwd = await resolveWorkspaceAnchor(sessions, sid);
-  const existing = store.sessions.get(sid);
-  if (existing && existing.file === resolved.file && existing.root === root) {
-    existing.statusConns.add(conn);
-    // Same cwd-refresh rationale as getSessionStatus: the fold survives a
-    // cwd-only re-hello, but the workspace anchor must track the new cwd.
-    existing.cwd = cwd ?? existing.cwd;
-    // Same wait as getSessionStatus, including the refold-chain loop: a
-    // subscriber that joins mid-scan gets the complete fold in its op
-    // response, not a prefix of it.
-    while (existing.ready) await existing.ready;
-    // Same failed-scan check as getSessionStatus.
-    if (store.sessions.get(sid) !== existing) {
-      return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
-    }
-    return { ok: true, data: await liveSnapshot(store, sid, existing) };
+  let subscription = store.subscriptions.get(sid);
+  if (subscription === undefined) {
+    subscription = { conns: new Set(), pushChain: Promise.resolve() };
+    store.subscriptions.set(sid, subscription);
   }
-  const carriedConns = new Set<TailConn>([conn]);
-  if (existing) {
-    // A re-hello re-validated a DIFFERENT transcript file for this sid
-    // (DR-0009 addendum): the old fold describes the wrong file, and its line
-    // listener either died with the old Watch or watches the wrong path.
-    // Rebuild from scratch, carrying every subscriber over to the new fold.
-    for (const c of existing.statusConns) carriedConns.add(c);
-    unsubscribeTranscriptLines(transcriptTail, sid, existing.listener);
-    store.sessions.delete(sid);
+  subscription.conns.add(conn);
+  const result = await getSessionStatus(store, sessions, sid);
+  if (!result.ok) {
+    unsubscribeSessionStatus(store, sid, conn);
+    return result;
   }
-
-  // live.file is assigned from the subscribe result below, before any
-  // listener can fire — the Watch only invokes listeners from fs.watch
-  // callbacks / poll timers (later ticks), and nothing between here and that
-  // assignment awaits.
-  const live: LiveSessionStatus = {
-    file: "",
-    root,
-    sidDir: undefined,
-    cwd,
-    state: createSessionStatusState(root),
-    statusConns: carriedConns,
-    scanGen: 0,
-    pushChain: Promise.resolve(),
-    pendingLines: [],
-    listener(payload) {
-      if (payload.lines.length === 0) {
-        // Watch reset (truncate or unlink+recreate replacement, transcript.ts
-        // checkNow): the folded state describes bytes that no longer exist.
-        // Refold the replacement file from scratch — the Watch's own lastEnd
-        // is already payload.size, so subsequent growth resumes incrementally.
-        startRefold(store, sid, live, payload.size, log);
-        return;
-      }
-      if (live.ready) {
-        // A scan is walking bytes that end where these lines begin. Folding
-        // them now would either be discarded with the superseded state or
-        // land out of order, so hold them until the scan publishes.
-        live.pendingLines.push(...payload.lines);
-        return;
-      }
-      let changed = false;
-      for (const line of payload.lines) {
-        if (isSessionStatusCandidate(line) && foldLine(live.state, line)) changed = true;
-      }
-      if (changed) pushSnapshot(store, sid, live, log);
-    },
-  };
-  // `resolved.file` is only consulted when the sid has no connected session
-  // announcing a transcript (resolveTailTarget), so a session that connects
-  // between the resolve above and this call still drives its own Watch.
-  const subscribed = subscribeTranscriptLines(
-    transcriptTail,
-    sessions,
-    sid,
-    live.listener,
-    log,
-    resolved.file,
-  );
-  if (!subscribed.ok) return subscribed;
-  live.file = subscribed.data.file;
-  live.sidDir = deriveSidDir(subscribed.data.file);
-  // Registered before the cold scan so a second subscriber arriving mid-scan
-  // joins this fold and awaits it, instead of starting a rival one.
-  store.sessions.set(sid, live);
-  live.scanGen += 1;
-  const gen = live.scanGen;
-  let scanned = true;
-  const ready = (async () => {
-    try {
-      await scanTranscript(live.file, live.state, subscribed.data.size);
-    } catch {
-      scanned = false;
-    }
-    // A Watch reset during the cold scan already started its own refold; that
-    // scan owns the state from here.
-    if (gen !== live.scanGen) return;
-    live.ready = undefined;
-    drainPendingLines(live);
-  })();
-  live.ready = ready;
-  await ready;
-  if (!scanned) {
-    unsubscribeTranscriptLines(transcriptTail, sid, live.listener);
-    store.sessions.delete(sid);
-    return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
-  }
-  if (existing) {
-    // Carried-over subscribers were following the OLD file's fold; without a
-    // push they would keep rendering it until the new file happens to change.
-    // (Only the old conns — the newly-subscribing conn gets the snapshot in
-    // its op response.)
-    const line = await statusEventLine(store, sid, live);
-    for (const c of existing.statusConns) c.write(line);
-  }
-  return { ok: true, data: await liveSnapshot(store, sid, live) };
+  subscription.inputReadiness = result.data.input_readiness?.kind;
+  return result;
 }
 
 export function unsubscribeSessionStatus(
   store: SessionStatusStore,
-  transcriptTail: TranscriptTailStore,
   sid: string,
-  conn: TailConn,
+  conn: TranscriptConn,
 ): void {
-  const live = store.sessions.get(sid);
-  if (!live) return;
-  live.statusConns.delete(conn);
-  if (live.statusConns.size !== 0) return;
-  unsubscribeTranscriptLines(transcriptTail, sid, live.listener);
-  store.sessions.delete(sid);
+  const subscription = store.subscriptions.get(sid);
+  if (subscription === undefined) return;
+  subscription.conns.delete(conn);
+  if (subscription.conns.size === 0) store.subscriptions.delete(sid);
 }
 
-export function sessionStatusUnsubscribeAll(
-  store: SessionStatusStore,
-  transcriptTail: TranscriptTailStore,
-  conn: TailConn,
-): void {
-  for (const [sid, live] of store.sessions) {
-    if (!live.statusConns.delete(conn) || live.statusConns.size !== 0) continue;
-    unsubscribeTranscriptLines(transcriptTail, sid, live.listener);
-    store.sessions.delete(sid);
-  }
+export function sessionStatusUnsubscribeAll(store: SessionStatusStore, conn: TranscriptConn): void {
+  for (const sid of store.subscriptions.keys()) unsubscribeSessionStatus(store, sid, conn);
 }
 
-export function stopAllSessionStatus(
-  store: SessionStatusStore,
-  transcriptTail: TranscriptTailStore,
-): void {
-  for (const [sid, live] of store.sessions) {
-    unsubscribeTranscriptLines(transcriptTail, sid, live.listener);
-  }
-  store.sessions.clear();
+export function stopAllSessionStatus(store: SessionStatusStore): void {
+  store.subscriptions.clear();
+  store.folds.clear();
 }

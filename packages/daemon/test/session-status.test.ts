@@ -26,9 +26,13 @@ import {
 import {
   startInProcessDaemon,
   stopInProcessDaemon,
+  appendPushed,
   isKind,
+  liveSessionConn,
+  pushRows,
   sayMarker,
   sessionConn,
+  stampRows,
   userConn,
   fixtureDir,
   defined,
@@ -139,6 +143,11 @@ async function apply(lines: string[], externalRoot?: string): Promise<SessionSta
     if (isSessionStatusCandidate(line)) foldLine(state, line);
   }
   return await snapshot(state);
+}
+
+/** `lines` as a transcript writes them: each ending in a newline. */
+function jsonl(lines: readonly string[]): string {
+  return lines.map((row) => `${row}\n`).join("");
 }
 
 function todoCreate(id = "1", subject = "First task"): string[] {
@@ -2273,36 +2282,33 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   });
 
   test("subscribe は初回 snapshot 後に status 変更だけを full snapshot push する", async () => {
-    // tail 追記の TaskUpdate result で 1 push、通常 assistant text では push 無しを保証する。
+    // 追記した TaskUpdate result は module の push で読まれて 1 push になり、
+    // push されるまでは読まれない。通常 assistant text では push 無しを保証する。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
-      fs.writeFileSync(
-        file,
-        todoCreate()
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
-      await sessionConn(ctx, sid, { transcript_path: file });
+      fs.writeFileSync(file, jsonl(todoCreate()));
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.todos[0]?.status).toBe("pending");
 
-      fs.appendFileSync(
-        file,
-        todoUpdate("tu", "1", { status: "completed" })
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
+      // 書かれただけの行は読まれない: live の fold はまだ pending のまま答える。
+      const update = stampRows(jsonl(todoUpdate("tu", "1", { status: "completed" })));
+      fs.appendFileSync(file, update.text);
+      const unpushed = await user.requestOk({ op: "session_status", sid });
+      expect(unpushed.todos[0]?.status).toBe("pending");
+      await pushRows(session, update.uuids);
       const { ev } = await user.readEventUntil("session_status");
       expect(ev.todos[0]?.status).toBe("completed");
       expect(ev.workflows).toEqual([]);
       expect(ev.background).toEqual([]);
 
-      fs.appendFileSync(
+      await appendPushed(
+        session,
         file,
         `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "plain" }] } })}\n`,
       );
@@ -2315,9 +2321,74 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
     }
   });
 
+  test("transcript を名乗る前に live になったセッションも、最初の push から Status を push する", async () => {
+    // run の名乗りは最初の prompt より前 (jsonl がまだ無い)。fold はファイル無しで
+    // 始まり、最初の push でそのファイルの頭から畳み直して、以後の行を push する。
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-status");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      const session = await liveSessionConn(ctx, sid);
+      fs.writeFileSync(file, jsonl(todoCreate()));
+      await session.requestOk({
+        op: "hello",
+        protocol: PROTOCOL_VERSION,
+        role: "session",
+        sid,
+        repo: "r",
+        ws: "w",
+        cwd: "",
+        transcript_path: file,
+      });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
+      const initial = await user.requestOk({ op: "session_status_subscribe", sid });
+      expect(initial.todos[0]?.status).toBe("pending");
+
+      await appendPushed(session, file, jsonl(todoUpdate("tu", "1", { status: "completed" })));
+      const { ev } = await user.readEventUntil(
+        "session_status",
+        (event) => event.todos[0]?.status === "completed",
+      );
+      expect(ev.todos).toHaveLength(1);
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("module の run が無いセッションは subscribe の答えだけで、追記を push しても status は push されない", async () => {
+    // fold を持つのは run が名乗っているセッションだけ (DR-0045 §3)。run の無いセッションの
+    // 答えはファイルの 1 回の走査で、その後の行は読まれない。
+    const ctx = await startInProcessDaemon();
+    const dir = fixtureDir("session-status");
+    try {
+      const sid = SID_A;
+      const file = path.join(dir, `${sid}.jsonl`);
+      fs.writeFileSync(file, jsonl(todoCreate()));
+      const session = await sessionConn(ctx, sid, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
+      const initial = await user.requestOk({ op: "session_status_subscribe", sid });
+      expect(initial.todos[0]?.status).toBe("pending");
+
+      await appendPushed(session, file, jsonl(todoUpdate("tu", "1", { status: "completed" })));
+      const peer = await sessionConn(ctx, SID_B);
+      const seen = await sayMarker(peer, user, "marker");
+      expect(seen.some(isKind("session_status"))).toBe(false);
+      // 1 回の走査で答える one-shot には、書かれた行が入る。
+      const now = await user.requestOk({ op: "session_status", sid });
+      expect(now.todos[0]?.status).toBe("completed");
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("外部 file tool の tail 追記を external_files full snapshot push で逐次配信する", async () => {
-    // DR-0024 は既存 status Watch に相乗りするため、subscribe 後の tool_use 1 行で
-    // allowlist が増え、tool_result 無しでもその新しい集合を即 push する。
+    // DR-0024 は status の fold に相乗りするため、subscribe 後に push された
+    // tool_use 1 行で allowlist が増え、tool_result 無しでもその新しい集合を即 push する。
     const ctx = await startInProcessDaemon();
     const root = fixtureDir("session-status");
     const outside = fixtureDir("session-status");
@@ -2327,13 +2398,17 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const external = path.join(outside, "tail.md");
       fs.writeFileSync(file, "");
       fs.writeFileSync(external, "tail");
-      await sessionConn(ctx, sid, { transcript_path: file, cwd: root });
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file, cwd: root });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.external_files).toEqual([]);
 
-      fs.appendFileSync(file, `${toolUse("tail-read", "Read", { file_path: external })}\n`);
+      await appendPushed(
+        session,
+        file,
+        `${toolUse("tail-read", "Read", { file_path: external })}\n`,
+      );
       const pushed = await user.readEventUntil(
         "session_status",
         (event) => event.external_files?.length === 1,
@@ -2361,7 +2436,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const touched = path.join(rootA, "inside-a.md");
       fs.writeFileSync(touched, "a");
       fs.writeFileSync(file, `${toolUse("read-a", "Read", { file_path: touched })}\n`);
-      const session = await sessionConn(ctx, sid, { transcript_path: file, cwd: rootA });
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file, cwd: rootA });
       const firstUser = await userConn(ctx);
       const initial = await firstUser.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.external_files).toEqual([]);
@@ -2377,6 +2452,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         transcript_path: file,
       });
       const secondUser = await userConn(ctx);
+      // The re-fold with the new root has landed (peers waits for it), so the
+      // answer is the live fold's.
+      await secondUser.requestOk({ op: "peers" });
       const rebuilt = await secondUser.requestOk({
         op: "session_status_subscribe",
         sid,
@@ -2390,21 +2468,23 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   });
 
   test("context usage と teammate relay の追記を full snapshot push で逐次配信する", async () => {
-    // foldLine の変化判定だけでなく、実 Watch→listener→session_status push 経路で新フィールドが届くことを保証する。
+    // foldLine の変化判定だけでなく、module の push を合図にした読み→fold→session_status push
+    // の実経路で新フィールドが届くことを保証する。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(file, `${assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 })}\n`);
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.context?.tokens).toBe(100);
       expect(initial.teammates).toEqual([]);
 
-      fs.appendFileSync(
+      await appendPushed(
+        session,
         file,
         `${assistantUsage(
           { input: 2, cacheRead: 517_000, cacheCreation: 2_998 },
@@ -2421,7 +2501,8 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         timestamp: END,
       });
 
-      fs.appendFileSync(
+      await appendPushed(
+        session,
         file,
         `${teammateRelay(
           '<teammate-message teammate_id="worker" color="cyan">ready</teammate-message>',
@@ -2445,47 +2526,32 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   });
 
   test("transcript/status subscribe は独立し、片方の解除後も他方が生きる", async () => {
-    // status は daemon の fold の Watch から、Timeline は module の push を合図に
-    // した読み (DR-0045 §4) から届く。片方を解除しても他方は止まらない。
+    // status は daemon の fold へ、Timeline はタブへ、module の push を合図にした
+    // 同じ読み (DR-0045 §4) から届く。片方を解除しても他方は止まらない。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
-      fs.writeFileSync(
-        file,
-        todoCreate()
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
-      const session = await sessionConn(ctx, sid, { transcript_path: file });
+      fs.writeFileSync(file, jsonl(todoCreate()));
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       await user.request({ op: "transcript_subscribe", sid });
       await user.request({ op: "session_status_subscribe", sid });
 
       await user.request({ op: "transcript_unsubscribe", sid });
-      fs.appendFileSync(
-        file,
-        todoUpdate("tu", "1", { status: "completed" })
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
+      await appendPushed(session, file, jsonl(todoUpdate("tu", "1", { status: "completed" })));
       const status = await user.readEventUntil("session_status");
       expect(status.ev.todos[0]?.status).toBe("completed");
 
       await user.request({ op: "transcript_subscribe", sid });
       await user.request({ op: "session_status_unsubscribe", sid });
-      fs.appendFileSync(
+      await appendPushed(
+        session,
         file,
-        todoUpdate("tu-after-unsubscribe", "1", { status: "in_progress" })
-          .map((line) => `${line}\n`)
-          .join(""),
+        jsonl(todoUpdate("tu-after-unsubscribe", "1", { status: "in_progress" })),
       );
-      await session.requestOk({
-        op: "transcript_push",
-        rows: [{ uuid: "tu-after-unsubscribe", door: "response", message: {} }],
-      });
       const transcript = await user.readEventUntil("transcript");
       expect(transcript.ev.lines).toHaveLength(2);
       expect(transcript.seen.some(isKind("session_status"))).toBe(false);
@@ -2497,7 +2563,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
 
   test("transcript の全書き換え (縮小 rewrite) 後は再 fold した snapshot を push する", async () => {
     // /clear 等で transcript が置換・縮小されたら、折り畳み済み状態は存在しない
-    // バイト列由来になる。Watch の reset イベント (lines=[]) を契機に全再 fold し、
+    // バイト列由来になる。縮小を見つけた push の読みを契機に全再 fold し、
     // 古い TODO を引きずらないことを保証する。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
@@ -2506,23 +2572,18 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const file = path.join(dir, `${sid}.jsonl`);
       fs.writeFileSync(
         file,
-        [...todoCreate("1", "Old world"), ...todoUpdate("tu", "1", { status: "completed" })]
-          .map((line) => `${line}\n`)
-          .join(""),
+        jsonl([...todoCreate("1", "Old world"), ...todoUpdate("tu", "1", { status: "completed" })]),
       );
-      await sessionConn(ctx, sid, { transcript_path: file });
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.todos).toEqual([{ id: "1", subject: "Old world", status: "completed" }]);
 
-      // 同一パスへ小さい内容で置換 (truncate 検出経路)。
-      fs.writeFileSync(
-        file,
-        todoCreate("9", "New world")
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
+      // 同一パスへ小さい内容で置換し、その行を push する (truncate 検出経路)。
+      const rewritten = stampRows(jsonl(todoCreate("9", "New world")));
+      fs.writeFileSync(file, rewritten.text);
+      await pushRows(session, rewritten.uuids);
       const { ev } = await user.readEventUntil(
         "session_status",
         (event) => event.todos[0]?.id === "9",
@@ -2535,31 +2596,26 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   });
 
   test("status subscriber の切断後は dead conn を除去し、同じ sid へ再 subscribe できる", async () => {
-    // connection close cleanup が line listener を解放し、Watch の close/reopen 後も push が復帰する。
+    // 接続の close が購読者を外し、全購読者が去った後の同じ sid への再 subscribe にも
+    // push が届くことを保証する。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-status");
     try {
       const sid = SID_A;
       const file = path.join(dir, `${sid}.jsonl`);
-      fs.writeFileSync(
-        file,
-        todoCreate()
-          .map((line) => `${line}\n`)
-          .join(""),
-      );
-      await sessionConn(ctx, sid, { transcript_path: file });
+      fs.writeFileSync(file, jsonl(todoCreate()));
+      const session = await liveSessionConn(ctx, sid, { transcript_path: file });
       const first = await userConn(ctx);
       await first.request({ op: "session_status_subscribe", sid });
-      first.close();
+      await first.end();
 
       const second = await userConn(ctx);
       const initial = await second.requestOk({ op: "session_status_subscribe", sid });
       expect(initial.todos[0]?.status).toBe("pending");
-      fs.appendFileSync(
+      await appendPushed(
+        session,
         file,
-        todoUpdate("tu-after-close", "1", { status: "completed" })
-          .map((line) => `${line}\n`)
-          .join(""),
+        jsonl(todoUpdate("tu-after-close", "1", { status: "completed" })),
       );
       const pushed = await second.readEventUntil("session_status");
       expect(pushed.ev.todos[0]?.status).toBe("completed");

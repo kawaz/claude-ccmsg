@@ -4,7 +4,12 @@ import * as path from "node:path";
 import {
   startInProcessDaemon,
   stopInProcessDaemon,
+  appendPushed,
+  liveSessionConn,
+  nameRun,
+  pushRows,
   sessionConn,
+  stampRows,
   userConn,
   fixtureDir,
 } from "./helpers.ts";
@@ -18,6 +23,7 @@ import {
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
+const C = "cccccccc-0000-4000-8000-000000000003";
 const START = "2026-07-14T16:27:55.672Z";
 const END = "2026-07-14T16:28:55.672Z";
 
@@ -57,18 +63,22 @@ function assistantLine(text: string): string {
 }
 
 describe("session_errors daemon op / push", () => {
-  test("接続中セッションが最終 turn のエラーで止まっていれば一覧に出る", async () => {
+  test("module の run があるセッションが最終 turn のエラーで止まっていれば一覧に出る", async () => {
     // サイドバーは開いていないセッションも色分けする必要があるので、
-    // session_status の購読 (= 開いている 1 件) とは別経路で全 peer 分が要る。
+    // session_status の購読 (= 開いている 1 件) とは別経路で、run のある全セッション分が要る。
+    // run の無いセッションは fold を持たないので、止まっていても一覧に出ない。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-errors");
     try {
       const stuck = path.join(dir, `${A}.jsonl`);
       const healthy = path.join(dir, `${B}.jsonl`);
+      const unmoduled = path.join(dir, `${C}.jsonl`);
       fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("Prompt is too long"));
       fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
-      await sessionConn(ctx, A, { transcript_path: stuck });
-      await sessionConn(ctx, B, { transcript_path: healthy });
+      fs.writeFileSync(unmoduled, assistantLine("working") + apiErrorLine("Prompt is too long"));
+      await liveSessionConn(ctx, A, { transcript_path: stuck });
+      await liveSessionConn(ctx, B, { transcript_path: healthy });
+      await sessionConn(ctx, C, { transcript_path: unmoduled });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
 
@@ -81,18 +91,22 @@ describe("session_errors daemon op / push", () => {
   });
 
   test("エラー発生と復帰がそれぞれ ev:session_errors を push する", async () => {
-    // 状態変化はポーリングではなく transcript tail で拾う (発生した瞬間に届く)。
+    // 状態変化はポーリングではなく module の push を合図に拾う (行が会話に入った瞬間に届く)。
+    // 書かれただけで push されていない行は読まれない。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-errors");
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, assistantLine("hello"));
-      await sessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
 
-      fs.appendFileSync(file, apiErrorLine("You're out of extra usage · resets 7pm (Asia/Tokyo)"));
+      const error = stampRows(apiErrorLine("You're out of extra usage · resets 7pm (Asia/Tokyo)"));
+      fs.appendFileSync(file, error.text);
+      expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
+      await pushRows(session, error.uuids);
       const raised = await user.readEventUntil(
         "session_errors",
         (event) => event.errors.length > 0,
@@ -105,7 +119,7 @@ describe("session_errors daemon op / push", () => {
         },
       ]);
 
-      fs.appendFileSync(file, assistantLine("back"));
+      await appendPushed(session, file, assistantLine("back"));
       const cleared = await user.readEventUntil(
         "session_errors",
         (event) => event.errors.length === 0,
@@ -126,7 +140,7 @@ describe("session_errors daemon op / push", () => {
         file,
         assistantLine("spawning") + apiErrorLine("Prompt is too long", { isSidechain: true }),
       );
-      await sessionConn(ctx, A, { transcript_path: file });
+      await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
@@ -151,21 +165,37 @@ describe("session_errors daemon op / push", () => {
     }
   });
 
-  test("接続が切れたセッションもエラー一覧に残る", async () => {
-    // 接続の有無はセッションの生存を意味しないので、切断後もエラー行を出し続ける。
+  test("module の run が去ったセッションはエラー一覧から消え、run が再び名乗れば戻る", async () => {
+    // エラーは run のある間だけの fold の値。セッションの接続が残っていても、run が去れば
+    // fold は捨てられて一覧から消える (ev:session_errors で知らせる)。次の run は
+    // ファイルを頭から読み直すので、同じ停止がまた一覧に出る。
     const ctx = await startInProcessDaemon();
     const dir = fixtureDir("session-errors");
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, apiErrorLine("Prompt is too long"));
-      const session = await sessionConn(ctx, A, { transcript_path: file });
+      await sessionConn(ctx, A, { transcript_path: file });
+      const run = await sessionConn(ctx, A, { transcript_path: file });
+      await nameRun(ctx, run);
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       expect((await user.requestOk({ op: "session_errors" })).errors).toHaveLength(1);
 
-      session.close();
-      await new Promise((r) => setTimeout(r, 50));
-      expect((await user.requestOk({ op: "session_errors" })).errors).toHaveLength(1);
+      await run.end();
+      const gone = await user.readEventUntil(
+        "session_errors",
+        (event) => event.errors.length === 0,
+      );
+      expect(gone.ev.errors).toEqual([]);
+      expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.map((p) => p.sid)).toEqual([A]);
+
+      const next = await sessionConn(ctx, A, { transcript_path: file });
+      await nameRun(ctx, next);
+      expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([
+        { sid: A, text: "Prompt is too long", timestamp: START },
+      ]);
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(dir, { recursive: true, force: true });
@@ -173,9 +203,10 @@ describe("session_errors daemon op / push", () => {
   });
 });
 
-// The API error is read off the transcript for every session, the one whose
-// hooks module sends facts included, and its kind is the row's `error`
-// (DR-0039 §2): the module has no way to read the classification.
+// The API error is read off the transcript for every session whose hooks
+// module has a run, the one that sends facts included, and its kind is the
+// row's `error` (DR-0039 §2): the module has no way to read the
+// classification.
 describe("session_errors of a session whose hooks module sends facts", () => {
   test("the transcript's error row is listed with its kind, and an answer clears it", async () => {
     const ctx = await startInProcessDaemon();
@@ -183,21 +214,21 @@ describe("session_errors of a session whose hooks module sends facts", () => {
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, assistantLine("hello"));
-      const session = await sessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       await session.requestOk({ op: "session_facts", facts: { at: Date.now(), model: "m" } });
       expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
 
       const text = "API Error: Request rejected (429) · retry later";
-      fs.appendFileSync(file, apiErrorLine(text, { error: "rate_limit" }));
+      await appendPushed(session, file, apiErrorLine(text, { error: "rate_limit" }));
       const raised = await user.readEventUntil(
         "session_errors",
         (event) => event.errors.length > 0,
       );
       expect(raised.ev.errors).toEqual([{ sid: A, text, timestamp: START, kind: "rate_limit" }]);
 
-      fs.appendFileSync(file, assistantLine("back"));
+      await appendPushed(session, file, assistantLine("back"));
       await user.readEventUntil("session_errors", (event) => event.errors.length === 0);
     } finally {
       await stopInProcessDaemon(ctx);
@@ -211,7 +242,7 @@ describe("session_errors of a session whose hooks module sends facts", () => {
     try {
       const file = path.join(dir, `${A}.jsonl`);
       fs.writeFileSync(file, assistantLine("hello"));
-      const session = await sessionConn(ctx, A, { transcript_path: file });
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const at = Date.now();

@@ -10,7 +10,14 @@ import {
   resolveVirtualRoot,
   resolveVirtualTranscript,
 } from "../src/virtual-sessions.ts";
-import { startTestDaemon, stopTestDaemon, sessionConn, userConn } from "./helpers.ts";
+import {
+  isKind,
+  sayMarker,
+  startTestDaemon,
+  stopTestDaemon,
+  sessionConn,
+  userConn,
+} from "./helpers.ts";
 import {
   assistantContentRow,
   line,
@@ -287,9 +294,10 @@ describe("hello-time transcript adoption", () => {
   });
 
   // Guarantees Status is not gated on a live ccmsg connection: a sid nothing is
-  // connected as still folds from its jsonl on disk, and the tail keeps pushing
-  // as that file grows.
-  test("session_status_subscribe folds and tails a sid with no connected session", async () => {
+  // connected as is answered by one read of its jsonl on disk, and is read
+  // again as the file grows. With no hooks module there is no live fold, so
+  // the growth is not pushed (DR-0045 §5).
+  test("session_status answers a sid with no connected session by reading its jsonl", async () => {
     const home = fixtureRoot();
     const config = path.join(home, ".claude");
     fs.mkdirSync(config);
@@ -316,6 +324,7 @@ describe("hello-time transcript adoption", () => {
     const ctx = await startTestDaemon({ HOME: home });
     try {
       const user = await userConn(ctx);
+      await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid: sid() });
       expect(initial.ok).toBe(true);
       expect(initial.todos).toHaveLength(1);
@@ -342,8 +351,11 @@ describe("hello-time transcript adoption", () => {
           .map((row) => `${line(row)}\n`)
           .join(""),
       );
-      const { ev } = await user.readEventUntil("session_status");
-      expect(ev.todos[0]?.status).toBe("completed");
+      const peer = await sessionConn(ctx, "aaaaaaaa-0000-4000-8000-0000000000bb");
+      const seen = await sayMarker(peer, user, "marker");
+      expect(seen.some(isKind("session_status"))).toBe(false);
+      const again = await user.requestOk({ op: "session_status", sid: sid() });
+      expect(again.todos[0]?.status).toBe("completed");
       user.close();
     } finally {
       await stopTestDaemon(ctx);
