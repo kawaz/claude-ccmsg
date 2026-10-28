@@ -1,15 +1,17 @@
 // End-to-end: the LLM gateway POSTs a `cache_keepalive` item to a real
-// daemon's /webhook/llm-gateway and the named session sees the marker on its
-// own subscribe stream, as an ordinary ev:"notify".
+// daemon's /webhook/llm-gateway and the named session gets the marker in its
+// conversation, as a notice from the daemon (DR-0039 §9). The session is a
+// fake harness (peer-harness.ts) whose state file names a live pid.
 //
 // Driven against a real daemon process for the same reason
 // llm-events-relay.test.ts is: the thing under test is the startup wiring
-// (config → token file → registered source → session stream), which a stubbed
-// Daemon would skip entirely.
+// (config → token file → registered source → the session's conversation),
+// which a stubbed Daemon would skip entirely.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
+import { DIRECT_DELIVERY_DAEMON_SENDER } from "@ccmsg/protocol";
 import {
   connect,
   spawnDaemonProc,
@@ -17,9 +19,9 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
-  sessionConn,
   userConn,
 } from "./helpers.ts";
+import { fakeHarness, type FakeHarness, parseEnvelope, sessionWithConfig } from "./peer-harness.ts";
 
 const TOKEN = "test-webhook-token";
 const SID = "ca000000-0000-4000-8000-000000000001";
@@ -106,11 +108,14 @@ async function postEvents(ctx: Ctx, payload: unknown): Promise<number> {
   return res.status;
 }
 
-/** A subscribed session — the stream a keepalive marker is delivered on. */
-async function sessionSubscriber(ctx: Ctx, sid = SID): Promise<TestClient> {
-  const c = await sessionConn(ctx, sid);
-  await c.request({ op: "subscribe" });
-  return c;
+/** Session SID with a hooks module, running in a fake harness: the
+ * conversation a keepalive marker is put into. Close the connection and
+ * dispose the harness when done. */
+async function sessionWithModule(ctx: Ctx): Promise<{ c: TestClient; h: FakeHarness }> {
+  const h = fakeHarness(SID, { pid: process.pid });
+  const c = await sessionWithConfig(ctx, SID, h.configDir);
+  await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+  return { c, h };
 }
 
 async function userSubscriber(ctx: Ctx): Promise<TestClient> {
@@ -119,59 +124,63 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   return c;
 }
 
-/** Send an ordinary notify to `sid`. Used as an ordering anchor: the webhook
- * POST has already returned by the time this is sent, so a marker that has not
- * arrived *before* this notify was one the daemon deliberately did not send.
- * Proves absence without waiting out a clock. */
-async function anchor(ctx: Ctx, sid: string, text: string): Promise<void> {
-  const u = await userConn(ctx);
-  await u.request({ op: "notify", sid, text });
-  u.close();
+/** Have the session notify itself, and return the bodies of every notice it
+ * got up to and including that one. Used as an ordering anchor: a keepalive
+ * takes its place in the line of deliveries before the webhook POST returns,
+ * and deliveries to one session arrive in that order, so a marker that has
+ * not arrived *before* this notice was one the daemon deliberately did not
+ * send. Proves absence without waiting out a clock. */
+async function upToAnchor(c: TestClient, h: FakeHarness): Promise<string[]> {
+  expect((await c.requestOk({ op: "notify", text: "anchor" })).result.outcome).toBe("delivered");
+  const seen: string[] = [];
+  for (;;) {
+    const body = parseEnvelope(await h.nextContent()).body;
+    seen.push(body);
+    if (body === "anchor") return seen;
+  }
 }
 
-describe("webhook cache_keepalive → session notify", () => {
-  test("an idle session gets the marker verbatim on its subscribe stream", async () => {
+describe("webhook cache_keepalive → a notice in the session's conversation", () => {
+  test("a session gets the marker verbatim, from the daemon", async () => {
     const ctx = await startKeepaliveDaemon();
+    const { c, h } = await sessionWithModule(ctx);
     try {
-      const s = await sessionSubscriber(ctx);
       expect(await postEvents(ctx, keepalivePayload())).toBe(204);
-      const { ev } = await s.readEventUntil("notify");
+      const { attrs, body } = parseEnvelope(await h.nextContent());
       // Verbatim: the gateway matches this exact string back on the request
-      // it is waiting for, and a decorated one would also risk truncation.
-      expect(ev.text).toBe(MARKER);
-      expect(ev.from).toEqual({ role: "gateway" });
-      s.close();
+      // it is waiting for.
+      expect(body).toBe(MARKER);
+      expect(attrs["ccmsg-from"]).toBe(DIRECT_DELIVERY_DAEMON_SENDER);
     } finally {
+      c.close();
       await stop(ctx);
+      h.dispose();
     }
   });
 
   test("a marker past its deadline is never delivered", async () => {
     const ctx = await startKeepaliveDaemon();
+    const { c, h } = await sessionWithModule(ctx);
     try {
-      const s = await sessionSubscriber(ctx);
       expect(await postEvents(ctx, keepalivePayload({ deadline: Date.now() - 1000 }))).toBe(204);
-      await anchor(ctx, SID, "anchor");
-      const { ev, seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
-      expect(ev.text).toBe("anchor");
-      expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
-      s.close();
+      expect(await upToAnchor(c, h)).toEqual(["anchor"]);
     } finally {
+      c.close();
       await stop(ctx);
+      h.dispose();
     }
   });
 
-  test("a marker for a session that is not subscribed goes nowhere", async () => {
+  test("a marker for another session does not reach this one", async () => {
     const ctx = await startKeepaliveDaemon();
+    const { c, h } = await sessionWithModule(ctx);
     try {
-      const s = await sessionSubscriber(ctx);
       expect(await postEvents(ctx, keepalivePayload({ session_id: "NOBODY" }))).toBe(204);
-      await anchor(ctx, SID, "anchor");
-      const { seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
-      expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
-      s.close();
+      expect(await upToAnchor(c, h)).toEqual(["anchor"]);
     } finally {
+      c.close();
       await stop(ctx);
+      h.dispose();
     }
   });
 

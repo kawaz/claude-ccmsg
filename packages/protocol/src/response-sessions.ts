@@ -13,6 +13,7 @@ import {
   SessionLaunchResponseSchema,
 } from "./launch.ts";
 import type { Output } from "./parse.ts";
+import { SendMessageResultSchema } from "./peer-tools.ts";
 import {
   SessionErrorEntrySchema,
   SessionInputReadinessSchema,
@@ -180,9 +181,11 @@ export const SubscribeAckSchema = v.object({
 });
 export type SubscribeAck = Output<typeof SubscribeAckSchema>;
 
+/** notify's reply, and what `ccmsg notify` prints: what came of the notice
+ * for the session it names, in send_message's words (DR-0039 §9). */
 export const NotifyResponseSchema = v.object({
   ok: v.literal(true),
-  delivered: v.number(),
+  result: SendMessageResultSchema,
 });
 export type NotifyResponse = Output<typeof NotifyResponseSchema>;
 

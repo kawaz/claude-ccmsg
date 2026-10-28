@@ -285,7 +285,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
   ],
   peers: [{ ok: true, peers: [PEER, { sid: SID, repo: "", ws: "", cwd: "" }] }],
-  notify: [{ ok: true, delivered: 2 }],
+  notify: [
+    { ok: true, result: { sid: SID, outcome: "delivered" } },
+    { ok: true, result: { sid: SID, outcome: "not_delivered", reason: "no_module" } },
+  ],
   dir_tree: [
     {
       ok: true,

@@ -15,11 +15,6 @@ const wire = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
 const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
-  notify: [
-    { ev: "notify", text: "hi", from: { role: "user" } },
-    { ev: "notify", text: "just push", from: { role: "session", sid: SID } },
-    { ev: "notify", text: "keepalive", from: { role: "gateway" } },
-  ],
   says: [
     { ev: "says", says: [] },
     {
@@ -81,7 +76,6 @@ const PUSHES: {
     },
   ],
   restarting: [{ ev: "restarting" }, { ev: "restarting", reason: "upgrade" }],
-  subscribe_superseded: [{ ev: "subscribe_superseded", sid: SID }],
   agents: [
     {
       ev: "agents",
@@ -135,7 +129,6 @@ const PUSHES: {
     { ev: "session_errors", errors: [{ sid: SID, text: "API Error: 500", timestamp: "t" }] },
     { ev: "session_errors", errors: [] },
   ],
-  net_online: [{ ev: "net_online", text: "the network is back", error_ts: "t" }],
   llm_requests: [
     {
       ev: "llm_requests",
@@ -199,14 +192,5 @@ describe("StreamEventSchema", () => {
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.failure.issues[0]?.path).toBe("lines.0");
-  });
-
-  test("a notify from a role nobody sends is a failure", () => {
-    expect(
-      parseWith(StreamEventSchema, { ev: "notify", text: "x", from: { role: "admin" } }).ok,
-    ).toBe(false);
-    expect(
-      parseWith(StreamEventSchema, { ev: "notify", text: "x", from: { role: "session" } }).ok,
-    ).toBe(false);
   });
 });

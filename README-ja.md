@@ -50,7 +50,7 @@ daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間�
 - **ストレージ** — daemon はメッセージの状態を持たない: メッセージは送り手と受け手のセッションの transcript に残り、`ccmsg say` の記録はメモリだけに持つ。room のログ (`<data dir>/rooms/r<N>.jsonl`) は読み取り専用で、web UI が表示し、何も書き込まない ([DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §2)
 - **配送** — セッションは plugin の `send` tool で別のセッションに送り、daemon は受け手の peer messaging socket に直接書き込んで、届いたかを送り手に返す。後で送り直すために預かることはしない ([DR-0034](./docs/decisions/DR-0034-peer-socket-injection.md)、[DR-0036](./docs/decisions/DR-0036-retire-rooms-for-p2p.md) §1、[DR-0039](./docs/decisions/DR-0039-all-mods-and-typed-tools.md) §3)。web UI からの人の入力はセッションの入力欄に入れて送る ([DR-0035](./docs/decisions/DR-0035-user-input-via-composer-fill.md))
 - **トランスポート** — ローカルクライアントは UNIX Domain Socket (`0600` + UID check)。webui は WebSocket (`/ws`) で同一プロトコル: セキュリティ層 = role を User に固定する identity pinning、接続元は loopback 限定 bind + source-IP allowlist (loopback、`CCMSG_HTTP_ALLOW`) + ブラウザ `Origin` 検証 (既定は loopback origin のみ、tailscale serve 等の追加は `CCMSG_HTTP_ALLOW_ORIGIN`) で審査
-- **クライアント** — plugin の hooks module (`send` / `say` / `peers` / `launch` の tool と、人の入力を受けるサイドカー)、kawaz が直接叩くユーザ CLI (`peers`・`dump`・`status`・`daemon`・`stop` など)、セッションの通知を流す `subscribe` コマンド、web UI。CLI は daemon をヘルスチェックし、落ちていれば起動する
+- **クライアント** — plugin の hooks module (`send` / `say` / `peers` / `launch` の tool と、人の入力を受けるサイドカー)、kawaz が直接叩くユーザ CLI (`peers`・`dump`・`status`・`daemon`・`stop` など。`notify` は justfile 等のスクリプトからセッションの会話に一言入れる)、web UI。CLI は daemon をヘルスチェックし、落ちていれば起動する
 
 ## ディレクトリ構成
 

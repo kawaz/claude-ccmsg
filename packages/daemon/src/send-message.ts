@@ -6,8 +6,10 @@
 // writes the envelope into the peer socket of every matched session that has
 // a hooks module (peer-inject.ts). A send that names an agent id goes to that
 // running subagent of each matched session instead, through the session's
-// module as user_message's text does (user-message.ts). Nothing is held for a
-// later attempt (DR-0036 §3).
+// module as user_message's text does (user-message.ts). A notice (notify, and
+// the daemon's own wake) goes to one session by id the same way, the sender's
+// own session included (DR-0039 §9). Nothing is held for a later attempt
+// (DR-0036 §3).
 import {
   type PeerListEntry,
   type PeerListInput,
@@ -40,15 +42,20 @@ export interface PeerDeps {
   hasModule(sid: string): boolean;
 }
 
-export interface SendMessageDeps extends PeerDeps {
+/** What a notice needs to reach a session's conversation. */
+export interface NoticeDeps extends PeerDeps {
   /** What the daemon knows of a session no live run serves. */
   readiness(sid: string): SessionInputReadiness;
   issueMid(): string;
   /** Delivers to one session in the order deliver was called for it. */
   deliver(run: SessionRun, frame: InjectFrame): Promise<InjectResult>;
-  /** The line every send stands in, from reading the runs to asking for its
-   * deliveries: one daemon's sends share one. */
+  /** The line every send and notice stands in, from reading the runs to
+   * asking for its deliveries: one daemon's share one. */
   inOrder: Serial;
+  log(line: string): void;
+}
+
+export interface SendMessageDeps extends NoticeDeps {
   /** Add `text` from session `from` to the running subagent `agentId` of
    * session `sid`, through its module (agent.append). */
   appendToAgent(
@@ -57,7 +64,6 @@ export interface SendMessageDeps extends PeerDeps {
     text: string,
     from: string,
   ): Promise<UserMessageOutcome>;
-  log(line: string): void;
 }
 
 /** The sessions of `runs`, each once, spelled as a target matches them. */
@@ -186,14 +192,7 @@ async function startSend(
     if (named === undefined || named === from || peers.some((peer) => peer.sid === named)) {
       return [];
     }
-    const kind = deps.readiness(named).kind;
-    return [
-      {
-        sid: named,
-        outcome: "not_delivered",
-        reason: kind === "session_changed" ? "session_changed" : "ended",
-      },
-    ];
+    return [notRunning(named, deps)];
   }
   if (agentId !== undefined) {
     const results = await Promise.all(
@@ -205,8 +204,42 @@ async function startSend(
   if (others.length === 0) {
     return matched.map((peer) => ({ ...spelled(peer), outcome: "not_delivered", reason: "self" }));
   }
-  const results = await Promise.all(others.map((peer) => sendToPeer(peer, from, text, deps)));
+  const results = await Promise.all(
+    others.map((peer) => sendToPeer(peer, from, text, "send_message", deps)),
+  );
   return results.sort((a, b) => a.sid.localeCompare(b.sid));
+}
+
+/** What a session named by id that no live run serves is answered with. */
+function notRunning(sid: string, deps: NoticeDeps): SendMessageResult {
+  const kind = deps.readiness(sid).kind;
+  return {
+    sid,
+    outcome: "not_delivered",
+    reason: kind === "session_changed" ? "session_changed" : "ended",
+  };
+}
+
+/** Put `text` from `from` into the conversation of session `sid`, in the
+ * envelope a send's message comes in, and say what came of it (DR-0039 §9).
+ * `from` is the sender's sid, or the word for a sender that is no session
+ * (DIRECT_DELIVERY_DAEMON_SENDER); the session may be the sender's own. In
+ * line with the sends, as a send's deliveries are. */
+export async function sendNotice(
+  notice: { from: string; sid: string; text: string },
+  deps: NoticeDeps,
+): Promise<SendMessageResult> {
+  // Wrapped, as sendToPeers' results are.
+  const { result } = await deps.inOrder(async () => {
+    const peer = (await peersOf(await deps.runs(), deps)).find((p) => p.sid === notice.sid);
+    return {
+      result:
+        peer !== undefined
+          ? sendToPeer(peer, notice.from, notice.text, "notify", deps)
+          : Promise.resolve(notRunning(notice.sid, deps)),
+    };
+  });
+  return await result;
 }
 
 /** Add `text` to the subagent `agentId` of `peer`. The subagent's own
@@ -236,11 +269,13 @@ async function appendToPeer(
   }
 }
 
+/** `op` names the request the delivery is for in the log. */
 async function sendToPeer(
   peer: Peer,
   from: string,
   text: string,
-  deps: SendMessageDeps,
+  op: "send_message" | "notify",
+  deps: NoticeDeps,
 ): Promise<SendMessageResult> {
   if (!deps.hasModule(peer.sid)) {
     return { ...spelled(peer), outcome: "not_delivered", reason: "no_module" };
@@ -253,7 +288,7 @@ async function sendToPeer(
       const content = renderAddressedDelivery({ mid, from, text });
       const result = await deps.deliver(run, { mid, content });
       deps.log(
-        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (send_message): ${result.outcome}` +
+        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (${op}): ${result.outcome}` +
           (result.outcome === "unavailable"
             ? ` (${result.cause}${result.cause === "no_peer_socket" ? `: ${result.lookup}` : ""})`
             : ""),

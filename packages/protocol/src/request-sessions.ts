@@ -94,17 +94,20 @@ export const PeersRequestSchema = v.object({
 });
 export type PeersRequest = Output<typeof PeersRequestSchema>;
 
-/** Turn this connection into a stream of the daemon's pushes: notify and
- * net_online for a session, and the webui's pushes (peers, agents, says, …)
- * for the user role (stream-event.ts). */
+/** Turn this connection into a stream of the webui's pushes (peers, agents,
+ * says, …, stream-event.ts). User role only: what reaches a session is put
+ * into its conversation instead (DR-0039 §9). */
 export const SubscribeRequestSchema = v.object({
   op: v.literal("subscribe"),
 });
 export type SubscribeRequest = Output<typeof SubscribeRequestSchema>;
 
+/** Put `text` into a session's conversation, from the calling session
+ * (session role only, DR-0039 §9): the envelope and the way in are
+ * send_message's. */
 export const NotifyRequestSchema = v.object({
   op: v.literal("notify"),
-  /** target session sid; absent = self. */
+  /** target session sid; absent = the caller's own. */
   sid: v.optional(v.string()),
   text: v.string(),
 });

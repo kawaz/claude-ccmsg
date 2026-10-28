@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createNetworkWatch, type MonitorStop } from "../src/network-watch.ts";
 import {
   createSessionWakeState,
+  forgetWoken,
   recordWoken,
   wakesForOnline,
   WAKE_TEXT,
@@ -113,7 +114,7 @@ describe("wake targets", () => {
     const state = createSessionWakeState();
     const wakes = wakesForOnline(state, [err("A", "t1"), err("B", "t2")]);
     expect(wakes.map((w) => w.sid)).toEqual(["A", "B"]);
-    expect(wakes[0]?.event).toEqual({ ev: "net_online", text: WAKE_TEXT, error_ts: "t1" });
+    expect(wakes[0]?.text).toBe(WAKE_TEXT);
     expect(wakesForOnline(state, [])).toEqual([]);
   });
 
@@ -126,9 +127,11 @@ describe("wake targets", () => {
 
   test("同じセッションが別のエラーで止まり直したら再び通知する", () => {
     const state = createSessionWakeState();
-    for (const w of wakesForOnline(state, [err("A", "t1")])) recordWoken(state, w);
+    const [first] = wakesForOnline(state, [err("A", "t1")]);
+    if (first !== undefined) recordWoken(state, first);
     const again = wakesForOnline(state, [err("A", "t2")]);
-    expect(again.map((w) => w.event.error_ts)).toEqual(["t2"]);
+    expect(again.map((w) => w.sid)).toEqual(["A"]);
+    expect(again[0]?.key).not.toBe(first?.key);
   });
 
   test("復帰したセッションは記録から落ちるので、次の停止で再び通知できる", () => {
@@ -139,9 +142,23 @@ describe("wake targets", () => {
   });
 
   test("届けられなかった通知は未通知のまま残る", () => {
-    // recordWoken を呼ぶのは実際に subscriber へ送れた時だけ。
+    // 送る前に recordWoken し、届かなかったら forgetWoken で取り消す。
     const state = createSessionWakeState();
+    const [wake] = wakesForOnline(state, [err("A", "t1")]);
+    if (wake === undefined) throw new Error("no wake for a stopped session");
+    recordWoken(state, wake);
+    expect(wakesForOnline(state, [err("A", "t1")])).toEqual([]);
+    forgetWoken(state, wake);
     expect(wakesForOnline(state, [err("A", "t1")]).map((w) => w.sid)).toEqual(["A"]);
-    expect(wakesForOnline(state, [err("A", "t1")]).map((w) => w.sid)).toEqual(["A"]);
+  });
+
+  test("取り消しは、その後に記録された別の停止を消さない", () => {
+    const state = createSessionWakeState();
+    const [old] = wakesForOnline(state, [err("A", "t1")]);
+    if (old === undefined) throw new Error("no wake for a stopped session");
+    recordWoken(state, old);
+    for (const w of wakesForOnline(state, [err("A", "t2")])) recordWoken(state, w);
+    forgetWoken(state, old);
+    expect(wakesForOnline(state, [err("A", "t2")])).toEqual([]);
   });
 });

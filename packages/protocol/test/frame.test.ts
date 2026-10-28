@@ -5,8 +5,6 @@ import { describe, expect, test } from "bun:test";
 import { type DaemonFrame, readDaemonFrame } from "../src/frame.ts";
 import type { ErrorResponse } from "../src/response.ts";
 
-const SID = "11111111-2222-4333-8444-555555555555";
-
 const line = (value: object): string => JSON.stringify(value);
 
 type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
@@ -60,9 +58,9 @@ describe("readDaemonFrame: replies", () => {
 
 describe("readDaemonFrame: events", () => {
   test("a push", () => {
-    expect(readDaemonFrame(line({ ev: "subscribe_superseded", sid: SID }))).toEqual({
+    expect(readDaemonFrame(line({ ev: "restarting", reason: "upgrade" }))).toEqual({
       kind: "event",
-      event: { ev: "subscribe_superseded", sid: SID },
+      event: { ev: "restarting", reason: "upgrade" },
     });
   });
 });

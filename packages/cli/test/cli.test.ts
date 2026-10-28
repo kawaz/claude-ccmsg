@@ -5,7 +5,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { parseWith, type ResponseOf, SessionStateFileTextSchema, VERSION } from "@ccmsg/protocol";
+import {
+  parseWith,
+  resolvePaths,
+  type ResponseOf,
+  SessionStateFileTextSchema,
+  VERSION,
+} from "@ccmsg/protocol";
 import {
   assistantContentRow,
   line,
@@ -15,6 +21,8 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
+import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
+import { nameRunNoSpawn } from "../src/client.ts";
 import { CliStatusSchema, printed, served } from "./cli-output.ts";
 import { runCli, CLI } from "./run-cli.ts";
 
@@ -46,8 +54,7 @@ function makeEnv(): { env: CliEnv; cleanup: () => void } {
 const MINIMAL_HELP = `Commands:
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
-  subscribe                                 Monitor常駐用
-  notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+  notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
@@ -405,6 +412,53 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
+  // 何を保証するか (DR-0039 §9): `ccmsg notify --self` は呼び手のセッションの
+  // 会話に、送信と同じ封筒で入る。結果の JSON を stdout に出し、届いた時だけ
+  // exit 0。届かなかった時 (module の無いセッション等) は理由を出して exit 1。
+  test("notify --self は自分の会話に入って exit 0、届かなければ理由を出して exit 1", async () => {
+    const { env, cleanup } = makeEnv();
+    const SELF = "50000003-0000-4000-8000-000000000000";
+    const own = fakeHarness(SELF, { pid: process.pid });
+    // daemon が届けるのは、この config dir を受け持つ時か、セッションがこの
+    // dir を名乗った時。ここでは前者にして、名乗りの経路に依らない。
+    const served1 = { ...env, CCMSG_CLAUDE_CONFIG_DIRS: own.configDir, CCMSG_SID: SELF };
+    const notify = (): ReturnType<typeof runCli> =>
+      runCli(["notify", "--self", "--text", "Monitor で just watch を起動して"], served1);
+    try {
+      const bare = await notify();
+      expect(bare.code).toBe(1);
+      expect(served("notify", bare.out).result).toEqual({
+        sid: SELF,
+        outcome: "not_delivered",
+        reason: "no_module",
+      });
+      expect(own.frames).toEqual([]);
+
+      const module = await nameRunNoSpawn(
+        resolvePaths(served1),
+        { role: "session", sid: SELF, repo: "", ws: "", cwd: "" },
+        { runId: "run1", startedAt: 1 },
+      );
+      expect(module).not.toBeNull();
+      try {
+        const sent = await notify();
+        expect(sent.code).toBe(0);
+        expect(served("notify", sent.out).result).toEqual({ sid: SELF, outcome: "delivered" });
+        const { attrs, body } = parseEnvelope(await own.nextContent());
+        expect({ from: attrs.from, body }).toEqual({
+          from: `ccmsg:${SELF}`,
+          body: "Monitor で just watch を起動して",
+        });
+      } finally {
+        module?.close();
+      }
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      own.dispose();
+      cleanup();
+    }
+  }, 30000);
+
   // 何を保証するか: 旧 CLAUDE_SESSION_ID env は拾わない (削除済み)。値を
   // セットしても identity 無し扱いで write op は error になる。
   test("旧 CLAUDE_SESSION_ID env は sid として拾わない (write op は error)", async () => {
@@ -418,39 +472,6 @@ describe("ccmsg CLI end-to-end", () => {
       });
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("requires a session identity");
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
-      cleanup();
-    }
-  }, 30000);
-
-  // 何を保証するか: subscribe は identity 無しでも起動 (u1 fallback、DR-0003 §3)、
-  // 起動直後の stderr に「subscribing as u1」警告が出る。stdout は pure jsonl のまま
-  // (Monitor 経由の consumer を汚さない)。
-  test("subscribe は sid 無しでも起動し stderr に u1 fallback 警告が出る", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
-        env: {
-          ...process.env,
-          ...env,
-          CCMSG_SID: "",
-          CLAUDE_CODE_SESSION_ID: "",
-          CLAUDE_SESSION_ID: "",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      // 警告は subscribe stream 開始前に main() が同期的に出すので、subprocess
-      // 起動 → ensure-daemon 完了 (数百 ms 目安) を待って kill、それから stderr を
-      // 全部読み切って assert する。stream 途中の race を避けるためこの手順が最も単純。
-      await new Promise<void>((r) => setTimeout(r, 1500));
-      sub.kill();
-      await sub.exited;
-      const errText = await new Response(sub.stderr).text();
-      expect(errText).toContain("subscribing as the User (u1)");
-      expect(errText).toContain("CCMSG_SID");
-      expect(errText).toContain("CLAUDE_CODE_SESSION_ID");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -998,8 +1019,8 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       CLAUDE_SESSION_ID: "",
     };
     try {
-      // 3 session を立ててそれぞれ異なる cwd で subscribe を張っておく (peers は
-      // 接続中 session を返すので、常駐 subscribe を noise なく差し込む)。
+      // 3 session がそれぞれ異なる cwd で 1 度ずつ hello しておく (daemon は
+      // hello した session を接続が切れた後も peers に載せる)。
       // CLI が hello で名乗る所在は固定値 3 つからしか来ない (DR-0003 §3
       // 「所在の正本」) ので、各 peer の cwd は CCMSG_CWD で明示する。Bun.spawn
       // の cwd は実 dir が要る (作成しないと spawn が失敗する)。base dir 配下に mkdir。
@@ -1010,18 +1031,19 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       fs.mkdirSync(alphaOne, { recursive: true });
       fs.mkdirSync(alphaTwo, { recursive: true });
       fs.mkdirSync(betaThree, { recursive: true });
-      const spawnPeer = (sid: string, cwd: string) =>
-        Bun.spawn([process.execPath, CLI, "--sid", sid, "subscribe"], {
+      const spawnPeer = async (sid: string, cwd: string): Promise<void> => {
+        const peer = Bun.spawn([process.execPath, CLI, "--sid", sid, "peers"], {
           cwd,
           env: { ...process.env, ...env, CCMSG_CWD: cwd },
           stdout: "pipe",
           stderr: "pipe",
         });
-      const p1 = spawnPeer("9a000000-0000-4000-8000-000000000000", alphaOne);
-      const p2 = spawnPeer("9b000000-0000-4000-8000-000000000000", alphaTwo);
-      const p3 = spawnPeer("9c000000-0000-4000-8000-000000000000", betaThree);
+        expect(await peer.exited).toBe(0);
+      };
+      await spawnPeer("9a000000-0000-4000-8000-000000000000", alphaOne);
+      await spawnPeer("9b000000-0000-4000-8000-000000000000", alphaTwo);
+      await spawnPeer("9c000000-0000-4000-8000-000000000000", betaThree);
       try {
-        // subscribe が daemon に hello するまでの猶予: peers を polling で待つ。
         const waitPeers = async (): Promise<ResponseOf<"peers">> => {
           for (let i = 0; i < 40; i++) {
             const res = served("peers", (await runCli(["peers"], readEnv)).out);
@@ -1052,9 +1074,6 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         const none = served("peers", (await runCli(["peers", "no-such-cwd"], readEnv)).out);
         expect(none.peers).toEqual([]);
       } finally {
-        p1.kill();
-        p2.kill();
-        p3.kill();
         fs.rmSync(peerBase, { recursive: true, force: true });
       }
     } finally {
@@ -1160,23 +1179,24 @@ describe("hello が名乗る所在", () => {
       CLAUDE_PROJECT_DIR: "",
     };
     // peer は全員 drifted で走らせる = CLI の process.cwd() は常に drifted。
-    const spawnPeer = (sid: string, peerEnv: Record<string, string>) =>
-      Bun.spawn([process.execPath, CLI, "--sid", sid, "subscribe"], {
+    // 各 peer は 1 度 hello して終わる (daemon は hello した session を載せ続ける)。
+    const spawnPeer = async (sid: string, peerEnv: Record<string, string>): Promise<void> => {
+      const peer = Bun.spawn([process.execPath, CLI, "--sid", sid, "peers"], {
         cwd: drifted,
         env: { ...process.env, ...env, CLAUDE_PROJECT_DIR: "", ...peerEnv },
         stdout: "pipe",
         stderr: "pipe",
       });
-    const procs = [
-      spawnPeer("10cf0000-0000-4000-8000-000000000000", {}),
-      spawnPeer("10ce0000-0000-4000-8000-000000000000", { CLAUDE_PROJECT_DIR: project }),
-      spawnPeer("10c00000-0000-4000-8000-000000000000", {
+      expect(await peer.exited).toBe(0);
+    };
+    try {
+      await spawnPeer("10cf0000-0000-4000-8000-000000000000", {});
+      await spawnPeer("10ce0000-0000-4000-8000-000000000000", { CLAUDE_PROJECT_DIR: project });
+      await spawnPeer("10c00000-0000-4000-8000-000000000000", {
         CLAUDE_PROJECT_DIR: project,
         CCMSG_CWD: override,
-      }),
-      spawnPeer("10cd0000-0000-4000-8000-000000000000", {}),
-    ];
-    try {
+      });
+      await spawnPeer("10cd0000-0000-4000-8000-000000000000", {});
       const waitPeers = async (): Promise<ResponseOf<"peers">["peers"]> => {
         for (let i = 0; i < 40; i++) {
           const res = served("peers", (await runCli(["peers"], readEnv)).out);
@@ -1194,7 +1214,6 @@ describe("hello が名乗る所在", () => {
       // 出所が 1 つも無ければ何も名乗らない (drifted を名乗ってしまわない)。
       expect(cwdOf("10cd0000-0000-4000-8000-000000000000") ?? "").toBe("");
     } finally {
-      for (const p of procs) p.kill();
       await runCli(["daemon", "stop"], readEnv).catch(() => {});
       fs.rmSync(base, { recursive: true, force: true });
       cleanup();

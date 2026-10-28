@@ -41,11 +41,9 @@ import {
   connectIfRunning,
   helloRequest,
   ensureDaemon,
-  reconnectSubscribeNoSpawn,
   sendFactsNoSpawn,
   waitDaemonGone,
 } from "./client.ts";
-import { watchSubscribeOwner } from "./subscribe-owner.ts";
 import {
   getRepoWsFromVcs,
   pruneOldSessionFiles,
@@ -73,9 +71,7 @@ const BOOL_FLAGS = new Set([
  * rather than silently posting as u1 (the User admin), which would forge
  * user-authored msgs (see docs/decisions/DR-0003 §3, docs/issue/2026-07-12-
  * prevent-u1-masquerade-on-missing-sid.md). peers/status stay available
- * identity-less because they only observe. subscribe also stays
- * available (with a stderr warning) so kawaz can observe as u1 until the
- * webui is up. */
+ * identity-less because they only observe. */
 const WRITE_OPS = new Set(["notify"]);
 
 interface Parsed {
@@ -160,8 +156,7 @@ function strField(v: string | undefined): string | undefined {
  * msgs when a Monitor subprocess inherited an env without CCMSG_SID (DR-0003
  * §3 revision, docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
  * Callers of write ops turn this null into a hard error; observe-only ops
- * (subscribe/peers/status) treat null as user role (with a stderr
- * warning for subscribe). */
+ * (peers/status) treat null as user role. */
 function resolveSessionIdentity(
   opts: Record<string, string | boolean>,
   cmd: string,
@@ -172,8 +167,8 @@ function resolveSessionIdentity(
     cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
   // Env auto-detect: CCMSG_SID first (an explicit override for manual
   // invocation / tests), then CLAUDE_CODE_SESSION_ID (Claude Code's own env,
-  // exported into Bash/Monitor subprocesses, so this is the normal path a
-  // hook-suggested bare `ccmsg subscribe` resolves through). `strField`
+  // exported into Bash subprocesses, so this is the normal path a `ccmsg
+  // notify --self` run from a session's own justfile resolves through). `strField`
   // collapses empty strings to undefined so `CCMSG_SID=""` (a shell/CI env
   // accident) doesn't shadow a real CLAUDE_CODE_SESSION_ID; same pattern used
   // elsewhere in this function for CCMSG_TRANSCRIPT_PATH and friends.
@@ -260,23 +255,9 @@ function refuseWriteWithoutSid(cmd: string): never {
       "    CCMSG_SID=<sid>            (explicit override, manual invocation / tests)\n" +
       "    --as-session <sid>         (explicit override on the command line)\n" +
       "  From a Claude Code session, CLAUDE_CODE_SESSION_ID is normally already set,\n" +
-      "  so a bare `ccmsg subscribe` (or other command) is enough.\n",
+      "  so the bare command is enough.\n",
   );
   process.exit(1);
-}
-
-/** Subscribe stays open under an identity-less env (kawaz's u1 observation
- * path, until webui is up). Warns loudly on stderr so a session sidecar that
- * lost its CCMSG_SID doesn't silently degrade into a no-op observer with no
- * peers entry and no echo suppression. stdout stays pure jsonl (Monitor
- * downstream). */
-function warnSubscribingAsUser(): void {
-  process.stderr.write(
-    "ccmsg subscribe: no session id (CLAUDE_CODE_SESSION_ID / CCMSG_SID unset) — " +
-      "subscribing as the User (u1). No peers entry, no echo suppression. " +
-      "Inside a Claude Code session, CLAUDE_CODE_SESSION_ID is normally already set, " +
-      "so a bare `ccmsg subscribe` is enough; for a manual sidecar, set CCMSG_SID=<session_id>.\n",
-  );
 }
 
 // --- output ----------------------------------------------------------------
@@ -299,6 +280,19 @@ async function runOnce(identity: Identity, req: RequestInput): Promise<never> {
   const res = await client.request(req);
   client.close();
   process.exit(output(res));
+}
+
+/** `ccmsg notify`: the result printed on stdout as it came, and the exit
+ * status saying whether the notice arrived — a caller that has to know (a
+ * justfile step) need not read the JSON. */
+async function runNotify(identity: Identity, req: RequestInput & { op: "notify" }): Promise<never> {
+  const paths = resolvePaths();
+  const client = await ensureDaemon(paths, identity);
+  const res = await client.request(req);
+  client.close();
+  if (!res.ok) process.exit(output(res));
+  process.stdout.write(`${JSON.stringify(res)}\n`);
+  process.exit(res.result.outcome === "delivered" ? 0 : 1);
 }
 
 // --- sidecar ---------------------------------------------------------------
@@ -796,95 +790,6 @@ function spokenArgs(args: readonly string[], command: string): string[] {
   return args.map((a, i) => (text.has(i) ? applySayDictionary(dict, a) : a));
 }
 
-async function runSubscribe(identity: Identity): Promise<never> {
-  // The "subscribing as u1" stderr warning is emitted by main() before this
-  // (see warnSubscribingAsUser) so the branch stays out of the hot path once
-  // the connection is up. stdout is pure jsonl for the downstream Monitor.
-  const paths = resolvePaths();
-  // Claude Code keeps one sessions/<pid>.json registry row for the current
-  // conversation and rewrites its sessionId on /clear. Watch that row so this
-  // sidecar cannot keep announcing the old sid after its owner moved on. The
-  // watcher is conservative: absent/unreadable registry state disables this
-  // supervision rather than terminating a potentially valid stream.
-  const ownerWatch =
-    identity.role === "session"
-      ? watchSubscribeOwner(process.env.CLAUDE_CONFIG_DIR, identity.sid)
-      : null;
-  const OWNER_STALE: unique symbol = Symbol("owner-stale");
-  const ownerStale = ownerWatch?.stale.then((): typeof OWNER_STALE => OWNER_STALE);
-  const stopForStaleOwner = (): never => {
-    ownerWatch?.close();
-    process.exit(0);
-  };
-  const raceOwner = async <T>(operation: Promise<T>): Promise<Awaited<T>> => {
-    if (!ownerStale) return await operation;
-    const result = await Promise.race([operation, ownerStale]);
-    if (result === OWNER_STALE) return stopForStaleOwner();
-    return result;
-  };
-  let client: Client = await ensureDaemon(paths, identity);
-  const ack = await client.request({ op: "subscribe" });
-  if (!ack.ok) process.exit(output(ack));
-  // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
-  // Monitor 相当のセッション寿命プロセスなので、上限に達したら fixed 5s で
-  // 回り続ける (docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md)。
-  const BACKOFFS_MS = [250, 500, 1000, 2000, 4000] as const;
-  const MAX_BACKOFF_MS = 5000;
-  let attempt = 0;
-  outer: for (;;) {
-    for (;;) {
-      const next = await raceOwner(client.readLine());
-      if (next === null) break; // socket closed → 再接続へ
-      const { line, frame } = next;
-      // 1 行を 1 回 frame のスキーマで読む。透過再接続の内部信号
-      // (`restarting`) は Monitor へ通知して AI の応答を発生させる対象ではない
-      // ので stdout に流さない。スキーマで読めない行は stdout に流さず、stderr
-      // に理由を残して捨てる。
-      if (frame.kind === "invalid") {
-        process.stderr.write(
-          `ccmsg subscribe: dropped a line the daemon wrote outside the wire's schema (${frame.failure.summary})\n`,
-        );
-        continue;
-      }
-      if (frame.kind === "event") {
-        const ev = frame.event;
-        if (ev.ev === "subscribe_superseded") {
-          // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
-          // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
-          // 契約なので、古いこちらは再接続せず正常終了する。
-          process.stderr.write(
-            "ccmsg subscribe: a newer subscribe started for this session " +
-              "(duplicate detected). Exiting this older one so messages are not " +
-              "delivered twice; the newer subscribe now receives them.\n",
-          );
-          ownerWatch?.close();
-          process.exit(0);
-        }
-        if (ev.ev === "restarting") continue;
-      }
-      process.stdout.write(`${line}\n`);
-    }
-    // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
-    // `ccmsg daemon stop` を subscribe が resurrection しない契約。
-    // 打ち切り条件は持たない (DR-0002 §4 設計意図): subscribe は daemon 更新を
-    // またいで生き続ける側で、再起動も通知もしない。非互換に見えても subscribe 側で
-    // exit / 再起動する方向には倒さない。protocol の互換を切るのは daemon 側の
-    // 意図的な判断で、その時はセッションが張り直す (例: DR-0029 追補の request_id
-    // 必須化)。
-    for (;;) {
-      const c = await raceOwner(reconnectSubscribeNoSpawn(paths, identity));
-      if (c !== null) {
-        client = c;
-        attempt = 0;
-        continue outer;
-      }
-      const delay = BACKOFFS_MS[attempt] ?? MAX_BACKOFF_MS;
-      attempt++;
-      await raceOwner(new Promise<void>((res) => setTimeout(res, delay)));
-    }
-  }
-}
-
 /** Ping an already-connected client and shape the result the way `status`/`daemon
  * start` report it (used by both so the two commands can't drift apart). Closes
  * `client` before returning. */
@@ -937,10 +842,10 @@ async function runDaemonStart(): Promise<never> {
  *
  * The stop→respawn sequence is the same one `ensureDaemon` runs for a
  * client-driven version upgrade (shutdown, waitDaemonGone, spawn), reused here
- * rather than duplicated. Live `subscribe` clients reattach through their own
- * no-spawn reconnect backoff once the replacement is listening; the no-spawn
- * contract only keeps subscribe from resurrecting a daemon nobody replaced, and
- * here the restarting client is the one putting it back.
+ * rather than duplicated. Live sidecars and webui tabs reattach on their own
+ * once the replacement is listening; the sidecars' no-spawn contract only
+ * keeps them from resurrecting a daemon nobody replaced, and here the
+ * restarting client is the one putting it back.
  *
  * With nothing running this degrades to `daemon start` (restarted:false,
  * started:true) instead of erroring — "make a current daemon be running" is the
@@ -1037,8 +942,7 @@ function printHelp(): void {
   process.stdout.write(`Commands:
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
-  subscribe                                 Monitor常駐用
-  notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+  notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
@@ -1053,9 +957,6 @@ Usage:
   ccmsg <command> [args] [options]
 
 Commands:
-  subscribe                    Stream the session's notifications (notify,
-                               net_online) as jsonl to stdout. Startup and
-                               reconnect are silent
   dump <session-id>            Export session handoff context (todos, agents, rooms) +
                                conversation entries as compact jsonl (default) or readable
                                text (--format text). --since/--until accept a
@@ -1067,7 +968,11 @@ Commands:
                                auto-names it under <data>/dumps/)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd
-  notify                       Signal a session's subscribe stream (--self / --sid, --text)
+  notify                       Put --text into a session's conversation, from this
+                               session (--self / --sid). It arrives as a message
+                               from another session does, and only in a session
+                               running the ccmsg plugin's hooks module. Prints
+                               the result; exits non-zero unless it arrived
   say [args...]                Speak via /usr/bin/say, first telling the daemon
                                which session spoke so the webui can show it in
                                that session's timeline. Every argument is
@@ -1104,7 +1009,7 @@ Commands:
                                edited config.ts/js/json (see CCMSG_CONFIG_DIR)
                                takes effect, since configuration is read once
                                at startup. Starts the daemon if none was running.
-                               Live "subscribe" clients reattach on their own
+                               Live sidecars and webui tabs reattach on their own
 
 Command Options:
   --since <value>              dump: inclusive lower bound — an ISO 8601 timestamp with
@@ -1147,8 +1052,7 @@ Notes:
   identity (CCMSG_SID / CLAUDE_CODE_SESSION_ID / --as-session). Without one the
   CLI exits with a non-zero status rather than posting as the User (u1). The
   User admin identity is issued by the webui backend only; the CLI cannot act
-  as u1 for write ops. subscribe still runs without a sid (with a stderr
-  warning), giving kawaz a plain-terminal observation path until the webui.
+  as u1 for write ops.
   Rooms are read-only: the webui shows the past rooms, and no command writes
   to one.
   No command sends to the person: their input reaches a session from the
@@ -1255,9 +1159,8 @@ async function main(): Promise<void> {
   // Write ops refuse to run without a sid — silently degrading to u1 was the
   // masquerade bug (docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
   if (sessionIdentity === null && WRITE_OPS.has(cmd)) refuseWriteWithoutSid(cmd);
-  // Observe ops fall back to user role. hello is required by the daemon for
-  // subscribe/notify anyway (IDENTITY_OPS in server.ts); peers/status don't
-  // need identity but hello with role=user is harmless and uniform.
+  // Observe ops fall back to user role: peers/status don't need identity, but
+  // hello with role=user is harmless and uniform.
   const identity: Identity = sessionIdentity ?? { role: "user" };
 
   switch (cmd) {
@@ -1329,12 +1232,7 @@ async function main(): Promise<void> {
         "ccmsg notify [--self | --sid <sid>] --text <text>",
       );
       const sid = str(opts, "sid");
-      await runOnce(identity, { op: "notify", ...(sid ? { sid } : {}), text });
-      return;
-    }
-    case "subscribe": {
-      if (sessionIdentity === null) warnSubscribingAsUser();
-      await runSubscribe(identity);
+      await runNotify(identity, { op: "notify", ...(sid ? { sid } : {}), text });
       return;
     }
     case "status": {

@@ -147,7 +147,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    ccmsg daemon restart
    ```
 
-   期待結果: エラーが出ない。設定が読めない (構文エラー、知らないキー、型の合わない値) と daemon は起動せず、`config: <file>: <場所>: <理由>` の行を daemon.log に書いて終わる。CLI から daemon を起動した時は同じ行が CLI のエラーとして出る。接続中の webui と `ccmsg subscribe` は自動で繋ぎ直す。
+   期待結果: エラーが出ない。設定が読めない (構文エラー、知らないキー、型の合わない値) と daemon は起動せず、`config: <file>: <場所>: <理由>` の行を daemon.log に書いて終わる。CLI から daemon を起動した時は同じ行が CLI のエラーとして出る。接続中の webui とサイドカーは自動で繋ぎ直す。
 
 4. **確かめる**
 

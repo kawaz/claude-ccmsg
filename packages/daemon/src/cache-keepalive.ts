@@ -1,25 +1,22 @@
 // Prompt-cache keepalive markers posted by the LLM gateway, relayed to the
-// session they belong to as an ordinary `ev:"notify"`.
+// session they belong to as a notice in its conversation (DR-0039 §9).
 //
 // The gateway watches a session's prompt cache and, shortly before it
 // would lapse, asks ccmsg to make that session say something — one cheap turn
 // re-warms the cache and saves re-sending the whole prefix. It cannot reach the
 // session itself: it only ever sees HTTP requests, and has no channel back into
-// a running CLI. ccmsg does, because the session is already holding a
-// `subscribe` stream open for exactly this kind of out-of-band delivery.
+// a running CLI. ccmsg does: it puts notices into a session's conversation.
 //
-// The marker goes out verbatim, with nothing wrapped around it: the gateway
-// decides what text proves the keepalive turn happened (it matches the same
-// string back on the request it is waiting for), and a notification that grows
-// decorations risks being truncated before the marker itself is read.
+// The marker is the notice's text, untouched: the gateway decides what text
+// proves the keepalive turn happened (it matches the same string back on the
+// request it is waiting for).
 //
 // Whether the session is mid-turn is deliberately not consulted. A marker that
 // lands during a turn rides along on that turn's next request, which re-warms
 // the cache just as well; one that lands too late is caught by the gateway's
 // own nonce guard. So the only question here is whether the deadline has
-// already passed — which makes this a relay, with no state to keep and nothing
-// to wait for.
-import { parseWith, type JsonValue, type NotifyFrom, type Output } from "@ccmsg/protocol";
+// already passed — which makes this a relay, with no state to keep.
+import { parseWith, type JsonValue, type Output, type SendMessageResult } from "@ccmsg/protocol";
 import * as v from "valibot";
 
 /** One `type: "cache_keepalive"` item from the gateway, read.
@@ -65,36 +62,32 @@ export function parseCacheKeepaliveEvent(item: JsonValue): CacheKeepaliveEvent |
   return event;
 }
 
-/** Stamped on the relayed notify: from the session's side this is
- * indistinguishable from `ccmsg notify --sid <sid>` sent by a user-role client,
- * so nothing downstream (CLI relay, webui fold) needs a case for it. */
-/** The marker is machinery, not a person: a session that reads `from` must be
- * able to tell it apart from a human `ccmsg notify` (a session once rejected a
- * `role:"user"` marker as impersonated input — r261m38). */
-export const CACHE_KEEPALIVE_FROM: NotifyFrom = { role: "gateway" };
-
 export interface CacheKeepaliveDeps {
-  /** Push the marker down that session's subscribe stream, answering how many
-   * streams took it — 0 means the session has none open, which is the only
-   * "undeliverable" case there is. */
-  deliver(sid: string, text: string): number;
+  /** Put the marker into that session's conversation as a notice from the
+   * daemon — machinery, neither a person nor a session, so a session that
+   * reads its `from` does not take it for impersonated input (r261m38) — and
+   * say what came of it. */
+  deliver(sid: string, text: string): Promise<SendMessageResult>;
   log: { info(msg: string): void };
   /** Injectable clock (ms), for tests. */
   now?: () => number;
 }
 
-/** Relay one keepalive, or log why it went nowhere. */
-export function relayCacheKeepalive(event: CacheKeepaliveEvent, deps: CacheKeepaliveDeps): void {
+/** Relay one keepalive, and log what came of it or why it went nowhere.
+ * Settles once the delivery has come to its outcome. */
+export async function relayCacheKeepalive(
+  event: CacheKeepaliveEvent,
+  deps: CacheKeepaliveDeps,
+): Promise<void> {
   const label = `cache keepalive ${event.nonce === "" ? "" : `${event.nonce} `}for ${event.session_id}`;
   const now = deps.now ? deps.now() : Date.now();
   if (event.deadline - now <= 0) {
     deps.log.info(`${label}: deadline already passed, dropped`);
     return;
   }
-  const delivered = deps.deliver(event.session_id, event.marker);
-  if (delivered === 0) {
-    deps.log.info(`${label}: session is not subscribed, dropped`);
-    return;
-  }
-  deps.log.info(`${label}: delivered`);
+  const result = await deps.deliver(event.session_id, event.marker);
+  deps.log.info(
+    `${label}: ${result.outcome}` +
+      (result.outcome === "not_delivered" ? ` (${result.reason}), dropped` : ""),
+  );
 }

@@ -718,7 +718,6 @@ export function createWsClient(
       dispatch({ type: "conn/status", status: "restarting" });
       return;
     }
-    if (streamEv.ev === "notify") return; // not surfaced in the UI (yet)
     // U1: live push whenever the daemon's merged agents rows
     // result changes (only emitted while >=1 user-role subscriber is
     // connected) — folds straight into the same agents/loaded action the

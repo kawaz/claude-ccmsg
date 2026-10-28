@@ -1,7 +1,9 @@
-// End-to-end: a real daemon process, a session stopped on an API error, and a
+// End-to-end: a real daemon process, sessions stopped on an API error, and a
 // network that comes back. The link is played through
 // CCMSG_NETWORK_WATCH_FILE so the test drives actual transitions rather than
-// the in-process seams (those are covered in network-watch.test.ts).
+// the in-process seams (those are covered in network-watch.test.ts). The wake
+// goes into a session's conversation (DR-0039 §9), so each session is a fake
+// harness (peer-harness.ts) whose state file names a live pid.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -11,10 +13,12 @@ import {
   startTestDaemon,
   stopTestDaemon,
   type DaemonCtx,
-  isKind,
+  type TestClient,
   userConn,
 } from "./helpers.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { fakeHarness, type FakeHarness, parseEnvelope } from "./peer-harness.ts";
+import { DIRECT_DELIVERY_DAEMON_SENDER, PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { WAKE_TEXT } from "../src/session-wake.ts";
 import {
   assistantMessage,
   assistantRow,
@@ -24,6 +28,7 @@ import {
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
+const C = "cccccccc-0000-4000-8000-000000000003";
 const ERR_TS = "2026-08-12T03:00:00.000Z";
 
 function apiErrorLine(text: string, timestamp = ERR_TS): string {
@@ -134,72 +139,108 @@ async function waitFor(what: string, ready: () => Promise<boolean>): Promise<voi
   }
 }
 
+/** Say hello as `sid`, running in `harness`'s config dir with `transcript`,
+ * and, with `module`, name a run of it as its sidecar does: the session then
+ * has a hooks module. The connection stays open for the run to stay live. */
+async function stalledSession(
+  ctx: DaemonCtx,
+  sid: string,
+  harness: FakeHarness,
+  transcript: string,
+  module: boolean,
+): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.requestOk({
+    op: "hello",
+    protocol: PROTOCOL_VERSION,
+    role: "session",
+    sid,
+    repo: "r",
+    ws: "w",
+    cwd: "/tmp",
+    transcript_path: transcript,
+    config_dir: harness.configDir,
+  });
+  if (module) await nameRun(c);
+  return c;
+}
+
+async function nameRun(c: TestClient): Promise<void> {
+  await c.requestOk({ op: "sidecar_hello", run_id: "run1", started_at: Date.now() });
+}
+
+/** The wakes `harness` has been sent so far. */
+function wakesIn(harness: FakeHarness): number {
+  return harness.frames.filter((f) => f.type === "user").length;
+}
+
 describe("network online wake", () => {
-  test("回線復帰で API エラー停止中のセッションだけが 1 回起こされる", async () => {
+  test("回線復帰で API エラー停止中のセッションだけが、その停止につき 1 回起こされる", async () => {
     const f = await startFixture();
     const stuck = path.join(f.dir, `${A}.jsonl`);
     const healthy = path.join(f.dir, `${B}.jsonl`);
+    const unmoduled = path.join(f.dir, `${C}.jsonl`);
     fs.writeFileSync(stuck, assistantLine("working") + apiErrorLine("API Error: 503"));
     fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
-    const a = await connect(f.ctx.sock);
-    const b = await connect(f.ctx.sock);
+    fs.writeFileSync(unmoduled, assistantLine("working") + apiErrorLine("API Error: 503"));
+    // A live pid each: the daemon reads one session per process.
+    const third = Bun.spawn(["sleep", "60"]);
+    const ha = fakeHarness(A, { pid: process.pid });
+    const hb = fakeHarness(B, { pid: process.ppid });
+    const hc = fakeHarness(C, { pid: third.pid });
+    const conns: TestClient[] = [];
     try {
-      await a.request({
-        op: "hello",
-        protocol: PROTOCOL_VERSION,
-        role: "session",
-        sid: A,
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-        transcript_path: stuck,
-      });
-      await b.request({
-        op: "hello",
-        protocol: PROTOCOL_VERSION,
-        role: "session",
-        sid: B,
-        repo: "r",
-        ws: "w",
-        cwd: "/tmp",
-        transcript_path: healthy,
-      });
-      await a.request({ op: "subscribe" });
-      await b.request({ op: "subscribe" });
+      conns.push(await stalledSession(f.ctx, A, ha, stuck, true));
+      conns.push(await stalledSession(f.ctx, B, hb, healthy, true));
+      const c = await stalledSession(f.ctx, C, hc, unmoduled, false);
+      conns.push(c);
 
       // The wake reads the api-error fold, which is built asynchronously from
       // the transcript. Recovering before it lands would be a race the
       // feature loses silently, so wait until the daemon reports the stall.
       await f.waitStall(A, ERR_TS);
+      await f.waitStall(C, ERR_TS);
       await f.setLink("online");
 
-      const woken = await a.readEventUntil("net_online");
-      expect(woken.ev.error_ts).toBe(ERR_TS);
-      expect(woken.ev.text).toContain("API error");
+      const woken = await ha.nextUser();
+      expect(woken.session_id).toBe(A);
+      const { attrs, body } = parseEnvelope(woken.message.content);
+      expect({ from: attrs.from, sender: attrs["ccmsg-from"], body }).toEqual({
+        from: `ccmsg:${DIRECT_DELIVERY_DAEMON_SENDER}`,
+        sender: DIRECT_DELIVERY_DAEMON_SENDER,
+        body: WAKE_TEXT,
+      });
 
-      // A second recovery must not re-poke the same stall. Rather than
-      // waiting on the absence of an event, drive a cycle that produces
-      // nothing, then a *new* stall whose wake is observable: any duplicate
-      // for the old stall would have to arrive before it.
+      // C has no hooks module, so nothing reached it — and the stall is not
+      // taken as woken: once C has a module, the next recovery wakes it, and
+      // A's unchanged stall is not poked again.
+      await nameRun(c);
       await f.setLink("offline");
       await f.setLink("online");
+      expect(parseEnvelope(await hc.nextContent()).body).toBe(WAKE_TEXT);
+      expect(wakesIn(hc)).toBe(1);
+
+      // A new stall of A is woken again. Deliveries to one session go in
+      // order, so a duplicate for the old stall would have to arrive before
+      // this one.
       const NEW_TS = "2026-08-12T04:00:00.000Z";
       fs.appendFileSync(stuck, assistantLine("back") + apiErrorLine("API Error: 529", NEW_TS));
       await f.waitStall(A, NEW_TS);
       await f.setLink("offline");
       await f.setLink("online");
-      const second = await a.readEventUntil("net_online", (ev) => ev.error_ts === NEW_TS);
-      expect(second.seen.filter(isKind("net_online"))).toHaveLength(1);
+      expect(parseEnvelope(await ha.nextContent()).body).toBe(WAKE_TEXT);
+      expect(wakesIn(ha)).toBe(2);
 
       // B never stopped, so the wake was never addressed to it — checked
-      // after A's second wake, which orders B's stream past both recoveries.
-      await b.request({ op: "ping" });
-      expect(await b.pendingEvents()).toEqual([]);
+      // after A's second wake, which comes after every recovery.
+      expect(hb.frames).toEqual([]);
     } finally {
       f.close();
-      a.close();
-      b.close();
+      for (const conn of conns) conn.close();
       await stopTestDaemon(f.ctx);
+      for (const h of [ha, hb, hc]) h.dispose();
+      third.kill();
+      await third.exited;
       fs.rmSync(f.dir, { recursive: true, force: true });
     }
   });

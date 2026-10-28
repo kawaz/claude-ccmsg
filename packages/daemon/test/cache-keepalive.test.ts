@@ -9,6 +9,7 @@ import {
   relayCacheKeepalive,
   type CacheKeepaliveEvent,
 } from "../src/cache-keepalive.ts";
+import type { SendMessageResult } from "@ccmsg/protocol";
 import { throughJson } from "./helpers.ts";
 
 function parseCacheKeepaliveEvent(item: unknown) {
@@ -22,22 +23,23 @@ function isCacheKeepaliveItem(item: unknown) {
 const MARKER = "[llm-gateway cache keepalive nonce=n1]";
 
 /** Wall clock the relay reads, pinned rather than real — a deadline test that
- * waited out a real one would either be slow or racy. */
-function harness(options: { subscribed?: boolean } = {}) {
+ * waited out a real one would either be slow or racy. `module: false` is a
+ * session the notice cannot reach. */
+function harness(options: { module?: boolean } = {}) {
   const delivered: { sid: string; text: string }[] = [];
   const logs: string[] = [];
   const state = {
-    subscribed: options.subscribed ?? true,
+    module: options.module ?? true,
     now: 1_000_000,
     delivered,
     logs,
   };
-  const relay = (event: CacheKeepaliveEvent): void =>
+  const relay = (event: CacheKeepaliveEvent): Promise<void> =>
     relayCacheKeepalive(event, {
-      deliver: (sid: string, text: string) => {
-        if (!state.subscribed) return 0;
+      deliver: async (sid: string, text: string): Promise<SendMessageResult> => {
+        if (!state.module) return { sid, outcome: "not_delivered", reason: "no_module" };
         state.delivered.push({ sid, text });
-        return 1;
+        return { sid, outcome: "delivered" };
       },
       log: { info: (msg: string) => state.logs.push(msg) },
       now: () => state.now,
@@ -107,45 +109,43 @@ describe("parseCacheKeepaliveEvent", () => {
 });
 
 describe("relayCacheKeepalive", () => {
-  test("a marker within its deadline goes straight to the session, verbatim", () => {
+  test("a marker within its deadline goes straight to the session, verbatim", async () => {
     const { relay, state } = harness();
-    relay(event(state.now, 60));
+    await relay(event(state.now, 60));
     expect(state.delivered).toEqual([{ sid: "S1", text: MARKER }]);
   });
 
-  test("nothing is added to or trimmed from the marker text", () => {
-    // The gateway matches this string back on the request it is waiting for,
-    // so any decoration would both break that match and risk pushing the
-    // marker past a notification's truncation point.
+  test("nothing is added to or trimmed from the marker text", async () => {
+    // The gateway matches this string back on the request it is waiting for.
     const { relay, state } = harness();
     const odd = "  [llm-gateway cache keepalive nonce=abc]\nsecond line  ";
-    relay(event(state.now, 60, { marker: odd }));
+    await relay(event(state.now, 60, { marker: odd }));
     expect(state.delivered[0]?.text).toBe(odd);
   });
 
-  test("a marker whose deadline has already passed is never delivered", () => {
+  test("a marker whose deadline has already passed is never delivered", async () => {
     const { relay, state } = harness();
-    relay(event(state.now, -1));
+    await relay(event(state.now, -1));
     expect(state.delivered).toEqual([]);
     expect(state.logs.some((l) => l.includes("deadline already passed"))).toBe(true);
   });
 
-  test("a deadline landing exactly now is already too late", () => {
+  test("a deadline landing exactly now is already too late", async () => {
     const { relay, state } = harness();
-    relay({ ...event(state.now, 0), deadline: state.now });
+    await relay({ ...event(state.now, 0), deadline: state.now });
     expect(state.delivered).toEqual([]);
   });
 
-  test("a session with no subscribe stream is logged, not retried", () => {
-    const { relay, state } = harness({ subscribed: false });
-    relay(event(state.now, 60));
+  test("a session the notice cannot reach is logged with why, not retried", async () => {
+    const { relay, state } = harness({ module: false });
+    await relay(event(state.now, 60));
     expect(state.delivered).toEqual([]);
-    expect(state.logs.some((l) => l.includes("not subscribed"))).toBe(true);
+    expect(state.logs.some((l) => l.includes("not_delivered (no_module)"))).toBe(true);
   });
 
-  test("the log line names the nonce so two keepalives can be told apart", () => {
+  test("the log line names the nonce so two keepalives can be told apart", async () => {
     const { relay, state } = harness();
-    relay(event(state.now, 60, { nonce: "n-second" }));
+    await relay(event(state.now, 60, { nonce: "n-second" }));
     expect(state.logs.some((l) => l.includes("n-second") && l.includes("delivered"))).toBe(true);
   });
 });

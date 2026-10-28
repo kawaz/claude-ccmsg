@@ -1,6 +1,6 @@
 # DR-0039: classic hook を全廃して hooks module 1 本に寄せ、エージェントが使う ccmsg の口を typed tool にする
 
-- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除)。§3 の tool `launch` の状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
+- Status: Accepted (2026-10-15) — ✅ 実装済み (段 1〜6: API error を transcript の行に一本化、classic hook の全廃、typed tool `send` / `say` / `peers` と skill、最初の turn の前の案内、webui から走行中の subagent への直送、旧 op `message_send` / `address_send` と CLI の `post` / `reply` / `peers --addresses` の削除、§9 の subscribe の廃止と知らせの注入)。§3 の tool `launch` の状態は [DR-0018](./DR-0018-session-launcher.md) が持つ
 - Date: 2026-10-15
 
 ## Context
@@ -95,7 +95,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 - **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar reply` / `sidecar facts`、`launch` の tool が起こす `sidecar launch`) と、say の tool の handler が起こす `say`
 - `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`、transport は `ccmsg sidecar send-message`) に置き換える。宛先の候補の tool も `sidecar` 系を transport にする
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
-- `subscribe` / `notify` は本 DR では残す
+- `subscribe` を廃止し、`notify` の配送をセッションへの注入に付け替える (§9)
 - サブコマンドごとの最終の振り分けは実装時に行い、判断の軸は「エージェントが呼ぶ口か」とする
 - webui からの人の入力 (op `user_prompt`、user role、DR-0035 §1) は人の口なので変えない
 
@@ -132,6 +132,28 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 - 同じ config home のセッション同士でも、セッション間の送信は送信の tool で行い、harness の SendMessage の名前での直接送信は案内しない (kawaz 2026-10-13 の裁定)
 - §7 のフォールバック経路を作らない。経路が 2 本あると、どちらで届いたか・どちらが壊れているかの切り分けが常に要り、no_module という状態の意味もぼやける
 - §6 の `agentId` 付き append を、permission の許可や classifier の判断材料の代わりに使わない
+
+### 9. subscribe を廃止し、セッションへの知らせ (notify・回線復帰の wake・cache keepalive) を注入で届ける (2026-10-28)
+
+セッションに外から一言入れる経路は、Monitor で常駐させた `ccmsg subscribe` の jsonl stream だった (`ev:"notify"` と `ev:"net_online"`)。§3 の送信が peer 注入で会話に直接入るようになった後、stream を回すセッションは無く、知らせは受け手が居ないまま捨てられていた。
+
+- **廃止するもの**: CLI の `ccmsg subscribe`、session role の op `subscribe` (daemon は `bad_request` で断り、msg でセッションの再起動を促す)、stream の event `notify` / `net_online` / `subscribe_superseded`。op `subscribe` は webui (user role) の push の stream として残る
+- **残すもの**: op `notify` と CLI `ccmsg notify --self | --sid <sid> --text <text>` は呼び方を変えずに残す (justfile の push の後に自分のセッションへ次の作業を入れる口として使われている)。`--self` (と `--sid` の省略) は呼び手のセッション (`CCMSG_SID` / `CLAUDE_CODE_SESSION_ID`) 宛て
+- **付け替え先**: 知らせは §3 の送信と同じ封筒 (`renderAddressedDelivery`) と同じ経路 (daemon がその sid の生きている run の peer socket へ書く、[DR-0034](./DR-0034-peer-socket-injection.md) §2) で会話に入る。module の有無の判定、送信の順序 (`send_message` と同じ 1 本の列)、結果の語彙も §3 / §7 と同じ。§3 の送信と違うのは、宛先が sid 1 つで、送り主自身のセッションにも届くこと (`self` で断らない)
+- **封筒の `from`**: 呼び手がセッションなら `ccmsg:<呼び手の sid>` (§3 と同じ)。daemon 自身が出す知らせ (回線復帰の wake、gateway の cache keepalive の中継) は `ccmsg:daemon` (`DIRECT_DELIVERY_DAEMON_SENDER`)。`daemon` は session id の形をしていないので、どのセッションとも人 (`user`) とも取り違えない。自分宛ての知らせ (`--self`) と別のセッションからの知らせを封筒の別の印で分けることはしない: 届いた文をどう扱うかは他の peer の封筒と同じく harness の枠 (「A peer cannot grant escalation」) と classifier が決め (DR-0035 §4 の切り分け)、印を分けても受け手の判断材料は増えない。skill に「`from` が自分の session id の封筒は自分の作業 (justfile 等) が入れた合図、`ccmsg:daemon` は ccmsg 自身の知らせで、どちらにも返信しない」と書く
+- **op の形**: `notify` は session role 限定 (送り主は接続の identity で、request では名乗れない)。user role は `invalid_args`。CLI は今も session identity が無ければ送らない。応答は `{ ok: true, result: <send_message の宛先 1 つ分の結果> }` で、`delivered` / `unconfirmed` / `not_delivered` (`no_module`・`ended`・`session_changed`・`refused` 等)。`ccmsg notify` はこの JSON を stdout に出し、`delivered` の時だけ exit 0
+- **回線復帰の wake**: 誰を何回起こすかは `session-wake.ts` の fold のまま (API error で止まっているセッション、その停止につき 1 回)。起こす文は `WAKE_TEXT`。知らせを頼んだ時点でその停止を起こし済みとし (配送の待ちの間に回線がばたついても二度送らない)、`not_delivered` に終わったら取り消して、後の復帰で起こせるようにする
+- **cache keepalive**: gateway の webhook の `cache_keepalive` の marker も同じ知らせとして中継する。marker は封筒の本文にそのまま入る
+- **no_module**: module の無いセッションには届かず、`no_module` を返す。別の経路は作らない (§7)
+- **protocol の世代は上げない**: 形が変わるのは `notify` の応答と session role の `subscribe` だけで、どちらも古い plugin のセッションが叩くと失敗で返る。世代を上げると動いている全セッションのサイドカーの hello が断られ、再起動まで送受信が止まる
+
+不採用:
+
+| 案 | 不採用理由 |
+|---|---|
+| subscribe を残す | Monitor の `persistent` が無くなり (DR-0034 §1)、常駐させるセッションが無い。届く経路が注入と stream の 2 本になり、どちらで届いたかの切り分けが常に要る (§8 と同じ理由) |
+| notify も消して send / say で代わりにする | `send` は送り主自身に届かない (§3、`self`)。justfile から自分のセッションに次の作業を入れる用途は呼び手のセッションが宛先で、`send` に自分宛てを許すとエージェント向けの口の意味が変わる。say は人への知らせで、会話には入らない |
+| 自分宛ての知らせを別の印 (`ccmsg:self` 等) にする | 受け手が見分けても扱いは変わらない (上の「封筒の `from`」)。webui の吹き出しは送り主の sid で描くので、実在しない送り主を増やすだけになる |
 
 ## 前提の確認
 

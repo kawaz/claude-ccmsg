@@ -19,6 +19,7 @@ import {
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
+const B = "bbbbbbbb-0000-4000-8000-000000000002";
 
 interface PeerLite {
   sid: string;
@@ -112,19 +113,19 @@ describe("peers timestamps", () => {
     }
   });
 
-  test("subscribe のぶら下がり (push のみ) は last_activity_at を進めない — 明示リクエストのみが進める", async () => {
+  test("A 宛ての notify は A の last_activity_at を進めない — A 自身の明示リクエストのみが進める", async () => {
     const ctx = await startInProcessDaemon();
     try {
       const c = await sessionConn(ctx, A);
       const admin = await userConn(ctx);
-      await c.request({ op: "subscribe" });
-      const afterSubscribe = await getPeer(admin, A);
-      // admin から A 宛の notify を飛ばし、A の stream に届いたのを見てから
-      // 読む — A 自身はリクエストを送っていないので last_activity_at は動かないはず
-      await admin.requestOk({ op: "notify", sid: A, text: "hi" });
-      await c.readEventUntil("notify");
-      const afterPush = await getPeer(admin, A);
-      expect(afterPush.last_activity_at).toBe(afterSubscribe.last_activity_at);
+      await c.request({ op: "ping" });
+      const before = await getPeer(admin, A);
+      // 別のセッション B が A 宛てに notify を送る。進むのは送った B の
+      // last_activity_at で、受け手の A は何もリクエストしていない
+      const b = await sessionConn(ctx, B);
+      await b.requestOk({ op: "notify", sid: A, text: "hi" });
+      const after = await getPeer(admin, A);
+      expect(after.last_activity_at).toBe(before.last_activity_at);
     } finally {
       await stopInProcessDaemon(ctx);
     }

@@ -150,8 +150,7 @@ function unlink(file: string): void {
 }
 
 /** Waits between attempts to reach a daemon that is not listening: these in
- * turn, then NAME_RETRY_MAX_MS for as long as the sidecar lives — the same as
- * a subscribe reconnecting. */
+ * turn, then NAME_RETRY_MAX_MS for as long as the sidecar lives. */
 const NAME_RETRY_MS = [250, 500, 1000, 2000, 4000] as const;
 const NAME_RETRY_MAX_MS = 5000;
 

@@ -12,6 +12,7 @@ import {
   LLM_STATS_DAYS_MIN,
   VERSION,
   PROTOCOL_VERSION,
+  DIRECT_DELIVERY_DAEMON_SENDER,
   isOtherGenerationHello,
   isSessionIdShape,
   readRequest,
@@ -20,14 +21,12 @@ import {
   type Identity,
   type LlmStatusReport,
   type PingResponse,
-  type NotifyFrom,
   type Paths,
   type PeerInfo,
   type PermitRequestRecord,
   type HelloRequest,
   type OtherGenerationHelloRequest,
   type RequestOp,
-  type NotifyStreamEvent,
   type ResponseBody,
   type RestartingStreamEvent,
   type ServedRequest,
@@ -37,6 +36,7 @@ import {
   type SessionInputReadiness,
   type StaleClientInfo,
   type JsonValue,
+  errorText,
   parseWith,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
@@ -96,6 +96,7 @@ import { holdTestLifeline, type TestLifeline } from "./test-lifeline.ts";
 import { createSerial, type Serial } from "./serial.ts";
 import {
   createSessionWakeState,
+  forgetWoken,
   recordWoken,
   wakesForOnline,
   type SessionWakeState,
@@ -124,7 +125,13 @@ import {
   type PermitRequestLog,
 } from "./permit-requests.ts";
 import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
-import { listPeers, type PeerDeps, sendToPeers } from "./send-message.ts";
+import {
+  listPeers,
+  type NoticeDeps,
+  type PeerDeps,
+  sendNotice,
+  sendToPeers,
+} from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
 import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
 import {
@@ -166,7 +173,6 @@ import {
 } from "./agents.ts";
 import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
 import {
-  CACHE_KEEPALIVE_FROM,
   isCacheKeepaliveItem,
   parseCacheKeepaliveEvent,
   relayCacheKeepalive,
@@ -528,14 +534,11 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
   // exception (DR-0009 addendum): unlike repo/ws/cwd, it is adoptTranscriptPath's
-  // disk lookup (or the CCMSG_TRANSCRIPT_PATH override) — and a
-  // re-subscribe after the stream died is a
-  // common, legitimate path that omits it (e.g. a
-  // `CCMSG_SID=<sid> ccmsg subscribe` typed without the transcript prefix). A
-  // hello that omits transcript_path preserves whatever was already adopted
-  // instead of clearing it — otherwise every such re-subscribe would silently
-  // kill the webui's Timeline view for a session that never stopped having a
-  // transcript.
+  // disk lookup (or the CCMSG_TRANSCRIPT_PATH override) — and most hellos
+  // omit it (every CLI run but one given the override). A hello that omits
+  // transcript_path preserves whatever was already adopted instead of
+  // clearing it — otherwise every such hello would silently kill the webui's
+  // Timeline view for a session that never stopped having a transcript.
   //
   // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
   // repo/ws/cwd (the session state file `sidecar begin` writes, read fresh by the CLI's
@@ -1030,6 +1033,20 @@ function peerDeps(daemon: Daemon): PeerDeps {
   };
 }
 
+/** How a send's message or a notice reaches a session's conversation: the
+ * session's runs as peerDeps reads them, and each run's peer socket in turn
+ * behind what was sent to it before (DR-0034 §2). */
+function noticeDeps(daemon: Daemon): NoticeDeps {
+  return {
+    ...peerDeps(daemon),
+    readiness: (sid) => readinessOf(daemon, sid),
+    issueMid: daemon.issueDirectMid,
+    deliver: (run, frame) => daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
+    inOrder: daemon.sendOrder,
+    log: (line) => daemon.log.info(line),
+  };
+}
+
 /** The config dirs this daemon serves (servedConfigDirs), each as a realpath
  * as the registry keeps them. */
 function servedDirs(daemon: Daemon): string[] {
@@ -1188,22 +1205,6 @@ function reportsUpstreamOverload(item: JsonValue): boolean {
   return parseWith(UpstreamOverloadSchema, item).ok;
 }
 
-/** Push one `ev:"notify"` down every subscribe stream held by `sid`, returning
- * how many got it (0 when that session has none open). The single place a
- * session-targeted notify is written, so the webhook-driven cache keepalive and
- * the `notify` op deliver through identical frames. */
-function notifySession(daemon: Daemon, sid: string, from: NotifyFrom, text: string): number {
-  const ephem: NotifyStreamEvent = { ev: "notify", text, from };
-  let delivered = 0;
-  for (const sub of daemon.subscribers) {
-    const id = sub.identity;
-    if (id?.role !== "session" || id.sid !== sid) continue;
-    send(sub, ephem);
-    delivered++;
-  }
-  return delivered;
-}
-
 /** Fold a posted batch of gateway request events into the cache and push the
  * result. Called from the webhook handler; exported for the tests that drive
  * the fold without an HTTP layer.
@@ -1231,9 +1232,14 @@ export function recordLlmRequests(daemon: Daemon, items: readonly JsonValue[], l
         dropped += 1;
         continue;
       }
+      // The webhook's answer does not wait for the delivery: the gateway
+      // learns nothing from it, and the relay logs what came of it.
       relayCacheKeepalive(keepalive, {
-        deliver: (sid, text) => notifySession(daemon, sid, CACHE_KEEPALIVE_FROM, text),
+        deliver: (sid, text) =>
+          sendNotice({ from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text }, noticeDeps(daemon)),
         log,
+      }).catch((e: unknown) => {
+        log.info(`cache keepalive for ${keepalive.session_id}: failed: ${errorText(e)}`);
       });
       continue;
     }
@@ -1389,47 +1395,30 @@ function networkState(daemon: Daemon): PingResponse["network"] {
 }
 
 /** Poke every session that is stopped on an API error, once per stall, after
- * the host comes back online. Delivery is the session's own subscribe stream,
- * so a session with no live subscribe simply is not woken — there is nothing
- * to deliver to, and no other channel reaches an idle CLI. */
-export function wakeStalledSessions(daemon: Daemon): void {
+ * the host comes back online (DR-0039 §9): the wake goes into the session's
+ * conversation the way a notice does, which starts the stalled session's next
+ * turn. A stall is counted as woken from the moment its wake is asked for, so
+ * a link that flaps while it is on its way does not send a second; a wake
+ * that did not arrive is uncounted again, and a later recovery can still wake
+ * that stall. Returns once every wake has come to its outcome. */
+export async function wakeStalledSessions(daemon: Daemon): Promise<void> {
   const wakes = wakesForOnline(daemon.sessionWake, sessionErrorEntries(daemon.sessionErrors));
-  if (wakes.length === 0) return;
-  let delivered = 0;
-  for (const wake of wakes) {
-    let sent = false;
-    for (const sub of daemon.subscribers) {
-      const id = sub.identity;
-      if (id?.role !== "session" || id.sid !== wake.sid) continue;
-      send(sub, wake.event);
-      sent = true;
-      delivered++;
-    }
-    if (sent) recordWoken(daemon.sessionWake, wake);
-  }
-  if (delivered > 0) {
-    daemon.log.info(`network online: woke ${delivered} stalled session subscriber(s)`);
-  }
-}
-
-// --- subscribe -----------------------------------------------------------
-
-/** A session may only have one live subscribe stream: two of them turn every
- * delivery into a duplicate notification for the same AI. The newest subscribe
- * is the deliberate one, so any older session-role subscriber on the same sid is
- * told to exit and is dropped from delivery here (the notice may be the last
- * thing that conn ever reads, and delivery must stop either way). User-role
- * subscribers are untouched — several webui tabs are normal. */
-function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
-  const id = conn.identity;
-  if (id?.role !== "session") return;
-  for (const sub of daemon.subscribers) {
-    if (sub === conn) continue;
-    if (sub.identity?.role !== "session" || sub.identity.sid !== id.sid) continue;
-    send(sub, { ev: "subscribe_superseded", sid: id.sid });
-    sub.subscribed = false;
-    daemon.subscribers.delete(sub);
-    daemon.log.info(`subscribe superseded for sid=${id.sid}: dropped an older subscribe stream`);
+  const results = await Promise.all(
+    wakes.map(async (wake) => {
+      recordWoken(daemon.sessionWake, wake);
+      const result = await sendNotice(
+        { from: DIRECT_DELIVERY_DAEMON_SENDER, sid: wake.sid, text: wake.text },
+        noticeDeps(daemon),
+      );
+      if (result.outcome === "not_delivered") forgetWoken(daemon.sessionWake, wake);
+      return result;
+    }),
+  );
+  for (const result of results) {
+    daemon.log.info(
+      `network online: wake ${result.sid}: ${result.outcome}` +
+        (result.outcome === "not_delivered" ? ` (${result.reason})` : ""),
+    );
   }
 }
 
@@ -1791,12 +1780,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           text: req.text,
         },
         {
-          ...peerDeps(daemon),
-          readiness: (sid) => readinessOf(daemon, sid),
-          issueMid: daemon.issueDirectMid,
-          deliver: (run, frame) =>
-            daemon.peerInjector.deliver(run.configDir, run.sid, frame, run.pid),
-          inOrder: daemon.sendOrder,
+          ...noticeDeps(daemon),
           appendToAgent: async (sid, agentId, text, from) => {
             const { tries: _tries, ...outcome } = await userMessage(
               { sid, agentId, text, from },
@@ -1809,7 +1793,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
             );
             return outcome;
           },
-          log: (line) => daemon.log.info(line),
         },
       );
       send(conn, { ok: true, results });
@@ -1934,36 +1917,45 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "subscribe": {
+      // The stream is the webui's (user role). What reaches a session goes
+      // into its conversation (notify, the wake: DR-0039 §9), and a session
+      // that still asks for a stream is running an older plugin, which a
+      // restart replaces.
+      if (conn.identity?.role !== "user") {
+        sendErr(
+          conn,
+          ErrorCode.bad_request,
+          "op 'subscribe' requires user role; a session receives notices in its conversation (restart the session to load the current ccmsg plugin)",
+        );
+        return;
+      }
       conn.subscribed = true;
       daemon.subscribers.add(conn);
       send(conn, { ok: true, subscribed: true });
-      supersedeOlderSessionSubscribers(daemon, conn);
-      if (conn.identity?.role === "user") {
-        // Catch-up for the agents list the poller already holds; later polls
-        // and runs reach this conn through maybeBroadcastAgents.
-        const { agents, polledAt } = daemon.agentsPoller.cache;
-        if (polledAt !== null) {
-          send(conn, {
-            ev: "agents",
-            agents: agentsWithModule(daemon, agents),
-            polled_at: polledAt,
-          });
-        }
-        // This conn may be the first user subscriber, which is what makes the
-        // per-peer api_error and user-input watches worth holding.
-        syncSessionErrors(daemon);
-        syncSessionUserInputs(daemon);
-        // Catch-up for the windows that opened before this tab connected. Sent
-        // only when something is live: an empty push would make a daemon with
-        // no gateway configured look like one whose sessions all went cold.
-        if (daemon.llmRequests.snapshot().length > 0) sendLlmRequests(daemon, conn);
-        // Sent even when empty: a tab reconnecting to a restarted daemon still
-        // holds the old daemon's says, and only this replaces them.
-        sendSays(daemon, conn);
-        // Same reason as the says: sent even when empty.
-        sendPermitRequests(daemon, conn);
-        sendRequestOverrides(daemon, conn);
+      // Catch-up for the agents list the poller already holds; later polls
+      // and runs reach this conn through maybeBroadcastAgents.
+      const { agents, polledAt } = daemon.agentsPoller.cache;
+      if (polledAt !== null) {
+        send(conn, {
+          ev: "agents",
+          agents: agentsWithModule(daemon, agents),
+          polled_at: polledAt,
+        });
       }
+      // This conn may be the first user subscriber, which is what makes the
+      // per-peer api_error and user-input watches worth holding.
+      syncSessionErrors(daemon);
+      syncSessionUserInputs(daemon);
+      // Catch-up for the windows that opened before this tab connected. Sent
+      // only when something is live: an empty push would make a daemon with
+      // no gateway configured look like one whose sessions all went cold.
+      if (daemon.llmRequests.snapshot().length > 0) sendLlmRequests(daemon, conn);
+      // Sent even when empty: a tab reconnecting to a restarted daemon still
+      // holds the old daemon's says, and only this replaces them.
+      sendSays(daemon, conn);
+      // Same reason as the says: sent even when empty.
+      sendPermitRequests(daemon, conn);
+      sendRequestOverrides(daemon, conn);
       return;
     }
 
@@ -2017,30 +2009,23 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "notify": {
+      // Session role only (DR-0039 §9): the sender is the calling session,
+      // stamped from the connection identity, never the request, and becomes
+      // the envelope's from. Waits for the delivery as send_message does.
       const id = conn.identity;
-      if (id === null) {
-        sendErr(conn, ErrorCode.hello_required, "op 'notify' requires hello first");
+      if (id?.role !== "session") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "notify is sent by a session; a person's input reaches a session through user_prompt",
+        );
         return;
       }
-      const targetSid = req.sid ?? (id.role === "session" ? id.sid : undefined);
-      const targetUser = req.sid === undefined && id.role === "user";
-      let delivered = 0;
-      // Stamp the sender from the connection identity (never the client's self-claim),
-      // so the receiver can distinguish self-notify from peer-notify and refuse to
-      // auto-execute a peer's command-shaped text (DR-0003 §7).
-      const from: NotifyFrom =
-        id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
-      if (targetUser) {
-        const ephem: NotifyStreamEvent = { ev: "notify", text: req.text, from };
-        for (const sub of daemon.subscribers) {
-          if (sub.identity?.role !== "user") continue;
-          send(sub, ephem);
-          delivered++;
-        }
-      } else if (targetSid) {
-        delivered = notifySession(daemon, targetSid, from, req.text);
-      }
-      send(conn, { ok: true, delivered });
+      const result = await sendNotice(
+        { from: id.sid, sid: req.sid ?? id.sid, text: req.text },
+        noticeDeps(daemon),
+      );
+      send(conn, { ok: true, result });
       return;
     }
 
@@ -3421,7 +3406,11 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     const sourceFile = process.env.CCMSG_NETWORK_WATCH_FILE;
     daemon.networkWatch = createNetworkWatch({
       log,
-      onOnline: () => wakeStalledSessions(daemon),
+      onOnline: () => {
+        wakeStalledSessions(daemon).catch((e: unknown) => {
+          log.info(`network online: wake failed: ${errorText(e)}`);
+        });
+      },
       ...(sourceFile ? fileNetworkSource(sourceFile) : {}),
       ...(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS
         ? { debounceMs: Number(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS) }

@@ -56,6 +56,11 @@ export interface DirectDeliveryEnvelope {
 /** `ccmsg-from` of a message a person sent. */
 export const DIRECT_DELIVERY_USER_SENDER = "user";
 
+/** `ccmsg-from` of a notice the daemon itself puts into a session (DR-0039
+ * §9): no person and no session, and not of a session id's shape, so it is
+ * taken for neither. */
+export const DIRECT_DELIVERY_DAEMON_SENDER = "daemon";
+
 const TAG = "cross-session-message";
 const CLOSING = `\n</${TAG}>`;
 /** The first opening tag of the element, with or without attributes that
@@ -110,7 +115,8 @@ export function directDeliveryReplyLine(mid: string, from: string, launcher = "c
 }
 
 /** One message as `renderAddressedDelivery` words it. `from` is the
- * sender's sid. */
+ * sender's sid, or DIRECT_DELIVERY_DAEMON_SENDER for the daemon's own
+ * notice. */
 export interface DirectDeliveryMessage {
   mid: string;
   from: string;

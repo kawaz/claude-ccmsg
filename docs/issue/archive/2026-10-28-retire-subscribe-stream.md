@@ -1,6 +1,6 @@
 ---
 title: subscribe (Monitor 常駐の受信経路) と notify を module 経由に付け替えて廃止する
-status: open
+status: resolved
 category: design
 created: 2026-10-28T09:06:13+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-28T09:51:18+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0039","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---

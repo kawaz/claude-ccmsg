@@ -16,27 +16,6 @@ import { LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
-/** Who a notify came from, daemon-stamped from the connection identity
- * (DR-0003 §7). The receiver uses this to tell a self-notify (own session —
- * actionable, e.g. a justfile push signal) from a peer-notify (another agent —
- * must NOT auto-execute even if the text looks like a shell command). Only
- * role + sid, no session metadata. `gateway` marks a relay of an automated
- * event from llm-gateway (the prompt-cache keepalive marker) — not a person
- * and not a peer session, so a reader must not take it for user input. */
-export const NotifyFromSchema = v.variant("role", [
-  v.object({ role: v.literal("user") }),
-  v.object({ role: v.literal("session"), sid: v.string() }),
-  v.object({ role: v.literal("gateway") }),
-]);
-export type NotifyFrom = Output<typeof NotifyFromSchema>;
-
-export const NotifyStreamEventSchema = v.object({
-  ev: v.literal("notify"),
-  text: v.string(),
-  from: NotifyFromSchema,
-});
-export type NotifyStreamEvent = Output<typeof NotifyStreamEventSchema>;
-
 /** One `ccmsg say` as the daemon holds it: which session made the speakers
  * talk, with what, and whether the person watching has acked it. With several
  * sessions running, macOS `say` alone is anonymous. Held in daemon memory
@@ -125,16 +104,6 @@ export const RestartingStreamEventSchema = v.object({
   reason: v.optional(v.string()),
 });
 export type RestartingStreamEvent = Output<typeof RestartingStreamEventSchema>;
-
-/** Sent to an older session-role subscribe stream when a newer `subscribe` for
- * the same sid arrives. Two live subscribe streams for one session double every
- * notification, so the daemon keeps the newest (the deliberate start) and tells
- * the older one to exit. `sid` is the session both streams share. */
-export const SubscribeSupersededStreamEventSchema = v.object({
-  ev: v.literal("subscribe_superseded"),
-  sid: v.string(),
-});
-export type SubscribeSupersededStreamEvent = Output<typeof SubscribeSupersededStreamEventSchema>;
 
 /** Push update of the agents rows (user-role subscribers only). Emitted when
  * the rows, or what the sessions' hooks modules say of them, change. */
@@ -290,22 +259,6 @@ export const SessionErrorsStreamEventSchema = v.object({
 });
 export type SessionErrorsStreamEvent = Output<typeof SessionErrorsStreamEventSchema>;
 
-/** Sent to a single session whose last turn stopped on a harness API error,
- * when the host's network comes back. It carries no room and no seq: the point
- * is the delivery itself, which reaches the session's `subscribe` stream and
- * re-prompts it — the same effect as a human typing one character into the
- * stalled session. Sessions that are not stopped on an error never receive it,
- * and one recovery produces at most one of these per stopped session. */
-export const NetworkOnlineStreamEventSchema = v.object({
-  ev: v.literal("net_online"),
-  /** Why the session is being woken and what to do, in one line. */
-  text: v.string(),
-  /** Timestamp of the API-error row this wake is for, so a session (or a log
-   * reader) can tell which stall it answers. */
-  error_ts: v.string(),
-});
-export type NetworkOnlineStreamEvent = Output<typeof NetworkOnlineStreamEventSchema>;
-
 /** Unsolicited push of a freshly fetched status report (user-role subscribers
  * only, same posture as ev:"llm_requests"). Sent when the gateway's webhook
  * reports a 529 and the daemon re-reads the status endpoint: that is the
@@ -320,20 +273,17 @@ export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 
 /** Every push, told apart by `ev`. */
 export const StreamEventSchema = v.variant("ev", [
-  NotifyStreamEventSchema,
   SaysStreamEventSchema,
   PermitRequestsStreamEventSchema,
   PermitRequestStreamEventSchema,
   RequestOverridesStreamEventSchema,
   RequestOverrideStreamEventSchema,
   RestartingStreamEventSchema,
-  SubscribeSupersededStreamEventSchema,
   AgentsStreamEventSchema,
   PeersStreamEventSchema,
   TranscriptStreamEventSchema,
   SessionStatusStreamEventSchema,
   SessionErrorsStreamEventSchema,
-  NetworkOnlineStreamEventSchema,
   LlmRequestsStreamEventSchema,
   LlmStatusStreamEventSchema,
 ]);

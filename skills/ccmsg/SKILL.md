@@ -42,6 +42,8 @@ description: ccmsg の tool (send / say / peers / launch / permit) で、別の�
 
 別のセッションからのメッセージは、`from="ccmsg:<session_id>"` の付いた `<cross-session-message>` の封筒で届く。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、`session_id` に `ccmsg:` の後ろの id を書く。
 
+同じ封筒で、返事の要らない知らせも届く。`from` が自分の session id のものは、自分の作業 (justfile 等の `ccmsg notify --self`) が入れた合図。`from="ccmsg:daemon"` のものは ccmsg 自身の知らせ (回線が戻った等)。どちらにも返信しない。
+
 ## 人に知らせる (`mcp__ccmsg-v1__say`)
 
 ```json

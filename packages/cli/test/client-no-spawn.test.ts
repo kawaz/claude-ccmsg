@@ -1,5 +1,5 @@
-// The client's attaches that never spawn a daemon (a subscribe reconnecting,
-// a sidecar naming its run, the hooks module sending facts): what each gives
+// The client's attaches that never spawn a daemon (a sidecar naming its run,
+// the hooks module sending facts): what each gives
 // back when no daemon listens, when the daemon refuses a step, and when the
 // connection drops mid-handshake. The end-to-end tests drive these against a
 // real daemon, which accepts; a refusal or a drop needs a peer that answers
@@ -16,12 +16,7 @@ import {
   type SessionIdentity,
   VERSION,
 } from "@ccmsg/protocol";
-import {
-  connectIfRunning,
-  nameRunNoSpawn,
-  reconnectSubscribeNoSpawn,
-  sendFactsNoSpawn,
-} from "../src/client.ts";
+import { connectIfRunning, nameRunNoSpawn, sendFactsNoSpawn } from "../src/client.ts";
 import { type FakeAnswer, type FakeDaemon, fakeDaemon } from "./fake-daemon.ts";
 
 let cleanup: Array<() => void> = [];
@@ -59,7 +54,6 @@ const accepted = (req: RequestFrame): object => {
   if (req.op === "hello") {
     return { ok: true, version: VERSION, protocol: PROTOCOL_VERSION, request_id: req.request_id };
   }
-  if (req.op === "subscribe") return { ok: true, subscribed: true, request_id: req.request_id };
   return { ok: true, request_id: req.request_id };
 };
 
@@ -87,37 +81,6 @@ describe("connectIfRunning", () => {
     expect(client).not.toBeNull();
     client?.close();
     expect(await connectIfRunning(nobodyListening())).toBeNull();
-  });
-});
-
-describe("reconnectSubscribeNoSpawn", () => {
-  test("a hello and a subscribe taken give the connection back", async () => {
-    const { peer, paths } = daemon((req) => [accepted(req)]);
-    const client = await reconnectSubscribeNoSpawn(paths, SESSION);
-    expect(client).not.toBeNull();
-    client?.close();
-    expect(opsOf(peer)).toEqual(["hello", "subscribe"]);
-  });
-
-  test("with no daemon listening it is null", async () => {
-    expect(await reconnectSubscribeNoSpawn(nobodyListening(), SESSION)).toBeNull();
-  });
-
-  test("a refused hello is null, and no subscribe is asked for", async () => {
-    const { peer, paths } = daemon(acceptingBut("hello", (req) => [refused(req)]));
-    expect(await reconnectSubscribeNoSpawn(paths, SESSION)).toBeNull();
-    expect(opsOf(peer)).toEqual(["hello"]);
-  });
-
-  test("a refused subscribe is null", async () => {
-    const { peer, paths } = daemon(acceptingBut("subscribe", (req) => [refused(req)]));
-    expect(await reconnectSubscribeNoSpawn(paths, SESSION)).toBeNull();
-    expect(opsOf(peer)).toEqual(["hello", "subscribe"]);
-  });
-
-  test("a connection dropped mid-handshake is null", async () => {
-    const { paths } = daemon(acceptingBut("subscribe", () => "hang up"));
-    expect(await reconnectSubscribeNoSpawn(paths, SESSION)).toBeNull();
   });
 });
 

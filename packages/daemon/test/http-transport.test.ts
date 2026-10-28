@@ -375,11 +375,10 @@ describe("HTTP/WS transport (DR-0004)", () => {
     }
   });
 
-  test("cross-transport delivery: a UDS session and a WS user reach each other's streams", async () => {
+  test("cross-transport delivery: a UDS session's push reaches a WS user's stream", async () => {
     const ctx = await startHttpDaemon();
     try {
       const udsSession = await sessionConn(ctx, S);
-      await udsSession.request({ op: "subscribe" });
 
       const wsUser = await connectWs(ctx);
       await wsUser.hello({ role: "user" });
@@ -388,12 +387,6 @@ describe("HTTP/WS transport (DR-0004)", () => {
       // UDS session says -> the WS user receives it live
       await udsSession.requestOk({ op: "say", text: "from uds" });
       await wsUser.readEventUntil("says", (e) => e.says.some((r) => r.text === "from uds"));
-
-      // WS user notifies -> the UDS session receives it, stamped as the user's
-      const sent = await wsUser.requestOk({ op: "notify", sid: S, text: "from ws" });
-      expect(sent.delivered).toBe(1);
-      const { ev } = await udsSession.readEventUntil("notify");
-      expect(ev).toMatchObject({ text: "from ws", from: { role: "user" } });
 
       udsSession.close();
       wsUser.close();
