@@ -5,6 +5,8 @@ description: Run an isolated daemon and drive the ccmsg web UI.
 
 # Verify ccmsg web UI
 
+When other workers are editing the same working copy, verify your own commit apart from their uncommitted changes: check it out into a throwaway workspace under the temp base (`jj workspace add --name <name> -r <commit> <temp base>/ws-<name>`, then `bun install --frozen-lockfile` in it), and start the daemon below and the test session's `--plugin-dir` from that workspace. Forget the workspace when done (`jj workspace forget <name>`).
+
 1. Start an isolated foreground daemon on an unused loopback port:
 
 ```bash
