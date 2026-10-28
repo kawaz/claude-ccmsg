@@ -1,5 +1,6 @@
 // What the webui shows of the overrides of a session's main-thread requests
-// (DR-0041 §5), and what its pickers send. Pure: no store, no DOM.
+// (DR-0041 §5), and what its selects offer and send (§6). Pure: no store, no
+// DOM.
 //
 // The engine's own display (`/model`, the session's model and effort) does
 // not change under an override, so the ctx line shows the values the main
@@ -10,9 +11,9 @@
 // status snapshot's context.
 import {
   LaunchEffortSchema,
+  launchEffortFromTranscript,
   launchModelFromTranscript,
   LaunchModelSchema,
-  parseWith,
   type ErrorResponse,
   type LaunchEffort,
   type LaunchModel,
@@ -29,7 +30,7 @@ export const OVERRIDE_MARK = "⁺";
 /** The two fields an override has. */
 export type OverrideField = "model" | "effort";
 
-/** The models and the efforts a picker offers, in the launch's order. */
+/** The models and the efforts a select offers, in the launch's order. */
 export const OVERRIDE_MODELS: readonly LaunchModel[] = LaunchModelSchema.options;
 export const OVERRIDE_EFFORTS: readonly LaunchEffort[] = LaunchEffortSchema.options;
 
@@ -63,12 +64,15 @@ function differs(field: OverrideField, value: string, own: string | undefined): 
   return value !== own;
 }
 
-function valueView(
+/** The value one field's requests are sent with, and which override it is
+ * when an override sets it to other than the session's own (`by`); null
+ * when neither the session nor an override names one. The same judgment
+ * marks the ctx line (§5) and labels the selects (§6.1). */
+function inForce(
   field: OverrideField,
   own: string | undefined,
   state: RequestOverrideState | undefined,
-  shorten: (value: string) => string,
-): RequestValueView | null {
+): { value: string; by?: "session" | "once" } | null {
   const once = state?.once[field] ?? null;
   const session = state?.session[field] ?? null;
   const by =
@@ -79,13 +83,25 @@ function valueView(
         : undefined;
   const value = by === "once" ? once : by === "session" ? session : null;
   if (value === null || by === undefined || !differs(field, value, own)) {
-    return own === undefined ? null : { text: shorten(own), title: `${field} ${own}` };
+    return own === undefined ? null : { value: own };
   }
+  return { value, by };
+}
+
+function valueView(
+  field: OverrideField,
+  own: string | undefined,
+  state: RequestOverrideState | undefined,
+  shorten: (value: string) => string,
+): RequestValueView | null {
+  const now = inForce(field, own, state);
+  if (now === null) return null;
+  if (now.by === undefined) return { text: shorten(now.value), title: `${field} ${now.value}` };
   return {
-    text: `${shorten(value)}${OVERRIDE_MARK}`,
-    by,
+    text: `${shorten(now.value)}${OVERRIDE_MARK}`,
+    by: now.by,
     title:
-      `${field} ${value} (${OVERRIDE_NAME[by]}。` +
+      `${field} ${now.value} (${OVERRIDE_NAME[now.by]}。` +
       (own !== undefined ? `セッション自身は ${own})` : "セッション自身の値はまだ分からない)"),
   };
 }
@@ -105,72 +121,128 @@ export function requestValueViews(
   return { model, effort: valueView("effort", ctx.effort, state, (e) => e) };
 }
 
-/** What the session override's pickers show: the fields whose values differ
- * from the session's own, in the pickers' vocabulary; "上書きなし" for the
- * rest. */
-export function sessionPickerValue(
-  state: RequestOverrideState | undefined,
-  ctx: SessionContextUsage | undefined,
-): RequestOverride {
-  const model = parseWith(LaunchModelSchema, state?.session.model ?? "");
-  const effort = parseWith(LaunchEffortSchema, state?.session.effort ?? "");
-  return {
-    ...(model.ok && differs("model", model.value, ctx?.model) ? { model: model.value } : {}),
-    ...(effort.ok && differs("effort", effort.value, ctx?.effort) ? { effort: effort.value } : {}),
-  };
+/** The marks the selects put before a value (DR-0041 §6.1): what the value
+ * is — the one-shot override's, the session override's, the session's own. */
+export const LAYER_MARK = { once: "⏱️", session: "📌", engine: "🏛️" } as const;
+
+/** What choosing an option of a select does (DR-0041 §6.1): nothing (the
+ * default, the value in force); the one-shot override of the send; the
+ * session override set to a value; or the field's one-shot and session
+ * overrides both cleared, to the session's own value (§6.5). */
+export type OverrideChoice =
+  | { kind: "current" }
+  | { kind: "once"; override: RequestOverride }
+  | { kind: "session" | "engine"; patch: RequestOverridePatch };
+
+export interface OverrideOption {
+  /** The `<option>`'s value, unique in its select. */
+  key: string;
+  label: string;
+  choice: OverrideChoice;
 }
 
-/** The one-shot override's values in the pickers' vocabulary. */
-export function onceOverride(state: RequestOverrideState | undefined): RequestOverride {
-  const model = parseWith(LaunchModelSchema, state?.once.model ?? "");
-  const effort = parseWith(LaunchEffortSchema, state?.once.effort ?? "");
-  return {
-    ...(model.ok ? { model: model.value } : {}),
-    ...(effort.ok ? { effort: effort.value } : {}),
-  };
+/** The groups of a select (DR-0041 §6.2), in this order. */
+export interface OverrideGroup {
+  label: "default" | "turn" | "session";
+  options: OverrideOption[];
 }
 
-/** A picker's value: an override field's value, or "" for none. */
-export function pickerValue(override: RequestOverride, field: OverrideField): string {
-  return override[field] ?? "";
+/** The key of the default option, the one a select starts on and returns
+ * to. */
+export const CURRENT_KEY = "current";
+
+/** One field's vocabulary, in the launch's order (§2), each value as the
+ * one-shot override that sets it. */
+function vocabulary(field: OverrideField): { value: string; set: RequestOverride }[] {
+  return field === "model"
+    ? OVERRIDE_MODELS.map((model) => ({ value: model, set: { model } }))
+    : OVERRIDE_EFFORTS.map((effort) => ({ value: effort, set: { effort } }));
 }
 
-/** `override` with `field` set to what a picker's `<select>` holds: "" (or
- * anything outside the vocabulary) is no override of that field. */
-export function withPicked(
-  override: RequestOverride,
+/** The session's own value of `field` in the vocabulary: the family of the
+ * model ID (`claude-fable-5-1` is `fable`), the effort as it is. Undefined
+ * when it is not known or outside the vocabulary, where the session group
+ * has no 🏛️ and offers every value with 📌. */
+function engineValue(
   field: OverrideField,
-  picked: string,
-): RequestOverride {
-  const model = parseWith(LaunchModelSchema, picked);
-  const effort = parseWith(LaunchEffortSchema, picked);
-  const next = {
-    model: field === "model" ? (model.ok ? model.value : undefined) : override.model,
-    effort: field === "effort" ? (effort.ok ? effort.value : undefined) : override.effort,
-  };
-  return {
-    ...(next.model !== undefined ? { model: next.model } : {}),
-    ...(next.effort !== undefined ? { effort: next.effort } : {}),
-  };
+  own: SessionContextUsage | undefined,
+): string | undefined {
+  if (own === undefined) return undefined;
+  if (field === "model") return launchModelFromTranscript(own.model);
+  return own.effort !== undefined ? launchEffortFromTranscript(own.effort) : undefined;
 }
 
-/** The request_override patch for a session picker of `field` set to `picked`: the
- * value, or null (clear) for none. */
-export function overridePatch(field: OverrideField, picked: string): RequestOverridePatch {
-  const set = withPicked({}, field, picked);
-  return field === "model" ? { model: set.model ?? null } : { effort: set.effort ?? null };
-}
-
-/** The values as a line (Status tab): its fields, or that there is none. */
-export function overrideText(override: RequestOverride): string {
-  const parts = [
-    ...(override.model !== undefined ? [`model ${override.model}`] : []),
-    ...(override.effort !== undefined ? [`effort ${override.effort}`] : []),
+/** The groups of the select of `field` (DR-0041 §6.2): default (the value in
+ * force, marked with the override it is), turn (⏱️, when `turn`), and
+ * session (📌, with 🏛️ in place of the session's own value). `own` is the
+ * session's own model and effort (the status snapshot's context); `shorten`
+ * how a model ID is shown. */
+export function overrideGroups(
+  field: OverrideField,
+  state: RequestOverrideState | undefined,
+  own: SessionContextUsage | undefined,
+  { turn, shorten }: { turn: boolean; shorten: (model: string) => string },
+): OverrideGroup[] {
+  const now = inForce(field, own?.[field], state);
+  const shown = (value: string) => (field === "model" ? shorten(value) : value);
+  const current =
+    now === null ? "—" : `${now.by !== undefined ? LAYER_MARK[now.by] : ""}${shown(now.value)}`;
+  const engine = engineValue(field, own);
+  const cleared: RequestOverridePatch = field === "model" ? { model: null } : { effort: null };
+  const values = vocabulary(field);
+  return [
+    {
+      label: "default",
+      options: [{ key: CURRENT_KEY, label: current, choice: { kind: "current" } }],
+    },
+    ...(turn
+      ? [
+          {
+            label: "turn" as const,
+            options: values.map(({ value, set }) => ({
+              key: `once:${value}`,
+              label: `${LAYER_MARK.once}${value}`,
+              choice: { kind: "once" as const, override: set },
+            })),
+          },
+        ]
+      : []),
+    {
+      label: "session",
+      options: values.map(({ value, set }) =>
+        value === engine
+          ? {
+              key: "engine",
+              label: `${LAYER_MARK.engine}${value}`,
+              choice: { kind: "engine", patch: cleared },
+            }
+          : {
+              key: `session:${value}`,
+              label: `${LAYER_MARK.session}${value}`,
+              choice: { kind: "session", patch: set },
+            },
+      ),
+    },
   ];
-  return parts.length > 0 ? parts.join(" · ") : "なし";
 }
 
-/** What a picker says of a request_override's reply: nothing when a module
+/** The option of `groups` whose key is `key`; the default one when there is
+ * none (the options moved under a choice, e.g. the session's own value
+ * changed). */
+export function chosenOption(groups: readonly OverrideGroup[], key: string): OverrideOption {
+  const options = groups.flatMap((group) => group.options);
+  const found = options.find((option) => option.key === key);
+  if (found !== undefined) return found;
+  return { key: CURRENT_KEY, label: options[0]?.label ?? "—", choice: { kind: "current" } };
+}
+
+/** The request_override patch a choice sends; null for one that sends none
+ * (the default, a one-shot override, which goes with the prompt). */
+export function choicePatch(choice: OverrideChoice): RequestOverridePatch | null {
+  return choice.kind === "session" || choice.kind === "engine" ? choice.patch : null;
+}
+
+/** What a select says of a request_override's reply: nothing when a module
  * took it, else what became of it and what to do. */
 export function requestOverrideNotice(
   reply: RequestOverrideResponse | ErrorResponse,

@@ -16,7 +16,6 @@ import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
-import { sessionPickerValue } from "../../request-override-view.ts";
 import { sessionProcessParts } from "../../utils.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -759,7 +758,8 @@ export function Timeline({
                               <ContextLine
                                 key={line.kind}
                                 context={line.context}
-                                value={sessionPickerValue(requestOverride, sessionStatus?.context)}
+                                state={requestOverride}
+                                own={sessionStatus?.context}
                                 onChange={(patch) => ws.requestOverride(sid, patch)}
                               />
                             ) : (

@@ -20,7 +20,12 @@ import {
 } from "../src/client/components/session-input-store.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
-import type { RequestOverride } from "@ccmsg/protocol";
+import type {
+  RequestOverride,
+  RequestOverrideDelivery,
+  RequestOverridePatch,
+  RequestOverrideState,
+} from "@ccmsg/protocol";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
@@ -120,41 +125,89 @@ describe("SessionInputComposer draft", () => {
   });
 });
 
-// DR-0041 §4: the one-shot override of one send, carried by the user_prompt.
-describe("SessionInputComposer one-shot override", () => {
-  /** The composer, opened, over a ws whose userPrompt answers `outcome` and
-   * records what it was asked. */
+// DR-0041 §6.3: the effort of one send. The select's groups are default /
+// turn (⏱️, carried by the user_prompt) / session (📌 and 🏛️, a
+// request_override sent ahead of the user_prompt); choosing sends nothing,
+// the send applies it.
+describe("SessionInputComposer effort", () => {
+  /** What the composer asked the ws, in order. */
+  type Call =
+    | { op: "request_override"; patch: RequestOverridePatch }
+    | { op: "user_prompt"; text: string; override?: RequestOverride };
+  /** The composer, opened, over a ws that records what it is asked: its
+   * userPrompt answers `outcome`, its requestOverride answers when the test
+   * says (`answerOverride`). The session runs on fable / low; `overrides`
+   * is what ev:"request_override" says of it. */
   async function openWith(
     outcome: "accepted" | "unconfirmed",
-  ): Promise<{ root: HTMLElement; sent: { text: string; override?: RequestOverride }[] }> {
+    overrides?: RequestOverrideState,
+    delivery: RequestOverrideDelivery = "applied",
+  ): Promise<{ root: HTMLElement; calls: Call[]; answerOverride: () => Promise<void> }> {
     const store = createStore(initialState());
-    const sent: { text: string; override?: RequestOverride }[] = [];
+    store.dispatch({
+      type: "session-status/loaded",
+      sid: SID,
+      snapshot: {
+        todos: [],
+        workflows: [],
+        background: [],
+        context: { model: "claude-fable-5-1", effort: "low", timestamp: "t" },
+      },
+    });
+    if (overrides !== undefined) {
+      store.dispatch({
+        type: "request-overrides/loaded",
+        sessions: [{ session_id: SID, ...overrides }],
+      });
+    }
+    const calls: Call[] = [];
+    const waiting: (() => void)[] = [];
     const ws: WsHandle = {
       ...createWsClient((action) => store.dispatch(action)),
+      requestOverride: (_sid, patch) => {
+        calls.push({ op: "request_override", patch });
+        return new Promise((resolve) => {
+          waiting.push(() => resolve({ ok: true, delivery }));
+        });
+      },
       userPrompt: async (_sid, text, override) => {
-        sent.push({ text, ...(override !== undefined ? { override } : {}) });
+        calls.push({ op: "user_prompt", text, ...(override !== undefined ? { override } : {}) });
         return { ok: true, outcome };
       },
     };
     const root = await mounted.mount(store, ws, h(SessionInputComposer, { sid: SID }));
     const fab = instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the FAB");
     await act(() => fab.click());
-    return { root, sent };
+    const answerOverride = async () => {
+      await act(async () => {
+        for (const answer of waiting.splice(0)) answer();
+        await drained();
+      });
+    };
+    return { root, calls, answerOverride };
   }
-  function select(root: HTMLElement, field: "model" | "effort"): HTMLSelectElement {
+  function select(root: HTMLElement): HTMLSelectElement {
     return instanceOf(
-      root.querySelector(`select[aria-label="この送信だけの上書き: ${field}"]`),
+      root.querySelector('select[aria-label="送信の effort"]'),
       HTMLSelectElement,
-      `the one-shot ${field}`,
+      "the effort select",
     );
   }
-  async function pick(root: HTMLElement, field: "model" | "effort", value: string): Promise<void> {
-    const el = select(root, field);
+  /** What the closed select shows: its selected option's label. */
+  const collapsed = (root: HTMLElement) => select(root).selectedOptions[0]?.textContent ?? "";
+  async function choose(root: HTMLElement, label: string): Promise<void> {
+    const el = select(root);
+    const option = [...el.options].find((o) => o.textContent === label);
+    if (option === undefined) throw new Error(`no option ${label}`);
     await act(() => {
-      el.value = value;
+      el.value = option.value;
       el.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
+  /** Every promise the send chained (the replies, the composer's own
+   * continuations) has settled: a task runs only once the microtasks before
+   * it have. */
+  const drained = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
   async function send(root: HTMLElement): Promise<void> {
     const button = instanceOf(
       root.querySelector(".session-input-send"),
@@ -163,44 +216,102 @@ describe("SessionInputComposer one-shot override", () => {
     );
     await act(async () => {
       button.click();
-      await Promise.resolve();
+      await drained();
     });
   }
 
-  // The effort is at hand; the model is a step further in.
-  test("the effort first; the model behind a disclosure that names it once picked", async () => {
+  test("the effort alone, in the default, turn and session groups (§6.2's example)", async () => {
     const { root } = await openWith("accepted");
-    const fields = instanceOf(root.querySelector(".override-fields"), HTMLElement, "the fields");
-    expect(fields.firstElementChild).toBe(select(root, "effort"));
-    const model = instanceOf(root.querySelector(".override-model"), HTMLDetailsElement, "model");
-    expect(model.open).toBe(false);
-    expect(model.contains(select(root, "model"))).toBe(true);
-    await pick(root, "model", "haiku");
-    expect(model.querySelector("summary")?.textContent).toBe("model: haiku");
+    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(1);
+    expect(
+      [...select(root).querySelectorAll("optgroup")].map((group) => [
+        group.label,
+        [...group.querySelectorAll("option")].map((option) => option.textContent),
+      ]),
+    ).toEqual([
+      ["default", ["low"]],
+      ["turn", ["⏱️low", "⏱️medium", "⏱️high", "⏱️xhigh", "⏱️max"]],
+      ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
+    ]);
+    // Chosen and not sent yet: the select shows what was chosen.
+    await choose(root, "📌high");
+    expect(collapsed(root)).toBe("📌high");
   });
 
-  test("none by default; what is picked goes with the send, and goes back to none once accepted", async () => {
-    const { root, sent } = await openWith("accepted");
-    expect(select(root, "model").value).toBe("");
-    expect(select(root, "effort").value).toBe("");
+  test("the default shows the layer in force and its value", async () => {
+    const { root } = await openWith("accepted", {
+      session: { model: "fable", effort: "xhigh" },
+      once: { model: null, effort: "high" },
+    });
+    expect(collapsed(root)).toBe("⏱️high");
+  });
+
+  test("⏱️ goes with the user_prompt, and the select goes back to the default once accepted", async () => {
+    const { root, calls } = await openWith("accepted");
     await type(root, "軽く答えて");
-    await pick(root, "effort", "low");
-    await pick(root, "model", "haiku");
+    await choose(root, "⏱️high");
     await send(root);
-    expect(sent).toEqual([{ text: "軽く答えて", override: { model: "haiku", effort: "low" } }]);
+    expect(calls).toEqual([
+      { op: "user_prompt", text: "軽く答えて", override: { effort: "high" } },
+    ]);
     const fab = instanceOf(root.querySelector(".session-input-fab"), HTMLButtonElement, "the FAB");
     await act(() => fab.click());
-    expect(select(root, "model").value).toBe("");
-    expect(select(root, "effort").value).toBe("");
+    expect(collapsed(root)).toBe("low");
+  });
+
+  test("📌 sends the request_override first, and the user_prompt once it is answered", async () => {
+    const { root, calls, answerOverride } = await openWith("accepted");
+    await type(root, "x");
+    await choose(root, "📌high");
+    await send(root);
+    expect(calls).toEqual([{ op: "request_override", patch: { effort: "high" } }]);
+    await answerOverride();
+    expect(calls).toEqual([
+      { op: "request_override", patch: { effort: "high" } },
+      { op: "user_prompt", text: "x", override: {} },
+    ]);
+  });
+
+  // §6.5: 🏛️ clears the effort's session and one-shot overrides.
+  test("🏛️ sends the effort as null ahead of the user_prompt", async () => {
+    const { root, calls, answerOverride } = await openWith("accepted", {
+      session: { model: "fable", effort: "max" },
+      once: { model: null, effort: null },
+    });
+    expect(collapsed(root)).toBe("📌max");
+    await type(root, "x");
+    await choose(root, "🏛️low");
+    await send(root);
+    await answerOverride();
+    expect(calls).toEqual([
+      { op: "request_override", patch: { effort: null } },
+      { op: "user_prompt", text: "x", override: {} },
+    ]);
+  });
+
+  // The session override stays apart from the prompt: one no module took is
+  // said in the FAB, and the prompt goes all the same.
+  test("a request_override no module took is said, and the user_prompt still goes", async () => {
+    const { root, calls, answerOverride } = await openWith("unconfirmed", undefined, "no_module");
+    expect(root.querySelector(".session-input-override .override-notice")).toBeNull();
+    await type(root, "x");
+    await choose(root, "📌high");
+    await send(root);
+    await answerOverride();
+    expect(calls.map((call) => call.op)).toEqual(["request_override", "user_prompt"]);
+    expect(root.querySelector(".session-input-override .override-notice")?.textContent).toContain(
+      "受け口 (hooks module) が無い",
+    );
+    expect(collapsed(root)).toBe("📌high");
   });
 
   test("kept with the text when the send is not confirmed", async () => {
-    const { root, sent } = await openWith("unconfirmed");
+    const { root, calls } = await openWith("unconfirmed");
     await type(root, "x");
-    await pick(root, "effort", "max");
+    await choose(root, "⏱️max");
     await send(root);
-    expect(sent).toEqual([{ text: "x", override: { effort: "max" } }]);
-    expect(select(root, "effort").value).toBe("max");
+    expect(calls).toEqual([{ op: "user_prompt", text: "x", override: { effort: "max" } }]);
+    expect(collapsed(root)).toBe("⏱️max");
   });
 });
 

@@ -1,118 +1,130 @@
 /** @jsxImportSource preact */
-// The pickers of the overrides of a session's requests (DR-0041 §5): the
-// model and the effort, each "上書きなし" or one of the launch's vocabulary.
-// The FAB's prompt form uses them for the one-shot override of one send; the
-// ctx line under the Timeline and the Status tab use them for the session
-// override, which goes to the daemon at once (request_override).
+// The selects of the overrides of a session's requests (DR-0041 §6): one
+// native `<select>` per field, its options in `<optgroup>`s, each value
+// marked with what it is (request-override-view.ts). The FAB's prompt form
+// puts the effort's select with the turn group beside the send, which applies
+// it; the ctx line under the Timeline and the Status tab put the session
+// override's editor (the model and the effort, the session group only), whose
+// [適用] sends the change to the daemon (request_override).
 import { useState } from "preact/hooks";
 import type {
   ErrorResponse,
-  RequestOverride,
   RequestOverridePatch,
   RequestOverrideResponse,
+  RequestOverrideState,
+  SessionContextUsage,
 } from "@ccmsg/protocol";
 import {
-  OVERRIDE_EFFORTS,
-  OVERRIDE_MODELS,
+  choicePatch,
+  chosenOption,
+  CURRENT_KEY,
   type OverrideField,
-  overridePatch,
-  pickerValue,
+  type OverrideGroup,
+  overrideGroups,
   requestOverrideNotice,
 } from "../request-override-view.ts";
-import type { MiniSummaryLine } from "../session-status-view.ts";
+import { type MiniSummaryLine, shortModel } from "../session-status-view.ts";
 
-/** Change the session override (ws.requestOverride for one session, target
- * `session`). */
+/** Change the session override (ws.requestOverride for one session). */
 export type SessionOverrideChange = (
   patch: RequestOverridePatch,
 ) => Promise<RequestOverrideResponse | ErrorResponse>;
 
-/** The `<select>`s of an override. The effort is the one to change lightly,
- * so it comes first and at hand; the model is a step further in, behind a
- * small disclosure that names the model set, if any (DR-0041 §5). */
-export function OverrideFields({
-  value,
-  onPick,
+/** One field's select: the groups' options, `chosen` the key of the one
+ * selected. Closed, it shows the selected option as the browser draws it. */
+export function OverrideSelect({
+  groups,
+  chosen,
+  onChoose,
   disabled,
   label,
 }: {
-  value: RequestOverride;
-  onPick: (field: OverrideField, picked: string) => void;
+  groups: readonly OverrideGroup[];
+  chosen: string;
+  onChoose: (key: string) => void;
   disabled: boolean;
   label: string;
 }) {
   return (
-    <span class="override-fields" role="group" aria-label={label}>
-      <select
-        class="override-select"
-        aria-label={`${label}: effort`}
-        value={pickerValue(value, "effort")}
-        disabled={disabled}
-        onChange={(e) => onPick("effort", e.currentTarget.value)}
-      >
-        <option value="">effort: 上書きなし</option>
-        {OVERRIDE_EFFORTS.map((effort) => (
-          <option key={effort} value={effort}>
-            effort: {effort}
-          </option>
-        ))}
-      </select>
-      <details class="override-model">
-        <summary>{value.model !== undefined ? `model: ${value.model}` : "model"}</summary>
-        <select
-          class="override-select"
-          aria-label={`${label}: model`}
-          value={pickerValue(value, "model")}
-          disabled={disabled}
-          onChange={(e) => onPick("model", e.currentTarget.value)}
-        >
-          <option value="">model: 上書きなし</option>
-          {OVERRIDE_MODELS.map((model) => (
-            <option key={model} value={model}>
-              model: {model}
+    <select
+      class="override-select"
+      aria-label={label}
+      value={chosen}
+      disabled={disabled}
+      onChange={(e) => onChoose(e.currentTarget.value)}
+    >
+      {groups.map((group) => (
+        <optgroup key={group.label} label={group.label}>
+          {group.options.map((option) => (
+            <option key={option.key} value={option.key}>
+              {option.label}
             </option>
           ))}
-        </select>
-      </details>
-    </span>
+        </optgroup>
+      ))}
+    </select>
   );
 }
 
-/** The session override's pickers: each pick goes to the daemon as it is
- * made, and what became of it is said beside them. The pickers show `value`,
- * the fields the session override sets to other than the session's own,
- * which ev:"request_override" brings back after a change. */
-export function SessionOverrideEditor({
-  value,
+/** One field of the session override (DR-0041 §6.4): its select, the
+ * [適用] beside it while an option other than the default is chosen, and
+ * what became of the last change. Applied, the select goes back to the
+ * default, which ev:"request_override" brings the new value to. */
+function SessionOverrideField({
+  field,
+  state,
+  own,
   onChange,
 }: {
-  value: RequestOverride;
+  field: OverrideField;
+  state: RequestOverrideState | undefined;
+  own: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
 }) {
+  const [chosenKey, setChosenKey] = useState(CURRENT_KEY);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const pick = async (field: OverrideField, picked: string) => {
+  const groups = overrideGroups(field, state, own, { turn: false, shorten: shortModel });
+  const chosen = chosenOption(groups, chosenKey);
+  const patch = choicePatch(chosen.choice);
+  const apply = async (change: RequestOverridePatch) => {
     setBusy(true);
     setNotice(null);
     try {
-      setNotice(requestOverrideNotice(await onChange(overridePatch(field, picked))));
+      const reply = await onChange(change);
+      setNotice(requestOverrideNotice(reply));
+      if (reply.ok) setChosenKey(CURRENT_KEY);
     } catch {
-      // The socket was not open: nothing was sent.
-      setNotice("送れなかった (daemon に繋がっていない)。繋がり直してから選び直す");
+      // The socket was not open: nothing was sent, so the choice stays.
+      setNotice("送れなかった (daemon に繋がっていない)。繋がり直してから [適用] を押し直す");
     } finally {
       setBusy(false);
     }
   };
   return (
-    <span class="override-editor">
-      <OverrideFields
-        value={value}
-        onPick={(field, picked) => {
-          void pick(field, picked);
+    <span class="override-field">
+      <OverrideSelect
+        groups={groups}
+        chosen={chosen.key}
+        onChoose={(key) => {
+          setChosenKey(key);
+          setNotice(null);
         }}
         disabled={busy}
-        label="通しの上書き"
+        label={`通しの上書き: ${field}`}
       />
+      {patch !== null ? (
+        <button
+          type="button"
+          class="override-apply"
+          disabled={busy}
+          onClick={() => {
+            void apply(patch);
+          }}
+        >
+          適用
+        </button>
+      ) : null}
       {notice ? (
         <span class="override-notice" role="status">
           {notice}
@@ -122,17 +134,40 @@ export function SessionOverrideEditor({
   );
 }
 
+/** The session override's editor, the same on the ctx line and in the Status
+ * tab (DR-0041 §6.4): the effort, then the model. `state` is what
+ * ev:"request_override" says of the session, `own` the session's own values
+ * (the status snapshot's context). */
+export function SessionOverrideEditor({
+  state,
+  own,
+  onChange,
+}: {
+  state: RequestOverrideState | undefined;
+  own: SessionContextUsage | undefined;
+  onChange: SessionOverrideChange;
+}) {
+  return (
+    <span class="override-editor" role="group" aria-label="通しの上書き">
+      <SessionOverrideField field="effort" state={state} own={own} onChange={onChange} />
+      <SessionOverrideField field="model" state={state} own={own} onChange={onChange} />
+    </span>
+  );
+}
+
 /** The ctx line under the Timeline with its model and effort as buttons that
- * open the session override's pickers. The pickers open as a row of their
- * own below the line: the line itself is cut short with an ellipsis when it
- * is too long, which would cut them too. */
+ * open the session override's editor. The editor opens as a row of its own
+ * below the line: the line itself is cut short with an ellipsis when it is
+ * too long, which would cut it too. */
 export function ContextLine({
   context,
-  value,
+  state,
+  own,
   onChange,
 }: {
   context: NonNullable<MiniSummaryLine["context"]>;
-  value: RequestOverride;
+  state: RequestOverrideState | undefined;
+  own: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
 }) {
   const [open, setOpen] = useState(false);
@@ -164,7 +199,7 @@ export function ContextLine({
             if (e.key === "Escape") setOpen(false);
           }}
         >
-          <SessionOverrideEditor value={value} onChange={onChange} />
+          <SessionOverrideEditor state={state} own={own} onChange={onChange} />
           <button
             type="button"
             class="ctx-override-close"

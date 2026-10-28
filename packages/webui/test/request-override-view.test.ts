@@ -1,15 +1,15 @@
-// What the webui shows of the overrides of a session's requests and what its
-// pickers send (DR-0041 §5).
+// What the webui shows of the overrides of a session's requests (DR-0041 §5)
+// and what its selects offer and send (§6).
 import { describe, expect, test } from "bun:test";
 import type { RequestOverrideState, SessionContextUsage } from "@ccmsg/protocol";
 import {
-  onceOverride,
-  overridePatch,
-  overrideText,
+  choicePatch,
+  chosenOption,
+  CURRENT_KEY,
+  type OverrideGroup,
+  overrideGroups,
   requestOverrideNotice,
   requestValueViews,
-  sessionPickerValue,
-  withPicked,
 } from "../src/client/request-override-view.ts";
 import {
   formatContextUsage,
@@ -103,38 +103,101 @@ describe("requestValueViews", () => {
   });
 });
 
-describe("the pickers", () => {
-  test("the session pickers show the fields set to other than the session's own", () => {
-    expect(sessionPickerValue(OWN, CTX)).toEqual({});
-    expect(sessionPickerValue(undefined, CTX)).toEqual({});
-    expect(
-      sessionPickerValue({ session: { model: "sonnet", effort: "high" }, once: NONE }, CTX),
-    ).toEqual({ model: "sonnet" });
-    expect(
-      sessionPickerValue({ session: { model: CTX.model, effort: "low" }, once: NONE }, CTX),
-    ).toEqual({ effort: "low" });
-    expect(onceOverride({ ...OWN, once: { model: "haiku", effort: null } })).toEqual({
-      model: "haiku",
-    });
-    expect(onceOverride(undefined)).toEqual({});
+/** A select's groups as their labels and their options' labels. */
+const shownGroups = (groups: readonly OverrideGroup[]) =>
+  groups.map((group) => [group.label, group.options.map((option) => option.label)]);
+
+// DR-0041 §6.1, §6.2: one select per field, its groups default / turn /
+// session, each value marked with what it is.
+describe("the selects", () => {
+  /** A fable / low session (the example of §6.2). */
+  const FABLE_LOW: SessionContextUsage = { ...CTX, model: "claude-fable-5-1", effort: "low" };
+  const FAB = { turn: true, shorten: shortModel };
+  const STATUS = { turn: false, shorten: shortModel };
+
+  test("the FAB's effort, no override: §6.2's example", () => {
+    expect(shownGroups(overrideGroups("effort", undefined, FABLE_LOW, FAB))).toEqual([
+      ["default", ["low"]],
+      ["turn", ["⏱️low", "⏱️medium", "⏱️high", "⏱️xhigh", "⏱️max"]],
+      ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
+    ]);
   });
 
-  test("a pick sets or clears one field and keeps the other", () => {
-    expect(withPicked({}, "effort", "low")).toEqual({ effort: "low" });
-    expect(withPicked({ effort: "low" }, "model", "fable")).toEqual({
-      model: "fable",
-      effort: "low",
-    });
-    expect(withPicked({ model: "fable", effort: "low" }, "effort", "")).toEqual({ model: "fable" });
-    // Outside the vocabulary is no override of that field.
-    expect(withPicked({ model: "fable" }, "model", "gpt")).toEqual({});
+  test("the Status tab's: no turn group; the model's 🏛️ is the family of the session's model ID", () => {
+    const own = { session: { model: "claude-fable-5-1[1m]", effort: "low" }, once: NONE };
+    expect(shownGroups(overrideGroups("model", own, FABLE_LOW, STATUS))).toEqual([
+      ["default", ["fable-5-1"]],
+      ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
+    ]);
+    expect(shownGroups(overrideGroups("effort", own, FABLE_LOW, STATUS))).toEqual([
+      ["default", ["low"]],
+      ["session", ["🏛️low", "📌medium", "📌high", "📌xhigh", "📌max"]],
+    ]);
   });
 
-  test("the patch: one field's value, or null to clear", () => {
-    expect(overridePatch("model", "sonnet")).toEqual({ model: "sonnet" });
-    expect(overridePatch("model", "")).toEqual({ model: null });
-    expect(overridePatch("effort", "xhigh")).toEqual({ effort: "xhigh" });
-    expect(overridePatch("effort", "")).toEqual({ effort: null });
+  test("the default shows the layer in force and its value", () => {
+    const label = (state: RequestOverrideState, field: "model" | "effort" = "effort") =>
+      overrideGroups(field, state, FABLE_LOW, STATUS)[0]?.options[0]?.label;
+    expect(label({ session: { model: "fable", effort: "high" }, once: NONE })).toBe("📌high");
+    expect(
+      label({ session: { model: "fable", effort: "high" }, once: { ...NONE, effort: "max" } }),
+    ).toBe("⏱️max");
+    // A session override that is the session's own value is no override.
+    expect(label({ session: { model: "fable", effort: "low" }, once: NONE })).toBe("low");
+    expect(label({ session: { model: "sonnet", effort: "low" }, once: NONE }, "model")).toBe(
+      "📌sonnet",
+    );
+    expect(label({ session: { model: "fable", effort: "low" }, once: NONE }, "model")).toBe(
+      "fable-5-1",
+    );
+    expect(
+      label(
+        { session: { model: "fable", effort: "low" }, once: { model: "haiku", effort: null } },
+        "model",
+      ),
+    ).toBe("⏱️haiku");
+  });
+
+  // §6.1 (kawaz 2026-10-28): a session's own value outside the vocabulary
+  // has no 🏛️ to stand for it, so every value is offered with 📌.
+  test("a session's own value outside the vocabulary: no 🏛️, every value 📌", () => {
+    const other = { ...CTX, model: "gpt-9", effort: "minimal" };
+    expect(shownGroups(overrideGroups("model", undefined, other, STATUS))[1]).toEqual([
+      "session",
+      ["📌fable", "📌opus", "📌sonnet", "📌haiku"],
+    ]);
+    expect(shownGroups(overrideGroups("effort", undefined, other, STATUS))[1]).toEqual([
+      "session",
+      ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"],
+    ]);
+    const { effort: _, ...noEffort } = CTX;
+    expect(shownGroups(overrideGroups("effort", undefined, noEffort, STATUS))).toEqual([
+      ["default", ["—"]],
+      ["session", ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"]],
+    ]);
+    expect(shownGroups(overrideGroups("effort", undefined, undefined, STATUS))[1]).toEqual([
+      "session",
+      ["📌low", "📌medium", "📌high", "📌xhigh", "📌max"],
+    ]);
+  });
+
+  test("what each choice sends: ⏱️ with the prompt, 📌 the value, 🏛️ null; the default nothing", () => {
+    const groups = overrideGroups("effort", undefined, FABLE_LOW, FAB);
+    const choice = (key: string) => chosenOption(groups, key).choice;
+    expect(choice(CURRENT_KEY)).toEqual({ kind: "current" });
+    expect(choice("once:high")).toEqual({ kind: "once", override: { effort: "high" } });
+    expect(choice("session:high")).toEqual({ kind: "session", patch: { effort: "high" } });
+    expect(choice("engine")).toEqual({ kind: "engine", patch: { effort: null } });
+    expect(choicePatch(choice(CURRENT_KEY))).toBeNull();
+    expect(choicePatch(choice("once:high"))).toBeNull();
+    expect(choicePatch(choice("session:high"))).toEqual({ effort: "high" });
+    expect(choicePatch(choice("engine"))).toEqual({ effort: null });
+    expect(
+      chosenOption(overrideGroups("model", undefined, FABLE_LOW, STATUS), "engine").choice,
+    ).toEqual({ kind: "engine", patch: { model: null } });
+    // A key the options no longer have (the session's own value moved under
+    // the choice) is the default.
+    expect(chosenOption(groups, "session:low")).toMatchObject({ key: CURRENT_KEY, label: "low" });
   });
 
   test("what a reply says: nothing when applied, else what became of it", () => {
@@ -148,10 +211,5 @@ describe("the pickers", () => {
     expect(
       requestOverrideNotice({ ok: false, error: { code: "invalid_args", msg: "effort: x" } }),
     ).toBe("変更できなかった (invalid_args): effort: x");
-  });
-
-  test("the values as a line", () => {
-    expect(overrideText({})).toBe("なし");
-    expect(overrideText({ model: "opus", effort: "low" })).toBe("model opus · effort low");
   });
 });

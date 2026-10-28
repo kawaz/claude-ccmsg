@@ -7803,39 +7803,41 @@ a.tl-attachment-file-path {
   cursor: pointer;
 }
 
-.override-fields {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-}
-
 .override-select {
   font: inherit;
   font-size: var(--font-size-sm);
 }
 
-/* The model is a step further in than the effort (DR-0041 §5). */
-.override-model {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-}
-
-.override-model > summary {
-  cursor: pointer;
-}
-
-.override-model[open] {
-  color: inherit;
-}
-
+/* The session override's editor (DR-0041 §6.4): each field's select with its
+ * [適用] and what became of the last change, side by side. */
 .override-editor {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-4) var(--space-6);
+}
+
+.override-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-4);
+}
+
+.override-apply {
+  padding: 0 var(--space-6);
+  border: 1px solid var(--accent);
+  border-radius: 0.3rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.override-apply:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .override-notice {
@@ -7844,26 +7846,12 @@ a.tl-attachment-file-path {
   white-space: normal;
 }
 
-.status-override {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.status-override-row {
+.session-input-override {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-4);
-}
-
-.status-override-label {
-  color: var(--fg-muted);
-}
-
-.session-input-override {
-  display: flex;
   justify-content: flex-end;
+  gap: var(--space-4);
 }
 
 .tl-status-mini-teammate::before {

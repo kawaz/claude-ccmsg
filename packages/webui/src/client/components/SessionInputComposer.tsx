@@ -17,12 +17,13 @@
 // 送る前から届かないと分かっている時 (受け口が無い、hyoui の外で起動した等) は、
 // daemon が peers の行と session_status に載せる input_readiness の理由と対処を
 // 先に示す。
-// 送信には単発の上書き (DR-0041 §4: その送信で始まる、または加わる turn の
-// 終わりまでの effort / model) を選んで付けられ、`user_prompt` に乗って文と一緒に
-// 届く。既定は「上書きなし」で、`accepted` になったら戻す。届かなかった・未確認の
-// 時は文と同じく選択も残す。
+// 送信には effort の選択 (DR-0041 §6.3) が付く。select の群は default (今効いて
+// いる値) / turn (⏱️ 単発: その送信で始まる、または加わる turn の終わりまで、
+// `user_prompt` に乗る) / session (📌 通し、🏛️ 単発と通しを両方外してセッション
+// 自身の値へ) で、選んだだけでは何も送らず、送信が適用を兼ねる。📌 / 🏛️ は
+// `request_override` の返事を待ってから `user_prompt` を送る。`accepted` に
+// なったら default に戻し、届かなかった・未確認の時は文と同じく選択も残す。
 import { createContext } from "preact";
-import type { RequestOverride } from "@ccmsg/protocol";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
@@ -72,8 +73,15 @@ import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
-import { OverrideFields } from "./RequestOverridePicker.tsx";
-import { withPicked } from "../request-override-view.ts";
+import { OverrideSelect } from "./RequestOverridePicker.tsx";
+import {
+  choicePatch,
+  chosenOption,
+  CURRENT_KEY,
+  overrideGroups,
+  requestOverrideNotice,
+} from "../request-override-view.ts";
+import { shortModel } from "../session-status-view.ts";
 
 /** Asks the composer of the session on screen to open (DR-0040 §7: pressing
  * 許可する copies the grant text and opens the box to paste it into).
@@ -101,7 +109,11 @@ export function SessionInputComposer({
   const [sends, setSends] = useState(() => loadSends(sid));
   const [sending, setSending] = useState(() => isSending(sid));
   const [failure, setFailure] = useState(() => lastFailure(sid));
-  const [single, setSingle] = useState<RequestOverride>({});
+  // effort の select で選んだ option の key。送信が受け付けられたら default。
+  const [effortKey, setEffortKey] = useState(CURRENT_KEY);
+  // 📌 / 🏛️ の送信で、request_override がセッションに効いたと確かめられなかった
+  // 時の注記。
+  const [overrideNotice, setOverrideNotice] = useState<string | null>(null);
   // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
   // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
   const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
@@ -157,6 +169,14 @@ export function SessionInputComposer({
   const agent = useStoreState(store, (s) => s.agents.find((a) => a.sessionId === sid), sameJson);
   const targetAgent = targetPeer ? undefined : agent;
   const sessionStatus = useStoreState(store, (s) => s.sessionStatuses.get(sid));
+  // What the overrides put on the session's requests (DR-0041 §5): the
+  // effort select's default option shows it.
+  const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
+  const effortGroups = overrideGroups("effort", requestOverride, sessionStatus?.context, {
+    turn: true,
+    shorten: shortModel,
+  });
+  const effortChoice = chosenOption(effortGroups, effortKey).choice;
   const targetLabel =
     targetPeer?.repo ||
     targetPeer?.ws ||
@@ -389,15 +409,23 @@ export function SessionInputComposer({
     // 送る文を下書きとして確定させてから記録を作る。accepted の時に「下書きが
     // 送った文のままか」を比べる相手になる。
     saveDraft(sid, text, attachments);
-    const outcome = await sendSessionInput(sid, { text, attachments }, finalText, (t) =>
-      ws.userPrompt(sid, t, single),
-    );
-    // 単発の上書きはその送信のもの: 受け付けられたら次の送信に持ち越さない。
-    if (outcome.kind === "accepted") setSingle({});
+    setOverrideNotice(null);
+    const outcome = await sendSessionInput(sid, { text, attachments }, finalText, async (t) => {
+      // 📌 / 🏛️ は通しを変えてから文を送る: 文の turn の最初の request から
+      // 効くように、module が受け取った返事を待つ。通しは文と独立に残るので、
+      // 文が届かなくても通しの変更はそのまま。
+      const patch = choicePatch(effortChoice);
+      if (patch !== null) {
+        setOverrideNotice(requestOverrideNotice(await ws.requestOverride(sid, patch)));
+      }
+      return ws.userPrompt(sid, t, effortChoice.kind === "once" ? effortChoice.override : {});
+    });
+    // 選択はその送信のもの: 受け付けられたら次の送信に持ち越さない。
+    if (outcome.kind === "accepted") setEffortKey(CURRENT_KEY);
     // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
     // 別タブで書き換わっていれば、その文を見せたまま残す。
     if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
-  }, [ws, sid, text, attachments, single, closePanel]);
+  }, [ws, sid, text, attachments, effortChoice, closePanel]);
 
   if (!open) {
     // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
@@ -595,11 +623,17 @@ export function SessionInputComposer({
           ))
         : null}
       <div class="session-input-override">
-        <OverrideFields
-          value={single}
-          onPick={(field, picked) => setSingle((now) => withPicked(now, field, picked))}
+        {overrideNotice ? (
+          <span class="override-notice" role="status">
+            {overrideNotice}
+          </span>
+        ) : null}
+        <OverrideSelect
+          groups={effortGroups}
+          chosen={chosenOption(effortGroups, effortKey).key}
+          onChoose={setEffortKey}
           disabled={sending}
-          label="この送信だけの上書き"
+          label="送信の effort"
         />
       </div>
       <div class="session-input-actions">
