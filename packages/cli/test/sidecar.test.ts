@@ -990,7 +990,30 @@ describe("ccmsg sidecar permit", () => {
       expect(ctx.daemon.permitRequests.snapshot()).toMatchObject([
         { id: reply.value.id, sid: SID, attachments: [script], commands: [command] },
       ]);
-      expect(spoken()).toBe("許可を求めています\n");
+      // After `--`, so a voice starting with `-` is not an option of say.
+      expect(spoken()).toBe("-- 許可を求めています\n");
+    });
+  });
+
+  // 何を保証するか: voice があれば固定文の代わりにそれを読み上げ (辞書も当たる)、
+  // voice は依頼の記録に入る。`-` で始まる voice も say の option にならない。
+  test("says the request's voice in place of the fixed sentence, and records it", async () => {
+    await withDaemon(0, async (env, ctx, spoken) => {
+      const { configDir } = ctx.daemon.paths;
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "push\tプッシュ\n");
+      for (const voice of ["push の許可をお願いします。", "-v の許可をお願いします。"]) {
+        const run = await runPermit(
+          JSON.stringify({ blocked: "x", commands: [{ command: "git push" }], voice }),
+          env,
+        );
+        expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+      }
+      expect(spoken()).toBe("-- プッシュ の許可をお願いします。\n-- -v の許可をお願いします。\n");
+      expect(ctx.daemon.permitRequests.snapshot().map((r) => r.voice)).toEqual([
+        "push の許可をお願いします。",
+        "-v の許可をお願いします。",
+      ]);
     });
   });
 
@@ -1003,7 +1026,7 @@ describe("ccmsg sidecar permit", () => {
       fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "許可\tきょか\n");
       const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(spoken()).toBe("きょかを求めています\n");
+      expect(spoken()).toBe("-- きょかを求めています\n");
     });
   });
 

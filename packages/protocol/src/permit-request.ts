@@ -25,6 +25,10 @@ const PermitTextSchema = v.pipe(
   v.check((text) => text.trim() !== "", "the text holds something other than whitespace"),
 );
 
+/** How long a request's `voice` may be: a call to the person, said in one
+ * breath. */
+export const PERMIT_VOICE_MAX_LENGTH = 80;
+
 /** A file the person is to read before permitting: an absolute path. */
 const AttachmentPathSchema = v.pipe(
   v.string(),
@@ -55,6 +59,17 @@ const PermitEntries = {
   intents: v.optional(v.array(PermitTextSchema)),
   /** The commands to permit. */
   commands: v.optional(v.array(v.object(PermitCommandEntries))),
+  /** What the speakers say in place of the fixed sentence (DR-0040 §6): a
+   * short call to the person. Not shown in the webui. */
+  voice: v.optional(
+    v.pipe(
+      PermitTextSchema,
+      v.maxLength(
+        PERMIT_VOICE_MAX_LENGTH,
+        `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`,
+      ),
+    ),
+  ),
 };
 
 /** Whether a request asks for anything: an intent or a command, by how many
@@ -113,6 +128,9 @@ export const PermitRequestRecordSchema = v.object({
   attachments: v.array(v.string()),
   intents: v.array(v.string()),
   commands: v.array(PermitCommandSchema),
+  /** What the speakers say for the request in place of the fixed sentence;
+   * not shown in the webui. */
+  voice: v.optional(v.string()),
   /** Set when the person pressed 許可する on it (permit_request_read); never
    * cleared. What the Sessions list's 🔐 counts is the unread ones. */
   read: v.boolean(),

@@ -87,6 +87,36 @@ describe("permit_request op", () => {
     }
   });
 
+  // 何を保証するか: voice は書かれたまま記録に入り、書かれなければ記録に無い
+  // (発声するものが固定文か voice かを記録から決められる)。
+  test("records the voice as written, and none when the request has none", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const { u } = await subscribedUser(ctx);
+      const s = await sessionConn(ctx, SID_A);
+      await s.requestOk({
+        op: "permit_request",
+        permit: {
+          blocked: "x",
+          commands: [{ command: "git push" }],
+          voice: "プッシュしてもいいですか",
+        },
+      });
+      const voiced = await u.readEventUntil("permit_request");
+      expect(voiced.ev.request.voice).toBe("プッシュしてもいいですか");
+      await s.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "git push" }] },
+      });
+      const plain = await u.readEventUntil("permit_request");
+      expect("voice" in plain.ev.request).toBe(false);
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
   // 何を保証するか: attachments は依頼の時点では読まず、記録はパスだけを
   // 持つ (依頼の配送を軽くする)。後から subscribe したタブにも同じ記録が届く。
   test("records the attachments by path, without reading them", async () => {

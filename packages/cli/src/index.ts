@@ -469,15 +469,16 @@ async function runSidecarLaunch(opts: Record<string, string | boolean>): Promise
   process.exit(output(res));
 }
 
-/** What the speakers say when a session asks for permission: that one is
- * asking. The request itself (its commands, its files) is for reading in the
+/** What the speakers say when a session asks for permission and wrote no
+ * `voice`: that one is asking. The request itself (its commands, its files) is for reading in the
  * webui, not for hearing. */
 const PERMIT_SPEECH = "許可を求めています";
 
 /** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the
  * person, as session `<sid>`, for the permission the input on standard input
  * describes. The daemon records it and shows it in the session's Timeline;
- * then the speakers say that a session is asking, through the speech binary
+ * then the speakers say its `voice`, or that a session is asking, through the
+ * speech binary
  * `ccmsg say` speaks with. Prints the daemon's permit_request reply, exiting
  * 0, the speech having ended. The input comes on standard input: its
  * commands may be long, and an argument is bounded in size and shown to
@@ -500,23 +501,25 @@ async function runSidecarPermit(opts: Record<string, string | boolean>): Promise
   const client = await daemonOrExit(identity, "sidecar permit");
   const res = await client.request({ op: "permit_request", permit: read.value });
   client.close();
-  if (res.ok) await speakPermitRequested();
+  if (res.ok) await speakPermitRequested(read.value.voice ?? PERMIT_SPEECH);
   process.exit(output(res));
 }
 
-/** Say PERMIT_SPEECH and wait for it to end. Never throws: a speech binary
- * that cannot start or fails is said on standard error. */
-async function speakPermitRequested(): Promise<void> {
+/** Say `speech` and wait for it to end. It goes after `--`, so a voice that
+ * starts with `-` is spoken rather than read as an option of say. Never
+ * throws: a speech binary that cannot start or fails is said on standard
+ * error. */
+async function speakPermitRequested(speech: string): Promise<void> {
   try {
-    const speech = Bun.spawn(
-      [process.env.CCMSG_SAY_BIN || SYSTEM_SAY, ...spokenArgs([PERMIT_SPEECH], "sidecar permit")],
+    const speaking = Bun.spawn(
+      [process.env.CCMSG_SAY_BIN || SYSTEM_SAY, ...spokenArgs(["--", speech], "sidecar permit")],
       {
         stdin: "ignore",
         stdout: "ignore",
         stderr: "inherit",
       },
     );
-    const spoke = await speech.exited;
+    const spoke = await speaking.exited;
     if (spoke !== 0) {
       process.stderr.write(`ccmsg sidecar permit: the speech exited ${String(spoke)}\n`);
     }

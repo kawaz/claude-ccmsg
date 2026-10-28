@@ -68,6 +68,8 @@ module の handler → CLI の transport → daemon の op → 記録 → 全タ
 
 daemon は `permit_request` を記録した時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
+入力に `voice` (例: 「bucket policy の変更の許可をお願いします。」) があれば、固定の文の代わりにそれを読み上げる。何の許可を待っているかを聞いて分かるようにするため。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon の記録まで届くが、音声だけのもので webui のバブルには出さない。
+
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
 - 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、daemon.log に 1 行書くだけで返事は変えない
 - daemon が依頼を記録しなかった時 (daemon が無い、断られた) は鳴らさない。見に行っても何も無いため

@@ -12,6 +12,7 @@ import { stateDirOf } from "@ccmsg/protocol/module-op";
 import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
 import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
+import { PERMIT_VOICE_MAX_LENGTH } from "@ccmsg/protocol/permit-request";
 import {
   type DescribeResult,
   type SessionFacts,
@@ -2508,6 +2509,7 @@ describe("the ccmsg tools", () => {
             required: ["command"],
           },
         },
+        voice: { type: "string" },
       },
       required: ["blocked"],
     });
@@ -3011,6 +3013,23 @@ describe("the ccmsg tools", () => {
     expect(result).toBe("許可依頼を出した");
   });
 
+  // 何を保証するか: voice は依頼の一部として sidecar permit の標準入力に渡る
+  // (読み上げるのは sidecar permit)。
+  test("a permit hands its voice to ccmsg sidecar permit with the request", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing({ ok: true, id: "0f0f/1" })();
+    });
+    const permit = {
+      blocked: "`git push` が止められた",
+      commands: [{ command: "git push origin main" }],
+      voice: "push の許可をお願いします。",
+    };
+    expect(await callTool(fake, "mcp__ccmsg-v1__permit", permit)).toBe("許可依頼を出した");
+    expect(seen).toEqual([JSON.stringify(permit)]);
+  });
+
   // Nothing to permit, a path that is not absolute, a field of another
   // type, a command that is its text alone or has none: answered in text,
   // and nothing runs.
@@ -3024,6 +3043,12 @@ describe("the ccmsg tools", () => {
       { blocked: "x", commands: "ls" },
       { blocked: "x", commands: ["ls"] },
       { blocked: "x", commands: [{ description: "一覧" }] },
+      { blocked: "x", commands: [{ command: "ls" }], voice: "" },
+      {
+        blocked: "x",
+        commands: [{ command: "ls" }],
+        voice: "あ".repeat(PERMIT_VOICE_MAX_LENGTH + 1),
+      },
       {},
     ]) {
       expect(await callTool(fake, "mcp__ccmsg-v1__permit", input)).toContain(

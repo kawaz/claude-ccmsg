@@ -102,7 +102,8 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
       "command": "aws s3api put-bucket-policy --bucket <bucket> --policy file:///abs/path/policy.json",
       "description": "公開読み取りの policy を当てる"
     }
-  ]
+  ],
+  "voice": "bucket policy の変更の許可をお願いします。"
 }
 ```
 

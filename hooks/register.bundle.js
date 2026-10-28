@@ -2091,6 +2091,7 @@ function peersText(peers) {
 var PERMIT_ATTACHMENT_MAX_BYTES = 64 * 1024;
 var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
+var PERMIT_VOICE_MAX_LENGTH = 80;
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
 var PermitCommandEntries = {
   command: PermitTextSchema,
@@ -2100,7 +2101,8 @@ var PermitEntries = {
   blocked: PermitTextSchema,
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
   intents: optional(array(PermitTextSchema)),
-  commands: optional(array(object(PermitCommandEntries)))
+  commands: optional(array(object(PermitCommandEntries))),
+  voice: optional(pipe(PermitTextSchema, maxLength(PERMIT_VOICE_MAX_LENGTH, `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`)))
 };
 function asksForSomething(intents, commands) {
   return (intents ?? 0) + (commands ?? 0) > 0;
@@ -2124,6 +2126,7 @@ var PermitRequestRecordSchema = object({
   attachments: array(string()),
   intents: array(string()),
   commands: array(PermitCommandSchema),
+  voice: optional(string()),
   read: boolean()
 });
 var PermitRequestResponseSchema = object({
@@ -2294,6 +2297,9 @@ var TOOL_INPUT_SCHEMAS = {
             "command"
           ]
         }
+      },
+      voice: {
+        type: "string"
       }
     },
     required: [

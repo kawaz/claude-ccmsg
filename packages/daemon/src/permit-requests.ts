@@ -145,5 +145,6 @@ export function permitRequestFields(
     attachments: permit.attachments ?? [],
     intents: permit.intents ?? [],
     commands: permit.commands ?? [],
+    ...(permit.voice !== undefined ? { voice: permit.voice } : {}),
   };
 }
