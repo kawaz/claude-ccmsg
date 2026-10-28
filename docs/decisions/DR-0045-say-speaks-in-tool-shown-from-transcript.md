@@ -1,6 +1,8 @@
 # DR-0045: hooks module はセッションの会話の行を daemon に流すだけにし、daemon が行を正本として webui への中継・say と launch の副作用・既読を持つ
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — 🟡 部分実装 (§9 の段階 1: module の push (`hooks/transcript-push.ts`)、op `transcript_push`、daemon の relay (`transcript-relay.ts`) と `transcript_subscribe` の付け替え。実機の観測は [findings](../findings/2026-10-28-transcript-push-live-verify.md))
+- Status: Accepted (2026-10-28、kawaz 裁定) — 🟡 部分実装 (§9 の段階 1・2)
+  - 段階 1: module の push (`hooks/transcript-push.ts`)、op `transcript_push`、daemon の relay (`transcript-relay.ts`)、`transcript_subscribe` の付け替え。実機の観測は [findings](../findings/2026-10-28-transcript-push-live-verify.md)
+  - 段階 2: §3 の追いつきと uuid の重複除去、§5 の fold・API error・最後のユーザ入力の付け替え、`transcript.ts` の Watch の削除。実機の観測は [findings](../findings/2026-10-28-dr-0045-stage2-verify.md)
 - Date: 2026-10-28
 
 ## Context
@@ -77,6 +79,13 @@ kawaz 2026-10-28 の裁定:
 - 重複は行の `uuid` で除く。追いつきの読みと push は重なりうる (読み始めた後に書かれた行が両方から来る)。compaction の後には同じ uuid の append がもう一度来る (§2)。uuid を持たない行は push で来ない。中継と fold が要る分 (今の fold は `queue-operation` 等を読まない) は、§2 の (c) の読みで jsonl から得る
 - daemon は会話の全文をメモリに持たない。push の `e.message` は §6・§7 に通し、§2 の (c) で読んだ jsonl の行は §5 の fold に通して §4 の中継に流す。持つのは各 fold の状態と、重複を除くための uuid の集合 (ライブのセッションの分) だけ
 - 閉じたセッション (module の run が去った) の uuid の集合と fold は捨てる。履歴は `transcript_read` がファイルから読む
+- 実装 (`transcript-relay.ts`):
+  - live: module の run が名乗っているセッション (`sidecar_hello` で名乗り、その接続が閉じるか harness が去るまで)。live になった時に一度だけ追いつく。同じ run の名乗り直しでは追いつき直さない (読み終わりの位置から続きを読むので、行は抜けない)
+  - 追いつき: ファイルの頭からその時の末尾まで、chunk ごとに event loop を明け渡して読み ([DR-0029](./DR-0029-async-io-principle.md))、fold だけに流す。追いつきの間に来た push は待つ uuid に積むだけで、続きの読みは追いつきの後
+  - 重複除去: relay はファイルから読んだ行の uuid の集合を持つ。push の uuid のうち読み済みのものは待たない。ファイルの側は byte offset で続きを読むので、同じ行を二度読まない
+  - fold は追いつきの間、別に作った状態に畳み、追いつきが終わった時に差し替える (読みかけの途中を見せない)
+  - transcript を名乗る前 (最初の prompt の前) に live になったセッションは、ファイル無しで fold を始め、最初の push でそのファイルの頭から追いつき直す
+  - ファイルが縮んだ・別のファイルになった時と、hello が別の transcript を名乗った時は、タブには空の event で新しい size を伝え、fold はそのファイルの頭から追いつき直す。hello の cwd / repo_root が変わった時も、fold を追いつき直す (DR-0024 の外部ファイルの判定の根が変わるため)
 
 ### 4. webui への中継
 
@@ -91,8 +100,8 @@ kawaz 2026-10-28 の裁定:
 - `transcript.ts` の Watch (fs.watch と poll、`subscribeTranscriptLines`) を削る。行の源は §3 の「追いつきの 1 回の読み + push を合図にした読み (§2 の (c))」になる
 - tail・fs.watch・ポーリングの口は残さない (kawaz 2026-10-28)。残すと、module の無いセッションへの暗黙のフォールバックになる。module の無いセッションの行は `transcript_read` で読めるだけ
 - 付け替え:
-  - Status の fold (`session-status.ts`): 購読の時の冷えた走査 (cold scan) は §3 の追いつきの読みと同じ形で行い、以後は push の行を `foldLine` に通す。購読の無い閉じたセッションの `session_status` は、今の `getSessionStatus` と同じくファイルの 1 回の走査で答える
-  - API error (`session-errors.ts`) と最後のユーザ入力 (`session-user-input.ts`): 接続中の全セッションの push の行を、それぞれの候補の検査と fold に通す。今は webui のタブが開いている時だけ tail していたが、push は常に届くので、タブの有無の gate は要らなくなる
+  - Status の fold (`session-status.ts`): live のセッションの fold は §3 の追いつきで作り、以後は push の行を `foldLine` に通す。購読の有無にかかわらず保ち、購読は push の宛先を決めるだけ。live でないセッションの `session_status` と、最初の追いつきが終わる前の `session_status` は、ファイルの 1 回の走査で答える。live でないセッションの購読には push が無い (live になって追いつくと push する)
+  - API error (`session-errors.ts`) と最後のユーザ入力 (`session-user-input.ts`): live の全セッションの行を、それぞれの候補の検査と fold に通す。webui のタブの有無では gate しない。live でないセッションは値を持たない (サイドバーのエラーの節に出ず、並びの時刻も無い)
   - say の未読 (§7) も同じ push の行から作る
 
 ### 6. 副作用
@@ -160,7 +169,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 |---|---|---|
 | 0 | §2 の観測 (済み: `claude -p` と対話のセッション) | — |
 | 1 (済み) | push の op と module の転送、daemon の受け口、§4 の中継 (`transcript_subscribe` の源を push 起点の読みに置き換える。`ev:"transcript"` の形と webui は不変) | DR-0046 の `POST /op` |
-| 2 | §3 の追いつきと uuid の重複除去、§5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
+| 2 (済み) | §3 の追いつきと uuid の重複除去、§5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
 | 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
 
 ## Alternatives Considered

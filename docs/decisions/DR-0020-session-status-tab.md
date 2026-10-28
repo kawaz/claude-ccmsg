@@ -39,6 +39,7 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 
 - 新 op (例 `session_status`): 初回は全量スキャンして畳み込み済み or 生イベント列を返す
 - **追加分は逐次 push**: 新しい status イベントが現れたら subscribe 中の webui へ push する。行の源は module から push される会話の行 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §5)
+- **fold を持つのは live のセッション**: hooks module の run が名乗っているセッション。live になった時に jsonl を頭から 1 回読んで fold を作り、購読の有無にかかわらず保つ (購読は push の宛先を決めるだけ)。live でないセッションの `session_status` はファイルの 1 回の走査で答え、その購読には push が無い ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §3 / §5)
 - これにより webui の読み込み範囲問題 (旧 ST-Q1) は消滅。畳み込み (イベント列 →
   現在状態) を daemon / webui どちらでやるかは Phase 1 の実装時判断 (protocol を薄く保つなら webui 側 fold、転送量を絞るなら daemon 側)
 
