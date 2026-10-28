@@ -7,8 +7,6 @@ import * as path from "node:path";
 import {
   AllowedOriginsTextSchema,
   VERSION,
-  applySayDictionary,
-  type SayDictionary,
   errorText,
   isSessionIdShape,
   migrateLegacyConfigFiles,
@@ -32,7 +30,7 @@ import {
   formatTextDump,
   writeSessionDumpFile,
 } from "@ccmsg/daemon/session-dump";
-import { Client, connectIfRunning, helloRequest, ensureDaemon, waitDaemonGone } from "./client.ts";
+import { Client, connectIfRunning, ensureDaemon, waitDaemonGone } from "./client.ts";
 import {
   getRepoWsFromVcs,
   pruneOldSessionFiles,
@@ -41,7 +39,6 @@ import {
   writeSessionFile,
 } from "./session-begin.ts";
 import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
-import { loadSayDictionary, speechTextOf } from "./say-dictionary.ts";
 import { type AgentsFormat, agentsTable } from "./agents.ts";
 
 // --- arg parsing -----------------------------------------------------------
@@ -469,25 +466,16 @@ async function runSidecarLaunch(opts: Record<string, string | boolean>): Promise
   process.exit(output(res));
 }
 
-/** What the speakers say when a session asks for permission and wrote no
- * `voice`: that one is asking. The request itself (its commands, its files) is for reading in the
- * webui, not for hearing. */
-const PERMIT_SPEECH = "許可を求めています";
-
 /** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the
  * person, as session `<sid>`, for the permission the input on standard input
- * describes. The daemon records it and shows it in the session's Timeline;
- * then the speakers say its `voice`, or that a session is asking, through the
- * speech binary
- * `ccmsg say` speaks with. Prints the daemon's permit_request reply, exiting
- * 0, the speech having ended. The input comes on standard input: its
- * commands may be long, and an argument is bounded in size and shown to
- * every user by `ps`.
+ * describes. The daemon records it, shows it in the session's Timeline and
+ * says its `voice`, or that a session is asking (DR-0045 §6). Prints the
+ * daemon's permit_request reply, exiting 0. The input comes on standard
+ * input: its commands may be long, and an argument is bounded in size and
+ * shown to every user by `ps`.
  *
  * Exits 3, nothing asked, when no daemon can be had; exits 1 with the
- * daemon's refusal on standard error when it did not record the request. A
- * speech that fails is said on standard error and does not change the exit:
- * the request is recorded, and the Timeline shows it. */
+ * daemon's refusal on standard error when it did not record the request. */
 async function runSidecarPermit(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar permit --sid <sid> < permit.json";
   const read = parseWith(PermitInputTextSchema, await Bun.stdin.text());
@@ -501,31 +489,7 @@ async function runSidecarPermit(opts: Record<string, string | boolean>): Promise
   const client = await daemonOrExit(identity, "sidecar permit");
   const res = await client.request({ op: "permit_request", permit: read.value });
   client.close();
-  if (res.ok) await speakPermitRequested(read.value.voice ?? PERMIT_SPEECH);
   process.exit(output(res));
-}
-
-/** Say `speech` and wait for it to end. It goes after `--`, so a voice that
- * starts with `-` is spoken rather than read as an option of say. Never
- * throws: a speech binary that cannot start or fails is said on standard
- * error. */
-async function speakPermitRequested(speech: string): Promise<void> {
-  try {
-    const speaking = Bun.spawn(
-      [process.env.CCMSG_SAY_BIN || SYSTEM_SAY, ...spokenArgs(["--", speech], "sidecar permit")],
-      {
-        stdin: "ignore",
-        stdout: "ignore",
-        stderr: "inherit",
-      },
-    );
-    const spoke = await speaking.exited;
-    if (spoke !== 0) {
-      process.stderr.write(`ccmsg sidecar permit: the speech exited ${String(spoke)}\n`);
-    }
-  } catch (e) {
-    process.stderr.write(`ccmsg sidecar permit: the speech did not start: ${errorText(e)}\n`);
-  }
 }
 
 /** The daemon, started if none runs; exit 3 with why when none can be had. */
@@ -536,141 +500,6 @@ async function daemonOrExit(identity: Identity, command: string): Promise<Client
     process.stderr.write(`ccmsg ${command}: the daemon could not be reached: ${errorText(e)}\n`);
     process.exit(3);
   }
-}
-
-// --- say -------------------------------------------------------------------
-
-/** The real macOS speech binary. Absolute on purpose: a `say` shim earlier on
- * PATH is exactly what delegates here, so resolving through PATH again would
- * re-enter the shim and loop. */
-const SYSTEM_SAY = "/usr/bin/say";
-
-/** How long the say record may take before the speech goes ahead
- * without it. The event is a nicety (which session spoke); the speech is the
- * thing the caller asked for, so a wedged daemon must cost latency once, not
- * silence. */
-const SAY_RECORD_TIMEOUT_MS = 1500;
-
-function printSayHelp(): void {
-  process.stdout.write(`ccmsg say — speak through ${SYSTEM_SAY}, and record which session spoke
-
-Usage:
-  ccmsg say [say-options] [text...]
-  echo <text> | ccmsg say [say-options]
-
-Every argument is forwarded to ${SYSTEM_SAY} in place — ccmsg defines no options
-of its own here, so \`say\`'s own flags (-v, -r, -o, ...) work unchanged and a
-PATH shim can delegate to this command without altering behaviour. The one
-exception is a lone --help / -h, which prints this text (${SYSTEM_SAY} has no
---help of its own to shadow).
-
-The words of the text to speak are first put as the reading dictionary says:
-the one shipped with ccmsg, with <config dir>/say-dictionary.tsv laid over it
-(one "word<TAB>reading" per line, "#" starts a comment; a word there wins over
-the same word shipped), read afresh by every speech. A word matches without regard to case, only where
-neither side is a letter or a digit ("daemon" in "_daemon_" and "の daemon で",
-not in "daemonize"), the longest word first. Options and their values are not
-touched, nor is a file given with -f. Text on standard input is replaced too,
-unless standard input is a terminal. The session's timeline records the text
-as it was written.
-
-Before speaking, the session id in CCMSG_SID / CLAUDE_CODE_SESSION_ID is used to
-tell the running daemon which session spoke, so the webui can answer "which
-session just talked" when several are running: the text appears in that
-session's timeline, unread until acked there. The daemon keeps this in memory
-only, so a daemon restart forgets it. Speech happens either way: no
-session id, no running daemon, or a daemon that errors all fall through to
-${SYSTEM_SAY} unchanged.
-
-Environment Variables:
-  CCMSG_SAY_BIN                Speech binary to exec instead of ${SYSTEM_SAY}
-                               (test hook — lets the say path be exercised
-                               without producing audio)
-  CCMSG_CONFIG_DIR             The config dir say-dictionary.tsv, the
-                               reading dictionary, is read from
-`);
-}
-
-/** Best-effort record of "this session spoke". Never throws, never blocks past
- * SAY_RECORD_TIMEOUT_MS, and deliberately does NOT spawn a daemon: the only
- * consumer of the event is the webui, which the daemon itself serves, so
- * starting one from a speech path would be a surprising side effect that
- * benefits nobody. */
-async function recordSayEvent(args: string[]): Promise<void> {
-  let identity: Identity | null;
-  try {
-    identity = resolveSessionIdentity({}, "say");
-  } catch {
-    // Not a session id: nothing to record it under, and the speech proceeds.
-    return;
-  }
-  if (identity === null || identity.role !== "session") return;
-  let client: Client | null = null;
-  const timer = setTimeout(() => client?.close(), SAY_RECORD_TIMEOUT_MS);
-  try {
-    client = await connectIfRunning(resolvePaths());
-    if (!client) return;
-    const hello = await client.request(helloRequest(identity));
-    if (!hello.ok) return;
-    await client.request({ op: "say", text: args.join(" ") });
-  } catch {
-    // daemon down / socket closed under us / op rejected — the speech below is
-    // what the caller asked for and it proceeds regardless.
-  } finally {
-    clearTimeout(timer);
-    client?.close();
-  }
-}
-
-/**
- * `ccmsg say` (kawaz r244 m5-m6). Records the say event, then hands the exact
- * argv to the system `say`. Argument handling bypasses the CLI's own parser
- * entirely (see main()): `say -v Kyoko --whatever` must reach `say` byte for
- * byte, and a ccmsg option in the middle of that would be a landmine for the
- * shim's users.
- *
- * Design rationale (no-args does NOT print help, unlike every other ccmsg
- * command): bare `say` reads the text from stdin, and `echo hi | say` is a
- * real, commonly-shimmed usage. Printing help there would break the pipe form
- * that the PATH shim exists to preserve.
- */
-async function runSay(args: string[]): Promise<never> {
-  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
-    printSayHelp();
-    process.exit(0);
-  }
-  await recordSayEvent(args);
-  const bin = process.env.CCMSG_SAY_BIN || SYSTEM_SAY;
-  // Text on standard input is read here only when it is not a terminal: on
-  // a terminal say speaks it line by line as it is typed, which reading it
-  // all first would take away.
-  const stdinText = speechTextOf(args).fromStdin && process.stdin.isTTY !== true;
-  const dict = stdinText ? sayDictionaryFor("say") : null;
-  const proc = Bun.spawn([bin, ...spokenArgs(args, "say")], {
-    stdin: dict === null ? "inherit" : new Blob([applySayDictionary(dict, await Bun.stdin.text())]),
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  process.exit(await proc.exited);
-}
-
-/** The reading dictionary (DR-0042), its problems said on standard error as
- * `ccmsg <command>: …`. */
-function sayDictionaryFor(command: string): SayDictionary {
-  return loadSayDictionary(resolvePaths().sayDictionary, (m) =>
-    process.stderr.write(`ccmsg ${command}: ${m}\n`),
-  );
-}
-
-/** `args` for the speech binary, the words of the text to speak put as the
- * reading dictionary says (DR-0042). Options and their values pass
- * unchanged. */
-function spokenArgs(args: readonly string[], command: string): string[] {
-  const { words } = speechTextOf(args);
-  if (words.length === 0) return [...args];
-  const dict = sayDictionaryFor(command);
-  const text = new Set(words);
-  return args.map((a, i) => (text.has(i) ? applySayDictionary(dict, a) : a));
 }
 
 /** Ping an already-connected client and shape the result the way `status`/`daemon
@@ -843,7 +672,6 @@ function printHelp(): void {
   peers [cwd(partial)]                      セッション一覧
   agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
-  say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
   --help-full
@@ -879,16 +707,6 @@ Commands:
                                from another session does, and only in a session
                                running the ccmsg plugin's hooks module. Prints
                                the result; exits non-zero unless it arrived
-  say [args...]                Speak via /usr/bin/say, first telling the daemon
-                               which session spoke so the webui can show it in
-                               that session's timeline. Every argument is
-                               forwarded in place (say's own -v/-r/-o keep
-                               working), the words of the text put as the
-                               reading dictionary (say-dictionary.tsv) says;
-                               speech
-                               still happens when there is no
-                               session id or no running daemon. Run
-                               "ccmsg say --help" for the full description
   status                       Show daemon liveness / version / uptime / pid.
                                Does not start the daemon — use daemon start
   stop <session-id>            Terminate the OS process behind a Claude Code
@@ -970,7 +788,8 @@ Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_CONFIG_DIR             Override config dir (config.ts, config.js, or
                                config.json, allowed-origins.json,
-                               say-dictionary.tsv)
+                               say-dictionary.tsv: the daemon's reading
+                               dictionary)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl read-only,
                                dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
@@ -992,9 +811,10 @@ Environment Variables:
                                adopted only if the daemon accepts it (widens
                                fs_list/fs_read to sibling workspaces instead of
                                just cwd)
-  CCMSG_SAY_BIN                say / sidecar permit: speech binary to exec instead
-                               of /usr/bin/say (test hook — exercise the path
-                               without audio)
+  CCMSG_SAY_BIN                Speech binary the daemon speaks the says and the
+                               requests for permission with, instead of
+                               /usr/bin/say (daemon side, test hook — exercise
+                               the path without audio)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
                                "off" to disable)
@@ -1012,14 +832,6 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0) {
     printHelp();
-    return;
-  }
-  // `say` takes over argv before the shared parser runs: its arguments belong
-  // to /usr/bin/say, not to ccmsg (runSay's doc comment). This also means a
-  // global option like --sid is passed through to say rather than consumed —
-  // intentional, the shim contract is "same arguments as say".
-  if (argv[0] === "say") {
-    await runSay(argv.slice(1));
     return;
   }
   // Ahead of the shared help handling, so `ccmsg sidecar --help` prints the

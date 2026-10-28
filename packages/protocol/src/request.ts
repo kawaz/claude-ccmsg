@@ -42,7 +42,6 @@ import {
   SendMessageRequestSchema,
   PeersRequestSchema,
   SayReadRequestSchema,
-  SayRequestSchema,
   SessionDumpFileRequestSchema,
   SessionEnvRequestSchema,
   SessionErrorsRequestSchema,
@@ -127,7 +126,6 @@ export type RequestEnvelope = Output<typeof RequestEnvelopeSchema>;
 const OP_REQUEST_SCHEMAS = [
   SendMessageRequestSchema,
   PeerListRequestSchema,
-  SayRequestSchema,
   SayReadRequestSchema,
   PermitRequestRequestSchema,
   PermitRequestReadRequestSchema,

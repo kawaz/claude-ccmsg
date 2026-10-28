@@ -464,6 +464,12 @@ export function relayPushed(
   waitForRows(store, relay);
 }
 
+/** Whether `sid`'s row `uuid` has been read off its file: the catch-up or a
+ * push's read got to it, so the row is not new. */
+export function relayHasRead(store: TranscriptRelayStore, sid: string, uuid: string): boolean {
+  return store.relays.get(sid)?.read.has(uuid) === true;
+}
+
 /** Follow `file` for `relay` from its end now: the tabs are told with an
  * empty event that carries its size, and the folds catch up with it. */
 function retarget(store: TranscriptRelayStore, relay: Relay, file: string): void {

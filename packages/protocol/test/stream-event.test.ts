@@ -15,13 +15,13 @@ const wire = <T>(value: T): unknown => JSON.parse(JSON.stringify(value));
 const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
-  says: [
-    { ev: "says", says: [] },
+  say_unread: [
+    { ev: "say_unread", says: [] },
     {
-      ev: "says",
+      ev: "say_unread",
       says: [
-        { id: "0f0f/1", sid: SID, text: "-v Kyoko hello", ts: "t", read: true },
-        { id: "0f0f/2", sid: SID, text: "", ts: "t", read: false },
+        { session_id: SID, tool_use_id: "toolu_01", ts: "2026-10-28T00:00:00.000Z" },
+        { session_id: SID, tool_use_id: "toolu_02", ts: "2026-10-28T00:00:01.000Z" },
       ],
     },
   ],

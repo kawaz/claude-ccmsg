@@ -20,7 +20,7 @@ import {
   type ItemOf,
   type TestClient,
   isKind,
-  sayMarker,
+  streamMarker,
   sessionConn,
   userConn,
 } from "./helpers.ts";
@@ -307,7 +307,7 @@ describe("agents: reading the state files", () => {
     // say from a fresh session) and confirm no "agents" event snuck in
     // among the events collected while waiting for it.
     const s = await sessionConn(ctx, SID_S);
-    const seen = await sayMarker(s, u, "marker");
+    const seen = await streamMarker(s, u, "marker");
     expect(seen.some(isKind("agents"))).toBe(false);
   });
 

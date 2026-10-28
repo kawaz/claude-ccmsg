@@ -376,17 +376,18 @@ export function isKind<K extends StreamKind>(kind: K): (item: StreamItem) => ite
 
 /** Order a user-role subscriber's stream past this moment, for asserting what
  * did not arrive before it: `poster`, a session already connected (a fresh
- * hello is itself a peers push), records a say, which the daemon pushes to
- * every user-role subscriber as `ev:"says"` before answering it. Resolves with
- * every item `reader` saw up to and including that push. */
-export async function sayMarker(
+ * hello is itself a peers push), asks for permission, which the daemon pushes
+ * to every user-role subscriber as `ev:"permit_request"` before answering it.
+ * Resolves with every item `reader` saw up to and including that push. */
+export async function streamMarker(
   poster: TestClient,
   reader: TestClient,
   text: string,
 ): Promise<StreamItem[]> {
-  await poster.requestOk({ op: "say", text });
-  const { seen } = await reader.readEventUntil("says", (ev) =>
-    ev.says.some((say) => say.text === text),
+  await poster.requestOk({ op: "permit_request", permit: { blocked: text, intents: ["marker"] } });
+  const { seen } = await reader.readEventUntil(
+    "permit_request",
+    (ev) => ev.request.blocked === text,
   );
   return seen;
 }

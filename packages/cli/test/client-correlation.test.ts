@@ -154,10 +154,11 @@ test("large requests arrive whole, in the order written", async () => {
         while ((at = buf.indexOf("\n")) >= 0) {
           const req = requestOf(buf.slice(0, at));
           buf = buf.slice(at + 1);
-          if (req.op !== "say") throw new Error(`expected a say, got ${req.op}`);
-          socket.write(
-            `${JSON.stringify({ ok: true, id: String(req.text.length), request_id: req.request_id })}\n`,
-          );
+          if (req.op !== "permit_request") {
+            throw new Error(`expected a permit_request, got ${req.op}`);
+          }
+          const id = String(req.permit.blocked.length);
+          socket.write(`${JSON.stringify({ ok: true, id, request_id: req.request_id })}\n`);
         }
       },
       open() {},
@@ -172,7 +173,12 @@ test("large requests arrive whole, in the order written", async () => {
   const client = await Client.connect(sock);
   const sizes = [1_000_000, 300_000, 10];
   const answers = await Promise.all(
-    sizes.map((size) => client.request({ op: "say", text: "y".repeat(size) })),
+    sizes.map((size) =>
+      client.request({
+        op: "permit_request",
+        permit: { blocked: "y".repeat(size), intents: ["x"] },
+      }),
+    ),
   );
   expect(answers.map((a) => (a.ok ? a.id : a.error.msg))).toEqual(sizes.map(String));
   client.close();

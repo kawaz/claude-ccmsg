@@ -17,7 +17,7 @@ import {
   stopInProcessDaemon,
   defined,
   isKind,
-  sayMarker,
+  streamMarker,
   sessionConn,
   userConn,
   fixtureDir,
@@ -1030,7 +1030,7 @@ describe("transcript live Timeline (DR-0045 §2 / §4)", () => {
       // say from a fresh session) and confirm no "transcript" event snuck in
       // among the events collected while waiting for it.
       const s2 = await sessionConn(ctx, SID_B);
-      const seen = await sayMarker(s2, u, "marker");
+      const seen = await streamMarker(s2, u, "marker");
       expect(seen.some(isKind("transcript"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);
@@ -1109,7 +1109,7 @@ describe("transcript live Timeline (DR-0045 §2 / §4)", () => {
       await u.requestOk({ op: "transcript_subscribe", sid });
       fs.appendFileSync(file, "L0\n");
       const s2 = await sessionConn(ctx, SID_B);
-      const seen = await sayMarker(s2, u, "marker");
+      const seen = await streamMarker(s2, u, "marker");
       expect(seen.some(isKind("transcript"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);
@@ -1146,7 +1146,7 @@ describe("transcript live Timeline (DR-0045 §2 / §4)", () => {
         ],
       });
       const s2 = await sessionConn(ctx, SID_B);
-      const seen = await sayMarker(s2, u, "marker");
+      const seen = await streamMarker(s2, u, "marker");
       expect(seen.some(isKind("transcript"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);

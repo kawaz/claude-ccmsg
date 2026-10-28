@@ -30,7 +30,7 @@ import {
   isKind,
   liveSessionConn,
   pushRows,
-  sayMarker,
+  streamMarker,
   sessionConn,
   stampRows,
   userConn,
@@ -2313,7 +2313,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "plain" }] } })}\n`,
       );
       const peer = await sessionConn(ctx, SID_B);
-      const seen = await sayMarker(peer, user, "marker");
+      const seen = await streamMarker(peer, user, "marker");
       expect(seen.some(isKind("session_status"))).toBe(false);
     } finally {
       await stopInProcessDaemon(ctx);
@@ -2375,7 +2375,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
 
       await appendPushed(session, file, jsonl(todoUpdate("tu", "1", { status: "completed" })));
       const peer = await sessionConn(ctx, SID_B);
-      const seen = await sayMarker(peer, user, "marker");
+      const seen = await streamMarker(peer, user, "marker");
       expect(seen.some(isKind("session_status"))).toBe(false);
       // 1 回の走査で答える one-shot には、書かれた行が入る。
       const now = await user.requestOk({ op: "session_status", sid });

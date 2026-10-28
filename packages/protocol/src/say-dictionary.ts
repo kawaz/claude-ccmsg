@@ -1,11 +1,12 @@
-// `<configDir>/say-dictionary.tsv` (DR-0042): the readings `ccmsg say` puts
-// in place of words just before it speaks, edited by hand (a person or an
-// agent). A line is `word<TAB>reading`; a line starting with `#` is
+// The reading dictionary (DR-0045 §6): the readings the daemon puts in place
+// of words just before it speaks, the ones shipped here with
+// `<configDir>/say-dictionary.tsv` laid over them, edited by hand (a person
+// or an agent). A line is `word<TAB>reading`; a line starting with `#` is
 // a comment and an empty line is nothing. A line that is neither and does not
 // read as an entry is reported and skipped, the rest of the file still in use.
 //
 // Everything here is pure (text in, text out): reading the file and the
-// speech binary live in the CLI.
+// speech binary live in the daemon.
 import * as v from "valibot";
 import { parseWith } from "./parse.ts";
 
@@ -77,6 +78,36 @@ export function sayDictionaryProblems(
   lines: readonly SayDictionaryLine[],
 ): readonly SayDictionaryProblem[] {
   return lines.flatMap((l, i) => (l.kind === "invalid" ? [{ line: i + 1, reason: l.reason }] : []));
+}
+
+/** The readings shipped with ccmsg, under the user's file: a word there wins
+ * over the same word here. */
+export const BUILTIN_SAY_DICTIONARY: readonly SayDictionaryEntry[] = [
+  { word: "1Password", reading: "ワンパスワード" },
+  { word: "daemon", reading: "デーモン" },
+  { word: "sidecar", reading: "サイドカー" },
+  { word: "plugin", reading: "プラグイン" },
+  { word: "OTP", reading: "オーティーピー" },
+  { word: "URL", reading: "ユーアールエル" },
+  { word: "API", reading: "エーピーアイ" },
+  { word: "CI", reading: "シーアイ" },
+  { word: "PR", reading: "ピーアール" },
+  { word: "jj", reading: "ジェイジェイ" },
+  { word: "Kyell", reading: "ケイエール" },
+];
+
+/** The dictionary to speak with: the shipped entries, then those of the
+ * user's file (`fileText`, undefined when there is none), with the lines of
+ * the file that did not read. */
+export function userSayDictionary(fileText: string | undefined): {
+  dictionary: SayDictionary;
+  problems: readonly SayDictionaryProblem[];
+} {
+  const lines = fileText === undefined ? [] : readSayDictionaryLines(fileText);
+  return {
+    dictionary: compileSayDictionary([...BUILTIN_SAY_DICTIONARY, ...sayDictionaryEntries(lines)]),
+    problems: sayDictionaryProblems(lines),
+  };
 }
 
 /** The entries made into one lookup. */

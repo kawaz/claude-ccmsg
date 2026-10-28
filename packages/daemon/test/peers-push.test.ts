@@ -12,7 +12,7 @@ import {
   type TestClient,
   defined,
   isKind,
-  sayMarker,
+  streamMarker,
   sessionConn,
   userConn,
 } from "./helpers.ts";
@@ -59,7 +59,7 @@ describe("ev:peers push", () => {
       const m = await sessionConn(ctx, SID_M); // marker poster
       await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
       await a.end();
-      const seen = await sayMarker(m, u, "marker");
+      const seen = await streamMarker(m, u, "marker");
       expect(seen.some(isKind("peers"))).toBe(false);
       const res = await u.requestOk({ op: "peers" });
       expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
@@ -111,7 +111,7 @@ describe("ev:peers push", () => {
         ws: "w",
         cwd: "/tmp",
       });
-      const seen = await sayMarker(m, u, "marker");
+      const seen = await streamMarker(m, u, "marker");
       expect(seen.some(isKind("peers"))).toBe(false);
       a.close();
       m.close();
@@ -159,7 +159,7 @@ describe("ev:peers push", () => {
       await readinessPushed(u, SID_A, SID_M); // drain both registrations' pushes
 
       await a1.end(); // one of two conns for sid A closes; A stays registered via a2
-      const seen = await sayMarker(m, u, "marker");
+      const seen = await streamMarker(m, u, "marker");
       expect(seen.some(isKind("peers"))).toBe(false);
       a2.close();
       m.close();

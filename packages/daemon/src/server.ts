@@ -115,7 +115,20 @@ import { deriveRepoWs } from "./repo-derive.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
 import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
-import { createSayLog, type SayLog } from "./say-log.ts";
+import {
+  actOnPushedRows,
+  createRowEffects,
+  keepRowEffectsOf,
+  type RowEffects,
+} from "./row-effects.ts";
+import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
+import {
+  loadSayUnreadStore,
+  markSaysRead,
+  sayUnreadFold,
+  type SayUnreadStore,
+  unreadSays,
+} from "./say-unread.ts";
 import {
   createPermitRequestLog,
   permitRequestFields,
@@ -159,6 +172,7 @@ import {
   relayUnsubscribeAll,
   relaysCaughtUp,
   stopAllRelays,
+  relayHasRead,
   syncLiveRelays,
   type TranscriptRelayStore,
 } from "./transcript-relay.ts";
@@ -373,8 +387,18 @@ export interface Daemon {
   /** Issues the mid of each message this daemon sends into a peer socket
    * (mid-issuer.ts). */
   issueDirectMid: () => string;
-  /** `ccmsg say` records, memory only (say-log.ts, DR-0036 §3). */
-  says: SayLog;
+  /** The daemon's voice: the says and the requests for permission are
+   * spoken one after another (say-speech.ts, DR-0045 §6). */
+  speaker: Speaker;
+  /** The tool calls acted on, from the rows the modules push (row-effects.ts,
+   * DR-0045 §6). */
+  rowEffects: RowEffects;
+  /** The says of the live sessions and which the person has read
+   * (say-unread.ts, DR-0045 §7). */
+  sayUnread: SayUnreadStore;
+  /** The last ev:"say_unread" sent, as its JSON: a push only when the set
+   * moved. */
+  sayUnreadSnapshot: string;
   /** Requests for the person's permission, memory only (permit-requests.ts,
    * DR-0040). */
   permitRequests: PermitRequestLog;
@@ -459,6 +483,7 @@ export function createDaemon(host: DaemonHost): Daemon {
         (sid) => sessionErrorFold(daemon.sessionErrors, sid, () => broadcastSessionErrors(daemon)),
         (sid) =>
           sessionUserInputFold(daemon.sessionUserInputs, sid, () => maybeBroadcastPeers(daemon)),
+        (sid) => sayUnreadFold(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
       ],
     }),
     trace,
@@ -485,7 +510,14 @@ export function createDaemon(host: DaemonHost): Daemon {
     peerInjector: new PeerInjector(),
     sendOrder: createSerial(),
     issueDirectMid: createMidIssuer(),
-    says: createSayLog(createMidIssuer()),
+    speaker: createSpeaker({
+      bin: host.env.CCMSG_SAY_BIN || SYSTEM_SAY,
+      dictionaryFile: paths.sayDictionary,
+      log,
+    }),
+    rowEffects: createRowEffects(),
+    sayUnread: loadSayUnreadStore(paths.sayRead, log, () => new Date()),
+    sayUnreadSnapshot: "",
     permitRequests: createPermitRequestLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
@@ -760,7 +792,9 @@ function liveSids(daemon: Daemon): string[] {
  * named or goes, and when a session is registered or forgotten. The same
  * moments make a session live or not (DR-0045 §3). */
 function refreshReadiness(daemon: Daemon): void {
-  syncLiveRelays(daemon.transcriptRelay, daemon.sessions, liveSids(daemon));
+  const live = liveSids(daemon);
+  syncLiveRelays(daemon.transcriptRelay, daemon.sessions, live);
+  keepRowEffectsOf(daemon.rowEffects, live);
   maybeBroadcastPeers(daemon);
   refreshInputReadiness(daemon.sessionStatus, daemon.sessions, daemon.log);
   const { agents, polledAt } = daemon.agentsPoller.cache;
@@ -1179,20 +1213,29 @@ function broadcastLlmRequests(daemon: Daemon): void {
   }
 }
 
-/** Push every say record the daemon holds to one connection (ev:"says"). The
- * full set, so the same call serves a fresh subscriber's catch-up and the live
+/** Push the unread says to one connection (ev:"say_unread"): the full set,
+ * so the same call serves a fresh subscriber's catch-up and the live
  * update. */
-function sendSays(daemon: Daemon, conn: Conn): void {
-  send(conn, { ev: "says", says: daemon.says.snapshot() });
+function sendSayUnread(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "say_unread", says: unreadSays(daemon.sayUnread) });
 }
 
-/** Push the say records to every user-role subscriber. Never to a session:
- * see SaysStreamEvent. */
-function broadcastSays(daemon: Daemon): void {
+/** Push the unread says to every user-role subscriber when they moved.
+ * Never to a session: see SayUnreadStreamEvent. */
+function broadcastSayUnread(daemon: Daemon): void {
+  const says = unreadSays(daemon.sayUnread);
+  const key = JSON.stringify(says);
+  if (key === daemon.sayUnreadSnapshot) return;
+  daemon.sayUnreadSnapshot = key;
   for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") sendSays(daemon, sub);
+    if (sub.identity?.role === "user") send(sub, { ev: "say_unread", says });
   }
 }
+
+/** What the speakers say when a session asks for permission and wrote no
+ * `voice`: that one is asking. The request itself (its commands, its files)
+ * is for reading in the webui, not for hearing (DR-0040 §6). */
+const PERMIT_SPEECH = "許可を求めています";
 
 /** Push every request for permission the daemon holds to one connection
  * (ev:"permit_requests"), a fresh subscriber's catch-up. */
@@ -1412,7 +1455,6 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "send_message",
   "peer_list",
   "user_message",
-  "say",
   "say_read",
   "permit_request",
   "permit_request_read",
@@ -1818,21 +1860,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       return;
     }
 
-    case "say": {
-      // `ccmsg say` は say の実行そのものは CLI が必ず行う。ここは「どの
-      // セッションが喋ったか」を webui が答えられるようにするための記録だけを
-      // 担う。記録は daemon のメモリだけに置く (DR-0036 §3)。session role 限定
-      // — 喋ったのは caller 自身なので、caller がセッションを名指す余地はない。
-      if (conn.identity?.role !== "session") {
-        sendErr(conn, ErrorCode.bad_request, "op 'say' requires session role");
-        return;
-      }
-      const record = daemon.says.add(conn.identity.sid, req.text, nowIso());
-      broadcastSays(daemon);
-      send(conn, { ok: true, id: record.id });
-      return;
-    }
-
     case "permit_request": {
       // 許可依頼は止められたエージェント自身が出す (session role 限定)。
       // 依頼は caller 自身のものなので、caller がセッションを名指す余地はない。
@@ -1845,6 +1872,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         permitRequestFields(conn.identity.sid, req.permit, nowIso()),
       );
       broadcastPermitRequest(daemon, record);
+      daemon.speaker.speak(record.voice ?? PERMIT_SPEECH);
       daemon.log.info(
         `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)}`,
       );
@@ -1898,21 +1926,21 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     case "say_read": {
       // 既読は webui の 🔔 バブル上のボタンからだけ立つ (user role 限定):
       // 未読数は「kawaz がまだ見ていない say」の数であって、喋った session が
-      // 自分で消せる意味の数ではない。
+      // 自分で消せる意味の数ではない。既読はファイルに書いてから答える
+      // (DR-0045 §7)。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'say_read' requires user role");
         return;
       }
-      const marked = daemon.says.markRead(req.ids);
-      if (marked.kind === "missing") {
-        // 存在しない id を黙って ack すると、未読数が減らないまま "既読にした"
-        // と見える。どれも既読にせず落として気づかせる。daemon の再起動で
-        // 記録が消えた後の ack もここに来る。
+      const marked = await markSaysRead(daemon.sayUnread, req.ids);
+      if (marked.kind === "unknown") {
+        // 未読でも既読でもない id を黙って ack すると、未読数が減らないまま
+        // "既読にした" と見える。どれも既読にせず落として気づかせる。
         sendErr(conn, ErrorCode.invalid_args, `no say with id ${marked.ids.join(", ")}`);
         return;
       }
       // 他タブの webui にも既読を伝える。二度目の ack は何も変えないので送らない。
-      if (marked.kind === "read") broadcastSays(daemon);
+      if (marked.kind === "read") broadcastSayUnread(daemon);
       send(conn, { ok: true, ids: req.ids });
       return;
     }
@@ -1948,9 +1976,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // no gateway configured look like one whose sessions all went cold.
       if (daemon.llmRequests.snapshot().length > 0) sendLlmRequests(daemon, conn);
       // Sent even when empty: a tab reconnecting to a restarted daemon still
-      // holds the old daemon's says, and only this replaces them.
-      sendSays(daemon, conn);
-      // Same reason as the says: sent even when empty.
+      // holds the old daemon's unread says, and only this replaces them.
+      sendSayUnread(daemon, conn);
+      // Same reason as the unread says: sent even when empty.
       sendPermitRequests(daemon, conn);
       sendRequestOverrides(daemon, conn);
       return;
@@ -3046,11 +3074,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         sendErr(conn, ErrorCode.bad_request, "op 'transcript_push' requires session role");
         return;
       }
+      const sid = conn.identity.sid;
+      // The rows not read off the file yet are new: their tool calls are acted
+      // on (DR-0045 §6). Asked before the read below, which may reach them.
+      const fresh = req.rows.filter((row) => !relayHasRead(daemon.transcriptRelay, sid, row.uuid));
+      actOnPushedRows(daemon.rowEffects, sid, fresh, {
+        speak: (text) => daemon.speaker.speak(text),
+      });
       const uuids = req.rows.flatMap((row) =>
         row.agent_id === undefined && row.door !== "queue" ? [row.uuid] : [],
       );
       if (uuids.length > 0) {
-        relayPushed(daemon.transcriptRelay, daemon.sessions, conn.identity.sid, uuids);
+        relayPushed(daemon.transcriptRelay, daemon.sessions, sid, uuids);
       }
       send(conn, { ok: true });
       return;

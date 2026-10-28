@@ -368,7 +368,7 @@ function fakeEngine(
           const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
-        if (argv[1] === "say" || argv[2] === "launch" || argv[2] === "permit") {
+        if (argv[2] === "launch" || argv[2] === "permit") {
           if (options.command === undefined) throw new Error(`no ${argv.join(" ")} here`);
           return options.command(argv, init ?? {});
         }
@@ -633,12 +633,14 @@ async function submitComposer(fake: Fake): Promise<number> {
 function registerOn(fake: Fake): ModuleState {
   const on: On = (event, ...args) => {
     const held: HookArgs[typeof event][] = fake.hooks[event];
-    held.push(args);
+    const at = held.push(args) - 1;
     fake.registered.push(event);
     return {
+      // At the hook's own index: a hook with no `.catch` leaves its slot
+      // empty, so the next hook's catcher still lines up with it.
       catch: (handler) => {
         const caught: HookOf[typeof event][] = fake.catchers[event];
-        caught.push(handler);
+        caught[at] = handler;
       },
     };
   };
@@ -2765,22 +2767,20 @@ describe("the ccmsg tools", () => {
     );
   });
 
-  test("say runs ccmsg say as the session, the text one argument", async () => {
-    const seen: { argv: readonly string[]; env?: Record<string, string> }[] = [];
-    const fake = toolFake(async (argv, init) => {
-      seen.push({ argv, ...(init.env !== undefined ? { env: init.env } : {}) });
+  // 何を保証するか: say の tool は入力を検査して「読み上げを依頼した」と返す
+  // だけで、プロセスを起こさない (発声は daemon が push の行から起こす、
+  // DR-0045 §6)。形に合わない入力は「何もしていない」と返す。
+  test("say only reads the input: the daemon speaks it from the pushed row", async () => {
+    const seen: (readonly string[])[] = [];
+    const fake = toolFake(async (argv) => {
+      seen.push(argv);
       return { exitCode: 0, stdout: "", stderr: "" };
     });
-    expect(await callTool(fake, "mcp__ccmsg-v1__say", { text: "終わりました 3 件" })).toContain(
-      "伝えた",
+    expect(await callTool(fake, "mcp__ccmsg-v1__say", { text: "終わりました 3 件" })).toBe(
+      "読み上げを依頼した (daemon が読み上げ、webui に 🔔 で出る)",
     );
-    expect(seen).toEqual([
-      {
-        argv: ["/plugin/bin/ccmsg", "say", "終わりました 3 件"],
-        env: { CCMSG_SID: fake.sid.value },
-      },
-    ]);
     expect(await callTool(fake, "mcp__ccmsg-v1__say", {})).toContain("say の入力が形に合わない");
+    expect(seen).toEqual([]);
   });
 
   test("peers lists the sessions send can reach, spelled as send takes them", async () => {

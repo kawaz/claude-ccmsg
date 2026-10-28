@@ -5,6 +5,7 @@
 //   state:  ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
 //             http.sock (a hooks module's `POST /op`, DR-0046)
+//             say-read.json (which says the person has read, DR-0045 §7)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
@@ -42,10 +43,13 @@ export interface Paths {
    * survive daemon restarts — unlike CCMSG_HTTP_ALLOW_ORIGIN, which vanishes
    * whenever a client respawns the daemon without that env set. */
   allowedOrigins: string;
-  /** The readings `ccmsg say` speaks words as (`word<TAB>reading` lines,
-   * DR-0042), edited by hand and read by the CLI just before each speech,
-   * laid over the dictionary shipped with the CLI. */
+  /** The readings the daemon speaks words as (`word<TAB>reading` lines,
+   * DR-0045 §6), edited by hand and read just before each speech, laid over
+   * the dictionary shipped in protocol's say-dictionary.ts. */
   sayDictionary: string;
+  /** `<stateDir>/say-read.json`: the ids of the says the person has read, and
+   * the time before which every say counts as read (DR-0045 §7). */
+  sayRead: string;
   /** DR-0018 session launcher and the rest of the daemon's user configuration
    * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
    * disposable runtime state and data/ holds only what must not be lost. */
@@ -133,6 +137,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
     sayDictionary: path.join(configDir, "say-dictionary.tsv"),
+    sayRead: path.join(stateDir, "say-read.json"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),

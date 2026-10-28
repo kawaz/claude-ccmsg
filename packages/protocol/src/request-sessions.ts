@@ -113,19 +113,6 @@ export const NotifyRequestSchema = v.object({
 });
 export type NotifyRequest = Output<typeof NotifyRequestSchema>;
 
-/** Record that this session spoke through `ccmsg say` (session role only).
- * The daemon keeps the record in memory and pushes it to user-role
- * subscribers as part of `ev:"says"` (stream-event.ts SayRecord); the speaker
- * is the caller's own sid, so the request names no session. The CLI ignores
- * the reply and execs `/usr/bin/say` regardless, so a failure here costs the
- * observation, never the speech. */
-export const SayRequestSchema = v.object({
-  op: v.literal("say"),
-  /** The argv forwarded to `/usr/bin/say`, joined by spaces (see SayRecord.text). */
-  text: v.string(),
-});
-export type SayRequest = Output<typeof SayRequestSchema>;
-
 /** Ask the person for permission (DR-0040, session role only): the caller's
  * `permit` tool. The daemon records the request (its attachments by path), and
  * shows it in the caller's Timeline; the caller is the one asking, so the
@@ -156,14 +143,16 @@ export const PermitAttachmentReadRequestSchema = v.object({
 });
 export type PermitAttachmentReadRequest = Output<typeof PermitAttachmentReadRequestSchema>;
 
-/** Mark say records as read (the webui's 既読 button). User role only: the
- * unread count exists for the person watching the session list, and a session
- * acking its own speech would clear a badge nobody looked at. */
+/** Mark says as read (the webui's 既読 button, DR-0045 §7) by the ids of
+ * their tool_use. User role only: the unread count exists for the person
+ * watching the session list, and a session acking its own speech would clear
+ * a badge nobody looked at. An id that is neither unread nor read refuses
+ * them all; ids all read already change nothing. */
 export const SayReadRequestSchema = v.object({
   op: v.literal("say_read"),
-  /** `id`s of the SayRecords being acked: one for a single bubble, every
-   * unread one the Timeline shows for its 「すべて既読」. The ids are the ones
-   * the reader saw, so a say arriving after the click stays unread. */
+  /** One for a single bubble, every unread one the Timeline shows for its
+   * 「すべて既読」. The ids are the ones the reader saw, so a say arriving
+   * after the click stays unread. */
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one say id")),
 });
 export type SayReadRequest = Output<typeof SayReadRequestSchema>;

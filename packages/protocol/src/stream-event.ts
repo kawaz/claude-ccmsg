@@ -16,45 +16,30 @@ import { ClaudeVersionSchema, LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
-/** One `ccmsg say` as the daemon holds it: which session made the speakers
- * talk, with what, and whether the person watching has acked it. With several
- * sessions running, macOS `say` alone is anonymous. Held in daemon memory
- * only (DR-0036 §3): a restarted daemon starts with none, unread ones
- * included. */
-export const SayRecordSchema = v.object({
-  /** `<instance id>/<n>`, unique across daemon restarts (a fresh instance id
-   * per daemon process), so an ack from a tab that has not yet caught up with
-   * a restart cannot land on a different say. The ack target `say_read`
-   * names. */
-  id: v.string(),
-  /** sid of the session that spoke (the `say` caller's own). */
-  sid: v.string(),
-  /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces —
-   * verbatim, options included. Empty when the caller piped text on stdin
-   * (the CLI must not consume that stream to peek at it). */
-  text: v.string(),
+/** One say the person has not read (DR-0045 §7): a `say` tool call on the
+ * main thread of a live session, by the id of its tool_use. */
+export const UnreadSaySchema = v.object({
+  session_id: v.string(),
+  /** The tool_use's id: what `say_read` names. */
+  tool_use_id: v.string(),
+  /** The time of the transcript row that made the call. */
   ts: v.string(),
-  /** Set by `say_read`; never cleared. */
-  read: v.boolean(),
 });
-export type SayRecord = Output<typeof SayRecordSchema>;
+export type UnreadSay = Output<typeof UnreadSaySchema>;
 
-/** Every say record the daemon holds, oldest first (user-role subscribers
- * only, same webui-only posture as ev:"peers"). Sent at subscribe time and
- * again whenever a say is recorded or acked — always the full set, so a tab
- * that reconnects to a restarted daemon replaces what it held with the new
- * daemon's (possibly empty) set instead of keeping says that no longer
- * exist. Never sent to a session: the session that spoke already knows it
- * spoke, and the ack is the person's gesture, so either would only spend
- * agent context. */
-export const SaysStreamEventSchema = v.object({
-  ev: v.literal("says"),
-  says: v.array(SayRecordSchema),
+/** Every say the person has not read, oldest first (user-role subscribers
+ * only, same webui-only posture as ev:"peers"). Sent at subscribe time, even
+ * when empty, and again whenever the set changes: always the full set, so a
+ * tab replaces what it held. Never sent to a session: the session that spoke
+ * knows it spoke, and reading is the person's gesture. */
+export const SayUnreadStreamEventSchema = v.object({
+  ev: v.literal("say_unread"),
+  says: v.array(UnreadSaySchema),
 });
-export type SaysStreamEvent = Output<typeof SaysStreamEventSchema>;
+export type SayUnreadStreamEvent = Output<typeof SayUnreadStreamEventSchema>;
 
 /** Every request for permission the daemon holds, oldest first (DR-0040 §5,
- * user-role subscribers only, like ev:"says"). Sent at subscribe time, even
+ * user-role subscribers only, like ev:"say_unread"). Sent at subscribe time, even
  * when empty, so a tab that reconnects to a restarted daemon drops what the
  * old one held. */
 export const PermitRequestsStreamEventSchema = v.object({
@@ -65,7 +50,7 @@ export type PermitRequestsStreamEvent = Output<typeof PermitRequestsStreamEventS
 
 /** One request for permission the daemon has just recorded, or just marked
  * read, to the same subscribers; a tab puts it in place of the one of the
- * same id, or adds it. One rather than the whole set as ev:"says" sends:
+ * same id, or adds it. One rather than the whole set as ev:"say_unread" sends:
  * only a request's `read` ever changes, so the catch-up above and these
  * single records are all a tab needs. */
 export const PermitRequestStreamEventSchema = v.object({
@@ -283,7 +268,7 @@ export type ClaudeVersionStreamEvent = Output<typeof ClaudeVersionStreamEventSch
 
 /** Every push, told apart by `ev`. */
 export const StreamEventSchema = v.variant("ev", [
-  SaysStreamEventSchema,
+  SayUnreadStreamEventSchema,
   PermitRequestsStreamEventSchema,
   PermitRequestStreamEventSchema,
   RequestOverridesStreamEventSchema,

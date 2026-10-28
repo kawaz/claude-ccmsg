@@ -12,6 +12,7 @@ import {
   parseCcmsgSendCommand,
   parseDirectDeliveries,
   pushNotificationText,
+  ccmsgSayText,
   parseWith,
   queuedCommandPrompt,
   TranscriptRowLineSchema,
@@ -344,6 +345,17 @@ describe("pushNotificationText", () => {
     ).toBe("終わりました");
     expect(pushNotificationText("Bash", { message: "x" })).toBeNull();
     expect(pushNotificationText("PushNotification", {})).toBeNull();
+  });
+});
+
+describe("ccmsgSayText", () => {
+  // 何を保証するか: say の tool の呼び出しだけを、入力が tool の形の時に本文で
+  // 読む。形に合わない入力 (module が断って何も起きなかった呼び出し) は null。
+  test("reads input.text of a say call whose input is the tool's only", () => {
+    expect(ccmsgSayText("mcp__ccmsg-v1__say", { text: "終わりました" })).toBe("終わりました");
+    expect(ccmsgSayText("PushNotification", { text: "x" })).toBeNull();
+    expect(ccmsgSayText("mcp__ccmsg-v1__say", {})).toBeNull();
+    expect(ccmsgSayText("mcp__ccmsg-v1__say", { text: 3 })).toBeNull();
   });
 });
 

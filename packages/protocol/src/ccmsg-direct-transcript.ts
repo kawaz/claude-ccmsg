@@ -29,6 +29,9 @@
 //   4. sent through the hooks module's `send` tool (DR-0039 §3): a tool_use
 //      `{name: CCMSG_TOOLS.send, input:{session_id?, cwd?, name?, pid?, text}}`,
 //      paired with its tool_result, which peer-tools-text.ts reads back.
+//   5. said through the hooks module's `say` tool (DR-0045 §7): a tool_use
+//      `{name: CCMSG_TOOLS.say, input:{text}}`. The daemon speaks it and holds
+//      whether the person has read it, by the tool_use's id.
 //
 // String work over the transcript rows' schemas, importing nothing but valibot
 // and the schema files beside it, so the browser bundle and the daemon share it
@@ -37,7 +40,7 @@ import * as v from "valibot";
 import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
-import { CCMSG_TOOLS } from "./peer-tools.ts";
+import { CCMSG_TOOLS, SayToolInputSchema } from "./peer-tools.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
 import { isKnownContentBlock } from "./transcript-content.ts";
 import { isKnownTranscriptRow, type TranscriptRow } from "./transcript-row.ts";
@@ -508,6 +511,15 @@ export function pushNotificationText(name: string, input: JsonObject): string | 
   if (name !== "PushNotification") return null;
   const read = parseWith(PushNotificationInputSchema, input);
   return read.ok ? read.value.message : null;
+}
+
+/** The text of a `say` tool call (`name` and the input as the model wrote
+ * it), or null for any other tool, or a call whose input is not the tool's
+ * (the module refused it, and nothing was said). */
+export function ccmsgSayText(name: string, input: JsonObject): string | null {
+  if (name !== CCMSG_TOOLS.say) return null;
+  const read = parseWith(SayToolInputSchema, input);
+  return read.ok ? read.value.text : null;
 }
 
 /** The input of a `send` tool call, read for what a reader shows of it. */

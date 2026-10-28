@@ -56,7 +56,6 @@ const MINIMAL_HELP = `Commands:
   peers [cwd(partial)]                      セッション一覧
   agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
-  say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
   --help-full
@@ -987,6 +986,23 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       cleanup();
     }
   }, 30000);
+
+  // 何を保証するか (DR-0045 §8): 発声は daemon が say の tool の呼び出しから
+  // 起こすので、CLI に say は無い。他の知らないコマンドと同じく unknown command
+  // として exit 非零になり、何も喋らない。
+  test("say は unknown command になる", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["say", "hello"], env);
+      expect({ code: res.code, err: res.err, out: res.out }).toEqual({
+        code: 1,
+        err: "ccmsg: unknown command 'say'\n\n",
+        out: MINIMAL_HELP,
+      });
+    } finally {
+      cleanup();
+    }
+  });
 
   // 何を保証するか (DR-0036 §2): room を作る・読む・抜けるサブコマンドは無い。
   // 他の知らないコマンドと同じく unknown command として exit 非零になる。

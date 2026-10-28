@@ -935,14 +935,16 @@ describe("ccmsg sidecar permit", () => {
     return { code, out, err };
   }
 
-  /** A daemon in this process, a speech binary that writes its arguments to
-   * a file and exits `speechExit`, and the CLI's environment for both. */
+  /** A daemon in this process that speaks through a binary writing its
+   * arguments to a file and exiting `speechExit` (the daemon speaks the
+   * request, DR-0045 §6), the CLI's environment, and what was spoken once the
+   * daemon's speeches ended. */
   async function withDaemon(
     speechExit: number,
     run: (
       env: Record<string, string | undefined>,
       ctx: Awaited<ReturnType<typeof startInProcessDaemon>>,
-      spoken: () => string,
+      spoken: () => Promise<string>,
       work: string,
     ) => Promise<void>,
   ): Promise<void> {
@@ -952,7 +954,7 @@ describe("ccmsg sidecar permit", () => {
       path.join(work, "say"),
       `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(spokenFile)}\nexit ${String(speechExit)}\n`,
     );
-    const ctx = await startInProcessDaemon();
+    const ctx = await startInProcessDaemon({ env: { CCMSG_SAY_BIN: speech } });
     try {
       const { stateDir, configDir, dataDir } = ctx.daemon.paths;
       await run(
@@ -961,10 +963,12 @@ describe("ccmsg sidecar permit", () => {
           CCMSG_STATE_DIR: stateDir,
           CCMSG_CONFIG_DIR: configDir,
           CCMSG_DATA_DIR: dataDir,
-          CCMSG_SAY_BIN: speech,
         },
         ctx,
-        () => (fs.existsSync(spokenFile) ? fs.readFileSync(spokenFile, "utf8") : ""),
+        async () => {
+          await ctx.daemon.speaker.idle();
+          return fs.existsSync(spokenFile) ? fs.readFileSync(spokenFile, "utf8") : "";
+        },
         work,
       );
     } finally {
@@ -991,7 +995,7 @@ describe("ccmsg sidecar permit", () => {
         { id: reply.value.id, sid: SID, attachments: [script], commands: [command] },
       ]);
       // After `--`, so a voice starting with `-` is not an option of say.
-      expect(spoken()).toBe("-- 許可を求めています\n");
+      expect(await spoken()).toBe("-- 許可を求めています\n");
     });
   });
 
@@ -1009,7 +1013,9 @@ describe("ccmsg sidecar permit", () => {
         );
         expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
       }
-      expect(spoken()).toBe("-- プッシュ の許可をお願いします。\n-- -v の許可をお願いします。\n");
+      expect(await spoken()).toBe(
+        "-- プッシュ の許可をお願いします。\n-- -v の許可をお願いします。\n",
+      );
       expect(ctx.daemon.permitRequests.snapshot().map((r) => r.voice)).toEqual([
         "push の許可をお願いします。",
         "-v の許可をお願いします。",
@@ -1017,8 +1023,8 @@ describe("ccmsg sidecar permit", () => {
     });
   });
 
-  // The speech goes through the reading dictionary like `ccmsg say` does
-  // (DR-0042): one dictionary for everything the speakers say.
+  // The speech goes through the reading dictionary like a say does
+  // (DR-0045 §6): one dictionary for everything the speakers say.
   test("says that one is asking with the reading dictionary applied", async () => {
     await withDaemon(0, async (env, ctx, spoken) => {
       const { configDir } = ctx.daemon.paths;
@@ -1026,17 +1032,18 @@ describe("ccmsg sidecar permit", () => {
       fs.writeFileSync(path.join(configDir, "say-dictionary.tsv"), "許可\tきょか\n");
       const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
       expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
-      expect(spoken()).toBe("-- きょかを求めています\n");
+      expect(await spoken()).toBe("-- きょかを求めています\n");
     });
   });
 
   // The request is what the person reads; a speech that fails costs the
-  // sound, not the request.
-  test("a speech that fails is said on stderr, and the request still stands", async () => {
-    await withDaemon(5, async (env, ctx) => {
+  // sound, not the request, and is the daemon's to log.
+  test("a speech that fails is said in the daemon's log, and the request still stands", async () => {
+    await withDaemon(5, async (env, ctx, spoken) => {
       const run = await runPermit(JSON.stringify({ blocked: "x", intents: ["編集"] }), env);
-      expect(run.code).toBe(0);
-      expect(run.err).toBe("ccmsg sidecar permit: the speech exited 5\n");
+      expect({ code: run.code, err: run.err }).toEqual({ code: 0, err: "" });
+      expect(await spoken()).toBe("-- 許可を求めています\n");
+      expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toContain("exited 5");
       expect(ctx.daemon.permitRequests.snapshot()).toHaveLength(1);
     });
   });
@@ -1054,7 +1061,7 @@ describe("ccmsg sidecar permit", () => {
         expect(run.err).toContain("standard input must be one request for permission as JSON");
       }
       expect(ctx.daemon.permitRequests.snapshot()).toEqual([]);
-      expect(spoken()).toBe("");
+      expect(await spoken()).toBe("");
     });
   });
 

@@ -6,9 +6,10 @@
 // and `permit` (ask the person for permission after the auto mode
 // classifier stopped an action, DR-0040). Each is answered here without
 // `next`: `send` and `peers` by asking the daemon (daemon-op.ts, DR-0046),
-// `launch` and `permit` through `ccmsg sidecar launch` / `permit`, `say`
-// through `ccmsg say`, the result always a text the model reads. SendMessage
-// is left to the harness.
+// `launch` and `permit` through `ccmsg sidecar launch` / `permit`, the result
+// always a text the model reads. `say` is the daemon's to speak: it finds the
+// call in the rows the module pushes (DR-0045 §6), so the tool only reads
+// the input. SendMessage is left to the harness.
 import * as v from "valibot";
 import {
   LaunchInputSchema,
@@ -35,9 +36,6 @@ import type { Engine, On } from "./engine.ts";
 import type { LifecycleState } from "./session-lifecycle.ts";
 import { toolInputSchemas } from "./tool-input-schemas.ts" with { type: "macro" };
 
-/** `say` budget: `ccmsg say` records the say and then speaks, and returns
- * when the speech ends, so a long text takes as long as it is to say. */
-export const SAY_TIMEOUT_MS = 120_000;
 /** `launch` budget (DR-0018 §3.7): the launch command's longest wait
  * (`launch_timeout_seconds`, at most 50 s) + the kill grace (0.5 s) + the wait for
  * its pipes' EOF (0.5 s) + a daemon `ccmsg sidecar launch` has to start (its
@@ -169,22 +167,13 @@ function failureText(stderr: string): string {
   return refusal.ok ? refusal.value.error.msg : said;
 }
 
-/** The `say` tool: say the text to the person through `ccmsg say`, which
- * records it for the webui (🔔) and speaks it. Never rejects. */
-async function sayTool<E>($: Engine, e: E): Promise<string> {
+/** The `say` tool: the daemon speaks the text and shows it in the webui (🔔)
+ * when the call's row reaches it, so this only reads the input. Whether the
+ * speech went is not known here. */
+function sayTool<E>(e: E): string {
   const read = parseWith(SayToolInputSchema, e);
   if (!read.ok) return notTheInput("say", read.failure.summary);
-  try {
-    const sid = await $.session.id();
-    const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "say", read.value.text], {
-      env: { CCMSG_SID: sid },
-      timeoutMs: SAY_TIMEOUT_MS,
-    });
-    if (run.exitCode === 0) return "伝えた (音声と webui の 🔔)";
-    return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split("\n")[0] ?? ""}`;
-  } catch (error) {
-    return `say を起こせなかったか ${String(SAY_TIMEOUT_MS / 1000)} 秒以内に終わらなかった: ${errorText(error)}`;
-  }
+  return "読み上げを依頼した (daemon が読み上げ、webui に 🔔 で出る)";
 }
 
 /** The `peers` tool: the sessions `send` can reach, spelled as it takes them.
@@ -319,9 +308,7 @@ export function registerToolCalls(on: On): void {
   })).catch(async () => ({
     result: `ccmsg の send が途中で止まり、届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`,
   }));
-  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async ($, e) => ({
-    result: await sayTool($, e),
-  })).catch(async () => ({ result: "ccmsg の say が途中で止まった。伝わったかは分からない" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async (_$, e) => ({ result: sayTool(e) }));
   on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
     result: await peersTool($, e),
   })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));

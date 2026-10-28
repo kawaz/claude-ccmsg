@@ -15,10 +15,9 @@ import {
 /** How many requests the daemon keeps. The oldest goes first once a new one
  * would exceed this.
  *
- * Design rationale: smaller than the say log's bound because a request
- * matters while its agent waits for the permission, which is far shorter
- * than the daemon lives, and the set is what a tab is sent when it
- * subscribes. */
+ * Design rationale: a request matters while its agent waits for the
+ * permission, which is far shorter than the daemon lives, and the set is
+ * what a tab is sent when it subscribes. */
 export const PERMIT_REQUEST_LOG_LIMIT = 50;
 
 /** What `markRead` did: the records it changed (none when every one was

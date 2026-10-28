@@ -335,14 +335,15 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const sub = await ws.requestOk({ op: "subscribe" });
       expect(sub.subscribed).toBe(true);
 
-      // a session's say is pushed to every user-role subscriber, this WS one included
+      // a session's request for permission is pushed to every user-role
+      // subscriber, this WS one included
       const speaker = await sessionConn(ctx, S);
-      const said = await speaker.requestOk({ op: "say", text: "hello from uds" });
-      const { ev } = await ws.readEventUntil("says", (e) => e.says.some((r) => r.id === said.id));
-      expect(ev.says.find((r) => r.id === said.id)).toMatchObject({
-        sid: S,
-        text: "hello from uds",
+      const asked = await speaker.requestOk({
+        op: "permit_request",
+        permit: { blocked: "hello from uds", intents: ["x"] },
       });
+      const { ev } = await ws.readEventUntil("permit_request", (e) => e.request.id === asked.id);
+      expect(ev.request).toMatchObject({ sid: S, blocked: "hello from uds" });
 
       ws.close();
       speaker.close();
@@ -364,9 +365,14 @@ describe("HTTP/WS transport (DR-0004)", () => {
 
       // served as the user: a user-role op answers, a session-role op is refused
       expect((await ws.requestOk({ op: "rooms" })).rooms).toEqual([]);
-      expect(await ws.request({ op: "say", text: "am I pinned?" })).toEqual({
+      expect(
+        await ws.request({
+          op: "permit_request",
+          permit: { blocked: "am I pinned?", intents: ["x"] },
+        }),
+      ).toEqual({
         ok: false,
-        error: { code: "bad_request", msg: "op 'say' requires session role" },
+        error: { code: "bad_request", msg: "op 'permit_request' requires session role" },
       });
 
       ws.close();
@@ -384,9 +390,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
       await wsUser.hello({ role: "user" });
       await wsUser.request({ op: "subscribe" });
 
-      // UDS session says -> the WS user receives it live
-      await udsSession.requestOk({ op: "say", text: "from uds" });
-      await wsUser.readEventUntil("says", (e) => e.says.some((r) => r.text === "from uds"));
+      // UDS session asks -> the WS user receives it live
+      await udsSession.requestOk({
+        op: "permit_request",
+        permit: { blocked: "from uds", intents: ["x"] },
+      });
+      await wsUser.readEventUntil("permit_request", (e) => e.request.blocked === "from uds");
 
       udsSession.close();
       wsUser.close();

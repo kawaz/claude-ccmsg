@@ -15,7 +15,7 @@ import {
   type DaemonCtx,
   type TestClient,
   isKind,
-  sayMarker,
+  streamMarker,
   sessionConn,
   userConn,
 } from "./helpers.ts";
@@ -107,8 +107,8 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   return c;
 }
 
-/** Connect a session that exists only to say a marker (helpers.ts
- * sayMarker); the reader is a user-role subscriber. */
+/** Connect a session that exists only to post a marker (helpers.ts
+ * streamMarker); the reader is a user-role subscriber. */
 async function markerSession(ctx: Ctx): Promise<TestClient> {
   const c = await sessionConn(ctx, SID_MARK);
   return c;
@@ -314,7 +314,7 @@ describe("webhook → ev:llm_requests", () => {
         ),
       ).toBe(401);
       const marker = await markerSession(ctx);
-      const seen = await sayMarker(marker, u, "marker");
+      const seen = await streamMarker(marker, u, "marker");
       expect(seen.some(isKind("llm_requests"))).toBe(false);
       marker.close();
       u.close();

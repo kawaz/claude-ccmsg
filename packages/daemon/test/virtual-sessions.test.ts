@@ -12,7 +12,7 @@ import {
 } from "../src/virtual-sessions.ts";
 import {
   isKind,
-  sayMarker,
+  streamMarker,
   startTestDaemon,
   stopTestDaemon,
   sessionConn,
@@ -352,7 +352,7 @@ describe("hello-time transcript adoption", () => {
           .join(""),
       );
       const peer = await sessionConn(ctx, "aaaaaaaa-0000-4000-8000-0000000000bb");
-      const seen = await sayMarker(peer, user, "marker");
+      const seen = await streamMarker(peer, user, "marker");
       expect(seen.some(isKind("session_status"))).toBe(false);
       const again = await user.requestOk({ op: "session_status", sid: sid() });
       expect(again.todos[0]?.status).toBe("completed");

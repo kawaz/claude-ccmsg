@@ -2282,7 +2282,6 @@ var PermitAttachmentReadResponseSchema = object({
   attachment: PermitAttachmentSchema
 });
 
-var SAY_TIMEOUT_MS = 120000;
 var LAUNCH_TIMEOUT_MS = 65000;
 var PERMIT_TIMEOUT_MS = 30000;
 var TOOL_INPUT_SCHEMAS = {
@@ -2514,23 +2513,11 @@ function failureText(stderr) {
   const refusal = parseWith(RefusalTextSchema, said);
   return refusal.ok ? refusal.value.error.msg : said;
 }
-async function sayTool($, e) {
+function sayTool(e) {
   const read = parseWith(SayToolInputSchema, e);
   if (!read.ok)
     return notTheInput("say", read.failure.summary);
-  try {
-    const sid = await $.session.id();
-    const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "say", read.value.text], {
-      env: { CCMSG_SID: sid },
-      timeoutMs: SAY_TIMEOUT_MS
-    });
-    if (run.exitCode === 0)
-      return "伝えた (音声と webui の \uD83D\uDD14)";
-    return `say が失敗した (exit ${String(run.exitCode)}): ${run.stderr.trim().split(`
-`)[0] ?? ""}`;
-  } catch (error) {
-    return `say を起こせなかったか ${String(SAY_TIMEOUT_MS / 1000)} 秒以内に終わらなかった: ${errorText(error)}`;
-  }
+  return "読み上げを依頼した (daemon が読み上げ、webui に \uD83D\uDD14 で出る)";
 }
 async function peersTool($, e) {
   const read = parseWith(PeersToolInputSchema, e);
@@ -2626,9 +2613,7 @@ function registerToolCalls(on) {
   })).catch(async () => ({
     result: `ccmsg の send が途中で止まり、届いたか確かめられなかった。${UNCONFIRMED_ADVICE}`
   }));
-  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async ($, e) => ({
-    result: await sayTool($, e)
-  })).catch(async () => ({ result: "ccmsg の say が途中で止まった。伝わったかは分からない" }));
+  on("tool.call", { tool: "mcp__ccmsg-v1__say" }, async (_$, e) => ({ result: sayTool(e) }));
   on("tool.call", { tool: "mcp__ccmsg-v1__peers" }, async ($, e) => ({
     result: await peersTool($, e)
   })).catch(async () => ({ result: "ccmsg の peers が途中で止まり、一覧を返せなかった" }));

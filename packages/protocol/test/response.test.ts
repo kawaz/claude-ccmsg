@@ -232,8 +232,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [] },
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
   ],
-  say: [{ ok: true, id: "0f0f/1" }],
-  say_read: [{ ok: true, ids: ["0f0f/1"] }],
+  say_read: [{ ok: true, ids: ["toolu_01"] }],
   permit_request: [{ ok: true, id: "0f0f/1" }],
   permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
   permit_attachment_read: [
@@ -624,7 +623,9 @@ describe("RESPONSE_SCHEMAS", () => {
   }
 
   test("the correlation envelope is not part of an op's reply", () => {
-    expect(parseWith(RESPONSE_SCHEMAS.say, { ok: true, id: "0f0f/1", request_id: "q1" })).toEqual({
+    expect(
+      parseWith(RESPONSE_SCHEMAS.permit_request, { ok: true, id: "0f0f/1", request_id: "q1" }),
+    ).toEqual({
       ok: true,
       value: { ok: true, id: "0f0f/1" },
     });

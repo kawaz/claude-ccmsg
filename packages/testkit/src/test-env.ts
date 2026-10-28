@@ -10,6 +10,11 @@ import { contentsOf, openRunTmp } from "./tmp.ts";
 
 process.env.CCMSG_AGENTS_POLL ??= "off";
 
+// A daemon speaks the says and the requests for permission it sees
+// (DR-0045 §6); one a test starts speaks through a binary that makes no
+// sound, unless the test hands it its own to record what was spoken.
+process.env.CCMSG_SAY_BIN ??= "/usr/bin/true";
+
 // One timeout for every test, long enough for the ones that start a daemon or
 // a CLI process. bun reads no `timeout` from bunfig.toml's [test] section, so
 // it is set here, where every run passes. A test that needs longer passes its

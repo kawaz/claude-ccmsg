@@ -190,17 +190,9 @@ export const NotifyResponseSchema = v.object({
 });
 export type NotifyResponse = Output<typeof NotifyResponseSchema>;
 
-export const SayResponseSchema = v.object({
-  ok: v.literal(true),
-  /** `id` of the SayRecord the daemon now holds — the ack target a later
-   * `say_read` names. */
-  id: v.string(),
-});
-export type SayResponse = Output<typeof SayResponseSchema>;
-
 export const SayReadResponseSchema = v.object({
   ok: v.literal(true),
-  /** echo of the acked SayRecords' ids */
+  /** echo of the acked tool_use ids */
   ids: v.array(v.string()),
 });
 export type SayReadResponse = Output<typeof SayReadResponseSchema>;

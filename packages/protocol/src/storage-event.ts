@@ -99,8 +99,7 @@ export const KindEventSchema = v.object({
 });
 export type KindEvent = Output<typeof KindEventSchema>;
 
-/** A session spoke through `ccmsg say`, as a 1on1 room's log holds it. The
- * daemon's own record of a say is SayRecord (stream-event.ts, DR-0036 §3). */
+/** A session spoke through `ccmsg say`, as a 1on1 room's log holds it. */
 export const SayEventSchema = v.object({
   type: v.literal("say"),
   /** sid of the session that spoke. */

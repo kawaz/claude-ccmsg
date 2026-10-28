@@ -1,7 +1,7 @@
-// The reading dictionary's lines and replacement (DR-0042), as pure
-// functions: which words are found where, and how the file's lines read and
-// read. Reading the file and speaking are the CLI's
-// (packages/cli/test/say-dictionary.test.ts).
+// The reading dictionary's lines and replacement (DR-0045 §6), as pure
+// functions: which words are found where, how the file's lines read, and how
+// the file lays over the shipped dictionary. Reading the file and speaking
+// are the daemon's (packages/daemon/test/say.test.ts).
 import { describe, expect, test } from "bun:test";
 import {
   applySayDictionary,
@@ -10,6 +10,7 @@ import {
   sayDictionaryEntries,
   sayDictionaryProblems,
   type SayDictionaryEntry,
+  userSayDictionary,
 } from "../src/index.ts";
 
 function say(entries: readonly SayDictionaryEntry[], text: string): string {
@@ -101,5 +102,23 @@ describe("readSayDictionaryLines", () => {
     expect(problems[1]?.reason).toContain("one tab");
     expect(problems[2]?.reason).toContain("the word");
     expect(problems[3]?.reason).toContain("the reading");
+  });
+});
+
+describe("userSayDictionary", () => {
+  // 何を保証するか: ファイルが無い間は同梱の初期辞書 (kawaz 裁定の 11 語) が効く。
+  // ファイルの行は同梱の後に重なり、同じ語はファイルが勝つ (大文字小文字を問わず)。
+  // 読めない行は行番号つきで返り、残りの行は効く。
+  test("lays the file over the shipped words, the file winning", () => {
+    const shipped = userSayDictionary(undefined);
+    expect(applySayDictionary(shipped.dictionary, "1Password の daemon と jj の PR")).toBe(
+      "ワンパスワード の デーモン と ジェイジェイ の ピーアール",
+    );
+    expect(shipped.problems).toEqual([]);
+    const user = userSayDictionary("DAEMON\tでーもん\nbroken\npush\tプッシュ\n");
+    expect(applySayDictionary(user.dictionary, "daemon に push、CI も")).toBe(
+      "でーもん に プッシュ、シーアイ も",
+    );
+    expect(user.problems.map((p) => p.line)).toEqual([2]);
   });
 });
