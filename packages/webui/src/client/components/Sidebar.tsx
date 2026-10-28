@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -174,18 +174,24 @@ export function Sidebar() {
   const panesRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLElement>(null);
   const axis = usePaneAxis(panesRef);
-  useEffect(() => {
-    saveSidebarWidth(sidebarWidth);
-  }, [sidebarWidth]);
-  useEffect(() => {
-    saveFormWidth(formWidth);
-  }, [formWidth]);
-  useEffect(() => {
-    saveDrawerWidth(drawerWidth);
-  }, [drawerWidth]);
-  useEffect(() => {
-    saveSidebarListHeight(listHeight);
-  }, [listHeight]);
+  // 書くのは人がスプリッターを動かした時だけ (storage.ts の「レイアウト寸法」:
+  // 動かしていない窓は何も書かず、最後にどこかの窓で使った値か既定を引き続ける)。
+  const resizeSidebarWidth = (width: number): void => {
+    setSidebarWidth(width);
+    saveSidebarWidth(width);
+  };
+  const resizeFormWidth = (width: number): void => {
+    setFormWidth(width);
+    saveFormWidth(width);
+  };
+  const resizeDrawerWidth = (width: number): void => {
+    setDrawerWidth(width);
+    saveDrawerWidth(width);
+  };
+  const resizeListHeight = (height: number): void => {
+    setListHeight(height);
+    saveSidebarListHeight(height);
+  };
 
   return (
     <nav
@@ -269,9 +275,9 @@ export function Sidebar() {
                 const dragAxis = readPaneAxis(panes);
                 const m = paneAxisMetrics(dragAxis, panes.getBoundingClientRect(), e);
                 if (dragAxis === "column") {
-                  setListHeight(clampSidebarListHeight(m.end - m.pointer, m.size));
+                  resizeListHeight(clampSidebarListHeight(m.end - m.pointer, m.size));
                 } else {
-                  setSidebarWidth(
+                  resizeSidebarWidth(
                     clampSidebarWidth(m.pointer - m.start, window.innerWidth - m.start),
                   );
                 }
@@ -298,16 +304,16 @@ export function Sidebar() {
           const panes = panesRef.current;
           if (!panes) return;
           if (readPaneAxis(panes) === "column") {
-            setDrawerWidth(clampDrawerWidth(e.clientX, window.innerWidth));
+            resizeDrawerWidth(clampDrawerWidth(e.clientX, window.innerWidth));
             return;
           }
           const form = formRef.current;
           if (form === null) {
-            setSidebarWidth(clampSidebarWidth(e.clientX, window.innerWidth));
+            resizeSidebarWidth(clampSidebarWidth(e.clientX, window.innerWidth));
             return;
           }
           const left = form.getBoundingClientRect().left;
-          setFormWidth(clampFormWidth(e.clientX - left, window.innerWidth - left));
+          resizeFormWidth(clampFormWidth(e.clientX - left, window.innerWidth - left));
         }}
       />
     </nav>

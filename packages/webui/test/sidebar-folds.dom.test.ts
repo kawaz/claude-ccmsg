@@ -20,6 +20,12 @@ import type {
 import { AppContext } from "../src/client/context.ts";
 import { Sidebar } from "../src/client/components/Sidebar.tsx";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
+import {
+  DRAWER_WIDTH_KEY,
+  FORM_WIDTH_KEY,
+  SIDEBAR_LIST_HEIGHT_KEY,
+  SIDEBAR_WIDTH_KEY,
+} from "../src/client/sidebar-panes.ts";
 import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
@@ -245,6 +251,49 @@ describe("the sidebar's folds", () => {
     expect(openFolds(root)).toEqual(["sidebar-sessions", "sidebar-globals"]);
     await click(toggleOf(root, "sidebar-globals"));
     expect(openFolds(root)).toEqual(["sidebar-sessions"]);
+  });
+});
+
+// storage.ts「レイアウト寸法」: a window that has not moved a splitter writes
+// nothing, and keeps reading the last value any window used (or the default).
+describe("the sidebar's pane sizes", () => {
+  const SIZE_KEYS = [
+    SIDEBAR_WIDTH_KEY,
+    FORM_WIDTH_KEY,
+    DRAWER_WIDTH_KEY,
+    SIDEBAR_LIST_HEIGHT_KEY,
+  ] as const;
+
+  function stored(): Record<string, string | null> {
+    return Object.fromEntries(
+      SIZE_KEYS.flatMap((key) => [
+        [`local ${key}`, localStorage.getItem(key)],
+        [`session ${key}`, sessionStorage.getItem(key)],
+      ]),
+    );
+  }
+
+  test("are not written on mount, only when a splitter is moved", async () => {
+    for (const key of SIZE_KEYS) {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    }
+    const { root } = await mountSidebar();
+    expect(Object.values(stored()).every((value) => value === null)).toBe(true);
+
+    const splitter = defined(root.querySelector("#sidebar-splitter"), "the sidebar's splitter");
+    await act(() => {
+      splitter.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+      splitter.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 333 }),
+      );
+      splitter.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    });
+    expect(localStorage.getItem(SIDEBAR_WIDTH_KEY)).toBe("333");
+    expect(sessionStorage.getItem(SIDEBAR_WIDTH_KEY)).toBe("333");
+    // Only the size the drag moved.
+    expect(localStorage.getItem(SIDEBAR_LIST_HEIGHT_KEY)).toBeNull();
+    expect(localStorage.getItem(DRAWER_WIDTH_KEY)).toBeNull();
   });
 });
 
