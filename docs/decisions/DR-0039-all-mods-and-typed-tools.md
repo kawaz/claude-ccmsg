@@ -92,7 +92,7 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 ### 4. CLI は人の口と module の transport の 2 面に縮める
 
 - **人の口**: `daemon` / `status` / `stop` / `origins` 等、人が端末で使うもの
-- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar begin`、`launch` の tool が起こす `sidecar launch`)。module が daemon に渡すもののうち `send` / `peers` / 事実 / 案内の URL / サイドカーの依頼への返事は CLI を挟まず daemon の `POST /op` で話す ([DR-0046](./DR-0046-module-op-over-http.md))
+- **module の transport**: module が `$.process.run` で起こすもの。`sidecar` 系 (`sidecar` / `sidecar begin`、`permit` の tool が起こす `sidecar permit`)。module が daemon に渡すもののうち `send` / `peers` / `launch` / 事実 / 案内の URL / サイドカーの依頼への返事は CLI を挟まず daemon の `POST /op` で話す ([DR-0046](./DR-0046-module-op-over-http.md))
 - `ccmsg sidecar send` は、SendMessage の `to` 1 つを受ける形 (op `address_send`) から、§3 の宛先の部分指定と本文を受け、宛先ごとの結果を返す新しい op (`send_message`) に置き換える。宛先の候補の tool の op は `peer_list`。どちらも module は daemon の `POST /op` で頼む ([DR-0046](./DR-0046-module-op-over-http.md))
 - エージェントがメッセージを入れる口を CLI から削る: `ccmsg post` / `ccmsg reply` (op `message_send`)、`ccmsg peers` の `addresses` (宛先の綴り)
 - `subscribe` を廃止し、`notify` の配送をセッションへの注入に付け替える (§9)

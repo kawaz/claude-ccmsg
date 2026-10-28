@@ -1,8 +1,9 @@
-# DR-0045: hooks module はセッションの会話の行を daemon に流すだけにし、daemon が行を正本として webui への中継・say と launch の副作用・既読を持つ
+# DR-0045: hooks module はセッションの会話の行を daemon に流すだけにし、daemon が行を正本として webui への中継・say の副作用・既読を持つ
 
-- Status: Accepted (2026-10-28、kawaz 裁定) — 🟡 部分実装 (§9 の段階 1・2)
+- Status: Accepted (2026-10-28、kawaz 裁定。launch は 2026-10-29 の裁定で §6 を改める) — ✅ 実装済み (§9 の段階 1〜3)
   - 段階 1: module の push (`hooks/transcript-push.ts`)、op `transcript_push`、daemon の relay (`transcript-relay.ts`)、`transcript_subscribe` の付け替え。実機の観測は [findings](../findings/2026-10-28-transcript-push-live-verify.md)
   - 段階 2: §3 の追いつきと uuid の重複除去、§5 の fold・API error・最後のユーザ入力の付け替え、`transcript.ts` の Watch の削除。実機の観測は [findings](../findings/2026-10-28-dr-0045-stage2-verify.md)
+  - 段階 3: §6 の say の発声と permit の音声 (`say-speech.ts`、`row-effects.ts`)、launch の `POST /op` (`launch_tool`)、§7 の未読と既読 (`say-unread.ts`、`say-read.json`、`ev:"say_unread"`、webui の 🔔)、§8 の削除。実機の観測は [findings](../findings/2026-10-28-dr-0045-stage3-verify.md)
 - Date: 2026-10-28
 
 ## Context
@@ -33,7 +34,7 @@ kawaz 2026-10-28 の裁定:
 | 持ち手 | 持つもの |
 |---|---|
 | hooks module | engine のイベント処理だけ。tool への応答 (`tool.call`)、`turn.step` (request の上書き、[DR-0041](./DR-0041-request-model-effort-override.md))、`turn.abort` ([DR-0044](./DR-0044-turn-abort.md))、`permit` のダイアログ ([DR-0040](./DR-0040-permit-request-tool.md))、prompt の差し込み ([DR-0035](./DR-0035-user-input-via-composer-fill.md))、セッションの事実 (`session_facts`)。会話の行は解釈せずに daemon へ流す (§2) |
-| daemon | ライブのセッションの会話の行の正本 (§3)。webui への中継 (§4)。行から導く状態 (Status の fold、API error、最後のユーザ入力、say の未読) (§5、§7)。行をきっかけにした副作用 (say の発声、launch の起動) と、`permit_request` を受けた時の音声 (§6) |
+| daemon | ライブのセッションの会話の行の正本 (§3)。webui への中継 (§4)。行から導く状態 (Status の fold、API error、最後のユーザ入力、say の未読) (§5、§7)。行をきっかけにした副作用 (say の発声) と、`permit_request` を受けた時の音声 (§6) |
 | webui | daemon から届く行と、`transcript_read` で読む履歴の描画。🔔 は say の tool_use の行から描く (§7) |
 
 - module の無いセッションは、ライブの更新も副作用も持たない。daemon が tail で拾い直す経路は作らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §7 の no_module)。履歴は `transcript_read` でファイルから読める
@@ -66,10 +67,10 @@ kawaz 2026-10-28 の裁定:
 
 **決め方** (kawaz 2026-10-28): 用途ごとに源を分ける。会話の行の正本は、セッションの transcript の jsonl。(a)〜(c) は次のとおり:
 - (a) daemon が `e.message` を行の形に直す: attachment の構造・usage・timestamp が `e` に無いので、直せない
-- (b) push の `e.message` を正本にする: 副作用 (§6) と既読 (§7) はこれで足りる。必要なのは tool_use の `id` / `name` / `input` で、jsonl と同じものが来る
+- (b) push の `e.message` を正本にする: 副作用 (§6) はこれで足りる。必要なのは tool_use の `id` / `name` / `input` で、jsonl と同じものが来る
 - (c) push を合図に jsonl の続きを読む: 中継 (§4) と fold (§5) は jsonl の行が要るので、これを採る
 
-副作用と既読を (b)、中継と fold を (c) にする。用途ごとに要るものが違い、互いに独立している。(c) の読み方:
+副作用を (b)、中継と fold と say の未読 (§7) を (c) にする。用途ごとに要るものが違い、互いに独立している。未読は追いつきの読みでも作るので、push と追いつきを 1 つの経路で扱える (c) の fold にし、say の時刻は行の timestamp から取る。(c) の読み方:
 - daemon はセッションごとに jsonl の読み終わりの位置を持つ。push が来たら、そこから続きを読む
 - 行は append より後に書かれる (実測で 20〜200 ms 後)。そこで、push で受けた uuid の行が jsonl に現れるまで、そのファイルだけを短い間隔で読み直す。上限 (例 5 秒) を過ぎたら 1 回最終読みをして諦める。待ちは push ごとの局所的な再試行で、待つ uuid が無ければ何も読まない。常時の Watch も FSEvents も使わない
 - 読んだ行を uuid で重ねて §4・§5 に流す。`door: "queue"` の append と、uuid の重なる二度目の append は読みの対象にしない
@@ -110,14 +111,14 @@ kawaz 2026-10-28 の裁定:
 
 ### 6. 副作用
 
-daemon は push で受けた `e.message` だけで副作用を起こす (§2 の (b))。追いつきの読みの行では起こさない (古い行で発声・起動をやり直さない)。同じ tool_use の id の副作用は 1 度だけ (id の集合をメモリに持ち、二重の push を除く)。
+daemon は push で受けた `e.message` だけで副作用を起こす (§2 の (b))。追いつきの読みの行では起こさない (古い行で発声をやり直さない): relay がファイルから読み済みの uuid の行は副作用の対象にしない (compaction で同じ uuid のまま来る二度目の append も、これで除く)。同じ tool_use の id の副作用は 1 度だけ (live のセッションごとに id の集合をメモリに持ち、行が書かれる前の二重の push を除く)。
 
 **say** (`mcp__ccmsg-v1__say` の tool_use、input `{ text }`):
 
 - daemon が読み上げ辞書を当てて、`[<say>, "--", <置き換えた本文>]` を起こす
   - `<say>` は daemon の環境の `CCMSG_SAY_BIN` か `/usr/bin/say`
   - `--` は、`-` で始まる本文を say のオプションとして読ませないため (実測: `say -o <file> "-v テスト"` は本文を読まずに exit 0、`--` を付けると発声する)
-- 発声は daemon の中で直列にする。同時に複数の say が来ても声が重ならない
+- 発声は daemon の中で直列にする。同時に複数の say が来ても声が重ならない。1 回の発声は 120 秒で打ち切って次へ進む (終わらない発声のバイナリが後の発声を止めない)
 - 辞書の規則 (archive の DR-0042 から引き取る):
   - 一致:
     - 大文字小文字を無視する
@@ -127,20 +128,17 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
     - 辞書に無い語はそのまま
   - ファイル: `<config dir>/say-dictionary.tsv`。1 行に `word<TAB>読み`、`#` で始まる行はコメント、空白だけの行は無視。規則に合わない行はその行だけ飛ばす。同じ語は後の行が勝つ。行の形はスキーマで読む ([DR-0038](./DR-0038-json-is-parsed-by-schema.md))
   - 同梱の辞書の後にファイルの行を重ねる (同じ語はファイルが勝つ)。初期値は `1Password` / `daemon` / `sidecar` / `plugin` / `OTP` / `URL` / `API` / `CI` / `PR` / `jj` / `Kyell` の読み
-  - 置き場: 同梱の辞書・行の読み・重ね合わせ・置き換えは protocol の純関数 (`packages/protocol/src/say-dictionary.ts`)。daemon は発声のたびにファイルを読む (編集は次の発声から効く)。飛ばした行と読めないファイルは daemon.log に 1 行ずつ書く
+  - 置き場: 同梱の辞書 (TS の定数 `BUILTIN_SAY_DICTIONARY`。daemon は bundle されるので、隣のファイルを読む形にしない)・行の読み・重ね合わせ・置き換えは protocol の純関数 (`packages/protocol/src/say-dictionary.ts`)。daemon は発声のたびにファイルを読む (編集は次の発声から効く)。飛ばした行と読めないファイルは daemon.log に 1 行ずつ書く
   - TL の 🔔 は、書かれた原文のまま描く
 - tool の結果は module が即座に返す: 「読み上げを依頼した (daemon が読み上げる)」。発声の成否は module には返らない
 - subagent / teammate の say も発声する
 
-**launch** (`mcp__ccmsg-v1__launch` の tool_use):
-
-- daemon が `session_launch` と同じ手順で起動し ([DR-0018](./DR-0018-session-launcher.md) §3)、結果を呼んだセッションの会話へ notify の封筒で戻す ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §9 と同じ peer 注入)。依頼者は session (`CCMSG_LAUNCH_REQUESTED_BY`) にする
-- module は入力を `LaunchInputSchema` で読む。読めなければ今と同じ文で即座に返し、何も起きない (daemon も同じ検査をして、読めない tool_use では起動しない)。読めたら「起動を依頼した。結果は ccmsg から知らせが届く」と返す
-- subagent からの launch の扱い (知らせの宛先) は段階 3 で決める
+**launch** (`mcp__ccmsg-v1__launch`): 行からは起こさない。module が daemon の `POST /op` の `launch_tool` を 1 往復で呼び、daemon は起動コマンドを上限付きで待って、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (kawaz 2026-10-29、[DR-0018](./DR-0018-session-launcher.md) §3.7)。行から起こす形は、tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れないので採らない
 
 **permit の音声**:
 - daemon が `permit_request` を記録した時に、上の say と同じ発声の関数で鳴らす。文は固定文「許可を求めています」か、依頼が持つ読み上げ用の文 (DR-0040 で足す `voice`)
 - CLI (`ccmsg sidecar permit`) は発声しない
+- テストの daemon は鳴らさない: テストの preload が `CCMSG_SAY_BIN` を無音のバイナリにする (テストが自分のバイナリを渡す時を除く)
 
 ### 7. say の表示と既読
 
@@ -150,6 +148,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
+- daemon の終了の途中では `ev:"say_unread"` を送らない。終了で fold を閉じると未読が空になり、タブは次の daemon が未読を送るまで全部の say を 🔕 として見せてしまう
 - 永続化: 既読の id の集合と、集合を作った時刻 `since` を `<state dir>/say-read.json` に持つ
   - `since` より前の say は既読とみなす (初回やファイルが壊れた時に、古い say で 🔔 が溢れないように)
   - 書き込みは `say_read` のたびに一時ファイルへ書いて rename し、応答はその後に返す
@@ -162,7 +161,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - protocol の op `say`、`SayRecord`、`ev:"says"`。daemon の `say-log.ts`
 - webui の say の時刻の差し込み (`useSayBubbles` と say-merge の say の分。許可依頼の時刻の差し込みは残す)
 - CLI の `sidecar permit` の発声と、CLI の読み上げ辞書 (`packages/cli/src/say-dictionary*`)
-- module の say / launch の CLI 経由の transport (`ccmsg sidecar launch` は webui と人の口として残すかを段階 3 で決める)
+- module の say / launch の CLI 経由の transport。`ccmsg sidecar launch` も削る (呼び手は module だけ。webui は op `session_launch` を直に使う)
 - `transcript.ts` の Watch (§5)
 - 旧版の plugin の module は自分の root の `bin/ccmsg say` を起こすので、旧版の CLI のまま発声する。旧版の CLI が送る op `say` は新しい daemon に断られるが、旧版の CLI は記録の失敗を握って発声に進む (実測)。旧版のセッションは行を push しないので、TL のライブ更新と 🔔 の未読は無い (再起動で新しい版になれば付く)
 - PATH に置いた `say` の shim (`exec ccmsg say "$@"`) は、PATH の `ccmsg` が `say` を持たない版を指した時点で発声できなくなる。shim の copy は消す
@@ -174,7 +173,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 | 0 | §2 の観測 (済み: `claude -p` と対話のセッション) | — |
 | 1 (済み) | push の op と module の転送、daemon の受け口、§4 の中継 (`transcript_subscribe` の源を push 起点の読みに置き換える。`ev:"transcript"` の形と webui は不変) | DR-0046 の `POST /op` |
 | 2 (済み) | §3 の追いつきと uuid の重複除去、§5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
-| 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
+| 3 (済み) | §6 の副作用 (say の発声、permit の音声)、launch の `POST /op`、§7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
 
 ## Alternatives Considered
 
@@ -192,9 +191,10 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - module → daemon の要求は、行の数だけ増える (1 turn に数行〜数十行)。DR-0046 の口の往復は 1 ms 前後 (実測) で、直列の送りは返事を待つ間の行をまとめる
 - daemon の副作用は daemon の環境で起きる (`CCMSG_SAY_BIN`、`<config dir>` は daemon の側の値)
 - Timeline の live の反応: 今の tail は fs.watch (FSEvents) で即時に拾い、2 秒の backup の poll で取りこぼしを拾う (最悪 2 秒)。新しい形は push の後に jsonl に行が現れるのを待って読むので、書き込みの遅れ (実測 ≈ 200 ms) の分だけ遅れ、常時のポーリングは無い
-- daemon が止まっている間の行は、副作用を起こさない (発声も起動もされない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
-- 発声の成否と launch の結果は tool の結果に入らない。launch の結果は notify で会話に届く
-- 触る範囲: hooks (`session.append` の転送、say / launch の handler の返事)、protocol (push の op、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、既読のファイル)、webui (say のバブル、Sessions 一覧の数)、CLI (`ccmsg say` と permit の発声の削除)
+- daemon が止まっている間の行は、副作用を起こさない (発声されない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
+- 発声の成否は tool の結果に入らない
+- 触る範囲: hooks (`session.append` の転送、say / launch の handler)、protocol (push の op、`launch_tool`、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、`launch_tool`、既読のファイル)、webui (say のバブル、Sessions 一覧の数)、CLI (`ccmsg say`・`sidecar launch`・permit の発声の削除)
+- 既読の集合 (`say-read.json` の `read`) は刈り込まず、tool_use の id の数だけ増える (1 つ数十 byte)
 
 ## 関連
 

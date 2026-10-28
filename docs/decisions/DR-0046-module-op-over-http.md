@@ -68,7 +68,7 @@ kawaz 2026-10-28 の裁定:
 | `subscribe`、`transcript_subscribe`、`transcript_unsubscribe`、`session_status_subscribe`、`session_status_unsubscribe` | 断る | 接続への push の購読とその解除。返事の後に push を受ける接続が無く、解除する購読も無い |
 | 上以外の全 op | 通す | 1 つの request に 1 つの返事で、接続の状態を返事の後に使わない。role の制限は dispatch のまま |
 
-`session_launch` も通すが、起動の待ちは最大約 61 秒で、§6 の host の 30 秒の打ち切りを超えうる (§7 で launch を移さない理由)。
+`session_launch` も通すが、起動の待ちは最大約 61 秒で、§6 の host の 30 秒の打ち切りを超えうる。tool `launch` は待ちを 15 秒で区切る別の op `launch_tool` を使う ([DR-0018](./DR-0018-session-launcher.md) §3.7)。
 
 ### 5. 権限
 
@@ -109,12 +109,12 @@ kawaz 2026-10-28 の裁定:
 | セッションの事実 | `session_facts` | `ccmsg sidecar facts` |
 | サイドカーの依頼への返事 (DR-0035 §3) | `sidecar_reply` | `ccmsg sidecar reply` |
 | 案内の URL (DR-0039 §5) | `ping` (`webui_url`) | なし (`ccmsg status` は人の口として残る) |
+| tool `launch` (kawaz 2026-10-29) | `launch_tool` (起動の待ちを 15 秒で区切り、超えた起動の結果は notify で戻す、[DR-0018](./DR-0018-session-launcher.md) §3.7) | `ccmsg sidecar launch` |
 
 この DR では移さないもの:
 
 - `ccmsg sidecar begin`: state file を書き、daemon が無ければ起こし、古ければ置き換える。HTTP の口は daemon が居ないと話せない
-- `ccmsg sidecar launch` (tool `launch`): 起動の待ちは最大約 61 秒 ([DR-0018](./DR-0018-session-launcher.md) §3.7) で、host が fetch を 30 秒で打ち切る
-- `ccmsg sidecar say-mark` (tool `say`)、`ccmsg sidecar permit` (tool `permit`)、request override、turn abort: 別の作業 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md)、DR-0041、DR-0044) が CLI 経由で仕上げた後に、この口へ移す
+- `ccmsg sidecar permit` (tool `permit`)、request override、turn abort: 別の作業 (DR-0040、DR-0041、DR-0044) が CLI 経由で仕上げた後に、この口へ移す。tool `say` は CLI を起こさない (daemon が push の行から発声する、[DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6)
 - daemon → module の向き: サイドカー (`ccmsg sidecar`) が daemon の依頼を module に渡す経路と、`describe` の版 (`ccmsg version`) は DR-0035 §3 のまま。依頼への返事だけがこの口に移る
 
 ### 8. 互換
@@ -136,7 +136,6 @@ kawaz 2026-10-28 の裁定:
 | keep-alive で接続を使い回す | 1 要求の往復は 0.5 ms 前後で (Consequences)、接続を張る費用は小さい。使い回すと 1 つの接続の中で要求の区切りと相手の pid の持ち越しを扱うことになる。行ごとの push (DR-0045) で接続の数が問題になった時に足す |
 | module の側に timeout を持つ (`$.clock.after` との race) | `tool.call` の hook で時計の待ちが 10 秒の予算に数えられるかを確かめていない。host の 30 秒の打ち切りと daemon の側の期限で上限は決まっている |
 | module が所在を名乗る (`$.session.cwd()`) | 所在は 5 つの 1 組で、module は `repo` / `ws` / `branch` / `repo_root` を持たない。cwd だけを名乗ると `repo_root` が消え、ファイルを読める範囲 (fs-access) が変わる |
-| tool `launch` も移す | 起動の待ちが host の 30 秒の打ち切りを超える |
 
 ## Consequences
 

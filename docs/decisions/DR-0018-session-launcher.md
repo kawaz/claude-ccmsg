@@ -1,6 +1,6 @@
 # DR-0018: Session Launcher (エージェントの tool `launch` と webui のフォームから、config で固定した 1 つの起動コマンドでセッションを起動する)
 
-Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)。§3.7 の tool `launch` の transport と結果の文は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 (daemon が tool_use の行から起動し、結果は notify で会話に戻す) で置き換わる
+Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)。§3.7 の tool `launch` は daemon の `POST /op` の `launch_tool` で起動し、待ちを超えた起動の結果は notify で会話に戻す (2026-10-29 の kawaz 裁定)
 Date: 2026-07-15
 Sponsor: kawaz
 
@@ -57,7 +57,7 @@ session_launcher: {
 - **`launch_command`** (省略可): 起動コマンドの argv (空でない文字列の配列)。省略すると plugin に同梱の**組み込みの起動コマンド** (`packages/daemon/src/default-launch-command.ts`) を、daemon を動かしている bun (`process.execPath`) で `[<bun>, <組み込みスクリプト>]` として実行する。組み込みは stdin の JSON の field を同じ名前の claude のオプションに写し、`hyoui run --detached -- claude <オプション>` を加工せずに実行して hyoui の終了コードで終わる (契約と中身は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」)。面の切替・cwd の信頼判定・trust ダイアログの吸収等が要る環境は自前のコマンドを書く。shell を介さずに実行する。先頭の要素は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前で、config を読む時に実行できるファイルの絶対パスに固定する (`~/` を展開し、名前は `PATH` で探す)。見つからない・実行できない時、`~` 単体の時は読めない config として daemon を起動時に止める。起動のたびに探し直さないので、起動の後で `PATH` やファイルが変わっても、起動したものと違うものを実行しない。起動コマンドが受ける入力と返すものの契約は [launch-command](../design/launch-command.md)
 - **`root_dirs`** (必須、空でない): webui の cwd ツリーの根。絶対パスか `~/…`。起動の cwd をこの配下に限ることはしない (cwd の信頼判定は起動コマンドの責務、§3.8)
 - **`dir_tree_depth`** (既定 2、1 以上の整数): cwd ツリーの初期ロードの深さ (LN-Q3)
-- **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。上限は tool の待ち (§3.7 の 65 秒) に、kill の猶予と出力の待ちと daemon の起動を待つ分が収まるように置く
+- **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。既定の 10 秒の起動は、kill の猶予と出力の待ちを足しても tool の待ち (§3.7 の 15 秒) に収まる
 - **`launch_max_concurrency`** (既定 4、1〜16 の整数): 同時に走らせる起動コマンドの数の上限。超えた依頼は起動コマンドを走らせずに `launch_busy` で断る。依頼者ごとの頻度の制限はしない (上限は daemon が抱えるプロセスの数に置く)
 - **`clean_env` / `keep_env`** (既定 `[]`): 起動コマンドに渡す環境から落とすキーと、落とさずに残すキーのパターン。daemon はあるセッションの中の shell から起動されることがあり、そのセッション由来の変数 (`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_CHILD_SESSION` 等) を持っている。それが新しいセッションへ流れて動作を変えるのを防ぐ。パターンは `*` がキー名の中の任意の文字列 (改行を含む) で、それ以外はリテラル (大文字小文字を区別、キー名全体との一致)。両方に当たるキーは残す (`keep_env` が勝つ)。広い `CLAUDE*` で落としつつ、面の分離に要る `CLAUDE_CONFIG_DIR` を残すのがこの優先の用途。daemon が足す変数 (`CCMSG_LAUNCH_REQUESTED_BY`、§3.5) は clean / keep の判定の後に重ねるので、`CCMSG_*` を落とすパターンでも必ず届く
 - config は 1 つのスキーマで読み ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、読めなければ daemon は起動時に止まる。エラーは読めない所ごとに `config: <file>: <場所>: <理由>` の 1 行で daemon.log に書かれ、CLI が spawn した daemon ならその行が CLI のエラーとして出る。壊れた所だけ捨てて起動したり、不正な値を既定値に読み替えたりはしない。既定値は値が無い時だけスキーマが与える。`session_launcher` に上の 7 つ以外のキーがあっても読めない (次の移行期間の 3 つを除く)。`session_launcher` の節が無ければ起動は設定されていない (`launcher_not_configured`、§3.4)。節があれば `launch_command` が無くても起動できる
@@ -178,8 +178,11 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 
 - **description と input schema**: [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の「mods の tool の作り方」に従う。description は `Launch a Claude session`。input schema は `LaunchToolFieldsSchema` を変換した 1 つの object で、各 field の型と enum (`model` / `effort`) と `required: ["cwd"]` だけを持ち (`additionalProperties` 等のメタのキーは出さない。知らない field は handler が読み取りで落とす)、field の説明は `resume` の `Session id to resume` だけ。uuid の形、空文字の禁止、組み合わせの検査 (§3.2) は schema に書かず、handler が読む `LaunchInputSchema` が持つ。使い方 (組み合わせの選び方、`exit_code` 0 はセッションの到達ではなく `peers` で確かめること) は skill に置く。Claude Code は top-level に `oneOf` か `anyOf` を持つ input schema の tool を session の tools から外す ([findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md)) ので、input schema は分岐の無い 1 つの object に保つ
 - **handler の読み方**: engine は `tool.call` の入力と同じ階層に自分の field (`tool`・`tool_use_id`・subagent なら `agentId`、後で足されるもの) を並べる。handler は `LaunchToolFieldsSchema` の field だけを取り出し (strict でない object で読み、他の field は落とす)、それを `LaunchInputSchema` で読む。engine の field を名前で外す作りにしない (engine が field を足すたびに全部の呼び出しが読めなくなる)。読めなければ「launch の入力が形に合わないので何もしていない: <理由>」で返す
-- **transport**: `ccmsg sidecar launch --sid <sid>`。stdin に入力の JSON、stdout に response の JSON。module の待ちは 65 秒: `launch_timeout_seconds` の上限 50 秒 + SIGKILL までの猶予 0.5 秒 + SIGKILL の後の待ち 0.5 秒 + EOF の待ち 0.5 秒 + `ccmsg sidecar launch` が daemon を起動して繋がるまでの待ち (再試行の間隔の和で約 10 秒) + 退避の書き込み。この和が待ちを下回ることはテストで固定する
-- **結果の文**: response の `{ session_id?, exit_code, stdout, stderr }` を JSON の文字列で返す。daemon が断った時と確かめられなかった時の文は protocol の `launchErrorText` が決め、webui と同じ文になる: daemon が断った (`internal` 以外) なら「ccmsg の daemon が起動を断ったので、起動していない (<code>): <msg>」、`internal` (op が途中で throw した、起動コマンドを走らせた後かもしれない) なら「起動したか確かめられなかった: <msg>」に「`peers` で確かめる」を足す。daemon に繋がらない時 (`ccmsg sidecar launch` の exit 3) は「ccmsg の daemon に繋がらず、起動していない」、65 秒を超えた時と途中で止まった時は「起動したか確かめられなかった。`peers` で確かめる」
+- **transport**: daemon の `POST /op` ([DR-0046](./DR-0046-module-op-over-http.md)) の op `launch_tool` (`{ launch, agent_id? }`、session role だけ) を 1 往復。`agent_id` は subagent からの呼び出しの時の、その subagent の id。daemon は `session_launch` と同じ手順 (依頼者はそのセッション、`launch_max_concurrency` と終了時の待ちも同じ) で起動し、起動コマンドの終わりを `LAUNCH_TOOL_WAIT_MS` (15 秒) まで待つ
+  - 待ちの内に終わったら、`session_launch` の返事の欄に `outcome: "done"` を付けて返す
+  - 終わらなければ `{ outcome: "running" }` を返し、起動は続ける。終わった時に、結果を呼んだ会話へ notify の封筒 (from は daemon、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §9) で入れる。subagent からの起動はその subagent 宛て (send の `agent_id` と同じ経路)、届かなければ daemon.log に書く。daemon の終了は、起動の待ちの後にこの知らせの待ちもする
+  - 15 秒の根拠: host は module の fetch を 30 秒で打ち切る。同梱の起動コマンド (`hyoui run --detached`) の所要時間は実測で 40〜411 ms (5 回、最初の 1 回は hyoui の server の起動を含む、[findings](../findings/2026-10-28-dr-0045-stage3-verify.md))。既定の `launch_timeout_seconds` (10 秒) で止められる起動も、kill の猶予と出力の待ち (計 1.5 秒) を足して 15 秒に収まるので、既定の設定では結果は同期で返る
+- **結果の文**: `done` は `{ session_id?, exit_code, stdout, stderr }` を JSON の文字列で返す。`running` は「起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く」。後で届く知らせの文は「ccmsg の launch (cwd: <cwd>) が終わった: 」に、同期の時と同じ JSON か断りの文を続けたもの。daemon が断った時と確かめられなかった時の文は protocol の `launchErrorText` が決め、webui と同じ文になる: daemon が断った (`internal` 以外) なら「ccmsg の daemon が起動を断ったので、起動していない (<code>): <msg>」、`internal` (op が途中で throw した、起動コマンドを走らせた後かもしれない) なら「起動したか確かめられなかった: <msg>」に「`peers` で確かめる」を足す。daemon が居ない時は「ccmsg の daemon が居ないので、起動していない」、古い時は「ccmsg の daemon がこの plugin より古いので、起動していない」、返事が無い時と途中で止まった時は「起動したか確かめられなかった。`peers` で確かめる」
 - **skill**: ccmsg の skill に `launch` の節を置く (いつ使うか、field の組み合わせ、`exit_code` 0 の後に `peers` で到達を確かめること、非 0 なら `session_id` は無く起動していないこと、`resume` と `continue` は走っているセッションに使わないこと、launch は permission を通らず `prompt` は起動されたセッションで人の入力として読まれること)
 
 ### 3.8 権限: session role からも起動できる
@@ -220,7 +223,7 @@ session role (エージェント) からの `session_launch` を受ける。
 |---|---|
 | 1 | protocol: `LaunchFieldsSchema` / `LaunchInputSchema` (組み合わせの検査) / `LaunchToolFieldsSchema` / `LaunchCommandInputSchema`、`session_launch` の request / response、`session_launcher_config` の response (`default_effort`)、error code `launch_command_unavailable` / `launch_busy`、capability `launch_available`、結果の文 `launchErrorText` |
 | 2 | daemon: config のスキーマ (§3.1、起動コマンドの絶対パスへの固定、組み込みの起動コマンド)、§3.5 の手順 (`launch_max_concurrency`、process group、出力の上限、終わる時の待ち)、§3.6 の退避と掃除、session role の受け付け、`default_effort` の読み取り |
-| 3 | module と CLI: `ccmsg sidecar launch`、tool `launch` の登録と handler、input schema と description、skill の節 |
+| 3 | module: tool `launch` の登録と handler (op `launch_tool`)、input schema と description、skill の節 |
 | 4 | webui: 全部の欄のフォーム、model / effort の既定、prefill、結果パネル、`launch_available` |
 | 5 | runbook (`session-launcher-setup` と `fork-rescue`) を新しい config と起動コマンドの契約に書き直す |
 
@@ -234,6 +237,7 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-10-25 (kawaz)**: エージェント向けの tool `launch` を足す。daemon が新しいセッションの `session_id` を生成して起動コマンドの入力に足す (tool の入力の型と起動コマンドの入力の型は別)。起動コマンドは config の `launch_command` 1 本で、daemon は JSON を stdin で渡すだけ。response は `{ session_id?, exit_code, stdout, stderr }` (`session_id` は新しいセッションを作る起動で exit 0 の時だけ。起動コマンドは失敗を全部セッションの起動より前に返す前提) で、4096 bytes 以上の出力はファイルに退避して置き場を返す。daemon は exit code を解釈しない。session role からの起動を許可する — §3.3〜§3.8
 - **2026-10-25 (kawaz、追加)**: 起動の入力の field 名を claude のオプション名の snake_case に揃え、起動の種類を表す `type` を持たない。引数の無いオプションは boolean。claude が拒む・無視する組み合わせはスキーマの組み合わせの検査で弾く。tool の入力は op の入力から `resume_session_at` を外したもの、起動コマンドの入力は op の入力に `session_id` を足したもの (field は claude のオプションと 1 対 1、依頼者は環境変数 `CCMSG_LAUNCH_REQUESTED_BY` で渡し、`clean_env` の判定の後に重ねる)。起動に関わる config のキーは `launch_` で揃える (`launch_timeout_seconds` / `launch_max_concurrency`)。`launch_command` は省略でき、無ければ同梱の組み込みの起動コマンド (`hyoui run --detached -- claude …` を加工せずに実行する) を使う。webui のフォームは全部の欄を常に出し、新規の model の既定は `fable`、effort の既定は daemon の settings.json の `modelSettings.<model>.effortLevel` (`session_launcher_config` の `default_effort`)。あわせてレビューの指摘から、`launch_max_concurrency` と `launch_busy`、daemon が終わる時の待ち、起動コマンドの絶対パスへの固定、process group への signal、出力の 1 MiB の上限、log の行の自由文の JSON の文字列化と `timed_out`、tool の待ちの 65 秒を入れる — §3.1〜§3.9
 - **2026-10-25 (kawaz、追加 2)**: `resume_session_at` は `fork_session` と一緒にだけ受ける (fork しない resume に付けた時の claude の挙動は未観測で、意味も無い) — §3.2
+- **2026-10-29 (kawaz)**: tool `launch` を daemon の `POST /op` に移し (`launch_tool`)、`ccmsg sidecar launch` を削る。daemon は起動コマンドを上限付きで待ち、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (subagent からの起動はその subagent 宛て)。transcript の行から daemon が起動する形 (DR-0045 §6 の当初の形) は採らない — §3.7
 
 ## 6. 不採用
 
@@ -249,6 +253,8 @@ session role (エージェント) からの `session_launch` を受ける。
 | 依頼者ごとに起動の頻度を制限する | daemon が守るべきは抱えるプロセスの数で、`launch_max_concurrency` で足りる。誰の起動を許すかは起動コマンドの判断 (§3.8、`CCMSG_LAUNCH_REQUESTED_BY`) |
 | 依頼者を起動コマンドの入力の field (`requested_by`) にする | 入力の field は claude のオプションと 1 対 1 に保つ。オプションに無い名前を混ぜると、field をそのままオプションに写す起動コマンド (組み込みを含む) が名前ごとに例外を持つことになる |
 | `launch_command` を必須にし、既定を持たない | 設定を書くまで起動が使えず、hyoui に claude を載せるだけの環境でも同じ起動コマンドを各自が書くことになる。既定の組み込みは加工をしないので、環境の都合が要る人は自前に差し替えればよく、既定があることで失うものが無い |
+| tool `launch` を daemon が transcript の tool_use の行から起動し、結果は notify だけで返す | tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れない。起動は大抵すぐ終わる (§3.7 の実測) ので、待ちの内に終われば同期で返す方が使える (kawaz 2026-10-29) |
+| tool `launch` を `ccmsg sidecar launch` (CLI) 経由のまま残す | 呼び出しのたびに CLI の process が起き、待ちを host の fetch の打ち切りの外に置くために 65 秒の別の待ちを持つことになる (kawaz 2026-10-29) |
 
 ## 7. 未確定
 

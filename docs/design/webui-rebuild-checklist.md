@@ -61,7 +61,7 @@
 | fold グループ化 | `FoldGroup` | DR-0020 | 移す | |
 | ccmsg メッセージ吹き出し | `CcmsgBubble` + `op:read` | DR-0027 | 移す | DR-0027 Accepted、daemon 一次情報での復元は現役 |
 | AI 発 post/reply の TL 表示 | `PeerCcmsgLineView` | DR-0027 | 移す | 同上 |
-| say バブルの配置 | `say-merge.ts` + `op:say_read` | — | 移す | daemon 側 op あり |
+| say バブルと既読 | `transcript-model.ts` の say の境界 + `say-read.ts` + `ev:say_unread` / `op:say_read` | DR-0045 | 移す | daemon 側 op あり |
 | fork 境界の表示 | `fork-point.ts` / `fork-divider.ts` / `ForkDivider` / `op:fork_origin` | — | 移す | hello の能力フラグに依らない (`fork_origin` だけで出る) |
 | 位置 pin と着地スクロール | `timeline-position.ts` + `navigation.ts` の `timelinePositions` | DR-0004 | 移す | URL で TL の一点を指せることは共有動線 |
 | 自動追随 (追記時の追尾) | `Timeline()` 内 | — | 移す | |
