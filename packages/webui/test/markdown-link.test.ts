@@ -20,6 +20,7 @@ import {
   isSafeUrl,
   literalAutolinkText,
   markdownLinkPathRef,
+  rewriteAliasHref,
 } from "../src/client/markdown-link.ts";
 
 describe("classifyMarkdownLinkUrl", () => {
@@ -136,6 +137,66 @@ describe("classifyMarkdownLinkUrl", () => {
     expect(classifyMarkdownLinkUrl("https://ccmsg.example.com/s/abc")).toEqual({
       kind: "external",
       url: "https://ccmsg.example.com/s/abc",
+    });
+  });
+});
+
+// An agent writes links under the name the daemon gives it (the head of ping's
+// `webui_urls`, DR-0043 §7). A page opened at another of those names (another
+// device's path) cannot always reach the head, so such a link is moved onto
+// the page's own origin. Only the origin moves; an origin the daemon does not
+// list is somebody else's site and is never touched.
+describe("rewriteAliasHref", () => {
+  const head = "https://ccmsg.example.ts.net";
+  const alias = "https://ccmsg.v6.example.jp";
+  const webuiUrls = [head, alias];
+
+  test("an href on another listed name moves to the current origin", () => {
+    expect(rewriteAliasHref(`${head}/s/abc/timeline/head`, webuiUrls, alias)).toBe(
+      `${alias}/s/abc/timeline/head`,
+    );
+  });
+
+  test("the path, query and hash are kept", () => {
+    expect(rewriteAliasHref(`${head}/s/abc/files/a%20b.md?sb.r=1#L10-L20`, webuiUrls, alias)).toBe(
+      `${alias}/s/abc/files/a%20b.md?sb.r=1#L10-L20`,
+    );
+  });
+
+  test("an href already on the current origin is returned as it came", () => {
+    expect(rewriteAliasHref(`${alias}/s/abc`, webuiUrls, alias)).toBe(`${alias}/s/abc`);
+  });
+
+  test("an origin the daemon does not list is left alone", () => {
+    expect(rewriteAliasHref("https://example.com/s/abc", webuiUrls, alias)).toBe(
+      "https://example.com/s/abc",
+    );
+    // Same host, other port: a different origin, so not one of the names.
+    expect(rewriteAliasHref("https://ccmsg.example.ts.net:8443/x", webuiUrls, alias)).toBe(
+      "https://ccmsg.example.ts.net:8443/x",
+    );
+  });
+
+  test("nothing moves before the list has arrived", () => {
+    expect(rewriteAliasHref(`${head}/s/abc`, undefined, alias)).toBe(`${head}/s/abc`);
+  });
+
+  test("an href that does not parse is returned as it came", () => {
+    expect(rewriteAliasHref("docs/x.md", webuiUrls, alias)).toBe("docs/x.md");
+  });
+
+  test("a link classified with the list opens in-app at the current origin", () => {
+    expect(classifyMarkdownLinkUrl(`${head}/s/abc?x=1#m3`, alias, webuiUrls)).toEqual({
+      kind: "internal",
+      url: `${alias}/s/abc?x=1#m3`,
+    });
+    expect(codeSpanLinkTarget(`${head}/s/abc`, alias, webuiUrls)).toEqual({
+      kind: "internal",
+      url: `${alias}/s/abc`,
+    });
+    expect(classifyMarkdownLinkUrl("https://example.com/x", alias, webuiUrls)).toEqual({
+      kind: "external",
+      url: "https://example.com/x",
     });
   });
 });

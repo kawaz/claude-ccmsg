@@ -31,6 +31,7 @@ import type {
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { CodeCopyFrame } from "./components/CodeCopyFrame.tsx";
+import { useWebuiUrls } from "./context.ts";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { splitTextForIssueRefs } from "./issue-ref.ts";
@@ -326,6 +327,10 @@ interface MarkdownRenderCtx {
    * author's own link target wins over a derived one. Mutated during the
    * walk, mirroring `headingIndex`. */
   inLink: boolean;
+  /** The other names this webui is opened at (ping's `webui_urls`, DR-0043
+   * §7): an absolute link naming one opens here under the current origin
+   * (`rewriteAliasHref`). Absent until the daemon has answered. */
+  webuiUrls?: readonly string[];
 }
 
 /** A failed write, reported against the item it happened to.
@@ -606,8 +611,13 @@ function renderTextRun(
  * The `<code>` sits inside the `<a>`, so the span keeps its code look; where
  * it opens follows a markdown link to the same URL: off-app in a new tab, this
  * webui's own origin in place. */
-function renderCodeSpan(value: string, key: string, inLink: boolean): VNode {
-  const target = codeSpanLinkTarget(value, currentOrigin());
+function renderCodeSpan(
+  value: string,
+  key: string,
+  inLink: boolean,
+  webuiUrls: readonly string[] | undefined,
+): VNode {
+  const target = codeSpanLinkTarget(value, currentOrigin(), webuiUrls);
   const code = <code class="md-inline-code">{value}</code>;
   if (!target) {
     return withInlineCopy(
@@ -822,7 +832,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // batch answer — falls through to plain `<code>`, matching pre-DR
       // output byte-for-byte.
       const href = ctx.filePathLinker ? ctx.filePathLinker(value) : null;
-      if (!href) return renderCodeSpan(value, key, ctx.inLink);
+      if (!href) return renderCodeSpan(value, key, ctx.inLink, ctx.webuiUrls);
       return withInlineCopy(
         <a key={key} class="md-inline-code-file-link" href={href}>
           <code class="md-inline-code">{value}</code>
@@ -883,7 +893,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
         );
       }
       // kawaz r55 m116/m117. Four outcomes, see `classifyMarkdownLinkUrl`.
-      const target = classifyMarkdownLinkUrl(link.url, currentOrigin());
+      const target = classifyMarkdownLinkUrl(link.url, currentOrigin(), ctx.webuiUrls);
       const label = renderLinkLabel(link.children, key, ctx);
       if (target.kind === "disarm") {
         // Render the link's own text with no <a>/href at all, so neither a
@@ -947,7 +957,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // instead as alt text plus a clickable link the user opts into.
       const image = node;
       const label = image.alt || image.url;
-      const target = classifyMarkdownLinkUrl(image.url, currentOrigin());
+      const target = classifyMarkdownLinkUrl(image.url, currentOrigin(), ctx.webuiUrls);
       if (target.kind === "disarm") {
         return <span key={key}>🖼 {label}</span>;
       }
@@ -1708,8 +1718,10 @@ function trimLiteralAutolinks(node: Nodes, source: string): void {
 export function renderPlainTextWithLinks(
   text: string,
   filePathLinker?: FilePathLinker,
+  webuiUrls?: readonly string[],
 ): (VNode | string)[] {
   const ctx: MarkdownRenderCtx = {
+    webuiUrls,
     headingIndex: 0,
     filePathLinker,
     // Reached only for a target `plainLinkTargetOpens` already confirmed.
@@ -1800,7 +1812,11 @@ export function parseMarkdownDocument(source: string): Root {
  * The output is wrapped in `<div class="md md-restricted">`; `.md-restricted`
  * applies `white-space: pre-wrap` so bare newlines in the user's message
  * render as line breaks (matching how the composer showed them). */
-export function renderRestrictedMarkdown(source: string, issueRepo?: string): VNode {
+export function renderRestrictedMarkdown(
+  source: string,
+  issueRepo?: string,
+  webuiUrls?: readonly string[],
+): VNode {
   const lines = source.split("\n");
   const blocks: (VNode | string)[] = [];
   let key = 0;
@@ -1812,7 +1828,7 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
     pending = [];
     blocks.push(
       <span class="md-restricted-text" key={`b${key++}`}>
-        {renderRestrictedInline(text, `b${key}`, issueRepo)}
+        {renderRestrictedInline(text, `b${key}`, issueRepo, webuiUrls)}
       </span>,
     );
   };
@@ -1842,7 +1858,7 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
       blocks.push(
         <blockquote key={`b${key++}`}>
           <span class="md-restricted-text">
-            {renderRestrictedInline(text, `b${key}`, issueRepo)}
+            {renderRestrictedInline(text, `b${key}`, issueRepo, webuiUrls)}
           </span>
         </blockquote>,
       );
@@ -1907,7 +1923,8 @@ function renderRestrictedText(
 function renderRestrictedInline(
   text: string,
   keyPrefix: string,
-  issueRepo?: string,
+  issueRepo: string | undefined,
+  webuiUrls: readonly string[] | undefined,
 ): (VNode | string)[] {
   // Match either `code` OR [text](url). Alternation is left-to-right so a
   // literal `[foo](bar)` inside `code` stays inside the code span (the
@@ -1927,11 +1944,11 @@ function renderRestrictedInline(
         ...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo),
       );
     if (m[1] !== undefined) {
-      out.push(renderCodeSpan(m[1], `${keyPrefix}c${n++}`, false));
+      out.push(renderCodeSpan(m[1], `${keyPrefix}c${n++}`, false, webuiUrls));
     } else {
       const label = m[2] ?? "";
       const url = m[3] ?? "";
-      out.push(renderRestrictedLink(label, url, `${keyPrefix}l${n++}`));
+      out.push(renderRestrictedLink(label, url, `${keyPrefix}l${n++}`, webuiUrls));
     }
     last = m.index + m[0].length;
   }
@@ -1944,7 +1961,12 @@ function renderRestrictedInline(
  * subset of MarkdownView's `link` case (DR-0015 §2.6 attachment rewrite +
  * DR-0010 URL scheme allowlist), minus the mdast child recursion (a
  * restricted link's label is always plain text as tokenized above). */
-function renderRestrictedLink(label: string, url: string, key: string): VNode {
+function renderRestrictedLink(
+  label: string,
+  url: string,
+  key: string,
+  webuiUrls: readonly string[] | undefined,
+): VNode {
   const attachment = attachmentUrlFromPath(url);
   if (attachment) {
     if (attachment.isImage) {
@@ -1975,7 +1997,7 @@ function renderRestrictedLink(label: string, url: string, key: string): VNode {
       </a>
     );
   }
-  const target = classifyMarkdownLinkUrl(url, currentOrigin());
+  const target = classifyMarkdownLinkUrl(url, currentOrigin(), webuiUrls);
   // Restricted mode has no `pathLinker` (a user-typed path isn't a
   // session-scoped reference — same reasoning that keeps `filePathLinker` off
   // this path), so a path target renders inert rather than navigating the
@@ -2024,6 +2046,8 @@ export function renderMarkdownAst(
      * tree itself is folded by `foldMarkdownSections` before it gets here —
      * this only tells CSS which layout the children were built for. */
     sections?: boolean;
+    /** See `MarkdownRenderCtx.webuiUrls`. */
+    webuiUrls?: readonly string[];
   },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
@@ -2036,6 +2060,7 @@ export function renderMarkdownAst(
     taskIndex: 0,
     issueRepo: opts?.issueRepo,
     inLink: false,
+    webuiUrls: opts?.webuiUrls,
   };
   return (
     <div class={opts?.sections ? "md md-sections" : "md"}>
@@ -2118,8 +2143,9 @@ export function MarkdownView({
   // than inherit a previous document's collapsed positions.
   const sectionFold = foldSections && !restricted;
   const sectionStore = useKeyedValue([source, sectionFold], () => new FoldOpenStore());
+  const webuiUrls = useWebuiUrls();
   return useMemo(() => {
-    if (restricted) return renderRestrictedMarkdown(source, issueRepo);
+    if (restricted) return renderRestrictedMarkdown(source, issueRepo, webuiUrls);
     const parsed = parseMarkdownDocument(source);
     const headings = tableOfContents ? extractMarkdownHeadings(parsed) : [];
     const root = sectionFold
@@ -2131,6 +2157,7 @@ export function MarkdownView({
       taskList,
       sections: sectionFold,
       issueRepo,
+      webuiUrls,
     });
     const withFold = sectionFold ? (
       <MarkdownSectionFoldContext.Provider
@@ -2186,5 +2213,6 @@ export function MarkdownView({
     sectionFold,
     sectionStore,
     issueRepo,
+    webuiUrls,
   ]);
 }

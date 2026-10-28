@@ -25,6 +25,7 @@
 // same question and splitting them across modules would let them drift.
 
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
+import { switchedHref } from "./sidebar-globals.ts";
 
 // URL scheme allowlist for link/image targets (DR-0010): http/https/mailto,
 // plus scheme-less URLs (relative paths, `#fragment`s) which CommonMark
@@ -152,29 +153,47 @@ export function markdownLinkPathRef(url: string): ParsedFilePathRef | null {
   return { path, line: start };
 }
 
+/** `href` moved to `currentOrigin` when it names one of the other names this
+ * webui is opened at (ping's `webui_urls`, DR-0043 §7), else `href` as it came.
+ * An agent writes links under the name the daemon gives it (the list's head),
+ * which is not the name a page opened at another one can reach (another
+ * device's path, docs/runbooks/device-access-path.md); the path, query and
+ * hash are kept, so the link opens the same screen here. An origin not in the
+ * list (an off-app site) and an href that does not parse are left alone, and
+ * so is everything while the list has not arrived. */
+export function rewriteAliasHref(
+  href: string,
+  webuiUrls: readonly string[] | undefined,
+  currentOrigin: string,
+): string {
+  const origin = URL.parse(href)?.origin;
+  if (origin === undefined || origin === currentOrigin || !webuiUrls?.includes(origin)) {
+    return href;
+  }
+  return switchedHref(href, currentOrigin);
+}
+
 /** Decide what to do with one markdown link/image target.
  *
  * `currentOrigin` (typically `location.origin`, `undefined` in contexts —
  * such as unit tests — with no `location`) is used only to catch an
  * *absolute* http(s) URL that names this same webui, so it opens in-app
- * instead of a new tab. It plays no role in the scheme-less relative-link
- * path below (`path` kind) — that routing is unconditional and unaffected by
- * whether an origin was supplied. */
+ * instead of a new tab. A URL naming another of the webui's names
+ * (`webuiUrls`, see `rewriteAliasHref`) counts as this webui too, with its
+ * origin swapped for the current one. Neither plays a role in the
+ * scheme-less relative-link path below (`path` kind) — that routing is
+ * unconditional and unaffected by whether an origin was supplied. */
 export function classifyMarkdownLinkUrl(
   url: string,
   currentOrigin?: string | null,
+  webuiUrls?: readonly string[],
 ): MarkdownLinkTarget {
   const scheme = urlScheme(url);
   if (scheme !== null) {
     if (!ALLOWED_URL_SCHEMES.has(scheme + ":")) return { kind: "disarm" };
     if (currentOrigin && (scheme === "http" || scheme === "https")) {
-      let urlOrigin: string | null = null;
-      try {
-        urlOrigin = new URL(url).origin;
-      } catch {
-        urlOrigin = null;
-      }
-      if (urlOrigin === currentOrigin) return { kind: "internal", url };
+      const href = rewriteAliasHref(url, webuiUrls, currentOrigin);
+      if (URL.parse(href)?.origin === currentOrigin) return { kind: "internal", url: href };
     }
     return { kind: "external", url };
   }
@@ -195,9 +214,10 @@ export function classifyMarkdownLinkUrl(
 export function codeSpanLinkTarget(
   code: string,
   currentOrigin?: string | null,
+  webuiUrls?: readonly string[],
 ): Extract<MarkdownLinkTarget, { kind: "external" | "internal" }> | null {
   if (/\s/.test(code)) return null;
-  const target = classifyMarkdownLinkUrl(code, currentOrigin);
+  const target = classifyMarkdownLinkUrl(code, currentOrigin, webuiUrls);
   return target.kind === "external" || target.kind === "internal" ? target : null;
 }
 

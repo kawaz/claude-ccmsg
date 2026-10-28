@@ -52,6 +52,7 @@ import {
   type MarkdownPathLinker,
 } from "./markdown-view.tsx";
 import type { SearchWord } from "./in-view-search.ts";
+import { useWebuiUrls } from "./context.ts";
 
 /** Build the per-message linker MarkdownView calls on every inline-code
  * token and every single-text `**bold**` run. See module doc for the semantics of `pending`/missing/declined. */
@@ -230,5 +231,9 @@ export function LinkedPlainText({
   useFilePathProbeEnqueue(text, ctx, "plain");
   const cacheTick = useFilePathCacheTick();
   const linker = useMemo(() => makeFilePathLinker(ctx, cacheTick), [ctx, cacheTick]);
-  return useMemo(() => <>{renderPlainTextWithLinks(text, linker)}</>, [text, linker]);
+  const webuiUrls = useWebuiUrls();
+  return useMemo(
+    () => <>{renderPlainTextWithLinks(text, linker, webuiUrls)}</>,
+    [text, linker, webuiUrls],
+  );
 }

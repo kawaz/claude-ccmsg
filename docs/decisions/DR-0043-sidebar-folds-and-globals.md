@@ -107,6 +107,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - **リンクに使う名前**: 一覧の先頭。`webui_url` と `ccmsg_url` ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §5) はこれ。リンクの名前を変えたい時は、その Origin を並びの先頭に置く
 - 一覧とリンクの名前は daemon の 1 つの関数から出す (一覧を作る関数があり、`webui_url` はその先頭)。2 つの絞り込みを別々に書かない
 - 一覧は起動の後にも伸びる (tailscale の自動許可は非同期、file は書き換えると次の読みで変わる)。webui が受け取るのは接続のたびの値 (§8)
+- **描画するリンクは今の origin に移す**: webui は描画する `<a href>` の origin が一覧のうち今の origin 以外の名前なら、origin だけを今の origin に差し替える (path・query・hash はそのまま、表示の text は変えない)。エージェントが書く `ccmsg_url` は一覧の先頭を指すが、別の名前で開いている端末からは先頭に届かないことがあるため ([device-access-path](../runbooks/device-access-path.md))。一覧に無い origin には触れず、一覧が届く前 (`ping` の返事の前) は何もしない
 
 ### 8. daemon から webui への渡し方
 
