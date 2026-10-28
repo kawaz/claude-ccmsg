@@ -80,9 +80,11 @@ kawaz 2026-10-28 の裁定:
 
 ### 4. webui への中継
 
-- `ev:"transcript"` の形 (`{ ev, sid, lines, ... }`、行は jsonl の 1 行の文字列) は保つ。daemon は §2 の (c) で読んだ jsonl の行を、そのセッションの Timeline を購読しているタブへ送る。push の `e.message` は中継しない (`transcript_subscribe` は購読の登録として残し、tail の Watch とは切り離す)
-- 継ぎ目を byte offset (`start` / `end` / `size`) から行の uuid に置き換える: 各 push は `prev_uuid` (送る行の直前の行の uuid) と行を持つ。webui は、読み込み済みの最後の行の uuid が `prev_uuid` と違えば、間が抜けたとみなす。その時は `transcript_read` で末尾を読み直し、uuid で重ねる
-- `transcript_read` (DR-0009 §3) は、履歴のページング (older と、訪れた時の末尾の読み) のために byte offset を保つ。読みの結果の行には uuid があるので、webui は push の行と読みの行を uuid で重ねられる
+- `transcript_subscribe` の源を、tail の Watch から §2 の (c) の読み (push を合図にした jsonl の続きの読み) に置き換える。daemon はその読みの行を、そのセッションの Timeline を購読しているタブへ送る。push の `e.message` は中継しない
+- `ev:"transcript"` の形 (`{ ev, sid, lines, start, end, size }`、行は jsonl の 1 行の文字列) と webui は変えない。継ぎ目は byte offset のまま (統括 2026-10-28)
+  - 読みの源がファイルなので、送る行の byte 範囲は正確に分かる
+  - `transcript_read` (DR-0009 §3) の `after` / `before` も byte offset なので、webui の継ぎ目の判定 (`end` が続かなければ `after` で読み足す) がそのまま使える
+  - uuid の継ぎ目にすると、uuid の無い行 (`queue-operation` 等) が挟まった時に継ぎ目を誤判定しうる
 
 ### 5. tail の廃止と利用者の付け替え
 
@@ -157,7 +159,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 | 段階 | 入れるもの | 前提 |
 |---|---|---|
 | 0 | §2 の観測 (済み: `claude -p` と対話のセッション) | — |
-| 1 (済み) | push の op と module の転送、daemon の受け口、§4 の中継 (`transcript_subscribe` を push 起点の読みに付け替える)。`ev:"transcript"` の継ぎ目は byte offset のまま入れた (§4 の uuid への置き換えは統括に確認中) | DR-0046 の `POST /op` |
+| 1 (済み) | push の op と module の転送、daemon の受け口、§4 の中継 (`transcript_subscribe` の源を push 起点の読みに置き換える。`ev:"transcript"` の形と webui は不変) | DR-0046 の `POST /op` |
 | 2 | §3 の追いつきと uuid の重複除去、§5 の利用者の付け替えと `transcript.ts` の Watch の削除 | 段階 1 |
 | 3 | §6 の副作用 (say の発声、launch、permit の音声) と §7 の既読、§8 の削除 | 段階 1 (未読は段階 2 の後でもよい) |
 
@@ -179,7 +181,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - Timeline の live の反応: 今の tail は fs.watch (FSEvents) で即時に拾い、2 秒の backup の poll で取りこぼしを拾う (最悪 2 秒)。新しい形は push の後に jsonl に行が現れるのを待って読むので、書き込みの遅れ (実測 ≈ 200 ms) の分だけ遅れ、常時のポーリングは無い
 - daemon が止まっている間の行は、副作用を起こさない (発声も起動もされない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
 - 発声の成否と launch の結果は tool の結果に入らない。launch の結果は notify で会話に届く
-- 触る範囲: hooks (`session.append` の転送、say / launch の handler の返事)、protocol (push の op、`ev:"transcript"` の継ぎ目、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、既読のファイル)、webui (継ぎ目、say のバブル、Sessions 一覧の数)、CLI (`ccmsg say` と permit の発声の削除)
+- 触る範囲: hooks (`session.append` の転送、say / launch の handler の返事)、protocol (push の op、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、既読のファイル)、webui (say のバブル、Sessions 一覧の数)、CLI (`ccmsg say` と permit の発声の削除)
 
 ## 関連
 
