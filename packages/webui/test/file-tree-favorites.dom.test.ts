@@ -7,6 +7,7 @@
 //   フルパスで、相対で保存された既存の項目もフルパスに直して書く
 // - 同じファイルは綴りが違っても 1 つのお気に入り。表示は workspace folder ごとに
 //   畳み、cwd の folder は見出し無し、どの folder にも無いものは others
+// - ペインの比率もマウントでは書かず、スプリッターを動かした時だけ書く
 // 出典: docs/findings/2026-10-14-webui-hooks-review-react-guidance.md (high 1)
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, render, type ComponentChild } from "preact";
@@ -19,7 +20,7 @@ import { createStore, type Store } from "../src/client/useStore.ts";
 import { favoritesStorageKey, parseFavorites } from "../src/client/utils.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
-import { defined, instanceOf, stubGlobal } from "./helpers.ts";
+import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 
 withDom();
@@ -252,5 +253,38 @@ describe("FileTree sections", () => {
   test("with workspace folders but none at the cwd, PROJECT_ROOT comes first", async () => {
     const root = await mount(panes(filesStore(), PEER, [{ name: "lib", path: "/repo/lib" }]));
     expect(workspaceRows(root)).toEqual(["PROJECT_ROOT", "lib"]);
+  });
+});
+
+// storage.ts「レイアウト寸法」: a window that has not moved the splitter writes
+// nothing, and keeps reading the last value any window used (or the default).
+describe("the Files tab's pane ratio", () => {
+  const RATIO_KEY = "ccmsg.sessionPaneRatio";
+
+  test("is not written on mount, only when the splitter is moved", async () => {
+    sessionStorage.removeItem(RATIO_KEY);
+    const root = await mountSettled(filesStore(), PEER);
+    expect(localStorage.getItem(RATIO_KEY)).toBeNull();
+    expect(sessionStorage.getItem(RATIO_KEY)).toBeNull();
+
+    const panesEl = defined(root.querySelector(".session-panes"), "the Files tab's panes");
+    const restore = stubProperty(panesEl, "getBoundingClientRect", {
+      value: () => new DOMRect(0, 0, 1000, 600),
+    });
+    try {
+      const splitter = defined(root.querySelector(".session-splitter"), "the splitter");
+      await act(() => {
+        splitter.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+        splitter.dispatchEvent(
+          new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientX: 400 }),
+        );
+        splitter.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      });
+    } finally {
+      restore();
+    }
+    expect(localStorage.getItem(RATIO_KEY)).toBe("0.4");
+    expect(sessionStorage.getItem(RATIO_KEY)).toBe("0.4");
+    sessionStorage.removeItem(RATIO_KEY);
   });
 });

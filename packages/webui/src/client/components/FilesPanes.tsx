@@ -72,13 +72,6 @@ export function FilesPanes({
   const [memoEditorOpen, setMemoEditorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Persist on change (drag settles). Effect over "save inside the
-  // handler" so the save reflects the state React actually committed,
-  // not the closure-captured value of the handler.
-  useEffect(() => {
-    savePaneRatio(ratio);
-  }, [ratio]);
-
   // A draft is intentionally ephemeral: switching session or selecting a
   // different file exits the editor without confirmation. Opening the editor
   // itself does not change selectedPath, so this effect does not immediately
@@ -134,7 +127,11 @@ export function FilesPanes({
     const container = containerRef.current;
     if (!container) return;
     const m = paneAxisMetrics(readPaneAxis(container), container.getBoundingClientRect(), e);
-    setRatio(paneRatioFromPointer(m.pointer, m.start, m.size));
+    const next = paneRatioFromPointer(m.pointer, m.start, m.size);
+    setRatio(next);
+    // 書くのは人がスプリッターを動かした時だけ (storage.ts の「レイアウト寸法」:
+    // 動かしていない窓は何も書かず、最後にどこかの窓で使った値か既定を引き続ける)。
+    savePaneRatio(next);
   };
 
   // Style: tree pane gets a flex-basis derived from the ratio, viewer

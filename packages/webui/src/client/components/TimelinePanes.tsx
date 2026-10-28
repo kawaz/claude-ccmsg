@@ -12,7 +12,7 @@
 // 消えるので、木の有無で Timeline の置き場を変えると、木が現れるたびに
 // Timeline が作り直され、到着時の読みと live tail の購読が重なり、スクロール
 // や畳みの状態も失われる。
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { AgentRef } from "../locator.ts";
 import type { TimelineState } from "../store.ts";
@@ -60,17 +60,17 @@ export function TimelinePanes({
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    savePaneRatio(ratio);
-  }, [ratio]);
-
   // FilesPanes と同じ解釈 (pane-axis.ts): container の flex-direction から軸を
   // 読むので、CSS @media (≤720px) の column 切替に自動追従する。
   const onSplitterDrag = (e: PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
     const m = paneAxisMetrics(readPaneAxis(container), container.getBoundingClientRect(), e);
-    setRatio(paneRatioFromPointer(m.pointer, m.start, m.size));
+    const next = paneRatioFromPointer(m.pointer, m.start, m.size);
+    setRatio(next);
+    // 書くのは人がスプリッターを動かした時だけ (storage.ts の「レイアウト寸法」:
+    // 動かしていない窓は何も書かず、最後にどこかの窓で使った値か既定を引き続ける)。
+    savePaneRatio(next);
   };
 
   const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };
