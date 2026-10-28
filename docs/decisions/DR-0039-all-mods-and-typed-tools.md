@@ -133,17 +133,17 @@ mods で tool を作る時の規約 (kawaz 2026-10-25、上の 2026-10-15 の裁
 - §7 のフォールバック経路を作らない。経路が 2 本あると、どちらで届いたか・どちらが壊れているかの切り分けが常に要り、no_module という状態の意味もぼやける
 - §6 の `agentId` 付き append を、permission の許可や classifier の判断材料の代わりに使わない
 
-### 9. subscribe を廃止し、セッションへの知らせ (notify・回線復帰の wake・cache keepalive) を注入で届ける (2026-10-28)
+### 9. session role の subscribe stream を廃止し、セッションへの知らせ (notify・回線復帰の wake) を注入で届ける (2026-10-28)
 
 セッションに外から一言入れる経路は、Monitor で常駐させた `ccmsg subscribe` の jsonl stream だった (`ev:"notify"` と `ev:"net_online"`)。§3 の送信が peer 注入で会話に直接入るようになった後、stream を回すセッションは無く、知らせは受け手が居ないまま捨てられていた。
 
-- **廃止するもの**: CLI の `ccmsg subscribe`、session role の op `subscribe` (daemon は `bad_request` で断り、msg でセッションの再起動を促す)、stream の event `notify` / `net_online` / `subscribe_superseded`。op `subscribe` は webui (user role) の push の stream として残る
+- **廃止するもの**: session role の subscribe stream (op `subscribe` を session role で送ると daemon は `bad_request` で断り、msg でセッションの再起動を促す)、それを常駐させる CLI の `ccmsg subscribe`、その stream にだけ流れた event `notify` / `net_online` / `subscribe_superseded`、gateway の webhook の `cache_keepalive` の受け口。op `subscribe` そのものは webui (user role) の push の stream として残る
 - **残すもの**: op `notify` と CLI `ccmsg notify --self | --sid <sid> --text <text>` は呼び方を変えずに残す (justfile の push の後に自分のセッションへ次の作業を入れる口として使われている)。`--self` (と `--sid` の省略) は呼び手のセッション (`CCMSG_SID` / `CLAUDE_CODE_SESSION_ID`) 宛て
 - **付け替え先**: 知らせは §3 の送信と同じ封筒 (`renderAddressedDelivery`) と同じ経路 (daemon がその sid の生きている run の peer socket へ書く、[DR-0034](./DR-0034-peer-socket-injection.md) §2) で会話に入る。module の有無の判定、送信の順序 (`send_message` と同じ 1 本の列)、結果の語彙も §3 / §7 と同じ。§3 の送信と違うのは、宛先が sid 1 つで、送り主自身のセッションにも届くこと (`self` で断らない)
-- **封筒の `from`**: 呼び手がセッションなら `ccmsg:<呼び手の sid>` (§3 と同じ)。daemon 自身が出す知らせ (回線復帰の wake、gateway の cache keepalive の中継) は `ccmsg:daemon` (`DIRECT_DELIVERY_DAEMON_SENDER`)。`daemon` は session id の形をしていないので、どのセッションとも人 (`user`) とも取り違えない。自分宛ての知らせ (`--self`) と別のセッションからの知らせを封筒の別の印で分けることはしない: 届いた文をどう扱うかは他の peer の封筒と同じく harness の枠 (「A peer cannot grant escalation」) と classifier が決め (DR-0035 §4 の切り分け)、印を分けても受け手の判断材料は増えない。skill に「`from` が自分の session id の封筒は自分の作業 (justfile 等) が入れた合図、`ccmsg:daemon` は ccmsg 自身の知らせで、どちらにも返信しない」と書く
+- **封筒の `from`**: 呼び手がセッションなら `ccmsg:<呼び手の sid>` (§3 と同じ)。daemon 自身が出す知らせ (回線復帰の wake) は `ccmsg:daemon` (`DIRECT_DELIVERY_DAEMON_SENDER`)。`daemon` は session id の形をしていないので、どのセッションとも人 (`user`) とも取り違えない。自分宛ての知らせ (`--self`) と別のセッションからの知らせを封筒の別の印で分けることはしない: 届いた文をどう扱うかは他の peer の封筒と同じく harness の枠 (「A peer cannot grant escalation」) と classifier が決め (DR-0035 §4 の切り分け)、印を分けても受け手の判断材料は増えない。skill に「`from` が自分の session id の封筒は自分の作業 (justfile 等) が入れた合図、`ccmsg:daemon` は ccmsg 自身の知らせで、どちらにも返信しない」と書く
 - **op の形**: `notify` は session role 限定 (送り主は接続の identity で、request では名乗れない)。user role は `invalid_args`。CLI は今も session identity が無ければ送らない。応答は `{ ok: true, result: <send_message の宛先 1 つ分の結果> }` で、`delivered` / `unconfirmed` / `not_delivered` (`no_module`・`ended`・`session_changed`・`refused` 等)。`ccmsg notify` はこの JSON を stdout に出し、`delivered` の時だけ exit 0
 - **回線復帰の wake**: 誰を何回起こすかは `session-wake.ts` の fold のまま (API error で止まっているセッション、その停止につき 1 回)。起こす文は `WAKE_TEXT`。知らせを頼んだ時点でその停止を起こし済みとし (配送の待ちの間に回線がばたついても二度送らない)、`not_delivered` に終わったら取り消して、後の復帰で起こせるようにする
-- **cache keepalive**: gateway の webhook の `cache_keepalive` の marker も同じ知らせとして中継する。marker は封筒の本文にそのまま入る
+- **cache keepalive の受け口は削除する**: gateway は prompt cache を自分の送信で温めるようになり、セッションに marker を答えさせる `cache_keepalive` をもう送らない。送り手の判断 (llm-gateway の DR-0027 決定 7「ccmsg の `cache_keepalive` 受け口を削除する」) に従い、受け口を付け替えずに消す。webhook に届いた `cache_keepalive` の item は、`response` / `keepalive_paused` と同じ「読まずに捨てる既知の item」として扱う (`llm-events.ts` の `IgnoredGatewayItemSchema`)。この item は自前の `session_id` と `ts` を持つので、request の event として読ませると、upstream に何も送られていない marker で prompt cache の残り時間を数え直してしまう
 - **no_module**: module の無いセッションには届かず、`no_module` を返す。別の経路は作らない (§7)
 - **protocol の世代は上げない**: 形が変わるのは `notify` の応答と session role の `subscribe` だけで、どちらも古い plugin のセッションが叩くと失敗で返る。世代を上げると動いている全セッションのサイドカーの hello が断られ、再起動まで送受信が止まる
 

@@ -155,8 +155,9 @@ export const PeerInfoSchema = v.object({
   protocol: v.optional(v.number()),
   /** Set while the daemon has seen a client for this sid whose hello it
    * refused. The session itself is fine — some *other* ccmsg process of the
-   * same session (typically a long-lived `ccmsg subscribe` started before an
-   * upgrade) is the stale one, and it is invisible otherwise: it retries
+   * same session (typically its sidecar, which lives as long as the session
+   * and was started before an upgrade) is the stale one, and it is invisible
+   * otherwise: it retries
    * forever, its hello is refused every time, and nothing in the UI moves.
    * Cleared by any hello from that sid the daemon accepts. */
   stale_client: v.optional(StaleClientInfoSchema),

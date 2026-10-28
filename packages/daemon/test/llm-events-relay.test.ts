@@ -280,6 +280,28 @@ describe("webhook → ev:llm_requests", () => {
     }
   });
 
+  test("a cache_keepalive item is not folded into the prompt-cache ring", async () => {
+    // It carries a session_id and a ts of its own, which the request-event
+    // parser would accept — restarting a countdown off a marker nothing sent
+    // upstream. The gateway no longer sends one (llm-gateway DR-0027).
+    const ctx = await startWebhookDaemon();
+    try {
+      const u = await userSubscriber(ctx);
+      const ts = Date.now();
+      expect(
+        await postEvents(ctx, [
+          { type: "cache_keepalive", session_id: "S1", marker: "m", deadline: ts + 60_000, ts },
+          { ts, session_id: "OTHER", prefix: "aa11bb22" },
+        ]),
+      ).toBe(204);
+      const { ev } = await u.readEventUntil("llm_requests");
+      expect(ev.requests.map((r) => r.session_id)).toEqual(["OTHER"]);
+      u.close();
+    } finally {
+      await stop(ctx);
+    }
+  });
+
   test("a bad token is rejected and nothing reaches the WS", async () => {
     const ctx = await startWebhookDaemon();
     try {

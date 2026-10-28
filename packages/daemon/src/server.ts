@@ -172,11 +172,6 @@ import {
   type AgentsScope,
 } from "./agents.ts";
 import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
-import {
-  isCacheKeepaliveItem,
-  parseCacheKeepaliveEvent,
-  relayCacheKeepalive,
-} from "./cache-keepalive.ts";
 import { type WebhookSource } from "./webhook.ts";
 import { releaseDaemonResources } from "./daemon-shutdown.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
@@ -1222,29 +1217,9 @@ export function recordLlmRequests(daemon: Daemon, items: readonly JsonValue[], l
   // anticipate. The refresher collapses the burst.
   if (items.some(reportsUpstreamOverload)) daemon.llmStatusRefresher?.trigger();
   for (const item of items) {
-    // Keepalive items are routed out before the request parser sees them.
-    // They carry a `session_id` and a `ts` of their own, so that parser would
-    // happily accept one and restart a series' cache countdown — off a marker
-    // the gateway has not sent upstream yet, and may never get to send.
-    if (isCacheKeepaliveItem(item)) {
-      const keepalive = parseCacheKeepaliveEvent(item);
-      if (!keepalive) {
-        dropped += 1;
-        continue;
-      }
-      // The webhook's answer does not wait for the delivery: the gateway
-      // learns nothing from it, and the relay logs what came of it.
-      relayCacheKeepalive(keepalive, {
-        deliver: (sid, text) =>
-          sendNotice({ from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text }, noticeDeps(daemon)),
-        log,
-      }).catch((e: unknown) => {
-        log.info(`cache keepalive for ${keepalive.session_id}: failed: ${errorText(e)}`);
-      });
-      continue;
-    }
     // Event kinds ccmsg has no use for travel in the same batch (the gateway's
-    // `response` and `keepalive_paused`). Skipping them silently is the point:
+    // `response`, `keepalive_paused` and `cache_keepalive`, llm-events.ts
+    // IgnoredGatewayItemSchema). Skipping them silently is the point:
     // they are well-formed events this daemon simply does not consume, and
     // counting them as dropped would log a line per batch about nothing.
     if (isIgnoredGatewayItem(item)) continue;

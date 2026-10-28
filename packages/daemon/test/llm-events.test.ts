@@ -142,10 +142,12 @@ describe("parseLlmRequestEvent", () => {
         paused_at: 1788700949703,
       }),
     ).toBeNull();
-    // Those two are the ones ccmsg deliberately reads nothing from; a kind it
-    // has never heard of still reaches the caller's drop log.
+    // Those two, and `cache_keepalive`, are the ones ccmsg deliberately reads
+    // nothing from; a kind it has never heard of still reaches the caller's
+    // drop log.
     expect(isIgnoredGatewayItem({ type: "response", ts: 1, session_id: "s" })).toBe(true);
     expect(isIgnoredGatewayItem({ type: "keepalive_paused", session_id: "s" })).toBe(true);
+    expect(isIgnoredGatewayItem({ type: "cache_keepalive", session_id: "s", ts: 1 })).toBe(true);
     expect(isIgnoredGatewayItem({ type: "something_new", session_id: "s" })).toBe(false);
     expect(isIgnoredGatewayItem({ ts: 1, session_id: "s" })).toBe(false);
     // A request event names itself in the same batch, and stays a request.

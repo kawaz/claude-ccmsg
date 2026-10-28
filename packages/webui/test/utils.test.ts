@@ -2077,7 +2077,7 @@ describe("clientBuildLabel / staleClientWarning", () => {
     expect(warning?.build).toBe("v0.129.0 / request_id 非対応");
     expect(warning?.text).toContain("v0.129.0");
     expect(warning?.text).toContain("request_id 非対応");
-    expect(warning?.text).toContain("subscribe を張り直して");
+    expect(warning?.text).toContain("このセッションを再起動して");
     expect(warning?.text).toContain("2026-09-03T01:00:00.000Z");
   });
 

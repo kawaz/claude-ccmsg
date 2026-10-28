@@ -2,9 +2,6 @@
 // line is read with the schema of what it is (a daemon reply, or one of the
 // CLI's own answers), and a field the schema does not name fails the read.
 import {
-  type JsonObject,
-  JsonObjectSchema,
-  jsonText,
   JsonTextSchema,
   type Output,
   parseWith,
@@ -49,12 +46,3 @@ export const CliStatusSchema = v.looseObject({
   stopped: v.optional(v.boolean()),
   restarted: v.optional(v.boolean()),
 });
-
-const JsonObjectTextSchema = jsonText(JsonObjectSchema);
-
-/** A line of `subscribe`'s output read as a JSON object, or nothing when it
- * is not one (a line written for a person, not a program). */
-export function jsonObjectLine(line: string): JsonObject | undefined {
-  const read = parseWith(JsonObjectTextSchema, line);
-  return read.ok ? read.value : undefined;
-}

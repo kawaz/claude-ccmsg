@@ -772,11 +772,12 @@ export function clientBuildLabel(row: { client_version?: string; protocol?: numb
 /** The warning one session's refused ccmsg client earns, or null while every
  * client of it is being served.
  *
- * The stale process is almost never the one that just hello'd — it is a
- * `ccmsg subscribe` still looping against a daemon that has moved on, refused
- * every few seconds and silent about it. So the text names the fix (restart
- * that session's subscribe) rather than the symptom, and the version it
- * reports is the *stale* client's, not the row's.
+ * The stale process is almost never the one that just hello'd — it is the
+ * session's sidecar, started with the plugin of its day and still trying
+ * against a daemon that has moved on, refused every few seconds and silent
+ * about it. So the text names the fix (restart the session, which loads the
+ * current plugin) rather than the symptom, and the version it reports is the
+ * *stale* client's, not the row's.
  *
  * An absent `protocol` is not "unknown generation" here: it is the daemon
  * saying the hello never got as far as being read as one, for carrying no
@@ -799,7 +800,7 @@ export function staleClientWarning(row: {
     build,
     text:
       `ccmsg クライアントが古い (${build})。` +
-      `このセッションで subscribe を張り直してください\n最終試行: ${stale.last_seen}`,
+      `このセッションを再起動してください (最新の plugin が載る)\n最終試行: ${stale.last_seen}`,
   };
 }
 

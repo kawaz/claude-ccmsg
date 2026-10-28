@@ -1,6 +1,7 @@
-// Delivery of a message from another session (DR-0039 §3) straight
-// into a Claude Code session through the harness's own peer messaging socket,
-// so the receiving session needs no `ccmsg subscribe` running to hear it.
+// Delivery of a message from another session (DR-0039 §3), or of a notice
+// (§9), straight into a Claude Code session through the harness's own peer
+// messaging socket, so the receiving session needs nothing of ccmsg's running
+// in it to hear it.
 //
 // The session is found by its state file `<config dir>/sessions/<pid>.json`
 // (`sessionId`, `pid`, `messagingSocketPath`, `peerProtocol`), authenticated

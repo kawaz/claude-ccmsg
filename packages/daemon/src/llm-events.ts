@@ -86,13 +86,18 @@ export function parseLlmRequestEvent(item: JsonValue): LlmRequestObservation | n
 }
 
 /** The kind of an item ccmsg reads nothing from: the answer's completion
- * (`response`) and the keepalive strategy being held off (`keepalive_paused`,
- * whose state also rides on every request event as `cache_paused`). Named one
- * by one rather than "anything that isn't a request" so a kind the gateway
- * grows still reaches the drop log, which is what makes a schema change
- * visible instead of silent. */
+ * (`response`), the keepalive strategy being held off (`keepalive_paused`,
+ * whose state also rides on every request event as `cache_paused`), and the
+ * prompt-cache keepalive marker a session was once asked to answer
+ * (`cache_keepalive`), which the gateway no longer sends since it keeps the
+ * cache warm on its own (llm-gateway DR-0027 decision 7; DR-0039 §9). The
+ * last carries a `session_id` and a `ts` of its own, so the request parser
+ * must never see it: it would restart a series' cache countdown off a marker
+ * nothing sent upstream. Named one by one rather than "anything that isn't a
+ * request" so a kind the gateway grows still reaches the drop log, which is
+ * what makes a schema change visible instead of silent. */
 const IgnoredGatewayItemSchema = v.object({
-  type: v.picklist(["response", "keepalive_paused"]),
+  type: v.picklist(["response", "keepalive_paused", "cache_keepalive"]),
 });
 
 /** True for an item this daemon deliberately reads nothing from, so the caller
