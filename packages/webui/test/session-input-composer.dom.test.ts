@@ -9,6 +9,7 @@
 // が他のタブに出す storage event (key / oldValue / newValue) を window に送る。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
+import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { SessionInputComposer } from "../src/client/components/SessionInputComposer.tsx";
 import {
@@ -200,5 +201,41 @@ describe("SessionInputComposer one-shot override", () => {
     await send(root);
     expect(sent).toEqual([{ text: "x", override: { effort: "max" } }]);
     expect(select(root, "effort").value).toBe("max");
+  });
+});
+
+// DR-0040 §7: 許可する on a permit bubble opens this composer through
+// SessionView's count (OpenComposerContext). Each new count opens it as the FAB
+// does, focus included; a re-render with the same count does not.
+describe("SessionInputComposer opened from outside", () => {
+  test("a new open request opens the panel with the textarea focused, once per request", async () => {
+    const store = createStore(initialState());
+    const ws = createWsClient((action) => store.dispatch(action));
+    let ask = (): void => {};
+    function Host() {
+      const [requests, setRequests] = useState(0);
+      ask = () => setRequests((n) => n + 1);
+      return h(SessionInputComposer, { sid: SID, openRequest: requests });
+    }
+    const root = await mounted.mount(store, ws, h(Host, null));
+    expect(root.querySelector(".session-input-fab")).not.toBeNull();
+    expect(root.querySelector(".session-input-textarea")).toBeNull();
+
+    await act(() => ask());
+    expect(document.activeElement).toBe(textarea(root));
+    expect(root.querySelector(".session-input-fab")).toBeNull();
+
+    // Closed by the person, it stays closed until the next request.
+    const close = instanceOf(
+      root.querySelector(".composer-panel-close"),
+      HTMLButtonElement,
+      "the close button",
+    );
+    await act(() => close.click());
+    expect(root.querySelector(".session-input-textarea")).toBeNull();
+    await act(() => store.dispatch({ type: "agents/loaded", agents: [] }));
+    expect(root.querySelector(".session-input-textarea")).toBeNull();
+    await act(() => ask());
+    expect(document.activeElement).toBe(textarea(root));
   });
 });

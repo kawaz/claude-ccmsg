@@ -6,7 +6,7 @@
 // 送る。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。
 import type { TargetedEvent } from "preact";
-import { useState } from "preact/hooks";
+import { useContext, useState } from "preact/hooks";
 import type { PermitAttachment, PermitRequestRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
@@ -18,6 +18,7 @@ import {
 } from "../../permit-request-view.ts";
 import { formatMsgTime } from "../../utils.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
+import { OpenComposerContext } from "../SessionInputComposer.tsx";
 import { useClipboardCopy } from "../CopyButton.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
@@ -118,6 +119,7 @@ function useAttachmentLoads(request: PermitRequestRecord): {
  * 変えた記録を ev:"permit_request" で全タブに送る。 */
 function GrantButton({ request }: { request: PermitRequestRecord }) {
   const { ws } = useApp();
+  const openComposer = useContext(OpenComposerContext);
   const { copied, copy } = useClipboardCopy();
   const [failed, setFailed] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
@@ -133,11 +135,15 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
       <button
         type="button"
         class={copied ? "permit-grant copied" : "permit-grant"}
-        title="許可の文をコピーする (このセッションの入力欄に貼って送る)"
+        title="許可の文をコピーして、このセッションの入力欄を開く (貼って送る)"
         onClick={() => {
           void copy(permitGrantText(request)).then((ok) => {
             setFailed(!ok);
-            if (ok) markRead();
+            if (!ok) return;
+            markRead();
+            // The text is on the clipboard: open this session's input box to
+            // paste it into. Not when the copy failed — there is nothing to paste.
+            openComposer?.();
           });
         }}
       >

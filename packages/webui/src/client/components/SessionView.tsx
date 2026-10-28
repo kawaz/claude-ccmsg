@@ -4,7 +4,7 @@
 // state.view is "session" or "timeline"). Files/Timeline/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
@@ -32,7 +32,7 @@ import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { StatusPanel, useSessionRestart } from "./StatusPanel.tsx";
-import { SessionInputComposer } from "./SessionInputComposer.tsx";
+import { OpenComposerContext, SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
@@ -263,6 +263,11 @@ export function SessionView({
   // outlives the Status panel, which goes while the session's old process is
   // gone and the resumed one has not come back.
   const restart = useSessionRestart(sid, (target) => ws.sessionRestart(target));
+  // The composer's open is its own state; what in the Timeline asks for it
+  // (許可する on a permit bubble, DR-0040 §7) reaches it through this count.
+  // The callback keeps one identity so the context does not change per render.
+  const [composerOpenRequest, setComposerOpenRequest] = useState(0);
+  const openComposer = useCallback(() => setComposerOpenRequest((n) => n + 1), []);
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (slice.connStatus !== "connected") return;
@@ -383,16 +388,18 @@ export function SessionView({
         {visitedTabs.has("timeline") ? (
           <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
             {hasTranscript ? (
-              <TimelinePanes
-                sid={sid}
-                agentTree={sessionStatus?.agent_tree}
-                timeline={tree.timeline}
-                search={tree.timelineSearch}
-                sessionStatus={sessionStatus}
-                agent={agent}
-                active={active}
-                visible={active && tab === "timeline"}
-              />
+              <OpenComposerContext.Provider value={openComposer}>
+                <TimelinePanes
+                  sid={sid}
+                  agentTree={sessionStatus?.agent_tree}
+                  timeline={tree.timeline}
+                  search={tree.timelineSearch}
+                  sessionStatus={sessionStatus}
+                  agent={agent}
+                  active={active}
+                  visible={active && tab === "timeline"}
+                />
+              </OpenComposerContext.Provider>
             ) : (
               <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
             )}
@@ -438,7 +445,9 @@ export function SessionView({
          * 動いている)。入力はセッションの hooks module が受けるので、subscribe
          * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
          * セッション) は宛先が存在しないのでガードのまま。 */}
-        {peer || agentForSid ? <SessionInputComposer sid={sid} /> : null}
+        {peer || agentForSid ? (
+          <SessionInputComposer sid={sid} openRequest={composerOpenRequest} />
+        ) : null}
       </main>
     </AppContext.Provider>
   );

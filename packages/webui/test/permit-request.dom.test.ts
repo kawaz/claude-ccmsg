@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
 import type { PermitAttachment, PermitRequestRecord, ReplyOf } from "@ccmsg/protocol";
+import { OpenComposerContext } from "../src/client/components/SessionInputComposer.tsx";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
@@ -96,6 +97,8 @@ async function openWith(
   store: Store;
   reads: Array<readonly string[]>;
   opens: string[];
+  /** How many times the bubble asked the session's composer to open. */
+  composerOpens: () => number;
 }> {
   const store = timelineStore(agent !== undefined ? { agent } : {});
   store.dispatch({ type: "permit-requests/loaded", requests: [...requests] });
@@ -126,13 +129,21 @@ async function openWith(
       );
     },
   };
+  let composerOpens = 0;
+  const openComposer = (): void => {
+    composerOpens++;
+  };
   const root = await mounted.mount(
     store,
     handle,
-    h(TimelineOf, agent !== undefined ? { agent } : {}),
+    h(
+      OpenComposerContext.Provider,
+      { value: openComposer },
+      h(TimelineOf, agent !== undefined ? { agent } : {}),
+    ),
   );
   await ws.lastRead().answer(page([]));
-  return { root, store, reads, opens };
+  return { root, store, reads, opens, composerOpens: () => composerOpens };
 }
 
 function stubClipboard(writeText: (text: string) => Promise<void>): void {
@@ -269,12 +280,12 @@ describe("permission request bubbles", () => {
     ]);
   });
 
-  test("許可する copies the permission, says it did, and marks the request read", async () => {
+  test("許可する copies the permission, says it did, marks the request read, and opens the composer", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root, store, reads } = await openWith([ASKED]);
+    const { root, store, reads, composerOpens } = await openWith([ASKED]);
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     expect(button.classList.contains("copied")).toBe(false);
     await act(async () => {
@@ -287,6 +298,8 @@ describe("permission request bubbles", () => {
     expect(root.querySelector(".permit-grant-error")).toBeNull();
     expect(reads).toEqual([[ASKED.id]]);
     expect(store.getState().permitRequests.map((r) => r.read)).toEqual([true]);
+    // DR-0040 §7: the session's input box opens to paste the text into.
+    expect(composerOpens()).toBe(1);
     // A request read already is not marked again.
     await act(async () => {
       grantButton(defined(bubbles(root)[0], "bubble")).click();
@@ -318,7 +331,7 @@ describe("permission request bubbles", () => {
     stubClipboard(async () => {
       throw new Error("denied");
     });
-    const { root, reads } = await openWith([ASKED]);
+    const { root, reads, composerOpens } = await openWith([ASKED]);
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     await act(async () => {
       button.click();
@@ -326,6 +339,8 @@ describe("permission request bubbles", () => {
     });
     expect(button.classList.contains("copied")).toBe(false);
     expect(reads).toEqual([]);
+    // Nothing to paste, so the input box stays as it was.
+    expect(composerOpens()).toBe(0);
     expect(root.querySelector(".permit-grant-error")?.textContent).toContain(
       "コピーできませんでした",
     );

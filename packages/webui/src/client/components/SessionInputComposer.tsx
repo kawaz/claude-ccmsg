@@ -21,6 +21,7 @@
 // 終わりまでの effort / model) を選んで付けられ、`user_prompt` に乗って文と一緒に
 // 届く。既定は「上書きなし」で、`accepted` になったら戻す。届かなかった・未確認の
 // 時は文と同じく選択も残す。
+import { createContext } from "preact";
 import type { RequestOverride } from "@ccmsg/protocol";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -74,7 +75,21 @@ import { CacheRing } from "./CacheRing.tsx";
 import { OverrideFields } from "./RequestOverridePicker.tsx";
 import { withPicked } from "../request-override-view.ts";
 
-export function SessionInputComposer({ sid }: { sid: string }) {
+/** Asks the composer of the session on screen to open (DR-0040 §7: pressing
+ * 許可する copies the grant text and opens the box to paste it into).
+ * SessionView supplies it to what it renders; outside a SessionView (no
+ * composer to open) it is null. */
+export const OpenComposerContext = createContext<(() => void) | null>(null);
+
+export function SessionInputComposer({
+  sid,
+  openRequest = 0,
+}: {
+  sid: string;
+  /** Counts the times something asked this composer to open
+   * (OpenComposerContext): each new count opens it, as the FAB does. */
+  openRequest?: number;
+}) {
   const { ws, store } = useApp();
   // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
   // sid は変わらない。
@@ -107,6 +122,15 @@ export function SessionInputComposer({ sid }: { sid: string }) {
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
   const { open, openPanel, closePanel, panelRef } = useFabPopup(sending);
+  // An open asked for from outside: opened while rendering with the new count
+  // (react.dev "Adjusting some state when a prop changes"), not in an Effect
+  // after it, so the open-time focus below runs in the same commit as for the
+  // FAB.
+  const [handledOpenRequest, setHandledOpenRequest] = useState(openRequest);
+  if (openRequest !== handledOpenRequest) {
+    setHandledOpenRequest(openRequest);
+    openPanel();
+  }
   // FAB とパネルは個別に D&D 移動できる。位置は永続化しない (component state
   // のみ)。useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();
