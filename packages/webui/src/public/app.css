@@ -7647,7 +7647,7 @@ a.tl-attachment-file-path {
  * その padding-bottom 12rem の余白帯の位置に負 margin で引き上げる。末尾まで
  * スクロールしたときだけ見える。 */
 .tl-bottom-controls {
-  margin: -1rem var(--space-11) var(--space-13);
+  margin: -1rem var(--space-11) var(--space-6);
   display: flex;
   flex-direction: column;
   gap: var(--space-7);
@@ -7693,13 +7693,10 @@ a.tl-attachment-file-path {
   align-items: flex-start;
   gap: var(--space-1);
   width: 100%;
-  padding: var(--space-6) var(--space-11);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  background: var(--bg-alt);
+  padding: 0;
   font: inherit;
   font-size: var(--font-size-sm);
-  color: var(--fg);
+  color: var(--fg-muted);
   text-align: left;
   /* 非対話 (kawaz r135m37): FAB と重なる位置での誤クリック事故防止。表示は
    * そのまま、クリックだけ下の要素へ完全に通す (button から div へ変更した
