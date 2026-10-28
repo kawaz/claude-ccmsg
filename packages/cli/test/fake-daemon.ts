@@ -23,6 +23,9 @@ export interface FakeDaemon {
   readonly sock: string;
   /** Every request read, in the order the client wrote them. */
   readonly requests: readonly RequestFrame[];
+  /** The same requests as the lines the client wrote, for a test that reads
+   * more of a request than its frame. */
+  readonly lines: readonly string[];
   /** Stop listening and remove the socket's directory. */
   stop(): void;
 }
@@ -33,6 +36,7 @@ export function fakeDaemon(answer: (req: RequestFrame) => FakeAnswer): FakeDaemo
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fake-daemon-"));
   const sock = path.join(dir, "daemon.sock");
   const requests: RequestFrame[] = [];
+  const lines: string[] = [];
   const server = Bun.listen<{ buf: string; decoder: TextDecoder }>({
     unix: sock,
     socket: {
@@ -44,9 +48,11 @@ export function fakeDaemon(answer: (req: RequestFrame) => FakeAnswer): FakeDaemo
         conn.buf += conn.decoder.decode(chunk, { stream: true });
         let at: number;
         while ((at = conn.buf.indexOf("\n")) >= 0) {
-          const req = frameOf(conn.buf.slice(0, at));
+          const line = conn.buf.slice(0, at);
+          const req = frameOf(line);
           conn.buf = conn.buf.slice(at + 1);
           requests.push(req);
+          lines.push(line);
           const reply = answer(req);
           if (reply === "hang up") {
             socket.end();
@@ -62,6 +68,7 @@ export function fakeDaemon(answer: (req: RequestFrame) => FakeAnswer): FakeDaemo
   return {
     sock,
     requests,
+    lines,
     stop() {
       server.stop(true);
       fs.rmSync(dir, { recursive: true, force: true });

@@ -54,6 +54,7 @@ function makeEnv(): { env: CliEnv; cleanup: () => void } {
 const MINIMAL_HELP = `Commands:
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
+  agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
@@ -215,6 +216,8 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).not.toContain("SendMessage");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("stop <session-id>");
+      expect(help.out).toMatch(/^ {2}agents {2,}List the live Claude Code sessions/m);
+      expect(help.out).toContain("agents: 'json' (default) or 'text' (a table)");
       expect(help.out).toContain("Command Options:");
       expect(help.out).toContain("Global Options:");
       expect(help.out).toContain("Environment Variables:");

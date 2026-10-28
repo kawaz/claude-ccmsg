@@ -53,6 +53,7 @@ import {
 } from "./session-begin.ts";
 import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
 import { loadSayDictionary, speechTextOf } from "./say-dictionary.ts";
+import { type AgentsFormat, agentsTable } from "./agents.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -910,6 +911,22 @@ async function runSessionKill(sessionId: string, force: boolean): Promise<never>
   process.exit(output(reply));
 }
 
+/** `ccmsg agents [--format <json|text>]` — the daemon's agents rows (op
+ * `agents`, the webui's Sessions list): every live Claude Code process in the
+ * config dirs the daemon serves, with its status. `json` (the default, as every
+ * other command prints) is the reply as it came; `text` is a table. The op is
+ * user role only, so this hellos as `{ role: "user" }` unconditionally, as
+ * `stop` does: inside a Claude Code session the session's own identity would be
+ * refused. */
+async function runAgents(format: AgentsFormat): Promise<never> {
+  const client = await daemonOrExit({ role: "user" }, "agents");
+  const res = await client.request({ op: "agents" });
+  client.close();
+  if (!res.ok || format === "json") process.exit(output(res));
+  process.stdout.write(agentsTable(res, os.homedir()));
+  process.exit(0);
+}
+
 async function handleDaemon(
   positionals: string[],
   opts: Record<string, string | boolean>,
@@ -942,6 +959,7 @@ function printHelp(): void {
   process.stdout.write(`Commands:
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧
+  agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
   say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
@@ -968,6 +986,12 @@ Commands:
                                auto-names it under <data>/dumps/)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd
+  agents                       List the live Claude Code sessions in the config
+                               dirs the daemon serves: session id, Claude Code's
+                               status (idle / busy / waiting / shell), whether
+                               the main thread answers a turn, name, config
+                               dir, cwd. Prints the daemon's reply as JSON;
+                               --format text prints a table
   notify                       Put --text into a session's conversation, from this
                                session (--self / --sid). It arrives as a message
                                from another session does, and only in a session
@@ -1018,6 +1042,7 @@ Command Options:
                                dragged in (the webui shows each record's uuid)
   --until <timestamp|uuid>     dump: inclusive upper bound, same two forms as --since
   --format <format>            dump: 'jsonl' (default) or 'text'
+                               agents: 'json' (default) or 'text' (a table)
   --out [path]                 dump: write the jsonl to a file and print only its
                                path. Bare --out auto-names it
                                <data>/dumps/<sid>-<YYYYMMDD-HHmmss>.jsonl.
@@ -1152,6 +1177,20 @@ async function main(): Promise<void> {
     const usage = "ccmsg stop <session-id> [--force]";
     const sid = requireArg(args[0], "session-id", usage);
     await runSessionKill(sid, opts.force === true);
+    return;
+  }
+
+  // `agents` hellos as role "user" too (runAgents' doc comment), for the same
+  // reason as `stop`.
+  if (cmd === "agents") {
+    const usage = "ccmsg agents [--format <json|text>]";
+    if (args[0] !== undefined)
+      throw new Error(`unexpected argument "${args[0]}"\n  usage: ${usage}`);
+    const format = str(opts, "format") ?? "json";
+    if (format !== "json" && format !== "text") {
+      throw new Error(`--format must be 'json' or 'text' (got '${format}')\n  usage: ${usage}`);
+    }
+    await runAgents(format);
     return;
   }
 
