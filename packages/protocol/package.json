@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./address": "./src/ccmsg-address.ts",
+    "./json-value": "./src/json-value.ts",
     "./launch": "./src/launch.ts",
     "./module-op": "./src/module-op.ts",
     "./parse": "./src/parse.ts",

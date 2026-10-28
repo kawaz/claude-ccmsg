@@ -80,6 +80,11 @@ import {
 } from "./subagents.ts";
 import { toolsAtStart } from "./tools.ts";
 import {
+  rowAppended,
+  SessionAppendInputSchema,
+  type TranscriptPushState,
+} from "./transcript-push.ts";
+import {
   AbortTurnInputSchema,
   mainTurnBegan,
   mainTurnFinished,
@@ -187,7 +192,12 @@ export async function fanOut<E, R>(
 }
 
 /** What the concerns observing the events read and write. */
-type BusState = LifecycleState & SidecarState & PromptSendState & FactsState & TurnAbortState;
+type BusState = LifecycleState &
+  SidecarState &
+  PromptSendState &
+  FactsState &
+  TurnAbortState &
+  TranscriptPushState;
 
 const mainThread = (input: { agentId?: string }): boolean => input.agentId === undefined;
 const subagent = (input: { agentId?: string }): boolean => input.agentId !== undefined;
@@ -332,6 +342,15 @@ export function registerBus(on: On, state: BusState): void {
       concern("subagents", SubagentTurnInputSchema, {
         when: subagent,
         after: (input) => subagentTurnCompleted($, state, input),
+      }),
+    ]),
+  ).catch(async (_$, e, next) => next(e));
+  // Once the row went in: a row the engine (or a plugin beneath) refuses is
+  // not in the conversation, and is not passed on.
+  on("session.append", async ($, e, next) =>
+    fanOut($, e, next, "session.append", [
+      concern("transcript-push", SessionAppendInputSchema, {
+        after: (input, result) => rowAppended($, state, input, result),
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));

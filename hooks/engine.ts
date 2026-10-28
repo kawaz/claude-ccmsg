@@ -113,7 +113,8 @@ export type ObservedEvent =
   | "command.run"
   | "prompt.submit"
   | "turn.start"
-  | "turn.complete";
+  | "turn.complete"
+  | "session.append";
 
 /** The events this module hooks. */
 export type HookedEvent = ObservedEvent | "turn.step" | "tool.call";

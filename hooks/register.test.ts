@@ -132,6 +132,7 @@ function emptyTable(): HookTable & CatchTable {
     "prompt.submit": [],
     "turn.start": [],
     "turn.complete": [],
+    "session.append": [],
     "turn.step": [],
     "tool.call": [],
   };
@@ -168,6 +169,8 @@ interface Fake {
   /** Each reply the module handed the daemon (`sidecar_reply`), with the sid
    * its hello named, in order. Kept apart from `asked` as the facts are. */
   replies: { sid: string; reply: SidecarReply }[];
+  /** The bodies of each `transcript_push` the module asked, in order. */
+  pushes: JsonObject[];
 
   /** Each `ccmsg sidecar begin` the module ran, with the sid and the cwd it
    * named, in order. Kept apart from `runs` as the facts are. */
@@ -250,6 +253,9 @@ function fakeEngine(
      * Error is what reading it rejects with. The plugin's package.json is
      * there unless given. */
     files?: Record<string, string | Error>;
+    /** What the daemon answers a `transcript_push` with, given the body: ok
+     * when absent. */
+    pushed?: (body: JsonObject) => Promise<{ status: number; text: string }>;
   } = {},
 ): Fake {
   // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
@@ -284,6 +290,7 @@ function fakeEngine(
   };
   const asked: Fake["asked"] = [];
   const replies: Fake["replies"] = [];
+  const pushes: Fake["pushes"] = [];
   const sockets = options.sockets ?? "up";
   const stateDir = (): string =>
     stateDirOf(
@@ -407,6 +414,16 @@ function fakeEngine(
           replies.push({ sid: request.value.hello.sid, reply: read.value.reply });
           return answering(200, { ok: true, request_id: "op" });
         }
+        if (request.value.op === "transcript_push") {
+          pushes.push(body.value);
+          if (options.pushed === undefined) return answering(200, { ok: true, request_id: "op" });
+          const answered = await options.pushed(body.value);
+          return {
+            ...answered,
+            ok: answered.status >= 200 && answered.status < 300,
+            headers: { "content-type": "application/json" },
+          };
+        }
         if (request.value.op === "ping") {
           statuses.count += 1;
           const webuiUrl = options.webuiUrl;
@@ -458,6 +475,7 @@ function fakeEngine(
     factsSent,
     asked,
     replies,
+    pushes,
     begins,
     runs,
     statuses,
@@ -3186,5 +3204,96 @@ describe("pure helpers", () => {
     feed("a\nb");
     feed("c\n\n");
     expect(lines).toEqual(["a", "bc"]);
+  });
+});
+
+// The rows that go into the conversation are passed on to the daemon as they
+// went in (DR-0045 §2): the engine's `session.append`, unread.
+describe("transcript_push", () => {
+  const ROW = {
+    uuid: "0fffe202-9b1e-4313-86b2-479d24bd37b0",
+    door: "response",
+    origin: { kind: "model", model: "claude-sonnet-5-5" },
+    message: {
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "ls" } }],
+    },
+  };
+  const rowsOf = (body: JsonObject | undefined) => body?.["rows"];
+  const PushedUuidsSchema = v.object({ rows: v.array(v.object({ uuid: v.string() })) });
+
+  // 何を保証するか: 行は会話に入った後に、uuid・door・中身をそのまま渡す。
+  // subagent の行は agent_id を付ける。module は中身を読まない。
+  test("a row that went in is pushed as it is, a subagent's with its agent id", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.append", ROW, async () => ({}));
+    await settle();
+    await fire(
+      fake,
+      "session.append",
+      { uuid: "u2", door: "prompt", agentId: "a0ea5ee99e172bc5c", message: { type: "user" } },
+      async () => ({}),
+    );
+    await settle();
+    expect(fake.pushes.map(rowsOf)).toEqual([
+      [{ uuid: ROW.uuid, door: "response", message: ROW.message }],
+      [{ uuid: "u2", door: "prompt", agent_id: "a0ea5ee99e172bc5c", message: { type: "user" } }],
+    ]);
+    expect(fake.pushes[0]?.["op"]).toBe("transcript_push");
+  });
+
+  // 何を保証するか: engine か下の plugin が拒んだ行は会話に無いので渡さない。
+  test("a row refused beneath is not pushed", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fire(fake, "session.append", ROW, async () => ({ deny: "refused" }));
+    await settle();
+    expect(fake.pushes).toEqual([]);
+  });
+
+  // 何を保証するか: 送りは 1 本ずつ。送りの返事を待つ間に入った行は、次の
+  // 1 回にまとめて入った順に送る (行の順を daemon が並べ直さずに済む)。
+  test("rows that go in while a push is out go together in the next, in order", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let first = true;
+    const fake = fakeEngine({
+      pushed: async () => {
+        if (first) {
+          first = false;
+          await held;
+        }
+        return { status: 200, text: JSON.stringify({ ok: true, request_id: "op" }) };
+      },
+    });
+    registerOn(fake);
+    for (const uuid of ["r1", "r2", "r3"]) {
+      await fire(fake, "session.append", { ...ROW, uuid }, async () => ({}));
+    }
+    await settle();
+    release();
+    await settle();
+    const uuids = fake.pushes.map((body) => {
+      const read = parseWith(PushedUuidsSchema, body);
+      return read.ok ? read.value.rows.map((r) => r.uuid) : null;
+    });
+    expect(uuids).toEqual([["r1"], ["r2", "r3"]]);
+  });
+
+  // 何を保証するか: 届かない送りは捨てて debug log に書く。module は再送しない
+  // (抜けた行は daemon が次の送りの時に jsonl から読む)。
+  test("a push the daemon does not take is dropped and logged", async () => {
+    const fake = fakeEngine({ sockets: "none" });
+    registerOn(fake);
+    await fire(fake, "session.append", ROW, async () => ({}));
+    await settle();
+    expect(fake.logs).toContain("ccmsg: transcript_push not delivered (no_daemon)");
+    await fire(fake, "session.append", { ...ROW, uuid: "r2" }, async () => ({}));
+    await settle();
+    expect(fake.logs.filter((l) => l.startsWith("ccmsg: transcript_push"))).toHaveLength(2);
   });
 });

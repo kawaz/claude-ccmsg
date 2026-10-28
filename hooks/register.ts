@@ -14,6 +14,8 @@
 //                         requests with from the web UI
 //   turn-abort.ts         the main loop's running turn, and turn.abort,
 //                         which stops it from the web UI
+//   transcript-push.ts    the rows that go into the conversation, passed on
+//                         to the daemon (DR-0045 §2)
 //   guidance.ts           what the model is told of ccmsg before its first turn
 //   tools.ts              the send / say / peers / launch tools
 //
@@ -40,6 +42,7 @@ import { newPromptSendState, type PromptSendState } from "./prompt-send.ts";
 import { type LifecycleState, newLifecycleState } from "./session-lifecycle.ts";
 import { newSidecarState, type SidecarState } from "./sidecar.ts";
 import { registerToolCalls } from "./tools.ts";
+import { newTranscriptPushState, type TranscriptPushState } from "./transcript-push.ts";
 import { newTurnAbortState, type TurnAbortState } from "./turn-abort.ts";
 
 /** The module's state for one load: one object, each concern's part
@@ -54,7 +57,8 @@ export type ModuleState = LifecycleState &
   SidecarState &
   PromptSendState &
   FactsState &
-  TurnAbortState;
+  TurnAbortState &
+  TranscriptPushState;
 
 export function newState(): ModuleState {
   return {
@@ -63,6 +67,7 @@ export function newState(): ModuleState {
     ...newPromptSendState(),
     ...newFactsState(),
     ...newTurnAbortState(),
+    ...newTranscriptPushState(),
   };
 }
 

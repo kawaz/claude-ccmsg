@@ -19,6 +19,7 @@
     "paths": {
       "@ccmsg/protocol": ["./packages/protocol/src/index.ts"],
       "@ccmsg/protocol/address": ["./packages/protocol/src/ccmsg-address.ts"],
+      "@ccmsg/protocol/json-value": ["./packages/protocol/src/json-value.ts"],
       "@ccmsg/protocol/launch": ["./packages/protocol/src/launch.ts"],
       "@ccmsg/protocol/module-op": ["./packages/protocol/src/module-op.ts"],
       "@ccmsg/protocol/parse": ["./packages/protocol/src/parse.ts"],

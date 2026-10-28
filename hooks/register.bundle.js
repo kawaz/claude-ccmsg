@@ -377,6 +377,19 @@ function boolean(message$1) {
     }
   });
 }
+function lazy(getter) {
+  return _standardSchema({
+    kind: "schema",
+    type: "lazy",
+    reference: lazy,
+    expects: "unknown",
+    async: false,
+    getter,
+    "~run"(dataset, config$1) {
+      return this.getter(dataset.value)["~run"](dataset, config$1);
+    }
+  });
+}
 function literal(literal_, message$1) {
   return _standardSchema({
     kind: "schema",
@@ -463,6 +476,23 @@ function looseObject(entries$1, message$1) {
               dataset.value[key] = input[key];
         }
       } else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function null_(message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "null",
+    reference: null_,
+    expects: "null",
+    async: false,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.value === null)
+        dataset.typed = true;
+      else
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
@@ -610,6 +640,78 @@ function picklist(options, message$1) {
       if (this.options.includes(dataset.value))
         dataset.typed = true;
       else
+        _addIssue(this, "type", dataset, config$1);
+      return dataset;
+    }
+  });
+}
+function record(key, value$1, message$1) {
+  return _standardSchema({
+    kind: "schema",
+    type: "record",
+    reference: record,
+    expects: "Object",
+    async: false,
+    key,
+    value: value$1,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      const input = dataset.value;
+      if (input && typeof input === "object") {
+        dataset.typed = true;
+        dataset.value = {};
+        for (const entryKey in input)
+          if (/* @__PURE__ */ _isValidObjectKey(input, entryKey)) {
+            const entryValue = input[entryKey];
+            const keyDataset = this.key["~run"]({ value: entryKey }, config$1);
+            if (keyDataset.issues) {
+              const pathItem = {
+                type: "object",
+                origin: "key",
+                input,
+                key: entryKey,
+                value: entryValue
+              };
+              for (const issue of keyDataset.issues) {
+                issue.path = [pathItem];
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues)
+                dataset.issues = keyDataset.issues;
+              if (config$1.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
+            }
+            const valueDataset = this.value["~run"]({ value: entryValue }, config$1);
+            if (valueDataset.issues) {
+              const pathItem = {
+                type: "object",
+                origin: "value",
+                input,
+                key: entryKey,
+                value: entryValue
+              };
+              for (const issue of valueDataset.issues) {
+                if (issue.path)
+                  issue.path.unshift(pathItem);
+                else
+                  issue.path = [pathItem];
+                dataset.issues?.push(issue);
+              }
+              if (!dataset.issues)
+                dataset.issues = valueDataset.issues;
+              if (config$1.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
+            }
+            if (!keyDataset.typed || !valueDataset.typed)
+              dataset.typed = false;
+            if (keyDataset.typed)
+              dataset.value[keyDataset.value] = valueDataset.value;
+          }
+      } else
         _addIssue(this, "type", dataset, config$1);
       return dataset;
     }
@@ -2524,6 +2626,69 @@ function registerToolCalls(on) {
   }));
 }
 
+var JSON_VALUE_MAX_DEPTH = 256;
+var JsonScalarOptions = [string(), number(), boolean(), null_()];
+var JsonScalarSchema = union(JsonScalarOptions);
+function holding(inner) {
+  const arrayOf = array(inner);
+  const objectOf = record(string(), inner);
+  return lazy((input) => Array.isArray(input) ? arrayOf : typeof input === "object" && input !== null ? objectOf : JsonScalarSchema);
+}
+function belowTheTop() {
+  let level = union(JsonScalarOptions, `JSON nested deeper than ${JSON_VALUE_MAX_DEPTH} levels`);
+  for (let depth = JSON_VALUE_MAX_DEPTH - 1;depth >= 1; depth--)
+    level = holding(level);
+  return level;
+}
+var JsonValueBelowTopSchema = belowTheTop();
+var JsonValueSchema = holding(JsonValueBelowTopSchema);
+var JsonObjectSchema = record(string(), JsonValueBelowTopSchema);
+
+var SessionAppendInputSchema = looseObject({
+  uuid: string(),
+  door: string(),
+  agentId: optional(string()),
+  message: JsonValueSchema
+});
+var RefusedSchema = looseObject({ deny: unknown() });
+var PushedTextSchema = jsonText(looseObject({ ok: literal(true) }));
+function newTranscriptPushState() {
+  return { unpushed: [], pushing: false };
+}
+function rowAppended($, state, input, result) {
+  if (parseWith(RefusedSchema, result).ok)
+    return;
+  state.unpushed.push({
+    uuid: input.uuid,
+    door: input.door,
+    ...input.agentId !== undefined ? { agent_id: input.agentId } : {},
+    message: input.message
+  });
+  if (!state.pushing)
+    pushAll($, state);
+}
+async function pushAll($, state) {
+  state.pushing = true;
+  try {
+    while (state.unpushed.length > 0) {
+      const rows = state.unpushed.splice(0);
+      const asked = await daemonOp($, { op: "transcript_push", rows });
+      if (asked.kind === "answered") {
+        if (!parseWith(PushedTextSchema, asked.text).ok) {
+          $.ui.log(`ccmsg: transcript_push refused: ${asked.text}`, { to: "debug" });
+        }
+      } else {
+        $.ui.log(`ccmsg: transcript_push not delivered (${asked.kind})`, { to: "debug" });
+      }
+    }
+  } catch (error) {
+    $.ui.log(`ccmsg: transcript_push failed: ${errorText(error)}`, { to: "debug" });
+    state.unpushed.length = 0;
+  } finally {
+    state.pushing = false;
+  }
+}
+
 function concern(name, schema, parts) {
   return {
     name,
@@ -2683,6 +2848,11 @@ function registerBus(on, state) {
       after: (input) => subagentTurnCompleted($, state, input)
     })
   ])).catch(async (_$, e, next) => next(e));
+  on("session.append", async ($, e, next) => fanOut($, e, next, "session.append", [
+    concern("transcript-push", SessionAppendInputSchema, {
+      after: (input, result) => rowAppended($, state, input, result)
+    })
+  ])).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => fanOut($, e, next, "prompt.submit", [
     concern("guidance", AnyInputSchema, { before: () => guide($, state) }),
     concern("request-override", PromptSubmitInputSchema, {
@@ -2703,7 +2873,8 @@ function newState() {
     ...newSidecarState(),
     ...newPromptSendState(),
     ...newFactsState(),
-    ...newTurnAbortState()
+    ...newTurnAbortState(),
+    ...newTranscriptPushState()
   };
 }
 function register(on) {
