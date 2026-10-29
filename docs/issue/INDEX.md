@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-29 | task | open | [dr0045-say-leftovers](./2026-10-29-dr0045-say-leftovers.md) | DR-0045 の実装後に残った say まわりの 3 点 (非 live セッションの「既読」表示、say-read.json の刈り込み、追いつき中の compaction 再 push) |
 | 2026-10-28 | bug | open | [fs-read-external-symlink-swap-without-module](./2026-10-28-fs-read-external-symlink-swap-without-module.md) | module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、許可されたパスの先祖が後から symlink に差し替わると差し替え先が読める |
 | 2026-10-25 | task | open | [drop-legacy-session-launcher-keys](./2026-10-25-drop-legacy-session-launcher-keys.md) | 新 daemon は session_launcher の旧キー shell / templates / timeout_seconds を移行期間として無視して読む (DR-0018 §3.1…  |
 | 2026-10-18 | bug | open | [send-message-served-dir-test-flaky-macos-ci](./2026-10-18-send-message-served-dir-test-flaky-macos-ci.md) | served dir への send_message のテストが macOS CI で確率的に no_peer_socket になる |
