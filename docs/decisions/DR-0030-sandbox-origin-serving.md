@@ -14,7 +14,7 @@ webui の配信経路は same-origin の `/fs-serve` だけで、画像拡張子
 - TL の長大 bash 出力を**別タブで全文表示**する
 
 一方 canddy-app-proxy には **sandbox ドメインが既に用意済み**で、ccmsg 用の route がコメントアウト状態で待機している (canddy `Caddyfile`、「ccmsg 側の実装が入ったら有効化」)。
-apps 側 `*.kawaz-mbp16-20211217.kawaz.jp` と sandbox 側`*.kawaz-mbp16-20211217.tmpspace.net` は **eTLD+1 が別**なので、passkey 窃取 /
+apps 側 `*.kawaz-mbp.kawaz.jp` と sandbox 側`*.kawaz-mbp.tmpspace.net` は **eTLD+1 が別**なので、passkey 窃取 /
 cookie tossing / SameSite 無効化が構造的に封じられている (canddy `docs/design/tailnet-local-apps-design.md` §3)。ccmsg はこの器を未活用。
 
 ## 2. 決定
@@ -87,7 +87,7 @@ sandbox 経路の性質 (apps 経路との差分):
 ### 3.3 ccmsg 側のパス設計
 
 ```
-https://ccmsg-files-<gid>.kawaz-mbp16-20211217.tmpspace.net/<token>/<relpath>
+https://ccmsg-files-<gid>.kawaz-mbp.tmpspace.net/<token>/<relpath>
 ```
 
 - `<gid>`: grant id。**秘密ではない** origin 分離キー。base32 小文字
@@ -205,7 +205,7 @@ sandbox allow-scripts allow-same-origin;
 default-src 'self'; img-src 'self' data: blob:;
 style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';
 font-src 'self' data:; connect-src 'self';
-frame-ancestors https://ccmsg.kawaz-mbp16-20211217.kawaz.jp;
+frame-ancestors https://ccmsg.kawaz-mbp.kawaz.jp;
 form-action 'none'; base-uri 'none'
 ```
 
@@ -230,8 +230,10 @@ ccmsg 側でも重複して付ける (canddy 無しでの直接検証時に効�
 `<dataDir>/config.json` に **`sandbox_origin_template`** を追加する。
 
 ```json
-{ "sandbox_origin_template": "https://ccmsg-files-{gid}.kawaz-mbp16-20211217.tmpspace.net" }
+{ "sandbox_origin_template": "https://ccmsg-files-{gid}.kawaz-mbp.tmpspace.net" }
 ```
+
+`kawaz-mbp.tmpspace.net` も webui 側と同じく dual (A + AAAA) / `v4-kawaz-mbp` / `v6-kawaz-mbp` の 3 つの名前を持つ。template は dual の名前を使い、iframe を読む経路は端末側の名前解決 (happy eyeballs) に任せる。`frame-ancestors` は許可 origin の集合から作るので、webui の 3 つの名前は全部並ぶ。
 
 daemon はこれを持つときだけ hello に **`sandbox_available: true`** を返す(user role 限定)。`terminal_gateway_url` / `llm_usage_available` と同じ流儀(server.ts の hello 分岐)。URL そのものは `sandbox_grant` の応答で返すので、hello では可否だけ渡す。
 

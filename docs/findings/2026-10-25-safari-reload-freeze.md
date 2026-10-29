@@ -308,7 +308,7 @@ pcap で「fragment が出ていて、iPhone からの ACK が途切れ、Caddy 
 
 ### その他
 
-- **iPhone を Tailscale の IPv6 で繋がせる**: IPv6 では DF が効くので fragment が出ない (候補 1 の表)。固まらなくなれば fragment が原因の側。この Mac の Tailscale の名前は AAAA を持つが、iPhone は IPv4 で繋いでいる。iPhone 側の MagicDNS が AAAA を返すか、iOS の Tailscale が IPv6 を使えるかは、Mac からは分からない。運用では iPhone / iPad を AAAA だけの `ccmsg.v6-sandbox.kawaz.jp` に繋がせて経過観察する (runbook `device-access-path.md`)
+- **iPhone を Tailscale の IPv6 で繋がせる**: IPv6 では DF が効くので fragment が出ない (候補 1 の表)。固まらなくなれば fragment が原因の側。この Mac の Tailscale の名前は AAAA を持つが、iPhone は IPv4 で繋いでいる。iPhone 側の MagicDNS が AAAA を返すか、iOS の Tailscale が IPv6 を使えるかは、Mac からは分からない。運用では iPhone / iPad を AAAA だけの `ccmsg.v6-kawaz-mbp.kawaz.jp` に繋がせて経過観察する (runbook `device-access-path.md`)
 
 - Mac の Chrome で `chrome://flags/#enable-quic` を Disabled にして画像を貼る。止まらなくなれば、画像の件は HTTP/3 の経路の問題
 - iOS の Safari には利用者が HTTP/3 を切る設定が無い (kawaz が実機で確認) ので、iPhone の側からは切り分けられない
