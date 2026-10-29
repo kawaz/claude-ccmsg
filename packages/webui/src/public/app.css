@@ -415,8 +415,10 @@ a {
   /* dvh: iOS Safari の 100vh はブラウザ UI が畳まれた時の高さなので、UI が出ている間は
    * ページが可視領域より高くなり全体が縦スクロールする。dvh は UI の出入りに追従する。 */
   height: 100dvh;
-  /* 一番下の端まで本文が来るので、端末のホームインジケータを自分で避ける
+  /* 上下の端まで本文が来るので、端末のステータスバー (ホーム画面に追加した
+   * PWA では #topbar がその下に潜る) とホームインジケータを自分で避ける
    * (index.html の viewport-fit=cover)。safe-area の無い端末では 0。 */
+  padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
   box-sizing: border-box;
 }
