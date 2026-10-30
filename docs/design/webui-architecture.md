@@ -83,7 +83,8 @@ Timeline / Files / Status / 検索 / usage) に育ったため、層の境界が
 
 - DOM は 1 種類: `App = Topbar + Layout(Sidebar | main) + Footer`。Sidebar の中は`SidebarPanes(Lists | Splitter | Form) + SidebarSplitter`。幅による違いは CSS のみ(PC: main は残り幅 / スマホ: main は viewport 幅で Layout が横スクロール + スナップ)
 - 絶対配置 (`position: fixed / absolute`) は「レイアウトに参加しない装飾・浮遊要素」に限る:
-  composer の FAB とパネル、lightbox、Timeline 右端のつまみ、スプリッターの当たり判定拡張、cache ring の重ね描き。**ペインや列の配置には使わない**
+  composer の FAB とパネル、パネルの入力欄の左上のつまみ、lightbox、Timeline 右端のつまみ、スプリッターの当たり判定拡張、cache ring の重ね描き。**ペインや列の配置には使わない**
+- パネルは画面の下に付くので、入力欄は右下 (ブラウザ組み込みの `resize`) に加えて左上のつまみでも高さを変えられる。つまみは入力欄の内側の角に重ねる小さな斜線で、上端を掴んだ点に合わせて上端を動かし、下端は動かさない (手で動かしたパネルは、伸びた分だけ上へずらす)。高さは組み込みの `resize` と同じく入力欄の inline style に書き、どちらのつまみも同じ高さを動かす
 - スプリッターは `PaneSplitter` (ドラッグの配管のみ) + 呼び出し側の「位置 → 一覧側のサイズ」変換(`pane-axis.ts`)。下限は `PANE_MIN_PX`、上限はコンテナ幅から導く
 - z-index は用途別トークン (`--z-composer` 等) に集約し、リテラルを散らさない
 

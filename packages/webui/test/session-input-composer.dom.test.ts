@@ -27,7 +27,7 @@ import type {
   RequestOverrideState,
 } from "@ccmsg/protocol";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
-import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
+import { instanceOf, MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { Mounted, SID } from "./timeline-harness.ts";
 
@@ -353,6 +353,99 @@ describe("SessionInputComposer effort", () => {
     await send(root);
     expect(calls).toEqual([{ op: "user_prompt", text: "x", override: { effort: "max" } }]);
     expect(collapsed(root)).toBe("⏱️max");
+  });
+});
+
+// The textarea's top-left grip: dragging it moves the top edge, the bottom
+// edge staying (the browser's own resize stays at the bottom-right). happy-dom
+// lays nothing out, so the boxes are stubbed: the textarea's bottom at 500 and
+// its CSS min-height 112, the panel's top at 300 (room for 300 more).
+describe("SessionInputComposer textarea top grip", () => {
+  const BOTTOM = 500;
+  const MIN = 112;
+
+  async function openWithBoxes() {
+    const root = await openComposer();
+    const el = textarea(root);
+    const panel = instanceOf(root.querySelector(".session-input-panel"), HTMLElement, "the panel");
+    const height = () => Math.max(MIN, Number.parseFloat(el.style.height) || MIN);
+    restores.push(
+      stubProperty(el, "getBoundingClientRect", {
+        value: () => new DOMRect(0, BOTTOM - height(), 300, height()),
+      }),
+      stubProperty(panel, "getBoundingClientRect", {
+        value: () => new DOMRect(0, 300, 360, 400),
+      }),
+    );
+    const grip = instanceOf(
+      root.querySelector(".session-input-textarea-ring > .session-input-resize-top"),
+      HTMLElement,
+      "the top grip",
+    );
+    return { root, el, panel, grip };
+  }
+
+  async function drag(target: HTMLElement, from: number, ...to: number[]): Promise<void> {
+    await act(() => {
+      target.dispatchEvent(
+        new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientY: from }),
+      );
+    });
+    for (const y of to) {
+      await act(() => {
+        target.dispatchEvent(
+          new PointerEvent("pointermove", { bubbles: true, pointerId: 1, clientY: y }),
+        );
+      });
+    }
+    await act(() => {
+      target.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+    });
+  }
+
+  test("the grip sits on the textarea's corner, apart from the layout", async () => {
+    const { root, grip } = await openWithBoxes();
+    // Inside the textarea's ring, after the textarea: no row of its own.
+    expect(grip.previousElementSibling).toBe(textarea(root));
+    expect(grip.getAttribute("role")).toBe("separator");
+  });
+
+  test("dragging it up makes the textarea taller by as much, down shorter", async () => {
+    const { el, panel, grip } = await openWithBoxes();
+    // Grabbed 5px below the top edge, the top edge follows 5px above the
+    // pointer.
+    await drag(grip, BOTTOM - MIN + 5, BOTTOM - MIN - 45);
+    expect(el.style.height).toBe(`${MIN + 50}px`);
+    await drag(grip, BOTTOM - MIN - 50 + 5, BOTTOM - MIN - 20 + 5);
+    expect(el.style.height).toBe(`${MIN + 20}px`);
+    // Past the bottom edge: 0, which the min-height raises.
+    await drag(grip, BOTTOM - MIN - 20, BOTTOM + 100);
+    expect(el.style.height).toBe("0px");
+    // The panel's own drag did not start: it stays where the CSS puts it.
+    expect(panel.style.top).toBe("");
+  });
+
+  test("it grows no further than the panel's top can go and stay in view", async () => {
+    const { el, grip } = await openWithBoxes();
+    await drag(grip, BOTTOM - MIN, -1000);
+    expect(el.style.height).toBe(`${MIN + 300}px`);
+  });
+
+  test("a panel moved by hand (placed by its top) moves up as the textarea grows", async () => {
+    const { root, el, panel, grip } = await openWithBoxes();
+    const header = instanceOf(
+      root.querySelector(".session-input-panel-header"),
+      HTMLElement,
+      "the panel header",
+    );
+    await drag(header, 310, 290);
+    // The click a browser fires after the pointerup, which the drag swallows
+    // (left waiting, it would swallow the next test's click).
+    await act(() => header.click());
+    expect(panel.style.top).toBe("280px");
+    await drag(grip, BOTTOM - MIN, BOTTOM - MIN - 50);
+    expect(el.style.height).toBe(`${MIN + 50}px`);
+    expect(panel.style.top).toBe("230px");
   });
 });
 

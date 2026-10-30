@@ -9449,6 +9449,38 @@ circle.cache-ring-shape {
   min-width: 0;
 }
 
+/* 入力欄の左上のつまみ (kawaz 2026-10-30): パネルは画面の下に付くので、上端を
+ * 掴んで高さを変えられるようにする。目立たせず場所も取らない: textarea の
+ * 内側の角に重ねる小さな斜線 2 本で、レイアウトに参加しない。掴める時
+ * (hover・入力中・ドラッグ中) だけ少し濃くする。斜線は右下の組み込みの
+ * つまみを左上へ写した向き。 */
+.session-input-resize-top {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-top-left-radius: 0.4rem;
+  color: var(--fg-muted);
+  background: linear-gradient(
+    135deg,
+    transparent 0 22%,
+    currentColor 22% calc(22% + 1px),
+    transparent calc(22% + 1px) 42%,
+    currentColor 42% calc(42% + 1px),
+    transparent calc(42% + 1px)
+  );
+  opacity: 0.45;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.session-input-resize-top:hover,
+.session-input-resize-top.dragging,
+.session-input-textarea-ring:focus-within > .session-input-resize-top {
+  opacity: 0.85;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* 動きは止めるが残量表示としての意味は残す (delay で決まった開始位置の
    * まま静止する)。 */

@@ -391,15 +391,20 @@ function hasClosest(
 }
 
 /** panel 側で使う handleFilter: textarea / input / button / select / a /
- * contenteditable のいずれかに含まれる target は drag を開始しない。パネル
- * の余白・ヘッダ・ラベル領域は許可される。 */
+ * contenteditable と、自分のドラッグを持つ separator (入力欄の左上のつまみ)
+ * のいずれかに含まれる target は drag を開始しない。パネルの余白・ヘッダ・
+ * ラベル領域は許可される。 */
 export function isPanelDragHandle(target: EventTarget | null): boolean {
   // DOM の Element type 参照を避けて duck typing (`closest` メソッドの有無)。
   // ブラウザ以外のテスト環境 (bun/node) で Element が未定義でも参照エラーに
   // ならないようにするための予防。closest を持たない target (Text / Window
   // / null) は handle 対象外 (false)。
   if (!target || !hasClosest(target)) return false;
-  if (target.closest('textarea, input, button, select, a, [contenteditable="true"]')) {
+  if (
+    target.closest(
+      'textarea, input, button, select, a, [contenteditable="true"], [role="separator"]',
+    )
+  ) {
     return false;
   }
   return true;

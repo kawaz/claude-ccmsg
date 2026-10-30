@@ -73,6 +73,8 @@ import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
+import { PaneSplitter } from "./PaneSplitter.tsx";
+import { resizeFromTop } from "./textarea-top-resize.ts";
 import { OverrideSelect } from "./RequestOverridePicker.tsx";
 import {
   choicePatch,
@@ -161,6 +163,9 @@ export function SessionInputComposer({
   // setSelectionRange して戻す。
   const restoreCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // 左上のつまみを掴んだ点と textarea の上端の差。ドラッグの間、上端がつまみと
+  // 一緒に動くように。
+  const gripOffsetRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル: repo → ws → cwd 末尾 → sid8。
   const targetPeer = useStoreState(store, (s) => s.peers.find((p) => p.sid === sid), sameJson);
@@ -572,6 +577,26 @@ export function SessionInputComposer({
           rows={4}
         />
         {cacheRing ? <CacheRing shape="rect" /> : null}
+        {/* 左上のつまみ: 上端を掴んで高さを変える (右下はブラウザ組み込みの
+         * resize)。上端の位置に、下端はそのまま。 */}
+        <PaneSplitter
+          class="session-input-resize-top"
+          ariaOrientation="horizontal"
+          onDragStart={(e) => {
+            const el = textareaRef.current;
+            if (el) gripOffsetRef.current = e.clientY - el.getBoundingClientRect().top;
+          }}
+          onDrag={(e) => {
+            const el = textareaRef.current;
+            const panel = panelRef.current;
+            if (!el || !panel) return;
+            const grown = resizeFromTop(el, panel, e.clientY - gripOffsetRef.current);
+            // 動かしたパネルは上端で置かれているので、伸びた分だけ上へ動かして
+            // 下端を保つ。動かしていないパネルは下端で置かれていて、そのまま。
+            const at = panelDrag.position;
+            if (at && grown !== 0) panelDrag.setPosition({ x: at.x, y: at.y - grown });
+          }}
+        />
       </div>
       <ComposerAttachments
         attachments={attachments}

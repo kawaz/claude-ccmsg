@@ -14,12 +14,17 @@ export function PaneSplitter({
   id,
   class: cls,
   ariaOrientation,
+  onDragStart,
   onDrag,
 }: {
   id?: string;
   class?: string;
   /** aria-orientation of the separator (visual bar direction). */
   ariaOrientation: "vertical" | "horizontal";
+  /** Called on the pointerdown that starts a drag, with the raw event: a
+   * caller whose layout value moves by the pointer's travel takes its start
+   * here. */
+  onDragStart?: (e: PointerEvent) => void;
   /** Called for every pointermove while dragging, with the raw event —
    * the caller derives its own layout value (ratio / px / axis). */
   onDrag: (e: PointerEvent) => void;
@@ -46,6 +51,7 @@ export function PaneSplitter({
         // pointer-events pipeline.
         e.currentTarget.setPointerCapture(e.pointerId);
         e.preventDefault();
+        onDragStart?.(e);
       }}
       onPointerMove={(e) => {
         if (!draggingRef.current) return;
