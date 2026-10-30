@@ -1,6 +1,6 @@
 # Runbook: session launcher のセットアップ
 
-- Last Updated: 2026-10-25
+- Last Updated: 2026-10-30
 
 ## 適用ケース
 
@@ -75,17 +75,23 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    for k in model effort name; do
      if [[ -n "$(get "$k")" ]]; then args+=("--$k" "$(get "$k")"); fi
    done
-   # prompt は末尾の改行も本文のうち。$(…) が末尾の改行を落とさないよう x を足して外す
-   prompt=$(jq -j '.prompt // empty' <<<"$input"; printf x)
-   prompt=${prompt%x}
-   if [[ -n "$prompt" ]]; then args+=(-- "$prompt"); fi
+   # prompt は claude の stdin に書く (jq -j は改行を足さない)。一時ファイルに書いて開き、
+   # 消してから渡す。pipe にすると、このスクリプトが終わった後に claude が読む分が欠けうる
+   if jq -e 'has("prompt")' >/dev/null <<<"$input"; then
+     prompt_file=$(mktemp)
+     jq -j '.prompt' <<<"$input" >"$prompt_file"
+     exec 3<"$prompt_file"
+     rm -f "$prompt_file"
+   else
+     exec 3</dev/null
+   fi
 
    # 対話の claude は detached な端末に載せ、ここはすぐに 0 で終わる
-   hyoui run --detached -- claude ${args[@]+"${args[@]}"} </dev/null
+   hyoui run --detached -- claude ${args[@]+"${args[@]}"} <&3
    ```
 
    - `cwd` は daemon が realpath にした値で届き、起動コマンドの cwd もそのディレクトリになる。信頼判定のパターンも realpath で書く (`/var` と `/private/var` のような symlink の違いで外れないように)
-   - `prompt` は `--` の後ろに 1 つの引数で置く。`-` で始まる prompt も option として読まれずにそのまま claude に届く ([findings 2026-10-25-claude-prompt-after-double-dash](../findings/2026-10-25-claude-prompt-after-double-dash.md))
+   - `prompt` は claude の stdin に書き、位置引数にしない (`ps` に見える、引数の長さの上限、option として読まれうる)。`hyoui run` は端末でない stdin を claude にそのまま継ぎ、claude はその中身を最初の prompt として送信する ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))
    - 非 0 で終わるのは対話の claude を起こす前だけにする。起こした後に非 0 で終わると、呼び手に新しいセッションの `session_id` が返らない (契約の「戻り方」)
    - fork 地点のある fork の一段目 (`claude -p … /exit`) は `launch_timeout_seconds` の中で終わる必要がある。plugin や hook の多い config dir では既定の 10 秒に収まる保証が無いので、使う config dir で一段目を手元で測り、足りなければ `launch_timeout_seconds` を延ばす (上限 50)
    - 載せる端末 (ここでは hyoui) は起動コマンドの process group から外れて動くものにする。timeout で止められた時、group に残ったものは一緒に止められる
