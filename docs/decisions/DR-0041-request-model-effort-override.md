@@ -67,8 +67,8 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - module は facts ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) に、上書きが main thread の request に載せる値 (`request_override: { session, once }`、各 `{ model, effort }`) を付けて送る。`session` は通しの field をセッション自身の値に重ねたもの (model はセッションの綴りのまま `[1m]` 付き、人が設定すると family)、`once` は単発の値で、無い field は `null`。上書きでこの値が変わらない時は送らない。facts の `model` / `effort` はセッション自身の値のまま
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
-- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `<率>[<window>] / <model> / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。上書きが効いていない field は、request が実際に走った値 (status snapshot の context の `model` / `effort`。`model` は transcript の応答した model の実 ID で、上書きで走った応答ならその model) を出す。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、Status タブと同じ通しの選択 (§6.4) が状態行の下に開き、押した field の select が開いた状態で出る。
-- 印と §6 の 🏛️・default の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つと開いた select だけにする
+- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `<率>[<window>] / <model> / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。上書きが効いていない field は、request が実際に走った値 (status snapshot の context の `model` / `effort`。`model` は transcript の応答した model の実 ID で、上書きで走った応答ならその model) を出す。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、その値の位置がその field の通しの選択 (§6.4) の select になる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つの値と、そこに出る select・[適用] だけにする
+- 印と §6 の 🏛️・default の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない
 - FAB のプロンプトフォーム、Status タブと状態行の選択は §6
 
 ### 6. FAB、Status タブと状態行の選択
@@ -125,7 +125,8 @@ low
 
 #### 6.4 Status タブと状態行
 
-- Status タブの OVERRIDE 行と、状態行 (§5) の model / effort を押して開く選択は、同じ部品で effort と model の select を同じ形で 1 つずつ出す (effort が先)
+- Status タブの OVERRIDE 行と状態行 (§5) の model / effort は、1 つの field の select と [適用] を同じ部品で出す。Status タブは effort と model を 1 つずつ並べ (effort が先)、状態行は model と effort の値の位置にそれぞれ置く
+- 状態行の静止時のテキストは §5 の状態行の表示 (`low⁺` 等) で、押すとその位置でその field の select になる。default 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。select・[適用]・返事の理由が出ている間は、状態行を省略記号で切らずに折り返す
 - 群は default と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (default) が `⏱️high` のようにそれを示す (単発の値を別の行には出さない)
 - select を default 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、押せば同じく送る (送っても何も変わらない)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
 - 返事が来たら、select は default に戻り、畳んだ表示は変更のイベント (§5) で届いた値で出し直す。断られた・送れなかった時は選択を残し、その理由を横に出す
@@ -151,7 +152,7 @@ low
   - `SessionContextUsageSchema` の `engine: { model?, effort? }`。daemon の `contextWithFacts` が module の facts の `model` / `effort` を入れ、facts に無い field は省き、どちらも無ければ `engine` ごと省く。context の `model` は transcript の応答した model のまま
 - webui
   - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。default のラベルは状態行の印と同じ判定 (`requestValueViews` の `by`)
-  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideEditor` (effort と model の select と [適用]、Status タブと状態行の両方)
+  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideField` (1 つの field の select と [適用]。状態行では静止時に状態行の表示を出す)、`SessionOverrideEditor` (Status タブの effort と model)、`ContextLine` (状態行。model と effort の位置に `SessionOverrideField`)
   - `SessionInputComposer.tsx`: effort の 1 つの select。選んだ option を持ち、送信の時に 📌 / 🏛️ なら `ws.requestOverride` の返事を待ってから `ws.userPrompt` を送る
   - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない
 
@@ -179,6 +180,10 @@ low
 17. **セッション自身の値が語彙に無い時は 🏛️ を出さない**: 全部の値を 📌 で出す (§6.1)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、そのまま送ってよい (冪等、§6.4)
 18. **model の select の候補は別名、🏛️ の位置は engine の model の family**: 候補は launch の語彙 (`fable` / `opus` / `sonnet` / `haiku`)、🏛️ は engine の model (`fable-5-1`) から切り出した family の位置 (§6.2)。engine の値は module の facts から取り、状態行の表示 (request が実際に走った値) とは分ける (§5)
 19. **静止時は select を見せない**: FAB、状態行、Status タブのどれも、静止時は押せると分かるテキストで畳んだ表示の値を出し、押した間だけ select にする。選択の確定・blur・Esc でテキストに戻る。select の中身と、FAB は送信が適用・Status と状態行は変えた時だけ [適用] の規則は変えない (§6)
+
+## 裁定 (kawaz 2026-10-30)
+
+20. **状態行の値はその位置で select になる**: 状態行の model / effort を押すと、その値の位置がその field の select になる。別の行・パネル・閉じるボタンは出さない (§5、§6.4)
 
 ## Alternatives Considered
 

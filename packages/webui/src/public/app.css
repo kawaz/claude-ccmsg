@@ -7764,12 +7764,22 @@ a.tl-attachment-file-path {
   color: var(--accent);
 }
 
-/* DR-0041 §5: the model and the effort of the ctx line open the session
- * override's pickers. The panel is not clickable (pointer-events: none
- * above); these two buttons and the pickers they open are the only parts
- * that take a click. */
-.ctx-value {
+/* DR-0041 §5: the model and the effort of the ctx line are the session
+ * override's fields in place. The panel is not clickable (pointer-events:
+ * none above); these two fields (their text at rest, the select, [適用] and
+ * what became of the change) are the only parts that take a click. */
+.tl-status-mini-context .override-field {
   pointer-events: auto;
+}
+
+/* A field opened or holding a choice or a reply leaves the one line: cut
+ * short with an ellipsis, it would cut the select and [適用] off. */
+.tl-status-mini-context:has(.override-select, .override-apply, .override-notice) {
+  overflow: visible;
+  white-space: normal;
+}
+
+.ctx-value {
   padding: 0;
   border: none;
   background: none;
@@ -7783,26 +7793,6 @@ a.tl-attachment-file-path {
 .ctx-value-overridden {
   color: var(--fg-warn);
   font-weight: 600;
-}
-
-.ctx-override-popover {
-  pointer-events: auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border: 1px solid var(--warn-border);
-  border-radius: 0.4rem;
-  background: var(--warn-surface);
-}
-
-.ctx-override-close {
-  padding: 0 var(--space-4);
-  border: none;
-  background: none;
-  color: var(--fg-muted);
-  cursor: pointer;
 }
 
 .override-select {

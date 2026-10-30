@@ -4,8 +4,10 @@
 // marked with what it is (request-override-view.ts). The FAB's prompt form
 // puts the effort's select with the turn group beside the send, which applies
 // it; the ctx line under the Timeline and the Status tab put the session
-// override's editor (the model and the effort, the session group only), whose
-// [適用] sends the change to the daemon (request_override).
+// override's fields (the model and the effort, the session group only), whose
+// [適用] sends the change to the daemon (request_override). The ctx line keeps
+// its own text for each value at rest and turns into the field's select where
+// the value is.
 import { useCallback, useRef, useState } from "preact/hooks";
 import type {
   ErrorResponse,
@@ -22,6 +24,7 @@ import {
   type OverrideGroup,
   overrideGroups,
   requestOverrideNotice,
+  type RequestValueView,
 } from "../request-override-view.ts";
 import { type MiniSummaryLine, shortModel } from "../session-status-view.ts";
 
@@ -47,25 +50,24 @@ function openPicker(select: HTMLSelectElement): void {
  * pressable, the label of the option chosen (`low`, `⏱️high`, `📌high`);
  * pressed, it becomes the native `<select>` of the groups' options with its
  * picker open, and goes back to text once an option is chosen, on blur, or
- * on Escape. `chosen` is the key of the option chosen; `startOpen` draws the
- * select from the start (the ctx line opens a field's straight from its
- * value). */
+ * on Escape. `chosen` is the key of the option chosen; `face` is the value as
+ * the ctx line shows it (DR-0041 §5), at rest in place of the option's label. */
 export function OverrideSelect({
   groups,
   chosen,
   onChoose,
   disabled,
   label,
-  startOpen = false,
+  face,
 }: {
   groups: readonly OverrideGroup[];
   chosen: string;
   onChoose: (key: string) => void;
   disabled: boolean;
   label: string;
-  startOpen?: boolean;
+  face?: RequestValueView;
 }) {
-  const [open, setOpen] = useState(startOpen);
+  const [open, setOpen] = useState(false);
   // Closed from the keyboard or by a choice, the text takes the focus back;
   // closed by the focus going elsewhere, it does not take it.
   const refocus = useRef(false);
@@ -79,7 +81,22 @@ export function OverrideSelect({
   }, []);
   const option = chosenOption(groups, chosen);
   if (!open || disabled) {
-    return (
+    // The ctx line's text (`low⁺`) is read as it is, between the line's other
+    // parts; the option's label alone (`📌low`) does not say which field it
+    // is, so its accessible name is the field's.
+    return face !== undefined ? (
+      <button
+        type="button"
+        class={face.by ? `ctx-value ctx-value-overridden ctx-value-${face.by}` : "ctx-value"}
+        aria-haspopup="listbox"
+        title={`${face.title}。押すと通しの上書きを変える`}
+        disabled={disabled}
+        ref={textRef}
+        onClick={() => setOpen(true)}
+      >
+        {face.text}
+      </button>
+    ) : (
       <button
         type="button"
         class="override-value"
@@ -114,11 +131,7 @@ export function OverrideSelect({
         if (!refocus.current) setOpen(false);
       }}
       onKeyDown={(e) => {
-        if (e.key !== "Escape") return;
-        // The Escape is the select's: it does not also close the ctx line's
-        // editor around it.
-        e.stopPropagation();
-        close(true);
+        if (e.key === "Escape") close(true);
       }}
     >
       {groups.map((group) => (
@@ -137,19 +150,20 @@ export function OverrideSelect({
 /** One field of the session override (DR-0041 §6.4): its select, the
  * [適用] beside it while an option other than the default is chosen, and
  * what became of the last change. Applied, the select goes back to the
- * default, which ev:"request_override" brings the new value to. */
+ * default, which ev:"request_override" brings the new value to. `face` is the
+ * ctx line's text of the value, shown at rest while the default is chosen. */
 function SessionOverrideField({
   field,
   state,
   context,
   onChange,
-  startOpen,
+  face,
 }: {
   field: OverrideField;
   state: RequestOverrideState | undefined;
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
-  startOpen: boolean;
+  face?: RequestValueView;
 }) {
   const [chosenKey, setChosenKey] = useState(CURRENT_KEY);
   const [busy, setBusy] = useState(false);
@@ -182,7 +196,7 @@ function SessionOverrideField({
         }}
         disabled={busy}
         label={`通しの上書き: ${field}`}
-        startOpen={startOpen}
+        face={chosen.key === CURRENT_KEY ? face : undefined}
       />
       {patch !== null ? (
         <button
@@ -205,21 +219,18 @@ function SessionOverrideField({
   );
 }
 
-/** The session override's editor, the same on the ctx line and in the Status
- * tab (DR-0041 §6.4): the effort, then the model. `state` is what
- * ev:"request_override" says of the session, `context` the status snapshot's
- * (its `engine` is the session's own values). `openField` is the field whose
- * select is drawn open from the start. */
+/** The session override's editor in the Status tab (DR-0041 §6.4): the
+ * effort, then the model. `state` is what ev:"request_override" says of the
+ * session, `context` the status snapshot's (its `engine` is the session's own
+ * values). */
 export function SessionOverrideEditor({
   state,
   context,
   onChange,
-  openField,
 }: {
   state: RequestOverrideState | undefined;
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
-  openField?: OverrideField;
 }) {
   const fields: OverrideField[] = ["effort", "model"];
   return (
@@ -231,17 +242,16 @@ export function SessionOverrideEditor({
           state={state}
           context={context}
           onChange={onChange}
-          startOpen={field === openField}
         />
       ))}
     </span>
   );
 }
 
-/** The ctx line under the Timeline with its model and effort as buttons that
- * open the session override's editor with the pressed field's select open.
- * The editor opens as a row of its own below the line: the line itself is
- * cut short with an ellipsis when it is too long, which would cut it too. */
+/** The ctx line under the Timeline (DR-0041 §5), its model and effort each
+ * the session override's field in place: at rest the line's own text of the
+ * value, pressed the field's select where the value is, with [適用] beside it
+ * once another option is chosen. */
 export function ContextLine({
   line,
   state,
@@ -253,51 +263,21 @@ export function ContextLine({
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
 }) {
-  const [open, setOpen] = useState<OverrideField | null>(null);
   const { fill, model, effort, tail } = line;
-  const button = (field: OverrideField, view: typeof model) => (
-    <button
-      type="button"
-      class={view.by ? `ctx-value ctx-value-overridden ctx-value-${view.by}` : "ctx-value"}
-      title={`${view.title}。押すと通しの上書きを変える`}
-      aria-expanded={open !== null}
-      onClick={() => setOpen(open === null ? field : null)}
-    >
-      {view.text}
-    </button>
+  const field = (name: OverrideField, view: RequestValueView) => (
+    <SessionOverrideField
+      field={name}
+      state={state}
+      context={context}
+      onChange={onChange}
+      face={view}
+    />
   );
   return (
-    <>
-      <span class="tl-status-mini-line tl-status-mini-context">
-        {fill} / {button("model", model)}
-        {effort ? <> / {button("effort", effort)}</> : null}
-        {tail !== "" ? ` / ${tail}` : null}
-      </span>
-      {open !== null ? (
-        <span
-          class="ctx-override-popover"
-          role="dialog"
-          aria-label="通しの上書き"
-          onKeyDown={(e) => {
-            if (e.key === "Escape") setOpen(null);
-          }}
-        >
-          <SessionOverrideEditor
-            state={state}
-            context={context}
-            onChange={onChange}
-            openField={open}
-          />
-          <button
-            type="button"
-            class="ctx-override-close"
-            aria-label="閉じる"
-            onClick={() => setOpen(null)}
-          >
-            ✕
-          </button>
-        </span>
-      ) : null}
-    </>
+    <span class="tl-status-mini-line tl-status-mini-context">
+      {fill} / {field("model", model)}
+      {effort ? <> / {field("effort", effort)}</> : null}
+      {tail !== "" ? ` / ${tail}` : null}
+    </span>
   );
 }
