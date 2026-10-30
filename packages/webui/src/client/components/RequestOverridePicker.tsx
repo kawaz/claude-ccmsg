@@ -8,7 +8,7 @@
 // [適用] sends the change to the daemon (request_override). The ctx line keeps
 // its own text for each value at rest and turns into the field's select where
 // the value is.
-import { useCallback, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type {
   ErrorResponse,
   RequestOverridePatch,
@@ -27,6 +27,12 @@ import {
   type RequestValueView,
 } from "../request-override-view.ts";
 import { type MiniSummaryLine, shortModel } from "../session-status-view.ts";
+
+/** How long what became of a change stays on the ctx line, as 「中断しました」
+ * (TurnResponding.tsx) does: the line is a summary that is always on screen,
+ * and the choice it was about is already back at the default or still with
+ * its [適用]. */
+export const CTX_LINE_NOTICE_MS = 4_000;
 
 /** Change the session override (ws.requestOverride for one session). */
 export type SessionOverrideChange = (
@@ -151,23 +157,34 @@ export function OverrideSelect({
  * [適用] beside it while an option other than the default is chosen, and
  * what became of the last change. Applied, the select goes back to the
  * default, which ev:"request_override" brings the new value to. `face` is the
- * ctx line's text of the value, shown at rest while the default is chosen. */
+ * ctx line's text of the value, shown at rest while the default is chosen;
+ * `noticeMs` how long what became of the change stays (without it, until the
+ * next choice). */
 function SessionOverrideField({
   field,
   state,
   context,
   onChange,
   face,
+  noticeMs,
 }: {
   field: OverrideField;
   state: RequestOverrideState | undefined;
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
   face?: RequestValueView;
+  noticeMs?: number;
 }) {
   const [chosenKey, setChosenKey] = useState(CURRENT_KEY);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // The notice goes after a while where it has one: a timer, synchronised
+  // with the notice it belongs to and cleared with it.
+  useEffect(() => {
+    if (notice === null || noticeMs === undefined) return;
+    const timer = setTimeout(() => setNotice(null), noticeMs);
+    return () => clearTimeout(timer);
+  }, [notice, noticeMs]);
   const groups = overrideGroups(field, state, context, { turn: false, shorten: shortModel });
   const chosen = chosenOption(groups, chosenKey);
   const patch = choicePatch(chosen.choice);
@@ -251,7 +268,7 @@ export function SessionOverrideEditor({
 /** The ctx line under the Timeline (DR-0041 §5), its model and effort each
  * the session override's field in place: at rest the line's own text of the
  * value, pressed the field's select where the value is, with [適用] beside it
- * once another option is chosen. */
+ * once another option is chosen. What became of a change goes after a while. */
 export function ContextLine({
   line,
   state,
@@ -271,6 +288,7 @@ export function ContextLine({
       context={context}
       onChange={onChange}
       face={view}
+      noticeMs={CTX_LINE_NOTICE_MS}
     />
   );
   return (

@@ -4,7 +4,7 @@
 // [適用], shown only while another option is chosen, sends that field's
 // patch, and what became of it is said beside it. The values come from the store, which
 // ev:"request_override" fills, the same in every tab.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type {
@@ -18,7 +18,10 @@ import type {
   SessionStatusSnapshot,
   UserMessageResponse,
 } from "@ccmsg/protocol";
-import { ContextLine } from "../src/client/components/RequestOverridePicker.tsx";
+import {
+  ContextLine,
+  CTX_LINE_NOTICE_MS,
+} from "../src/client/components/RequestOverridePicker.tsx";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
 import { AppContext } from "../src/client/context.ts";
 import { miniSummaryLines } from "../src/client/session-status-view.ts";
@@ -307,6 +310,33 @@ describe("the ctx line's fields", () => {
     );
     expect(textOf(other, "effort").textContent).toBe("📌max");
     expect(ctxApply(other, "effort")).not.toBeNull();
+  });
+
+  // The ctx line is always on screen: what became of a change goes after a
+  // while, as 「中断しました」 does. A failure keeps its choice and [適用].
+  test("what became of a change goes after a while; a failure's choice stays", async () => {
+    jest.useFakeTimers();
+    try {
+      const refused = recorder({ ok: false, error: { code: "invalid_args", msg: "effort: x" } });
+      const root = await mountLine(refused.onChange);
+      await pressValue(root, "effort");
+      await choose(root, "effort", "📌max");
+      await applyField(root, "effort");
+      const notice = () => fieldOf(root, "effort").querySelector(".override-notice");
+      expect(notice()?.textContent).toBe("変更できなかった (invalid_args): effort: x");
+      await act(() => {
+        jest.advanceTimersByTime(CTX_LINE_NOTICE_MS - 1);
+      });
+      expect(notice()).not.toBeNull();
+      await act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(notice()).toBeNull();
+      expect(textOf(root, "effort").textContent).toBe("📌max");
+      expect(ctxApply(root, "effort")).not.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
