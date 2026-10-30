@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # 組み込みの起動コマンド (packages/daemon/src/default-launch-command.sh) は zsh で動き、
+      # そのテストと config の既定 (`zsh -f <スクリプト>`) は zsh を PATH に要る。
+      - name: Install zsh
+        if: runner.os == 'Linux'
+        run: command -v zsh || { sudo apt-get update && sudo apt-get install -y zsh; }
+
       # justfile の `test` / `coverage` recipe は lint と typecheck に依存しているので、
       # 1 つの step で lint → typecheck → test の順に走る (step を分けると依存で同じ
       # recipe が繰り返し走る)。

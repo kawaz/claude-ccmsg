@@ -219,11 +219,15 @@ describe("loadConfig", () => {
   });
 
   // Without launch_command the daemon runs the built-in launch command with
-  // the bun running it (DR-0018 §3.1), as a launch_command it fixed itself.
-  test("no launch_command is the built-in launch command run by the daemon's bun", async () => {
+  // zsh (DR-0018 §3.1), as a launch_command it fixed itself: zsh found in
+  // PATH, as for a launch_command naming it.
+  test("no launch_command is the built-in launch command run by zsh -f", async () => {
     fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
     const command = (await loaded()).session_launcher?.launch_command;
-    expect(command).toEqual([process.execPath, DEFAULT_LAUNCH_COMMAND_SCRIPT]);
+    const zsh = Bun.which("zsh");
+    expect(zsh).not.toBeNull();
+    expect(command?.[0] ?? null).toBe(zsh);
+    expect(command?.slice(1)).toEqual(["-f", DEFAULT_LAUNCH_COMMAND_SCRIPT]);
     expect(fs.existsSync(DEFAULT_LAUNCH_COMMAND_SCRIPT)).toBe(true);
   });
 

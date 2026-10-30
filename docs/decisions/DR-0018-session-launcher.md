@@ -54,7 +54,7 @@ session_launcher: {
 
 起動そのものの設定は `launch_` で始まる名前に揃える (`launch_command` / `launch_timeout_seconds` / `launch_max_concurrency`)。`root_dirs` / `dir_tree_depth` は webui の cwd ツリーの、`clean_env` / `keep_env` は起動コマンドの環境の設定。
 
-- **`launch_command`** (省略可): 起動コマンドの argv (空でない文字列の配列)。省略すると plugin に同梱の**組み込みの起動コマンド** (`packages/daemon/src/default-launch-command.ts`) を、daemon を動かしている bun (`process.execPath`) で `[<bun>, <組み込みスクリプト>]` として実行する。組み込みは stdin の JSON の field を同じ名前の claude のオプションに写し (`prompt` は claude の stdin に書く)、`hyoui run --detached -- claude <オプション>` を加工せずに実行して hyoui の終了コードで終わる (契約と中身は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」)。面の切替・cwd の信頼判定・trust ダイアログの吸収等が要る環境は自前のコマンドを書く。shell を介さずに実行する。先頭の要素は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前で、config を読む時に実行できるファイルの絶対パスに固定する (`~/` を展開し、名前は `PATH` で探す)。見つからない・実行できない時、`~` 単体の時は読めない config として daemon を起動時に止める。起動のたびに探し直さないので、起動の後で `PATH` やファイルが変わっても、起動したものと違うものを実行しない。起動コマンドが受ける入力と返すものの契約は [launch-command](../design/launch-command.md)
+- **`launch_command`** (省略可): 起動コマンドの argv (空でない文字列の配列)。省略すると plugin に同梱の**組み込みの起動コマンド** (zsh スクリプト `packages/daemon/src/default-launch-command.sh`) を `["zsh", "-f", <組み込みスクリプト>]` として実行する (`zsh` は下のとおり daemon の `PATH` で探して固定する)。組み込みは stdin の JSON の field を同じ名前の claude のオプションに写し、`hyoui run --detached -- claude <オプション>` を (`direnv` があれば `direnv exec .` を通して) 実行し、hyoui の終了コードで終わる。`prompt` は claude の stdin に書く。model ごとの effort の既定、既定の prompt、環境の掃除も持つ (中身は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」)。cwd の信頼判定・trust ダイアログの吸収・permission mode・セッション名の既定・環境ごとの claude 本体の切替が要る環境は自前のコマンドを書く。shell を介さずに実行する。先頭の要素は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前で、config を読む時に実行できるファイルの絶対パスに固定する (`~/` を展開し、名前は `PATH` で探す)。見つからない・実行できない時、`~` 単体の時は読めない config として daemon を起動時に止める。起動のたびに探し直さないので、起動の後で `PATH` やファイルが変わっても、起動したものと違うものを実行しない。起動コマンドが受ける入力と返すものの契約は [launch-command](../design/launch-command.md)
 - **`root_dirs`** (必須、空でない): webui の cwd ツリーの根。絶対パスか `~/…`。起動の cwd をこの配下に限ることはしない (cwd の信頼判定は起動コマンドの責務、§3.8)
 - **`dir_tree_depth`** (既定 2、1 以上の整数): cwd ツリーの初期ロードの深さ (LN-Q3)
 - **`launch_timeout_seconds`** (既定 10、1〜50 の整数): 起動コマンドを待つ時間。超えたら SIGTERM、その 500 ms 後に SIGKILL (§3.5)。既定の 10 秒の起動は、kill の猶予と出力の待ちを足しても tool の待ち (§3.7 の 15 秒) に収まる
@@ -238,7 +238,8 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-10-25 (kawaz、追加)**: 起動の入力の field 名を claude のオプション名の snake_case に揃え、起動の種類を表す `type` を持たない。引数の無いオプションは boolean。claude が拒む・無視する組み合わせはスキーマの組み合わせの検査で弾く。tool の入力は op の入力から `resume_session_at` を外したもの、起動コマンドの入力は op の入力に `session_id` を足したもの (field は claude のオプションと 1 対 1、依頼者は環境変数 `CCMSG_LAUNCH_REQUESTED_BY` で渡し、`clean_env` の判定の後に重ねる)。起動に関わる config のキーは `launch_` で揃える (`launch_timeout_seconds` / `launch_max_concurrency`)。`launch_command` は省略でき、無ければ同梱の組み込みの起動コマンド (`hyoui run --detached -- claude …` を加工せずに実行する) を使う。webui のフォームは全部の欄を常に出し、新規の model の既定は `fable`、effort の既定は daemon の settings.json の `modelSettings.<model>.effortLevel` (`session_launcher_config` の `default_effort`)。あわせてレビューの指摘から、`launch_max_concurrency` と `launch_busy`、daemon が終わる時の待ち、起動コマンドの絶対パスへの固定、process group への signal、出力の 1 MiB の上限、log の行の自由文の JSON の文字列化と `timed_out`、tool の待ちの 65 秒を入れる — §3.1〜§3.9
 - **2026-10-25 (kawaz、追加 2)**: `resume_session_at` は `fork_session` と一緒にだけ受ける (fork しない resume に付けた時の claude の挙動は未観測で、意味も無い) — §3.2
 - **2026-10-29 (kawaz)**: tool `launch` を daemon の `POST /op` に移し (`launch_tool`)、`ccmsg sidecar launch` を削る。daemon は起動コマンドを上限付きで待ち、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (subagent からの起動はその subagent 宛て)。transcript の行から daemon が起動する形 (DR-0045 §6 の当初の形) は採らない — §3.7
-- **2026-10-30 (kawaz)**: 起動コマンドは `prompt` を claude の位置引数にせず、claude の stdin に書く (`ps` に見える、引数の長さの上限、shell の解釈を避ける)。組み込みの起動コマンドも同じ — §3.2、§3.3、[launch-command](../design/launch-command.md)
+- **2026-10-30 (kawaz)**: 起動コマンドは `prompt` を claude の位置引数にせず、claude の stdin に書く (`ps` に見える、引数の長さの上限、shell の解釈を避ける) — §3.2、§3.3、[launch-command](../design/launch-command.md)
+- **2026-10-30 (kawaz、追加)**: 組み込みの起動コマンドを、kawaz の起動スクリプトから環境固有のもの (cwd の信頼判定、trust ダイアログの吸収、リポの持ち主ごとの claude 本体の切替、permission mode、セッション名の既定と装飾) を除いた zsh スクリプトにする。model ごとの effort の既定、既定の prompt (`.`)、環境の掃除、`direnv exec .` 経由の起動は組み込みに持つ — §3.1、[launch-command](../design/launch-command.md)
 
 ## 6. 不採用
 
@@ -253,7 +254,7 @@ session role (エージェント) からの `session_launch` を受ける。
 | tool の handler が engine の field (`tool` / `tool_use_id` / `agentId`) を名前で外してから読む | engine が field を足すと全部の呼び出しが読めない入力になる。tool の field だけを取り出す (§3.7) |
 | 依頼者ごとに起動の頻度を制限する | daemon が守るべきは抱えるプロセスの数で、`launch_max_concurrency` で足りる。誰の起動を許すかは起動コマンドの判断 (§3.8、`CCMSG_LAUNCH_REQUESTED_BY`) |
 | 依頼者を起動コマンドの入力の field (`requested_by`) にする | 入力の field は claude のオプションと 1 対 1 に保つ。オプションに無い名前を混ぜると、field をそのままオプションに写す起動コマンド (組み込みを含む) が名前ごとに例外を持つことになる |
-| `launch_command` を必須にし、既定を持たない | 設定を書くまで起動が使えず、hyoui に claude を載せるだけの環境でも同じ起動コマンドを各自が書くことになる。既定の組み込みは加工をしないので、環境の都合が要る人は自前に差し替えればよく、既定があることで失うものが無い |
+| `launch_command` を必須にし、既定を持たない | 設定を書くまで起動が使えず、hyoui に claude を載せるだけの環境でも同じ起動コマンドを各自が書くことになる。環境の都合 (cwd の信頼判定等) が要る人は自前に差し替えればよく、既定があることで失うものが無い |
 | tool `launch` を daemon が transcript の tool_use の行から起動し、結果は notify だけで返す | tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れない。起動は大抵すぐ終わる (§3.7 の実測) ので、待ちの内に終われば同期で返す方が使える (kawaz 2026-10-29) |
 | tool `launch` を `ccmsg sidecar launch` (CLI) 経由のまま残す | 呼び出しのたびに CLI の process が起き、待ちを host の fetch の打ち切りの外に置くために 65 秒の別の待ちを持つことになる (kawaz 2026-10-29) |
 

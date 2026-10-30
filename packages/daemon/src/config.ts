@@ -121,14 +121,17 @@ const LaunchCommandSchema = v.tupleWithRest(
 );
 
 /** The launch command the daemon runs when the config names none: the
- * built-in script beside this module, run by the bun running the daemon
- * (default-launch-command.ts). */
+ * built-in zsh script beside this module (default-launch-command.sh). */
 export const DEFAULT_LAUNCH_COMMAND_SCRIPT = fileURLToPath(
-  new URL("./default-launch-command.ts", import.meta.url),
+  new URL("./default-launch-command.sh", import.meta.url),
 );
 
+/** `zsh -f`: zsh looked up in the daemon's PATH like any launch command's
+ * program, reading no startup file, so the script runs in the environment the
+ * daemon hands it (launch-command.md) and not one the user's ~/.zshenv
+ * rewrites. */
 function defaultLaunchCommand(): [string, ...string[]] {
-  return [process.execPath, DEFAULT_LAUNCH_COMMAND_SCRIPT];
+  return ["zsh", "-f", DEFAULT_LAUNCH_COMMAND_SCRIPT];
 }
 
 /** `session_launcher` (DR-0018 §3.1). The defaults are given here, for a field

@@ -54,7 +54,7 @@ daemon が起動コマンドの環境に足す変数。`clean_env` / `keep_env` 
 
 field ごとに同じ名前のオプションへ写す: `model` → `--model`、`effort` → `--effort`、`continue` → `--continue`、`resume` → `--resume <id>`、`fork_session` → `--fork-session`、`session_id` → `--session-id <id>`、`name` → `--name`。
 
-`prompt` は起動した claude の stdin に書く (位置引数にしない: `ps` に見える、引数の長さの上限に当たる、shell や option として解釈されうる)。対話の claude は端末でない stdin を読み切り、その中身を最初の prompt として送信する。改行も末尾の改行もそのまま 1 つの prompt になる ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))。`prompt` が無ければ stdin は `/dev/null` にする。端末 proxy は stdin を claude にそのまま継ぐもの (`hyoui run` は端末でない stdin の fd を子の stdin に渡す) を使う。
+`prompt` は起動した claude の stdin に書く (位置引数にしない: `ps` に見える、引数の長さの上限に当たる、shell や option として解釈されうる)。対話の claude は端末でない stdin を読み切り、その中身を最初の prompt として送信する。改行も末尾の改行もそのまま 1 つの prompt になる ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))。`prompt` が無い時に何を渡すか (既定の prompt、`/dev/null`) は起動コマンドが決める。端末 proxy は stdin を claude にそのまま継ぐもの (`hyoui run` は端末でない stdin の fd を子の stdin に渡す) を使う。
 
 | 入力 | claude の起動 |
 |---|---|
@@ -76,7 +76,7 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
 - 二段の両方を同じ `CLAUDE_CONFIG_DIR` で起動する (一段目が書いた transcript を二段目が同じ `projects` ディレクトリから読むため)
 - `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰め、末尾の改行の除去や付け足しをしない)
-- `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる (組み込みは一時ファイルに書いて開いた fd を渡し、ファイルはすぐ消す)
+- `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる。here-string や一時ファイルのような通常のファイルなら、claude が後から読んでも全部ある
 - `resume_session_at` が user の record を指す時、claude は二段目の resume で `No response requested.` の synthetic な assistant 行を足してから続ける (同 findings)。これは claude の挙動で、起動コマンドが手を入れるものではない
 
 ## 戻り方
@@ -90,13 +90,17 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 
 ## 組み込みの起動コマンド
 
-config に `launch_command` が無い時、daemon は plugin に同梱の `packages/daemon/src/default-launch-command.ts` を、daemon を動かしている bun で起動コマンドとして実行する (DR-0018 §3.1)。この契約に従う最小の起動コマンドで、次のことだけをする。
+config に `launch_command` が無い時、daemon は plugin に同梱の zsh スクリプト `packages/daemon/src/default-launch-command.sh` を `zsh -f <スクリプト>` で起動コマンドとして実行する (DR-0018 §3.1)。`zsh` は daemon の `PATH` で探す。`-f` で `~/.zshenv` 等を読まないので、スクリプトは daemon が渡した環境で動く。スクリプトがすることは次のとおり。
 
-- stdin の JSON を `LaunchCommandInputSchema` で読む。読めなければ非零 (2) で終わる
-- field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写し、`hyoui run --detached -- claude <オプション>` を shell を介さずに実行して、hyoui の終了コードで終わる。`prompt` は一時ファイルに書いて読み取りで開き、ファイルを消してから、その fd を hyoui の stdin にする (hyoui がそのまま claude の stdin に継ぐ)。`prompt` が無ければ stdin は `/dev/null`。`hyoui` が `PATH` に無ければ非零 (2)
-- `fork_session` と `resume_session_at` がある時は、上の「claude の引数への写し方」の二段で起動する。一段目の `claude -p` は hyoui を通さずに直接起こし、非零なら非零 (2) で終わって hyoui は起こさない。二段は契約どおりに fork 地点を効かせるための起動の仕方で、下の「加工」には当たらない
+- **前提**: `jq`・`hyoui`・`claude` のどれかが `PATH` に無ければ非零 (2) で終わり、理由を stderr に書く
+- **入力を読む**: stdin の JSON の各 field を `jq` で取り出す。入力の検査はしない (daemon が `LaunchCommandInputSchema` で検査した入力を渡す)
+- **オプション**: field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写す
+- **effort の既定**: `effort` が無い時は model ごとに決める (fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
+- **prompt**: `prompt` が無い時は `.`。claude の stdin に here-string (`<<<`) で渡す。here-string は通常のファイルなので、claude が後から読んでも欠けない。`jq -r` で取り出す時に末尾の改行が落ち、here-string が改行を 1 つ足すので、claude に届く prompt の末尾は改行 1 つになる
+- **環境**: `CLAUDE_CONFIG_DIR` を除く `CLAUDE*`・`ANTHROPIC_*`・`HYOUI_*`・`CCMSG_*` の変数を消してから claude を起動する (daemon の `clean_env` が残したものも含めて、別のセッションや端末の変数を継がない)
+- **起動**: `hyoui run --detached -- claude <オプション>` を exec し、hyoui の stdout (端末の id) と終了コードをそのまま返す。`direnv` が `PATH` にあれば `direnv exec .` を通し、cwd の `.envrc` (config dir、リポの持ち主のアカウントの鍵等) を claude に効かせる
 
-加工はしない: direnv の適用、model 名への `[1m]` 等の付与、セッション名の装飾、trust ダイアログの吸収、cwd の信頼判定、`CCMSG_LAUNCH_REQUESTED_BY` による判定の切り替えはどれもしない。面ごとの環境の切替や trust ダイアログの吸収が要る環境は、自前の起動コマンドを書いて `launch_command` に置く。
+cwd の信頼判定と trust ダイアログの吸収はしない。`CCMSG_LAUNCH_REQUESTED_BY` による判定の切り替え、permission mode の指定、セッション名の既定もしない。どれかが要る環境は、自前の起動コマンドを書いて `launch_command` に置く。
 
 ## 起動コマンドが持つ責務
 

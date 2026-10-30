@@ -19,7 +19,7 @@ webui の「+ 新規」を押して「daemon にセッションの起動が設�
 
 ## 仕組み
 
-**`session_launcher` の節を書けば、起動コマンドを用意しなくても動く**。`launch_command` を省くと、plugin に同梱の組み込みの起動コマンドが `hyoui run --detached -- claude <オプション>` を加工せずに実行する (hyoui が `PATH` に要る)。面ごとの環境の切替 (direnv 等)、cwd の信頼判定、trust ダイアログの吸収、model 名やセッション名の加工が要るなら、手順 1 のとおり自前の起動コマンドを書いて `launch_command` に置く。
+**`session_launcher` の節を書けば、起動コマンドを用意しなくても動く**。`launch_command` を省くと、plugin に同梱の組み込みの起動コマンド (zsh スクリプト) が `hyoui run --detached -- claude <オプション>` を実行する (`zsh`・`jq`・`hyoui`・`claude` が `PATH` に要る。`direnv` があれば `direnv exec .` を通す)。組み込みが持つ既定 (effort、prompt) は [launch-command](../design/launch-command.md) の「組み込みの起動コマンド」。cwd の信頼判定、trust ダイアログの吸収、permission mode、セッション名の既定、環境ごとの claude 本体の切替が要るなら、手順 1 のとおり自前の起動コマンドを書いて `launch_command` に置く。
 
 daemon は claude の引数を組み立てない。config の `launch_command` に書いた 1 つのコマンド (起動コマンド、無ければ組み込み) を、shell を介さずに起動の依頼ごとに 1 回実行し、標準入力に起動の入力の JSON を 1 つ渡して、終わりを待ってその終了コードと出力を呼び手に返す。どの claude をどの端末に載せるか、cwd を信頼してよいか、任意の field の既定は、起動コマンドが全部持つ。取り決めの正本は [launch-command](../design/launch-command.md)。
 
@@ -108,7 +108,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
    | キー | 必須 | 既定 | 意味 |
    |---|---|---|---|
-   | `launch_command` | | 組み込み | 起動コマンドの argv (空でない文字列の配列)。省くと同梱の組み込みの起動コマンド (`hyoui run --detached -- claude …`)。先頭は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前。daemon の起動時に実行できるファイルの絶対パスに固定し、見つからなければ daemon は起動しない |
+   | `launch_command` | | 組み込み | 起動コマンドの argv (空でない文字列の配列)。省くと同梱の組み込みの起動コマンド (`zsh -f <同梱のスクリプト>`、`hyoui run --detached -- claude …`)。先頭は絶対パス、`~/` で始まるパス、または daemon の `PATH` で探す名前。daemon の起動時に実行できるファイルの絶対パスに固定し、見つからなければ daemon は起動しない |
    | `root_dirs` | 必須 | | webui の cwd ツリーの根 (絶対パスか `~/…`、1 つ以上)。起動の cwd をこの配下に限るものではない |
    | `dir_tree_depth` | | 2 | cwd ツリーを最初に読む深さ |
    | `launch_timeout_seconds` | | 10 | 起動コマンドを待つ秒数 (1〜50 の整数)。超えると起動コマンドの process group に SIGTERM、500 ms 後に SIGKILL |
@@ -166,7 +166,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | 「+ 新規」で未設定の案内が出る / `launcher_not_configured` | `session_launcher` を書いたファイルが読まれていない | 起動ログの `also present and being ignored` の warn を見て、優先順 (`config.ts` > `config.js` > `config.json`) で読まれているファイルを確かめる。書いた後に daemon を再起動したか確かめる |
-| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 7 つ以外のキーがあっても読めない (旧版用の `shell` / `templates` / `timeout_seconds` だけは無視される)。`launch_command.0: … is not found in PATH` / `… is not an executable file` は起動コマンドが daemon の起動時に見つからない (daemon の `PATH`、実行ビット、相対パスでないか) |
+| daemon が起動しない | 設定が読めない | エラーの `config: <file>: <場所>: <理由>` が壊れた場所を指す。`session_launcher` に 7 つ以外のキーがあっても読めない (旧版用の `shell` / `templates` / `timeout_seconds` だけは無視される)。`launch_command.0: … is not found in PATH` / `… is not an executable file` は起動コマンドが daemon の起動時に見つからない (daemon の `PATH`、実行ビット、相対パスでないか)。`launch_command` を省いて `zsh is not found in PATH` なら、組み込みを動かす zsh が daemon の `PATH` に無い |
 | `launch_command_unavailable` | daemon の起動の後で起動コマンドが消えた・実行できなくなった | 起動コマンドを置き直して daemon を再起動する (起動コマンドの path は daemon の起動時に固定される) |
 | `launch_busy` | `launch_max_concurrency` 個の起動が走っている、または daemon が終わりかけている | 走っている起動が終わってから依頼し直す。いつも当たるなら起動コマンドが速やかに終わっているか (`exit_code` が 143 / 137 で終わっていないか) を見る |
 | `invalid_args` | 起動の入力がスキーマに合わない、または `cwd` が存在するディレクトリでない | msg の最初の理由を読む。webui は送る前に欄ごとの理由を出す |
