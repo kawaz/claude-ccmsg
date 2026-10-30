@@ -622,20 +622,14 @@ export function SessionInputComposer({
             </div>
           ))
         : null}
-      <div class="session-input-override">
-        {overrideNotice ? (
-          <span class="override-notice" role="status">
-            {overrideNotice}
-          </span>
-        ) : null}
-        <OverrideSelect
-          groups={effortGroups}
-          chosen={chosenOption(effortGroups, effortKey).key}
-          onChoose={setEffortKey}
-          disabled={sending}
-          label="送信の effort"
-        />
-      </div>
+      {overrideNotice ? (
+        <div
+          class="session-input-notice session-input-notice-warn session-input-override-notice"
+          role="status"
+        >
+          <p class="session-input-notice-detail">{overrideNotice}</p>
+        </div>
+      ) : null}
       <div class="session-input-actions">
         <div class="composer-attach-buttons">
           {/* 画像/ファイルボタンの区別は不要、クリップマーク 1 個に統一。
@@ -670,6 +664,14 @@ export function SessionInputComposer({
             <span aria-hidden="true">📎</span>
           </button>
         </div>
+        {/* The effort goes with the send that applies it (DR-0041 §6.3). */}
+        <OverrideSelect
+          groups={effortGroups}
+          chosen={chosenOption(effortGroups, effortKey).key}
+          onChoose={setEffortKey}
+          disabled={sending}
+          label="送信の effort"
+        />
         <button
           type="button"
           class="session-input-send"

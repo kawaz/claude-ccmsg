@@ -239,10 +239,13 @@ describe("SessionInputComposer effort", () => {
   test("the effort alone, in the default, turn and session groups (§6.2's example)", async () => {
     const { root } = await openWith("accepted");
     // At rest the text, no select; pressed, the one select of the effort.
-    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(0);
+    expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(0);
     expect(collapsed(root)).toBe("low");
     const el = await select(root);
-    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(1);
+    expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(1);
+    // Open, it stays in the send's row, left of the send.
+    expect(el.parentElement?.classList.contains("session-input-actions")).toBe(true);
+    expect(el.nextElementSibling?.classList.contains("session-input-send")).toBe(true);
     expect(document.activeElement).toBe(el);
     expect(
       [...el.querySelectorAll("optgroup")].map((group) => [
@@ -261,8 +264,19 @@ describe("SessionInputComposer effort", () => {
     expect(document.activeElement).toBe(text(root));
     // Chosen and not sent yet: the text shows what was chosen.
     await choose(root, "📌high");
-    expect(root.querySelectorAll(".session-input-override select")).toHaveLength(0);
+    expect(root.querySelectorAll(".session-input-panel select")).toHaveLength(0);
     expect(collapsed(root)).toBe("📌high");
+  });
+
+  // §6.3: the effort takes no row of its own. At rest it is the send's left
+  // neighbour in the row of the attach button and the send.
+  test("at rest, the effort is the send's left neighbour in the send's row", async () => {
+    const { root } = await openWith("accepted");
+    const effort = text(root);
+    const row = instanceOf(effort.parentElement, HTMLElement, "the effort's row");
+    expect(row.classList.contains("session-input-actions")).toBe(true);
+    expect(effort.nextElementSibling?.classList.contains("session-input-send")).toBe(true);
+    expect(row.querySelector(".composer-attach-btn")).not.toBeNull();
   });
 
   test("the default shows the layer in force and its value", async () => {
@@ -320,13 +334,13 @@ describe("SessionInputComposer effort", () => {
   // said in the FAB, and the prompt goes all the same.
   test("a request_override no module took is said, and the user_prompt still goes", async () => {
     const { root, calls, answerOverride } = await openWith("unconfirmed", undefined, "no_module");
-    expect(root.querySelector(".session-input-override .override-notice")).toBeNull();
+    expect(root.querySelector(".session-input-override-notice")).toBeNull();
     await type(root, "x");
     await choose(root, "📌high");
     await send(root);
     await answerOverride();
     expect(calls.map((call) => call.op)).toEqual(["request_override", "user_prompt"]);
-    expect(root.querySelector(".session-input-override .override-notice")?.textContent).toContain(
+    expect(root.querySelector(".session-input-override-notice")?.textContent).toContain(
       "受け口 (hooks module) が無い",
     );
     expect(collapsed(root)).toBe("📌high");

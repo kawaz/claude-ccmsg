@@ -115,6 +115,7 @@ low
 #### 6.3 FAB (SessionInputComposer)
 
 - effort の select だけを置く。model は FAB では変えない (model の変更は Status タブと状態行で行う。Consequences の prompt cache)
+- effort の select は送信ボタンの左隣、送信ボタンと同じ行に置き、それだけで 1 行を使わない。`request_override` の返事の理由は、出す時だけその行の上に出す
 - 群は default / turn / session の 3 つ
 - 送信が適用を兼ねる。選んだだけでは何も送らず、プロンプトの送信の時に送る
   - ⏱️: 送信の `user_prompt` の `effort` に乗せる (§4)
@@ -184,6 +185,7 @@ low
 ## 裁定 (kawaz 2026-10-30)
 
 20. **状態行の値はその位置で select になる**: 状態行の model / effort を押すと、その値の位置がその field の select になる。別の行・パネル・閉じるボタンは出さない (§5、§6.4)
+21. **FAB の effort は送信ボタンの左**: effort の select に 1 行を使わず、送信ボタンと同じ行のその左隣に置く (§6.3)
 
 ## Alternatives Considered
 

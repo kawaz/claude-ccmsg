@@ -7059,9 +7059,14 @@ a.tl-attachment-file-path {
 
 .session-input-actions {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-8);
+}
+
+/* The attach button on the left, the effort and the send together on the
+ * right (DR-0041 §6.3). */
+.session-input-actions > .composer-attach-buttons {
+  margin-inline-end: auto;
 }
 
 .session-input-send {
@@ -7866,14 +7871,6 @@ a.tl-attachment-file-path {
   color: var(--fg-warn);
   font-size: var(--font-size-sm);
   white-space: normal;
-}
-
-.session-input-override {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-4);
 }
 
 .tl-status-mini-teammate::before {
