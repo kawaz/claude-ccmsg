@@ -41,29 +41,29 @@ function echoCommand(dir: string): string {
   return writeMockBin(path.join(dir, "echo-launch"), "#!/bin/sh\ncat\n");
 }
 
-/** A launch command that waits for one line on a FIFO it makes in `dir`
- * (releaseGates), then prints its standard input. */
+/** The FIFO `<dir>/gate` a gated command waits on. The test makes it before
+ * the launch, so the line releaseGate writes waits for the command to open it
+ * however long the command takes to start: the daemon answers `running` once
+ * launchToolWaitMs has passed, whether or not the command has got that far.
+ * One launch per gate, as each test here starts one. */
+function gatePath(dir: string): string {
+  return path.join(dir, "gate");
+}
+
+/** A launch command that waits for one line on `<dir>/gate` (releaseGate),
+ * then prints its standard input. */
 function gatedCommand(dir: string): string {
-  const at = (name: string): string => JSON.stringify(path.join(dir, name));
+  expect(Bun.spawnSync(["mkfifo", gatePath(dir)]).exitCode).toBe(0);
   return writeMockBin(
     path.join(dir, "gated"),
-    `#!/bin/sh\ninput=$(cat)\ngate=$(mktemp -u ${at("gate-XXXXXX")})\nmkfifo "$gate"\n` +
-      `read line < "$gate"\nprintf '%s' "$input"\n`,
+    `#!/bin/sh\ninput=$(cat)\nread line < ${JSON.stringify(gatePath(dir))}\nprintf '%s' "$input"\n`,
   );
 }
 
-/** Let every gated command waiting in `dir` go. */
-async function releaseGates(dir: string): Promise<void> {
-  const gates = fs
-    .readdirSync(dir)
-    .filter((name) => name.startsWith("gate-"))
-    .map((name) => path.join(dir, name));
-  await Promise.all(
-    gates.map(async (fifo) => {
-      await fs.promises.writeFile(fifo, "go\n");
-      await fs.promises.rm(fifo);
-    }),
-  );
+/** Let the gated command of `dir` go: the write opens the FIFO, which waits
+ * for the command to open it for reading. */
+async function releaseGate(dir: string): Promise<void> {
+  await fs.promises.writeFile(gatePath(dir), "go\n");
 }
 
 function launcherConfig(command: string, root: string): CcmsgConfig {
@@ -124,7 +124,7 @@ describe("launch_tool", () => {
       ok: true,
       outcome: "running",
     });
-    await releaseGates(dir);
+    await releaseGate(dir);
     const frame = await h.nextUser();
     const { attrs, body } = parseEnvelope(frame.message.content);
     expect(attrs.from).toBe("ccmsg:daemon");
@@ -151,7 +151,7 @@ describe("launch_tool", () => {
         agent_id: "a1",
       }),
     ).toEqual({ ok: true, outcome: "running" });
-    await releaseGates(dir);
+    await releaseGate(dir);
     await Promise.all(ctx.daemon.launches);
     await Promise.all(ctx.daemon.launchNotices);
     expect(fs.readFileSync(ctx.daemon.paths.log, "utf8")).toMatch(
