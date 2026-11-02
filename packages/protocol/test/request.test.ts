@@ -176,7 +176,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   session_launch: {
     ok: {
       op: "session_launch",
-      launch: { cwd: "/w", resume: SID, fork_session: true, resume_session_at: SID, prompt: "p" },
+      launch: { cwd: "/w", resume: SID, fork_session: true, prompt: "p" },
     },
     bad: [
       { op: "session_launch" },

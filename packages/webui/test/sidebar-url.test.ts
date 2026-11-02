@@ -35,16 +35,15 @@ describe("parseSidebarUrl", () => {
   // 書き方も含む) は、見えない入力として紛れ込まない。
   test("sb.<field> は起動フォームの欄の名前だけを拾う", () => {
     const state = parseSidebarUrl(
-      "?sb.panel=new&sb.fork_session=true&sb.resume=sid-1&sb.resume_session_at=u-9&sb.type=fork&sb.session_id=x&sb.command=y",
+      "?sb.panel=new&sb.fork_session=true&sb.resume=sid-1&sb.type=fork&sb.session_id=x&sb.command=y",
     );
     expect(state.launch).toEqual({
       fork_session: "true",
       resume: "sid-1",
-      resume_session_at: "u-9",
     });
   });
 
-  test("8 つの欄はどれも URL から読める", () => {
+  test("起動フォームの欄はどれも URL から読める", () => {
     const query = LAUNCH_FORM_FIELDS.map((field) => `sb.${field}=v-${field}`).join("&");
     const state = parseSidebarUrl(`?sb.panel=new&${query}`);
     expect(Object.keys(state.launch)).toEqual([...LAUNCH_FORM_FIELDS]);
@@ -74,7 +73,7 @@ describe("withSidebarState / round-trip", () => {
   const opened: SidebarUrlState = {
     panel: "session-creator",
     search: null,
-    launch: { fork_session: "true", resume: "sid-1", resume_session_at: "u-9", prompt: "a\nb" },
+    launch: { fork_session: "true", resume: "sid-1", prompt: "a\nb" },
   };
 
   test("組み立てた URL を読み戻すと同じ状態になる", () => {
@@ -123,7 +122,7 @@ describe("toggleSidebarPanel", () => {
     const forked: SidebarUrlState = {
       panel: "session-creator",
       search: null,
-      launch: { fork_session: "true", resume: "sid-1", resume_session_at: "u-9" },
+      launch: { fork_session: "true", resume: "sid-1" },
     };
     const closed = toggleSidebarPanel(forked, "session-creator");
     expect(closed).toEqual(CLOSED_SIDEBAR);

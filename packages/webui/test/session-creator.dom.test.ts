@@ -174,7 +174,6 @@ describe("SessionCreator: every field, under claude's option names", () => {
       "--effort",
       "--continue",
       "--resume",
-      "--resume-session-at",
       "--fork-session",
       "--session-id",
       "--name",
@@ -268,17 +267,15 @@ describe("SessionCreator: what is sent", () => {
     expect(launches).toEqual([{ cwd: "/repos/app", resume: SID, name: "prep", prompt: "続けて" }]);
   });
 
-  test("a fork link sends the fork and its fork point", async () => {
+  test("a fork link sends the fork", async () => {
     const { root, launches } = await mountWith(
-      creator({ resume: SID, resume_session_at: NEW_SID, fork_session: "true", cwd: "/r" }),
+      creator({ resume: SID, fork_session: "true", cwd: "/r" }),
     );
     expect(
       instanceOf(control(root, "--fork-session"), HTMLInputElement, "--fork-session").checked,
     ).toBe(true);
     await submit(root);
-    expect(launches).toEqual([
-      { cwd: "/r", resume: SID, resume_session_at: NEW_SID, fork_session: true },
-    ]);
+    expect(launches).toEqual([{ cwd: "/r", resume: SID, fork_session: true }]);
   });
 });
 

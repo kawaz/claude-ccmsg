@@ -422,14 +422,6 @@ export function SessionCreator({
             issue={issues.resume}
             onChange={(resume) => update({ resume })}
           />
-          <TextField
-            label="--resume-session-at"
-            value={form.resume_session_at}
-            placeholder="fork 地点の項目の uuid (空なら履歴の先端まで)"
-            uuid
-            issue={issues.resume_session_at}
-            onChange={(resumeSessionAt) => update({ resume_session_at: resumeSessionAt })}
-          />
           <OptionField
             label="--fork-session"
             checked={form.fork_session}

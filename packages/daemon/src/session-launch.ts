@@ -236,9 +236,6 @@ function logFieldsOf(requester: string, input: LaunchCommandInput): string {
     ...(input.continue === true ? ["continue=true"] : []),
     ...(input.resume !== undefined ? [`resume=${input.resume}`] : []),
     ...(input.fork_session === true ? ["fork_session=true"] : []),
-    ...(input.resume_session_at !== undefined
-      ? [`resume_session_at=${input.resume_session_at}`]
-      : []),
     ...(input.session_id !== undefined ? [`session_id=${input.session_id}`] : []),
     ...(input.prompt !== undefined ? [`prompt_bytes=${Buffer.byteLength(input.prompt)}`] : []),
   ].join(" ");

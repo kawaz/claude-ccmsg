@@ -27,7 +27,6 @@ import {
   type LaunchSeed,
   type SidebarUrlState,
 } from "./sidebar-url.ts";
-import type { AppState } from "./store.ts";
 
 /** The model / effort select options: the protocol's picklists, verbatim. */
 export const LAUNCH_MODELS: readonly LaunchModel[] = LaunchModelSchema.options;
@@ -50,7 +49,6 @@ export interface SessionCreatorForm {
   effort: string | undefined;
   continue: boolean;
   resume: string;
-  resume_session_at: string;
   fork_session: boolean;
   name: string;
   prompt: string;
@@ -120,7 +118,6 @@ export function initialSessionCreatorForm(seed: LaunchSeed): SessionCreatorForm 
     effort: seededEffort(seed.effort),
     continue: seed.continue === "true",
     resume: seed.resume ?? "",
-    resume_session_at: seed.resume_session_at ?? "",
     fork_session: seed.fork_session === "true",
     name: seed.name ?? "",
     prompt: seed.prompt ?? "",
@@ -144,7 +141,6 @@ export function launchCandidate(
   text("effort", shownEffort(form, defaults));
   if (form.continue) candidate.continue = true;
   text("resume", form.resume);
-  text("resume_session_at", form.resume_session_at);
   if (form.fork_session) candidate.fork_session = true;
   text("name", form.name);
   text("prompt", form.prompt);
@@ -182,7 +178,6 @@ export function checkSessionCreatorForm(
  * session, where it ran, what it last ran as (raw transcript spellings, from
  * the end of its transcript) and its title. */
 export interface ResumePrefill {
-  kind: "resume";
   sessionId: string;
   cwd?: string;
   model?: string;
@@ -192,58 +187,12 @@ export interface ResumePrefill {
   title?: string;
 }
 
-/** What the Timeline's "ここから fork" hands to the form: the session on
- * screen, the record to fork at (fork-point.ts), where and as what that
- * session runs, and its title. */
-export interface ForkPrefill {
-  kind: "fork";
-  sessionId: string;
-  resumeAt: string;
-  cwd?: string;
-  model?: string;
-  effort?: string;
-  /** The source session's title. The fork is a new session, but it opens as
-   * "this one, branched" (kawaz r259m62), so the source's name is the seed. */
-  title?: string;
-}
-
-export type SessionCreatorPrefill = ForkPrefill | ResumePrefill;
-
-/** The fork prefill for a session on screen, read out of AppState once at the
- * moment of the click. Only what the client already holds is read — nothing is
- * fetched for it:
- *
- * - cwd and title: a connected session's `peers` row and `agents` row; a
- *   session that is not connected (opened from Session Search) has neither,
- *   and the search hit it was opened from carries both from its transcript
- * - model / effort: the status entry's context observation (the Timeline
- *   subscribes the session it shows, DR-0020 §2.1)
- *
- * Whatever none of them knows is absent, and its field opens blank. */
-export function forkPrefill(state: AppState, sessionId: string, resumeAt: string): ForkPrefill {
-  const context = state.sessionStatuses.get(sessionId)?.context;
-  const hit = state.sessionTrees.get(sessionId)?.searchHit;
-  const cwd = state.peers.find((p) => p.sid === sessionId)?.cwd ?? hit?.cwd ?? undefined;
-  const title =
-    state.agents.find((a) => a.sessionId === sessionId)?.name ?? hit?.title ?? undefined;
-  return {
-    kind: "fork",
-    sessionId,
-    resumeAt,
-    ...(cwd ? { cwd } : {}),
-    ...(context?.model ? { model: context.model } : {}),
-    ...(context?.effort ? { effort: context.effort } : {}),
-    ...(title ? { title } : {}),
-  };
-}
-
 /** The sidebar URL that opens the form on a session the user already chose.
  * Everything the opener knows goes into the link, so the link alone opens the
  * same form — pasted elsewhere, reloaded, or after the session disconnected.
- * A resume is `--resume <id>`; a fork adds `--fork-session` and the record to
- * fork at (`--resume-session-at`). A blank or unmappable value is left out,
+ * The session is `--resume <id>`. A blank or unmappable value is left out,
  * and its field opens blank. */
-export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlState {
+export function prefillSidebarState(prefill: ResumePrefill): SidebarUrlState {
   const cwd = prefill.cwd?.trim();
   const model = prefill.model === undefined ? undefined : launchModelFromTranscript(prefill.model);
   const effort =
@@ -257,9 +206,6 @@ export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlS
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       resume: prefill.sessionId,
-      ...(prefill.kind === "fork"
-        ? { resume_session_at: prefill.resumeAt, fork_session: "true" }
-        : {}),
       ...(title ? { name: title } : {}),
     },
   };

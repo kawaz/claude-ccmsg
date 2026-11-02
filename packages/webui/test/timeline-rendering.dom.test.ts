@@ -5,7 +5,7 @@
 // - ccmsg のメッセージは、ユーザ発はバブル、peer 発は fold の中に出る
 // - system 発の行 (task-notification) と API エラーは、それと分かる形で出る
 // - 項目ごとの jsonl トグルで元の JSONL 行を出し、pretty で整形できる
-// - fork 地点の区切り線と、選択中の項目に対する fork / dump の操作が出る
+// - fork 地点の区切り線と、選択中の項目に対する dump の操作が出る
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -67,19 +67,9 @@ async function openWith(
   options: {
     origin?: ForkOrigin;
     position?: string;
-    launchAvailable?: boolean;
-    /** The session's own peers row, for what a fork reads off it. */
-    cwd?: string;
   } = {},
 ): Promise<HTMLElement> {
   const store = timelineStore(options.position === undefined ? {} : { position: options.position });
-  if (options.launchAvailable) store.dispatch({ type: "launch/availability", available: true });
-  if (options.cwd !== undefined) {
-    store.dispatch({
-      type: "peers/loaded",
-      peers: [{ sid: SID, repo: "app", ws: "main", cwd: options.cwd }],
-    });
-  }
   const ws = new FakeTranscriptWs(store);
   ws.origin = options.origin ?? null;
   const root = await mounted.mount(store, ws.handle, h(TimelineOf, null));
@@ -230,7 +220,7 @@ describe("Timeline renders each kind of row", () => {
     expect(text.indexOf("mine")).toBeGreaterThan(at);
   });
 
-  test("an assistant bubble's menu offers fork and dump for the selected item", async () => {
+  test("an assistant bubble's menu offers dump for the selected item", async () => {
     // メニューは選択中の項目にだけ開く。URL の書き換えはこのテストでは store に
     // 戻らないので、その項目を選んだ状態で開く。
     const root = await openWith(
@@ -238,53 +228,11 @@ describe("Timeline renders each kind of row", () => {
         jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
         jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) })),
       ],
-      { position: uuidOf("a", 1), launchAvailable: true },
-    );
-    const menu = root.querySelector(".tl-msg-menu-toggle");
-    await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
-    expect(root.querySelector(".tl-msg-menu")).not.toBeNull();
-    const text = root.textContent ?? "";
-    expect(text).not.toContain("launcher) が設定されていません");
-    expect(text).toContain("fork");
-    expect(text).toContain("この項目以降を dump");
-  });
-
-  // The link carries everything the form opens with (DR-0018 §3.9's fork
-  // prefill), so it opens the same fork when pasted or reopened later.
-  test("ここから fork opens the form as a fork of this session at the selected record", async () => {
-    const navigated: string[] = [];
-    restores.push(stubGlobal("navigation", { navigate: (url: string) => navigated.push(url) }));
-    const root = await openWith(
-      [
-        jsonl(userContentRow("q", { uuid: uuidOf("u", 1) })),
-        jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) })),
-      ],
-      { position: uuidOf("a", 1), launchAvailable: true, cwd: "/repos/app/main" },
-    );
-    const menu = root.querySelector(".tl-msg-menu-toggle");
-    await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
-    const keep = [...root.querySelectorAll(".tl-float-action")].find((b) =>
-      b.textContent?.includes("まで残して fork"),
-    );
-    await act(() => instanceOf(keep, HTMLElement, "fork button").click());
-    const url = new URL(defined(navigated.at(-1), "navigation"), "http://x");
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      "sb.panel": "new",
-      "sb.cwd": "/repos/app/main",
-      "sb.resume": SID,
-      "sb.resume_session_at": uuidOf("a", 1),
-      "sb.fork_session": "true",
-    });
-  });
-
-  test("without launch_available the menu offers no fork", async () => {
-    const root = await openWith(
-      [jsonl(assistantContentRow([textBlock("answer")], { uuid: uuidOf("a", 1) }))],
       { position: uuidOf("a", 1) },
     );
     const menu = root.querySelector(".tl-msg-menu-toggle");
     await act(() => instanceOf(menu, HTMLElement, "bubble menu").click());
-    expect(root.textContent).toContain("launcher) が設定されていません");
-    expect(root.querySelector(".tl-float-fork")).toBeNull();
+    expect(root.querySelector(".tl-msg-menu")).not.toBeNull();
+    expect(root.textContent).toContain("この項目以降を dump");
   });
 });

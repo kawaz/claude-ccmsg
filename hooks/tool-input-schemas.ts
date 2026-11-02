@@ -13,7 +13,7 @@
 // skill's to say, by their full names.
 import { type JsonSchema, toJsonSchema } from "@valibot/to-json-schema";
 import type * as v from "valibot";
-import { LaunchToolFieldsSchema } from "@ccmsg/protocol/launch";
+import { LaunchFieldsSchema } from "@ccmsg/protocol/launch";
 import {
   PeersToolInputSchema,
   SayToolInputSchema,
@@ -95,7 +95,7 @@ export function toolInputSchemas(): {
     send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Running subagent's id" }),
     say: toolInputSchemaOf(SayToolInputSchema),
     peers: toolInputSchemaOf(PeersToolInputSchema),
-    launch: toolInputSchemaOf(LaunchToolFieldsSchema, { resume: "Session id to resume" }),
+    launch: toolInputSchemaOf(LaunchFieldsSchema, { resume: "Session id to resume" }),
     permit: toolInputSchemaOf(PermitToolInputSchema),
   };
 }

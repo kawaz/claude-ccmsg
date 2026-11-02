@@ -1,6 +1,6 @@
 # DR-0018: Session Launcher (エージェントの tool `launch` と webui のフォームから、config で固定した 1 つの起動コマンドでセッションを起動する)
 
-Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup` と `fork-rescue`)。§3.7 の tool `launch` は daemon の `POST /op` の `launch_tool` で起動し、待ちを超えた起動の結果は notify で会話に戻す (2026-10-29 の kawaz 裁定)
+Status: Accepted (2026-07-16、§3 は 2026-10-25 の kawaz 裁定) — ✅ 実装済み (§4 の段 1〜5: protocol の起動の入力と op、daemon の config と起動の手順と出力の退避、tool `launch` と `ccmsg sidecar launch` と skill の節、webui のフォームと prefill と結果パネル、runbook の `session-launcher-setup`)。§3.7 の tool `launch` は daemon の `POST /op` の `launch_tool` で起動し、待ちを超えた起動の結果は notify で会話に戻す (2026-10-29 の kawaz 裁定)
 Date: 2026-07-15
 Sponsor: kawaz
 
@@ -8,7 +8,7 @@ Sponsor: kawaz
 
 別の Claude セッションを起動したい場面は 2 つある。
 
-- **人が webui から**: model / effort / cwd / プロンプトを毎回端末でタイプせずに、サイドバーの「新規」や、過去セッションの検索結果の「resume」、Timeline の「ここから fork」から起動したい
+- **人が webui から**: model / effort / cwd / プロンプトを毎回端末でタイプせずに、サイドバーの「新規」や、過去セッションの検索結果の「resume」から起動したい
 - **エージェントが**: worker を立てる、作業を別セッションへ引き継ぐ。今はエージェントが起動用のスクリプトを Bash で叩いており、(a) 引数の渡し方がぶれて prompt が捨てられる事故が起き、(b) Bash で別セッションを起動すること自体が auto mode の classifier に止められる
 
 どの claude を、どの端末 (detached の端末 proxy 等) で、どの trust 判定の下で起動するかは kawaz の環境の都合で、ccmsg が知るべきことではない。
@@ -75,7 +75,6 @@ export const LaunchFieldsSchema = v.strictObject({
   effort: v.optional(LaunchEffortSchema),        // low | medium | high | xhigh | max
   continue: v.optional(v.boolean()),
   resume: v.optional(SessionUuidSchema),         // 小文字の uuid (hello の sid と同じ形)
-  resume_session_at: v.optional(SessionUuidSchema),
   fork_session: v.optional(v.boolean()),
   name: v.optional(NonEmptySchema),
   prompt: v.optional(NonEmptySchema),
@@ -85,8 +84,6 @@ export const LaunchInputSchema = v.pipe(
   LaunchFieldsSchema,
   // 組み合わせの検査 (下の表)。v.forward(v.partialCheck(...), [<直す field>]) で書く
 );
-
-export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_session_at"]);
 ```
 
 | field | claude のオプション | 意味 |
@@ -95,8 +92,7 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 | `model` / `effort` | `--model` / `--effort` | 新規 (`continue` も `resume` も無い) では必須。それ以外で無ければ起動コマンドが決める |
 | `continue` | `--continue` | cwd で最も新しいセッションの続き |
 | `resume` | `--resume` | 指定したセッションの続き (id は変わらない) |
-| `resume_session_at` | `--resume-session-at` | fork 地点の transcript の record の uuid。その record までを写す。無ければ先端まで。`fork_session` と一緒にだけ指定できる |
-| `fork_session` | `--fork-session` | `continue` / `resume` の元の履歴を写した新しいセッションにする |
+| `fork_session` | `--fork-session` | `continue` / `resume` の元の履歴を先端まで写した新しいセッションにする |
 | `name` | `--name` | セッション名。無ければ起動コマンドが決める |
 | `prompt` | (stdin) | 最初の prompt。起動コマンドが claude の stdin に書く (位置引数にしない: `ps` に見える、長さの上限、shell の解釈を避ける)。無ければ起動コマンドが決める |
 
@@ -106,14 +102,13 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 |---|---|
 | `continue` と `resume` の同時指定 | `resume` |
 | `fork_session` に `continue` も `resume` も無い | `fork_session` |
-| `resume_session_at` に `fork_session` が無い (fork しない resume に fork 地点は意味が無く、claude の扱いも未観測) | `resume_session_at` |
 | 新規 (`continue` も `resume` も無い) で `model` が無い | `model` |
 | 新規で `effort` が無い | `effort` |
 
 - 検査は読む field が読めた時点で走る (`partialCheck`)。他の field が読めなくても組み合わせの理由も出るので、webui のフォームは理由を一度に全部出せる。新規の `model` / `effort` の理由の文 (`LAUNCH_CHOOSE_MESSAGE`、「選んでください …」) はスキーマが持ち、webui は別の文を持たない
 - `continue` / `fork_session` の `false` は付けないのと同じ。`name` と `prompt` に空文字は受けない (「指定しない」の言い方を field の不在 1 つにする)
 - `strictObject` で、知らない field は読めない入力になる。黙って捨てると、呼び手は渡した値が効いたと思い込む
-- **tool の入力** (`LaunchToolFieldsSchema`) は op の入力から `resume_session_at` を外したもの (§3.7)。fork 地点は transcript の record の uuid で、エージェントにはそれを知る手段が無い。スキーマを 2 つ手書きせず `v.omit` で導き、組み合わせの検査は tool の handler も `LaunchInputSchema` で行う
+- **tool の入力** (§3.7) も同じ `LaunchFieldsSchema` の field で、組み合わせの検査は tool の handler も `LaunchInputSchema` で行う
 
 ### 3.3 起動コマンドの入力 (stdin の JSON)
 
@@ -124,9 +119,9 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 | (§3.2 の field) | 起動の入力のまま。`cwd` は realpath |
 | `session_id` | daemon が生成した新しいセッションの id (UUID v4、`crypto.randomUUID()`)。新規 (`continue` も `resume` も無い) と `fork_session` の時だけ |
 
-- 起動コマンドは `session_id` を `claude --session-id` に渡す。fork で `--resume <元> --fork-session --session-id <新>` が効くこと (`-p` と対話の両方、`--resume-session-at` との併用は `-p`) は [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) で確かめた
+- 起動コマンドは `session_id` を `claude --session-id` に渡す。fork で `--resume <元> --fork-session --session-id <新>` が効くこと (`-p` と対話の両方) は [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) で確かめた
 - fork でない `continue` / `resume` には足さない。claude は fork でない `--continue` / `--resume` に `--session-id` を付けると起動しない (同 findings)。`resume` の id は `resume` のまま、`continue` の id は claude が選ぶセッションの id で、daemon は知らない
-- claude の引数への写し方、fork 地点のある fork の二段起動、終了コードの意味は [launch-command](../design/launch-command.md) が正本
+- claude の引数への写し方、終了コードの意味は [launch-command](../design/launch-command.md) が正本
 
 ### 3.4 protocol
 
@@ -156,7 +151,7 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 7. `launch_timeout_seconds` で起動コマンドの process group に SIGTERM、その 500 ms 後に SIGKILL。SIGKILL からさらに 500 ms 待っても終わりを見届けられなければ、`exit_code` 137 として返事に進む。timeout で止めた起動コマンドが終わった後に group に残っているものにも SIGKILL を送る。起動コマンドが group から外した子 (setsid した端末 proxy 等) には届かない。timeout でない終わり方では何も止めない
 8. stdout / stderr は spawn の直後から読み続ける (pipe の詰まりで子が止まらないように)。取り込むのは出力ごとに先頭の 1 MiB までで、それより後は読んで数えるだけにする。子が終わった後、pipe の EOF を最長 500 ms 待ち、来なければそこまでの出力で打ち切る。起動コマンドが残した子が pipe の書き端を持ち続けると EOF が来ないため
 9. 出力ごとに 4096 bytes 以上なら退避ファイルに書き、本文を差し替える (§3.6)
-10. daemon.log に 1 行を書く: `session_launch: by=<user か sid> cwd=<JSON の文字列> [continue=true] [resume=<id>] [fork_session=true] [resume_session_at=<uuid>] [session_id=<id>] [prompt_bytes=<N>] exit_code=<N> [timed_out=true] stdout_bytes=<N> stderr_bytes=<N>`。依頼者が書く文字列 (`cwd`) は JSON の文字列にして、行の中に別の field を装えないようにする。`prompt` の本文は書かない (長さだけ)。`timed_out=true` は 7 の timeout で止めた時で、起動コマンドが自分で 143 で終わった時と区別する
+10. daemon.log に 1 行を書く: `session_launch: by=<user か sid> cwd=<JSON の文字列> [continue=true] [resume=<id>] [fork_session=true] [session_id=<id>] [prompt_bytes=<N>] exit_code=<N> [timed_out=true] stdout_bytes=<N> stderr_bytes=<N>`。依頼者が書く文字列 (`cwd`) は JSON の文字列にして、行の中に別の field を装えないようにする。`prompt` の本文は書かない (長さだけ)。`timed_out=true` は 7 の timeout で止めた時で、起動コマンドが自分で 143 で終わった時と区別する
 11. response を返す
 
 起動コマンドの spawn が失敗した時 (config を読んだ後にファイルが消えた等の ENOENT、EACCES) は `launch_command_unavailable` を返し、10 の行にも残す (msg は JSON の文字列にする)。
@@ -176,8 +171,8 @@ export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_sessio
 
 [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の `send` / `say` / `peers` と同じ形で、module が `session.start` で登録し (`isDeferred: true`、対話のセッションだけ)、`tool.call` の handler が `next` を呼ばずに `{ result }` で答える。
 
-- **description と input schema**: [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の「mods の tool の作り方」に従う。description は `Launch a Claude session`。input schema は `LaunchToolFieldsSchema` を変換した 1 つの object で、各 field の型と enum (`model` / `effort`) と `required: ["cwd"]` だけを持ち (`additionalProperties` 等のメタのキーは出さない。知らない field は handler が読み取りで落とす)、field の説明は `resume` の `Session id to resume` だけ。uuid の形、空文字の禁止、組み合わせの検査 (§3.2) は schema に書かず、handler が読む `LaunchInputSchema` が持つ。使い方 (組み合わせの選び方、`exit_code` 0 はセッションの到達ではなく `peers` で確かめること) は skill に置く。Claude Code は top-level に `oneOf` か `anyOf` を持つ input schema の tool を session の tools から外す ([findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md)) ので、input schema は分岐の無い 1 つの object に保つ
-- **handler の読み方**: engine は `tool.call` の入力と同じ階層に自分の field (`tool`・`tool_use_id`・subagent なら `agentId`、後で足されるもの) を並べる。handler は `LaunchToolFieldsSchema` の field だけを取り出し (strict でない object で読み、他の field は落とす)、それを `LaunchInputSchema` で読む。engine の field を名前で外す作りにしない (engine が field を足すたびに全部の呼び出しが読めなくなる)。読めなければ「launch の入力が形に合わないので何もしていない: <理由>」で返す
+- **description と input schema**: [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 の「mods の tool の作り方」に従う。description は `Launch a Claude session`。input schema は `LaunchFieldsSchema` を変換した 1 つの object で、各 field の型と enum (`model` / `effort`) と `required: ["cwd"]` だけを持ち (`additionalProperties` 等のメタのキーは出さない。知らない field は handler が読み取りで落とす)、field の説明は `resume` の `Session id to resume` だけ。uuid の形、空文字の禁止、組み合わせの検査 (§3.2) は schema に書かず、handler が読む `LaunchInputSchema` が持つ。使い方 (組み合わせの選び方、`exit_code` 0 はセッションの到達ではなく `peers` で確かめること) は skill に置く。Claude Code は top-level に `oneOf` か `anyOf` を持つ input schema の tool を session の tools から外す ([findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md)) ので、input schema は分岐の無い 1 つの object に保つ
+- **handler の読み方**: engine は `tool.call` の入力と同じ階層に自分の field (`tool`・`tool_use_id`・subagent なら `agentId`、後で足されるもの) を並べる。handler は `LaunchFieldsSchema` の field だけを取り出し (strict でない object で読み、他の field は落とす)、それを `LaunchInputSchema` で読む。engine の field を名前で外す作りにしない (engine が field を足すたびに全部の呼び出しが読めなくなる)。読めなければ「launch の入力が形に合わないので何もしていない: <理由>」で返す
 - **transport**: daemon の `POST /op` ([DR-0046](./DR-0046-module-op-over-http.md)) の op `launch_tool` (`{ launch, agent_id? }`、session role だけ) を 1 往復。`agent_id` は subagent からの呼び出しの時の、その subagent の id。daemon は `session_launch` と同じ手順 (依頼者はそのセッション、`launch_max_concurrency` と終了時の待ちも同じ) で起動し、起動コマンドの終わりを `LAUNCH_TOOL_WAIT_MS` (15 秒) まで待つ
   - 待ちの内に終わったら、`session_launch` の返事の欄に `outcome: "done"` を付けて返す
   - 終わらなければ `{ outcome: "running" }` を返し、起動は続ける。終わった時に、結果を呼んだ会話へ notify の封筒 (from は daemon、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §9) で入れる。subagent からの起動はその subagent 宛て (send の `agent_id` と同じ経路)、届かなければ daemon.log に書く。daemon の終了は、起動の待ちの後にこの知らせの待ちもする
@@ -196,12 +191,12 @@ session role (エージェント) からの `session_launch` を受ける。
 
 ### 3.9 webui
 
-- サイドバーの SESSIONS 見出しの右に「+ 新規」ボタン。押すと view `session-creator` に切り替わる。「+ 新規」、Timeline の「ここから fork」、Session Search の「resume」は `launch_available` の時だけ出す
+- サイドバーの SESSIONS 見出しの右に「+ 新規」ボタン。押すと view `session-creator` に切り替わる。「+ 新規」と Session Search の「resume」は `launch_available` の時だけ出す
 - フォーム (`SessionCreator`) は全部の欄を常に出す。見出しは claude のオプション名そのまま (大文字にせず等幅で出す)。並び:
   - cwd: `CwdTree` (`dir_tree`) で選ぶ。検索フィルタ欄はパス名の部分一致
   - `--model` / `--effort`: picklist の値の select
   - `--continue`: checkbox
-  - `--resume` / `--resume-session-at`: text
+  - `--resume`: text
   - `--fork-session`: checkbox
   - `--session-id`: 入力できない欄。daemon が生成することを placeholder の「自動生成」で示す (新しいセッションを作らない組み合わせでは、いつ生成するかを添える)。op の入力に `session_id` は無い
   - `--name`: text
@@ -211,9 +206,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - `--continue` か `--resume` を入れると、両方の select に「指定しない」が加わり、それが既定になる
   - 人が選んだ値は既定に戻さない
 - 送る前に `LaunchInputSchema` で読み、読めなければ欄ごとの理由を出して送らない。理由の文はスキーマのもの
-- prefill:
-  - Session Search の結果の「resume」: `resume` = その id、cwd、model / effort は transcript の末尾から、name は既存の title
-  - Timeline の「ここから fork」: `resume` = 見ているセッション、`fork_session` = on、`resume_session_at` = 選んだ record の uuid、cwd / model / effort は見ているセッションのもの、name は元の title
+- prefill: Session Search の結果の「resume」は、`resume` = その id、cwd、model / effort は transcript の末尾から、name は既存の title
 - 結果パネル: `session_id` (新しいセッションを作る起動で exit 0 の時だけある。セッションの view へのリンクで、hello が来るまでは開いても空)、`exit_code`、`stdout`、`stderr` (退避の文はそのまま出す)。daemon が断った時と確かめられなかった時は `launchErrorText` の文
 - フォームの値の URL 同期 (`sb.*`) は上の欄の field 名に揃える (`sb.continue=true` / `sb.fork_session=true` で on)
 
@@ -221,11 +214,11 @@ session role (エージェント) からの `session_launch` を受ける。
 
 | 段 | 内容 |
 |---|---|
-| 1 | protocol: `LaunchFieldsSchema` / `LaunchInputSchema` (組み合わせの検査) / `LaunchToolFieldsSchema` / `LaunchCommandInputSchema`、`session_launch` の request / response、`session_launcher_config` の response (`default_effort`)、error code `launch_command_unavailable` / `launch_busy`、capability `launch_available`、結果の文 `launchErrorText` |
+| 1 | protocol: `LaunchFieldsSchema` / `LaunchInputSchema` (組み合わせの検査) / `LaunchCommandInputSchema`、`session_launch` の request / response、`session_launcher_config` の response (`default_effort`)、error code `launch_command_unavailable` / `launch_busy`、capability `launch_available`、結果の文 `launchErrorText` |
 | 2 | daemon: config のスキーマ (§3.1、起動コマンドの絶対パスへの固定、組み込みの起動コマンド)、§3.5 の手順 (`launch_max_concurrency`、process group、出力の上限、終わる時の待ち)、§3.6 の退避と掃除、session role の受け付け、`default_effort` の読み取り |
 | 3 | module: tool `launch` の登録と handler (op `launch_tool`)、input schema と description、skill の節 |
 | 4 | webui: 全部の欄のフォーム、model / effort の既定、prefill、結果パネル、`launch_available` |
-| 5 | runbook (`session-launcher-setup` と `fork-rescue`) を新しい config と起動コマンドの契約に書き直す |
+| 5 | runbook (`session-launcher-setup`) を新しい config と起動コマンドの契約に書き直す |
 
 段 1 → 2 → 3 / 4 の順 (3 と 4 は並行できる)。段 2 の時点で、`session_launcher` の起動コマンドが見つからない config は §3.1 のとおり daemon を起動時に止めるので、kawaz の config と起動コマンドを段 2 と同時に差し替える。
 
@@ -240,6 +233,7 @@ session role (エージェント) からの `session_launch` を受ける。
 - **2026-10-29 (kawaz)**: tool `launch` を daemon の `POST /op` に移し (`launch_tool`)、`ccmsg sidecar launch` を削る。daemon は起動コマンドを上限付きで待ち、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (subagent からの起動はその subagent 宛て)。transcript の行から daemon が起動する形 (DR-0045 §6 の当初の形) は採らない — §3.7
 - **2026-10-30 (kawaz)**: 起動コマンドは `prompt` を claude の位置引数にせず、claude の stdin に書く (`ps` に見える、引数の長さの上限、shell の解釈を避ける) — §3.2、§3.3、[launch-command](../design/launch-command.md)
 - **2026-10-30 (kawaz、追加)**: 組み込みの起動コマンドを、kawaz の起動スクリプトから環境固有のもの (cwd の信頼判定、trust ダイアログの吸収、リポの持ち主ごとの claude 本体の切替、permission mode、セッション名の既定と装飾) を除いた zsh スクリプトにする。model ごとの effort の既定、既定の prompt (`.`)、環境の掃除、`direnv exec .` 経由の起動は組み込みに持つ — §3.1、[launch-command](../design/launch-command.md)
+- **2026-11-02 (kawaz)**: fork 地点 (`resume_session_at`、`--resume-session-at`) を起動の入力から削る。`--resume-session-at` は `-p` でしか効かず、対話の fork に効かせるには `-p` での二段の起動が要る。fork は `fork_session` (元の履歴を先端まで写す) だけにし、webui の Timeline の「ここから fork」も削る — §3.2、§3.3、§3.9
 
 ## 6. 不採用
 
@@ -268,8 +262,8 @@ session role (エージェント) からの `session_launch` を受ける。
 ## 8. 関連
 
 - [launch-command](../design/launch-command.md) — 起動コマンドの契約 (stdin の JSON、claude の引数への写し方、終了コード)
-- [runbook session-launcher-setup](../runbooks/session-launcher-setup.md) / [runbook fork-rescue](../runbooks/fork-rescue.md) — 設定の手順と、fork による救出の手順
-- [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id`・`--resume-session-at` の併用の実測、claude が拒む組み合わせ
+- [runbook session-launcher-setup](../runbooks/session-launcher-setup.md) — 設定の手順
+- [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` の併用の実測、claude が拒む組み合わせ
 - [findings 2026-10-25-launch-tool-input-schema](../findings/2026-10-25-launch-tool-input-schema.md) — top-level の `oneOf` / `anyOf` の tool が外されること
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) — typed tool (`send` / `say` / `peers` と `launch`) の登録の形
 - [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と config をスキーマで読む

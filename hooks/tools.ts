@@ -13,7 +13,7 @@
 import * as v from "valibot";
 import {
   LaunchInputSchema,
-  LaunchToolFieldsSchema,
+  LaunchFieldsSchema,
   LaunchToolResponseTextSchema,
   launchErrorText,
 } from "@ccmsg/protocol/launch";
@@ -201,7 +201,7 @@ async function peersTool<E>($: Engine, e: E): Promise<string> {
  * make every call unreadable. A field the model wrote outside the tool's
  * fields is dropped with them: the schema it is shown lists the fields, and
  * says nothing more (DR-0039 §3). */
-const LaunchToolCallSchema = v.object(LaunchToolFieldsSchema.entries);
+const LaunchToolCallSchema = v.object(LaunchFieldsSchema.entries);
 
 const LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 

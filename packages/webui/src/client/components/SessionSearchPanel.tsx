@@ -291,7 +291,6 @@ export function SessionSearchPanel({
     pushNavigation(
       `${location.pathname}${location.search}`,
       prefillSidebarState({
-        kind: "resume",
         sessionId: hit.sid,
         ...(hit.cwd ? { cwd: hit.cwd } : {}),
         ...(hit.model ? { model: hit.model } : {}),

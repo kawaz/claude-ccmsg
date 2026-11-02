@@ -2092,7 +2092,7 @@ select.sidebar-globals-endpoint {
   background: transparent;
 }
 
-/* --resume / --resume-session-at / --session-id: 中身は uuid なので等幅で、
+/* --resume / --session-id: 中身は uuid なので等幅で、
  * 桁の違いが目視で分かるように。入力自体の枠は .session-creator-field input
  * と共通。 */
 .session-creator-uuid-input {
@@ -7609,15 +7609,6 @@ a.tl-attachment-file-path {
   font-size: var(--font-size-xs);
 }
 
-/* 「まで残す」「から消す」の 2 ボタンと、その境界を説明する 1 行。縦積みなのは
- * ボタン名が文になっていて横並びだと折り返すため。 */
-.tl-float-fork {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-5);
-}
-
 .tl-float-action {
   padding: var(--space-4) var(--space-9);
   border: 1px solid var(--border);
@@ -7630,16 +7621,12 @@ a.tl-attachment-file-path {
   cursor: pointer;
 }
 
-/* セッション単位のアクション。fork の 2 ボタン群とは操作単位が違うので区切り
- * 線で分ける。 */
+/* dump の操作一式 (除くものの 2 択、ボタン、書き出したパス、説明) の縦積み。 */
 .tl-float-dump {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-5);
-  margin-top: var(--space-7);
-  padding-top: var(--space-7);
-  border-top: 1px solid var(--border);
 }
 
 /* 「何を除くか」の 2 択。ボタンの前に置いて、押す前に効くものだと分かる位置に。 */

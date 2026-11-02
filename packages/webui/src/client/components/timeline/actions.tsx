@@ -1,9 +1,8 @@
-// 選択中の項目に対する操作 (fork / dump) と fork 地点の区切り線。
+// 選択中の項目に対する操作 (dump) と fork 地点の区切り線。
 import { useState } from "preact/hooks";
 import { type ForkOrigin } from "@ccmsg/protocol";
 import { sessionHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
-import { type ForkActionState } from "../../fork-point.ts";
 import { isScopedDump, sessionDumpRequest } from "../../session-dump-action.ts";
 
 /** The seam in a forked session: everything above it was copied from the
@@ -39,8 +38,8 @@ type DumpActionState =
   | { kind: "error"; msg: string };
 
 /** dump をファイルに書き出すアクション。無選択ならセッション全体、項目を
- * 選択中ならその record 以降 (選択自身を含む) を切り出す。fork と違い
- * off-chain の record も正当な起点 (session-dump-action.ts 参照)。 */
+ * 選択中ならその record 以降 (選択自身を含む) を切り出す。放棄された分岐上の
+ * record も正当な起点 (session-dump-action.ts 参照)。 */
 export function DumpFileAction({ sid, position }: { sid: string; position: string }) {
   const { ws } = useApp();
   const [state, setState] = useState<DumpActionState>({ kind: "idle" });
@@ -116,58 +115,6 @@ export function DumpFileAction({ sid, position }: { sid: string; position: strin
             : scoped
               ? "選択中の項目を含め、それ以降を daemon ホストの dumps/ にテキストで書き出します。選択を解除するとセッション全体になります。"
               : "セッション全体 (todos / agents / rooms + 会話) を daemon ホストの dumps/ にテキストで書き出します。項目を選択すると、そこ以降だけを切り出せます。"}
-      </p>
-    </div>
-  );
-}
-
-/** アクションタブのうち「選択中の項目」に対する操作 (セッション単位の操作は
- * DumpFileAction のようにその上下に並ぶ)。 */
-export function ForkAction({
-  state,
-  available,
-  onFork,
-}: {
-  state: ForkActionState;
-  /** hello の `launch_available`。fork は launcher の起動なので、daemon
-   * に launcher が無い時はボタンを出さない (押しても起動フォームが「未設定」
-   * を返すだけ)。 */
-  available: boolean;
-  onFork: (resumeAt: string) => void;
-}) {
-  if (!available) {
-    return <p class="tl-float-note">daemon にセッション起動 (launcher) が設定されていません。</p>;
-  }
-  if (state.kind === "no-selection") {
-    return <p class="tl-float-note">fork 地点にする項目をクリックして選択してください。</p>;
-  }
-  if (state.kind === "off-chain") {
-    return (
-      <p class="tl-float-note">
-        この項目は放棄された分岐上にあります。resume が読み込む会話に含まれないので fork
-        地点にできません。
-      </p>
-    );
-  }
-  // 選択項目を「残す」か「消す」かは同じ強さの 2 択なので、片方を既定にして
-  // もう片方をオプション扱いにせず、2 つのボタンとして並べる (kawaz r115 m9)。
-  // ボタン名がそのまま境界の説明になっていて、どちらを押すと何が残るかを
-  // 読む前に分かる。
-  const { resumeAtBefore } = state;
-  return (
-    <div class="tl-float-fork">
-      <button type="button" class="tl-float-action" onClick={() => onFork(state.resumeAt)}>
-        この項目まで残して fork
-      </button>
-      {resumeAtBefore === undefined ? null : (
-        <button type="button" class="tl-float-action" onClick={() => onFork(resumeAtBefore)}>
-          この項目から消して fork
-        </button>
-      )}
-      <p class="tl-float-note">
-        {state.resumeAtBefore === undefined
-          ? "この項目の直前が読み込まれていないので、消す側は選べません。older を読み込むと選べます。"
-          : "「まで残す」= この項目までが新セッションの記憶に残ります。「から消す」= この項目以降の記憶が消えます。"}
       </p>
     </div>
   );

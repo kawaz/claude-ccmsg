@@ -2804,7 +2804,7 @@ describe("the ccmsg tools", () => {
   // oneOf / anyOf (docs/findings/2026-10-25-launch-tool-input-schema.md).
   // Which options go together is the skill's to say and the handler's to
   // check, not the schema's.
-  test("launch is shown one flat object of types: cwd required, no resume_session_at", async () => {
+  test("launch is shown one flat object of types, cwd required", async () => {
     const fake = toolFake(printing({}));
     await fire(fake, "session.start", START, async () => ({}));
     expect(fake.tools.find((t) => t.name === "launch")?.inputSchema).toEqual({
@@ -2873,25 +2873,6 @@ describe("the ccmsg tools", () => {
     expect(await callTool(fake, "mcp__ccmsg-v1__launch", { cwd: "/w", continue: true })).toBe(
       "起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く",
     );
-  });
-
-  // A fork point names a transcript record the agent cannot see: the tool
-  // has no such field, and one written anyway does not reach the daemon.
-  test("a resume_session_at written anyway does not reach the daemon", async () => {
-    const fake = daemonFake(replying(launched));
-    await callTool(fake, "mcp__ccmsg-v1__launch", {
-      cwd: "/w",
-      resume: RESUMED,
-      fork_session: true,
-      resume_session_at: RESUMED,
-    });
-    expect(fake.asked.map((a) => a.body)).toEqual([
-      {
-        op: "launch_tool",
-        launch: { cwd: "/w", resume: RESUMED, fork_session: true },
-        hello: HELLO,
-      },
-    ]);
   });
 
   // What a new session requires missing, a combination claude refuses, or a

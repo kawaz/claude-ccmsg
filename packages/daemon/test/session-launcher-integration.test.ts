@@ -35,7 +35,6 @@ import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 const tmp = perTestTmpDir();
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
 const RESUME_SID = "bbbbbbbb-0000-4000-8000-000000000002";
-const RECORD_UUID = "cccccccc-0000-4000-8000-000000000003";
 
 /** A launch command that prints its standard input to stdout and its cwd to
  * stderr, then exits with `exit`. */
@@ -199,7 +198,6 @@ describe("session_launch: what the launch command reads", () => {
         cwd: dir,
         resume: RESUME_SID,
         fork_session: true,
-        resume_session_at: RECORD_UUID,
       });
       expect(reply.session_id).toBeDefined();
       expect(reply.session_id).not.toBe(RESUME_SID);
@@ -207,7 +205,6 @@ describe("session_launch: what the launch command reads", () => {
         cwd: fs.realpathSync(dir),
         resume: RESUME_SID,
         fork_session: true,
-        resume_session_at: RECORD_UUID,
         session_id: reply.session_id ?? "",
       });
     });

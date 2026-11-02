@@ -47,7 +47,6 @@ export const LAUNCH_FORM_FIELDS = [
   "effort",
   "continue",
   "resume",
-  "resume_session_at",
   "fork_session",
   "name",
   "prompt",

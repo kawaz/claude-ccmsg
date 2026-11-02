@@ -6,9 +6,7 @@ import { describe, expect, test } from "bun:test";
 import {
   LAUNCH_CHOOSE_MESSAGE,
   LaunchCommandInputSchema,
-  LaunchFieldsSchema,
   LaunchInputSchema,
-  LaunchToolFieldsSchema,
   launchEffortFromTranscript,
   launchErrorText,
   launchMakesSession,
@@ -18,7 +16,6 @@ import { parseWith } from "../src/parse.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const NEW_SID = "99999999-8888-4777-8666-555555555555";
-const AT = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
 /** The reasons `value` does not read as a launch, by field path ("" for the
  * launch itself); empty when it reads. */
@@ -42,7 +39,6 @@ describe("LaunchInputSchema", () => {
       { cwd: "/w", resume: SID },
       { cwd: "/w", resume: SID, fork_session: true },
       { cwd: "/w", continue: true, fork_session: true },
-      { cwd: "/w", resume: SID, fork_session: true, resume_session_at: AT },
     ] as const) {
       expect(parseWith(LaunchInputSchema, launch)).toEqual({ ok: true, value: launch });
     }
@@ -54,7 +50,6 @@ describe("LaunchInputSchema", () => {
       model: "haiku" as const,
       effort: "max" as const,
       resume: SID,
-      resume_session_at: AT,
       fork_session: true,
       name: "n",
       prompt: "line 1\nline 2\n",
@@ -90,22 +85,8 @@ describe("LaunchInputSchema", () => {
       model: "opus",
       effort: "low",
       fork_session: true,
-      resume_session_at: AT,
     });
     expect(issues).toEqual({ fork_session: "continue か resume と一緒に指定する" });
-  });
-
-  // A fork point is where a fork is cut; on a resume that does not fork it
-  // has no meaning (and claude's handling of it is unobserved).
-  test("resume_session_at without fork_session does not read, on resume_session_at", () => {
-    expect(launchIssues({ cwd: "/w", resume: SID, resume_session_at: AT })).toEqual({
-      resume_session_at: "fork_session と一緒に指定する",
-    });
-    expect(
-      launchIssues({ cwd: "/w", model: "opus", effort: "low", resume_session_at: AT }),
-    ).toEqual({
-      resume_session_at: "fork_session と一緒に指定する",
-    });
   });
 
   // The checks run once the fields they read are readable, so a form shows
@@ -139,30 +120,19 @@ describe("LaunchInputSchema", () => {
   });
 
   // The same shape hello takes a session id in.
-  test("resume and resume_session_at take a lowercase uuid", () => {
+  test("resume takes a lowercase uuid", () => {
     expect(launchIssues({ cwd: "/w", resume: "abc" })).toEqual({
       resume: "小文字の uuid で指定する",
     });
-    expect(launchIssues({ cwd: "/w", resume: AT.toUpperCase() })).toHaveProperty("resume");
-    expect(launchIssues({ cwd: "/w", resume: SID, resume_session_at: "abc" })).toHaveProperty(
-      "resume_session_at",
-    );
+    expect(
+      launchIssues({ cwd: "/w", resume: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE" }),
+    ).toHaveProperty("resume");
   });
 
   test("a model or effort outside the lists, or a non-boolean option, does not read", () => {
     expect(launchIssues({ cwd: "/w", model: "gpt", effort: "high" })).toHaveProperty("model");
     expect(launchIssues({ cwd: "/w", continue: true, effort: "extreme" })).toHaveProperty("effort");
     expect(launchIssues({ cwd: "/w", continue: "true" })).toHaveProperty("continue");
-  });
-});
-
-describe("LaunchToolFieldsSchema", () => {
-  // The tool's fields are the launch's without the fork point, which names a
-  // transcript record an agent cannot see.
-  test("has the launch's fields but resume_session_at", () => {
-    expect(Object.keys(LaunchToolFieldsSchema.entries)).toEqual(
-      Object.keys(LaunchFieldsSchema.entries).filter((field) => field !== "resume_session_at"),
-    );
   });
 });
 

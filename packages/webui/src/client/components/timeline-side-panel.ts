@@ -18,7 +18,7 @@ export interface ContainerLike {
  *
  * `list` は TL 項目が並ぶ要素 (`.tl-lines`)。ここへのクリックは **項目の選択**
  * であって「パネルから離れる操作」ではないので閉じない — 閉じてしまうと
- * 「パネルを開いたまま fork 地点を選び直す」ができず、選ぶたびに開き直す羽目に
+ * 「パネルを開いたまま起点の項目を選び直す」ができず、選ぶたびに開き直す羽目に
  * なる。パネル自身の中も当然閉じない。それ以外 (sidebar / toolbar / composer
  * など) は従来どおり畳む。 */
 export function shouldCloseSidePanel(

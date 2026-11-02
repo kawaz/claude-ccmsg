@@ -183,15 +183,6 @@ export interface TurnLine {
   ts: string | null;
   /** Stable JSONL row identifier used by Timeline position URLs. */
   uuid?: string;
-  /** The row this one was written as a continuation of. A transcript is a tree,
-   * not a list: resuming a session without `--fork-session` appends a new
-   * branch to the same file, leaving the rows after the resume point on an
-   * abandoned branch that stays in the file and is still rendered. Only the
-   * chain ending at the last row is the conversation `claude --resume`
-   * reconstructs, which is what makes this field worth carrying — see
-   * `liveChainUuids` in fork-point.ts. Absent on a session's first row
-   * (`parentUuid: null` on the wire) and on rows that carry no link. */
-  parentUuid?: string;
   role: "user" | "assistant";
   segments: Segment[];
   /** classifyUserMessage's verdict for a role:"user" line — which pattern of
@@ -223,11 +214,6 @@ export interface MetaLine {
   ts: string | null;
   /** Stable JSONL row identifier used by Timeline position URLs. */
   uuid?: string;
-  /** Same link as TurnLine.parentUuid. Carried on meta rows too because the
-   * chain `liveChainUuids` walks runs through them — an attachment sitting
-   * between two turns is part of the conversation's parent chain, and dropping
-   * its link would cut the walk short at the first attachment. */
-  parentUuid?: string;
   type: string;
   summary: string;
   raw: string;
@@ -2713,7 +2699,7 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   return {
     kind: "meta",
     ts: head.value.timestamp ?? null,
-    ...linkOf(head.value.uuid, head.value.parentUuid ?? null),
+    ...uuidOf(head.value.uuid),
     type: row.type,
     summary: row.type,
     raw,
@@ -2724,15 +2710,9 @@ function brokenLine(raw: string, failure: ParseFailure): BrokenLine {
   return { kind: "broken", raw, error: failure.summary };
 }
 
-/** The `uuid` / `parentUuid` fields of a line, for a row that carries them. */
-function linkOf(
-  uuid: string | undefined,
-  parentUuid: string | null,
-): Pick<TurnLine, "uuid" | "parentUuid"> {
-  return {
-    ...(uuid !== undefined ? { uuid } : {}),
-    ...(parentUuid !== null ? { parentUuid } : {}),
-  };
+/** The `uuid` field of a line, for a row that carries one. */
+function uuidOf(uuid: string | undefined): Pick<TurnLine, "uuid"> {
+  return uuid !== undefined ? { uuid } : {};
 }
 
 function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
@@ -2748,7 +2728,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
       return {
         kind: "turn",
         ts: row.timestamp,
-        ...linkOf(row.uuid, row.parentUuid),
+        ...uuidOf(row.uuid),
         role: "user",
         segments,
         userMessageKind,
@@ -2758,7 +2738,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
       return {
         kind: "turn",
         ts: row.timestamp,
-        ...linkOf(row.uuid, row.parentUuid),
+        ...uuidOf(row.uuid),
         role: "assistant",
         segments: parseSegments(row.message.content, "assistant", undefined),
         assistantMessageKind: classifyAssistantMessage(row),
@@ -2777,7 +2757,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
         return {
           kind: "turn",
           ts: row.timestamp,
-          ...linkOf(row.uuid, row.parentUuid),
+          ...uuidOf(row.uuid),
           role: "user",
           segments: [{ kind: "text", role: "user", text: queuedPrompt }],
           userMessageKind: "peer-message",
@@ -2786,7 +2766,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
       return {
         kind: "meta",
         ts: row.timestamp,
-        ...linkOf(row.uuid, row.parentUuid),
+        ...uuidOf(row.uuid),
         type: row.type,
         summary: row.type,
         raw,
@@ -2829,7 +2809,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
       return {
         kind: "meta",
         ts: row.timestamp,
-        ...linkOf(row.uuid, row.parentUuid),
+        ...uuidOf(row.uuid),
         type: row.type,
         summary: `${row.type}: ${row.subtype}`,
         raw,
@@ -2939,7 +2919,6 @@ export function pairQueuedTurns(
       kind: "meta",
       ts: line.ts,
       ...(line.uuid ? { uuid: line.uuid } : {}),
-      ...(line.parentUuid ? { parentUuid: line.parentUuid } : {}),
       type: "queue-operation",
       summary: "queue-operation: enqueue",
       raw,

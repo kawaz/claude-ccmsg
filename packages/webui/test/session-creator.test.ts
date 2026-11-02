@@ -1,6 +1,6 @@
 // DR-0018 §3.9: the launch form's model (session-creator.ts) — every field at
 // once, the model / effort the selects show by default, what the form sends
-// and what it refuses to send, the two prefills, and the URL seed the form
+// and what it refuses to send, the resume prefill, and the URL seed the form
 // opens from.
 import { describe, expect, test } from "bun:test";
 import {
@@ -13,7 +13,6 @@ import {
 import {
   checkSessionCreatorForm,
   commitCwdInput,
-  forkPrefill,
   formContinues,
   formMakesSession,
   initialCwdPickerMode,
@@ -27,11 +26,8 @@ import {
   type SessionCreatorForm,
 } from "../src/client/session-creator.ts";
 import { LAUNCH_FORM_FIELDS, type LaunchSeed } from "../src/client/sidebar-url.ts";
-import { initialState, reducer } from "../src/client/store.ts";
-import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
 
 const SID = "aaaaaaaa-0000-4000-8000-000000000001";
-const AT = "bbbbbbbb-0000-4000-8000-000000000002";
 
 /** A form with the given fields and every other one blank. */
 function form(fields: Partial<SessionCreatorForm> = {}): SessionCreatorForm {
@@ -68,7 +64,6 @@ describe("initialSessionCreatorForm: the URL seed", () => {
       effort: undefined,
       continue: false,
       resume: "",
-      resume_session_at: "",
       fork_session: false,
       name: "",
       prompt: "",
@@ -203,25 +198,12 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
   });
 
   test("a fork without continue or resume is refused on --fork-session", () => {
-    const check = checkSessionCreatorForm(
-      form({ cwd: "/r", fork_session: true, resume_session_at: AT }),
-      { fable: "high" },
-    );
+    const check = checkSessionCreatorForm(form({ cwd: "/r", fork_session: true }), {
+      fable: "high",
+    });
     expect(check.ok).toBe(false);
     if (check.ok) return;
     expect(Object.keys(check.issues)).toEqual(["fork_session"]);
-  });
-
-  test("a fork point without --fork-session is refused on --resume-session-at", () => {
-    const check = checkSessionCreatorForm(
-      form({ cwd: "/r", resume: SID, resume_session_at: AT }),
-      {},
-    );
-    expect(check).toEqual({
-      ok: false,
-      issues: { resume_session_at: "fork_session と一緒に指定する" },
-      general: [],
-    });
   });
 
   test("a blank or relative cwd and a malformed session id are refused with the schema's reasons", () => {
@@ -244,8 +226,8 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
         { cwd: "/r", resume: SID },
       ],
       [
-        { cwd: "/r", resume: SID, fork_session: true, resume_session_at: AT },
-        { cwd: "/r", resume: SID, resume_session_at: AT, fork_session: true },
+        { cwd: "/r", resume: SID, fork_session: true },
+        { cwd: "/r", resume: SID, fork_session: true },
       ],
     ] as const) {
       expect(checkSessionCreatorForm(form(fields), { fable: "high" })).toEqual({
@@ -259,7 +241,6 @@ describe("checkSessionCreatorForm: only what the schema reads is sent", () => {
 describe("prefill: Session Search の「resume」", () => {
   test("--resume with the session, its cwd, model / effort and its title as the name", () => {
     const link = prefillSidebarState({
-      kind: "resume",
       sessionId: SID,
       cwd: "/repos/app",
       model: "claude-fable-5[1m]",
@@ -287,114 +268,12 @@ describe("prefill: Session Search の「resume」", () => {
 
   test("a blank cwd or title and an unmappable model are left out of the link", () => {
     const link = prefillSidebarState({
-      kind: "resume",
       sessionId: SID,
       cwd: " ",
       model: "gpt-5.6-sol",
       title: "",
     });
     expect(link.launch).toEqual({ resume: SID });
-  });
-});
-
-describe("prefill: Timeline の「ここから fork」", () => {
-  const opusHigh = new Map([
-    [
-      SID,
-      {
-        ...fullSessionStatusSnapshot(),
-        context: {
-          tokens: 1,
-          model: "claude-opus-5-5",
-          effort: "high",
-          timestamp: "2026-10-25T00:00:00.000Z",
-        },
-      },
-    ],
-  ]);
-
-  test("a connected session: its cwd, model / effort and its title as the name", () => {
-    const state = {
-      ...initialState(),
-      peers: [{ sid: SID, repo: "app", ws: "main", cwd: "/repos/app/main" }],
-      agents: [
-        {
-          pid: 1,
-          cwd: "/repos/app/main",
-          kind: "interactive",
-          startedAt: 0,
-          sessionId: SID,
-          name: "release prep",
-          config_dir: "/home/u/.claude",
-        },
-      ],
-      sessionStatuses: opusHigh,
-    };
-    const link = prefillSidebarState(forkPrefill(state, SID, AT));
-    expect(link.launch).toEqual({
-      cwd: "/repos/app/main",
-      model: "opus",
-      effort: "high",
-      resume: SID,
-      resume_session_at: AT,
-      fork_session: "true",
-      name: "release prep",
-    });
-    const expected: LaunchInput = {
-      cwd: "/repos/app/main",
-      model: "opus",
-      effort: "high",
-      resume: SID,
-      resume_session_at: AT,
-      fork_session: true,
-      name: "release prep",
-    };
-    expect(checkSessionCreatorForm(formFromLink(link.launch), {})).toEqual({
-      ok: true,
-      launch: expected,
-    });
-  });
-
-  // A session opened from Session Search is not connected: no peers / agents
-  // row, but the hit it was opened from read cwd and title off its transcript.
-  test("a session opened from Session Search takes cwd and title from its hit", () => {
-    const opened = reducer(initialState(), {
-      type: "session-search/opened",
-      hit: {
-        sid: SID,
-        config_dir: "/home/u/.claude",
-        file: `/home/u/.claude/projects/p/${SID}.jsonl`,
-        cwd: "/repos/app/feature",
-        repo: null,
-        ws: null,
-        created_at: "2026-10-25T00:00:00.000Z",
-        updated_at: "2026-10-25T00:00:00.000Z",
-        size: 1,
-        matches: [],
-        title: "old work",
-      },
-      search: { queryText: "x", caseSensitive: false, regex: false },
-    });
-    const state = { ...opened, sessionStatuses: opusHigh };
-    expect(prefillSidebarState(forkPrefill(state, SID, AT)).launch).toEqual({
-      cwd: "/repos/app/feature",
-      model: "opus",
-      effort: "high",
-      resume: SID,
-      resume_session_at: AT,
-      fork_session: "true",
-      name: "old work",
-    });
-  });
-
-  // Nothing the client holds knows the session: the link still opens the fork,
-  // with the cwd picker empty for the user to choose.
-  test("what the state does not know is left out", () => {
-    expect(prefillSidebarState(forkPrefill(initialState(), SID, AT)).launch).toEqual({
-      resume: SID,
-      resume_session_at: AT,
-      fork_session: "true",
-    });
   });
 });
 

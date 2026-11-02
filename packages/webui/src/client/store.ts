@@ -302,7 +302,7 @@ export interface AppState {
   sandboxAvailable: boolean;
   /** hello response の `launch_available` (DR-0018 §3.4)。daemon に
    * session_launcher が設定されている時だけ true で、起動の導線 (サイドバー
-   * の「+ 新規」、Timeline の「ここから fork」、Session Search の「resume」)
+   * の「+ 新規」、Session Search の「resume」)
    * はこの時のみ出す。未設定の daemon では、押した先の起動フォームが「未設定」
    * しか返せない — sandboxAvailable と同じ姿勢。 */
   launchAvailable: boolean;

@@ -1,12 +1,12 @@
 # Runbook: session launcher のセットアップ
 
-- Last Updated: 2026-10-30
+- Last Updated: 2026-11-02
 
 ## 適用ケース
 
 ccmsg から Claude Code のセッションを起動できるようにする ([DR-0018](../decisions/DR-0018-session-launcher.md))。起動の口は 2 つある。
 
-- 人が webui から: サイドバーの「+ 新規」、Session Search の結果の「resume」、Timeline の「ここから fork」
+- 人が webui から: サイドバーの「+ 新規」、Session Search の結果の「resume」
 - エージェントが tool `launch` から (使い方は plugin の skill ccmsg)
 
 webui の「+ 新規」を押して「daemon にセッションの起動が設定されていません」と出る時、またはエージェントの `launch` が「ccmsg の daemon が起動を断ったので、起動していない: …」(`launcher_not_configured`) で返る時に、この手順で設定する。
@@ -40,7 +40,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    fail() { echo "launch-claude: $*" >&2; exit 2; }
 
    # 知らない field は推測で補わずに断る
-   unknown=$(jq -r 'keys - ["cwd","model","effort","continue","resume","resume_session_at","fork_session","session_id","name","prompt"] | join(",")' <<<"$input")
+   unknown=$(jq -r 'keys - ["cwd","model","effort","continue","resume","fork_session","session_id","name","prompt"] | join(",")' <<<"$input")
    [[ -z "$unknown" ]] || fail "unknown field: $unknown"
 
    # cwd の信頼判定 (daemon はしない)。人 (webui) からは ~/src の下を、
@@ -55,23 +55,12 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
    # 起動の入力の field は claude のオプション名なので、同じ名前のオプションに写す。
    # 空の配列の展開は ${a[@]+"${a[@]}"} で書く (macOS の bash 3.2 は set -u で "${a[@]}" を unbound にする)
-   source_args=()
-   [[ "$(get continue)" == true ]] && source_args+=(--continue)
-   [[ -n "$(get resume)" ]] && source_args+=(--resume "$(get resume)")
-
    args=()
-   # resume_session_at は fork_session と一緒にだけ来る (daemon が確かめ済み)
-   if [[ -n "$(get resume_session_at)" ]]; then
-     # --resume-session-at は -p でしか効かないので、切り詰めた fork を先に作る
-     claude -p ${source_args[@]+"${source_args[@]}"} --fork-session --session-id "$(get session_id)" \
-       --resume-session-at "$(get resume_session_at)" --output-format json /exit >/dev/null
-     args+=(--resume "$(get session_id)")
-   else
-     args+=(${source_args[@]+"${source_args[@]}"})
-     [[ "$(get fork_session)" == true ]] && args+=(--fork-session)
-     # session_id は新規と fork_session の時だけ来る
-     [[ -n "$(get session_id)" ]] && args+=(--session-id "$(get session_id)")
-   fi
+   [[ "$(get continue)" == true ]] && args+=(--continue)
+   [[ -n "$(get resume)" ]] && args+=(--resume "$(get resume)")
+   [[ "$(get fork_session)" == true ]] && args+=(--fork-session)
+   # session_id は新規と fork_session の時だけ来る
+   [[ -n "$(get session_id)" ]] && args+=(--session-id "$(get session_id)")
    for k in model effort name; do
      if [[ -n "$(get "$k")" ]]; then args+=("--$k" "$(get "$k")"); fi
    done
@@ -93,7 +82,6 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
    - `cwd` は daemon が realpath にした値で届き、起動コマンドの cwd もそのディレクトリになる。信頼判定のパターンも realpath で書く (`/var` と `/private/var` のような symlink の違いで外れないように)
    - `prompt` は claude の stdin に書き、位置引数にしない (`ps` に見える、引数の長さの上限、option として読まれうる)。`hyoui run` は端末でない stdin を claude にそのまま継ぎ、claude はその中身を最初の prompt として送信する ([findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md))
    - 非 0 で終わるのは対話の claude を起こす前だけにする。起こした後に非 0 で終わると、呼び手に新しいセッションの `session_id` が返らない (契約の「戻り方」)
-   - fork 地点のある fork の一段目 (`claude -p … /exit`) は `launch_timeout_seconds` の中で終わる必要がある。plugin や hook の多い config dir では既定の 10 秒に収まる保証が無いので、使う config dir で一段目を手元で測り、足りなければ `launch_timeout_seconds` を延ばす (上限 50)
    - 載せる端末 (ここでは hyoui) は起動コマンドの process group から外れて動くものにする。timeout で止められた時、group に残ったものは一緒に止められる
 
    置く前に手元で試せる。`launch_command` と同じ argv を、cwd をそのディレクトリにして、標準入力に JSON を渡して叩く:
@@ -157,7 +145,7 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
 4. **確かめる**
 
-   - webui のサイドバーの「+ 新規」を押し、cwd ツリーと `--model`・`--effort`・`--continue`・`--resume`・`--resume-session-at`・`--fork-session`・`--session-id`・`--name`・`PROMPT` の欄が出れば設定は読めている。`--model` は `fable`、`--effort` は daemon の `CLAUDE_CONFIG_DIR` の settings.json の `modelSettings.fable.effortLevel` (無ければ未選択) で開く
+   - webui のサイドバーの「+ 新規」を押し、cwd ツリーと `--model`・`--effort`・`--continue`・`--resume`・`--fork-session`・`--session-id`・`--name`・`PROMPT` の欄が出れば設定は読めている。`--model` は `fable`、`--effort` は daemon の `CLAUDE_CONFIG_DIR` の settings.json の `modelSettings.fable.effortLevel` (無ければ未選択) で開く
    - `--continue` も `--resume` も入れずに起動すると新しいセッションで、結果パネルに `exit_code`・`stdout`・`stderr` と、exit 0 なら新しいセッションへのリンク (`session_id`) が出る。セッションが hello で daemon に名乗るまでは、リンク先は空のまま
    - daemon.log に `session_launch: by=user cwd="…" session_id=… exit_code=0 …` の行が残る (エージェントの起動なら `by=<依頼したセッションの id>`。timeout で止めた起動には `timed_out=true` が付く)
 
@@ -170,8 +158,8 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 | `launch_command_unavailable` | daemon の起動の後で起動コマンドが消えた・実行できなくなった | 起動コマンドを置き直して daemon を再起動する (起動コマンドの path は daemon の起動時に固定される) |
 | `launch_busy` | `launch_max_concurrency` 個の起動が走っている、または daemon が終わりかけている | 走っている起動が終わってから依頼し直す。いつも当たるなら起動コマンドが速やかに終わっているか (`exit_code` が 143 / 137 で終わっていないか) を見る |
 | `invalid_args` | 起動の入力がスキーマに合わない、または `cwd` が存在するディレクトリでない | msg の最初の理由を読む。webui は送る前に欄ごとの理由を出す |
-| `exit_code` が 0 でない | 起動コマンドが断った (信頼できない cwd、読めない入力、fork の一段目の失敗) | `stderr` の最初の行を読む。手順 1 の手元での叩き方で再現する |
-| `exit_code` が 143 か 137 | `launch_timeout_seconds` を超えて SIGTERM / SIGKILL で止められた (daemon.log の行に `timed_out=true`) | 起動コマンドが対話の claude を待っていないか確かめる。claude は detached な端末に載せてすぐ終わる。fork 地点のある fork なら一段目の所要を測る |
+| `exit_code` が 0 でない | 起動コマンドが断った (信頼できない cwd、読めない入力) | `stderr` の最初の行を読む。手順 1 の手元での叩き方で再現する |
+| `exit_code` が 143 か 137 | `launch_timeout_seconds` を超えて SIGTERM / SIGKILL で止められた (daemon.log の行に `timed_out=true`) | 起動コマンドが対話の claude を待っていないか確かめる。claude は detached な端末に載せてすぐ終わる |
 | `stdout` / `stderr` が `output is <N> bytes, file: <path>` | 出力が 4096 bytes 以上で、state dir の `launches/` に退避された | その file を読む。7 日で消える。`truncated to the first …` が付く時は 1 MiB を超えた分が捨てられている |
 | exit 0 なのにセッションが peers / サイドバーに出ない | 起動コマンドは終わったが、claude が立ち上がらなかった (端末の問題、trust ダイアログで止まっている等) | 起動コマンドが載せた端末を見る。exit 0 は到達を意味しない |
 
@@ -179,4 +167,3 @@ daemon は claude の引数を組み立てない。config の `launch_command` �
 
 - [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力、op、daemon の手順、tool `launch`、webui
 - [launch-command](../design/launch-command.md) — 起動コマンドの契約
-- [fork-rescue](./fork-rescue.md) — fork でコンテキストの尽きたセッションを救う

@@ -77,7 +77,7 @@ field は claude のオプションと同じ名前 (`fork_session` は `--fork-s
 
 - `model` は `fable` / `opus` / `sonnet` / `haiku`、`effort` は `low` / `medium` / `high` / `xhigh` / `max`
 - `name` と `prompt` はどれにも書ける (空文字は不可)。書かなければ起動コマンドが決める。`model` / `effort` も新しいセッション以外では任意
-- `resume` は小文字の uuid の session id。fork 地点を選んだ fork はこの tool ではできない (先端まで写す)
+- `resume` は小文字の uuid の session id。`fork_session` は元の履歴を先端まで写す
 - `continue` と `resume` は一緒に書けない。`fork_session` は `continue` か `resume` と一緒にだけ書ける。合わない組み合わせや知らない field は、何もせずに断られる
 - `resume` と `continue` は今走っているセッションに使わない。同じ会話に 2 つのプロセスが書くことになる。走っているセッションに伝えたいことは `send` で送る
 - `launch` は permission の確認を通らない。`prompt` は起動されたセッションで人の入力として読まれ、そのセッションは人の指示として従う。人に頼まれていない指示を `prompt` に書かない

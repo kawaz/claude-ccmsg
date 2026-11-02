@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { formatClockTime, formatMsgTime } from "../../utils.ts";
 import { useDismissOnOutsidePointer } from "../../useDismissOnOutsidePointer.ts";
 import { type TurnLine } from "../../transcript-model.ts";
-import { type ForkActionState } from "../../fork-point.ts";
 import { Tabs } from "../Tabs.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import {
@@ -13,7 +12,7 @@ import {
 } from "./translation.ts";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
-import { DumpFileAction, ForkAction } from "./actions.tsx";
+import { DumpFileAction } from "./actions.tsx";
 
 export function UserPromptBubble({
   line,
@@ -73,7 +72,7 @@ export function UserPromptBubble({
 
 /** assistant バブルのハンバーガーから開く「重い操作」一式に必要なもの。
  *
- * fork / dump は URL の選択位置 (`position`) に紐づく操作のままで、バブルの
+ * dump は URL の選択位置 (`position`) に紐づく操作のままで、バブルの
  * ツールバーは**その置き場所**を増やすだけ (kawaz 裁定: 不可逆・重い操作は
  * 明示選択のまま、hover だけで発火させない)。ハンバーガーを開く操作自体が
  * その明示選択に当たるので、開いた項目をその場で選択位置にする。 */
@@ -81,9 +80,6 @@ export interface BubbleActions {
   sid: string;
   /** 現在の選択位置 (URL の position、無選択なら "head")。 */
   position: string;
-  forkAction: ForkActionState;
-  launchAvailable: boolean;
-  onFork: (resumeAt: string) => void;
   /** この項目を選択位置にする (選択済みなら呼ばない — toggle なので外れる)。 */
   onSelect: (uuid: string) => void;
 }
@@ -94,11 +90,6 @@ function BubbleActionsMenu({ actions }: { actions: BubbleActions }) {
     // クリックがそこへ伝播すると、開いたばかりのメニューの足元 (選択位置) が
     // 外れる。メニューの中はメニューの中で完結させる。
     <div class="tl-msg-menu" onClick={(e) => e.stopPropagation()}>
-      <ForkAction
-        state={actions.forkAction}
-        available={actions.launchAvailable}
-        onFork={actions.onFork}
-      />
       <DumpFileAction sid={actions.sid} position={actions.position} />
     </div>
   );
@@ -117,7 +108,7 @@ export function AssistantBubble({
   translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
-  /** 重い操作 (fork / dump) の材料。agent TL のように選択位置を表せない
+  /** 重い操作 (dump) の材料。agent TL のように選択位置を表せない
    * 文脈では undefined で、ハンバーガー自体を出さない。 */
   actions: BubbleActions | undefined;
 }) {
@@ -135,7 +126,7 @@ export function AssistantBubble({
   }, [tab, translationAvailability.host]);
 
   // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
-  // 畳む (残しても「fork 地点を選んでください」しか出せない)。
+  // 畳む (残すと、開いた項目でなく選択中の別の項目への操作になる)。
   const selectedHere = actions !== undefined && actions.position === line.uuid;
   useEffect(() => {
     if (menuOpen && !selectedHere) setMenuOpen(false);
@@ -207,10 +198,10 @@ export function AssistantBubble({
                 class="tl-thinking-tab tl-msg-menu-toggle"
                 aria-expanded={menuOpen}
                 aria-label="この項目の操作"
-                title="fork / dump"
+                title="dump"
                 onClick={() => {
                   const next = !menuOpen;
-                  // 開く操作 = この項目を fork/dump の対象に決める明示選択。
+                  // 開く操作 = この項目を dump の対象に決める明示選択。
                   if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
                   setMenuOpen(next);
                 }}

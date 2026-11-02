@@ -305,7 +305,6 @@ function equalParsedLine(a: ParsedLine, b: ParsedLine): boolean {
         b.kind === "turn" &&
         a.ts === b.ts &&
         a.uuid === b.uuid &&
-        a.parentUuid === b.parentUuid &&
         a.role === b.role &&
         a.userMessageKind === b.userMessageKind &&
         a.assistantMessageKind === b.assistantMessageKind &&
@@ -317,7 +316,6 @@ function equalParsedLine(a: ParsedLine, b: ParsedLine): boolean {
         b.kind === "meta" &&
         a.ts === b.ts &&
         a.uuid === b.uuid &&
-        a.parentUuid === b.parentUuid &&
         a.type === b.type &&
         a.summary === b.summary &&
         a.raw === b.raw &&

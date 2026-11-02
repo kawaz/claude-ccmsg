@@ -30,15 +30,14 @@ daemon は Claude セッションの起動を、config の `session_launcher.lau
 | `effort` | `low` / `medium` / `high` / `xhigh` / `max` | `--effort`。新規では必ずある |
 | `continue` | boolean | `--continue` |
 | `resume` | uuid | `--resume` の id |
-| `resume_session_at` | uuid | `--resume-session-at`: fork 地点の transcript の record の uuid。無ければ先端まで写す |
-| `fork_session` | boolean | `--fork-session` |
+| `fork_session` | boolean | `--fork-session`: 元のセッションの履歴を先端まで写した新しいセッションにする |
 | `session_id` | uuid | daemon が生成した新しいセッションの id (UUID v4)。新規と `fork_session` の時だけある。起動コマンドが 0 で終われば呼び手にこの値が返る |
 | `name` | 文字列 (空でない) | `--name` |
 | `prompt` | 文字列 (空でない) | 最初の prompt。起動した claude の stdin に書く |
 
 - field は全部 claude のオプションと 1 対 1 (`session_id` は `--session-id`)。`prompt` だけはオプションでなく claude の stdin に当たる。claude の起動に無い名前の field は来ない
 - 無い field と、`false` の `continue` / `fork_session` は指定されていない
-- daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` は `continue` か `resume` と一緒にだけ来る、`resume_session_at` は `fork_session` と一緒にだけ来る、新規には `model` と `effort` がある
+- daemon は組み合わせを確かめてから渡す: `continue` と `resume` は同時に来ない、`fork_session` は `continue` か `resume` と一緒にだけ来る、新規には `model` と `effort` がある
 - 任意の field が無い時の値は起動コマンドが決める (例: model ごとの effort の既定、リポ名と日時からのセッション名、既定の prompt、元のセッションの model)
 - 読めない入力 (知らない field、型の違う値) には推測で補って起動せず、非零で終わって理由を stderr に書く。daemon が新しい field を足した時に、古い起動コマンドが黙って無視して別の起動をするのを避けるため
 
@@ -61,30 +60,20 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 | 新規 | `claude --session-id <session_id> --model <model> --effort <effort> [--name <name>]` |
 | `continue` | `claude --continue [--model …] [--effort …] [--name …]` |
 | `resume` | `claude --resume <resume> [--model …] [--effort …] [--name …]` |
-| `continue` / `resume` + `fork_session` (`resume_session_at` なし) | 上に `--fork-session --session-id <session_id>` を足す |
-| `fork_session` + `resume_session_at` | 二段 (下記) |
-
-`fork_session` と `resume_session_at` がある時は二段で起動する。`--resume-session-at` は `-p` でしか効かず、対話の起動に付けると黙って無視されて先端まで写されるため ([findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md))。
-
-1. 切り詰めた fork を作る (同期): `claude -p (--resume <resume> | --continue) --fork-session --session-id <session_id> --resume-session-at <resume_session_at> --output-format json /exit`。`/exit` は `-p` では何も実行されず API を呼ばない。非零で終わったら、そこで起動コマンドも非零で終わり、claude の stderr を自分の stderr に出す。fork 地点を外した先端 fork や、id の違う fork に切り替えない (成功したように見えて意図と違うセッションができる)
-2. できたセッションを対話で続ける: `claude --resume <session_id> [--model …] [--effort …] [--name …]` (`prompt` は stdin)。fork でない resume なので `--fork-session` も `--session-id` も付けない
-
-一段目は `launch_timeout_seconds` の中で終わる必要がある。plugin も settings も無い config dir で 0.6〜0.7 秒だった (同 findings) が、plugin や hook の多い config dir ではそれより延びる。既定の 10 秒に収まる保証は無いので、使う config dir で測って `timeout_seconds` を決める。
+| `continue` / `resume` + `fork_session` | 上に `--fork-session --session-id <session_id>` を足す |
 
 守ること:
 
 - `--session-id` は `session_id` がある時だけ付ける。fork でない `--continue` / `--resume` に付けると claude は `--session-id can only be used with --continue or --resume if --fork-session is also specified.` で起動しない
-- 二段の両方を同じ `CLAUDE_CONFIG_DIR` で起動する (一段目が書いた transcript を二段目が同じ `projects` ディレクトリから読むため)
-- `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰め、末尾の改行の除去や付け足しをしない)
+- `prompt` は本文を変えずに claude に届ける (shell の語分割、quote の除去、切り詰めをしない)
 - `prompt` を pipe で渡す時は、起動コマンドが終わった後に claude が読んでも欠けないようにする。端末 proxy が detach してすぐ終わると、pipe が受け取りきっていない分は失われる。here-string や一時ファイルのような通常のファイルなら、claude が後から読んでも全部ある
-- `resume_session_at` が user の record を指す時、claude は二段目の resume で `No response requested.` の synthetic な assistant 行を足してから続ける (同 findings)。これは claude の挙動で、起動コマンドが手を入れるものではない
 
 ## 戻り方
 
 - **速やかに終わる**: 対話の claude は detached な端末 (端末 proxy 等) で起こし、起動コマンド自身は `launch_timeout_seconds` より十分前に終わる。待ち続けると SIGTERM / SIGKILL で止められる
 - **detach した子は process group から外す**: 対話の claude を載せた端末 proxy 等は setsid して起動コマンドの process group から外す。group に残った子は、timeout で止められた時に一緒に止められる
 - **detach した子に stdout / stderr を継がせない**: daemon は起動コマンドが終わった後、pipe の EOF を 500 ms しか待たない。子が pipe を持ち続けると、その後の出力は呼び手に届かない
-- **終了コード**: 失敗 (入力が読めない、cwd が信頼できない、fork の一段目の失敗等) は全部、対話の claude を起動する前に非零で返す。**対話の claude を起動した後は 0 で終わる** (起動の後の失敗を非零で返さない。非零は「起動していない」を意味する)。daemon は response の `session_id` を exit 0 の時だけ返すので (DR-0018 §3.4)、起動した後に非零で終わると、立ち上がったセッションの id が呼び手に届かなくなる。0 はセッションが立ち上がって daemon に名乗ったこと (到達) ではない。detached に起こした claude がその後 `Session ID … is already in use.` 等で終わっても、起動コマンドの 0 は変わらない。daemon は値を解釈せず、そのまま呼び手に返す
+- **終了コード**: 失敗 (入力が読めない、cwd が信頼できない等) は全部、対話の claude を起動する前に非零で返す。**対話の claude を起動した後は 0 で終わる** (起動の後の失敗を非零で返さない。非零は「起動していない」を意味する)。daemon は response の `session_id` を exit 0 の時だけ返すので (DR-0018 §3.4)、起動した後に非零で終わると、立ち上がったセッションの id が呼び手に届かなくなる。0 はセッションが立ち上がって daemon に名乗ったこと (到達) ではない。detached に起こした claude がその後 `Session ID … is already in use.` 等で終わっても、起動コマンドの 0 は変わらない。daemon は値を解釈せず、そのまま呼び手に返す
 - **stdout**: 呼び手に見せる短い文 (例: claude を載せた端末の id)。4096 bytes 以上は daemon がファイルに退避し、呼び手には置き場だけが返る。daemon が取り込むのは先頭の 1 MiB まで
 - **stderr**: 非零で終わる時の理由。呼び手 (エージェントや webui の結果パネル) が最初の行で事情を掴めるように、要点を先頭に書く
 
@@ -93,7 +82,7 @@ field ごとに同じ名前のオプションへ写す: `model` → `--model`、
 config に `launch_command` が無い時、daemon は plugin に同梱の zsh スクリプト `packages/daemon/src/default-launch-command.sh` を `zsh -f <スクリプト>` で起動コマンドとして実行する (DR-0018 §3.1)。`zsh` は daemon の `PATH` で探す。`-f` で `~/.zshenv` 等を読まないので、スクリプトは daemon が渡した環境で動く。スクリプトがすることは次のとおり。
 
 - **前提**: `jq`・`hyoui`・`claude` のどれかが `PATH` に無ければ非零 (2) で終わり、理由を stderr に書く
-- **入力を読む**: stdin の JSON の各 field を `jq` で取り出す。入力の検査はしない (daemon が `LaunchCommandInputSchema` で検査した入力を渡す)
+- **入力を読む**: stdin の JSON の各 field を `jq` で取り出す。入力の検査はしない。組み込みは同じ版の daemon が `LaunchCommandInputSchema` で検査した入力だけを受けるので、知らない field は来ない
 - **オプション**: field を上の「claude の引数への写し方」のとおり同じ名前のオプションに写す
 - **effort の既定**: `effort` が無い時は model ごとに決める (fable は low、opus は medium、sonnet は medium、haiku は low)。`model` も無ければ `--model` も `--effort` も付けない
 - **prompt**: `prompt` が無い時は `.`。claude の stdin に here-string (`<<<`) で渡す。here-string は通常のファイルなので、claude が後から読んでも欠けない。`jq -r` で取り出す時に末尾の改行が落ち、here-string が改行を 1 つ足すので、claude に届く prompt の末尾は改行 1 つになる
@@ -115,5 +104,5 @@ daemon が持たず、起動コマンドが判断するもの。
 ## 関連
 
 - [DR-0018](../decisions/DR-0018-session-launcher.md) — 起動の入力、op、daemon の手順、tool `launch`
-- [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` / `--resume-session-at` の併用、`--session-id` を拒む組み合わせ
+- [findings 2026-10-25-fork-with-session-id](../findings/2026-10-25-fork-with-session-id.md) — `--fork-session` と `--session-id` の併用、`--session-id` を拒む組み合わせ
 - [findings 2026-10-30-launch-prompt-on-stdin](../findings/2026-10-30-launch-prompt-on-stdin.md) — stdin の prompt が対話の claude の最初の prompt になること、pipe で渡した prompt が detach の後に欠けること

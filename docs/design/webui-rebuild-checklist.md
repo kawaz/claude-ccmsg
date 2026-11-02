@@ -62,7 +62,7 @@
 | ccmsg メッセージ吹き出し | `CcmsgBubble` + `op:read` | DR-0027 | 移す | DR-0027 Accepted、daemon 一次情報での復元は現役 |
 | AI 発 post/reply の TL 表示 | `PeerCcmsgLineView` | DR-0027 | 移す | 同上 |
 | say バブルと既読 | `transcript-model.ts` の say の境界 + `say-read.ts` + `ev:say_unread` / `op:say_read` | DR-0045 | 移す | daemon 側 op あり |
-| fork 境界の表示 | `fork-point.ts` / `fork-divider.ts` / `ForkDivider` / `op:fork_origin` | — | 移す | hello の能力フラグに依らない (`fork_origin` だけで出る) |
+| fork 境界の表示 | `fork-divider.ts` / `ForkDivider` / `op:fork_origin` | — | 移す | hello の能力フラグに依らない (`fork_origin` だけで出る) |
 | 位置 pin と着地スクロール | `timeline-position.ts` + `navigation.ts` の `timelinePositions` | DR-0004 | 移す | URL で TL の一点を指せることは共有動線 |
 | 自動追随 (追記時の追尾) | `Timeline()` 内 | — | 移す | |
 | in-view 検索 (ハイライト + index 移動) | `in-view-search.ts` + `SearchBar.tsx` + `rendered-text-search.ts` | DR-0022 | 移す | DR-0022 Accepted |
@@ -217,7 +217,7 @@
 | cwd ピッカー | `CwdTree.tsx` + `cwd-tree.ts` | DR-0018 | 移す | |
 | 起動結果パネル | `LaunchResultPanel` (`SessionCreator` 内) | DR-0018 | 移す | |
 | フォーム値の URL 同期 (`sb.*`) | `sidebar-url.ts` | DR-0018 + kawaz | 移す | 「URL を貼れば相手の画面も同じ組み合わせ」が明示された設計意図 |
-| Session Search の「resume」・Timeline の「ここから fork」の prefill | `forkPrefill` / `prefillSidebarState` (`session-creator.ts`) | DR-0018 §3.9 | 移す | |
+| Session Search の「resume」の prefill | `prefillSidebarState` (`session-creator.ts`) | DR-0018 §3.9 | 移す | |
 | 「+ 新規」・fork・resume の導線を出す条件 | hello の `launch_available` | DR-0018 §3.4 | 移す | |
 | 起動先 instance の選択 | — | DR-0032 §2.3 | 保留 | **新規要件**。クラスタ化で「どの instance で起動するか」が要る |
 

@@ -976,15 +976,6 @@ function variant(key, options, message$1) {
     }
   });
 }
-function omit(schema, keys) {
-  const entries$1 = { ...schema.entries };
-  for (const key of keys)
-    delete entries$1[key];
-  return _standardSchema({
-    ...schema,
-    entries: entries$1
-  });
-}
 function pipe(...pipe$1) {
   return _standardSchema({
     ...pipe$1[0],
@@ -1334,7 +1325,6 @@ var LaunchFieldsSchema = strictObject({
   effort: optional(LaunchEffortSchema),
   continue: optional(boolean()),
   resume: optional(SessionUuidSchema),
-  resume_session_at: optional(SessionUuidSchema),
   fork_session: optional(boolean()),
   name: optional(NonEmptySchema),
   prompt: optional(NonEmptySchema)
@@ -1347,8 +1337,7 @@ function launchMakesSession(launch) {
 }
 var LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume も無い新規の起動では必須)";
 var NEEDS_SOURCE = "continue か resume と一緒に指定する";
-var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["fork_session"], ["resume_session_at"]], (launch) => launch.resume_session_at === undefined || launch.fork_session === true, "fork_session と一緒に指定する"), ["resume_session_at"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
-var LaunchToolFieldsSchema = omit(LaunchFieldsSchema, ["resume_session_at"]);
+var LaunchInputSchema = pipe(LaunchFieldsSchema, forward(partialCheck([["continue"], ["resume"]], (launch) => !(launch.continue === true && launch.resume !== undefined), "continue と resume は同時に指定できない"), ["resume"]), forward(partialCheck([["continue"], ["resume"], ["fork_session"]], (launch) => launch.fork_session !== true || launchContinues(launch), NEEDS_SOURCE), ["fork_session"]), forward(partialCheck([["continue"], ["resume"], ["model"]], (launch) => launchContinues(launch) || launch.model !== undefined, LAUNCH_CHOOSE_MESSAGE), ["model"]), forward(partialCheck([["continue"], ["resume"], ["effort"]], (launch) => launchContinues(launch) || launch.effort !== undefined, LAUNCH_CHOOSE_MESSAGE), ["effort"]));
 var LaunchCommandInputSchema = pipe(strictObject({
   ...LaunchFieldsSchema.entries,
   session_id: optional(SessionUuidSchema)
@@ -2545,7 +2534,7 @@ async function peersTool($, e) {
   const refusal = parseWith(RefusalTextSchema, asked.text);
   return `一覧を返せなかった: ${refusal.ok ? refusal.value.error.msg : asked.text}`;
 }
-var LaunchToolCallSchema = object(LaunchToolFieldsSchema.entries);
+var LaunchToolCallSchema = object(LaunchFieldsSchema.entries);
 var LAUNCH_UNCONFIRMED = "起動したか確かめられなかった。`peers` で確かめる";
 var CallerSchema = object({ agentId: optional(string()) });
 async function launchTool($, e) {

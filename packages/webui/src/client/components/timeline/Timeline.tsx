@@ -6,8 +6,6 @@ import { useMemo, useRef } from "preact/hooks";
 import { type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
 import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
-import { pushNavigation } from "../../navigation.ts";
-import { forkPrefill, prefillSidebarState } from "../../session-creator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
@@ -20,7 +18,6 @@ import { sessionProcessParts } from "../../utils.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
-import { forkActionState, liveChain } from "../../fork-point.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { ErrorView } from "../ErrorView.tsx";
@@ -101,7 +98,6 @@ export function Timeline({
     s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
   );
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
-  const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
   const peers = useStoreState(store, (s) => s.peers);
   // The session's process (uptime and Claude Code version for the ctx line).
   const sessionProcess = useStoreState(
@@ -189,22 +185,10 @@ export function Timeline({
   const searchCtx = inViewSearch.searchCtx;
 
   const userNav = useUserTurnNav({ sid, agent, groups, end: timeline.end, scrollRef });
-  // 側面パネルの「アクション」タブが選択中の項目に対して出せるもの。項目
-  // クリックで付く位置選択 (`/timeline/<uuid>`) をそのまま入力に使う —
-  // 選択モデルを 2 つ持たないのは 👤 nav に相乗りしていた時と同じ姿勢で、
-  // 対象が user turn から「uuid を持つ全項目」に広がっただけ (kawaz r115 m7)。
-  // 放棄された分岐上のレコードは resume が読み込まないので fork 地点にできない
-  // (実測: `No message found`)。表示はするが fork だけ出さないための判定材料。
-  const chain = useMemo(() => liveChain(parsed), [parsed]);
-  const forkAction = useMemo(
-    () => forkActionState(currentPosition, chain),
-    [currentPosition, chain],
-  );
-  // 同じアクション一式を assistant バブルのハンバーガーからも開ける
-  // (BubbleActions)。側面パネルと材料を共有するので、どちらから開いても
-  // 「選択中の項目に対する fork / dump」という意味は 1 つのまま。
-  // agent TL は位置選択を URL で表せない (selectPosition が no-op) ので
-  // 渡さない = ハンバーガーを出さない。
+  // assistant バブルのハンバーガーから開く、選択中の項目に対する dump
+  // (BubbleActions)。項目クリックで付く位置選択 (`/timeline/<uuid>`) を
+  // そのまま入力に使う。agent TL は位置選択を URL で表せない
+  // (selectPosition が no-op) ので渡さない = ハンバーガーを出さない。
   const bubbleActions = useMemo<BubbleActions | undefined>(
     () =>
       agentActive
@@ -212,19 +196,9 @@ export function Timeline({
         : {
             sid,
             position: currentPosition,
-            forkAction,
-            launchAvailable,
-            // cwd / model / effort は押した瞬間のこのセッションの値をリンクに
-            // 載せる (forkPrefill)。リンクだけで同じフォームが開くように —
-            // 貼っても、セッションが切れた後に開き直しても。
-            onFork: (resumeAt: string) =>
-              pushNavigation(
-                `${location.pathname}${location.search}`,
-                prefillSidebarState(forkPrefill(store.getState(), sid, resumeAt)),
-              ),
             onSelect: pin.selectPosition,
           },
-    [sid, currentPosition, forkAction, launchAvailable, pin.selectPosition, agentActive, store],
+    [sid, currentPosition, pin.selectPosition, agentActive],
   );
 
   // 末尾追従と位置への着地は、位置の状態 (pin.tracker) を戻り値で共有する。

@@ -3,9 +3,7 @@
 // The daemon resolves the seam (fork-origin.ts) and names the last copied
 // record by uuid; this turns that uuid into a position in the rendered group
 // list. Pure, per DR-0005 §1, so the placement rule is testable without a
-// Timeline. The launch-side counterpart is fork-point.ts: that one decides
-// where to CUT when starting a fork, this one decides where to DRAW the seam of
-// a fork that already exists.
+// Timeline.
 import type { ParsedLine, TimelineGroup } from "./transcript-model.ts";
 
 /** A broken line carries no uuid to match on, hence the narrowing. */

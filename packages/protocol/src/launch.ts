@@ -64,8 +64,6 @@ export const LaunchFieldsSchema = v.strictObject({
   effort: v.optional(LaunchEffortSchema),
   continue: v.optional(v.boolean()),
   resume: v.optional(SessionUuidSchema),
-  /** The transcript record a fork copies up to (`--resume-session-at`). */
-  resume_session_at: v.optional(SessionUuidSchema),
   fork_session: v.optional(v.boolean()),
   name: v.optional(NonEmptySchema),
   prompt: v.optional(NonEmptySchema),
@@ -97,10 +95,9 @@ export const LAUNCH_CHOOSE_MESSAGE = "選んでください (continue も resume
 
 const NEEDS_SOURCE = "continue か resume と一緒に指定する";
 
-/** A launch, as the `session_launch` op and the webui's form read it. The
- * checks are the combinations claude refuses or ignores
- * (docs/findings/2026-10-25-fork-with-session-id.md), and a fork point
- * without a fork, which has no meaning; each is placed on the
+/** A launch, as the `session_launch` op, the `launch` tool and the webui's
+ * form read it. The checks are the combinations claude refuses or ignores
+ * (docs/findings/2026-10-25-fork-with-session-id.md); each is placed on the
  * field to change, and runs as soon as the fields it reads are readable, so a
  * form shows every reason at once. */
 export const LaunchInputSchema = v.pipe(
@@ -123,14 +120,6 @@ export const LaunchInputSchema = v.pipe(
   ),
   v.forward(
     v.partialCheck(
-      [["fork_session"], ["resume_session_at"]],
-      (launch) => launch.resume_session_at === undefined || launch.fork_session === true,
-      "fork_session と一緒に指定する",
-    ),
-    ["resume_session_at"],
-  ),
-  v.forward(
-    v.partialCheck(
       [["continue"], ["resume"], ["model"]],
       (launch) => launchContinues(launch) || launch.model !== undefined,
       LAUNCH_CHOOSE_MESSAGE,
@@ -147,12 +136,6 @@ export const LaunchInputSchema = v.pipe(
   ),
 );
 export type LaunchInput = Output<typeof LaunchInputSchema>;
-
-/** The `launch` tool's fields, as the model is shown them: the launch's
- * without `resume_session_at`, which names a transcript record an agent has
- * no way to see. The tool's input is read with LaunchInputSchema (its
- * checks), from these fields alone. */
-export const LaunchToolFieldsSchema = v.omit(LaunchFieldsSchema, ["resume_session_at"]);
 
 /** The environment variable the daemon names who asked for a launch in:
  * `user` (the person, from the webui) or the asking session's id. It is put
