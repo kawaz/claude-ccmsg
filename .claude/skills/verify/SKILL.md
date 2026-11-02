@@ -40,6 +40,16 @@ cwd=$(cd "$cwd" && pwd -P)
 jq -n --arg p "$cwd" '{theme:"dark",hasCompletedOnboarding:true,projects:{($p):{hasTrustDialogAccepted:true}}}' > "$config_dir/.claude.json"
 ```
 
+A test that needs a logged-in `claude` runs in a real config dir, where no seed is written. Take its cwd from the pool of trusted cwds instead, and give it back when done:
+
+```bash
+cwd=$(scripts/verify-cwd.ts acquire)   # an empty git repo, ~/.local/state/ccmsg/tmp-test-trusted-dirs/NN
+# ... start claude in "$cwd" ...
+scripts/verify-cwd.ts release NN
+```
+
+Design rationale: the pool sits at a fixed place instead of under the temp base the temp-files rule asks for. Trust is keyed by the cwd's realpath, so only a path that stays the same across runs and jj workspaces can be trusted once for good. Each `NN` is its own git repo under a root that is one too (with `.gitignore` `*`), so the session's git sees `NN` and never a repo above it. Nothing in the pool is kept: the whole dir may be removed, and the next `acquire` makes it again at the same paths. The pool is trusted once with `scripts/verify-cwd.ts register`, which writes a copy of the config dir's `.claude.json` with the 50 cwds trusted and prints its path; kawaz puts it in place. Running sessions keep rewriting that file, so the copy is made just before it is put in place (docs/findings/2026-11-02-verify-cwd-pool.md).
+
 ## Never deliver into a session kawaz is using
 
 The isolated daemon still delivers to a real session that says hello to it: peer injection writes straight into that session's harness socket, found under the config dir the hello announced. The daemon cannot tell a hello that names a live session's sid and config dir from that session's own, so such a `hello` with `role: "session"`, a room whose member is that sid, or a `send_message` (the `send` tool) that names it, lands in that session's conversation.

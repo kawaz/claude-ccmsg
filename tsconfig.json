@@ -35,6 +35,12 @@
       "@ccmsg/webui": ["./packages/webui/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "hooks/**/*.ts", "bin/**/*.ts"],
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "hooks/**/*.ts",
+    "bin/**/*.ts",
+    "scripts/**/*.ts"
+  ],
   "exclude": ["packages/webui/src/client/**", "packages/webui/test/**"]
 }
