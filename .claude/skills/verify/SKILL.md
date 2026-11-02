@@ -31,6 +31,15 @@ When the verify has the daemon start a real `claude` (the launch command, a rest
 
 Use a different port when `18642` is occupied. A daemon whose state dir is not the default one serves no Claude config dir: it lists, registers and delivers to only the sessions that say hello to it, each in the config dir that session announces, and not the sessions beside it. To show the sessions of a fixture config dir, name it in `CCMSG_CLAUDE_CONFIG_DIRS` (absolute paths joined by `:`). Never name a real config dir (`~/.claude*`) there: the daemon then reaches every session in it.
 
+## Start a test session without the trust dialog
+
+A real `claude` started in a cwd it has not seen shows the "Quick safety check" trust dialog before any plugin loads. With an isolated `CLAUDE_CONFIG_DIR`, write the cwd's trust (and the first-run onboarding flags, which otherwise stop it at the theme picker) into the config dir's `.claude.json` before launching. Use the cwd's `realpath` (`pwd -P`): the key must match `/private/var/...`, not `/var/...` (docs/findings/2026-11-02-verify-trust-seed.md).
+
+```bash
+cwd=$(cd "$cwd" && pwd -P)
+jq -n --arg p "$cwd" '{theme:"dark",hasCompletedOnboarding:true,projects:{($p):{hasTrustDialogAccepted:true}}}' > "$config_dir/.claude.json"
+```
+
 ## Never deliver into a session kawaz is using
 
 The isolated daemon still delivers to a real session that says hello to it: peer injection writes straight into that session's harness socket, found under the config dir the hello announced. The daemon cannot tell a hello that names a live session's sid and config dir from that session's own, so such a `hello` with `role: "session"`, a room whose member is that sid, or a `send_message` (the `send` tool) that names it, lands in that session's conversation.
