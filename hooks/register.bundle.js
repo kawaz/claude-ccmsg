@@ -252,6 +252,23 @@ function partialCheck(paths, requirement, message$1) {
     }
   };
 }
+function rawCheck(action) {
+  return {
+    kind: "validation",
+    type: "raw_check",
+    reference: rawCheck,
+    async: false,
+    expects: null,
+    "~run"(dataset, config$1) {
+      action({
+        dataset,
+        config: config$1,
+        addIssue: (info) => _addIssue(this, info?.label ?? "input", dataset, config$1, info)
+      });
+      return dataset;
+    }
+  };
+}
 function regex(requirement, message$1) {
   return {
     kind: "validation",
@@ -2137,9 +2154,20 @@ var PeerListResponseSchema = object({
 });
 var PeerListResponseTextSchema = jsonText(PeerListResponseSchema);
 var RefusalTextSchema = jsonText(ErrorResponseSchema);
-var SendToolInputSchema = pipe(object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
+function refusesFieldsOf(tool, takes, theirs) {
+  const foreign = (input) => theirs.find((field) => (field in input) && !takes.includes(field));
+  return rawCheck(({ dataset, addIssue }) => {
+    if (!dataset.typed)
+      return;
+    const field = foreign(dataset.value);
+    if (field !== undefined) {
+      addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
+    }
+  });
+}
+var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
 var SayToolInputSchema = object({ text: PeerTextSchema });
-var PeersToolInputSchema = object(PeerListEntries);
+var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix", "name"], ["session_id", "cwd", "pid", "agent_id", "text"]), object(PeerListEntries));
 
 var UNCONFIRMED_ADVICE = "送り直すと二重に届くかもしれないので、まず相手の返事を待つ";
 var NOT_DELIVERED = {

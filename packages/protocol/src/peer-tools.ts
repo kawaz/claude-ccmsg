@@ -193,10 +193,32 @@ export const RefusalTextSchema = jsonText(ErrorResponseSchema);
 
 // --- the tools ------------------------------------------------------------------
 
+/** A check that the call holds none of `theirs`, the other tool's fields.
+ *
+ * Design rationale: not a strict object. The engine puts its own fields
+ * beside a tool's input (the tool's name, the call's id, a subagent's agent
+ * id, whatever it adds later), so a strict schema would refuse every call.
+ * What a model gets wrong is the sibling tool's field (`cwd` to `peers`,
+ * which the object drops and lists every session; `cwd_prefix` to `send`),
+ * and those are named here. */
+function refusesFieldsOf(tool: string, takes: readonly string[], theirs: readonly string[]) {
+  const foreign = (input: object): string | undefined =>
+    theirs.find((field) => field in input && !takes.includes(field));
+  return v.rawCheck<Record<string, unknown>>(({ dataset, addIssue }) => {
+    if (!dataset.typed) return;
+    const field = foreign(dataset.value);
+    if (field !== undefined) {
+      addIssue({ message: `${tool} takes ${takes.join(", ")}; ${field} is not its field` });
+    }
+  });
+}
+
 /** `send`'s input: who to (PeerTargetSchema's fields, at least one), the
  * running subagent of theirs to add it to when `agent_id` is given, and the
  * text. */
 export const SendToolInputSchema = v.pipe(
+  v.looseObject({}),
+  refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]),
   v.object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }),
   v.check((input) => namesSomebody(input), NAMES_SOMEBODY),
 );
@@ -207,6 +229,14 @@ export const SayToolInputSchema = v.object({ text: PeerTextSchema });
 export type SayToolInput = Output<typeof SayToolInputSchema>;
 
 /** The `peers` tool's input: peer-list's fields, picked out of the call (the
- * engine puts its own fields beside them). */
-export const PeersToolInputSchema = v.object(PeerListEntries);
+ * engine puts its own fields beside them), and none of send's. */
+export const PeersToolInputSchema = v.pipe(
+  v.looseObject({}),
+  refusesFieldsOf(
+    "peers",
+    ["cwd_prefix", "name"],
+    ["session_id", "cwd", "pid", "agent_id", "text"],
+  ),
+  v.object(PeerListEntries),
+);
 export type PeersToolInput = Output<typeof PeersToolInputSchema>;

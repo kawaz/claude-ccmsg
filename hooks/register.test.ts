@@ -3110,6 +3110,21 @@ describe("the ccmsg tools", () => {
     );
   });
 
+  // A field of the other tool is refused rather than dropped, which would
+  // list every session (peers) or lose the filter (send).
+  test("peers refuses send's fields and send refuses peers's, asking nothing", async () => {
+    const fake = daemonFake(replying({ ok: true, peers: [], results: [] }));
+    expect(await callTool(fake, "mcp__ccmsg-v1__peers", { cwd: "/w" })).toBe(
+      "peers の入力が形に合わないので何もしていない: peers takes cwd_prefix, name; cwd is not its field",
+    );
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__send", { cwd_prefix: "/w/", name: "n", text: "hi" }),
+    ).toBe(
+      "send の入力が形に合わないので何もしていない: send takes session_id, cwd, name, pid, agent_id, text; cwd_prefix is not its field",
+    );
+    expect(fake.asked).toEqual([]);
+  });
+
   test("peers the daemon refused says the daemon's reason, not its JSON", async () => {
     const fake = daemonFake(
       replying({ ok: false, error: { code: "invalid_args", msg: "op: unknown op: peer_list" } }),
