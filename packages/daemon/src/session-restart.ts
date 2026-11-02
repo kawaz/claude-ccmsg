@@ -6,6 +6,7 @@
 import {
   ErrorCode,
   LaunchInputSchema,
+  RESTART_PROMPT,
   launchEffortFromTranscript,
   launchModelFromTranscript,
   parseWith,
@@ -17,12 +18,6 @@ import { normalizeConfigDir } from "./config-dir.ts";
 import { claudeConfigDir } from "./default-effort.ts";
 import { killSession, resolveRecord, verifyPid, type SessionKillDeps } from "./session-kill.ts";
 import { buildLaunchEnv, type SessionLaunchOutcome } from "./session-launch.ts";
-
-/** The prompt the resumed session starts with: a fixed text (DR-0028
- * 「restart」). Whether the session had cron / schedule jobs is not looked
- * at; the line asks the session to put back whatever it had. */
-export const RESTART_PROMPT =
-  "プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。cron/schedule があるなら貼り直してください。";
 
 /** The config dir the launch command starts claude in, as a realpath: that of
  * the environment it inherits (`baseEnv` cleaned by clean_env / keep_env,
@@ -62,9 +57,11 @@ export type SessionRestartOutcome =
   | { ok: false; code: ErrorCode; msg: string };
 
 /** The launch that resumes `sessionId` where its process ran, as what it runs
- * as. A model or effort the launch cannot name is left to the command. */
+ * as, starting with `prompt`. A model or effort the launch cannot name is left
+ * to the command. */
 async function resumeLaunch(
   sessionId: string,
+  prompt: string,
   record: { cwd?: string; name?: string },
   deps: SessionRestartDeps,
 ): Promise<{ ok: true; launch: LaunchInput } | { ok: false; code: ErrorCode; msg: string }> {
@@ -85,7 +82,7 @@ async function resumeLaunch(
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
     ...(record.name !== undefined && record.name !== "" ? { name: record.name } : {}),
-    prompt: RESTART_PROMPT,
+    prompt,
   });
   if (!read.ok) {
     return { ok: false, code: ErrorCode.invalid_args, msg: read.failure.summary };
@@ -94,9 +91,11 @@ async function resumeLaunch(
 }
 
 /** One restart, DR-0028 「restart」 steps 2–8 (the role, the launcher's
- * shutdown and in-flight bound are the caller's). */
+ * shutdown and in-flight bound are the caller's). The resumed session starts
+ * with `prompt`, or RESTART_PROMPT when the request names none. */
 export async function restartSession(
   sessionId: string,
+  prompt: string | undefined,
   deps: SessionRestartDeps,
 ): Promise<SessionRestartOutcome> {
   const fields: string[] = [`session_id=${sessionId}`];
@@ -122,7 +121,7 @@ export async function restartSession(
     return refuse(ErrorCode.not_found, `no process for session ${sessionId}`);
   }
   fields.push(`pid=${String(record.pid)}`);
-  const resume = await resumeLaunch(sessionId, record, deps);
+  const resume = await resumeLaunch(sessionId, prompt ?? RESTART_PROMPT, record, deps);
   if (!resume.ok) return refuse(resume.code, resume.msg);
 
   const { terminated } = await killSession(record.pid, deps.kill);

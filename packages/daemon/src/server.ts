@@ -2304,7 +2304,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       }
       const sid = req.session_id;
       const entry = daemon.sessions.get(sid);
-      const running = restartSession(sid, {
+      const running = restartSession(sid, req.prompt, {
         launcher,
         baseEnv: daemon.env,
         sessionConfigDir: entry?.configDir,

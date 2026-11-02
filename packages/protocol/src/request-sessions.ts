@@ -7,7 +7,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
-import { LaunchInputSchema } from "./launch.ts";
+import { LaunchFieldsSchema, LaunchInputSchema } from "./launch.ts";
 import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-override.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
@@ -268,11 +268,18 @@ export const SessionKillRequestSchema = v.object({
 });
 export type SessionKillRequest = Output<typeof SessionKillRequestSchema>;
 
+/** The prompt a restarted session starts with when the request names none,
+ * and the text the webui's restart form opens with (DR-0028 「restart」).
+ * Whether the session had cron / schedule jobs is not looked at; the line
+ * asks the session to put back whatever it had. */
+export const RESTART_PROMPT =
+  "プロセス再起動 (resume) しました。teammate/subagentはSendMessage(agentId)で再開可能。workflow等もIDで再開可能。backgroundやcron/scheduleがあれば貼り直し。";
+
 /** Restart a session (DR-0028 「restart」, user role only): stop its process as
  * session_kill does, and once it is observed gone, resume the same id through
  * the launch command (DR-0018), with the model / effort / name it runs as and
- * a prompt saying it was restarted. Every reason to refuse is checked before
- * the process is stopped.
+ * a first prompt. Every reason to refuse is checked before the process is
+ * stopped.
  *
  * Slow reply like session_launch: up to the kill grace and the launch
  * command's wait. */
@@ -280,6 +287,9 @@ export const SessionRestartRequestSchema = v.object({
   op: v.literal("session_restart"),
   /** The session to restart. No pid, for the reason session_kill takes none. */
   session_id: SessionIdSchema,
+  /** The resumed session's first prompt, read as the launch's `prompt` (not
+   * empty). Absent for RESTART_PROMPT. */
+  prompt: LaunchFieldsSchema.entries.prompt,
 });
 export type SessionRestartRequest = Output<typeof SessionRestartRequestSchema>;
 

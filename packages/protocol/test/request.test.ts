@@ -200,8 +200,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   session_restart: {
-    ok: { op: "session_restart", session_id: SID },
-    bad: [{ op: "session_restart" }, { op: "session_restart", session_id: "" }],
+    ok: { op: "session_restart", session_id: SID, prompt: "再起動した" },
+    bad: [
+      { op: "session_restart" },
+      { op: "session_restart", session_id: "" },
+      { op: "session_restart", session_id: SID, prompt: "" },
+      { op: "session_restart", session_id: SID, prompt: 1 },
+    ],
   },
   session_rename: {
     ok: { op: "session_rename", session_id: SID, title: "t" },
@@ -658,6 +663,15 @@ describe("readRequest: the forms beside each op's type", () => {
     expect(
       refusal(read({ op: "session_launch", launch: { cwd: "/w", continue: true, resume: SID } })),
     ).toContain("launch.resume");
+  });
+
+  // The prompt of a restart is the person's choice; without one the daemon
+  // starts the resumed session with RESTART_PROMPT (DR-0028 「restart」).
+  test("session_restart reads without a prompt", () => {
+    expect(read({ op: "session_restart", session_id: SID })).toEqual({
+      ok: true,
+      value: { op: "session_restart", session_id: SID, request_id: "q1" },
+    });
   });
 });
 

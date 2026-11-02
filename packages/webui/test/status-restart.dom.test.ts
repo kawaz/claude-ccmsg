@@ -1,20 +1,22 @@
 // DR-0028 「restart」: the Status tab's 再起動 as mounted — beside the kill
 // button in the danger zone, with its look; offered only when the daemon can
 // launch, the session's process is there and it runs in the config dir the
-// launch command starts claude in; no confirm; both buttons disabled while
-// either runs; what it came to under them.
+// launch command starts claude in; no confirm, but a form in place whose text,
+// RESTART_PROMPT to begin with, is the resumed session's first prompt; both
+// buttons disabled while either runs; what it came to under them.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type {
-  AgentInfo,
-  ErrorResponse,
-  SessionEnvResponse,
-  SessionKillResponse,
-  SessionRestartResponse,
-  SessionStatusSnapshot,
-  UserMessageResponse,
-  RequestOverrideResponse,
+import {
+  RESTART_PROMPT,
+  type AgentInfo,
+  type ErrorResponse,
+  type SessionEnvResponse,
+  type SessionKillResponse,
+  type SessionRestartResponse,
+  type SessionStatusSnapshot,
+  type UserMessageResponse,
+  type RequestOverrideResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
@@ -55,7 +57,8 @@ interface Mounted {
   root: HTMLElement;
   /** Render the view again with the Status panel's snapshot. */
   show: (snapshot: SessionStatusSnapshot | undefined) => Promise<void>;
-  restarts: () => number;
+  /** The prompts of the restarts asked for, oldest first. */
+  restarts: () => string[];
   /** Answers the pending restart. */
   answer: (reply: SessionRestartResponse | ErrorResponse) => Promise<void>;
 }
@@ -77,10 +80,13 @@ async function mount(options: {
   if (agentConfigDir !== null) {
     store.dispatch({ type: "agents/loaded", agents: [agentRow(agentConfigDir)] });
   }
-  let count = 0;
+  const prompts: string[] = [];
   let resolve: ((reply: SessionRestartResponse | ErrorResponse) => void) | undefined;
-  const onRestart = (): Promise<SessionRestartResponse | ErrorResponse> => {
-    count += 1;
+  const onRestart = (
+    _sid: string,
+    prompt: string,
+  ): Promise<SessionRestartResponse | ErrorResponse> => {
+    prompts.push(prompt);
     return new Promise((r) => {
       resolve = r;
     });
@@ -122,7 +128,7 @@ async function mount(options: {
   return {
     root,
     show,
-    restarts: () => count,
+    restarts: () => [...prompts],
     answer: async (reply) => {
       await act(() => {
         resolve?.(reply);
@@ -141,6 +147,39 @@ function restartButton(root: HTMLElement): HTMLButtonElement | null {
 function killButton(root: HTMLElement): HTMLButtonElement | null {
   const found = root.querySelector(".status-kill-button:not(.status-restart-button)");
   return found === null ? null : instanceOf(found, HTMLButtonElement, "the kill button");
+}
+
+function restartForm(root: HTMLElement): HTMLFormElement | null {
+  const found = root.querySelector(".status-restart-form");
+  return found === null ? null : instanceOf(found, HTMLFormElement, "the restart form");
+}
+
+function formText(root: HTMLElement): HTMLTextAreaElement {
+  return instanceOf(
+    restartForm(root)?.querySelector("textarea"),
+    HTMLTextAreaElement,
+    "the restart form's text",
+  );
+}
+
+function formButton(root: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...(restartForm(root)?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent === label,
+  );
+  return instanceOf(found, HTMLButtonElement, `the form's ${label}`);
+}
+
+/** Open the form with 再起動 and send it as it is. */
+async function restartWithDefault(root: HTMLElement): Promise<void> {
+  await act(() => restartButton(root)?.click());
+  await act(() => formButton(root, "再起動").click());
+}
+
+async function typeInto(textarea: HTMLTextAreaElement, value: string): Promise<void> {
+  await act(() => {
+    textarea.value = value;
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 function resultText(root: HTMLElement): string {
@@ -179,8 +218,8 @@ describe("Status の再起動", () => {
     });
     try {
       const mounted = await mount({ launchConfigDir: CONFIG_DIR });
-      await act(() => restartButton(mounted.root)?.click());
-      expect(mounted.restarts()).toBe(1);
+      await restartWithDefault(mounted.root);
+      expect(mounted.restarts()).toEqual([RESTART_PROMPT]);
       expect(confirms).toEqual([]);
       expect(restartButton(mounted.root)?.disabled).toBe(true);
       expect(restartButton(mounted.root)?.textContent).toBe("再起動中…");
@@ -201,6 +240,77 @@ describe("Status の再起動", () => {
     }
   });
 
+  test("pressed, it opens a form in place with RESTART_PROMPT, not selected, and restarts nothing yet", async () => {
+    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    expect(restartForm(mounted.root)).toBeNull();
+    await act(() => restartButton(mounted.root)?.click());
+    expect(restartForm(mounted.root)?.closest(".status-kill-zone")).not.toBeNull();
+    const text = formText(mounted.root);
+    expect(text.value).toBe(RESTART_PROMPT);
+    expect(text.classList.contains("session-input-textarea")).toBe(true);
+    expect(document.activeElement).toBe(text);
+    expect(text.selectionStart).toBe(RESTART_PROMPT.length);
+    expect(text.selectionEnd).toBe(RESTART_PROMPT.length);
+    expect(restartButton(mounted.root)?.disabled).toBe(true);
+    expect(mounted.restarts()).toEqual([]);
+  });
+
+  test("the form's text, as the person left it, is the prompt the restart is asked with", async () => {
+    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    await act(() => restartButton(mounted.root)?.click());
+    const edited = `${RESTART_PROMPT}\nテストの続きから`;
+    await typeInto(formText(mounted.root), edited);
+    await act(() => formButton(mounted.root, "再起動").click());
+    expect(mounted.restarts()).toEqual([edited]);
+    // While it runs, the form stays, nothing in it to press or edit.
+    expect(formText(mounted.root).disabled).toBe(true);
+    expect(formButton(mounted.root, "再起動").disabled).toBe(true);
+    expect(formButton(mounted.root, "キャンセル").disabled).toBe(true);
+    await mounted.answer({
+      ok: true,
+      restarted: true,
+      session_id: SID,
+      exit_code: 0,
+      stdout: "",
+      stderr: "",
+    });
+    expect(restartForm(mounted.root)).toBeNull();
+    expect(resultText(mounted.root)).toBe("再起動しました");
+  });
+
+  test("an empty text cannot be sent", async () => {
+    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    await act(() => restartButton(mounted.root)?.click());
+    await typeInto(formText(mounted.root), " \n");
+    expect(formButton(mounted.root, "再起動").disabled).toBe(true);
+    await act(() => restartForm(mounted.root)?.requestSubmit());
+    expect(mounted.restarts()).toEqual([]);
+  });
+
+  test("キャンセル and Esc close the form without restarting", async () => {
+    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    await act(() => restartButton(mounted.root)?.click());
+    await act(() => formButton(mounted.root, "キャンセル").click());
+    expect(restartForm(mounted.root)).toBeNull();
+    expect(restartButton(mounted.root)?.disabled).toBe(false);
+
+    await act(() => restartButton(mounted.root)?.click());
+    await act(() => {
+      formText(mounted.root).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    expect(restartForm(mounted.root)).toBeNull();
+    expect(mounted.restarts()).toEqual([]);
+
+    // Opened again, it starts from RESTART_PROMPT, not what was left.
+    await act(() => restartButton(mounted.root)?.click());
+    await typeInto(formText(mounted.root), "途中まで書いた");
+    await act(() => formButton(mounted.root, "キャンセル").click());
+    await act(() => restartButton(mounted.root)?.click());
+    expect(formText(mounted.root).value).toBe(RESTART_PROMPT);
+  });
+
   test("while the kill runs, the restart is disabled too", async () => {
     const restore = stubGlobal("confirm", () => true);
     try {
@@ -208,7 +318,7 @@ describe("Status の再起動", () => {
       await act(() => killButton(mounted.root)?.click());
       expect(killButton(mounted.root)?.disabled).toBe(true);
       expect(restartButton(mounted.root)?.disabled).toBe(true);
-      expect(mounted.restarts()).toBe(0);
+      expect(mounted.restarts()).toEqual([]);
     } finally {
       restore();
     }
@@ -216,7 +326,7 @@ describe("Status の再起動", () => {
 
   test("the result outlives the Status panel going while the session is between processes", async () => {
     const mounted = await mount({ launchConfigDir: CONFIG_DIR });
-    await act(() => restartButton(mounted.root)?.click());
+    await restartWithDefault(mounted.root);
     await mounted.show(undefined);
     expect(restartButton(mounted.root)).toBeNull();
     await mounted.answer({
@@ -234,7 +344,7 @@ describe("Status の再起動", () => {
 
   test("a launch command that did not resume is shown with its output", async () => {
     const mounted = await mount({ launchConfigDir: CONFIG_DIR });
-    await act(() => restartButton(mounted.root)?.click());
+    await restartWithDefault(mounted.root);
     await mounted.answer({
       ok: true,
       restarted: true,
@@ -251,7 +361,7 @@ describe("Status の再起動", () => {
 
   test("a process not seen gone says it was not started", async () => {
     const mounted = await mount({ launchConfigDir: CONFIG_DIR });
-    await act(() => restartButton(mounted.root)?.click());
+    await restartWithDefault(mounted.root);
     await mounted.answer({
       ok: false,
       error: { code: "restart_timeout", msg: "not seen gone" },
@@ -261,7 +371,7 @@ describe("Status の再起動", () => {
 
   test("another refusal names its code and message", async () => {
     const mounted = await mount({ launchConfigDir: CONFIG_DIR });
-    await act(() => restartButton(mounted.root)?.click());
+    await restartWithDefault(mounted.root);
     await mounted.answer({ ok: false, error: { code: "not_found", msg: "no process" } });
     expect(resultText(mounted.root)).toBe("再起動できなかった (not_found): no process");
   });

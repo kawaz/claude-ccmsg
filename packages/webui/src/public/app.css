@@ -7091,6 +7091,9 @@ a.tl-attachment-file-path {
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-11);
+  /* The end of the tab (the danger zone, the restart form's textarea) scrolls
+   * clear of the composer FAB pinned over the bottom-right. */
+  padding-bottom: calc(var(--composer-fab-size) + 2 * var(--composer-fab-offset));
   display: flex;
   flex-direction: column;
   gap: var(--space-13);
@@ -9915,6 +9918,16 @@ circle.cache-ring-shape {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-7);
+}
+
+/* The restart's form under the pair (DR-0028 「restart」): the composer's
+ * textarea over a row of buttons like the pair. Layout only; the look is
+ * theirs. */
+.status-restart-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  margin: var(--space-7) 0 0;
 }
 
 .status-restart-result p {

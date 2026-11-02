@@ -92,7 +92,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 ### op `session_restart` (user role)
 
-- request: `{ op: "session_restart", session_id }`
+- request: `{ op: "session_restart", session_id, prompt? }`。`prompt` は resume したセッションの最初の prompt (空にはできない、`session_launch` の `prompt` と同じ読み方)。無ければ下の既定文
 - response: `{ ok: true, restarted: true, session_id, exit_code, stdout, stderr }`。`session_id` は resume したセッションの id (request と同じ)、`exit_code` / `stdout` / `stderr` は `session_launch` と同じ (起動コマンドの終了コードと出力、DR-0018 §3.4)。`exit_code` が 0 でなければ、セッションは止まったが起動コマンドは resume を起こしていない
 - error (どれも、断った時はプロセスを止めていない。`internal` だけは止めた後かもしれない):
   - `bad_request`: user role でない
@@ -114,7 +114,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
    - `resume`: その sid
    - `model` / `effort`: Status タブの CTX と同じ値 (hooks module の facts の model / effort を、transcript の末尾の main context の assistant 行の model / effort に重ねたもの) を、起動の入力の選択肢に写す (`claude-fable-5[1m]` → `fable`、Session Search の resume の prefill と同じ写し方)。写せないものと値の無いものは入れない (起動コマンドが決める)
    - `name`: 3 で読んだ record の `name`。無ければ入れない
-   - `prompt`: 下の文面
+   - `prompt`: request の `prompt`、無ければ下の既定文
 5. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ (未検証: turn の最中など、止まるまでに 3 秒を超える claude で `restart_timeout` になるか)。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
 6. 消滅を観測したら `session_kill` と同じくその sid の登録を忘れて peers を配る (resume したセッションは hello か agents の poll で戻る)
 7. DR-0018 §3.5 の手順 4〜11 で起動する (依頼者は `user`。daemon.log にはその手順の `session_launch: …` の行も残る)
@@ -129,17 +129,22 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 ### resume の prompt
 
+既定文 (protocol の `RESTART_PROMPT`。request に `prompt` が無い時に daemon が使い、webui の再起動のフォームが最初に入れておく文):
+
 ```
-プロセス再起動 (resume) しました。バックグラウンドプロセスとチームメートは停止され再利用不可。サブエージェントは作業中は中断されたかもだが再開指示などアクセスは可能。cron/schedule があるなら貼り直してください。
+プロセス再起動 (resume) しました。teammate/subagentはSendMessage(agentId)で再開可能。workflow等もIDで再開可能。backgroundやcron/scheduleがあれば貼り直し。
 ```
 
-- 固定文で、止める前にセッションの cron / schedule の有無を調べて出し分けることはしない (kawaz 2026-10-25)。予定の扱いは resume したセッションに任せる。resume の後に何が残るかの観測は [findings 2026-10-25-cron-schedule-persistence](../findings/2026-10-25-cron-schedule-persistence.md)
+- 止める前にセッションの cron / schedule の有無を調べて出し分けることはしない (kawaz 2026-10-25)。予定の扱いは resume したセッションに任せる。resume の後に何が残るかの観測は [findings 2026-10-25-cron-schedule-persistence](../findings/2026-10-25-cron-schedule-persistence.md)
 - 内容 (会話の中身) には触れない。コンテキストは続く
 
 ### webui
 
 - Status タブの危険ゾーンの「セッションを終了」の隣に「再起動」ボタン (停止と再起動は対の操作なので並べる、kawaz 2026-10-25)。見た目は終了ボタンと同じで、どちらかが走っている間は両方を disabled にする。`launch_available` で、そのセッションの agents の行があり (プロセスが居る)、行の `config_dir` が hello の `launch_config_dir` と同じ時だけ出す
-- 確認ダイアログは出さない (ユーザが理解して押す)。押している間は disabled で、文言を「再起動中…」にする
+- 確認ダイアログは出さない (ユーザが理解して押す)。押すとボタンの下にその場で再起動のフォームが開く (kawaz 2026-11-02): textarea 1 つと [再起動] [キャンセル]。textarea には既定文が入っていて (全選択はしない、caret は末尾)、そのまま送っても、書き換えて指示を足してもよい。送った内容が request の `prompt` になる。FAB (composer) は使わない
+  - [再起動] は内容が空 (空白だけを含む) なら disabled。[キャンセル] と Esc で閉じ、次に開くと既定文から始まる
+  - textarea の見た目は composer の textarea (`.session-input-textarea`) と同じ。ボタンは危険ゾーンのボタンと同じ見た目。説明文は付けない
+  - フォームが開いている間はボタン行の「再起動」は disabled。restart が走っている間はフォームの中も全部 disabled で、ボタン行の「再起動」の文言が「再起動中…」になる。結果が出たらフォームを閉じる
 - restart の間はセッションの登録が外れて Status のパネルが一度消えるので、押している状態と結果はセッションの view が持ち、resume したセッションが戻った後のパネルに出す ([findings 2026-10-25-session-restart-verify](../findings/2026-10-25-session-restart-verify.md))
 - 結果は危険ゾーンのボタンの下に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
 

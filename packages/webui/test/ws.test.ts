@@ -831,6 +831,39 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
+  // The restart form's text goes as the resumed session's first prompt
+  // (DR-0028 「restart」).
+  test("sessionRestart sends the prompt with the session id", async () => {
+    const sid = "11111111-2222-4333-8444-555555555555";
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionRestart(sid, "再起動した。続きを");
+    const sent = sentFrame(ws1, "session_restart");
+    expect(sent).toEqual({
+      op: "session_restart",
+      request_id: defined(sent.request_id, "the request id of the session_restart frame"),
+      session_id: sid,
+      prompt: "再起動した。続きを",
+    });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        request_id: sent.request_id,
+        ok: true,
+        restarted: true,
+        session_id: sid,
+        exit_code: 0,
+        stdout: "",
+        stderr: "",
+      }),
+    );
+    expect((await req).ok).toBe(true);
+  });
+
   // session_rename is a slow op like translate; its reply pairs by
   // request_id the same way.
   test("sessionRename sends the title with a request_id and resolves from the reply", async () => {
