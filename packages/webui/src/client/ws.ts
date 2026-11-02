@@ -62,6 +62,9 @@ export const REQUEST_OVERRIDE_REPLY_TIMEOUT_MS = 8_000;
 /** How long turnAbort waits for its reply: the daemon's
  * TURN_ABORT_DEADLINE_MS (5 s) and the same margin. */
 export const TURN_ABORT_REPLY_TIMEOUT_MS = 8_000;
+/** How long sessionRename waits for its reply: the daemon's
+ * SESSION_RENAME_DEADLINE_MS (5 s) and the same margin. */
+export const SESSION_RENAME_REPLY_TIMEOUT_MS = 8_000;
 
 /** The time the client reads and the waits it sets: how long a socket has
  * been idle, when to reconnect, when a reply is overdue. The same seam as the
@@ -346,15 +349,12 @@ export interface WsHandle {
    * StatusPanel's 再起動). Slow: the kill grace and the launch command's
    * wait. */
   sessionRestart(sessionId: string, prompt: string): Promise<ReplyOf<"session_restart">>;
-  /** Retitle a session by having the daemon type `/rename <title>` into that
-   * session's own terminal (user role only, kawaz r135m16 — the Sessions
-   * list's pencil button). Best-effort: a successful response means the
-   * keystrokes were delivered, not that the session is now called that, so
-   * callers should report "sent" rather than showing the new title as fact —
-   * the real one arrives with the next agents poll. `error.code ===
-   * "terminal_unavailable"` means no run of the session named a hyoui
-   * terminal (started outside hyoui, or without the hooks module) and it can
-   * only be renamed by hand. Slow like sessionKill. */
+  /** Rename a session (DR-0047, user role only — the Sessions list's
+   * title editor): the session's hooks module runs `/rename <title>`. The
+   * reply's `outcome` is `renamed`, or `queued` when the session was
+   * answering a turn and is renamed once it ends; the name itself arrives
+   * with the agents rows. Errors: `no_module` (the session has no hooks
+   * module), `session_not_found`, `rename_failed`. */
   sessionRename(sessionId: string, title: string): Promise<ReplyOf<"session_rename">>;
   /** Put what the person wrote into a session as their own prompt (DR-0035
    * §1, user role only — SessionView's input panel). The daemon has the
@@ -1092,11 +1092,10 @@ export function createWsClient(
     sessionRestart: (sessionId, prompt) =>
       send({ op: "session_restart", session_id: sessionId, prompt }),
     sessionRename: (sessionId, title) =>
-      send({
-        op: "session_rename",
-        session_id: sessionId,
-        title,
-      }),
+      send(
+        { op: "session_rename", session_id: sessionId, title },
+        { timeoutMs: SESSION_RENAME_REPLY_TIMEOUT_MS },
+      ),
     userPrompt: (sessionId, text, override) =>
       send(
         {

@@ -317,7 +317,10 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, restarted: true, session_id: SID, exit_code: 0, stdout: "o", stderr: "" },
     { ok: true, restarted: true, session_id: SID, exit_code: 2, stdout: "", stderr: "e" },
   ],
-  session_rename: [{ ok: true, hyoui_session_id: "h1", title: "t" }],
+  session_rename: [
+    { ok: true, title: "t", outcome: "renamed" },
+    { ok: true, title: "t", outcome: "queued" },
+  ],
   user_prompt: [
     { ok: true, outcome: "accepted" },
     { ok: true, outcome: "not_delivered", reason: "no_module" },

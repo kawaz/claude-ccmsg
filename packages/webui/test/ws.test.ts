@@ -864,8 +864,7 @@ describe("createWsClient agents/ping (U1)", () => {
     expect((await req).ok).toBe(true);
   });
 
-  // session_rename is a slow op like translate; its reply pairs by
-  // request_id the same way.
+  // session_rename is a slow op (DR-0047): its reply pairs by request_id.
   test("sessionRename sends the title with a request_id and resolves from the reply", async () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
@@ -886,16 +885,12 @@ describe("createWsClient agents/ping (U1)", () => {
       JSON.stringify({
         request_id: sent.request_id,
         ok: true,
-        hyoui_session_id: "run-abc",
         title: "新しいタイトル",
+        outcome: "queued",
       }),
     );
 
-    expect(await req).toEqual({
-      ok: true,
-      hyoui_session_id: "run-abc",
-      title: "新しいタイトル",
-    });
+    expect(await req).toEqual({ ok: true, title: "新しいタイトル", outcome: "queued" });
   });
 
   // DR-0035 §1: the input panel sends the text verbatim as user_prompt (no
@@ -1027,7 +1022,7 @@ describe("createWsClient agents/ping (U1)", () => {
   });
 
   // The failure path the row's editor renders inline.
-  test("sessionRename surfaces a terminal_unavailable reply as an error", async () => {
+  test("sessionRename surfaces a no_module reply as an error", async () => {
     const handle = createWsClient(() => {});
     openHandles.push(handle);
     handle.connect();
@@ -1040,13 +1035,13 @@ describe("createWsClient agents/ping (U1)", () => {
       JSON.stringify({
         request_id: sent.request_id,
         ok: false,
-        error: { code: "terminal_unavailable", msg: "no known terminal" },
+        error: { code: "no_module", msg: "no hooks module" },
       }),
     );
 
     const res = await req;
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.error.code).toBe("terminal_unavailable");
+    if (!res.ok) expect(res.error.code).toBe("no_module");
   });
 
   // THE regression correlated replies fix: while a slow

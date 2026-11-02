@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionRenameResponse } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
@@ -60,6 +60,14 @@ function useTick(intervalMs: number): void {
  * arrives on its own via the agents poll), it just must not become permanent
  * sidebar furniture. */
 const RENAME_NOTE_MS = 6000;
+
+/** The row's note for a rename the session took: changed now, or once the
+ * turn it was answering ends (DR-0047). */
+export function renameNoteOf(sent: SessionRenameResponse): string {
+  return sent.outcome === "queued"
+    ? `応答の後に名前を変更: ${sent.title}`
+    : `名前を変更: ${sent.title}`;
+}
 
 /** How long the session-id copy confirmation stays up — same 1.5s as
  * StatusPanel's CopyButton, so the two copy affordances feel identical. */
@@ -223,10 +231,9 @@ function SessionIdText({ sid }: { sid: string }) {
  * slot*, so the row neither grows a control of its own nor changes height
  * while editing.
  *
- * `editable` is false where the daemon has no terminal to type into
- * (session_rename answers `terminal_unavailable` without a hyoui session) —
- * arming an interaction that can only fail would be worse than leaving the
- * text inert.
+ * `editable` is false where the session has no hooks module to run
+ * `/rename` (session_rename answers `no_module`, DR-0047) — arming an
+ * interaction that can only fail would be worse than leaving the text inert.
  *
  * Being a lone input with no buttons, it can settle on plain Enter (no
  * Shift+Enter requirement as in RoomTitle, whose [保存] button is what a bare
@@ -236,11 +243,10 @@ function SessionIdText({ sid }: { sid: string }) {
  * `isComposing`, and the blur a candidate window can provoke is masked while
  * a composition is open — neither must be read as "the user is done".
  *
- * What this cannot do is show the result: `session_rename` only types
- * `/rename <title>` into the session's terminal (see SessionRenameRequest),
- * so a success closes the editor and leaves a "送信した" note while the row's
- * headline keeps reporting whatever the agents rows list, until a later
- * poll confirms it (or doesn't). */
+ * A success closes the editor and leaves a note saying whether the name
+ * changed now or changes once the session's turn ends (`queued`); the row's
+ * headline is the agents rows' name, which follows when the session takes
+ * it. */
 function SessionTitle({
   sid,
   title,
@@ -250,7 +256,7 @@ function SessionTitle({
   sid: string;
   title: string;
   editable: boolean;
-  onSent: (title: string) => void;
+  onSent: (sent: SessionRenameResponse) => void;
 }) {
   const { ws } = useApp();
   const [editing, setEditing] = useState(false);
@@ -317,7 +323,7 @@ function SessionTitle({
       }
       settledRef.current = true;
       close();
-      onSent(res.title);
+      onSent(res);
     } catch {
       setError("接続エラーのため送信できませんでした");
     } finally {
@@ -477,8 +483,8 @@ function SessionRowItem({
     <SessionTitle
       sid={row.sid}
       title={title}
-      editable={Boolean(row.agent?.hyoui_session_id)}
-      onSent={(sent) => setRenameNote(`/rename を送信: ${sent}`)}
+      editable={row.agent?.turn !== undefined}
+      onSent={(sent) => setRenameNote(renameNoteOf(sent))}
     />
   );
   // An agent-only row has no repo/ws at all (the agents rows carry no VCS
@@ -688,16 +694,16 @@ function PinnedSessionRow({
   // still gets a non-blank line rather than a gap where a title goes.
   const title =
     pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
-  // Editable on exactly the condition SessionRowItem uses — the daemon needs a
-  // hyoui terminal to type `/rename` into, which only a running session has.
-  // An offline pin's title is therefore plain text, not an editor that could
-  // only fail.
+  // Editable on exactly the condition SessionRowItem uses — the session's
+  // hooks module runs `/rename`, and only a running session has one that has
+  // spoken. An offline pin's title is therefore plain text, not an editor
+  // that could only fail.
   const titleCell = (
     <SessionTitle
       sid={pin.sid}
       title={title}
-      editable={Boolean(agent?.hyoui_session_id)}
-      onSent={(sent) => setRenameNote(`/rename を送信: ${sent}`)}
+      editable={agent?.turn !== undefined}
+      onSent={(sent) => setRenameNote(renameNoteOf(sent))}
     />
   );
   // With no repo/ws to print, the title takes the first line's place instead

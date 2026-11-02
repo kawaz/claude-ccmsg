@@ -1,34 +1,33 @@
-// session_rename boundary (kawaz r135m16): type `/rename <title>` into the
-// terminal a Claude Code session runs in, because that slash command is the
-// only writer of a session's title (see SessionRenameRequest in the protocol
-// for why there is no API route). Pure logic split out of server.ts the same
-// way session-kill.ts is, with the two external effects — resolving the
-// session's terminal and running hyoui — injected so tests can cover every
-// branch without a terminal multiplexer.
+// session_rename (DR-0047): rename a session by handing a `session.rename`
+// request to the hooks module of every live run of the session at once; the
+// module runs the built-in `/rename` with `$.command.run`. The modules'
+// answers are read into the op's one answer.
+//
+// Which runs a session has is sidecar-runs.ts's; the request and its reply go
+// through sidecar-call.ts. What the module does is hooks/session-rename.ts.
+import { ErrorCode } from "@ccmsg/protocol";
+import { callSidecar, type SidecarDeps } from "./sidecar-call.ts";
+import type { SessionRunsView } from "./user-prompt.ts";
 
-/** `hyoui input` child budget. hyoui serializes input holders (its auto-lock),
- * so this covers "another client is mid-input" as well as a wedged daemon;
- * a rename that cannot get through in this window is better reported as
- * failed than left holding the reply open. */
-export const HYOUI_TIMEOUT_MS = 5000;
+/** How long the daemon waits for the modules to answer `session.rename`:
+ * the write, then the module's wait for `/rename` (RENAME_WAIT_MS, 2 s) and
+ * its reply over `POST /op` (DR-0046). */
+export const SESSION_RENAME_DEADLINE_MS = 5_000;
 
-/** Title clamp: a session title shows up
- * in the Sessions list's first line, where anything longer is unreadable
- * regardless of what the TUI would accept. */
+/** Title clamp: a session title shows up in the Sessions list's first line,
+ * where anything longer is unreadable regardless of what the TUI would
+ * accept. */
 export const RENAME_TITLE_MAX_LEN = 200;
 
 export type TitleValidation = { ok: true; title: string } | { ok: false; msg: string };
 
-/** Validate + normalize a requested title before it becomes part of a hyoui
- * spec argument.
+/** Validate + normalize a requested title before it is handed on.
  *
- * hyoui does no escape processing (`text:` bytes go to the PTY verbatim) and
- * splits a spec on its first `:` only, so a `:` in the title is harmless but
- * a control character is not: a raw newline reaches the TUI as Enter and
- * submits a truncated `/rename`, and other C0 bytes are terminal control
- * sequences. Rejecting is deliberate over stripping — silently renaming a
- * session to something the user did not type is worse than an error they can
- * act on. */
+ * A title is one line the Sessions list shows: a newline or another control
+ * character in it would end up in Claude Code's state file and break the
+ * row. Rejecting is deliberate over stripping — silently renaming a session
+ * to something the user did not type is worse than an error they can act
+ * on. */
 export function validateRenameTitle(raw: string): TitleValidation {
   const title = raw.trim();
   if (title === "") {
@@ -62,86 +61,123 @@ export function validateRenameTitle(raw: string): TitleValidation {
   return { ok: true, title };
 }
 
-/** Injectable effects. Production defaults in `productionRenameDeps` below. */
-export interface SessionRenameDeps {
-  /** The session's terminal handle (`HYOUI_SESSION_ID`), or null when the
-   * daemon has never seen one for this session id. */
-  hyouiSessionId(sessionId: string): string | null;
-  /** Run `hyoui` with the given argv tail. Must reject on spawn failure,
-   * non-zero exit, or timeout. */
-  runHyoui(args: string[]): Promise<void>;
+export interface SessionRenameDeps extends SidecarDeps {
+  deadlineMs: number;
+  runs: SessionRunsView;
+  /** Whether the daemon still counts `sid` among the running sessions. */
+  isRunning(sid: string): boolean;
 }
 
-/** The exact `hyoui input` argv tail for one rename.
- *
- * Every element is a separate argv entry, so no shell quoting is involved and
- * spaces in the title need no handling. `key:Enter` is a second spec rather
- * than a `\r` appended to the text: hyoui delivers specs in order with a PTY
- * drain between them, which keeps the submit from racing the typed line.
- * The session id alone names the terminal. Exported so a test can assert the
- * command shape without running hyoui. */
-export function renameCommandArgs(hyouiSessionId: string, title: string): string[] {
-  return ["input", hyouiSessionId, `text:/rename ${title}`, "key:Enter"];
+export function productionSessionRenameDeps(
+  deps: SidecarDeps,
+  runs: SessionRunsView,
+  isRunning: (sid: string) => boolean,
+): SessionRenameDeps {
+  return { ...deps, deadlineMs: SESSION_RENAME_DEADLINE_MS, runs, isRunning };
 }
 
+/** What became of the request at one run, for the daemon log. */
+export interface SessionRenameTry {
+  id: string;
+  socket: string;
+  result:
+    | "unwritten"
+    | "write_uncertain"
+    | "unconfirmed"
+    | "unreadable"
+    | "renamed"
+    | "queued"
+    | "refused";
+}
+
+/** session_rename's answer: renamed or queued, or the error the op replies
+ * with. */
 export type SessionRenameOutcome =
-  | { ok: true; hyoui_session_id: string; title: string }
-  /** The session has no terminal the daemon can type into. */
-  | { ok: false; reason: "terminal_unavailable" }
-  /** hyoui was reachable in principle but the send failed (not installed,
-   * session socket gone, another holder never released, non-zero exit). */
-  | { ok: false; reason: "send_failed"; msg: string };
+  | { ok: true; outcome: "renamed" | "queued" }
+  | {
+      ok: false;
+      code:
+        | typeof ErrorCode.session_not_found
+        | typeof ErrorCode.no_module
+        | typeof ErrorCode.rename_failed;
+      msg: string;
+    };
 
-/** Send one rename. `title` must already have passed validateRenameTitle —
- * the split keeps the wire-level rejection (invalid_args, no side effects)
- * apart from the delivery attempt, which is best-effort by nature. */
-export async function sessionRename(
-  sessionId: string,
+/** One run's try, and for a module's `refused` the engine's words, which
+ * the reply carries. */
+interface RunAnswer {
+  attempt: SessionRenameTry;
+  refusal?: string;
+}
+
+/** One run's try: the module's answer, or why there is none. */
+async function tryRun(
+  sid: string,
+  socket: string,
+  name: string,
+  deps: SessionRenameDeps,
+): Promise<RunAnswer> {
+  const call = await callSidecar(socket, sid, "session.rename", { name }, deps.deadlineMs, deps);
+  const { id } = call;
+  if (call.write === "not_written") return { attempt: { id, socket, result: "unwritten" } };
+  if (call.reply === undefined) {
+    const result = call.write === "uncertain" ? "write_uncertain" : "unconfirmed";
+    return { attempt: { id, socket, result } };
+  }
+  // A failure, or a result not of session.rename's shape (a module of
+  // another ccmsg), says nothing of the rename.
+  if (!call.reply.ok || !call.reply.value.ok) {
+    return { attempt: { id, socket, result: "unreadable" } };
+  }
+  const result = call.reply.value.result;
+  if (result.outcome === "refused") {
+    return { attempt: { id, socket, result: "refused" }, refusal: result.message };
+  }
+  return { attempt: { id, socket, result: result.outcome } };
+}
+
+/** Ask every live run of `sid` to rename the session to `title` (already
+ * through validateRenameTitle), all at once. `renamed` when one module ran
+ * `/rename`, else `queued` when one left it to the engine to run once the
+ * session is idle. Else a refusal or a missing answer is `rename_failed`. No
+ * run to write to is `no_module` for a session the daemon counts as running,
+ * `session_not_found` for one it does not or whose run moved to another id
+ * (/clear, /resume); no other route is tried (DR-0039 §7). */
+export async function renameSession(
+  sid: string,
   title: string,
   deps: SessionRenameDeps,
-): Promise<SessionRenameOutcome> {
-  const hyouiSessionId = deps.hyouiSessionId(sessionId);
-  if (!hyouiSessionId) return { ok: false, reason: "terminal_unavailable" };
-  try {
-    await deps.runHyoui(renameCommandArgs(hyouiSessionId, title));
-  } catch (e) {
-    return { ok: false, reason: "send_failed", msg: String(e) };
-  }
-  return { ok: true, hyoui_session_id: hyouiSessionId, title };
-}
-
-/** Run a command, rejecting on non-zero exit so a hyoui refusal (unknown
- * session, lock timeout, bad spec) surfaces as a failed rename instead of a
- * silent success. Mirrors session-kill.ts's runner; kept local rather than
- * shared because that one returns stdout and this one only needs the verdict. */
-async function runHyouiCommand(args: string[], timeoutMs: number): Promise<void> {
-  const argv = ["hyoui", ...args];
-  const proc = Bun.spawn(argv, {
-    env: process.env,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: timeoutMs,
-    killSignal: "SIGKILL",
-  });
-  const [code, errText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-  if (code !== 0) {
-    throw new Error(`hyoui exited ${code}: ${errText.trim().slice(0, 200)}`);
-  }
-}
-
-/** Build the production deps around a live view of the agents poll. The
- * lookup is a callback rather than a snapshot so a rename issued minutes
- * after the connection opened still reads the current poll, and it uses the
- * poller cache (unlike session_kill's fresh read of the state files): a stale pid
- * risks signalling the wrong process, whereas a stale HYOUI_SESSION_ID names
- * a terminal that either still belongs to this session or no longer exists —
- * hyoui rejects the latter, which becomes send_failed. */
-export function productionRenameDeps(
-  lookupHyouiSessionId: (sessionId: string) => string | null,
-): SessionRenameDeps {
-  return {
-    hyouiSessionId: lookupHyouiSessionId,
-    runHyoui: (args) => runHyouiCommand(args, HYOUI_TIMEOUT_MS),
+): Promise<{ outcome: SessionRenameOutcome; tries: SessionRenameTry[] }> {
+  const answered = await Promise.all(
+    deps.runs.liveOf(sid).map(({ socket }) => tryRun(sid, socket, title, deps)),
+  );
+  const tries = answered.map((a) => a.attempt);
+  const outcome = (): SessionRenameOutcome => {
+    if (tries.some((t) => t.result === "renamed")) return { ok: true, outcome: "renamed" };
+    if (tries.some((t) => t.result === "queued")) return { ok: true, outcome: "queued" };
+    const [refusal] = answered.flatMap((a) => (a.refusal !== undefined ? [a.refusal] : []));
+    if (refusal !== undefined) {
+      return {
+        ok: false,
+        code: ErrorCode.rename_failed,
+        msg: `the session refused /rename: ${refusal}`,
+      };
+    }
+    if (tries.some((t) => t.result !== "unwritten")) {
+      return {
+        ok: false,
+        code: ErrorCode.rename_failed,
+        msg: `no hooks module of session ${sid} answered within ${String(deps.deadlineMs / 1000)}s (a session started on an older plugin cannot be asked this); whether it will be renamed is not known`,
+      };
+    }
+    if (deps.isRunning(sid) && !deps.runs.movedOn(sid)) {
+      return {
+        ok: false,
+        code: ErrorCode.no_module,
+        msg: `session ${sid} has no hooks module to rename it; rename it from its terminal (/rename)`,
+      };
+    }
+    return { ok: false, code: ErrorCode.session_not_found, msg: `no running session ${sid}` };
   };
+  return { outcome: outcome(), tries };
 }

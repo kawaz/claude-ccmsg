@@ -279,12 +279,6 @@ export const ErrorCode = {
   // keeps the webui from asking at all, and this covers the window where the
   // config changed under a live connection.
   sandbox_not_configured: "sandbox_not_configured",
-  // session_rename: the session exists but the daemon knows no terminal to
-  // type into (no run of it named a HYOUI_SESSION_ID: no hooks module, started
-  // outside hyoui, or the agents poll has not seen it yet). Kept apart from not_found — "this session cannot be renamed
-  // this way" is a standing property of how the session was started, whereas
-  // not_found would suggest retrying against a session that is simply gone.
-  terminal_unavailable: "terminal_unavailable",
   // claude_update (DR-0043 §6): `claude` is not on the daemon's PATH.
   claude_not_found: "claude_not_found",
   // claude_update: `claude update` exited non-zero; the msg carries the exit
@@ -299,8 +293,8 @@ export const ErrorCode = {
   // claude_update: the run did not end within CLAUDE_UPDATE_TIMEOUT_MS and was
   // stopped.
   claude_update_timeout: "claude_update_timeout",
-  // turn_abort (DR-0044 §2): the session runs, but no live run of it has a
-  // hooks module to ask. No other route (a key sent to the terminal, a
+  // turn_abort (DR-0044 §2), session_rename (DR-0047): the session runs, but
+  // no live run of it has a hooks module to ask. No other route (a key sent to the terminal, a
   // signal) is tried (DR-0039 §7).
   no_module: "no_module",
   // turn_abort: the modules asked run no main-loop turn (it had ended).
@@ -309,5 +303,9 @@ export const ErrorCode = {
   // `$.turn.abort`, or no answer came in time, so whether it stopped is not
   // known. The msg says which.
   abort_failed: "abort_failed",
+  // session_rename (DR-0047): no module renamed the session — the engine
+  // refused `$.command.run`, or no answer came in time, so whether it will be
+  // renamed is not known. The msg says which.
+  rename_failed: "rename_failed",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

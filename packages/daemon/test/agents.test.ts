@@ -10,7 +10,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
   spawnDaemonProc,
@@ -621,16 +620,9 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     });
   });
 
-  // session_rename types into the terminal the row carries, and a session
-  // whose run went has none to type into.
-  test("run が去ると行は端末を持たず、session_rename は terminal_unavailable", async () => {
-    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd, base, binDir }) => {
-      const hyouiLog = path.join(base, "hyoui.log");
-      fs.writeFileSync(hyouiLog, "");
-      writeMockBin(
-        path.join(binDir, "hyoui"),
-        `#!/usr/bin/env bash\nprintf '%s|' "$@" >> "${hyouiLog}"\necho >> "${hyouiLog}"\n`,
-      );
+  // The terminal is the live run's: a session whose run went has none.
+  test("run が去ると行は端末を持たない", async () => {
+    await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
       setRows(dirA, [row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() })]);
       const run = await nameRun(ctx, SID_RUN, "run1", "hy-1");
@@ -638,25 +630,11 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
         "agents",
         (e) => terminalsOf(e.agents, SID_RUN)[0]?.terminal !== undefined,
       );
-      const renamed = await u.requestOk({
-        op: "session_rename",
-        session_id: SID_RUN,
-        title: "t",
-      });
-      expect(renamed).toMatchObject({ hyoui_session_id: "hy-1", title: "t" });
-      expect(fs.readFileSync(hyouiLog, "utf-8")).toBe("input|hy-1|text:/rename t|key:Enter|\n");
-
       await run.end();
       const { ev } = await u.readEventUntil("agents", (e) =>
         terminalsOf(e.agents, SID_RUN).every((r) => r.terminal === undefined),
       );
       expect(terminalsOf(ev.agents, SID_RUN)).toEqual([{ pid: process.pid, terminal: undefined }]);
-      const refused = await u.requestError({
-        op: "session_rename",
-        session_id: SID_RUN,
-        title: "t",
-      });
-      expect(refused.error.code).toBe("terminal_unavailable");
     });
   });
 

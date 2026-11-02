@@ -1832,13 +1832,22 @@ var TurnAbortResultSchema = variant("outcome", [
   object({ outcome: literal("no_turn") }),
   object({ outcome: literal("refused"), message: string() })
 ]);
+var SessionRenameArgsSchema = object({
+  name: pipe(string(), nonEmpty("a name is not empty"))
+});
+var SessionRenameResultSchema = variant("outcome", [
+  object({ outcome: literal("renamed") }),
+  object({ outcome: literal("queued") }),
+  object({ outcome: literal("refused"), message: string() })
+]);
 var SIDECAR_OPS = {
   describe: { args: DescribeArgsSchema, result: DescribeResultSchema },
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
-  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema }
+  "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
+  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema }
 };
 var SIDECAR_OP_NAMES = [
   "describe",
@@ -1846,7 +1855,8 @@ var SIDECAR_OP_NAMES = [
   "session.facts",
   "agent.append",
   "request.override",
-  "turn.abort"
+  "turn.abort",
+  "session.rename"
 ];
 function requestSchema(op, args) {
   return object({
@@ -1862,7 +1872,8 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
-  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args)
+  requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
+  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args)
 ]);
 var SidecarErrorCodeSchema = picklist(["internal"]);
 var SidecarErrorSchema = object({
@@ -1884,6 +1895,24 @@ var SidecarReplySchema = sidecarReplySchema(unknown());
 var SidecarRequestLineSchema = jsonText(SidecarRequestSchema);
 function readSidecarRequest(line) {
   return parseWith(SidecarRequestLineSchema, line);
+}
+
+var RENAME_WAIT_MS = 2000;
+async function renameSession($, state, args) {
+  const run = $.command.run({ command: "rename", args: args.name }).then(() => ({ outcome: "renamed" }), (e) => {
+    const message = errorText(e);
+    $.ui.log(`ccmsg: /rename refused: ${message}`, { to: "debug" });
+    return { outcome: "refused", message };
+  });
+  if (state.mainTurnId !== undefined)
+    return { outcome: "queued" };
+  let timer;
+  const waited = new Promise((resolve) => {
+    timer = $.clock.after(RENAME_WAIT_MS, () => resolve({ outcome: "queued" }));
+  });
+  const result = await Promise.race([run, waited]);
+  timer?.cancel();
+  return result;
 }
 
 function newTurnAbortState() {
@@ -1989,6 +2018,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
       case "turn.abort":
         return { id, ok: true, result: await abortMainTurn($, state) };
+      case "session.rename":
+        return { id, ok: true, result: await renameSession($, state, request.args) };
     }
   } catch (e) {
     $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });

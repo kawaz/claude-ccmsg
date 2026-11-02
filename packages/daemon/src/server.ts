@@ -68,7 +68,11 @@ import { pruneLaunchOutputs } from "./launch-output.ts";
 import { defaultEfforts } from "./default-effort.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
-import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
+import {
+  productionSessionRenameDeps,
+  renameSession,
+  validateRenameTitle,
+} from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { readSessionLaunchContext, sessionSearch } from "./session-search.ts";
 import { launchConfigDir, restartSession } from "./session-restart.ts";
@@ -2353,50 +2357,41 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
     }
 
     case "session_rename": {
-      // user role only, same posture as session_kill: typing into another
-      // session's terminal is at least as strong an action as signalling it,
-      // and a session-role agent must not be able to drive its peers' TUIs.
+      // user role only, same posture as session_kill (DR-0047): renaming a
+      // session is the person's, and a session-role agent must not rename
+      // its peers.
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_rename' requires user role");
         return;
       }
-      // Title validation happens before the delivery attempt so a malformed
+      // Title validation happens before any module is asked so a malformed
       // title costs nothing but a synchronous invalid_args.
       const titleCheck = validateRenameTitle(req.title);
       if (!titleCheck.ok) {
         sendErr(conn, ErrorCode.invalid_args, titleCheck.msg);
         return;
       }
-      const renamed = await sessionRename(
-        req.session_id,
+      const sid = req.session_id;
+      // Slow reply: it waits for the modules' replies, up to
+      // SESSION_RENAME_DEADLINE_MS (DR-0029).
+      const { outcome, tries } = await renameSession(
+        sid,
         titleCheck.title,
-        productionRenameDeps(
-          (sid) =>
-            agentsWithModule(daemon, daemon.agentsPoller.cache.agents).find(
-              (agent) => agent.sessionId === sid && agent.hyoui_session_id !== undefined,
-            )?.hyoui_session_id ?? null,
+        productionSessionRenameDeps(
+          productionSidecarDeps(daemon.sidecarReplies),
+          daemon.sidecarRuns,
+          (s) => daemon.sessions.has(s),
         ),
       );
-      if (renamed.ok) {
-        send(conn, {
-          ok: true,
-          hyoui_session_id: renamed.hyoui_session_id,
-          title: renamed.title,
-        });
+      daemon.log.info(
+        `session_rename: session_id=${sid} result=${outcome.ok ? outcome.outcome : outcome.code}` +
+          ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
+      );
+      if (!outcome.ok) {
+        sendErr(conn, outcome.code, outcome.msg);
         return;
       }
-      if (renamed.reason === "terminal_unavailable") {
-        sendErr(
-          conn,
-          ErrorCode.terminal_unavailable,
-          `session ${req.session_id} has no known terminal (no run of it named a HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
-        );
-        return;
-      }
-      // The browser shows this once and moves on; the log line is what a
-      // later "why did rename fail" investigation has to go on.
-      daemon.log.warn(`op 'session_rename' send failed for ${req.session_id}: ${renamed.msg}`);
-      sendErr(conn, "internal", `sending /rename to the session's terminal failed: ${renamed.msg}`);
+      send(conn, { ok: true, title: titleCheck.title, outcome: outcome.outcome });
       return;
     }
 

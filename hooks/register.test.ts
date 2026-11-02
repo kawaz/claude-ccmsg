@@ -47,6 +47,7 @@ import {
   samePrompt,
 } from "./prompt-send.ts";
 import { beginArgv } from "./session-lifecycle.ts";
+import { RENAME_WAIT_MS } from "./session-rename.ts";
 import { answer, lineSplitter, RESPAWN_MIN_MS } from "./sidecar.ts";
 import { agentMessage } from "./subagents.ts";
 import { PERMIT_TIMEOUT_MS } from "./tools.ts";
@@ -201,6 +202,8 @@ interface Fake {
   logs: string[];
   /** The turn ids the module asked `$.turn.abort` to stop, in order. */
   aborts: string[];
+  /** The slash commands the module ran with `$.command.run`, in order. */
+  commandRuns: { command: string; args?: string }[];
 }
 
 /** The value given after `flag` in a sidecar's argv. */
@@ -243,6 +246,9 @@ function fakeEngine(
     /** What `$.turn.abort` does with the id it is given: resolve when
      * absent. */
     abort?: (turnId: string) => Promise<void>;
+    /** What `$.command.run` does with the command it is given: resolve at
+     * once when absent. */
+    commandRun?: (input: { command: string; args?: string }) => Promise<unknown>;
     /** The files `$.fs` holds, by absolute path: a text is the file's, an
      * Error is what reading it rejects with. The plugin's package.json is
      * there unless given. */
@@ -277,6 +283,7 @@ function fakeEngine(
   const agentAppends: Fake["agentAppends"] = [];
   const agents: Fake["agents"] = [];
   const aborts: string[] = [];
+  const commandRuns: Fake["commandRuns"] = [];
   const store = options.store ?? new Map<string, unknown>();
   const files: Record<string, string | Error> = {
     "/plugin/package.json": '{ "name": "ccmsg", "version": "9.9.9" }',
@@ -325,6 +332,12 @@ function fakeEngine(
       abort: async ({ turnId }) => {
         aborts.push(turnId);
         await options.abort?.(turnId);
+      },
+    },
+    command: {
+      run: async (input) => {
+        commandRuns.push(input);
+        return (await options.commandRun?.(input)) ?? {};
       },
     },
     agent: { list: async () => agents.map((a) => ({ ...a })) },
@@ -488,6 +501,7 @@ function fakeEngine(
     agents,
     store,
     aborts,
+    commandRuns,
   };
   return fake;
 }
@@ -1285,6 +1299,7 @@ describe("requests the module answers without running prompt.send", () => {
         "agent.append",
         "request.override",
         "turn.abort",
+        "session.rename",
       ],
       version: "1.2.3",
     };
@@ -2179,6 +2194,111 @@ describe("stopping the main loop's turn (turn.abort)", () => {
         message: "Error: HooksError: $.turn.abort: t1 is not the running turn t9",
       },
     });
+  });
+});
+
+// Renaming the session from the web UI (DR-0047).
+describe("renaming the session (session.rename)", () => {
+  const RENAME = '{"v":1,"op":"session.rename","id":"r1","args":{"name":"新しい名前"}}';
+  async function started(
+    options: Parameters<typeof fakeEngine>[0] = {},
+  ): Promise<{ fake: Fake; state: ModuleState }> {
+    const fake = fakeEngine(options);
+    const state = registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    return { fake, state };
+  }
+  /** The daemon asks session.rename over the sidecar; the module's reply. */
+  function rename(fake: Fake): Promise<SidecarReply> {
+    const at = fake.replies.length;
+    spawned(fake, 0).stream.push(`${RENAME}\n`);
+    return nextReply(fake, at);
+  }
+  /** A `$.command.run` that ends only when the test says. */
+  function held(): { run: () => Promise<unknown>; end: () => void; fail: (e: Error) => void } {
+    let end = (): void => {};
+    let fail = (_e: Error): void => {};
+    const done = new Promise<unknown>((resolve, reject) => {
+      end = () => resolve({});
+      fail = reject;
+    });
+    return { run: () => done, end, fail };
+  }
+
+  test("an idle session: /rename runs with the name, and the reply is renamed", async () => {
+    const { fake } = await started();
+    expect(await rename(fake)).toEqual({ id: "r1", ok: true, result: { outcome: "renamed" } });
+    expect(fake.commandRuns).toEqual([{ command: "rename", args: "新しい名前" }]);
+    // The wait for the run is let go once it ended.
+    expect(fake.timers.filter((t) => t.ms === RENAME_WAIT_MS && !t.cancelled)).toEqual([]);
+  });
+
+  // The engine runs a command once the session is idle: while the main loop
+  // answers a turn the module asks for the run and answers at once, rather
+  // than holding the reply until the turn ends.
+  test("a main-loop turn running: /rename is asked for, and the reply is queued at once", async () => {
+    const pending = held();
+    const { fake } = await started({ commandRun: pending.run });
+    await fire(fake, "turn.start", { text: "", turnId: "t1" }, async () => ({}));
+    expect(await rename(fake)).toEqual({ id: "r1", ok: true, result: { outcome: "queued" } });
+    expect(fake.commandRuns).toEqual([{ command: "rename", args: "新しい名前" }]);
+    pending.end();
+  });
+
+  // A subagent's turn does not make the session busy for a slash command.
+  test("only a subagent's turn running: the module waits for the run", async () => {
+    const { fake } = await started();
+    await fire(fake, "turn.start", { text: "", turnId: "s1", agentId: "a1" }, async () => ({}));
+    expect(await rename(fake)).toMatchObject({ result: { outcome: "renamed" } });
+  });
+
+  // Busy in a way the module does not see (a turn running when it was loaded,
+  // a dialog open): the run does not end, and the wait answers queued.
+  test("a run that does not end within the wait: queued", async () => {
+    const pending = held();
+    const { fake } = await started({ commandRun: pending.run });
+    const at = fake.replies.length;
+    spawned(fake, 0).stream.push(`${RENAME}\n`);
+    await settle();
+    const timer = fake.timers.find((t) => t.ms === RENAME_WAIT_MS && !t.cancelled);
+    if (timer === undefined) throw new Error("no wait for the run");
+    timer.fn();
+    expect(await nextReply(fake, at)).toEqual({
+      id: "r1",
+      ok: true,
+      result: { outcome: "queued" },
+    });
+    pending.end();
+  });
+
+  test("the engine refusing: refused, with its words", async () => {
+    const { fake } = await started({
+      commandRun: async () => {
+        throw new Error("HooksError: $.command.run: unknown command rename");
+      },
+    });
+    expect(await rename(fake)).toEqual({
+      id: "r1",
+      ok: true,
+      result: {
+        outcome: "refused",
+        message: "Error: HooksError: $.command.run: unknown command rename",
+      },
+    });
+  });
+
+  // A refusal after the queued answer has nobody to go to but the log.
+  test("a queued run the engine refuses later is logged", async () => {
+    const pending = held();
+    const { fake } = await started({ commandRun: pending.run });
+    await fire(fake, "turn.start", { text: "", turnId: "t1" }, async () => ({}));
+    expect(await rename(fake)).toMatchObject({ result: { outcome: "queued" } });
+    pending.fail(new Error("refused past a Stop"));
+    await settle();
+    expect(fake.logs.some((l) => l.includes("/rename refused: Error: refused past a Stop"))).toBe(
+      true,
+    );
   });
 });
 

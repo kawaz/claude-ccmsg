@@ -41,6 +41,12 @@ export interface Engine {
      * carried; the engine rejects any other, naming both. */
     abort(input: { turnId: string }): Promise<void>;
   };
+  command: {
+    /** Run a slash command as if the person typed `/command args`, queued
+     * and run once the session is idle. Rejects an unknown name, and a call
+     * from inside a hook the turn waits on. */
+    run(input: { command: string; args?: string }): Promise<unknown>;
+  };
   agent: {
     /** The session's subagents and teammates, `status` where each loop stands. */
     list(): Promise<readonly { id: string; description: string; type: string; status: string }[]>;

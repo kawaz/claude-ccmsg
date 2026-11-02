@@ -1,25 +1,68 @@
+// session_rename (DR-0047): the title is checked before any module is asked,
+// every live run is asked at once, one renaming is enough, a session busy with
+// a turn is renamed after it, and a session without a module is no_module.
 import { describe, expect, test } from "bun:test";
 import {
+  jsonText,
+  parseWith,
+  type SessionRenameResult,
+  type SidecarReply,
+  SidecarRequestSchema,
+} from "@ccmsg/protocol";
+import { SidecarReplies } from "../src/sidecar-call.ts";
+import type { SidecarRun } from "../src/sidecar-runs.ts";
+import {
   RENAME_TITLE_MAX_LEN,
-  renameCommandArgs,
-  sessionRename,
-  validateRenameTitle,
+  renameSession,
   type SessionRenameDeps,
+  validateRenameTitle,
 } from "../src/session-rename.ts";
 import { startInProcessDaemon, stopInProcessDaemon, sessionConn, userConn } from "./helpers.ts";
 
-/** Deps that record what was run instead of spawning hyoui. `hyoui` is the
- * terminal handle to hand back for any session id (null = "no terminal"). */
-function fakeDeps(opts: { hyoui: string | null; fail?: string }): SessionRenameDeps & {
-  runs: string[][];
-} {
-  const runs: string[][] = [];
+const SID = "11111111-2222-4333-8444-555555555555";
+const RequestTextSchema = jsonText(SidecarRequestSchema);
+
+function runOf(runId: string): SidecarRun {
+  return { sid: SID, runId, startedAt: 1, socket: `/sidecars/${SID}.${runId}.sock` };
+}
+
+/** How a run behaves: takes no line, takes it and says nothing, answers a
+ * result, or answers something that is not session.rename's. */
+type Behaviour = "unwritten" | "silent" | "garbled" | SessionRenameResult;
+
+/** Deps whose runs behave as `runs` says, by run id. */
+function deps(
+  runs: Record<string, Behaviour>,
+  session: { running: boolean; movedOn?: boolean } = { running: true },
+): { deps: SessionRenameDeps; written: string[] } {
+  const replies = new SidecarReplies();
+  let n = 0;
+  const written: string[] = [];
   return {
-    runs,
-    hyouiSessionId: () => opts.hyoui,
-    runHyoui: async (args) => {
-      runs.push(args);
-      if (opts.fail) throw new Error(opts.fail);
+    written,
+    deps: {
+      replies,
+      newId: () => `id${++n}`,
+      now: Date.now,
+      deadlineMs: 50,
+      runs: {
+        liveOf: (sid) => (sid === SID ? Object.keys(runs).map(runOf) : []),
+        movedOn: () => session.movedOn === true,
+      },
+      isRunning: () => session.running,
+      write: async (socket, line) => {
+        const runId = /\.([0-9a-z]+)\.sock$/.exec(socket)?.[1] ?? "";
+        const behaviour = runs[runId];
+        if (behaviour === undefined || behaviour === "unwritten") return "not_written";
+        written.push(line);
+        const read = parseWith(RequestTextSchema, line);
+        if (!read.ok) throw new Error(read.failure.summary);
+        if (behaviour === "silent") return "written";
+        const result = behaviour === "garbled" ? { outcome: "sent" } : behaviour;
+        const reply: SidecarReply = { id: read.value.id, ok: true, result };
+        replies.take(SID, reply);
+        return "written";
+      },
     },
   };
 }
@@ -32,11 +75,8 @@ describe("validateRenameTitle", () => {
     });
   });
 
-  // `:` is the one punctuation mark that could plausibly break the hyoui spec
-  // syntax, and it does not: hyoui splits a spec on its FIRST colon only, so
-  // everything after `text:` is the value verbatim. Asserted here so a future
-  // "let's also reject colons" edit has to argue with a test.
-  test("keeps colons and slashes — hyoui splits a spec on its first colon only", () => {
+  // Only control characters are refused: punctuation is part of a title.
+  test("keeps colons and slashes", () => {
     expect(validateRenameTitle("fix: a/b ratio 1:2")).toEqual({
       ok: true,
       title: "fix: a/b ratio 1:2",
@@ -48,9 +88,7 @@ describe("validateRenameTitle", () => {
     expect(validateRenameTitle("").ok).toBe(false);
   });
 
-  // The reason the whole validation exists: hyoui does no escape processing,
-  // so a raw newline inside the `text:` spec would reach the TUI as Enter and
-  // submit a half-typed `/rename`.
+  // A title is one line of the Sessions list.
   test("rejects control characters (newline, tab, CR, escape, DEL)", () => {
     for (const bad of ["a\nb", "a\tb", "a\rb", "a\u001bb", "a\u007fb"]) {
       const res = validateRenameTitle(bad);
@@ -70,62 +108,77 @@ describe("validateRenameTitle", () => {
   });
 });
 
-describe("renameCommandArgs", () => {
-  // The command shape is the whole contract with hyoui: one `text:` spec
-  // carrying the literal line to type, then a separate `key:Enter` to submit.
-  // The session id alone names the terminal.
-  test("builds `input <session> text:/rename <title> key:Enter`", () => {
-    expect(renameCommandArgs("run-abc", "新しい名前")).toEqual([
-      "input",
-      "run-abc",
-      "text:/rename 新しい名前",
-      "key:Enter",
+describe("renameSession", () => {
+  test("every run is asked at once with the name; one renaming is enough", async () => {
+    const { deps: d, written } = deps({
+      run1: { outcome: "queued" },
+      run2: { outcome: "renamed" },
+    });
+    const done = await renameSession(SID, "新しい名前", d);
+    expect(done.outcome).toEqual({ ok: true, outcome: "renamed" });
+    expect(written.map((line) => parseWith(RequestTextSchema, line))).toEqual([
+      { ok: true, value: { v: 1, op: "session.rename", id: "id1", args: { name: "新しい名前" } } },
+      { ok: true, value: { v: 1, op: "session.rename", id: "id2", args: { name: "新しい名前" } } },
     ]);
+    expect(done.tries.map((t) => t.result)).toEqual(["queued", "renamed"]);
   });
 
-  // Each element is its own argv entry, so a title with spaces needs no
-  // quoting and must not be split.
-  test("keeps a multi-word title inside a single spec argument", () => {
-    const args = renameCommandArgs("run-abc", "two words here");
-    expect(args).toHaveLength(4);
-    expect(args[2]).toBe("text:/rename two words here");
-  });
-});
-
-describe("sessionRename", () => {
-  test("sends the command and reports the terminal it went to", async () => {
-    const deps = fakeDeps({ hyoui: "run-xyz" });
-    const res = await sessionRename("sid-1", "新タイトル", deps);
-    expect(res).toEqual({ ok: true, hyoui_session_id: "run-xyz", title: "新タイトル" });
-    expect(deps.runs).toEqual([["input", "run-xyz", "text:/rename 新タイトル", "key:Enter"]]);
+  // A session answering a turn is renamed once the turn ends: the person is
+  // told so, and it is not an error.
+  test("a module that left it for the turn's end: queued, over a refusal elsewhere", async () => {
+    const done = await renameSession(
+      SID,
+      "t",
+      deps({ run1: { outcome: "queued" }, run2: { outcome: "refused", message: "no" } }).deps,
+    );
+    expect(done.outcome).toEqual({ ok: true, outcome: "queued" });
   });
 
-  // No terminal = nothing to type into. The important half of this assertion
-  // is that hyoui is never run: guessing a handle would type into someone
-  // else's terminal.
-  test("refuses with terminal_unavailable and runs nothing when no handle is known", async () => {
-    const deps = fakeDeps({ hyoui: null });
-    const res = await sessionRename("sid-1", "t", deps);
-    expect(res).toEqual({ ok: false, reason: "terminal_unavailable" });
-    expect(deps.runs).toEqual([]);
+  // The engine's words reach the person.
+  test("a module the engine refused: rename_failed with what the engine said", async () => {
+    const done = await renameSession(
+      SID,
+      "t",
+      deps({ run1: { outcome: "refused", message: "unknown command rename" } }).deps,
+    );
+    expect(done.outcome).toEqual({
+      ok: false,
+      code: "rename_failed",
+      msg: "the session refused /rename: unknown command rename",
+    });
   });
 
-  test("maps a hyoui failure to send_failed, carrying the reason", async () => {
-    const deps = fakeDeps({ hyoui: "run-xyz", fail: "hyoui exited 1: no such session" });
-    const res = await sessionRename("sid-1", "t", deps);
-    expect(res.ok).toBe(false);
-    if (!res.ok && res.reason === "send_failed") {
-      expect(res.msg).toContain("no such session");
-    } else {
-      throw new Error(`expected send_failed, got ${JSON.stringify(res)}`);
+  // A module of an older plugin, which does not read session.rename, answers
+  // nothing.
+  test("no answer, or one not of session.rename's shape: rename_failed", async () => {
+    for (const silent of ["silent", "garbled"] as const) {
+      const done = await renameSession(SID, "t", deps({ run1: "unwritten", run2: silent }).deps);
+      expect(done.outcome).toMatchObject({ ok: false, code: "rename_failed" });
+      if (done.outcome.ok) throw new Error("renamed");
+      expect(done.outcome.msg).toContain("whether it will be renamed is not known");
+    }
+  });
+
+  // DR-0039 §7: without a module there is no other route to try.
+  test("no run to write to: no_module for a running session, session_not_found otherwise", async () => {
+    const cases: [Record<string, Behaviour>, { running: boolean; movedOn?: boolean }, string][] = [
+      [{}, { running: true }, "no_module"],
+      [{ run1: "unwritten" }, { running: true }, "no_module"],
+      [{}, { running: false }, "session_not_found"],
+      [{}, { running: true, movedOn: true }, "session_not_found"],
+    ];
+    for (const [runs, session, code] of cases) {
+      const { deps: d, written } = deps(runs, session);
+      const done = await renameSession(SID, "t", d);
+      expect(done.outcome).toMatchObject({ ok: false, code });
+      expect(written).toEqual([]);
     }
   });
 });
 
 describe("session_rename over the wire", () => {
-  // Typing into another session's terminal is at least as strong as
-  // signalling it, so the same user-role gate as session_kill applies — and
-  // it applies before any validation or spawning.
+  // Renaming a session is the person's, so the same user-role gate as
+  // session_kill applies — and it applies before any validation.
   test("session role is refused with bad_request", async () => {
     const ctx = await startInProcessDaemon();
     try {
@@ -147,8 +200,8 @@ describe("session_rename over the wire", () => {
     }
   });
 
-  // A bad title costs nothing to reject, so it is refused before the delivery
-  // attempt is ever made.
+  // A bad title costs nothing to reject, so it is refused before any module
+  // is asked.
   test("a title with a newline is refused synchronously with invalid_args", async () => {
     const ctx = await startInProcessDaemon();
     try {
@@ -201,23 +254,28 @@ describe("session_rename over the wire", () => {
     }
   });
 
-  // A well-formed request for a session the agents poll has never seen: the
-  // ack arrives on the positional slot, then the outcome event says there is
-  // no terminal. Nothing is spawned, so this stays fast and hermetic.
-  test("user role with an unknown session is answered terminal_unavailable", async () => {
+  // DR-0039 §7: without a module there is no other route to try.
+  test("a session no run of which is named: session_not_found when it does not run, no_module when it does", async () => {
     const ctx = await startInProcessDaemon();
     try {
-      const c = await userConn(ctx);
-      const reply = await c.requestError({
+      const u = await userConn(ctx);
+      const gone = await u.requestError({
         op: "session_rename",
         session_id: "00000000-0000-0000-0000-000000000000",
         title: "新しい名前",
       });
-      expect(reply.ok).toBe(false);
-      expect(reply.error?.code).toBe("terminal_unavailable");
-      c.close();
+      expect(gone.error.code).toBe("session_not_found");
+      const running = await sessionConn(ctx, SID);
+      const noModule = await u.requestError({
+        op: "session_rename",
+        session_id: SID,
+        title: "新しい名前",
+      });
+      expect(noModule.error.code).toBe("no_module");
+      running.close();
+      u.close();
     } finally {
       await stopInProcessDaemon(ctx);
     }
-  }, 30000);
+  });
 });

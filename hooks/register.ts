@@ -14,6 +14,8 @@
 //                         requests with from the web UI
 //   turn-abort.ts         the main loop's running turn, and turn.abort,
 //                         which stops it from the web UI
+//   session-rename.ts     session.rename, the session's name changed from
+//                         the web UI with `/rename`
 //   transcript-push.ts    the rows that go into the conversation, passed on
 //                         to the daemon (DR-0045 §2)
 //   guidance.ts           what the model is told of ccmsg before its first turn

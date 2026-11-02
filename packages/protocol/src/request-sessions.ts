@@ -293,43 +293,23 @@ export const SessionRestartRequestSchema = v.object({
 });
 export type SessionRestartRequest = Output<typeof SessionRestartRequestSchema>;
 
-/** Retitle a running Claude Code session by typing its own `/rename` command
- * into the terminal that session lives in (user role only).
+/** Rename a running Claude Code session (user role only, DR-0047): the
+ * daemon hands the name to every live run's hooks module as a
+ * `session.rename` request, and the module runs the built-in `/rename <title>`
+ * with `$.command.run`, which is what a person typing it does. The engine runs
+ * it once the session is idle, so a session answering a turn is renamed after
+ * the turn (`outcome: "queued"`). The name the session ends up with is the
+ * agents rows' `name`, which follows Claude Code's state file.
  *
- * There is no API to set a session's title: Claude Code records `name` in
- * its state file but nothing writes it from outside, and the title kawaz wants to fix
- * is exactly that `name` (the Sessions list's first line). The one route that
- * does work is the one kawaz performs by hand today — switch to the session's
- * terminal and type `/rename <title>`. This op automates that keystroke
- * delivery through hyoui, the terminal multiplexer the sessions run under:
- * the daemon already learns each session's `HYOUI_SESSION_ID` from the run its
- * hooks module names (AgentInfo.hyoui_session_id), which is the terminal
- * handle `hyoui input` needs. A session with no known hyoui terminal is refused with
- * `terminal_unavailable` rather than guessed at.
+ * Errors: `invalid_args` (an empty title, one over RENAME_TITLE_MAX_LEN, or
+ * one with a control character), `session_not_found`, `no_module` (no live
+ * run has a hooks module; no other route is tried, DR-0039 §7),
+ * `rename_failed` (the engine refused, or no module answered in time).
  *
- * **Best-effort by construction**: success means the keystrokes were handed
- * to the terminal, NOT that Claude Code accepted the rename — the daemon
- * cannot see the TUI's reaction. A session sitting in a modal, or a build of
- * Claude Code without `/rename`, will report `ok` here and simply not be
- * renamed. The webui says so in its own wording rather than claiming the
- * title changed; the authoritative title arrives later via the normal agents
- * poll.
- *
- * `title` is embedded into a single hyoui spec argument (`text:/rename
- * <title>`), and hyoui applies no escape processing — a raw newline in the
- * value would reach the TUI as a real newline and submit a half-typed
- * command. Control characters are therefore rejected up front (see
- * validateRenameTitle in the daemon) instead of being silently stripped.
- *
- * Slow reply for the same reason as session_kill: this spawns a `hyoui
- * input` child, and hyoui itself serializes against other input holders. */
+ * Slow reply: it waits for the modules' replies (DR-0029). */
 export const SessionRenameRequestSchema = v.object({
   op: v.literal("session_rename"),
-  /** The Claude Code session UUID to retitle. The request carries no
-   * hyoui session id for the same reason session_kill carries no pid: the
-   * daemon's own agents-poll resolution is a stronger basis than a
-   * client-asserted terminal handle, and a wrong handle would type a
-   * `/rename` into somebody else's terminal. */
+  /** The Claude Code session UUID to rename. */
   session_id: SessionIdSchema,
   /** The new title, as the user typed it. Leading/trailing whitespace is
    * trimmed; control characters are rejected (invalid_args). */

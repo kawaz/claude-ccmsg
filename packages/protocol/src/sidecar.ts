@@ -283,6 +283,27 @@ export const TurnAbortResultSchema = v.variant("outcome", [
 ]);
 export type TurnAbortResult = Output<typeof TurnAbortResultSchema>;
 
+// --- session.rename --------------------------------------------------------
+
+/** `session.rename` (DR-0047): give the session the name `name` with the
+ * built-in `/rename`, run by `$.command.run`. The daemon has checked the name
+ * (trimmed, not empty, no control characters). */
+export const SessionRenameArgsSchema = v.object({
+  name: v.pipe(v.string(), v.nonEmpty("a name is not empty")),
+});
+export type SessionRenameArgs = Output<typeof SessionRenameArgsSchema>;
+
+/** What a `session.rename` came to: `renamed` (`$.command.run` resolved),
+ * `queued` (the main loop runs a turn, or the run did not end within the
+ * module's wait: the engine runs `/rename` once the session is idle), or
+ * `refused` (`$.command.run` rejected; `message` is what it said). */
+export const SessionRenameResultSchema = v.variant("outcome", [
+  v.object({ outcome: v.literal("renamed") }),
+  v.object({ outcome: v.literal("queued") }),
+  v.object({ outcome: v.literal("refused"), message: v.string() }),
+]);
+export type SessionRenameResult = Output<typeof SessionRenameResultSchema>;
+
 // --- the ops ---------------------------------------------------------------
 
 /** Each op's arguments and result. */
@@ -293,6 +314,7 @@ export const SIDECAR_OPS = {
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
+  "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
 export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
@@ -306,6 +328,7 @@ export const SIDECAR_OP_NAMES = [
   "agent.append",
   "request.override",
   "turn.abort",
+  "session.rename",
 ] as const satisfies readonly SidecarOp[];
 
 /** The schema of a request of `op` with args read by `args`. */
@@ -343,6 +366,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
+  requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),
 ]);
 export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;

@@ -263,17 +263,14 @@ export const SessionRestartResponseSchema = v.object({
 });
 export type SessionRestartResponse = Output<typeof SessionRestartResponseSchema>;
 
-/** Payload of a completed session_rename, delivered inside
- * the session_rename reply. `ok` here means "the `/rename <title>` keystrokes
- * reached the terminal", not "the session is now called that" — see
- * SessionRenameRequest for why the daemon cannot know the latter. `title` is
- * the normalized (trimmed) string actually typed, so a UI can report what it
- * sent rather than what the user's draft happened to contain, and
- * `hyoui_session_id` names the terminal it went to. */
+/** Payload of a session_rename (DR-0047): a live run's hooks module ran
+ * `/rename` (`renamed`) or asked the engine to run it once the session is
+ * idle (`queued`, the session was answering a turn). `title` is the trimmed
+ * name the module was given. */
 export const SessionRenameResponseSchema = v.object({
   ok: v.literal(true),
-  hyoui_session_id: v.string(),
   title: v.string(),
+  outcome: v.picklist(["renamed", "queued"]),
 });
 export type SessionRenameResponse = Output<typeof SessionRenameResponseSchema>;
 

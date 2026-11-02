@@ -17,6 +17,8 @@ import {
   sidecarRunId,
   SidecarRunIdSchema,
   RequestOverrideResultSchema,
+  SessionRenameResultSchema,
+  type SessionRenameResult,
 } from "../src/sidecar.ts";
 
 const line = (value: object): string => JSON.stringify(value);
@@ -286,6 +288,30 @@ describe("the ops' results", () => {
     }
     for (const result of [{ outcome: "refused" }, { outcome: "stopped" }]) {
       expect(parseWith(TurnAbortResultSchema, result).ok).toBe(false);
+    }
+  });
+
+  // DR-0047: session.rename carries the name, not empty, and answers whether
+  // the rename ran or waits for the session to be idle; a refusal carries the
+  // engine's words.
+  test("session.rename: a name, and renamed / queued / refused", () => {
+    const request = { v: 1, op: "session.rename", id: "r", args: { name: "新しい名前" } } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    for (const args of [{}, { name: "" }, { name: 1 }]) {
+      expect(readSidecarRequest(line({ v: 1, op: "session.rename", id: "r", args })).ok).toBe(
+        false,
+      );
+    }
+    const results: SessionRenameResult[] = [
+      { outcome: "renamed" },
+      { outcome: "queued" },
+      { outcome: "refused", message: "unknown command rename" },
+    ];
+    for (const result of results) {
+      expect(parseWith(SessionRenameResultSchema, result)).toEqual({ ok: true, value: result });
+    }
+    for (const result of [{ outcome: "refused" }, { outcome: "sent" }]) {
+      expect(parseWith(SessionRenameResultSchema, result).ok).toBe(false);
     }
   });
 
