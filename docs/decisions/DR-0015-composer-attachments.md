@@ -62,6 +62,7 @@ kawaz が新機能を発案 (verbatim §7):
 - 入力欄下に添付一覧を「`FILE<N>: <filename>`」の小さめフォントで並べる (存在アピール)。upload 中は「`FILE<N>: <filename> (42%)`」等の進捗も併記
 - 送信 or 手動除去 (× ボタン) で添付一覧から消える
 - **clipboard paste**: Composer に paste event listener を張り、`ClipboardEvent.clipboardData.items` に `image/*` mime があれば file として抽出して upload 経路に流す [kawaz]
+- **ディレクトリの paste / drop**: Finder のディレクトリも kind `file` の item で届くが、`webkitGetAsEntry()` が directory を返す item は添付にせず、その名前 (basename) をテキストとして caret 位置に入れる。ブラウザからはフルパスを読めない (Finder の「パス名をコピー」(⌘⌥C) ならフルパスがテキストで貼れる)
 
 ### 2.6 添付表示 (受信側の rendering)
 

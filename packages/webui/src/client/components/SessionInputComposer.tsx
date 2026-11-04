@@ -31,7 +31,7 @@ import { sameJson, useStoreState } from "../useStore.ts";
 import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
 import {
-  extractTransferFiles,
+  extractTransfer,
   hasPendingUpload,
   insertPlaceholder,
   maxPlaceholderNumber,
@@ -278,6 +278,33 @@ export function SessionInputComposer({
     }
   }, [text]);
 
+  // paste / drop されたディレクトリの名前を caret 位置にテキストとして入れる
+  // (ディレクトリは添付にしない、DR-0015 §2.5)。同じイベントの添付の
+  // placeholder が名前の後ろに続くように、beginUpload と同じ caret の予約を使う。
+  const insertDirectoryNames = useCallback(
+    (names: string[]) => {
+      const el = textareaRef.current;
+      const current = contentRef.current;
+      const start = Math.min(
+        pendingCaretRef.current ?? (el ? el.selectionStart : current.text.length),
+        current.text.length,
+      );
+      const end = pendingCaretRef.current ?? (el ? el.selectionEnd : start);
+      const inserted = names.join("\n");
+      const nextCaret = start + inserted.length;
+      pendingCaretRef.current = nextCaret;
+      queueMicrotask(() => {
+        pendingCaretRef.current = null;
+      });
+      restoreCaretRef.current = nextCaret;
+      edit({
+        text: current.text.slice(0, start) + inserted + current.text.slice(Math.max(start, end)),
+        attachments: current.attachments,
+      });
+    },
+    [edit],
+  );
+
   // 添付 upload 開始 (通常 Composer と同じロジック)。caret 位置にプレースホルダ
   // 挿入 + XHR upload、progress は state に反映、送信ボタン disable は
   // hasPendingUpload に委ねる。
@@ -365,16 +392,23 @@ export function SessionInputComposer({
   );
 
   // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、
-  // drop は Finder からの drag & drop 添付。
+  // drop は Finder からの drag & drop 添付。ディレクトリは名前をテキストで入れる。
+  const takeTransfer = useCallback(
+    (e: Event, items: DataTransferItemList) => {
+      const { files, directoryNames } = extractTransfer(items);
+      if (files.length === 0 && directoryNames.length === 0) return; // 通常テキストは default に任せる
+      e.preventDefault();
+      if (directoryNames.length > 0) insertDirectoryNames(directoryNames);
+      for (const f of files) beginUpload(f);
+    },
+    [beginUpload, insertDirectoryNames],
+  );
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
       if (!e.clipboardData || isSending(sid)) return;
-      const files = extractTransferFiles(e.clipboardData.items);
-      if (files.length === 0) return; // 通常テキスト paste は default に任せる
-      e.preventDefault();
-      for (const f of files) beginUpload(f);
+      takeTransfer(e, e.clipboardData.items);
     },
-    [beginUpload, sid],
+    [takeTransfer, sid],
   );
   const onDragOver = useCallback((e: DragEvent) => {
     if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
@@ -382,12 +416,9 @@ export function SessionInputComposer({
   const onDrop = useCallback(
     (e: DragEvent) => {
       if (!e.dataTransfer || isSending(sid)) return;
-      const files = extractTransferFiles(e.dataTransfer.items);
-      if (files.length === 0) return;
-      e.preventDefault();
-      for (const f of files) beginUpload(f);
+      takeTransfer(e, e.dataTransfer.items);
     },
-    [beginUpload, sid],
+    [takeTransfer, sid],
   );
 
   const onFilesPicked = useCallback(

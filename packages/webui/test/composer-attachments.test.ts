@@ -6,7 +6,7 @@
 // `.ts` import 慣習を維持し、JSX runtime を巻き込まない。
 import { describe, expect, test } from "bun:test";
 import {
-  extractTransferFiles,
+  extractTransfer,
   hasPendingUpload,
   insertPlaceholder,
   maxPlaceholderNumber,
@@ -150,12 +150,23 @@ describe("hasPendingUpload", () => {
   });
 });
 
-describe("extractTransferFiles", () => {
+describe("extractTransfer", () => {
   // paste / drop の DataTransfer items から file を全部拾う。DR-0015 §2.5 の
   // clipboard 画像経路に加えて「Finder コピーの paste」と
   // 「Finder からの drag & drop」も拾う = mime 不問で kind:"file" を全部。
-  function fakeItem(kind: string, type: string, file: File | null) {
-    return { kind, type, getAsFile: () => file };
+  // Finder のディレクトリも kind:"file" で届くが、添付にせず名前だけ返す。
+  function fakeItem(kind: string, type: string, file: File | null, directory?: string) {
+    return {
+      kind,
+      type,
+      getAsFile: () => file,
+      webkitGetAsEntry: () =>
+        kind !== "file"
+          ? null
+          : directory !== undefined
+            ? { isDirectory: true, name: directory }
+            : { isDirectory: false, name: file?.name ?? "" },
+    };
   }
 
   test("extracts every file item regardless of mime, skipping non-file entries", () => {
@@ -164,25 +175,42 @@ describe("extractTransferFiles", () => {
     const items = [
       fakeItem("file", "image/png", png),
       fakeItem("string", "text/plain", null), // kind != file → skip
-      fakeItem("file", "application/pdf", pdf), // 画像以外も添付対象 (mid=51)
+      fakeItem("file", "application/pdf", pdf), // 画像以外も添付対象
     ];
-    const got = extractTransferFiles(items);
-    expect(got.length).toBe(2);
-    expect(got[0]).toBe(png);
-    expect(got[1]).toBe(pdf);
+    const got = extractTransfer(items);
+    expect(got.files.length).toBe(2);
+    expect(got.files[0]).toBe(png);
+    expect(got.files[1]).toBe(pdf);
+    expect(got.directoryNames).toEqual([]);
   });
 
   // getAsFile が null を返す壊れた entry を除外 (browser の実装差分への保険)。
   test("skips items whose getAsFile returns null even when kind matches", () => {
     const items = [fakeItem("file", "image/png", null)];
-    expect(extractTransferFiles(items)).toEqual([]);
+    expect(extractTransfer(items)).toEqual({ files: [], directoryNames: [] });
   });
 
-  // file を含まない transfer (通常のテキスト paste / テキスト drop) は空配列 →
+  // file を含まない transfer (通常のテキスト paste / テキスト drop) は空 →
   // 呼び出し側は browser default の挙動にそのまま任せる。
-  test("returns [] when the transfer has no file (text paste/drop falls through)", () => {
+  test("returns nothing when the transfer has no file (text paste/drop falls through)", () => {
     const items = [fakeItem("string", "text/plain", null)];
-    expect(extractTransferFiles(items)).toEqual([]);
+    expect(extractTransfer(items)).toEqual({ files: [], directoryNames: [] });
+  });
+
+  // ディレクトリは getAsFile が File を返しても添付にしない (upload すると
+  // transport error で落ちる)。名前を返し、混ざったファイルは従来どおり添付。
+  test("a directory item gives its name, not a file; files beside it stay files", () => {
+    const dirFile = new File([], "project", { type: "" });
+    const txt = new File([new Uint8Array([3])], "note.txt", { type: "text/plain" });
+    const items = [
+      fakeItem("file", "", dirFile, "project"),
+      fakeItem("file", "text/plain", txt),
+      fakeItem("string", "text/plain", null),
+    ];
+    const got = extractTransfer(items);
+    expect(got.directoryNames).toEqual(["project"]);
+    expect(got.files.length).toBe(1);
+    expect(got.files[0]).toBe(txt);
   });
 });
 

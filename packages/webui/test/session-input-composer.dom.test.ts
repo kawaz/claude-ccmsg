@@ -484,3 +484,93 @@ describe("SessionInputComposer opened from outside", () => {
     expect(document.activeElement).toBe(textarea(root));
   });
 });
+
+describe("SessionInputComposer paste of Finder items", () => {
+  // Finder の cmd+c はファイルもディレクトリも kind:"file" の item で置き、
+  // 名前を text/plain に添える。ディレクトリは upload できないので添付に
+  // せず名前をテキストで caret 位置に入れ、ファイルは従来どおり添付にする
+  // (DR-0015 §2.5)。
+  /** 送られた upload を数えるだけで、終わらせない XHR。 */
+  let uploads: string[] = [];
+  class PendingXhr {
+    upload = {};
+    open(): void {}
+    send(form: FormData): void {
+      const file = form.get("file");
+      uploads.push(file instanceof File ? file.name : "");
+    }
+  }
+  beforeEach(() => {
+    uploads = [];
+    restores.push(stubGlobal("XMLHttpRequest", PendingXhr));
+  });
+
+  function fileItem(file: File, directory: boolean) {
+    return {
+      kind: "file",
+      type: file.type,
+      getAsFile: () => file,
+      webkitGetAsEntry: () => ({ isDirectory: directory, name: file.name }),
+    };
+  }
+  function textItem() {
+    return {
+      kind: "string",
+      type: "text/plain",
+      getAsFile: () => null,
+      webkitGetAsEntry: () => null,
+    };
+  }
+
+  async function paste(root: HTMLElement, items: unknown[]): Promise<Event> {
+    const el = textarea(root);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    restores.push(stubProperty(event, "clipboardData", { value: { items } }));
+    await act(() => {
+      el.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  function attachmentLabels(root: HTMLElement): string[] {
+    return Array.from(
+      root.querySelectorAll(".composer-attachment-label"),
+      (n) => n.textContent ?? "",
+    );
+  }
+
+  test("a directory goes in as its name at the caret, with no attachment", async () => {
+    const root = await openComposer();
+    await type(root, "see  here");
+    textarea(root).setSelectionRange(4, 4);
+    const event = await paste(root, [
+      fileItem(new File([], "project", { type: "" }), true),
+      textItem(),
+    ]);
+    expect(event.defaultPrevented).toBe(true);
+    expect(textarea(root).value).toBe("see project here");
+    expect(textarea(root).selectionStart).toBe(11);
+    expect(attachmentLabels(root)).toEqual([]);
+    expect(uploads).toEqual([]);
+  });
+
+  test("a file is attached as before, and a directory beside it goes in as text", async () => {
+    const root = await openComposer();
+    await paste(root, [
+      fileItem(new File([], "project", { type: "" }), true),
+      fileItem(new File([new Uint8Array([1])], "note.txt", { type: "text/plain" }), false),
+      textItem(),
+    ]);
+    expect(textarea(root).value).toBe("project[FILE1]");
+    expect(uploads).toEqual(["note.txt"]);
+    expect(attachmentLabels(root).length).toBe(1);
+    expect(attachmentLabels(root)[0]).toContain("note.txt");
+  });
+
+  test("text alone is left to the browser's own paste", async () => {
+    const root = await openComposer();
+    const event = await paste(root, [textItem()]);
+    expect(event.defaultPrevented).toBe(false);
+    expect(uploads).toEqual([]);
+  });
+});

@@ -108,27 +108,51 @@ export function hasPendingUpload(attachments: ComposerAttachment[]): boolean {
   return attachments.some((a) => a.status === "uploading");
 }
 
+/** The part of a DataTransferItem that extractTransfer reads. */
+export interface TransferItem {
+  kind: string;
+  type: string;
+  getAsFile(): File | null;
+  webkitGetAsEntry(): { isDirectory: boolean; name: string } | null;
+}
+
+/** What a paste / drop carries: files to attach, and the names of the
+ * directories in it (which go into the text instead). */
+export interface TransferContents {
+  files: File[];
+  directoryNames: string[];
+}
+
 /**
- * Extract every File object from a paste / drop event's DataTransfer items.
- * DR-0015 §2.5 は image mime の clipboard paste が起点だが、kawaz r17 mid=51
- * (2026-07-15) で「Finder でコピーしたファイルの paste」「Finder からの
- * drag & drop」にも拡張 — どちらも kind:"file" の item として届くので、
- * mime を問わず全部拾う (添付機能自体が任意ファイル対応、DR-0015 §2.1)。
- * Returns [] when the transfer has no file (in which case the caller should
- * fall through to the browser's default text paste / drop behavior).
+ * Split a paste / drop event's DataTransfer items into files and directories.
+ * DR-0015 §2.5 は image mime の clipboard paste が起点だが、「Finder でコピー
+ * したファイルの paste」「Finder からの drag & drop」も kind:"file" の item と
+ * して届くので、mime を問わず全部拾う (添付機能自体が任意ファイル対応、
+ * DR-0015 §2.1)。Finder のディレクトリも kind:"file" で届き、getAsFile は
+ * 中身の読めない File を返す (upload が transport error で落ちる) ので、
+ * entry が directory の item は添付にせず名前だけを返す。entry.name はその
+ * item の basename で、Finder が text/plain に置く名前と同じもの (text/plain は
+ * clipboard 全体で 1 つなので、ファイルとディレクトリが混ざると item ごとに
+ * 切り分けられない)。webkitGetAsEntry はイベントの handler の中でしか読めない
+ * ので、呼び出し側は同期で呼ぶ。
+ * Both lists are empty when the transfer has no file (in which case the
+ * caller should fall through to the browser's default text paste / drop).
  */
-export function extractTransferFiles(
-  items:
-    | Iterable<{ kind: string; type: string; getAsFile(): File | null }>
-    | ArrayLike<{ kind: string; type: string; getAsFile(): File | null }>,
-): File[] {
-  const out: File[] = [];
+export function extractTransfer(
+  items: Iterable<TransferItem> | ArrayLike<TransferItem>,
+): TransferContents {
+  const out: TransferContents = { files: [], directoryNames: [] };
   // items may be a DataTransferItemList (array-like) or an iterable; loop over
   // both via for-of on a materialized array.
   for (const item of Array.from(items)) {
     if (item.kind !== "file") continue;
+    const entry = item.webkitGetAsEntry();
+    if (entry?.isDirectory) {
+      out.directoryNames.push(entry.name);
+      continue;
+    }
     const file = item.getAsFile();
-    if (file) out.push(file);
+    if (file) out.files.push(file);
   }
   return out;
 }
