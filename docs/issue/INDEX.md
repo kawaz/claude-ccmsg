@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-04 | bug | open | [launch-trust-after-upgrade-restart](./2026-11-04-launch-trust-after-upgrade-restart.md) | upgrade で起きた daemon を通した launch で、launch command の trust ダイアログ自動承認が効かない (Yes 送信の key:Down が選択を動かさない、原因未特定) |
 | 2026-11-02 | bug | open | [launch-tool-test-first-run-timeout](./2026-11-02-launch-tool-test-first-run-timeout.md) | launch-tool.test.ts の subagent launch テストが just test の 1 回目だけ 5000ms で timeout する |
 | 2026-10-29 | task | open | [dr0045-say-leftovers](./2026-10-29-dr0045-say-leftovers.md) | DR-0045 の実装後に残った say まわりの 3 点 (非 live セッションの「既読」表示、say-read.json の刈り込み、追いつき中の compaction 再 push) |
 | 2026-10-28 | bug | open | [fs-read-external-symlink-swap-without-module](./2026-10-28-fs-read-external-symlink-swap-without-module.md) | module の無いセッションの fs_read_external は毎回の走査で allowlist を作り直すので、許可されたパスの先祖が後から symlink に差し替わると差し替え先が読める |
