@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-05 | request | open | [webui-mark-sessions-with-old-module-as-not-live](./2026-11-05-webui-mark-sessions-with-old-module-as-not-live.md) | push を持たない古い module (0.211 より前) のセッションを webui で「ライブ更新なし」と分からせる |
 | 2026-11-05 | bug | open | [bun-test-parallel-processes-fail](./2026-11-05-bun-test-parallel-processes-fail.md) | bun test を 2 プロセス同時に走らせると agents / send-message / op-http のテストが落ちる (何かを取り合っている、未調査) |
 | 2026-11-02 | bug | open | [bun-preload-default-timeout-first-file-only](./2026-11-02-bun-preload-default-timeout-first-file-only.md) | preload の setDefaultTimeout(15_000) が最初に走るテストファイルにしか効かず、2 番目以降は 5000ms のまま |
 | 2026-10-29 | task | open | [dr0045-say-leftovers](./2026-10-29-dr0045-say-leftovers.md) | DR-0045 の実装後に残った say まわりの 3 点 (非 live セッションの「既読」表示、say-read.json の刈り込み、追いつき中の compaction 再 push) |
