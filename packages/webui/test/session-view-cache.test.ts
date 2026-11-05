@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { touchSessionViewCache, type CachedSessionView } from "../src/client/session-view-cache.ts";
+import {
+  sessionViewMountOrder,
+  touchSessionViewCache,
+  type CachedSessionView,
+} from "../src/client/session-view-cache.ts";
 
 const entry = (sid: string, tab: CachedSessionView["tab"] = "timeline"): CachedSessionView => ({
   sid,
@@ -41,5 +45,20 @@ describe("session view LRU cache", () => {
     );
     const empty: CachedSessionView[] = [];
     expect(touchSessionViewCache(empty, entry("s1"), 0)).toBe(empty);
+  });
+});
+
+describe("session view mount order", () => {
+  test("is by sid, whatever order the sessions were used in", () => {
+    const cache = [entry("s3"), entry("s1"), entry("s2")];
+    expect(sessionViewMountOrder(cache).map((item) => item.sid)).toEqual(["s1", "s2", "s3"]);
+    expect(cache.map((item) => item.sid)).toEqual(["s3", "s1", "s2"]);
+  });
+
+  test("showing a kept session again leaves the mount order as it was", () => {
+    const cache = [entry("s1"), entry("s2"), entry("s3")];
+    const revisited = touchSessionViewCache(cache, entry("s1"), 3);
+    expect(revisited.map((item) => item.sid)).toEqual(["s2", "s3", "s1"]);
+    expect(sessionViewMountOrder(revisited).map((item) => item.sid)).toEqual(["s1", "s2", "s3"]);
   });
 });

@@ -20,7 +20,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
 import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
 import { nextSidebarSnapLeft, opensOnMain } from "../sidebar-panes.ts";
-import { touchSessionViewCache, type CachedSessionView } from "../session-view-cache.ts";
+import {
+  sessionViewMountOrder,
+  touchSessionViewCache,
+  type CachedSessionView,
+} from "../session-view-cache.ts";
 import { useCanGoBack, useCanGoForward } from "../useNavigationHistory.ts";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
@@ -171,7 +175,8 @@ export function App() {
     (frame.view === "session" || frame.view === "timeline")
       ? frame.currentSid
       : null;
-  // The session views kept mounted (most recently shown last). It remembers
+  // The session views kept mounted (most recently shown last; they are mounted
+  // in `sessionViewMountOrder`, so showing one never moves it). It remembers
   // the views shown on earlier renders, so it is state, brought up to date
   // during render: setting it here re-runs this render before anything is
   // committed. A view the LRU drops unmounts, and SessionView releases its
@@ -324,7 +329,7 @@ export function App() {
          * 自分の右端に立てる (Sidebar.tsx)。本文と横に並びきるか、本文が
          * 幅いっぱいを占めて横スクロールで行き来するかは app.css が決める。 */}
         <Sidebar />
-        {sessionViews.map((view) => (
+        {sessionViewMountOrder(sessionViews).map((view) => (
           <CachedSessionViewComponent
             key={view.sid}
             sid={view.sid}

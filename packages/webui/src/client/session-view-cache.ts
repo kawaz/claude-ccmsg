@@ -32,3 +32,16 @@ export function touchSessionViewCache(
   next.push(current);
   return next.slice(-limit);
 }
+
+/** The order the kept views are mounted in, which is not the order they were
+ * used in: by sid, so the views already mounted keep their places in the DOM
+ * whichever one is shown. Moving a view's element (what rendering the cache in
+ * use order does when a kept view is shown again) drops the scroll position of
+ * every scroller inside it, in Chromium and WebKit alike; a view that stays in
+ * place and is only hidden and shown keeps them. Only one view is shown at a
+ * time, so their order in the DOM is not seen. */
+export function sessionViewMountOrder(
+  cache: readonly CachedSessionView[],
+): readonly CachedSessionView[] {
+  return cache.toSorted((a, b) => (a.sid < b.sid ? -1 : a.sid > b.sid ? 1 : 0));
+}

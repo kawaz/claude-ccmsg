@@ -4,7 +4,7 @@
 // state.view is "session" or "timeline"). Files/Timeline/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "preact/hooks";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
@@ -157,8 +157,17 @@ export function SessionView({
   // render before anything is committed.
   const [visitedTabs, setVisitedTabs] = useState<ReadonlySet<SessionTab>>(() => new Set([tab]));
   if (!visitedTabs.has(tab)) setVisitedTabs(new Set([...visitedTabs, tab]));
-  const rootRef = useRef<HTMLElement>(null);
-  const scrollPositions = useRef(new Map<HTMLElement, { top: number; left: number }>());
+  // Design rationale: scroll positions are left to the browser. Hiding this
+  // view (`hidden` below, when App's LRU keeps it behind another session) or a
+  // tab panel keeps every scroller's position: Chromium and WebKit both give an
+  // element its scroll offset back when its `display: none` ancestor is shown
+  // again, without a scroll event, as long as the element is not moved in the
+  // DOM meanwhile (App mounts the kept views in `sessionViewMountOrder` so that
+  // none of them moves). Recording them here would mean reading the
+  // layout of the view's elements, and in Chromium each such read on an
+  // element inside a closed <details> (a Timeline fold) runs a layout of the
+  // whole document: on a Timeline read to its start that is minutes of a
+  // frozen tab (docs/findings/2026-11-05-older-tab-freeze-fix.md).
 
   // This view unmounts only when App's LRU drops the session (App.tsx). Its
   // cached transcript is then released: `SessionTreeState.timeline` is the
@@ -170,40 +179,6 @@ export function SessionView({
   // stays.
   useEffect(() => () => store.dispatch({ type: "timeline/evicted", sids: [sid] }), [store, sid]);
 
-  // The scroll positions inside this view, kept as its elements scroll, so the
-  // view comes back where it was after the LRU hid it. Taken from the scroll
-  // events rather than by reading every element when leaving: a scrollTop read
-  // can make the browser lay the page out again, and a Timeline read to its
-  // first line holds tens of thousands of elements, so that read froze the tab
-  // for minutes on every navigation (docs/findings/2026-11-05-older-tab-freeze.md).
-  // A layout effect, so the scroll a child makes on its first render (the
-  // Timeline's move to its end) is heard: scroll events go out with the next
-  // frame, after this has run.
-  useLayoutEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    const positions = scrollPositions.current;
-    const onScroll = (event: Event) => {
-      const element = event.target;
-      if (!(element instanceof HTMLElement)) return;
-      positions.set(element, { top: element.scrollTop, left: element.scrollLeft });
-    };
-    // Scroll events do not bubble: the capture phase hears every descendant's.
-    root.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => root.removeEventListener("scroll", onScroll, { capture: true });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!active) return;
-    for (const [element, position] of scrollPositions.current) {
-      if (!element.isConnected) {
-        scrollPositions.current.delete(element);
-        continue;
-      }
-      element.scrollTop = position.top;
-      element.scrollLeft = position.left;
-    }
-  }, [active]);
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // 接続中セッションが申告した transcript_path、無ければ sid から解決した
   // `<configDir>/projects/<project>/<sid>.jsonl` (daemon の resolveTranscript
@@ -348,7 +323,7 @@ export function SessionView({
 
   return (
     <AppContext.Provider value={app}>
-      <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
+      <main class="session-view" hidden={!active} data-session-id={sid}>
         <div class="session-tabs">
           {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
            * you can middle-click into a second window is worth more here than
