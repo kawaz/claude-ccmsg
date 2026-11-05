@@ -46,3 +46,11 @@ archive の `2026-10-10-just-test-one-timeout-unidentified` で名前の分か�
 - [ ] 原因を観測で特定する (推測で断定しない。失敗時のログを tee で残す)
 - [ ] `just test` を連続で複数回 (cold を含む) 実行して 5000ms timeout が再現しない
 - [ ] push の coverage gate が通る
+
+## 原因と修正 (2026-11-02)
+
+原因: test 側の同期の欠け。待ちを超える起動の test 2 件 (「…outcome is told when it ends」と「a subagent's launch past the wait…」) は、daemon が `launchToolWaitMs` (50ms) の後に `running` を返した直後に、起動コマンドが自分で `mkfifo` する FIFO をディレクトリから探して放していた。50ms の内に起動コマンドがそこまで進まないと (起動から 50ms 後に FIFO が無かったのは 30 回中 2 回、負荷が高いほど増える) 何も放さず、起動コマンドは `launch_timeout_seconds` (10 秒) で止められるまで待つ。5000ms で落ちたのは、preload の `setDefaultTimeout(15_000)` が最初に走るテストファイルにしか効かないため (単独なら 15 秒で、10 秒待って pass する。別に [bun-preload-default-timeout-first-file-only](./2026-11-02-bun-preload-default-timeout-first-file-only.md))。製品側の実装には原因が無かった。
+
+修正 commit: zwmsnzkt (630f9e1d)。FIFO を test が起動の前に作り、起動コマンドはそれを読むだけにした。test の書き込みは読み手が開くまで待つので、起動の遅さに依らない。主張と assert、timeout は変えていない。
+
+証拠と再現の表は [findings 2026-11-02-launch-tool-test-first-run-timeout](../findings/2026-11-02-launch-tool-test-first-run-timeout.md)。直した後の `just test` は 3 回連続で 4613 pass / 0 fail。
