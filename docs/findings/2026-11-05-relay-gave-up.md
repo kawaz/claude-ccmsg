@@ -73,13 +73,13 @@ gave up の手前には、後ろに block が続く行 (thinking、並列 tool_u
 - タブが受け取って描かなかった push は、後で描かれた時に `elapsed_ms` の大きい client trace として残る (trace.ts は `dom_commit` で end までの保留を全部報告する)。11-02 以降の `dom_commit` で `elapsed_ms` が 1 秒を超えるのは 1 件だけ。= タブが受け取って落としたのではなく、daemon が送っていない (そのタブの購読が無い) 側を示す
 - daemon は `transcript_subscribe` / `transcript_unsubscribe` を log に書かないので、購読が無かった間にタブが TL を見ていたのか、別の画面にいたのかは区別できない
 
-## 判断に効く含み
+## 結論
 
-- gave up は「行が来ない」異常ではなく、Claude Code の書き込みの時機 (response の終わり) に daemon の待ちの上限 (5 秒) が合っていないだけ。行は response の最後の push で読まれる
-- TL がライブ更新されない件は、daemon の relay の側 (読むファイル、offset、uuid の照合、gave up の後の拾い) では説明がつかない。実データで見えたのは購読の欠けだけで、欠けの起きる操作は特定できていない
+- gave up は Claude Code の書き込みの時機 (response の終わり) によるもので、TL に影響しない。行は response の最後の block の push で読まれ、欠けも重複も無く届く
+- TL がライブ更新されなかったのは、module が 0.211 より前で push の無いセッション (kawaz 2026-11-05 裁定。新 module のセッションでは即時に反映されることを kawaz が確認)。daemon の relay の側 (読むファイル、offset、uuid の照合、gave up の後の拾い) に原因は無い
 
 ## 未検証
 
-- kawaz の操作 (止まった時に見ていたセッション、ブラウザ、直前の操作) と購読の欠けの対応
+- 7ab56c6d の購読者 0 の区間に、kawaz のタブが何をしていたか (older の後の固まりと reload の可能性。[older の計測](2026-11-05-older-tab-freeze.md))
 - `transcript_subscribe` が失敗する場面 (webui は失敗を握りつぶして再試行しない。`session_not_found` / `not_found` が返るのは、セッションが daemon に登録されていない時と transcript を名乗っていない時)
 - interrupt (Esc) や API error で途中で終わった response の、append 済みの block の行が書かれるか

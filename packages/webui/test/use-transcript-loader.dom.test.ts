@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
+import type { PeerInfo } from "@ccmsg/protocol";
 import { AppContext, useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -265,6 +266,17 @@ describe("useTranscriptLoader", () => {
   });
 });
 
+function peerRow(sid: string): PeerInfo {
+  return {
+    sid,
+    repo: "repo",
+    ws: "ws",
+    cwd: `/w/${sid}`,
+    connected_at: "2026-11-05T00:00:00.000Z",
+    transcript_path: `/p/${sid}.jsonl`,
+  };
+}
+
 interface TailProps {
   active: boolean;
   agentActive: boolean;
@@ -288,6 +300,29 @@ describe("useLiveTailSubscription", () => {
       await hook.rerender({ active: false, agentActive: false });
     });
     expect(ws.unsubscribes).toEqual([SID]);
+  });
+
+  // 何を保証するか: daemon に断られた購読 (daemon の再起動直後などで、セッションが
+  // まだ登録されていない) は、そのセッションの peer の行が変わった (登録された、
+  // transcript を名乗った) のを合図にもう一度出す。時間で再試行しないので、他の
+  // セッションの peer の変化や、行が変わらないうちは出さない。
+  test("a refused subscribe is made again once the session's peer row changes", async () => {
+    const store = timelineStore({ connected: false });
+    const ws = new FakeTranscriptWs(store);
+    ws.refuseSubscribes = 1;
+    await mountHook(store, ws, useTail, { active: true, agentActive: false });
+    await act(() => store.dispatch({ type: "conn/status", status: "connected" }));
+    expect(ws.subscribes).toEqual([SID]);
+
+    const other = { ...peerRow(SID), sid: "ffffffff-0000-4000-8000-00000000000f" };
+    await act(() => store.dispatch({ type: "peers/loaded", peers: [other] }));
+    expect(ws.subscribes).toEqual([SID]);
+
+    await act(() => store.dispatch({ type: "peers/loaded", peers: [other, peerRow(SID)] }));
+    expect(ws.subscribes).toEqual([SID, SID]);
+
+    await act(() => store.dispatch({ type: "peers/loaded", peers: [peerRow(SID)] }));
+    expect(ws.subscribes).toEqual([SID, SID]);
   });
 
   test("an agent Timeline does not subscribe", async () => {

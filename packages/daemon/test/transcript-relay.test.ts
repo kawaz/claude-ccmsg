@@ -13,6 +13,7 @@ import {
   RELAY_RETRY_MS,
   RELAY_WAIT_MS,
   relayCaughtUp,
+  relayHasRead,
   relayPushed,
   relaySubscribe,
   stopAllRelays,
@@ -49,7 +50,7 @@ function setUp(initial = "", options: { tab?: boolean; transcript?: boolean } = 
   const folded: string[] = [];
   const restartedOn: (string | undefined)[] = [];
   const store = createTranscriptRelayStore(
-    { info: (m) => logged.push(m), error: (m) => logged.push(m) },
+    { debug: (m) => logged.push(m), info: (m) => logged.push(m), error: (m) => logged.push(m) },
     { folds: [() => recordingFold(folded, restartedOn)], now: () => now },
   );
   const meta: { sid: string; transcript_path?: string } = { sid: SID };
@@ -106,6 +107,34 @@ describe("relayPushed", () => {
       expect(t.sent).toEqual([]);
       t.push(["next"]);
       expect(t.sent).toEqual([['{"uuid":"never-written-in-time"}']]);
+    } finally {
+      stopAllRelays(t.store);
+    }
+  });
+
+  // 何を保証するか: Claude Code は 1 つの response の行を stream の終わりに
+  // まとめて書き、block は完了ごとに push する (docs/findings/2026-11-05-relay-gave-up.md)。
+  // 後ろに長い block が続く block は上限を過ぎてから書かれ、待ちは止まるが、
+  // response の最後の block の push の読みで先の行も、欠けも重複も無く、
+  // ファイルの順に届く。待ちが止まっても、読んだ行の uuid は読んだままで残る。
+  test("a block written past the wait arrives with the response's last block, once and in order", async () => {
+    const t = setUp();
+    try {
+      fs.appendFileSync(t.file, '{"uuid":"prompt"}\n');
+      t.push(["prompt"]);
+      t.push(["thinking"]);
+      await ticks(2);
+      t.advance(RELAY_WAIT_MS);
+      await ticks(3);
+      expect(t.logged.some((m) => m.includes("gave up waiting") && m.includes("thinking"))).toBe(
+        true,
+      );
+      expect(relayHasRead(t.store, SID, "prompt")).toBe(true);
+      fs.appendFileSync(t.file, '{"uuid":"thinking"}\n{"uuid":"text"}\n');
+      t.push(["text"]);
+      await ticks(3);
+      expect(t.sent).toEqual([['{"uuid":"prompt"}'], ['{"uuid":"thinking"}', '{"uuid":"text"}']]);
+      expect(relayHasRead(t.store, SID, "thinking")).toBe(true);
     } finally {
       stopAllRelays(t.store);
     }

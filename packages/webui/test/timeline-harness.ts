@@ -36,6 +36,9 @@ export class FakeTranscriptWs {
   readonly reads: PendingRead[] = [];
   readonly subscribes: string[] = [];
   readonly unsubscribes: string[] = [];
+  /** How many of the next transcript_subscribe the daemon refuses
+   * (`session_not_found`, as before the session registered). */
+  refuseSubscribes = 0;
   readonly forkOrigins: string[] = [];
   /** fork_origin の答え (既定は fork ではない)。 */
   origin: ForkOrigin | null = null;
@@ -65,6 +68,13 @@ export class FakeTranscriptWs {
       },
       transcriptSubscribe: (sid) => {
         this.subscribes.push(sid);
+        if (this.refuseSubscribes > 0) {
+          this.refuseSubscribes -= 1;
+          return Promise.resolve({
+            ok: false,
+            error: { code: "session_not_found", msg: `unknown session: ${sid}` },
+          });
+        }
         return Promise.resolve({ ok: true, sid, size: 0 });
       },
       transcriptUnsubscribe: (sid) => {

@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-11-05 | bug | open | [tl-not-live-relay-gave-up](./2026-11-05-tl-not-live-relay-gave-up.md) | module のあるセッションの Timeline がライブ更新されない。daemon の gave up は response の終わりにまとめて書く Claude Code の時機によるもので行は失われない、TL の件は未再現 (実 trace では購読の欠けだけ) |
 | 2026-11-05 | bug | open | [older-tab-freeze](./2026-11-05-older-tab-freeze.md) | older を先頭まで読んだ TL では live tail の push ごとに最大 1.3 秒の long task が出て、turn が続くとタブがほぼ応答しなくなる (読んだ量に比例する layout と markdown の parse) |
 | 2026-11-05 | request | open | [webui-mark-sessions-with-old-module-as-not-live](./2026-11-05-webui-mark-sessions-with-old-module-as-not-live.md) | push を持たない古い module (0.211 より前) のセッションを webui で「ライブ更新なし」と分からせる |
 | 2026-11-05 | bug | open | [bun-test-parallel-processes-fail](./2026-11-05-bun-test-parallel-processes-fail.md) | bun test を 2 プロセス同時に走らせると agents / send-message / op-http のテストが落ちる (何かを取り合っている、未調査) |

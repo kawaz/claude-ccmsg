@@ -175,6 +175,7 @@ import {
   relayRefold,
   relayRetarget,
   relaySubscribe,
+  relaySubscriberCount,
   relayUnsubscribe,
   relayUnsubscribeAll,
   relaysCaughtUp,
@@ -1054,7 +1055,24 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   // A sidecar's connection closing is its run going.
   if (daemon.sidecarRuns.leave(conn)) refreshReadiness(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, conn);
-  relayUnsubscribeAll(daemon.transcriptRelay, conn);
+  for (const sid of relayUnsubscribeAll(daemon.transcriptRelay, conn)) {
+    logTranscriptSubscription(daemon, conn, "unsubscribe", sid, "conn closed");
+  }
+}
+
+/** One line per change in who follows a Timeline (`transcript_subscribe`),
+ * with how many connections follow it afterwards. */
+function logTranscriptSubscription(
+  daemon: Daemon,
+  conn: Conn,
+  op: "subscribe" | "unsubscribe",
+  sid: string,
+  result: string,
+): void {
+  const subscribers = relaySubscriberCount(daemon.transcriptRelay, sid);
+  daemon.log.info(
+    `transcript ${op} ${conn.id ?? "c?"} sid=${sid}: ${result} subscribers=${String(subscribers)}`,
+  );
 }
 
 /** File the "this sid has an out-of-date ccmsg client" record the session list
@@ -3144,6 +3162,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       const result = relaySubscribe(daemon.transcriptRelay, daemon.sessions, req.sid, conn);
+      // Which tab followed which Timeline, and when it stopped: a Timeline that
+      // does not move is told apart from one nobody follows only by this.
+      logTranscriptSubscription(daemon, conn, "subscribe", req.sid, result.ok ? "ok" : result.code);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -3158,6 +3179,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       relayUnsubscribe(daemon.transcriptRelay, req.sid, conn);
+      logTranscriptSubscription(daemon, conn, "unsubscribe", req.sid, "ok");
       send(conn, { ok: true, sid: req.sid });
       return;
     }

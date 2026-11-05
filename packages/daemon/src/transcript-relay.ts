@@ -10,11 +10,14 @@
 // session with no module has neither folds nor a live Timeline; its transcript
 // is read with `transcript_read` and session_status's one-shot read.
 //
-// A row goes in before its line is written (measured: 20–200 ms later,
-// docs/findings/2026-10-28-session-append-vs-jsonl.md), so a push whose rows
-// are not in the file yet reads the file again at short intervals until they
-// are, and past RELAY_WAIT_MS reads it once more and stops waiting. A row
-// given up on is read with the next push, from where the reading stopped.
+// A row goes in before its line is written: Claude Code writes the lines of
+// one API response when its stream ends, while each content block goes in as
+// it completes (docs/findings/2026-11-05-relay-gave-up.md). So a push whose
+// rows are not in the file yet reads the file again at short intervals until
+// they are, and past RELAY_WAIT_MS reads it once more and stops waiting. A
+// block followed by a long one is written only past that wait; its line is
+// read with the next push (the response's last block), from where the
+// reading stopped, so the wait running out loses nothing.
 import * as fs from "node:fs";
 import { ErrorCode } from "@ccmsg/protocol";
 import {
@@ -93,17 +96,24 @@ interface Relay {
   catchUpGen: number;
 }
 
+/** The relay's log: `debug` for a wait that ran out, which is how a long
+ * response's earlier blocks always end and is only there to line events up
+ * when looking into one. */
+export interface RelayLog extends TranscriptLog {
+  debug(msg: string): void;
+}
+
 export interface TranscriptRelayStore {
   relays: Map<string, Relay>;
   foldFactories: readonly LineFoldFactory[];
-  log: TranscriptLog;
+  log: RelayLog;
   trace?: TraceWriter;
   /** The clock, for tests. */
   now: () => number;
 }
 
 export function createTranscriptRelayStore(
-  log: TranscriptLog,
+  log: RelayLog,
   options: {
     trace?: TraceWriter;
     folds?: readonly LineFoldFactory[];
@@ -254,8 +264,8 @@ function waitForRows(store: TranscriptRelayStore, relay: Relay): void {
     // A catch-up the read started resumes the wait when it lands.
     if (relay.waiting.size === 0 || relay.catchUp !== null) return;
     if (store.now() >= deadline) {
-      store.log.info(
-        `transcript relay: gave up waiting sid=${relay.sid} rows=${String(relay.waiting.size)} after ${String(RELAY_WAIT_MS)}ms`,
+      store.log.debug(
+        `transcript relay: gave up waiting sid=${relay.sid} rows=${String(relay.waiting.size)} after ${String(RELAY_WAIT_MS)}ms uuids=${[...relay.waiting].join(",")}`,
       );
       relay.waiting.clear();
       return;
@@ -425,11 +435,21 @@ export function relayUnsubscribe(
   dropIfUnused(store, relay);
 }
 
-/** Forget `conn` everywhere (its connection closed). */
-export function relayUnsubscribeAll(store: TranscriptRelayStore, conn: TranscriptConn): void {
+/** Forget `conn` everywhere (its connection closed). Returns the sids it
+ * followed. */
+export function relayUnsubscribeAll(store: TranscriptRelayStore, conn: TranscriptConn): string[] {
+  const left: string[] = [];
   for (const relay of store.relays.values()) {
-    if (relay.subscribers.delete(conn)) dropIfUnused(store, relay);
+    if (!relay.subscribers.delete(conn)) continue;
+    left.push(relay.sid);
+    dropIfUnused(store, relay);
   }
+  return left;
+}
+
+/** How many connections follow `sid`'s Timeline now. */
+export function relaySubscriberCount(store: TranscriptRelayStore, sid: string): number {
+  return store.relays.get(sid)?.subscribers.size ?? 0;
 }
 
 /** `sid`'s module pushed rows of its main thread's conversation (`uuids`):

@@ -59,6 +59,11 @@ export class Logger {
     if (this.echoStderr) process.stderr.write(line);
   }
 
+  /** What is only there to line events up when looking into one (a wait
+   * that ran out). */
+  debug(msg: string): void {
+    this.log("debug", msg);
+  }
   info(msg: string): void {
     this.log("info", msg);
   }
