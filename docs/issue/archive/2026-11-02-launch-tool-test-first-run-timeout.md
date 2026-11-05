@@ -1,6 +1,6 @@
 ---
 title: launch-tool.test.ts の subagent launch テストが just test の 1 回目だけ 5000ms で timeout する
-status: open
+status: resolved
 category: bug
 created: 2026-11-02T17:30:34+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-05T14:48:59+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","finding/2026-11-02-launch-tool-test-first-run-timeout"]
 blocked_by:
 origin: 自リポ TODO
 ---
