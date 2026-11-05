@@ -104,4 +104,40 @@ describe("a hidden SessionView", () => {
     await show(true);
     expect(root.textContent).toContain("question 2");
   });
+
+  // 何を保証するか: 表示に戻った時、隠れる前にスクロールしていた要素はその位置に
+  // 戻る。位置はスクロールのイベントから取り、離れる時に要素を全部読み直さない
+  // (先頭まで読んだ Timeline は数万の要素を持ち、scrollTop の読みのたびに layout
+  // が走ってタブが固まった)。
+  test("puts back the scroll positions it had, taken from the scroll events", async () => {
+    const { root, show } = await openTimeline();
+    const scroller = root.querySelector<HTMLElement>("main.session-view div");
+    if (scroller === null) throw new Error("expected an element inside the view");
+    scroller.scrollTop = 120;
+    scroller.dispatchEvent(new Event("scroll"));
+    let reads = 0;
+    const others = [...root.querySelectorAll<HTMLElement>("main.session-view *")].filter(
+      (element) => element !== scroller,
+    );
+    const undo = others.map((element) =>
+      stubProperty(element, "scrollTop", {
+        configurable: true,
+        get() {
+          reads += 1;
+          return 0;
+        },
+        set() {},
+      }),
+    );
+    try {
+      window.dispatchEvent(new Event("ccmsg:before-navigation"));
+      await show(false);
+      scroller.scrollTop = 0;
+      await show(true);
+      expect(scroller.scrollTop).toBe(120);
+      expect(reads).toBe(0);
+    } finally {
+      for (const restore of undo) restore();
+    }
+  });
 });

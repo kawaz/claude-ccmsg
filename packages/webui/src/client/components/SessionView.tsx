@@ -16,7 +16,7 @@ import {
   type AgentRef,
   type SessionTab,
 } from "../locator.ts";
-import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
+import { replaceNavigation } from "../navigation.ts";
 import { hasSessionTranscript } from "../utils.ts";
 import {
   isSessionPinned,
@@ -170,26 +170,36 @@ export function SessionView({
   // stays.
   useEffect(() => () => store.dispatch({ type: "timeline/evicted", sids: [sid] }), [store, sid]);
 
-  useEffect(() => {
-    if (!active) return;
-    const capture = () => {
-      const root = rootRef.current;
-      if (!root) return;
-      const next = new Map<HTMLElement, { top: number; left: number }>();
-      for (const element of root.querySelectorAll<HTMLElement>("*")) {
-        if (element.scrollTop !== 0 || element.scrollLeft !== 0) {
-          next.set(element, { top: element.scrollTop, left: element.scrollLeft });
-        }
-      }
-      scrollPositions.current = next;
+  // The scroll positions inside this view, kept as its elements scroll, so the
+  // view comes back where it was after the LRU hid it. Taken from the scroll
+  // events rather than by reading every element when leaving: a scrollTop read
+  // can make the browser lay the page out again, and a Timeline read to its
+  // first line holds tens of thousands of elements, so that read froze the tab
+  // for minutes on every navigation (docs/findings/2026-11-05-older-tab-freeze.md).
+  // A layout effect, so the scroll a child makes on its first render (the
+  // Timeline's move to its end) is heard: scroll events go out with the next
+  // frame, after this has run.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const positions = scrollPositions.current;
+    const onScroll = (event: Event) => {
+      const element = event.target;
+      if (!(element instanceof HTMLElement)) return;
+      positions.set(element, { top: element.scrollTop, left: element.scrollLeft });
     };
-    window.addEventListener(BEFORE_NAVIGATION_EVENT, capture);
-    return () => window.removeEventListener(BEFORE_NAVIGATION_EVENT, capture);
-  }, [active]);
+    // Scroll events do not bubble: the capture phase hears every descendant's.
+    root.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => root.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
 
   useLayoutEffect(() => {
     if (!active) return;
     for (const [element, position] of scrollPositions.current) {
+      if (!element.isConnected) {
+        scrollPositions.current.delete(element);
+        continue;
+      }
       element.scrollTop = position.top;
       element.scrollLeft = position.left;
     }

@@ -2,7 +2,7 @@
 
 - Date: 2026-11-05
 - 対象: ccmsg v0.212.0 の webui、playwright の Chromium (headless) と WebKit (headless)
-- 動機: kawaz 2026-11-05 の報告。older を何度か押す (先頭まで読む等) とほぼ毎回タブが固まって死ぬ
+- 動機: kawaz 2026-11-05 の報告。older を何度か押す (先頭まで読む等) とほぼ毎回タブが固まって死ぬ。kawaz の再現手順: older で全部読み切る → その時点ではスクロールは普通に動く → Terminal や画面内の別タブ (Files / Status 等) をクリックした瞬間に全部固まる
 - 方法:
   - 隔離 daemon (verify skill の手順) に、Messages API の代役で動く試験セッションを置き、個人面の大きい transcript の写しを resume した (58 MB の 1 本と、49 MB の 1 本を `--fork-session` した 17 MB の 1 本)
   - playwright で TL を開き、older を先頭まで押した。押すごとに DOM ノード数、`performance.memory.usedJSHeapSize`、long task (PerformanceObserver) を記録し、CDP の Profiler で CPU の内訳を取った。内訳を読むために、計測の間だけ webui の bundle を minify せずに出した (確認の後に戻した)
@@ -47,10 +47,24 @@ CPU の内訳 (先頭まで読んだ状態で 3 turn を流した 14 秒、自�
 | `MarkdownView` の `parseMarkdownDocument` 以下 (合計時間) | 1,426 ms |
 | `ScrollHold.toBottom` (合計時間) | 715 ms |
 
+### 3. 読み切った後の画面内の移動で固まる (kawaz の手順)
+
+17 MB を older で先頭まで読み (DOM ノード 46,640)、Files タブのリンクをクリックした。playwright-core を直接使い、クリックの後にページへ式を評価させて応答までの時間を見た。固まっている間の JS の位置は、クリックの前に Debugger を有効にしておき、`Debugger.pause` で取った。
+
+| | クリックからページが応答するまで | 固まっている間の stack |
+|---|---|---|
+| 直す前 | 60 秒を超えて応答なし (Profiler の停止も 30 秒で返らない) | `capture` (SessionView) ← navigation.ts の `BEFORE_NAVIGATION_EVENT` の dispatch (3 回取って 3 回とも同じ) |
+| 直した後 | 335 ms (`/files` へ移っていた) | — |
+
+- 原因: SessionView は、隠れた後に表示へ戻った時のスクロール位置を戻すために、画面内の移動 (タブの切り替え、別のセッションへの移動) のたびに `BEFORE_NAVIGATION_EVENT` で view の中の要素を全部 (`querySelectorAll("*")`) 走査し、各要素の `scrollTop` / `scrollLeft` を読んでいた
+- `scrollTop` の読みは layout を強いる。読み切った TL では 1 要素あたり約 26〜33 ms かかり (先頭の 100 要素で 2.6 秒、1,000 要素で 32.7 秒、3,000 要素で 53.9 秒)、view の中の約 2.5 万要素を読み終えるまで main thread が返らない
+- 直し方: 位置は要素のスクロールのイベント (view の root で capture phase で聞く) から取って持ち、移動の時には要素を読まない。表示に戻った時に、持っている要素のうち DOM に残っているものだけ位置を戻す
+
 ## 判断に効く含み
 
 - 重さは「読んだ量に比例する DOM を全部実体化して持つ」ことから来ている。push のたびの layout (scroll の位置の計測と末尾への寄せ) と、markdown の parse のやり直しが、読んだ量に比例して重くなる
-- タブが「死ぬ」まで至ったのは今回の計測では見ていない。kawaz の環境との差 (実ブラウザの他のタブ、App の LRU が隠れたまま mount している他のセッションの TL、iPad の Safari のメモリ上限、より忙しいセッション) は確かめていない
+- kawaz の言う「固まって死ぬ」は §3 (読み切った後の画面内の移動) で、移動のたびの全要素の `scrollTop` の読みが原因。直した後は 335 ms で移る
+- §2 の push ごとの重さは別に残る (読んだ量に比例する DOM を全部持つことによる)
 
 ## 未検証
 
