@@ -1,6 +1,6 @@
 ---
 title: upgrade で起きた daemon を通した launch で、launch command の trust ダイアログ自動承認が効かない
-status: open
+status: resolved
 category: bug
 created: 2026-11-04T21:00:00+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-05T14:37:09+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:launch_command スクリプト側の Yes 送鍵タイミングを kawaz が修正済み、daemon 側に直すものなし","finding/2026-11-04-upgrade-restart-launch-env"]
 blocked_by:
 origin: 自リポ TODO
 ---
