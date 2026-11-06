@@ -46,7 +46,7 @@ const LATIN_ALNUM_RE = /[A-Za-z0-9]/g;
  * なお誤訳側に落ち得るが、その場合も原文タブは無傷で残る。 */
 const JAPANESE_RATIO_THRESHOLD = 0.1;
 
-function shouldSkipParagraph(paragraph: string): boolean {
+export function shouldSkipParagraph(paragraph: string): boolean {
   if (paragraph.trim() === "") return true;
   const japanese = paragraph.match(JAPANESE_CHAR_RE)?.length ?? 0;
   if (japanese === 0) return false;
@@ -55,11 +55,57 @@ function shouldSkipParagraph(paragraph: string): boolean {
   return japanese / (japanese + latin) > JAPANESE_RATIO_THRESHOLD;
 }
 
-/** テキスト全体が翻訳不要 (全段落が skip 対象) か。true なら翻訳タブの
- * デフォルト選択を original に留める (kawaz r38 mid=54: 翻訳が走らないのに
- * 訳タブが選ばれていると「原文と同一か」の確認クリックが無駄に発生する)。 */
-export function isTranslationSkippedText(text: string): boolean {
-  return text.split("\n\n").every(shouldSkipParagraph);
+/** 「英語の段落」とみなす日本語文字の比率の上限 (DR-0049 §8)。 */
+const ENGLISH_PARAGRAPH_JAPANESE_RATIO = 0.2;
+/** 判定に数える段落の下限の文字数 (DR-0049 §8)。「OK」「Done.」のような
+ * 短い段落だけで本文全体を訳タブに倒さない。 */
+const MIN_JUDGED_PARAGRAPH_CHARS = 20;
+
+/** 行頭の fenced code の開き / 閉じ (``` か ~~~ を 3 つ以上)。 */
+const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/** インラインコード (同じ数のバッククォートで閉じる span)。 */
+const INLINE_CODE_RE = /(`+)[^`]*?\1/g;
+
+/** fenced code block の行 (開き・閉じの行を含む) を空行に置き換える。閉じの
+ * 無い fence は本文の終わりまでをコードとみなす (markdown の解釈と同じ)。 */
+function withoutFencedCode(text: string): string {
+  let fence: string | null = null;
+  return text
+    .split("\n")
+    .map((line) => {
+      const marker = FENCE_RE.exec(line)?.[1];
+      if (fence === null) {
+        if (marker === undefined) return line;
+        fence = marker;
+        return "";
+      }
+      if (marker !== undefined && marker[0] === fence[0] && marker.length >= fence.length) {
+        fence = null;
+      }
+      return "";
+    })
+    .join("\n");
+}
+
+/** 本文に英語の段落が 1 つでもあるか (DR-0049 §8: 既定のタブを ja(plamo)
+ * にするか)。
+ *
+ * コード (fenced / インライン) を除いた本文を空行で段落に分け、20 文字以上
+ * ある段落のうち、日本語文字 (ひらがな / カタカナ / 漢字) の比率が 2 割未満の
+ * ものが 1 つでもあれば true。文字数と比率の分母は「日本語文字 + 英数字」で、
+ * 記号・空白は数えない (shouldSkipParagraph と同じ数え方)。 */
+export function hasEnglishParagraph(text: string): boolean {
+  return withoutFencedCode(text)
+    .split("\n\n")
+    .some((paragraph) => {
+      const prose = paragraph.replace(INLINE_CODE_RE, "");
+      const japanese = prose.match(JAPANESE_CHAR_RE)?.length ?? 0;
+      const latin = prose.match(LATIN_ALNUM_RE)?.length ?? 0;
+      const count = japanese + latin;
+      return (
+        count >= MIN_JUDGED_PARAGRAPH_CHARS && japanese / count < ENGLISH_PARAGRAPH_JAPANESE_RATIO
+      );
+    });
 }
 
 function getTranslatorStatic(): TranslatorStatic | null {
@@ -146,7 +192,7 @@ export type PartialTextListener = (partialText: string) => void;
  * 差し替えられるようにする (kawaz 裁定: 小出し優先)。翻訳不要な段落と失敗
  * 段落は原文が入った初期値のままなので、初期状態から「確定した原文」として
  * 扱われる。最終戻り値は従来どおり全段落結合後の完成訳文。 */
-async function joinProgressively(
+export async function joinProgressively(
   paragraphs: string[],
   translateOne: (paragraph: string) => Promise<string>,
   onPartial?: PartialTextListener,
@@ -199,7 +245,7 @@ export interface TranslationLookup {
 
 let translationLookup: TranslationLookup = { revision: translationRevision, translatedTextOf };
 
-function registerParagraphTranslation(original: string, translated: string): void {
+export function registerParagraphTranslation(original: string, translated: string): void {
   // 訳が原文と同一の段落 (skip 判定を通ったもの、翻訳失敗の fallback) は
   // 何も足さないので登録しない。
   if (translated === original) return;

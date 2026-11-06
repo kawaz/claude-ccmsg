@@ -8,7 +8,10 @@ import { type TLSearchCtx } from "./useInViewSearch.ts";
 import {
   type TranslationAvailability,
   type TranslationTab,
+  hasTranslationTabs,
+  isTranslationTabOffered,
   translationTabItems,
+  useDefaultTranslationTab,
 } from "./translation.ts";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
@@ -112,18 +115,32 @@ export function AssistantBubble({
    * 文脈では undefined で、ハンバーガー自体を出さない。 */
   actions: BubbleActions | undefined;
 }) {
-  // 既定は常に original (kawaz r135m50)。thinking のような自動選択はしない。
+  // 既定のタブは thinking と同じ判定 (DR-0049 §8): ja(plamo) が使えて本文に
+  // 英語の段落があれば ja(plamo)、それ以外は original。本文はバブルの中の
+  // text segment をつないだもの (ツールバー 1 つがその全部に効く)。
   const [tab, setTab] = useState<TranslationTab>("original");
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const bodyText = line.segments
+    .flatMap((seg) => (seg.kind === "text" ? [seg.text] : []))
+    .join("\n\n");
+  const selectTab = useDefaultTranslationTab({
+    text: bodyText,
+    enabled: true,
+    plamoUrl: translationAvailability.plamoUrl,
+    elementRef: bubbleRef,
+    setTab,
+  });
   const [source, setSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
+  const hasTranslationTab = hasTranslationTabs(translationAvailability);
 
   // Reconnect can replace a macOS daemon with a non-capable daemon (same guard
-  // as ThinkingSegment): a selected host tab must fall back to original rather
-  // than keep showing text no live route can produce.
+  // as ThinkingSegment): a selected tab whose route went away must fall back to
+  // original rather than keep showing text no live route can produce.
+  const tabOffered = isTranslationTabOffered(tab, translationAvailability);
   useEffect(() => {
-    if (tab === "ja-host" && !translationAvailability.host) setTab("original");
-  }, [tab, translationAvailability.host]);
+    if (!tabOffered) setTab("original");
+  }, [tabOffered]);
 
   // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
   // 畳む (残すと、開いた項目でなく選択中の別の項目への操作になる)。
@@ -147,7 +164,7 @@ export function AssistantBubble({
   }, [menuOpen]);
 
   return (
-    <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
+    <div class="tl-bubble tl-bubble-left tl-bubble-assistant" ref={bubbleRef}>
       <div class="tl-bubble-body">
         {line.segments.map((seg, i) => (
           <SegmentView
@@ -174,7 +191,7 @@ export function AssistantBubble({
               tabClass="tl-thinking-tab"
               label="本文の言語"
               selected={tab}
-              onSelect={setTab}
+              onSelect={selectTab}
               items={translationTabItems(translationAvailability)}
             />
           ) : null}

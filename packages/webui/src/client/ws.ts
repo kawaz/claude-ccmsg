@@ -33,6 +33,7 @@ import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { summarizeUserAgent } from "./utils.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 import { orderSubscriptions } from "./subscription-order.ts";
+import { probePlamoHealth } from "./plamo-translate.ts";
 
 /** How long after an unexpected close each reconnect attempt waits, by
  * attempt; attempts past the end keep the last. */
@@ -455,6 +456,10 @@ export function createWsClient(
    * a reload that happened minutes ago — and its absence is what lets the
    * daemon log tell a reconnect apart from a genuine re-load. */
   let firstHello = true;
+  /** Counts the ja(plamo) health probes (DR-0049), so a probe that outlives
+   * its connection — a reconnect started a newer one — cannot publish a URL
+   * the newer hello may no longer carry. */
+  let plamoProbeGeneration = 0;
   let closedByUs = false;
   let reconnectTimer: WsWait | null = null;
   let keepaliveTimer: WsWait | null = null;
@@ -573,6 +578,8 @@ export function createWsClient(
     // connection's answer before probing this hello so stale host tabs cannot
     // survive a reconnect to a different/non-macOS daemon.
     dispatch({ type: "translator/availability", host: false });
+    dispatch({ type: "translator/plamo", url: null });
+    const probeGeneration = ++plamoProbeGeneration;
     const navType = firstHello ? navigationType() : undefined;
     const ua = globalThis.navigator?.userAgent;
     firstHello = false;
@@ -670,6 +677,17 @@ export function createWsClient(
           available: hello.launch_available === true,
           ...(hello.launch_config_dir !== undefined ? { configDir: hello.launch_config_dir } : {}),
         });
+        // ja(plamo) の翻訳サーバ (DR-0049): URL が来たらブラウザから
+        // `/health` を確かめ、通った時だけタブを出す。待たずに先へ進む —
+        // 翻訳サーバの到達性で handshake を遅らせない。
+        const plamoUrl = hello.translate_plamo_url;
+        if (plamoUrl !== undefined) {
+          void probePlamoHealth(plamoUrl).then((healthy) => {
+            if (healthy && probeGeneration === plamoProbeGeneration) {
+              dispatch({ type: "translator/plamo", url: plamoUrl });
+            }
+          });
+        }
       }
       await send({ op: "subscribe" });
       const peers = await send({ op: "peers" });

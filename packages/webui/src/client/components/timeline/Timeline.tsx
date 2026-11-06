@@ -99,6 +99,7 @@ export function Timeline({
     s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
   );
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
+  const plamoTranslateUrl = useStoreState(store, (s) => s.plamoTranslateUrl);
   const peers = useStoreState(store, (s) => s.peers);
   // What the session runs as, for the end of the ctx line: its process
   // (uptime, Claude Code version), its ccmsg, and the host's Claude Code
@@ -131,7 +132,7 @@ export function Timeline({
   const pin = usePositionPin({ sid, currentPosition, agentActive });
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
-  // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
+  // capability probe、plamo は hello の URL への `/health` (DR-0049)。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
   const browserTranslatorAvailable = useMemo(() => hasTranslatorApi(), []);
   // 1 op = 1 英語段落: 各 ThinkingSegment の host 翻訳が独立に
   // ws.translate([paragraph]) を送り、segment ごとに完了した順で反映される
@@ -145,8 +146,9 @@ export function Timeline({
       host: hostTranslatorAvailable,
       browser: browserTranslatorAvailable,
       hostRequest: hostTranslateRequest,
+      ...(plamoTranslateUrl !== null ? { plamoUrl: plamoTranslateUrl } : {}),
     }),
-    [hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest],
+    [hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest, plamoTranslateUrl],
   );
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
   // 3 分おきの再描画で十分。

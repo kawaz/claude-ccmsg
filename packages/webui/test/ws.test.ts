@@ -36,6 +36,7 @@ import {
   stubGlobal,
 } from "./helpers.ts";
 import { fullSessionStatusSnapshot } from "./session-status-fixture.ts";
+import { _resetPlamoStateForTest } from "../src/client/plamo-translate.ts";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -1924,5 +1925,81 @@ describe("createWsClient daemon version guard", () => {
       type: "version-mismatch/detected",
       mismatch: { daemonVersion: newer },
     });
+  });
+});
+
+// ja(plamo) (DR-0049): hello が翻訳サーバの URL を載せてきたら、ブラウザから
+// `<url>/health` を確かめ、通った時だけ store に URL を入れる (= タブが出る)。
+// 接続のたびに最初に null へ戻すので、前の接続の URL は残らない。
+describe("ja(plamo) の可用性", () => {
+  const PLAMO_URL = "https://translate.example.test";
+
+  /** hello を返し、health が `healthCallsToAwait` 回叩かれるのを待ってから
+   * (0 なら待たずに) 出た translator/plamo の action を返す。 */
+  async function plamoActionsAfterHello(opts: {
+    url?: string;
+    health: () => Response;
+    healthCallsToAwait: number;
+  }): Promise<{ actions: Action[]; healthCalls: string[] }> {
+    _resetPlamoStateForTest({ retryDelayMs: 0 });
+    const healthCalls: string[] = [];
+    const { promise: healthDone, resolve: resolveHealthDone } = Promise.withResolvers<void>();
+    if (opts.healthCallsToAwait === 0) resolveHealthDone();
+    restoreGlobals.push(
+      stubGlobal("fetch", async (input: string) => {
+        healthCalls.push(input);
+        if (healthCalls.length === opts.healthCallsToAwait) resolveHealthDone();
+        return opts.health();
+      }),
+    );
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    ws1.replyTo("hello", {
+      ok: true,
+      version: VERSION,
+      protocol: PROTOCOL_VERSION,
+      ...(opts.url !== undefined ? { translate_plamo_url: opts.url } : {}),
+    });
+    await healthDone;
+    // 最後の health の応答から dispatch までの continuation を流す。
+    await flush();
+    return { actions: actions.filter((a) => a.type === "translator/plamo"), healthCalls };
+  }
+
+  test("health が 200 なら URL を store に入れる", async () => {
+    const { actions, healthCalls } = await plamoActionsAfterHello({
+      url: PLAMO_URL,
+      health: () => new Response('{"status":"ok"}'),
+      healthCallsToAwait: 1,
+    });
+    expect(healthCalls).toEqual([`${PLAMO_URL}/health`]);
+    expect(actions).toEqual([
+      { type: "translator/plamo", url: null },
+      { type: "translator/plamo", url: PLAMO_URL },
+    ]);
+  });
+
+  test("health が通らなければ URL を入れない (タブを出さない)", async () => {
+    const { actions, healthCalls } = await plamoActionsAfterHello({
+      url: PLAMO_URL,
+      health: () => new Response("down", { status: 503 }),
+      healthCallsToAwait: 2,
+    });
+    expect(healthCalls).toHaveLength(2);
+    expect(actions).toEqual([{ type: "translator/plamo", url: null }]);
+  });
+
+  test("hello に URL が無ければ health も叩かない", async () => {
+    const { actions, healthCalls } = await plamoActionsAfterHello({
+      health: () => new Response("ok"),
+      healthCallsToAwait: 0,
+    });
+    expect(healthCalls).toEqual([]);
+    expect(actions).toEqual([{ type: "translator/plamo", url: null }]);
   });
 });

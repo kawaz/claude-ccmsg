@@ -2,7 +2,6 @@
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { type Segment } from "../../transcript-model.ts";
 import { LinkedMarkdownView, LinkedPlainText } from "../../filepath-linker.tsx";
-import { isTranslationSkippedText, hasCachedHostText } from "../../translate.ts";
 import { type SearchWord } from "../../in-view-search.ts";
 import { Tabs } from "../Tabs.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
@@ -14,9 +13,11 @@ import { AgentSendFold, AgentSpawnFold } from "./agents.tsx";
 import {
   type TranslationAvailability,
   type TranslationTab,
+  hasTranslationTabs,
+  isTranslationTabOffered,
   translationTabItems,
   useTranslatedText,
-  enqueueViewportTranslation,
+  useDefaultTranslationTab,
 } from "./translation.ts";
 
 /** 本文の無い thinking (thinking-hidden)。thinking が起きた事実は TL の
@@ -83,7 +84,6 @@ function ThinkingSegment({
   const [tab, setTab] = useState<TranslationTab>("original");
   const [detailsOpen, setDetailsOpen] = useCategoryOpen("thinking");
   const detailsRef = useRef<HTMLDetailsElement>(null);
-  const translationStartedRef = useRef(false);
   const { bodyText, translatingLabel } = useTranslatedText(
     text,
     translationAvailability,
@@ -91,73 +91,24 @@ function ThinkingSegment({
     onDisplayChange,
   );
 
-  const hostAvailable = translationAvailability.host;
-  const browserAvailable = translationAvailability.browser;
+  const selectTab = useDefaultTranslationTab({
+    text,
+    enabled: foldGroupOpen && detailsOpen,
+    plamoUrl: translationAvailability.plamoUrl,
+    elementRef: detailsRef,
+    setTab,
+  });
+
+  // Reconnect can replace a macOS daemon with a non-capable daemon, or one
+  // without the plamo URL. The WS handshake clears both capabilities before
+  // probing again, so an already-selected tab whose route went away must
+  // return to original rather than show stale text.
+  const tabOffered = isTranslationTabOffered(tab, translationAvailability);
   useEffect(() => {
-    if (!foldGroupOpen || !detailsOpen || translationStartedRef.current) return;
+    if (!tabOffered) setTab("original");
+  }, [tabOffered]);
 
-    // The host route is the default comparison result when both are present: it
-    // is the dictionary-like path this feature adds, while browser remains an
-    // independently selectable comparison surface.
-    const selectDefaultTranslation = () => {
-      // 全段落が日本語等で翻訳 skip されるテキストは original のまま (kawaz
-      // r38 mid=54) — 訳タブを選んでも内容が原文と同一で、確認クリックの
-      // 無駄を生むだけ。
-      if (isTranslationSkippedText(text)) return;
-      if (hostAvailable) setTab("ja-host");
-      else if (browserAvailable) setTab("ja-browser");
-    };
-
-    const startTranslation = () => {
-      if (translationStartedRef.current) return;
-      translationStartedRef.current = true;
-      selectDefaultTranslation();
-    };
-
-    // Cache hits do not add daemon work, so retain the immediate display behavior
-    // even when this thinking is outside the prefetch range.
-    if (hostAvailable && hasCachedHostText(text)) {
-      startTranslation();
-      return;
-    }
-
-    const element = detailsRef.current;
-    if (element === null || typeof IntersectionObserver === "undefined") {
-      startTranslation();
-      return;
-    }
-
-    const root = element.closest(".timeline-view");
-    let cancelPending: (() => void) | undefined;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          cancelPending = enqueueViewportTranslation(element, startTranslation);
-          observer.disconnect();
-        }
-      },
-      {
-        root,
-        // Keep the active window bounded to the viewport plus roughly two
-        // scroll-area heights before and after it.
-        rootMargin: "200% 0px",
-      },
-    );
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-      cancelPending?.();
-    };
-  }, [foldGroupOpen, detailsOpen, text, hostAvailable, browserAvailable]);
-
-  // Reconnect can replace a macOS daemon with a non-capable daemon. The WS
-  // handshake clears host availability before probing the new process, so an
-  // already-selected host tab must return to original rather than show stale text.
-  useEffect(() => {
-    if (tab === "ja-host" && !translationAvailability.host) setTab("original");
-  }, [tab, translationAvailability.host]);
-
-  const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
+  const hasTranslationTab = hasTranslationTabs(translationAvailability);
 
   return (
     <details
@@ -182,7 +133,7 @@ function ThinkingSegment({
                 tabClass="tl-thinking-tab"
                 label="本文の言語"
                 selected={tab}
-                onSelect={setTab}
+                onSelect={selectTab}
                 items={translationTabItems(translationAvailability)}
               />
             </div>
@@ -207,8 +158,8 @@ function ThinkingSegment({
 /** assistant 応答本文の表示モード。バブルの hover ツールバーが 1 つ持ち、
  * その中の text segment 全部に同じモードが効く。 */
 interface AssistantBodyView {
-  /** 既定は常に "original" — thinking と違い自動で訳へ切り替えない
-   * (kawaz r135m50: 応答本文は常に見えているので、訳は操作起点で足りる)。 */
+  /** 既定は thinking と同じ判定 (DR-0049 §8、useDefaultTranslationTab) で
+   * バブルが決める。 */
   tab: TranslationTab;
   /** true = markdown を解釈せず原文のまま出す (コピペ用)。 */
   source: boolean;

@@ -562,8 +562,9 @@ function TabsSection() {
           selected="original"
           items={[
             { id: "original", label: "original" },
-            { id: "ja-host", label: "ja(host)" },
+            { id: "ja-plamo", label: "ja(plamo)" },
             { id: "ja-browser", label: "ja(browser)" },
+            { id: "ja-host", label: "ja(host)" },
           ]}
         />
       </Specimen>

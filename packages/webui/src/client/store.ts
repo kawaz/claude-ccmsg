@@ -260,6 +260,10 @@ export interface AppState {
   versionMismatch: VersionMismatch | null;
   /** DR-0023 host translation capability, probed once after each hello. */
   hostTranslatorAvailable: boolean;
+  /** DR-0049 ja(plamo) の翻訳サーバの base URL。hello の `translate_plamo_url`
+   * が来て、`<url>/health` が 200 を返した時だけ非 null (到達できない
+   * サーバのタブは出さない)。接続のたびに null へ戻してから確かめ直す。 */
+  plamoTranslateUrl: string | null;
   /** Web gateway (hyoui) の base URL。hello response の
    * `terminal_gateway_url` を保持し、SessionView の Terminal タブは
    * この値が非 null で、agent の hyoui_session_id が解決済みか、端末が無い
@@ -448,6 +452,7 @@ export function initialState(): AppState {
     hostClaudeVersion: null,
     versionMismatch: null,
     hostTranslatorAvailable: false,
+    plamoTranslateUrl: null,
     terminalGatewayUrl: null,
     llmUsageAvailable: false,
     llmUsageProbes: new Map(),
@@ -541,6 +546,7 @@ export type Action =
   // bundle と揃っていれば導線を引っ込める。
   | { type: "version-mismatch/detected"; mismatch: VersionMismatch | null }
   | { type: "translator/availability"; host: boolean }
+  | { type: "translator/plamo"; url: string | null }
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
   | { type: "llm-stats/availability"; available: boolean }
@@ -1168,6 +1174,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "translator/availability":
       return { ...state, hostTranslatorAvailable: action.host };
+    case "translator/plamo":
+      return { ...state, plamoTranslateUrl: action.url };
     case "terminal-gateway/loaded":
       return { ...state, terminalGatewayUrl: action.url };
     case "llm-usage/availability":
