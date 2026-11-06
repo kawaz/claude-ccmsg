@@ -4,7 +4,9 @@
 // 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。添付の中身は
 // 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
 // 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
-// 持たない (エージェントが許可の文を受けて再実行する)。
+// 持たない (エージェントが許可の文を受けて再実行する)。1 行のコマンドには
+// 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
+// 実行させる (出力はセッションの会話に入る)。
 import type { TargetedEvent } from "preact";
 import { useContext, useRef, useState } from "preact/hooks";
 import type { PermitAttachment, PermitCommand, PermitRequestRecord } from "@ccmsg/protocol";
@@ -14,9 +16,17 @@ import {
   attachmentNote,
   commandHeading,
   fenceLangOfPath,
+  isOneLineCommand,
   permitGrantText,
 } from "../../permit-request-view.ts";
 import { formatMsgTime } from "../../utils.ts";
+import {
+  classifySessionInputReply,
+  formatSentAt,
+  type SessionInputOutcome,
+  sessionInputNotice,
+  sessionInputSendFailure,
+} from "../session-input.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { OpenComposerContext } from "../SessionInputComposer.tsx";
 import { useClipboardCopy } from "../CopyButton.tsx";
@@ -177,6 +187,66 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
   );
 }
 
+/** 「! で実行」の 1 回の送信: 送っている、終わった (その結果と押した時刻)。 */
+type BangRun =
+  | { kind: "idle" }
+  | { kind: "sending" }
+  | { kind: "done"; outcome: SessionInputOutcome; at: string };
+
+/** 「! で実行」。1 行のコマンドを、依頼したセッションで人が `! <command>` と
+ * 打って Enter したのと同じに実行させる (user_prompt の bash mode、DR-0040 §7)。
+ * 「許可する」とは独立で、既読にもしない。出力はそのセッションの会話に入り、
+ * Timeline にはコマンドが終わった後に出るので、送れた時は押した時刻を添え、
+ * 二度押しの判断材料にする。届かなかった・確かめられなかった時は入力欄と
+ * 同じ注記を出す。送っている間は押せない。
+ *
+ * ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (CodeCopyFrame
+ * と同じ): コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と
+ * Timeline の検索に混ざる。読み上げる名前は aria-label が持つ。 */
+function BangButton({ sid, command }: { sid: string; command: string }) {
+  const { ws } = useApp();
+  const [run, setRun] = useState<BangRun>({ kind: "idle" });
+  // 同期で見る: 連打は再 render の前に 2 回目を呼びうる。
+  const sending = useRef(false);
+  const notice = run.kind === "done" ? sessionInputNotice(run.outcome) : null;
+  return (
+    <div class="permit-bang-row">
+      <button
+        type="button"
+        class="permit-bang"
+        aria-label="! で実行"
+        title="このコマンドを、このセッションで ! <コマンド> と打って Enter したのと同じに実行する (出力はセッションの会話に入る)"
+        disabled={run.kind === "sending"}
+        aria-busy={run.kind === "sending"}
+        onClick={() => {
+          if (sending.current) return;
+          sending.current = true;
+          setRun({ kind: "sending" });
+          const at = new Date().toISOString();
+          void ws
+            .userPrompt(sid, command, undefined, "bash")
+            .then(classifySessionInputReply, sessionInputSendFailure)
+            .then((outcome) => {
+              sending.current = false;
+              setRun({ kind: "done", outcome, at });
+            });
+        }}
+      />
+      {run.kind === "done" && run.outcome.kind === "accepted" ? (
+        <span class="permit-bang-sent" role="status">
+          {formatSentAt(run.at)} に送りました。出力はコマンドが終わると Timeline に出ます
+        </span>
+      ) : null}
+      {notice !== null ? (
+        <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
+          <p class="session-input-notice-title">{notice.title}</p>
+          <p class="session-input-notice-detail">{notice.detail}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** 人が書いた文 1 つ (止められた行動 / intent) を、選ばれた翻訳タブの綴りで
  * markdown として出す。 */
 function TranslatedMarkdown({
@@ -310,6 +380,9 @@ export function PermitRequestBubble({
                   <span>{commandHeading(command)}</span>
                 )}
                 <CodeBlock code={command.command} lang="sh" />
+                {isOneLineCommand(command.command) ? (
+                  <BangButton sid={request.sid} command={command.command} />
+                ) : null}
               </li>
             ))}
           </ul>

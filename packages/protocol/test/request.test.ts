@@ -673,6 +673,26 @@ describe("readRequest: the forms beside each op's type", () => {
       value: { op: "session_restart", session_id: SID, request_id: "q1" },
     });
   });
+
+  // A bash mode command (`! <text>`, DR-0040 §7) is a user_prompt with
+  // `mode: "bash"`; a prompt has no mode, and no other mode is read.
+  test("user_prompt reads a bash mode command, and no mode it does not know", () => {
+    expect(read({ op: "user_prompt", session_id: SID, text: "ls -la", mode: "bash" })).toEqual({
+      ok: true,
+      value: {
+        op: "user_prompt",
+        session_id: SID,
+        text: "ls -la",
+        mode: "bash",
+        request_id: "q1",
+      },
+    });
+    for (const mode of ["prompt", "shell", "", null, 1]) {
+      expect(refusal(read({ op: "user_prompt", session_id: SID, text: "ls", mode }))).toContain(
+        "mode",
+      );
+    }
+  });
 });
 
 describe("readRequest: hello by generation", () => {

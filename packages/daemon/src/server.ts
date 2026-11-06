@@ -2443,11 +2443,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
             ...(req.model !== undefined ? { model: req.model } : {}),
             ...(req.effort !== undefined ? { effort: req.effort } : {}),
           },
+          ...(req.mode !== undefined ? { mode: req.mode } : {}),
         },
         productionInputDeps(daemon.sidecarReplies, daemon.sidecarRuns),
       );
       daemon.log.info(
-        `session-input -> ${req.session_id}: ${outcome.outcome}` +
+        `session-input -> ${req.session_id}${req.mode !== undefined ? ` (${req.mode})` : ""}: ${outcome.outcome}` +
           (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
           ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );

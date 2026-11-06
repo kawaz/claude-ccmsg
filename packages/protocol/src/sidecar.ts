@@ -53,18 +53,27 @@ export function sidecarRunId(startedAt: number, random: number): string {
 
 // --- prompt.send -----------------------------------------------------------
 
+/** How a prompt.send's text goes into the session (DR-0035 §3): `bash` runs
+ * it as the person's bash mode command (`! <text>` typed in the composer),
+ * whose output enters the conversation. Absent for the person's prompt. */
+export const PromptSendModeSchema = v.picklist(["bash"]);
+export type PromptSendMode = Output<typeof PromptSendModeSchema>;
+
 /** `prompt.send`: put `text` into the session as the person's own prompt —
  * fill the composer, press Enter on the session's terminal, and keep the
  * person's half-typed draft (DR-0035 §1, §5). The text is taken verbatim and
  * must hold something other than whitespace. `override` is the one-shot
  * override of the turn the prompt starts or joins (DR-0041 §4), absent for
- * none. Fields beside these are left out rather than refused. */
+ * none; a bash mode command carries none (`mode`). `mode` is how the text
+ * goes in (PromptSendModeSchema). Fields beside these are left out rather
+ * than refused. */
 export const PromptSendArgsSchema = v.object({
   text: v.pipe(
     v.string(),
     v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
   ),
   override: v.optional(RequestOverrideSchema),
+  mode: v.optional(PromptSendModeSchema),
 });
 export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
 
@@ -79,8 +88,10 @@ export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
  *   terminal to send Enter to
  * - `not_submitted`: Enter did not submit the text; the composer was put back
  *   to what the person had typed
- * - `enter_failed`: sending Enter to the terminal failed, and the text never
- *   left the composer; the composer was put back as for `not_submitted`
+ * - `enter_failed`: sending the keys to the terminal failed — Enter, or for a
+ *   bash mode command the `!` that switches the composer to bash mode, which
+ *   was not seen to switch it — and the text never left the composer; the
+ *   composer was put back as for `not_submitted`
  * - `session_changed`: the run moved to another session id (/clear, /resume)
  *   before Enter, so the text was not put in */
 export const UserPromptModuleReasonSchema = v.picklist([
@@ -96,7 +107,10 @@ export type UserPromptModuleReason = Output<typeof UserPromptModuleReasonSchema>
 
 /** What a `prompt.send` that ran says. `accepted` means the harness's
  * `prompt.submit` of the filled text from the composer went through: the
- * prompt is in the session, or queued behind the running turn. `unconfirmed`
+ * prompt is in the session, or queued behind the running turn. For a bash
+ * mode command, which raises no prompt.submit, it means Enter took the command
+ * out of the composer (`prompt.change` with `origin.kind: "clear"`): the
+ * command runs, or is queued behind the running turn. `unconfirmed`
  * is the module not knowing: Enter went out but no such submit came and the
  * composer no longer holds the text, or the
  * session changed its id (/clear, /resume) after Enter, or after the fill with

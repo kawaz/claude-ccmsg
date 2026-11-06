@@ -41,7 +41,13 @@ import {
 } from "./engine.ts";
 import type { FactsState } from "./facts.ts";
 import { guide, sweepGuided, unguide } from "./guidance.ts";
-import { type PromptSendState, PromptSubmitInputSchema, promptSubmitted } from "./prompt-send.ts";
+import {
+  composerCleared,
+  PromptChangeInputSchema,
+  type PromptSendState,
+  PromptSubmitInputSchema,
+  promptSubmitted,
+} from "./prompt-send.ts";
 import {
   mainTurnEnded,
   mainTurnMoved,
@@ -371,6 +377,16 @@ export function registerBus(on: On, state: BusState): void {
       concern("prompt-send", PromptSubmitInputSchema, {
         when: (input) => input.origin?.kind === "composer",
         after: (input, result) => promptSubmitted($, state, input, result),
+      }),
+    ]),
+  ).catch(async (_$, e, next) => next(e));
+  // A bash mode command raises no prompt.submit: its Enter shows as the
+  // composer emptied (`origin.kind: "clear"`), which accepts it.
+  on("prompt.change", async ($, e, next) =>
+    fanOut($, e, next, "prompt.change", [
+      concern("prompt-send", PromptChangeInputSchema, {
+        when: (input) => input.origin?.kind === "clear",
+        after: () => composerCleared($, state),
       }),
     ]),
   ).catch(async (_$, e, next) => next(e));

@@ -2866,6 +2866,50 @@ select.sidebar-globals-endpoint {
   color: var(--danger);
 }
 
+/* 「! で実行」。1 行のコマンドのコードブロックの直下に、「許可する」より
+ * 小さく枠だけで置く。文字は CSS で出す (CodeCopyFrame と同じ: コマンドの並び
+ * の中にあり、選んでコピーした文字列と Timeline の検索に混ざらない)。横に
+ * 送った時刻、下に届かなかった時の注記 (入力欄と同じもの) が並ぶ。 */
+.permit-bang-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.permit-bang {
+  font: inherit;
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.permit-bang::before {
+  content: "! で実行";
+}
+
+.permit-bang[aria-busy="true"]::before {
+  content: "送信中…";
+}
+
+.permit-bang:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.permit-bang-sent {
+  color: var(--fg-muted);
+}
+
+.permit-bang-row > .session-input-notice {
+  flex-basis: 100%;
+}
+
 .event {
   font-size: var(--font-size-sm);
   color: var(--fg-muted);

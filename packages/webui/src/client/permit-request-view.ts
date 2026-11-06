@@ -50,6 +50,13 @@ export function commandHeading(command: PermitCommand): string {
     : "以下コマンドの実行";
 }
 
+/** Whether a command is one line, which is what the bubble offers to run as
+ * the person's `! <command>` (DR-0040 §7): a line break, of any kind, makes it
+ * several. */
+export function isOneLineCommand(command: string): boolean {
+  return !/[\r\n]/.test(command);
+}
+
 /** One command as an item of the permission: its heading, then the command
  * whole in a code block (a continued line, a here document stay as written). */
 function commandItem(command: PermitCommand): string {

@@ -10,6 +10,7 @@
 import {
   overridesAnything,
   type Parsed,
+  type PromptSendMode,
   type PromptSendResult,
   type RequestOverride,
   type UserPromptModuleReason,
@@ -29,7 +30,8 @@ import type { SidecarRuns } from "./sidecar-runs.ts";
  *
  * One try on the module's side is at most a `hyoui input` (3 s), the wait for
  * the filled text's prompt.submit (3 s) and the reply process (3 s) — 9 s — plus the fill and
- * the write, which take milliseconds. The rest of the 12 s leaves room for a
+ * the write, which take milliseconds. A bash mode command adds the `!` that
+ * switches the composer and the wait for the switch (2 s): 11 s. The rest of the 12 s leaves room for a
  * second run after a first that answered at once that it cannot take input
  * (no_composer / no_terminal, which needs no Enter and so comes back within a
  * reply's time). Past it the answer is unconfirmed: a person waiting on a
@@ -86,21 +88,24 @@ export interface UserPromptTry {
 }
 
 /** What a person wrote for session `sid`, with the one-shot override of the
- * turn it starts or joins (DR-0041 §4), `{}` or absent for none. */
+ * turn it starts or joins (DR-0041 §4), `{}` or absent for none, and how the
+ * text goes in (`bash` for a bash mode command, absent for a prompt). */
 export interface SessionPrompt {
   sid: string;
   text: string;
   override?: RequestOverride;
+  mode?: PromptSendMode;
 }
 
 export async function userPrompt(
   prompt: SessionPrompt,
   deps: UserPromptDeps,
 ): Promise<UserPromptOutcome & { tries: UserPromptTry[] }> {
-  const { sid, text, override } = prompt;
+  const { sid, text, override, mode } = prompt;
   const args = {
     text,
     ...(override !== undefined && overridesAnything(override) ? { override } : {}),
+    ...(mode !== undefined ? { mode } : {}),
   };
   const until = deps.now() + deps.deadlineMs;
   const tries: UserPromptTry[] = [];

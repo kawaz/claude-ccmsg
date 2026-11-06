@@ -159,13 +159,14 @@ async function replyTo(
       case "describe":
         return { id, ok: true, result: await describe($) };
       case "prompt.send": {
-        const { text, override } = request.args;
+        const { text, override, mode } = request.args;
         const queued: QueuedSend = {
           id,
           text,
           sid,
           generation,
           ...(override !== undefined ? { override } : {}),
+          ...(mode !== undefined ? { mode } : {}),
         };
         return await queuePromptSend($, state, queued);
       }

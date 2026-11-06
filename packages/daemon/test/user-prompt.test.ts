@@ -246,6 +246,18 @@ describe("userPrompt asks one run at a time", () => {
     ]);
   });
 
+  // DR-0035 §3: a bash mode command goes to the module with its mode; a
+  // prompt goes with none.
+  test("a bash mode command goes with its mode", async () => {
+    const { deps, written } = scripted({ run100: ACCEPTED });
+    await userPrompt({ sid: SID, text: "ls -la", mode: "bash" }, deps);
+    await userPrompt({ sid: SID, text: "hi" }, deps);
+    expect(written.map((w) => w.line.args)).toEqual([
+      { text: "ls -la", mode: "bash" },
+      { text: "hi" },
+    ]);
+  });
+
   test("no live run: not_delivered no_module", async () => {
     const { deps } = scripted({});
     expect(await userPrompt({ sid: SID, text: "hi" }, deps)).toMatchObject({
@@ -637,6 +649,37 @@ describe("user_prompt over the wire", () => {
         sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
       );
       expect(taken).toEqual({ ok: true });
+      expect(await reply).toEqual({ ok: true, outcome: "accepted" });
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  test("a bash mode command reaches the sidecar with its mode", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1", "hy-1");
+    try {
+      const user = await userConn(ctx);
+      const reply = user.request({
+        op: "user_prompt",
+        session_id: SID,
+        text: "ls -la",
+        mode: "bash",
+      });
+      const line = await nextRequest(sidecar);
+      expect(line).toEqual({
+        v: 1,
+        op: "prompt.send",
+        id: line.id,
+        args: { text: "ls -la", mode: "bash" },
+      });
+      const module = await sessionConn(ctx, SID);
+      await module.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
+      );
       expect(await reply).toEqual({ ok: true, outcome: "accepted" });
       user.close();
       module.close();

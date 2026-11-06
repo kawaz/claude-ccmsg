@@ -42,6 +42,7 @@ import {
   ACCEPT_WAIT_MS,
   handlePromptSend,
   hyouiEnterArgv,
+  hyouiShellModeArgv,
   PromptSubmitInputSchema,
   type QueuedSend,
   samePrompt,
@@ -125,6 +126,7 @@ function emptyTable(): HookTable & CatchTable {
     "session.compact": [],
     "command.run": [],
     "prompt.submit": [],
+    "prompt.change": [],
     "turn.start": [],
     "turn.complete": [],
     "session.append": [],
@@ -222,7 +224,10 @@ function fakeEngine(
     env?: Record<string, string>;
     refusal?: "dialog" | "no_composer";
     surfaces?: readonly string[];
-    onEnter?: (fake: Fake) => Promise<number>;
+    /** What the terminal does with the keys hyoui sends it (`argv` is the
+     * `hyoui input` command): Enter, or for a bash mode command first the
+     * `!`. */
+    onEnter?: (fake: Fake, argv: readonly string[]) => Promise<number>;
     /** What `ccmsg version` does: print this, or throw. */
     version?: string | Error;
     /** What the ccmsg command a tool runs (`sidecar launch`, `sidecar permit`,
@@ -354,13 +359,13 @@ function fakeEngine(
     },
     prompt: {
       read: async () => ({ text: composer.text, cursor: composer.text.length }),
-      fill: async ({ text }) => {
+      fill: async ({ text, mode }) => {
         if (options.refusal) {
           return { isFilled: false, refusal: options.refusal, text: composer.text };
         }
         fills.push(text);
-        composer.text = text;
-        return { isFilled: true, text };
+        composer.text = mode === "append" ? composer.text + text : text;
+        return { isFilled: true, text: composer.text };
       },
     },
     process: {
@@ -372,7 +377,7 @@ function fakeEngine(
         runs.push([...argv]);
         stdins.push(init?.stdin);
         if (argv[0] === "hyoui") {
-          const exitCode = options.onEnter ? await options.onEnter(fake) : 0;
+          const exitCode = options.onEnter ? await options.onEnter(fake, argv) : 0;
           return { exitCode, stdout: "", stderr: "" };
         }
         if (argv[2] === "launch" || argv[2] === "permit") {
@@ -833,6 +838,166 @@ describe("handlePromptSend", () => {
     );
     expect(fake.fills).toEqual([]);
     expect(state.restoring).toEqual({ text: "mine", draft: "draft" });
+  });
+});
+
+/** What the terminal does with a bash mode command's keys: the `!` shows the
+ * composer in bash mode (hyoui's wait sees it), and Enter takes the command
+ * out of the composer, which the harness tells only as prompt.change with
+ * `origin.kind: "clear"` (docs/findings/2026-11-06-permit-bang-run.md). */
+async function runOnEnter(fake: Fake, argv: readonly string[]): Promise<number> {
+  if (argv.includes("key:Enter")) {
+    fake.composer.text = "";
+    await fire(fake, "prompt.change", CLEARED, async (e) => ({ text: e.text }));
+  }
+  return 0;
+}
+
+/** prompt.change as the harness raises it when a submit took the draft. */
+const CLEARED = { text: "", cursor: 0, origin: { kind: "clear" } };
+
+/** A bash mode command as the module queues it. */
+function queuedBash(fake: Fake, state: ModuleState, text: string): QueuedSend {
+  return { ...queued(fake, state, text), mode: "bash" };
+}
+
+// A bash mode command (`mode: "bash"`, DR-0035 §3) goes in as the person's
+// `! <command>`: the composer emptied, `!` pressed and its switch to bash mode
+// waited for, the command appended, then Enter. Its Enter raises no
+// prompt.submit; the composer emptied by it is the acceptance.
+describe("handlePromptSend: a bash mode command", () => {
+  test("accepted: `!` and its switch, the command appended, Enter, then the draft goes back", async () => {
+    const fake = fakeEngine({ draft: "half typed 書きかけ", onEnter: runOnEnter });
+    const state = registerOn(fake);
+    const report = await handlePromptSend(fake.$, state, queuedBash(fake, state, "ls -la"));
+    expect(report).toEqual({ outcome: "accepted" });
+    expect(fake.runs).toEqual([
+      ["hyoui", "input", "term-1", "text:!", "wait:─\\n!", "--timeout", "1s"],
+      ["hyoui", "input", "term-1", "key:Enter"],
+    ]);
+    expect(fake.runs[0]).toEqual(hyouiShellModeArgv("term-1"));
+    await settle();
+    // Emptied (leaving bash mode, so the `!` switches into it), the command
+    // appended after the `!`, then the draft back once Enter took it.
+    expect(fake.fills).toEqual(["", "ls -la", "half typed 書きかけ"]);
+    expect(fake.composer.text).toBe("half typed 書きかけ");
+    expect(state.awaiting).toBeUndefined();
+    expect(state.restoring).toBeUndefined();
+  });
+
+  test("the `!` not seen to switch: enter_failed, no Enter, the draft goes back", async () => {
+    const fake = fakeEngine({
+      draft: "keep",
+      onEnter: async (_f, argv) => (argv.includes("text:!") ? 1 : 0),
+    });
+    const state = registerOn(fake);
+    expect(await handlePromptSend(fake.$, state, queuedBash(fake, state, "ls"))).toEqual({
+      outcome: "not_delivered",
+      reason: "enter_failed",
+    });
+    expect(fake.runs).toEqual([hyouiShellModeArgv("term-1")]);
+    expect(fake.fills).toEqual(["", "keep"]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  test("a dialog refuses the emptying fill: no key is pressed, the reason is reported", async () => {
+    const fake = fakeEngine({ draft: "keep", refusal: "dialog" });
+    const state = registerOn(fake);
+    expect(await handlePromptSend(fake.$, state, queuedBash(fake, state, "ls"))).toEqual({
+      outcome: "not_delivered",
+      reason: "dialog",
+    });
+    expect(fake.runs).toEqual([]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  // The command never went in: the draft goes back and it is known not to be
+  // delivered.
+  test("a dialog refusing the command after the switch: the draft goes back, the reason is reported", async () => {
+    const fake = fakeEngine({ draft: "keep", onEnter: runOnEnter });
+    const state = registerOn(fake);
+    const prompt = fake.$.prompt;
+    const fill = (input: Parameters<typeof prompt.fill>[0]) => prompt.fill(input);
+    fake.$.prompt = { ...prompt };
+    fake.$.prompt.fill = async (input) =>
+      input.mode === "append" ? { isFilled: false, refusal: "dialog", text: "" } : fill(input);
+    expect(await handlePromptSend(fake.$, state, queuedBash(fake, state, "ls"))).toEqual({
+      outcome: "not_delivered",
+      reason: "dialog",
+    });
+    expect(fake.runs).toEqual([hyouiShellModeArgv("term-1")]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  // A prompt.submit of the same text is a prompt someone typed, not the bash
+  // mode command: the command stayed in the composer and is taken back out.
+  test("a prompt.submit of the same text is not its acceptance: not_submitted", async () => {
+    const fake = fakeEngine({
+      draft: "keep",
+      onEnter: async (f, argv) => {
+        if (argv.includes("key:Enter")) {
+          await fire(f, "prompt.submit", submitted(f.composer.text), entered);
+        }
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queuedBash(fake, state, "ls"));
+    await expireAcceptWait(fake);
+    expect(await report).toEqual({ outcome: "not_delivered", reason: "not_submitted" });
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  // Bash mode raises no prompt.submit, which is where the one-shot override
+  // is armed: it is not carried with the command.
+  test("the one-shot override does not ride on a bash mode command", async () => {
+    let awaited: ModuleState["awaiting"];
+    const fake = fakeEngine({
+      onEnter: async (f, argv) => {
+        if (argv.includes("key:Enter")) awaited = state.awaiting;
+        return runOnEnter(f, argv);
+      },
+    });
+    const state = registerOn(fake);
+    const request = { ...queuedBash(fake, state, "ls"), override: { effort: "low" } } as const;
+    expect(await handlePromptSend(fake.$, state, request)).toEqual({ outcome: "accepted" });
+    expect(awaited?.mode).toBe("bash");
+    expect(awaited?.override).toBeUndefined();
+  });
+
+  // The emptied composer accepts only a bash mode command: a prompt is
+  // accepted by its submit alone.
+  test("a composer emptied with no submit does not accept a prompt", async () => {
+    const fake = fakeEngine({ onEnter: runOnEnter });
+    const state = registerOn(fake);
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "ls"));
+    await expireAcceptWait(fake);
+    expect(await report).toEqual({ outcome: "unconfirmed" });
+  });
+
+  test("a clear with nothing awaited puts nothing back", async () => {
+    const fake = fakeEngine();
+    const state = registerOn(fake);
+    state.restoring = { text: "mine", draft: "draft" };
+    await fire(fake, "prompt.change", CLEARED, async (e) => ({ text: e.text }));
+    for (const kind of ["plugin", "engine", "history"]) {
+      await fire(fake, "prompt.change", { ...CLEARED, origin: { kind } }, async (e) => e);
+    }
+    await settle();
+    expect(fake.fills).toEqual([]);
+    expect(state.restoring).toEqual({ text: "mine", draft: "draft" });
+  });
+
+  test("a prompt.send line with mode bash runs as a bash mode command", async () => {
+    const fake = fakeEngine({ onEnter: runOnEnter });
+    registerOn(fake);
+    await fire(fake, "session.start", START, async () => ({}));
+    await settle();
+    spawned(fake, 0).stream.push(
+      '{"v":1,"op":"prompt.send","id":"b1","args":{"text":"ls -la","mode":"bash"}}\n',
+    );
+    expect(await nextReply(fake)).toEqual({ id: "b1", ok: true, result: { outcome: "accepted" } });
+    expect(fake.runs).toEqual([hyouiShellModeArgv("term-1"), hyouiEnterArgv("term-1")]);
   });
 });
 

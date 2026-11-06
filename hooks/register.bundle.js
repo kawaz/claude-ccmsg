@@ -1205,6 +1205,8 @@ async function sweepGuided($) {
 }
 
 var HYOUI_TIMEOUT_MS = 3000;
+var SHELL_MODE_TIMEOUT_MS = 2000;
+var SHELL_MODE_SCREEN = "─\\n!";
 var ACCEPT_WAIT_MS = 3000;
 function newPromptSendState() {
   return { queue: Promise.resolve() };
@@ -1213,9 +1215,23 @@ var PromptSubmitInputSchema = looseObject({
   text: optional(string()),
   origin: optional(looseObject({ kind: optional(string()) }))
 });
+var PromptChangeInputSchema = looseObject({
+  origin: optional(looseObject({ kind: optional(string()) }))
+});
 var PromptSubmitResultSchema = looseObject({ drop: optional(string()) });
 function hyouiEnterArgv(hyouiSessionId) {
   return ["hyoui", "input", hyouiSessionId, "key:Enter"];
+}
+function hyouiShellModeArgv(hyouiSessionId) {
+  return [
+    "hyoui",
+    "input",
+    hyouiSessionId,
+    "text:!",
+    `wait:${SHELL_MODE_SCREEN}`,
+    "--timeout",
+    "1s"
+  ];
 }
 function samePrompt(submitted, filled) {
   return submitted === filled || submitted === filled.trimEnd();
@@ -1236,24 +1252,65 @@ async function putBackUnsent($, text, draft) {
     return false;
   return !(await $.prompt.read()).text.includes(text);
 }
+function refused(refusal) {
+  return { isFilled: false, result: { outcome: "not_delivered", reason: refusal ?? "refused" } };
+}
+async function restoreDraft($, draft) {
+  const put = await $.prompt.fill({ text: draft, mode: "replace" });
+  if (!put.isFilled) {
+    $.ui.log(`ccmsg: could not put the draft back; it was: ${draft}`, { to: "debug" });
+  }
+}
+async function fillBashCommand($, hyouiSessionId, text, draft) {
+  const emptied = await $.prompt.fill({ text: "", mode: "replace" });
+  if (!emptied.isFilled)
+    return refused(emptied.refusal);
+  let switched;
+  try {
+    const run = await $.process.run(hyouiShellModeArgv(hyouiSessionId), {
+      timeoutMs: SHELL_MODE_TIMEOUT_MS
+    });
+    switched = run.exitCode === 0;
+  } catch {
+    switched = false;
+  }
+  if (!switched) {
+    await restoreDraft($, draft);
+    return { isFilled: false, result: { outcome: "not_delivered", reason: "enter_failed" } };
+  }
+  const filled = await $.prompt.fill({ text, mode: "append" });
+  if (!filled.isFilled) {
+    await restoreDraft($, draft);
+    return refused(filled.refusal);
+  }
+  return { isFilled: true };
+}
+async function fillPrompt($, text) {
+  const filled = await $.prompt.fill({ text, mode: "replace" });
+  return filled.isFilled ? { isFilled: true } : refused(filled.refusal);
+}
 async function handlePromptSend($, state, request) {
   const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
   if (!hyouiSessionId)
     return { outcome: "not_delivered", reason: "no_terminal" };
   const draft = (await $.prompt.read()).text;
-  const filled = await $.prompt.fill({ text: request.text, mode: "replace" });
+  const filled = request.mode === "bash" ? await fillBashCommand($, hyouiSessionId, request.text, draft) : await fillPrompt($, request.text);
   if (!filled.isFilled)
-    return { outcome: "not_delivered", reason: filled.refusal ?? "refused" };
+    return filled.result;
   if (!await stillCurrent($, state, request)) {
     return await putBackUnsent($, request.text, draft) ? SESSION_CHANGED : UNCONFIRMED;
   }
   const accepted = Promise.withResolvers();
-  state.awaiting = {
+  state.awaiting = request.mode === "bash" ? { text: request.text, accept: () => accepted.resolve(true), mode: request.mode } : {
     text: request.text,
     accept: () => accepted.resolve(true),
     ...request.override !== undefined ? { override: request.override } : {}
   };
-  state.restoring = { text: request.text, draft };
+  state.restoring = {
+    text: request.text,
+    draft,
+    ...request.mode !== undefined ? { mode: request.mode } : {}
+  };
   let entered;
   try {
     const run = await $.process.run(hyouiEnterArgv(hyouiSessionId), {
@@ -1312,7 +1369,7 @@ async function promptSubmitted($, state, input, result) {
     return;
   const settled = parseWith(PromptSubmitResultSchema, result);
   const entered = settled.ok && settled.value.drop === undefined;
-  const awaiting = state.awaiting;
+  const awaiting = state.awaiting?.mode === undefined ? state.awaiting : undefined;
   if (awaiting !== undefined) {
     if (entered && samePrompt(input.text, awaiting.text)) {
       state.awaiting = undefined;
@@ -1322,11 +1379,29 @@ async function promptSubmitted($, state, input, result) {
     }
   }
   const restoring = state.restoring;
-  if (!entered || restoring === undefined || !samePrompt(input.text, restoring.text))
+  if (!entered || restoring === undefined || restoring.mode !== undefined)
+    return;
+  if (!samePrompt(input.text, restoring.text))
     return;
   state.restoring = undefined;
   if (restoring.draft !== "")
     await putBackDraft($, restoring.text, restoring.draft);
+}
+function composerCleared($, state) {
+  const awaiting = state.awaiting;
+  if (awaiting?.mode === "bash") {
+    state.awaiting = undefined;
+    awaiting.accept();
+  }
+  const restoring = state.restoring;
+  if (restoring?.mode !== "bash")
+    return;
+  state.restoring = undefined;
+  if (restoring.draft === "")
+    return;
+  putBackDraft($, restoring.text, restoring.draft).catch((e) => {
+    $.ui.log(`ccmsg: the draft was not put back: ${errorText(e)}`, { to: "debug" });
+  });
 }
 
 var SESSION_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -1759,9 +1834,11 @@ function sidecarRunId(startedAt, random) {
   const digits = Math.floor(random * 36 ** 8).toString(36).padStart(8, "0");
   return `${Math.floor(startedAt).toString(36)}${digits}`.slice(0, SIDECAR_RUN_ID_MAX);
 }
+var PromptSendModeSchema = picklist(["bash"]);
 var PromptSendArgsSchema = object({
   text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace")),
-  override: optional(RequestOverrideSchema)
+  override: optional(RequestOverrideSchema),
+  mode: optional(PromptSendModeSchema)
 });
 var UserPromptModuleReasonSchema = picklist([
   "dialog",
@@ -2000,13 +2077,14 @@ async function replyTo($, state, sid, generation, request) {
       case "describe":
         return { id, ok: true, result: await describe($) };
       case "prompt.send": {
-        const { text, override } = request.args;
+        const { text, override, mode } = request.args;
         const queued = {
           id,
           text,
           sid,
           generation,
-          ...override !== undefined ? { override } : {}
+          ...override !== undefined ? { override } : {},
+          ...mode !== undefined ? { mode } : {}
         };
         return await queuePromptSend($, state, queued);
       }
@@ -2930,6 +3008,12 @@ function registerBus(on, state) {
     concern("prompt-send", PromptSubmitInputSchema, {
       when: (input) => input.origin?.kind === "composer",
       after: (input, result) => promptSubmitted($, state, input, result)
+    })
+  ])).catch(async (_$, e, next) => next(e));
+  on("prompt.change", async ($, e, next) => fanOut($, e, next, "prompt.change", [
+    concern("prompt-send", PromptChangeInputSchema, {
+      when: (input) => input.origin?.kind === "clear",
+      after: () => composerCleared($, state)
     })
   ])).catch(async (_$, e, next) => next(e));
 }

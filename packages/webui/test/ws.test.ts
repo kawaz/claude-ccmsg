@@ -924,6 +924,26 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(await req).toEqual({ ok: true, outcome: "not_delivered", reason: "dialog" });
   });
 
+  // DR-0040 §7: 「! で実行」 sends the command as user_prompt with mode bash,
+  // and no override.
+  test("userPrompt with mode bash sends it with the text", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[0], "the first socket");
+    ws1.readyState = MockWebSocket.OPEN;
+
+    void handle.userPrompt("sid-1", "ls -la", undefined, "bash");
+    const sent = sentFrame(ws1, "user_prompt");
+    expect(sent).toEqual({
+      op: "user_prompt",
+      request_id: defined(sent.request_id, "the request id of the user_prompt frame"),
+      session_id: "sid-1",
+      text: "ls -la",
+      mode: "bash",
+    });
+  });
+
   // A user_prompt written before the socket closed settles with
   // connection_closed — the panel reads that as "maybe delivered", not as a
   // failure, so this must not hang or reject.

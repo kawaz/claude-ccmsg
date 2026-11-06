@@ -7,6 +7,7 @@ import {
   attachmentNote,
   commandHeading,
   fenceLangOfPath,
+  isOneLineCommand,
   permitGrantText,
 } from "../src/client/permit-request-view.ts";
 
@@ -110,5 +111,20 @@ describe("attachments", () => {
     expect(
       attachmentNote({ path: "/a", read: true, content: "", bytes: 0, truncated: false }),
     ).toBeNull();
+  });
+});
+
+// DR-0040 §7: 「! で実行」 is offered for a one-line command only.
+describe("isOneLineCommand", () => {
+  test("a command with no line break is one line", () => {
+    for (const command of ["ls -la", "echo 'a  b' | wc -c", "  x  ", 'cat <<<"in"']) {
+      expect(isOneLineCommand(command)).toBe(true);
+    }
+  });
+
+  test("any line break makes it several: LF, CRLF, CR, a trailing one", () => {
+    for (const command of ["a\nb", "a\r\nb", "a\rb", "ls\n", "cat <<EOF\nx\nEOF"]) {
+      expect(isOneLineCommand(command)).toBe(false);
+    }
   });
 });

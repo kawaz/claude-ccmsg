@@ -27,6 +27,7 @@ import type { AgentRef } from "../src/client/locator.ts";
 import { permitGrantText } from "../src/client/permit-request-view.ts";
 import { useStoreState } from "../src/client/useStore.ts";
 import type { Store } from "../src/client/useStore.ts";
+import type { WsHandle } from "../src/client/ws.ts";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
@@ -94,6 +95,8 @@ const OPENED: Readonly<Record<string, PermitAttachment>> = {
 async function openWith(
   requests: readonly PermitRequestRecord[],
   agent?: AgentRef,
+  /** What the daemon answers a user_prompt (「! で実行」) with. */
+  userPrompt?: WsHandle["userPrompt"],
 ): Promise<{
   root: HTMLElement;
   store: Store;
@@ -130,6 +133,7 @@ async function openWith(
           : { ok: false, error: { code: "invalid_args", msg: `no permit request with id ${id}` } },
       );
     },
+    ...(userPrompt !== undefined ? { userPrompt } : {}),
   };
   let composerOpens = 0;
   const openComposer = (): void => {
@@ -373,5 +377,107 @@ describe("permission request bubbles", () => {
       [ASKED.id, true],
       [later.id, false],
     ]);
+  });
+});
+
+// DR-0040 §7: a one-line command has 「! で実行」 under its code block, which
+// runs it in the asking session as the person's `! <command>` (user_prompt
+// with mode bash). The button is apart from 許可する: it neither copies nor
+// marks the request read. Its words come from CSS, not the DOM, so they join
+// neither the commands' copied text nor the Timeline's search.
+describe("! で実行", () => {
+  const ONE_AND_MANY: PermitRequestRecord = {
+    ...ASKED,
+    attachments: [],
+    commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
+  };
+
+  /** A user_prompt that records what it was asked and answers `reply`. */
+  function answering(reply: ReplyOf<"user_prompt">, asked: unknown[][]): WsHandle["userPrompt"] {
+    return (...args) => {
+      asked.push(args);
+      return Promise.resolve(reply);
+    };
+  }
+
+  function bangOf(li: Element | undefined): HTMLButtonElement | null {
+    return defined(li, "command").querySelector<HTMLButtonElement>("button.permit-bang");
+  }
+
+  test("sits under the code block of each one-line command, and of no multi-line one", async () => {
+    const { root } = await openWith([ONE_AND_MANY]);
+    const [oneLine, multiLine] = [...root.querySelectorAll(".permit-command")];
+    const button = instanceOf(bangOf(oneLine), HTMLButtonElement, "! で実行");
+    expect(button.getAttribute("aria-label")).toBe("! で実行");
+    expect(button.textContent).toBe("");
+    // Right under the code block: the row after the code's frame.
+    const row = defined(button.parentElement, "row");
+    expect(row.className).toBe("permit-bang-row");
+    expect(row.previousElementSibling?.className).toContain("code-copy-frame");
+    expect(bangOf(multiLine)).toBeNull();
+  });
+
+  test("runs the command as bash mode in the asking session, and says when", async () => {
+    const asked: unknown[][] = [];
+    const { root, reads, composerOpens } = await openWith(
+      [ONE_AND_MANY],
+      undefined,
+      answering({ ok: true, outcome: "accepted" }, asked),
+    );
+    const li = root.querySelector(".permit-command") ?? undefined;
+    await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
+    expect(asked).toEqual([[SID, "ls -la", undefined, "bash"]]);
+    expect(li?.querySelector(".permit-bang-sent")?.textContent).toContain(
+      "に送りました。出力はコマンドが終わると Timeline に出ます",
+    );
+    expect(li?.querySelector(".session-input-notice")).toBeNull();
+    // Apart from 許可する: nothing copied, not marked read, no composer.
+    expect(reads).toEqual([]);
+    expect(composerOpens()).toBe(0);
+  });
+
+  test("cannot be pressed again while its run is being sent", async () => {
+    const asked: unknown[][] = [];
+    let answer: (reply: ReplyOf<"user_prompt">) => void = () => {};
+    const { root } = await openWith([ONE_AND_MANY], undefined, (...args) => {
+      asked.push(args);
+      return new Promise((resolve) => {
+        answer = resolve;
+      });
+    });
+    const li = root.querySelector(".permit-command") ?? undefined;
+    const button = instanceOf(bangOf(li), HTMLButtonElement, "! で実行");
+    await press(button);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    button.click();
+    expect(asked.length).toBe(1);
+    await act(async () => {
+      answer({ ok: true, outcome: "accepted" });
+      await Promise.resolve();
+    });
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("aria-busy")).toBe("false");
+  });
+
+  test("not delivered, or not known to be, shows the input box's notice", async () => {
+    for (const [reply, tone, title] of [
+      [{ ok: true, outcome: "not_delivered", reason: "dialog" }, "danger", "届きませんでした"],
+      [
+        { ok: false, error: { code: "request_timeout", msg: "no reply" } },
+        "warn",
+        "届いたか確認できませんでした",
+      ],
+    ] as const) {
+      const asked: unknown[][] = [];
+      const { root } = await openWith([ONE_AND_MANY], undefined, answering(reply, asked));
+      const li = root.querySelector(".permit-command") ?? undefined;
+      await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
+      const notice = defined(li?.querySelector(".session-input-notice") ?? undefined, "notice");
+      expect(notice.classList.contains(`session-input-notice-${tone}`)).toBe(true);
+      expect(notice.querySelector(".session-input-notice-title")?.textContent).toBe(title);
+      expect(li?.querySelector(".permit-bang-sent")).toBeNull();
+      await mounted.unmount();
+    }
   });
 });

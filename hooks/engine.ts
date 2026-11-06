@@ -118,6 +118,7 @@ export type ObservedEvent =
   | "session.compact"
   | "command.run"
   | "prompt.submit"
+  | "prompt.change"
   | "turn.start"
   | "turn.complete"
   | "session.append";

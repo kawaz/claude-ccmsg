@@ -331,6 +331,21 @@ describe("the ops' results", () => {
     ).toBe(false);
   });
 
+  // DR-0035 §3: `mode: "bash"` puts the text in as the person's bash mode
+  // command (`! <text>`); a prompt has none.
+  test("prompt.send: a bash mode command, and no mode it does not know", () => {
+    const request = {
+      v: 1,
+      op: "prompt.send",
+      id: "b",
+      args: { text: "ls -la", mode: "bash" },
+    } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    for (const mode of ["prompt", "shell", null]) {
+      expect(readSidecarRequest(line({ ...request, args: { text: "ls", mode } })).ok).toBe(false);
+    }
+  });
+
   test("session.facts is asked with no arguments", () => {
     expect(readSidecarRequest(line({ v: 1, op: "session.facts", id: "f", args: {} }))).toEqual({
       ok: true,

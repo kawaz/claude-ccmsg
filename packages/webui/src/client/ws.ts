@@ -18,6 +18,7 @@ import type {
   DaemonFrame,
   ErrorResponse,
   ParseFailure,
+  PromptSendMode,
   ReplyOf,
   RequestInput,
   RequestOverride,
@@ -365,11 +366,14 @@ export interface WsHandle {
    * or `request_timeout` (no answer within USER_PROMPT_REPLY_TIMEOUT_MS)
    * means the request was written but its answer was lost: the text may be in
    * the session. `override` is the one-shot override of the turn the prompt
-   * starts or joins (DR-0041 §4); `{}` or absent for none. */
+   * starts or joins (DR-0041 §4); `{}` or absent for none. `mode` `bash` runs
+   * the text as the person's bash mode command (`! <text>`, DR-0040 §7),
+   * absent for a prompt. */
   userPrompt(
     sessionId: string,
     text: string,
     override?: RequestOverride,
+    mode?: PromptSendMode,
   ): Promise<ReplyOf<"user_prompt">>;
   /** Change the session override of a session's main-thread requests
    * (DR-0041 §3, user role only): a field of `patch` absent keeps it, `null`
@@ -1114,7 +1118,7 @@ export function createWsClient(
         { op: "session_rename", session_id: sessionId, title },
         { timeoutMs: SESSION_RENAME_REPLY_TIMEOUT_MS },
       ),
-    userPrompt: (sessionId, text, override) =>
+    userPrompt: (sessionId, text, override, mode) =>
       send(
         {
           op: "user_prompt",
@@ -1122,6 +1126,7 @@ export function createWsClient(
           text,
           ...(override?.model !== undefined ? { model: override.model } : {}),
           ...(override?.effort !== undefined ? { effort: override.effort } : {}),
+          ...(mode !== undefined ? { mode } : {}),
         },
         { timeoutMs: USER_PROMPT_REPLY_TIMEOUT_MS },
       ),

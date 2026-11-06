@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節)。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -93,6 +93,7 @@ daemon は `permit_request` を記録した時に、say と同じ発声の関数
 - {intents の各要素を markdown で}
 - 以下コマンドの実行（{description}）
   {command をコードブロック (sh) で}
+  [! で実行]                      ← command が 1 行の時だけ (§11)
 
 [✅ 許可する]                     ← 本文の最後 (吹き出しの中)
 
@@ -133,10 +134,24 @@ handler は `tool.call` の `agentId` があれば何もせず「permit は suba
 
 plugin の skill (`skills/ccmsg/SKILL.md`) に `mcp__ccmsg-v1__permit` の節を足す: いつ使うか (classifier に止められた直後、止められた操作を書き換えずに再実行するため)、入力の定型、許可の文を受けたら許可されたコマンドを 1 つずつそのまま実行すること、subagent からは使わないこと。
 
+### 11. 「! で実行」
+
+kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を含まない) のものに、そのコードブロックの直下に小さいボタン「! で実行」を置く。押すと、依頼したセッションで、人が composer に `! <command>` と打って Enter したのと同じ結果になる (Claude Code の bash mode。コマンドが実行され、出力が会話に入る)。
+
+- 経路は人の入力と同じ op `user_prompt` に `mode: "bash"` を付けたもの ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。module が composer を空にし、自分の端末に `!` を打って bash mode に切り替わるのを待ち、コマンドを入れて Enter を送る。送る先は依頼の `sid`
+- 複数行の command には出さない。kawaz の裁定による UI の範囲で、bash mode が 1 行に限られるからではない (2.1.319 では複数行も実行された。[findings](../findings/2026-11-06-permit-bang-run.md))
+- 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない
+- 送っている間は押せない (送信中…)。結果の表示は入力欄の送信と同じ語彙: 受け付けられたら押した時刻と「出力はコマンドが終わると Timeline に出ます」を横に添える (`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間がある。二度押しの判断材料)。届かなかった・確かめられなかった時は入力欄と同じ注記 (`sessionInputNotice`) を出す
+- 実行の結果は webui で別に出さない。会話に入った行が TL に流れる
+- ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (コードブロックのコピーボタンと同じ)。コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と Timeline の検索に混ざる。読み上げる名前は `aria-label` が持つ
+
 ## Alternatives Considered
 
 | 案 | 不採用理由 |
 |---|---|
+| 「! で実行」を `$.prompt.fill` に `! <command>` ごと入れて Enter で起こす | bash mode にならず、通常の prompt として model に送られる (2.1.319 実測) |
+| 「! で実行」を module の `$.process.run` で走らせる | 結果が transcript に入らず、人の `!` と同じにならない |
+| 「! で実行」の送信を別の op にする | 書きかけの退避・Enter・受け付けの待ち・戻しが人の入力と同じで、違うのは composer への入れ方と受け付けの印だけ。`user_prompt` / `prompt.send` の入力の区別で足りる (DR-0035 §3) |
 | rules の定型文を手で書く今の形だけにする | Context の 3 つの弱み (形のぶれ、具体の入れ忘れ、ファイルの中身を貼ると context を食う) が残る |
 | ファイルの中身をエージェントが本文に貼る | 中身がエージェントの context に載り、長いファイルほど高くつく。本文の中で許可の対象と説明の境目も曖昧になる |
 | 添付を依頼の時に daemon が読んで記録に写す | 依頼の記録と配送が添付の中身 (最大 16 × 64 KiB) を運ぶことになり、人が開かない添付まで読む。中身を人が見るのは開いた時で、その時に読めば足りる |
@@ -162,6 +177,7 @@ plugin の skill (`skills/ccmsg/SKILL.md`) に `mcp__ccmsg-v1__permit` の節を
 - TL のバブルの「添付」等の文字と「許可する」「コピーしました」は DOM にあるので、Timeline の検索に当たる (say の「既読」と同じ)
 - 「許可する」を押して文を写しても送らなかった場合も既読になり、🔐 は消える。既読は「人が依頼に手を付けた」の印で、許可が届いたことは示さない
 - rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
+- 「! で実行」は人の `! <command>` と同じで、auto mode の classifier を通らずにそのセッションの環境で実行される。コマンドを書いたのはエージェントで、押す前にコマンドを読んで判断するのは人である。会話に入るのはコマンドとその出力で、許可の文は入らない
 
 ## 関連
 

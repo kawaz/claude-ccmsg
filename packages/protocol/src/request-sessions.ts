@@ -14,6 +14,7 @@ import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
 import { PermitInputSchema } from "./permit-request.ts";
 import {
   AgentAppendArgsSchema,
+  PromptSendModeSchema,
   SessionFactsSchema,
   SidecarReplySchema,
   SidecarRunIdSchema,
@@ -363,6 +364,10 @@ export const UserPromptRequestSchema = v.object({
    * prompt is. Each absent for the session override's. */
   model: RequestOverrideSchema.entries.model,
   effort: RequestOverrideSchema.entries.effort,
+  /** `bash` to run the text as the person's bash mode command (`! <text>`),
+   * absent for a prompt (PromptSendModeSchema). A bash mode command starts
+   * no prompt.submit, so the one-shot override is not tied to it. */
+  mode: v.optional(PromptSendModeSchema),
 });
 export type UserPromptRequest = Output<typeof UserPromptRequestSchema>;
 
