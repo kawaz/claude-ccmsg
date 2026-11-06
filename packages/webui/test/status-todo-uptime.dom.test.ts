@@ -231,7 +231,7 @@ describe("Timeline ctx line", () => {
       );
       // Its last line is where the version opens (DR-0048 §5).
       expect(titles).toEqual([
-        "ccmsg v0.212.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02121",
+        "ccmsg v0.212.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.212.1",
         "claude v2.1.310 (this session's process; the host has the same version installed)\nhttps://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310",
       ]);
       // kawaz 2026-11-06 (DR-0048 §5): the versions, and only they, are links
@@ -245,7 +245,7 @@ describe("Timeline ctx line", () => {
       expect(links).toEqual([
         [
           "ccmsg v0.212.1",
-          "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02121",
+          "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.212.1",
           "_blank",
           "noopener noreferrer",
         ],

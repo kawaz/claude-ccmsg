@@ -1,7 +1,7 @@
-// Where a version shown in the webui opens (DR-0048 §5): its heading's anchor
-// in the CHANGELOG on GitHub. The anchors are the ones GitHub gives the pages'
-// headings (Claude Code's `## 2.1.318` is `#21318`, seen on its page
-// 2026-11-06; ccmsg's `## v0.214.1` is `#v02141`).
+// Where a version shown in the webui opens (DR-0048 §5): its entry's anchor in
+// the CHANGELOG on GitHub. Claude Code's is the one GitHub gives the heading
+// (`## 2.1.318` is `#21318`, seen on its page 2026-11-06); ccmsg's is the
+// explicit `<a id="v<version>">` on the heading line, so it keeps the dots.
 import { describe, expect, test } from "bun:test";
 import {
   ccmsgChangelogUrl,
@@ -12,7 +12,6 @@ import {
 describe("githubHeadingAnchor", () => {
   test("drops the dots of a version", () => {
     expect(githubHeadingAnchor("2.1.318")).toBe("21318");
-    expect(githubHeadingAnchor("v0.214.1")).toBe("v02141");
   });
 
   // GitHub's rule: lowercase, punctuation other than `-` and `_` dropped,
@@ -25,9 +24,17 @@ describe("githubHeadingAnchor", () => {
 });
 
 describe("ccmsgChangelogUrl", () => {
-  test("is ccmsg's CHANGELOG at the version's `## v<version>` heading", () => {
-    expect(ccmsgChangelogUrl("0.214.1")).toBe(
-      "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141",
+  test("is ccmsg's CHANGELOG at the version's explicit anchor, dots kept", () => {
+    expect(ccmsgChangelogUrl("0.215.0")).toBe(
+      "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.215.0",
+    );
+  });
+
+  // A version string is from outside the page (the daemon): whatever it holds
+  // stays inside the fragment.
+  test("keeps an odd version inside the fragment", () => {
+    expect(ccmsgChangelogUrl("0.215.0 ä/?#x")).toBe(
+      "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.215.0%20%C3%A4%2F%3F%23x",
     );
   });
 });

@@ -329,7 +329,7 @@ describe("GLOBALS", () => {
       a.getAttribute("rel"),
       a.getAttribute("title"),
     ]);
-    const ccmsg = "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141";
+    const ccmsg = "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1";
     const claude = "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21318";
     expect(links).toEqual([
       ["v0.214.1", ccmsg, "_blank", "noopener noreferrer", `ccmsg daemon v0.214.1\n${ccmsg}`],

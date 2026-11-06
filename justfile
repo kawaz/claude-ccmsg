@@ -50,7 +50,7 @@ push-without-bump: check-on-default-branch ensure-clean ci check-translations ch
     @just _local-plugin-reload
 
 # version を bump して Release commit を作成 (push は別途 `just push`)。
-# 先に CHANGELOG.md の先頭に新版の節 (`## v<新版>`) を書いて commit しておく。
+# 先に CHANGELOG.md の先頭に新版の節 (`## v<新版> <a id="v<新版>"></a>`) を書いて commit しておく。
 # 無ければ書く見出しを示して止まる (DR-0048)
 [script]
 bump-version bump="patch": ensure-clean
@@ -257,7 +257,8 @@ _check-translation-headers name:
     head -5 {{ name }}-ja.md | grep -qF "> 🇬🇧 [README.md](./README.md)"
     head -5 {{ name }}.md    | grep -qF "> 🇯🇵 [README-ja.md](./README-ja.md)"
 
-# CHANGELOG.md の最初の節が version (既定は今の版) の節 `## v<version>` か検証 (DR-0048)。
+# CHANGELOG.md の最初の節の見出しが version (既定は今の版) の `## v<version> <a id="v<version>"></a>` か検証 (DR-0048)。
+# 見出しの版とアンカーの版が両方 version であることを、見出し行の完全一致で見る。
 # bump-version は新版で、push は今の版で呼ぶ (Release commit が節を伴うことを push 時にも保証)。
 [private]
 [script]
@@ -265,10 +266,12 @@ check-changelog version="":
     v={{ quote(version) }}
     [ -n "$v" ] || v=$(bump-semver get {{ version-files }} --no-hint)
     first=$(grep -m1 '^## ' CHANGELOG.md 2>/dev/null || true)
-    [ "$first" = "## v$v" ] && exit 0
-    printf >&2 'ERROR: CHANGELOG.md の最初の節が v%s の節ではない (今の最初の節: %s)。\n' "$v" "${first:-なし}"
-    printf >&2 '  CHANGELOG.md の冒頭の説明の下 (既存の節より上) に次の節を足して commit し、もう一度実行してください:\n\n'
-    printf >&2 '## v%s\n\n%s\n\n- <この版で変わったことを 1 行ずつ、数行で>\n\n' "$v" "$(date +%Y-%m-%d)"
+    want=$(printf '## v%s <a id="v%s"></a>' "$v" "$v")
+    [ "$first" = "$want" ] && exit 0
+    printf >&2 'ERROR: CHANGELOG.md の最初の節の見出しが v%s のもの (%s) ではない (今の最初の節: %s)。\n' "$v" "$want" "${first:-なし}"
+    printf >&2 '  見出しは `## v<版> <a id="v<版>"></a>` の形で、見出しの版とアンカーの版を揃える。\n'
+    printf >&2 '  CHANGELOG.md の冒頭の説明の下 (既存の節より上) に次の節を足して (この版の節が既にあれば見出しをこの形に直して) commit し、もう一度実行してください:\n\n'
+    printf >&2 '%s\n\n%s\n\n- <この版で変わったことを 1 行ずつ、数行で>\n\n' "$want" "$(date +%Y-%m-%d)"
     exit 1
 
 # product code に変更があれば version も main@origin より bump 済か検証 (変更なしならスキップ)。

@@ -17,20 +17,22 @@ Claude Code は版ごとの変更点を `https://github.com/anthropics/claude-co
 
 ### 2. 置き場はリポ直下の `CHANGELOG.md`
 
-- GitHub はリポ直下の `CHANGELOG.md` を特別扱いし (リポのトップから辿れる)、版の見出しのアンカーで外から版の節へ飛べる。webui のリンク先として安定した URL になる
+- GitHub はリポ直下の `CHANGELOG.md` を特別扱いし (リポのトップから辿れる)、版のアンカーで外から版の節へ飛べる。webui のリンク先として安定した URL になる
 - kawaz/* の docs の配置規約 (reference の `docs-authoring/docs-layout`) は、直下の文書を `README{,-ja}.md` と任意の `CHANGELOG.md` に限っている。これはその `CHANGELOG.md` にあたる
 - 日本語だけで書き、英訳は持たない
 
 ### 3. 書式
 
 - Keep a Changelog に倣い、新しい版が上。1 版は数行の箇条書きで、Added / Changed 等の小見出しは置かない
-- 版の見出しは `## v<版>` だけにし、日付はその下の 1 行目に書く。見出しに日付を入れると (`## v0.214.1 - 2026-11-06` → `#v02141---2026-11-06`)、版しか知らない webui がアンカーを組み立てられない
+- 版の見出しは `## v<版> <a id="v<版>"></a>` の形にする (例: `## v0.215.0 <a id="v0.215.0"></a>`)。見出しのテキストは `v<版>` だけで、同じ行の明示アンカーが版の区切りの `.` を残した `#v<版>` を与える。GitHub が見出しに付けるアンカーは `.` を落とす (`v0.215.0` → `#v02150`) ので、版として読めない
+- GitHub は markdown の `id` を `user-content-v<版>` に書き換えて描画し、`#v<版>` で開かれたページはその要素へスクロールする (2026-11-06 に、`<a id="v1.7.1">` を持つ公開リポの CHANGELOG を `#v1.7.1` 付きで開いて確認)
+- 日付は見出しの下の 1 行目に書く。見出しの行は版とアンカーだけにし、§4 の gate が行の完全一致で検査できる形に保つ
 - 「Unreleased」の節は持たない。bump のたびに新版の節を書く
 - 過去の版は書かない。最初の節は、この仕組みが入る版の節
 
 ### 4. bump と push の gate
 
-- justfile の `check-changelog [version]`: `CHANGELOG.md` の最初の `## ` の見出しが `## v<version>` でなければ失敗する。version を省くと今の版 (`bump-semver get` の version ファイル群)
+- justfile の `check-changelog [version]`: `CHANGELOG.md` の最初の `## ` の行が `## v<version> <a id="v<version>"></a>` でなければ失敗する (見出しの版とアンカーの版がどちらも version であることを、行の完全一致で見る)。version を省くと今の版 (`bump-semver get` の version ファイル群)
 - `just bump-version` は、`bump-semver <bump> <version ファイル群>` を `--write` 無しで実行して新版を先に出し、`check-changelog <新版>` を通ってから version ファイルを書いて Release commit を作る。節が無ければ version ファイルに触れずに止まり、足す節の形 (見出し・日付・箇条書き) をエラー文で示す
 - bump する側は、bump の前に節を書いて commit する (`ensure-clean` があるので、書いたまま bump はできない)
 - `just push` の deps に `check-changelog` (今の版) を `check-version-bumped` と同じ階層で入れる。Release commit が節を伴うことを push の時にも保証する。`push-without-bump` には入れない (版が変わらない push なので)
@@ -38,9 +40,10 @@ Claude Code は版ごとの変更点を `https://github.com/anthropics/claude-co
 
 ### 5. webui の版のリンク
 
-- ccmsg の版 (状態行の `ccmsg v<版>`、GLOBALS の daemon の版) は `https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#<アンカー>`、アンカーは見出し `v<版>` の GitHub の規則によるもの (`v0.214.1` → `v02141`)
-- Claude Code の版 (状態行の `claude v<版>`、GLOBALS の Claude Code の版) は `https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#<アンカー>`、アンカーは見出し `<版>` のもの (`2.1.318` → `21318`)
-- GitHub の規則: 小文字にし、文字・数字・`_`・`-`・空白以外を落とし、空白を `-` にする。webui の `githubHeadingAnchor` がこれを実装する
+- ccmsg の版 (状態行の `ccmsg v<版>`、GLOBALS の daemon の版) は `https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v<版>` (例: `#v0.215.0`)。§3 の明示アンカーを指す
+- Claude Code の版 (状態行の `claude v<版>`、GLOBALS の Claude Code の版) は `https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#<アンカー>`、アンカーは GitHub が見出し `<版>` に付けるもの (`2.1.318` → `21318`)
+- GitHub の見出しのアンカーの規則: 小文字にし、文字・数字・`_`・`-`・空白以外を落とし、空白を `-` にする。webui の `githubHeadingAnchor` がこれを実装する
+- 版の文字列は daemon やプロセスから来る外部の値なので、アンカーは `encodeURIComponent` を通して fragment に入れる (実際の版は変わらない)
 - 節の無い版 (古すぎる・新しすぎる) は、ページの先頭が開くだけで壊れない
 - 新しいタブで開く (`target="_blank" rel="noopener noreferrer"`、webui の他の外部リンクと同じ)。`noreferrer` で webui の origin (tailnet の名前) を GitHub に送らない
 - 見た目: 状態行は「枠なし 1 行、押せるのは値だけ」([DR-0041](./DR-0041-request-model-effort-override.md) §6) のまま、リンクは行の色で下線なし、hover とキーボードの focus で下線を出す。GLOBALS も同じ。hover の説明 (title) の最後の行にリンク先の URL を書く
@@ -51,7 +54,8 @@ Claude Code は版ごとの変更点を `https://github.com/anthropics/claude-co
 - **`docs/` の下に置く**: 規約の上では置けるが、GitHub の直下の扱いと、外から版へ飛ぶ短い URL を失う
 - **GitHub Releases に書く**: 版の作成を `just` の外 (gh / Web) に広げ、オフラインの checkout に変更点が残らない。gate も Releases の API に依存する
 - **commit log から自動生成**: commit message は「何をどうした (理由)」の長文で、版の要点にならない。要点の選別は人 (エージェント) の判断で、生成に任せると増やしたくない「読まれない長文」になる
-- **見出しに日付を入れる (`## v0.214.1 - 2026-11-06`)**: Keep a Changelog の通常の形だが、webui は版しか知らないのでアンカーを組み立てられない (§3)
+- **見出しに日付を入れる (`## v0.214.1 - 2026-11-06`)**: Keep a Changelog の通常の形だが、見出しの行の形が日付で変わり、gate の完全一致の検査ができなくなる (§3)
+- **GitHub が見出しに付けるアンカーを使う (明示アンカーを持たない)**: `## v0.215.0` のアンカーは `#v02150` で、版の区切りが消えて読めない
 
 ## Consequences
 

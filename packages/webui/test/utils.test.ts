@@ -513,11 +513,11 @@ describe("sessionRuntimeParts", () => {
     );
     expect(parts.map((part) => [part.key, part.href])).toEqual([
       ["uptime", undefined],
-      ["ccmsg", "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141"],
+      ["ccmsg", "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1"],
       ["claude", "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21317"],
     ]);
     expect(parts.find((part) => part.key === "ccmsg")?.title).toBe(
-      "ccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141",
+      "ccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1",
     );
   });
 });
