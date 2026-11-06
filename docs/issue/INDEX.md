@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-06 | task | open | [drop-legacy-client-version-hello-key](./2026-11-06-drop-legacy-client-version-hello-key.md) | hello の wire field client_version は ccmsg_version に改名済み。移行期間の旧名の受け口を、旧 module が全部再起動された後に外す |
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った TL では live tail の push ごとに最大 1.3 秒の long task が出る (読んだ量に比例する layout と markdown の parse) |
 | 2026-11-05 | request | open | [webui-mark-sessions-with-old-module-as-not-live](./2026-11-05-webui-mark-sessions-with-old-module-as-not-live.md) | push を持たない古い module (0.211 より前) のセッションを webui で「ライブ更新なし」と分からせる |
 | 2026-11-05 | bug | open | [bun-test-parallel-processes-fail](./2026-11-05-bun-test-parallel-processes-fail.md) | bun test を 2 プロセス同時に走らせると agents / send-message / op-http のテストが落ちる (何かを取り合っている、未調査) |
