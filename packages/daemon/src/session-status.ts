@@ -1176,6 +1176,67 @@ const MAX_AGENT_TREE_DEPTH = 5;
  * "stopped" mid-turn. See Design rationale in readAgentTree. */
 const AGENT_LIVE_MTIME_WINDOW_MS = 2 * 60 * 1000;
 
+/** How much of an agent transcript's end is read for its model and effort.
+ * An assistant row is usually a few KiB; one carrying a large tool input can
+ * exceed this, and then the agent shows no model until a shorter row lands
+ * (DR-0020 addendum 2026-11-06). */
+const AGENT_ENGINE_TAIL_BYTES = 128 * 1024;
+
+/** The two fields of an assistant row the agent tree reads. Narrower than
+ * `AssistantRowSchema` on purpose: a row whose content holds a block shape
+ * ccmsg does not know yet still says which model wrote it. */
+const AgentEngineRowLineSchema = jsonText(
+  v.looseObject({
+    type: v.literal("assistant"),
+    message: v.looseObject({ model: v.string() }),
+    effort: v.optional(v.string()),
+  }),
+);
+
+interface AgentEngine {
+  model: string;
+  effort?: string;
+}
+
+/** Memoized on the transcript's mtime/size, so an idle agent's tail is read
+ * once; a working agent's is read again on each snapshot after it wrote. */
+const agentEngineByPath = createMtimeCache<AgentEngine | undefined>(1024);
+
+/** The model and effort of the latest non-synthetic assistant row in the last
+ * `AGENT_ENGINE_TAIL_BYTES` of an agent transcript. Never reads the whole
+ * file. */
+async function readAgentEngine(transcriptPath: string): Promise<AgentEngine | undefined> {
+  return agentEngineByPath.get(transcriptPath, async (stat) => {
+    const start = Math.max(0, stat.size - AGENT_ENGINE_TAIL_BYTES);
+    const length = stat.size - start;
+    if (length === 0) return undefined;
+    let text: string;
+    let handle: fs.promises.FileHandle | undefined;
+    try {
+      handle = await fs.promises.open(transcriptPath, "r");
+      const buf = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buf, 0, length, start);
+      text = buf.subarray(0, bytesRead).toString("utf-8");
+    } catch {
+      return undefined;
+    } finally {
+      await handle?.close();
+    }
+    const lines = text.split("\n");
+    // The first line of a window that starts mid-file is a cut row.
+    const from = start > 0 ? 1 : 0;
+    for (let i = lines.length - 1; i >= from; i--) {
+      const line = lines[i];
+      if (line === undefined || !line.includes('"assistant"')) continue;
+      const read = parseWith(AgentEngineRowLineSchema, line);
+      if (!read.ok || read.value.message.model === "<synthetic>") continue;
+      const { effort } = read.value;
+      return { model: read.value.message.model, ...(effort !== undefined ? { effort } : {}) };
+    }
+    return undefined;
+  });
+}
+
 interface AgentMetaFile {
   /** agentId derived from filename: `agent-<agentId>.meta.json`. */
   agentId: string;
@@ -1187,6 +1248,8 @@ interface AgentMetaFile {
   mtimeMs: number;
   /** the meta.json record. */
   meta: AgentMeta;
+  /** model / effort the agent's transcript tail shows (readAgentEngine). */
+  engine: AgentEngine | undefined;
 }
 
 /** Filename → agentId. The convention is `agent-<agentId>.meta.json`; the
@@ -1628,7 +1691,8 @@ async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFi
   } catch {
     mtimeMs = cached.mtimeMs;
   }
-  return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.meta };
+  const engine = await readAgentEngine(transcriptPath);
+  return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.meta, engine };
 }
 
 /** r46 m8: meta.json + kind + state から `AgentTreeNode` を組む共通ヘルパ。
@@ -1648,10 +1712,13 @@ function buildAgentTreeNode(
     state,
     children: [],
     ...(kind === "teammate" && name !== undefined ? { teammate_name: name } : {}),
+    ...(name !== undefined ? { name } : {}),
     ...(agentType !== undefined ? { agent_type: agentType } : {}),
     ...(description !== undefined ? { description } : {}),
     ...(color !== undefined ? { color } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(m.engine !== undefined ? { running_model: m.engine.model } : {}),
+    ...(m.engine?.effort !== undefined ? { effort: m.engine.effort } : {}),
     ...(teamName !== undefined ? { team_name: teamName } : {}),
     ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
     ...(extra?.workflow_id ? { workflow_id: extra.workflow_id } : {}),

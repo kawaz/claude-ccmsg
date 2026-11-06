@@ -183,9 +183,25 @@ const AgentTreeNodeFieldsSchema = v.object({
   agent_type: v.optional(v.string()),
   /** meta.json `description` — the spawn call's description, verbatim. */
   description: v.optional(v.string()),
+  /** meta.json `name` — the name the agent was spawned with (the `name` of
+   * the Agent call), for any kind. Absent when the spawn named none. The
+   * Timeline's agent bubbles look an agent up by it. */
+  name: v.optional(v.string()),
   /** teammate-only fields (mirror SessionTeammate). */
   color: v.optional(v.string()),
+  /** meta.json `model`, as the spawn recorded it: a resolved id for a
+   * teammate, possibly the alias the call passed (`sonnet[1m]`) for a
+   * subagent. The model the agent actually answers with is
+   * `running_model`. */
   model: v.optional(v.string()),
+  /** `message.model` of the agent's latest assistant row (not `<synthetic>`)
+   * found in the last 128 KiB of its transcript, e.g. `claude-opus-5-5`.
+   * Absent when that window holds none (the agent has not answered yet, or
+   * its latest rows are longer than the window). */
+  running_model: v.optional(v.string()),
+  /** Top-level `effort` of the same row (`low` ... `max`). Absent with
+   * `running_model`, or when the row carries none. */
+  effort: v.optional(v.string()),
   team_name: v.optional(v.string()),
   /** meta.json `spawnDepth` (0-based; root's direct child = 0). */
   spawn_depth: v.number(),

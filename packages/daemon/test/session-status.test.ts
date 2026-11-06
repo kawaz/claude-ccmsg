@@ -1414,6 +1414,54 @@ describe("agent tree from meta.json", () => {
     }
   });
 
+  test("ノードは meta の name と、transcript の最新の assistant 行の model / effort を持つ", async () => {
+    // spawn の model は alias (sonnet[1m]) のまま meta に残り、実際に答えた
+    // model と effort は transcript の assistant 行にしかない。<synthetic> の
+    // 行 (CC が自分で書いた行) は飛ばす。
+    const dir = fixtureDir("session-status");
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("toolu_probe")}\n`);
+      writeMeta(dir, "probe", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_probe",
+        spawnDepth: 0,
+        name: "probe",
+        model: "sonnet[1m]",
+      });
+      const assistant = (model: string, effort?: string): string =>
+        JSON.stringify({
+          type: "assistant",
+          message: { model, content: [] },
+          ...(effort !== undefined ? { effort } : {}),
+        });
+      writeTranscript(dir, "probe", [
+        assistant("claude-haiku-5-5", "low"),
+        assistant("claude-sonnet-5-5", "medium"),
+        assistant("<synthetic>"),
+      ]);
+      const tree = await readAgentTree(dir, rootFile, createSessionStatusState());
+      const node = tree?.agents.find((n) => n.agent_id === "probe");
+      expect(node?.name).toBe("probe");
+      expect(node?.model).toBe("sonnet[1m]");
+      expect(node?.running_model).toBe("claude-sonnet-5-5");
+      expect(node?.effort).toBe("medium");
+
+      // 末尾の窓 (128 KiB) より前にしか assistant 行が無ければ読まない。
+      writeTranscript(dir, "probe", [
+        assistant("claude-sonnet-5-5", "medium"),
+        JSON.stringify({ type: "user", padding: "x".repeat(200 * 1024) }),
+      ]);
+      const far = await readAgentTree(dir, rootFile, createSessionStatusState());
+      const farNode = far?.agents.find((n) => n.agent_id === "probe");
+      expect(farNode?.running_model).toBeUndefined();
+      expect(farNode?.effort).toBeUndefined();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
   test("transcript が truncate されたら増分状態を捨てて読み直す", async () => {
     // 同じ path が短い内容で書き直された場合、旧内容の toolUseId を持ち越すと
     // 消えたはずの親に子がぶら下がったままになる。親を subagent にすることで

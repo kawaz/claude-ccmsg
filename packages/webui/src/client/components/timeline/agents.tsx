@@ -4,7 +4,9 @@ import { Avatar, hueForSeed } from "../../avatar.tsx";
 import { type Segment } from "../../transcript-model.ts";
 import { LinkedMarkdownView } from "../../filepath-linker.tsx";
 import { agentDirectionMarker } from "../../agent-communication-view.ts";
+import { spawnModelLabel } from "../agent-tree-view.ts";
 import {
+  AgentEngineLabelsContext,
   AgentTimelineHrefsContext,
   SessionFilePathCtxContext,
   useCategoryOpen,
@@ -26,19 +28,23 @@ import {
 // linkify を渡さない。展開後のバブル内ヘッダ (AgentCard 側) では従来通り
 // リンク化する。fold の details toggle と両立させるため click は
 // stopPropagation する (バブル内でも fold summary の別 <details> に
-// 巻き込まれないよう予防的に維持)。model があれば名前のすぐ右に淡色で
-// 並べる (Agent spawn 用。SendMessage / peer-message は model 情報を
-// 持たないので undefined で無表示)。
+// 巻き込まれないよう予防的に維持)。名前のすぐ右に、その agent が実際に
+// 動いている model / effort を淡色で並べる (kawaz 2026-11-06、`(fable-5-1/low)`)。
+// 源は agent tree のノード (AgentEngineLabelsContext)、取れない時だけ spawn の
+// Agent call が渡した `spawnModel`。どちらも無ければ出さない。
 export function AgentIdentity({
   name,
-  model,
+  spawnModel,
   linkify = false,
 }: {
   name: string;
-  model?: string;
+  spawnModel?: string;
   linkify?: boolean;
 }) {
   const tlHref = useContext(AgentTimelineHrefsContext).get(name);
+  const engine =
+    useContext(AgentEngineLabelsContext).get(name) ??
+    (spawnModel ? spawnModelLabel(spawnModel) : undefined);
   return (
     <span class="tl-agent-identity">
       <Avatar seed={`agent:${name}`} size={18} />
@@ -49,7 +55,7 @@ export function AgentIdentity({
       ) : (
         <strong>{name}</strong>
       )}
-      {model ? <span class="tl-agent-model-inline">{model}</span> : null}
+      {engine ? <span class="tl-agent-model-inline">{engine}</span> : null}
     </span>
   );
 }
@@ -72,10 +78,9 @@ export function AgentCard({
    * be told from an in-process teammate without giving it a different bubble.
    * `null`/undefined for the unmarked default. */
   channelLabel?: string | null;
-  // Agent spawn 用: モデル名は名前のすぐ右に淡色で並べる (kawaz r46m15:
-  // 「モデル名は名前のすぐ右に置くとかで良いんじゃない?他の 2 エージェント
-  // メッセージタイプのやつも」)。SendMessage / peer-message はモデル情報を
-  // 持たないので undefined。
+  // Agent spawn 用: spawn の Agent call が渡した model。agent tree から実物が
+  // 取れない時だけ名前の右に出す (AgentIdentity)。SendMessage / relay は
+  // undefined。
   model?: string;
   translationAvailability: TranslationAvailability;
 }) {
@@ -114,7 +119,7 @@ export function AgentCard({
       <div class="tl-bubble-body">
         <div class="tl-bubble-from tl-agent-card-head">
           <span class="tl-agent-direction-marker">{marker}</span>
-          <AgentIdentity name={name} model={model} linkify />
+          <AgentIdentity name={name} spawnModel={model} linkify />
           {channelLabel ? (
             <span
               class="tl-agent-badge"

@@ -14,6 +14,7 @@ import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
+import { agentEngineLabelsByName } from "../agent-tree-view.ts";
 import { sessionRuntimeParts, type SessionRuntime } from "../../utils.ts";
 import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
@@ -39,6 +40,7 @@ import { useUserTurnNav } from "./useUserTurnNav.ts";
 import { useSelectionContainment } from "./useSelectionContainment.ts";
 import {
   ItemRawContext,
+  AgentEngineLabelsContext,
   AgentTimelineHrefsContext,
   FileToolSidContext,
   SessionFilePathCtxContext,
@@ -308,6 +310,11 @@ export function Timeline({
     return hrefs;
   }, [sessionStatus, sid]);
 
+  const agentEngineLabels = useMemo(
+    () => agentEngineLabelsByName(sessionStatus?.agent_tree),
+    [sessionStatus],
+  );
+
   // filepath 解決 ctx は「この pane が表示しているセッション自身」の cwd/
   // repo_root を使う (kawaz r46m62、TL は自セッションの発言表示なので発言者
   // = 自分)。peer 行がまだ届いていない (WS 接続直後などの短い間) は
@@ -353,421 +360,425 @@ export function Timeline({
     <FileToolSidContext.Provider value={sid}>
       <SessionFilePathCtxContext.Provider value={sessionFilePathCtx}>
         <AgentTimelineHrefsContext.Provider value={agentTimelineHrefs}>
-          <TimelineAutoOpenContext.Provider value={autoOpen.context}>
-            <FoldOpenContext.Provider value={folds.store}>
-              <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
-                <ItemRawContext.Provider value={itemRawLookup}>
-                  <div
-                    class="timeline-view"
-                    ref={scrollRef}
-                    style={{ "--tl-float-reserve": `${sidePanel.reserve}px` }}
-                  >
-                    {agentLabel ? (
-                      <div class="tl-agent-header">
-                        <span class="tl-agent-header-label">agent: {agentLabel}</span>
-                        <a class="tl-agent-header-back" href={timelineHref(sid)}>
-                          親セッションへ戻る
-                        </a>
-                      </div>
-                    ) : null}
-                    <div class="tl-toolbar">
-                      {timeline.atStart ? null : (
-                        <button
-                          type="button"
-                          disabled={timeline.status === "loading"}
-                          onClick={loader.loadOlder}
-                        >
-                          older
-                        </button>
-                      )}
-                      <>
-                        <SearchBar
-                          words={inViewSearch.words}
-                          queryText={search.queryText}
-                          onQueryChange={(queryText) => inViewSearch.changeSearch({ queryText })}
-                          caseSensitive={search.caseSensitive}
-                          onToggleCaseSensitive={() =>
-                            inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
-                          }
-                          regexMode={search.regex}
-                          onToggleRegex={() => inViewSearch.changeSearch({ regex: !search.regex })}
-                          matchCount={inViewSearch.matchCount}
-                          currentIndex={inViewSearch.currentIndex}
-                          onPrev={inViewSearch.prev}
-                          onNext={inViewSearch.next}
-                          hasError={inViewSearch.hasError}
-                          targets={{
-                            user: inViewSearch.targets.user,
-                            onToggleUser: inViewSearch.targets.toggleUser,
-                            ai: inViewSearch.targets.ai,
-                            onToggleAI: inViewSearch.targets.toggleAI,
-                            ccmsg: inViewSearch.targets.ccmsg,
-                            onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
-                          }}
-                          foldScope={{
-                            searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
-                            onToggle: inViewSearch.foldScope.toggle,
-                          }}
-                        />
-                        <div class="tl-user-nav">
-                          <button
-                            type="button"
-                            class="tl-user-nav-count"
-                            disabled={userNav.currentIndex <= 0 || userNav.keys.length === 0}
-                            onClick={userNav.scrollToCurrent}
-                            title="現在のユーザ発言へ戻る"
-                          >
-                            👤 {userNav.currentIndex}/{userNav.keys.length}
-                          </button>
-                          {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
-                           * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
-                           * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
-                           * 意味がない)。 */}
-                          <button
-                            type="button"
-                            disabled={userNav.keys.length === 0}
-                            onClick={userNav.goPrev}
-                            title="前のユーザ発言へ"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            disabled={userNav.keys.length === 0}
-                            onClick={userNav.goNext}
-                            title="次のユーザ発言へ"
-                          >
-                            ↓
-                          </button>
-                        </div>
-                      </>
-                      <button type="button" onClick={scrollToTop} title="最上部へ">
-                        ⤒
-                      </button>
-                      <button type="button" onClick={scrollToBottom} title="最下部へ">
-                        ⤓
-                      </button>
-                    </div>
-                    {timeline.status === "error" ? (
-                      <ErrorView
-                        mark="!"
-                        tone="danger"
-                        title="transcript を読み込めませんでした"
-                        detail={timeline.error}
-                        action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
-                      />
-                    ) : (
-                      <div class="tl-lines" ref={tlLinesRef}>
-                        {parsed.length === 0 && permitBubbles.requests.length === 0 ? (
-                          <p class="tl-empty">(空の transcript)</p>
-                        ) : (
-                          <>
-                            {sayRead.readError !== null ? (
-                              <p class="tl-say-error">{sayRead.readError}</p>
-                            ) : null}
-                            {groups
-                              .map((group, i) => {
-                                if (group.kind === "fold") {
-                                  return (
-                                    <MemoFoldGroup
-                                      key={group.entries[0].offset}
-                                      entries={group.entries}
-                                      translationAvailability={translationAvailability}
-                                      searchCtx={searchCtx}
-                                    />
-                                  );
-                                }
-                                const { line, offset } = group;
-                                // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                                // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                                // fold group に送るので groups の "entry" 側には来ない) —
-                                // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                                // 実データ上も自明に成り立つ。
-                                if (line.kind !== "turn") return null;
-                                // boundaries[i] は上の useMemo で groups と同じ index で
-                                // 計算済み (render のたびの再分類を避けるため)。
-                                const boundary = boundaries[i];
-                                if (boundary === undefined || boundary === null) return null;
-                                switch (boundary.kind) {
-                                  case "user-prompt":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <UserPromptBubble
-                                          line={line}
-                                          offsetKey={offset}
-                                          navKey={`user:${offset}`}
-                                          registerUserTurnRef={userNav.registerUserTurnRef}
-                                          translationAvailability={translationAvailability}
-                                          now={now}
-                                          searchCtx={searchCtx}
-                                          onUserTurnClick={userNav.onUserTurnClick}
-                                          selected={userNav.selectedKey === `user:${offset}`}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "assistant-response":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <AssistantBubble
-                                          line={line}
-                                          offset={offset}
-                                          translationAvailability={translationAvailability}
-                                          now={now}
-                                          searchCtx={searchCtx}
-                                          actions={bubbleActions}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "api-error":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <ApiErrorNotice line={line} />
-                                      </ItemRawToggle>
-                                    );
-                                  case "bash-command":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <BashRunCard
-                                          command={boundary.segment.command}
-                                          output={boundary.segment.output}
-                                          ts={line.ts}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "bash-command-output":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <BashRunCard
-                                          command={null}
-                                          output={boundary.segment}
-                                          ts={line.ts}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "push-notification":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <SayBubble
-                                          label="PushNotification"
-                                          text={boundary.text}
-                                          ts={line.ts ?? ""}
-                                          now={now}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "say":
-                                    return (
-                                      <ItemRawToggle
-                                        key={offset}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={pin.selectPosition}
-                                      >
-                                        <SayCallBubble
-                                          text={boundary.text}
-                                          ts={line.ts ?? ""}
-                                          now={now}
-                                          read={sayRead.readState(boundary.toolUseId)}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  case "ccmsg": {
-                                    // raw タブ用の「この行に何が書いてあったか」:
-                                    // extractCcmsgMessages が読むのと同じ text segment 結合
-                                    // (subscribe / teammate-message wrapper の原文はそこにある)。
-                                    const rawText = line.segments
-                                      .filter(
-                                        (s): s is Extract<Segment, { kind: "text" }> =>
-                                          s.kind === "text",
-                                      )
-                                      .map((s) => s.text)
-                                      .join("\n");
-                                    return boundary.messages
-                                      .map((m, j) => {
-                                        if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
-                                          return null;
-                                        const navKey = `ccmsg:${offset}:${j}`;
-                                        return (
-                                          <ItemRawToggle
-                                            key={`${offset}-${j}`}
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                          >
-                                            <CcmsgBubble
-                                              message={m}
-                                              rawText={rawText}
-                                              now={now}
-                                              searchKey={ccmsgUnitKey(offset, j)}
-                                              searchCtx={searchCtx}
-                                              navKey={
-                                                userNav.keySet.has(navKey) ? navKey : undefined
-                                              }
-                                              registerUserTurnRef={userNav.registerUserTurnRef}
-                                              onUserTurnClick={userNav.onUserTurnClick}
-                                              selected={userNav.selectedKey === navKey}
-                                              room={rooms.get(m.room)}
-                                              peers={peers}
-                                            />
-                                          </ItemRawToggle>
-                                        );
-                                      })
-                                      .filter((n) => n !== null);
-                                  }
-                                }
-                              })
-                              // Index-aligned with `groups` on both counts: the seam
-                              // splices in ahead of the first group of forked-off
-                              // history, and each slot's permission bubbles ahead of
-                              // the first group that is newer than them.
-                              .flatMap((node, i) => [
-                                ...bubbleNodes(i),
-                                ...(i === forkDividerIndex && forkOrigin
-                                  ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
-                                  : [node]),
-                              ])}
-                            {/* 読み込み済み window より新しい許可依頼 (= 依頼した turn の行が
-                                まだ jsonl に無い live のケース) は末尾に出す。 */}
-                            {bubbleNodes(groups.length)}
-                            <TurnResponding
-                              key={sid}
-                              since={respondingAt}
-                              onAbort={() => ws.turnAbort(sid)}
-                            />
-                          </>
-                        )}
-                      </div>
-                    )}
+          <AgentEngineLabelsContext.Provider value={agentEngineLabels}>
+            <TimelineAutoOpenContext.Provider value={autoOpen.context}>
+              <FoldOpenContext.Provider value={folds.store}>
+                <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
+                  <ItemRawContext.Provider value={itemRawLookup}>
                     <div
-                      ref={sidePanel.panelRef}
-                      class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}
+                      class="timeline-view"
+                      ref={scrollRef}
+                      style={{ "--tl-float-reserve": `${sidePanel.reserve}px` }}
                     >
-                      <button
-                        type="button"
-                        class="tl-auto-open-handle"
-                        aria-label={sidePanel.open ? "パネルを閉じる" : "パネルを開く"}
-                        aria-expanded={sidePanel.open}
-                        onClick={sidePanel.toggle}
-                      >
-                        {sidePanel.open ? "›" : "‹"}
-                      </button>
-                      <div class="tl-float-body">
-                        <fieldset
-                          class="tl-auto-open"
-                          aria-label="自動オープンする Timeline カテゴリ"
-                        >
-                          <legend>auto open</legend>
-                          {(["U", "R", "C", "T", "A", "E"] as const).map((category) => {
-                            const fixed = category === "U" || category === "R";
-                            // C/T/A/E の checkbox 表示状態と toggle 対象キーの対応。
-                            // U/R は境界要素なので常に表示 (fixed)。
-                            const settingKey =
-                              category === "C"
-                                ? "ccmsg"
-                                : category === "T"
-                                  ? "thinking"
-                                  : category === "E"
-                                    ? "edit"
-                                    : "agent";
-                            return (
-                              <label
-                                key={category}
-                                title={fixed ? "常に表示" : `${category} を自動オープン`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={fixed ? true : autoOpen.settings[settingKey]}
-                                  disabled={fixed}
-                                  onChange={() => {
-                                    if (!fixed) autoOpen.toggle(settingKey);
-                                  }}
-                                />
-                                {category}
-                              </label>
-                            );
-                          })}
-                          <span class="tl-auto-open-separator" aria-hidden="true" />
-                          <label title="C/T/A/E を含む外側の fold を自動オープン">
-                            <input
-                              type="checkbox"
-                              checked={autoOpen.settings.items}
-                              onChange={() => autoOpen.toggle("items")}
-                            />
-                            N items
-                          </label>
-                        </fieldset>
-                      </div>
-                    </div>
-                    <div class="tl-bottom-controls">
-                      {/* 非対話 (kawaz r135m37): FAB と重なる位置にあり、
-                       * ボタンだと誤クリックで Status タブへ飛ぶ事故が多い。
-                       * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
-                      {miniLines.length > 0 ? (
-                        <div class="tl-status-mini">
-                          {miniLines.map((line) =>
-                            line.context ? (
-                              <ContextLine
-                                key={line.kind}
-                                line={line.context}
-                                state={requestOverride}
-                                context={sessionStatus?.context}
-                                onChange={(patch) => ws.requestOverride(sid, patch)}
-                              />
-                            ) : (
-                              <span
-                                key={`${line.kind}-${line.text}`}
-                                class={`tl-status-mini-line tl-status-mini-${line.kind}`}
-                              >
-                                {line.text}
-                              </span>
-                            ),
-                          )}
+                      {agentLabel ? (
+                        <div class="tl-agent-header">
+                          <span class="tl-agent-header-label">agent: {agentLabel}</span>
+                          <a class="tl-agent-header-back" href={timelineHref(sid)}>
+                            親セッションへ戻る
+                          </a>
                         </div>
                       ) : null}
+                      <div class="tl-toolbar">
+                        {timeline.atStart ? null : (
+                          <button
+                            type="button"
+                            disabled={timeline.status === "loading"}
+                            onClick={loader.loadOlder}
+                          >
+                            older
+                          </button>
+                        )}
+                        <>
+                          <SearchBar
+                            words={inViewSearch.words}
+                            queryText={search.queryText}
+                            onQueryChange={(queryText) => inViewSearch.changeSearch({ queryText })}
+                            caseSensitive={search.caseSensitive}
+                            onToggleCaseSensitive={() =>
+                              inViewSearch.changeSearch({ caseSensitive: !search.caseSensitive })
+                            }
+                            regexMode={search.regex}
+                            onToggleRegex={() =>
+                              inViewSearch.changeSearch({ regex: !search.regex })
+                            }
+                            matchCount={inViewSearch.matchCount}
+                            currentIndex={inViewSearch.currentIndex}
+                            onPrev={inViewSearch.prev}
+                            onNext={inViewSearch.next}
+                            hasError={inViewSearch.hasError}
+                            targets={{
+                              user: inViewSearch.targets.user,
+                              onToggleUser: inViewSearch.targets.toggleUser,
+                              ai: inViewSearch.targets.ai,
+                              onToggleAI: inViewSearch.targets.toggleAI,
+                              ccmsg: inViewSearch.targets.ccmsg,
+                              onToggleCcmsg: inViewSearch.targets.toggleCcmsg,
+                            }}
+                            foldScope={{
+                              searchClosedFolds: inViewSearch.foldScope.searchClosedFolds,
+                              onToggle: inViewSearch.foldScope.toggle,
+                            }}
+                          />
+                          <div class="tl-user-nav">
+                            <button
+                              type="button"
+                              class="tl-user-nav-count"
+                              disabled={userNav.currentIndex <= 0 || userNav.keys.length === 0}
+                              onClick={userNav.scrollToCurrent}
+                              title="現在のユーザ発言へ戻る"
+                            >
+                              👤 {userNav.currentIndex}/{userNav.keys.length}
+                            </button>
+                            {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
+                             * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
+                             * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
+                             * 意味がない)。 */}
+                            <button
+                              type="button"
+                              disabled={userNav.keys.length === 0}
+                              onClick={userNav.goPrev}
+                              title="前のユーザ発言へ"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={userNav.keys.length === 0}
+                              onClick={userNav.goNext}
+                              title="次のユーザ発言へ"
+                            >
+                              ↓
+                            </button>
+                          </div>
+                        </>
+                        <button type="button" onClick={scrollToTop} title="最上部へ">
+                          ⤒
+                        </button>
+                        <button type="button" onClick={scrollToBottom} title="最下部へ">
+                          ⤓
+                        </button>
+                      </div>
+                      {timeline.status === "error" ? (
+                        <ErrorView
+                          mark="!"
+                          tone="danger"
+                          title="transcript を読み込めませんでした"
+                          detail={timeline.error}
+                          action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
+                        />
+                      ) : (
+                        <div class="tl-lines" ref={tlLinesRef}>
+                          {parsed.length === 0 && permitBubbles.requests.length === 0 ? (
+                            <p class="tl-empty">(空の transcript)</p>
+                          ) : (
+                            <>
+                              {sayRead.readError !== null ? (
+                                <p class="tl-say-error">{sayRead.readError}</p>
+                              ) : null}
+                              {groups
+                                .map((group, i) => {
+                                  if (group.kind === "fold") {
+                                    return (
+                                      <MemoFoldGroup
+                                        key={group.entries[0].offset}
+                                        entries={group.entries}
+                                        translationAvailability={translationAvailability}
+                                        searchCtx={searchCtx}
+                                      />
+                                    );
+                                  }
+                                  const { line, offset } = group;
+                                  // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                                  // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                                  // fold group に送るので groups の "entry" 側には来ない) —
+                                  // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                                  // 実データ上も自明に成り立つ。
+                                  if (line.kind !== "turn") return null;
+                                  // boundaries[i] は上の useMemo で groups と同じ index で
+                                  // 計算済み (render のたびの再分類を避けるため)。
+                                  const boundary = boundaries[i];
+                                  if (boundary === undefined || boundary === null) return null;
+                                  switch (boundary.kind) {
+                                    case "user-prompt":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <UserPromptBubble
+                                            line={line}
+                                            offsetKey={offset}
+                                            navKey={`user:${offset}`}
+                                            registerUserTurnRef={userNav.registerUserTurnRef}
+                                            translationAvailability={translationAvailability}
+                                            now={now}
+                                            searchCtx={searchCtx}
+                                            onUserTurnClick={userNav.onUserTurnClick}
+                                            selected={userNav.selectedKey === `user:${offset}`}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "assistant-response":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <AssistantBubble
+                                            line={line}
+                                            offset={offset}
+                                            translationAvailability={translationAvailability}
+                                            now={now}
+                                            searchCtx={searchCtx}
+                                            actions={bubbleActions}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "api-error":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <ApiErrorNotice line={line} />
+                                        </ItemRawToggle>
+                                      );
+                                    case "bash-command":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <BashRunCard
+                                            command={boundary.segment.command}
+                                            output={boundary.segment.output}
+                                            ts={line.ts}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "bash-command-output":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <BashRunCard
+                                            command={null}
+                                            output={boundary.segment}
+                                            ts={line.ts}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "push-notification":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <SayBubble
+                                            label="PushNotification"
+                                            text={boundary.text}
+                                            ts={line.ts ?? ""}
+                                            now={now}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "say":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                        >
+                                          <SayCallBubble
+                                            text={boundary.text}
+                                            ts={line.ts ?? ""}
+                                            now={now}
+                                            read={sayRead.readState(boundary.toolUseId)}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "ccmsg": {
+                                      // raw タブ用の「この行に何が書いてあったか」:
+                                      // extractCcmsgMessages が読むのと同じ text segment 結合
+                                      // (subscribe / teammate-message wrapper の原文はそこにある)。
+                                      const rawText = line.segments
+                                        .filter(
+                                          (s): s is Extract<Segment, { kind: "text" }> =>
+                                            s.kind === "text",
+                                        )
+                                        .map((s) => s.text)
+                                        .join("\n");
+                                      return boundary.messages
+                                        .map((m, j) => {
+                                          if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
+                                            return null;
+                                          const navKey = `ccmsg:${offset}:${j}`;
+                                          return (
+                                            <ItemRawToggle
+                                              key={`${offset}-${j}`}
+                                              offset={offset}
+                                              uuid={line.uuid}
+                                              selectedPosition={currentPosition === line.uuid}
+                                              onSelectPosition={pin.selectPosition}
+                                            >
+                                              <CcmsgBubble
+                                                message={m}
+                                                rawText={rawText}
+                                                now={now}
+                                                searchKey={ccmsgUnitKey(offset, j)}
+                                                searchCtx={searchCtx}
+                                                navKey={
+                                                  userNav.keySet.has(navKey) ? navKey : undefined
+                                                }
+                                                registerUserTurnRef={userNav.registerUserTurnRef}
+                                                onUserTurnClick={userNav.onUserTurnClick}
+                                                selected={userNav.selectedKey === navKey}
+                                                room={rooms.get(m.room)}
+                                                peers={peers}
+                                              />
+                                            </ItemRawToggle>
+                                          );
+                                        })
+                                        .filter((n) => n !== null);
+                                    }
+                                  }
+                                })
+                                // Index-aligned with `groups` on both counts: the seam
+                                // splices in ahead of the first group of forked-off
+                                // history, and each slot's permission bubbles ahead of
+                                // the first group that is newer than them.
+                                .flatMap((node, i) => [
+                                  ...bubbleNodes(i),
+                                  ...(i === forkDividerIndex && forkOrigin
+                                    ? [<ForkDivider key="fork-divider" origin={forkOrigin} />, node]
+                                    : [node]),
+                                ])}
+                              {/* 読み込み済み window より新しい許可依頼 (= 依頼した turn の行が
+                                まだ jsonl に無い live のケース) は末尾に出す。 */}
+                              {bubbleNodes(groups.length)}
+                              <TurnResponding
+                                key={sid}
+                                since={respondingAt}
+                                onAbort={() => ws.turnAbort(sid)}
+                              />
+                            </>
+                          )}
+                        </div>
+                      )}
+                      <div
+                        ref={sidePanel.panelRef}
+                        class={`tl-auto-open-float${sidePanel.open ? " tl-auto-open-float-open" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          class="tl-auto-open-handle"
+                          aria-label={sidePanel.open ? "パネルを閉じる" : "パネルを開く"}
+                          aria-expanded={sidePanel.open}
+                          onClick={sidePanel.toggle}
+                        >
+                          {sidePanel.open ? "›" : "‹"}
+                        </button>
+                        <div class="tl-float-body">
+                          <fieldset
+                            class="tl-auto-open"
+                            aria-label="自動オープンする Timeline カテゴリ"
+                          >
+                            <legend>auto open</legend>
+                            {(["U", "R", "C", "T", "A", "E"] as const).map((category) => {
+                              const fixed = category === "U" || category === "R";
+                              // C/T/A/E の checkbox 表示状態と toggle 対象キーの対応。
+                              // U/R は境界要素なので常に表示 (fixed)。
+                              const settingKey =
+                                category === "C"
+                                  ? "ccmsg"
+                                  : category === "T"
+                                    ? "thinking"
+                                    : category === "E"
+                                      ? "edit"
+                                      : "agent";
+                              return (
+                                <label
+                                  key={category}
+                                  title={fixed ? "常に表示" : `${category} を自動オープン`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={fixed ? true : autoOpen.settings[settingKey]}
+                                    disabled={fixed}
+                                    onChange={() => {
+                                      if (!fixed) autoOpen.toggle(settingKey);
+                                    }}
+                                  />
+                                  {category}
+                                </label>
+                              );
+                            })}
+                            <span class="tl-auto-open-separator" aria-hidden="true" />
+                            <label title="C/T/A/E を含む外側の fold を自動オープン">
+                              <input
+                                type="checkbox"
+                                checked={autoOpen.settings.items}
+                                onChange={() => autoOpen.toggle("items")}
+                              />
+                              N items
+                            </label>
+                          </fieldset>
+                        </div>
+                      </div>
+                      <div class="tl-bottom-controls">
+                        {/* 非対話 (kawaz r135m37): FAB と重なる位置にあり、
+                         * ボタンだと誤クリックで Status タブへ飛ぶ事故が多い。
+                         * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
+                        {miniLines.length > 0 ? (
+                          <div class="tl-status-mini">
+                            {miniLines.map((line) =>
+                              line.context ? (
+                                <ContextLine
+                                  key={line.kind}
+                                  line={line.context}
+                                  state={requestOverride}
+                                  context={sessionStatus?.context}
+                                  onChange={(patch) => ws.requestOverride(sid, patch)}
+                                />
+                              ) : (
+                                <span
+                                  key={`${line.kind}-${line.text}`}
+                                  class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+                                >
+                                  {line.text}
+                                </span>
+                              ),
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                </ItemRawContext.Provider>
-              </CcmsgRenderContext.Provider>
-            </FoldOpenContext.Provider>
-          </TimelineAutoOpenContext.Provider>
+                  </ItemRawContext.Provider>
+                </CcmsgRenderContext.Provider>
+              </FoldOpenContext.Provider>
+            </TimelineAutoOpenContext.Provider>
+          </AgentEngineLabelsContext.Provider>
         </AgentTimelineHrefsContext.Provider>
       </SessionFilePathCtxContext.Provider>
     </FileToolSidContext.Provider>

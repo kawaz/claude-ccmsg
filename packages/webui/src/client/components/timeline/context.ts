@@ -16,6 +16,8 @@ import { type ItemRawLookup } from "./useTranscriptModel.ts";
 export const ItemRawContext = createContext<ItemRawLookup | null>(null);
 
 export const AgentTimelineHrefsContext = createContext<ReadonlyMap<string, string>>(new Map());
+/** agent の名前 → 名前の右に出す model / effort (`agentEngineLabelsByName`)。 */
+export const AgentEngineLabelsContext = createContext<ReadonlyMap<string, string>>(new Map());
 export const FileToolSidContext = createContext("");
 
 /** Sender-scoped `FilePathResolveCtx` for the session that this Timeline pane

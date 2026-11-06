@@ -6239,8 +6239,8 @@ a.md-prose-file-link {
   text-decoration: underline;
 }
 
-/* AgentCard 名前のすぐ右にモデル名を淡色で並べる (kawaz r46m15)。
- * SendMessage / peer-message はデータを持たないので undefined = 非表示。 */
+/* 🤖 の名前のすぐ右に、その agent の model / effort を淡色で並べる
+ * (kawaz r46m15、2026-11-06)。取れない時は出さない。 */
 .tl-agent-model-inline {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--font-size-2xs);

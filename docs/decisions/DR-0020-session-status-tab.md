@@ -62,7 +62,7 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 
 セッション自身とチームメイトの現在 model・effort を Status タブ + TL ミニパネルに表示する (DR-0020 の延長、独立 DR は立てない)。
 
-- データ源: transcript jsonl の assistant 行 — `message.model` (foldContextUsage が既に採用) と top-level `effort` (実測: assistant 行のみに付く。CC バージョンによっては欠落 = optional)。チームメイトは `<sidDir>/subagents/agent-*.meta.json` の`model` (spawn 時固定、`[1m]` 付きの生値) を snapshot 時に読む。teammate 側のeffort は meta.json に無く transcript を開くコストが割に合わないため対象外。
+- データ源: transcript jsonl の assistant 行 — `message.model` (foldContextUsage が既に採用) と top-level `effort` (実測: assistant 行のみに付く。CC バージョンによっては欠落 = optional)。チームメイトは `<sidDir>/subagents/agent-*.meta.json` の`model` (spawn 時固定、`[1m]` 付きの生値) を snapshot 時に読む。agent 側の実際の model と effort は agent tree のノードが持つ (Addendum 2026-11-06)。
 - 表示は「transcript 上の最新観測値」でありリアルタイム保証はない (context 表示と同じ位置づけ)。
 - 転送形: `SessionContextUsage.effort?` を追加、`SessionTeammate.model?` を追加。
   いずれも optional なので旧クライアント互換。
@@ -94,3 +94,15 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - 2 つの版は、その版の CHANGELOG の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)。hover の説明の最後の行にリンク先を書く。
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。
+
+## Addendum 2026-11-06: agent tree のノードの名前・実際の model・effort (kawaz)
+
+Timeline の 🤖 バブル (SendMessage / spawn / relay) は名前の右に、その agent が実際に動いている model と effort を `(fable-5-1/low)` の形で出す。バブルは agent を名前で引くので、agent tree のノード (`AgentTreeNode`) が次の 3 つを持つ。いずれも optional。
+
+- `name`: meta.json の `name` (Agent call の `name`)。kind を問わず載せる。`teammate_name` は teammate の TL リンクの識別子として別に持つ
+- `running_model`: agent の transcript (`agent-<agentId>.jsonl`) の最新の非 `<synthetic>` assistant 行の `message.model`。meta.json の `model` は subagent では spawn の alias (`sonnet[1m]`) のままなので、実物はこちら
+- `effort`: 同じ行の top-level `effort`
+
+transcript は末尾 128 KiB だけを読み、その中で最後の assistant 行を探す。見つからなければ両方とも無し (全文は読まない。agent の数だけ毎 snapshot 読むので読む量に上限を置く)。読んだ結果は transcript の mtime / size で memo する。
+
+webui は agent tree を走査して 名前 → 表示の綴りを作る。model は `running_model`、無ければ meta.json の `model`、どちらも無ければ spawn の Agent call が渡した `model`。effort は `running_model` と同じ行の値なので、`running_model` がある時だけ付ける。綴りは ctx 行と同じ `shortModel`。同じ名前の agent が複数いれば `last_activity_ms` の新しい方。

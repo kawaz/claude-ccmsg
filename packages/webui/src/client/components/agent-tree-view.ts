@@ -2,11 +2,65 @@
 // 正規化)。JSX を含まないので bun test から直接叩ける
 // (timeline-item-markdown.ts と同じ分離)。
 import type {
+  AgentTreeGroups,
   AgentTreeNode,
   AgentTreeWorkflowGroup,
   AgentTreeWorkflowPhase,
 } from "@ccmsg/protocol";
 import { agentTimelineHref } from "../locator.ts";
+import { shortModel } from "../session-status-view.ts";
+
+/** Timeline の 🤖 バブルが名前の右に出す model と effort の綴り
+ * (`(fable-5-1/low)`、ctx 行と同じ shortModel)。実際に答えている model
+ * (`running_model`、agent の transcript の最新の assistant 行) を優先し、
+ * 無い時は meta.json の model。effort は running_model と同じ行の値なので、
+ * それが無ければ model だけ。 */
+export function agentEngineLabel(node: AgentTreeNode): string | undefined {
+  const model = node.running_model ?? node.model;
+  if (model === undefined) return undefined;
+  const effort = node.running_model !== undefined ? node.effort : undefined;
+  return `(${shortModel(model)}${effort !== undefined ? `/${effort}` : ""})`;
+}
+
+/** spawn の Agent call が渡した model (preset の alias) を同じ綴りにする。
+ * 実物 (agent tree のノード) が取れない時だけ使う。 */
+export function spawnModelLabel(model: string): string {
+  return `(${shortModel(model)})`;
+}
+
+function* allAgentNodes(tree: AgentTreeGroups): Generator<AgentTreeNode> {
+  function* walk(nodes: readonly AgentTreeNode[]): Generator<AgentTreeNode> {
+    for (const node of nodes) {
+      yield node;
+      yield* walk(node.children);
+    }
+  }
+  yield* walk(tree.teammates);
+  yield* walk(tree.agents);
+  for (const run of tree.workflows) {
+    for (const phase of run.phases) yield* walk(phase.members);
+    yield* walk(run.unassigned);
+  }
+}
+
+/** 名前 (spawn の name、teammate の名前) → `agentEngineLabel`。バブルは名前
+ * (SendMessage の宛先、spawn の name、relay の送り手) で agent を引く。同じ
+ * 名前の agent が複数いれば last_activity_ms の新しい方。 */
+export function agentEngineLabelsByName(
+  tree: AgentTreeGroups | undefined,
+): ReadonlyMap<string, string> {
+  const picked = new Map<string, { at: number; label: string }>();
+  if (tree === undefined) return new Map();
+  for (const node of allAgentNodes(tree)) {
+    const name = node.name ?? node.teammate_name;
+    const label = agentEngineLabel(node);
+    if (name === undefined || label === undefined) continue;
+    const at = node.last_activity_ms ?? 0;
+    const current = picked.get(name);
+    if (current === undefined || at > current.at) picked.set(name, { at, label });
+  }
+  return new Map([...picked].map(([name, { label }]) => [name, label]));
+}
 
 /** ツリー 1 ノードの TL リンク先。workflow member の transcript は
  * `subagents/workflows/<runId>/agent-<id>.jsonl` にあり、runId を落とした
