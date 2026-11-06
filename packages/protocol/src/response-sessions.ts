@@ -79,13 +79,6 @@ export const HelloResponseSchema = v.object({
    * the webui offers neither the launch form nor a fork from the Timeline,
    * which could only answer launcher_not_configured. */
   launch_available: v.optional(v.boolean()),
-  /** With `launch_available`: the config dir (realpath) the launch command
-   * starts claude in, as far as the daemon knows it — the CLAUDE_CONFIG_DIR of
-   * the environment the command inherits, or `~/.claude` without one (DR-0028
-   * 「restart」). The webui offers a restart only for a session whose agents
-   * row is in this dir: resumed anywhere else, claude has no transcript of
-   * it. */
-  launch_config_dir: v.optional(v.string()),
   /** The `translate_plamo_url` config key (DR-0049), echoed to user-role
    * hellos only, as terminal_gateway_url is. Unlike the llm_* flags the URL
    * itself is sent: the browser fetches the translation server directly, and

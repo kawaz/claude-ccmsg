@@ -14,31 +14,12 @@ import {
   type SessionRestartResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
-import { normalizeConfigDir } from "./config-dir.ts";
-import { claudeConfigDir } from "./default-effort.ts";
 import { killSession, resolveRecord, verifyPid, type SessionKillDeps } from "./session-kill.ts";
-import { buildLaunchEnv, type SessionLaunchOutcome } from "./session-launch.ts";
-
-/** The config dir the launch command starts claude in, as a realpath: that of
- * the environment it inherits (`baseEnv` cleaned by clean_env / keep_env,
- * DR-0018 §3.5). A launch command of one's own may switch it; the daemon
- * cannot see that, and goes by this. */
-export function launchConfigDir(
-  launcher: SessionLauncherConfig,
-  baseEnv: Readonly<Record<string, string | undefined>>,
-): string | undefined {
-  return normalizeConfigDir(
-    claudeConfigDir(buildLaunchEnv(baseEnv, launcher.clean_env, launcher.keep_env)),
-  );
-}
+import type { SessionLaunchOutcome } from "./session-launch.ts";
 
 export interface SessionRestartDeps {
   /** `session_launcher` of the config; undefined when there is none. */
   launcher: SessionLauncherConfig | undefined;
-  /** The daemon's environment, which the launch command inherits cleaned. */
-  baseEnv: Readonly<Record<string, string | undefined>>;
-  /** The config dir the session runs under, as the registry has it. */
-  sessionConfigDir: string | undefined;
   /** Where the session's process is looked up and how it is stopped. */
   kill: SessionKillDeps;
   /** What the session runs as, in the transcript's spellings: the hooks
@@ -107,14 +88,6 @@ export async function restartSession(
   const { launcher } = deps;
   if (launcher === undefined) {
     return refuse(ErrorCode.launcher_not_configured, "session launcher is not configured");
-  }
-  const launchDir = launchConfigDir(launcher, deps.baseEnv);
-  if (deps.sessionConfigDir === undefined || deps.sessionConfigDir !== launchDir) {
-    return refuse(
-      ErrorCode.restart_unavailable,
-      `session ${sessionId} runs in ${deps.sessionConfigDir ?? "an unknown config dir"}, ` +
-        `and the launch command starts claude in ${launchDir ?? "an unknown config dir"}`,
-    );
   }
   const record = await resolveRecord(sessionId, deps.kill);
   if (record === null || !(await verifyPid(record.pid, deps.kill))) {

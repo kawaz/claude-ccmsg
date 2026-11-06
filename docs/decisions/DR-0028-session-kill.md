@@ -98,7 +98,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
   - `bad_request`: user role でない
   - `launcher_not_configured` / `launch_busy`: `session_launch` と同じ (DR-0018 §3.4)。restart は走っている間ずっと起動の 1 つに数え、daemon の終わり方の待ち (DR-0018 §3.5) にも入る
   - `not_found`: その sid のプロセスが居ない (本 DR の pid の解決と ps の検証に通らない)
-  - `restart_unavailable`: 起動コマンドがそのセッションを resume できる条件 (下の config dir、cwd) を満たさない
+  - `restart_unavailable`: そのセッションのプロセスの record に `cwd` が無く、resume する場所が分からない
   - `restart_timeout`: 停止の手順の猶予の中でプロセスの終わりを観測できなかった。起動コマンドは走らせていない (シグナルは届いているので、後でプロセスが終わることはある)
   - `invalid_args` / `launch_command_unavailable`: `session_launch` と同じ。前者は起動の入力がスキーマに合わない時で、止める前に読むので止めていない。後者は止めた後に起動コマンドを起こせなかった時
 - 返事は停止の猶予 (最長 3 秒) と起動コマンドの待ち (`launch_timeout_seconds` + 猶予) の和まで遅れる。同じ接続の他の依頼は待たせない (2-phase)
@@ -108,24 +108,20 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 止めた後に、止める前から分かっていた理由で起動を断ることが無いよう、断る理由は全部止める前に確かめる。
 
 1. user role でなければ `bad_request`。launcher が無ければ `launcher_not_configured`、daemon が終わりかけているか起動が `launch_max_concurrency` 個走っていれば `launch_busy`
-2. その sid の登録 (peers) の config dir が、起動コマンドが claude を起こす config dir (下記) と同じでなければ `restart_unavailable`
-3. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、ps で claude のプロセスであることを確かめる。通らなければ `not_found`
-4. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 3 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable` (未検証: EnterWorktree で cwd が変わったセッションで、record の cwd から resume が transcript を見つけられるか)
+2. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、ps で claude のプロセスであることを確かめる。通らなければ `not_found`
+3. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 2 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable` (未検証: EnterWorktree で cwd が変わったセッションで、record の cwd から resume が transcript を見つけられるか)
    - `resume`: その sid
    - `model` / `effort`: Status タブの CTX と同じ値 (hooks module の facts の model / effort を、transcript の末尾の main context の assistant 行の model / effort に重ねたもの) を、起動の入力の選択肢に写す (`claude-fable-5[1m]` → `fable`、Session Search の resume の prefill と同じ写し方)。写せないものと値の無いものは入れない (起動コマンドが決める)
-   - `name`: 3 で読んだ record の `name`。無ければ入れない
+   - `name`: 2 で読んだ record の `name`。無ければ入れない
    - `prompt`: request の `prompt`、無ければ下の既定文
-5. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ (未検証: turn の最中など、止まるまでに 3 秒を超える claude で `restart_timeout` になるか)。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
-6. 消滅を観測したら `session_kill` と同じくその sid の登録を忘れて peers を配る (resume したセッションは hello か agents の poll で戻る)
-7. DR-0018 §3.5 の手順 4〜11 で起動する (依頼者は `user`。daemon.log にはその手順の `session_launch: …` の行も残る)
-8. daemon.log に 1 行: `session_restart: session_id=<sid> pid=<pid> terminated=<true|false> [exit_code=<N>] [error=<code>]`
+4. 本 DR の 2 連の SIGTERM で止め、猶予 (3 秒) の中でプロセスの消滅を観測するまで待つ (未検証: turn の最中など、止まるまでに 3 秒を超える claude で `restart_timeout` になるか)。観測できなければ `restart_timeout` で終わり、起動しない。同じ transcript を旧プロセスと新プロセスが同時に開かないための順序で、DR-0018 §2.3 (起動の後のプロセスを追わない) の線は越えない。SIGKILL へは上げない (本 DR の原則のまま)
+5. 消滅を観測したら `session_kill` と同じくその sid の登録を忘れて peers を配る (resume したセッションは hello か agents の poll で戻る)
+6. DR-0018 §3.5 の手順 4〜11 で起動する (依頼者は `user`。daemon.log にはその手順の `session_launch: …` の行も残る)
+7. daemon.log に 1 行: `session_restart: session_id=<sid> pid=<pid> terminated=<true|false> [exit_code=<N>] [error=<code>]`
 
-### 起動コマンドが claude を起こす config dir
+### resume する config dir
 
-組み込みの起動コマンドは direnv を通さず、面 (`CLAUDE_CONFIG_DIR`) を切り替えない (DR-0018 §3.1)。起こされる claude の config dir は、起動コマンドが継ぐ環境 (daemon の環境に `clean_env` / `keep_env` を当てたもの、DR-0018 §3.5 の 6) の `CLAUDE_CONFIG_DIR`、無ければ `~/.claude` で、daemon はこれを realpath にしてセッションの config dir と比べる。違う config dir のセッションを resume すると、起こされた claude はその transcript を持たない config dir で起動する。
-
-- hello の response に `launch_config_dir` (上の realpath) を `launch_available` と一緒に返す。webui は agents の行の `config_dir` がこれと同じセッションにだけ restart ボタンを出す
-- 自前の `launch_command` で面を切り替える環境でも、ボタンの条件は daemon の config dir (上の値) との一致のまま。daemon は起動コマンドがどの config dir で claude を起こすかを知らないので、別の面のセッションには restart を出さない
+claude はセッションの transcript をそのセッションが動いていた config dir (`CLAUDE_CONFIG_DIR`) の下にしか持たない。どの config dir (面) で resume するかは起動コマンドの責務で (cwd の `.envrc` 等から決める、[launch-command](../design/launch-command.md))、daemon は関知しない。daemon は面を比べずに起動コマンドに resume を頼み、webui は面を見ずに restart ボタンを出す (kawaz 2026-11-06)。
 
 ### resume の prompt
 
@@ -140,7 +136,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 ### webui
 
-- Status タブの危険ゾーンの「セッションを終了」の隣に「再起動」ボタン (停止と再起動は対の操作なので並べる、kawaz 2026-10-25)。見た目は終了ボタンと同じで、どちらかが走っている間は両方を disabled にする。`launch_available` で、そのセッションの agents の行があり (プロセスが居る)、行の `config_dir` が hello の `launch_config_dir` と同じ時だけ出す
+- Status タブの危険ゾーンの「セッションを終了」の隣に「再起動」ボタン (停止と再起動は対の操作なので並べる、kawaz 2026-10-25)。見た目は終了ボタンと同じで、どちらかが走っている間は両方を disabled にする。`launch_available` で、そのセッションの agents の行がある (プロセスが居る) 時に出す。セッションの config dir は問わない (下の「resume する config dir」)
 - 確認ダイアログは出さない (ユーザが理解して押す)。押すとボタンの下にその場で再起動のフォームが開く (kawaz 2026-11-02): textarea 1 つと [再起動] [キャンセル]。textarea には既定文が入っていて (全選択はしない、caret は末尾)、そのまま送っても、書き換えて指示を足してもよい。送った内容が request の `prompt` になる。FAB (composer) は使わない
   - [再起動] は内容が空 (空白だけを含む) なら disabled。[キャンセル] と Esc で閉じ、次に開くと既定文から始まる
   - textarea の見た目は composer の textarea (`.session-input-textarea`) と同じ。ボタンは危険ゾーンのボタンと同じ見た目。説明文は付けない (textarea の placeholder に「(⌘+Enter で送信)」を composer と同じ言い方で添える)
@@ -151,7 +147,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 
 ### 却下した代替案
 
-- **webui が `session_kill` → 待ち → `session_launch` を 3 往復する**: 止まったことの観測と起動の順序が webui にあり、途中で接続が切れると止めたまま起動しない状態が残る。断る理由を止める前に揃えて確かめることも webui からはできない (config dir や record の cwd は daemon が読む)
+- **webui が `session_kill` → 待ち → `session_launch` を 3 往復する**: 止まったことの観測と起動の順序が webui にあり、途中で接続が切れると止めたまま起動しない状態が残る。断る理由を止める前に揃えて確かめることも webui からはできない (record の cwd は daemon が読む)
 - **止める前に cron / schedule の有無を調べ、ある時だけ一文を出す**: 調べない (kawaz 2026-10-25)。正確な一覧は Stop の hook の入力の `session_crons` にしか出ず、module で取るには [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §1 が持たないと決めた `classic.*` の hook が要る
 - **猶予を過ぎたら SIGKILL に上げて起動する**: 本 DR の原則 (daemon が自動で不可逆側に倒さない) のまま。止まらなければ `restart_timeout` を返し、人が危険ゾーンの強制終了を選ぶ
 

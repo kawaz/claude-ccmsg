@@ -76,7 +76,7 @@ import {
 } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { readSessionLaunchContext, sessionSearch } from "./session-search.ts";
-import { launchConfigDir, restartSession } from "./session-restart.ts";
+import { restartSession } from "./session-restart.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
 import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
@@ -1882,11 +1882,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       // いなければ、新規フォームも Timeline の fork も launcher_not_configured
       // しか返せない。
       const launchAvailable = newId.role === "user" && !!daemon.config.session_launcher;
-      // Where the launch command starts claude, for the webui to offer a
-      // restart only to the sessions it can resume (DR-0028 「restart」).
-      const launcherForDir = newId.role === "user" ? daemon.config.session_launcher : undefined;
-      const launchDir =
-        launcherForDir !== undefined ? launchConfigDir(launcherForDir, daemon.env) : undefined;
       // ja(plamo) の翻訳サーバ (DR-0049) は terminal_gateway_url と同じく URL
       // そのものを user role にだけ返す — fetch するのはブラウザで、daemon は
       // 中継しない。
@@ -1903,7 +1898,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ...(llmKeepalivePauseAvailable ? { llm_keepalive_pause_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
         ...(launchAvailable ? { launch_available: true } : {}),
-        ...(launchDir !== undefined ? { launch_config_dir: launchDir } : {}),
         ...(translatePlamoUrl ? { translate_plamo_url: translatePlamoUrl } : {}),
       });
       return;
@@ -2340,8 +2334,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const entry = daemon.sessions.get(sid);
       const running = restartSession(sid, req.prompt, {
         launcher,
-        baseEnv: daemon.env,
-        sessionConfigDir: entry?.configDir,
         kill: { ...productionKillDeps, configDirs: () => scopeDirsOf(daemon, sid) },
         runsAs: async () => {
           const facts = daemon.sessionFacts.get(sid);

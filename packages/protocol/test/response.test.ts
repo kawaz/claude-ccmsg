@@ -207,7 +207,6 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       llm_keepalive_pause_available: true,
       sandbox_available: true,
       launch_available: true,
-      launch_config_dir: "/home/u/.claude",
     },
   ],
   user_message: [

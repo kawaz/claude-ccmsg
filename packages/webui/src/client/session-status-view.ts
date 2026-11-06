@@ -172,21 +172,10 @@ export function formatAgentLiveState(agent: AgentInfo | undefined): string | nul
 }
 
 /** Whether the Status tab offers a restart for the session whose agents row
- * is `agent` (DR-0028 「restart」): the daemon can launch, the session's
- * process is there, and it runs in the config dir the launch command starts
- * claude in (hello's `launch_config_dir`) — resumed in any other, claude has
- * no transcript of it. */
-export function restartOffered(
-  agent: AgentInfo | undefined,
-  launchAvailable: boolean,
-  launchConfigDir: string | null,
-): boolean {
-  return (
-    launchAvailable &&
-    agent !== undefined &&
-    launchConfigDir !== null &&
-    agent.config_dir === launchConfigDir
-  );
+ * is `agent` (DR-0028 「restart」): the daemon can launch, and the session's
+ * process is there. The daemon resumes it in the config dir it runs in. */
+export function restartOffered(agent: AgentInfo | undefined, launchAvailable: boolean): boolean {
+  return launchAvailable && agent !== undefined;
 }
 
 /** What a restart came to, as the Status tab says it under the LIVE row: the

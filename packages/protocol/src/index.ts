@@ -238,8 +238,8 @@ export const ErrorCode = {
   // daemon is shutting down. Nothing was run; the caller may ask again.
   launch_busy: "launch_busy",
   // session_restart (DR-0028 「restart」): the launch command cannot resume this
-  // session (it starts claude in another config dir, or the session's process
-  // records no cwd). Checked before the process is stopped.
+  // session (the session's process records no cwd). Checked before the process
+  // is stopped.
   restart_unavailable: "restart_unavailable",
   // session_restart: the process was not observed gone within the kill grace,
   // so the launch command was not run.

@@ -23,7 +23,6 @@ import { restartSession, type SessionRestartDeps } from "../src/session-restart.
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import {
-  connect,
   sessionConn,
   startInProcessDaemon,
   stopInProcessDaemon,
@@ -226,7 +225,10 @@ describe("session_restart over the wire", () => {
     }
   });
 
-  test("a session in another config dir than the launch command starts claude in is refused, and not stopped", async () => {
+  // Which config dir the resume runs in is the launch command's (DR-0028
+  // 「restart」): a session in another config dir than the daemon's is
+  // restarted like any other.
+  test("a session in another config dir than the daemon's is restarted", async () => {
     const proc = fakeClaude();
     try {
       const cwd = fs.realpathSync(tmp("restart-cwd-"));
@@ -236,18 +238,18 @@ describe("session_restart over the wire", () => {
       await withDaemon(command, daemonConfig, async (ctx) => {
         const session = await sessionConn(ctx, SID, { cwd, config_dir: config.dir });
         const user = await userConn(ctx);
-        const reply = await user.requestError({ op: "session_restart", session_id: SID });
-        expect(reply.error.code).toBe("restart_unavailable");
-        expect(isAlive(proc.pid)).toBe(true);
-        const logged = restartLogLines(ctx);
-        expect(logged).toHaveLength(1);
-        expect(logged[0]).toContain(`session_restart: session_id=${SID} error=restart_unavailable`);
+        const reply: SessionRestartResponse = await user.requestOk({
+          op: "session_restart",
+          session_id: SID,
+        });
+        expect(reply.exit_code).toBe(0);
+        expect(reply.stderr.trim()).toBe("gone");
+        await proc.exited;
         session.close();
         user.close();
       });
     } finally {
       proc.kill("SIGKILL");
-      await proc.exited;
     }
   });
 
@@ -294,20 +296,6 @@ describe("session_restart over the wire", () => {
       session.close();
     });
   });
-
-  test("hello names the config dir the launch command starts claude in, only with a launcher", async () => {
-    const config = fs.realpathSync(tmp("claude-config-"));
-    await withDaemon(noLaunch(), config, async (ctx) => {
-      const user = await connect(ctx.sock);
-      expect((await user.hello({ role: "user" })).launch_config_dir).toBe(config);
-      user.close();
-    });
-    await withDaemon(undefined, config, async (ctx) => {
-      const user = await connect(ctx.sock);
-      expect((await user.hello({ role: "user" })).launch_config_dir).toBeUndefined();
-      user.close();
-    });
-  });
 });
 
 /** Inert kill effects for restartSession's own branches: the process is
@@ -332,8 +320,6 @@ function restartDeps(
 ): SessionRestartDeps {
   return {
     launcher: launcher("/bin/true", "/w"),
-    baseEnv: { CLAUDE_CONFIG_DIR: "/fake/.claude" },
-    sessionConfigDir: "/fake/.claude",
     kill,
     runsAs: () => Promise.resolve({ model: "claude-sonnet-5-5", effort: "low" }),
     stopped: () => {

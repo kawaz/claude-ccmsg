@@ -65,17 +65,12 @@ interface Mounted {
 
 async function mount(options: {
   launchAvailable?: boolean;
-  launchConfigDir?: string;
   agentConfigDir?: string | null;
   /** The kill's reply never comes, so the kill stays running. */
   killHangs?: boolean;
 }): Promise<Mounted> {
   const store = createStore(initialState());
-  store.dispatch({
-    type: "launch/availability",
-    available: options.launchAvailable ?? true,
-    ...(options.launchConfigDir !== undefined ? { configDir: options.launchConfigDir } : {}),
-  });
+  store.dispatch({ type: "launch/availability", available: options.launchAvailable ?? true });
   const agentConfigDir = options.agentConfigDir === undefined ? CONFIG_DIR : options.agentConfigDir;
   if (agentConfigDir !== null) {
     store.dispatch({ type: "agents/loaded", agents: [agentRow(agentConfigDir)] });
@@ -187,8 +182,8 @@ function resultText(root: HTMLElement): string {
 }
 
 describe("Status の再起動", () => {
-  test("offered beside the kill button, with its look, when the session runs in the launch command's config dir", async () => {
-    const { root } = await mount({ launchConfigDir: CONFIG_DIR });
+  test("offered beside the kill button, with its look, when the daemon can launch and the process is there", async () => {
+    const { root } = await mount({});
     const button = restartButton(root);
     expect(button?.textContent).toBe("再起動");
     expect(button?.classList.contains("status-kill-button")).toBe(true);
@@ -197,16 +192,16 @@ describe("Status の再起動", () => {
     expect(labels).toEqual(["セッションを終了", "再起動"]);
   });
 
-  test("not offered for a session in another config dir", async () => {
-    const { root } = await mount({ launchConfigDir: "/home/u/.claude-other" });
-    expect(restartButton(root)).toBeNull();
+  // The daemon resumes a session in the config dir it runs in, so a session
+  // of any config dir is offered one.
+  test("offered for a session of any config dir", async () => {
+    const { root } = await mount({ agentConfigDir: "/home/u/.claude-other" });
+    expect(restartButton(root)?.textContent).toBe("再起動");
   });
 
   test("not offered when the daemon cannot launch, or without the session's process", async () => {
     expect(restartButton((await mount({ launchAvailable: false })).root)).toBeNull();
-    const noDir = await mount({});
-    expect(restartButton(noDir.root)).toBeNull();
-    const noProcess = await mount({ launchConfigDir: CONFIG_DIR, agentConfigDir: null });
+    const noProcess = await mount({ agentConfigDir: null });
     expect(restartButton(noProcess.root)).toBeNull();
   });
 
@@ -217,7 +212,7 @@ describe("Status の再起動", () => {
       return false;
     });
     try {
-      const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+      const mounted = await mount({});
       await restartWithDefault(mounted.root);
       expect(mounted.restarts()).toEqual([RESTART_PROMPT]);
       expect(confirms).toEqual([]);
@@ -241,7 +236,7 @@ describe("Status の再起動", () => {
   });
 
   test("pressed, it opens a form in place with RESTART_PROMPT, not selected, and restarts nothing yet", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     expect(restartForm(mounted.root)).toBeNull();
     await act(() => restartButton(mounted.root)?.click());
     expect(restartForm(mounted.root)?.closest(".status-kill-zone")).not.toBeNull();
@@ -256,7 +251,7 @@ describe("Status の再起動", () => {
   });
 
   test("the form's text, as the person left it, is the prompt the restart is asked with", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await act(() => restartButton(mounted.root)?.click());
     const edited = `${RESTART_PROMPT}\nテストの続きから`;
     await typeInto(formText(mounted.root), edited);
@@ -279,7 +274,7 @@ describe("Status の再起動", () => {
   });
 
   test("an empty text cannot be sent", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await act(() => restartButton(mounted.root)?.click());
     await typeInto(formText(mounted.root), " \n");
     expect(formButton(mounted.root, "再起動").disabled).toBe(true);
@@ -288,7 +283,7 @@ describe("Status の再起動", () => {
   });
 
   test("⌘+Enter in the form's text sends the restart like 再起動; a bare Enter does not", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await act(() => restartButton(mounted.root)?.click());
     const edited = `${RESTART_PROMPT}\n続きから`;
     await typeInto(formText(mounted.root), edited);
@@ -313,7 +308,7 @@ describe("Status の再起動", () => {
   });
 
   test("キャンセル and Esc close the form without restarting", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await act(() => restartButton(mounted.root)?.click());
     await act(() => formButton(mounted.root, "キャンセル").click());
     expect(restartForm(mounted.root)).toBeNull();
@@ -339,7 +334,7 @@ describe("Status の再起動", () => {
   test("while the kill runs, the restart is disabled too", async () => {
     const restore = stubGlobal("confirm", () => true);
     try {
-      const mounted = await mount({ launchConfigDir: CONFIG_DIR, killHangs: true });
+      const mounted = await mount({ killHangs: true });
       await act(() => killButton(mounted.root)?.click());
       expect(killButton(mounted.root)?.disabled).toBe(true);
       expect(restartButton(mounted.root)?.disabled).toBe(true);
@@ -350,7 +345,7 @@ describe("Status の再起動", () => {
   });
 
   test("the result outlives the Status panel going while the session is between processes", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await restartWithDefault(mounted.root);
     await mounted.show(undefined);
     expect(restartButton(mounted.root)).toBeNull();
@@ -368,7 +363,7 @@ describe("Status の再起動", () => {
   });
 
   test("a launch command that did not resume is shown with its output", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await restartWithDefault(mounted.root);
     await mounted.answer({
       ok: true,
@@ -385,7 +380,7 @@ describe("Status の再起動", () => {
   });
 
   test("a process not seen gone says it was not started", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await restartWithDefault(mounted.root);
     await mounted.answer({
       ok: false,
@@ -395,7 +390,7 @@ describe("Status の再起動", () => {
   });
 
   test("another refusal names its code and message", async () => {
-    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    const mounted = await mount({});
     await restartWithDefault(mounted.root);
     await mounted.answer({ ok: false, error: { code: "not_found", msg: "no process" } });
     expect(resultText(mounted.root)).toBe("再起動できなかった (not_found): no process");

@@ -628,7 +628,6 @@ export function StatusPanel({
     restartOffered(
       s.agents.find((candidate) => candidate.sessionId === sid),
       s.launchAvailable,
-      s.launchConfigDir,
     ),
   );
   // The session's own title — what `/rename` sets — resolved through the same

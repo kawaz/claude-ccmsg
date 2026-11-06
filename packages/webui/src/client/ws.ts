@@ -679,7 +679,6 @@ export function createWsClient(
         dispatch({
           type: "launch/availability",
           available: hello.launch_available === true,
-          ...(hello.launch_config_dir !== undefined ? { configDir: hello.launch_config_dir } : {}),
         });
         // ja(plamo) の翻訳サーバ (DR-0049): URL が来たらブラウザから
         // `/health` を確かめ、通った時だけタブを出す。待たずに先へ進む —
