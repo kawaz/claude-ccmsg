@@ -2643,9 +2643,15 @@ describe("the ccmsg tools", () => {
             required: ["command"],
           },
         },
-        voice: { type: "string" },
+        voice: { type: "string", description: "日本語" },
       },
       required: ["blocked"],
+    });
+    // say's text is spoken, so the model is told the language it is spoken in.
+    expect(fake.tools[1]?.inputSchema).toEqual({
+      type: "object",
+      properties: { text: { type: "string", description: "日本語" } },
+      required: ["text"],
     });
   });
 

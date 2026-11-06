@@ -93,9 +93,9 @@ export function toolInputSchemas(): {
 } {
   return {
     send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Running subagent's id" }),
-    say: toolInputSchemaOf(SayToolInputSchema),
+    say: toolInputSchemaOf(SayToolInputSchema, { text: "日本語" }),
     peers: toolInputSchemaOf(PeersToolInputSchema),
     launch: toolInputSchemaOf(LaunchFieldsSchema, { resume: "Session id to resume" }),
-    permit: toolInputSchemaOf(PermitToolInputSchema),
+    permit: toolInputSchemaOf(PermitToolInputSchema, { voice: "日本語" }),
   };
 }

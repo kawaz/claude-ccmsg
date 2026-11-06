@@ -2369,7 +2369,8 @@ var TOOL_INPUT_SCHEMAS = {
     type: "object",
     properties: {
       text: {
-        type: "string"
+        type: "string",
+        description: "日本語"
       }
     },
     required: [
@@ -2469,7 +2470,8 @@ var TOOL_INPUT_SCHEMAS = {
         }
       },
       voice: {
-        type: "string"
+        type: "string",
+        description: "日本語"
       }
     },
     required: [
