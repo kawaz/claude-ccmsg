@@ -161,6 +161,40 @@ describe("ja(plamo) tab", () => {
     }
     expect(body.textContent).toContain("訳:Footer paragraph.");
   });
+
+  // 訳タブの間だけ本文を包む要素に tl-translated が付き、CSS の text-autospace
+  // が効く (DR-0049 §8)。原文には付かない。効果の実測は findings の実機表。
+  test("the body wrapper carries tl-translated only while a translation tab is selected", async () => {
+    const { promise: posted, resolve: resolvePosted } = Promise.withResolvers<void>();
+    restoreFetch = stubGlobal("fetch", async () => {
+      resolvePosted();
+      return Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "訳:Scope paragraph." } }],
+      });
+    });
+    const root = await mountThinking("Scope paragraph.", {
+      host: false,
+      browser: false,
+      hostRequest: async () => unavailable,
+      plamoUrl: PLAMO_URL,
+    });
+    const body = defined(root.querySelector(".tl-thinking-body"), "the thinking body");
+    expect(body.querySelector(".tl-translated")).toBeNull();
+
+    const plamoTab = defined(
+      [...body.querySelectorAll<HTMLButtonElement>(".tl-thinking-tab")].find(
+        (el) => el.textContent === "ja(plamo)",
+      ),
+      "the ja(plamo) tab",
+    );
+    await act(() => plamoTab.click());
+    await posted;
+    for (let i = 0; i < 3; i++) {
+      await act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    }
+    const scope = defined(body.querySelector(".tl-translated"), "the translated wrapper");
+    expect(scope.textContent).toContain("訳:Scope paragraph.");
+  });
 });
 
 describe("default tab", () => {

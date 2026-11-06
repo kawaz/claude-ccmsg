@@ -19,6 +19,7 @@ import {
   useTranslatedText,
   useDefaultTranslationTab,
 } from "./translation.ts";
+import { TranslatedScope } from "./translated-scope.tsx";
 
 /** 本文の無い thinking (thinking-hidden)。thinking が起きた事実は TL の
  * 流れとして意味を持つので通常 thinking と同じ fold で並べ、中身は理由を
@@ -121,16 +122,18 @@ function ThinkingSegment({
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-thinking-body">
-          <LinkedMarkdownView
-            source={bodyText}
-            // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
-            // 揃える (翻訳結果の inline code は原文と同一で、原文で網羅すれば
-            // どのタブでも同じリンクが張れる、余計な probe も発生しない)。
-            probeSource={text}
-            ctx={filePathCtx}
-            highlightWords={mdSearch?.words}
-            onMatchClick={mdSearch?.onMatchClick}
-          />
+          <TranslatedScope tab={tab}>
+            <LinkedMarkdownView
+              source={bodyText}
+              // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
+              // 揃える (翻訳結果の inline code は原文と同一で、原文で網羅すれば
+              // どのタブでも同じリンクが張れる、余計な probe も発生しない)。
+              probeSource={text}
+              ctx={filePathCtx}
+              highlightWords={mdSearch?.words}
+              onMatchClick={mdSearch?.onMatchClick}
+            />
+          </TranslatedScope>
           {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
           {/* 翻訳タブは他のバブルと同じ足元の hover ツールバーに置く。時刻は
            * fold の summary 行が持つので、足元の行はツールバーだけ。出すのは
@@ -184,27 +187,30 @@ function AssistantMarkdownText({
   onDisplayChange?: (() => void) | undefined;
 }) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
+  const tab = view?.tab ?? "original";
   const { bodyText, translatingLabel } = useTranslatedText(
     source,
     translationAvailability,
-    view?.tab ?? "original",
+    tab,
     onDisplayChange,
   );
   return (
     <>
-      {view?.source === true ? (
-        // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
-        // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
-        <CopyablePreText class="tl-bubble-source" text={bodyText} />
-      ) : (
-        <LinkedMarkdownView
-          source={bodyText}
-          // 翻訳がかかっても probe 対象は原文に揃える (ThinkingSegment と同じ
-          // 理由: 訳文の inline code は原文と同一)。
-          probeSource={source}
-          ctx={filePathCtx}
-        />
-      )}
+      <TranslatedScope tab={tab}>
+        {view?.source === true ? (
+          // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
+          // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
+          <CopyablePreText class="tl-bubble-source" text={bodyText} />
+        ) : (
+          <LinkedMarkdownView
+            source={bodyText}
+            // 翻訳がかかっても probe 対象は原文に揃える (ThinkingSegment と同じ
+            // 理由: 訳文の inline code は原文と同一)。
+            probeSource={source}
+            ctx={filePathCtx}
+          />
+        )}
+      </TranslatedScope>
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
   );
@@ -234,7 +240,9 @@ function UserPlainText({
   );
   return (
     <>
-      <LinkedPlainText text={bodyText} ctx={filePathCtx} />
+      <TranslatedScope tab={tab}>
+        <LinkedPlainText text={bodyText} ctx={filePathCtx} />
+      </TranslatedScope>
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
   );

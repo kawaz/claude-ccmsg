@@ -20,6 +20,7 @@ import {
   useBubbleTranslationTab,
   useTranslatedText,
 } from "./translation.ts";
+import { TranslatedScope } from "./translated-scope.tsx";
 
 // エージェント識別子 (avatar + 名前)。`linkify=true` の時だけ名前クリックで
 // TL 遷移リンクを描く (kawaz r46m15 の「名前クリックで良いんじゃない?」の
@@ -132,7 +133,9 @@ export function AgentCard({
         {title ? <div class="tl-agent-title">{title}</div> : null}
         {body ? (
           <div class="tl-agent-md">
-            <LinkedMarkdownView source={bodyText} ctx={filePathCtx} />
+            <TranslatedScope tab={tab}>
+              <LinkedMarkdownView source={bodyText} ctx={filePathCtx} />
+            </TranslatedScope>
             {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
           </div>
         ) : null}

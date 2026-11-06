@@ -6117,6 +6117,16 @@ a.md-prose-file-link {
   border-color: var(--accent);
 }
 
+/* 訳文を描く要素を包む。レイアウトには関わらず、PLaMo の訳文で詰まる
+ * 英数字と和文の間に空きを入れる (DR-0049 §8)。原文には付かない。 */
+.tl-scope {
+  display: contents;
+}
+
+.tl-translated {
+  text-autospace: normal;
+}
+
 .tl-thinking-translating {
   margin: var(--space-4) 0 0;
   font-size: var(--font-size-xs);

@@ -39,6 +39,7 @@ import {
   useBubbleTranslationTab,
   useTranslatedText,
 } from "./translation.ts";
+import { TranslatedScope } from "./translated-scope.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -261,7 +262,9 @@ function TranslatedMarkdown({
   const { bodyText, translatingLabel } = useTranslatedText(source, availability, tab);
   return (
     <>
-      <MarkdownView source={bodyText} />
+      <TranslatedScope tab={tab}>
+        <MarkdownView source={bodyText} />
+      </TranslatedScope>
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
   );
@@ -283,7 +286,9 @@ function TranslatedCommandHeading({
   const { bodyText, translatingLabel } = useTranslatedText(description, availability, tab);
   return (
     <>
-      <span>{commandHeading({ ...command, description: bodyText })}</span>
+      <TranslatedScope tab={tab}>
+        <span>{commandHeading({ ...command, description: bodyText })}</span>
+      </TranslatedScope>
       {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
     </>
   );
