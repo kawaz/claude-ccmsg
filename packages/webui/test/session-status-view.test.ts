@@ -167,12 +167,15 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([
       {
         kind: "context",
-        text: "64%[1m] / fable-5",
+        text: "64% / fable-5[1m]",
         context: {
-          fill: "64%[1m]",
-          model: { text: "fable-5", title: "model claude-fable-5" },
-          effort: null,
-          tail: "",
+          usage: {
+            fill: "64%",
+            model: { text: "fable-5", title: "model claude-fable-5" },
+            window: "[1m]",
+            effort: null,
+          },
+          tail: [],
         },
       },
     ]);
@@ -189,20 +192,24 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([
       {
         kind: "context",
-        text: "50%[200K] / m",
+        text: "50% / m[200K]",
         context: {
-          fill: "50%[200K]",
-          model: { text: "m", title: "model m" },
-          effort: null,
-          tail: "",
+          usage: {
+            fill: "50%",
+            model: { text: "m", title: "model m" },
+            window: "[200K]",
+            effort: null,
+          },
+          tail: [],
         },
       },
     ]);
   });
 
-  // The ctx line ends with the session's process: uptime and Claude Code
-  // version (kawaz 2026-10-25), in the line's own " / " separation.
-  test("the process parts end the ctx line", () => {
+  // The ctx line ends with what the session runs as: uptime, the ccmsg and
+  // Claude Code versions (kawaz 2026-11-06), in the line's own " / "
+  // separation.
+  test("the runtime parts end the ctx line", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [],
       workflows: [],
@@ -216,15 +223,26 @@ describe("miniSummaryLines", () => {
         timestamp: "t",
       },
     };
-    expect(miniSummaryLines(snapshot, ["2d15h"])).toEqual([
+    const tail = [
+      { key: "uptime", text: "2d15h" },
+      {
+        key: "ccmsg",
+        text: "ccmsg v0.212.1",
+        title: "ccmsg v0.212.1 (the ccmsg this session runs)",
+      },
+    ];
+    expect(miniSummaryLines(snapshot, tail)).toEqual([
       {
         kind: "context",
-        text: "10%[1m] / fable-5-1 / low / 2d15h",
+        text: "10% / fable-5-1[1m] / low / 2d15h / ccmsg v0.212.1",
         context: {
-          fill: "10%[1m]",
-          model: { text: "fable-5-1", title: "model claude-fable-5-1" },
-          effort: { text: "low", title: "effort low" },
-          tail: "2d15h",
+          usage: {
+            fill: "10%",
+            model: { text: "fable-5-1", title: "model claude-fable-5-1" },
+            window: "[1m]",
+            effort: { text: "low", title: "effort low" },
+          },
+          tail,
         },
       },
     ]);
@@ -237,14 +255,18 @@ describe("miniSummaryLines", () => {
       ...EMPTY_SNAPSHOT,
       context: { window: 1_000_000, model: "claude-fable-5-1", timestamp: "t" },
     };
-    expect(miniSummaryLines(snapshot, ["4h27m"])).toEqual([{ kind: "context", text: "4h27m" }]);
+    const tail = [{ key: "uptime", text: "4h27m" }];
+    expect(miniSummaryLines(snapshot, tail)).toEqual([
+      { kind: "context", text: "4h27m", context: { usage: null, tail } },
+    ]);
   });
 
   // Before the transcript says anything of the context, what the process runs
   // as is still known, so the line carries that alone.
   test("process parts without context make the line on their own", () => {
-    expect(miniSummaryLines(EMPTY_SNAPSHOT, ["35m20s"])).toEqual([
-      { kind: "context", text: "35m20s" },
+    const tail = [{ key: "uptime", text: "35m20s" }];
+    expect(miniSummaryLines(EMPTY_SNAPSHOT, tail)).toEqual([
+      { kind: "context", text: "35m20s", context: { usage: null, tail } },
     ]);
   });
 
@@ -307,12 +329,15 @@ describe("miniSummaryLines", () => {
       { kind: "workflow", text: "wf" },
       {
         kind: "context",
-        text: "52%[1m] / m",
+        text: "52% / m[1m]",
         context: {
-          fill: "52%[1m]",
-          model: { text: "m", title: "model m" },
-          effort: null,
-          tail: "",
+          usage: {
+            fill: "52%",
+            model: { text: "m", title: "model m" },
+            window: "[1m]",
+            effort: null,
+          },
+          tail: [],
         },
       },
       { kind: "teammate", text: "researcher" },
@@ -371,7 +396,7 @@ describe("context usage display", () => {
       model: "claude-opus-5-5",
       timestamp: "2026-07-17T00:00:00.000Z",
     });
-    expect(formatted.text).toBe("10%[1m] / opus-5-5");
+    expect(formatted.text).toBe("10% / opus-5-5[1m]");
     expect(formatted.title).toContain("100,000 tokens");
     expect(formatted.title).toContain("context window 1,000,000");
   });
@@ -391,7 +416,7 @@ describe("context usage display", () => {
   // 最初の応答の前は使用量が無い。window と model は module が起動直後に送る。
   test("使用量の無い window は — で出す", () => {
     const formatted = formatContextUsage({ window: 1_000_000, model: "m", timestamp: "t" });
-    expect(formatted.text).toBe("—[1m] / m");
+    expect(formatted.text).toBe("— / m[1m]");
     expect(formatted.title).toContain("no response yet");
   });
 
@@ -407,7 +432,7 @@ describe("context usage display", () => {
     // clamp すると「window より多く使っている」という診断情報を失う。
     expect(
       formatContextUsage({ tokens: 1_100_000, window: 1_000_000, model: "m", timestamp: "t" }).text,
-    ).toBe("110%[1m] / m");
+    ).toBe("110% / m[1m]");
   });
 
   test("formatSessionModelEffort は model を持つ最初の候補だけを採用する", () => {
@@ -454,8 +479,9 @@ describe("context usage display", () => {
   });
 
   // The model is the one that answered (the transcript's ID without
-  // `claude-`); the window's `[1m]` belongs to the fill, never to the model.
-  test("model は claude- を落とした実 ID で、[1m] は分母側だけに付く", () => {
+  // `claude-`); the window's `[1m]` follows it, as the model's attribute
+  // (kawaz 2026-11-06), and is not part of the model's own text.
+  test("model は claude- を落とした実 ID で、[1m] は model の後ろに付く", () => {
     const formatted = formatContextUsage({
       tokens: 280_000,
       window: 1_000_000,
@@ -463,8 +489,9 @@ describe("context usage display", () => {
       effort: "low",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("28%[1m] / fable-5-1 / low");
+    expect(formatted.text).toBe("28% / fable-5-1[1m] / low");
     expect(formatted.model.text).toBe("fable-5-1");
+    expect(formatted.window).toBe("[1m]");
   });
 
   test("effort ありの context は「/ model / effort」の順で text に付く", () => {
@@ -476,7 +503,7 @@ describe("context usage display", () => {
       effort: "low",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("33%[1m] / fable-5 / low");
+    expect(formatted.text).toBe("33% / fable-5[1m] / low");
     expect(formatted.title).toContain("effort low");
   });
 
@@ -489,7 +516,7 @@ describe("context usage display", () => {
       model: "claude-fable-5",
       timestamp: "t",
     });
-    expect(formatted.text).toBe("50%[200K] / fable-5");
+    expect(formatted.text).toBe("50% / fable-5[200K]");
     expect(formatted.title).not.toContain("effort");
   });
 });

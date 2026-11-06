@@ -93,15 +93,15 @@ describe("requestValueViews", () => {
       session: { model: CTX.model, effort: "low" },
       once: NONE,
     });
-    expect(formatted.text).toBe("10%[1m] / opus-5-5 / low⁺");
+    expect(formatted.text).toBe("10% / opus-5-5[1m] / low⁺");
     expect(formatted.title).toContain("effort low (通しの上書き。セッション自身は high)");
     const [line] = miniSummaryLines(
       { todos: [], workflows: [], background: [], context: CTX },
       [],
       { ...OWN, once: { model: "haiku", effort: null } },
     );
-    expect(line?.text).toBe("10%[1m] / haiku⁺ / high");
-    expect(line?.context?.model.by).toBe("once");
+    expect(line?.text).toBe("10% / haiku⁺[1m] / high");
+    expect(line?.context?.usage?.model.by).toBe("once");
   });
 });
 

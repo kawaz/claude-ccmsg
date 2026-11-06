@@ -208,44 +208,47 @@ export function restartResultText(reply: SessionRestartResponse | ErrorResponse)
   return { text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
 }
 
-/** The ctx line, in its parts: the fill (`10%[1m]`) and the model and the
- * effort the requests are sent with (DR-0041 §5). */
+/** The ctx line's usage, in its parts: the fill (`10%`), the model and the
+ * effort the requests are sent with (DR-0041 §5), and the context window
+ * that follows the model (`[1m]`, empty when not known). */
 export interface ContextUsageView {
   text: string;
   title: string;
   fill: string;
   model: RequestValueView;
+  window: string;
   effort: RequestValueView | null;
 }
 
-/** The ctx line: the percentage of the window Claude Code reported through
- * the session's hooks module, with the window in brackets (`28%[1m]`).
- * Without that window (a session without the module) the token count stands
- * alone (`280k`): the window depends on the model's default and on
- * environment overrides the transcript does not record, so it is not guessed.
- * Before the first response there is no fill, shown as `—`. The model (the
- * transcript's ID without `claude-`, `fable-5-1`; the window's `[1m]` is not
- * its) and the effort are the ones the requests are sent with: an override's,
- * marked, else the session's own (`overrides` is what ev:"request_override"
- * says of the session). Parts are joined with ` / `. */
+/** The ctx line's usage: the percentage of the window Claude Code reported
+ * through the session's hooks module (`28%`), and the window in brackets after
+ * the model (`fable-5-1[1m]`): the window is the model's, as the session runs
+ * it. Without that window (a session without the module) the token count
+ * stands alone (`280k`) and the model has no brackets: the window depends on
+ * the model's default and on environment overrides the transcript does not
+ * record, so it is not guessed. Before the first response there is no fill,
+ * shown as `—`. The model (the transcript's ID without `claude-`,
+ * `fable-5-1`) and the effort are the ones the requests are sent with: an
+ * override's, marked, else the session's own (`overrides` is what
+ * ev:"request_override" says of the session). Parts are joined with ` / `. */
 export function formatContextUsage(
   ctx: SessionContextUsage,
   overrides?: RequestOverrideState,
 ): ContextUsageView {
   const { tokens, window } = ctx;
-  const used =
+  const fill =
     tokens === undefined
       ? "—"
       : window !== undefined
         ? `${Math.round((tokens / window) * 100)}%`
         : `${Math.round(tokens / 1000)}k`;
-  const fill = `${used}${window !== undefined ? formatContextWindow(window) : ""}`;
+  const windowText = window !== undefined ? formatContextWindow(window) : "";
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
   const { model, effort } = requestValueViews(ctx, overrides, shortModel);
   return {
-    text: [fill, model.text, ...(effort ? [effort.text] : [])].join(" / "),
+    text: [fill, `${model.text}${windowText}`, ...(effort ? [effort.text] : [])].join(" / "),
     title:
       (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
       (window !== undefined
@@ -255,6 +258,7 @@ export function formatContextUsage(
       (effort ? ` / ${effort.title}` : ""),
     fill,
     model,
+    window: windowText,
     effort,
   };
 }
@@ -313,15 +317,23 @@ export type MiniSummaryLineKind = "workflow" | "context" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
-  /** The ctx line's parts, when it has the context: the model and the effort
-   * are drawn apart from the rest so a person can change the session
-   * override from them (DR-0041 §5). `tail` is what follows them. */
+  /** The ctx line's parts. `usage` is there once the transcript has said
+   * something of the context: its model and effort are drawn apart from the
+   * rest so a person can change the session override from them (DR-0041 §5).
+   * `tail` is what follows them, each part drawn with its own hover text. */
   context?: {
-    fill: string;
-    model: RequestValueView;
-    effort: RequestValueView | null;
-    tail: string;
+    usage: Omit<ContextUsageView, "text" | "title"> | null;
+    tail: LinePart[];
   };
+}
+
+/** One ` / `-separated part of the ctx line's tail, with the hover text that
+ * says what it is when the text alone does not. `key` names which part it is
+ * (`uptime`, `ccmsg`, `claude`), the same whatever its text. */
+export interface LinePart {
+  key: string;
+  text: string;
+  title?: string;
 }
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
@@ -338,7 +350,7 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
 }
 
 /** 走行中 workflow 名を要約した上に、context 消費 (issue 2026-07-17 #1、
- * 末尾にプロセスの稼働時間と Claude Code の版) と活動中 teammates
+ * 末尾にプロセスの稼働時間、ccmsg と Claude Code の版) と活動中 teammates
  * (issue 2026-07-17 #5) を追加行として付与する。workflow がゼロかつ
  * context/teammates も無ければ空配列 (呼び出し側はこれをパネル非表示の合図
  * にする、DR-0020 §2.1 "ゼロ件なら非表示")。
@@ -348,7 +360,7 @@ function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | nu
  * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。 */
 export function miniSummaryLines(
   snapshot: SessionStatusSnapshot,
-  processParts: readonly string[] = [],
+  tail: readonly LinePart[] = [],
   overrides?: RequestOverrideState,
 ): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
@@ -359,26 +371,22 @@ export function miniSummaryLines(
     .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name }));
 
   const extra: MiniSummaryLine[] = [];
-  // The ctx line ends with what the session's process runs as (uptime,
-  // Claude Code version: `processParts`), which stands alone before the
-  // transcript has said anything of the context.
-  const context =
+  // The ctx line ends with what the session runs as (uptime, the ccmsg and
+  // Claude Code versions: `tail`), which stands alone before the transcript
+  // has said anything of the context.
+  const usage =
     snapshot.context?.tokens !== undefined ? formatContextUsage(snapshot.context, overrides) : null;
-  const contextParts = [...(context ? [context.text] : []), ...processParts];
+  const contextParts = [...(usage ? [usage.text] : []), ...tail.map((part) => part.text)];
   if (contextParts.length > 0) {
     extra.push({
       kind: "context",
       text: contextParts.join(" / "),
-      ...(context
-        ? {
-            context: {
-              fill: context.fill,
-              model: context.model,
-              effort: context.effort,
-              tail: processParts.join(" / "),
-            },
-          }
-        : {}),
+      context: {
+        usage: usage
+          ? { fill: usage.fill, model: usage.model, window: usage.window, effort: usage.effort }
+          : null,
+        tail: [...tail],
+      },
     });
   }
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);

@@ -173,7 +173,7 @@ describe("the ctx line's fields", () => {
   /** A field of the line: the model's comes first, then the effort's. */
   const fieldOf = (root: HTMLElement, field: Field) =>
     instanceOf(
-      root.querySelectorAll(".tl-status-mini-context > .override-field")[field === "model" ? 0 : 1],
+      root.querySelectorAll(".tl-status-mini-context .override-field")[field === "model" ? 0 : 1],
       HTMLElement,
       `the ctx line's ${field}`,
     );

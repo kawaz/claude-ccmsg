@@ -7754,23 +7754,34 @@ a.tl-attachment-file-path {
   color: var(--accent);
 }
 
+/* The ctx line is not cut short: too long for the width (a phone), it wraps,
+ * between its ` / `-separated parts only (each part keeps to one line). */
 .tl-status-mini-context {
   font-family: ui-monospace, monospace;
   color: var(--accent);
+  overflow: visible;
+  white-space: normal;
+}
+
+.tl-status-mini-context .ctx-part {
+  white-space: nowrap;
 }
 
 /* DR-0041 §5: the model and the effort of the ctx line are the session
  * override's fields in place. The panel is not clickable (pointer-events:
  * none above); these two fields (their text at rest, the select, [適用] and
- * what became of the change) are the only parts that take a click. */
-.tl-status-mini-context .override-field {
+ * what became of the change) are the only parts that take a click. A part
+ * with a hover text (the versions) takes the pointer for the hover alone: it
+ * has nothing to press. */
+.tl-status-mini-context .override-field,
+.tl-status-mini-context .ctx-part-titled {
   pointer-events: auto;
 }
 
-/* A field opened or holding a choice or a reply leaves the one line: cut
- * short with an ellipsis, it would cut the select and [適用] off. */
-.tl-status-mini-context:has(.override-select, .override-apply, .override-notice) {
-  overflow: visible;
+/* The part of a field opened or holding a choice or a reply wraps inside
+ * too: kept to one line, the select, [適用] and the reply would run off the
+ * width. The other parts still keep to one line each. */
+.tl-status-mini-context .ctx-part:has(.override-select, .override-apply, .override-notice) {
   white-space: normal;
 }
 

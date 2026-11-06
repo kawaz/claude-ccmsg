@@ -16,6 +16,7 @@ import type {
 } from "@ccmsg/protocol";
 import { jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
+import type { LinePart } from "./session-status-view.ts";
 import type { PeerSortKey } from "./sidebar-url.ts";
 import { numberText } from "./storage.ts";
 import type { AppState, RoomState } from "./store.ts";
@@ -54,12 +55,52 @@ export function formatDuration(ms: number): string {
   return `${days}d${totalHour % 24}h`;
 }
 
-/** What a session's process has been running as, for the end of the
- * Timeline's ctx line: how long since it started, in the same `formatDuration`
- * the bubbles and the responding row use ("2d15h"). The Claude Code version
- * is not part of it (the sidebar's GLOBALS shows it, DR-0043 §5.3). */
-export function sessionProcessParts(agent: Pick<AgentInfo, "startedAt">, now: number): string[] {
-  return [formatDuration(now - agent.startedAt)];
+/** What a session runs as, from the rows the webui holds of it. */
+export interface SessionRuntime {
+  /** The session's process, from its agents row: when it started and the
+   * Claude Code version it runs. */
+  process?: Pick<AgentInfo, "startedAt" | "version">;
+  /** The ccmsg build the session's client announced (its peer row's
+   * `client_version`). */
+  ccmsgVersion?: string;
+  /** This host's Claude Code version as GLOBALS shows it (DR-0043 §5.3), null
+   * when not known. */
+  hostClaudeVersion: string | null;
+}
+
+/** The end of the Timeline's ctx line: how long the session's process has
+ * been running, in the same `formatDuration` the bubbles and the responding
+ * row use ("2d15h"), then the ccmsg the session runs (`ccmsg v0.212.1`) and
+ * the Claude Code its process runs (`claude v2.1.317`). A part whose value is
+ * not known is left out. The Claude Code version is the process's, not the
+ * host's installed one GLOBALS shows, so its hover text says which it is and
+ * how it compares with the host's when that is known. */
+export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LinePart[] {
+  const { process, ccmsgVersion, hostClaudeVersion } = runtime;
+  const parts: LinePart[] = [];
+  if (process) parts.push({ key: "uptime", text: formatDuration(now - process.startedAt) });
+  if (ccmsgVersion) {
+    parts.push({
+      key: "ccmsg",
+      text: `ccmsg v${ccmsgVersion}`,
+      title: `ccmsg v${ccmsgVersion} (the ccmsg this session runs)`,
+    });
+  }
+  const claudeVersion = process?.version;
+  if (claudeVersion) {
+    const host =
+      hostClaudeVersion === null
+        ? ""
+        : hostClaudeVersion === claudeVersion
+          ? "; the host has the same version installed"
+          : `; the host has v${hostClaudeVersion} installed`;
+    parts.push({
+      key: "claude",
+      text: `claude v${claudeVersion}`,
+      title: `claude v${claudeVersion} (this session's process${host})`,
+    });
+  }
+  return parts;
 }
 
 /** HH:MM:SS in the viewer's local timezone, for a Timeline turn's timestamp

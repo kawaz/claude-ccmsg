@@ -8,6 +8,7 @@
 // [適用] sends the change to the daemon (request_override). The ctx line keeps
 // its own text for each value at rest and turns into the field's select where
 // the value is.
+import { type ComponentChildren, Fragment } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type {
   ErrorResponse,
@@ -268,7 +269,10 @@ export function SessionOverrideEditor({
 /** The ctx line under the Timeline (DR-0041 §5), its model and effort each
  * the session override's field in place: at rest the line's own text of the
  * value, pressed the field's select where the value is, with [適用] beside it
- * once another option is chosen. What became of a change goes after a while. */
+ * once another option is chosen. What became of a change goes after a while.
+ * Each ` / `-separated part is a span of its own, so a line too long for the
+ * width breaks between parts, not inside one (`ccmsg` and its version, the
+ * model and its window stay together). */
 export function ContextLine({
   line,
   state,
@@ -280,7 +284,7 @@ export function ContextLine({
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
 }) {
-  const { fill, model, effort, tail } = line;
+  const { usage, tail } = line;
   const field = (name: OverrideField, view: RequestValueView) => (
     <SessionOverrideField
       field={name}
@@ -291,11 +295,34 @@ export function ContextLine({
       noticeMs={CTX_LINE_NOTICE_MS}
     />
   );
+  const parts: { key: string; node: ComponentChildren; title?: string }[] = [];
+  if (usage) {
+    parts.push({ key: "fill", node: usage.fill });
+    parts.push({
+      key: "model",
+      node: (
+        <>
+          {field("model", usage.model)}
+          {usage.window}
+        </>
+      ),
+    });
+    if (usage.effort) parts.push({ key: "effort", node: field("effort", usage.effort) });
+  }
+  for (const part of tail) parts.push({ key: part.key, node: part.text, title: part.title });
   return (
     <span class="tl-status-mini-line tl-status-mini-context">
-      {fill} / {field("model", model)}
-      {effort ? <> / {field("effort", effort)}</> : null}
-      {tail !== "" ? ` / ${tail}` : null}
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " / " : null}
+          <span
+            class={part.title !== undefined ? "ctx-part ctx-part-titled" : "ctx-part"}
+            title={part.title}
+          >
+            {part.node}
+          </span>
+        </Fragment>
+      ))}
     </span>
   );
 }

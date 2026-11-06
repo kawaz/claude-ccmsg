@@ -1,7 +1,8 @@
 // The Status tab's TODO list and the session's uptime, as mounted (kawaz
 // 2026-10-25): the TODO list starts closed with its count in the heading and
 // opens to the rows; UPTIME says how long the process has run; the Timeline's
-// ctx line ends with the uptime and shows no Claude Code version the process runs.
+// ctx line ends with the uptime, the ccmsg the session runs and the Claude Code
+// version its process runs (kawaz 2026-11-06).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -206,7 +207,7 @@ describe("Timeline ctx line", () => {
     },
   };
 
-  test("ends with the uptime and shows no Claude Code version", async () => {
+  test("ends with the uptime, the ccmsg version and the Claude Code version", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();
@@ -214,10 +215,24 @@ describe("Timeline ctx line", () => {
         type: "agents/loaded",
         agents: [agentRow(2 * 24 * HOUR + 15 * HOUR, "2.1.310")],
       });
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [{ sid: SID, repo: "owner/repo", ws: "main", cwd: "/w", client_version: "0.212.1" }],
+      });
       const root = await mountTimeline(store, SNAPSHOT);
-      expect(root.querySelector(".tl-status-mini-context")?.textContent).toBe(
-        "12%[1m] / fable-5-1 / low / 2d15h",
+      const line = root.querySelector(".tl-status-mini-context");
+      expect(line?.textContent).toBe(
+        "12% / fable-5-1[1m] / low / 2d15h / ccmsg v0.212.1 / claude v2.1.310",
       );
+      // The hover text tells the process's version from the host's (GLOBALS):
+      // here the session is the one started last, so the host's is the same.
+      const titles = [...(line?.querySelectorAll(".ctx-part[title]") ?? [])].map((part) =>
+        part.getAttribute("title"),
+      );
+      expect(titles).toEqual([
+        "ccmsg v0.212.1 (the ccmsg this session runs)",
+        "claude v2.1.310 (this session's process; the host has the same version installed)",
+      ]);
     } finally {
       restore();
     }
@@ -228,7 +243,7 @@ describe("Timeline ctx line", () => {
     try {
       const root = await mountTimeline(timelineStore(), SNAPSHOT);
       expect(root.querySelector(".tl-status-mini-context")?.textContent).toBe(
-        "12%[1m] / fable-5-1 / low",
+        "12% / fable-5-1[1m] / low",
       );
     } finally {
       restore();

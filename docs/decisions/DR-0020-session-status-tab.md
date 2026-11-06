@@ -84,5 +84,12 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 
 - **TODO 一覧は既定で閉じる**: TODO が多いと Status タブの他の節を押し下げて邪魔になり、重要度も他の節より低い。節全体を `<details>` にし、見出しに全件数 (`TODO (n)`) を出す。開閉の状態は保持しない。開いた中身は従来どおり (in_progress、pending は開いた fold、completed は閉じた fold)。TODO が 1 件も無いセッションでは節を出さない (Background と同じ)。
 - **稼働時間**: そのプロセスの起動からの経過。データ源は Claude Code の `sessions/<pid>.json` の `startedAt` (agents の行に既に載っている)。resume は新しいプロセスなので、そこから数え直す。書式は webui が経過を出す既存の `formatDuration` (メッセージバブルの相対時間、応答中の経過と同じ `5s` / `1m12s` / `5h12m` / `2d15h`) に揃え、個別の書式を作らない。Status タブに `UPTIME` の行、TL 下ミニパネルの ctx 行の末尾に出す。Status タブはタブを開いた時点の値で、開いている間は更新しない。
-- **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せる。表示は DR-0043 §5.3 (GLOBALS)。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
-- ctx 行は `12%[1m] / fable-5-1 / low / 2d15h` の形になる (先頭は context の使用率と、直後の角括弧に context window の大きさ `[1m]` / `[200K]`。次に model、effort、稼働時間。区切りは ` / `。model は transcript の最新の assistant 行 (非 sidechain・非 synthetic) の `message.model` から `claude-` を落とした実際に適用された model ID `fable-5-1` で、hooks module が名乗る起動時の別名 (`fable[1m]`) は使わない。`[1m]` は model には付けず分母側だけ)。window が分からない間は率の代わりに token 数 (`120k`) を出す。assistant 行がまだ無い間 (context の観測が無い間) も、プロセスの行があれば `35m20s` だけの行を出す。
+- **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せる。TL 下ミニパネルの ctx 行の末尾にそのセッションのプロセスの版として出し、ホストの版は DR-0043 §5.3 (GLOBALS) に出す。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
+- ctx 行は `15% / fable-5-1[1m] / low / 51m37s / ccmsg v0.212.1 / claude v2.1.317` の形 (kawaz 2026-11-06)。区切りは ` / `。
+  - 先頭は context の使用率。window が分からない間 (hooks module の無いセッション) は率の代わりに token 数 (`120k`)。
+  - 次に model と、その直後の角括弧に context window の大きさ (`[1m]` / `[200K]`、window は model の属性)。model は transcript の最新の assistant 行 (非 sidechain・非 synthetic) の `message.model` から `claude-` を落とした実際に適用された model ID `fable-5-1` で、hooks module が名乗る起動時の別名 (`fable[1m]`) は使わない。window が分からない間は角括弧を付けない。
+  - 次に effort、稼働時間。
+  - `ccmsg v<版>` はそのセッションで動いている ccmsg の版で、peer の行の `client_version` (そのセッションの client が hello で名乗った版)。名乗っていなければ出さない。
+  - `claude v<版>` はそのセッションのプロセスの Claude Code の版 (上の agents の行の `version`)。行に版が無ければ出さない。hover の説明に、これがプロセスの版であることと、GLOBALS のホストの版が分かればそれとの比較 (`the host has v2.1.318 installed` / `the host has the same version installed`) を書く。`ccmsg v<版>` の hover もそのセッションの ccmsg であることを書く。
+  - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
+  - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。

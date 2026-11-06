@@ -67,7 +67,7 @@ engine 側の表示 (`/model` の picker、`$.session.model()`) は変わらな�
 - module は facts ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) に、上書きが main thread の request に載せる値 (`request_override: { session, once }`、各 `{ model, effort }`) を付けて送る。`session` は通しの field をセッション自身の値に重ねたもの (model はセッションの綴りのまま `[1m]` 付き、人が設定すると family)、`once` は単発の値で、無い field は `null`。上書きでこの値が変わらない時は送らない。facts の `model` / `effort` はセッション自身の値のまま
 - daemon は facts を受けるたびに、前に受けた値と比べ、変わった上書きごとに `ev: "request_override" { session_id, target, model, effort }` を全 user role の購読者 (webui のタブ) に配る。変わらない時は配らない。値が変わる契機は、通しの op、module の起動 (セッションの元の値で通しが決まった時)、端末で打った `/model` / `/effort` (元の値が変わった時)、単発の始まり (送信に付いた単発が有効になった時)、単発が `turn.complete` で消えた時 (`target: "once"`、値は `null`)
 - 購読した時に全セッションの値を `ev: "request_overrides"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い値を捨てられるように。say / 許可依頼と同じ流儀)。webui はこの 2 つの push だけで状態を持つので、複数のタブ・デバイスで同じ表示になる
-- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-07-18 の `<率>[<window>] / <model> / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。上書きが効いていない field は、request が実際に走った値 (status snapshot の context の `model` / `effort`。`model` は transcript の応答した model の実 ID で、上書きで走った応答ならその model) を出す。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、その値の位置がその field の通しの選択 (§6.4) の select になる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つの値と、そこに出る select・[適用] だけにする
+- webui の TL 下の状態行 ([DR-0020](./DR-0020-session-status-tab.md) の Addendum 2026-10-25 の `<率> / <model>[<window>] / <effort> / …`) は model / effort を `once ?? session` の実効値で出し、セッションの元の値と違う field には印 (`⁺` と色) を付ける (上書きが元の値と同じなら印は付けない)。上書きが効いていない field は、request が実際に走った値 (status snapshot の context の `model` / `effort`。`model` は transcript の応答した model の実 ID で、上書きで走った応答ならその model) を出す。hover の説明に元の値と、どちらの上書きかを書く。model / effort の部分を押すと、その値の位置がその field の通しの選択 (§6.4) の select になる。状態行の枠は FAB と重なる位置での誤クリックを避けるために押せなくしてあり、押せるのはこの 2 つの値と、そこに出る select・[適用] だけにする
 - 印と §6 の 🏛️・default の比べる相手の「セッションの元の値」は、module の facts の値 (model は `$.session.model()`、effort は差し替える前の `turn.step` の `e.effort`) で、daemon が status snapshot の context に `engine: { model?, effort? }` として載せる。transcript の行は上書きで走った実効値を持つので、元の値には使わない。module の facts が無い間 (module が無い、読み直した直後) は `engine` が無く、比べる相手が分からないので、上書きの値は元の値と違うとして扱い、§6 の 🏛️ は出さない
 - FAB のプロンプトフォーム、Status タブと状態行の選択は §6
 
@@ -127,7 +127,7 @@ low
 #### 6.4 Status タブと状態行
 
 - Status タブの OVERRIDE 行と状態行 (§5) の model / effort は、1 つの field の select と [適用] を同じ部品で出す。Status タブは effort と model を 1 つずつ並べ (effort が先)、状態行は model と effort の値の位置にそれぞれ置く
-- 状態行の静止時のテキストは §5 の状態行の表示 (`low⁺` 等) で、押すとその位置でその field の select になる。default 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。select・[適用]・返事の理由が出ている間は、状態行を省略記号で切らずに折り返す。状態行は常に画面にある要約なので、返事の理由は 4 秒で消す (TL の「中断しました」と同じ。断られた時の選択と [適用] は残る)。Status タブの理由は次に選ぶまで残す
+- 状態行の静止時のテキストは §5 の状態行の表示 (`low⁺` 等) で、押すとその位置でその field の select になる。default 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。状態行は省略記号で切らず、幅に収まらなければ ` / ` の区切りで折り返す。select・[適用]・返事の理由が出ている間は、その部分の中でも折り返す。状態行は常に画面にある要約なので、返事の理由は 4 秒で消す (TL の「中断しました」と同じ。断られた時の選択と [適用] は残る)。Status タブの理由は次に選ぶまで残す
 - 群は default と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (default) が `⏱️high` のようにそれを示す (単発の値を別の行には出さない)
 - select を default 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、押せば同じく送る (送っても何も変わらない)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
 - 返事が来たら、select は default に戻り、畳んだ表示は変更のイベント (§5) で届いた値で出し直す。断られた・送れなかった時は選択を残し、その理由を横に出す

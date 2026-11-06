@@ -53,7 +53,7 @@ import {
   resolveSessionTopbar,
   sessionBadges,
   sessionLabel,
-  sessionProcessParts,
+  sessionRuntimeParts,
   sessionRowTitle,
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
@@ -444,18 +444,58 @@ describe("formatDuration", () => {
   });
 });
 
-describe("sessionProcessParts", () => {
+describe("sessionRuntimeParts", () => {
   const now = Date.parse("2026-10-25T12:00:00.000Z");
   const startedAt = now - (2 * 24 + 15) * 3_600_000;
 
-  test("the uptime alone, whether or not the record names a version", () => {
-    const agent = { startedAt, version: "2.1.310" };
-    expect(sessionProcessParts(agent, now)).toEqual(["2d15h"]);
+  // kawaz 2026-11-06: `<uptime> / ccmsg v<x> / claude v<y>`.
+  test("the uptime, then the ccmsg and Claude Code versions", () => {
+    const parts = sessionRuntimeParts(
+      {
+        process: { startedAt, version: "2.1.317" },
+        ccmsgVersion: "0.212.1",
+        hostClaudeVersion: "2.1.318",
+      },
+      now,
+    );
+    expect(parts.map((part) => part.text)).toEqual(["2d15h", "ccmsg v0.212.1", "claude v2.1.317"]);
+    expect(parts.map((part) => part.key)).toEqual(["uptime", "ccmsg", "claude"]);
   });
 
   // The same duration text as the bubbles and the responding row.
   test("the uptime is formatDuration's", () => {
-    expect(sessionProcessParts({ startedAt: now - 72_000 }, now)).toEqual(["1m12s"]);
+    const parts = sessionRuntimeParts(
+      { process: { startedAt: now - 72_000 }, hostClaudeVersion: null },
+      now,
+    );
+    expect(parts).toEqual([{ key: "uptime", text: "1m12s" }]);
+  });
+
+  // Not made up: a version nobody announced is not on the line.
+  test("a part whose value is not known is left out", () => {
+    expect(sessionRuntimeParts({ hostClaudeVersion: "2.1.318" }, now)).toEqual([]);
+    expect(
+      sessionRuntimeParts({ ccmsgVersion: "0.212.1", hostClaudeVersion: null }, now).map(
+        (part) => part.text,
+      ),
+    ).toEqual(["ccmsg v0.212.1"]);
+  });
+
+  // The process's version is not GLOBALS' host version: the hover text says
+  // whose it is, and compares it with the host's when that is known.
+  test("the Claude Code version's hover text tells it from the host's", () => {
+    const claudeTitle = (hostClaudeVersion: string | null) =>
+      sessionRuntimeParts(
+        { process: { startedAt, version: "2.1.317" }, hostClaudeVersion },
+        now,
+      ).find((part) => part.key === "claude")?.title;
+    expect(claudeTitle("2.1.318")).toBe(
+      "claude v2.1.317 (this session's process; the host has v2.1.318 installed)",
+    );
+    expect(claudeTitle("2.1.317")).toBe(
+      "claude v2.1.317 (this session's process; the host has the same version installed)",
+    );
+    expect(claudeTitle(null)).toBe("claude v2.1.317 (this session's process)");
   });
 });
 

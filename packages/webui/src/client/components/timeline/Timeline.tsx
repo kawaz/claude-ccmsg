@@ -14,7 +14,8 @@ import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
-import { sessionProcessParts } from "../../utils.ts";
+import { sessionRuntimeParts, type SessionRuntime } from "../../utils.ts";
+import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
@@ -99,15 +100,28 @@ export function Timeline({
   );
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
   const peers = useStoreState(store, (s) => s.peers);
-  // The session's process (uptime and Claude Code version for the ctx line).
-  const sessionProcess = useStoreState(
+  // What the session runs as, for the end of the ctx line: its process
+  // (uptime, Claude Code version), its ccmsg, and the host's Claude Code
+  // version the process's is compared with.
+  const sessionRuntime = useStoreState(
     store,
-    (s) => {
+    (s): SessionRuntime => {
       const row = s.agents.find((candidate) => candidate.sessionId === sid);
-      if (!row) return undefined;
+      const ccmsgVersion = s.peers.find((p) => p.sid === sid)?.client_version;
       return {
-        startedAt: row.startedAt,
-        ...(row.version !== undefined ? { version: row.version } : {}),
+        ...(row
+          ? {
+              process: {
+                startedAt: row.startedAt,
+                ...(row.version !== undefined ? { version: row.version } : {}),
+              },
+            }
+          : {}),
+        ...(ccmsgVersion !== undefined ? { ccmsgVersion } : {}),
+        hostClaudeVersion: hostClaudeVersion(
+          lastSessionClaudeVersion(s.agents),
+          s.hostClaudeVersion,
+        ),
       };
     },
     sameJson,
@@ -250,11 +264,7 @@ export function Timeline({
   // §5), the same in every tab.
   const requestOverride = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
   const miniLines = sessionStatus
-    ? miniSummaryLines(
-        sessionStatus,
-        sessionProcess ? sessionProcessParts(sessionProcess, now) : [],
-        requestOverride,
-      )
+    ? miniSummaryLines(sessionStatus, sessionRuntimeParts(sessionRuntime, now), requestOverride)
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
