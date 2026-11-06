@@ -180,7 +180,12 @@ export function Timeline({
   // The permission bubbles of one slot, in the order they were made.
   const bubbleNodes = (slot: number) =>
     (permitBubbles.slots[slot] ?? []).map((request) => (
-      <PermitRequestBubble key={`permit-${request.id}`} request={request} now={now} />
+      <PermitRequestBubble
+        key={`permit-${request.id}`}
+        request={request}
+        now={now}
+        translationAvailability={translationAvailability}
+      />
     ));
 
   const scrollRef = useRef<HTMLDivElement | null>(null);

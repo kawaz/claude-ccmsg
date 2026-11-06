@@ -6,8 +6,8 @@
 // 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。
 import type { TargetedEvent } from "preact";
-import { useContext, useState } from "preact/hooks";
-import type { PermitAttachment, PermitRequestRecord } from "@ccmsg/protocol";
+import { useContext, useRef, useState } from "preact/hooks";
+import type { PermitAttachment, PermitCommand, PermitRequestRecord } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
 import {
@@ -20,6 +20,15 @@ import { formatMsgTime } from "../../utils.ts";
 import { CodeBlock } from "../CodeBlock.tsx";
 import { OpenComposerContext } from "../SessionInputComposer.tsx";
 import { useClipboardCopy } from "../CopyButton.tsx";
+import { Tabs } from "../Tabs.tsx";
+import {
+  type TranslationAvailability,
+  type TranslationTab,
+  hasTranslationTabs,
+  translationTabItems,
+  useBubbleTranslationTab,
+  useTranslatedText,
+} from "./translation.ts";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -168,21 +177,85 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
   );
 }
 
+/** 人が書いた文 1 つ (止められた行動 / intent) を、選ばれた翻訳タブの綴りで
+ * markdown として出す。 */
+function TranslatedMarkdown({
+  source,
+  tab,
+  availability,
+}: {
+  source: string;
+  tab: TranslationTab;
+  availability: TranslationAvailability;
+}) {
+  const { bodyText, translatingLabel } = useTranslatedText(source, availability, tab);
+  return (
+    <>
+      <MarkdownView source={bodyText} />
+      {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+    </>
+  );
+}
+
+/** コマンドの見出し。説明 (description) は人が書いた文なので訳し、コマンド
+ * 本文は書かれたまま出す。 */
+function TranslatedCommandHeading({
+  command,
+  description,
+  tab,
+  availability,
+}: {
+  command: PermitCommand;
+  description: string;
+  tab: TranslationTab;
+  availability: TranslationAvailability;
+}) {
+  const { bodyText, translatingLabel } = useTranslatedText(description, availability, tab);
+  return (
+    <>
+      <span>{commandHeading({ ...command, description: bodyText })}</span>
+      {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+    </>
+  );
+}
+
+/** 訳す対象 (止められた行動、intent、コマンドの説明) を段落としてつないだ
+ * もの。既定のタブの判定に渡す。コマンド本文と添付のパスは訳さない。 */
+function permitTranslatableText(request: PermitRequestRecord): string {
+  return [
+    request.blocked,
+    ...request.intents,
+    ...request.commands.flatMap((command) =>
+      command.description !== undefined ? [command.description] : [],
+    ),
+  ].join("\n\n");
+}
+
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
  * .tl-bubble-from / .tl-bubble-footer / .tl-bubble-time) で組み、中身の節と
  * 「許可する」だけをこのバブルのものにする。未読と既読で
  * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「許可する」は本文の最後に置く
- * (足元の行は他の吹き出しと同じく時刻だけ)。 */
+ * (足元の行は応答のバブルと同じく時刻と翻訳タブ)。翻訳タブは人が読む文
+ * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
+ * パス・「許可する」が写す許可の文は原文のまま。 */
 export function PermitRequestBubble({
   request,
   now,
+  translationAvailability,
 }: {
   request: PermitRequestRecord;
   now: number;
+  translationAvailability: TranslationAvailability;
 }) {
   const attachments = useAttachmentLoads(request);
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const { tab, selectTab } = useBubbleTranslationTab({
+    text: permitTranslatableText(request),
+    availability: translationAvailability,
+    elementRef: bubbleRef,
+  });
   return (
-    <div class="tl-bubble tl-bubble-left tl-bubble-permit">
+    <div class="tl-bubble tl-bubble-left tl-bubble-permit" ref={bubbleRef}>
       <div class="tl-bubble-body">
         <div class="tl-bubble-from">
           {/* 未読は閉じた錠、人が「許可する」を押した (既読) 後は開いた錠。 */}
@@ -193,7 +266,11 @@ export function PermitRequestBubble({
         </div>
         <section class="permit-section">
           <h4 class="permit-heading">止められた行動</h4>
-          <MarkdownView source={request.blocked} />
+          <TranslatedMarkdown
+            source={request.blocked}
+            tab={tab}
+            availability={translationAvailability}
+          />
         </section>
         {request.attachments.length > 0 ? (
           <section class="permit-section">
@@ -213,12 +290,25 @@ export function PermitRequestBubble({
           <ul class="permit-asks">
             {request.intents.map((intent, i) => (
               <li key={`i${String(i)}`}>
-                <MarkdownView source={intent} />
+                <TranslatedMarkdown
+                  source={intent}
+                  tab={tab}
+                  availability={translationAvailability}
+                />
               </li>
             ))}
             {request.commands.map((command, i) => (
               <li key={`c${String(i)}`} class="permit-command">
-                <span>{commandHeading(command)}</span>
+                {command.description !== undefined ? (
+                  <TranslatedCommandHeading
+                    command={command}
+                    description={command.description}
+                    tab={tab}
+                    availability={translationAvailability}
+                  />
+                ) : (
+                  <span>{commandHeading(command)}</span>
+                )}
                 <CodeBlock code={command.command} lang="sh" />
               </li>
             ))}
@@ -230,6 +320,18 @@ export function PermitRequestBubble({
       </div>
       <div class="tl-bubble-footer">
         <span class="tl-bubble-time">{formatMsgTime(request.ts, now)}</span>
+        {hasTranslationTabs(translationAvailability) ? (
+          <div class="tl-msg-toolbar">
+            <Tabs
+              class="tl-thinking-tabs"
+              tabClass="tl-thinking-tab"
+              label="本文の言語"
+              selected={tab}
+              onSelect={selectTab}
+              items={translationTabItems(translationAvailability)}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );

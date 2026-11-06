@@ -7,11 +7,9 @@ import { Tabs } from "../Tabs.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import {
   type TranslationAvailability,
-  type TranslationTab,
   hasTranslationTabs,
-  isTranslationTabOffered,
   translationTabItems,
-  useDefaultTranslationTab,
+  useBubbleTranslationTab,
 } from "./translation.ts";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
@@ -118,29 +116,18 @@ export function AssistantBubble({
   // 既定のタブは thinking と同じ判定 (DR-0049 §8): ja(plamo) が使えて本文に
   // 英語の段落があれば ja(plamo)、それ以外は original。本文はバブルの中の
   // text segment をつないだもの (ツールバー 1 つがその全部に効く)。
-  const [tab, setTab] = useState<TranslationTab>("original");
   const bubbleRef = useRef<HTMLDivElement>(null);
   const bodyText = line.segments
     .flatMap((seg) => (seg.kind === "text" ? [seg.text] : []))
     .join("\n\n");
-  const selectTab = useDefaultTranslationTab({
+  const { tab, selectTab } = useBubbleTranslationTab({
     text: bodyText,
-    enabled: true,
-    plamoUrl: translationAvailability.plamoUrl,
+    availability: translationAvailability,
     elementRef: bubbleRef,
-    setTab,
   });
   const [source, setSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const hasTranslationTab = hasTranslationTabs(translationAvailability);
-
-  // Reconnect can replace a macOS daemon with a non-capable daemon (same guard
-  // as ThinkingSegment): a selected tab whose route went away must fall back to
-  // original rather than keep showing text no live route can produce.
-  const tabOffered = isTranslationTabOffered(tab, translationAvailability);
-  useEffect(() => {
-    if (!tabOffered) setTab("original");
-  }, [tabOffered]);
 
   // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
   // 畳む (残すと、開いた項目でなく選択中の別の項目への操作になる)。

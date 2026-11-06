@@ -1,14 +1,17 @@
 // ja(plamo) タブ (DR-0049) を thinking の描画で見る: 翻訳サーバの URL が
 // あれば `original / ja(plamo) / ja(browser) / ja(host)` の順にタブが並び、
 // 選ぶと段落の訳が翻訳サーバから届いて本文が差し替わる。URL が無ければ
-// タブは出ない。fold を開いた thinking と応答のバブルは、20 文字以上の英語の
+// タブは出ない。fold を開いた thinking と、応答・許可依頼のバブルは、20 文字以上の英語の
 // 段落が 1 つでもあれば ja(plamo) を既定で選び、無ければ original のまま。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { h, render } from "preact";
+import { type ComponentChild, h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { ErrorResponse } from "@ccmsg/protocol";
+import type { ErrorResponse, PermitRequestRecord } from "@ccmsg/protocol";
 import { SegmentView } from "../src/client/components/timeline/segments.tsx";
 import { AssistantBubble } from "../src/client/components/timeline/bubbles.tsx";
+import { PermitRequestBubble } from "../src/client/components/timeline/PermitRequestBubble.tsx";
+import { AppContext } from "../src/client/context.ts";
+import { FakeTranscriptWs, SID, timelineStore } from "./timeline-harness.ts";
 import type { Segment } from "../src/client/transcript-model.ts";
 import type { TranslationAvailability } from "../src/client/components/timeline/translation.ts";
 import { _resetPlamoStateForTest } from "../src/client/plamo-translate.ts";
@@ -233,5 +236,71 @@ describe("default tab", () => {
 
   test("a Japanese assistant bubble stays on original", async () => {
     expect(await bubbleTab(JAPANESE.join("\n\n"))).toBe("original");
+  });
+
+  // 許可依頼のバブルも同じ判定。訳は fetch のモックが返す「訳」。
+  async function settleTranslation(): Promise<void> {
+    for (let i = 0; i < 3; i++) {
+      await act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    }
+  }
+
+  async function mountInApp(vnode: ComponentChild): Promise<HTMLElement> {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    container = root;
+    const store = timelineStore();
+    const ws = new FakeTranscriptWs(store);
+    await act(() =>
+      render(h(AppContext.Provider, { value: { store, ws: ws.handle } }, vnode), root),
+    );
+    await settleTranslation();
+    return root;
+  }
+
+  function languageTab(root: HTMLElement): string | null {
+    const languageTabs = root.querySelector('[aria-label="本文の言語"]');
+    return languageTabs?.querySelector('[aria-selected="true"]')?.textContent ?? null;
+  }
+
+  function permitOf(blocked: string, intent: string, description: string): PermitRequestRecord {
+    return {
+      id: "i/1",
+      sid: SID,
+      ts: "2026-11-06T00:00:00.000Z",
+      blocked,
+      attachments: ["/w/policy.json"],
+      intents: [intent],
+      commands: [{ command: "git push origin main", description }],
+      read: false,
+    };
+  }
+
+  test("an English permit request opens on ja(plamo) and shows the translation", async () => {
+    const root = await mountInApp(
+      h(PermitRequestBubble, {
+        request: permitOf(ENGLISH, "Editing the configuration file of the daemon.", "push it"),
+        now: 0,
+        translationAvailability: withPlamo,
+      }),
+    );
+    expect(languageTab(root)).toBe("ja(plamo)");
+    const body = defined(root.querySelector(".tl-bubble-body"), "the permit body");
+    expect(body.textContent).not.toContain(ENGLISH);
+    expect(body.textContent).toContain("訳");
+    // コマンド本文と添付のパスは訳さない。
+    expect(body.textContent).toContain("git push origin main");
+    expect(body.textContent).toContain("/w/policy.json");
+  });
+
+  test("a Japanese permit request stays on original", async () => {
+    const root = await mountInApp(
+      h(PermitRequestBubble, {
+        request: permitOf(JAPANESE[0] ?? "", JAPANESE[1] ?? "", JAPANESE[2] ?? ""),
+        now: 0,
+        translationAvailability: withPlamo,
+      }),
+    );
+    expect(languageTab(root)).toBe("original");
   });
 });

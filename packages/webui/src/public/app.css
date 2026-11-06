@@ -4951,6 +4951,8 @@ button.session-tab {
 
 .tl-item:hover .tl-msg-toolbar,
 .tl-item:focus-within .tl-msg-toolbar,
+.tl-bubble-permit:hover .tl-msg-toolbar,
+.tl-bubble-permit:focus-within .tl-msg-toolbar,
 .tl-msg-toolbar-open {
   opacity: 1;
 }

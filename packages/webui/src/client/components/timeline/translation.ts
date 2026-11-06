@@ -1,4 +1,4 @@
-// thinking / assistant 本文の ja 訳 (plamo / host / browser) の取得とタブ。
+// thinking / assistant 本文 / 許可依頼の ja 訳 (plamo / host / browser) の取得とタブ。
 import type { RefObject } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
@@ -211,7 +211,7 @@ export function useTranslatedText(
   return { bodyText, translatingLabel };
 }
 
-/** 既定のタブの自動選択 (DR-0049 §8)。thinking と assistant 応答のバブルが
+/** 既定のタブの自動選択 (DR-0049 §8)。thinking と、応答・許可依頼のバブルが
  * 同じ判定を使う。
  *
  * `enabled` (thinking なら fold と details が開いている) の間に、ja(plamo) が
@@ -287,6 +287,34 @@ export function useDefaultTranslationTab({
     },
     [setTab],
   );
+}
+
+/** バブル 1 つが持つ翻訳タブの選択 (応答 / 許可依頼)。タブ 1 列が
+ * バブルの中の訳す対象全部に効く。`text` は既定の判定に渡す本文 (訳す対象を
+ * 全部つないだもの)、`elementRef` は可視範囲の判定に使うバブルの要素。選んで
+ * いたタブの経路が再接続で無くなったら original に戻す。 */
+export function useBubbleTranslationTab({
+  text,
+  availability,
+  elementRef,
+}: {
+  text: string;
+  availability: TranslationAvailability;
+  elementRef: RefObject<Element>;
+}): { tab: TranslationTab; selectTab: (tab: TranslationTab) => void } {
+  const [tab, setTab] = useState<TranslationTab>("original");
+  const selectTab = useDefaultTranslationTab({
+    text,
+    enabled: true,
+    plamoUrl: availability.plamoUrl,
+    elementRef,
+    setTab,
+  });
+  const tabOffered = isTranslationTabOffered(tab, availability);
+  useEffect(() => {
+    if (!tabOffered) setTab("original");
+  }, [tabOffered]);
+  return { tab, selectTab };
 }
 
 const pendingViewportTranslations = new Map<Element, () => void>();
