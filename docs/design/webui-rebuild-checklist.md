@@ -70,7 +70,7 @@
 | `SearchTargetToggles` / `SearchFoldScopeToggle` | `SearchBar.tsx` | DR-0022 | 保留 | export された UI 部品が参照 0。検索スコープ切替 UI が意図的に未接続なのか、退化したのか不明 |
 | raw JSONL 表示モード | `RawLineRow` + `raw-view-mode.ts` | — | 移す | デバッグ動線として日常的 |
 | `raw-view-mode` の購読 API 3 つ | `RAW_PRETTY_KEY` / `getRawViewPretty` / `subscribeRawViewPretty` | — | 落とす候補 | 参照 0、購読機構だけが浮いている |
-| 翻訳 (host / browser 2 経路) | `translate.ts` + `useTranslatedText` + `op:translate` | DR-0023 | 移す | DR-0023 Accepted (PoC 全項目成立)、hello の能力フラグ付き |
+| 翻訳 (plamo / host / browser 3 経路) | `translate.ts` + `plamo-translate.ts` + `useTranslatedText` + `op:translate` | DR-0023 / DR-0049 | 移す | DR-0023 Accepted (PoC 全項目成立)、hello の能力フラグ付き。plamo は hello の `translate_plamo_url` とブラウザからの `/health` |
 | dump 出力アクション | `DumpFileAction` + `session-dump-action.ts` + `op:session_dump_file` | — | 移す | daemon op と純関数層が揃っている |
 | ミニ status パネル (TL 内) | `Timeline()` + `session-status-view.ts` | DR-0020 | 移す | Status タブと派生を共有 |
 | 右端フロートパネル | `timeline-side-panel.ts` + `Timeline()` | — | 保留 | Status タブ・ツールバーと役割が重なる。統合可否は kawaz 裁定 |
