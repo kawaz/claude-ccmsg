@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-11-06 | bug | open | [timeline-tail-bubble-remount-loses-transient-state](./2026-11-06-timeline-tail-bubble-remount-loses-transient-state.md) | TL 末尾のバブルは後から行が足されると作り直され、ボタンの送信中 / 送った時刻 / 「コピーしました」などの一時状態が消える |
 | 2026-11-06 | task | open | [drop-legacy-client-version-hello-key](./2026-11-06-drop-legacy-client-version-hello-key.md) | hello の wire field client_version は ccmsg_version に改名済み。移行期間の旧名の受け口を、旧 module が全部再起動された後に外す |
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った TL では live tail の push ごとに最大 1.3 秒の long task が出る (読んだ量に比例する layout と markdown の parse) |
 | 2026-11-05 | request | open | [webui-mark-sessions-with-old-module-as-not-live](./2026-11-05-webui-mark-sessions-with-old-module-as-not-live.md) | push を持たない古い module (0.211 より前) のセッションを webui で「ライブ更新なし」と分からせる |
