@@ -4962,10 +4962,12 @@ button.session-tab {
   font-variant-numeric: tabular-nums;
 }
 
-/* assistant 応答の hover ツールバー行。時刻と同じ行に同居させる (kawaz:
- * 「常時非表示、hover で出現」) — ツールバーは opacity だけで隠すので場所は
- * 常に確保されており、hover しても行の高さが動かない。本文の上に重ねる案は
- * 1 行目の右端を隠し、出し入れする案はレイアウトが跳ねるので採らない。 */
+/* 吹き出しの足元の行 (BubbleFooter、全吹き出し共通)。左から 時刻 →
+ * 翻訳タブ → 付随ボタン。タブとボタンは hover ツールバーで、時刻と同じ行に同居
+ * させる (kawaz: 「常時非表示、hover で出現」) — ツールバーは opacity だけで
+ * 隠すので場所は常に確保されており、hover しても行の高さが動かない。本文の
+ * 上に重ねる案は 1 行目の右端を隠し、出し入れする案はレイアウトが跳ねるので
+ * 採らない。右寄せの吹き出しは時刻を右端に置く (timeAtEnd)。 */
 .tl-bubble-footer {
   display: flex;
   align-items: center;
@@ -4993,12 +4995,11 @@ button.session-tab {
   opacity: 0;
 }
 
-.tl-item:hover .tl-msg-toolbar,
-.tl-item:focus-within .tl-msg-toolbar,
-.tl-bubble-permit:hover .tl-msg-toolbar,
-.tl-bubble-permit:focus-within .tl-msg-toolbar,
-.tl-bubble-agent:hover .tl-msg-toolbar,
-.tl-bubble-agent:focus-within .tl-msg-toolbar,
+/* 出すのは足元の行を直接持つ要素 (吹き出し / thinking の枠) の hover と
+ * focus の間。直接の親に限るので、吹き出しの中に入れ子になった別の吹き出し
+ * の足元は外側の hover では出ない。 */
+:hover > .tl-bubble-footer > .tl-msg-toolbar,
+:focus-within > .tl-bubble-footer > .tl-msg-toolbar,
 .tl-msg-toolbar-open {
   opacity: 1;
 }
@@ -6085,6 +6086,16 @@ a.md-prose-file-link {
   max-width: 85%;
 }
 
+/* thinking の本文の枠と足元の行 (BubbleFooter) を縦に積む。吹き出しの
+ * .tl-bubble と同じ形で、足元の行は枠の外に来る。 */
+.tl-thinking-frame {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 /* 本文の無い thinking のプレースホルダ。thinking 本文より一段弱い扱い。 */
 .tl-thinking-hidden-note {
   font-size: var(--font-size-xs);
@@ -6125,6 +6136,16 @@ a.md-prose-file-link {
 
 .tl-translated {
   text-autospace: normal;
+}
+
+/* 訳文を出すタブ (ja(*)) が選ばれている間は、選択色を青でなく琥珀にする:
+ * 本文が訳文か原文かを、タブの色だけでぱっと見で分かるようにする (kawaz
+ * 2026-11-06)。警告の赤系までは行かない注意系の色を、青の選択と同じ塗りの
+ * 強さで使う (淡い面だと選ばれていないタブに見える)。 */
+.tl-thinking-tab.tl-translated-tab.active {
+  background: var(--warn);
+  color: var(--bg);
+  border-color: var(--warn);
 }
 
 .tl-thinking-translating {

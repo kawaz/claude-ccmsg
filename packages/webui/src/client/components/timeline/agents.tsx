@@ -8,19 +8,18 @@ import { spawnModelLabel } from "../agent-tree-view.ts";
 import {
   AgentEngineLabelsContext,
   AgentTimelineHrefsContext,
+  CcmsgRenderContext,
   SessionFilePathCtxContext,
   useCategoryOpen,
 } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
-import { Tabs } from "../Tabs.tsx";
 import {
   type TranslationAvailability,
-  hasTranslationTabs,
-  translationTabItems,
   useBubbleTranslationTab,
   useTranslatedText,
 } from "./translation.ts";
 import { TranslatedScope } from "./translated-scope.tsx";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 
 // エージェント識別子 (avatar + 名前)。`linkify=true` の時だけ名前クリックで
 // TL 遷移リンクを描く (kawaz r46m15 の「名前クリックで良いんじゃない?」の
@@ -68,6 +67,7 @@ export function AgentCard({
   body,
   model,
   channelLabel,
+  ts,
   translationAvailability,
 }: {
   name: string;
@@ -83,8 +83,11 @@ export function AgentCard({
   // 取れない時だけ名前の右に出す (AgentIdentity)。SendMessage / relay は
   // undefined。
   model?: string;
+  /** この発話の行の時刻。足元に他の吹き出しと同じ位置で出す。 */
+  ts: string | null;
   translationAvailability: TranslationAvailability;
 }) {
+  const now = useContext(CcmsgRenderContext)?.now;
   const marker = agentDirectionMarker(direction);
   // AgentCard の展開表示は CcmsgBubble (別セッション間 msg) と同じ rich
   // バブル形式に統一する (kawaz r55m29 裁定: 「もういいよ ccmsg 形式でさ。
@@ -140,21 +143,13 @@ export function AgentCard({
           </div>
         ) : null}
       </div>
-      {/* 時刻はヘッダ側の fold 行が持つので、足元の行はツールバーだけ。 */}
-      {body && hasTranslationTabs(translationAvailability) ? (
-        <div class="tl-bubble-footer">
-          <div class="tl-msg-toolbar">
-            <Tabs
-              class="tl-thinking-tabs"
-              tabClass="tl-thinking-tab"
-              label="本文の言語"
-              selected={tab}
-              onSelect={selectTab}
-              items={translationTabItems(translationAvailability)}
-            />
-          </div>
-        </div>
-      ) : null}
+      <BubbleFooter
+        translation={
+          body ? { availability: translationAvailability, tab, onSelect: selectTab } : undefined
+        }
+        ts={ts}
+        now={now}
+      />
     </div>
   );
 }
@@ -194,6 +189,7 @@ export function AgentSendFold({
           direction="outbound"
           title={segment.summary}
           body={segment.message}
+          ts={ts}
           translationAvailability={translationAvailability}
         />
       </div>
@@ -244,6 +240,7 @@ export function AgentSpawnFold({
           model={segment.model || undefined}
           title={combinedTitle}
           body={segment.prompt}
+          ts={ts}
           translationAvailability={translationAvailability}
         />
       </div>

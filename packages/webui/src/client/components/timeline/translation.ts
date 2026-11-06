@@ -1,5 +1,6 @@
 // thinking / assistant 本文 / 許可依頼の ja 訳 (plamo / host / browser) の取得とタブ。
 import type { RefObject } from "preact";
+import { type TabItem } from "../Tabs.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   getPendingHostTranslationCount,
@@ -30,19 +31,28 @@ export interface TranslationAvailability {
 
 export type TranslationTab = "original" | "ja-plamo" | "ja-host" | "ja-browser";
 
+/** 訳文を出すタブ (`ja(*)`) に付く class。選ばれている間はタブの色を他の
+ * タブの選択色 (青) と変え、本文が訳文だとぱっと見で分かるようにする
+ * (DR-0049 §8)。 */
+export const TRANSLATED_TAB_CLASS = "tl-translated-tab";
+
 /** 翻訳タブ 1 行分の items。availability が false の経路はタブ自体を出さない
  * (見せる view が無い)。thinking と assistant 応答で同じ並びを使う。並びは
  * 速くて品質の良い経路から、将来削る候補の host を末尾に (DR-0049 §8)。 */
 export function translationTabItems(
   availability: TranslationAvailability,
-): { id: TranslationTab; label: string }[] {
+): TabItem<TranslationTab>[] {
   return [
     { id: "original", label: "original" },
     ...(availability.plamoUrl !== undefined
-      ? [{ id: "ja-plamo" as const, label: "ja(plamo)" }]
+      ? [{ id: "ja-plamo" as const, label: "ja(plamo)", class: TRANSLATED_TAB_CLASS }]
       : []),
-    ...(availability.browser ? [{ id: "ja-browser" as const, label: "ja(browser)" }] : []),
-    ...(availability.host ? [{ id: "ja-host" as const, label: "ja(host)" }] : []),
+    ...(availability.browser
+      ? [{ id: "ja-browser" as const, label: "ja(browser)", class: TRANSLATED_TAB_CLASS }]
+      : []),
+    ...(availability.host
+      ? [{ id: "ja-host" as const, label: "ja(host)", class: TRANSLATED_TAB_CLASS }]
+      : []),
   ];
 }
 

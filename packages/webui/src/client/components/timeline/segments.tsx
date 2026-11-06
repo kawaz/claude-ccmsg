@@ -3,7 +3,6 @@ import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { type Segment } from "../../transcript-model.ts";
 import { LinkedMarkdownView, LinkedPlainText } from "../../filepath-linker.tsx";
 import { type SearchWord } from "../../in-view-search.ts";
-import { Tabs } from "../Tabs.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { SessionFilePathCtxContext, useCategoryOpen } from "./context.ts";
@@ -13,13 +12,12 @@ import { AgentSendFold, AgentSpawnFold } from "./agents.tsx";
 import {
   type TranslationAvailability,
   type TranslationTab,
-  hasTranslationTabs,
   isTranslationTabOffered,
-  translationTabItems,
   useTranslatedText,
   useDefaultTranslationTab,
 } from "./translation.ts";
 import { TranslatedScope } from "./translated-scope.tsx";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 
 /** 本文の無い thinking (thinking-hidden)。thinking が起きた事実は TL の
  * 流れとして意味を持つので通常 thinking と同じ fold で並べ、中身は理由を
@@ -109,8 +107,6 @@ function ThinkingSegment({
     if (!tabOffered) setTab("original");
   }, [tabOffered]);
 
-  const hasTranslationTab = hasTranslationTabs(translationAvailability);
-
   return (
     <details
       ref={detailsRef}
@@ -121,38 +117,28 @@ function ThinkingSegment({
       <FoldSummary ts={ts} label="thinking" open={detailsOpen} decoration={{ kind: "thinking" }} />
       <div class="tl-guided">
         <FoldGuide />
-        <div class="tl-thinking-body">
-          <TranslatedScope tab={tab}>
-            <LinkedMarkdownView
-              source={bodyText}
-              // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
-              // 揃える (翻訳結果の inline code は原文と同一で、原文で網羅すれば
-              // どのタブでも同じリンクが張れる、余計な probe も発生しない)。
-              probeSource={text}
-              ctx={filePathCtx}
-              highlightWords={mdSearch?.words}
-              onMatchClick={mdSearch?.onMatchClick}
-            />
-          </TranslatedScope>
-          {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
-          {/* 翻訳タブは他のバブルと同じ足元の hover ツールバーに置く。時刻は
-           * fold の summary 行が持つので、足元の行はツールバーだけ。出すのは
-           * 使える経路のタブだけで (translationTabItems)、選択はタブ state を
-           * 動かすだけ — その経路の翻訳は useTranslatedText が起動する。 */}
-          {hasTranslationTab ? (
-            <div class="tl-bubble-footer">
-              <div class="tl-msg-toolbar">
-                <Tabs
-                  class="tl-thinking-tabs"
-                  tabClass="tl-thinking-tab"
-                  label="本文の言語"
-                  selected={tab}
-                  onSelect={selectTab}
-                  items={translationTabItems(translationAvailability)}
-                />
-              </div>
-            </div>
-          ) : null}
+        {/* 本文の枠と足元の行を縦に積む (吹き出しの .tl-bubble と同じ形)。
+         * 足元の行は枠の外、他の吹き出しと同じ段に置く。時刻は fold の
+         * summary 行が持つので足元には出さない。 */}
+        <div class="tl-thinking-frame">
+          <div class="tl-thinking-body">
+            <TranslatedScope tab={tab}>
+              <LinkedMarkdownView
+                source={bodyText}
+                // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
+                // 揃える (翻訳結果の inline code は原文と同一で、原文で網羅すれば
+                // どのタブでも同じリンクが張れる、余計な probe も発生しない)。
+                probeSource={text}
+                ctx={filePathCtx}
+                highlightWords={mdSearch?.words}
+                onMatchClick={mdSearch?.onMatchClick}
+              />
+            </TranslatedScope>
+            {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+          </div>
+          <BubbleFooter
+            translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
+          />
         </div>
       </div>
     </details>

@@ -5,7 +5,7 @@ import { type RoomState, ADMIN_ID } from "../../store.ts";
 import { useApp } from "../../context.ts";
 import { setBounded } from "../../bounded-map.ts";
 import { Avatar, UserAvatar } from "../../avatar.tsx";
-import { formatClockTime, formatMsgTime, memberLabel } from "../../utils.ts";
+import { formatClockTime, memberLabel } from "../../utils.ts";
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "../TimelineItem.tsx";
 import {
   ccmsgUnitKey,
@@ -20,6 +20,7 @@ import { type TLSearchCtx } from "./useInViewSearch.ts";
 import { CcmsgRenderContext, useCategoryOpen } from "./context.ts";
 import { ItemRawToggle } from "./raw.tsx";
 import { FoldGuide, NOOP_REGISTER_REF, NOOP_ON_CLICK } from "./folds.tsx";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
  * CcmsgBubble を再利用するため、boundary 側 (Timeline() 直下) と同じ props
@@ -381,7 +382,7 @@ export function CcmsgBubble({
           <p class="tl-say-error">届いたか未確認: {direct.error}</p>
         ) : null}
       </div>
-      <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span>
+      <BubbleFooter ts={ts} now={now} />
     </div>
   );
   // u1 (自分の発話) は主役側なので従来通り右寄せ吹き出しをそのまま。

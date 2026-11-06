@@ -126,7 +126,8 @@ describe("ja(plamo) tab", () => {
     expect(body.textContent).toContain("訳:Second paragraph.");
   });
 
-  // thinking の翻訳タブは他のバブルと同じく本文の足元の hover ツールバーにある。
+  // thinking の翻訳タブは他のバブルと同じ足元の行 (BubbleFooter) の hover
+  // ツールバーにあり、足元の行は本文の枠の外、枠のすぐ下に来る。
   test("the language tabs sit in the hover toolbar under the thinking body and switch it", async () => {
     const { promise: posted, resolve: resolvePosted } = Promise.withResolvers<void>();
     restoreFetch = stubGlobal("fetch", async () => {
@@ -142,10 +143,10 @@ describe("ja(plamo) tab", () => {
       plamoUrl: PLAMO_URL,
     });
     const body = defined(root.querySelector(".tl-thinking-body"), "the thinking body");
-    const footer = defined(body.lastElementChild, "the last child of the thinking body");
+    const footer = defined(body.nextElementSibling, "the row right under the thinking body");
     expect(footer.classList.contains("tl-bubble-footer")).toBe(true);
     const toolbar = defined(footer.querySelector(".tl-msg-toolbar"), "the hover toolbar");
-    expect(body.querySelectorAll('[aria-label="本文の言語"]').length).toBe(1);
+    expect(root.querySelectorAll('[aria-label="本文の言語"]').length).toBe(1);
     expect(body.textContent).toContain("Footer paragraph.");
 
     const plamoTab = defined(
@@ -181,8 +182,9 @@ describe("ja(plamo) tab", () => {
     const body = defined(root.querySelector(".tl-thinking-body"), "the thinking body");
     expect(body.querySelector(".tl-translated")).toBeNull();
 
+    // タブは本文の枠の外、足元の行 (BubbleFooter) にある。
     const plamoTab = defined(
-      [...body.querySelectorAll<HTMLButtonElement>(".tl-thinking-tab")].find(
+      [...root.querySelectorAll<HTMLButtonElement>(".tl-thinking-tab")].find(
         (el) => el.textContent === "ja(plamo)",
       ),
       "the ja(plamo) tab",

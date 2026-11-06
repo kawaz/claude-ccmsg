@@ -19,7 +19,6 @@ import {
   isOneLineCommand,
   permitGrantText,
 } from "../../permit-request-view.ts";
-import { formatMsgTime } from "../../utils.ts";
 import {
   classifySessionInputReply,
   formatSentAt,
@@ -30,16 +29,14 @@ import {
 import { CodeBlock } from "../CodeBlock.tsx";
 import { OpenComposerContext } from "../SessionInputComposer.tsx";
 import { useClipboardCopy } from "../CopyButton.tsx";
-import { Tabs } from "../Tabs.tsx";
 import {
   type TranslationAvailability,
   type TranslationTab,
-  hasTranslationTabs,
-  translationTabItems,
   useBubbleTranslationTab,
   useTranslatedText,
 } from "./translation.ts";
 import { TranslatedScope } from "./translated-scope.tsx";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -307,10 +304,10 @@ function permitTranslatableText(request: PermitRequestRecord): string {
 }
 
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
- * .tl-bubble-from / .tl-bubble-footer / .tl-bubble-time) で組み、中身の節と
+ * .tl-bubble-from / BubbleFooter) で組み、中身の節と
  * 「許可する」だけをこのバブルのものにする。未読と既読で
  * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「許可する」は本文の最後に置く
- * (足元の行は応答のバブルと同じく時刻と翻訳タブ)。翻訳タブは人が読む文
+ * (足元の行は他の吹き出しと同じく翻訳タブと時刻)。翻訳タブは人が読む文
  * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
  * パス・「許可する」が写す許可の文は原文のまま。 */
 export function PermitRequestBubble({
@@ -396,21 +393,11 @@ export function PermitRequestBubble({
           <GrantButton request={request} />
         </div>
       </div>
-      <div class="tl-bubble-footer">
-        <span class="tl-bubble-time">{formatMsgTime(request.ts, now)}</span>
-        {hasTranslationTabs(translationAvailability) ? (
-          <div class="tl-msg-toolbar">
-            <Tabs
-              class="tl-thinking-tabs"
-              tabClass="tl-thinking-tab"
-              label="本文の言語"
-              selected={tab}
-              onSelect={selectTab}
-              items={translationTabItems(translationAvailability)}
-            />
-          </div>
-        ) : null}
-      </div>
+      <BubbleFooter
+        translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
+        ts={request.ts}
+        now={now}
+      />
     </div>
   );
 }

@@ -1,16 +1,12 @@
 // 境界の行のバブル (ユーザの発話、assistant の最終応答、API エラー)。
 import { useEffect, useRef, useState } from "preact/hooks";
-import { formatClockTime, formatMsgTime } from "../../utils.ts";
+import { formatClockTime } from "../../utils.ts";
 import { useDismissOnOutsidePointer } from "../../useDismissOnOutsidePointer.ts";
 import { type TurnLine } from "../../transcript-model.ts";
 import { Tabs } from "../Tabs.tsx";
 import { type TLSearchCtx } from "./useInViewSearch.ts";
-import {
-  type TranslationAvailability,
-  hasTranslationTabs,
-  translationTabItems,
-  useBubbleTranslationTab,
-} from "./translation.ts";
+import { type TranslationAvailability, useBubbleTranslationTab } from "./translation.ts";
+import { BubbleFooter } from "./BubbleFooter.tsx";
 import { SegmentView } from "./segments.tsx";
 import { systemMessageRawText } from "./system-messages.tsx";
 import { DumpFileAction } from "./actions.tsx";
@@ -79,23 +75,14 @@ export function UserPromptBubble({
           ))
         )}
       </div>
-      {/* 右寄せ吹き出しは時刻も右に揃える (kawaz: 「ユーザメッセージは右に
-       * あるのに時刻が左」)。翻訳タブは時刻の左に置き、時刻を右端に保つ。 */}
-      <div class="tl-bubble-footer">
-        {hasTranslationTabs(translationAvailability) ? (
-          <div class="tl-msg-toolbar" onClick={(e) => e.stopPropagation()}>
-            <Tabs
-              class="tl-thinking-tabs"
-              tabClass="tl-thinking-tab"
-              label="本文の言語"
-              selected={tab}
-              onSelect={selectTab}
-              items={translationTabItems(translationAvailability)}
-            />
-          </div>
-        ) : null}
-        {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
-      </div>
+      {/* 右寄せの吹き出しは時刻を右端に置く (kawaz: 「ユーザメッセージは右に
+       * あるのに時刻が左」)。 */}
+      <BubbleFooter
+        translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
+        ts={line.ts}
+        now={now}
+        timeAtEnd
+      />
     </div>
   );
 }
@@ -156,7 +143,6 @@ export function AssistantBubble({
   });
   const [source, setSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const hasTranslationTab = hasTranslationTabs(translationAvailability);
 
   // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
   // 畳む (残すと、開いた項目でなく選択中の別の項目への操作になる)。
@@ -166,10 +152,10 @@ export function AssistantBubble({
   }, [menuOpen, selectedHere]);
 
   // メニューは本文の上に重なるオーバーレイなので、外側を触ったら畳む
-  // (置きっぱなしだと下の項目が押せない)。ツールバーごと囲うことで、翻訳
+  // (置きっぱなしだと下の項目が押せない)。足元の行ごと囲うことで、翻訳
   // タブ等の隣接操作では閉じない。
-  const toolbarRef = useRef<HTMLDivElement>(null);
-  useDismissOnOutsidePointer(toolbarRef, menuOpen, () => setMenuOpen(false));
+  const footerRef = useRef<HTMLDivElement>(null);
+  useDismissOnOutsidePointer(footerRef, menuOpen, () => setMenuOpen(false));
   useEffect(() => {
     if (!menuOpen) return;
     function onKeyDown(e: KeyboardEvent): void {
@@ -195,57 +181,47 @@ export function AssistantBubble({
           />
         ))}
       </div>
-      {/* 時刻と同じ 1 行に置く: ツールバーは通常 opacity 0 なので、行の高さが
-       * hover で動かない (本文の上に重ねると 1 行目の右端を隠す、本文の下に
-       * 出し入れするとレイアウトが跳ねる)。 */}
-      <div class="tl-bubble-footer">
-        {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
-        <div class={`tl-msg-toolbar${menuOpen ? " tl-msg-toolbar-open" : ""}`} ref={toolbarRef}>
-          {hasTranslationTab ? (
-            <Tabs
-              class="tl-thinking-tabs"
-              tabClass="tl-thinking-tab"
-              label="本文の言語"
-              selected={tab}
-              onSelect={selectTab}
-              items={translationTabItems(translationAvailability)}
-            />
-          ) : null}
-          <Tabs
-            class="tl-thinking-tabs"
-            tabClass="tl-thinking-tab"
-            label="本文の表示形式"
-            selected={source ? "source" : "md"}
-            onSelect={(id) => setSource(id === "source")}
-            items={[
-              { id: "md", label: "md", title: "markdown として表示" },
-              { id: "source", label: "source", title: "markdown の原文を表示 (コピペ用)" },
-            ]}
-          />
-          {actions === undefined ? null : (
-            // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に
-            // 絶対配置され、TL のレイアウトを一切動かさない。
-            <div class="tl-msg-menu-anchor">
-              <button
-                type="button"
-                class="tl-thinking-tab tl-msg-menu-toggle"
-                aria-expanded={menuOpen}
-                aria-label="この項目の操作"
-                title="dump"
-                onClick={() => {
-                  const next = !menuOpen;
-                  // 開く操作 = この項目を dump の対象に決める明示選択。
-                  if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
-                  setMenuOpen(next);
-                }}
-              >
-                ☰
-              </button>
-              {menuOpen ? <BubbleActionsMenu actions={actions} /> : null}
-            </div>
-          )}
-        </div>
-      </div>
+      <BubbleFooter
+        translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
+        ts={line.ts}
+        now={now}
+        open={menuOpen}
+        footerRef={footerRef}
+      >
+        <Tabs
+          class="tl-thinking-tabs"
+          tabClass="tl-thinking-tab"
+          label="本文の表示形式"
+          selected={source ? "source" : "md"}
+          onSelect={(id) => setSource(id === "source")}
+          items={[
+            { id: "md", label: "md", title: "markdown として表示" },
+            { id: "source", label: "source", title: "markdown の原文を表示 (コピペ用)" },
+          ]}
+        />
+        {actions === undefined ? null : (
+          // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に
+          // 絶対配置され、TL のレイアウトを一切動かさない。
+          <div class="tl-msg-menu-anchor">
+            <button
+              type="button"
+              class="tl-thinking-tab tl-msg-menu-toggle"
+              aria-expanded={menuOpen}
+              aria-label="この項目の操作"
+              title="dump"
+              onClick={() => {
+                const next = !menuOpen;
+                // 開く操作 = この項目を dump の対象に決める明示選択。
+                if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
+                setMenuOpen(next);
+              }}
+            >
+              ☰
+            </button>
+            {menuOpen ? <BubbleActionsMenu actions={actions} /> : null}
+          </div>
+        )}
+      </BubbleFooter>
     </div>
   );
 }

@@ -22,6 +22,9 @@ export interface TabItem<Id extends string = string> {
   title?: string;
   /** The view behind this tab is unavailable for this subject. Not clickable. */
   disabled?: boolean;
+  /** Extra class for this tab alone, added to the row's `tabClass` (a tab
+   * whose selected state must read differently from its neighbours'). */
+  class?: string;
 }
 
 export function Tabs<Id extends string>({
@@ -51,12 +54,13 @@ export function Tabs<Id extends string>({
         // its Timeline tab): the row would be pointing at a view that is not
         // there. It reads as unavailable, and the pane below says the rest.
         const isSelected = item.id === selected && !item.disabled;
-        const classes = tabClass + (isSelected ? " active" : "");
+        const itemClass = item.class === undefined ? tabClass : `${tabClass} ${item.class}`;
+        const classes = itemClass + (isSelected ? " active" : "");
         if (item.disabled) {
           return (
             <span
               key={item.id}
-              class={tabClass + " disabled"}
+              class={itemClass + " disabled"}
               role="tab"
               aria-disabled="true"
               title={item.title}
