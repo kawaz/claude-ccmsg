@@ -54,6 +54,7 @@ daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間�
 ## ディレクトリ構成
 
 ```
+CHANGELOG.md         # 版ごとの変更点 (bump の前に新版の節を書く、DR-0048)
 packages/
   protocol/          # 共有型定義 (wire protocol / XDG paths / version)、概略は docs/design/protocol-package.md
   daemon/            # 中央デーモン (bun)

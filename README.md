@@ -54,6 +54,7 @@ An agent tells the person something with the ccmsg plugin's `say` tool. The daem
 ## Repository layout
 
 ```
+CHANGELOG.md         # changes per version (write the new version's entry before bumping, DR-0048)
 packages/
   protocol/          # shared types (wire protocol / XDG paths / version), overview: docs/design/protocol-package.md
   daemon/            # central daemon (bun)
