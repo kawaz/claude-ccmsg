@@ -61,6 +61,19 @@
 - 受け付けは `prompt.change` の `origin.kind === "clear"`。`<bash-input>` の `session.append` はコマンドが終わるまで来ないので、長いコマンドでは受け付けの待ちに間に合わない
 - 書きかけは `clear` の後に fill で戻せる。fill (replace) は shell mode を抜けるので、書きかけは通常の入力として戻る
 
+## 実装 (permit バブルの「! で実行」) を通した確認
+
+隔離 daemon (作業コピーの `packages/daemon/src/index.ts --foreground`、`CCMSG_*` / `HOME` を一時ディレクトリに向け、`CCMSG_CLAUDE_CONFIG_DIRS` に試験用の config home だけを名指した) と、作業コピーを `--plugin-dir` にした試験セッション `🤖ccmsg-verify-permit-bang` (hyoui の下、Messages API の代役が固定の文を返す) で、`ccmsg sidecar permit --sid <試験セッション>` に 1 行のコマンド (`echo permit-bang-ok; ls -la`) と 3 行のコマンドを出し、webui を `playwright-cli` で開いた。
+
+| 確かめたこと | 結果 |
+|---|---|
+| ボタンの出し分け | 1 行のコマンドの下にだけ `button.permit-bang` (`aria-label` 「! で実行」、`::before` の content 「! で実行」)。3 行のコマンドには無い |
+| 押した時 (composer に書きかけ `draft 書きかけ` を置いた状態) | 試験セッションで `! echo permit-bang-ok; ls -la` が実行され出力が出た。その後 composer は `❯ draft 書きかけ` (通常の入力) に戻った |
+| daemon.log | `session-input -> <sid> (bash): accepted tries=[… accepted]` |
+| transcript | `<bash-input>echo permit-bang-ok; ls -la</bash-input>` と `<bash-stdout>permit-bang-ok\ntotal 0…` の user 行 (どちらも `origin` 無し) |
+| webui の TL | 実行が `shell` の塊 (コマンドと出力) として出た。押した直後にボタンの横へ「HH:MM に送りました。出力はコマンドが終わると Timeline に出ます」 |
+| 押した後の表示の持続 | 依頼のバブルが TL の末尾にある時に押すと、その後に行が足された時点でバブルが作り直され (印を付けたボタンの要素が別のものに替わった)、送った時刻の表示が消えた。末尾でない (後ろに行がある) バブルで押した時は要素が替わらず、表示が残った |
+
 ## 確かめていないこと
 
 - ダイアログ中に `!` の打鍵が届いた時の振る舞い (手順では、その前の fill がダイアログで断られる)
