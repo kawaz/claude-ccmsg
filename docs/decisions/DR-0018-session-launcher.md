@@ -200,7 +200,7 @@ session role (エージェント) からの `session_launch` を受ける。
   - `--fork-session`: checkbox
   - `--session-id`: 入力できない欄。daemon が生成することを placeholder の「自動生成」で示す (新しいセッションを作らない組み合わせでは、いつ生成するかを添える)。op の入力に `session_id` は無い
   - `--name`: text
-  - `PROMPT`: multiline
+  - `PROMPT`: multiline。⌘/Ctrl+Enter で起動ボタンと同じ経路に送る (再起動フォームと同じ `shouldSendOnKeyDown`。素の Enter は改行、IME 変換中の Enter は起動しない。placeholder に「(⌘+Enter で起動)」)
 - model / effort の既定:
   - 新規 (`--continue` が off で `--resume` が空) では、`--model` は `fable`、`--effort` は選ばれている model の `default_effort` (§3.4)。`default_effort` に無ければ未選択 (「選んでください」) で、送る時にスキーマの理由が出る。model を選び直すと、effort はその model の既定に選び直される
   - `--continue` か `--resume` を入れると、両方の select に「指定しない」が加わり、それが既定になる

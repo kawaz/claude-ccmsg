@@ -258,6 +258,30 @@ describe("SessionCreator: what is sent", () => {
     ]);
   });
 
+  test("⌘+Enter in PROMPT launches like 起動; a bare Enter or an IME's Enter does not", async () => {
+    const { root, launches } = await mountWith(creator({ cwd: "/repos/app" }));
+    await type(root, "PROMPT", "始めて");
+    const prompt = control(root, "PROMPT");
+    const press = (init: KeyboardEventInit) =>
+      act(() => {
+        prompt.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }),
+        );
+      });
+    await press({});
+    await press({ isComposing: true, metaKey: true });
+    await settle();
+    expect(launches).toEqual([]);
+    expect(instanceOf(prompt, HTMLTextAreaElement, "PROMPT").placeholder).toContain(
+      "⌘+Enter で起動",
+    );
+    await press({ metaKey: true });
+    await settle();
+    expect(launches).toEqual([
+      { cwd: "/repos/app", model: "fable", effort: "high", prompt: "始めて" },
+    ]);
+  });
+
   test("a resume link sends the resume it carries", async () => {
     const { root, launches } = await mountWith(
       creator({ resume: SID, cwd: "/repos/app", name: "prep" }),

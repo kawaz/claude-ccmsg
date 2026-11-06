@@ -13,6 +13,7 @@
 // The run button's request/response round trip *is* the whole feature — the
 // result renders once and nothing here polls, subscribes, or remembers past
 // launches.
+import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { launchErrorText, type SessionLaunchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
@@ -34,6 +35,7 @@ import {
 } from "../session-creator.ts";
 import type { LaunchSeed } from "../sidebar-url.ts";
 import { errorMessage } from "../utils.ts";
+import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { CwdTree } from "./CwdTree.tsx";
 
 type LauncherProbe =
@@ -350,6 +352,15 @@ export function SessionCreator({
     }
   }
 
+  // ⌘/Ctrl+Enter launches through the form's own submit (same check, same
+  // errors as 起動); a bare Enter and an IME's confirming Enter stay a newline.
+  function launchOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
+    if (!shouldSendOnKeyDown(e)) return;
+    e.preventDefault();
+    if (launch.status === "running") return;
+    e.currentTarget.form?.requestSubmit();
+  }
+
   const defaults = probe.status === "ready" ? probe.defaultEfforts : {};
   const check = form && showIssues ? checkSessionCreatorForm(form, defaults) : null;
   const issues = check && !check.ok ? check.issues : {};
@@ -452,9 +463,10 @@ export function SessionCreator({
             <textarea
               class="session-creator-prompt"
               value={form.prompt}
-              placeholder="空なら起動コマンドが決める"
+              placeholder="空なら起動コマンドが決める (⌘+Enter で起動)"
               aria-invalid={issues.prompt === undefined ? undefined : true}
               onInput={(e) => update({ prompt: e.currentTarget.value })}
+              onKeyDown={launchOnModEnter}
             />
             <FieldIssue issue={issues.prompt} />
           </label>
