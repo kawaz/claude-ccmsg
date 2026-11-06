@@ -48,6 +48,7 @@ import {
 import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
+import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { Fold } from "./Fold.tsx";
 import { SessionOverrideEditor, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 
@@ -253,10 +254,22 @@ function KillZone({
     el.setSelectionRange(el.value.length, el.value.length);
   }, []);
 
+  function sendRestart(): void {
+    if (restartDraft === null || restartDraft.trim() === "" || restart.busy) return;
+    void restart.start(restartDraft).then(() => setRestartDraft(null));
+  }
+
   function submitRestart(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
     e.preventDefault();
-    if (restartDraft === null || restartDraft.trim() === "") return;
-    void restart.start(restartDraft).then(() => setRestartDraft(null));
+    sendRestart();
+  }
+
+  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
+  // an IME's confirming Enter stay a newline.
+  function sendRestartOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
+    if (!shouldSendOnKeyDown(e)) return;
+    e.preventDefault();
+    sendRestart();
   }
 
   function closeRestartOnEscape(e: JSX.TargetedKeyboardEvent<HTMLFormElement>): void {
@@ -340,9 +353,11 @@ function KillZone({
             ref={focusDraft}
             class="session-input-textarea"
             aria-label="再起動後の最初の prompt"
+            placeholder="再起動後の最初の prompt... (⌘+Enter で送信)"
             value={restartDraft}
             disabled={restart.busy}
             onInput={(e) => setRestartDraft(e.currentTarget.value)}
+            onKeyDown={sendRestartOnModEnter}
           />
           <div class="status-kill-buttons">
             <button

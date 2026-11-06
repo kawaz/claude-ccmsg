@@ -287,6 +287,31 @@ describe("Status の再起動", () => {
     expect(mounted.restarts()).toEqual([]);
   });
 
+  test("⌘+Enter in the form's text sends the restart like 再起動; a bare Enter does not", async () => {
+    const mounted = await mount({ launchConfigDir: CONFIG_DIR });
+    await act(() => restartButton(mounted.root)?.click());
+    const edited = `${RESTART_PROMPT}\n続きから`;
+    await typeInto(formText(mounted.root), edited);
+    await act(() => {
+      formText(mounted.root).dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(mounted.restarts()).toEqual([]);
+    expect(formText(mounted.root).placeholder).toContain("⌘+Enter で送信");
+    await act(() => {
+      formText(mounted.root).dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(mounted.restarts()).toEqual([edited]);
+  });
+
   test("キャンセル and Esc close the form without restarting", async () => {
     const mounted = await mount({ launchConfigDir: CONFIG_DIR });
     await act(() => restartButton(mounted.root)?.click());
