@@ -265,6 +265,13 @@ const CcmsgConfigObjectSchema = v.strictObject({
    * session_id を POST する。usage / stats / status と同じ理由で独立のキーに
    * し、URL を他から導かない。未設定なら webui は停止操作を出さない。 */
   llm_keepalive_pause_url: v.optional(HttpUrlSchema),
+  /** PLaMo 翻訳サーバ (llama-server の OpenAI 互換 API) の base URL — webui の
+   * 翻訳比較タブ `ja(plamo)` が `<url>/health` で可用性を確かめ、
+   * `<url>/v1/chat/completions` に段落を送る (DR-0049)。llm_* と違い daemon は
+   * fetch しない: ブラウザが直接叩く (サーバ側が ccmsg の origin に CORS を
+   * 返す前提) ので、hello で URL そのものを webui に渡す。未設定なら webui は
+   * `ja(plamo)` タブを出さない。 */
+  translate_plamo_url: v.optional(HttpUrlSchema),
   webhooks: v.optional(WebhooksSchema),
   /** 非信頼コンテンツを配信する sandbox origin の URL テンプレート (DR-0030
    * §7.1)、例: `https://ccmsg-files-{gid}.host.example`。未設定なら sandbox

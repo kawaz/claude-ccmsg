@@ -1887,6 +1887,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const launcherForDir = newId.role === "user" ? daemon.config.session_launcher : undefined;
       const launchDir =
         launcherForDir !== undefined ? launchConfigDir(launcherForDir, daemon.env) : undefined;
+      // ja(plamo) の翻訳サーバ (DR-0049) は terminal_gateway_url と同じく URL
+      // そのものを user role にだけ返す — fetch するのはブラウザで、daemon は
+      // 中継しない。
+      const translatePlamoUrl =
+        newId.role === "user" ? daemon.config.translate_plamo_url : undefined;
       send(conn, {
         ok: true,
         version: daemon.version,
@@ -1899,6 +1904,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
         ...(launchAvailable ? { launch_available: true } : {}),
         ...(launchDir !== undefined ? { launch_config_dir: launchDir } : {}),
+        ...(translatePlamoUrl ? { translate_plamo_url: translatePlamoUrl } : {}),
       });
       return;
     }

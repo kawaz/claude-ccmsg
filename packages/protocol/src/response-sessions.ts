@@ -86,6 +86,12 @@ export const HelloResponseSchema = v.object({
    * row is in this dir: resumed anywhere else, claude has no transcript of
    * it. */
   launch_config_dir: v.optional(v.string()),
+  /** The `translate_plamo_url` config key (DR-0049), echoed to user-role
+   * hellos only, as terminal_gateway_url is. Unlike the llm_* flags the URL
+   * itself is sent: the browser fetches the translation server directly, and
+   * the daemon never does. Absent means unconfigured, and the webui then
+   * offers no `ja(plamo)` tab. */
+  translate_plamo_url: v.optional(v.string()),
 });
 export type HelloResponse = Output<typeof HelloResponseSchema>;
 
