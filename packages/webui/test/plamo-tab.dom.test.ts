@@ -8,7 +8,7 @@ import { type ComponentChild, h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { ErrorResponse, PermitRequestRecord } from "@ccmsg/protocol";
 import { SegmentView } from "../src/client/components/timeline/segments.tsx";
-import { AssistantBubble } from "../src/client/components/timeline/bubbles.tsx";
+import { AssistantBubble, UserPromptBubble } from "../src/client/components/timeline/bubbles.tsx";
 import { PermitRequestBubble } from "../src/client/components/timeline/PermitRequestBubble.tsx";
 import { AppContext } from "../src/client/context.ts";
 import { FakeTranscriptWs, SID, timelineStore } from "./timeline-harness.ts";
@@ -236,6 +236,54 @@ describe("default tab", () => {
 
   test("a Japanese assistant bubble stays on original", async () => {
     expect(await bubbleTab(JAPANESE.join("\n\n"))).toBe("original");
+  });
+
+  // user のバブル (別セッションからのメッセージを含む) も同じ判定。
+  async function userBubble(text: string): Promise<{ tab: string | null; body: string }> {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    container = root;
+    await act(() =>
+      render(
+        h(UserPromptBubble, {
+          line: {
+            kind: "turn",
+            ts: null,
+            role: "user",
+            segments: [{ kind: "text", role: "user", text }],
+          },
+          offsetKey: 0,
+          navKey: "k",
+          registerUserTurnRef: () => {},
+          translationAvailability: withPlamo,
+          now: 0,
+          searchCtx: undefined,
+          onUserTurnClick: () => {},
+          selected: false,
+        }),
+        root,
+      ),
+    );
+    for (let i = 0; i < 3; i++) {
+      await act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    }
+    return {
+      tab: languageTab(root),
+      body: root.querySelector(".tl-bubble-body")?.textContent ?? "",
+    };
+  }
+
+  test("a user bubble with English opens on ja(plamo) and shows the translation", async () => {
+    const { tab, body } = await userBubble(ENGLISH);
+    expect(tab).toBe("ja(plamo)");
+    expect(body).not.toContain(ENGLISH);
+    expect(body).toContain("訳");
+  });
+
+  test("a Japanese user bubble stays on original", async () => {
+    const { tab, body } = await userBubble(JAPANESE.join("\n\n"));
+    expect(tab).toBe("original");
+    expect(body).toContain("まずファイルを読む。");
   });
 
   // 許可依頼のバブルも同じ判定。訳は fetch のモックが返す「訳」。

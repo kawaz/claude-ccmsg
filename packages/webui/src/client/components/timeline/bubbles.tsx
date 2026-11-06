@@ -41,10 +41,24 @@ export function UserPromptBubble({
   onUserTurnClick: (navKey: string) => void;
   selected: boolean;
 }) {
+  // 既定のタブは応答のバブルと同じ判定 (DR-0049 §8)。訳すのは text segment
+  // だけで、添付などそれ以外の表示は原文のまま。
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const bodyText = line.segments
+    .flatMap((seg) => (seg.kind === "text" ? [seg.text] : []))
+    .join("\n\n");
+  const { tab, selectTab } = useBubbleTranslationTab({
+    text: bodyText,
+    availability: translationAvailability,
+    elementRef: bubbleRef,
+  });
   return (
     <div
+      ref={(el) => {
+        bubbleRef.current = el;
+        registerUserTurnRef(navKey, el);
+      }}
       class={`tl-bubble tl-bubble-right${selected ? " tl-bubble-user-nav-selected" : ""}`}
-      ref={(el) => registerUserTurnRef(navKey, el)}
       onClick={() => onUserTurnClick(navKey)}
     >
       <div class="tl-bubble-body">
@@ -60,13 +74,28 @@ export function UserPromptBubble({
               foldGroupOpen={false}
               searchKey={`${offsetKey}-${i}`}
               searchCtx={searchCtx}
+              userTab={tab}
             />
           ))
         )}
       </div>
       {/* 右寄せ吹き出しは時刻も右に揃える (kawaz: 「ユーザメッセージは右に
-       * あるのに時刻が左」)。 */}
-      {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
+       * あるのに時刻が左」)。翻訳タブは時刻の左に置き、時刻を右端に保つ。 */}
+      <div class="tl-bubble-footer">
+        {hasTranslationTabs(translationAvailability) ? (
+          <div class="tl-msg-toolbar" onClick={(e) => e.stopPropagation()}>
+            <Tabs
+              class="tl-thinking-tabs"
+              tabClass="tl-thinking-tab"
+              label="本文の言語"
+              selected={tab}
+              onSelect={selectTab}
+              items={translationTabItems(translationAvailability)}
+            />
+          </div>
+        ) : null}
+        {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
+      </div>
     </div>
   );
 }

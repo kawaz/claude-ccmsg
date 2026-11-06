@@ -213,9 +213,30 @@ function AssistantMarkdownText({
  * パスだけをリンクにする (markdown としては解釈しない — DR-0010 §6)。
  * useContext の呼び場所を固定するための薄い wrapper (AssistantMarkdownText
  * と同じ理由)。 */
-function UserPlainText({ text }: { text: string }) {
+function UserPlainText({
+  text,
+  tab,
+  translationAvailability,
+  onDisplayChange,
+}: {
+  text: string;
+  tab: TranslationTab;
+  translationAvailability: TranslationAvailability;
+  onDisplayChange?: (() => void) | undefined;
+}) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
-  return <LinkedPlainText text={text} ctx={filePathCtx} />;
+  const { bodyText, translatingLabel } = useTranslatedText(
+    text,
+    translationAvailability,
+    tab,
+    onDisplayChange,
+  );
+  return (
+    <>
+      <LinkedPlainText text={bodyText} ctx={filePathCtx} />
+      {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+    </>
+  );
 }
 
 export function SegmentView({
@@ -226,6 +247,7 @@ export function SegmentView({
   searchKey,
   searchCtx,
   assistantView,
+  userTab = "original",
 }: {
   segment: Segment;
   translationAvailability: TranslationAvailability;
@@ -242,6 +264,9 @@ export function SegmentView({
   /** assistant 吹き出しの hover ツールバーが決める本文の見せ方。吹き出しの
    * 外 (fold 内の assistant text) には無く、その場合は原文 markdown 表示。 */
   assistantView?: AssistantBodyView | undefined;
+  /** user 吹き出しの hover ツールバーが決める本文の言語タブ。吹き出しの外
+   * (fold 内の user text) には無く、その場合は原文。 */
+  userTab?: TranslationTab | undefined;
 }) {
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   // Highlighting is applied after render from this unit's DOM textContent.
@@ -262,7 +287,12 @@ export function SegmentView({
                 onDisplayChange={searchCtx?.notifyDisplayChange}
               />
             ) : (
-              <UserPlainText text={segment.text} />
+              <UserPlainText
+                text={segment.text}
+                tab={userTab}
+                translationAvailability={translationAvailability}
+                onDisplayChange={searchCtx?.notifyDisplayChange}
+              />
             )}
           </div>
         );
