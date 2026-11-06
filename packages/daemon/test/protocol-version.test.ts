@@ -27,7 +27,7 @@ async function peersOf(ctx: DaemonCtx): Promise<readonly PeerInfo[]> {
   await c.request({
     op: "hello",
     role: "user",
-    client_version: VERSION,
+    ccmsg_version: VERSION,
     protocol: PROTOCOL_VERSION,
   });
   const res = await c.requestOk({ op: "peers" });
@@ -55,7 +55,7 @@ describe("protocol version handshake", () => {
         repo: "r",
         ws: "w",
         cwd: "/tmp",
-        client_version: "9.9.9",
+        ccmsg_version: "9.9.9",
         protocol: PROTOCOL_VERSION,
       });
       expect(hello.ok).toBe(true);
@@ -63,10 +63,47 @@ describe("protocol version handshake", () => {
 
       const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S1);
       expect(peer).toBeDefined();
-      expect(peer?.client_version).toBe("9.9.9");
+      expect(peer?.ccmsg_version).toBe("9.9.9");
       expect(peer?.protocol).toBe(PROTOCOL_VERSION);
       expect(peer?.stale_client).toBeUndefined();
       c.close();
+    });
+  });
+
+  // Migration (issue drop-legacy-client-version-hello-key): a module loaded
+  // before the rename names its build `client_version` until its session
+  // restarts; the daemon reads it as `ccmsg_version`, and the new name wins
+  // when a hello carries both.
+  test("a hello naming its build by the old name client_version is read as ccmsg_version", async () => {
+    await withDaemon(async (ctx) => {
+      const legacy = await connect(ctx.sock);
+      await legacy.requestOk({
+        op: "hello",
+        role: "session",
+        sid: SID_S1,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+        client_version: "9.9.8",
+        protocol: PROTOCOL_VERSION,
+      });
+      expect((await peersOf(ctx)).find((p) => p.sid === SID_S1)?.ccmsg_version).toBe("9.9.8");
+
+      const both = await connect(ctx.sock);
+      await both.requestOk({
+        op: "hello",
+        role: "session",
+        sid: SID_S1,
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+        ccmsg_version: "9.9.9",
+        client_version: "9.9.8",
+        protocol: PROTOCOL_VERSION,
+      });
+      expect((await peersOf(ctx)).find((p) => p.sid === SID_S1)?.ccmsg_version).toBe("9.9.9");
+      legacy.close();
+      both.close();
     });
   });
 
@@ -82,10 +119,11 @@ describe("protocol version handshake", () => {
         repo: "r",
         ws: "w",
         cwd: "/tmp",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
       });
 
+      // A client of a generation before names its build by the old name.
       const old = await connect(ctx.sock);
       const err = await old.requestRefusal({
         op: "hello",
@@ -106,7 +144,7 @@ describe("protocol version handshake", () => {
       expect(peer?.stale_client?.last_seen).toBeString();
       // The refused hello registered nothing: the healthy connection's build
       // is still what the peer reports.
-      expect(peer?.client_version).toBe(VERSION);
+      expect(peer?.ccmsg_version).toBe(VERSION);
       old.close();
       live.close();
     });
@@ -149,7 +187,7 @@ describe("protocol version handshake", () => {
         repo: "r",
         ws: "w",
         cwd: "/tmp",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
       });
 
@@ -194,7 +232,7 @@ describe("protocol version handshake", () => {
       // Left absent rather than filled in with the assumed generation: the
       // client never mentioned one, and the display says "版数不明".
       expect(peer?.protocol).toBeUndefined();
-      expect(peer?.client_version).toBeUndefined();
+      expect(peer?.ccmsg_version).toBeUndefined();
       expect(peer?.stale_client).toBeUndefined();
       c.close();
     });
@@ -240,7 +278,7 @@ describe("protocol version handshake", () => {
         repo: "r",
         ws: "w",
         cwd: "/tmp",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
       });
       const peer = (await peersOf(ctx)).find((p) => p.sid === SID_S5);
@@ -261,7 +299,7 @@ describe("protocol version handshake", () => {
         repo: "r",
         ws: "w",
         cwd: "/tmp",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
       });
 
@@ -269,7 +307,7 @@ describe("protocol version handshake", () => {
       await watcher.request({
         op: "hello",
         role: "user",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
       });
       await watcher.request({ op: "subscribe" });

@@ -61,7 +61,7 @@ export interface SessionRuntime {
    * Claude Code version it runs. */
   process?: Pick<AgentInfo, "startedAt" | "version">;
   /** The ccmsg build the session's client announced (its peer row's
-   * `client_version`). */
+   * `ccmsg_version`). */
   ccmsgVersion?: string;
   /** This host's Claude Code version as GLOBALS shows it (DR-0043 §5.3), null
    * when not known. */
@@ -522,7 +522,7 @@ export interface SessionRow {
    * build fields). All absent on an agent-only row: the agents rows
    * knows nothing about ccmsg, and a session that never connected has no
    * client to be stale. */
-  client_version?: string;
+  ccmsg_version?: string;
   protocol?: number;
   stale_client?: StaleClientInfo;
 }
@@ -561,7 +561,7 @@ export function toSessionRow(
     last_activity_at: peer.last_activity_at,
     repo_root: peer.repo_root,
     transcript_path: peer.transcript_path,
-    client_version: peer.client_version,
+    ccmsg_version: peer.ccmsg_version,
     protocol: peer.protocol,
     stale_client: peer.stale_client,
     agent: agentsBySid.get(peer.sid),
@@ -797,8 +797,8 @@ export function summarizeUserAgent(ua: string, maxTouchPoints = 0): string {
  * more — every subscribe running today is one, they are perfectly compatible
  * (`UNANNOUNCED_PROTOCOL_VERSION`), and this row is not the place to imply
  * otherwise. Any warning comes from `staleClientWarning` instead. */
-export function clientBuildLabel(row: { client_version?: string; protocol?: number }): string {
-  const version = row.client_version ? `v${row.client_version}` : "版数不明";
+export function clientBuildLabel(row: { ccmsg_version?: string; protocol?: number }): string {
+  const version = row.ccmsg_version ? `v${row.ccmsg_version}` : "版数不明";
   return row.protocol === undefined ? version : `${version} (protocol ${row.protocol})`;
 }
 

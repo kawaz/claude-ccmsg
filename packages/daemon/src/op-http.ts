@@ -26,6 +26,7 @@ import {
   ErrorCode,
   jsonText,
   JsonObjectSchema,
+  helloCcmsgVersion,
   type JsonObject,
   OP_HTTP_PATH,
   parseWith,
@@ -64,6 +65,9 @@ const BodySchema = jsonText(JsonObjectSchema);
  * speaks. */
 const OpHelloSchema = v.object({
   sid: v.string(),
+  ccmsg_version: v.optional(v.string()),
+  /** The old name of `ccmsg_version`, which a module loaded before the
+   * rename sends until its session restarts; read as `ccmsg_version`. */
   client_version: v.optional(v.string()),
   protocol: v.optional(v.number()),
 });
@@ -224,7 +228,7 @@ export async function answerOp(
     return refusal(
       400,
       ErrorCode.bad_request,
-      `the body names the hello the request is asked under in \`hello\` ({ sid, client_version?, protocol? }): ${named.failure.summary}`,
+      `the body names the hello the request is asked under in \`hello\` ({ sid, ccmsg_version?, protocol? }): ${named.failure.summary}`,
     );
   }
   const bound = parseWith(ConnectionOpSchema, op);
@@ -258,8 +262,8 @@ export async function answerOp(
     role: "session",
     sid: named.value.sid,
     config_dir: session.configDir,
-    ...(named.value.client_version !== undefined
-      ? { client_version: named.value.client_version }
+    ...(helloCcmsgVersion(named.value) !== undefined
+      ? { ccmsg_version: helloCcmsgVersion(named.value) }
       : {}),
     ...(named.value.protocol !== undefined ? { protocol: named.value.protocol } : {}),
   };

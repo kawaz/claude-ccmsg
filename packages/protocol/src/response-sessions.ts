@@ -145,8 +145,8 @@ export const PeerInfoSchema = v.object({
    * it after every peer that has one rather than treating it as epoch. */
   last_user_input_at: v.optional(v.string()),
   /** ccmsg build of the client that last hello'd for this sid, when it
-   * announced one (`HelloRequest.client_version`). */
-  client_version: v.optional(v.string()),
+   * announced one (`HelloRequest.ccmsg_version`). */
+  ccmsg_version: v.optional(v.string()),
   /** Wire generation that client announced (`HelloRequest.protocol`). Absent
    * for a client that predates the field, which means
    * `UNANNOUNCED_PROTOCOL_VERSION` rather than "unknown" — it is left absent

@@ -217,7 +217,7 @@ describe("Timeline ctx line", () => {
       });
       store.dispatch({
         type: "peers/loaded",
-        peers: [{ sid: SID, repo: "owner/repo", ws: "main", cwd: "/w", client_version: "0.212.1" }],
+        peers: [{ sid: SID, repo: "owner/repo", ws: "main", cwd: "/w", ccmsg_version: "0.212.1" }],
       });
       const root = await mountTimeline(store, SNAPSHOT);
       const line = root.querySelector(".tl-status-mini-context");

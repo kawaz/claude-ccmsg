@@ -40,6 +40,7 @@ import {
   type StaleClientInfo,
   type JsonValue,
   errorText,
+  helloCcmsgVersion,
   parseWith,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
@@ -258,9 +259,9 @@ interface SessionEntry {
    * ev:"peers") where a bare config dir path would be noise nobody reads. */
   configDir?: string;
   /** ccmsg build / wire generation the latest hello for this sid announced
-   * (PeerInfo.client_version / .protocol). Outside `meta` for the same reason
+   * (PeerInfo.ccmsg_version / .protocol). Outside `meta` for the same reason
    * configDir is. */
-  clientVersion?: string;
+  ccmsgVersion?: string;
   clientProtocol?: number;
   /** ISO time this entry was first created in this daemon process; a later
    * hello for the same sid reuses the existing entry and never touches this
@@ -753,7 +754,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   // itself the report — a client from before this session's hello carried
   // either one — and the peer row says so rather than showing the last
   // connection's answer as if it were this one's.
-  entry.clientVersion = client.version;
+  entry.ccmsgVersion = client.version;
   entry.clientProtocol = client.protocol;
   if (
     !isNewEntry &&
@@ -1119,7 +1120,9 @@ function claimedHello(claims: OtherGenerationHelloRequest): HelloRequest {
     op: "hello",
     role: claims.role ?? "session",
     ...(claims.sid !== undefined ? { sid: claims.sid } : {}),
-    ...(claims.client_version !== undefined ? { client_version: claims.client_version } : {}),
+    ...(helloCcmsgVersion(claims) !== undefined
+      ? { ccmsg_version: helloCcmsgVersion(claims) }
+      : {}),
   };
 }
 
@@ -1147,10 +1150,13 @@ function refuseGeneration(
   );
 }
 
-/** What a hello claims about its own build. An empty version names none. */
+/** What a hello claims about its own build: `ccmsg_version`, or the old name
+ * `client_version` a module loaded before the rename sends until its session
+ * restarts. An empty version names none. */
 function readClientBuild(hello: HelloRequest): ClientBuild {
+  const version = helloCcmsgVersion(hello);
   return {
-    ...(hello.client_version ? { version: hello.client_version } : {}),
+    ...(version ? { version } : {}),
     ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
   };
 }
@@ -1189,10 +1195,10 @@ function withReadiness(daemon: Daemon, sid: string): Pick<PeerInfo, "input_readi
 function clientBuildFields(
   daemon: Daemon,
   s: SessionEntry,
-): Pick<PeerInfo, "client_version" | "protocol" | "stale_client"> {
+): Pick<PeerInfo, "ccmsg_version" | "protocol" | "stale_client"> {
   const stale = daemon.staleClients.get(s.meta.sid);
   return {
-    ...(s.clientVersion ? { client_version: s.clientVersion } : {}),
+    ...(s.ccmsgVersion ? { ccmsg_version: s.ccmsgVersion } : {}),
     ...(s.clientProtocol !== undefined ? { protocol: s.clientProtocol } : {}),
     ...(stale ? { stale_client: stale } : {}),
   };
@@ -1759,7 +1765,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         const nav = logToken(req.nav_type);
         const ua = logToken(req.ua);
         daemon.log.info(
-          `webui ${conn.id ?? "c?"} hello client_version=${client.version ?? "?"}` +
+          `webui ${conn.id ?? "c?"} hello ccmsg_version=${client.version ?? "?"}` +
             (nav ? ` nav=${nav}` : "") +
             (ua ? ` ua=${ua}` : ""),
         );

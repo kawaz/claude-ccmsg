@@ -1064,7 +1064,7 @@ async function helloOf($, asked) {
   return {
     sid,
     protocol: PROTOCOL_VERSION,
-    ...version !== undefined ? { client_version: version } : {}
+    ...version !== undefined ? { ccmsg_version: version } : {}
   };
 }
 async function pluginVersion($) {

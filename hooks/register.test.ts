@@ -2679,7 +2679,7 @@ describe("the ccmsg tools", () => {
   /** What the module says of who asks: the session it means, the plugin's
    * version and the wire's generation. The daemon names the session by the
    * asking process (DR-0046 §3), so nothing else is said. */
-  const HELLO = { sid: fake0, protocol: 1, client_version: "9.9.9" };
+  const HELLO = { sid: fake0, protocol: 1, ccmsg_version: "9.9.9" };
 
   // The tools ask the daemon over its socket (DR-0046): no ccmsg process is
   // started for them.
@@ -2755,7 +2755,7 @@ describe("the ccmsg tools", () => {
       files: { "/plugin/package.json": new Error("EACCES") },
     });
     await callTool(fake, "mcp__ccmsg-v1__send", { cwd: "/w", text: "hi" });
-    const { client_version: _version, ...rest } = HELLO;
+    const { ccmsg_version: _version, ...rest } = HELLO;
     expect(fake.asked.map((a) => a.body.hello)).toEqual([rest]);
     expect(fake.logs).toContain("ccmsg: the plugin's version is not read: Error: EACCES");
   });

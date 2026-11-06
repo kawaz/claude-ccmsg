@@ -107,7 +107,7 @@ export function Timeline({
     store,
     (s): SessionRuntime => {
       const row = s.agents.find((candidate) => candidate.sessionId === sid);
-      const ccmsgVersion = s.peers.find((p) => p.sid === sid)?.client_version;
+      const ccmsgVersion = s.peers.find((p) => p.sid === sid)?.ccmsg_version;
       return {
         ...(row
           ? {

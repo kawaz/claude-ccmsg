@@ -89,7 +89,7 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - 先頭は context の使用率。window が分からない間 (hooks module の無いセッション) は率の代わりに token 数 (`120k`)。
   - 次に model と、その直後の角括弧に context window の大きさ (`[1m]` / `[200K]`、window は model の属性)。model は transcript の最新の assistant 行 (非 sidechain・非 synthetic) の `message.model` から `claude-` を落とした実際に適用された model ID `fable-5-1` で、hooks module が名乗る起動時の別名 (`fable[1m]`) は使わない。window が分からない間は角括弧を付けない。
   - 次に effort、稼働時間。
-  - `ccmsg v<版>` はそのセッションで動いている ccmsg の版で、peer の行の `client_version` (そのセッションの client が hello で名乗った版)。名乗っていなければ出さない。
+  - `ccmsg v<版>` はそのセッションで動いている ccmsg の版で、peer の行の `ccmsg_version` (そのセッションの client が hello で名乗った版)。名乗っていなければ出さない。
   - `claude v<版>` はそのセッションのプロセスの Claude Code の版 (上の agents の行の `version`)。行に版が無ければ出さない。hover の説明に、これがプロセスの版であることと、GLOBALS のホストの版が分かればそれとの比較 (`the host has v2.1.318 installed` / `the host has the same version installed`) を書く。`ccmsg v<版>` の hover もそのセッションの ccmsg であることを書く。
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。

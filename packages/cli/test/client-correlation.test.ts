@@ -191,7 +191,7 @@ test("every hello announces this build and the generation it speaks", () => {
   expect(helloRequest({ role: "user" })).toMatchObject({
     op: "hello",
     role: "user",
-    client_version: VERSION,
+    ccmsg_version: VERSION,
     protocol: PROTOCOL_VERSION,
   });
   expect(
@@ -200,7 +200,7 @@ test("every hello announces this build and the generation it speaks", () => {
     op: "hello",
     role: "session",
     sid: "S",
-    client_version: VERSION,
+    ccmsg_version: VERSION,
     protocol: PROTOCOL_VERSION,
   });
 });

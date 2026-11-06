@@ -336,7 +336,7 @@ async function waitDaemonGone(sockPath: string): Promise<void> {
 /** What every hello says about the process sending it, regardless of role: the
  * build, so a stale client can be named, and the wire generation, so a daemon
  * that no longer speaks it refuses instead of half-serving it. */
-const clientBuild = { client_version: VERSION, protocol: PROTOCOL_VERSION } as const;
+const clientBuild = { ccmsg_version: VERSION, protocol: PROTOCOL_VERSION } as const;
 
 export function helloRequest(identity: Identity): Extract<RequestInput, { op: "hello" }> {
   if (identity.role === "user") return { op: "hello", role: "user", ...clientBuild };

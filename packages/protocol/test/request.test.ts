@@ -34,7 +34,7 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       sid: SID,
       cwd: "/w",
       protocol: PROTOCOL_VERSION,
-      client_version: "1",
+      ccmsg_version: "1",
     },
     bad: [
       { op: "hello" },

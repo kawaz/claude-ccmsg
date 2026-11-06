@@ -2077,13 +2077,13 @@ describe("summarizeUserAgent", () => {
 
 describe("clientBuildLabel / staleClientWarning", () => {
   test("clientBuildLabel names the build and the generation it speaks", () => {
-    expect(clientBuildLabel({ client_version: "0.137.0", protocol: 1 })).toBe(
+    expect(clientBuildLabel({ ccmsg_version: "0.137.0", protocol: 1 })).toBe(
       "v0.137.0 (protocol 1)",
     );
   });
 
   test("clientBuildLabel keeps the version alone when no generation was announced", () => {
-    expect(clientBuildLabel({ client_version: "0.129.0" })).toBe("v0.129.0");
+    expect(clientBuildLabel({ ccmsg_version: "0.129.0" })).toBe("v0.129.0");
   });
 
   // 現在走っている subscribe は全部この形 (どちらの欄も無い)。完全に互換な
@@ -2094,7 +2094,7 @@ describe("clientBuildLabel / staleClientWarning", () => {
   });
 
   test("staleClientWarning is null while every client of the session is current", () => {
-    expect(staleClientWarning(peer({ client_version: "0.137.0", protocol: 1 }))).toBeNull();
+    expect(staleClientWarning(peer({ ccmsg_version: "0.137.0", protocol: 1 }))).toBeNull();
   });
 
   // stale 記録の protocol 欄が無い = 世代を名乗る前に弾かれた (request_id
@@ -2125,14 +2125,14 @@ describe("clientBuildLabel / staleClientWarning", () => {
     const row = toSessionRow(
       peer({
         sid: "s1",
-        client_version: "0.137.0",
+        ccmsg_version: "0.137.0",
         protocol: 1,
         stale_client: { last_seen: "2026-09-03T01:00:00.000Z", version: "0.129.0" },
       }),
       indexAgentsBySid([]),
       new Map(),
     );
-    expect(row.client_version).toBe("0.137.0");
+    expect(row.ccmsg_version).toBe("0.137.0");
     expect(row.protocol).toBe(1);
     expect(staleClientWarning(row)?.marker).toBe("⚠");
   });

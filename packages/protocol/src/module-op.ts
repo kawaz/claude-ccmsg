@@ -22,7 +22,7 @@ export const OP_HTTP_PATH = "/op";
  * wire's generation. */
 export interface OpHello {
   readonly sid: string;
-  readonly client_version?: string;
+  readonly ccmsg_version?: string;
   readonly protocol?: number;
 }
 

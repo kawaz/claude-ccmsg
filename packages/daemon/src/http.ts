@@ -7,7 +7,7 @@ import { handleFsServe } from "./fs-serve.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
 import { handleSandboxRequest, sandboxGidFromHost } from "./sandbox.ts";
-import type { HelloRequest } from "@ccmsg/protocol";
+import { helloCcmsgVersion, type HelloRequest } from "@ccmsg/protocol";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
 import { handleWebhookRequest } from "./webhook.ts";
 
@@ -90,7 +90,7 @@ function pinHelloToUser(hello: HelloRequest): HelloRequest {
   return {
     op: "hello",
     role: "user",
-    ...(hello.client_version !== undefined ? { client_version: hello.client_version } : {}),
+    ...(helloCcmsgVersion(hello) !== undefined ? { ccmsg_version: helloCcmsgVersion(hello) } : {}),
     ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
     ...(hello.nav_type !== undefined ? { nav_type: hello.nav_type } : {}),
     ...(hello.ua !== undefined ? { ua: hello.ua } : {}),

@@ -36,7 +36,7 @@ kawaz 2026-10-28 の裁定:
 
 ### 2. 要求と応答
 
-- 要求の body は、wire の request と同じ JSON (`{ op, ...op の欄 }`) に `hello` 欄を足した 1 つの object。`hello` は `{ sid, client_version?, protocol? }` (§3)。`request_id` は書かない (書いても daemon が上書きする)
+- 要求の body は、wire の request と同じ JSON (`{ op, ...op の欄 }`) に `hello` 欄を足した 1 つの object。`hello` は `{ sid, ccmsg_version?, protocol? }` (§3)。`request_id` は書かない (書いても daemon が上書きする)
 - daemon は 1 つの要求を 1 つの接続として扱う。§3 で決めたセッションの hello を作り、続いて body の残りを op の request にして、`daemon.sock` の 1 行と同じ処理 (`readRequest`、世代の検査、名乗りを要する op の検査、dispatch) に順に通し、要求の終わりで接続を閉じる (購読等の後始末も `daemon.sock` の接続が閉じた時と同じ)
 - 応答は wire の返事の JSON をそのまま本文にする (`{ ok: true, ... }` か `{ ok: false, error: { code, msg } }`。`request_id` が付いたまま)。status は 200。hello が断られたら hello の返事を返し、op は走らせない
 - body が JSON の object でない、`hello` 欄が §3 の形でない時は status 400 で `bad_request` の返事を返す。`/op` 以外の path は 404、`POST` 以外の method は 405 (`Allow: POST`)、HTTP として読めない要求は 400 / 413 / 431 / 501 (本文は理由の短い文)
@@ -50,9 +50,10 @@ kawaz 2026-10-28 の裁定:
 - body の `hello` は pid から引けないものだけを持つ:
   - `sid`: module が頼むつもりのセッション (`$.session.id()`)。daemon は §3 で決めた session id と比べ、違えば `unknown_peer` で断る (「process <pid> runs session <a>, not <b> (its id may have just changed: /clear, /resume)」)。identity は pid が決め、この欄は食い違いを見つけるためだけに使う。`/clear` の直後に module と state file の id がずれた要求を、別のセッションの名で通さない
   - 例外はサイドカーの依頼への返事 (`sidecar_reply`) で、同じ process が以前に走らせていた id なら通す (kawaz 2026-10-28)。返事は依頼が届いた id で送る (daemon はその id の依頼と返事を突き合わせる) ので、`/clear` / `/resume` の前に届いた依頼 (`prompt.send` の `session_changed` 等) への返事は古い id を名乗る。daemon は相手の pid ごとに、その state file に見つけた session id を、その process が生きている間覚えておき (`PeerSessions`)、返事が名乗る id がその中にあれば、その id で hello を作る。覚えるのは daemon の process の中だけで、daemon を起こし直すと忘れる
-  - `client_version`: plugin の root の `package.json` の `version` (`ccmsg version` と同じ値)。bundle に版を焼き込むと release の bump のたびに bundle が古くなる (`bun hooks/bundle.ts --check`) ので、`$.fs.read` で読む。読めなければ欄を省き、debug の log に残す
+  - `ccmsg_version`: plugin の root の `package.json` の `version` (`ccmsg version` と同じ値)。bundle に版を焼き込むと release の bump のたびに bundle が古くなる (`bun hooks/bundle.ts --check`) ので、`$.fs.read` で読む。読めなければ欄を省き、debug の log に残す
+  - 移行期間: daemon は旧名 `client_version` も受け、`ccmsg_version` として扱う (両方あれば `ccmsg_version`)。名前を変える前に読み込まれた module は、セッションを再起動するまで旧名で送るため。`daemon.sock` の hello も同じ。旧 module が全部再起動された後に旧名の受け口を落とす (issue `drop-legacy-client-version-hello-key`)
   - `protocol`: `PROTOCOL_VERSION`。版 (`package.json` を import する `version.ts`) と分けて `protocol-version.ts` に置き、bundle は世代だけを持つ。世代の違う値は hello の世代の検査が断る
-- daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`client_version` / `protocol` (body のもの)。所在 (`cwd` / `repo` / `ws` / `repo_root` / `branch`) と `transcript_path` は入れない
+- daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`ccmsg_version` / `protocol` (body のもの)。所在 (`cwd` / `repo` / `ws` / `repo_root` / `branch`) と `transcript_path` は入れない
   - 所在の 5 つは 1 組で、名乗るか名乗らないかのどちらか (`registerSession`)。名乗らない hello は登録済みの所在を保つので、サイドカーの名乗り (state file を読む CLI の hello) が付けた所在がそのまま残る
   - `transcript_path` を名乗らない hello は、その sid に採用済みの path を保ち、探し直さない (server.ts の hello)。探すと全 config dir の `projects/` を読み、実の home で 1 回約 30 ms かかる。採用済みの path が無い間 (最初の transcript が書かれる前) は今までどおり hello ごとに探す
 - user role はこの口に無い。頼み手は必ずセッションで、user role の op は dispatch の role の検査で今までどおり断られる

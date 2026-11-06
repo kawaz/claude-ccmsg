@@ -48,7 +48,7 @@ async function helloOf($: Engine, asked: string | undefined): Promise<OpHello> {
   return {
     sid,
     protocol: PROTOCOL_VERSION,
-    ...(version !== undefined ? { client_version: version } : {}),
+    ...(version !== undefined ? { ccmsg_version: version } : {}),
   };
 }
 

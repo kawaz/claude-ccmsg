@@ -124,6 +124,33 @@ describe("POST /op", () => {
     }
   });
 
+  // Migration (issue drop-legacy-client-version-hello-key): a module loaded
+  // before the rename names its build `client_version` until its session
+  // restarts; the daemon reads it as `ccmsg_version`, and the new name wins
+  // when the hello carries both.
+  test("the build the hello names, by the old name client_version too", async () => {
+    const run = await started();
+    try {
+      const builds: (string | undefined)[] = [];
+      for (const hello of [
+        { ...HELLO, ccmsg_version: "9.9.9" },
+        { ...HELLO, client_version: "9.9.8" },
+        { ...HELLO, ccmsg_version: "9.9.9", client_version: "9.9.8" },
+      ]) {
+        const { status, text } = await post(run.ctx, asked({ op: "peer_list" }, hello));
+        expect(status).toBe(200);
+        expect(servedReply("peer_list", text).ok).toBe(true);
+        const user = await userConn(run.ctx);
+        const peers = await user.requestOk({ op: "peers" });
+        builds.push(peers.peers.find((p) => p.sid === SID)?.ccmsg_version);
+        user.close();
+      }
+      expect(builds).toEqual(["9.9.9", "9.9.8", "9.9.9"]);
+    } finally {
+      await stopped(run);
+    }
+  });
+
   // Who asks is the process, not the body: a process no state file in reach
   // names, and a body naming another session than the process runs, are
   // refused before anything is served.

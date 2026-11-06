@@ -580,7 +580,7 @@ export function createWsClient(
       const hello = await send({
         op: "hello",
         role: "user",
-        client_version: VERSION,
+        ccmsg_version: VERSION,
         protocol: PROTOCOL_VERSION,
         ...(navType !== undefined ? { nav_type: navType } : {}),
         ...(ua ? { ua: summarizeUserAgent(ua, globalThis.navigator?.maxTouchPoints ?? 0) } : {}),

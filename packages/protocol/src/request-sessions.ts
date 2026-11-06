@@ -47,6 +47,11 @@ export const HelloRequestSchema = v.object({
   /** The ccmsg build this client runs (`VERSION`). Diagnostic only — the
    * daemon never gates on it — but it is what turns "this session's client is
    * stale" into an actionable line: it names the version to upgrade from. */
+  ccmsg_version: v.optional(v.string()),
+  /** The name `ccmsg_version` had: a module loaded before the rename still
+   * sends it until its session restarts, so the daemon reads it as
+   * `ccmsg_version` (`helloCcmsgVersion`) and clients do not send it
+   * (docs/issue drop-legacy-client-version-hello-key). */
   client_version: v.optional(v.string()),
   /** The wire generation this client speaks: this one. A hello of another
    * generation is OtherGenerationHelloRequest. Omitting the field means
@@ -79,9 +84,20 @@ export const OtherGenerationHelloRequestSchema = v.object({
   protocol: v.pipe(v.number(), v.notValue(PROTOCOL_VERSION)),
   role: v.optional(v.picklist(["session", "user"])),
   sid: v.optional(v.string()),
+  ccmsg_version: v.optional(v.string()),
+  /** Its old name, which the clients of the generations before carry. */
   client_version: v.optional(v.string()),
 });
 export type OtherGenerationHelloRequest = Output<typeof OtherGenerationHelloRequestSchema>;
+
+/** The ccmsg build a hello announces: `ccmsg_version`, else the old name
+ * `client_version` a client from before the rename sends. */
+export function helloCcmsgVersion(hello: {
+  ccmsg_version?: string;
+  client_version?: string;
+}): string | undefined {
+  return hello.ccmsg_version ?? hello.client_version;
+}
 
 /** A hello of any generation, told apart by the generation it announces. */
 export const AnyGenerationHelloRequestSchema = v.variant("protocol", [
