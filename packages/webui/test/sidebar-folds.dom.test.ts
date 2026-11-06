@@ -315,9 +315,33 @@ describe("GLOBALS", () => {
     expect(rows(root).slice(1)).toEqual(["daemon v0.200.0", "claude v2.1.312↻"]);
   });
 
+  // kawaz 2026-11-06 (DR-0048 §5): each version opens its CHANGELOG entry in
+  // a new tab, the hover text saying what it is and where it goes.
+  test("each version is a link to its CHANGELOG entry", async () => {
+    const { root } = await mountSidebar((store) => {
+      store.dispatch({ type: "daemon-info/loaded", version: "0.214.1" });
+      store.dispatch({ type: "agents/loaded", agents: [agentRow(100, "2.1.318")] });
+    });
+    const links = [...root.querySelectorAll("#sidebar-globals a")].map((a) => [
+      a.textContent,
+      a.getAttribute("href"),
+      a.getAttribute("target"),
+      a.getAttribute("rel"),
+      a.getAttribute("title"),
+    ]);
+    const ccmsg = "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141";
+    const claude = "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21318";
+    expect(links).toEqual([
+      ["v0.214.1", ccmsg, "_blank", "noopener noreferrer", `ccmsg daemon v0.214.1\n${ccmsg}`],
+      ["v2.1.318", claude, "_blank", "noopener noreferrer", `Claude Code v2.1.318\n${claude}`],
+    ]);
+  });
+
   test("a dash for a version nothing has told yet", async () => {
     const { root } = await mountSidebar();
     expect(rows(root).slice(1)).toEqual(["daemon —", "claude —↻"]);
+    // Nothing to open.
+    expect(root.querySelectorAll("#sidebar-globals a")).toHaveLength(0);
   });
 
   test("the endpoint is plain text when there is nowhere else to go", async () => {

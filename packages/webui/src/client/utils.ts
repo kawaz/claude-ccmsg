@@ -16,6 +16,7 @@ import type {
 } from "@ccmsg/protocol";
 import { jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
+import { ccmsgChangelogUrl, claudeCodeChangelogUrl } from "./changelog-url.ts";
 import type { LinePart } from "./session-status-view.ts";
 import type { PeerSortKey } from "./sidebar-url.ts";
 import { numberText } from "./storage.ts";
@@ -74,16 +75,19 @@ export interface SessionRuntime {
  * the Claude Code its process runs (`claude v2.1.317`). A part whose value is
  * not known is left out. The Claude Code version is the process's, not the
  * host's installed one GLOBALS shows, so its hover text says which it is and
- * how it compares with the host's when that is known. */
+ * how it compares with the host's when that is known. Each version opens its
+ * CHANGELOG entry (DR-0048 §5), and its hover text ends with where. */
 export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LinePart[] {
   const { process, ccmsgVersion, hostClaudeVersion } = runtime;
   const parts: LinePart[] = [];
   if (process) parts.push({ key: "uptime", text: formatDuration(now - process.startedAt) });
   if (ccmsgVersion) {
+    const href = ccmsgChangelogUrl(ccmsgVersion);
     parts.push({
       key: "ccmsg",
       text: `ccmsg v${ccmsgVersion}`,
-      title: `ccmsg v${ccmsgVersion} (the ccmsg this session runs)`,
+      title: `ccmsg v${ccmsgVersion} (the ccmsg this session runs)\n${href}`,
+      href,
     });
   }
   const claudeVersion = process?.version;
@@ -94,10 +98,12 @@ export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LineP
         : hostClaudeVersion === claudeVersion
           ? "; the host has the same version installed"
           : `; the host has v${hostClaudeVersion} installed`;
+    const href = claudeCodeChangelogUrl(claudeVersion);
     parts.push({
       key: "claude",
       text: `claude v${claudeVersion}`,
-      title: `claude v${claudeVersion} (this session's process${host})`,
+      title: `claude v${claudeVersion} (this session's process${host})\n${href}`,
+      href,
     });
   }
   return parts;

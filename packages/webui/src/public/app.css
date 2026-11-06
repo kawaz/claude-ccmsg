@@ -774,6 +774,18 @@ a {
   min-width: 0;
 }
 
+/* 版は CHANGELOG のその版の節へのリンク (DR-0048 §5)。行の文字のまま、
+ * hover で下線が出て押せると分かる。 */
+.sidebar-globals-version {
+  color: inherit;
+  text-decoration: none;
+}
+
+.sidebar-globals-version:hover,
+.sidebar-globals-version:focus-visible {
+  text-decoration: underline;
+}
+
 /* 版の横の更新ボタン: SESSIONS の見出しの ↻ (#peers-refresh) と同じ
  * chromeless なアイコンボタン。押している間 (disabled) は薄くする。 */
 .sidebar-globals-claude-update {
@@ -7770,12 +7782,24 @@ a.tl-attachment-file-path {
 /* DR-0041 §5: the model and the effort of the ctx line are the session
  * override's fields in place. The panel is not clickable (pointer-events:
  * none above); these two fields (their text at rest, the select, [適用] and
- * what became of the change) are the only parts that take a click. A part
- * with a hover text (the versions) takes the pointer for the hover alone: it
- * has nothing to press. */
+ * what became of the change) and the versions (links to their CHANGELOG
+ * entries, DR-0048 §5) are the only parts that take a click. A part with a
+ * hover text takes the pointer for the hover too. */
 .tl-status-mini-context .override-field,
 .tl-status-mini-context .ctx-part-titled {
   pointer-events: auto;
+}
+
+/* The versions' links keep the line's look: no colour or underline of their
+ * own at rest, an underline on hover to say they open something. */
+.tl-status-mini-context .ctx-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.tl-status-mini-context .ctx-link:hover,
+.tl-status-mini-context .ctx-link:focus-visible {
+  text-decoration: underline;
 }
 
 /* The part of a field opened or holding a choice or a reply wraps inside

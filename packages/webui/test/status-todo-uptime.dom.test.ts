@@ -229,9 +229,32 @@ describe("Timeline ctx line", () => {
       const titles = [...(line?.querySelectorAll(".ctx-part[title]") ?? [])].map((part) =>
         part.getAttribute("title"),
       );
+      // Its last line is where the version opens (DR-0048 §5).
       expect(titles).toEqual([
-        "ccmsg v0.212.1 (the ccmsg this session runs)",
-        "claude v2.1.310 (this session's process; the host has the same version installed)",
+        "ccmsg v0.212.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02121",
+        "claude v2.1.310 (this session's process; the host has the same version installed)\nhttps://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310",
+      ]);
+      // kawaz 2026-11-06 (DR-0048 §5): the versions, and only they, are links
+      // to their CHANGELOG entries, opened in a new tab.
+      const links = [...(line?.querySelectorAll("a") ?? [])].map((a) => [
+        a.textContent,
+        a.getAttribute("href"),
+        a.getAttribute("target"),
+        a.getAttribute("rel"),
+      ]);
+      expect(links).toEqual([
+        [
+          "ccmsg v0.212.1",
+          "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02121",
+          "_blank",
+          "noopener noreferrer",
+        ],
+        [
+          "claude v2.1.310",
+          "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21310",
+          "_blank",
+          "noopener noreferrer",
+        ],
       ]);
     } finally {
       restore();

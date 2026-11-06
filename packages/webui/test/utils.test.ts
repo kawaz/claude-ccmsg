@@ -482,20 +482,43 @@ describe("sessionRuntimeParts", () => {
   });
 
   // The process's version is not GLOBALS' host version: the hover text says
-  // whose it is, and compares it with the host's when that is known.
+  // whose it is, and compares it with the host's when that is known. Its last
+  // line is where the version opens (DR-0048 §5).
   test("the Claude Code version's hover text tells it from the host's", () => {
     const claudeTitle = (hostClaudeVersion: string | null) =>
       sessionRuntimeParts(
         { process: { startedAt, version: "2.1.317" }, hostClaudeVersion },
         now,
       ).find((part) => part.key === "claude")?.title;
+    const url = "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21317";
     expect(claudeTitle("2.1.318")).toBe(
-      "claude v2.1.317 (this session's process; the host has v2.1.318 installed)",
+      `claude v2.1.317 (this session's process; the host has v2.1.318 installed)\n${url}`,
     );
     expect(claudeTitle("2.1.317")).toBe(
-      "claude v2.1.317 (this session's process; the host has the same version installed)",
+      `claude v2.1.317 (this session's process; the host has the same version installed)\n${url}`,
     );
-    expect(claudeTitle(null)).toBe("claude v2.1.317 (this session's process)");
+    expect(claudeTitle(null)).toBe(`claude v2.1.317 (this session's process)\n${url}`);
+  });
+
+  // kawaz 2026-11-06 (DR-0048 §5): each version opens its entry in its
+  // CHANGELOG; the uptime opens nothing.
+  test("the versions open their CHANGELOG entries", () => {
+    const parts = sessionRuntimeParts(
+      {
+        process: { startedAt, version: "2.1.317" },
+        ccmsgVersion: "0.214.1",
+        hostClaudeVersion: null,
+      },
+      now,
+    );
+    expect(parts.map((part) => [part.key, part.href])).toEqual([
+      ["uptime", undefined],
+      ["ccmsg", "https://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141"],
+      ["claude", "https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21317"],
+    ]);
+    expect(parts.find((part) => part.key === "ccmsg")?.title).toBe(
+      "ccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v02141",
+    );
   });
 });
 

@@ -272,7 +272,8 @@ export function SessionOverrideEditor({
  * once another option is chosen. What became of a change goes after a while.
  * Each ` / `-separated part is a span of its own, so a line too long for the
  * width breaks between parts, not inside one (`ccmsg` and its version, the
- * model and its window stay together). */
+ * model and its window stay together). A part with a page to open (the
+ * versions' CHANGELOG entries, DR-0048 §5) is a link to it in a new tab. */
 export function ContextLine({
   line,
   state,
@@ -309,7 +310,17 @@ export function ContextLine({
     });
     if (usage.effort) parts.push({ key: "effort", node: field("effort", usage.effort) });
   }
-  for (const part of tail) parts.push({ key: part.key, node: part.text, title: part.title });
+  for (const part of tail) {
+    const node =
+      part.href !== undefined ? (
+        <a class="ctx-link" href={part.href} target="_blank" rel="noopener noreferrer">
+          {part.text}
+        </a>
+      ) : (
+        part.text
+      );
+    parts.push({ key: part.key, node, title: part.title });
+  }
   return (
     <span class="tl-status-mini-line tl-status-mini-context">
       {parts.map((part, index) => (

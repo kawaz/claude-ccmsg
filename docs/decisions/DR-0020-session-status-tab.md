@@ -91,5 +91,6 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - 次に effort、稼働時間。
   - `ccmsg v<版>` はそのセッションで動いている ccmsg の版で、peer の行の `ccmsg_version` (そのセッションの client が hello で名乗った版)。名乗っていなければ出さない。
   - `claude v<版>` はそのセッションのプロセスの Claude Code の版 (上の agents の行の `version`)。行に版が無ければ出さない。hover の説明に、これがプロセスの版であることと、GLOBALS のホストの版が分かればそれとの比較 (`the host has v2.1.318 installed` / `the host has the same version installed`) を書く。`ccmsg v<版>` の hover もそのセッションの ccmsg であることを書く。
+  - 2 つの版は、その版の CHANGELOG の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)。hover の説明の最後の行にリンク先を書く。
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。

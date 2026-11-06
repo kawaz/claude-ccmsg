@@ -4,6 +4,7 @@
 import { useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { ccmsgChangelogUrl, claudeCodeChangelogUrl } from "../changelog-url.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
 import {
   endpointChoices,
@@ -60,6 +61,33 @@ function EndpointLine({ candidates }: { candidates: readonly string[] | undefine
   );
 }
 
+/** `v<version>` as a link to its CHANGELOG entry in a new tab (DR-0048 §5),
+ * the hover text saying what it is and where it goes; `—` while nothing has
+ * told the version. */
+function VersionLink({
+  version,
+  url,
+  what,
+}: {
+  version: string | null;
+  url: (version: string) => string;
+  what: string;
+}) {
+  if (version === null) return <>—</>;
+  const href = url(version);
+  return (
+    <a
+      class="sidebar-globals-version"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={`${what} v${version}\n${href}`}
+    >
+      v{version}
+    </a>
+  );
+}
+
 /** `claude v<version> [↻]` (§5.3). The button has the daemon run `claude
  * update`; the version shown changes when the daemon's reading arrives (the
  * reply here, ev:"claude_version" in every tab). No confirmation: the update
@@ -83,7 +111,7 @@ function ClaudeLine({ version }: { version: string | null }) {
   return (
     <>
       <p class="sidebar-globals-row">
-        claude {version !== null ? `v${version}` : "—"}
+        claude <VersionLink version={version} url={claudeCodeChangelogUrl} what="Claude Code" />
         <button
           type="button"
           class="sidebar-globals-claude-update"
@@ -112,7 +140,8 @@ export function SidebarGlobals() {
     <div class="sidebar-globals">
       <EndpointLine candidates={slice.webuiUrls} />
       <p class="sidebar-globals-row">
-        daemon {slice.daemonVersion !== null ? `v${slice.daemonVersion}` : "—"}
+        daemon{" "}
+        <VersionLink version={slice.daemonVersion} url={ccmsgChangelogUrl} what="ccmsg daemon" />
       </p>
       <ClaudeLine version={slice.claudeVersion} />
     </div>

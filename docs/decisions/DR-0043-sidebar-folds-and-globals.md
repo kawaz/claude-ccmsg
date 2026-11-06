@@ -73,11 +73,13 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 #### 5.2 daemon の版
 
 - `daemon v<version>` の 1 行。値は今と同じ `ping` の返事の `version` (store の `daemonInfo`)
+- 版は ccmsg の CHANGELOG のその版の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)
 - Status タブから移す。Status タブの最下部の行は消し、2 か所に出さない
 
 #### 5.3 Claude Code の版と更新
 
 - `claude v<version> [↻]` の 1 行。出す版は **最後に起動したセッションのプロセスの版** (agents の行のうち `startedAt` が最も新しく `version` を持つ行の `version`)。版の最大は取らない: 自動更新が有効なら新しいセッションは起動の時に最新へ上がるので、最後に起動したセッションの版がこのホストの今の版を言う
+- 版は Claude Code の CHANGELOG のその版の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)
 - 版の横にリロードのアイコンボタンを置く。押すと daemon が `claude update` を実行する (§6)。`claude` は daemon の PATH のもの。`claude update` の結果は `claude --version` の実測で見る。binary は上がるが、走っているプロセスには再起動 ([DR-0028](./DR-0028-session-kill.md) の restart) まで効かない
 - `claude update` が終わったら、daemon は `claude --version` を実行し直して版を覚え直し、表示にはその版を使う。`claude update` の出力は解釈しない (kawaz 実測)。`claude --version` の出力は先頭の版の語だけを読む (`2.1.312 (Claude Code)` → `2.1.312`)
 - 2 つの源の組み合わせは「後に観測した方が勝つ」: 最後に起動したセッションの `startedAt` と、daemon が覚え直した時刻 (§8 の `observed_at`) を比べ、新しい方の版を出す。update の後に起動したセッションがあれば、その版が出る。どちらも無ければ (走っているセッションが無く、update もしていない) 行は `claude —` とボタンだけにする

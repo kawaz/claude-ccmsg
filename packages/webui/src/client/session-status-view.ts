@@ -328,12 +328,15 @@ export interface MiniSummaryLine {
 }
 
 /** One ` / `-separated part of the ctx line's tail, with the hover text that
- * says what it is when the text alone does not. `key` names which part it is
- * (`uptime`, `ccmsg`, `claude`), the same whatever its text. */
+ * says what it is when the text alone does not, and the page its text opens
+ * in a new tab when there is one (a version's CHANGELOG entry, DR-0048 §5).
+ * `key` names which part it is (`uptime`, `ccmsg`, `claude`), the same
+ * whatever its text. */
 export interface LinePart {
   key: string;
   text: string;
   title?: string;
+  href?: string;
 }
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
