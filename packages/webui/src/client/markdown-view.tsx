@@ -29,6 +29,7 @@ import type {
   RootContent,
   Text,
 } from "mdast";
+import { attachmentUrlFromPath } from "./attachment-path.ts";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { CodeCopyFrame } from "./components/CodeCopyFrame.tsx";
 import { useWebuiUrls } from "./context.ts";
@@ -81,52 +82,6 @@ export type FilePathLinker = (token: string) => string | null;
  * `href`**, never as a plain `<a>`, since a path-shaped target that navigates
  * the webui origin strands a standalone PWA user with no way back. */
 export type MarkdownPathLinker = (ref: ParsedFilePathRef) => string | null;
-
-// DR-0015 §2.6 attachment image extensions. Kept as a set (not re-derived
-// from the daemon's MIME table) so this file stays browser-only and doesn't
-// pull the daemon's node-only helpers via cross-package imports. The daemon
-// upload path stores files with the extensions this set filters on, so a
-// mismatch would surface immediately as a broken `<img>` — the failure mode
-// is loud, not silent.
-const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".svg",
-  ".avif",
-  ".bmp",
-  ".ico",
-]);
-
-/**
- * DR-0015 §2.6 attachment path recognizer. Given a Markdown link's `url` from
- * a message body, returns `{url, isImage}` when it points at the daemon's
- * TMPDIR attachment area (`/…/claude-ccmsg-<uid>/attachment/<basename>`), or
- * `null` otherwise. The returned `url` is rewritten to the daemon's HTTP
- * endpoint (`/attachment/<basename>`) — the raw filesystem path a browser
- * cannot fetch (`file://` is sandbox-blocked) becomes a fetchable
- * same-origin URL, which the caller renders as either `<img>` (image mime)
- * or a normal `<a>`.
- *
- * The pattern intentionally matches only trailing basenames — one segment,
- * no slashes — under the `attachment/` directory. Anchoring at the end + the
- * `[^/]+` guard means a path like `/foo/claude-ccmsg-501/attachment/../etc`
- * would not match at all (`..` fails the character class), so a hostile
- * message body can't rewrite arbitrary daemon URLs. The daemon's own GET
- * route does its own uuid/ext re-validation regardless.
- */
-export function attachmentUrlFromPath(url: string): { url: string; isImage: boolean } | null {
-  const basename = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url)?.[1];
-  if (basename === undefined) return null;
-  const dot = basename.lastIndexOf(".");
-  const ext = dot >= 0 ? basename.slice(dot).toLowerCase() : "";
-  return {
-    url: `/attachment/${basename}`,
-    isImage: ATTACHMENT_IMAGE_EXTENSIONS.has(ext),
-  };
-}
 
 /** Synthetic node the `<details>` fold (see `foldDetailsBlocks`) inserts into
  * the mdast tree. Not an mdast type — `type` is namespaced so it can never

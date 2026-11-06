@@ -1,4 +1,5 @@
 import type { ErrorResponse, TranslateResponse } from "@ccmsg/protocol";
+import { withoutAttachmentLinks } from "./attachment-path.ts";
 import { setBounded } from "./bounded-map.ts";
 
 // TL 本文 (thinking ブロック / assistant 応答) の原文 -> 日本語訳を提供する
@@ -65,6 +66,10 @@ const MIN_JUDGED_PARAGRAPH_CHARS = 20;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 /** インラインコード (同じ数のバッククォートで閉じる span)。 */
 const INLINE_CODE_RE = /(`+)[^`]*?\1/g;
+/** 空白を含まない token のうち、`/` を 2 つ以上含むもの (パス) と `://` を
+ * 含むもの (URL)。backtick で囲まれていないパスや URL は英数字が多く、日本語の
+ * 本文でも比率を英語側へ倒すので判定から外す。 */
+const PATH_OR_URL_TOKEN_RE = /[^\s]*(?::\/\/|\/[^\s]*\/)[^\s]*/g;
 
 /** fenced code block の行 (開き・閉じの行を含む) を空行に置き換える。閉じの
  * 無い fence は本文の終わりまでをコードとみなす (markdown の解釈と同じ)。 */
@@ -90,15 +95,18 @@ function withoutFencedCode(text: string): string {
 /** 本文に英語の段落が 1 つでもあるか (DR-0049 §8: 既定のタブを ja(plamo)
  * にするか)。
  *
- * コード (fenced / インライン) を除いた本文を空行で段落に分け、20 文字以上
- * ある段落のうち、日本語文字 (ひらがな / カタカナ / 漢字) の比率が 2 割未満の
+ * コード (fenced / インライン)・添付のリンク・パスと URL の token を除いた
+ * 本文を空行で段落に分け、20 文字以上ある段落のうち、日本語文字 (ひらがな / カタカナ / 漢字) の比率が 2 割未満の
  * ものが 1 つでもあれば true。文字数と比率の分母は「日本語文字 + 英数字」で、
  * 記号・空白は数えない (shouldSkipParagraph と同じ数え方)。 */
 export function hasEnglishParagraph(text: string): boolean {
   return withoutFencedCode(text)
     .split("\n\n")
     .some((paragraph) => {
-      const prose = paragraph.replace(INLINE_CODE_RE, "");
+      const prose = withoutAttachmentLinks(paragraph.replace(INLINE_CODE_RE, "")).replace(
+        PATH_OR_URL_TOKEN_RE,
+        "",
+      );
       const japanese = prose.match(JAPANESE_CHAR_RE)?.length ?? 0;
       const latin = prose.match(LATIN_ALNUM_RE)?.length ?? 0;
       const count = japanese + latin;

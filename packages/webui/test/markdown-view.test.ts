@@ -23,7 +23,6 @@ import type {
   Table,
 } from "mdast";
 import {
-  attachmentUrlFromPath,
   collectMarkdownSectionKeys,
   extractMarkdownHeadings,
   foldMarkdownSections,
@@ -35,6 +34,7 @@ import {
   renderPlainTextWithLinks,
   renderRestrictedMarkdown,
 } from "../src/client/markdown-view.tsx";
+import { attachmentUrlFromPath } from "../src/client/attachment-path.ts";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
 import { CodeCopyFrame } from "../src/client/components/CodeCopyFrame.tsx";
 import { parseSearchQuery, type SearchWord } from "../src/client/in-view-search.ts";

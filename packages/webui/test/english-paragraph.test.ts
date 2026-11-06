@@ -52,4 +52,28 @@ describe("hasEnglishParagraph", () => {
   test("an unterminated fence runs to the end of the body", () => {
     expect(hasEnglishParagraph(`日本語の段落。\n\n\`\`\`\n${ENGLISH}\n\n${ENGLISH}`)).toBe(false);
   });
+
+  // webui の Composer が本文に入れる添付のリンク (DR-0015 §2.4) は、名前も
+  // パスも英数字が多いが人の書いた文ではない。
+  test("a paragraph that is only an attachment link is not judged", () => {
+    const attachment =
+      "[FILE1:Screenshot 2026-11-06 at 10.15.42.png](/var/folders/ab/cdefgh0123456789/T/claude-ccmsg-501/attachment/0f4c2a8e-6b1d-4a57-9d2e-3c8b7e1f9a20.png)";
+    expect(hasEnglishParagraph(`この画面を見て直して。\n\n${attachment}`)).toBe(false);
+  });
+
+  test("Japanese with many bare absolute paths stays original", () => {
+    expect(
+      hasEnglishParagraph(
+        "/Users/someone/repos/example/main/packages/webui/src/client/translate.ts と /Users/someone/repos/example/main/docs/decisions/DR-0049-translation-tab.md と ~/repos/example/main/test/english-paragraph.test.ts を読んで、判定を直す。",
+      ),
+    ).toBe(false);
+  });
+
+  test("English with paths is still English", () => {
+    expect(
+      hasEnglishParagraph(
+        "Read /Users/someone/repos/example/src/translate.ts and https://example.com/docs/plamo before changing the default tab rule.",
+      ),
+    ).toBe(true);
+  });
 });
