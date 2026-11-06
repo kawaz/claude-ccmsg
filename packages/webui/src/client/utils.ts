@@ -945,6 +945,32 @@ export function parseFavorites(raw: string | null): string[] {
   return [...(read?.ok ? read.value : v.getDefault(FavoritesSchema))];
 }
 
+/** localStorage key for what kind (dir / file) each favorite was when it was
+ * favorited, beside `favoritesStorageKey`'s list of paths. The list stays a
+ * plain list of paths; this map is optional knowledge about them, so a
+ * directory favorite sorts as a directory in the Files section without its
+ * parent being expanded. A path with no entry is read from the tree when the
+ * tree knows it and counts as a file otherwise. */
+export function favoriteKindsStorageKey(root: string): string {
+  return `ccmsg.favorite-kinds.${root}`;
+}
+
+export type FavoriteKind = "dir" | "file";
+
+const FavoriteKindsSchema = v.optional(
+  v.record(v.string(), v.picklist(["dir", "file"])),
+  () => ({}),
+);
+const FavoriteKindsTextSchema = jsonText(FavoriteKindsSchema);
+
+/** Reads a raw `localStorage.getItem(favoriteKindsStorageKey(...))` result
+ * into a path -> kind map; a value that does not read as one is ignored as a
+ * whole, like `parseFavorites`. */
+export function parseFavoriteKinds(raw: string | null): Map<string, FavoriteKind> {
+  const read = raw === null ? null : parseWith(FavoriteKindsTextSchema, raw);
+  return new Map(Object.entries(read?.ok ? read.value : v.getDefault(FavoriteKindsSchema)));
+}
+
 /** Toggles one path in a favorites list: removes it if already present,
  * appends it if absent. Pure (always returns a new array, never mutates
  * `favorites`) so a caller can feed the result straight into `useState`'s

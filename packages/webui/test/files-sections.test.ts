@@ -149,4 +149,41 @@ describe("groupByFolder", () => {
   test("prefix collision is not containment", () => {
     expect(groupByFolder(["/repo/library/x.md"], layout)[0]?.name).toBe(OTHERS_GROUP_NAME);
   });
+
+  // The tree lists directories before files at each level, then by name.
+  test("rows of one level are directories first, then files, as the tree lists them", () => {
+    const dirs = new Set(["main/docs/decisions", "main/docs/issue"]);
+    const labels = (
+      groupByFolder(
+        [
+          "/repo/main/docs/decisions",
+          "/repo/main/docs/DESIGN-ja.md",
+          "/repo/main/docs/issue",
+          "/repo/main/docs/QUESTIONS.md",
+          "/repo/main/docs/ROADMAP.md",
+          "/repo/main/docs/STRUCTURE.md",
+        ],
+        layout,
+        (key) => dirs.has(key),
+      )[0]?.rows ?? []
+    ).map((r) => r.label);
+    expect(labels).toEqual([
+      "docs/decisions",
+      "docs/issue",
+      "docs/DESIGN-ja.md",
+      "docs/QUESTIONS.md",
+      "docs/ROADMAP.md",
+      "docs/STRUCTURE.md",
+    ]);
+  });
+
+  test("paths of different depth follow the tree's depth-first order", () => {
+    const dirs = new Set(["main/a/d"]);
+    const labels = (
+      groupByFolder(["/repo/main/a.md", "/repo/main/a/d", "/repo/main/a/b/c.md"], layout, (key) =>
+        dirs.has(key),
+      )[0]?.rows ?? []
+    ).map((r) => r.label);
+    expect(labels).toEqual(["a/b/c.md", "a/d", "a.md"]);
+  });
 });

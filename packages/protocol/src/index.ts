@@ -7,6 +7,7 @@
 export { VERSION, PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
+export * from "./tree-order.ts";
 export * from "./module-op.ts";
 export * from "./config-migration.ts";
 export * from "./search-query.ts";

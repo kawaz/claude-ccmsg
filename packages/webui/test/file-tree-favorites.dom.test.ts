@@ -17,7 +17,11 @@ import { AppContext } from "../src/client/context.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { initialState, type SessionTreeState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
-import { favoritesStorageKey, parseFavorites } from "../src/client/utils.ts";
+import {
+  favoriteKindsStorageKey,
+  favoritesStorageKey,
+  parseFavorites,
+} from "../src/client/utils.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { FilesPanes } from "../src/client/components/FilesPanes.tsx";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
@@ -207,6 +211,13 @@ function workspaceRows(root: HTMLElement): string[] {
 }
 
 describe("FileTree sections", () => {
+  test("a favorited directory whose tree is folded sorts before files by its stored kind", async () => {
+    seed([`${CWD}/README.md`, `${CWD}/zdocs`]);
+    localStorage.setItem(favoriteKindsStorageKey(CWD), JSON.stringify({ [`${CWD}/zdocs`]: "dir" }));
+    const root = await mount(panes(filesStore(), PEER));
+    expect(favoritesSection(root)).toEqual(["zdocs", "README.md"]);
+  });
+
   test("one file favorited by its relative and its full path shows once", async () => {
     seed(["README.md", `${CWD}/README.md`]);
     const root = await mount(panes(filesStore(), PEER));

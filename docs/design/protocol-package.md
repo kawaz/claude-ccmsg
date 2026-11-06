@@ -87,6 +87,7 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 | `config-migration.ts` | data dir に残った設定ファイルを config dir へ移す起動時の処理 | CLI、daemon |
 | `search-query.ts` | transcript 検索窓のクエリ文法 | daemon、webui |
 | `file-search-query.ts` | Files ペインのパス検索 (`fs_find`) のクエリ文法。daemon の探索と client の照合が同じ解釈をするために共有する | daemon、webui |
+| `tree-order.ts` | `compareTreeOrder` (ファイルツリーの兄弟の並び: ディレクトリが先、次に名前の codepoint 順)。daemon の `fs_list` と webui の Files 区画が同じ関数で並べる | daemon、webui |
 | `ccmsg-address.ts` | 封筒の `from` が送り主を書く `ccmsg:` の接頭辞 (`DIRECT_ADDRESS_PREFIX`、[DR-0039](../decisions/DR-0039-all-mods-and-typed-tools.md) §3) と、session id の形 (`isSessionIdShape`) | CLI、daemon |
 | `ccmsg-direct-transcript.ts` | transcript に現れる ccmsg の直送 (配送された封筒、`send` の tool の呼び出し、agent の `ccmsg post` / `reply` / `notify` の Bash 呼び出しとその結果、PushNotification) の認識と、daemon が書く封筒の描画。書く形と読み戻す形を 1 か所で定義する | daemon、webui |
 

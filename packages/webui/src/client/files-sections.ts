@@ -9,7 +9,7 @@
 // the Files panes route by (`canonicalViewerPath`): containment-relative for
 // the session's own folder, absolute for any other workspace folder and for
 // files outside every folder the containment root holds.
-import type { WorkspaceFolder } from "@ccmsg/protocol";
+import { compareTreeOrder, type WorkspaceFolder } from "@ccmsg/protocol";
 import { normalizePosix, viewerPathForAbsolute } from "./filepath-ref.ts";
 import { treeRootPath } from "./utils.ts";
 
@@ -142,11 +142,38 @@ function folderOf(full: string, folders: readonly FilesFolder[]): FilesFolder | 
   return best;
 }
 
+/** Order two paths as the tree lists them: segment by segment from the
+ * parent, directories before files and then by name at each level
+ * (`compareTreeOrder`, the daemon's own listing order). Every segment but the
+ * last is a directory; `isDir` says whether the last one is. */
+export function comparePathsTreeOrder(
+  a: { path: string; isDir: boolean },
+  b: { path: string; isDir: boolean },
+): number {
+  const as = a.path.split("/");
+  const bs = b.path.split("/");
+  const shared = Math.min(as.length, bs.length);
+  for (let i = 0; i < shared; i++) {
+    const order = compareTreeOrder(
+      { name: as[i] ?? "", isDir: i < as.length - 1 || a.isDir },
+      { name: bs[i] ?? "", isDir: i < bs.length - 1 || b.isDir },
+    );
+    if (order !== 0) return order;
+  }
+  return as.length - bs.length;
+}
+
 /** Group full paths by the folder holding them — the deepest one when folders
  * nest. The cwd's group comes first, then the other folders in section order,
- * then `others`; a folder with no path in it gets no group. Rows sort by
- * label within a group. */
-export function groupByFolder(fulls: readonly string[], layout: FilesLayout): FilesGroup[] {
+ * then `others`; a folder with no path in it gets no group. Rows within a
+ * group are in tree order (`comparePathsTreeOrder` on their labels); `isDir`
+ * tells whether a row's tree key names a directory (unknown counts as a
+ * file). */
+export function groupByFolder(
+  fulls: readonly string[],
+  layout: FilesLayout,
+  isDir: (key: string) => boolean = () => false,
+): FilesGroup[] {
   const byFolder = new Map<FilesFolder, FilesGroupRow[]>();
   const others: FilesGroupRow[] = [];
   for (const full of fulls) {
@@ -165,7 +192,13 @@ export function groupByFolder(fulls: readonly string[], layout: FilesLayout): Fi
     rows.push({ full, key, label });
     byFolder.set(folder, rows);
   }
-  const sortRows = (rows: FilesGroupRow[]) => rows.sort((a, b) => a.label.localeCompare(b.label));
+  const sortRows = (rows: FilesGroupRow[]) =>
+    rows.sort((a, b) =>
+      comparePathsTreeOrder(
+        { path: a.label, isDir: isDir(a.key) },
+        { path: b.label, isDir: isDir(b.key) },
+      ),
+    );
   const ordered = [...layout.folders].sort((a, b) => Number(b.isCwd) - Number(a.isCwd));
   const groups: FilesGroup[] = [];
   for (const folder of ordered) {

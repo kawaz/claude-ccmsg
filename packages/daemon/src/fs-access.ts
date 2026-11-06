@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  compareTreeOrder,
   ErrorCode,
   FS_READ_MAX_BYTES,
   FS_STAT_BATCH_MAX_PATHS,
@@ -311,14 +312,12 @@ async function resolveContained(
 // --- fs_list ---------------------------------------------------------------
 
 function compareEntries(a: FsEntry, b: FsEntry): number {
-  // dirs first (DR-0008: fs_list ordering), then name ascending (plain
-  // codepoint order — deliberately not locale-aware, so results are
-  // identical across test/CI/user locales).
-  if (a.type === "dir" && b.type !== "dir") return -1;
-  if (a.type !== "dir" && b.type === "dir") return 1;
-  if (a.name < b.name) return -1;
-  if (a.name > b.name) return 1;
-  return 0;
+  // dirs first (DR-0008: fs_list ordering), then name ascending in codepoint
+  // order — the one order the webui's Files sections share.
+  return compareTreeOrder(
+    { name: a.name, isDir: a.type === "dir" },
+    { name: b.name, isDir: b.type === "dir" },
+  );
 }
 
 /** The shared body of both list ops: one `lstat` per name, in stable sort

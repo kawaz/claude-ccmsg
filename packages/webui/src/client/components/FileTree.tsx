@@ -20,8 +20,11 @@ import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
   expandPathsForSelection,
+  favoriteKindsStorageKey,
+  type FavoriteKind,
   favoritesStorageKey,
   isWorkspaceFilePath,
+  parseFavoriteKinds,
   parseFavorites,
   sortExternalFiles,
   toggleFavorite,
@@ -33,6 +36,7 @@ import {
   fullPathOf,
   groupByFolder,
 } from "../files-sections.ts";
+import { viewerPathForAbsolute } from "../filepath-ref.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 
 function joinPath(parent: string, name: string): string {
@@ -47,6 +51,14 @@ function joinPath(parent: string, name: string): string {
  * per DR-0005 §1. */
 function loadFavorites(root: string): string[] {
   return parseFavorites(readStorage(favoritesStorageKey(root)));
+}
+
+function loadFavoriteKinds(root: string): Map<string, FavoriteKind> {
+  return parseFavoriteKinds(readStorage(favoriteKindsStorageKey(root)));
+}
+
+function saveFavoriteKinds(root: string, kinds: ReadonlyMap<string, FavoriteKind>): void {
+  writeStorage(favoriteKindsStorageKey(root), JSON.stringify(Object.fromEntries(kinds)));
 }
 
 function saveFavorites(root: string, favorites: string[]): void {
@@ -679,12 +691,31 @@ export function FileTree({
   const favoriteFulls = favoriteFullPaths(favorites, layout.containmentRoot);
   const favoriteSet = new Set(favoriteFulls);
 
+  // What each favorite was when it was favorited (dir / file), by full path.
+  // The tree row being starred knows its type; a folded tree cannot say later.
+  // A favorite saved without one is read from the tree while the tree shows it
+  // as a directory; otherwise it counts as a file.
+  const [kinds, setKinds] = useState<Map<string, FavoriteKind>>(() =>
+    favRoot ? loadFavoriteKinds(favRoot) : new Map<string, FavoriteKind>(),
+  );
+  const kindOf = (full: string): FavoriteKind | undefined => {
+    const known = kinds.get(full);
+    if (known) return known;
+    const key = viewerPathForAbsolute(full, layout.containmentRoot);
+    return favoriteEntryKind(key, tree).kind === "dir" ? "dir" : undefined;
+  };
+
   const onToggleFavorite = (path: string) => {
     const full = fullPathOf(path, layout.containmentRoot);
     if (!favRoot || full === null) return;
     const next = toggleFavorite(favoriteFulls, full);
     setFavorites(next);
     saveFavorites(favRoot, next);
+    const nextKinds = new Map(kinds);
+    if (next.includes(full)) nextKinds.set(full, favoriteEntryKind(path, tree).kind);
+    else nextKinds.delete(full);
+    setKinds(nextKinds);
+    saveFavoriteKinds(favRoot, nextKinds);
   };
   const fav: FavContext | null = favRoot
     ? {
@@ -695,8 +726,12 @@ export function FileTree({
         onToggle: onToggleFavorite,
       }
     : null;
-  const favoriteGroups = groupByFolder(favoriteFulls, layout);
-  const externalGroups = groupByFolder(sortExternalFiles(externalFiles), layout);
+  const isDirKey = (key: string) => {
+    const full = fullPathOf(key, layout.containmentRoot);
+    return (full !== null && kindOf(full) === "dir") || favoriteEntryKind(key, tree).kind === "dir";
+  };
+  const favoriteGroups = groupByFolder(favoriteFulls, layout, isDirKey);
+  const externalGroups = groupByFolder(sortExternalFiles(externalFiles), layout, isDirKey);
 
   // New-file creation state (kawaz r46 mid=24): kept here so at most one
   // DirNode hosts the inline input at a time — sharing a single `activePath`
