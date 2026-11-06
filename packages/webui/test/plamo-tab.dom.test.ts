@@ -125,6 +125,42 @@ describe("ja(plamo) tab", () => {
     expect(body.textContent).toContain("訳:First paragraph.");
     expect(body.textContent).toContain("訳:Second paragraph.");
   });
+
+  // thinking の翻訳タブは他のバブルと同じく本文の足元の hover ツールバーにある。
+  test("the language tabs sit in the hover toolbar under the thinking body and switch it", async () => {
+    const { promise: posted, resolve: resolvePosted } = Promise.withResolvers<void>();
+    restoreFetch = stubGlobal("fetch", async () => {
+      resolvePosted();
+      return Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "訳:Footer paragraph." } }],
+      });
+    });
+    const root = await mountThinking("Footer paragraph.", {
+      host: false,
+      browser: false,
+      hostRequest: async () => unavailable,
+      plamoUrl: PLAMO_URL,
+    });
+    const body = defined(root.querySelector(".tl-thinking-body"), "the thinking body");
+    const footer = defined(body.lastElementChild, "the last child of the thinking body");
+    expect(footer.classList.contains("tl-bubble-footer")).toBe(true);
+    const toolbar = defined(footer.querySelector(".tl-msg-toolbar"), "the hover toolbar");
+    expect(body.querySelectorAll('[aria-label="本文の言語"]').length).toBe(1);
+    expect(body.textContent).toContain("Footer paragraph.");
+
+    const plamoTab = defined(
+      [...toolbar.querySelectorAll<HTMLButtonElement>(".tl-thinking-tab")].find(
+        (el) => el.textContent === "ja(plamo)",
+      ),
+      "the ja(plamo) tab in the toolbar",
+    );
+    await act(() => plamoTab.click());
+    await posted;
+    for (let i = 0; i < 3; i++) {
+      await act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+    }
+    expect(body.textContent).toContain("訳:Footer paragraph.");
+  });
 });
 
 describe("default tab", () => {

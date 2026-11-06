@@ -59,6 +59,7 @@ thinking / assistant 応答の翻訳比較タブ ([DR-0023](./DR-0023-daemon-loc
 ### 8. UI
 
 - 翻訳タブと既定のタブの判定を持つのは thinking / assistant 応答 / user の prompt (別セッションからのメッセージを含む) / 許可依頼 / エージェント間メッセージ (`<cross-session-message>` / `<teammate-message>` / `<agent-message>` の relay、SendMessage、spawn の prompt) のバブルで、どれも同じタブの並びと判定を使う。許可依頼で訳すのは止められた行動・intent・コマンドの説明で、コマンド本文・添付のパス・「許可する」が写す許可の文は原文のまま。エージェント間メッセージで訳すのは本文だけで、ヘッダ (名前、summary、channel のラベル) と idle 通知の行は原文のまま。既定の判定には訳す対象を全部つないだ本文を渡す
+- タブ列はどれも本文の足元の hover ツールバー (`tl-msg-toolbar`、通常は不可視で hover / focus で出る) に置く。thinking は fold の中の本文の枠の足元に、thinking ごとに 1 列持つ (thinking は応答とは別の行に書かれ、応答のバブルの中には来ない)。時刻は fold の summary 行が持つので、thinking の足元の行はツールバーだけ。fold が閉じている間は summary 行に翻訳の状態を出さない
 - タブ名 `ja(plamo)`。並びは `original / ja(plamo) / ja(browser) / ja(host)`。速くて品質の良い経路を先に、将来削る候補の host を末尾に置く
 - **既定のタブ** (thinking は fold を開いた時、応答・user・許可依頼・エージェント間メッセージのバブルは描画した時に、同じ判定で自動で選ぶもの): `ja(plamo)` が使えて本文に英語の段落が 1 つでもあれば `ja(plamo)`、それ以外は `original`。host / browser は比較のために選べるタブで、既定にはしない
   - 英語の段落の判定: 本文から fenced code block (閉じの無い fence は本文の終わりまで) とインラインコードを除き、空行で段落に分ける。20 文字以上ある段落のうち、日本語文字 (ひらがな / カタカナ / 漢字、browser / host の段落判定と同じ文字クラス) の比率が 2 割未満のものを英語の段落とする。文字数と比率の分母は「日本語文字 + 英数字」で、記号と空白は数えない。バブルの本文は中の text segment をつないだもの

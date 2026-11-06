@@ -6092,24 +6092,11 @@ a.md-prose-file-link {
   opacity: 0.75;
 }
 
-/* thinking 翻訳比較タブ (DR-0023)。 */
-.tl-thinking-toolbar {
-  display: flex;
-  align-items: center;
-  margin-bottom: var(--space-5);
-}
-
-.tl-thinking-toolbar > .tl-thinking-tabs {
-  margin-bottom: 0;
-}
-
-/* thinking / system-message / ccmsg の小さなタブ列。 */
+/* TL 内の小さなタブ列 (翻訳タブ、system-message / ccmsg の msg|raw 等)。
+ * 本文の上に置く時の下余白を持ち、足元の .tl-msg-toolbar の中では 0 にする。 */
 .tl-thinking-tabs {
   display: flex;
   gap: var(--space-4);
-  /* tl-thinking-body の中に置く (kawaz r17 mid=64、2026-07-15): 枠外に
-   * 出すとどの thinking セグメントに属するかが視覚的に切れるうえ、fold
-   * ガイドの縦線に乗ってしまう。body の上部に配置して 1 枠にまとめる。 */
   margin-bottom: var(--space-5);
 }
 

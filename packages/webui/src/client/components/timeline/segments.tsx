@@ -121,23 +121,6 @@ function ThinkingSegment({
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-thinking-body">
-          {hasTranslationTab ? (
-            <div class="tl-thinking-toolbar">
-              {/* Only the offered translators get a tab — each one is a
-               * separate capability of the host/browser (see
-               * translationAvailability), so an unavailable one has no view to
-               * show. 選択はタブ state を動かすだけで、その経路の翻訳は
-               * useTranslatedText が必要になった時に起動する。 */}
-              <Tabs
-                class="tl-thinking-tabs"
-                tabClass="tl-thinking-tab"
-                label="本文の言語"
-                selected={tab}
-                onSelect={selectTab}
-                items={translationTabItems(translationAvailability)}
-              />
-            </div>
-          ) : null}
           <LinkedMarkdownView
             source={bodyText}
             // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
@@ -149,6 +132,24 @@ function ThinkingSegment({
             onMatchClick={mdSearch?.onMatchClick}
           />
           {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+          {/* 翻訳タブは他のバブルと同じ足元の hover ツールバーに置く。時刻は
+           * fold の summary 行が持つので、足元の行はツールバーだけ。出すのは
+           * 使える経路のタブだけで (translationTabItems)、選択はタブ state を
+           * 動かすだけ — その経路の翻訳は useTranslatedText が起動する。 */}
+          {hasTranslationTab ? (
+            <div class="tl-bubble-footer">
+              <div class="tl-msg-toolbar">
+                <Tabs
+                  class="tl-thinking-tabs"
+                  tabClass="tl-thinking-tab"
+                  label="本文の言語"
+                  selected={tab}
+                  onSelect={selectTab}
+                  items={translationTabItems(translationAvailability)}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
     </details>

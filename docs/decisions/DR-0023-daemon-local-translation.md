@@ -25,7 +25,7 @@ thinking の英日翻訳は現在 Chrome built-in Translator API (browser ロー
 
 - **translate-helper CLI (Swift、リポにバンドル)**: stdin で text (jsonl バッチ)、stdout に翻訳結果。Translation.framework を直 link。ビルド済みバイナリを release に同梱するか、初回に daemon が `swiftc` でビルド (Xcode CLT 必須) — 配布方式は PoC 後に決定
 - **daemon**: 新 op `translate` (text[] → text[])。helper を**常駐子プロセス** (stdin/stdout jsonl ループ) で保持 — PoC 実測でプロセス起動 + prepare が ~1.4s/件と重く、都度起動は不成立。常駐なら prepare 済みセッション再利用で操作あたり数百 ms 級を見込む (Phase 1 で実測)。macOS 以外 / helper 不在ではエラー (webui はタブ非表示にフォールバック)
-- **webui**: 排他フォールバックではなく**翻訳比較タブ** (kawaz)。thinking のタブ列を `original / ja(plamo) / ja(browser) / ja(host)` とし、利用可能な翻訳経路を全部並べる:
+- **webui**: 排他フォールバックではなく**翻訳比較タブ** (kawaz)。thinking のタブ列を `original / ja(plamo) / ja(browser) / ja(host)` とし、利用可能な翻訳経路を全部並べる。タブ列は thinking の fold の本文の足元にある hover ツールバーに置く (他のバブルの翻訳タブと同じ置き場、[DR-0049](./DR-0049-webui-plamo-translation-tab.md) §8):
   - ja(plamo) = ブラウザが PLaMo 翻訳サーバへ直接段落を送る経路 ([DR-0049](./DR-0049-webui-plamo-translation-tab.md))
   - ja(browser) = Chrome built-in Translator API (AI 翻訳、勝手意訳の実績あり — kawaz: 「禿げてるね → そんな、かっこいいですよ！」級のクソ翻訳が起きる)
   - ja(host) = daemon translate op (macOS Translation.framework、辞書的で信頼度高め)
