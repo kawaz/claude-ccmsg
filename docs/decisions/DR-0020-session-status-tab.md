@@ -106,3 +106,12 @@ Timeline の 🤖 バブル (SendMessage / spawn / relay) は名前の右に、�
 transcript は末尾 128 KiB だけを読み、その中で最後の assistant 行を探す。見つからなければ両方とも無し (全文は読まない。agent の数だけ毎 snapshot 読むので読む量に上限を置く)。読んだ結果は transcript の mtime / size で memo する。
 
 webui は agent tree を走査して 名前 → 表示の綴りを作る。model は `running_model`、無ければ meta.json の `model`、どちらも無ければ spawn の Agent call が渡した `model`。effort は `running_model` と同じ行の値なので、`running_model` がある時だけ付ける。綴りは ctx 行と同じ `shortModel`。同じ名前の agent が複数いれば `last_activity_ms` の新しい方。
+
+## Addendum 2026-11-06: agent tree パネルの行 (kawaz)
+
+TL 横の agent tree パネルの Teammates / Agents は、state ごとの区画 (`spawned (2)` / `idle (18)` など) に分けて並べる。
+
+- 行は `● 名前 (model/effort) 経過時間`。`(model/effort)` は 🤖 バブルと同じ綴りで、同じ関数 (`agentEngineLabel`) が作る。effort が無ければ model だけを括弧に入れる
+- 行末に状態語は出さない。区画名が状態を示す。代わりに最終活動 (`last_activity_ms`) からの経過時間を `3m10s` の形 (`formatDuration`) で薄い色で出す。`last_activity_ms` が無い行は何も出さない。経過時間は応答中の経過時間と同じ 1 秒の tick で、パネルが 1 本だけ張って配る
+- 区画の既定は、生きている系 (active / running / progress / spawned / idle) が開、完了系が畳み。idle は使っていないだけで生きている teammate なので開く
+- Workflows の member 行は区画を持たないので、drilldown の state (done / running / error など) を行末に出す

@@ -4,8 +4,8 @@
 //
 // - グループヘッダは "Teammates (N live / M)" 形式。空グループはヘッダごと非表示。
 // - Teammates / Agents グループ内は、ノードを state 単位のサブグループに
-//   分け、それぞれ折りたたみ可能に。default 開閉は「動いている系
-//   (active/running/progress/spawned) = 開、idle = 閉、完了系 (stopped/
+//   分け、それぞれ折りたたみ可能に。default 開閉は「生きている系
+//   (active/running/progress/spawned/idle) = 開、完了系 (stopped/
 //   completed/done/killed/failed/unknown) = 閉」。数十体ぶら下がって縦に
 //   伸びるのを畳むための r46 m17 対応。
 // - Workflows は run 単位でネスト。run ヘッダに done/total、run の下に
@@ -26,7 +26,10 @@ import type {
 import { createContext } from "preact";
 import { useContext, useState } from "preact/hooks";
 import { timelineHref, type AgentRef } from "../locator.ts";
+import { useSecondTick } from "../useSecondTick.ts";
+import { formatDuration } from "../utils.ts";
 import {
+  agentEngineLabel,
   agentNodeHref,
   countPhaseErrors,
   countRunErrors,
@@ -34,11 +37,11 @@ import {
   dotProps,
   isRunLive,
   runDotProps,
+  spawnModelLabel,
   type NodeStateResolver,
 } from "./agent-tree-view.ts";
 import {
   buildWorkflowDrilldown,
-  canonicalModelId,
   dedupeWorkflowRunsByRunId,
   type WorkflowDrilldownAgentView,
 } from "../session-status-view.ts";
@@ -95,12 +98,22 @@ const STATE_ORDER = [
   "unknown",
 ];
 
-// default 展開する state (動いている系のみ)。kawaz r46 m17 の指示に基づき、
-// idle と 完了系はデフォルト畳む。
-const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "spawned"]);
+// default 展開する state (生きている系)。idle は使っていないだけで生きている
+// agent なので開く (kawaz 2026-11-06)。完了系は畳む (r46 m17)。
+const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "spawned", "idle"]);
 
 function displayLabel(node: AgentTreeNode): string {
   return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;
+}
+
+/** 行末の最終活動からの経過時間の基準時刻。行ごとに interval を張らず、
+ * パネルが 1 本の秒 tick (応答中の経過時間と同じ更新間隔) を配る。 */
+const NowContext = createContext<number>(0);
+
+function LastActivity({ atMs }: { atMs: number | undefined }) {
+  const now = useContext(NowContext);
+  if (atMs === undefined) return null;
+  return <span class="agent-tree-elapsed">{formatDuration(now - atMs)}</span>;
 }
 
 /** kawaz r46 mid=29: 選択中の agent TL をツリー上で識別するための現在地。
@@ -135,12 +148,16 @@ function AgentTreeNodeRow({
   // teammate/agent 側 node には tokens 情報が無いので drillLookup を引かない
   // (agentId 衝突は理論上無いが、責務境界を UI 側にも残す)。
   const drill = workflowId ? drillLookup?.get(node.agent_id) : undefined;
-  const modelRaw = node.model ?? drill?.model;
-  const modelDisplay = modelRaw ? canonicalModelId(modelRaw) : null;
+  // Timeline の 🤖 バブルと同じ `(model/effort)` の綴り。workflow member で
+  // node から取れない時だけ drilldown の model を使う (effort は無い)。
+  const modelDisplay =
+    agentEngineLabel(node) ?? (drill?.model ? spawnModelLabel(drill.model) : undefined);
   const tokensLabel = formatTokens(drill?.tokens);
-  // state 注記: workflow member は drill.state (done / running / error /
-  // progress / pending) を優先。それ以外は node.state (fold 由来)。
-  const stateNote = drill?.state ?? node.state;
+  // state 注記は workflow member の drill.state (done / running / error /
+  // progress / pending) だけ。teammate / agent の行は state 別の区画名が状態を
+  // 示すので出さず、代わりに最終活動からの経過時間を出す。
+  const stateNote = drill?.state;
+  const dotState = stateNote ?? node.state;
   const current = isCurrentAgent(useContext(CurrentAgentContext), node);
   return (
     <li class="agent-tree-node" data-workflow-id={workflowId}>
@@ -161,7 +178,7 @@ function AgentTreeNodeRow({
         ) : (
           <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
         )}
-        <span {...dotProps(stateNote || node.state)} aria-hidden="true">
+        <span {...dotProps(dotState)} aria-hidden="true">
           ●
         </span>
         <a class="agent-tree-label" href={href} title={label}>
@@ -170,6 +187,7 @@ function AgentTreeNodeRow({
         {modelDisplay ? <span class="agent-tree-model">{modelDisplay}</span> : null}
         {tokensLabel ? <span class="agent-tree-tokens">{tokensLabel} tok</span> : null}
         {stateNote ? <span class="agent-tree-state-note">{stateNote}</span> : null}
+        {workflowId ? null : <LastActivity atMs={node.last_activity_ms} />}
       </div>
       {hasChildren && open ? (
         <ul class="agent-tree-children">
@@ -534,33 +552,40 @@ export function AgentTreePanel({
   currentAgent?: AgentRef | null;
 }) {
   const drillLookup = buildAgentDrillLookup(workflows);
+  const now = useSecondTick();
   const onMain = !currentAgent;
   return (
     <CurrentAgentContext.Provider value={currentAgent ?? null}>
-      <div class="agent-tree-panel">
-        {/* kawaz r76 m59: ツリーはセッションが生やした agent しか並べておらず、
-         * agent TL からセッション自身の TL へ戻る導線がツリー側に無かった。
-         * 先頭にセッション自身の行を置き、他の行と同じ選択ハイライト規則
-         * (agent 未選択 = ここが current) で現在地も示す。 */}
-        <ul class="agent-tree-root agent-tree-self">
-          <li class="agent-tree-node">
-            <div
-              class={"agent-tree-row" + (onMain ? " agent-tree-row-current" : "")}
-              aria-current={onMain ? "true" : undefined}
-            >
-              {/* kawaz r99m36: main はグループ見出しと同レベルの単独行なので
-               * caret/dot のスペーサを置かず左端に揃える (agent 行との整列
-               * ではなく見出しとの整列が正)。 */}
-              <a class="agent-tree-label" href={timelineHref(sid)} title="このセッション自身の TL">
-                main
-              </a>
-            </div>
-          </li>
-        </ul>
-        <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
-        <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
-        <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
-      </div>
+      <NowContext.Provider value={now}>
+        <div class="agent-tree-panel">
+          {/* kawaz r76 m59: ツリーはセッションが生やした agent しか並べておらず、
+           * agent TL からセッション自身の TL へ戻る導線がツリー側に無かった。
+           * 先頭にセッション自身の行を置き、他の行と同じ選択ハイライト規則
+           * (agent 未選択 = ここが current) で現在地も示す。 */}
+          <ul class="agent-tree-root agent-tree-self">
+            <li class="agent-tree-node">
+              <div
+                class={"agent-tree-row" + (onMain ? " agent-tree-row-current" : "")}
+                aria-current={onMain ? "true" : undefined}
+              >
+                {/* kawaz r99m36: main はグループ見出しと同レベルの単独行なので
+                 * caret/dot のスペーサを置かず左端に揃える (agent 行との整列
+                 * ではなく見出しとの整列が正)。 */}
+                <a
+                  class="agent-tree-label"
+                  href={timelineHref(sid)}
+                  title="このセッション自身の TL"
+                >
+                  main
+                </a>
+              </div>
+            </li>
+          </ul>
+          <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
+          <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
+          <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
+        </div>
+      </NowContext.Provider>
     </CurrentAgentContext.Provider>
   );
 }

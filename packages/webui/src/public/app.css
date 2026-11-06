@@ -8390,13 +8390,15 @@ a.tl-attachment-file-path {
  * (ツリーは横スクロールで全文が見える、r46 mid=18 方針)。 */
 .agent-tree-model,
 .agent-tree-tokens,
+.agent-tree-elapsed,
 .agent-tree-state-note {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   flex: 0 0 auto;
   white-space: nowrap;
 }
-.agent-tree-tokens {
+.agent-tree-tokens,
+.agent-tree-elapsed {
   font-variant-numeric: tabular-nums;
 }
 
