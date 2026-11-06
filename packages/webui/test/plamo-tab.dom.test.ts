@@ -10,6 +10,7 @@ import type { ErrorResponse, PermitRequestRecord } from "@ccmsg/protocol";
 import { SegmentView } from "../src/client/components/timeline/segments.tsx";
 import { AssistantBubble, UserPromptBubble } from "../src/client/components/timeline/bubbles.tsx";
 import { PermitRequestBubble } from "../src/client/components/timeline/PermitRequestBubble.tsx";
+import { SystemMessageFold } from "../src/client/components/timeline/system-messages.tsx";
 import { AppContext } from "../src/client/context.ts";
 import { FakeTranscriptWs, SID, timelineStore } from "./timeline-harness.ts";
 import type { Segment } from "../src/client/transcript-model.ts";
@@ -350,5 +351,46 @@ describe("default tab", () => {
       }),
     );
     expect(languageTab(root)).toBe("original");
+  });
+
+  // エージェント間メッセージ (teammate / cross-session の relay、SendMessage、
+  // spawn) のバブルも同じ判定。訳すのは本文だけで、ヘッダの名前と summary は
+  // 原文のまま。
+  async function relayBubble(body: string): Promise<HTMLElement> {
+    return mountInApp(
+      h(SystemMessageFold, {
+        kind: "peer-message",
+        line: {
+          kind: "turn",
+          ts: null,
+          role: "user",
+          segments: [
+            {
+              kind: "text",
+              role: "user",
+              text: `<teammate-message teammate_id="worker" summary="status report">${body}</teammate-message>`,
+            },
+          ],
+        },
+        translationAvailability: withPlamo,
+        foldGroupOpen: true,
+      }),
+    );
+  }
+
+  test("an English agent relay opens on ja(plamo) and shows the translation", async () => {
+    const root = await relayBubble(ENGLISH);
+    expect(languageTab(root)).toBe("ja(plamo)");
+    const card = defined(root.querySelector(".tl-bubble-agent"), "the agent bubble");
+    expect(card.querySelector(".tl-agent-md")?.textContent).toContain("訳");
+    expect(card.textContent).not.toContain(ENGLISH);
+    expect(card.querySelector(".tl-agent-title")?.textContent).toBe("status report");
+    expect(card.querySelector(".tl-agent-identity")?.textContent).toContain("worker");
+  });
+
+  test("a Japanese agent relay stays on original", async () => {
+    const root = await relayBubble(JAPANESE.join("\n\n"));
+    expect(languageTab(root)).toBe("original");
+    expect(root.querySelector(".tl-agent-md")?.textContent).toContain("まずファイルを読む。");
   });
 });

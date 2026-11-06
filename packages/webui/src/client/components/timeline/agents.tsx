@@ -1,5 +1,5 @@
 // agent (subagent / teammate) の起動・送信の fold とカード。
-import { useContext } from "preact/hooks";
+import { useContext, useRef } from "preact/hooks";
 import { Avatar, hueForSeed } from "../../avatar.tsx";
 import { type Segment } from "../../transcript-model.ts";
 import { LinkedMarkdownView } from "../../filepath-linker.tsx";
@@ -10,6 +10,14 @@ import {
   useCategoryOpen,
 } from "./context.ts";
 import { FoldGuide, FoldSummary } from "./folds.tsx";
+import { Tabs } from "../Tabs.tsx";
+import {
+  type TranslationAvailability,
+  hasTranslationTabs,
+  translationTabItems,
+  useBubbleTranslationTab,
+  useTranslatedText,
+} from "./translation.ts";
 
 // エージェント識別子 (avatar + 名前)。`linkify=true` の時だけ名前クリックで
 // TL 遷移リンクを描く (kawaz r46m15 の「名前クリックで良いんじゃない?」の
@@ -53,6 +61,7 @@ export function AgentCard({
   body,
   model,
   channelLabel,
+  translationAvailability,
 }: {
   name: string;
   direction: "inbound" | "outbound";
@@ -68,6 +77,7 @@ export function AgentCard({
   // メッセージタイプのやつも」)。SendMessage / peer-message はモデル情報を
   // 持たないので undefined。
   model?: string;
+  translationAvailability: TranslationAvailability;
 }) {
   const marker = agentDirectionMarker(direction);
   // AgentCard の展開表示は CcmsgBubble (別セッション間 msg) と同じ rich
@@ -86,10 +96,20 @@ export function AgentCard({
   // (filePathCtx はセッション owner の SessionFilePathCtxContext を使う)。
   const filePathCtx = useContext(SessionFilePathCtxContext);
   const hue = hueForSeed(`agent:${name}`);
+  // 翻訳タブと既定の判定は応答のバブルと同じ (DR-0049 §8)。訳すのは本文
+  // だけで、ヘッダ (名前、summary、channel ラベル) は原文のまま。
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const { tab, selectTab } = useBubbleTranslationTab({
+    text: body,
+    availability: translationAvailability,
+    elementRef: bubbleRef,
+  });
+  const { bodyText, translatingLabel } = useTranslatedText(body, translationAvailability, tab);
   return (
     <div
       class={`tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-agent tl-bubble-agent-${direction}`}
       style={{ "--member-hue": String(hue) }}
+      ref={bubbleRef}
     >
       <div class="tl-bubble-body">
         <div class="tl-bubble-from tl-agent-card-head">
@@ -107,10 +127,26 @@ export function AgentCard({
         {title ? <div class="tl-agent-title">{title}</div> : null}
         {body ? (
           <div class="tl-agent-md">
-            <LinkedMarkdownView source={body} ctx={filePathCtx} />
+            <LinkedMarkdownView source={bodyText} ctx={filePathCtx} />
+            {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
           </div>
         ) : null}
       </div>
+      {/* 時刻はヘッダ側の fold 行が持つので、足元の行はツールバーだけ。 */}
+      {body && hasTranslationTabs(translationAvailability) ? (
+        <div class="tl-bubble-footer">
+          <div class="tl-msg-toolbar">
+            <Tabs
+              class="tl-thinking-tabs"
+              tabClass="tl-thinking-tab"
+              label="本文の言語"
+              selected={tab}
+              onSelect={selectTab}
+              items={translationTabItems(translationAvailability)}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -118,9 +154,11 @@ export function AgentCard({
 export function AgentSendFold({
   segment,
   ts,
+  translationAvailability,
 }: {
   segment: Extract<Segment, { kind: "agent-send" }>;
   ts: string | null;
+  translationAvailability: TranslationAvailability;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
   const label = `SendMessage → ${segment.to}`;
@@ -148,6 +186,7 @@ export function AgentSendFold({
           direction="outbound"
           title={segment.summary}
           body={segment.message}
+          translationAvailability={translationAvailability}
         />
       </div>
     </details>
@@ -163,9 +202,11 @@ export function AgentSendFold({
 export function AgentSpawnFold({
   segment,
   ts,
+  translationAvailability,
 }: {
   segment: Extract<Segment, { kind: "agent-spawn" }>;
   ts: string | null;
+  translationAvailability: TranslationAvailability;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
   const typeMeta = `${segment.agentType || "agent"}${segment.background ? " · background" : ""}`;
@@ -195,6 +236,7 @@ export function AgentSpawnFold({
           model={segment.model || undefined}
           title={combinedTitle}
           body={segment.prompt}
+          translationAvailability={translationAvailability}
         />
       </div>
     </details>

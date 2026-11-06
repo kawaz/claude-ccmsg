@@ -55,7 +55,13 @@ function IdlePeerRow({ peer, ts }: { peer: PeerMessageRich; ts: string | null })
   );
 }
 
-function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
+function SystemMessageRichView({
+  rich,
+  translationAvailability,
+}: {
+  rich: SystemMessageRich;
+  translationAvailability: TranslationAvailability;
+}) {
   switch (rich.display) {
     case "fields":
       return (
@@ -109,6 +115,7 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
                 title={relay.summary}
                 body={relay.body}
                 channelLabel={peerChannelLabel(relay.channel)}
+                translationAvailability={translationAvailability}
               />
             ),
           )}
@@ -167,7 +174,7 @@ function SystemMessageBody({
         ]}
       />
       {tab === "rich" ? (
-        <SystemMessageRichView rich={rich} />
+        <SystemMessageRichView rich={rich} translationAvailability={translationAvailability} />
       ) : (
         <div class="tl-fold-body tl-segments">
           {line.segments.length === 0 ? (

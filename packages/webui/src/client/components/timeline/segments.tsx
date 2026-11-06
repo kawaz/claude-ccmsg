@@ -336,9 +336,21 @@ export function SegmentView({
       case "bash-result":
         return segment.background ? <BashResultFold segment={segment} ts={ts} /> : null;
       case "agent-send":
-        return <AgentSendFold segment={segment} ts={ts} />;
+        return (
+          <AgentSendFold
+            segment={segment}
+            ts={ts}
+            translationAvailability={translationAvailability}
+          />
+        );
       case "agent-spawn":
-        return <AgentSpawnFold segment={segment} ts={ts} />;
+        return (
+          <AgentSpawnFold
+            segment={segment}
+            ts={ts}
+            translationAvailability={translationAvailability}
+          />
+        );
       case "tool-result":
         return (
           <details class="tl-fold">
