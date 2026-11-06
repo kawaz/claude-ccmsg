@@ -11,7 +11,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
-import { SessionInputComposer } from "../src/client/components/SessionInputComposer.tsx";
+import {
+  type ComposerOpenRequest,
+  SessionInputComposer,
+} from "../src/client/components/SessionInputComposer.tsx";
 import {
   draftKey,
   loadDraft,
@@ -450,8 +453,8 @@ describe("SessionInputComposer textarea top grip", () => {
 });
 
 // DR-0040 §7: 許可する on a permit bubble opens this composer through
-// SessionView's count (OpenComposerContext). Each new count opens it as the FAB
-// does, focus included; a re-render with the same count does not.
+// SessionView's request (OpenComposerContext). Each new seq opens it as the FAB
+// does, focus included; a re-render with the same seq does not.
 describe("SessionInputComposer opened from outside", () => {
   test("a new open request opens the panel with the textarea focused, once per request", async () => {
     const store = createStore(initialState());
@@ -460,7 +463,7 @@ describe("SessionInputComposer opened from outside", () => {
     function Host() {
       const [requests, setRequests] = useState(0);
       ask = () => setRequests((n) => n + 1);
-      return h(SessionInputComposer, { sid: SID, openRequest: requests });
+      return h(SessionInputComposer, { sid: SID, openRequest: { seq: requests } });
     }
     const root = await mounted.mount(store, ws, h(Host, null));
     expect(root.querySelector(".session-input-fab")).not.toBeNull();
@@ -482,6 +485,41 @@ describe("SessionInputComposer opened from outside", () => {
     expect(root.querySelector(".session-input-textarea")).toBeNull();
     await act(() => ask());
     expect(document.activeElement).toBe(textarea(root));
+  });
+
+  /** The composer under a host whose `ask(fill)` makes one open request with
+   * `fill` (what SessionView does for OpenComposerContext). */
+  async function mountAskedWithFill(): Promise<{
+    root: HTMLElement;
+    ask: (fill: string) => Promise<void>;
+  }> {
+    const store = createStore(initialState());
+    const ws = createWsClient((action) => store.dispatch(action));
+    let request = (_fill: string): void => {};
+    function Host() {
+      const [state, setState] = useState<ComposerOpenRequest>({ seq: 0 });
+      request = (fill) => setState((prev) => ({ seq: prev.seq + 1, fill }));
+      return h(SessionInputComposer, { sid: SID, openRequest: state });
+    }
+    const root = await mounted.mount(store, ws, h(Host, null));
+    return { root, ask: (fill) => act(() => request(fill)) };
+  }
+
+  test("an open request puts its text into an empty textarea and saves it as the draft", async () => {
+    const { root, ask } = await mountAskedWithFill();
+    await ask("以下の操作を許可します。");
+    expect(document.activeElement).toBe(textarea(root));
+    expect(textarea(root).value).toBe("以下の操作を許可します。");
+    expect(loadDraft(SID)?.text).toBe("以下の操作を許可します。");
+  });
+
+  test("an open request leaves a textarea with something in it as it is", async () => {
+    saveDraft(SID, "書きかけの文");
+    const { root, ask } = await mountAskedWithFill();
+    await ask("以下の操作を許可します。");
+    expect(document.activeElement).toBe(textarea(root));
+    expect(textarea(root).value).toBe("書きかけの文");
+    expect(loadDraft(SID)?.text).toBe("書きかけの文");
   });
 });
 

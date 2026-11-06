@@ -85,20 +85,27 @@ import {
 } from "../request-override-view.ts";
 import { shortModel } from "../session-status-view.ts";
 
-/** Asks the composer of the session on screen to open (DR-0040 §7: pressing
- * 許可する copies the grant text and opens the box to paste it into).
+/** Asks the composer of the session on screen to open, putting `fill` into
+ * the textarea when it is empty (DR-0040 §7: pressing 許可する copies the
+ * grant text, opens the box and fills an empty one with the same text).
  * SessionView supplies it to what it renders; outside a SessionView (no
  * composer to open) it is null. */
-export const OpenComposerContext = createContext<(() => void) | null>(null);
+export const OpenComposerContext = createContext<((fill: string) => void) | null>(null);
+
+/** One ask from outside for this composer to open (OpenComposerContext).
+ * Each new `seq` opens it, as the FAB does; `fill` goes into the textarea
+ * when it is empty. */
+export type ComposerOpenRequest = { readonly seq: number; readonly fill?: string };
+
+const NO_OPEN_REQUEST: ComposerOpenRequest = { seq: 0 };
 
 export function SessionInputComposer({
   sid,
-  openRequest = 0,
+  openRequest = NO_OPEN_REQUEST,
 }: {
   sid: string;
-  /** Counts the times something asked this composer to open
-   * (OpenComposerContext): each new count opens it, as the FAB does. */
-  openRequest?: number;
+  /** The latest ask from outside to open (OpenComposerContext). */
+  openRequest?: ComposerOpenRequest;
 }) {
   const { ws, store } = useApp();
   // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
@@ -136,15 +143,30 @@ export function SessionInputComposer({
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
   const { open, openPanel, closePanel, panelRef } = useFabPopup(sending);
-  // An open asked for from outside: opened while rendering with the new count
+  // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
   // after it, so the open-time focus below runs in the same commit as for the
-  // FAB.
-  const [handledOpenRequest, setHandledOpenRequest] = useState(openRequest);
-  if (openRequest !== handledOpenRequest) {
+  // FAB. The handled request keeps its fill until the Effect below has put it
+  // in; the request held at mount carries none, so a remount does not fill
+  // again.
+  const [handledOpenRequest, setHandledOpenRequest] = useState<ComposerOpenRequest>(() => ({
+    seq: openRequest.seq,
+  }));
+  if (openRequest.seq !== handledOpenRequest.seq) {
     setHandledOpenRequest(openRequest);
     openPanel();
   }
+  // The fill is an edit (saved as the draft), so it runs in an Effect rather
+  // than while rendering. Empty is what the FAB counts as no draft: nothing
+  // but whitespace.
+  useEffect(() => {
+    const { seq, fill } = handledOpenRequest;
+    if (fill === undefined) return;
+    setHandledOpenRequest({ seq });
+    const current = contentRef.current;
+    if (current.text.trim().length > 0) return;
+    edit({ text: fill, attachments: current.attachments });
+  }, [handledOpenRequest, edit]);
   // FAB とパネルは個別に D&D 移動できる。位置は永続化しない (component state
   // のみ)。useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();

@@ -32,7 +32,11 @@ import { useEffectEvent } from "../useEffectEvent.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { StatusPanel, useSessionRestart } from "./StatusPanel.tsx";
-import { OpenComposerContext, SessionInputComposer } from "./SessionInputComposer.tsx";
+import {
+  type ComposerOpenRequest,
+  OpenComposerContext,
+  SessionInputComposer,
+} from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
@@ -249,10 +253,16 @@ export function SessionView({
   // gone and the resumed one has not come back.
   const restart = useSessionRestart(sid, (target, prompt) => ws.sessionRestart(target, prompt));
   // The composer's open is its own state; what in the Timeline asks for it
-  // (許可する on a permit bubble, DR-0040 §7) reaches it through this count.
-  // The callback keeps one identity so the context does not change per render.
-  const [composerOpenRequest, setComposerOpenRequest] = useState(0);
-  const openComposer = useCallback(() => setComposerOpenRequest((n) => n + 1), []);
+  // (許可する on a permit bubble, DR-0040 §7) reaches it through this request,
+  // with the text to put into an empty textarea. The callback keeps one
+  // identity so the context does not change per render.
+  const [composerOpenRequest, setComposerOpenRequest] = useState<ComposerOpenRequest>({
+    seq: 0,
+  });
+  const openComposer = useCallback(
+    (fill: string) => setComposerOpenRequest((prev) => ({ seq: prev.seq + 1, fill })),
+    [],
+  );
   useEffect(() => {
     if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (slice.connStatus !== "connected") return;

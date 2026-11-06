@@ -3,7 +3,7 @@
 // が、止められた行動・読むファイル・許可してほしいことを並べて人に見せ、
 // 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。添付の中身は
 // 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
-// 送る。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
+// 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。
 import type { TargetedEvent } from "preact";
 import { useContext, useState } from "preact/hooks";
@@ -135,15 +135,17 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
       <button
         type="button"
         class={copied ? "permit-grant copied" : "permit-grant"}
-        title="許可の文をコピーして、このセッションの入力欄を開く (貼って送る)"
+        title="許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
         onClick={() => {
-          void copy(permitGrantText(request)).then((ok) => {
+          const grant = permitGrantText(request);
+          void copy(grant).then((ok) => {
             setFailed(!ok);
             if (!ok) return;
             markRead();
             // The text is on the clipboard: open this session's input box to
-            // paste it into. Not when the copy failed — there is nothing to paste.
-            openComposer?.();
+            // paste it into, with the text already in it when the box is
+            // empty. Not when the copy failed — there is nothing to paste.
+            openComposer?.(grant);
           });
         }}
       >
