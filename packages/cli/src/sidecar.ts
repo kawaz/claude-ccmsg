@@ -156,7 +156,12 @@ const NAME_RETRY_MAX_MS = 5000;
 
 export interface KeepNamedOptions {
   readonly paths: Paths;
-  readonly identity: Identity;
+  /** The session as each attempt names it, read again for every attempt: the
+   * sidecar starts beside `sidecar begin` rather than after it, so the state
+   * file that says where the session is may be written only after the first
+   * attempt, and a daemon that listens later should be told what it says by
+   * then. */
+  readonly identity: () => Identity;
   readonly name: RunName;
   /** Settles when the sidecar has let go of its socket: the run is named no
    * more, and the connection naming it is closed. */
@@ -193,7 +198,7 @@ export async function keepNamed(options: KeepNamedOptions): Promise<void> {
   let client: Client | null = null;
   try {
     for (;;) {
-      const naming = nameRunNoSpawn(options.paths, options.identity, options.name);
+      const naming = nameRunNoSpawn(options.paths, options.identity(), options.name);
       const named = await Promise.race([naming, stopped]);
       if (named === STOPPED) {
         void naming.then((late) => late?.close());

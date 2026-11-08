@@ -20,7 +20,7 @@ import {
   toolUseBlock,
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
-import { defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
+import { connect, defined, jsonObjectOf, refusedReply } from "../../daemon/test/helpers.ts";
 import { fakeHarness, parseEnvelope } from "../../daemon/test/peer-harness.ts";
 import { nameRunNoSpawn } from "../src/client.ts";
 import { CliStatusSchema, printed, served } from "./cli-output.ts";
@@ -143,6 +143,39 @@ describe("ccmsg CLI end-to-end", () => {
       expect((await runCli(["sidecar", "begin", "--sid", sid, "--cwd", cwd], env)).code).toBe(0);
       const again = printed(CliStatusSchema, (await runCli(["status"], env)).out);
       expect(again.pid).toBe(status.pid);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // 何を保証するか: `sidecar begin` は書いた state file の所在で daemon にその
+  // セッションを名乗る。新しいセッションの sidecar は begin の横で起き、state
+  // file より先に (所在の無い) 名乗りをしうるので、begin の名乗りが無いと
+  // peers の repo / ws / cwd が空のまま残る (launch で起こしたセッションで観測)。
+  test("sidecar begin は書いた所在でセッションを daemon に名乗る", async () => {
+    const { env, cleanup } = makeEnv();
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-begin-")));
+    const sid = "50000003-0000-4000-8000-000000000000";
+    try {
+      // Where the session is comes from --cwd alone, not an override knob the
+      // test runner may carry.
+      const knobs = { CCMSG_CWD: "", CCMSG_REPO: "", CCMSG_WS: "", CLAUDE_PROJECT_DIR: "" };
+      const begin = await runCli(["sidecar", "begin", "--sid", sid, "--cwd", cwd], {
+        ...env,
+        ...knobs,
+      });
+      expect(begin.code).toBe(0);
+      const c = await connect(resolvePaths(env).sock);
+      await c.hello({ role: "user" });
+      const peers = await c.requestOk({ op: "peers" });
+      c.close();
+      const me = defined(
+        peers.peers.find((p) => p.sid === sid),
+        `the peer ${sid}`,
+      );
+      expect({ repo: me.repo, ws: me.ws, cwd: me.cwd }).toEqual({ repo: "", ws: "", cwd });
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();

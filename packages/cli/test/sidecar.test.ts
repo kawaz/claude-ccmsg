@@ -622,6 +622,72 @@ describe("ccmsg sidecar names its run to the daemon", () => {
       await stopTestDaemon(ctx);
     }
   });
+
+  // 何を保証するか: 新しいセッションの sidecar は `sidecar begin` の後でなく横で
+  // 起きる (hooks/bus.ts の session.start)。state file がまだ無いうちに名乗った
+  // sidecar でも、次に名乗る daemon には名乗る時点の state file の所在を言う。
+  // 起動時に読んだ空の所在を持ち続けると、daemon の再起動の後 peers の
+  // repo / ws / cwd が空のままになる (launch で起こしたセッションで観測)。
+  test("names the run with where the state file says the session is at each naming", async () => {
+    const first = await startShortDaemon();
+    // Where the session is comes from the state file alone here: none of the
+    // override knobs or CLAUDE_PROJECT_DIR the test runner may carry.
+    const env: Record<string, string> = {};
+    for (const [k, value] of Object.entries(process.env)) {
+      const knob = ["CCMSG_CWD", "CCMSG_REPO", "CCMSG_WS", "CCMSG_REPO_ROOT", "CCMSG_BRANCH"];
+      if (value !== undefined && !knob.includes(k) && k !== "CLAUDE_PROJECT_DIR") env[k] = value;
+    }
+    const sidecar = Bun.spawn(sidecarArgv(), {
+      env: { ...env, ...first.env },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The sidecar says `named …` once the daemon took the naming.
+    const err = sidecar.stderr.getReader();
+    const decoder = new TextDecoder();
+    let said = "";
+    const namedTimes = async (n: number): Promise<void> => {
+      while ((said.match(/^named [^\n]*\n/gm) ?? []).length < n) {
+        const { done, value } = await err.read();
+        if (done) throw new Error(`the sidecar ended: ${said}`);
+        said += decoder.decode(value, { stream: true });
+      }
+    };
+    const locationOf = async (ctx: DaemonCtx) => {
+      const user = await userConn(ctx);
+      const peers = await user.requestOk({ op: "peers" });
+      user.close();
+      const row = peers.peers.find((p) => p.sid === SID);
+      return { repo: row?.repo, ws: row?.ws, cwd: row?.cwd };
+    };
+    let second: DaemonCtx | undefined;
+    try {
+      await namedTimes(1);
+      expect(await locationOf(first)).toEqual({ repo: "", ws: "", cwd: "" });
+
+      // `sidecar begin` writes the file after the sidecar named the run.
+      const cwd = fs.realpathSync(first.base);
+      fs.mkdirSync(path.join(first.stateDir, "sessions"), { recursive: true });
+      fs.writeFileSync(
+        path.join(first.stateDir, "sessions", `${SID}.json`),
+        JSON.stringify({
+          cwd,
+          repo: "owner/repo",
+          ws: "ws1",
+          updated_at: new Date().toISOString(),
+        }),
+      );
+      await stopKeepingDirs(first);
+      second = { ...first, proc: spawnDaemonProc(first.stateDir, first.dataDir) };
+      await namedTimes(2);
+      expect(await locationOf(second)).toEqual({ repo: "owner/repo", ws: "ws1", cwd });
+    } finally {
+      sidecar.kill("SIGTERM");
+      await sidecar.exited;
+      await stopTestDaemon(second ?? first);
+    }
+  });
 });
 
 describe("keepNamed", () => {
@@ -660,7 +726,7 @@ describe("keepNamed", () => {
       await before.request({ op: "subscribe" });
       named = keepNamed({
         paths,
-        identity,
+        identity: () => identity,
         name,
         stopped: stop.promise,
         log: (line) => {
@@ -735,7 +801,7 @@ describe("keepNamed", () => {
     const lines: string[] = [];
     const named = keepNamed({
       paths: resolvePaths({ CCMSG_STATE_DIR: stateDir }),
-      identity,
+      identity: () => identity,
       name,
       stopped: stop.promise,
       log: (line) => lines.push(line),

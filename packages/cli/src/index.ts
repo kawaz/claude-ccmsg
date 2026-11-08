@@ -379,7 +379,9 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
   process.stderr.write(`ready ${running.path}\n`);
   const named = keepNamed({
     paths,
-    identity,
+    // The sid is the one --sid gave, so a later read names the same session;
+    // only where it is can have been written since.
+    identity: () => resolveSessionIdentity(opts, "sidecar") ?? identity,
     name: {
       runId,
       startedAt,
@@ -398,8 +400,8 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
 /** `ccmsg sidecar begin --sid <sid> --cwd <dir>`: the session `<sid>` began
  * (its start, or the id it has after /clear or /resume) in `<dir>`, its
  * project root. Writes the session's state file, which every CLI hello of the
- * session reads to name it, and brings the daemon up if none is running.
- * The module runs it without waiting on it, so the daemon's start does not
+ * session reads to name it, brings the daemon up if none is running, and
+ * says to it where the session is. The module runs it without waiting on it, so the daemon's start does not
  * hold the session up. */
 async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar begin --sid <sid> --cwd <dir>";
@@ -424,8 +426,13 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
     updated_at: new Date().toISOString(),
   });
   pruneOldSessionFiles(paths.stateDir);
+  // The hello is the session's, from the file just written: the sidecar
+  // starts beside this command, not after it, and may have named the run
+  // before the file said where the session is (a new session's first start
+  // has no file of its sid yet).
+  const identity = resolveSessionIdentity(opts, "sidecar begin") ?? { role: "user" };
   try {
-    (await ensureDaemon(paths, { role: "user" })).close();
+    (await ensureDaemon(paths, identity)).close();
   } catch (e) {
     process.stderr.write(`ccmsg sidecar begin: the daemon did not come up: ${errorText(e)}\n`);
     process.exit(1);

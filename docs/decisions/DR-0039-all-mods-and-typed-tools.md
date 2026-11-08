@@ -176,7 +176,7 @@ Proposed の時点で前提として挙げた項目を、findings 2026-10-15-mod
 実装時に確認したこと (代役の API と隔離 config home、どれも本 DR の判断を変えなかった):
 
 - model が応答を stream している最中 (request の応答待ち) の busy の Enter: `prompt.submit` は Enter の時点で起きて受け付けになった (webui の入力で 163 ms)。queue された prompt は実行中の turn の次の request ではなく、その turn の終わった後の別の turn (`promptSource: "queued"`) に入った。tool の実行中の Enter (「前提の確認」) とは入る turn が違う
-- 実物の daemon の起動: `ccmsg sidecar begin` (state file の書き込みと daemon の起動) の所要は daemon が無い時 0.38 s、いる時 0.28 s。module は待たずに走らせるので、最初の `session.start` は待たされない
+- 実物の daemon の起動: `ccmsg sidecar begin` (state file の書き込みと daemon の起動) の所要は daemon が無い時 0.38 s、いる時 0.28 s。module は待たずに走らせるので、最初の `session.start` は待たされない。サイドカーも begin の後でなく横で起きるので、新しいセッションの最初の名乗りは state file より先になりうる (launch で起こしたセッションで peers の repo / ws / cwd が空のまま残った、2026-11-08)。begin は書いた所在でそのセッションとして daemon に hello し、サイドカーは名乗るたびに state file を読み直す
 - retry が有効な時の API error: 途中の試行では transcript に行を書かず、retry が尽きた時に最後の error の行を 1 本だけ書いた。retry が成功した時は error の行を書かなかった
 - transcript の API error の行の `error` 欄の語彙: 実 transcript で `server_error` / `invalid_request` / `rate_limit` / `unknown` / `authentication_failed` / `model_not_found` / `billing_error` と欄の無い行で、どれも `classic.StopFailure` の分類 (engine の型定義の 13 語) に含まれた。`kind` は open な文字列のまま読む
 
