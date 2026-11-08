@@ -2967,8 +2967,9 @@ select.sidebar-globals-endpoint {
 
 /* 「! で実行」。1 行のコマンドのコードブロックの直下に、「許可する」より
  * 小さく枠だけで置く。文字は CSS で出す (CodeCopyFrame と同じ: コマンドの並び
- * の中にあり、選んでコピーした文字列と Timeline の検索に混ざらない)。横に
- * 送った時刻、下に届かなかった時の注記 (入力欄と同じもの) が並ぶ。 */
+ * の中にあり、選んでコピーした文字列と Timeline の検索に混ざらない)。押して
+ * からコマンドが終わるまで「実行中…」、終わったら「実行済み」(data-run)。下に
+ * 届かなかった時の注記 (入力欄と同じもの) が並ぶ。 */
 .permit-bang-row {
   display: flex;
   flex-wrap: wrap;
@@ -2992,8 +2993,12 @@ select.sidebar-globals-endpoint {
   content: "! で実行";
 }
 
-.permit-bang[aria-busy="true"]::before {
-  content: "送信中…";
+.permit-bang[data-run="running"]::before {
+  content: "実行中…";
+}
+
+.permit-bang[data-run="ended"]::before {
+  content: "実行済み";
 }
 
 .permit-bang:disabled {
@@ -3001,8 +3006,10 @@ select.sidebar-globals-endpoint {
   opacity: 0.6;
 }
 
-.permit-bang-sent {
+.permit-bang[data-run="ended"] {
+  border-color: var(--border);
   color: var(--fg-muted);
+  opacity: 1;
 }
 
 .permit-bang-row > .session-input-notice {

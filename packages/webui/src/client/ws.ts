@@ -866,6 +866,12 @@ export function createWsClient(
       });
       return;
     }
+    // A bash mode command ended in a session (DR-0040 §11): the
+    // 「! で実行」 that sent it shows it done.
+    if (streamEv.ev === "bash_command_ended") {
+      dispatch({ type: "bash-command/ended", sid: streamEv.sid, command: streamEv.command });
+      return;
+    }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
     // event stream — the full non-expired set, both on connect (catch-up for
     // windows that opened before this tab existed) and on every new request.

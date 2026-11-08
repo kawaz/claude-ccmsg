@@ -132,6 +132,7 @@ import {
   keepRowEffectsOf,
   type RowEffects,
 } from "./row-effects.ts";
+import { bashCommandsEnded } from "./bash-command-rows.ts";
 import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
@@ -1510,6 +1511,14 @@ async function permitOf(daemon: Daemon, sid: string, id: string): Promise<SeenPe
     broadcastPermitState(daemon),
   );
   return findPermit(daemon.permits, sid, id);
+}
+
+/** Tell every user-role subscriber that a bash mode command ended in `sid`
+ * (DR-0040 §11). Never to a session, as ev:"permit_state". */
+function broadcastBashCommandEnded(daemon: Daemon, sid: string, command: string): void {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "bash_command_ended", sid, command });
+  }
 }
 
 /** Push one status report to every user-role subscriber. Unsolicited, like
@@ -3446,6 +3455,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       actOnPushedRows(daemon.rowEffects, sid, fresh, {
         speak: (text) => daemon.speaker.speak(text),
       });
+      // A bash mode command's row comes once it has ended: the tabs that ran
+      // it from a request (「! で実行」, DR-0040 §11) learn it is done. The
+      // new rows only, as above: compaction pushes the kept rows again.
+      for (const command of bashCommandsEnded(fresh)) {
+        broadcastBashCommandEnded(daemon, sid, command);
+      }
       // A subagent's or teammate's say is the session's to read too (DR-0050
       // §10): its row is in the agent's own file, so the push is where it is
       // seen.

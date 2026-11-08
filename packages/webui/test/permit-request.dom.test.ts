@@ -14,6 +14,11 @@
 // - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
 // - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
 // - 結果の行が後から live で届くと、その時にバブルになる
+// - 本文の最後の行は右端に「許可する」、その左に「既読」。「既読」は写さず
+//   入力欄も開かずに既読にし、既読の依頼では押せない。理由はボタンの左に出す
+// - 「! で実行」は 1 行のコマンドの下にだけあり、押すとコマンドが終わる
+//   (ev:"bash_command_ended") まで「実行中…」、終わったら「実行済み」のまま。
+//   受け付けられなければ戻して注記を出す。状態はバブルの描き直しで消えない
 // daemon の代わりに、store へ ev:"permit_state" と同じ action を流し、
 // permit_read で受けた id を未読から外して返し、permit_attachment_read には
 // パスごとに決めた答えを返す。
@@ -125,6 +130,9 @@ async function openWith(
     /** What the daemon answers a permit_read with, in place of marking the
      * ids read. */
     permitRead?: WsHandle["permitRead"];
+    /** A store a Timeline was mounted on before (its state already in it),
+     * to mount it again. */
+    store?: Store;
   } = {},
 ): Promise<{
   root: HTMLElement;
@@ -135,12 +143,15 @@ async function openWith(
   composerOpens: () => number;
 }> {
   const { agent, userPrompt } = options;
-  const store = timelineStore(agent !== undefined ? { agent } : {});
-  store.dispatch({
-    type: "permit-state/loaded",
-    unread: [...(options.unread ?? [unread(ID)])],
-    applied: [],
-  });
+  const held = options.store;
+  const store = held ?? timelineStore(agent !== undefined ? { agent } : {});
+  if (held === undefined) {
+    store.dispatch({
+      type: "permit-state/loaded",
+      unread: [...(options.unread ?? [unread(ID)])],
+      applied: [],
+    });
+  }
   const ws = new FakeTranscriptWs(store);
   const reads: Array<readonly string[]> = [];
   const opens: string[] = [];
@@ -185,7 +196,8 @@ async function openWith(
       h(TimelineOf, agent !== undefined ? { agent } : {}),
     ),
   );
-  await ws.lastRead().answer(page(rows));
+  // A store mounted before holds the window: the Timeline reads nothing.
+  if (ws.reads.length > 0) await ws.lastRead().answer(page(rows));
   return { root, store, reads, opens, composerOpens: () => composerOpens };
 }
 
@@ -502,20 +514,19 @@ describe("permission request bubbles", () => {
   });
 });
 
-// DR-0040 §7: a one-line command has 「! で実行」 under its code block, which
+// DR-0040 §11: a one-line command has 「! で実行」 under its code block, which
 // runs it in the asking session as the person's `! <command>` (user_prompt
-// with mode bash). The button is apart from 許可する: it neither copies nor
-// marks the request read. Its words come from CSS, not the DOM, so they join
-// neither the commands' copied text nor the Timeline's search.
+// with mode bash). It is 実行中… until the session's `<bash-input>` row for
+// the command comes (ev:"bash_command_ended"), then 実行済み for good. The
+// button is apart from 許可する: it neither copies nor marks the request
+// read. Its words come from CSS, not the DOM, so they join neither the
+// commands' copied text nor the Timeline's search.
 describe("! で実行", () => {
-  const ONE_AND_MANY = permitRows(
-    1,
-    ID,
-    inputOf({
-      attachments: [],
-      commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
-    }),
-  );
+  const BANG_INPUT = inputOf({
+    attachments: [],
+    commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
+  });
+  const ONE_AND_MANY = permitRows(1, ID, BANG_INPUT);
 
   /** A user_prompt that records what it was asked and answers `reply`. */
   function answering(reply: ReplyOf<"user_prompt">, asked: unknown[][]): WsHandle["userPrompt"] {
@@ -527,6 +538,29 @@ describe("! で実行", () => {
 
   function bangOf(li: Element | undefined): HTMLButtonElement | null {
     return defined(li, "command").querySelector<HTMLButtonElement>("button.permit-bang");
+  }
+
+  /** The button's state as the person sees it: its words (data-run, which
+   * picks the CSS content, and the aria-label naming them) and whether it
+   * can be pressed. */
+  function stateOf(button: HTMLButtonElement): [string | null, string | null, boolean] {
+    return [button.dataset.run ?? null, button.getAttribute("aria-label"), button.disabled];
+  }
+
+  function firstBang(root: HTMLElement): HTMLButtonElement {
+    return instanceOf(
+      bangOf(root.querySelector(".permit-command") ?? undefined),
+      HTMLButtonElement,
+      "! で実行",
+    );
+  }
+
+  /** The session's `<bash-input>` row for `command` reached the daemon
+   * (ev:"bash_command_ended"). */
+  async function ended(store: Store, command: string, sid: string = SID): Promise<void> {
+    await act(() => {
+      store.dispatch({ type: "bash-command/ended", sid, command });
+    });
   }
 
   test("sits under the code block of each one-line command, and of no multi-line one", async () => {
@@ -542,24 +576,40 @@ describe("! で実行", () => {
     expect(bangOf(multiLine)).toBeNull();
   });
 
-  test("runs the command as bash mode in the asking session, and says when", async () => {
+  // 何を保証するか: 押すと依頼したセッションへ bash mode で送り、コマンドが
+  // 終わる (そのセッションの同じコマンドの <bash-input> の行が届く) まで
+  // 「実行中…」で押せない。別のセッションの行や別のコマンドの行では終わらない。
+  // 終わったら「実行済み」のまま押せない (終了コードは行に無いので成功か
+  // 失敗かは出さない)。「許可する」とは独立で、写さず、既読にせず、入力欄も
+  // 開かない。
+  test("runs the command as bash mode, 実行中… until its row comes, then 実行済み for good", async () => {
     const asked: unknown[][] = [];
-    const { root, reads, composerOpens } = await openWith(ONE_AND_MANY, {
+    const { root, store, reads, composerOpens } = await openWith(ONE_AND_MANY, {
       userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
     });
-    const li = root.querySelector(".permit-command") ?? undefined;
-    await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
+    expect(stateOf(firstBang(root))).toEqual(["idle", "! で実行", false]);
+    await press(firstBang(root));
     expect(asked).toEqual([[SID, "ls -la", undefined, "bash"]]);
-    expect(li?.querySelector(".permit-bang-sent")?.textContent).toContain(
-      "に送りました。出力はコマンドが終わると Timeline に出ます",
-    );
-    expect(li?.querySelector(".session-input-notice")).toBeNull();
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
+    expect(firstBang(root).getAttribute("aria-busy")).toBe("true");
+    await ended(store, "ls -la", "someone-else");
+    await ended(store, "ls");
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
+    await ended(store, "ls -la");
+    expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", true]);
+    expect(firstBang(root).getAttribute("aria-busy")).toBe("false");
+    expect(root.querySelector(".session-input-notice")).toBeNull();
+    // Pressing a done one sends nothing.
+    firstBang(root).click();
+    expect(asked.length).toBe(1);
     // Apart from 許可する: nothing copied, not marked read, no composer.
     expect(reads).toEqual([]);
     expect(composerOpens()).toBe(0);
   });
 
-  test("cannot be pressed again while its run is being sent", async () => {
+  // 何を保証するか: 送っている間 (返事の前) も「実行中…」で、連打しても 1 度
+  // しか送らない (再 render の前の 2 度目も store で止める)。
+  test("sends once however fast it is pressed", async () => {
     const asked: unknown[][] = [];
     let answer: (reply: ReplyOf<"user_prompt">) => void = () => {};
     const { root } = await openWith(ONE_AND_MANY, {
@@ -570,22 +620,52 @@ describe("! で実行", () => {
         });
       },
     });
-    const li = root.querySelector(".permit-command") ?? undefined;
-    const button = instanceOf(bangOf(li), HTMLButtonElement, "! で実行");
-    await press(button);
-    expect(button.disabled).toBe(true);
-    expect(button.getAttribute("aria-busy")).toBe("true");
-    button.click();
+    const button = firstBang(root);
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
     expect(asked.length).toBe(1);
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
     await act(async () => {
       answer({ ok: true, outcome: "accepted" });
       await Promise.resolve();
     });
-    expect(button.disabled).toBe(false);
-    expect(button.getAttribute("aria-busy")).toBe("false");
+    // Taken, not ended: still running.
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
   });
 
-  test("not delivered, or not known to be, shows the input box's notice", async () => {
+  // 何を保証するか: コマンドの行は、受け付けの返事より先に届くことがある
+  // (短いコマンド)。その時も「実行済み」になり、後から来た返事で戻らない
+  // (受け付けられなかったと言われても、同じコマンドが終わった行がある)。
+  test("a row before the reply ends it, and the reply does not take it back", async () => {
+    for (const reply of [
+      { ok: true, outcome: "accepted" },
+      { ok: true, outcome: "not_delivered", reason: "dialog" },
+    ] as const) {
+      let answer: (reply: ReplyOf<"user_prompt">) => void = () => {};
+      const { root, store } = await openWith(ONE_AND_MANY, {
+        userPrompt: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      });
+      await press(firstBang(root));
+      await ended(store, "ls -la");
+      await act(async () => {
+        answer(reply);
+        await Promise.resolve();
+      });
+      expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", true]);
+      await mounted.unmount();
+    }
+  });
+
+  // 何を保証するか: 受け付けられなかった (届かなかった)・確かめられなかった時
+  // は「! で実行」に戻して入力欄と同じ注記を出す。その後に同じコマンドの行が
+  // 来ても実行済みにしない (押していない扱い)。もう一度押すと注記は消える。
+  test("not taken, or not known to be, goes back with the input box's notice", async () => {
     for (const [reply, tone, title] of [
       [{ ok: true, outcome: "not_delivered", reason: "dialog" }, "danger", "届きませんでした"],
       [
@@ -595,14 +675,42 @@ describe("! で実行", () => {
       ],
     ] as const) {
       const asked: unknown[][] = [];
-      const { root } = await openWith(ONE_AND_MANY, { userPrompt: answering(reply, asked) });
+      const { root, store } = await openWith(ONE_AND_MANY, {
+        userPrompt: answering(reply, asked),
+      });
       const li = root.querySelector(".permit-command") ?? undefined;
-      await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
+      await press(firstBang(root));
+      expect(stateOf(firstBang(root))).toEqual(["idle", "! で実行", false]);
       const notice = defined(li?.querySelector(".session-input-notice") ?? undefined, "notice");
       expect(notice.classList.contains(`session-input-notice-${tone}`)).toBe(true);
       expect(notice.querySelector(".session-input-notice-title")?.textContent).toBe(title);
-      expect(li?.querySelector(".permit-bang-sent")).toBeNull();
+      await ended(store, "ls -la");
+      expect(stateOf(firstBang(root))).toEqual(["idle", "! で実行", false]);
+      await press(firstBang(root));
+      expect(asked.length).toBe(2);
       await mounted.unmount();
     }
+  });
+
+  // 何を保証するか: 実行中・実行済みは、バブルが描き直されても (Timeline が
+  // 作り直す、開き直す) 残る。同じコマンドを持つ別の依頼のボタンは、その
+  // 依頼で押していなければ実行済みにならない。
+  test("keeps 実行中 / 実行済み when the bubble is drawn again, per request", async () => {
+    const rows = [...ONE_AND_MANY, ...permitRows(9, "toolu_p9", BANG_INPUT)];
+    const asked: unknown[][] = [];
+    const userPrompt = answering({ ok: true, outcome: "accepted" }, asked);
+    const { root, store } = await openWith(rows, { userPrompt });
+    await press(firstBang(root));
+    await mounted.unmount();
+    const again = await openWith(rows, { store, userPrompt });
+    expect(stateOf(firstBang(again.root))).toEqual(["running", "実行中…", true]);
+    await ended(store, "ls -la");
+    await mounted.unmount();
+    const third = await openWith(rows, { store, userPrompt });
+    const [mine, theirs] = [...third.root.querySelectorAll<HTMLElement>(".tl-bubble-permit")].map(
+      (bubble) => stateOf(firstBang(bubble)),
+    );
+    expect(mine).toEqual(["ended", "実行済み", true]);
+    expect(theirs).toEqual(["idle", "! で実行", false]);
   });
 });

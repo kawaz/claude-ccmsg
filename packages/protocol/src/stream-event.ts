@@ -80,6 +80,20 @@ export const PermitStateStreamEventSchema = v.object({
 });
 export type PermitStateStreamEvent = Output<typeof PermitStateStreamEventSchema>;
 
+/** A bash mode command (the person's `! <command>`, or a request's
+ * 「! で実行」) that has just ended in session `sid`'s main thread, to the
+ * same subscribers (DR-0040 §11). The daemon knows of it by the
+ * `<bash-input>` row the session's module pushes, which Claude Code writes
+ * once the command has ended. `command` is that row's, as Claude Code wrote
+ * it (its trailing blanks dropped). The row does not say how the command
+ * exited, so neither does this. */
+export const BashCommandEndedStreamEventSchema = v.object({
+  ev: v.literal("bash_command_ended"),
+  sid: v.string(),
+  command: v.string(),
+});
+export type BashCommandEndedStreamEvent = Output<typeof BashCommandEndedStreamEventSchema>;
+
 /** The overrides of every session the daemon knows them of (DR-0041 §5,
  * user-role subscribers only, like ev:"permit_state"): what each session's
  * main-thread requests are sent with, as its hooks module last reported.
@@ -292,6 +306,7 @@ export const StreamEventSchema = v.variant("ev", [
   SayUnreadStreamEventSchema,
   AgentSaysStreamEventSchema,
   PermitStateStreamEventSchema,
+  BashCommandEndedStreamEventSchema,
   RequestOverridesStreamEventSchema,
   RequestOverrideStreamEventSchema,
   RestartingStreamEventSchema,

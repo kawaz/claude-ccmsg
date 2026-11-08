@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」と、その実行中・実行済みの表示 (§11、`ev:"bash_command_ended"`)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -115,7 +115,7 @@ daemon は `permit_request` を受けた時に、say と同じ発声の関数 ([
 - {intents の各要素を markdown で}
 - 以下コマンドの実行（{description}）
   {command をコードブロック (sh) で}
-  [! で実行]                      ← command が 1 行の時だけ (§11)
+  [! で実行] / [実行中…] / [実行済み]   ← command が 1 行の時だけ (§11)
 
 `.claude/settings.local.json` の修正許可   (project_permissions が無ければ節ごと出さない、§12)
 ▸ `{settings.local.json のパス}`  ← 既定で閉じた <details>。開いた時に読む (無ければ「(無し)」)
@@ -171,8 +171,13 @@ kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を�
 - bash mode を知らない前の版 (0.217.0 より前) の module のまま動いているセッションでは、module が `mode` を落とし、コマンドは通常の prompt として入る。前の版向けの分岐は置かず、plugin を更新したらセッションを起動し直す ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)
 - 複数行の command には出さない。kawaz の裁定による UI の範囲で、bash mode が 1 行に限られるからではない (2.1.319 では複数行も実行された。[findings](../findings/2026-11-06-permit-bang-run.md))
 - 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない
-- 送っている間は押せない (送信中…)。結果の表示は入力欄の送信と同じ語彙: 受け付けられたら押した時刻と「出力はコマンドが終わると Timeline に出ます」を横に添える (`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間がある。二度押しの判断材料)。届かなかった・確かめられなかった時は入力欄と同じ注記 (`sessionInputNotice`) を出す
-- 実行の結果は webui で別に出さない。会話に入った行が TL に流れる
+- 押してからコマンドが終わるまで「実行中…」で押せない (kawaz 2026-11-08)。`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間があり、その間の二度押しを防ぐ
+- 終わりは、依頼したセッションの module が push する `<bash-input>{command}</bash-input>` の user 行 (DR-0045 §2) で知る。daemon は push で受けた新しい行 (追いつきで読んだ行の再 push と、subagent / teammate の行を除く) のコマンドを、user role の購読者に `ev:"bash_command_ended" { sid, command }` で送る。webui はそのセッションで実行中の「! で実行」のうち、コマンドが行のコマンドと同じもの (Claude Code が落とす末尾の空白だけを除いて一致) を「実行済み」にする
+- 「実行済み」は戻らず、押せない。成功か失敗かは出さない: 2.1.319 の bash mode の行 (`<bash-input>` の行と `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` の行) は終了コードを持たず、`false`・`exit 3`・`sh -c 'exit 3'` の行は成功したコマンドの行と同じ形だった ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)。`<bash-stderr>` の中身は終了コードの代わりにしない (成功しても stderr に書くコマンド、失敗しても何も書かないコマンドがある)。失敗したコマンドはボタンから押し直せず、人が composer で `!` と打つか、エージェントが依頼を出し直す。出力は会話に入った行が TL に流れる
+- 受け付けられなかった・確かめられなかった時は「! で実行」に戻し、入力欄と同じ注記 (`sessionInputNotice`) を出す。返事より先に行が届いた時 (短いコマンド) は「実行済み」にし、後の返事では戻さない (同じコマンドが終わった行がある)。戻した後に届いた行では実行済みにしない
+- 実行中・実行済みは webui のタブの store に、依頼 (`permit` の呼び出しの tool_use の id) とコマンドの位置ごとに持つ。バブルが描き直されても残る。daemon には持たないので、別のタブと読み直したタブでは「! で実行」に戻る
+- 行はどの押下のものかを持たないので、同じセッションで同じ文字列のコマンドを並べて実行中にした時 (同じ依頼の中でも別の依頼でも)、1 つの行で全部が「実行済み」になる。人が composer で同じコマンドを `!` で打った時も、実行中のボタンは「実行済み」になる
+- 行が来なければ「実行中…」のまま: 実行中に端末で Escape で止めた時 (コマンドは composer に戻り、`<bash-input>` の行は書かれない)、push が daemon に届かなかった時。タブを読み直すと戻る
 - ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (コードブロックのコピーボタンと同じ)。コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と Timeline の検索に混ざる。読み上げる名前は `aria-label` が持つ
 
 ### 12. プロジェクトの `permissions.allow` を足し引きする (`project_permissions`)
@@ -213,6 +218,9 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 |---|---|
 | 「! で実行」を `$.prompt.fill` に `! <command>` ごと入れて Enter で起こす | bash mode にならず、通常の prompt として model に送られる (2.1.319 実測) |
 | 「! で実行」を module の `$.process.run` で走らせる | 結果が transcript に入らず、人の `!` と同じにならない |
+| 「! で実行」の成功 / 失敗を `<bash-stderr>` の有無で出す | 終了コードではない。成功しても stderr に書くコマンド、失敗しても何も書かないコマンド (`false`) がある |
+| 「! で実行」の終わりを、webui が開いている TL の行 (transcript の購読) で知る | 行が届く時にそのセッションの TL を購読していないタブ (別のセッションを見ている) は終わりを知れない。daemon は push で全セッションの行を受けている |
+| 「! で実行」の実行済みを daemon の状態 (各コマンドの `ran_at`) に持つ | `user_prompt` はどの依頼のどのコマンドかを持たず、結び付けるには送信を別の op にすることになる (下の行)。得られるのは読み直したタブでの持続だけ |
 | 「! で実行」の送信を別の op にする | 書きかけの退避・Enter・受け付けの待ち・戻しが人の入力と同じで、違うのは composer への入れ方と受け付けの印だけ。`user_prompt` / `prompt.send` の入力の区別で足りる (DR-0035 §3) |
 | rules の定型文を手で書く今の形だけにする | Context の 3 つの弱み (形のぶれ、具体の入れ忘れ、ファイルの中身を貼ると context を食う) が残る |
 | ファイルの中身をエージェントが本文に貼る | 中身がエージェントの context に載り、長いファイルほど高くつく。本文の中で許可の対象と説明の境目も曖昧になる |
@@ -254,6 +262,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 - 「許可する」を押して文を写しても送らなかった場合も既読になり、🔐 は消える。既読は「人が依頼に手を付けた」の印で、許可が届いたことは示さない
 - rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
 - `project_permissions` の「許可する」は、人が押した 1 件だけを依頼の行の cwd の `.claude/settings.local.json` に書く。書いた rule は以後のこのプロジェクトの全セッションで classifier を通らずに通る。消すのは人の手か、`remove` の依頼
+- `ev:"bash_command_ended"` は、人が composer で打った `!` を含む全セッションの bash mode のコマンドを user role の購読者に送る。webui を開ける人は元から transcript を読めるので、見える範囲は広がらない
 - 「! で実行」は人の `! <command>` と同じで、auto mode の classifier を通らずにそのセッションの環境で実行される。コマンドを書いたのはエージェントで、押す前にコマンドを読んで判断するのは人である。会話に入るのはコマンドとその出力で、許可の文は入らない
 
 ## 関連

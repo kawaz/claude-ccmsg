@@ -45,6 +45,7 @@ import {
   type TimelineFilter,
 } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
+import { endPermitBangRuns, type PermitBangRun } from "./permit-request-view.ts";
 import {
   CLOSED_SIDEBAR,
   parsePeerSortKey,
@@ -438,6 +439,11 @@ export interface AppState {
    * DR-0040 §12): which 許可する of a bubble's settings section shows
    * 適用済み. Replaced whole on every push. */
   permitApplied: readonly AppliedPermitPermission[];
+  /** The 「! で実行」 of the permission bubbles that are running or have
+   * ended (DR-0040 §11), by permitBangKey: here rather than in the button,
+   * so that a bubble drawn again (the Timeline rebuilding the row after it)
+   * keeps them. The tab's own: another tab, or this one reloaded, has none. */
+  permitBangRuns: ReadonlyMap<string, PermitBangRun>;
   /** What the overrides put on each session's main-thread requests (DR-0041
    * §5), by session id: replaced whole by the subscribe-time set
    * (ev:"request_overrides"), and one override of one session at a time
@@ -514,6 +520,7 @@ export function initialState(): AppState {
     notificationLists: new Map(),
     permitUnread: [],
     permitApplied: [],
+    permitBangRuns: new Map(),
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
     connStatus: "connecting",
@@ -559,6 +566,12 @@ export type Action =
       unread: readonly UnreadPermit[];
       applied: readonly AppliedPermitPermission[];
     }
+  // A 「! で実行」 was pressed (running), or the session did not take it
+  // (withdrawn: back to none, unless its command has ended meanwhile).
+  | { type: "permit-bang/started"; key: string; sid: string; command: string }
+  | { type: "permit-bang/withdrawn"; key: string }
+  // ev:"bash_command_ended": the runs of that session and command end.
+  | { type: "bash-command/ended"; sid: string; command: string }
   | {
       type: "request-overrides/loaded";
       sessions: readonly ({ session_id: string } & RequestOverrideState)[];
@@ -1167,6 +1180,27 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "permit-state/loaded":
       return { ...state, permitUnread: action.unread, permitApplied: action.applied };
+    case "permit-bang/started":
+      return {
+        ...state,
+        permitBangRuns: new Map(state.permitBangRuns).set(action.key, {
+          kind: "running",
+          sid: action.sid,
+          command: action.command,
+        }),
+      };
+    case "permit-bang/withdrawn": {
+      // The reply can come after the command's row: a command that ended
+      // has run, whatever the reply said.
+      if (state.permitBangRuns.get(action.key)?.kind !== "running") return state;
+      const permitBangRuns = new Map(state.permitBangRuns);
+      permitBangRuns.delete(action.key);
+      return { ...state, permitBangRuns };
+    }
+    case "bash-command/ended": {
+      const permitBangRuns = endPermitBangRuns(state.permitBangRuns, action.sid, action.command);
+      return permitBangRuns === state.permitBangRuns ? state : { ...state, permitBangRuns };
+    }
     case "request-overrides/loaded":
       return {
         ...state,

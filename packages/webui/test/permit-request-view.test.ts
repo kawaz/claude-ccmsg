@@ -7,10 +7,14 @@ import {
   appliedAtOf,
   attachmentNote,
   commandHeading,
+  endPermitBangRuns,
   fenceLangOfPath,
+  isBashCommandOf,
   isOneLineCommand,
+  permitBangKey,
   permitGrantText,
   projectSettingsPathOf,
+  type PermitBangRun,
 } from "../src/client/permit-request-view.ts";
 
 function request(fields: Partial<PermitCall>): PermitCall {
@@ -145,5 +149,43 @@ describe("project permissions", () => {
     expect(appliedAtOf(applied, "toolu_1", { remove: "Bash(ls)" })).toBeUndefined();
     expect(appliedAtOf(applied, "toolu_2", { add: "Bash(ls)" })).toBeUndefined();
     expect(appliedAtOf(applied, "toolu_3", { add: "Bash(ls)" })).toBeUndefined();
+  });
+});
+
+describe("the runs of 「! で実行」", () => {
+  // 何を保証するか: Claude Code は <bash-input> にコマンドの末尾の空白を落として
+  // 書き、他は変えない (先頭と中の空白、引用符、< & はそのまま)。送ったコマンドと
+  // 行のコマンドはその違いだけを許して同じとみなす。
+  test("a row's command is the one sent but for the trailing blanks", () => {
+    expect(isBashCommandOf("ls -la", "ls -la")).toBe(true);
+    expect(isBashCommandOf("  echo   x  \t", "  echo   x")).toBe(true);
+    expect(isBashCommandOf("echo '<a&b>'", "echo '<a&b>'")).toBe(true);
+    expect(isBashCommandOf("ls -la", "ls  -la")).toBe(false);
+    expect(isBashCommandOf("  ls", "ls")).toBe(false);
+    expect(isBashCommandOf("ls", "ls -la")).toBe(false);
+  });
+
+  // 何を保証するか: 行が来たセッションとコマンドの、実行中の run だけを終える。
+  // 別のセッション・別のコマンド・実行済みは変えない。変わらなければ同じ Map を
+  // 返す (store が描き直しを起こさない)。依頼とコマンドの位置で別の run になる。
+  test("a row ends the running runs of its session and command alone", () => {
+    const mine = permitBangKey("toolu_1", 0);
+    const sameCommandElsewhere = permitBangKey("toolu_2", 0);
+    const otherCommand = permitBangKey("toolu_1", 1);
+    expect(new Set([mine, sameCommandElsewhere, otherCommand]).size).toBe(3);
+    const runs: ReadonlyMap<string, PermitBangRun> = new Map<string, PermitBangRun>([
+      [mine, { kind: "running", sid: "s", command: "ls -la " }],
+      [sameCommandElsewhere, { kind: "running", sid: "t", command: "ls -la" }],
+      [otherCommand, { kind: "running", sid: "s", command: "pwd" }],
+      [permitBangKey("toolu_3", 0), { kind: "ended" }],
+    ]);
+    const after = endPermitBangRuns(runs, "s", "ls -la");
+    expect([...after]).toEqual([
+      [mine, { kind: "ended" }],
+      [sameCommandElsewhere, { kind: "running", sid: "t", command: "ls -la" }],
+      [otherCommand, { kind: "running", sid: "s", command: "pwd" }],
+      [permitBangKey("toolu_3", 0), { kind: "ended" }],
+    ]);
+    expect(endPermitBangRuns(runs, "s", "whoami")).toBe(runs);
   });
 });

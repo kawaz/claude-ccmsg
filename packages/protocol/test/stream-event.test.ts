@@ -82,6 +82,10 @@ const PUSHES: {
     { ev: "request_override", session_id: SID, target: "session", model: "sonnet", effort: "low" },
     { ev: "request_override", session_id: SID, target: "once", model: null, effort: null },
   ],
+  bash_command_ended: [
+    { ev: "bash_command_ended", sid: SID, command: "ls -la" },
+    { ev: "bash_command_ended", sid: SID, command: "echo '<a&b>'" },
+  ],
   restarting: [{ ev: "restarting" }, { ev: "restarting", reason: "upgrade" }],
   agents: [
     {

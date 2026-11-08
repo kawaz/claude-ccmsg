@@ -123,3 +123,21 @@ kawaz の hyoui の下のセッション (Claude Code 2.1.318) に 2026-11-07 �
 - 実環境の失敗の原因は、plugin の更新前に起動して 0.215.1 の module のまま動いていたセッションに `mode: "bash"` を送り、その module が `mode` を落として通常の prompt として入れ、`accepted` を返したこと (上の表で再現済み)。hyoui の `wait:` の偽陽性は観測していない
 - 前の版の module 向けの分岐は置かない (kawaz 2026-11-08)。plugin を更新したら、そのセッションを起動し直す (DR-0040 §11)
 - module の `wait:` は `─\n!\x{a0}` にした (上の「照合の範囲」)。2.1.319 の作業コピーの module で、composer に書きかけ `draft 書きかけ` を置いて 2 回送り、1 回目 (idle) は `<bash-input>echo new319-bang-1</bash-input>` と出力、2 回目は 1 回目の後に始まった turn の実行中で、画面に履歴の `! echo new319-bang-1` がある状態で `! echo new319-bang-2` として待ちの列に入った (transcript は `queue-operation` の `enqueue`)。書きかけは戻った
+
+## 2026-11-08: bash mode の行は終了コードを持たない
+
+「! で実行」に成功 / 失敗を出せるかを見るため、bash mode で終了コードの違うコマンドを走らせ、transcript の行を読んだ。Claude Code 2.1.319、hyoui 0.16.4、一時ディレクトリの config home (`CLAUDE_CONFIG_DIR`、onboarding 済み・ダミー鍵の承認・作業ディレクトリの trust)、`ANTHROPIC_BASE_URL` は閉じたポート、`--name "🤖ccmsg-verify-bang-exitcode"`。plugin は載せず、キーは `hyoui input <id> 'text:!' 'wait:─\n!\x{a0}' 'text:<command>' key:Enter` で送った。各コマンドの後に model への request が始まるので、`Escape` で止めてから次を実行させた。
+
+| コマンド | `<bash-input>` の行の `message.content` | 続く行の `message.content` | 画面 |
+|---|---|---|---|
+| `echo ok-0` | `<bash-input>echo ok-0</bash-input>` | `<bash-stdout>ok-0</bash-stdout><bash-stderr></bash-stderr>` | `⎿ ok-0` |
+| `false` | `<bash-input>false</bash-input>` | `<bash-stdout></bash-stdout><bash-stderr></bash-stderr>` | `⎿ (No output)` |
+| `exit 3` | `<bash-input>exit 3</bash-input>` | `<bash-stdout></bash-stdout><bash-stderr></bash-stderr>` | `⎿ (No output)` |
+| `sh -c 'exit 3'` | `<bash-input>sh -c 'exit 3'</bash-input>` | `<bash-stdout></bash-stdout><bash-stderr></bash-stderr>` | `⎿ (No output)` |
+| `ls /nonexistent` | `<bash-input>ls /nonexistent</bash-input>` | `<bash-stdout></bash-stdout><bash-stderr>ls: cannot access '/nonexistent': No such file or directory\n</bash-stderr>` | `⎿ ls: cannot access …` |
+
+- どの行も、終了コードを表す欄は無かった。行の欄は `parentUuid` / `isSidechain` / `promptId` / `type` / `message` / `uuid` / `timestamp` / `userType` / `entrypoint` / `cwd` / `sessionId` / `version` / `gitBranch` と、出力の行の `turnOrigin` / `turnPosition`
+- `false` / `exit 3` / `sh -c 'exit 3'` の行は、出力の無い成功したコマンドの行と区別できない。画面の表示も同じ (`(No output)`)
+- 同じ transcript の `api-request` の行 (model に送る内容) にも、終了コードの文は無かった (`Exit code` の文字列は 0 件)
+- 実環境の config dir の transcript の `<bash-stderr>` が空でない行 (2.1.50〜2.1.317) にも、終了コードの欄は無かった (`python` が無いファイルを開けなかった行など)
+- mod の event (`session.append` 等) に終了コードが載るかは見ていない。`session.append` の `<bash-input>` の本文は transcript の行と同じ (上の 2026-11-06 の節)

@@ -97,6 +97,46 @@ export function isOneLineCommand(command: string): boolean {
   return !/[\r\n]/.test(command);
 }
 
+/** A 「! で実行」 that is under way or done (DR-0040 §11): running from the
+ * press until the session's `<bash-input>` row for it comes
+ * (ev:"bash_command_ended"), then ended for good. That row does not say how
+ * the command exited, so ended says nothing of it either. A press the
+ * session did not take goes back to none. */
+export type PermitBangRun = { kind: "running"; sid: string; command: string } | { kind: "ended" };
+
+/** Where a 「! で実行」's run is held: the request (its `permit` call's
+ * tool_use id) and the command's place among its commands. Two requests
+ * asking the same command are two runs, so one does not show the other's as
+ * ended. */
+export function permitBangKey(toolUseId: string, index: number): string {
+  return `${toolUseId}\n${String(index)}`;
+}
+
+/** Whether the command a session's `<bash-input>` row names (`ended`) is the
+ * one a 「! で実行」 sent (`asked`): Claude Code writes the command with its
+ * trailing blanks dropped and nothing else changed (findings
+ * 2026-11-06-permit-bang-run.md). Two commands of the same text cannot be
+ * told apart. */
+export function isBashCommandOf(asked: string, ended: string): boolean {
+  return asked.trimEnd() === ended;
+}
+
+/** The runs after a bash mode command ended in session `sid`: each running
+ * one of that session and command is ended. The same map when none is. */
+export function endPermitBangRuns(
+  runs: ReadonlyMap<string, PermitBangRun>,
+  sid: string,
+  command: string,
+): ReadonlyMap<string, PermitBangRun> {
+  const ending = [...runs].filter(
+    ([, run]) => run.kind === "running" && run.sid === sid && isBashCommandOf(run.command, command),
+  );
+  if (ending.length === 0) return runs;
+  const next = new Map(runs);
+  for (const [key] of ending) next.set(key, { kind: "ended" });
+  return next;
+}
+
 /** One command as an item of the permission: its heading, then the command
  * whole in a code block (a continued line, a here document stay as written). */
 function commandItem(command: PermitCommand): string {
