@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.224.0 <a id="v0.224.0"></a>
+
+2026-11-08
+
+- 許可依頼の正本を transcript の permit の行にした (DR-0040)。daemon が持つのは既読と `project_permissions` の適用済みの状態 (`permit-state.json`) だけで、依頼の中身の永続化 (`permit-requests.json`) は無くした。過去の依頼も transcript にあるぶん全部出て、daemon の再起動と無関係。subagent の断られた呼び出しは出ない。`say_list` は `notification_list` (say と許可依頼を 1 回の読みで) に
+- 設定ファイル (`.claude/settings.local.json`) の場所は依頼の行の cwd から決める
+- 新しいセッションの peers の repo / ws / cwd が空になっていたのを直した (サイドカーが state file より先に名乗っていた。名乗るたびに読み直す)
+- protocol 2.2
+
 ## v0.223.1 <a id="v0.223.1"></a>
 
 2026-11-08
