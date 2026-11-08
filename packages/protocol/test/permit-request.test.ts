@@ -18,7 +18,9 @@ import {
   PermitToolInputSchema,
 } from "../src/permit-request.ts";
 
-const REQUEST = { blocked: "`git push` が止められた", commands: [{ command: "git push" }] };
+const VOICE = "push の許可をお願いします。";
+const REQUEST_BODY = { blocked: "`git push` が止められた", commands: [{ command: "git push" }] };
+const REQUEST = { ...REQUEST_BODY, voice: VOICE };
 
 /** The reasons `value` does not read as the tool's input, by field path;
  * empty when it reads. */
@@ -29,9 +31,12 @@ function toolIssues(value: object): Record<string, string> {
 }
 
 describe("permit voice", () => {
-  // 何を保証するか: voice は任意で、上限ちょうどまでの文は読める。
-  test("a request reads without a voice, and with one up to the limit", () => {
-    expect(toolIssues(REQUEST)).toEqual({});
+  // 何を保証するか: tool の入力では voice は必須で、無ければ voice の field で
+  // 断られる。上限ちょうどまでの文は読める。daemon 側 (sidecar の入力) は
+  // 固定文へのフォールバックのため voice 無しも読む。
+  test("the tool requires a voice, up to the limit", () => {
+    expect(Object.keys(toolIssues(REQUEST_BODY))).toEqual(["voice"]);
+    expect(parseWith(PermitInputSchema, REQUEST_BODY).ok).toBe(true);
     expect(toolIssues({ ...REQUEST, voice: "push してもいいですか" })).toEqual({});
     expect(toolIssues({ ...REQUEST, voice: "あ".repeat(PERMIT_VOICE_MAX_LENGTH) })).toEqual({});
   });
@@ -97,6 +102,28 @@ describe("permit project_permissions", () => {
     ).toBe(true);
   });
 
+  // 何を保証するか: Edit / Read / Write の rule の path が ~/ で始まるものは
+  // permissions.allow で効かないので、add でも remove でも rule の位置で断られ、
+  // 絶対パスで書き直せる理由が付く。Bash の中の ~/ は通る。
+  test("a file rule under ~/ is refused, a Bash command naming ~/ is not", () => {
+    const reason =
+      "~/ は permissions.allow では効かない。絶対パスで書く (例 Edit(/Users/<user>/.config/foo/bar.toml))";
+    for (const tool of ["Edit", "Read", "Write"]) {
+      expect(
+        toolIssues({ ...REQUEST, project_permissions: [{ add: `${tool}(~/.config/a.toml)` }] }),
+      ).toEqual({ "project_permissions.0.add": reason });
+      expect(toolIssues({ ...REQUEST, project_permissions: [{ remove: `${tool}(~/a)` }] })).toEqual(
+        { "project_permissions.0.remove": reason },
+      );
+    }
+    for (const rule of ["Bash(ls ~/x)", "Edit(/Users/u/.config/a.toml)", "Edit(~a)"]) {
+      expect(toolIssues({ ...REQUEST, project_permissions: [{ add: rule }] })).toEqual({});
+    }
+    expect(
+      parseWith(PermitInputSchema, { ...REQUEST, project_permissions: [{ add: "Edit(~/a)" }] }).ok,
+    ).toBe(false);
+  });
+
   // 何を保証するか: 空・空白だけのルールと、同じルールを 2 度名指すもの (add と
   // remove に分けても) は断られる (1 つのルールにボタンは 1 つ)。
   test("an empty rule and a rule named twice are refused", () => {
@@ -112,10 +139,10 @@ describe("permit project_permissions", () => {
   // 何を保証するか: project_permissions だけの依頼も読める (毎回止められる操作の
   // allow を足すことだけを求める依頼)。何も求めない依頼は今までどおり断られる。
   test("project permissions alone are a request, and nothing at all is not", () => {
-    const alone = { blocked: "x", project_permissions: [{ add: "Bash(a)" }] };
+    const alone = { blocked: "x", voice: VOICE, project_permissions: [{ add: "Bash(a)" }] };
     expect(parseWith(PermitToolInputSchema, alone).ok).toBe(true);
     expect(parseWith(PermitInputSchema, alone).ok).toBe(true);
-    expect(toolIssues({ blocked: "x", project_permissions: [] })).toEqual({
+    expect(toolIssues({ blocked: "x", voice: VOICE, project_permissions: [] })).toEqual({
       "": "ask for at least one of intents and commands, or project_permissions",
     });
   });

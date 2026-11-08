@@ -29,6 +29,8 @@ import {
 import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import {
   PERMIT_REQUESTED_TEXT,
+  PERMIT_VOICE_REQUIRED,
+  PERMIT_VOICE_TOO_LONG,
   PermitRequestResponseTextSchema,
   PermitToolInputSchema,
 } from "@ccmsg/protocol/permit-request";
@@ -271,7 +273,18 @@ async function permitTool<E>($: Engine, e: E): Promise<string> {
     return "permit は subagent からは使えない。止められた操作は委譲元に報告して止まる (委譲元が自分で実行し、止められたら委譲元が permit で許可を求める)";
   }
   const read = parseWith(PermitToolInputSchema, e);
-  if (!read.ok) return notTheInput("permit", read.failure.summary);
+  if (!read.ok) {
+    // A missing `voice` is valibot's own "Invalid key" text; the model is told
+    // what to write instead.
+    const reasons = read.failure.issues.map((issue) =>
+      issue.path === "voice" && issue.message !== PERMIT_VOICE_TOO_LONG
+        ? PERMIT_VOICE_REQUIRED
+        : issue.path === ""
+          ? issue.message
+          : `${issue.path}: ${issue.message}`,
+    );
+    return notTheInput("permit", reasons.join("; "));
+  }
   let run: { exitCode: number; stdout: string; stderr: string };
   try {
     run = await $.process.run(toolArgv($.plugin.root, await $.session.id()), {

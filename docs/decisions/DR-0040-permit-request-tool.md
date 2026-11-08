@@ -25,9 +25,10 @@ attachments: string[]                                 # コマンドが読むフ
 intents:     string[]                                 # コマンドでない許可してほしいこと (markdown、各 1 文。Edit 等)
 commands:    { command: string, description?: string }[]   # Bash に渡す内容そのまま (複数行可) と、何をするかの短い説明
 project_permissions: { add?: string, remove?: string }[]  # プロジェクトの permissions.allow に足す / 消す rule (完全一致形を推奨、§12)
+voice:       string                                   # 読み上げる 1 文 (日本語、§6)
 ```
 
-- 必須は `blocked` と、各コマンドの `command`。`intents`・`commands`・`project_permissions` の少なくとも 1 つに 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
+- 必須は `blocked` と `voice` と、各コマンドの `command`。`intents`・`commands`・`project_permissions` の少なくとも 1 つに 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
 - `attachments` は絶対パス (`/` で始まる) で、同じパスを 2 度書かない。数は 16 まで (バブルと許可の文の 1 行ずつになるので、人が読み切れる数に抑える)
 - 配列の field は要素の型ごと、object は field ごとに見せる (`{ type: "array", items: { type: "object", properties: { command: { type: "string" }, description: { type: "string" } }, required: ["command"] } }`)。配列と object の型は中身の型までで 1 つの型なので、`toolInputSchemaOf` は `items` と `properties` / `required` を同じ規則 (型と enum だけ) で導く。長さや重複の決まりは見せない
 - 合わない入力は「permit の入力が形に合わないので何もしていない: <理由>」で返す (DR-0039 §3)
@@ -90,7 +91,7 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 
 daemon は `permit_request` を受けた時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
-入力に `voice` (例: 「bucket policy の変更の許可をお願いします。」) があれば、固定の文の代わりにそれを読み上げる。何の許可を待っているかを聞いて分かるようにするため。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon まで届くが、音声だけのもので webui のバブルには出さない。
+tool の入力の `voice` (例: 「bucket policy の変更の許可をお願いします。」) は必須で、固定の文の代わりにそれを読み上げる。voice が無いと「許可を求めています」が連続して鬱陶しいので、依頼ごとに内容の分かる 1 文を読ませる。無い入力は `voice (読み上げる 1 文、日本語) が要る` の形で tool が断る (kawaz 2026-11-08)。`ccmsg sidecar permit` と daemon は voice の無い依頼も受け、その時は固定の文を読むフォールバックとする。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon まで届くが、音声だけのもので webui のバブルには出さない。
 
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
 - 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は TL に出るので、daemon.log に 1 行書くだけで返事は変えない
@@ -198,6 +199,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 - 1 要素は `add` か `remove` のどちらか 1 つ。両方・どちらも無い要素は断る
 - rule が完全一致形かは機械的に判定しない。`*` を含んでも通す: `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで rule を見てする (kawaz 2026-11-08)
+- `Edit` / `Read` / `Write` の rule の path が `~/` で始まるもの (`/^(Edit|Read|Write)\(~\//`) は断る。`permissions.allow` は `~` を展開せず効かないため。tool は「`~/` は permissions.allow では効かない。絶対パスで書く (例 `Edit(/abs/path/foo/bar.toml)`)」を返し、依頼は出さない。同じ検査を daemon の `permit_permission_apply` の入力も通る (protocol の rule のスキーマ 1 つ。`Bash(ls ~/x)` のようなコマンドの中の `~/` は対象外) (kawaz 2026-11-08)
 - 空白だけの rule、同じ rule を 2 度名指す依頼 (add と remove に分けても) は断る (1 つの rule にボタンは 1 つ)
 - `project_permissions` だけの依頼も受ける (毎回止められる操作の allow を足すことだけを求める依頼)。`intents`・`commands`・`project_permissions` のどれも無い依頼は断る。拒否の文は「ask for at least one of intents and commands, or project_permissions」
 - model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)`

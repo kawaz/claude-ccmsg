@@ -37,12 +37,25 @@ const AttachmentPathSchema = v.pipe(
   v.check((path) => path.startsWith("/"), "an attachment is an absolute path"),
 );
 
+/** Whether `rule` is a file rule (`Edit` / `Read` / `Write`) whose path starts
+ * with `~/`: `permissions.allow` does not expand `~`, so such a rule never
+ * matches. Both the tool's input and the daemon's apply check it. */
+export function isTildeFileRule(rule: string): boolean {
+  return /^(Edit|Read|Write)\(~\//.test(rule);
+}
+
 /** A rule of `permissions.allow` as written in a project's
  * `.claude/settings.local.json`: `Bash(<the command>)`, `Edit(<the path>)`.
  * The exact form is recommended (an exact allow rule skips the classifier),
  * and nothing tells it apart here: a `*` may be a wildcard or part of the
  * command (`find -name \*.json`), which the person judges in the bubble. */
-const ProjectPermissionRuleSchema = PermitTextSchema;
+const ProjectPermissionRuleSchema = v.pipe(
+  PermitTextSchema,
+  v.check(
+    (rule) => !isTildeFileRule(rule),
+    "~/ は permissions.allow では効かない。絶対パスで書く (例 Edit(/Users/<user>/.config/foo/bar.toml))",
+  ),
+);
 
 /** One change to the asking session's project `permissions.allow`
  * (DR-0040 §12): a rule to add or one to remove, never both. */
@@ -97,18 +110,18 @@ const PermitEntries = {
       ),
     ),
   ),
-  /** What the speakers say in place of the fixed sentence (DR-0040 §6): a
-   * short call to the person. Not shown in the webui. */
-  voice: v.optional(
-    v.pipe(
-      PermitTextSchema,
-      v.maxLength(
-        PERMIT_VOICE_MAX_LENGTH,
-        `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`,
-      ),
-    ),
-  ),
 };
+
+/** What the speakers say (DR-0040 §6): a short call to the person. Not shown
+ * in the webui. */
+export const PERMIT_VOICE_REQUIRED = "voice (読み上げる 1 文、日本語) が要る";
+/** What a too long voice is refused with. */
+export const PERMIT_VOICE_TOO_LONG = `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`;
+const PermitVoiceSchema = v.pipe(
+  v.string(PERMIT_VOICE_REQUIRED),
+  v.check((text) => text.trim() !== "", PERMIT_VOICE_REQUIRED),
+  v.maxLength(PERMIT_VOICE_MAX_LENGTH, PERMIT_VOICE_TOO_LONG),
+);
 
 /** Whether a request asks for anything: an intent, a command or a project
  * permission, by how many of each it has. */
@@ -120,7 +133,12 @@ const ASKS_FOR_SOMETHING = "ask for at least one of intents and commands, or pro
 /** The `permit` tool's input, picked out of the call (the engine puts its
  * own fields beside it, which `v.object` leaves out). */
 export const PermitToolInputSchema = v.pipe(
-  v.object(PermitEntries),
+  v.object({
+    ...PermitEntries,
+    /** Required: every request says what it asks for, so the speakers do
+     * not repeat the fixed sentence. */
+    voice: PermitVoiceSchema,
+  }),
   v.check(
     (input) =>
       asksForSomething(
@@ -139,6 +157,9 @@ export type PermitToolInput = Output<typeof PermitToolInputSchema>;
 export const PermitInputSchema = v.pipe(
   v.strictObject({
     ...PermitEntries,
+    /** Optional here: the daemon says its fixed sentence when a request
+     * comes without one. The tool always sends it. */
+    voice: v.optional(PermitVoiceSchema),
     commands: v.optional(v.array(v.strictObject(PermitCommandEntries))),
   }),
   v.check(

@@ -123,7 +123,8 @@ export function toolInputSchemas(): {
     launch: toolInputSchemaOf(LaunchFieldsSchema, { resume: "Session id to resume" }),
     permit: toolInputSchemaOf(PermitToolInputSchema, {
       voice: "日本語",
-      project_permissions: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)",
+      project_permissions:
+        "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。Edit / Read / Write は絶対パスで書く (~/ は効かない)",
     }),
   };
 }

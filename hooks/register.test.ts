@@ -2815,11 +2815,12 @@ describe("the ccmsg tools", () => {
             type: "object",
             properties: { add: { type: "string" }, remove: { type: "string" } },
           },
-          description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)",
+          description:
+            "完全一致形を推奨 (完全一致形の allow は classifier を通らない)。Edit / Read / Write は絶対パスで書く (~/ は効かない)",
         },
         voice: { type: "string", description: "日本語" },
       },
-      required: ["blocked"],
+      required: ["blocked", "voice"],
     });
     // say's text is spoken, so the model is told the language it is spoken in.
     expect(fake.tools[1]?.inputSchema).toEqual({
@@ -3292,6 +3293,7 @@ describe("the ccmsg tools", () => {
       blocked: "`git push` が止められた",
       attachments: ["/w/policy.json"],
       commands: [{ command: "git push origin main", description: "main を公開する" }],
+      voice: "push の許可をお願いします。",
       tool: "mcp__ccmsg-v1__permit",
       tool_use_id: "toolu_1",
     });
@@ -3302,6 +3304,7 @@ describe("the ccmsg tools", () => {
           blocked: "`git push` が止められた",
           attachments: ["/w/policy.json"],
           commands: [{ command: "git push origin main", description: "main を公開する" }],
+          voice: "push の許可をお願いします。",
         }),
         timeoutMs: PERMIT_TIMEOUT_MS,
       },
@@ -3344,6 +3347,7 @@ describe("the ccmsg tools", () => {
         { add: "Bash(find . -name \\*.json)" },
         { remove: "Bash(just deploy-old)" },
       ],
+      voice: "deploy の許可をお願いします。",
     };
     expect(await callTool(fake, "mcp__ccmsg-v1__permit", permit)).toBe("許可依頼を出した");
     expect(seen).toEqual([JSON.stringify(permit)]);
@@ -3356,18 +3360,20 @@ describe("the ccmsg tools", () => {
   });
 
   // Nothing to permit, a path that is not absolute, a field of another
-  // type, a command that is its text alone or has none: answered in text,
-  // and nothing runs.
+  // type, a command that is its text alone or has none, no voice: answered in
+  // text, and nothing runs.
   test("an input that is not permit's is answered in text, and nothing runs", async () => {
     const fake = toolFake(printing({ ok: true, id: "0f0f/1" }));
+    const voice = "ls の許可をお願いします。";
     for (const input of [
-      { blocked: "x" },
-      { blocked: "x", intents: [], commands: [] },
-      { blocked: "", commands: [{ command: "ls" }] },
-      { blocked: "x", commands: [{ command: "ls" }], attachments: ["rel/a.ts"] },
-      { blocked: "x", commands: "ls" },
-      { blocked: "x", commands: ["ls"] },
-      { blocked: "x", commands: [{ description: "一覧" }] },
+      { blocked: "x", voice },
+      { blocked: "x", intents: [], commands: [], voice },
+      { blocked: "", commands: [{ command: "ls" }], voice },
+      { blocked: "x", commands: [{ command: "ls" }], attachments: ["rel/a.ts"], voice },
+      { blocked: "x", commands: "ls", voice },
+      { blocked: "x", commands: ["ls"], voice },
+      { blocked: "x", commands: [{ description: "一覧" }], voice },
+      { blocked: "x", commands: [{ command: "ls" }] },
       { blocked: "x", commands: [{ command: "ls" }], voice: "" },
       {
         blocked: "x",
@@ -3397,6 +3403,46 @@ describe("the ccmsg tools", () => {
     expect(fake.runs).toEqual([]);
   });
 
+  // 何を保証するか: voice の無い入力は、voice が要ると model に言って断る。
+  test("a permit without a voice is refused, saying a voice is needed", async () => {
+    const fake = toolFake(printing({ ok: true, id: "0f0f/1" }));
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__permit", {
+        blocked: "x",
+        commands: [{ command: "ls" }],
+      }),
+    ).toContain("voice (読み上げる 1 文、日本語) が要る");
+    expect(fake.runs).toEqual([]);
+  });
+
+  // 何を保証するか: ~/ で始まる Edit / Read / Write の rule は permissions.allow
+  // で効かないので入口で断り、絶対パスで書く旨を model に返す。何も起こさない。
+  // Bash の中の ~/ は通る。
+  test("a permit refuses a file rule under ~/ with the reason, and runs nothing", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing({ ok: true, id: "0f0f/1" })();
+    });
+    const base = { blocked: "x", voice: "編集の許可をお願いします。" };
+    for (const rule of ["Edit(~/a.toml)", "Read(~/a)", "Write(~/a)"]) {
+      expect(
+        await callTool(fake, "mcp__ccmsg-v1__permit", {
+          ...base,
+          project_permissions: [{ add: rule }],
+        }),
+      ).toContain("~/ は permissions.allow では効かない。絶対パスで書く");
+    }
+    expect(seen).toEqual([]);
+    expect(
+      await callTool(fake, "mcp__ccmsg-v1__permit", {
+        ...base,
+        project_permissions: [{ add: "Bash(ls ~/x)" }],
+      }),
+    ).toBe("許可依頼を出した");
+    expect(seen).toHaveLength(1);
+  });
+
   test("a permit with no daemon, or one the daemon refused, says it was not asked", async () => {
     const unreachable = toolFake(async () => ({
       exitCode: 3,
@@ -3407,6 +3453,7 @@ describe("the ccmsg tools", () => {
       await callTool(unreachable, "mcp__ccmsg-v1__permit", {
         blocked: "x",
         commands: [{ command: "ls" }],
+        voice: "ls の許可をお願いします。",
       }),
     ).toBe(
       "ccmsg の daemon に繋がらず、許可依頼を出していない: ccmsg sidecar permit: the daemon could not be reached: ECONNREFUSED",
@@ -3420,6 +3467,7 @@ describe("the ccmsg tools", () => {
       await callTool(refused, "mcp__ccmsg-v1__permit", {
         blocked: "x",
         commands: [{ command: "ls" }],
+        voice: "ls の許可をお願いします。",
       }),
     ).toBe("許可依頼を出せなかった: op: unknown op: permit_request");
   });
@@ -3432,6 +3480,7 @@ describe("the ccmsg tools", () => {
       await callTool(fake, "mcp__ccmsg-v1__permit", {
         blocked: "x",
         commands: [{ command: "ls" }],
+        voice: "ls の許可をお願いします。",
       }),
     ).toBe(
       `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: Error: timed out`,

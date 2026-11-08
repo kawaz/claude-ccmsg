@@ -182,6 +182,24 @@ describe("permit project_permissions over the wire", () => {
     }
   });
 
+  // 何を保証するか: ~/ で始まる Edit / Read / Write の rule は、依頼の行に
+  // あっても適用の口で断り、何も書かない (permissions.allow で効かない rule)。
+  test("refuses to apply a file rule under ~/, even one the request asked for", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const u = await userConn(ctx);
+      const { s, dir } = await asked(ctx, [{ add: "Edit(~/a.toml)" }, { remove: "Read(~/b)" }]);
+      for (const permission of [{ add: "Edit(~/a.toml)" }, { remove: "Read(~/b)" }]) {
+        expect(await u.request(apply(permission))).toMatchObject({ ok: false });
+      }
+      expect(fs.existsSync(path.join(dir, ".claude"))).toBe(false);
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
   // 何を保証するか: 読めない設定ファイルへの適用は settings_unreadable で断り、
   // ファイルを書き換えず、適用済みにしない。
   test("refuses to apply over settings that do not read, leaving them", async () => {
