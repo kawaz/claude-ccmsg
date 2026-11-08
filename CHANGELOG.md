@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.220.0 <a id="v0.220.0"></a>
+
+2026-11-08
+
+- Timeline のタブ列の左端と Sessions の行に未読の 🔔 (say) / 🔐 (許可依頼) のバッジを置いた (DR-0050)。数は右上の赤いカウンター、押すとその種類だけを出すフィルタ (`?filter=say|permit`)、もう一度押すと解除して選択中のバブルの画面内の位置を保つ
+- subagent / teammate (worker) の say も親セッションの未読に数え、親の Timeline に `🤖 名前 (model/effort)` の送り手付きで出す (protocol 2.1: `say_unread` の `agent_id`、新しい `agent_says`)
+- 古い ccmsg client のセッションは Status の本文を印と版だけにして説明は title に移し、Timeline 下の状態行の `ccmsg v…` も黄色にした
+
 ## v0.219.0 <a id="v0.219.0"></a>
 
 2026-11-08
