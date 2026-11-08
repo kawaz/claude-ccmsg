@@ -30,6 +30,7 @@ import {
   type SessionStatusSnapshot,
   type StorageEvent,
   type TranscriptReadResponse,
+  type AgentSay,
   type UnreadSay,
   parseWith,
 } from "@ccmsg/protocol";
@@ -411,6 +412,10 @@ export interface AppState {
    * button, and the unread 🔔 marker in the Sessions list. Replaced whole on
    * every push — the daemon always sends the full set. */
   unreadSays: readonly UnreadSay[];
+  /** Every say of the live sessions' subagents and teammates (ev:"agent_says",
+   * DR-0050 §10), oldest first: drawn in the session's own Timeline at their
+   * time. Whether one is unread is `unreadSays`'. Replaced whole on every push. */
+  agentSays: readonly AgentSay[];
   /** Every request for permission the daemon holds (DR-0040), oldest first:
    * the permission bubbles in each session's Timeline and the unread 🔐
    * marker in the Sessions list. Replaced whole by the subscribe-time set
@@ -489,6 +494,7 @@ export function initialState(): AppState {
     sessionErrors: new Map(),
     llmRequests: new Map(),
     unreadSays: [],
+    agentSays: [],
     permitRequests: [],
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -523,6 +529,7 @@ export type Action =
   | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
   // Full replacement, same as llm-requests/loaded (ev:"say_unread").
   | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
+  | { type: "agent-says/loaded"; says: readonly AgentSay[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
   | { type: "permit-requests/updated"; request: PermitRequestRecord }
   | {
@@ -1121,6 +1128,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "say-unread/loaded":
       return { ...state, unreadSays: action.says };
+    case "agent-says/loaded":
+      return { ...state, agentSays: action.says };
     case "permit-requests/loaded":
       return { ...state, permitRequests: action.requests };
     case "permit-requests/updated": {

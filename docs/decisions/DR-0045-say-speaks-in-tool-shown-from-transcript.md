@@ -144,7 +144,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 - TL は main thread の assistant 行の tool_use `{name:"mcp__ccmsg-v1__say", input:{text}}` を、PushNotification と同じ境界行の 🔔 バブルとして描く。時刻と位置はその行のもの。照合は `packages/protocol/src/ccmsg-direct-transcript.ts` に置く
 - バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
-- 既読のキーは tool_use の id。未読は、ライブのセッションの main thread の say の tool_use (§3 の追いつきと push で見たもの) から既読の集合を引いたもの
+- 既読のキーは tool_use の id。未読は、ライブのセッションの say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの) から既読の集合を引いたもの
 - daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
@@ -153,7 +153,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
   - `since` より前の say は既読とみなす (初回やファイルが壊れた時に、古い say で 🔔 が溢れないように)
   - 書き込みは `say_read` のたびに一時ファイルへ書いて rename し、応答はその後に返す
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外。say を transcript の行から描く以上、既読をメモリだけに持つと、再起動のたびに過去の say が全部未読に戻る
-- subagent の say はその agent の TL に 🔕 で出て、未読には入らない
+- subagent / teammate の say も親セッションの未読に入り (`say_unread` の `agent_id`)、本文は `ev:"agent_says"` で webui に渡って親セッションの TL に時刻で合流する ([DR-0050](./DR-0050-timeline-notification-badges.md) §10)。その agent の TL では transcript の行から 🔕 で出る
 
 ### 8. 削るもの
 

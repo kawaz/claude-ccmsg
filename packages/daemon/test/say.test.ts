@@ -19,7 +19,7 @@ import type { JsonObject } from "@ccmsg/protocol";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { assistantContentRow, line, toolUseBlock } from "../../protocol/test/transcript-rows.ts";
-import { loadSayUnreadStore, markSaysRead, unreadSays } from "../src/say-unread.ts";
+import { agentSays, loadSayUnreadStore, markSaysRead, unreadSays } from "../src/say-unread.ts";
 import {
   fixtureDir,
   isKind,
@@ -211,6 +211,35 @@ describe("say: what the person has not read", () => {
       const { ev } = await user.readEventUntil("say_unread", (e) => e.says.length > 0);
       expect(ev.says).toMatchObject([{ session_id: A, tool_use_id: "toolu_1" }]);
       expect(unreadSays(ctx.daemon.sayUnread).map((s) => s.tool_use_id)).toEqual(["toolu_1"]);
+    });
+  });
+
+  // 何を保証するか: subagent / teammate の say も親セッションの未読に数え
+  // (agent_id 付き)、本文は ev:"agent_says" で届く (DR-0050 §10)。既読は main の
+  // say と同じ say_read で付き、既読になっても agent_says には残る。
+  test("a subagent's say is unread under its session, and its text is in agent_says", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      const file = path.join(dir, `${A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "subscribe" });
+      const first = await user.readEventUntil("agent_says", () => true);
+      expect(first.ev.says).toEqual([]);
+
+      await pushSay(session, { text: "worker から" }, "toolu_sub", { agent_id: "a1" });
+      const unread = await user.readEventUntil("say_unread", (e) => e.says.length > 0);
+      expect(unread.ev.says).toMatchObject([
+        { session_id: A, tool_use_id: "toolu_sub", agent_id: "a1" },
+      ]);
+      const told = await user.readEventUntil("agent_says", (e) => e.says.length > 0);
+      expect(told.ev.says).toMatchObject([
+        { session_id: A, agent_id: "a1", tool_use_id: "toolu_sub", text: "worker から" },
+      ]);
+
+      await user.requestOk({ op: "say_read", ids: ["toolu_sub"] });
+      expect(unreadSays(ctx.daemon.sayUnread)).toEqual([]);
+      expect(agentSays(ctx.daemon.sayUnread).map((say) => say.tool_use_id)).toEqual(["toolu_sub"]);
     });
   });
 

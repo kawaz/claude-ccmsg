@@ -21,9 +21,12 @@ import {
   jsonText,
   parseWith,
   TranscriptRowLineSchema,
+  type AgentSay,
+  type TranscriptPushRow,
   type UnreadSay,
 } from "@ccmsg/protocol";
 import type { LineFold } from "./transcript-relay.ts";
+import { toolUsesOf } from "./row-effects.ts";
 
 /** say-read.json: the read ids, and the time before which every say is
  * read. */
@@ -37,9 +40,17 @@ const SayReadFileSchema = jsonText(
 /** The says of one live session, by tool_use id, to their row's time. */
 type SessionSays = Map<string, string>;
 
+/** The says of one live session's subagents and teammates, by tool_use id. */
+type SessionAgentSays = Map<string, { agentId: string; ts: string; text: string }>;
+
 export interface SayUnreadStore {
   /** The settled says of each live session. */
   says: Map<string, SessionSays>;
+  /** The says of each live session's subagents and teammates (DR-0050 §10).
+   * Their rows are in the agents' own transcripts, which the relay does not
+   * read, so they come from the pushed rows only: a say made while the daemon
+   * was down is not among them. */
+  agentSays: Map<string, SessionAgentSays>;
   read: Set<string>;
   since: string;
   file: string;
@@ -73,6 +84,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     const { since } = read.value;
     return {
       says: new Map(),
+      agentSays: new Map(),
       read: new Set(read.value.read),
       since,
       file,
@@ -80,7 +92,14 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     };
   }
   const since = now().toISOString();
-  return { says: new Map(), read: new Set(), since, file, written: Promise.resolve() };
+  return {
+    says: new Map(),
+    agentSays: new Map(),
+    read: new Set(),
+    since,
+    file,
+    written: Promise.resolve(),
+  };
 }
 
 function isUnread(store: SayUnreadStore, id: string, ts: string): boolean {
@@ -93,6 +112,13 @@ export function unreadSays(store: SayUnreadStore): UnreadSay[] {
   for (const [sid, says] of store.says) {
     for (const [id, ts] of says) {
       if (isUnread(store, id, ts)) unread.push({ session_id: sid, tool_use_id: id, ts });
+    }
+  }
+  for (const [sid, says] of store.agentSays) {
+    for (const [id, say] of says) {
+      if (isUnread(store, id, say.ts)) {
+        unread.push({ session_id: sid, tool_use_id: id, ts: say.ts, agent_id: say.agentId });
+      }
     }
   }
   return unread.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
@@ -114,7 +140,9 @@ export async function markSaysRead(
 ): Promise<MarkSaysReadResult> {
   const unread = new Set(unreadSays(store).map((s) => s.tool_use_id));
   const known = (id: string): boolean =>
-    store.read.has(id) || [...store.says.values()].some((says) => says.has(id));
+    store.read.has(id) ||
+    [...store.says.values()].some((says) => says.has(id)) ||
+    [...store.agentSays.values()].some((says) => says.has(id));
   const unknown = ids.filter((id) => !known(id));
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
   const fresh = ids.filter((id) => unread.has(id));
@@ -122,6 +150,64 @@ export async function markSaysRead(
   for (const id of fresh) store.read.add(id);
   await writeSayRead(store);
   return { kind: "read" };
+}
+
+/** Every say of the live sessions' subagents and teammates, oldest first
+ * (ev:"agent_says"). */
+export function agentSays(store: SayUnreadStore): AgentSay[] {
+  const out: AgentSay[] = [];
+  for (const [sid, says] of store.agentSays) {
+    for (const [id, say] of says) {
+      out.push({
+        session_id: sid,
+        agent_id: say.agentId,
+        tool_use_id: id,
+        ts: say.ts,
+        text: say.text,
+      });
+    }
+  }
+  return out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
+/** Take a say `agentId` of `sid` called, from a pushed row: counted with the
+ * session's says from then on (DR-0050 §10), at the time it was pushed. True
+ * when it is new; the same tool_use pushed again is the one already held. */
+export function takeAgentSay(
+  store: SayUnreadStore,
+  sid: string,
+  say: { agentId: string; id: string; text: string; ts: string },
+): boolean {
+  let says = store.agentSays.get(sid);
+  if (says === undefined) {
+    says = new Map();
+    store.agentSays.set(sid, says);
+  }
+  if (says.has(say.id)) return false;
+  says.set(say.id, { agentId: say.agentId, ts: say.ts, text: say.text });
+  return true;
+}
+
+/** Take the says of the subagents' and teammates' rows among `rows` (the
+ * main thread's are the relay's, read off the jsonl), all at `ts`. True when
+ * any is new. */
+export function takeAgentSaysOf(
+  store: SayUnreadStore,
+  sid: string,
+  rows: readonly TranscriptPushRow[],
+  ts: string,
+): boolean {
+  let taken = false;
+  for (const row of rows) {
+    const agentId = row.agent_id;
+    if (agentId === undefined) continue;
+    for (const use of toolUsesOf(row)) {
+      const text = ccmsgSayText(use.name, use.input);
+      if (text === null) continue;
+      if (takeAgentSay(store, sid, { agentId, id: use.id, text, ts })) taken = true;
+    }
+  }
+  return taken;
 }
 
 /** Write the file whole: to a temporary file beside it, then renamed over
@@ -189,7 +275,10 @@ export function sayUnreadFold(store: SayUnreadStore, sid: string, onChange: () =
     },
     close() {
       if (store.says.get(sid) === settled) store.says.delete(sid);
-      if ((settled?.size ?? 0) > 0) onChange();
+      // The agents' says go with the session: it is no longer live.
+      const hadAgentSays = (store.agentSays.get(sid)?.size ?? 0) > 0;
+      store.agentSays.delete(sid);
+      if ((settled?.size ?? 0) > 0 || hadAgentSays) onChange();
       settled = undefined;
       next = undefined;
     },

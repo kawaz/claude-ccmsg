@@ -15,11 +15,15 @@ export function useSayRead({
   sid,
   agentTimeline,
   boundaries,
+  agentSayIds,
 }: {
   sid: string;
   agentTimeline: boolean;
   /** TL の groups と同じ index の境界の分類 (useTranscriptModel)。 */
   boundaries: ReadonlyArray<BoundaryKind | null>;
+  /** この TL に合流させて出す subagent / teammate の say の id (DR-0050 §10)。
+   * 「N 件すべて既読」はこれも含めて時刻順に数える。 */
+  agentSayIds: readonly string[];
 }): {
   /** tool_use の id が `id` の say の既読の状態 (未読なら既読ボタンが既読に
    * する id、sayReadTargets)。 */
@@ -29,11 +33,22 @@ export function useSayRead({
 } {
   const { store, ws } = useApp();
   const unreadSays = useStoreState(store, (s) => s.unreadSays);
-  const unread = useMemo(
-    () => new Set(unreadSays.filter((say) => say.session_id === sid).map((say) => say.tool_use_id)),
+  const unreadTs = useMemo(
+    () =>
+      new Map(
+        unreadSays.filter((say) => say.session_id === sid).map((say) => [say.tool_use_id, say.ts]),
+      ),
     [unreadSays, sid],
   );
-  const shownUnread = useMemo(() => shownUnreadSays(boundaries, unread), [boundaries, unread]);
+  const unread = useMemo(() => new Set(unreadTs.keys()), [unreadTs]);
+  const shownUnread = useMemo(() => {
+    const shown = [
+      ...shownUnreadSays(boundaries, unread),
+      ...agentSayIds.filter((id) => unread.has(id)),
+    ];
+    const at = (id: string): number => Date.parse(unreadTs.get(id) ?? "");
+    return shown.sort((a, b) => at(a) - at(b));
+  }, [boundaries, unread, unreadTs, agentSayIds]);
   // 既読は非楽観 — 成功すると daemon が更新後の ev:"say_unread" を全タブに
   // 送り、store がそれで置き換える。失敗を黙って捨てると「押しても何も起きない」
   // に見えるので、TL でも 1 行のエラーとして出して次の試行まで残す。

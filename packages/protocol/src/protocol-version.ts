@@ -32,7 +32,7 @@ export type ProtocolVersion = Output<typeof ProtocolVersionSchema>;
  * A major change sets the minor back to 0. `just check-protocol-bumped`
  * refuses a push that changes this package without moving this.
  */
-export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 0 };
+export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 1 };
 
 /**
  * The major of a party that names no `major.minor`: a hello or a ping reply

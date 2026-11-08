@@ -13,7 +13,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import { CCMSG_TOOLS, type PermitRequestRecord, type UnreadSay } from "@ccmsg/protocol";
+import {
+  CCMSG_TOOLS,
+  type AgentSay,
+  type PermitRequestRecord,
+  type UnreadSay,
+} from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import { permitPosition, type TimelineFilter } from "../src/client/locator.ts";
@@ -118,10 +123,12 @@ async function open(options: {
   start?: number;
   filter: TimelineFilter | null;
   says?: readonly UnreadSay[];
+  agentSays?: readonly AgentSay[];
   requests?: readonly PermitRequestRecord[];
 }): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs }> {
   const store = timelineStore();
   store.dispatch({ type: "say-unread/loaded", says: [...(options.says ?? [])] });
+  store.dispatch({ type: "agent-says/loaded", says: [...(options.agentSays ?? [])] });
   store.dispatch({ type: "permit-requests/loaded", requests: [...(options.requests ?? [])] });
   await filterTo(store, options.filter);
   const ws = new FakeTranscriptWs(store);
@@ -249,5 +256,46 @@ describe("the Timeline's filter", () => {
       says: [unreadSay(1)],
     });
     expect(ws.reads.length).toBe(1);
+  });
+});
+
+// DR-0050 §10: a subagent's or teammate's say is the session's to read. The
+// daemon hands it (ev:"agent_says", its row being in the agent's own file),
+// and the main Timeline draws it at its time, saying who spoke in the label's
+// row, under the 🔔 filter too; its 既読 is the say's own.
+describe("a worker's say in the main Timeline", () => {
+  const workerSay: AgentSay = {
+    session_id: SID,
+    agent_id: "a1",
+    tool_use_id: "toolu_w1",
+    ts: "2026-10-09T01:00:02.500Z",
+    text: "worker が終わった",
+  };
+
+  test("is drawn at its time with its sender, unread, and kept by the 🔔 filter", async () => {
+    const { root, store } = await open({
+      rows: [sayRow(1), sayRow(3)],
+      filter: null,
+      says: [
+        unreadSay(1),
+        { ...unreadSay(0), tool_use_id: "toolu_w1", ts: workerSay.ts, agent_id: "a1" },
+      ],
+      agentSays: [workerSay],
+    });
+    const bubbles = [...root.querySelectorAll(".say")].map((bubble) => [
+      bubble.querySelector(".say-body")?.textContent ?? "",
+      bubble.querySelector(".say-from")?.textContent ?? "",
+      bubble.querySelector(".say-icon")?.textContent ?? "",
+    ]);
+    expect(bubbles).toEqual([
+      ["said 1", "say", "🔔"],
+      ["worker が終わった", "say🤖 a1", "🔔"],
+      ["said 3", "say", "🔕"],
+    ]);
+    // 未読は main 1 + worker 1。最新の未読 (worker) のボタンが両方を既読にする。
+    const button = root.querySelectorAll(".say")[1]?.querySelector(".say-read-btn");
+    expect(button?.textContent).toBe("2 件すべて既読");
+    await filterTo(store, "say");
+    expect(kept(root).map(([kind]) => kind)).toEqual(["say", "say", "say"]);
   });
 });

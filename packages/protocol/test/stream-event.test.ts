@@ -22,6 +22,27 @@ const PUSHES: {
       says: [
         { session_id: SID, tool_use_id: "toolu_01", ts: "2026-10-28T00:00:00.000Z" },
         { session_id: SID, tool_use_id: "toolu_02", ts: "2026-10-28T00:00:01.000Z" },
+        {
+          session_id: SID,
+          tool_use_id: "toolu_03",
+          ts: "2026-10-28T00:00:02.000Z",
+          agent_id: "a1b2c3",
+        },
+      ],
+    },
+  ],
+  agent_says: [
+    { ev: "agent_says", says: [] },
+    {
+      ev: "agent_says",
+      says: [
+        {
+          session_id: SID,
+          agent_id: "a1b2c3",
+          tool_use_id: "toolu_03",
+          ts: "2026-10-28T00:00:02.000Z",
+          text: "終わった",
+        },
       ],
     },
   ],

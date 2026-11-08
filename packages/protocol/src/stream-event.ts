@@ -16,14 +16,18 @@ import { ClaudeVersionSchema, LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
-/** One say the person has not read (DR-0045 §7): a `say` tool call on the
- * main thread of a live session, by the id of its tool_use. */
+/** One say the person has not read (DR-0045 §7): a `say` tool call of a
+ * live session, by the id of its tool_use — on its main thread, or of one of
+ * its subagents or teammates (DR-0050 §10). */
 export const UnreadSaySchema = v.object({
   session_id: v.string(),
   /** The tool_use's id: what `say_read` names. */
   tool_use_id: v.string(),
-  /** The time of the transcript row that made the call. */
+  /** The time of the transcript row that made the call; for a subagent's
+   * or teammate's, the time the daemon got the row pushed. */
   ts: v.string(),
+  /** The subagent or teammate that called it; absent on the main thread. */
+  agent_id: v.optional(v.string()),
 });
 export type UnreadSay = Output<typeof UnreadSaySchema>;
 
@@ -37,6 +41,29 @@ export const SayUnreadStreamEventSchema = v.object({
   says: v.array(UnreadSaySchema),
 });
 export type SayUnreadStreamEvent = Output<typeof SayUnreadStreamEventSchema>;
+
+/** A say a subagent or teammate of a live session called (DR-0050 §10). Its
+ * row is in the agent's own transcript, which the session's Timeline does
+ * not read, so the daemon hands its text to draw it there. */
+export const AgentSaySchema = v.object({
+  session_id: v.string(),
+  agent_id: v.string(),
+  tool_use_id: v.string(),
+  /** When the daemon got the row pushed. */
+  ts: v.string(),
+  text: v.string(),
+});
+export type AgentSay = Output<typeof AgentSaySchema>;
+
+/** Every say of the live sessions' subagents and teammates, read or not,
+ * oldest first (user-role subscribers only, like ev:"say_unread"). Sent at
+ * subscribe time, even when empty, and again whenever the set changes:
+ * always the full set. Whether one is unread is ev:"say_unread"'s. */
+export const AgentSaysStreamEventSchema = v.object({
+  ev: v.literal("agent_says"),
+  says: v.array(AgentSaySchema),
+});
+export type AgentSaysStreamEvent = Output<typeof AgentSaysStreamEventSchema>;
 
 /** Every request for permission the daemon holds, oldest first (DR-0040 §5,
  * user-role subscribers only, like ev:"say_unread"). Sent at subscribe time, even
@@ -269,6 +296,7 @@ export type ClaudeVersionStreamEvent = Output<typeof ClaudeVersionStreamEventSch
 /** Every push, told apart by `ev`. */
 export const StreamEventSchema = v.variant("ev", [
   SayUnreadStreamEventSchema,
+  AgentSaysStreamEventSchema,
   PermitRequestsStreamEventSchema,
   PermitRequestStreamEventSchema,
   RequestOverridesStreamEventSchema,

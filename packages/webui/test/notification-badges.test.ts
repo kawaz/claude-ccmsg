@@ -8,6 +8,7 @@
 // - the counts are the session's unread says and unread requests only
 import { describe, expect, test } from "bun:test";
 import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import { agentSayerLabel } from "../src/client/components/agent-tree-view.ts";
 import {
   badgeCounterText,
   badgeHref,
@@ -63,5 +64,49 @@ describe("notification badges", () => {
     ];
     expect(notificationCountsOf("s1", says, requests)).toEqual({ say: 2, permit: 1 });
     expect(notificationCountsOf("s3", says, requests)).toEqual({ say: 0, permit: 0 });
+  });
+});
+
+// DR-0050 §10: a worker's say counts in its session's 🔔 (main + workers), and
+// its bubble names the worker by the agent tree, with model/effort when known.
+describe("a worker's say", () => {
+  test("counts in the session's 🔔 with the main thread's", () => {
+    const says: UnreadSay[] = [
+      { session_id: "s1", tool_use_id: "t1", ts: "2026-11-08T00:00:00.000Z" },
+      { session_id: "s1", tool_use_id: "t2", ts: "2026-11-08T00:00:01.000Z", agent_id: "a1" },
+    ];
+    expect(notificationCountsOf("s1", says, [])).toEqual({ say: 2, permit: 0 });
+  });
+
+  test("names the worker with its model/effort, or by name or id alone", () => {
+    const tree = {
+      teammates: [],
+      workflows: [],
+      agents: [
+        {
+          agent_id: "a1",
+          name: "reviewer",
+          model: "fable[1m]",
+          running_model: "claude-fable-5-1",
+          effort: "low",
+          kind: "subagent" as const,
+          spawn_depth: 0,
+          state: "active" as const,
+          children: [],
+        },
+        {
+          agent_id: "a2",
+          name: "builder",
+          kind: "subagent" as const,
+          spawn_depth: 0,
+          state: "active" as const,
+          children: [],
+        },
+      ],
+    };
+    expect(agentSayerLabel(tree, "a1")).toBe("🤖 reviewer (fable-5-1/low)");
+    expect(agentSayerLabel(tree, "a2")).toBe("🤖 builder");
+    expect(agentSayerLabel(tree, "a9")).toBe("🤖 a9");
+    expect(agentSayerLabel(undefined, "a1")).toBe("🤖 a1");
   });
 });

@@ -130,7 +130,11 @@ describe("useSayRead", () => {
     });
     const wrap = (child: ComponentChild) => h(AppContext.Provider, { value: { store, ws } }, child);
     return track(
-      await renderHook((p: typeof props) => useSayRead({ sid: SID, ...p }), props, { wrap }),
+      await renderHook(
+        (p: typeof props) => useSayRead({ sid: SID, agentSayIds: [], ...p }),
+        props,
+        { wrap },
+      ),
     );
   }
 

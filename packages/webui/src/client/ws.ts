@@ -812,6 +812,13 @@ export function createWsClient(
       dispatch({ type: "say-unread/loaded", says: streamEv.says });
       return;
     }
+    // The says of the sessions' subagents and teammates (DR-0050 §10), read or
+    // not — the full set, replaced the same way. They are drawn in the main
+    // Timeline from this, their rows being in the agents' own transcripts.
+    if (streamEv.ev === "agent_says") {
+      dispatch({ type: "agent-says/loaded", says: streamEv.says });
+      return;
+    }
     // Requests for permission (DR-0040 §5): the full set on connect, which
     // replaces what the tab held (a restarted daemon starts with none), then
     // each one as it is recorded or marked read, in place of the one held.

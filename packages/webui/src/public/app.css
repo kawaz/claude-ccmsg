@@ -2766,6 +2766,13 @@ select.sidebar-globals-endpoint {
   margin-bottom: var(--space-2);
 }
 
+/* subagent / teammate の say の送り手 (DR-0050 §10)。送り手の行の中に並べ、
+ * 行を増やさない。 */
+.say-sender {
+  margin-left: var(--space-6);
+  color: var(--fg);
+}
+
 /* 時刻 + 既読の足元行。.tl-bubble-footer と同じ「本文の下に 1 行」構成。 */
 .say-footer {
   display: flex;

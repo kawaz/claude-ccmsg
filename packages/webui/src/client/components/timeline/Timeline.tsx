@@ -3,7 +3,11 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { useEffect, useMemo, useRef } from "preact/hooks";
-import { type SessionStatusSnapshot } from "@ccmsg/protocol";
+import {
+  type AgentSay,
+  type PermitRequestRecord,
+  type SessionStatusSnapshot,
+} from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
 import { type AgentRef, agentTimelineHref, permitPosition, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
@@ -14,7 +18,7 @@ import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
-import { agentEngineLabelsByName } from "../agent-tree-view.ts";
+import { agentEngineLabelsByName, agentSayerLabel } from "../agent-tree-view.ts";
 import {
   protocolSkewWarning,
   sessionRuntimeParts,
@@ -39,6 +43,7 @@ import { useFilterScroll } from "./useFilterScroll.ts";
 import { unreadSayBeforeWindow } from "../../say-read.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { usePermitBubbles } from "./usePermitBubbles.ts";
+import { permitSlots } from "../../permit-merge.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -195,30 +200,63 @@ export function Timeline({
     [groups, forkOrigin?.boundary_uuid],
   );
   const folds = useTimelineFolds(autoOpen.revision, groups);
-  const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries });
+  // A subagent's or teammate's say is drawn here too, at its time (DR-0050
+  // §10): its row is in the agent's own transcript, so the daemon hands it.
+  // An agent's Timeline draws its own says from its transcript instead.
+  const allAgentSays = useStoreState(store, (s) => s.agentSays);
+  const agentSays = useMemo(
+    () => (agent ? [] : allAgentSays.filter((say) => say.session_id === sid)),
+    [agent, allAgentSays, sid],
+  );
+  const agentSayIds = useMemo(() => agentSays.map((say) => say.tool_use_id), [agentSays]);
+  const agentSaySlots = useMemo(() => permitSlots(groups, agentSays), [groups, agentSays]);
+  const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries, agentSayIds });
   const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
   // The permission bubbles of one slot, in the order they were made.
   // Each is selectable like a transcript item, its record id standing in for
   // a uuid (DR-0050 §9 U7), and answers to the 🔐 filter.
   const bubbleNodes = (slot: number) =>
-    (permitBubbles.slots[slot] ?? []).map((request) => {
-      const position = permitPosition(request.id);
-      return (
-        <div
-          key={`permit-${request.id}`}
-          class={`tl-item${currentPosition === position ? " tl-position-selected" : ""}`}
-          data-timeline-uuid={position}
-          data-notif="permit"
-          onClick={selectPositionOnClick(position, pin.selectPosition)}
-        >
-          <PermitRequestBubble
-            request={request}
-            now={now}
-            translationAvailability={translationAvailability}
-          />
-        </div>
-      );
-    });
+    [
+      ...(permitBubbles.slots[slot] ?? []).map((request) => ({
+        ts: request.ts,
+        node: permitNode(request),
+      })),
+      ...(agentSaySlots[slot] ?? []).map((say) => ({ ts: say.ts, node: agentSayNode(say) })),
+    ]
+      .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
+      .map((item) => item.node);
+  // The bubble of a subagent's or teammate's say: the say bubble the main
+  // thread's says use, with who said it in its label's row. It answers to the
+  // 🔔 filter; it is not a transcript row, so it carries no position.
+  const agentSayNode = (say: AgentSay) => (
+    <div key={`agent-say-${say.tool_use_id}`} class="tl-item" data-notif="say">
+      <SayCallBubble
+        text={say.text}
+        ts={say.ts}
+        now={now}
+        read={sayRead.readState(say.tool_use_id)}
+        sender={agentSayerLabel(sessionStatus?.agent_tree, say.agent_id)}
+      />
+    </div>
+  );
+  const permitNode = (request: PermitRequestRecord) => {
+    const position = permitPosition(request.id);
+    return (
+      <div
+        key={`permit-${request.id}`}
+        class={`tl-item${currentPosition === position ? " tl-position-selected" : ""}`}
+        data-timeline-uuid={position}
+        data-notif="permit"
+        onClick={selectPositionOnClick(position, pin.selectPosition)}
+      >
+        <PermitRequestBubble
+          request={request}
+          now={now}
+          translationAvailability={translationAvailability}
+        />
+      </div>
+    );
+  };
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -295,7 +333,9 @@ export function Timeline({
       currentFilter === "say" &&
       unreadSayBeforeWindow(
         boundaries,
-        unreadSays.filter((say) => say.session_id === sid),
+        // A subagent's say is not in this transcript at all: older pages
+        // would never bring it in.
+        unreadSays.filter((say) => say.session_id === sid && say.agent_id === undefined),
         firstLoadedTs,
       ),
     [currentFilter, boundaries, unreadSays, sid, firstLoadedTs],
@@ -308,7 +348,8 @@ export function Timeline({
   // フィルタに該当するバブルが読み込み済みの範囲に 1 つも無いか (§5)。
   const filterEmpty =
     currentFilter === "say"
-      ? !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
+      ? agentSays.length === 0 &&
+        !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
       : currentFilter === "permit"
         ? permitBubbles.requests.length === 0
         : false;

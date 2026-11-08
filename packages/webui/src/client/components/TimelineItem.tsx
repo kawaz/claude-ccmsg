@@ -202,11 +202,14 @@ export function SayCallBubble({
   ts,
   now,
   read,
+  sender,
 }: {
   text: string;
   ts: string;
   now: number;
   read: SayReadState;
+  /** See SayBubble's `sender`. */
+  sender?: string;
 }) {
   return (
     <SayBubble
@@ -214,6 +217,7 @@ export function SayCallBubble({
       text={text}
       ts={ts}
       now={now}
+      {...(sender !== undefined ? { sender } : {})}
       acked={read.kind !== "unread"}
       read={
         read.kind === "unread" ? (
@@ -240,6 +244,7 @@ export function SayBubble({
   now,
   acked = false,
   read,
+  sender,
 }: {
   label: string;
   text: string;
@@ -247,6 +252,10 @@ export function SayBubble({
   now: number;
   acked?: boolean;
   read?: ComponentChildren;
+  /** Who said it when not the main thread: a subagent or teammate
+   * (`🤖 <name> (model/effort)`, DR-0050 §10). In the label's row, so the
+   * bubble gains no row for it. */
+  sender?: string;
 }) {
   return (
     <div class="say">
@@ -254,7 +263,13 @@ export function SayBubble({
         <span class="say-icon" aria-hidden="true">
           {acked ? "🔕" : "🔔"}
         </span>
-        <span class="say-from">{label}</span>
+        {/* The sender sits inside the label's span: .say-meta lays its
+            children straight onto the bubble's grid, so a sibling would be a
+            row of its own. */}
+        <span class="say-from">
+          {label}
+          {sender !== undefined ? <span class="say-sender">{sender}</span> : null}
+        </span>
       </div>
       {/* Rendered as plain text: this is the literal text handed to the
           speech / notification, so markdown-ish characters in it are literal,

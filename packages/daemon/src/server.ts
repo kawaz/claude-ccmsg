@@ -136,6 +136,8 @@ import {
   loadSayUnreadStore,
   markSaysRead,
   sayUnreadFold,
+  agentSays,
+  takeAgentSaysOf,
   type SayUnreadStore,
   unreadSays,
 } from "./say-unread.ts";
@@ -418,6 +420,8 @@ export interface Daemon {
   /** The last ev:"say_unread" sent, as its JSON: a push only when the set
    * moved. */
   sayUnreadSnapshot: string;
+  /** The last ev:"agent_says" sent, as its JSON, the same way. */
+  agentSaysSnapshot: string;
   /** Requests for the person's permission, memory only (permit-requests.ts,
    * DR-0040). */
   permitRequests: PermitRequestLog;
@@ -539,6 +543,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     launchToolWaitMs: LAUNCH_TOOL_WAIT_MS,
     sayUnread: loadSayUnreadStore(paths.sayRead, log, () => new Date()),
     sayUnreadSnapshot: "",
+    agentSaysSnapshot: "",
     permitRequests: createPermitRequestLog(createMidIssuer()),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
@@ -1359,6 +1364,7 @@ function broadcastLlmRequests(daemon: Daemon): void {
  * update. */
 function sendSayUnread(daemon: Daemon, conn: Conn): void {
   send(conn, { ev: "say_unread", says: unreadSays(daemon.sayUnread) });
+  send(conn, { ev: "agent_says", says: agentSays(daemon.sayUnread) });
 }
 
 /** Push the unread says to every user-role subscriber when they moved.
@@ -1369,10 +1375,18 @@ function broadcastSayUnread(daemon: Daemon): void {
   if (daemon.shuttingDown) return;
   const says = unreadSays(daemon.sayUnread);
   const key = JSON.stringify(says);
-  if (key === daemon.sayUnreadSnapshot) return;
-  daemon.sayUnreadSnapshot = key;
+  if (key !== daemon.sayUnreadSnapshot) {
+    daemon.sayUnreadSnapshot = key;
+    for (const sub of daemon.subscribers) {
+      if (sub.identity?.role === "user") send(sub, { ev: "say_unread", says });
+    }
+  }
+  const ofAgents = agentSays(daemon.sayUnread);
+  const agentKey = JSON.stringify(ofAgents);
+  if (agentKey === daemon.agentSaysSnapshot) return;
+  daemon.agentSaysSnapshot = agentKey;
   for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") send(sub, { ev: "say_unread", says });
+    if (sub.identity?.role === "user") send(sub, { ev: "agent_says", says: ofAgents });
   }
 }
 
@@ -3221,6 +3235,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       actOnPushedRows(daemon.rowEffects, sid, fresh, {
         speak: (text) => daemon.speaker.speak(text),
       });
+      // A subagent's or teammate's say is the session's to read too (DR-0050
+      // §10): its row is in the agent's own file, so the push is where it is
+      // seen.
+      if (takeAgentSaysOf(daemon.sayUnread, sid, req.rows, new Date().toISOString())) {
+        broadcastSayUnread(daemon);
+      }
       const uuids = req.rows.flatMap((row) =>
         row.agent_id === undefined && row.door !== "queue" ? [row.uuid] : [],
       );

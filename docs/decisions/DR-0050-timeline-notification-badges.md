@@ -1,6 +1,6 @@
 # DR-0050: TL ヘッダの 🔔🔐 バッジで、未読の say / 許可依頼だけを TL に出すフィルタを URL で切り替える
 
-- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、タブ列と Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`)
+- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、タブ列と Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`、§10 の worker の say の `ev:"agent_says"` と合流)
 - Date: 2026-11-08
 
 ## Context
@@ -143,6 +143,17 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 | U13 | Sessions の行の規則 | TL と同じ (片方が 1 以上なら両方、1 でも数字) (§7) |
 | U14 | カウンターの桁 | 100 以上は `99+` (§3) |
 | U15 | 許可依頼の既読の操作 | DR-0040 のまま「許可する」で既読 (§2) |
+
+### 10. subagent / teammate (worker) の say
+
+worker の say も親セッションの未読に数え、親セッションの TL に出す (kawaz 2026-11-08)。worker が say すると音声は鳴るので、TL にもバッジにも出ないと、人は誰に呼ばれたか分からない。
+
+- daemon: worker の say の行は worker 自身の transcript にあり、relay は読まない。module が push する行 (`agent_id` 付き) から say の tool_use を拾い、親セッションの sid の下に `{ agent_id, tool_use_id, ts, text }` で持つ。`ts` は push を受けた時刻。既読は main の say と同じ集合 (`say-read.json`) で、`say_read` もそのまま効く。セッションが live でなくなると消える (main の say と同じ)。push からだけ拾うので、daemon が止まっている間の worker の say は入らない
+- protocol (minor を上げる): `ev:"say_unread"` の要素に `agent_id` (worker の時だけ)。worker の say の全件 (既読も含む) を `ev:"agent_says"` `{ says: [{ session_id, agent_id, tool_use_id, ts, text }] }` で user role の購読者に送る (購読の時に全件、空でも。変わるたびに全件)。どれが未読かは `say_unread` が持つ
+- webui: 親セッションの TL に、許可依頼のバブルと同じ方式 (`permitSlots`) で時刻の位置に合流させ、main の say と同じ say バブルで描く。既読ボタンと「N 件すべて既読」は main と worker を時刻順に合わせて数える。agent の TL は今のまま transcript から 🔕 で描く
+- 送り手: say バブルの送り手の行 (`say` の文字の横) に `🤖 <worker 名> (model/effort)` を足す。行は増やさない。名前と model/effort は session status の agent tree のノードを `agent_id` で引き、model/effort は `agentEngineLabel` と同じ綴り。ノードが無ければ `agent_id`、model が無ければ名前だけ
+- 🔔 の数 (タブ列と Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ。§5 の自動の older は、worker の say を窓の外の未読として数えない (older を読んでも出てこないため)
+- 許可依頼は今のまま (subagent からは使えない)
 
 ## Alternatives Considered
 
