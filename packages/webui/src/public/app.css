@@ -4970,10 +4970,13 @@ button.session-tab {
 }
 
 /* 同じ遮断を bubble 本文にも: width: fit-content が pre の実幅まで伸びよう
- * とするのを max-width で止め、pre 側の overflow-x: auto に流す。 */
+ * とするのを max-width で止め、pre 側の overflow-x: auto に流す。markdown
+ * の外の字 (送り手の行の長い id など) も、`.md` と同じく切れ目のない長い
+ * トークンを行の途中で折り返して吹き出しの外へ出さない。 */
 .tl-bubble-body {
   max-width: 100%;
   min-width: 0;
+  overflow-wrap: break-word;
 }
 
 .tl-bubble-right {
@@ -5236,8 +5239,15 @@ button.session-tab {
   color: var(--fg-muted);
   margin-bottom: var(--space-3);
   display: flex;
+  /* 送り手の行も吹き出しの幅に収める: 長い id (`daemon · <mid>`) は次の行へ
+   * 送り、それでも長ければ子を 0 まで縮めて .tl-bubble-body の
+   * overflow-wrap で折り返す。 */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
+}
+.tl-bubble-from > * {
+  min-width: 0;
 }
 
 /* --- Markdown rendering (DR-0010): assistant text segments only, walked
@@ -5258,6 +5268,12 @@ button.session-tab {
  * 大きい値。 */
 .md {
   line-height: var(--md-leading-tight);
+  /* 地の文の切れ目のない長いトークン (絶対パス・URL) は行の途中で折り返し、
+   * 置かれた枠 (吹き出し・thinking・プレビュー) の外へ出さない。break-word は
+   * min-content を変えないので、表の自然幅や fit-content の幅の決まり方は
+   * そのまま。code ブロックは white-space: pre で折り返さず、自分で横スクロール
+   * する。 */
+  overflow-wrap: break-word;
 }
 
 .md > :first-child,
@@ -6505,7 +6521,6 @@ a.md-prose-file-link {
  * cross-axis しか効かないため、明示的に flex 空間を与える必要がある。) */
 .tl-agent-fold > .tl-guided > .tl-bubble {
   flex: 1;
-  min-width: 0;
 }
 
 /* システムメッセージ rich|raw タブ (U2 kawaz spec: 「分類済みシステムメッ
@@ -6696,6 +6711,15 @@ a.tl-attachment-file-path {
   min-width: 0;
 }
 
+/* ガイドの隣に置く中身 (吹き出し / カード / pre / .tl-guided-content) は row
+ * flex の子なので、既定の min-width:auto だと中身の min-content (code ブロック
+ * の最長行) まで広がり、fold ごと TL の幅を突き破ってページが横スクロールする。
+ * 中身の種類によらずここで 0 まで縮められるようにし、長い行は内側の pre
+ * (`.md-code` / `.tl-fold-body` の overflow-x: auto) が自分で横スクロールする。 */
+.tl-guided > * {
+  min-width: 0;
+}
+
 .tl-fold-guide {
   flex: 0 0 auto;
   width: 0.5rem;
@@ -6724,7 +6748,6 @@ a.tl-attachment-file-path {
 
 .tl-guided-content {
   flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
