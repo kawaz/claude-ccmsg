@@ -54,7 +54,8 @@ module の handler → CLI の transport → daemon の op → 記録 → 全タ
 ### 4. 記録
 
 - 記録は `PermitRequestLog` に持つ
-- 上限はセッションごとに最新 200 件 (`PERMIT_REQUESTS_PER_SESSION`)。超えたらそのセッションの古いものから消え、別のセッションの記録は消さない。期間の上限は置かず、そのセッションの transcript と同じく残す。上限は、許可を求め続けるセッションでファイルと subscribe の全件が増え続けないためで、セッションごとなのは 1 つのセッションが他のセッションの記録を押し出さないため
+- 上限はセッションごとに最新 200 件 (`PERMIT_REQUESTS_PER_SESSION`) と、全体で 2,000 件 (`PERMIT_REQUESTS_TOTAL`)。セッションごとの上限を超えたらそのセッションの古いものから消え、別のセッションの記録は消さない (1 つのセッションが他のセッションの記録を押し出さない)。全体の上限は subscribe の全件がセッションの数に比例して増え続けないためで、超えたら全セッションの古いものから消える
+- 期間の上限は置かず、そのセッションの transcript と同じだけ残す。daemon の起動の時に、記録のある各セッションの transcript を履歴の読みと同じ解決 (`resolveTranscript` の allowVirtual) で探し、見つからないセッションの記録を落とす (解決が答えられなかったセッションは残す)。落とした時は購読中のタブに全件を送り直す
 - 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, project_settings?, read }`。無い list は空の list で持つ。`project_settings` は `project_permissions` のある依頼だけが持つ (§12)。記録した後に変わるのは `read` と、`project_settings` の各変更の `applied_at` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
 - `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (上限で消えた依頼への既読もここに来る)
 
@@ -223,7 +224,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 ## Consequences
 
-- 記録は daemon の再起動を越えて残る。`permit-requests.json` はセッションごとの上限 (200 件) までしか増えないが、期間の上限は無いので、セッションの数に比例して大きくなり、subscribe の全件 (`ev:"permit_requests"`) も同じだけ大きくなる。上限を超えて消えた依頼は transcript の `permit` の tool_use (汎用の tool の行) でしか読めない
+- 記録は daemon の再起動を越えて残る。`permit-requests.json` と subscribe の全件 (`ev:"permit_requests"`) は全体の上限 (2,000 件) まで大きくなりうる。上限を超えて消えた依頼は transcript の `permit` の tool_use (汎用の tool の行) でしか読めない
 - 添付は人が開いた時点の中身で、依頼の時点や実行の時点の中身とは限らない。許可の文はパスを名指すだけで、人が読んだ後にファイルが変わっても示さない。classifier も中身を確かめない
 - daemon は依頼したセッションが名指したファイルを、webui を開ける人が開いた時に読んで見せる。同じ uid のエージェントは元からそのファイルを読めて transcript に出せるので、見える範囲は広がらない
 - `permit` は permission の判定を通らない tool なので、エージェントはいつでも呼べる。呼んでも権限は変わらず、許可は人の発話でしか生まれない

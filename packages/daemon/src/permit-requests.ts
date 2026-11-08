@@ -38,6 +38,14 @@ import {
  * session, so that one such session does not push another's requests out. */
 export const PERMIT_REQUESTS_PER_SESSION = 200;
 
+/** How many requests the daemon keeps of all sessions together; the oldest
+ * go first once the sessions' bounds leave more than this.
+ *
+ * Design rationale: a tab is sent every request when it subscribes, and the
+ * sessions' own bound does not stop that set growing with the number of
+ * sessions. */
+export const PERMIT_REQUESTS_TOTAL = 2000;
+
 /** permit-requests.json: every request held, oldest first. */
 const PermitRequestsFileSchema = jsonText(
   v.object({ requests: v.array(PermitRequestRecordSchema) }),
@@ -75,15 +83,28 @@ export interface PermitRequestLog {
   ): PermitRequestRecord | undefined;
   /** Every request held, oldest first. */
   snapshot(): readonly PermitRequestRecord[];
+  /** Drop the requests of every session `keep` says no to, and answer how
+   * many went. Never rejects: a session `keep` cannot answer for is kept. */
+  prune(keep: (sid: string) => Promise<boolean>): Promise<number>;
   /** Settles once every change made so far is in the file (at once without
    * one). Never rejects: a write that fails is said in the log, and the
    * requests stay held in memory. */
   written(): Promise<void>;
 }
 
-/** `records` with no session holding more than `limit`: each session's
- * oldest go first. The order is kept. */
+/** `records` with no session holding more than `limit` and no more than
+ * `total` in all: each session's oldest go first, then the oldest of all.
+ * The order is kept. */
 function bounded(
+  records: readonly PermitRequestRecord[],
+  limit: number,
+  total: number = PERMIT_REQUESTS_TOTAL,
+): readonly PermitRequestRecord[] {
+  const kept = boundedPerSession(records, limit);
+  return kept.length > total ? kept.slice(-total) : kept;
+}
+
+function boundedPerSession(
   records: readonly PermitRequestRecord[],
   limit: number,
 ): readonly PermitRequestRecord[] {
@@ -197,6 +218,21 @@ export function createPermitRequestLog(
     },
     snapshot() {
       return records;
+    },
+    async prune(keep) {
+      const gone = new Set<string>();
+      for (const sid of new Set(records.map((r) => r.sid))) {
+        try {
+          if (!(await keep(sid))) gone.add(sid);
+        } catch {
+          // Not known to be gone: kept.
+        }
+      }
+      const before = records.length;
+      records = records.filter((r) => !gone.has(r.sid));
+      const dropped = before - records.length;
+      if (dropped > 0) save();
+      return dropped;
     },
     written() {
       return written;

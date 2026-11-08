@@ -1447,6 +1447,20 @@ function sendPermitRequests(daemon: Daemon, conn: Conn): void {
   send(conn, { ev: "permit_requests", requests: daemon.permitRequests.snapshot() });
 }
 
+/** Drop the requests for permission of the sessions whose transcript is gone
+ * (DR-0040 §4): kept as long as the transcript that asked them. The tabs
+ * already subscribed are sent the set that is left. */
+async function prunePermitRequests(daemon: Daemon): Promise<void> {
+  const dropped = await daemon.permitRequests.prune(
+    async (sid) => (await resolveTranscript(daemon.sessions, sid, { allowVirtual: true })).ok,
+  );
+  if (dropped === 0) return;
+  daemon.log.info(`permit-requests: dropped ${String(dropped)} of sessions with no transcript`);
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") sendPermitRequests(daemon, sub);
+  }
+}
+
 /** Push one request for permission just recorded or marked read to every
  * user-role subscriber (ev:"permit_request"). Never to a session: the asking
  * session knows it asked. */
@@ -3799,6 +3813,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   daemon.webhooks = buildWebhookSources(daemon, log);
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
+  void prunePermitRequests(daemon);
 
   if (agentsPollEnabled()) {
     startAgentsPoller(

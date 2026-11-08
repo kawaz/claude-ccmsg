@@ -19,7 +19,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { PERMIT_ATTACHMENT_MAX_BYTES, type PermitRequestRecord } from "@ccmsg/protocol";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
-import { createPermitRequestLog, readPermitAttachment } from "../src/permit-requests.ts";
+import {
+  createPermitRequestLog,
+  PERMIT_REQUESTS_PER_SESSION,
+  PERMIT_REQUESTS_TOTAL,
+  readPermitAttachment,
+} from "../src/permit-requests.ts";
 import {
   isKind,
   sessionConn,
@@ -495,6 +500,36 @@ describe("permit requests kept across restarts", () => {
     await log.written();
     const smaller = createPermitRequestLog(() => "x", 2, { file, log: silent });
     expect(smaller.snapshot().map((r) => r.blocked)).toEqual(["b1", "a4", "a5"]);
+  });
+
+  // 何を保証するか: transcript の無いセッション (keep が false) の記録は起動時の
+  // 刈り込みで落ちてファイルからも消え、答えられなかったセッションの記録は残る。
+  // 全体の上限を超えたら全セッションの古いものから落ちる。
+  test("prunes the sessions whose transcript is gone, and bounds all sessions together", async () => {
+    const file = path.join(tmpDir("ccmsg-permit-file-"), "permit-requests.json");
+    let n = 0;
+    const log = createPermitRequestLog(() => `i/${String(++n)}`, 200, { file, log: silent });
+    log.add(fields(SID_A, "a"));
+    log.add(fields(SID_B, "b"));
+    log.add(fields("unknown-sid", "u"));
+    const dropped = await log.prune(async (sid) => {
+      if (sid === "unknown-sid") throw new Error("cannot tell");
+      return sid !== SID_B;
+    });
+    expect(dropped).toBe(1);
+    expect(log.snapshot().map((r) => r.blocked)).toEqual(["a", "u"]);
+    await log.written();
+    const again = createPermitRequestLog(() => "x", 200, { file, log: silent });
+    expect(again.snapshot().map((r) => r.blocked)).toEqual(["a", "u"]);
+
+    expect(PERMIT_REQUESTS_TOTAL).toBe(2000);
+    const many = createPermitRequestLog(() => `m/${String(++n)}`, PERMIT_REQUESTS_PER_SESSION);
+    for (let k = 0; k < 11; k += 1) {
+      for (let j = 0; j < 200; j += 1)
+        many.add(fields(`sid-${String(k)}`, `${String(k)}-${String(j)}`));
+    }
+    expect(many.snapshot()).toHaveLength(PERMIT_REQUESTS_TOTAL);
+    expect(many.snapshot()[0]?.blocked).toBe("1-0");
   });
 
   // 何を保証するか: ファイルが無ければ空から始め、何も言わない。読めない
