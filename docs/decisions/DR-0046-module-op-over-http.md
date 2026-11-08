@@ -52,7 +52,7 @@ kawaz 2026-10-28 の裁定:
   - 例外はサイドカーの依頼への返事 (`sidecar_reply`) で、同じ process が以前に走らせていた id なら通す (kawaz 2026-10-28)。返事は依頼が届いた id で送る (daemon はその id の依頼と返事を突き合わせる) ので、`/clear` / `/resume` の前に届いた依頼 (`prompt.send` の `session_changed` 等) への返事は古い id を名乗る。daemon は相手の pid ごとに、その state file に見つけた session id を、その process が生きている間覚えておき (`PeerSessions`)、返事が名乗る id がその中にあれば、その id で hello を作る。覚えるのは daemon の process の中だけで、daemon を起こし直すと忘れる
   - `ccmsg_version`: plugin の root の `package.json` の `version` (`ccmsg version` と同じ値)。bundle に版を焼き込むと release の bump のたびに bundle が古くなる (`bun hooks/bundle.ts --check`) ので、`$.fs.read` で読む。読めなければ欄を省き、debug の log に残す
   - 移行期間: daemon は旧名 `client_version` も受け、`ccmsg_version` として扱う (両方あれば `ccmsg_version`)。名前を変える前に読み込まれた module は、セッションを再起動するまで旧名で送るため。`daemon.sock` の hello も同じ。旧 module が全部再起動された後に旧名の受け口を落とす (issue `drop-legacy-client-version-hello-key`)
-  - `protocol`: `PROTOCOL_VERSION`。版 (`package.json` を import する `version.ts`) と分けて `protocol-version.ts` に置き、bundle は世代だけを持つ。世代の違う値は hello の世代の検査が断る
+  - `protocol`: `PROTOCOL_VERSION`。版 (`package.json` を import する `version.ts`) と分けて `protocol-version.ts` に置き、bundle は protocol の版だけを持つ。major の違う値は hello の版の検査が断る ([DR-0002](./DR-0002-daemon-supervision.md) §4)
 - daemon が作る hello は `role: "session"`、`sid` と `config_dir` (§3 で決めたもの)、`ccmsg_version` / `protocol` (body のもの)。所在 (`cwd` / `repo` / `ws` / `repo_root` / `branch`) と `transcript_path` は入れない
   - 所在の 5 つは 1 組で、名乗るか名乗らないかのどちらか (`registerSession`)。名乗らない hello は登録済みの所在を保つので、サイドカーの名乗り (state file を読む CLI の hello) が付けた所在がそのまま残る
   - `transcript_path` を名乗らない hello は、その sid に採用済みの path を保ち、探し直さない (server.ts の hello)。探すと全 config dir の `projects/` を読み、実の home で 1 回約 30 ms かかる。採用済みの path が無い間 (最初の transcript が書かれる前) は今までどおり hello ごとに探す

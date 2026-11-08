@@ -34,9 +34,26 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 
 - daemon は hello / pong 応答に自 `version` を含める
 - クライアントは自分の version と daemon の version を比較し、**client の方が厳密に新しい場合のみ** `{op:"shutdown", reason:"upgrade"}` を送って graceful stop させ、ensure 手順で新 version を spawn する (クライアント主導、newer-wins)。daemon が同じか新しければ何もしない。比較は `@ccmsg/protocol` の `compareVersions`
+- daemon の version は hello の応答から読み、hello が断られた時 (下の protocol の major が違う daemon) は hello の要らない `ping` の応答から読む。protocol の major を上げた plugin に update した直後、走っている旧 daemon は新しい client の hello を全部断るので、ping で読まないと入れ替えられない
   - newer-wins なのは、gradual rollout で新旧 client が同時に daemon へ接触する状況で、互いに相手を降格させ合うフラッピングを起こさないため
 - graceful stop: 新規受付停止 → 接続中 client に `{ev:"restarting"}` → 後継 daemon と競合する全資源 (listen port、pid file、lock 等) の解放 → UDS listener 停止 → exit。UDS 接続不能が旧 daemon の停止完了を示す唯一の境界なので、UDS close は競合資源の後片付けの最後に行う。socket pathname は lock を得た後継の起動時 cleanup に委ねる。sidecar は自動再接続する
 - plugin update 直後の「新 CLI vs 旧常駐 daemon」はこれで自動解消する
+
+#### protocol の版 (major.minor) [kawaz 2026-11-08]
+
+daemon と client の間の契約 (`packages/protocol` のスキーマ) の版を、release の版とは別に `PROTOCOL_VERSION` (`{ major, minor }`、`packages/protocol/src/protocol-version.ts`) として手で動かす。client は hello の `protocol` で自分の版を名乗り、daemon は hello と ping の応答で自分の版を返す。どこを上げるかは、その変更が走っている client に何を起こすかで決める:
+
+| 変更の種類 | 上げる所 | daemon の扱い | webui の見せ方 |
+|---|---|---|---|
+| 通信できなくなる変更 (封筒・hello・subscribe・event の形) | major (minor は 0 に戻す) | 違う major の hello を断り、session の hello ならその sid に stale の印 (`PeerInfo.stale_client`) を付ける | webui 自身の bundle の major が daemon と違えば、リロードボタンを赤にし title で「ccmsg の protocol が変わった。リロードしてください」 |
+| 通信は通るが意味がずれうる変更 (tool / op の追加削除、schema の変更) | minor | 受け入れ、その client の版を `PeerInfo.protocol` に載せる | そのセッションの ccmsg (TL 下の状態行の `ccmsg v…`、Status タブの CCMSG、Sessions の行の印) を黄色 (`--warn`) にし、title で「このセッションの ccmsg の protocol は <client> で daemon は <daemon>。リロードでは直らない。セッションを起動し直すと直る」 |
+| plugin の版だけ (bundle が変わった) | 上げない | 何もしない | リロードボタンを青に (version の比較) |
+
+- minor の違いを断らないのは、受け入れて見えるようにすれば足りるから。古い module は daemon が送る op の新しい field を黙って落とす (例: `prompt.send` の `mode: "bash"` を落として通常の prompt として入れる) ので、その無言の不具合に気づけることが要る。直すのはセッションの起動し直し (起動時の plugin の module が載る、DR-0035 §3) で、webui のリロードでは直らない
+- major の違いを断るのは、通信の形が違う相手とは話せず、互換の経路は持たないから (下の「後方互換は原則実装しない」)。protocol を名乗らない hello と、`protocol` に数値 (`1`) を名乗る hello は major 1 (`UNANNOUNCED_PROTOCOL_MAJOR`) として断る。major を 2 にしたのは hello の `protocol` の形そのもの (数値 → `{ major, minor }`) を変えたからで、これより前の client はすべて major 1 として断られ、セッションの起動し直しが要る
+- ping の応答に `protocol` を名乗らない daemon も major 1 と読む。webui は hello が断られた時に ping でこれを読み、bundle の major と比べる (bundle は daemon が配るので、major が違えば版の新旧によらずリロードで揃う)
+- `PeerInfo.protocol` は、その sid で最後に受け入れた hello の版。agents の poll だけで知っているセッション (hello した client が居ない) では無い
+- `just push` の deps の `check-protocol-bumped` が、`packages/protocol/src/` に main@origin からの変更があるのに `PROTOCOL_VERSION` が動いていない push を止める (`protocol-version.ts` だけの変更は通す)。major か minor かの判断は人が上の表でする
 
 #### 最新であるべきは daemon プロセスだけ
 

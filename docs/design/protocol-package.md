@@ -25,9 +25,9 @@
 
 | ファイル | 何の形か | 誰が読むか |
 |---|---|---|
-| `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest`、別世代の hello を見分ける `isOtherGenerationHello` | daemon |
+| `request.ts` | 依頼 1 行。`RequestBodySchema` (`op` の variant)、`RequestEnvelopeSchema` (`request_id`)、`Request` / `RequestOp` / `REQUEST_OPS`、行を読む `readRequest` (daemon と別の protocol major の hello は `other_major_hello` として読み分ける) | daemon |
 | `request-rooms.ts` | room のログを読む依頼 (room は読み取り専用、[DR-0036](../decisions/DR-0036-retire-rooms-for-p2p.md) §2): `read` `room_history` `rooms` | daemon |
-| `request-sessions.ts` | セッションの依頼: `hello` (世代ごとの形) `subscribe` `peers` `notify` `say_read` `send_message` `peer_list` `dir_tree` `session_launch` `launch_tool` `session_launcher_config` `session_kill` `session_restart` `session_rename` `user_prompt` `user_message` `request_override` `turn_abort` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
+| `request-sessions.ts` | セッションの依頼: `hello` (daemon の major の形と、それ以外の major の hello の断る分だけの形) `subscribe` `peers` `notify` `say_read` `send_message` `peer_list` `dir_tree` `session_launch` `launch_tool` `session_launcher_config` `session_kill` `session_restart` `session_rename` `user_prompt` `user_message` `request_override` `turn_abort` `sidecar_reply` `sidecar_hello` `session_facts` `session_env` `session_search` `fork_origin` `session_dump_file` `agents` `session_status` `session_status_subscribe` `session_status_unsubscribe` `session_errors` | daemon |
 | `request-files.ts` | ファイルの依頼: `fs_list` `fs_read` `fs_read_external` `fs_list_workspace` `fs_read_workspace` `fs_write` `fs_create` `fs_delete` `fs_edit` `fs_stat_batch` `fs_find` `sandbox_grant` `sandbox_revoke` | daemon |
 | `request-transcripts.ts` | transcript の依頼: `transcript_read` `transcript_subscribe` `transcript_unsubscribe` `client_trace` | daemon |
 | `request-host.ts` | daemon とホストの依頼: `ping` `shutdown` `translate` `llm_usage` `llm_stats` `llm_status` `llm_keepalive_pause` `claude_update` | daemon |
@@ -82,7 +82,8 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 
 | ファイル | 何か | 誰が使うか |
 |---|---|---|
-| `version.ts` | `VERSION` (root の package.json の版)、`PROTOCOL_VERSION`、`UNANNOUNCED_PROTOCOL_VERSION` | CLI、daemon、webui |
+| `version.ts` | `VERSION` (root の package.json の版)。`protocol-version.ts` を re-export する | CLI、daemon、webui |
+| `protocol-version.ts` | `PROTOCOL_VERSION` (`{ major, minor }`、上げ方は [DR-0002](../decisions/DR-0002-daemon-supervision.md) §4)、`UNANNOUNCED_PROTOCOL_MAJOR`、hello が名乗る版の読み方 (`claimedProtocol`)、表示 (`formatProtocol`)。release の版で bundle が変わらないよう `version.ts` と分けてあり、hooks module が bundle する | CLI、daemon、webui、hooks module |
 | `version-compare.ts` | `compareVersions` (daemon の版の食い違いの判定) | CLI、webui |
 | `config-migration.ts` | data dir に残った設定ファイルを config dir へ移す起動時の処理 | CLI、daemon |
 | `search-query.ts` | transcript 検索窓のクエリ文法 | daemon、webui |
@@ -97,7 +98,7 @@ ccmsg が書いて別のプロセスが読む形。両端が ccmsg なので、C
 - 外から来た値は受け取ったその場で `parseWith(Schema, input)` に通す。テキストなら `jsonText(Schema)` で JSON と形を 1 段で読む。結果は `Parsed<T>` で、失敗は throw でなく値 (`{ ok: false, failure }`)。失敗をどう扱うか (拒否して理由を返す、その行だけ捨てる、劣化表示) は境界ごとに決める
 - object の読み方は形の持ち主で決まる
   - Claude Code の形 (transcript、meta.json、`claude agents`、`sessions/<pid>.json`、workflow、hook の stdin): `v.looseObject` で使う field だけを定義し、残りは通す。必須にするのは、その種類が実機で必ず持つ field だけ
-  - ccmsg 自身の wire とファイル: `v.object`。宣言した field は型どおりでなければ失敗、宣言していない field は出力から落とす (拒否はしない)。両端は同じホストで一緒に変わり、別世代の client は hello の `protocol` で弾くため ([DR-0002](../decisions/DR-0002-daemon-supervision.md) §4、`request.ts` の冒頭コメント)
+  - ccmsg 自身の wire とファイル: `v.object`。宣言した field は型どおりでなければ失敗、宣言していない field は出力から落とす (拒否はしない)。両端は同じホストで一緒に変わり、別の protocol major の client は hello の `protocol` で弾くため ([DR-0002](../decisions/DR-0002-daemon-supervision.md) §4、`request.ts` の冒頭コメント)
   - `v.strictObject` は、知らない field があること自体が送り手の誤りになる所だけ (サイドカーの `describe` の空の args 等)
 - 種類が増えていく variant (transcript の行・ブロック・attachment・道具、workflow の entry) は、最後の option の判別値を `otherThan(既知の名前)` にして未知の種類を Other として受ける。既知の種類で形が壊れた値は失敗にし、Other に吸わせない。既知か Other かは `isKnown*` (`isKnownTranscriptRow`、`isKnownContentBlock`、`isKnownToolUse`、`isKnownAttachment` 等) で分ける
 - 読んだ値は不変 (`Output<S>` は深く readonly)。書き換えず、要るものは新しく組み立てる。値を任意の名前で引かない
@@ -123,7 +124,7 @@ room のログ (`StorageEvent`) の `from` / `to` / member の `id` は、人か
 
 - valibot 1.x を使う ([DR-0038](../decisions/DR-0038-json-is-parsed-by-schema.md) §2)。`Output<S>` を深い readonly にしているのは、valibot の `v.readonly()` が 1 段しか効かず variant の option に pipe を付けられないため
 - スキーマのファイルは valibot と互いのファイル以外を import しない。hooks module (`hooks/`) が bundle して使えるようにするため。例外は node の API を使う `paths.ts` / `config-migration.ts` と、package.json を読む `version.ts` で、これらは hooks module からは使わない
-- wire は同じホストの daemon と client が一緒に変わる前提 ([DR-0002](../decisions/DR-0002-daemon-supervision.md) §4)。世代の違いは hello の `protocol` で 1 度だけ判定する
+- wire は同じホストの daemon と client が一緒に変わる前提 ([DR-0002](../decisions/DR-0002-daemon-supervision.md) §4)。protocol の版 (`major.minor`) の違いは hello の `protocol` で 1 度だけ判定する (major 違いは断り、minor 違いは受け入れて `PeerInfo.protocol` で見せる)
 
 ## 関連
 

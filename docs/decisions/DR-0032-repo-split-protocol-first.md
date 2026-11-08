@@ -73,9 +73,9 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
 ## 3. 細部の確定 (統括判断、異論があれば直す)
 
 - plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を同梱、分離は protocol とwebui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui`
-- **互換経路は持たない**。protocol の世代が違う相手とは話さず、webui には更新 / リロードの警告を出す
+- **互換経路は持たない**。protocol の major が違う相手とは話さず、webui には更新 / リロードの警告を出す ([DR-0002](./DR-0002-daemon-supervision.md) §4)
 - **protocol の配布**: npm registry の `@ccmsg` org 配下に publish する (`@ccmsg/protocol`。`ccmsg` 本体も`bun install -g` の経路が npm なので揃う。unscoped の `ccmsg` は第三者が取得済みなので本体・webui も`@ccmsg/*` に置く)。`ccmsg` と `ccmsg-webui` は package.json で版を固定して依存する
-- **版付け**: 契約の世代は `PROTOCOL_VERSION` (整数)。package の版は semver で、世代を上げる変更はmajor を上げる。同一世代内の追加 (任意フィールド・任意 op) は minor
+- **版付け**: 契約の版は `PROTOCOL_VERSION` (`{ major, minor }`、上げ方は [DR-0002](./DR-0002-daemon-supervision.md) §4)。package の版は semver で、protocol の major を上げる変更は major を上げる。tool / op の追加削除・schema の変更 (protocol の minor) は minor
 - **DR / docs の振り分け**: リポを分ける時点で、webui 固有の DR (0005 / 0010 / 0014 の UI 部 / 0015 /
   0018 / 0020〜0022 / 0024〜0026 / 0031) は新 webui リポの設計文書へ内容を移し、本リポの INDEX には移管先を残す。protocol 固有 (0003 / 0006 / 0011 / 0016 / 0017 / 0029) は contract リポの DESIGN とop 表に吸収済みのものから Superseded にする
 - **instance の起動**: 常駐。`ccmsg daemon add <config home>` で登録し、`ccmsg service register` が監督者(`ccmsg daemon supervise`) を launchd / systemd に登録して instance を子として保つ
