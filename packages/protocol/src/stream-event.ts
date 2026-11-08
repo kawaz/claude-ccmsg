@@ -17,14 +17,14 @@ import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
 /** One say the person has not read (DR-0045 §7): a `say` tool call of a
- * live session, by the id of its tool_use — on its main thread, or of one of
- * its subagents or teammates (DR-0050 §10). */
+ * session, by the id of its tool_use — on its main thread, or of one of its
+ * subagents or teammates (DR-0050 §10). */
 export const UnreadSaySchema = v.object({
   session_id: v.string(),
   /** The tool_use's id: what `say_read` names. */
   tool_use_id: v.string(),
   /** The time of the transcript row that made the call; for a subagent's
-   * or teammate's, the time the daemon got the row pushed. */
+   * or teammate's the daemon got pushed, the time it got the row pushed. */
   ts: v.string(),
   /** The subagent or teammate that called it; absent on the main thread. */
   agent_id: v.optional(v.string()),
@@ -42,21 +42,23 @@ export const SayUnreadStreamEventSchema = v.object({
 });
 export type SayUnreadStreamEvent = Output<typeof SayUnreadStreamEventSchema>;
 
-/** A say a subagent or teammate of a live session called (DR-0050 §10). Its
- * row is in the agent's own transcript, which the session's Timeline does
- * not read, so the daemon hands its text to draw it there. */
+/** A say a subagent or teammate of a session called (DR-0050 §10). Its row
+ * is in the agent's own transcript, which the session's Timeline does not
+ * read, so the daemon hands its text to draw it there. */
 export const AgentSaySchema = v.object({
   session_id: v.string(),
   agent_id: v.string(),
   tool_use_id: v.string(),
-  /** When the daemon got the row pushed. */
+  /** When the daemon got the row pushed; for one it found reading the
+   * agent's transcript (say_list), the row's time. */
   ts: v.string(),
   text: v.string(),
 });
 export type AgentSay = Output<typeof AgentSaySchema>;
 
-/** Every say of the live sessions' subagents and teammates, read or not,
- * oldest first (user-role subscribers only, like ev:"say_unread"). Sent at
+/** Every say of the sessions' subagents and teammates the daemon holds
+ * (the live sessions' pushed ones, and the ones a say_list found), read or
+ * not, oldest first (user-role subscribers only, like ev:"say_unread"). Sent at
  * subscribe time, even when empty, and again whenever the set changes:
  * always the full set. Whether one is unread is ev:"say_unread"'s. */
 export const AgentSaysStreamEventSchema = v.object({

@@ -136,6 +136,9 @@ export interface WsHandle {
    * updated `ev:"say_unread"` set to every tab and the store takes it from
    * there, so every open tab converges on the same bell and badge. */
   sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;
+  /** Every say of the session `sid`, read or not (DR-0050 §5): what the 🔔
+   * filter shows of the says outside the loaded window. */
+  sayList(sid: string): Promise<ReplyOf<"say_list">>;
   /** Mark requests for permission read (DR-0040): the bubble's 許可する.
    * Non-optimistic, like sayRead — the daemon pushes each record it changed
    * as ev:"permit_request". */
@@ -1059,6 +1062,7 @@ export function createWsClient(
       ws?.close();
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
+    sayList: (sid) => send({ op: "say_list", sid }),
     permitRequestRead: (ids) => send({ op: "permit_request_read", ids: [...ids] }),
     permitAttachmentRead: (id, path) => send({ op: "permit_attachment_read", id, path }),
     permitSettingsRead: (id) => send({ op: "permit_settings_read", id }),

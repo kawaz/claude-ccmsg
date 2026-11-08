@@ -8,8 +8,9 @@
 //   a uuid, and selecting keeps the filter (§9 U7, §4)
 // - taking the filter off leaves every element in place (no re-render of the
 //   transcript), which the scroll restoring relies on (§5, §6)
-// - an unread say older than the loaded window makes the 🔔 filter read older
-//   until it is in; one not drawn yet but newer does not (§9 U8)
+// - the 🔔 filter asks the daemon for every say of the session (say_list) and
+//   shows the ones outside the loaded window at their time, each once, without
+//   reading older pages; they are the filter's only (§5, §9 U8)
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
@@ -17,6 +18,7 @@ import {
   CCMSG_TOOLS,
   type AgentSay,
   type PermitRequestRecord,
+  type SessionSay,
   type UnreadSay,
 } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
@@ -124,6 +126,8 @@ async function open(options: {
   filter: TimelineFilter | null;
   says?: readonly UnreadSay[];
   agentSays?: readonly AgentSay[];
+  /** What say_list answers. */
+  list?: readonly SessionSay[];
   requests?: readonly PermitRequestRecord[];
 }): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs }> {
   const store = timelineStore();
@@ -132,6 +136,7 @@ async function open(options: {
   store.dispatch({ type: "permit-requests/loaded", requests: [...(options.requests ?? [])] });
   await filterTo(store, options.filter);
   const ws = new FakeTranscriptWs(store);
+  ws.says = options.list ?? [];
   const root = await mounted.mount(store, ws.handle, h(TimelineOf, {}));
   await ws.lastRead().answer(page(options.rows, options.start ?? 0));
   return { root, store, ws };
@@ -174,9 +179,7 @@ describe("the Timeline's filter", () => {
 
   test("says so when nothing of the kind is loaded", async () => {
     const { root, store } = await open({ rows: [...exchange(1)], filter: "say" });
-    expect(root.querySelector(".tl-filter-empty")?.textContent).toBe(
-      "読み込み済みの範囲に say はありません",
-    );
+    expect(root.querySelector(".tl-filter-empty")?.textContent).toBe("say はありません");
     await filterTo(store, "permit");
     expect(root.querySelector(".tl-filter-empty")?.textContent).toBe("許可依頼はありません");
     await filterTo(store, null);
@@ -222,40 +225,101 @@ describe("the Timeline's filter", () => {
     expect(after.every((el, i) => el === before[i])).toBe(true);
   });
 
-  test("an unread say older than the window makes the 🔔 filter read older until it is in", async () => {
-    // 窓は 1:02:03 からで、未読の toolu_1 (1:00:01) はそれより前にある。
-    const { ws } = await open({
-      rows: [...exchange(1)],
+  test("the 🔔 filter shows every say of the session, the ones outside the window at their time", async () => {
+    // 窓は sayRow(3) (1:00:03) から。toolu_1 (1:00:01) は窓より前の main の say、
+    // toolu_w2 (1:00:02) は push で受けていない worker の say。toolu_3 は窓の中。
+    const { root, ws } = await open({
+      rows: [sayRow(3), ...exchange(1)],
       start: 5000,
       filter: "say",
       says: [unreadSay(1)],
+      list: [
+        { tool_use_id: "toolu_1", ts: unreadSay(1).ts, text: "said 1" },
+        { tool_use_id: "toolu_w2", ts: "2026-10-09T01:00:02.000Z", text: "w 2", agent_id: "a1" },
+        { tool_use_id: "toolu_3", ts: unreadSay(3).ts, text: "said 3" },
+      ],
     });
-    expect(ws.reads.length).toBe(2);
-    expect(ws.lastRead().opts?.before).toBe(5000);
-    await ws.lastRead().answer(page([sayRow(1)], 4000));
-    // 含まれたので、それ以上は遡らない。
-    expect(ws.reads.length).toBe(2);
+    expect(ws.sayLists).toEqual([SID]);
+    const bubbles = [...root.querySelectorAll(".say")].map((bubble) => [
+      bubble.querySelector(".say-body")?.textContent ?? "",
+      bubble.querySelector(".say-from")?.textContent ?? "",
+      bubble.querySelector(".say-icon")?.textContent ?? "",
+    ]);
+    expect(bubbles).toEqual([
+      ["said 1", "say", "🔔"],
+      ["w 2", "say🤖 a1", "🔕"],
+      ["said 3", "say", "🔕"],
+    ]);
+    // 窓の外の 2 つは位置を持たず、フィルタだけのものと名乗る。窓の中の say は
+    // transcript の行のまま (位置を持つ)。
+    expect(kept(root)).toEqual([
+      ["say", ""],
+      ["say", ""],
+      ["say", uuidOf("a", 103)],
+    ]);
+    expect(
+      [...lines(root).querySelectorAll("[data-filter-only]")].map(
+        (el) => el.querySelector(".say-body")?.textContent,
+      ),
+    ).toEqual(["said 1", "w 2"]);
+    // older を読みに行かない (一覧で足りている)。
+    expect(ws.reads.length).toBe(1);
   });
 
-  test("an unread say newer than the window's start is not looked for in older pages", async () => {
-    // toolu_9 (1:00:09) は窓の先頭 (1:00:01) より新しい = live で届く途中。
-    const { ws } = await open({
-      rows: [sayRow(1)],
+  test("an unread say outside the window is counted in the newest button's 「すべて既読」", async () => {
+    const { root } = await open({
+      rows: [sayRow(3)],
       start: 5000,
       filter: "say",
-      says: [unreadSay(9)],
+      says: [unreadSay(1), unreadSay(3)],
+      list: [
+        { tool_use_id: "toolu_1", ts: unreadSay(1).ts, text: "said 1" },
+        { tool_use_id: "toolu_3", ts: unreadSay(3).ts, text: "said 3" },
+      ],
     });
-    expect(ws.reads.length).toBe(1);
+    const buttons = [...root.querySelectorAll(".say-read-btn")].map((b) => b.textContent);
+    expect(buttons).toEqual(["既読", "2 件すべて既読"]);
   });
 
-  test("no filter, no reading older for the unread", async () => {
-    const { ws } = await open({
-      rows: [...exchange(1)],
-      start: 5000,
-      filter: null,
-      says: [unreadSay(1)],
+  test("a worker's say already merged in is not drawn twice from the list", async () => {
+    const worker: AgentSay = {
+      session_id: SID,
+      agent_id: "a1",
+      tool_use_id: "toolu_w2",
+      ts: "2026-10-09T01:00:02.000Z",
+      text: "w 2",
+    };
+    const { root } = await open({
+      rows: [sayRow(3)],
+      filter: "say",
+      agentSays: [worker],
+      list: [{ tool_use_id: "toolu_w2", ts: worker.ts, text: "w 2", agent_id: "a1" }],
     });
-    expect(ws.reads.length).toBe(1);
+    expect([...root.querySelectorAll(".say-body")].map((b) => b.textContent)).toEqual([
+      "w 2",
+      "said 3",
+    ]);
+    expect(lines(root).querySelector("[data-filter-only]")).toBeNull();
+  });
+
+  test("taking the 🔔 filter off takes the listed says out, and asks again on the way back", async () => {
+    const { root, store, ws } = await open({
+      rows: [sayRow(3)],
+      filter: "say",
+      list: [{ tool_use_id: "toolu_1", ts: unreadSay(1).ts, text: "said 1" }],
+    });
+    expect(root.querySelectorAll(".say")).toHaveLength(2);
+    await filterTo(store, null);
+    expect([...root.querySelectorAll(".say-body")].map((b) => b.textContent)).toEqual(["said 3"]);
+    await filterTo(store, "say");
+    expect(ws.sayLists).toEqual([SID, SID]);
+    expect(root.querySelectorAll(".say")).toHaveLength(2);
+  });
+
+  test("no 🔔 filter, no asking for the list", async () => {
+    const { ws, store } = await open({ rows: [...exchange(1)], filter: null });
+    await filterTo(store, "permit");
+    expect(ws.sayLists).toEqual([]);
   });
 });
 

@@ -2,10 +2,10 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { useEffect, useMemo, useRef } from "preact/hooks";
+import { useMemo, useRef } from "preact/hooks";
 import {
-  type AgentSay,
   type PermitRequestRecord,
+  type SessionSay,
   type SessionStatusSnapshot,
 } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
@@ -41,7 +41,7 @@ import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
-import { unreadSayBeforeWindow } from "../../say-read.ts";
+import { useSayList } from "./useSayList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { usePermitBubbles } from "./usePermitBubbles.ts";
 import { permitSlots } from "../../permit-merge.ts";
@@ -209,9 +209,24 @@ export function Timeline({
     () => (agent ? [] : allAgentSays.filter((say) => say.session_id === sid)),
     [agent, allAgentSays, sid],
   );
-  const agentSayIds = useMemo(() => agentSays.map((say) => say.tool_use_id), [agentSays]);
   const agentSaySlots = useMemo(() => permitSlots(groups, agentSays), [groups, agentSays]);
-  const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries, agentSayIds });
+  // Under the 🔔 filter, every say of the session is shown (DR-0050 §5): the
+  // ones neither in the loaded window nor among the workers' above come from
+  // the daemon's list of them, at their time. They are the filter's only, as
+  // they have no row here: taking the filter off takes them out.
+  const sayList = useSayList({ sid, filter: currentFilter });
+  const listedSays = useMemo((): readonly SessionSay[] => {
+    if (currentFilter !== "say" || sayList === undefined) return [];
+    const drawn = new Set(agentSays.map((say) => say.tool_use_id));
+    for (const boundary of boundaries) if (boundary?.kind === "say") drawn.add(boundary.toolUseId);
+    return sayList.filter((say) => !drawn.has(say.tool_use_id));
+  }, [currentFilter, sayList, agentSays, boundaries]);
+  const listedSaySlots = useMemo(() => permitSlots(groups, listedSays), [groups, listedSays]);
+  const mergedSayIds = useMemo(
+    () => [...agentSays, ...listedSays].map((say) => say.tool_use_id),
+    [agentSays, listedSays],
+  );
+  const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries, mergedSayIds });
   const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
   // The permission bubbles of one slot, in the order they were made.
   // Each is selectable like a transcript item, its record id standing in for
@@ -222,21 +237,35 @@ export function Timeline({
         ts: request.ts,
         node: permitNode(request),
       })),
-      ...(agentSaySlots[slot] ?? []).map((say) => ({ ts: say.ts, node: agentSayNode(say) })),
+      ...(agentSaySlots[slot] ?? []).map((say) => ({ ts: say.ts, node: mergedSayNode(say) })),
+      ...(listedSaySlots[slot] ?? []).map((say) => ({
+        ts: say.ts,
+        node: mergedSayNode(say, { filterOnly: true }),
+      })),
     ]
       .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
       .map((item) => item.node);
-  // The bubble of a subagent's or teammate's say: the say bubble the main
-  // thread's says use, with who said it in its label's row. It answers to the
-  // 🔔 filter; it is not a transcript row, so it carries no position.
-  const agentSayNode = (say: AgentSay) => (
-    <div key={`agent-say-${say.tool_use_id}`} class="tl-item" data-notif="say">
+  // The bubble of a say merged in by its time (a subagent's or teammate's, or
+  // one outside the window): the say bubble the window's says use, with who
+  // said it in its label's row when a worker did. It answers to the 🔔
+  // filter; it is not a row of the window, so it carries no position. One
+  // that is the filter's only says so (`data-filter-only`), so the scroll
+  // kept on taking the filter off does not hold on to it.
+  const mergedSayNode = (say: SessionSay, { filterOnly = false } = {}) => (
+    <div
+      key={`${filterOnly ? "listed" : "agent"}-say-${say.tool_use_id}`}
+      class="tl-item"
+      data-notif="say"
+      data-filter-only={filterOnly ? "say" : undefined}
+    >
       <SayCallBubble
         text={say.text}
         ts={say.ts}
         now={now}
         read={sayRead.readState(say.tool_use_id)}
-        sender={agentSayerLabel(sessionStatus?.agent_tree, say.agent_id)}
+        {...(say.agent_id !== undefined
+          ? { sender: agentSayerLabel(sessionStatus?.agent_tree, say.agent_id) }
+          : {})}
       />
     </div>
   );
@@ -320,36 +349,13 @@ export function Timeline({
     tracker: pin.tracker,
   });
 
-  // 🔔 のフィルタは未読の say を見つけるためのもので、読み込み済みの範囲より
-  // 古い未読は older を読まないと出ない。含まれるまで遡る (DR-0050 §9 U8)。
-  // 1 回読むたびに boundaries が変わってここが再び走り、含まれるか先頭に着いた
-  // ら止まる。
-  const unreadSays = useStoreState(store, (s) => s.unreadSays);
-  const firstLoadedTs = useMemo(() => {
-    for (const line of parsed) if (line.kind !== "broken" && line.ts !== null) return line.ts;
-    return null;
-  }, [parsed]);
-  const needsOlderForUnread = useMemo(
-    () =>
-      currentFilter === "say" &&
-      unreadSayBeforeWindow(
-        boundaries,
-        // A subagent's say is not in this transcript at all: older pages
-        // would never bring it in.
-        unreadSays.filter((say) => say.session_id === sid && say.agent_id === undefined),
-        firstLoadedTs,
-      ),
-    [currentFilter, boundaries, unreadSays, sid, firstLoadedTs],
-  );
-  const loadOlder = loader.loadOlder;
-  useEffect(() => {
-    if (!needsOlderForUnread || timeline.status !== "loaded" || timeline.atStart) return;
-    loadOlder();
-  }, [needsOlderForUnread, timeline.status, timeline.atStart, loadOlder]);
-  // フィルタに該当するバブルが読み込み済みの範囲に 1 つも無いか (§5)。
+  // フィルタに該当するバブルが 1 つも無いか (§5)。say は daemon の一覧が
+  // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   const filterEmpty =
     currentFilter === "say"
-      ? agentSays.length === 0 &&
+      ? sayList !== undefined &&
+        agentSays.length === 0 &&
+        listedSays.length === 0 &&
         !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
       : currentFilter === "permit"
         ? permitBubbles.requests.length === 0
@@ -594,7 +600,7 @@ export function Timeline({
                               {filterEmpty ? (
                                 <p class="tl-filter-empty">
                                   {currentFilter === "say"
-                                    ? "読み込み済みの範囲に say はありません"
+                                    ? "say はありません"
                                     : "許可依頼はありません"}
                                 </p>
                               ) : null}

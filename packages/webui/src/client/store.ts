@@ -31,6 +31,7 @@ import {
   type StorageEvent,
   type TranscriptReadResponse,
   type AgentSay,
+  type SessionSay,
   type UnreadSay,
   parseWith,
 } from "@ccmsg/protocol";
@@ -412,10 +413,15 @@ export interface AppState {
    * button, and the unread 🔔 marker in the Sessions list. Replaced whole on
    * every push — the daemon always sends the full set. */
   unreadSays: readonly UnreadSay[];
-  /** Every say of the live sessions' subagents and teammates (ev:"agent_says",
+  /** Every say of the sessions' subagents and teammates the daemon holds (ev:"agent_says",
    * DR-0050 §10), oldest first: drawn in the session's own Timeline at their
    * time. Whether one is unread is `unreadSays`'. Replaced whole on every push. */
   agentSays: readonly AgentSay[];
+  /** Every say of a session, read or not (say_list, DR-0050 §5), by sid,
+   * oldest first: what the 🔔 filter shows of the says outside the loaded
+   * window. Asked for each time the filter is entered, and replaced whole by
+   * the answer. A session not asked yet has none here. */
+  sayLists: ReadonlyMap<string, readonly SessionSay[]>;
   /** Every request for permission the daemon holds (DR-0040), oldest first:
    * the permission bubbles in each session's Timeline and the unread 🔐
    * marker in the Sessions list. Replaced whole by the subscribe-time set
@@ -495,6 +501,7 @@ export function initialState(): AppState {
     llmRequests: new Map(),
     unreadSays: [],
     agentSays: [],
+    sayLists: new Map(),
     permitRequests: [],
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
@@ -530,6 +537,7 @@ export type Action =
   // Full replacement, same as llm-requests/loaded (ev:"say_unread").
   | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
   | { type: "agent-says/loaded"; says: readonly AgentSay[] }
+  | { type: "say-list/loaded"; sid: string; says: readonly SessionSay[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
   | { type: "permit-requests/updated"; request: PermitRequestRecord }
   | {
@@ -1130,6 +1138,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, unreadSays: action.says };
     case "agent-says/loaded":
       return { ...state, agentSays: action.says };
+    case "say-list/loaded":
+      return { ...state, sayLists: new Map(state.sayLists).set(action.sid, action.says) };
     case "permit-requests/loaded":
       return { ...state, permitRequests: action.requests };
     case "permit-requests/updated": {

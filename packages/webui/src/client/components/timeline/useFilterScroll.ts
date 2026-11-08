@@ -43,7 +43,8 @@ function offsetIn(scroller: HTMLElement, el: HTMLElement): number {
  * フィルタ中の TL で、外した後に保つものを決める。`position` は URL の位置
  * (選んでいなければ "head")。選んだバブルが出ていればそれを、選んでいなくて
  * 末尾を見ていれば末尾を、それ以外は画面の一番上に見えているバブル
- * (`data-notif` を名乗る行) を基準にする。何も見えていなければ null。
+ * (`data-notif` を名乗る行のうち、フィルタを外しても残るもの) を基準にする。
+ * 何も見えていなければ null。
  */
 export function filterScrollAnchor(
   scroller: HTMLElement,
@@ -59,9 +60,10 @@ export function filterScrollAnchor(
   }
   if (isAtBottom(scroller)) return { kind: "bottom" };
   const top = scroller.getBoundingClientRect().top;
-  const first = [...scroller.querySelectorAll<HTMLElement>("[data-notif]")].find(
-    (el) => isRendered(el) && el.getBoundingClientRect().bottom > top,
-  );
+  // フィルタだけのバブル (窓の外の say) は外すと消えるので基準にしない。
+  const first = [
+    ...scroller.querySelectorAll<HTMLElement>("[data-notif]:not([data-filter-only])"),
+  ].find((el) => isRendered(el) && el.getBoundingClientRect().bottom > top);
   return first === undefined
     ? null
     : { kind: "element", element: first, offset: offsetIn(scroller, first) };

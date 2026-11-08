@@ -39,24 +39,3 @@ export function shownUnreadSays(
 export function sayReadTargets(shownUnread: readonly string[], id: string): readonly string[] {
   return shownUnread.at(-1) === id ? shownUnread : [id];
 }
-
-/**
- * Whether an unread say of the session is older than everything loaded, so
- * the 🔔 filter has to read older to show it (DR-0050 §9 U8: the filter is for
- * finding the unread, and one outside the window cannot be found). `unread`
- * is the session's (`say_unread`, which carries each say's time); a say newer
- * than the window's start but not drawn yet is on its way live, not older.
- * `firstTs` is the time of the first stamped row loaded, null when none is.
- */
-export function unreadSayBeforeWindow(
-  boundaries: ReadonlyArray<BoundaryKind | null>,
-  unread: ReadonlyArray<{ tool_use_id: string; ts: string }>,
-  firstTs: string | null,
-): boolean {
-  if (firstTs === null) return false;
-  const start = Date.parse(firstTs);
-  if (Number.isNaN(start)) return false;
-  const shown = new Set<string>();
-  for (const boundary of boundaries) if (boundary?.kind === "say") shown.add(boundary.toolUseId);
-  return unread.some((say) => !shown.has(say.tool_use_id) && Date.parse(say.ts) < start);
-}
