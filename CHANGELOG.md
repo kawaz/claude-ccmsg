@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.220.1 <a id="v0.220.1"></a>
+
+2026-11-08
+
+- protocol の minor を 2.0 に戻した (v0.220.0 の変更は daemon → webui だけで module の契約は変わっていない)。`check-protocol-bumped` は「protocol の src を変えて、かつ module の bundle が変わる」時だけ bump を求める
+- 古い client の印: Sessions の行には major 違い (hello を断られた) の ⚠ だけを赤で出し、minor 違いの △ は出さない。Status と状態行は major 違いが赤、minor 違いが黄色
+
 ## v0.220.0 <a id="v0.220.0"></a>
 
 2026-11-08
