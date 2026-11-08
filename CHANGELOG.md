@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.225.1 <a id="v0.225.1"></a>
+
+2026-11-08
+
+- permit の `voice` (読み上げる 1 文、日本語) を必須にした。依頼ごとに内容の分かる文を読ませ、既定の「許可を求めています」の連続を避ける
+- `project_permissions` の rule が `Edit(~/…` / `Read(~/…` / `Write(~/…` なら断る (`~/` は permissions.allow では効かない。絶対パスで書く)。protocol 2.3
+
 ## v0.225.0 <a id="v0.225.0"></a>
 
 2026-11-08
