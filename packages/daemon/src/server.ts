@@ -25,7 +25,6 @@ import {
   type PingResponse,
   type Paths,
   type PeerInfo,
-  type PermitRequestRecord,
   type HelloRequest,
   type OtherMajorHelloLine,
   type ProtocolVersion,
@@ -120,6 +119,7 @@ import {
   stopAllSessionStatus,
   subscribeSessionStatus,
   unsubscribeSessionStatus,
+  type OneShotLineReader,
   type SessionStatusStore,
 } from "./session-status.ts";
 import { deriveRepoWs } from "./repo-derive.ts";
@@ -144,14 +144,21 @@ import {
   type SayUnreadStore,
   unreadSays,
 } from "./say-unread.ts";
+import { readPermitAttachment } from "./permit-attachment.ts";
 import {
   askedFor,
-  createPermitRequestLog,
-  PERMIT_REQUESTS_PER_SESSION,
-  permitRequestFields,
-  readPermitAttachment,
-  type PermitRequestLog,
-} from "./permit-requests.ts";
+  findPermit,
+  loadPermitStore,
+  markPermitApplied,
+  markPermitsRead,
+  permitFold,
+  permitList,
+  permitScan,
+  permitStateEvent,
+  type PermitStore,
+  type SeenPermit,
+} from "./permit-state.ts";
+import { sessionSweep } from "./session-sweep.ts";
 import {
   applyProjectPermission,
   createKeyedQueue,
@@ -434,9 +441,13 @@ export interface Daemon {
   sayUnreadSnapshot: string;
   /** The last ev:"agent_says" sent, as its JSON, the same way. */
   agentSaysSnapshot: string;
-  /** Requests for the person's permission, kept in
-   * `<stateDir>/permit-requests.json` (permit-requests.ts, DR-0040 §4). */
-  permitRequests: PermitRequestLog;
+  /** The requests for the person's permission found in the transcripts, and
+   * which the person has acted on, kept in `<stateDir>/permit-state.json`
+   * (permit-state.ts, DR-0040 §4, §5). */
+  permits: PermitStore;
+  /** The last ev:"permit_state" sent, as its JSON: a push only when it
+   * moved. */
+  permitStateSnapshot: string;
   /** The applies of project permissions, one at a time per settings file
    * (project-permissions.ts, DR-0040 §12). */
   settingsQueue: <T>(file: string, task: () => Promise<T>) => Promise<T>;
@@ -526,15 +537,21 @@ export function createDaemon(host: DaemonHost): Daemon {
         (sid) =>
           sessionUserInputFold(daemon.sessionUserInputs, sid, () => maybeBroadcastPeers(daemon)),
         (sid) => sayUnreadFold(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
+        (sid) => permitFold(daemon.permits, sid, () => broadcastPermitState(daemon)),
       ],
     }),
     trace,
     sessionStatus: createSessionStatusStore({
       inputReadiness: (sid) => readinessOf(daemon, sid),
       facts: (sid) => daemon.sessionFacts.get(sid),
-      // A session that is not live has its says counted on the read that
-      // answers its status, which a tab opening it asks for (DR-0045 §7).
-      oneShotReader: (sid) => sayScan(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
+      // A session that is not live has its says and its requests for
+      // permission found on the read that answers its status, which a tab
+      // opening it asks for (DR-0045 §7, DR-0040 §5).
+      oneShotReader: (sid) =>
+        bothReaders(
+          sayScan(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
+          permitScan(daemon.permits, sid, () => broadcastPermitState(daemon)),
+        ),
     }),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),
@@ -565,10 +582,8 @@ export function createDaemon(host: DaemonHost): Daemon {
     sayUnread: loadSayUnreadStore(paths.sayRead, log, () => new Date()),
     sayUnreadSnapshot: "",
     agentSaysSnapshot: "",
-    permitRequests: createPermitRequestLog(createMidIssuer(), PERMIT_REQUESTS_PER_SESSION, {
-      file: paths.permitRequests,
-      log,
-    }),
+    permits: loadPermitStore(paths.permitState, log, () => new Date()),
+    permitStateSnapshot: "",
     settingsQueue: createKeyedQueue(),
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
@@ -1437,38 +1452,64 @@ function broadcastSayUnread(daemon: Daemon): void {
   }
 }
 
+/** The refusal of a permit op naming no request the daemon finds. */
+function noPermitText(sid: string, id: string): string {
+  return `no permit request with id ${id} in session ${sid}`;
+}
+
 /** What the speakers say when a session asks for permission and wrote no
  * `voice`: that one is asking. The request itself (its commands, its files)
  * is for reading in the webui, not for hearing (DR-0040 §6). */
 const PERMIT_SPEECH = "許可を求めています";
 
-/** Push every request for permission the daemon holds to one connection
- * (ev:"permit_requests"), a fresh subscriber's catch-up. */
-function sendPermitRequests(daemon: Daemon, conn: Conn): void {
-  send(conn, { ev: "permit_requests", requests: daemon.permitRequests.snapshot() });
+/** Push the person's state of the requests for permission to one
+ * connection (ev:"permit_state"): the full state, so the same call serves a
+ * fresh subscriber's catch-up and the live update. */
+function sendPermitState(daemon: Daemon, conn: Conn): void {
+  send(conn, permitStateEvent(daemon.permits));
 }
 
-/** Drop the requests for permission of the sessions whose transcript is gone
- * (DR-0040 §4): kept as long as the transcript that asked them. The tabs
- * already subscribed are sent the set that is left. */
-async function prunePermitRequests(daemon: Daemon): Promise<void> {
-  const dropped = await daemon.permitRequests.prune(
-    async (sid) => (await resolveTranscript(daemon.sessions, sid, { allowVirtual: true })).ok,
+/** Push the state of the requests for permission to every user-role
+ * subscriber when it moved. Never to a session: the asking session knows it
+ * asked. Not while shutting down, as broadcastSayUnread. */
+function broadcastPermitState(daemon: Daemon): void {
+  if (daemon.shuttingDown) return;
+  const event = permitStateEvent(daemon.permits);
+  const key = JSON.stringify(event);
+  if (key === daemon.permitStateSnapshot) return;
+  daemon.permitStateSnapshot = key;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, event);
+  }
+}
+
+/** Both of a one-shot read's readers, given each line in turn. */
+function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineReader {
+  return {
+    take(line) {
+      a.take(line);
+      b.take(line);
+    },
+    done() {
+      a.done();
+      b.done();
+    },
+  };
+}
+
+/** The request for permission `id` of session `sid`: the one the daemon
+ * holds, or, when it holds none of the session's yet (its Timeline was not
+ * opened since the daemon started), the one the whole read of the session's
+ * transcripts finds. Undefined when there is none. */
+async function permitOf(daemon: Daemon, sid: string, id: string): Promise<SeenPermit | undefined> {
+  const held = findPermit(daemon.permits, sid, id);
+  if (held !== undefined) return held;
+  const resolved = await resolveTranscript(daemon.sessions, sid, { allowVirtual: true });
+  if (!resolved.ok) return undefined;
+  await permitList(daemon.permits, sid, sessionSweep(resolved.file), () =>
+    broadcastPermitState(daemon),
   );
-  if (dropped === 0) return;
-  daemon.log.info(`permit-requests: dropped ${String(dropped)} of sessions with no transcript`);
-  for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") sendPermitRequests(daemon, sub);
-  }
-}
-
-/** Push one request for permission just recorded or marked read to every
- * user-role subscriber (ev:"permit_request"). Never to a session: the asking
- * session knows it asked. */
-function broadcastPermitRequest(daemon: Daemon, request: PermitRequestRecord): void {
-  for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") send(sub, { ev: "permit_request", request });
-  }
+  return findPermit(daemon.permits, sid, id);
 }
 
 /** Push one status report to every user-role subscriber. Unsolicited, like
@@ -1675,9 +1716,9 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "peer_list",
   "user_message",
   "say_read",
-  "say_list",
+  "notification_list",
   "permit_request",
-  "permit_request_read",
+  "permit_read",
   "permit_attachment_read",
   "permit_settings_read",
   "permit_permission_apply",
@@ -2075,40 +2116,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "permit_request": {
       // 許可依頼は止められたエージェント自身が出す (session role 限定)。
       // 依頼は caller 自身のものなので、caller がセッションを名指す余地はない。
-      // attachments はパスだけを記録し、人が開いた時に読む (DR-0040 §3)。
+      // daemon がするのは読み上げだけで、依頼の中身は持たない: 依頼は caller の
+      // transcript の permit の行で、TL はその行から描く (DR-0040 §4)。
       if (conn.identity?.role !== "session") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
-      // Project permissions go into the asking session's project directory,
-      // fixed now: the record names the file the person is shown and writes.
-      const asked = req.permit.project_permissions ?? [];
-      const cwd = daemon.sessions.get(conn.identity.sid)?.meta.cwd ?? "";
-      if (asked.length > 0 && cwd === "") {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          "the session's project directory is not known, so project_permissions has no settings file to go into; ask without them",
-        );
-        return;
-      }
-      const record = daemon.permitRequests.add(
-        permitRequestFields(
-          conn.identity.sid,
-          req.permit,
-          nowIso(),
-          asked.length > 0 ? projectSettingsPath(cwd) : undefined,
-        ),
-      );
-      broadcastPermitRequest(daemon, record);
-      daemon.speaker.speak(record.voice ?? PERMIT_SPEECH);
+      daemon.speaker.speak(req.permit.voice ?? PERMIT_SPEECH);
       daemon.log.info(
-        `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)} project_permissions=${String(record.project_settings?.permissions.length ?? 0)}`,
+        `permit_request: by=${conn.identity.sid} attachments=${String(req.permit.attachments?.length ?? 0)} intents=${String(req.permit.intents?.length ?? 0)} commands=${String(req.permit.commands?.length ?? 0)} project_permissions=${String(req.permit.project_permissions?.length ?? 0)}`,
       );
-      // Answered once the record is in the file, so a restart right after
-      // does not lose a request its session was told it made.
-      await daemon.permitRequests.written();
-      send(conn, { ok: true, id: record.id });
+      send(conn, { ok: true });
       return;
     }
 
@@ -2120,16 +2138,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'permit_attachment_read' requires user role");
         return;
       }
-      const record = daemon.permitRequests.find(req.id);
-      if (record === undefined) {
-        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+      const seen = await permitOf(daemon, req.sid, req.tool_use_id);
+      if (seen === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
         return;
       }
-      if (!record.attachments.includes(req.path)) {
+      if (!seen.permit.attachments.includes(req.path)) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          `permit request ${req.id} names no attachment ${req.path}`,
+          `permit request ${req.tool_use_id} names no attachment ${req.path}`,
         );
         return;
       }
@@ -2139,106 +2157,98 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "permit_settings_read": {
       // 設定ファイルは人がバブルの区画を開いた時に読む (user role 限定)。読める
-      // のは記録が名指すファイル (依頼したセッションのプロジェクトの
-      // .claude/settings.local.json) だけ (DR-0040 §12)。
+      // のは依頼の行の cwd の .claude/settings.local.json だけ (DR-0040 §12)。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_settings_read' requires user role");
         return;
       }
-      const record = daemon.permitRequests.find(req.id);
-      if (record === undefined) {
-        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+      const seen = await permitOf(daemon, req.sid, req.tool_use_id);
+      if (seen === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
         return;
       }
-      if (record.project_settings === undefined) {
+      if (seen.permit.project_permissions.length === 0) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          `permit request ${req.id} asks for no project permission`,
+          `permit request ${req.tool_use_id} asks for no project permission`,
         );
         return;
       }
       send(conn, {
         ok: true,
-        attachment: await readPermitAttachment(record.project_settings.path),
+        attachment: await readPermitAttachment(projectSettingsPath(seen.cwd)),
       });
       return;
     }
 
     case "permit_permission_apply": {
-      // 人が 1 件の「許可する」を押した (user role 限定)。書けるのは記録にある
-      // 変更だけを、記録が名指すファイルにだけ。任意の文字列を書く口にしない
-      // (DR-0040 §12)。同じファイルへの適用は 1 つずつ。
+      // 人が 1 件の「許可する」を押した (user role 限定)。書けるのは依頼の行に
+      // ある変更だけを、その行の cwd の設定ファイルにだけ。任意の文字列を書く
+      // 口にしない (DR-0040 §12)。同じファイルへの適用は 1 つずつ。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_permission_apply' requires user role");
         return;
       }
-      const record = daemon.permitRequests.find(req.id);
-      if (record === undefined) {
-        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+      const seen = await permitOf(daemon, req.sid, req.tool_use_id);
+      if (seen === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, noPermitText(req.sid, req.tool_use_id));
         return;
       }
-      const settings = record.project_settings;
-      if (settings === undefined || !askedFor(settings.permissions, req.permission)) {
+      if (!askedFor(seen, req.permission)) {
         sendErr(
           conn,
           ErrorCode.invalid_args,
-          `permit request ${req.id} asks for no project permission ${JSON.stringify(req.permission)}`,
+          `permit request ${req.tool_use_id} asks for no project permission ${JSON.stringify(req.permission)}`,
         );
         return;
       }
-      const applied = await daemon.settingsQueue(settings.path, () =>
-        applyProjectPermission(settings.path, req.permission),
+      const file = projectSettingsPath(seen.cwd);
+      const applied = await daemon.settingsQueue(file, () =>
+        applyProjectPermission(file, req.permission),
       );
       if (applied.kind !== "applied") {
-        daemon.log.warn(
-          `permit_permission_apply: ${settings.path}: ${applied.kind}: ${applied.reason}`,
-        );
+        daemon.log.warn(`permit_permission_apply: ${file}: ${applied.kind}: ${applied.reason}`);
         sendErr(
           conn,
           applied.kind === "unreadable"
             ? ErrorCode.settings_unreadable
             : ErrorCode.settings_write_failed,
           applied.kind === "unreadable"
-            ? `${settings.path} does not read as settings, so nothing was written: ${applied.reason}`
-            : `${settings.path} could not be written: ${applied.reason}`,
+            ? `${file} does not read as settings, so nothing was written: ${applied.reason}`
+            : `${file} could not be written: ${applied.reason}`,
         );
         return;
       }
       const at = nowIso();
-      const marked = daemon.permitRequests.markApplied(req.id, req.permission, at);
-      if (marked !== undefined) broadcastPermitRequest(daemon, marked);
+      // Answered once the state is in the file, so a restart right after
+      // does not show the permission as not applied.
+      await markPermitApplied(daemon.permits, req.tool_use_id, req.permission, at);
+      broadcastPermitState(daemon);
       if (applied.changed) {
-        daemon.settingsDiffNotifier.applied(
-          record.sid,
-          settings.path,
-          applied.before,
-          applied.after,
-        );
+        daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
       }
       daemon.log.info(
-        `permit_permission_apply: id=${req.id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${settings.path}`,
+        `permit_permission_apply: id=${req.tool_use_id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${file}`,
       );
-      await daemon.permitRequests.written();
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;
     }
 
-    case "permit_request_read": {
+    case "permit_read": {
       // 既読は webui のバブルの「許可する」からだけ立つ (user role 限定、
-      // say_read と同じ理由)。存在しない id は黙って ack せず、どれも既読に
-      // しない。変わった記録だけを 1 件ずつ全タブに送る。
+      // say_read と同じ理由)。知らない id は黙って ack せず、どれも既読に
+      // しない。既読はファイルに書いてから答える (DR-0040 §5)。
       if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'permit_request_read' requires user role");
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_read' requires user role");
         return;
       }
-      const marked = daemon.permitRequests.markRead(req.ids);
-      if (marked.kind === "missing") {
+      const marked = await markPermitsRead(daemon.permits, req.ids);
+      if (marked.kind === "unknown") {
         sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${marked.ids.join(", ")}`);
         return;
       }
-      for (const record of marked.changed) broadcastPermitRequest(daemon, record);
-      await daemon.permitRequests.written();
+      if (marked.kind === "read") broadcastPermitState(daemon);
       send(conn, { ok: true, ids: req.ids });
       return;
     }
@@ -2265,11 +2275,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
-    case "say_list": {
-      // The 🔔 filter's every say of one session (DR-0050 §5), for the person
-      // only, as say_read is.
+    case "notification_list": {
+      // The 🔔 and 🔐 filters' every say and request of one session
+      // (DR-0050 §5), for the person only, as say_read is. One read of the
+      // session's transcripts serves both.
       if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'say_list' requires user role");
+        sendErr(conn, ErrorCode.bad_request, "op 'notification_list' requires user role");
         return;
       }
       const resolved = await resolveTranscript(daemon.sessions, req.sid, { allowVirtual: true });
@@ -2277,16 +2288,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, resolved.code, resolved.msg);
         return;
       }
-      // The says the first ask finds may be unread ones nothing held yet
-      // (an agent's, made while the daemon was down), so the tabs are told.
-      const says = await sayList(daemon.sayUnread, req.sid, resolved.file, () =>
-        broadcastSayUnread(daemon),
-      );
-      if (says === null) {
+      // What the first ask finds may be unread ones nothing held yet (an
+      // agent's say made while the daemon was down, the requests of a session
+      // that is not live), so the tabs are told.
+      const sweep = sessionSweep(resolved.file);
+      const [says, permits] = await Promise.all([
+        sayList(daemon.sayUnread, req.sid, sweep, () => broadcastSayUnread(daemon)),
+        permitList(daemon.permits, req.sid, sweep, () => broadcastPermitState(daemon)),
+      ]);
+      if (says === null || permits === null) {
         sendErr(conn, ErrorCode.not_found, `transcript not found: ${req.sid}`);
         return;
       }
-      send(conn, { ok: true, sid: req.sid, says });
+      send(conn, { ok: true, sid: req.sid, says, permits });
       return;
     }
 
@@ -2324,7 +2338,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // holds the old daemon's unread says, and only this replaces them.
       sendSayUnread(daemon, conn);
       // Same reason as the unread says: sent even when empty.
-      sendPermitRequests(daemon, conn);
+      sendPermitState(daemon, conn);
       sendRequestOverrides(daemon, conn);
       return;
     }
@@ -3604,9 +3618,10 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
   daemon.peerInjector.close();
-  // The next daemon reads the requests at its start, which comes once the
-  // lock is released below: the last change has to be in the file by then.
-  await daemon.permitRequests.written();
+  // The next daemon reads the state of the requests for permission at its
+  // start, which comes once the lock is released below: the last change has
+  // to be in the file by then.
+  await daemon.permits.written;
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
   // tearing down either transport so both sides can receive the restarting frame.
@@ -3840,7 +3855,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   daemon.webhooks = buildWebhookSources(daemon, log);
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
-  void prunePermitRequests(daemon);
 
   if (agentsPollEnabled()) {
     startAgentsPoller(

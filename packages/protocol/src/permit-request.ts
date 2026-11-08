@@ -2,8 +2,10 @@
 // auto mode classifier stopped asks, through the `permit` tool, for the words
 // that let it run the action again. As schemas (DR-0038): what the model
 // writes into the tool, what the hooks module hands `ccmsg sidecar permit` on
-// standard input, the daemon's record of it, its reply, and an attachment as
-// the daemon reads it when the person opens it.
+// standard input, the daemon's reply, the call as a reader of the transcript
+// shows it (the transcript is where a request is kept, DR-0040 §4), the
+// person's state of it the daemon keeps, and an attachment as the daemon reads
+// it when the person opens it.
 //
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
@@ -152,72 +154,104 @@ export const PermitInputSchema = v.pipe(
 export type PermitInput = Output<typeof PermitInputSchema>;
 export const PermitInputTextSchema = jsonText(PermitInputSchema);
 
-/** One command of a request as the daemon holds it. */
+/** What the `permit` tool answers when the request went out: the daemon
+ * spoke it, and the session's Timeline shows the call's row as the request.
+ * A call answered anything else (refused, a subagent's, no daemon) shows
+ * nothing, so readers of the transcript tell a request by this result. */
+export const PERMIT_REQUESTED_TEXT = "許可依頼を出した";
+
+/** One command of a request as a reader shows it. */
 export const PermitCommandSchema = v.object({
   command: v.string(),
   description: v.optional(v.string()),
 });
 export type PermitCommand = Output<typeof PermitCommandSchema>;
 
-/** One project permission of a request as the daemon holds it: the change
- * the session asked for, and when the person applied it (absent until then). */
-export const PermitProjectPermissionRecordSchema = v.union([
-  v.object({ add: v.string(), applied_at: v.optional(v.string()) }),
-  v.object({ remove: v.string(), applied_at: v.optional(v.string()) }),
+/** One project permission of a request as a reader shows it: `{ add }` or
+ * `{ remove }`. Not strict: the call it is read from was checked when it was
+ * made, and only a call the tool answered with PERMIT_REQUESTED_TEXT is
+ * shown. */
+export const PermitProjectPermissionCallSchema = v.union([
+  v.object({ add: v.string() }),
+  v.object({ remove: v.string() }),
 ]);
-export type PermitProjectPermissionRecord = Output<typeof PermitProjectPermissionRecordSchema>;
 
-/** The project permissions of a request: the settings file they go into (the
- * asking session's project directory's `.claude/settings.local.json`, fixed
- * when the request is recorded) and the changes, in the order asked. */
-export const PermitProjectSettingsSchema = v.object({
-  path: v.string(),
-  permissions: v.array(PermitProjectPermissionRecordSchema),
-});
-export type PermitProjectSettings = Output<typeof PermitProjectSettingsSchema>;
-
-/** One request for permission as the daemon holds it. Held in memory only,
- * like a say (DR-0040 §4). The attachments are their paths: the daemon reads
- * one when the person opens it (permit_attachment_read). What changes is
- * `read`, which the person's 許可する sets, and a project permission's
- * `applied_at`, which its own 許可する sets; whether the person permitted the
- * rest is not tracked. */
-export const PermitRequestRecordSchema = v.object({
-  /** `<instance id>/<n>` (mid-issuer.ts). */
-  id: v.string(),
-  /** sid of the session that asked. */
-  sid: v.string(),
-  ts: v.string(),
+/** A `permit` call as the person is shown it (DR-0040 §7), read off the
+ * call's tool_use in the transcript: the lists the call left out are empty.
+ * `voice` is not in it, being the speakers' alone. */
+export const PermitCallSchema = v.object({
   blocked: v.string(),
   attachments: v.array(v.string()),
   intents: v.array(v.string()),
   commands: v.array(PermitCommandSchema),
-  /** What the speakers say for the request in place of the fixed sentence;
-   * not shown in the webui. */
-  voice: v.optional(v.string()),
-  /** Present when the request asked for project permissions. */
-  project_settings: v.optional(PermitProjectSettingsSchema),
-  /** Set when the person pressed 許可する on it (permit_request_read); never
-   * cleared. What the Sessions list's 🔐 counts is the unread ones. */
-  read: v.boolean(),
+  project_permissions: v.array(PermitProjectPermissionCallSchema),
 });
-export type PermitRequestRecord = Output<typeof PermitRequestRecordSchema>;
+export type PermitCall = Output<typeof PermitCallSchema>;
 
-/** permit_request's reply, and what `ccmsg sidecar permit` prints: the id
- * of the record the daemon now holds. */
-export const PermitRequestResponseSchema = v.object({
-  ok: v.literal(true),
-  id: v.string(),
+/** A `permit` call's input as the model wrote it, read for what the person
+ * is shown. Loose and with the lists optional, as the input of any version
+ * of the tool reads. */
+export const PermitCallInputSchema = v.looseObject({
+  blocked: v.string(),
+  attachments: v.optional(v.array(v.string())),
+  intents: v.optional(v.array(v.string())),
+  commands: v.optional(v.array(PermitCommandSchema)),
+  project_permissions: v.optional(v.array(PermitProjectPermissionCallSchema)),
 });
+
+/** The project permission `permission`, as the person may apply it. */
+export function permitCallPermission(
+  permission: Output<typeof PermitProjectPermissionCallSchema>,
+): PermitProjectPermission {
+  return "add" in permission ? { add: permission.add } : { remove: permission.remove };
+}
+
+/** permit_request's reply, and what `ccmsg sidecar permit` prints: the
+ * daemon has the request, and spoke it. */
+export const PermitRequestResponseSchema = v.object({ ok: v.literal(true) });
 export type PermitRequestResponse = Output<typeof PermitRequestResponseSchema>;
 export const PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
 
-/** permit_request_read's reply: the ids it marked, echoed. */
-export const PermitRequestReadResponseSchema = v.object({
+/** permit_read's reply: the ids it marked, echoed. */
+export const PermitReadResponseSchema = v.object({
   ok: v.literal(true),
   ids: v.array(v.string()),
 });
-export type PermitRequestReadResponse = Output<typeof PermitRequestReadResponseSchema>;
+export type PermitReadResponse = Output<typeof PermitReadResponseSchema>;
+
+/** A project permission of a request the person applied (DR-0040 §12): the
+ * request by its `permit` call's tool_use id, the change, and when. */
+export const AppliedPermitPermissionSchema = v.object({
+  tool_use_id: v.string(),
+  permission: PermitProjectPermissionCallSchema,
+  applied_at: v.string(),
+});
+export type AppliedPermitPermission = Output<typeof AppliedPermitPermissionSchema>;
+
+/** One request the person has not acted on yet (DR-0040 §5): a `permit`
+ * call of a session's, by the id of its tool_use. */
+export const UnreadPermitSchema = v.object({
+  session_id: v.string(),
+  tool_use_id: v.string(),
+  /** The time of the transcript row that made the call. */
+  ts: v.string(),
+});
+export type UnreadPermit = Output<typeof UnreadPermitSchema>;
+
+/** One request of a session, as notification_list answers it. */
+export const SessionPermitSchema = v.object({
+  /** The tool_use's id: what permit_read and the permit ops name. */
+  tool_use_id: v.string(),
+  /** The time of the transcript row that made the call. */
+  ts: v.string(),
+  /** The directory the session ran in when it asked (the row's `cwd`): its
+   * `.claude/settings.local.json` is where the project permissions go. */
+  cwd: v.string(),
+  permit: PermitCallSchema,
+  /** The subagent or teammate that called it; absent on the main thread. */
+  agent_id: v.optional(v.string()),
+});
+export type SessionPermit = Output<typeof SessionPermitSchema>;
 
 /** Why the daemon could not show an attachment's content:
  *
@@ -280,7 +314,7 @@ export type PermitSettingsReadResponse = Output<typeof PermitSettingsReadRespons
 
 /** permit_permission_apply's reply: whether the file changed (an added rule
  * already there, or a removed one not there, leaves it as it was), and the
- * time the permission was applied at, which the record now carries. */
+ * time the permission was applied at, which ev:"permit_state" now carries. */
 export const PermitPermissionApplyResponseSchema = v.object({
   ok: v.literal(true),
   changed: v.boolean(),

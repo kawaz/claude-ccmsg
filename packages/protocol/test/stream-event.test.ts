@@ -46,20 +46,21 @@ const PUSHES: {
       ],
     },
   ],
-  permit_requests: [
-    { ev: "permit_requests", requests: [] },
+  permit_state: [
+    { ev: "permit_state", unread: [], applied: [] },
     {
-      ev: "permit_requests",
-      requests: [
+      ev: "permit_state",
+      unread: [{ session_id: SID, tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z" }],
+      applied: [
         {
-          id: "0f0f/1",
-          sid: SID,
-          ts: "t",
-          blocked: "`git push` が止められた",
-          attachments: ["/w/a.json", "/w/b"],
-          intents: [],
-          commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
-          read: false,
+          tool_use_id: "toolu_02",
+          permission: { add: "Bash(git push)" },
+          applied_at: "2026-11-08T00:00:01.000Z",
+        },
+        {
+          tool_use_id: "toolu_02",
+          permission: { remove: "Bash(old)" },
+          applied_at: "2026-11-08T00:00:02.000Z",
         },
       ],
     },
@@ -80,21 +81,6 @@ const PUSHES: {
   request_override: [
     { ev: "request_override", session_id: SID, target: "session", model: "sonnet", effort: "low" },
     { ev: "request_override", session_id: SID, target: "once", model: null, effort: null },
-  ],
-  permit_request: [
-    {
-      ev: "permit_request",
-      request: {
-        id: "0f0f/2",
-        sid: SID,
-        ts: "t",
-        blocked: "x",
-        attachments: [],
-        intents: ["`/w/a.ts` の編集"],
-        commands: [],
-        read: true,
-      },
-    },
   ],
   restarting: [{ ev: "restarting" }, { ev: "restarting", reason: "upgrade" }],
   agents: [

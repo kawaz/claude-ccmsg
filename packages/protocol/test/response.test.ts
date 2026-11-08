@@ -236,8 +236,8 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
   ],
   say_read: [{ ok: true, ids: ["toolu_01"] }],
-  say_list: [
-    { ok: true, sid: SID, says: [] },
+  notification_list: [
+    { ok: true, sid: SID, says: [], permits: [] },
     {
       ok: true,
       sid: SID,
@@ -250,10 +250,24 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
           agent_id: "a1234567",
         },
       ],
+      permits: [
+        {
+          tool_use_id: "toolu_03",
+          ts: "2026-11-08T00:00:02.000Z",
+          cwd: "/w",
+          permit: {
+            blocked: "`git push` が止められた",
+            attachments: ["/w/a.json"],
+            intents: [],
+            commands: [{ command: "git push", description: "公開する" }],
+            project_permissions: [{ add: "Bash(git push)" }, { remove: "Bash(old)" }],
+          },
+        },
+      ],
     },
   ],
-  permit_request: [{ ok: true, id: "0f0f/1" }],
-  permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
+  permit_request: [{ ok: true }],
+  permit_read: [{ ok: true, ids: ["toolu_01"] }],
   permit_attachment_read: [
     {
       ok: true,
@@ -659,10 +673,10 @@ describe("RESPONSE_SCHEMAS", () => {
 
   test("the correlation envelope is not part of an op's reply", () => {
     expect(
-      parseWith(RESPONSE_SCHEMAS.permit_request, { ok: true, id: "0f0f/1", request_id: "q1" }),
+      parseWith(RESPONSE_SCHEMAS.say_read, { ok: true, ids: ["toolu_01"], request_id: "q1" }),
     ).toEqual({
       ok: true,
-      value: { ok: true, id: "0f0f/1" },
+      value: { ok: true, ids: ["toolu_01"] },
     });
   });
 });

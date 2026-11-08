@@ -6,7 +6,7 @@
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
-import { PermitRequestRecordSchema } from "./permit-request.ts";
+import { AppliedPermitPermissionSchema, UnreadPermitSchema } from "./permit-request.ts";
 import {
   RequestOverrideStateSchema,
   RequestOverrideTargetSchema,
@@ -50,14 +50,14 @@ export const AgentSaySchema = v.object({
   agent_id: v.string(),
   tool_use_id: v.string(),
   /** When the daemon got the row pushed; for one it found reading the
-   * agent's transcript (say_list), the row's time. */
+   * agent's transcript (notification_list), the row's time. */
   ts: v.string(),
   text: v.string(),
 });
 export type AgentSay = Output<typeof AgentSaySchema>;
 
 /** Every say of the sessions' subagents and teammates the daemon holds
- * (the live sessions' pushed ones, and the ones a say_list found), read or
+ * (the live sessions' pushed ones, and the ones a notification_list found), read or
  * not, oldest first (user-role subscribers only, like ev:"say_unread"). Sent at
  * subscribe time, even when empty, and again whenever the set changes:
  * always the full set. Whether one is unread is ev:"say_unread"'s. */
@@ -67,29 +67,21 @@ export const AgentSaysStreamEventSchema = v.object({
 });
 export type AgentSaysStreamEvent = Output<typeof AgentSaysStreamEventSchema>;
 
-/** Every request for permission the daemon holds, oldest first (DR-0040 §5,
- * user-role subscribers only, like ev:"say_unread"). Sent at subscribe time, even
- * when empty, so a tab that reconnects to a restarted daemon drops what the
- * old one held. */
-export const PermitRequestsStreamEventSchema = v.object({
-  ev: v.literal("permit_requests"),
-  requests: v.array(PermitRequestRecordSchema),
+/** The person's state of the requests for permission (DR-0040 §5,
+ * user-role subscribers only, like ev:"say_unread"): the requests not acted
+ * on yet, oldest first, and every project permission applied. The requests
+ * themselves are the `permit` calls in the transcripts, which the Timeline
+ * draws. Sent at subscribe time, even when empty, and again whenever either
+ * changes: always the full state, so a tab replaces what it held. */
+export const PermitStateStreamEventSchema = v.object({
+  ev: v.literal("permit_state"),
+  unread: v.array(UnreadPermitSchema),
+  applied: v.array(AppliedPermitPermissionSchema),
 });
-export type PermitRequestsStreamEvent = Output<typeof PermitRequestsStreamEventSchema>;
-
-/** One request for permission the daemon has just recorded, or just marked
- * read, to the same subscribers; a tab puts it in place of the one of the
- * same id, or adds it. One rather than the whole set as ev:"say_unread" sends:
- * only a request's `read` ever changes, so the catch-up above and these
- * single records are all a tab needs. */
-export const PermitRequestStreamEventSchema = v.object({
-  ev: v.literal("permit_request"),
-  request: PermitRequestRecordSchema,
-});
-export type PermitRequestStreamEvent = Output<typeof PermitRequestStreamEventSchema>;
+export type PermitStateStreamEvent = Output<typeof PermitStateStreamEventSchema>;
 
 /** The overrides of every session the daemon knows them of (DR-0041 §5,
- * user-role subscribers only, like ev:"permit_requests"): what each session's
+ * user-role subscribers only, like ev:"permit_state"): what each session's
  * main-thread requests are sent with, as its hooks module last reported.
  * Sent at subscribe time, even when empty, so a tab that reconnects to a
  * restarted daemon drops what the old one held. */
@@ -299,8 +291,7 @@ export type ClaudeVersionStreamEvent = Output<typeof ClaudeVersionStreamEventSch
 export const StreamEventSchema = v.variant("ev", [
   SayUnreadStreamEventSchema,
   AgentSaysStreamEventSchema,
-  PermitRequestsStreamEventSchema,
-  PermitRequestStreamEventSchema,
+  PermitStateStreamEventSchema,
   RequestOverridesStreamEventSchema,
   RequestOverrideStreamEventSchema,
   RestartingStreamEventSchema,

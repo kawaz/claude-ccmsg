@@ -28,6 +28,7 @@ import {
 } from "@ccmsg/protocol/peer-tools";
 import { peersText, sendResultText, UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import {
+  PERMIT_REQUESTED_TEXT,
   PermitRequestResponseTextSchema,
   PermitToolInputSchema,
 } from "@ccmsg/protocol/permit-request";
@@ -255,8 +256,9 @@ async function launchTool<E>($: Engine, e: E): Promise<string> {
 }
 
 /** The `permit` tool: ask the person for permission through `ccmsg sidecar
- * permit`, which shows the request in the session's Timeline and says that
- * one is asking. Never rejects.
+ * permit`, which has the daemon say that one is asking. The request is the
+ * call's row, which the session's Timeline draws once this answers that the
+ * request went out (DR-0040 §4). Never rejects.
  *
  * Design rationale: a subagent's call is refused rather than shown. The
  * person's permission reaches the main thread (the person writes to the
@@ -281,7 +283,8 @@ async function permitTool<E>($: Engine, e: E): Promise<string> {
     return `ccmsg sidecar permit が ${String(PERMIT_TIMEOUT_MS / 1000)} 秒以内に終わらなかったか起動できず、許可依頼が出たか確かめられなかった: ${errorText(error)}`;
   }
   const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
-  if (answered.ok) return "許可依頼を出した";
+  // The Timeline draws the call as the request on this result alone.
+  if (answered.ok) return PERMIT_REQUESTED_TEXT;
   $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
   // 3: no daemon could be had, so nothing was shown.
   if (run.exitCode === 3) {

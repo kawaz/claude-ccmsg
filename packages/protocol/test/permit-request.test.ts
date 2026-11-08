@@ -1,9 +1,18 @@
 // The `permit` tool's input and what `ccmsg sidecar permit` takes (DR-0040
 // §2, §6): `voice`, the call the speakers say, goes from the tool to the
-// daemon's record.
+// daemon. And a `permit` call as a reader of the transcript shows it (§4):
+// the call read for what the person is shown, and its result telling whether
+// a request went out.
 import { describe, expect, test } from "bun:test";
-import { parseWith } from "../src/parse.ts";
 import {
+  ccmsgPermitCall,
+  permitRequested,
+  permitRequestedBy,
+} from "../src/ccmsg-direct-transcript.ts";
+import { parseWith } from "../src/parse.ts";
+import { CCMSG_TOOLS } from "../src/peer-tools.ts";
+import {
+  PERMIT_REQUESTED_TEXT,
   PERMIT_VOICE_MAX_LENGTH,
   PermitInputSchema,
   PermitToolInputSchema,
@@ -109,5 +118,48 @@ describe("permit project_permissions", () => {
     expect(toolIssues({ blocked: "x", project_permissions: [] })).toEqual({
       "": "ask for at least one of intents and commands, or project_permissions",
     });
+  });
+});
+
+describe("a permit call as the transcript holds it", () => {
+  // 何を保証するか: permit の呼び出しは、無い list を空にして読める形に整え、
+  // voice は落とす (読み上げ専用でバブルに出さない)。他の tool と、blocked の
+  // 無い入力は null。
+  test("reads the call for what the person is shown, the lists it left out empty", () => {
+    expect(
+      ccmsgPermitCall(CCMSG_TOOLS.permit, {
+        blocked: "x",
+        commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
+        project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
+        voice: "聞いて",
+      }),
+    ).toEqual({
+      blocked: "x",
+      attachments: [],
+      intents: [],
+      commands: [{ command: "git push", description: "公開する" }, { command: "ls" }],
+      project_permissions: [{ add: "Bash(ls)" }, { remove: "Bash(old)" }],
+    });
+    expect(ccmsgPermitCall(CCMSG_TOOLS.say, { blocked: "x", intents: ["y"] })).toBeNull();
+    expect(ccmsgPermitCall(CCMSG_TOOLS.permit, { intents: ["y"] })).toBeNull();
+  });
+
+  // 何を保証するか: 依頼が出たのは、結果がエラーでなく PERMIT_REQUESTED_TEXT の
+  // ものだけ (text でも text の block の list でも)。断りの文・エラーの結果は
+  // 依頼でない。
+  test("a call made a request when its result says so, and only then", () => {
+    expect(permitRequested(PERMIT_REQUESTED_TEXT, false)).toBe(true);
+    expect(permitRequested(PERMIT_REQUESTED_TEXT, true)).toBe(false);
+    expect(permitRequested("permit は subagent からは使えない。", false)).toBe(false);
+    const block = (content: string | { type: "text"; text: string }[], is_error?: boolean) => ({
+      type: "tool_result" as const,
+      tool_use_id: "toolu_01",
+      content,
+      ...(is_error !== undefined ? { is_error } : {}),
+    });
+    expect(permitRequestedBy(block(PERMIT_REQUESTED_TEXT))).toBe(true);
+    expect(permitRequestedBy(block([{ type: "text", text: PERMIT_REQUESTED_TEXT }]))).toBe(true);
+    expect(permitRequestedBy(block(PERMIT_REQUESTED_TEXT, true))).toBe(false);
+    expect(permitRequestedBy(block("許可依頼を出せなかった: x"))).toBe(false);
   });
 });

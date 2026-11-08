@@ -41,8 +41,13 @@ import { DIRECT_ADDRESS_PREFIX } from "./ccmsg-address.ts";
 import { type JsonObject, JsonValueSchema } from "./json-value.ts";
 import { JsonTextSchema, parseWith } from "./parse.ts";
 import { CCMSG_TOOLS, SayToolInputSchema } from "./peer-tools.ts";
+import { PERMIT_REQUESTED_TEXT, PermitCallInputSchema, type PermitCall } from "./permit-request.ts";
 import { isKnownAttachment } from "./transcript-attachment.ts";
-import { isKnownContentBlock } from "./transcript-content.ts";
+import {
+  isKnownContentBlock,
+  isKnownToolResultContentBlock,
+  type ToolResultBlock,
+} from "./transcript-content.ts";
 import { isKnownTranscriptRow, type TranscriptRow } from "./transcript-row.ts";
 
 /** One message as the envelope carries it. `from` is `"user"` for a person
@@ -520,6 +525,52 @@ export function ccmsgSayText(name: string, input: JsonObject): string | null {
   if (name !== CCMSG_TOOLS.say) return null;
   const read = parseWith(SayToolInputSchema, input);
   return read.ok ? read.value.text : null;
+}
+
+/** A `permit` tool call (`name` and the input as the model wrote it), as the
+ * person is shown it (DR-0040 §7), or null for any other tool, or a call
+ * whose input carries no `blocked`. Whether the call made a request is its
+ * result's (permitRequested). */
+export function ccmsgPermitCall(name: string, input: JsonObject): PermitCall | null {
+  if (name !== CCMSG_TOOLS.permit) return null;
+  const read = parseWith(PermitCallInputSchema, input);
+  if (!read.ok) return null;
+  const call = read.value;
+  return {
+    blocked: call.blocked,
+    attachments: call.attachments ?? [],
+    intents: call.intents ?? [],
+    commands: (call.commands ?? []).map((c) =>
+      c.description !== undefined
+        ? { command: c.command, description: c.description }
+        : { command: c.command },
+    ),
+    project_permissions: (call.project_permissions ?? []).map((p) =>
+      "add" in p ? { add: p.add } : { remove: p.remove },
+    ),
+  };
+}
+
+/** Whether a `permit` call's tool_result (its text, and whether it is an
+ * error) says the request went out: only such a call is a request the person
+ * is shown. A subagent's call, one the module refused, and one that found no
+ * daemon are answered otherwise. */
+export function permitRequested(text: string, isError: boolean): boolean {
+  return !isError && text.trim() === PERMIT_REQUESTED_TEXT;
+}
+
+/** permitRequested, of a tool_result block as the transcript holds it: its
+ * text is its content's text blocks. */
+export function permitRequestedBy(block: ToolResultBlock): boolean {
+  const text =
+    typeof block.content === "string"
+      ? block.content
+      : block.content
+          .flatMap((item) =>
+            isKnownToolResultContentBlock(item) && item.type === "text" ? [item.text] : [],
+          )
+          .join("\n");
+  return permitRequested(text, block.is_error === true);
 }
 
 /** The input of a `send` tool call, read for what a reader shows of it. */

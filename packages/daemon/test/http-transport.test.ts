@@ -33,6 +33,34 @@ import {
 
 const S = "50000000-0000-4000-8000-000000000001";
 
+/** A transcript_push of one row of a subagent of the session's that says
+ * `text`: the daemon pushes it to every user-role subscriber as
+ * ev:"agent_says" (DR-0050 §10) before it answers. */
+function agentSayPush(text: string) {
+  return {
+    op: "transcript_push" as const,
+    rows: [
+      {
+        uuid: crypto.randomUUID(),
+        door: "response",
+        agent_id: "a1234567",
+        message: {
+          type: "assistant",
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: `toolu_${crypto.randomUUID()}`,
+              name: "mcp__ccmsg-v1__say",
+              input: { text },
+            },
+          ],
+        },
+      },
+    ],
+  };
+}
+
 /** Minimal WS counterpart of helpers.ts's TestClient: the same typed
  * request/readEvent surface, every line read with the wire's schemas the same
  * way, backed by a browser-standard WebSocket instead of a UDS Bun.connect
@@ -335,15 +363,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const sub = await ws.requestOk({ op: "subscribe" });
       expect(sub.subscribed).toBe(true);
 
-      // a session's request for permission is pushed to every user-role
+      // a say of a session's subagent is pushed to every user-role
       // subscriber, this WS one included
       const speaker = await sessionConn(ctx, S);
-      const asked = await speaker.requestOk({
-        op: "permit_request",
-        permit: { blocked: "hello from uds", intents: ["x"] },
-      });
-      const { ev } = await ws.readEventUntil("permit_request", (e) => e.request.id === asked.id);
-      expect(ev.request).toMatchObject({ sid: S, blocked: "hello from uds" });
+      await speaker.requestOk(agentSayPush("hello from uds"));
+      const { ev } = await ws.readEventUntil("agent_says", (e) => e.says.length > 0);
+      expect(ev.says).toMatchObject([{ session_id: S, text: "hello from uds" }]);
 
       ws.close();
       speaker.close();
@@ -390,12 +415,11 @@ describe("HTTP/WS transport (DR-0004)", () => {
       await wsUser.hello({ role: "user" });
       await wsUser.request({ op: "subscribe" });
 
-      // UDS session asks -> the WS user receives it live
-      await udsSession.requestOk({
-        op: "permit_request",
-        permit: { blocked: "from uds", intents: ["x"] },
-      });
-      await wsUser.readEventUntil("permit_request", (e) => e.request.blocked === "from uds");
+      // UDS session pushes -> the WS user receives it live
+      await udsSession.requestOk(agentSayPush("from uds"));
+      await wsUser.readEventUntil("agent_says", (e) =>
+        e.says.some((say) => say.text === "from uds"),
+      );
 
       udsSession.close();
       wsUser.close();

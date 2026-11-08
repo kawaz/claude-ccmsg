@@ -435,14 +435,15 @@ async function runSidecarBegin(opts: Record<string, string | boolean>): Promise<
 
 /** `ccmsg sidecar permit --sid <sid> < permit.json` (DR-0040): ask the
  * person, as session `<sid>`, for the permission the input on standard input
- * describes. The daemon records it, shows it in the session's Timeline and
- * says its `voice`, or that a session is asking (DR-0045 §6). Prints the
- * daemon's permit_request reply, exiting 0. The input comes on standard
- * input: its commands may be long, and an argument is bounded in size and
- * shown to every user by `ps`.
+ * describes. The daemon says its `voice`, or that a session is asking
+ * (DR-0045 §6); the session's Timeline shows the request from the `permit`
+ * call's row once the module answers it (DR-0040 §4). Prints the daemon's
+ * permit_request reply, exiting 0. The input comes on standard input: its
+ * commands may be long, and an argument is bounded in size and shown to every
+ * user by `ps`.
  *
  * Exits 3, nothing asked, when no daemon can be had; exits 1 with the
- * daemon's refusal on standard error when it did not record the request. */
+ * daemon's refusal on standard error when it did not take the request. */
 async function runSidecarPermit(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar permit --sid <sid> < permit.json";
   const read = parseWith(PermitInputTextSchema, await Bun.stdin.text());

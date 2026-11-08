@@ -6,7 +6,8 @@
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
 //             http.sock (a hooks module's `POST /op`, DR-0046)
 //             say-read.json (which says the person has read, DR-0045 §7)
-//             permit-requests.json (the requests for permission, DR-0040 §4)
+//             permit-state.json (which requests for permission the person has
+//               acted on, and the project permissions applied, DR-0040 §5)
 //             sidecars/<sid>.<run id>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
@@ -51,9 +52,10 @@ export interface Paths {
   /** `<stateDir>/say-read.json`: the ids of the says the person has read, and
    * the time before which every say counts as read (DR-0045 §7). */
   sayRead: string;
-  /** `<stateDir>/permit-requests.json`: the requests for the person's
-   * permission the daemon holds, kept across its restarts (DR-0040 §4). */
-  permitRequests: string;
+  /** `<stateDir>/permit-state.json`: the ids of the requests for permission
+   * the person has acted on, the time before which every request counts as
+   * acted on, and the project permissions applied (DR-0040 §5). */
+  permitState: string;
   /** DR-0018 session launcher and the rest of the daemon's user configuration
    * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
    * disposable runtime state and data/ holds only what must not be lost. */
@@ -142,7 +144,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
     sayDictionary: path.join(configDir, "say-dictionary.tsv"),
     sayRead: path.join(stateDir, "say-read.json"),
-    permitRequests: path.join(stateDir, "permit-requests.json"),
+    permitState: path.join(stateDir, "permit-state.json"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),

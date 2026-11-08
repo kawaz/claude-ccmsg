@@ -170,7 +170,7 @@ describe("resolveAgentTranscript (DR-0025)", () => {
 });
 
 describe("listAgentTranscripts (DR-0050 §5)", () => {
-  // 何を保証するか: say_list が読む agent の transcript は、subagents/ 直下と
+  // 何を保証するか: notification_list が読む agent の transcript は、subagents/ 直下と
   // workflows/<runId>/ の agent-<id>.jsonl の全部 (名前順)。id は file 名から取る。
   // meta.json 等の他の file、id / run id の形に合わない名前、symlink は入れない
   // (directory の外を読ませない)。subagents/ が無ければ空。

@@ -135,8 +135,9 @@ export const NotifyRequestSchema = v.object({
 export type NotifyRequest = Output<typeof NotifyRequestSchema>;
 
 /** Ask the person for permission (DR-0040, session role only): the caller's
- * `permit` tool. The daemon records the request (its attachments by path), and
- * shows it in the caller's Timeline; the caller is the one asking, so the
+ * `permit` tool. The daemon speaks the request's `voice`, or that a session is
+ * asking (DR-0040 §6). The request itself is the call's row in the caller's
+ * transcript, which the Timeline draws; the caller is the one asking, so the
  * request names no session. */
 export const PermitRequestRequestSchema = v.object({
   op: v.literal("permit_request"),
@@ -144,42 +145,45 @@ export const PermitRequestRequestSchema = v.object({
 });
 export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
-/** Mark requests for permission as read (the webui's 許可する, DR-0040 §7).
- * User role only, as say_read is: what is unread is what the person has not
- * acted on. */
-export const PermitRequestReadRequestSchema = v.object({
-  op: v.literal("permit_request_read"),
+/** Mark requests for permission as read (the webui's 許可する, DR-0040 §7)
+ * by the ids of their `permit` calls' tool_use. User role only, as say_read
+ * is: what is unread is what the person has not acted on. */
+export const PermitReadRequestSchema = v.object({
+  op: v.literal("permit_read"),
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one request id")),
 });
-export type PermitRequestReadRequest = Output<typeof PermitRequestReadRequestSchema>;
+export type PermitReadRequest = Output<typeof PermitReadRequestSchema>;
 
 /** Read one attachment of a request for permission, as it is now (DR-0040
- * §3): the webui's opening it. User role only. `path` must be one the
- * request named, so the person reads only what the asking session put in
- * front of them. */
+ * §3): the webui's opening it. User role only. The request is session `sid`'s
+ * `permit` call `tool_use_id`, and `path` must be one it named, so the person
+ * reads only what the asking session put in front of them. */
 export const PermitAttachmentReadRequestSchema = v.object({
   op: v.literal("permit_attachment_read"),
-  id: v.string(),
+  sid: v.string(),
+  tool_use_id: v.string(),
   path: v.string(),
 });
 export type PermitAttachmentReadRequest = Output<typeof PermitAttachmentReadRequestSchema>;
 
 /** Read the settings file a request's project permissions go into, as it is
  * now (DR-0040 §12): the webui's opening it. User role only; the file is the
- * one the record names, never one the caller chooses. */
+ * one of the directory the call was made in, never one the caller chooses. */
 export const PermitSettingsReadRequestSchema = v.object({
   op: v.literal("permit_settings_read"),
-  id: v.string(),
+  sid: v.string(),
+  tool_use_id: v.string(),
 });
 export type PermitSettingsReadRequest = Output<typeof PermitSettingsReadRequestSchema>;
 
 /** Apply one project permission of a request (DR-0040 §12): the webui's
- * 許可する beside it. User role only. `permission` must be one the request
- * asked for, so the person writes only what the asking session put in front
- * of them, into the file the record names. */
+ * 許可する beside it. User role only. `permission` must be one the call asked
+ * for, so the person writes only what the asking session put in front of
+ * them, into the settings file of the directory the call was made in. */
 export const PermitPermissionApplyRequestSchema = v.object({
   op: v.literal("permit_permission_apply"),
-  id: v.string(),
+  sid: v.string(),
+  tool_use_id: v.string(),
   permission: PermitProjectPermissionSchema,
 });
 export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
@@ -198,16 +202,17 @@ export const SayReadRequestSchema = v.object({
 });
 export type SayReadRequest = Output<typeof SayReadRequestSchema>;
 
-/** Every say of one session, read or not: its main thread's and its
- * subagents' and teammates' (the webui's 🔔 filter, DR-0050 §5). User role
- * only, as say_read is. The first ask reads the session's transcript and its
- * agents' whole; the daemon keeps what it found and adds the pushed rows'
- * says to it, so a later ask reads nothing. */
-export const SayListRequestSchema = v.object({
-  op: v.literal("say_list"),
+/** Every say and every request for permission of one session, read or
+ * not: its main thread's and its subagents' and teammates' (the webui's 🔔
+ * and 🔐 filters, DR-0050 §5). User role only, as say_read is. The first ask
+ * reads the session's transcript and its agents' whole, once for both kinds;
+ * the daemon keeps what it found and adds the rows it reads later to it, so a
+ * later ask reads nothing. */
+export const NotificationListRequestSchema = v.object({
+  op: v.literal("notification_list"),
   sid: v.string(),
 });
-export type SayListRequest = Output<typeof SayListRequestSchema>;
+export type NotificationListRequest = Output<typeof NotificationListRequestSchema>;
 
 /** Send a message to the sessions `to` picks out: what the `send` tool of a
  * session's hooks module asks (session role only, DR-0039 §3).

@@ -37,7 +37,7 @@ export type ProtocolVersion = Output<typeof ProtocolVersionSchema>;
  * refuses a push that changes this package and the hooks bundle without
  * moving this.
  */
-export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 1 };
+export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 2 };
 
 /**
  * The major of a party that names no `major.minor`: a hello or a ping reply

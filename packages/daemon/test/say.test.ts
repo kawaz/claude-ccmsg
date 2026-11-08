@@ -15,7 +15,7 @@
 //   - live でないセッションの say は、そのセッションの status の一回読み (TL を
 //     開いた時) で数え、未読に入り、say_read で既読にできる。live に
 //     なったら fold に引き継ぎ、二重に数えない
-//   - say_list はそのセッションの全 say (main と agent の transcript の、既読も
+//   - notification_list はそのセッションの全 say (main と agent の transcript の、既読も
 //     含む) を時刻順に返す。初回だけ全部読み、以後は fold の行と push の差分で
 //     増える (読み直さない)。見つけた say は未読と agent_says に合流し、同じ id
 //     を二重に数えない
@@ -511,10 +511,10 @@ describe("say-read.json", () => {
   });
 });
 
-describe("say: every say of a session (say_list)", () => {
+describe("say: every say of a session (notification_list)", () => {
   const WORKER = "a1234567";
 
-  // 何を保証するか: say_list は main の transcript と subagent / teammate /
+  // 何を保証するか: notification_list は main の transcript と subagent / teammate /
   // workflow agent の transcript の say を全部 (既読も) 本文付きで時刻順に返す。
   // live でないセッションでも返す。agent の say には agent_id が付く。見つけた
   // agent の say は未読 (agent_id 付き) と ev:"agent_says" に出て、タブに届く。
@@ -539,7 +539,7 @@ describe("say: every say of a session (say_list)", () => {
       await user.requestOk({ op: "subscribe" });
       await user.readEventUntil("agent_says", () => true);
 
-      const listed = await user.requestOk({ op: "say_list", sid: A });
+      const listed = await user.requestOk({ op: "notification_list", sid: A });
       expect(listed.says.map((say) => [say.tool_use_id, say.text, say.agent_id])).toEqual([
         ["toolu_m1", "main 1", undefined],
         ["toolu_w1", "worker 1", WORKER],
@@ -573,15 +573,15 @@ describe("say: every say of a session (say_list)", () => {
       );
       await sessionConn(ctx, A, { transcript_path: file });
       const user = await userConn(ctx);
-      await user.requestOk({ op: "say_list", sid: A });
+      await user.requestOk({ op: "notification_list", sid: A });
       await user.requestOk({ op: "say_read", ids: ["toolu_1"] });
-      const listed = await user.requestOk({ op: "say_list", sid: A });
+      const listed = await user.requestOk({ op: "notification_list", sid: A });
       expect(listed.says.map((say) => say.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
       expect(unreadSays(ctx.daemon.sayUnread).map((say) => say.tool_use_id)).toEqual(["toolu_2"]);
     });
   });
 
-  // 何を保証するか: 2 回目の say_list は読み直さない (ファイルに直接足した行は
+  // 何を保証するか: 2 回目の notification_list は読み直さない (ファイルに直接足した行は
   // 出ない)。以後は push の差分で増える: main の say は fold が読んだ行から、
   // agent の say は push の行から。同じ say を fold・push・一覧で重ねて持っても、
   // 未読は 1 件ずつ。セッションが live でなくなっても一覧は残る。
@@ -597,17 +597,17 @@ describe("say: every say of a session (say_list)", () => {
       const session = await liveSessionConn(ctx, A, { transcript_path: file });
       await relaysCaughtUp(ctx.daemon.transcriptRelay);
       const user = await userConn(ctx);
-      const first = await user.requestOk({ op: "say_list", sid: A });
+      const first = await user.requestOk({ op: "notification_list", sid: A });
       expect(first.says.map((say) => say.tool_use_id)).toEqual(["toolu_m1", "toolu_w1"]);
 
       // Written without a push: only a read of the file would find them.
       fs.appendFileSync(agentFile(WORKER), agentSayLine("unpushed", "toolu_w0", WORKER, at(3)));
-      const again = await user.requestOk({ op: "say_list", sid: A });
+      const again = await user.requestOk({ op: "notification_list", sid: A });
       expect(again.says.map((say) => say.tool_use_id)).toEqual(["toolu_m1", "toolu_w1"]);
 
       await writeAndPushSay(session, file, "main 2", "toolu_m2");
       await pushSay(session, { text: "worker 2" }, "toolu_w2", { agent_id: WORKER });
-      const grown = await user.requestOk({ op: "say_list", sid: A });
+      const grown = await user.requestOk({ op: "notification_list", sid: A });
       expect(grown.says.map((say) => [say.tool_use_id, say.text])).toEqual([
         ["toolu_m1", "main 1"],
         ["toolu_w1", "worker 1"],
@@ -626,7 +626,7 @@ describe("say: every say of a session (say_list)", () => {
       ]);
 
       await session.end();
-      const kept = await user.requestOk({ op: "say_list", sid: A });
+      const kept = await user.requestOk({ op: "notification_list", sid: A });
       expect(kept.says.map((say) => say.tool_use_id)).toEqual([
         "toolu_m1",
         "toolu_w1",
@@ -648,7 +648,7 @@ describe("say: every say of a session (say_list)", () => {
       const pushed = agentSays(ctx.daemon.sayUnread)[0]?.ts;
       fs.writeFileSync(agentFile(WORKER), agentSayLine("worker", "toolu_w", WORKER, at(60)));
       const user = await userConn(ctx);
-      const listed = await user.requestOk({ op: "say_list", sid: A });
+      const listed = await user.requestOk({ op: "notification_list", sid: A });
       expect(listed.says).toEqual([
         { tool_use_id: "toolu_w", ts: pushed ?? "", text: "worker", agent_id: WORKER },
       ]);
@@ -663,18 +663,18 @@ describe("say: every say of a session (say_list)", () => {
       sinceLongAgo(ctx);
       const file = path.join(dir, "projects", "p", `${A}.jsonl`);
       const session = await sessionConn(ctx, A, { transcript_path: file });
-      expect(await session.request({ op: "say_list", sid: A })).toEqual({
+      expect(await session.request({ op: "notification_list", sid: A })).toEqual({
         ok: false,
-        error: { code: "bad_request", msg: "op 'say_list' requires user role" },
+        error: { code: "bad_request", msg: "op 'notification_list' requires user role" },
       });
       const user = await userConn(ctx);
-      expect(await user.request({ op: "say_list", sid: A })).toMatchObject({
+      expect(await user.request({ op: "notification_list", sid: A })).toMatchObject({
         ok: false,
         error: { code: "not_found" },
       });
       expect(ctx.daemon.sayUnread.listed.has(A)).toBe(false);
       sessionTree(dir, A, sayLine("one", "toolu_1", { timestamp: at(1) }));
-      const listed = await user.requestOk({ op: "say_list", sid: A });
+      const listed = await user.requestOk({ op: "notification_list", sid: A });
       expect(listed.says.map((say) => say.tool_use_id)).toEqual(["toolu_1"]);
     });
   });

@@ -84,9 +84,9 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "say_read", id: "toolu_01" },
     ],
   },
-  say_list: {
-    ok: { op: "say_list", sid: SID },
-    bad: [{ op: "say_list" }, { op: "say_list", sid: 1 }],
+  notification_list: {
+    ok: { op: "notification_list", sid: SID },
+    bad: [{ op: "notification_list" }, { op: "notification_list", sid: 1 }],
   },
   permit_request: {
     ok: {
@@ -142,41 +142,45 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   permit_attachment_read: {
-    ok: { op: "permit_attachment_read", id: "0f0f/1", path: "/w/policy.json" },
+    ok: { op: "permit_attachment_read", sid: SID, tool_use_id: "toolu_01", path: "/w/policy.json" },
     bad: [
-      { op: "permit_attachment_read", id: "0f0f/1" },
-      { op: "permit_attachment_read", path: "/w/policy.json" },
+      { op: "permit_attachment_read", sid: SID, tool_use_id: "toolu_01" },
+      { op: "permit_attachment_read", sid: SID, path: "/w/policy.json" },
+      { op: "permit_attachment_read", tool_use_id: "toolu_01", path: "/w/policy.json" },
     ],
   },
   permit_settings_read: {
-    ok: { op: "permit_settings_read", id: "0f0f/1" },
-    bad: [{ op: "permit_settings_read" }],
+    ok: { op: "permit_settings_read", sid: SID, tool_use_id: "toolu_01" },
+    bad: [
+      { op: "permit_settings_read" },
+      { op: "permit_settings_read", sid: SID },
+      { op: "permit_settings_read", tool_use_id: "toolu_01" },
+    ],
   },
   permit_permission_apply: {
     ok: {
       op: "permit_permission_apply",
-      id: "0f0f/1",
+      sid: SID,
+      tool_use_id: "toolu_01",
       permission: { add: "Bash(just deploy)" },
     },
     bad: [
-      { op: "permit_permission_apply", id: "0f0f/1" },
-      { op: "permit_permission_apply", permission: { add: "Bash(just deploy)" } },
+      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01" },
+      { op: "permit_permission_apply", sid: SID, permission: { add: "Bash(just deploy)" } },
+      { op: "permit_permission_apply", tool_use_id: "toolu_01", permission: { add: "Bash(x)" } },
       // One of add and remove, exactly.
-      { op: "permit_permission_apply", id: "0f0f/1", permission: {} },
+      { op: "permit_permission_apply", sid: SID, tool_use_id: "toolu_01", permission: {} },
       {
         op: "permit_permission_apply",
-        id: "0f0f/1",
+        sid: SID,
+        tool_use_id: "toolu_01",
         permission: { add: "Bash(a)", remove: "Bash(b)" },
       },
     ],
   },
-  permit_request_read: {
-    ok: { op: "permit_request_read", ids: ["0f0f/1"] },
-    bad: [
-      { op: "permit_request_read" },
-      { op: "permit_request_read", ids: [] },
-      { op: "permit_request_read", ids: [1] },
-    ],
+  permit_read: {
+    ok: { op: "permit_read", ids: ["toolu_01"] },
+    bad: [{ op: "permit_read" }, { op: "permit_read", ids: [] }, { op: "permit_read", ids: [1] }],
   },
   subscribe: { ok: { op: "subscribe" }, bad: [] },
   read: {

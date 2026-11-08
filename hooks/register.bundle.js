@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 1 };
+var PROTOCOL_VERSION = { major: 2, minor: 2 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2398,38 +2398,51 @@ var PermitInputSchema = pipe(strictObject({
   commands: optional(array(strictObject(PermitCommandEntries)))
 }), check((input) => asksForSomething(input.intents?.length, input.commands?.length, input.project_permissions?.length), ASKS_FOR_SOMETHING));
 var PermitInputTextSchema = jsonText(PermitInputSchema);
+var PERMIT_REQUESTED_TEXT = "許可依頼を出した";
 var PermitCommandSchema = object({
   command: string(),
   description: optional(string())
 });
-var PermitProjectPermissionRecordSchema = union([
-  object({ add: string(), applied_at: optional(string()) }),
-  object({ remove: string(), applied_at: optional(string()) })
+var PermitProjectPermissionCallSchema = union([
+  object({ add: string() }),
+  object({ remove: string() })
 ]);
-var PermitProjectSettingsSchema = object({
-  path: string(),
-  permissions: array(PermitProjectPermissionRecordSchema)
-});
-var PermitRequestRecordSchema = object({
-  id: string(),
-  sid: string(),
-  ts: string(),
+var PermitCallSchema = object({
   blocked: string(),
   attachments: array(string()),
   intents: array(string()),
   commands: array(PermitCommandSchema),
-  voice: optional(string()),
-  project_settings: optional(PermitProjectSettingsSchema),
-  read: boolean()
+  project_permissions: array(PermitProjectPermissionCallSchema)
 });
-var PermitRequestResponseSchema = object({
-  ok: literal(true),
-  id: string()
+var PermitCallInputSchema = looseObject({
+  blocked: string(),
+  attachments: optional(array(string())),
+  intents: optional(array(string())),
+  commands: optional(array(PermitCommandSchema)),
+  project_permissions: optional(array(PermitProjectPermissionCallSchema))
 });
+var PermitRequestResponseSchema = object({ ok: literal(true) });
 var PermitRequestResponseTextSchema = jsonText(PermitRequestResponseSchema);
-var PermitRequestReadResponseSchema = object({
+var PermitReadResponseSchema = object({
   ok: literal(true),
   ids: array(string())
+});
+var AppliedPermitPermissionSchema = object({
+  tool_use_id: string(),
+  permission: PermitProjectPermissionCallSchema,
+  applied_at: string()
+});
+var UnreadPermitSchema = object({
+  session_id: string(),
+  tool_use_id: string(),
+  ts: string()
+});
+var SessionPermitSchema = object({
+  tool_use_id: string(),
+  ts: string(),
+  cwd: string(),
+  permit: PermitCallSchema,
+  agent_id: optional(string())
 });
 var PermitAttachmentUnreadableSchema = picklist([
   "missing",
@@ -2800,7 +2813,7 @@ async function permitTool($, e) {
   }
   const answered = parseWith(PermitRequestResponseTextSchema, run.stdout);
   if (answered.ok)
-    return "許可依頼を出した";
+    return PERMIT_REQUESTED_TEXT;
   $.ui.log(`ccmsg: permit exited ${String(run.exitCode)}: ${run.stderr.trim()}`, { to: "debug" });
   if (run.exitCode === 3) {
     return `ccmsg の daemon に繋がらず、許可依頼を出していない: ${firstStderrLine(run.stderr)}`;
