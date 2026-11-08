@@ -520,7 +520,7 @@ describe("sessionRuntimeParts", () => {
     expect(parts.find((part) => part.key === "ccmsg")?.title).toBe(
       "ccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1",
     );
-    expect(parts.find((part) => part.key === "ccmsg")?.warn).toBeUndefined();
+    expect(parts.find((part) => part.key === "ccmsg")?.tone).toBeUndefined();
   });
 
   // DR-0002 §4: the session's ccmsg of another protocol minor than the daemon
@@ -528,10 +528,14 @@ describe("sessionRuntimeParts", () => {
   test("a ccmsg of another protocol minor is a warning, with the reason in its hover text", () => {
     const skew = "このセッションの ccmsg の protocol は 2.0 で daemon は 2.1。";
     const ccmsg = sessionRuntimeParts(
-      { ccmsgVersion: "0.214.1", clientWarning: skew, hostClaudeVersion: null },
+      {
+        ccmsgVersion: "0.214.1",
+        clientWarning: { text: skew, tone: "warn" },
+        hostClaudeVersion: null,
+      },
       now,
     ).find((part) => part.key === "ccmsg");
-    expect(ccmsg?.warn).toBe(true);
+    expect(ccmsg?.tone).toBe("warn");
     expect(ccmsg?.title).toBe(
       `${skew}\nccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1`,
     );
@@ -2146,6 +2150,7 @@ describe("clientBuildLabel / staleClientWarning / protocolSkewWarning", () => {
       }),
     );
     expect(warning?.marker).toBe("⚠");
+    expect(warning?.tone).toBe("danger");
     expect(warning?.build).toBe("v0.217.1 (protocol 1)");
     expect(warning?.text).toContain("v0.217.1");
     expect(warning?.text).toContain("このセッションを再起動して");
@@ -2168,6 +2173,7 @@ describe("clientBuildLabel / staleClientWarning / protocolSkewWarning", () => {
   test("protocolSkewWarning marks a client of the daemon's major with another minor", () => {
     const warning = protocolSkewWarning({ major: 2, minor: 0 }, { major: 2, minor: 1 });
     expect(warning?.marker).toBe("△");
+    expect(warning?.tone).toBe("warn");
     expect(warning?.text).toBe(
       "このセッションの ccmsg の protocol は 2.0 で daemon は 2.1。リロードでは直らない。セッションを起動し直すと直る",
     );

@@ -328,7 +328,8 @@ export interface LinePart {
   text: string;
   title?: string;
   href?: string;
-  warn?: boolean;
+  /** Drawn in the warning (yellow) or the danger (red) colour. */
+  tone?: "warn" | "danger";
 }
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる

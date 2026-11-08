@@ -277,8 +277,10 @@ check-changelog version="":
     printf >&2 '%s\n\n%s\n\n- <この版で変わったことを 1 行ずつ、数行で>\n\n' "$want" "$(date +%Y-%m-%d)"
     exit 1
 
-# protocol の契約 (packages/protocol/src/) が main@origin から変わっていれば、PROTOCOL_VERSION (major か minor) も動いているか検証 (DR-0002 §4)。
-# protocol-version.ts だけの変更 (bump のみ) は通す。PROTOCOL_VERSION の値は宣言の 1 行を空白を除いて比べる
+# protocol の契約 (packages/protocol/src/) が main@origin から変わり、かつ hooks の bundle の中身 (1 行目の bun の記録を除く) も変わっていれば、
+# PROTOCOL_VERSION (major か minor) も動いているか検証 (DR-0002 §4)。bundle が変わらない = module が取り込む契約は変わっていない (webui 向け等) ので bump 不要。
+# protocol-version.ts だけの変更 (bump のみ) は通す。PROTOCOL_VERSION の値は宣言の 1 行を空白を除いて比べる。
+# bundle は check-hooks-bundle で作業コピーの source と一致が確かめられている前提 (ci の後に走る)
 [private]
 [script]
 check-protocol-bumped:
@@ -294,7 +296,11 @@ check-protocol-bumped:
     old=$(printf '%s\n' "$patch" | declared -)
     new=$(printf '%s\n' "$patch" | declared '+')
     [ -n "$new" ] && [ "$old" != "$new" ] && exit 0
-    printf >&2 'ERROR: protocol の契約 (packages/protocol/src/) が main@origin から変わったが PROTOCOL_VERSION が動いていない。\n'
+    bundle=hooks/register.bundle.js
+    before=$(jj file show -r main@origin "$bundle" | tail -n +2)
+    after=$(tail -n +2 "$bundle")
+    [ "$before" = "$after" ] && exit 0
+    printf >&2 'ERROR: module の契約が変わった (hooks の bundle が main@origin から変わる) が PROTOCOL_VERSION が動いていない。\n'
     printf >&2 '  通信の形 (封筒・hello・subscribe・event の形) が変わるなら major、tool / op の追加削除・schema 変更なら minor を上げる。\n'
     printf >&2 '  場所: %s の PROTOCOL_VERSION (今: %s)\n' {{ quote(protocol-version-file) }} "$(sed -n 's/^export const PROTOCOL_VERSION[^=]*= *\(.*\);$/\1/p' {{ protocol-version-file }})"
     printf >&2 '  変わったファイル:\n'

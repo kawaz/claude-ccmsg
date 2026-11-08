@@ -1,9 +1,10 @@
 // The protocol version (`major.minor`, DR-0002 §4) as the webui shows it,
 // mounted. A session whose ccmsg speaks the daemon's major with another minor
 // is served, but can drop what the daemon sends it without a word: its ccmsg
-// is drawn in yellow on the Timeline's ctx line, in the Status tab and on its
-// Sessions row, each with a hover text saying a reload does not fix it and
-// restarting the session does. A tab whose bundle speaks another major than
+// is drawn in yellow on the Timeline's ctx line and in the Status tab (not on
+// its Sessions row), each with a hover text saying a reload does not fix it and
+// restarting the session does. A session whose client of another major is
+// refused is drawn in red in all three places. A tab whose bundle speaks another major than
 // the daemon is refused outright: the reload button turns red.
 import { afterEach, describe, expect, test } from "bun:test";
 import { type ComponentChildren, h, render } from "preact";
@@ -117,36 +118,28 @@ async function mountInto(store: Store, node: ComponentChildren): Promise<HTMLEle
 }
 
 describe("a session's ccmsg of another protocol minor than the daemon", () => {
-  test("its Sessions row carries a yellow mark, saying how to fix it on hover", async () => {
+  test("its Sessions row carries no mark of the minor difference", async () => {
     const store = createStore(initialState());
     daemonSpeaks(store, DAEMON);
     const root = await mountInto(
       store,
       h(SessionList, { peers: [peer(SID, OLDER_MINOR), peer(OTHER, DAEMON)], currentSid: null }),
     );
-    const rowOf = (sid: string) =>
-      instanceOf(
-        [...root.querySelectorAll("li.session-row")].find((row) =>
-          row.querySelector(".session-line3")?.textContent?.startsWith(sid.slice(0, 8)),
-        ),
-        HTMLElement,
-        `the row of ${sid}`,
-      );
-    const mark = rowOf(SID).querySelector(".session-protocol-skew");
-    expect(mark?.textContent).toBe("△");
-    expect(mark?.getAttribute("title")).toBe(SKEW_TEXT);
-    expect(rowOf(SID).title).toContain(SKEW_TEXT);
-    // The daemon's own version: no mark.
-    expect(rowOf(OTHER).querySelector(".session-protocol-skew")).toBeNull();
+    expect(root.querySelector(".session-protocol-skew")).toBeNull();
+    expect(root.querySelector(".session-stale-client")).toBeNull();
+    expect(root.textContent).not.toContain("△");
   });
 
-  test("no mark before the tab knows the daemon's version", async () => {
+  test("a refused (stale) client's Sessions row carries the ⚠ mark, which is the only mark Sessions has", async () => {
     const store = createStore(initialState());
+    daemonSpeaks(store, DAEMON);
     const root = await mountInto(
       store,
-      h(SessionList, { peers: [peer(SID, OLDER_MINOR)], currentSid: null }),
+      h(SessionList, { peers: [stalePeer(SID)], currentSid: null }),
     );
-    expect(root.querySelector(".session-protocol-skew")).toBeNull();
+    const mark = root.querySelector(".session-stale-client");
+    expect(mark?.textContent).toBe("⚠");
+    expect(mark?.getAttribute("title")).toContain("ccmsg クライアントが古い");
   });
 
   test("the Status tab's CCMSG is yellow, with the reason as its hover text", async () => {
@@ -192,7 +185,7 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
     expect(dd.title).toContain("セッションを再起動してください");
   });
 
-  test("a refused (stale) client: the ctx line's ccmsg is yellow with the stale version and reason", async () => {
+  test("a refused (stale) client: the ctx line's ccmsg is red with the stale version and reason", async () => {
     const restore = stubGlobal("navigation", { navigate() {} });
     try {
       const store = timelineStore();
@@ -203,7 +196,8 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
         (p) => p.textContent === "ccmsg v0.217.1",
       );
       const ccmsg = instanceOf(part, HTMLElement, "the ccmsg part");
-      expect(ccmsg.classList.contains("ctx-part-warn")).toBe(true);
+      expect(ccmsg.classList.contains("ctx-part-danger")).toBe(true);
+      expect(ccmsg.classList.contains("ctx-part-warn")).toBe(false);
       expect(ccmsg.title.split("\n")[0]).toContain("ccmsg クライアントが古い");
     } finally {
       restore();

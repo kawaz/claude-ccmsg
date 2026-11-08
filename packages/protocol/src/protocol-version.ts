@@ -13,9 +13,13 @@ export type ProtocolVersion = Output<typeof ProtocolVersionSchema>;
 
 /**
  * The wire protocol's version, `major.minor`, moved by hand — never by a
- * release — whenever the contract between the daemon and its clients (the
- * schemas of this package) changes. Which part moves is decided by what the
- * change does to a client already running (DR-0002 §4):
+ * release — whenever the contract between the daemon and the clients that
+ * start with a session (the hooks module, whose bundle takes in the schemas
+ * of this package it imports) changes. A change that only the webui reads
+ * does not move it: the daemon serves the webui's bundle, so it is always the
+ * daemon's own. The CLI is replaced together with the plugin, so a running
+ * session never holds an older one. Which part moves is decided by what the
+ * change does to a module already running (DR-0002 §4):
  *
  * - **major**: a client can no longer talk to the daemon (the envelope,
  *   hello, subscribe, the shape of an event). The daemon refuses a hello of
@@ -30,9 +34,10 @@ export type ProtocolVersion = Output<typeof ProtocolVersionSchema>;
  *   reload does not.
  *
  * A major change sets the minor back to 0. `just check-protocol-bumped`
- * refuses a push that changes this package without moving this.
+ * refuses a push that changes this package and the hooks bundle without
+ * moving this.
  */
-export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 1 };
+export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 0 };
 
 /**
  * The major of a party that names no `major.minor`: a hello or a ping reply

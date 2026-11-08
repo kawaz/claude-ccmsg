@@ -45,15 +45,15 @@ daemon と client の間の契約 (`packages/protocol` のスキーマ) の版�
 
 | 変更の種類 | 上げる所 | daemon の扱い | webui の見せ方 |
 |---|---|---|---|
-| 通信できなくなる変更 (封筒・hello・subscribe・event の形) | major (minor は 0 に戻す) | 違う major の hello を断り、session の hello ならその sid に stale の印 (`PeerInfo.stale_client`) を付ける | そのセッションの ccmsg は minor 違いと同じ場所で黄色にし、本文は印と版 (`⚠ v… (protocol 1)`)、説明は title に置く (状態行の `ccmsg v…` の版は断られた client のもの)。webui 自身の bundle の major が daemon と違えば、リロードボタンを赤にし title で「ccmsg の protocol が変わった。リロードしてください」 |
-| 通信は通るが意味がずれうる変更 (tool / op の追加削除、schema の変更) | minor | 受け入れ、その client の版を `PeerInfo.protocol` に載せる | そのセッションの ccmsg (TL 下の状態行の `ccmsg v…`、Status タブの CCMSG、Sessions の行の印) を黄色 (`--warn`) にする。本文は印と版 (`△ v… (protocol 2.0)`) だけで、説明は title に置く:「このセッションの ccmsg の protocol は <client> で daemon は <daemon>。リロードでは直らない。セッションを起動し直すと直る」 |
+| 通信できなくなる変更 (封筒・hello・subscribe・event の形) | major (minor は 0 に戻す) | 違う major の hello を断り、session の hello ならその sid に stale の印 (`PeerInfo.stale_client`) を付ける | そのセッションの ccmsg を赤 (`--danger`) にする: Sessions の行の ⚠、Status の CCMSG の行、TL 下の状態行の `ccmsg v…`。本文は印と版 (`⚠ v… (protocol 1)`)、説明は title に置く (状態行の `ccmsg v…` の版は断られた client のもの)。webui 自身の bundle の major が daemon と違えば、リロードボタンを赤にし title で「ccmsg の protocol が変わった。リロードしてください」 |
+| 通信は通るが意味がずれうる変更 (tool / op の追加削除、schema の変更) | minor | 受け入れ、その client の版を `PeerInfo.protocol` に載せる | そのセッションの ccmsg (TL 下の状態行の `ccmsg v…`、Status タブの CCMSG) だけを黄色 (`--warn`) にする。Sessions の行には出さない (Sessions に出すのは major 違いの ⚠ だけ)。本文は印と版 (`△ v… (protocol 2.0)`) だけで、説明は title に置く:「このセッションの ccmsg の protocol は <client> で daemon は <daemon>。リロードでは直らない。セッションを起動し直すと直る」 |
 | plugin の版だけ (bundle が変わった) | 上げない | 何もしない | リロードボタンを青に (version の比較) |
 
 - minor の違いを断らないのは、受け入れて見えるようにすれば足りるから。古い module は daemon が送る op の新しい field を黙って落とす (例: `prompt.send` の `mode: "bash"` を落として通常の prompt として入れる) ので、その無言の不具合に気づけることが要る。直すのはセッションの起動し直し (起動時の plugin の module が載る、DR-0035 §3) で、webui のリロードでは直らない
 - major の違いを断るのは、通信の形が違う相手とは話せず、互換の経路は持たないから (下の「後方互換は原則実装しない」)。protocol を名乗らない hello と、`protocol` に数値 (`1`) を名乗る hello は major 1 (`UNANNOUNCED_PROTOCOL_MAJOR`) として断る。major を 2 にしたのは hello の `protocol` の形そのもの (数値 → `{ major, minor }`) を変えたからで、これより前の client はすべて major 1 として断られ、セッションの起動し直しが要る
 - ping の応答に `protocol` を名乗らない daemon も major 1 と読む。webui は hello が断られた時に ping でこれを読み、bundle の major と比べる (bundle は daemon が配るので、major が違えば版の新旧によらずリロードで揃う)
 - `PeerInfo.protocol` は、その sid で最後に受け入れた hello の版。agents の poll だけで知っているセッション (hello した client が居ない) では無い
-- `just push` の deps の `check-protocol-bumped` が、`packages/protocol/src/` に main@origin からの変更があるのに `PROTOCOL_VERSION` が動いていない push を止める (`protocol-version.ts` だけの変更は通す)。major か minor かの判断は人が上の表でする
+- `just push` の deps の `check-protocol-bumped` が、`packages/protocol/src/` に main@origin からの変更があり、かつ hooks の bundle (`hooks/register.bundle.js`、module が import する protocol のファイルを含む) の中身 (1 行目の bun の記録を除く) が main@origin から変わるのに `PROTOCOL_VERSION` が動いていない push を止める (`protocol-version.ts` だけの変更は通す)。bundle が変わらない変更は module が取り込む契約が変わっていない (webui だけが読む schema) ので上げない: webui の bundle は daemon が配るので常に daemon と同じ。CLI だけが使う protocol の変更も上げない: CLI は plugin の更新で同時に入れ替わるので、起動中のセッションのズレが起きない。major か minor かの判断は人が上の表でする
 
 #### 最新であるべきは daemon プロセスだけ
 

@@ -57,6 +57,11 @@ export function formatDuration(ms: number): string {
   return `${days}d${totalHour % 24}h`;
 }
 
+/** How a ccmsg client's protocol warning is drawn: `warn` (yellow) for another
+ * minor, `danger` (red) for another major, which the daemon refuses
+ * (DR-0002 §4). */
+export type WarningTone = "warn" | "danger";
+
 /** What a session runs as, from the rows the webui holds of it. */
 export interface SessionRuntime {
   /** The session's process, from its agents row: when it started and the
@@ -66,10 +71,11 @@ export interface SessionRuntime {
    * `ccmsg_version`). */
   ccmsgVersion?: string;
   /** Set while that client is off the daemon's protocol: another minor
-   * (`protocolSkewWarning`) or another major, refused (`staleClientWarning`,
-   * and then `ccmsgVersion` is the refused client's). The ccmsg part is drawn
-   * in yellow with this text as its hover. */
-  clientWarning?: string;
+   * (`protocolSkewWarning`, yellow) or another major, refused
+   * (`staleClientWarning`, red, and then `ccmsgVersion` is the refused
+   * client's). The ccmsg part is drawn in the tone with the text as its
+   * hover. */
+  clientWarning?: { text: string; tone: WarningTone };
   /** This host's Claude Code version as GLOBALS shows it (DR-0043 §5.3), null
    * when not known. */
   hostClaudeVersion: string | null;
@@ -93,9 +99,9 @@ export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LineP
     parts.push({
       key: "ccmsg",
       text: `ccmsg v${ccmsgVersion}`,
-      title: `${clientWarning === undefined ? what : `${clientWarning}\n${what}`}\n${href}`,
+      title: `${clientWarning === undefined ? what : `${clientWarning.text}\n${what}`}\n${href}`,
       href,
-      ...(clientWarning !== undefined ? { warn: true } : {}),
+      ...(clientWarning !== undefined ? { tone: clientWarning.tone } : {}),
     });
   }
   const claudeVersion = process?.version;
@@ -828,11 +834,12 @@ export function clientBuildLabel(row: {
 export function protocolSkewWarning(
   client: ProtocolVersion | undefined,
   daemon: ProtocolVersion | undefined,
-): { marker: string; text: string } | null {
+): { marker: string; text: string; tone: "warn" } | null {
   if (client === undefined || daemon === undefined) return null;
   if (client.major !== daemon.major || client.minor === daemon.minor) return null;
   return {
     marker: "△",
+    tone: "warn",
     text:
       `このセッションの ccmsg の protocol は ${formatProtocol(client)} で daemon は ${formatProtocol(daemon)}。` +
       "リロードでは直らない。セッションを起動し直すと直る",
@@ -850,7 +857,7 @@ export function protocolSkewWarning(
  * *stale* client's, not the row's. */
 export function staleClientWarning(row: {
   stale_client?: StaleClientInfo;
-}): { marker: string; build: string; text: string } | null {
+}): { marker: string; build: string; text: string; tone: "danger" } | null {
   const stale = row.stale_client;
   if (!stale) return null;
   const version = stale.version ? `v${stale.version}` : "版数不明";
@@ -861,6 +868,7 @@ export function staleClientWarning(row: {
   const build = `${version} (${generation})`;
   return {
     marker: "⚠",
+    tone: "danger",
     build,
     text:
       `ccmsg クライアントが古い (${build})。` +

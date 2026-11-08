@@ -1380,21 +1380,16 @@ select.sidebar-globals-endpoint {
   flex-shrink: 0;
   line-height: 1;
   white-space: nowrap;
-  color: var(--warn);
+  color: var(--danger);
 }
 
 .status-stale-client {
-  color: var(--warn);
+  color: var(--danger);
 }
 
 /* ccmsg の protocol の minor が daemon と違うセッション (DR-0002 §4)。繋がっては
- * いるが daemon が送るものを黙って落としうる。直し方は title が言う。 */
-.session-protocol-skew {
-  flex-shrink: 0;
-  line-height: 1;
-  white-space: nowrap;
-  color: var(--warn);
-}
+ * いるが daemon が送るものを黙って落としうる。Status タブと状態行だけ黄色にし、
+ * Sessions の行には出さない。直し方は title が言う。 */
 
 .status-protocol-skew {
   color: var(--warn);
@@ -7965,6 +7960,12 @@ a.tl-attachment-file-path {
  * protocol minor than the daemon (DR-0002 §4), why in its hover text. */
 .tl-status-mini-context .ctx-part-warn {
   color: var(--warn);
+}
+
+/* The danger variant: the session's ccmsg speaks another protocol major and
+ * is refused. */
+.tl-status-mini-context .ctx-part-danger {
+  color: var(--danger);
 }
 
 /* The versions' links keep the line's look: no colour or underline of their

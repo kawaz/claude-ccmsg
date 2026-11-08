@@ -296,7 +296,12 @@ export function ContextLine({
       noticeMs={CTX_LINE_NOTICE_MS}
     />
   );
-  const parts: { key: string; node: ComponentChildren; title?: string; warn?: boolean }[] = [];
+  const parts: {
+    key: string;
+    node: ComponentChildren;
+    title?: string;
+    tone?: "warn" | "danger";
+  }[] = [];
   if (usage) {
     parts.push({ key: "fill", node: usage.fill });
     parts.push({
@@ -319,7 +324,7 @@ export function ContextLine({
       ) : (
         part.text
       );
-    parts.push({ key: part.key, node, title: part.title, warn: part.warn });
+    parts.push({ key: part.key, node, title: part.title, tone: part.tone });
   }
   return (
     <span class="tl-status-mini-line tl-status-mini-context">
@@ -330,7 +335,7 @@ export function ContextLine({
             class={[
               "ctx-part",
               ...(part.title !== undefined ? ["ctx-part-titled"] : []),
-              ...(part.warn === true ? ["ctx-part-warn"] : []),
+              ...(part.tone !== undefined ? [`ctx-part-${part.tone}`] : []),
             ].join(" ")}
             title={part.title}
           >

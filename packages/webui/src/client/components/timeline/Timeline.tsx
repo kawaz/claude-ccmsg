@@ -143,7 +143,7 @@ export function Timeline({
             }
           : {}),
         ...(ccmsgVersion !== undefined ? { ccmsgVersion } : {}),
-        ...(skew !== null ? { clientWarning: skew.text } : {}),
+        ...(skew !== null ? { clientWarning: { text: skew.text, tone: skew.tone } } : {}),
         hostClaudeVersion: hostClaudeVersion(
           lastSessionClaudeVersion(s.agents),
           s.hostClaudeVersion,

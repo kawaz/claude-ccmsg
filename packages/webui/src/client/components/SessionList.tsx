@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type {
-  AgentInfo,
-  LlmRequestInfo,
-  PeerInfo,
-  ProtocolVersion,
-  SessionRenameResponse,
-} from "@ccmsg/protocol";
+import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionRenameResponse } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { NotificationBadges } from "./NotificationBadges.tsx";
 import { pushNavigation } from "../navigation.ts";
@@ -28,7 +22,6 @@ import {
   offlineAgentRows,
   sessionRowTitle,
   sessionBadges,
-  protocolSkewWarning,
   staleClientWarning,
   shortSid,
   toSessionRow,
@@ -454,7 +447,6 @@ function SessionRowItem({
   cacheRequest,
   sayUnread,
   permitUnread,
-  daemonProtocol,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -480,7 +472,6 @@ function SessionRowItem({
   permitUnread: number;
   /** daemon の protocol の版 (ping の `protocol`)。行の client の版と
    * minor が違えば黄色の印を出す (DR-0002 §4)。undefined = まだ知らない。 */
-  daemonProtocol: ProtocolVersion | undefined;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheRequest);
@@ -538,8 +529,6 @@ function SessionRowItem({
     );
   const staleClient = staleClientWarning(row);
   if (staleClient) titleParts.push(staleClient.text);
-  const protocolSkew = protocolSkewWarning(row.protocol, daemonProtocol);
-  if (protocolSkew) titleParts.push(protocolSkew.text);
 
   return (
     <li
@@ -572,18 +561,6 @@ function SessionRowItem({
               aria-label="ccmsg クライアントが古い"
             >
               {staleClient.marker}
-            </span>
-          ) : null}
-          {/* minor 違いの module は拒否されずに繋がり、知らない field や op を
-           * 黙って落とす。古い client と同じ「repo 名の直前」に黄色の印を出し、
-           * 直し方 (セッションの起動し直し) は hover で読ませる。 */}
-          {protocolSkew ? (
-            <span
-              class="session-protocol-skew"
-              title={protocolSkew.text}
-              aria-label="ccmsg の protocol が daemon と違う"
-            >
-              {protocolSkew.marker}
             </span>
           ) : null}
         </span>
@@ -906,7 +883,6 @@ function sessionListSlice(state: AppState) {
     pinnedSessions: state.pinnedSessions,
     unreadSays: state.unreadSays,
     permitRequests: state.permitRequests,
-    daemonProtocol: state.daemonInfo?.protocol,
   };
 }
 
@@ -940,7 +916,6 @@ export function SessionList({
     pinnedSessions,
     unreadSays,
     permitRequests,
-    daemonProtocol,
   } = useStoreState(store, sessionListSlice, shallowEqual);
   // 未読の say は daemon が ev:"say_unread" で全件 push するので、TL を開いて
   // いないセッションの未読もここで数えられる。
@@ -1019,7 +994,6 @@ export function SessionList({
                 cacheRequest={llmRequests.get(row.sid) ?? null}
                 sayUnread={sayUnreadBy.get(row.sid) ?? 0}
                 permitUnread={permitUnreadBy.get(row.sid) ?? 0}
-                daemonProtocol={daemonProtocol}
               />
             ))}
           </ul>
