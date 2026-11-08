@@ -18,10 +18,13 @@ import {
   type PermitProjectPermission,
 } from "@ccmsg/protocol";
 
+/** The project's local settings file, from the project directory. */
+export const PROJECT_SETTINGS_FILE = path.join(".claude", "settings.local.json");
+
 /** Where a project's local settings are, for a session whose project
  * directory is `cwd`. */
 export function projectSettingsPath(cwd: string): string {
-  return path.join(cwd, ".claude", "settings.local.json");
+  return path.join(cwd, PROJECT_SETTINGS_FILE);
 }
 
 /** The settings file's text, as JSON. JsonValueSchema reads an array as an
@@ -250,11 +253,13 @@ export function unifiedDiff(file: string, before: string | null, after: string):
  * as one notice. */
 export const SETTINGS_DIFF_NOTICE_DELAY_MS = 5_000;
 
-/** The notice the session gets for a change to its project settings. */
+/** The notice the session gets for a change to its project settings. `file`
+ * is the file as named from the project directory, which is the session's
+ * cwd, so that the notice stays short enough to read on a phone. */
 export function settingsDiffNotice(file: string, diff: string): string {
   const fence = "```";
   return [
-    `人が許可依頼の「許可する」で ${file} の permissions.allow を書き換えた。このセッションにすぐ効く (再起動は要らない)。`,
+    `人が許可依頼の「許可する」で \`${file}\` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。`,
     "",
     `${fence}diff`,
     diff.trimEnd(),
@@ -294,8 +299,8 @@ export function createSettingsDiffNotifier(
     const held = pending.get(key);
     if (held === undefined) return;
     pending.delete(key);
-    const diff = unifiedDiff(held.file, held.before, held.after);
-    if (diff !== "") tell(held.sid, settingsDiffNotice(held.file, diff));
+    const diff = unifiedDiff(PROJECT_SETTINGS_FILE, held.before, held.after);
+    if (diff !== "") tell(held.sid, settingsDiffNotice(PROJECT_SETTINGS_FILE, diff));
   };
   return {
     applied(sid, file, before, after) {

@@ -230,7 +230,9 @@ describe("createSettingsDiffNotifier", () => {
   });
 
   // 何を保証するか: 連続した適用は最後の適用から 5 秒後に 1 通にまとまり、
-  // diff は最初の適用前 → 最後の適用後。5 秒経つ前には何も送らない。
+  // diff は最初の適用前 → 最後の適用後。5 秒経つ前には何も送らない。知らせは
+  // ```diff のコードブロックで、ファイルは文でも diff の見出しでもプロジェクト
+  // からの相対 (絶対パスを繰り返さず、スマホの幅で読める)。
   test("tells once, 5 s after the last apply, the diff of the whole burst", () => {
     jest.useFakeTimers();
     const told: { sid: string; text: string }[] = [];
@@ -244,12 +246,13 @@ describe("createSettingsDiffNotifier", () => {
     jest.advanceTimersByTime(1);
     expect(told).toHaveLength(1);
     expect(told[0]?.sid).toBe("s1");
-    expect(told[0]?.text).toContain("すぐ効く");
-    expect(told[0]?.text).toContain(
+    expect(told[0]?.text).toBe(
       [
+        "人が許可依頼の「許可する」で `.claude/settings.local.json` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。",
+        "",
         "```diff",
         "--- /dev/null",
-        `+++ ${file}`,
+        "+++ .claude/settings.local.json",
         "@@ -0,0 +1,4 @@",
         "+{",
         '+  "a": 1,',

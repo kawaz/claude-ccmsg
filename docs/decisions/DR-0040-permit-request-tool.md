@@ -186,7 +186,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 - 同じファイルへの適用は daemon の中で 1 つずつ行う (並んだ 2 件の書き込みが互いを消さない)。daemon の外 (人やセッションの手) の書き込みとの競合は扱わない
 - 読み書きの失敗は `settings_write_failed`。成功したら記録のその変更に `applied_at` を付けて記録を既読にし (適用は人が依頼に手を付けたこと。「許可する」と同じ印)、§5 と同じく変わった 1 件を全タブに送る。応答は `{ ok, changed, applied_at }`
 
-**通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は「人が許可依頼の「許可する」で <path> の permissions.allow を書き換えた。このセッションにすぐ効く (再起動は要らない)。」と diff のコードブロック。
+**通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は「人が許可依頼の「許可する」で `.claude/settings.local.json` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。」と ```diff のコードブロック。ファイルは文でも diff の見出し (`---` / `+++`) でもプロジェクトのディレクトリ (セッションの cwd) からの相対で書き、スマホの幅で読める長さにする。
 
 **反映**: 起動中の Claude Code のセッションは `.claude/settings.local.json` の変更を再起動なしで拾う (2.1.319、対話のセッション、`--permission-mode dontAsk`。起動時に `.claude/` が無い状態から作った時、allow を `[]` に戻した時、rename で置き換えた時のどれも、1〜5 秒後の次の tool 呼び出しから効いた。ccmsg の経路 (tool → バブル → 押す → 書き込み → 同じコマンドの再実行) でも通った。[findings](../findings/2026-11-08-settings-local-reload.md))。auto mode で classifier の前に allow が効くことは同じ設定の読み直しに乗るが、auto mode では観測していない。
 
