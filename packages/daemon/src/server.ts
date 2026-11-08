@@ -136,6 +136,7 @@ import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
   markSaysRead,
+  sayScan,
   sayTotals,
   sayUnreadFold,
   agentSays,
@@ -531,6 +532,9 @@ export function createDaemon(host: DaemonHost): Daemon {
     sessionStatus: createSessionStatusStore({
       inputReadiness: (sid) => readinessOf(daemon, sid),
       facts: (sid) => daemon.sessionFacts.get(sid),
+      // A session that is not live has its says counted on the read that
+      // answers its status, which a tab opening it asks for (DR-0045 §7).
+      oneShotReader: (sid) => sayScan(daemon.sayUnread, sid, () => broadcastSayUnread(daemon)),
     }),
     sessionErrors: createSessionErrorsStore(),
     sessionUserInputs: createSessionUserInputStore(),

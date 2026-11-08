@@ -1,7 +1,9 @@
 // Which says the person has not read (DR-0045 §7). A say is a `say` tool
-// call on the main thread of a live session, known by its tool_use's id; the
-// relay hands the session's lines to the fold here (the catch-up's and every
-// push's read), so a say is seen with its row's time. What is read is a set
+// call on the main thread of a session, known by its tool_use's id. For a live
+// session the relay hands its lines to the fold here (the catch-up's and every
+// push's read); for one that is not live, a tab opening it has its transcript
+// read once for its status, and the same read counts its says (sayScan). A
+// say is seen with its row's time. What is read is a set
 // of those ids, kept in `<stateDir>/say-read.json` with `since`, the time
 // before which every say counts as read: the first start, and a file that
 // does not read, would otherwise make every say in every live transcript
@@ -26,6 +28,7 @@ import {
   type TranscriptPushRow,
   type UnreadSay,
 } from "@ccmsg/protocol";
+import type { OneShotLineReader } from "./session-status.ts";
 import type { LineFold } from "./transcript-relay.ts";
 import { toolUsesOf } from "./row-effects.ts";
 
@@ -38,7 +41,8 @@ const SayReadFileSchema = jsonText(
   }),
 );
 
-/** The says of one live session, by tool_use id, to their row's time. */
+/** The says of one session's main thread, by tool_use id, to their row's
+ * time. */
 type SessionSays = Map<string, string>;
 
 /** The says of one live session's subagents and teammates, by tool_use id. */
@@ -47,6 +51,11 @@ type SessionAgentSays = Map<string, { agentId: string; ts: string; text: string 
 export interface SayUnreadStore {
   /** The settled says of each live session. */
   says: Map<string, SessionSays>;
+  /** The says of sessions that are not live, as the last one-shot read of
+   * their transcript found them (sayScan): kept until the session becomes
+   * live, when its fold takes over, or the daemon stops. A session in `says`
+   * is not read from here. */
+  scanned: Map<string, SessionSays>;
   /** The says of each live session's subagents and teammates (DR-0050 §10).
    * Their rows are in the agents' own transcripts, which the relay does not
    * read, so they come from the pushed rows only: a say made while the daemon
@@ -85,6 +94,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     const { since } = read.value;
     return {
       says: new Map(),
+      scanned: new Map(),
       agentSays: new Map(),
       read: new Set(read.value.read),
       since,
@@ -95,6 +105,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
   const since = now().toISOString();
   return {
     says: new Map(),
+    scanned: new Map(),
     agentSays: new Map(),
     read: new Set(),
     since,
@@ -107,10 +118,17 @@ function isUnread(store: SayUnreadStore, id: string, ts: string): boolean {
   return !store.read.has(id) && Date.parse(ts) >= Date.parse(store.since);
 }
 
+/** The main thread's says of every session the store knows them of: a live
+ * session's from its fold, and the others' from their last one-shot read. */
+function* mainSays(store: SayUnreadStore): Iterable<[string, SessionSays]> {
+  yield* store.says;
+  for (const entry of store.scanned) if (!store.says.has(entry[0])) yield entry;
+}
+
 /** Every unread say, oldest first. */
 export function unreadSays(store: SayUnreadStore): UnreadSay[] {
   const unread: UnreadSay[] = [];
-  for (const [sid, says] of store.says) {
+  for (const [sid, says] of mainSays(store)) {
     for (const [id, ts] of says) {
       if (isUnread(store, id, ts)) unread.push({ session_id: sid, tool_use_id: id, ts });
     }
@@ -132,7 +150,7 @@ export function sayTotals(store: SayUnreadStore): SessionSayTotal[] {
   const add = (sid: string, count: number): void => {
     if (count > 0) totals.set(sid, (totals.get(sid) ?? 0) + count);
   };
-  for (const [sid, says] of store.says) add(sid, says.size);
+  for (const [sid, says] of mainSays(store)) add(sid, says.size);
   for (const [sid, says] of store.agentSays) add(sid, says.size);
   return [...totals].map(([session_id, count]) => ({ session_id, count }));
 }
@@ -145,8 +163,8 @@ export type MarkSaysReadResult =
   | { kind: "unknown"; ids: readonly string[] };
 
 /** Mark `ids` read, all of them or none, and write the file before saying
- * so. An id is known when a live session's say has it, or it was read
- * before. */
+ * so. An id is known when a session's say the store holds has it, or it was
+ * read before. */
 export async function markSaysRead(
   store: SayUnreadStore,
   ids: readonly string[],
@@ -154,7 +172,7 @@ export async function markSaysRead(
   const unread = new Set(unreadSays(store).map((s) => s.tool_use_id));
   const known = (id: string): boolean =>
     store.read.has(id) ||
-    [...store.says.values()].some((says) => says.has(id)) ||
+    [...mainSays(store)].some(([, says]) => says.has(id)) ||
     [...store.agentSays.values()].some((says) => says.has(id));
   const unknown = ids.filter((id) => !known(id));
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
@@ -281,6 +299,9 @@ export function sayUnreadFold(store: SayUnreadStore, sid: string, onChange: () =
         settled = next;
         next = undefined;
         store.says.set(sid, settled);
+        // The fold takes over from the one-shot read: the same says are not
+        // held twice.
+        if (store.scanned.delete(sid)) moved = true;
       }
       if (!moved) return;
       moved = false;
@@ -296,4 +317,36 @@ export function sayUnreadFold(store: SayUnreadStore, sid: string, onChange: () =
       next = undefined;
     },
   };
+}
+
+/** Count `sid`'s says on a one-shot read of its transcript, for a session
+ * that is not live (session-status.ts getSessionStatus): its says are then
+ * the ones this read found. A session live by the time the read is done
+ * keeps its fold's, which the relay reads off the same file. `onChange` is
+ * told when what the read found differs from what was held. */
+export function sayScan(
+  store: SayUnreadStore,
+  sid: string,
+  onChange: () => void,
+): OneShotLineReader {
+  const found: SessionSays = new Map();
+  return {
+    take(line) {
+      for (const say of saysOfLine(line)) found.set(say.id, say.ts);
+    },
+    done() {
+      if (store.says.has(sid)) return;
+      const held = store.scanned.get(sid);
+      store.scanned.set(sid, found);
+      if (held !== undefined && sameSays(held, found)) return;
+      if (held === undefined && found.size === 0) return;
+      onChange();
+    },
+  };
+}
+
+function sameSays(a: SessionSays, b: SessionSays): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, ts] of a) if (b.get(id) !== ts) return false;
+  return true;
 }

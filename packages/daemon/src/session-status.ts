@@ -1733,10 +1733,22 @@ export async function scanTranscript(
   file: string,
   state: SessionStatusState,
   endOffset?: number,
+  also?: OneShotLineReader,
 ): Promise<void> {
   await scanTranscriptLines(file, endOffset, (line) => {
     if (isSessionStatusCandidate(line)) foldLine(state, line);
+    also?.take(line);
   });
+  also?.done();
+}
+
+/** What else is drawn from a transcript when its status is answered by a
+ * one-shot read: each line, then word that the read reached the end (never
+ * given when the read fails). The say of a session that is not live is
+ * counted this way (say-unread.ts, DR-0045 §7), on the same read. */
+export interface OneShotLineReader {
+  take(line: string): void;
+  done(): void;
 }
 
 /** A live session's settled Status fold (DR-0045 §5). */
@@ -1777,6 +1789,9 @@ export interface SessionStatusSnapshotSources {
   /** What the session's hooks module last said of it (session-facts.ts),
    * laid over the transcript's fold (withFacts). */
   facts?: (sid: string) => SessionFacts | undefined;
+  /** What also reads `sid`'s transcript when its status is a one-shot read
+   * (a session that is not live, or whose fold has not landed). */
+  oneShotReader?: (sid: string) => OneShotLineReader;
 }
 
 /** Each source is absent where nothing can tell (tests of the fold alone). */
@@ -2065,7 +2080,7 @@ export async function getSessionStatus(
   }
   const state = createSessionStatusState(root);
   try {
-    await scanTranscript(resolved.file, state);
+    await scanTranscript(resolved.file, state, undefined, store.oneShotReader?.(sid));
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }

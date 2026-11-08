@@ -144,8 +144,9 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 - TL は main thread の assistant 行の tool_use `{name:"mcp__ccmsg-v1__say", input:{text}}` を、PushNotification と同じ境界行の 🔔 バブルとして描く。時刻と位置はその行のもの。照合は `packages/protocol/src/ccmsg-direct-transcript.ts` に置く
 - バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
-- 既読のキーは tool_use の id。未読は、ライブのセッションの say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの) から既読の集合を引いたもの
-- daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
+- 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの) から既読の集合を引いたもの
+- live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。live でないセッションの subagent / teammate の say は数えない (その行は agent の transcript にあり、この読みは本体の transcript だけを読む)
+- daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }], totals: [{ session_id, count }] }` で送る。`totals` は既読も含めたセッションごとの say の数 (バッジを出すかの源、[DR-0050](./DR-0050-timeline-notification-badges.md) §3)。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
 - daemon の終了の途中では `ev:"say_unread"` を送らない。終了で fold を閉じると未読が空になり、タブは次の daemon が未読を送るまで全部の say を 🔕 として見せてしまう
@@ -163,7 +164,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - CLI の `sidecar permit` の発声と、CLI の読み上げ辞書 (`packages/cli/src/say-dictionary*`)
 - module の say / launch の CLI 経由の transport。`ccmsg sidecar launch` も削る (呼び手は module だけ。webui は op `session_launch` を直に使う)
 - `transcript.ts` の Watch (§5)
-- 旧版の plugin の module は自分の root の `bin/ccmsg say` を起こすので、旧版の CLI のまま発声する。旧版の CLI が送る op `say` は新しい daemon に断られるが、旧版の CLI は記録の失敗を握って発声に進む (実測)。旧版のセッションは行を push しないので、TL のライブ更新と 🔔 の未読は無い (再起動で新しい版になれば付く)
+- 旧版の plugin の module は自分の root の `bin/ccmsg say` を起こすので、旧版の CLI のまま発声する。旧版の CLI が送る op `say` は新しい daemon に断られるが、旧版の CLI は記録の失敗を握って発声に進む (実測)。旧版のセッションは行を push しないので、TL のライブ更新は無い。🔔 の未読は TL を開いた時の一回読み (§7) で付く (再起動で新しい版になれば live の fold で付く)
 - PATH に置いた `say` の shim (`exec ccmsg say "$@"`) は、PATH の `ccmsg` が `say` を持たない版を指した時点で発声できなくなる。shim の copy は消す
 
 ### 9. 段階
