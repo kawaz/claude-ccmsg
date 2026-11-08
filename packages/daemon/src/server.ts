@@ -146,6 +146,7 @@ import {
 import {
   askedFor,
   createPermitRequestLog,
+  PERMIT_REQUESTS_PER_SESSION,
   permitRequestFields,
   readPermitAttachment,
   type PermitRequestLog,
@@ -432,8 +433,8 @@ export interface Daemon {
   sayUnreadSnapshot: string;
   /** The last ev:"agent_says" sent, as its JSON, the same way. */
   agentSaysSnapshot: string;
-  /** Requests for the person's permission, memory only (permit-requests.ts,
-   * DR-0040). */
+  /** Requests for the person's permission, kept in
+   * `<stateDir>/permit-requests.json` (permit-requests.ts, DR-0040 §4). */
   permitRequests: PermitRequestLog;
   /** The applies of project permissions, one at a time per settings file
    * (project-permissions.ts, DR-0040 §12). */
@@ -560,7 +561,10 @@ export function createDaemon(host: DaemonHost): Daemon {
     sayUnread: loadSayUnreadStore(paths.sayRead, log, () => new Date()),
     sayUnreadSnapshot: "",
     agentSaysSnapshot: "",
-    permitRequests: createPermitRequestLog(createMidIssuer()),
+    permitRequests: createPermitRequestLog(createMidIssuer(), PERMIT_REQUESTS_PER_SESSION, {
+      file: paths.permitRequests,
+      log,
+    }),
     settingsQueue: createKeyedQueue(),
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
@@ -2087,6 +2091,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       daemon.log.info(
         `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)} project_permissions=${String(record.project_settings?.permissions.length ?? 0)}`,
       );
+      // Answered once the record is in the file, so a restart right after
+      // does not lose a request its session was told it made.
+      await daemon.permitRequests.written();
       send(conn, { ok: true, id: record.id });
       return;
     }
@@ -2198,6 +2205,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       daemon.log.info(
         `permit_permission_apply: id=${req.id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${settings.path}`,
       );
+      await daemon.permitRequests.written();
       send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;
     }
@@ -2216,6 +2224,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       for (const record of marked.changed) broadcastPermitRequest(daemon, record);
+      await daemon.permitRequests.written();
       send(conn, { ok: true, ids: req.ids });
       return;
     }
@@ -3556,6 +3565,9 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
   daemon.peerInjector.close();
+  // The next daemon reads the requests at its start, which comes once the
+  // lock is released below: the last change has to be in the file by then.
+  await daemon.permitRequests.written();
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
   // tearing down either transport so both sides can receive the restarting frame.

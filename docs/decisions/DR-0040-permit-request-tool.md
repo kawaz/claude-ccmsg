@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、記録の永続化 `permit-requests.json` (§4))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -54,10 +54,17 @@ module の handler → CLI の transport → daemon の op → 記録 → 全タ
 ### 4. 記録
 
 - 記録は `PermitRequestLog` に持つ
-- daemon のメモリだけに持つ。v1 だけの永続状態を増やさない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3)。daemon を再起動すると消える
-- 上限は 50 件で、超えたら古いものから消える。依頼が意味を持つのはエージェントが許可を待つ間だけで daemon の寿命よりずっと短く、全件は subscribe したタブに送るものなので小さく持つ
+- 上限はセッションごとに最新 200 件 (`PERMIT_REQUESTS_PER_SESSION`)。超えたらそのセッションの古いものから消え、別のセッションの記録は消さない。期間の上限は置かず、そのセッションの transcript と同じく残す。上限は、許可を求め続けるセッションでファイルと subscribe の全件が増え続けないためで、セッションごとなのは 1 つのセッションが他のセッションの記録を押し出さないため
 - 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, project_settings?, read }`。無い list は空の list で持つ。`project_settings` は `project_permissions` のある依頼だけが持つ (§12)。記録した後に変わるのは `read` と、`project_settings` の各変更の `applied_at` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
-- `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (daemon の再起動で消えた依頼への既読もここに来る)
+- `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (上限で消えた依頼への既読もここに来る)
+
+#### 永続化
+
+- 記録 (依頼の中身、`read`、`project_settings` の `applied_at`) を `<state dir>/permit-requests.json` (`{ requests: [...] }`、古い順) に持ち、daemon の起動の時に読む。daemon の再起動は版の更新のたびに起き、メモリだけに持つと、許可を待っているセッションの依頼のバブル・🔐・「許可する」が再起動で消える (kawaz 2026-11-08)
+- 書き込みは記録・既読・適用で変わるたびに、隣の一時ファイルに書いて rename で置き換える (mode 0600。エージェントが実行を求めたコマンドを含む)。書き込みは直列で、最後の変化が最後に着く。`permit_request` / `permit_request_read` / `permit_permission_apply` はファイルに書いてから答え、daemon の終了は書き終わるのを待ってから lock を放す (次の daemon が読む前に着く)
+- ファイルが無ければ空から始める。読めない (JSON でない、記録の形でない) ファイルは空から始めて daemon.log に 1 行書く。書けなかった時も daemon.log に 1 行書き、記録はメモリに持ったまま答える
+- 読み戻した記録にも上限を当てる。id は記録の時の daemon の系列 (`<instance id>/<n>`) のままで、次の daemon は新しい系列から振るので重ならない
+- 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外で、`say-read.json` ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7) と同じ置き場と書き方
 
 ### 5. 配送
 
@@ -196,7 +203,8 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 | 添付を依頼の時に daemon が読んで記録に写す | 依頼の記録と配送が添付の中身 (最大 16 × 64 KiB) を運ぶことになり、人が開かない添付まで読む。中身を人が見るのは開いた時で、その時に読めば足りる |
 | 添付の結果 (読めたか、切り詰めたか) を tool の結果で model に返す | 人が開くまで読まないので、依頼の時点で返せるものが無い。model に要るのは依頼が出たことだけ |
 | say の記録に許可依頼を混ぜる | 形 (添付・intents・commands、既読の意味) と上限の根拠が違う。say の未読の数 (Sessions の 🔔) に許可依頼が混ざる |
-| 記録をファイルに持ち、daemon の再起動を越えて残す | v1 だけの永続状態を増やさない (DR-0036 §3)。依頼が意味を持つのは許可を待つ間で、再起動の後も transcript には `permit` の tool_use (入力の全文) が残る |
+| 記録を daemon のメモリだけに持つ | daemon は版の更新のたびに再起動し、許可を待っているセッションの依頼のバブル・🔐・「許可する」がそのたびに消える。transcript の `permit` の tool_use からは「許可する」と添付の読み取りに要る記録の id が戻らない (§4 の永続化) |
+| 上限を全体で数える (例: 全セッションで 50 件) | 許可を求め続ける 1 つのセッション (実例で 52 件) が、他のセッションの記録を押し出す |
 | 記録が変わるたびに全件を送る (say と同じ) | 変わるのは `read` だけで、変わった 1 件で足りる |
 | バブルを transcript の `permit` の tool_use から描く | 既読と添付の読み取りに daemon の記録 (id) が要り、transcript と突き合わせる経路が増える。say と同じ時刻の合流で足りる |
 | webui から任意のパスを読む口 (既存の fs 系 op を広げる) で添付を読む | 読める範囲が依頼の名指しから外れる。DR-0024 の allowlist は transcript から集めた集合で、依頼の添付を足すには集め方を変える必要がある。依頼の記録を照合する専用の op の方が範囲が狭く明確 |
@@ -215,7 +223,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 ## Consequences
 
-- daemon の再起動で TL のバブルは消える。transcript には `permit` の tool_use (止められた行動・パス・intents・commands の全文) が汎用の tool の行として残るので、内容は読み返せるが、添付の中身と「許可する」は失われる。再起動の後も許可が要るなら、エージェントにもう一度 `permit` を呼ばせる
+- 記録は daemon の再起動を越えて残る。`permit-requests.json` はセッションごとの上限 (200 件) までしか増えないが、期間の上限は無いので、セッションの数に比例して大きくなり、subscribe の全件 (`ev:"permit_requests"`) も同じだけ大きくなる。上限を超えて消えた依頼は transcript の `permit` の tool_use (汎用の tool の行) でしか読めない
 - 添付は人が開いた時点の中身で、依頼の時点や実行の時点の中身とは限らない。許可の文はパスを名指すだけで、人が読んだ後にファイルが変わっても示さない。classifier も中身を確かめない
 - daemon は依頼したセッションが名指したファイルを、webui を開ける人が開いた時に読んで見せる。同じ uid のエージェントは元からそのファイルを読めて transcript に出せるので、見える範囲は広がらない
 - `permit` は permission の判定を通らない tool なので、エージェントはいつでも呼べる。呼んでも権限は変わらず、許可は人の発話でしか生まれない
@@ -229,6 +237,6 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 ## 関連
 
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 — typed tool の登録の形、handler の流儀、`say` の記録と配送
-- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 — say の記録をメモリだけに持つ、v1 だけの永続状態を増やさない
+- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 — v1 だけの永続状態を増やさない (§4 の永続化はその例外)
 - [DR-0024](./DR-0024-out-of-project-files.md) §3.2 — セッションが名指したパスだけを読む信頼の形
 - [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と記録をスキーマで読む

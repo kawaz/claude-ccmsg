@@ -1,11 +1,24 @@
 // Requests for the person's permission (DR-0040): what an agent the auto mode
-// classifier stopped asked for, with the paths of the files it named. Held in
-// memory only and pushed to the webui as `ev:"permit_requests"` /
-// `ev:"permit_request"` (stream-event.ts); a file is read when the person
-// opens it (permit_attachment_read).
+// classifier stopped asked for, with the paths of the files it named. Kept in
+// `<stateDir>/permit-requests.json` across restarts (DR-0040 §4) and pushed to
+// the webui as `ev:"permit_requests"` / `ev:"permit_request"`
+// (stream-event.ts); a file is read when the person opens it
+// (permit_attachment_read).
+//
+// Design rationale: the second state the daemon keeps on disk for the webui
+// alone, after say-read.json (DR-0036 §3 keeps v1 from growing such state). A
+// restart comes with every push of the daemon, and a request held in memory
+// only went with it: its bubble, its 🔐 and its 許可する were lost while the
+// session that asked was still waiting.
+import * as fs from "node:fs";
 import { open } from "node:fs/promises";
+import * as path from "node:path";
+import * as v from "valibot";
 import {
+  jsonText,
   PERMIT_ATTACHMENT_MAX_BYTES,
+  parseWith,
+  PermitRequestRecordSchema,
   type PermitAttachment,
   type PermitAttachmentUnreadable,
   type PermitInput,
@@ -15,18 +28,31 @@ import {
   projectPermissionRule,
 } from "@ccmsg/protocol";
 
-/** How many requests the daemon keeps. The oldest goes first once a new one
- * would exceed this.
+/** How many requests the daemon keeps of one session. The session's oldest
+ * goes first once a new one would exceed this; other sessions' are not
+ * touched.
  *
- * Design rationale: a request matters while its agent waits for the
- * permission, which is far shorter than the daemon lives, and the set is
- * what a tab is sent when it subscribes. */
-export const PERMIT_REQUEST_LOG_LIMIT = 50;
+ * Design rationale: a request is kept as long as the transcript that asked
+ * it, with no time limit, so the bound is what keeps the file and the
+ * subscribe-time set from growing with a session that asks without end. Per
+ * session, so that one such session does not push another's requests out. */
+export const PERMIT_REQUESTS_PER_SESSION = 200;
+
+/** permit-requests.json: every request held, oldest first. */
+const PermitRequestsFileSchema = jsonText(
+  v.object({ requests: v.array(PermitRequestRecordSchema) }),
+);
+
+/** Where a log keeps its requests across restarts, and where it says that
+ * the file did not read or could not be written. */
+export interface PermitRequestFile {
+  file: string;
+  log: { warn(msg: string): void };
+}
 
 /** What `markRead` did: the records it changed (none when every one was
  * read already), or the ids no record has, in which case nothing is marked
- * (never recorded, recorded by another daemon process, or dropped by the
- * bound). */
+ * (never recorded, or dropped by the bound). */
 export type MarkPermitReadResult =
   | { kind: "read"; changed: readonly PermitRequestRecord[] }
   | { kind: "missing"; ids: readonly string[] };
@@ -49,17 +75,86 @@ export interface PermitRequestLog {
   ): PermitRequestRecord | undefined;
   /** Every request held, oldest first. */
   snapshot(): readonly PermitRequestRecord[];
+  /** Settles once every change made so far is in the file (at once without
+   * one). Never rejects: a write that fails is said in the log, and the
+   * requests stay held in memory. */
+  written(): Promise<void>;
+}
+
+/** `records` with no session holding more than `limit`: each session's
+ * oldest go first. The order is kept. */
+function bounded(
+  records: readonly PermitRequestRecord[],
+  limit: number,
+): readonly PermitRequestRecord[] {
+  const counts = new Map<string, number>();
+  for (const r of records) counts.set(r.sid, (counts.get(r.sid) ?? 0) + 1);
+  const drop = new Map<string, number>();
+  for (const [sid, count] of counts) if (count > limit) drop.set(sid, count - limit);
+  if (drop.size === 0) return records;
+  return records.filter((r) => {
+    const left = drop.get(r.sid) ?? 0;
+    if (left === 0) return true;
+    drop.set(r.sid, left - 1);
+    return false;
+  });
+}
+
+/** The requests `persist` holds: none when the file is missing, or does not
+ * read (said in the log). */
+function loadPermitRequests(persist: PermitRequestFile): readonly PermitRequestRecord[] {
+  let text: string;
+  try {
+    text = fs.readFileSync(persist.file, "utf8");
+  } catch (e) {
+    if (!(e instanceof Error && "code" in e && e.code === "ENOENT")) {
+      persist.log.warn(
+        `permit-requests: ${persist.file}: ${e instanceof Error ? e.message : "unreadable"} — starting with none`,
+      );
+    }
+    return [];
+  }
+  const read = parseWith(PermitRequestsFileSchema, text);
+  if (!read.ok) {
+    persist.log.warn(
+      `permit-requests: ${persist.file}: ${read.failure.summary} — starting with none`,
+    );
+    return [];
+  }
+  return read.value.requests;
 }
 
 export function createPermitRequestLog(
   issueId: () => string,
-  limit: number = PERMIT_REQUEST_LOG_LIMIT,
+  limit: number = PERMIT_REQUESTS_PER_SESSION,
+  persist?: PermitRequestFile,
 ): PermitRequestLog {
-  let records: readonly PermitRequestRecord[] = [];
+  let records: readonly PermitRequestRecord[] =
+    persist === undefined ? [] : bounded(loadPermitRequests(persist), limit);
+  let written: Promise<void> = Promise.resolve();
+  /** Write the file whole, after the writes before it: to a temporary file
+   * beside it, then renamed over it, so a crash leaves the old file or the
+   * new one. The text is taken now, so the last change is the last to land. */
+  const save = (): void => {
+    if (persist === undefined) return;
+    const { file, log } = persist;
+    const text = `${JSON.stringify({ requests: records })}\n`;
+    const tmp = path.join(path.dirname(file), `.permit-requests.${String(process.pid)}.tmp`);
+    written = written.then(async () => {
+      try {
+        await fs.promises.mkdir(path.dirname(file), { recursive: true });
+        await fs.promises.writeFile(tmp, text, { mode: 0o600 });
+        await fs.promises.rename(tmp, file);
+      } catch (e) {
+        log.warn(`permit-requests: ${file}: ${e instanceof Error ? e.message : "not written"}`);
+      }
+    });
+  };
   return {
     add(fields) {
       const record: PermitRequestRecord = { id: issueId(), ...fields, read: false };
-      records = [...records, record].slice(-limit);
+      records = bounded([...records, record], limit);
+      save();
       return record;
     },
     find(id) {
@@ -77,6 +172,7 @@ export function createPermitRequestLog(
         changed.push(marked);
         return marked;
       });
+      if (changed.length > 0) save();
       return { kind: "read", changed };
     },
     markApplied(id, permission, at) {
@@ -96,10 +192,14 @@ export function createPermitRequestLog(
         };
         return marked;
       });
+      if (marked !== undefined) save();
       return marked;
     },
     snapshot() {
       return records;
+    },
+    written() {
+      return written;
     },
   };
 }

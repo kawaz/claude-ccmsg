@@ -435,3 +435,105 @@ describe("permit request log", () => {
     ]);
   });
 });
+
+// 永続化 (DR-0040 §4): 記録は <stateDir>/permit-requests.json に持ち、daemon の
+// 再起動を越えて残る。
+describe("permit requests kept across restarts", () => {
+  const fields = (sid: string, blocked: string) => ({
+    sid,
+    ts: "2026-11-08T00:00:00.000Z",
+    blocked,
+    attachments: [],
+    intents: [],
+    commands: [{ command: "ls" }],
+  });
+  const silent = { warn: (): void => {} };
+
+  // 何を保証するか: 記録・既読・適用の変化のたびにファイルへ書き、同じファイルから
+  // 作った次の log (再起動した daemon) が、同じ記録を同じ順で持つ。id の番号は
+  // 新しい daemon の系列から振られ、前の daemon の id と重ならない。
+  test("writes every change, and a log made from the file holds the same records", async () => {
+    const file = path.join(tmpDir("ccmsg-permit-file-"), "permit-requests.json");
+    let n = 0;
+    const first = createPermitRequestLog(() => `old/${String(++n)}`, 200, { file, log: silent });
+    first.add(fields(SID_A, "one"));
+    first.add({
+      ...fields(SID_B, "two"),
+      project_settings: {
+        path: "/p/.claude/settings.local.json",
+        permissions: [{ add: "Bash(ls)" }],
+      },
+    });
+    first.markRead(["old/1"]);
+    first.markApplied("old/2", { add: "Bash(ls)" }, "2026-11-08T01:00:00.000Z");
+    await first.written();
+
+    const second = createPermitRequestLog(() => "new/1", 200, { file, log: silent });
+    expect(second.snapshot()).toEqual(first.snapshot());
+    expect(second.snapshot().map((r) => [r.id, r.read])).toEqual([
+      ["old/1", true],
+      ["old/2", true],
+    ]);
+    expect(second.find("old/2")?.project_settings?.permissions).toEqual([
+      { add: "Bash(ls)", applied_at: "2026-11-08T01:00:00.000Z" },
+    ]);
+    expect(second.add(fields(SID_A, "three")).id).toBe("new/1");
+    // The file is the person's alone: it holds the commands an agent asked to run.
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  // 何を保証するか: 上限はセッションごと。1 つのセッションが上限を超えても、
+  // そのセッションの古いものだけが消え、別のセッションの記録は残る。読み戻しでも
+  // 同じ上限を当てる。
+  test("bounds each session alone, on add and on reading the file back", async () => {
+    const file = path.join(tmpDir("ccmsg-permit-file-"), "permit-requests.json");
+    let n = 0;
+    const log = createPermitRequestLog(() => `i/${String(++n)}`, 3, { file, log: silent });
+    log.add(fields(SID_B, "b1"));
+    for (const k of [1, 2, 3, 4, 5]) log.add(fields(SID_A, `a${String(k)}`));
+    expect(log.snapshot().map((r) => r.blocked)).toEqual(["b1", "a3", "a4", "a5"]);
+    await log.written();
+    const smaller = createPermitRequestLog(() => "x", 2, { file, log: silent });
+    expect(smaller.snapshot().map((r) => r.blocked)).toEqual(["b1", "a4", "a5"]);
+  });
+
+  // 何を保証するか: ファイルが無ければ空から始め、何も言わない。読めない
+  // (JSON でない、記録の形でない) ファイルは空から始めて log に 1 行書く。
+  test("starts with none from a missing file silently, and from one that does not read with a warning", () => {
+    const dir = tmpDir("ccmsg-permit-file-");
+    const warned: string[] = [];
+    const log = { warn: (msg: string): void => void warned.push(msg) };
+    const missing = path.join(dir, "missing.json");
+    expect(createPermitRequestLog(() => "x", 200, { file: missing, log }).snapshot()).toEqual([]);
+    expect(warned).toEqual([]);
+    const broken = path.join(dir, "broken.json");
+    fs.writeFileSync(broken, '{"requests":[{"id":1}]}\n');
+    expect(createPermitRequestLog(() => "x", 200, { file: broken, log }).snapshot()).toEqual([]);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain(`permit-requests: ${broken}:`);
+  });
+
+  // 何を保証するか: permit_request と permit_request_read は、ファイルに書いて
+  // から答える。答えの直後に daemon が落ちても、次の daemon は同じ記録を読む。
+  test("permit_request and permit_request_read answer once the file holds the change", async () => {
+    const ctx = await startInProcessDaemon();
+    try {
+      const file = ctx.daemon.paths.permitRequests;
+      const s = await sessionConn(ctx, SID_A);
+      const answered = await s.requestOk({
+        op: "permit_request",
+        permit: { blocked: "x", commands: [{ command: "git push" }] },
+      });
+      const afterRequest = createPermitRequestLog(() => "n", 200, { file, log: silent });
+      expect(afterRequest.snapshot()).toMatchObject([{ id: answered.id, sid: SID_A, read: false }]);
+      const u = await userConn(ctx);
+      await u.requestOk({ op: "permit_request_read", ids: [answered.id] });
+      const afterRead = createPermitRequestLog(() => "n", 200, { file, log: silent });
+      expect(afterRead.find(answered.id)?.read).toBe(true);
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+});
