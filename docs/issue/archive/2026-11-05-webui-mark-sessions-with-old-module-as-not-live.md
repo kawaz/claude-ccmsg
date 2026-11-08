@@ -1,6 +1,6 @@
 ---
 title: push を持たない古い module のセッションを webui で「ライブ更新なし」と分からせる
-status: open
+status: resolved
 category: request
 created: 2026-11-05T15:20:41+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-08T09:18:41+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["discarded:kawaz 裁定 (2026-11-08)。後方互換の分岐は置かない方針で、古い module のセッションは kawaz が再起動する。表示で気付かせる仕組みも不要"]
 blocked_by:
 origin: 自リポ TODO
 ---
