@@ -36,7 +36,7 @@ import { OpenComposerContext } from "../src/client/components/SessionInputCompos
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
-import { permitGrantText } from "../src/client/permit-request-view.ts";
+import { permitBangKey, permitGrantText } from "../src/client/permit-request-view.ts";
 import { useStoreState } from "../src/client/useStore.ts";
 import type { Store } from "../src/client/useStore.ts";
 import type { WsHandle } from "../src/client/ws.ts";
@@ -646,10 +646,11 @@ describe("! で実行", () => {
   // 何を保証するか: 押すと依頼したセッションへ bash mode で送り、コマンドが
   // 終わる (そのセッションの同じコマンドの <bash-input> の行が届く) まで
   // 「実行中…」で押せない。別のセッションの行や別のコマンドの行では終わらない。
-  // 終わったら「実行済み」のまま押せない (終了コードは行に無いので成功か
-  // 失敗かは出さない)。「許可する」とは独立で、写さず、既読にせず、入力欄も
+  // 終わったら「実行済み」(終了コードは行に無いので成功か失敗かは出さない)。
+  // 「実行済み」を押すと送らずに「! で実行」に戻り、もう一度押すとまた送って
+  // 「実行中…」になる。「許可する」とは独立で、写さず、既読にせず、入力欄も
   // 開かない。
-  test("runs the command as bash mode, 実行中… until its row comes, then 実行済み for good", async () => {
+  test("runs the command as bash mode, 実行中… until its row comes, then 実行済み, which a press puts back", async () => {
     const asked: unknown[][] = [];
     const { root, store, reads, composerOpens } = await openWith(ONE_AND_MANY, {
       userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
@@ -663,12 +664,25 @@ describe("! で実行", () => {
     await ended(store, "ls");
     expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
     await ended(store, "ls -la");
-    expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", true]);
+    expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", false]);
     expect(firstBang(root).getAttribute("aria-busy")).toBe("false");
     expect(root.querySelector(".session-input-notice")).toBeNull();
-    // Pressing a done one sends nothing.
-    firstBang(root).click();
+    // Pressing a done one puts the button back, sending nothing.
+    await press(firstBang(root));
     expect(asked.length).toBe(1);
+    expect(stateOf(firstBang(root))).toEqual(["idle", "! で実行", false]);
+    expect(store.getState().permitBangRuns.get(permitBangKey(ID, 0))).toEqual({
+      kind: "ended",
+    });
+    // Pressed again, it runs again.
+    await press(firstBang(root));
+    expect(asked).toEqual([
+      [SID, "ls -la", undefined, "bash"],
+      [SID, "ls -la", undefined, "bash"],
+    ]);
+    expect(stateOf(firstBang(root))).toEqual(["running", "実行中…", true]);
+    await ended(store, "ls -la");
+    expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", false]);
     // Apart from 許可する: nothing copied, not marked read, no composer.
     expect(reads).toEqual([]);
     expect(composerOpens()).toBe(0);
@@ -724,7 +738,7 @@ describe("! で実行", () => {
         answer(reply);
         await Promise.resolve();
       });
-      expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", true]);
+      expect(stateOf(firstBang(root))).toEqual(["ended", "実行済み", false]);
       await mounted.unmount();
     }
   });
@@ -760,7 +774,8 @@ describe("! で実行", () => {
   });
 
   // 何を保証するか: 実行中・実行済みは、バブルが描き直されても (Timeline が
-  // 作り直す、開き直す) 残る。同じコマンドを持つ別の依頼のボタンは、その
+  // 作り直す、開き直す) 残る。「実行済み」を押して戻したのは表示だけなので、
+  // 描き直すと「実行済み」に戻る。同じコマンドを持つ別の依頼のボタンは、その
   // 依頼で押していなければ実行済みにならない。
   test("keeps 実行中 / 実行済み when the bubble is drawn again, per request", async () => {
     const rows = [...ONE_AND_MANY, ...permitRows(9, "toolu_p9", BANG_INPUT)];
@@ -777,7 +792,14 @@ describe("! で実行", () => {
     const [mine, theirs] = [...third.root.querySelectorAll<HTMLElement>(".tl-bubble-permit")].map(
       (bubble) => stateOf(firstBang(bubble)),
     );
-    expect(mine).toEqual(["ended", "実行済み", true]);
+    expect(mine).toEqual(["ended", "実行済み", false]);
     expect(theirs).toEqual(["idle", "! で実行", false]);
+    await press(
+      firstBang(defined(third.root.querySelector<HTMLElement>(".tl-bubble-permit"), "mine")),
+    );
+    expect(stateOf(firstBang(third.root))).toEqual(["idle", "! で実行", false]);
+    await mounted.unmount();
+    const fourth = await openWith(rows, { store, userPrompt });
+    expect(stateOf(firstBang(fourth.root))).toEqual(["ended", "実行済み", false]);
   });
 });

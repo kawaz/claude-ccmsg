@@ -279,11 +279,14 @@ const BANG_LABEL = { idle: "! で実行", running: "実行中…", ended: "実�
  * 打って Enter したのと同じに実行させる (user_prompt の bash mode、DR-0040 §11)。
  * 「許可する」とは独立で、既読にもしない。押してからコマンドが終わるまで
  * (そのセッションの `<bash-input>` の行が ev:"bash_command_ended" で届くまで)
- * 「実行中…」で押せず、終わったら「実行済み」のまま押せない。行は終了コードを
- * 持たないので、成功か失敗かは出さない (出力は Timeline に出る)。受け付け
- * られなかった・確かめられなかった時は「! で実行」に戻し、入力欄と同じ注記を
- * 出す。実行中・実行済みは store (permitBangRuns) に依頼の tool_use の id と
- * コマンドの位置で持ち、バブルが描き直されても消えない。
+ * 「実行中…」で押せず、終わったら「実行済み」になる。行は終了コードを持た
+ * ないので、成功か失敗かは出さない (出力は Timeline に出る)。「実行済み」を
+ * 押すと「! で実行」に戻り、もう一度実行できる。戻すのはこのボタンの表示だけ
+ * (その場の state) で、store の実行済みは消さないので、バブルが描き直されると
+ * 「実行済み」に戻る。受け付けられなかった・確かめられなかった時は
+ * 「! で実行」に戻し、入力欄と同じ注記を出す。実行中・実行済みは store
+ * (permitBangRuns) に依頼の tool_use の id とコマンドの位置で持ち、バブルが
+ * 描き直されても消えない。
  *
  * ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (CodeCopyFrame
  * と同じ): コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と
@@ -303,8 +306,10 @@ function BangButton({
   const key = permitBangKey(toolUseId, index);
   const run = useStoreState(store, (s) => s.permitBangRuns.get(key));
   const [refused, setRefused] = useState<SessionInputOutcome | null>(null);
+  // 「実行済み」を押して「! で実行」に戻した (表示だけ)。次に押した時に解く。
+  const [cleared, setCleared] = useState(false);
   const notice = refused !== null ? sessionInputNotice(refused) : null;
-  const state = run?.kind ?? "idle";
+  const state = run === undefined || (run.kind === "ended" && cleared) ? "idle" : run.kind;
   return (
     <div class="permit-bang-row">
       <button
@@ -312,13 +317,22 @@ function BangButton({
         class="permit-bang"
         data-run={state}
         aria-label={BANG_LABEL[state]}
-        title="このコマンドを、このセッションで ! <コマンド> と打って Enter したのと同じに実行する (出力はセッションの会話に入る)"
-        disabled={state !== "idle"}
+        title={
+          state === "ended"
+            ? "押すと「! で実行」に戻し、もう一度実行できるようにする"
+            : "このコマンドを、このセッションで ! <コマンド> と打って Enter したのと同じに実行する (出力はセッションの会話に入る)"
+        }
+        disabled={state === "running"}
         aria-busy={state === "running"}
         onClick={() => {
+          if (state === "ended") {
+            setCleared(true);
+            return;
+          }
           // The store, not this render's `run`: a second click can come
           // before the render of the first.
-          if (store.getState().permitBangRuns.has(key)) return;
+          if (store.getState().permitBangRuns.get(key)?.kind === "running") return;
+          setCleared(false);
           setRefused(null);
           store.dispatch({ type: "permit-bang/started", key, sid, command });
           void ws
