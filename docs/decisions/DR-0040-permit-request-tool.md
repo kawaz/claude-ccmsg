@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、記録の永続化 `permit-requests.json` (§4))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`)、表示の正本を transcript の `permit` の行にし daemon は人の状態だけを `permit-state.json` に持つ形 (§4、kawaz 2026-11-08))。§6 の音声を鳴らす場所 (daemon が `permit_request` を受けた時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -34,58 +34,71 @@ project_permissions: { add?: string, remove?: string }[]  # プロジェクト�
 
 ### 2. 経路
 
-module の handler → CLI の transport → daemon の op → 記録 → 全タブへの配送 → TL のバブル。
+module の handler → CLI の transport → daemon の op (音声) → handler の結果 → transcript の `permit` の行と結果の行 → daemon と webui がその行を読む → TL のバブル。
 
-- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)。音声は daemon が記録した時に鳴らす (§6)
-- `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が記録したら daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
-- op `permit_request` は session role だけが送れる。依頼するのは止められたエージェント自身なので、依頼はセッションを名指さず、送ったセッションの sid で記録する
-- 応答は記録の id だけ。handler は「許可依頼を出した」とだけ返す。添付の中身を人が読めるかは人が開いた時に分かることで、model に返すものは無い
-- handler は `next` を呼ばずに答えるので、`permit` 自体は permission の判定 (classifier を含む) を通らない (DR-0039 §3)。止められた直後でも呼べる。`permit` がするのは記録と表示と音声だけで、権限は何も変えない
+- handler は入力を `PermitToolInputSchema` で読み、`ccmsg sidecar permit --sid <sid>` を `$.process.run` で起こして入力を標準入力に JSON で渡す (コマンドが長く、引数は `ps` で全員に見えるため、`send-message` と同じ)。待ちは 30 秒 (daemon を起こす時の接続の再試行の分)
+- `ccmsg sidecar permit` は標準入力を `PermitInputSchema` (知らない field を断る。各コマンドの object も) で読み、session として daemon に op `permit_request` (`{ op, permit }`) を送る。daemon が受けたら daemon の応答を標準出力に出して exit 0。daemon が無ければ exit 3、断られたら断りを標準エラーに出して exit 1 (`send-message` / `launch` と同じ)
+- op `permit_request` は session role だけが送れる。daemon がするのは §6 の音声だけで、依頼の中身は持たない。応答は `{ ok: true }`
+- handler は daemon が受けた時だけ、結果を `PERMIT_REQUESTED_TEXT` (「許可依頼を出した」、protocol の定数) にする。この結果の行が、その呼び出しが依頼であることの印になる (§4)。添付の中身を人が読めるかは人が開いた時に分かることで、model に返すものは無い
+- handler は `next` を呼ばずに答えるので、`permit` 自体は permission の判定 (classifier を含む) を通らない (DR-0039 §3)。止められた直後でも呼べる。`permit` がするのは表示と音声だけで、権限は何も変えない
 
 ### 3. 添付の読み取り
 
-- 依頼の時には読まない。記録は添付のパスだけを持つ。依頼の配送が軽くなり、人が開かない添付は読まれない
-- 人がバブルで添付を開いた時に、webui が op `permit_attachment_read` (`{ id, path }`、user role だけ) で daemon に読ませ、返った中身をその折り畳みに差し込む。読めた後は閉じて開き直しても読み直さない。daemon が答えなかった時は、次に開いた時に読み直す
-- 読めるのは、その id の依頼が名指したパスだけ。依頼に無いパスや、持っていない id は断る。信頼の形は [DR-0024](./DR-0024-out-of-project-files.md) §3.2 の allowlist と同じで、「セッション自身が名指したパスを、名指された分だけ」読む。人 (user role) が任意のパスを読めるようにはならない
+- 依頼の時には読まない。依頼 (transcript の行) は添付のパスだけを持つ。人が開かない添付は読まれない
+- 人がバブルで添付を開いた時に、webui が op `permit_attachment_read` (`{ sid, tool_use_id, path }`、user role だけ) で daemon に読ませ、返った中身をその折り畳みに差し込む。読めた後は閉じて開き直しても読み直さない。daemon が答えなかった時は、次に開いた時に読み直す
+- 読めるのは、そのセッションのその `permit` の呼び出し (§4 の依頼) が名指したパスだけ。依頼に無いパスや、依頼でない呼び出し・知らない id は断る。daemon がまだそのセッションの依頼を読んでいなければ、その場で transcript を読んで探す (§4 の全走査)。信頼の形は [DR-0024](./DR-0024-out-of-project-files.md) §3.2 の allowlist と同じで、「セッション自身が名指したパスを、名指された分だけ」読む。人 (user role) が任意のパスを読めるようにはならない
 - パスはそのまま開く (symlink は辿る)。通常のファイルだけを読み、先頭の 64 KiB (`PERMIT_ATTACHMENT_MAX_BYTES`) までを返す。長いファイルは先頭だけを返し、全体のバイト数と切り詰めた印を添える。上限で切れた多バイト文字は捨てる
 - 中身は UTF-8 のテキストとして読む。NUL を含む、または UTF-8 に無いバイト列を含むものは「テキストでない」として中身を返さない
 - 読めない時は理由を返す: `missing` (無い)、`not_a_file` (ディレクトリ等)、`denied` (権限が無い)、`not_text`、`failed` (その他)。webui は同じ文言 (`PERMIT_ATTACHMENT_UNREADABLE_TEXT`) で出す
 
-### 4. 記録
+### 4. 依頼の正本と人の状態
 
-- 記録は `PermitRequestLog` に持つ
-- 上限はセッションごとに最新 200 件 (`PERMIT_REQUESTS_PER_SESSION`) と、全体で 2,000 件 (`PERMIT_REQUESTS_TOTAL`)。セッションごとの上限を超えたらそのセッションの古いものから消え、別のセッションの記録は消さない (1 つのセッションが他のセッションの記録を押し出さない)。全体の上限は subscribe の全件がセッションの数に比例して増え続けないためで、超えたら全セッションの古いものから消える
-- 期間の上限は置かず、そのセッションの transcript と同じだけ残す。daemon の起動の時に、記録のある各セッションの transcript を履歴の読みと同じ解決 (`resolveTranscript` の allowVirtual) で探し、見つからないセッションの記録を落とす (解決が答えられなかったセッションは残す)。落とした時は購読中のタブに全件を送り直す
-- 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, project_settings?, read }`。無い list は空の list で持つ。`project_settings` は `project_permissions` のある依頼だけが持つ (§12)。記録した後に変わるのは `read` と、`project_settings` の各変更の `applied_at` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
-- `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (上限で消えた依頼への既読もここに来る)
+kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが貯まる)。say ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7) と同じく、**表示の正本は transcript の `permit` の tool_use の行**で、daemon は人の状態だけを持つ。
 
-#### 永続化
+**依頼**: セッションの transcript の assistant 行の tool_use `mcp__ccmsg-v1__permit` のうち、その tool_result が `PERMIT_REQUESTED_TEXT` (エラーでない) のもの。
 
-- 記録 (依頼の中身、`read`、`project_settings` の `applied_at`) を `<state dir>/permit-requests.json` (`{ requests: [...] }`、古い順) に持ち、daemon の起動の時に読む。daemon の再起動は版の更新のたびに起き、メモリだけに持つと、許可を待っているセッションの依頼のバブル・🔐・「許可する」が再起動で消える (kawaz 2026-11-08)
-- 書き込みは記録・既読・適用で変わるたびに、隣の一時ファイルに書いて rename で置き換える (mode 0600。エージェントが実行を求めたコマンドを含む)。書き込みは直列で、最後の変化が最後に着く。`permit_request` / `permit_request_read` / `permit_permission_apply` はファイルに書いてから答え、daemon の終了は書き終わるのを待ってから lock を放す (次の daemon が読む前に着く)
-- ファイルが無ければ空から始める。読めない (JSON でない、記録の形でない) ファイルは空から始めて daemon.log に 1 行書く。書けなかった時も daemon.log に 1 行書き、記録はメモリに持ったまま答える
-- 読み戻した記録にも上限を当てる。id は記録の時の daemon の系列 (`<instance id>/<n>`) のままで、次の daemon は新しい系列から振るので重ならない
-- 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外で、`say-read.json` ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7) と同じ置き場と書き方
+- 依頼の中身は tool_use の `input` (blocked / attachments / intents / commands / project_permissions)。無い list は空として読み、`voice` は読まない (音声だけのもの)。入力は形を緩く読む (結果の行が handler の検査を通ったことを示すので、版の違う入力も読める)
+- 結果が別の文の呼び出しは依頼でない: subagent / teammate の呼び出し (§9 で module が断る)、形の合わない入力、daemon が無い・断った時。結果の行がまだ無い呼び出しも、結果が書かれるまで依頼でない
+- 依頼は tool_use の id (`tool_use_id`) で指す。transcript にあるぶん全部が依頼で、daemon の再起動と無関係に過去の分も出る
+- main の transcript の sidechain の行は main の依頼でない。subagent / teammate の transcript (`<sid>/subagents/agent-*.jsonl`、workflow の agent) の呼び出しも同じ規則で読む (§9 により結果は断りなので、依頼にはならない)
+- 結果の文の照合は protocol の純関数 (`ccmsgPermitCall`、`permitRequested`) に置き、daemon と webui が同じものを使う
 
-### 5. 配送
+**daemon が依頼を見つける経路** (say と同じ、DR-0045 §7 / [DR-0050](./DR-0050-timeline-notification-badges.md) §5):
 
-- user role の subscriber だけに送る。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)
-- subscribe の時に全件を `ev:"permit_requests"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い依頼を捨てられるように)。記録した時と既読にした時に、その 1 件だけを `ev:"permit_request"` で送る
-- 許可依頼で変わるのは `read` と変更の `applied_at` だけなので、変わった 1 件だけで足りる。webui は全件で置き換え、1 件は同じ id のものと差し替える (無ければ足す)
+- live のセッション: relay の fold (追いつきと push の読み) が main の行を読み、呼び出しを結果の行まで持ってから依頼にする
+- live でないセッション: TL を開いた時の status の一回読みで同じく読む。live になると fold が引き継ぐ (二重に数えない)
+- 全走査: op `notification_list` (§5) を初めて聞かれたセッションは、main と agent の transcript を頭から読む (say と同じ 1 回の読みで両方を拾う)。以後は fold の行で増え、読み直さない
+- 見つけた依頼はメモリに持つ (fold はセッションが live の間、全走査の分は daemon が止まるまで)。ファイルには書かない
+
+**daemon が持つ人の状態** (`<state dir>/permit-state.json`、`{ since, read, applied }`):
+
+- `read`: 人が手を付けた依頼の `tool_use_id`。op `permit_read` (`{ ids }`、user role だけ) が既読にする。daemon の知らない id が 1 つでもあれば、どれも既読にせずに断る。二度目は何も変えない
+- `since`: これより前の依頼は手を付けたものとみなす。ファイルが無い・読めない時は今から始める (古い依頼で 🔐 が溢れない)
+- `applied`: 人が適用した `project_permissions` (`{ tool_use_id, permission: { add } | { remove }, applied_at }`、§12)。適用はその依頼の既読も立てる
+- 未読の依頼 = daemon が見つけた依頼のうち、`read` に無く `since` 以後のもの。同じ id は 1 件
+- 書き込みは変わるたびに隣の一時ファイルに書いて rename で置き換える (mode 0600)。書き込みは直列で、`permit_read` / `permit_permission_apply` はファイルに書いてから答える。daemon の終了は書き終わるのを待ってから lock を放す。書けなかった時は daemon.log に 1 行書き、状態はメモリに持ったまま答える
+- `read` と `applied` は刈り込まず、依頼の数だけ増える (1 件数十 byte)
+- 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外で、`say-read.json` (DR-0045 §7) と同じ理由 (依頼は再起動を越える transcript から描くので、状態をメモリだけに持つと再起動のたびに過去の依頼が全部未読に戻り、適用済みが消える)。依頼の中身は持たない
+
+### 5. 配送と一覧
+
+- 人の状態は user role の subscriber だけに `ev:"permit_state"` `{ unread: [{ session_id, tool_use_id, ts }], applied: [...] }` で送る。subscribe の時に全件 (空でも。再起動した daemon に繋ぎ直したタブが古い状態を捨てられるように)、変わるたびに全件。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)。daemon の終了の途中では送らない (fold を閉じて空になった未読を配らない)
+- 依頼の中身は送らない。webui は窓の中の依頼を transcript の行から描く (§7)
+- op `notification_list { sid }` (user role だけ、DR-0050 §5) はそのセッションの全 say と全依頼 (既読も含む) を時刻順に返す。依頼は `{ tool_use_id, ts, cwd, permit, agent_id? }` (`cwd` は呼び出しの行の cwd、`permit` は読める形に整えた入力)
 
 ### 6. 音声
 
-daemon は `permit_request` を記録した時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
+daemon は `permit_request` を受けた時に、say と同じ発声の関数 ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6) で固定の文「許可を求めています」を読み上げる。許可待ちはエージェントが止まっている状態なので、人が気づく価値がある。
 
-入力に `voice` (例: 「bucket policy の変更の許可をお願いします。」) があれば、固定の文の代わりにそれを読み上げる。何の許可を待っているかを聞いて分かるようにするため。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon の記録まで届くが、音声だけのもので webui のバブルには出さない。
+入力に `voice` (例: 「bucket policy の変更の許可をお願いします。」) があれば、固定の文の代わりにそれを読み上げる。何の許可を待っているかを聞いて分かるようにするため。`voice` は日本語で書く (セッションの応答言語が英語でも)。input schema の `voice` に `description: "日本語"` を付けて model に伝える (kawaz 2026-11-06)。`voice` は依頼の一部として `ccmsg sidecar permit` から daemon まで届くが、音声だけのもので webui のバブルには出さない。
 
 - 読み上げるのは依頼があることだけで、`blocked` やコマンドは読まない。中身は markdown やコマンドで、読み上げに向かず、webui で読むもの
-- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は記録されて TL に出ているので、daemon.log に 1 行書くだけで返事は変えない
-- daemon が依頼を記録しなかった時 (daemon が無い、断られた) は鳴らさない。見に行っても何も無いため
+- 音声が鳴らせなくても (コマンドが起動できない、失敗した) 依頼は TL に出るので、daemon.log に 1 行書くだけで返事は変えない
+- daemon が依頼を受けなかった時 (daemon が無い、断られた) は鳴らさない。その呼び出しの結果は依頼の印にならず (§4)、見に行っても何も無いため
 
 ### 7. webui のバブル
 
-そのセッションの Timeline に、記録の時刻で合流させて出す (読み込み済みの行の間の、その時刻の位置に差し込む)。subagent の Timeline には出さない。外枠 (角丸・余白・送り手の行・時刻の行) は TL の他の吹き出しと同じ部品 (`.tl-bubble` / `.tl-bubble-body` / `.tl-bubble-from` / `.tl-bubble-footer` / `.tl-bubble-time`) をそのまま使い、専用にするのは中身 (止められた行動 / 添付 / 許可してほしいこと / 「許可する」) と見た目だけにする。エージェント間の msg (色の付いた面だけ) とも say (琥珀の札) とも色相でなく明度と形で分ける: 送り手の行を本文の幅いっぱいの帯にして墨 (文字色より 1 段明るい `--gray-11`。依頼が何件も並んでも帯と枠が「許可する」より重くならない明度) で塗り、TL の地より明るい面・同じ墨の枠 2px・影で浮かせ、「許可する」を accent の塗りにする。未読と既読で見た目は変えず、帯のアイコン (未読 🔐 / 既読 🔓) で見分ける。既読になってもバブルは消えない。
+そのセッションの Timeline に、依頼の `permit` の呼び出しの行の位置で境界のバブルとして出す (say のバブルと同じ。行の uuid で選べる)。呼び出しの行が窓にあり、その結果の行が依頼の印になった時に出る (live では結果の行が届いた時)。読み込み済みの範囲 (窓) の外の依頼は、🔐 のフィルタの間だけ `notification_list` の答えから時刻の位置に合流させて出す (位置を持たず、フィルタを外すと消える。DR-0050 §5)。subagent の Timeline の呼び出しは §9 で断られているので出ない。外枠 (角丸・余白・送り手の行・時刻の行) は TL の他の吹き出しと同じ部品 (`.tl-bubble` / `.tl-bubble-body` / `.tl-bubble-from` / `.tl-bubble-footer` / `.tl-bubble-time`) をそのまま使い、専用にするのは中身 (止められた行動 / 添付 / 許可してほしいこと / 「許可する」) と見た目だけにする。エージェント間の msg (色の付いた面だけ) とも say (琥珀の札) とも色相でなく明度と形で分ける: 送り手の行を本文の幅いっぱいの帯にして墨 (文字色より 1 段明るい `--gray-11`。依頼が何件も並んでも帯と枠が「許可する」より重くならない明度) で塗り、TL の地より明るい面・同じ墨の枠 2px・影で浮かせ、「許可する」を accent の塗りにする。未読と既読で見た目は変えず、帯のアイコン (未読 🔐 / 既読 🔓) で見分ける。既読になってもバブルは消えない。
 
 ```
 🔐 許可依頼                       ← 帯 (既読は 🔓)
@@ -117,10 +130,10 @@ daemon は `permit_request` を記録した時に、say と同じ発声の関数
 - 見出しや文言は UI の他の文言と揃えて日本語にする
 - 言語は拡張子をコードブロックの言語名として渡し、既存のコードブロックの言語表 (`highlight.ts`) で引く。拡張子の無いファイルは素のテキスト
 - 「✅ 許可する」は §8 の文をクリップボードに写す (`useClipboardCopy`、既存のコピーボタンと同じ成功の見え方の時間)。写せたらボタンの文字を「コピーしました」に短く替える。2 つの文字を同じ升目に重ねて幅を広い方に固定し、押した時にボタンの幅が動かないようにする。写せなかった時 (安全でない文脈、権限の拒否) は「コピーできませんでした」と添える
-- 写せたら、その依頼が未読なら `permit_request_read` で既読にする (非楽観。daemon が変えた記録を全タブに送る)。写せなかった時は人がまだ何もできていないので未読のまま。既読の専用のボタンは置かない (「許可する」を押すことが、人が依頼に手を付けたことになる)
+- 写せたら、その依頼が未読なら `permit_read` で既読にする (非楽観。daemon が新しい `ev:"permit_state"` を全タブに送る)。写せなかった時は人がまだ何もできていないので未読のまま。既読の専用のボタンは置かない (「許可する」を押すことが、人が依頼に手を付けたことになる)
 - 写せたら、そのセッションの入力欄 (FAB のパネル) も開き、textarea にフォーカスする (FAB を押した時と同じ開き方)。写せなかった時は開かない (kawaz 2026-10-28)
 - 開く時、textarea が空 (FAB が下書き無しとみなす、空白だけの入力を含む) なら写した文と同じ文を入れる (人の編集と同じく下書きとして保存する)。そのまま送れるようにするため。空でなければ書きかけの入力を変えない (人は写した文を好きな位置に貼る) (kawaz 2026-11-06)
-- Sessions 一覧の各行には、未読の許可依頼があれば say の 🔔 の隣 (アイコンと repo 名の間) に 🔐 と件数 (2 件以上の時) を出す。ピン留めした行にも出す
+- 未読かどうかは `ev:"permit_state"` の `unread` に居るか。Sessions 一覧の各行には、未読の許可依頼があれば say の 🔔 の隣 (アイコンと repo 名の間) に 🔐 と件数 (2 件以上の時) を出す。ピン留めした行にも出す
 
 ### 8. ボタンが写す文
 
@@ -172,25 +185,25 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 - `project_permissions` だけの依頼も受ける (毎回止められる操作の allow を足すことだけを求める依頼)。`intents`・`commands`・`project_permissions` のどれも無い依頼は断る。拒否の文は「ask for at least one of intents and commands, or project_permissions」
 - model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)`
 
-**記録**: daemon は `permit_request` を受けた時に、依頼したセッションの登録の cwd (sidecar begin が名乗る `$.session.root()`、realpath) から `<cwd>/.claude/settings.local.json` を決め、`project_settings: { path, permissions: [{ add | remove, applied_at? }] }` として記録に固定する。人に見せるファイルと書くファイルが同じであるように、後の hello で cwd が変わっても動かさない。セッションの cwd が分からない時は、`project_permissions` のある依頼を `invalid_args` で断る。
+**設定ファイル**: 依頼の `permit` の呼び出しの行の `cwd` の `.claude/settings.local.json`。行は transcript にあって変わらないので、人に見せるファイルと書くファイルは、daemon の再起動やセッションが live でなくなった後も同じになる。webui は `<cwd>/.claude/settings.local.json` を折り畳みの見出しに出す。
 
-**読み取り**: op `permit_settings_read { id }` (user role だけ)。記録が名指すファイルを添付と同じ読み方 (§3、先頭 64 KiB、テキストだけ) で読み、添付と同じ形で返す。webui は無いファイル (`missing`) を「(無し)」と出す。webui の折り畳みは開いている間、開くたびと、記録の `applied_at` が変わった時に読み直す (人もセッションも書き換えるファイルなので、添付と違い読んだものを持ち続けない)。
+**読み取り**: op `permit_settings_read { sid, tool_use_id }` (user role だけ)。依頼の設定ファイルを添付と同じ読み方 (§3、先頭 64 KiB、テキストだけ) で読み、添付と同じ形で返す。webui は無いファイル (`missing`) を「(無し)」と出す。webui の折り畳みは開いている間、開くたびと、その依頼の適用 (`ev:"permit_state"` の `applied`) が変わった時に読み直す (人もセッションも書き換えるファイルなので、添付と違い読んだものを持ち続けない)。
 
-**書き込み**: op `permit_permission_apply { id, permission: { add } | { remove } }` (user role だけ)。
+**書き込み**: op `permit_permission_apply { sid, tool_use_id, permission: { add } | { remove } }` (user role だけ)。
 
-- 書けるのは、その id の記録にある変更 (add / remove の別と rule が一致するもの) だけを、記録が名指すファイルにだけ。記録に無い rule、add と remove の取り違え、持っていない id は `invalid_args` で断る。任意の文字列を書く口にしない
+- 書けるのは、その依頼の行の `project_permissions` にある変更 (add / remove の別と rule が一致するもの) だけを、その依頼の設定ファイルにだけ。行に無い rule、add と remove の取り違え、依頼でない呼び出し・知らない id は `invalid_args` で断る。任意の文字列を書く口にしない
 - ファイルを JSON の object として読む (無ければ `{}`)。`permissions` が object でない、`permissions.allow` が文字列の配列でない、JSON でないものは `settings_unreadable` で断り、書かない
 - add は無ければ足し、remove はその rule を消す。どちらも変わらない (既にある add、無い remove) なら書かない (無いファイルも作らない)
 - 書き戻しは `permissions.allow` を文字列順 (`Array.prototype.sort` の既定) に並べ、`JSON.stringify(settings, null, 2)` と末尾の改行 1 つ。他のキーは値も位置も保つ (`permissions` の中の `deny` 等も)。無い `permissions` / `allow` は末尾に足す。`.claude/` が無ければ作る
 - 書き込みは隣の一時ファイルに書いて rename で置き換える (読み直すセッションに書きかけを見せない)。設定ファイルが symlink なら辿った先を置き換え、symlink は残す
 - 同じファイルへの適用は daemon の中で 1 つずつ行う (並んだ 2 件の書き込みが互いを消さない)。daemon の外 (人やセッションの手) の書き込みとの競合は扱わない
-- 読み書きの失敗は `settings_write_failed`。成功したら記録のその変更に `applied_at` を付けて記録を既読にし (適用は人が依頼に手を付けたこと。「許可する」と同じ印)、§5 と同じく変わった 1 件を全タブに送る。応答は `{ ok, changed, applied_at }`
+- 読み書きの失敗は `settings_write_failed`。成功したらその変更の適用 (§4 の `applied`) と依頼の既読を立てて (適用は人が依頼に手を付けたこと。「許可する」と同じ印) ファイルに書き、§5 の `ev:"permit_state"` を全タブに送る。応答は `{ ok, changed, applied_at }`
 
 **通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は「人が許可依頼の「許可する」で `.claude/settings.local.json` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。」と ```diff のコードブロック。ファイルは文でも diff の見出し (`---` / `+++`) でもプロジェクトのディレクトリ (セッションの cwd) からの相対で書き、スマホの幅で読める長さにする。
 
 **反映**: 起動中の Claude Code のセッションは `.claude/settings.local.json` の変更を再起動なしで拾う (2.1.319、対話のセッション、`--permission-mode dontAsk`。起動時に `.claude/` が無い状態から作った時、allow を `[]` に戻した時、rename で置き換えた時のどれも、1〜5 秒後の次の tool 呼び出しから効いた。ccmsg の経路 (tool → バブル → 押す → 書き込み → 同じコマンドの再実行) でも通った。[findings](../findings/2026-11-08-settings-local-reload.md))。auto mode で classifier の前に allow が効くことは同じ設定の読み直しに乗るが、auto mode では観測していない。
 
-**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「許可する」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、変更 1 件ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行と、その 1 件だけを書く「✅ 許可する」(枠だけのボタン。依頼全体の「許可する」の塗りより軽くして形で分ける)。押している間は「書き込み中…」で押せない。非楽観で、daemon が送り直す記録に `applied_at` が付くとボタンを無効にして「適用済み HH:MM」にする。断られたら理由を横に出し、ボタンは押せるまま。この節の「許可する」は §8 の許可の文を写さず、入力欄も開かない (既読は daemon が適用と一緒に立てる)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「許可する」を出さない (写す操作が無い)。
+**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「許可する」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、変更 1 件ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行と、その 1 件だけを書く「✅ 許可する」(枠だけのボタン。依頼全体の「許可する」の塗りより軽くして形で分ける)。押している間は「書き込み中…」で押せない。非楽観で、daemon が送る `ev:"permit_state"` の `applied` にその変更が載るとボタンを無効にして「適用済み HH:MM」にする。断られたら理由を横に出し、ボタンは押せるまま。この節の「許可する」は §8 の許可の文を写さず、入力欄も開かない (既読は daemon が適用と一緒に立てる)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「許可する」を出さない (写す操作が無い)。
 
 ## Alternatives Considered
 
@@ -201,22 +214,23 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 | 「! で実行」の送信を別の op にする | 書きかけの退避・Enter・受け付けの待ち・戻しが人の入力と同じで、違うのは composer への入れ方と受け付けの印だけ。`user_prompt` / `prompt.send` の入力の区別で足りる (DR-0035 §3) |
 | rules の定型文を手で書く今の形だけにする | Context の 3 つの弱み (形のぶれ、具体の入れ忘れ、ファイルの中身を貼ると context を食う) が残る |
 | ファイルの中身をエージェントが本文に貼る | 中身がエージェントの context に載り、長いファイルほど高くつく。本文の中で許可の対象と説明の境目も曖昧になる |
-| 添付を依頼の時に daemon が読んで記録に写す | 依頼の記録と配送が添付の中身 (最大 16 × 64 KiB) を運ぶことになり、人が開かない添付まで読む。中身を人が見るのは開いた時で、その時に読めば足りる |
+| 添付を依頼の時に daemon が読んで持つ | 依頼の配送が添付の中身 (最大 16 × 64 KiB) を運ぶことになり、人が開かない添付まで読む。中身を人が見るのは開いた時で、その時に読めば足りる |
 | 添付の結果 (読めたか、切り詰めたか) を tool の結果で model に返す | 人が開くまで読まないので、依頼の時点で返せるものが無い。model に要るのは依頼が出たことだけ |
-| say の記録に許可依頼を混ぜる | 形 (添付・intents・commands、既読の意味) と上限の根拠が違う。say の未読の数 (Sessions の 🔔) に許可依頼が混ざる |
-| 記録を daemon のメモリだけに持つ | daemon は版の更新のたびに再起動し、許可を待っているセッションの依頼のバブル・🔐・「許可する」がそのたびに消える。transcript の `permit` の tool_use からは「許可する」と添付の読み取りに要る記録の id が戻らない (§4 の永続化) |
-| 上限を全体で数える (例: 全セッションで 50 件) | 許可を求め続ける 1 つのセッション (実例で 52 件) が、他のセッションの記録を押し出す |
-| 記録が変わるたびに全件を送る (say と同じ) | 変わるのは `read` だけで、変わった 1 件で足りる |
-| バブルを transcript の `permit` の tool_use から描く | 既読と添付の読み取りに daemon の記録 (id) が要り、transcript と突き合わせる経路が増える。say と同じ時刻の合流で足りる |
-| webui から任意のパスを読む口 (既存の fs 系 op を広げる) で添付を読む | 読める範囲が依頼の名指しから外れる。DR-0024 の allowlist は transcript から集めた集合で、依頼の添付を足すには集め方を変える必要がある。依頼の記録を照合する専用の op の方が範囲が狭く明確 |
-| 許可したかどうかを記録する | 許可の正は人の発話とエージェントの再実行で、webui のボタンを押したことではない (写した文を送らないこともある)。ボタンで立てる `read` は手を付けたかの印に留める |
+| say の未読に許可依頼を混ぜる (同じ既読の集合・同じ event) | 既読の意味 (say は読んだ、依頼は手を付けた) と、依頼だけが持つ状態 (適用) が違う。say の未読の数 (Sessions の 🔔) に許可依頼が混ざる。見つける経路 (fold / 一回読み / 全走査) と全走査の 1 回の読みは共有する |
+| daemon が依頼の記録 (中身・既読・適用) を `permit-requests.json` に永続化し、記録から描く | 依頼の中身は transcript にもあり、二重に持つ記録が貯まり続ける (上限と刈り込みの規則が要る)。上限で消えた依頼は transcript にあっても出なくなる。transcript の `permit` の行と tool_use の id で、表示と既読と適用の照合は足りる (kawaz 2026-11-08) |
+| 依頼の記録を daemon のメモリだけに持つ | daemon は版の更新のたびに再起動し、依頼のバブル・🔐・「許可する」がそのたびに消える |
+| 依頼かどうかを tool_use の有無だけで決める (結果を見ない) | subagent の呼び出し (module が断る) と、形が合わない・daemon が無い呼び出しも依頼として出る。許可を受けて再実行できない、または人に何も知らされていない呼び出しがバブルになる |
+| `permit_request` に tool_use の id を載せ、daemon がその id を依頼として記録する | 依頼かどうかを daemon の記録が決めることになり、記録を持たない経路 (live でないセッション、再起動の後、webui の窓の中の行) と規則が分かれる。結果の行を印にすれば、daemon と webui が transcript だけから同じ規則で決められる |
+| 設定ファイルを依頼の時のセッションの登録の cwd から決めて daemon が持つ | 依頼ごとの状態を daemon に持つことになり、live でないセッション・再起動の後に分からなくなる。行の `cwd` は transcript にあって変わらない |
+| webui から任意のパスを読む口 (既存の fs 系 op を広げる) で添付を読む | 読める範囲が依頼の名指しから外れる。DR-0024 の allowlist は transcript から集めた集合で、依頼の添付を足すには集め方を変える必要がある。依頼を照合する専用の op の方が範囲が狭く明確 |
+| 許可したかどうかを daemon が持つ | 許可の正は人の発話とエージェントの再実行で、webui のボタンを押したことではない (写した文を送らないこともある)。ボタンで立てる `read` は手を付けたかの印に留める |
 | 許可の文に、人が開いて読めた添付だけを並べ、未確認の数をボタンの横に添える | 中身を見るまでもないファイル (読み慣れた script 等) が、開かなかったというだけで許可の文から落ちる。確認したかは送る前に人が判断することで、開いたかで文を変えるとその判断を UI が決めることになる |
 | 未確認の添付が残っている間は「許可する」を押せなくする | 中身を見るまでもないファイルでも全部開かせることになる |
 | 許可依頼専用の外枠 (角丸・余白・時刻行) を組む | TL の他の吹き出しと形がずれる。違うのは中身と面の色だけで、外枠は共通の部品で足りる |
 | say と同じ専用の既読ボタンを置く | 「許可する」を押すことが手を付けたことそのもので、ボタンが 2 つあると押す順を迷わせる |
 | subagent の依頼もバブルに出す | 許可を受けて再実行できるのは本体だけで、subagent は止まったまま残る (§9) |
 | `project_permissions` をエージェント自身が書く (Edit で settings.local.json を直す) | 許可の範囲を広げる書き込みを、止められた側が自分で行うことになる。人が rule を 1 件ずつ見て押す形にする |
-| webui から任意の rule を書ける op にする | 書ける範囲が依頼の名指しから外れる。§3 の添付と同じく、記録にある変更だけを照合して書く |
+| webui から任意の rule を書ける op にする | 書ける範囲が依頼の名指しから外れる。§3 の添付と同じく、依頼の行にある変更だけを照合して書く |
 | `*` を含む rule を断る | `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで見てする |
 | `project_permissions` だけの依頼を断る | 毎回止められる操作の allow を足すことだけを求める依頼は正当で、その時に再実行する操作が無いこともある |
 | 適用のたびにすぐ知らせる | 続けて押した数だけセッションに知らせが入り、context を食う。5 秒まとめて最初と最後の差分を 1 通にする |
@@ -224,20 +238,26 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 ## Consequences
 
-- 記録は daemon の再起動を越えて残る。`permit-requests.json` と subscribe の全件 (`ev:"permit_requests"`) は全体の上限 (2,000 件) まで大きくなりうる。上限を超えて消えた依頼は transcript の `permit` の tool_use (汎用の tool の行) でしか読めない
+- 依頼は transcript にあるぶん全部が出る。daemon は依頼の中身を持たず、`permit-state.json` は既読と適用の id だけで増える (刈り込まない)
+- 🔐 の未読の数は、daemon がそのセッションの transcript を読んだ後に入る: live のセッションは追いつきの後、live でないセッションは TL を開いた時 (一回読み) か 🔐 / 🔔 のフィルタに入った時 (全走査)。読む前は数えない
+- 窓の外の依頼は 🔐 のフィルタの間だけ出る。フィルタの無い TL では、older で窓に入れると行の位置に出る
+- `permit-state.json` の無い初回の daemon は、その時より前の依頼を手を付けたものとみなす
+- 旧版の module のまま動いているセッションは、`permit_request` の応答 (`{ ok }`) を旧い形で読めず、依頼が出なかったと model に返す。その呼び出しの結果は依頼の印にならないのでバブルに出ない (音声は鳴る)。PROTOCOL_VERSION の minor の違いでセッションに印が付き、セッションを起動し直すと直る
+- 依頼の行の `cwd` は、セッションが worktree に入った後 (EnterWorktree) は worktree を指す。その時に Claude Code が読む `.claude/settings.local.json` が worktree のものかは未検証
 - 添付は人が開いた時点の中身で、依頼の時点や実行の時点の中身とは限らない。許可の文はパスを名指すだけで、人が読んだ後にファイルが変わっても示さない。classifier も中身を確かめない
 - daemon は依頼したセッションが名指したファイルを、webui を開ける人が開いた時に読んで見せる。同じ uid のエージェントは元からそのファイルを読めて transcript に出せるので、見える範囲は広がらない
 - `permit` は permission の判定を通らない tool なので、エージェントはいつでも呼べる。呼んでも権限は変わらず、許可は人の発話でしか生まれない
 - TL のバブルの「添付」等の文字と「許可する」「コピーしました」は DOM にあるので、Timeline の検索に当たる (say の「既読」と同じ)
 - 「許可する」を押して文を写しても送らなかった場合も既読になり、🔐 は消える。既読は「人が依頼に手を付けた」の印で、許可が届いたことは示さない
 - rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
-- `project_permissions` の「許可する」は、人が押した 1 件だけをセッションのプロジェクトの `.claude/settings.local.json` に書く。書いた rule は以後のこのプロジェクトの全セッションで classifier を通らずに通る。消すのは人の手か、`remove` の依頼
-- 記録が名指す設定ファイルは、依頼の時に daemon が持つセッションの cwd (起動・`/clear`・`/resume` の時に module が名乗る `$.session.root()`) で決まる。セッションの中の `/cd` は名乗り直さないので追わない (未検証: `/cd` の後に Claude Code が読む設定ファイルがどれか)
+- `project_permissions` の「許可する」は、人が押した 1 件だけを依頼の行の cwd の `.claude/settings.local.json` に書く。書いた rule は以後のこのプロジェクトの全セッションで classifier を通らずに通る。消すのは人の手か、`remove` の依頼
 - 「! で実行」は人の `! <command>` と同じで、auto mode の classifier を通らずにそのセッションの環境で実行される。コマンドを書いたのはエージェントで、押す前にコマンドを読んで判断するのは人である。会話に入るのはコマンドとその出力で、許可の文は入らない
 
 ## 関連
 
 - [DR-0039](./DR-0039-all-mods-and-typed-tools.md) §3 — typed tool の登録の形、handler の流儀、`say` の記録と配送
-- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 — v1 だけの永続状態を増やさない (§4 の永続化はその例外)
+- [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 — v1 だけの永続状態を増やさない (§4 の人の状態の永続化はその例外)
+- [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §7 — say を transcript の行から描き、既読だけを daemon が持つ形 (§4 はこれに揃える)
+- [DR-0050](./DR-0050-timeline-notification-badges.md) §5 — 🔐 のフィルタ、`notification_list`
 - [DR-0024](./DR-0024-out-of-project-files.md) §3.2 — セッションが名指したパスだけを読む信頼の形
-- [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と記録をスキーマで読む
+- [DR-0038](./DR-0038-json-is-parsed-by-schema.md) — 入力と状態のファイルをスキーマで読む

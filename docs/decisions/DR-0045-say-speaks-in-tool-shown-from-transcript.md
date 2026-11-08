@@ -34,8 +34,8 @@ kawaz 2026-10-28 の裁定:
 | 持ち手 | 持つもの |
 |---|---|
 | hooks module | engine のイベント処理だけ。tool への応答 (`tool.call`)、`turn.step` (request の上書き、[DR-0041](./DR-0041-request-model-effort-override.md))、`turn.abort` ([DR-0044](./DR-0044-turn-abort.md))、`permit` のダイアログ ([DR-0040](./DR-0040-permit-request-tool.md))、prompt の差し込み ([DR-0035](./DR-0035-user-input-via-composer-fill.md))、セッションの事実 (`session_facts`)。会話の行は解釈せずに daemon へ流す (§2) |
-| daemon | ライブのセッションの会話の行の正本 (§3)。webui への中継 (§4)。行から導く状態 (Status の fold、API error、最後のユーザ入力、say の未読) (§5、§7)。行をきっかけにした副作用 (say の発声) と、`permit_request` を受けた時の音声 (§6) |
-| webui | daemon から届く行と、`transcript_read` で読む履歴の描画。🔔 は say の tool_use の行から描く (§7) |
+| daemon | ライブのセッションの会話の行の正本 (§3)。webui への中継 (§4)。行から導く状態 (Status の fold、API error、最後のユーザ入力、say と許可依頼の未読) (§5、§7、[DR-0040](./DR-0040-permit-request-tool.md) §4)。行をきっかけにした副作用 (say の発声) と、`permit_request` を受けた時の音声 (§6) |
+| webui | daemon から届く行と、`transcript_read` で読む履歴の描画。🔔 は say の tool_use の行から、許可依頼のバブルは `permit` の tool_use の行から描く (§7、DR-0040 §7) |
 
 - module の無いセッションは、ライブの更新も副作用も持たない。daemon が tail で拾い直す経路は作らない ([DR-0039](./DR-0039-all-mods-and-typed-tools.md) §7 の no_module)。履歴は `transcript_read` でファイルから読める
 
@@ -136,7 +136,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 **launch** (`mcp__ccmsg-v1__launch`): 行からは起こさない。module が daemon の `POST /op` の `launch_tool` を 1 往復で呼び、daemon は起動コマンドを上限付きで待って、間に合えば結果を同期で返し、間に合わなければ「起動中」を返して結果を notify で会話に戻す (kawaz 2026-10-29、[DR-0018](./DR-0018-session-launcher.md) §3.7)。行から起こす形は、tool の結果に `session_id` が入らず、同じ turn の中で起動先へ続けて送れないので採らない
 
 **permit の音声**:
-- daemon が `permit_request` を記録した時に、上の say と同じ発声の関数で鳴らす。文は固定文「許可を求めています」か、依頼が持つ読み上げ用の文 (DR-0040 で足す `voice`)
+- daemon が `permit_request` を受けた時に、上の say と同じ発声の関数で鳴らす (daemon は依頼の中身を持たず、依頼は transcript の `permit` の行。DR-0040 §4)。文は固定文「許可を求めています」か、依頼が持つ読み上げ用の文 (DR-0040 で足す `voice`)
 - CLI (`ccmsg sidecar permit`) は発声しない
 - テストの daemon は鳴らさない: テストの preload が `CCMSG_SAY_BIN` を無音のバイナリにする (テストが自分のバイナリを渡す時を除く)
 
@@ -144,8 +144,8 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 - TL は main thread の assistant 行の tool_use `{name:"mcp__ccmsg-v1__say", input:{text}}` を、PushNotification と同じ境界行の 🔔 バブルとして描く。時刻と位置はその行のもの。照合は `packages/protocol/src/ccmsg-direct-transcript.ts` に置く
 - バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
-- 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの、`say_list` を聞かれたセッションはその読みで見たもの) から既読の集合を引いたもの。同じ id は 1 件に数える
-- live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。この読みは本体の transcript だけを読むので、live でないセッションの subagent / teammate の say は数えない (次の `say_list` で数える)
+- 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの、`notification_list` を聞かれたセッションはその読みで見たもの) から既読の集合を引いたもの。同じ id は 1 件に数える
+- live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。この読みは本体の transcript だけを読むので、live でないセッションの subagent / teammate の say は数えない (次の `notification_list` で数える)
 - daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
@@ -155,7 +155,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
   - 書き込みは `say_read` のたびに一時ファイルへ書いて rename し、応答はその後に返す
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外。say を transcript の行から描く以上、既読をメモリだけに持つと、再起動のたびに過去の say が全部未読に戻る
 - subagent / teammate の say も親セッションの未読に入り (`say_unread` の `agent_id`)、本文は `ev:"agent_says"` で webui に渡って親セッションの TL に時刻で合流する ([DR-0050](./DR-0050-timeline-notification-badges.md) §10)。その agent の TL では transcript の行から 🔕 で出る
-- op `say_list { sid }` (user role だけ、[DR-0050](./DR-0050-timeline-notification-badges.md) §5) は、そのセッションの全 say (既読も含む) を本文付きで時刻順に返す。daemon は初めて聞かれた時に、本体の transcript と、その subagent / teammate / workflow agent の transcript (`<sid>/subagents/agent-*.jsonl`、`<sid>/subagents/workflows/<runId>/agent-*.jsonl`) を頭から読む。live / live でないを問わない。agent の transcript は全ての行がその agent のもの (sidechain の行) なので、assistant 行の say の tool_use を全部拾い、agent の id は file 名から取る
+- op `notification_list { sid }` (user role だけ、[DR-0050](./DR-0050-timeline-notification-badges.md) §5) は、そのセッションの全 say (既読も含む) を本文付きで時刻順に返す (同じ答えに全許可依頼も入る。DR-0040 §5)。daemon は初めて聞かれた時に、本体の transcript と、その subagent / teammate / workflow agent の transcript (`<sid>/subagents/agent-*.jsonl`、`<sid>/subagents/workflows/<runId>/agent-*.jsonl`) を頭から読む。say と許可依頼は同じ 1 回の読みで拾う (`session-sweep.ts`)。live / live でないを問わない。agent の transcript は全ての行がその agent のもの (sidechain の行) なので、assistant 行の say の tool_use を全部拾い、agent の id は file 名から取る
   - 読んだ結果は daemon が止まるまで持ち (セッションが live でなくなっても消さない)、以後は §3 の fold が読む main の行と、push の worker の行から足す。読み直さない。読んでいる間に来た行も、読みと重ねて足す (同じ id は 1 件)
   - 先に push で拾っていた worker の say は、push の時刻のまま持つ (`ev:"agent_says"` と同じ時刻)
   - 見つけた say は未読の集合 (上) と `ev:"agent_says"` に合流し、読みが終わった時に変わっていれば `ev:"say_unread"` / `ev:"agent_says"` を送り直す

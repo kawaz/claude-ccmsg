@@ -24,7 +24,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `/r/<room>/m<mid>` | ルームの特定メッセージへアンカー |
 | `/s/<sid>` | セッションの最後に見ていた画面へリダイレクト |
 | `/s/<sid>/files` | Files タブ |
-| `/s/<sid>/timeline/<position>` | Timeline (`head`、レコード uuid、または許可依頼の `permit:<id>`) |
+| `/s/<sid>/timeline/<position>` | Timeline (`head` かレコード uuid。許可依頼はその `permit` の呼び出しの行の uuid) |
 | `/s/<sid>/timeline/agent/tm/<name>` | teammate の TL |
 | `/s/<sid>/timeline/agent/sub/<agentId>` | サブエージェントの TL |
 | `/s/<sid>/timeline/agent/wf/<runId>/<agentId>` | workflow 内エージェントの TL |
