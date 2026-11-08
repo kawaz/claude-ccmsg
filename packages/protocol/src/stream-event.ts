@@ -69,13 +69,15 @@ export type AgentSaysStreamEvent = Output<typeof AgentSaysStreamEventSchema>;
 
 /** The person's state of the requests for permission (DR-0040 §5,
  * user-role subscribers only, like ev:"say_unread"): the requests not acted
- * on yet, oldest first, and every project permission applied. The requests
+ * on yet, oldest first, the ones whose permission the person copied with
+ * 許可する (granted, by tool_use id), and every project permission applied. The requests
  * themselves are the `permit` calls in the transcripts, which the Timeline
  * draws. Sent at subscribe time, even when empty, and again whenever either
  * changes: always the full state, so a tab replaces what it held. */
 export const PermitStateStreamEventSchema = v.object({
   ev: v.literal("permit_state"),
   unread: v.array(UnreadPermitSchema),
+  granted: v.array(v.string()),
   applied: v.array(AppliedPermitPermissionSchema),
 });
 export type PermitStateStreamEvent = Output<typeof PermitStateStreamEventSchema>;

@@ -2929,8 +2929,9 @@ select.sidebar-globals-endpoint {
   color: var(--fg-muted);
 }
 
-/* 2 つのラベルを同じ升目に重ね、幅を広い方に固定する: 押した後に
- * 「コピーしました」へ切り替わってもボタンの幅が動かない。 */
+/* 3 つのラベル (許可する / 許可済み / コピーしました) を同じ升目に重ね、幅を
+ * 一番広いものに固定する: 押した後に切り替わってもボタンの幅が動かない。
+ * 許可済み (.granted) は塗りを外した枠だけにして、未操作の塗りと一目で分ける。 */
 .permit-grant {
   display: inline-grid;
   font-size: var(--font-size-md);
@@ -2948,12 +2949,25 @@ select.sidebar-globals-endpoint {
   text-align: center;
 }
 
+.permit-grant.granted {
+  background: transparent;
+  color: var(--accent);
+}
+
 /* 塗りのボタンの上では成功の色が地に沈むので、ボタンの文字色のまま出す。 */
+.permit-grant-granted,
 .permit-grant-copied {
   visibility: hidden;
 }
 
-.permit-grant.copied .permit-grant-label {
+.permit-grant.granted .permit-grant-granted {
+  visibility: visible;
+}
+
+/* 「コピーしました」が出ている間は、許可する / 許可済みのどちらも隠す。 */
+.permit-grant.granted .permit-grant-label,
+.permit-grant.copied .permit-grant-label,
+.permit-grant.copied .permit-grant-granted {
   visibility: hidden;
 }
 

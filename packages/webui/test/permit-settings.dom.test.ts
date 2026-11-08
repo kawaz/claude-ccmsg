@@ -116,6 +116,7 @@ async function openWith(
       store.dispatch({
         type: "permit-state/loaded",
         unread: state.permitUnread,
+        granted: state.permitGranted,
         applied: [...state.permitApplied, { tool_use_id: id, permission, applied_at: APPLIED_AT }],
       });
       return Promise.resolve({ ok: true, changed: true, applied_at: APPLIED_AT });

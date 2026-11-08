@@ -47,10 +47,11 @@ const PUSHES: {
     },
   ],
   permit_state: [
-    { ev: "permit_state", unread: [], applied: [] },
+    { ev: "permit_state", unread: [], granted: [], applied: [] },
     {
       ev: "permit_state",
       unread: [{ session_id: SID, tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z" }],
+      granted: ["toolu_02"],
       applied: [
         {
           tool_use_id: "toolu_02",

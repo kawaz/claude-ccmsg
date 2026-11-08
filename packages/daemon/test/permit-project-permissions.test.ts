@@ -97,6 +97,7 @@ describe("permit project_permissions over the wire", () => {
       expect(ev).toEqual({
         ev: "permit_state",
         unread: [],
+        granted: [],
         applied: [
           {
             tool_use_id: ID,

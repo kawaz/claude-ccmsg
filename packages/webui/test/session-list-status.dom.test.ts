@@ -62,7 +62,7 @@ async function mount(
 ): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
-  store.dispatch({ type: "permit-state/loaded", unread: unreadPermits, applied: [] });
+  store.dispatch({ type: "permit-state/loaded", unread: unreadPermits, granted: [], applied: [] });
   store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");

@@ -237,6 +237,50 @@ describe("permit: the requests in a live session's transcript", () => {
     }
   });
 
+  // 何を保証するか: granted 付きの既読 (「許可する」) は既読と許可済みを立てる。
+  // 既読 (無視) にした依頼にも後から許可済みを立てる。granted の無い既読は
+  // 許可済みを立てず、許可済みの依頼の既読・許可は何も変えない (送らない)。
+  // ev:"permit_state" の granted に載り、ファイルにも入る。
+  test("granted marks the request permitted too, after a plain read as well", async () => {
+    const ctx = await startInProcessDaemon();
+    const dir = tmpDir("permit-granted-");
+    try {
+      const file = path.join(dir, `${SID_A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const s = await liveSessionConn(ctx, SID_A, { transcript_path: file });
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      const u = await subscribedUser(ctx);
+      const permit = { blocked: "x", commands: [{ command: "ls" }] };
+      const now = (): string => new Date().toISOString();
+      await appendPushed(s, file, permitLines("toolu_a", permit, { timestamp: now() }));
+      await appendPushed(s, file, permitLines("toolu_b", permit, { timestamp: now() }));
+      await u.readEventUntil("permit_state", (e) => e.unread.length === 2);
+      const state = async () => {
+        const { ev } = await u.readEventUntil("permit_state");
+        return [ev.unread.map((p) => p.tool_use_id), ev.granted];
+      };
+
+      await u.requestOk({ op: "permit_read", ids: ["toolu_a"], granted: true });
+      expect(await state()).toEqual([["toolu_b"], ["toolu_a"]]);
+      await u.requestOk({ op: "permit_read", ids: ["toolu_b"] });
+      expect(await state()).toEqual([[], ["toolu_a"]]);
+      await u.requestOk({ op: "permit_read", ids: ["toolu_b"], granted: true });
+      expect(await state()).toEqual([[], ["toolu_a", "toolu_b"]]);
+      expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
+        '"granted":["toolu_a","toolu_b"]',
+      );
+
+      await u.requestOk({ op: "permit_read", ids: ["toolu_a"] });
+      await u.requestOk({ op: "permit_read", ids: ["toolu_a"], granted: true });
+      await u.request({ op: "ping" });
+      expect((await u.pendingEvents()).filter(isKind("permit_state"))).toEqual([]);
+      u.close();
+      s.close();
+    } finally {
+      await stopInProcessDaemon(ctx);
+    }
+  });
+
   // 何を保証するか: セッションが live でなくなると、その依頼は未読から消える
   // (say と同じ)。終了の途中では空の未読を配らない。
   test("a session no longer live takes its requests out of the unread", async () => {
@@ -625,12 +669,13 @@ describe("permit-state.json", () => {
     ]);
     first.permits.set(SID_A, permits);
     expect(unreadPermits(first).map((p) => p.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
-    expect(await markPermitsRead(first, ["toolu_1"])).toEqual({ kind: "read" });
+    expect(await markPermitsRead(first, ["toolu_1"], true)).toEqual({ kind: "read" });
     await markPermitApplied(first, "toolu_2", { add: "Bash(ls)" }, "2026-10-28T01:00:00.000Z");
     expect(fs.readFileSync(file, "utf8")).not.toContain("秘密のコマンド");
 
     const second = loadPermitStore(file, log, () => new Date("2026-10-29T00:00:00.000Z"));
     expect(second.since).toBe("2026-10-28T00:00:00.000Z");
+    expect([...second.granted]).toEqual(["toolu_1"]);
     expect(second.applied).toEqual([
       {
         tool_use_id: "toolu_2",
@@ -662,9 +707,15 @@ describe("permit-state.json", () => {
     const broken = path.join(dir, "broken.json");
     fs.writeFileSync(broken, '{"since":"x","read":[]}\n');
     const store = loadPermitStore(broken, log, now);
-    expect({ since: store.since, read: [...store.read], applied: store.applied }).toEqual({
+    expect({
+      since: store.since,
+      read: [...store.read],
+      granted: [...store.granted],
+      applied: store.applied,
+    }).toEqual({
       since: "2026-10-28T00:00:00.000Z",
       read: [],
+      granted: [],
       applied: [],
     });
     expect(warned).toHaveLength(1);

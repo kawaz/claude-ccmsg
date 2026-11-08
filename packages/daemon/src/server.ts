@@ -2245,14 +2245,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "permit_read": {
-      // 既読は webui のバブルの「許可する」からだけ立つ (user role 限定、
-      // say_read と同じ理由)。知らない id は黙って ack せず、どれも既読に
-      // しない。既読はファイルに書いてから答える (DR-0040 §5)。
+      // 既読は webui のバブルの「既読」と「許可する」からだけ立つ (user role
+      // 限定、say_read と同じ理由)。「許可する」は granted も立てる。知らない
+      // id は黙って ack せず、どれも既読にしない。ファイルに書いてから答える
+      // (DR-0040 §5)。
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'permit_read' requires user role");
         return;
       }
-      const marked = await markPermitsRead(daemon.permits, req.ids);
+      const marked = await markPermitsRead(daemon.permits, req.ids, req.granted === true);
       if (marked.kind === "unknown") {
         sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${marked.ids.join(", ")}`);
         return;

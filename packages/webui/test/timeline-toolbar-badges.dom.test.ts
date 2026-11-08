@@ -53,7 +53,7 @@ async function at(store: Store, sid: string, position: string, filter: TimelineF
 async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
   const store = createStore(initialState());
   store.dispatch({ type: "say-unread/loaded", says });
-  store.dispatch({ type: "permit-state/loaded", unread: requests, applied: [] });
+  store.dispatch({ type: "permit-state/loaded", unread: requests, granted: [], applied: [] });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);

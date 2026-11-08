@@ -145,12 +145,15 @@ export const PermitRequestRequestSchema = v.object({
 });
 export type PermitRequestRequest = Output<typeof PermitRequestRequestSchema>;
 
-/** Mark requests for permission as read (the webui's 許可する, DR-0040 §7)
- * by the ids of their `permit` calls' tool_use. User role only, as say_read
- * is: what is unread is what the person has not acted on. */
+/** Mark requests for permission as read (the webui's 既読 and 許可する,
+ * DR-0040 §7) by the ids of their `permit` calls' tool_use, and with
+ * `granted` as permitted too (許可する copied the permission). User role
+ * only, as say_read is: what is unread is what the person has not acted
+ * on. */
 export const PermitReadRequestSchema = v.object({
   op: v.literal("permit_read"),
   ids: v.pipe(v.array(v.string()), v.nonEmpty("Expected at least one request id")),
+  granted: v.optional(v.literal(true)),
 });
 export type PermitReadRequest = Output<typeof PermitReadRequestSchema>;
 

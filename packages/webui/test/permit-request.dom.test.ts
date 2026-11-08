@@ -124,6 +124,8 @@ async function openWith(
   options: {
     /** The requests not acted on (ev:"permit_state"); `ID` unless told. */
     unread?: readonly UnreadPermit[];
+    /** The requests granted (ev:"permit_state"); none unless told. */
+    granted?: readonly string[];
     agent?: AgentRef;
     /** What the daemon answers a user_prompt (「! で実行」) with. */
     userPrompt?: WsHandle["userPrompt"];
@@ -137,7 +139,8 @@ async function openWith(
 ): Promise<{
   root: HTMLElement;
   store: Store;
-  reads: Array<readonly string[]>;
+  /** Each permit_read: its ids and whether it asked for granted. */
+  reads: Array<[readonly string[], boolean]>;
   opens: string[];
   /** How many times the bubble asked the session's composer to open. */
   composerOpens: () => number;
@@ -149,20 +152,25 @@ async function openWith(
     store.dispatch({
       type: "permit-state/loaded",
       unread: [...(options.unread ?? [unread(ID)])],
+      granted: [...(options.granted ?? [])],
       applied: [],
     });
   }
   const ws = new FakeTranscriptWs(store);
-  const reads: Array<readonly string[]> = [];
+  const reads: Array<[readonly string[], boolean]> = [];
   const opens: string[] = [];
   const handle = {
     ...ws.handle,
-    permitRead: (ids: readonly string[]) => {
-      reads.push(ids);
+    permitRead: (ids: readonly string[], granted?: boolean) => {
+      reads.push([ids, granted === true]);
       const state = store.getState();
       store.dispatch({
         type: "permit-state/loaded",
         unread: state.permitUnread.filter((p) => !ids.includes(p.tool_use_id)),
+        granted:
+          granted === true
+            ? [...state.permitGranted, ...ids.filter((id) => !state.permitGranted.includes(id))]
+            : state.permitGranted,
         applied: state.permitApplied,
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
@@ -237,6 +245,19 @@ async function press(button: HTMLButtonElement): Promise<void> {
 
 function grantButton(bubble: HTMLElement): HTMLButtonElement {
   return instanceOf(bubble.querySelector("button.permit-grant"), HTMLButtonElement, "grant");
+}
+
+/** What the last row says: the 許可する label shown (the one not
+ * aria-hidden), and 既読's words and whether it is disabled. */
+function actionsOf(bubble: HTMLElement): { grant: string; read: [string, boolean] } {
+  const shown = [...grantButton(bubble).querySelectorAll("span")].filter(
+    (span) => span.getAttribute("aria-hidden") !== "true",
+  );
+  const read = instanceOf(bubble.querySelector("button.permit-read"), HTMLButtonElement, "既読");
+  return {
+    grant: shown.map((span) => span.textContent).join("|"),
+    read: [read.textContent ?? "", read.disabled],
+  };
 }
 
 describe("permission request bubbles", () => {
@@ -353,7 +374,11 @@ describe("permission request bubbles", () => {
     ]);
   });
 
-  test("許可する copies the permission, says it did, marks the request read, and opens the composer", async () => {
+  // 何を保証するか: 「許可する」は許可の文を写し、写せたら「コピーしました」を
+  // 出して依頼を許可済み (既読でもある) にし、入力欄を開く。許可済みの依頼の
+  // ボタンは塗りを外した「許可済み」になり、押すともう一度写す (許可済みは
+  // 立て直さない)。「既読」は「既読済み」で押せない。
+  test("許可する copies the permission, says it did, marks the request granted, and opens the composer", async () => {
     const written: string[] = [];
     stubClipboard(async (text) => {
       written.push(text);
@@ -372,20 +397,46 @@ describe("permission request bubbles", () => {
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
-    expect(reads).toEqual([[ID]]);
+    expect(reads).toEqual([[[ID], true]]);
     expect(store.getState().permitUnread).toEqual([]);
+    expect(store.getState().permitGranted).toEqual([ID]);
     // Read: the open lock, in the same bubble with the same look.
     const settled = defined(bubbles(root)[0], "bubble");
     expect(settled.className).toBe(bubble.className);
     expect(settled.querySelector(".tl-bubble-from")?.textContent).toBe("🔓許可依頼");
+    // Granted: the outline look, its label under 「コピーしました」 for now.
+    expect(grantButton(settled).classList.contains("granted")).toBe(true);
+    expect(actionsOf(settled)).toEqual({ grant: "コピーしました", read: ["既読済み", true] });
     // DR-0040 §7: the session's input box opens to paste the text into.
     expect(composerOpens()).toBe(1);
-    // A request read already is not marked again.
-    await act(async () => {
-      grantButton(defined(bubbles(root)[0], "bubble")).click();
-      await Promise.resolve();
-    });
-    expect(reads).toEqual([[ID]]);
+    // Granted already: it copies again, and is not marked again.
+    await press(grantButton(defined(bubbles(root)[0], "bubble")));
+    expect(written).toEqual([permitGrantText(ASKED), permitGrantText(ASKED)]);
+    expect(reads).toEqual([[[ID], true]]);
+  });
+
+  // 何を保証するか: 全体の「許可する」と「既読」の見た目で、未操作 / 既読
+  // (無視) / 許可済みの 3 つが分かれる (DR-0040 §7 の表)。daemon の状態
+  // (ev:"permit_state" の unread / granted) から描くので、読み直したタブでも同じ。
+  test("tell apart untouched, read (ignored), and granted at a glance", async () => {
+    const { root } = await openWith(
+      [
+        ...permitRows(1, ID, inputOf()),
+        ...permitRows(2, "toolu_r", inputOf()),
+        ...permitRows(3, "toolu_g", inputOf()),
+      ],
+      { unread: [unread(ID)], granted: ["toolu_g"] },
+    );
+    expect(bubbles(root).map(actionsOf)).toEqual([
+      { grant: "✅ 許可する", read: ["既読", false] },
+      { grant: "✅ 許可する", read: ["既読済み", true] },
+      { grant: "許可済み", read: ["既読済み", true] },
+    ]);
+    expect(bubbles(root).map((b) => grantButton(b).classList.contains("granted"))).toEqual([
+      false,
+      false,
+      true,
+    ]);
   });
 
   // 何を保証するか: 「既読」は許可の文を写さず、入力欄も開かずに依頼を既読に
@@ -404,14 +455,25 @@ describe("permission request bubbles", () => {
       );
     expect(readButton().disabled).toBe(false);
     await press(readButton());
-    expect(reads).toEqual([[ID]]);
+    expect(reads).toEqual([[[ID], false]]);
     expect(store.getState().permitUnread).toEqual([]);
+    expect(store.getState().permitGranted).toEqual([]);
     expect(written).toEqual([]);
     expect(composerOpens()).toBe(0);
-    expect(defined(bubbles(root)[0], "bubble").querySelector(".tl-bubble-from")?.textContent).toBe(
-      "🔓許可依頼",
-    );
+    const bubble = defined(bubbles(root)[0], "bubble");
+    expect(bubble.querySelector(".tl-bubble-from")?.textContent).toBe("🔓許可依頼");
+    expect(actionsOf(bubble)).toEqual({ grant: "✅ 許可する", read: ["既読済み", true] });
     expect(readButton().disabled).toBe(true);
+    // 許可する stays: pressing it after 既読 makes the request granted.
+    await press(grantButton(bubble));
+    expect(written).toEqual([permitGrantText(ASKED)]);
+    expect(reads).toEqual([
+      [[ID], false],
+      [[ID], true],
+    ]);
+    expect(grantButton(defined(bubbles(root)[0], "bubble")).classList.contains("granted")).toBe(
+      true,
+    );
   });
 
   // 何を保証するか: 既読にできなかった理由は、写せなかった理由と同じく
@@ -505,7 +567,12 @@ describe("permission request bubbles", () => {
       "🔓許可依頼",
     ]);
     await act(() =>
-      store.dispatch({ type: "permit-state/loaded", unread: [unread("toolu_p2")], applied: [] }),
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: [unread("toolu_p2")],
+        granted: [],
+        applied: [],
+      }),
     );
     expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
       "🔓許可依頼",

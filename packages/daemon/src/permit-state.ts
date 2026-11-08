@@ -10,7 +10,8 @@
 // call, which the module refuses, and one that found no daemon are not.
 //
 // What the daemon keeps on disk is the person's state alone, in
-// `<stateDir>/permit-state.json`: the ids of the requests acted on, the time
+// `<stateDir>/permit-state.json`: the ids of the requests acted on (and of
+// the ones whose permission the person copied, granted), the time
 // `since` before which every request counts as acted on (a first start, and a
 // file that does not read, would otherwise bring every request of every
 // transcript up at once), and the project permissions applied.
@@ -51,6 +52,7 @@ const PermitStateFileSchema = jsonText(
   v.object({
     since: v.pipe(v.string(), v.isoTimestamp()),
     read: v.array(v.string()),
+    granted: v.array(v.string()),
     applied: v.array(AppliedPermitPermissionSchema),
   }),
 );
@@ -90,6 +92,9 @@ export interface PermitStore {
    * fold's lines add to it. */
   listed: Map<string, SessionPermitList>;
   read: Set<string>;
+  /** The requests whose permission the person copied with 許可する: read
+   * too. */
+  granted: Set<string>;
   since: string;
   /** Every project permission applied, in the order applied. */
   applied: readonly AppliedPermitPermission[];
@@ -127,6 +132,7 @@ export function loadPermitStore(file: string, log: PermitStateLog, now: () => Da
     scanned: new Map(),
     listed: new Map(),
     read: new Set(held?.read ?? []),
+    granted: new Set(held?.granted ?? []),
     since: held?.since ?? now().toISOString(),
     applied: held?.applied ?? [],
     file,
@@ -213,7 +219,12 @@ export function unreadPermits(store: PermitStore): UnreadPermit[] {
 
 /** The ev:"permit_state" of now. */
 export function permitStateEvent(store: PermitStore): PermitStateStreamEvent {
-  return { ev: "permit_state", unread: unreadPermits(store), applied: [...store.applied] };
+  return {
+    ev: "permit_state",
+    unread: unreadPermits(store),
+    granted: [...store.granted],
+    applied: [...store.applied],
+  };
 }
 
 /** The request `id` of session `sid`, when the store holds it. */
@@ -232,20 +243,26 @@ export type MarkPermitsReadResult =
   | { kind: "unchanged" }
   | { kind: "unknown"; ids: readonly string[] };
 
-/** Mark `ids` read, all of them or none, and write the file before saying
- * so. */
+/** Mark `ids` read, and granted too when `granted` (許可する copied the
+ * permission), all of them or none, and write the file before saying so. A
+ * request read already (by 既読, or an apply) can be granted later; nothing
+ * is ever taken back. */
 export async function markPermitsRead(
   store: PermitStore,
   ids: readonly string[],
+  granted = false,
 ): Promise<MarkPermitsReadResult> {
   const unread = new Set(unreadPermits(store).map((p) => p.tool_use_id));
   const known = (id: string): boolean =>
     store.read.has(id) || [...sessionsPermits(store)].some(([, permits]) => permits.has(id));
   const unknown = ids.filter((id) => !known(id));
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
-  const fresh = ids.filter((id) => unread.has(id));
+  const fresh = ids.filter((id) => unread.has(id) || (granted && !store.granted.has(id)));
   if (fresh.length === 0) return { kind: "unchanged" };
-  for (const id of fresh) store.read.add(id);
+  for (const id of fresh) {
+    store.read.add(id);
+    if (granted) store.granted.add(id);
+  }
   await writePermitState(store);
   return { kind: "read" };
 }
@@ -290,6 +307,7 @@ function writePermitState(store: PermitStore): Promise<void> {
   const text = `${JSON.stringify({
     since: store.since,
     read: [...store.read],
+    granted: [...store.granted],
     applied: store.applied,
   })}\n`;
   const tmp = path.join(path.dirname(store.file), `.permit-state.${String(process.pid)}.tmp`);

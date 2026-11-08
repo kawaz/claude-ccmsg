@@ -435,6 +435,10 @@ export interface AppState {
    * themselves are the `permit` calls in the transcripts. Replaced whole on
    * every push. */
   permitUnread: readonly UnreadPermit[];
+  /** The requests whose permission the person copied with 許可する, by
+   * their tool_use id (ev:"permit_state", DR-0040 §7): which bubbles show
+   * 許可済み. Replaced whole on every push. */
+  permitGranted: readonly string[];
   /** Every project permission the person applied (ev:"permit_state",
    * DR-0040 §12): which 許可する of a bubble's settings section shows
    * 適用済み. Replaced whole on every push. */
@@ -519,6 +523,7 @@ export function initialState(): AppState {
     agentSays: [],
     notificationLists: new Map(),
     permitUnread: [],
+    permitGranted: [],
     permitApplied: [],
     permitBangRuns: new Map(),
     requestOverrides: new Map(),
@@ -564,6 +569,7 @@ export type Action =
   | {
       type: "permit-state/loaded";
       unread: readonly UnreadPermit[];
+      granted: readonly string[];
       applied: readonly AppliedPermitPermission[];
     }
   // A 「! で実行」 was pressed (running), or the session did not take it
@@ -1179,7 +1185,12 @@ export function reducer(state: AppState, action: Action): AppState {
         }),
       };
     case "permit-state/loaded":
-      return { ...state, permitUnread: action.unread, permitApplied: action.applied };
+      return {
+        ...state,
+        permitUnread: action.unread,
+        permitGranted: action.granted,
+        permitApplied: action.applied,
+      };
     case "permit-bang/started":
       return {
         ...state,

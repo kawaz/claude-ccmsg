@@ -141,9 +141,10 @@ export interface WsHandle {
    * the loaded window. */
   notificationList(sid: string): Promise<ReplyOf<"notification_list">>;
   /** Mark requests for permission read by their `permit` calls' tool_use
-   * ids (DR-0040 §5): the bubble's 許可する. Non-optimistic, like sayRead —
-   * the daemon pushes the new ev:"permit_state". */
-  permitRead(ids: readonly string[]): Promise<ReplyOf<"permit_read">>;
+   * ids (DR-0040 §5): the bubble's 既読, and with `granted` its 許可する.
+   * Non-optimistic, like sayRead — the daemon pushes the new
+   * ev:"permit_state". */
+  permitRead(ids: readonly string[], granted?: boolean): Promise<ReplyOf<"permit_read">>;
   /** Read one attachment of session `sid`'s request `toolUseId` as it is now
    * (DR-0040 §3): the bubble's opening it. */
   permitAttachmentRead(
@@ -848,6 +849,7 @@ export function createWsClient(
       dispatch({
         type: "permit-state/loaded",
         unread: streamEv.unread,
+        granted: streamEv.granted,
         applied: streamEv.applied,
       });
       return;
@@ -1077,7 +1079,8 @@ export function createWsClient(
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
     notificationList: (sid) => send({ op: "notification_list", sid }),
-    permitRead: (ids) => send({ op: "permit_read", ids: [...ids] }),
+    permitRead: (ids, granted) =>
+      send({ op: "permit_read", ids: [...ids], ...(granted === true ? { granted } : {}) }),
     permitAttachmentRead: (sid, tool_use_id, path) =>
       send({ op: "permit_attachment_read", sid, tool_use_id, path }),
     permitSettingsRead: (sid, tool_use_id) =>
