@@ -1,6 +1,6 @@
 # DR-0050: TL ヘッダの 🔔🔐 バッジで、未読の say / 許可依頼だけを TL に出すフィルタを URL で切り替える
 
-- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、TL のツールバーと Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`、§10 の worker の say の `ev:"agent_says"` と合流)
+- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、TL のツールバーと Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`、§10 の worker の say の `ev:"agent_says"` と合流、§5 の op `say_list` と窓の外の say の合流)
 - Date: 2026-11-08
 
 ## Context
@@ -17,7 +17,7 @@
 
 増やしたくないもの:
 
-- 未読と既読の正本と経路 (daemon が持ち、`ev:"say_unread"` / `ev:"permit_requests"` / `ev:"permit_request"` で全タブに配る今の形のまま。webui 側に別の未読の状態を持たない)
+- 未読と既読の正本と経路 (daemon が持ち、`ev:"say_unread"` / `ev:"permit_requests"` / `ev:"permit_request"` で全タブに配る。webui 側に別の未読の状態を持たない)
 - TL の描画の経路 (フィルタ用に TL を別に描く部品を作らない)
 - URL に載らない画面の状態 (フィルタは URL が正本)
 
@@ -26,7 +26,7 @@
 - 🔔 の数は store の `unreadSays` のうち `session_id` がそのセッションのもの (Sessions 一覧の `sayUnreadBySid` と同じ数え方)。🔐 の数は store の `permitRequests` のうち `sid` がそのセッションで `read` が無いもの (`permitUnreadBySid`)
 - 許可依頼は main thread の分だけ (subagent の TL に出ない DR-0040 §7)。say は main と worker の合計 (§10)
 - 既読にする操作は今のまま: say はバブルの「既読」/「N 件すべて既読」(DR-0027 §6.3)、許可依頼は「許可する」(DR-0040 §7)。バッジは数を出してフィルタを切り替えるだけで、押しても既読にしない
-- protocol の変更は要らない (数・時刻・セッションは既存の push に揃っている)
+- 数・時刻・セッションは `say_unread` / `permit_requests` の push に揃っている。🔔 のフィルタに出す窓の外の say の本文は op `say_list` で聞く (§5)
 
 ### 3. TL ヘッダのバッジ
 
@@ -87,10 +87,16 @@ path でなく query にした根拠:
 - 🔔 のフィルタには PushNotification の 🔔 バブル (既読を持たない) も含める。見た目も役割も say と同じ「人への呼びかけ」 (§9 U3)
 - 隠すのは該当しない全ての子: fold group、user / assistant / ccmsg / bash / API error のバブル、fork の境目、応答中の行 (`TurnResponding`)。既読の失敗の 1 行 (`tl-say-error`) と下の「ありません」の 1 行は残す
 - 隠すだけなので、fold の開閉・翻訳タブ・raw の表示・読み込み済みの markdown と highlight は解除の後もそのまま残り、解除で描き直しが起きない (§6 の位置合わせが測る要素が同じ DOM のまま)
-- フィルタ中に該当するバブルが読み込み済みの範囲に 1 つも無い時は、隠した行の代わりに「読み込み済みの範囲に say はありません」(許可依頼なら「許可依頼はありません」) を 1 行出す。older は今と同じ位置に出し続け、押せば遡れる
-- 許可依頼は今と同じく記録の時刻で行の間に合流する (DR-0040 §7、`permitSlots`)。読み込み済みの範囲より古い依頼は先頭の枠に入るので、フィルタ中も常に見える
+- フィルタ中に該当するバブルが 1 つも無い時は、隠した行の代わりに「say はありません」(許可依頼なら「許可依頼はありません」) を 1 行出す。🔔 は下の `say_list` の答えが届いてから決める (届く前に出すと、すぐ消すことになる)。older は同じ位置に出し続け、押せば遡れる
+- 許可依頼は記録の時刻で行の間に合流する (DR-0040 §7、`permitSlots`)。読み込み済みの範囲より古い依頼は先頭の枠に入るので、フィルタ中も常に見える
 - 末尾追従 (`useStickToBottom`) はフィルタ中も同じに動く。新しい say が届けば末尾に足され、末尾を見ていれば追う
-- 🔔 のフィルタ中、そのセッションの未読の say (`say_unread` の `ts`) が読み込み済みの範囲の先頭の行より古ければ、含まれるまで older を自動で読む (先頭に着いたら止める)。未読を見つけるのがフィルタの目的で、窓の外の未読は見つけられないため。範囲の先頭より新しいのにまだ描かれていない未読は live で届く途中なので遡らない (§9 U8)
+- 🔔 のフィルタは、そのセッションの全 say (既読も含む。main と §10 の worker の say) を出す。読み込み済みの範囲 (窓) の中に say が無くても 0 件にしない (§9 U8)
+  - webui はフィルタに入るたびに op `say_list { sid }` (user role) を送り、答え `{ sid, says: [{ tool_use_id, ts, text, agent_id? }] }` (時刻順) を store に持つ。窓の中の行に居る say と、`ev:"agent_says"` で合流済みの worker の say を除いた残りを、許可依頼と同じ方式 (`permitSlots`) で時刻の位置に合流させ、同じ say バブルで描く。同じ say を二重に出さない
+  - 窓の外の say は窓の行ではないので位置 (選択) を持たない。older を読んで窓に入れば、窓の行のバブル (位置を持つ) に替わる
+  - 窓の外の say はフィルタだけのもので、フィルタを外すと出さない (`data-filter-only`)。§6 の「画面の一番上に見えているバブル」の基準にはしない (外すと消えるため)
+  - 「N 件すべて既読」の数え方 (DR-0027 §6.3) は、窓の外の say も含めて時刻順
+  - フィルタに入った後の新しい say は、main は live の行で窓に、worker は `ev:"agent_says"` で届くので、`say_list` の答えを追って更新しない
+  - daemon は初めて聞かれたセッションの transcript と、その subagent / teammate / workflow agent の transcript (`<sid>/subagents/agent-*.jsonl` と `<sid>/subagents/workflows/<runId>/agent-*.jsonl`) を全部読み、見つけた say を持つ。live でないセッションも同じ。以後は fold が読んだ main の行と push の worker の行から足し、読み直さない。持った say は daemon が止まるまで残り、未読と `ev:"agent_says"` に合流する (DR-0045 §7)
 - TL 内検索はフィルタ中は見えているものだけが対象で、say / 許可依頼のバブルは検索の単位を持たないので一致は 0 件になる (ハイライトも消え、外すと戻る)。👤 のナビは移動先のユーザ発言が隠れているので無効にする (§9 U9)
 - 許可依頼のバブルも transcript の項目と同じくクリックで選べる。位置の段には記録の id を `permit:<id>` で名乗らせ、バブルの外枠の `data-timeline-uuid` に載せる。§6 は say と同じに動く。記録が上限で消えると、窓の外の uuid と同じく head に戻る (§9 U7)
 
@@ -120,6 +126,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 - バッジ: TL のツールバーは 0 / 0 でも両方出る、Sessions の行は 0 / 0 で出ず片方だけ 1 以上で両方出る、0 の方にカウンターが無い、1 でも数字が出る、選択中の色が URL の `filter` に従う
 - URL: `filter` の往復 (parse → href)、未知の値と空の値が「なし」になる、agent の path で読まない、位置の選択・解除・head への戻しが `filter` を落とさない、バッジの href が「付ける / 外す」になる
 - 描画: フィルタ中に該当しない子が隠れ、該当する子が残る、該当が 0 の時の 1 行、解除で DOM の要素が同じまま (描き直されない)
+- 全 say: 🔔 のフィルタに入るたびに `say_list` を聞く、窓の外の say が時刻の位置に出る (older を読まない)、窓の中の say と合流済みの worker の say は二重に出ない、外すと窓の外の say が消える、「N 件すべて既読」が窓の外の say も数える。daemon は初回に本体と agent の transcript を全部読み、2 回目は読み直さず、fold と push の差分で増え、未読に同じ id を二重に数えない
 - 位置: 解除の前後で選択したバブルの距離が同じになる `scrollTop` の補正量 (dom test で上下に隠れていた行の高さを与えて確かめる)、補正の後に内容が伸びても距離が保たれる、人のスクロールで手放す
 - Sessions: 行のバッジの href がフィルタ付きの TL で、行の link が `/s/<sid>` のまま
 
@@ -136,7 +143,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 | U5 | フィルタに入る時の位置 | 選択を外して末尾から (`head?filter=…`) (§4、§6) |
 | U6 | 選択が無い時にフィルタを外した時の位置 | 末尾を見ていたら末尾、それ以外は画面の一番上に見えているバブルを保つ (§6) |
 | U7 | 許可依頼のバブルの選択の表し方 | 位置の段に `permit:<id>` (§5) |
-| U8 | 読み込み済みの範囲より古い未読の say | 含まれるまで older を自動で読む (§5) |
+| U8 | 読み込み済みの範囲の外の say | daemon が持つそのセッションの全 say (`say_list`) から、時刻の位置に合流させて出す。older は読まない (kawaz 2026-11-08) (§5) |
 | U9 | フィルタ中の TL 内検索と 👤 のナビ | 検索は見えているものだけが対象、👤 は無効 (§5) |
 | U10 | フィルタの切り替えの履歴 | replace。見え方なので履歴を積まず、戻るで表示が往復しない (§4) |
 | U11 | `/s/<sid>` の復元に `filter` を含めるか | 含めない (§4) |
@@ -150,11 +157,11 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 
 worker の say も親セッションの未読に数え、親セッションの TL に出す (kawaz 2026-11-08)。worker が say すると音声は鳴るので、TL にもバッジにも出ないと、人は誰に呼ばれたか分からない。
 
-- daemon: worker の say の行は worker 自身の transcript にあり、relay は読まない。module が push する行 (`agent_id` 付き) から say の tool_use を拾い、親セッションの sid の下に `{ agent_id, tool_use_id, ts, text }` で持つ。`ts` は push を受けた時刻。既読は main の say と同じ集合 (`say-read.json`) で、`say_read` もそのまま効く。セッションが live でなくなると消える (main の say と同じ)。push からだけ拾うので、daemon が止まっている間の worker の say は入らない
-- protocol (minor は上げない。daemon から webui への契約だけの変更で、webui の bundle は daemon が配るため。module が push する行と tool の schema も変わらない): `ev:"say_unread"` の要素に `agent_id` (worker の時だけ)。worker の say の全件 (既読も含む) を `ev:"agent_says"` `{ says: [{ session_id, agent_id, tool_use_id, ts, text }] }` で user role の購読者に送る (購読の時に全件、空でも。変わるたびに全件)。どれが未読かは `say_unread` が持つ
+- daemon: worker の say の行は worker 自身の transcript にあり、relay は読まない。module が push する行 (`agent_id` 付き) から say の tool_use を拾い、親セッションの sid の下に `{ agent_id, tool_use_id, ts, text }` で持つ。`ts` は push を受けた時刻。既読は main の say と同じ集合 (`say-read.json`) で、`say_read` もそのまま効く。push で拾った分はセッションが live でなくなると消える (main の say と同じ)。daemon が止まっている間の worker の say と、live でないセッションの worker の say は、§5 の `say_list` が worker の transcript を読んだ時に入る (行の時刻で持ち、daemon が止まるまで残る)
+- protocol (minor は上げない。daemon から webui への契約だけの変更で、webui の bundle は daemon が配るため。module が push する行と tool の schema も変わらない): `ev:"say_unread"` の要素に `agent_id` (worker の時だけ)。daemon が持つ worker の say の全件 (既読も含む。push で拾った分と、§5 の `say_list` が読んだ分) を `ev:"agent_says"` `{ says: [{ session_id, agent_id, tool_use_id, ts, text }] }` で user role の購読者に送る (購読の時に全件、空でも。変わるたびに全件)。どれが未読かは `say_unread` が持つ
 - webui: 親セッションの TL に、許可依頼のバブルと同じ方式 (`permitSlots`) で時刻の位置に合流させ、main の say と同じ say バブルで描く。既読ボタンと「N 件すべて既読」は main と worker を時刻順に合わせて数える。agent の TL は今のまま transcript から 🔕 で描く
 - 送り手: say バブルの送り手の行 (`say` の文字の横) に `🤖 <worker 名> (model/effort)` を足す。行は増やさない。名前と model/effort は session status の agent tree のノードを `agent_id` で引き、model/effort は `agentEngineLabel` と同じ綴り。ノードが無ければ `agent_id`、model が無ければ名前だけ
-- 🔔 の数 (TL のツールバーと Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ。§5 の自動の older は、worker の say を窓の外の未読として数えない (older を読んでも出てこないため)
+- 🔔 の数 (TL のツールバーと Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ
 - 許可依頼は今のまま (subagent からは使えない)
 
 ## Alternatives Considered
@@ -173,7 +180,9 @@ worker の say も親セッションの未読に数え、親セッションの T
 - フィルタ中は TL 内検索の一致が 0 件になる。フィルタを外すまで、検索語に当たる行は数えられない
 - 隠すだけの方式なので、フィルタ中も TL の全ての行は DOM に居続け、描画の重さはフィルタの無い時と変わらない
 - 許可依頼の記録は daemon の再起動を越えて残る (DR-0040 §4 の永続化)。セッションごとの上限で消えた依頼の `permit:<id>` の位置の URL は、窓の外と同じく head に戻る
-- 🔔 のフィルタの自動の older は、古い未読が多い長い transcript では 5 MB ずつ何度も読む (DR-0009 の older の上限)。未読が含まれた時点で止まる
+- 🔔 のフィルタに初めて入ったセッションは、daemon がその transcript と全ての agent の transcript を 1 回ずつ頭から読む (chunk ごとに event loop を明け渡す、DR-0029)。長いセッションでは答えまで時間がかかり、その間「say はありません」は出さない
+- daemon は `say_list` を聞かれたセッションの say (本文付き) を、daemon が止まるまで持つ。聞かれたセッションの数と say の数だけ増える
+- `say_list` で初めて見つかった worker の say (daemon が止まっている間のもの、live でないセッションのもの) は、その時から 🔔 の数に入る。フィルタに入る前の数は、それを含まない
 - `webui-url-grammar` の「ページ固有 query」に `filter` の行が増える
 
 ## 関連

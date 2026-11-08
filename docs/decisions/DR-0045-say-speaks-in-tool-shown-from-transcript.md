@@ -144,8 +144,8 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 
 - TL は main thread の assistant 行の tool_use `{name:"mcp__ccmsg-v1__say", input:{text}}` を、PushNotification と同じ境界行の 🔔 バブルとして描く。時刻と位置はその行のもの。照合は `packages/protocol/src/ccmsg-direct-transcript.ts` に置く
 - バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
-- 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの) から既読の集合を引いたもの
-- live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。live でないセッションの subagent / teammate の say は数えない (その行は agent の transcript にあり、この読みは本体の transcript だけを読む)
+- 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの、`say_list` を聞かれたセッションはその読みで見たもの) から既読の集合を引いたもの。同じ id は 1 件に数える
+- live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。この読みは本体の transcript だけを読むので、live でないセッションの subagent / teammate の say は数えない (次の `say_list` で数える)
 - daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
@@ -155,6 +155,11 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
   - 書き込みは `say_read` のたびに一時ファイルへ書いて rename し、応答はその後に返す
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外。say を transcript の行から描く以上、既読をメモリだけに持つと、再起動のたびに過去の say が全部未読に戻る
 - subagent / teammate の say も親セッションの未読に入り (`say_unread` の `agent_id`)、本文は `ev:"agent_says"` で webui に渡って親セッションの TL に時刻で合流する ([DR-0050](./DR-0050-timeline-notification-badges.md) §10)。その agent の TL では transcript の行から 🔕 で出る
+- op `say_list { sid }` (user role だけ、[DR-0050](./DR-0050-timeline-notification-badges.md) §5) は、そのセッションの全 say (既読も含む) を本文付きで時刻順に返す。daemon は初めて聞かれた時に、本体の transcript と、その subagent / teammate / workflow agent の transcript (`<sid>/subagents/agent-*.jsonl`、`<sid>/subagents/workflows/<runId>/agent-*.jsonl`) を頭から読む。live / live でないを問わない。agent の transcript は全ての行がその agent のもの (sidechain の行) なので、assistant 行の say の tool_use を全部拾い、agent の id は file 名から取る
+  - 読んだ結果は daemon が止まるまで持ち (セッションが live でなくなっても消さない)、以後は §3 の fold が読む main の行と、push の worker の行から足す。読み直さない。読んでいる間に来た行も、読みと重ねて足す (同じ id は 1 件)
+  - 先に push で拾っていた worker の say は、push の時刻のまま持つ (`ev:"agent_says"` と同じ時刻)
+  - 見つけた say は未読の集合 (上) と `ev:"agent_says"` に合流し、読みが終わった時に変わっていれば `ev:"say_unread"` / `ev:"agent_says"` を送り直す
+  - 本体の transcript が読めなければ `not_found` で断り、何も持たない (次に聞かれた時に読み直す)。agent の transcript で読めないものは飛ばす
 
 ### 8. 削るもの
 
