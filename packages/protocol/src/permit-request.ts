@@ -35,6 +35,29 @@ const AttachmentPathSchema = v.pipe(
   v.check((path) => path.startsWith("/"), "an attachment is an absolute path"),
 );
 
+/** A rule of `permissions.allow` as written in a project's
+ * `.claude/settings.local.json`: `Bash(<the command>)`, `Edit(<the path>)`.
+ * The exact form is recommended (an exact allow rule skips the classifier),
+ * and nothing tells it apart here: a `*` may be a wildcard or part of the
+ * command (`find -name \*.json`), which the person judges in the bubble. */
+const ProjectPermissionRuleSchema = PermitTextSchema;
+
+/** One change to the asking session's project `permissions.allow`
+ * (DR-0040 §12): a rule to add or one to remove, never both. */
+export const PermitProjectPermissionSchema = v.union(
+  [
+    v.strictObject({ add: ProjectPermissionRuleSchema }),
+    v.strictObject({ remove: ProjectPermissionRuleSchema }),
+  ],
+  "each project permission is { add } or { remove }, one of the two",
+);
+export type PermitProjectPermission = Output<typeof PermitProjectPermissionSchema>;
+
+/** The rule a project permission names, added or removed. */
+export function projectPermissionRule(permission: { add: string } | { remove: string }): string {
+  return "add" in permission ? permission.add : permission.remove;
+}
+
 /** One command to permit: exactly as it goes to Bash, and what it does in a
  * few words. */
 const PermitCommandEntries = {
@@ -59,6 +82,19 @@ const PermitEntries = {
   intents: v.optional(v.array(PermitTextSchema)),
   /** The commands to permit. */
   commands: v.optional(v.array(v.object(PermitCommandEntries))),
+  /** Rules to add to or remove from the project's
+   * `.claude/settings.local.json` `permissions.allow`, each applied when the
+   * person presses its own 許可する (DR-0040 §12). */
+  project_permissions: v.optional(
+    v.pipe(
+      v.array(PermitProjectPermissionSchema),
+      v.check(
+        (permissions) =>
+          new Set(permissions.map(projectPermissionRule)).size === permissions.length,
+        "each project permission rule is named once",
+      ),
+    ),
+  ),
   /** What the speakers say in place of the fixed sentence (DR-0040 §6): a
    * short call to the person. Not shown in the webui. */
   voice: v.optional(
@@ -72,19 +108,24 @@ const PermitEntries = {
   ),
 };
 
-/** Whether a request asks for anything: an intent or a command, by how many
- * of each it has. */
-function asksForSomething(intents: number | undefined, commands: number | undefined): boolean {
-  return (intents ?? 0) + (commands ?? 0) > 0;
+/** Whether a request asks for anything: an intent, a command or a project
+ * permission, by how many of each it has. */
+function asksForSomething(...counts: readonly (number | undefined)[]): boolean {
+  return counts.some((count) => (count ?? 0) > 0);
 }
-const ASKS_FOR_SOMETHING = "ask for at least one of intents and commands";
+const ASKS_FOR_SOMETHING = "ask for at least one of intents and commands, or project_permissions";
 
 /** The `permit` tool's input, picked out of the call (the engine puts its
  * own fields beside it, which `v.object` leaves out). */
 export const PermitToolInputSchema = v.pipe(
   v.object(PermitEntries),
   v.check(
-    (input) => asksForSomething(input.intents?.length, input.commands?.length),
+    (input) =>
+      asksForSomething(
+        input.intents?.length,
+        input.commands?.length,
+        input.project_permissions?.length,
+      ),
     ASKS_FOR_SOMETHING,
   ),
 );
@@ -99,7 +140,12 @@ export const PermitInputSchema = v.pipe(
     commands: v.optional(v.array(v.strictObject(PermitCommandEntries))),
   }),
   v.check(
-    (input) => asksForSomething(input.intents?.length, input.commands?.length),
+    (input) =>
+      asksForSomething(
+        input.intents?.length,
+        input.commands?.length,
+        input.project_permissions?.length,
+      ),
     ASKS_FOR_SOMETHING,
   ),
 );
@@ -113,11 +159,29 @@ export const PermitCommandSchema = v.object({
 });
 export type PermitCommand = Output<typeof PermitCommandSchema>;
 
+/** One project permission of a request as the daemon holds it: the change
+ * the session asked for, and when the person applied it (absent until then). */
+export const PermitProjectPermissionRecordSchema = v.union([
+  v.object({ add: v.string(), applied_at: v.optional(v.string()) }),
+  v.object({ remove: v.string(), applied_at: v.optional(v.string()) }),
+]);
+export type PermitProjectPermissionRecord = Output<typeof PermitProjectPermissionRecordSchema>;
+
+/** The project permissions of a request: the settings file they go into (the
+ * asking session's project directory's `.claude/settings.local.json`, fixed
+ * when the request is recorded) and the changes, in the order asked. */
+export const PermitProjectSettingsSchema = v.object({
+  path: v.string(),
+  permissions: v.array(PermitProjectPermissionRecordSchema),
+});
+export type PermitProjectSettings = Output<typeof PermitProjectSettingsSchema>;
+
 /** One request for permission as the daemon holds it. Held in memory only,
  * like a say (DR-0040 §4). The attachments are their paths: the daemon reads
- * one when the person opens it (permit_attachment_read). The one thing that
- * changes is `read`, which the person's 許可する sets; whether the person
- * permitted is not tracked. */
+ * one when the person opens it (permit_attachment_read). What changes is
+ * `read`, which the person's 許可する sets, and a project permission's
+ * `applied_at`, which its own 許可する sets; whether the person permitted the
+ * rest is not tracked. */
 export const PermitRequestRecordSchema = v.object({
   /** `<instance id>/<n>` (mid-issuer.ts). */
   id: v.string(),
@@ -131,6 +195,8 @@ export const PermitRequestRecordSchema = v.object({
   /** What the speakers say for the request in place of the fixed sentence;
    * not shown in the webui. */
   voice: v.optional(v.string()),
+  /** Present when the request asked for project permissions. */
+  project_settings: v.optional(PermitProjectSettingsSchema),
   /** Set when the person pressed 許可する on it (permit_request_read); never
    * cleared. What the Sessions list's 🔐 counts is the unread ones. */
   read: v.boolean(),
@@ -206,3 +272,18 @@ export const PermitAttachmentReadResponseSchema = v.object({
   attachment: PermitAttachmentSchema,
 });
 export type PermitAttachmentReadResponse = Output<typeof PermitAttachmentReadResponseSchema>;
+
+/** permit_settings_read's reply: the request's settings file as read now, in
+ * the shape of an attachment (`missing` when there is none yet). */
+export const PermitSettingsReadResponseSchema = PermitAttachmentReadResponseSchema;
+export type PermitSettingsReadResponse = Output<typeof PermitSettingsReadResponseSchema>;
+
+/** permit_permission_apply's reply: whether the file changed (an added rule
+ * already there, or a removed one not there, leaves it as it was), and the
+ * time the permission was applied at, which the record now carries. */
+export const PermitPermissionApplyResponseSchema = v.object({
+  ok: v.literal(true),
+  changed: v.boolean(),
+  applied_at: v.string(),
+});
+export type PermitPermissionApplyResponse = Output<typeof PermitPermissionApplyResponseSchema>;

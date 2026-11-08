@@ -52,3 +52,62 @@ describe("permit voice", () => {
     ).toBe(false);
   });
 });
+
+describe("permit project_permissions", () => {
+  // 何を保証するか: 1 要素は add か remove のどちらか 1 つで、書いた通りに読める。
+  // 無い時は今までどおり読める (任意の field)。
+  test("an entry is an add or a remove, and the field is optional", () => {
+    expect(toolIssues(REQUEST)).toEqual({});
+    const permissions = [{ add: "Bash(just deploy)" }, { remove: "Edit(/w/a.toml)" }];
+    const read = parseWith(PermitToolInputSchema, { ...REQUEST, project_permissions: permissions });
+    expect(read.ok && read.value.project_permissions).toEqual(permissions);
+    expect(parseWith(PermitInputSchema, { ...REQUEST, project_permissions: permissions }).ok).toBe(
+      true,
+    );
+  });
+
+  // 何を保証するか: add と remove の両方を持つ要素、どちらも持たない要素は
+  // その要素の位置で断られ、理由はどちらか 1 つと言う (黙ってどちらかに寄せない)。
+  test("an entry with both, or neither, is refused at the entry", () => {
+    for (const entry of [{ add: "Bash(a)", remove: "Bash(b)" }, {}, { allow: "Bash(a)" }]) {
+      expect(toolIssues({ ...REQUEST, project_permissions: [entry] })).toEqual({
+        "project_permissions.0": "each project permission is { add } or { remove }, one of the two",
+      });
+    }
+  });
+
+  // 何を保証するか: * を含む rule も読める。* がワイルドカードかコマンドの
+  // 文字列の一部 (find -name \*.json) かは形で分からないので、判断は人がバブルで
+  // 見てする。
+  test("a rule with a * reads, whatever the * means", () => {
+    for (const entry of [{ add: "Bash(find . -name \\*.json)" }, { remove: "Bash(git push:*)" }]) {
+      expect(toolIssues({ ...REQUEST, project_permissions: [entry] })).toEqual({});
+    }
+    expect(
+      parseWith(PermitInputSchema, { ...REQUEST, project_permissions: [{ add: "Bash(*)" }] }).ok,
+    ).toBe(true);
+  });
+
+  // 何を保証するか: 空・空白だけのルールと、同じルールを 2 度名指すもの (add と
+  // remove に分けても) は断られる (1 つのルールにボタンは 1 つ)。
+  test("an empty rule and a rule named twice are refused", () => {
+    expect(toolIssues({ ...REQUEST, project_permissions: [{ add: " " }] })).not.toEqual({});
+    expect(
+      toolIssues({
+        ...REQUEST,
+        project_permissions: [{ add: "Bash(a)" }, { remove: "Bash(a)" }],
+      }),
+    ).toEqual({ project_permissions: "each project permission rule is named once" });
+  });
+
+  // 何を保証するか: project_permissions だけの依頼も読める (毎回止められる操作の
+  // allow を足すことだけを求める依頼)。何も求めない依頼は今までどおり断られる。
+  test("project permissions alone are a request, and nothing at all is not", () => {
+    const alone = { blocked: "x", project_permissions: [{ add: "Bash(a)" }] };
+    expect(parseWith(PermitToolInputSchema, alone).ok).toBe(true);
+    expect(parseWith(PermitInputSchema, alone).ok).toBe(true);
+    expect(toolIssues({ blocked: "x", project_permissions: [] })).toEqual({
+      "": "ask for at least one of intents and commands, or project_permissions",
+    });
+  });
+});

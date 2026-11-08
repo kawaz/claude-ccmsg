@@ -11,7 +11,7 @@ import { LaunchFieldsSchema, LaunchInputSchema } from "./launch.ts";
 import { RequestOverridePatchSchema, RequestOverrideSchema } from "./request-override.ts";
 import type { Output } from "./parse.ts";
 import { PeerListInputSchema, SendMessageInputSchema } from "./peer-tools.ts";
-import { PermitInputSchema } from "./permit-request.ts";
+import { PermitInputSchema, PermitProjectPermissionSchema } from "./permit-request.ts";
 import {
   AgentAppendArgsSchema,
   PromptSendModeSchema,
@@ -163,6 +163,26 @@ export const PermitAttachmentReadRequestSchema = v.object({
   path: v.string(),
 });
 export type PermitAttachmentReadRequest = Output<typeof PermitAttachmentReadRequestSchema>;
+
+/** Read the settings file a request's project permissions go into, as it is
+ * now (DR-0040 §12): the webui's opening it. User role only; the file is the
+ * one the record names, never one the caller chooses. */
+export const PermitSettingsReadRequestSchema = v.object({
+  op: v.literal("permit_settings_read"),
+  id: v.string(),
+});
+export type PermitSettingsReadRequest = Output<typeof PermitSettingsReadRequestSchema>;
+
+/** Apply one project permission of a request (DR-0040 §12): the webui's
+ * 許可する beside it. User role only. `permission` must be one the request
+ * asked for, so the person writes only what the asking session put in front
+ * of them, into the file the record names. */
+export const PermitPermissionApplyRequestSchema = v.object({
+  op: v.literal("permit_permission_apply"),
+  id: v.string(),
+  permission: PermitProjectPermissionSchema,
+});
+export type PermitPermissionApplyRequest = Output<typeof PermitPermissionApplyRequestSchema>;
 
 /** Mark says as read (the webui's 既読 button, DR-0045 §7) by the ids of
  * their tool_use. User role only: the unread count exists for the person

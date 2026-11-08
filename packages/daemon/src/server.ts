@@ -142,11 +142,19 @@ import {
   unreadSays,
 } from "./say-unread.ts";
 import {
+  askedFor,
   createPermitRequestLog,
   permitRequestFields,
   readPermitAttachment,
   type PermitRequestLog,
 } from "./permit-requests.ts";
+import {
+  applyProjectPermission,
+  createKeyedQueue,
+  createSettingsDiffNotifier,
+  projectSettingsPath,
+  type SettingsDiffNotifier,
+} from "./project-permissions.ts";
 import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
 import {
   listPeers,
@@ -425,6 +433,12 @@ export interface Daemon {
   /** Requests for the person's permission, memory only (permit-requests.ts,
    * DR-0040). */
   permitRequests: PermitRequestLog;
+  /** The applies of project permissions, one at a time per settings file
+   * (project-permissions.ts, DR-0040 §12). */
+  settingsQueue: <T>(file: string, task: () => Promise<T>) => Promise<T>;
+  /** Tells a session what the person's presses did to its settings file,
+   * once per burst (DR-0040 §12). */
+  settingsDiffNotifier: SettingsDiffNotifier;
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
@@ -545,6 +559,10 @@ export function createDaemon(host: DaemonHost): Daemon {
     sayUnreadSnapshot: "",
     agentSaysSnapshot: "",
     permitRequests: createPermitRequestLog(createMidIssuer()),
+    settingsQueue: createKeyedQueue(),
+    settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
+      void tellSettingsDiff(daemon, sid, text);
+    }),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sessionOverrides: new SessionOverrides(),
@@ -604,6 +622,20 @@ function startLaunch(
   );
   daemon.launches.add(running);
   return { ok: true, running: running.finally(() => daemon.launches.delete(running)) };
+}
+
+/** What the person's presses did to a session's project settings, into the
+ * session's conversation from the daemon (DR-0040 §12). A notice that does
+ * not arrive (the session ended, has no module) is logged. */
+async function tellSettingsDiff(daemon: Daemon, sid: string, text: string): Promise<void> {
+  const result = await sendNotice(
+    { from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text },
+    noticeDeps(daemon),
+  );
+  daemon.log.info(
+    `permit_permission_apply: told ${sid} the settings diff: ${result.outcome}` +
+      (result.outcome === "not_delivered" ? ` (${result.reason})` : ""),
+  );
 }
 
 /** What a `launch` tool's launch that ended after its reply came to, into
@@ -1617,6 +1649,8 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "permit_request",
   "permit_request_read",
   "permit_attachment_read",
+  "permit_settings_read",
+  "permit_permission_apply",
   "subscribe",
   "rooms",
   "room_history",
@@ -2016,13 +2050,30 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'permit_request' requires session role");
         return;
       }
+      // Project permissions go into the asking session's project directory,
+      // fixed now: the record names the file the person is shown and writes.
+      const asked = req.permit.project_permissions ?? [];
+      const cwd = daemon.sessions.get(conn.identity.sid)?.meta.cwd ?? "";
+      if (asked.length > 0 && cwd === "") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "the session's project directory is not known, so project_permissions has no settings file to go into; ask without them",
+        );
+        return;
+      }
       const record = daemon.permitRequests.add(
-        permitRequestFields(conn.identity.sid, req.permit, nowIso()),
+        permitRequestFields(
+          conn.identity.sid,
+          req.permit,
+          nowIso(),
+          asked.length > 0 ? projectSettingsPath(cwd) : undefined,
+        ),
       );
       broadcastPermitRequest(daemon, record);
       daemon.speaker.speak(record.voice ?? PERMIT_SPEECH);
       daemon.log.info(
-        `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)}`,
+        `permit_request: by=${record.sid} id=${record.id} attachments=${String(record.attachments.length)} intents=${String(record.intents.length)} commands=${String(record.commands.length)} project_permissions=${String(record.project_settings?.permissions.length ?? 0)}`,
       );
       send(conn, { ok: true, id: record.id });
       return;
@@ -2050,6 +2101,92 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       send(conn, { ok: true, attachment: await readPermitAttachment(req.path) });
+      return;
+    }
+
+    case "permit_settings_read": {
+      // 設定ファイルは人がバブルの区画を開いた時に読む (user role 限定)。読める
+      // のは記録が名指すファイル (依頼したセッションのプロジェクトの
+      // .claude/settings.local.json) だけ (DR-0040 §12)。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_settings_read' requires user role");
+        return;
+      }
+      const record = daemon.permitRequests.find(req.id);
+      if (record === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+        return;
+      }
+      if (record.project_settings === undefined) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.id} asks for no project permission`,
+        );
+        return;
+      }
+      send(conn, {
+        ok: true,
+        attachment: await readPermitAttachment(record.project_settings.path),
+      });
+      return;
+    }
+
+    case "permit_permission_apply": {
+      // 人が 1 件の「許可する」を押した (user role 限定)。書けるのは記録にある
+      // 変更だけを、記録が名指すファイルにだけ。任意の文字列を書く口にしない
+      // (DR-0040 §12)。同じファイルへの適用は 1 つずつ。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'permit_permission_apply' requires user role");
+        return;
+      }
+      const record = daemon.permitRequests.find(req.id);
+      if (record === undefined) {
+        sendErr(conn, ErrorCode.invalid_args, `no permit request with id ${req.id}`);
+        return;
+      }
+      const settings = record.project_settings;
+      if (settings === undefined || !askedFor(settings.permissions, req.permission)) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `permit request ${req.id} asks for no project permission ${JSON.stringify(req.permission)}`,
+        );
+        return;
+      }
+      const applied = await daemon.settingsQueue(settings.path, () =>
+        applyProjectPermission(settings.path, req.permission),
+      );
+      if (applied.kind !== "applied") {
+        daemon.log.warn(
+          `permit_permission_apply: ${settings.path}: ${applied.kind}: ${applied.reason}`,
+        );
+        sendErr(
+          conn,
+          applied.kind === "unreadable"
+            ? ErrorCode.settings_unreadable
+            : ErrorCode.settings_write_failed,
+          applied.kind === "unreadable"
+            ? `${settings.path} does not read as settings, so nothing was written: ${applied.reason}`
+            : `${settings.path} could not be written: ${applied.reason}`,
+        );
+        return;
+      }
+      const at = nowIso();
+      const marked = daemon.permitRequests.markApplied(req.id, req.permission, at);
+      if (marked !== undefined) broadcastPermitRequest(daemon, marked);
+      if (applied.changed) {
+        daemon.settingsDiffNotifier.applied(
+          record.sid,
+          settings.path,
+          applied.before,
+          applied.after,
+        );
+      }
+      daemon.log.info(
+        `permit_permission_apply: id=${req.id} ${"add" in req.permission ? "add" : "remove"} changed=${String(applied.changed)} file=${settings.path}`,
+      );
+      send(conn, { ok: true, changed: applied.changed, applied_at: at });
       return;
     }
 
@@ -3400,6 +3537,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   }
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
+  daemon.settingsDiffNotifier.stop();
   daemon.translator.stop();
   stopAllRelays(daemon.transcriptRelay);
   stopAllSessionStatus(daemon.sessionStatus);

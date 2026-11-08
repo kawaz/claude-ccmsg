@@ -2809,6 +2809,14 @@ describe("the ccmsg tools", () => {
             required: ["command"],
           },
         },
+        project_permissions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { add: { type: "string" }, remove: { type: "string" } },
+          },
+          description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)",
+        },
         voice: { type: "string", description: "日本語" },
       },
       required: ["blocked"],
@@ -3317,6 +3325,34 @@ describe("the ccmsg tools", () => {
     };
     expect(await callTool(fake, "mcp__ccmsg-v1__permit", permit)).toBe("許可依頼を出した");
     expect(seen).toEqual([JSON.stringify(permit)]);
+  });
+
+  // 何を保証するか: project_permissions は依頼の一部として sidecar permit の
+  // 標準入力に渡る (* を含む rule もそのまま。判断は人がバブルで見てする)。
+  // add と remove の両方を持つ要素は入口で断り、何も起こさない。
+  test("a permit hands its project permissions on, and refuses an entry with both", async () => {
+    const seen: (string | undefined)[] = [];
+    const fake = toolFake(async (_argv, init) => {
+      seen.push(init?.stdin);
+      return printing({ ok: true, id: "0f0f/1" })();
+    });
+    const permit = {
+      blocked: "`just deploy` が止められた",
+      commands: [{ command: "just deploy" }],
+      project_permissions: [
+        { add: "Bash(just deploy)" },
+        { add: "Bash(find . -name \\*.json)" },
+        { remove: "Bash(just deploy-old)" },
+      ],
+    };
+    expect(await callTool(fake, "mcp__ccmsg-v1__permit", permit)).toBe("許可依頼を出した");
+    expect(seen).toEqual([JSON.stringify(permit)]);
+    for (const project_permissions of [[{ add: "Bash(a)", remove: "Bash(b)" }], [{}]]) {
+      expect(
+        await callTool(fake, "mcp__ccmsg-v1__permit", { ...permit, project_permissions }),
+      ).toContain("permit の入力が形に合わない");
+    }
+    expect(seen).toHaveLength(1);
   });
 
   // Nothing to permit, a path that is not absolute, a field of another

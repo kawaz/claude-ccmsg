@@ -144,6 +144,28 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "permit_attachment_read", path: "/w/policy.json" },
     ],
   },
+  permit_settings_read: {
+    ok: { op: "permit_settings_read", id: "0f0f/1" },
+    bad: [{ op: "permit_settings_read" }],
+  },
+  permit_permission_apply: {
+    ok: {
+      op: "permit_permission_apply",
+      id: "0f0f/1",
+      permission: { add: "Bash(just deploy)" },
+    },
+    bad: [
+      { op: "permit_permission_apply", id: "0f0f/1" },
+      { op: "permit_permission_apply", permission: { add: "Bash(just deploy)" } },
+      // One of add and remove, exactly.
+      { op: "permit_permission_apply", id: "0f0f/1", permission: {} },
+      {
+        op: "permit_permission_apply",
+        id: "0f0f/1",
+        permission: { add: "Bash(a)", remove: "Bash(b)" },
+      },
+    ],
+  },
   permit_request_read: {
     ok: { op: "permit_request_read", ids: ["0f0f/1"] },
     bad: [

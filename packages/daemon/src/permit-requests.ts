@@ -9,7 +9,10 @@ import {
   type PermitAttachment,
   type PermitAttachmentUnreadable,
   type PermitInput,
+  type PermitProjectPermission,
+  type PermitProjectPermissionRecord,
   type PermitRequestRecord,
+  projectPermissionRule,
 } from "@ccmsg/protocol";
 
 /** How many requests the daemon keeps. The oldest goes first once a new one
@@ -35,6 +38,15 @@ export interface PermitRequestLog {
   find(id: string): PermitRequestRecord | undefined;
   /** Mark the records `ids` read, all of them or none. */
   markRead(ids: readonly string[]): MarkPermitReadResult;
+  /** Mark the project permission `permission` of the record `id` applied at
+   * `at`, and the record read (the person has acted on it, as with 許可する),
+   * and return the record; undefined when no record `id` is held (it went out
+   * by the bound while the file was written). */
+  markApplied(
+    id: string,
+    permission: PermitProjectPermission,
+    at: string,
+  ): PermitRequestRecord | undefined;
   /** Every request held, oldest first. */
   snapshot(): readonly PermitRequestRecord[];
 }
@@ -67,10 +79,50 @@ export function createPermitRequestLog(
       });
       return { kind: "read", changed };
     },
+    markApplied(id, permission, at) {
+      let marked: PermitRequestRecord | undefined;
+      records = records.map((r) => {
+        if (r.id !== id || r.project_settings === undefined) return r;
+        const settings = r.project_settings;
+        marked = {
+          ...r,
+          read: true,
+          project_settings: {
+            ...settings,
+            permissions: settings.permissions.map((asked) =>
+              sameChange(asked, permission) ? { ...asked, applied_at: at } : asked,
+            ),
+          },
+        };
+        return marked;
+      });
+      return marked;
+    },
     snapshot() {
       return records;
     },
   };
+}
+
+/** Whether `asked` is the change `permission`: the same rule, added or
+ * removed alike. */
+function sameChange(
+  asked: PermitProjectPermissionRecord,
+  permission: PermitProjectPermission,
+): boolean {
+  return (
+    "add" in asked === "add" in permission &&
+    projectPermissionRule(asked) === projectPermissionRule(permission)
+  );
+}
+
+/** Whether a request asked for the change `permission` among its project
+ * permissions `asked` (the person applies only what the session asked). */
+export function askedFor(
+  asked: readonly PermitProjectPermissionRecord[],
+  permission: PermitProjectPermission,
+): boolean {
+  return asked.some((held) => sameChange(held, permission));
 }
 
 /** Why an attachment that failed to open or read cannot be shown, by its
@@ -131,12 +183,16 @@ export async function readPermitAttachment(path: string): Promise<PermitAttachme
 }
 
 /** A request as the daemon records it for session `sid`: the fields an
- * absent list leaves out as empty lists. */
+ * absent list leaves out as empty lists, and the project permissions (none
+ * applied yet) with `settingsPath`, the file they go into, when it asked for
+ * any. */
 export function permitRequestFields(
   sid: string,
   permit: PermitInput,
   ts: string,
+  settingsPath?: string,
 ): Omit<PermitRequestRecord, "id" | "read"> {
+  const asked = permit.project_permissions ?? [];
   return {
     sid,
     ts,
@@ -145,5 +201,8 @@ export function permitRequestFields(
     intents: permit.intents ?? [],
     commands: permit.commands ?? [],
     ...(permit.voice !== undefined ? { voice: permit.voice } : {}),
+    ...(settingsPath !== undefined && asked.length > 0
+      ? { project_settings: { path: settingsPath, permissions: [...asked] } }
+      : {}),
   };
 }

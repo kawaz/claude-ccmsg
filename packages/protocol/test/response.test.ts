@@ -245,6 +245,13 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     },
     { ok: true, attachment: { path: "/w/b", read: false, reason: "not_text" } },
   ],
+  permit_settings_read: [
+    {
+      ok: true,
+      attachment: { path: "/w/.claude/settings.local.json", read: false, reason: "missing" },
+    },
+  ],
+  permit_permission_apply: [{ ok: true, changed: true, applied_at: "2026-11-08T07:00:00.000Z" }],
   subscribe: [{ ok: true, subscribed: true }],
   read: [
     {

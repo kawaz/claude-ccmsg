@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 0 };
+var PROTOCOL_VERSION = { major: 2, minor: 1 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -2368,6 +2368,14 @@ var PERMIT_ATTACHMENTS_MAX = 16;
 var PermitTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var PERMIT_VOICE_MAX_LENGTH = 80;
 var AttachmentPathSchema = pipe(string(), check((path) => path.startsWith("/"), "an attachment is an absolute path"));
+var ProjectPermissionRuleSchema = PermitTextSchema;
+var PermitProjectPermissionSchema = union([
+  strictObject({ add: ProjectPermissionRuleSchema }),
+  strictObject({ remove: ProjectPermissionRuleSchema })
+], "each project permission is { add } or { remove }, one of the two");
+function projectPermissionRule(permission) {
+  return "add" in permission ? permission.add : permission.remove;
+}
 var PermitCommandEntries = {
   command: PermitTextSchema,
   description: optional(PermitTextSchema)
@@ -2377,21 +2385,30 @@ var PermitEntries = {
   attachments: optional(pipe(array(AttachmentPathSchema), maxLength(PERMIT_ATTACHMENTS_MAX, `at most ${PERMIT_ATTACHMENTS_MAX} attachments`), check((paths) => new Set(paths).size === paths.length, "each attachment is named once"))),
   intents: optional(array(PermitTextSchema)),
   commands: optional(array(object(PermitCommandEntries))),
+  project_permissions: optional(pipe(array(PermitProjectPermissionSchema), check((permissions) => new Set(permissions.map(projectPermissionRule)).size === permissions.length, "each project permission rule is named once"))),
   voice: optional(pipe(PermitTextSchema, maxLength(PERMIT_VOICE_MAX_LENGTH, `voice is a short call of at most ${PERMIT_VOICE_MAX_LENGTH} characters`)))
 };
-function asksForSomething(intents, commands) {
-  return (intents ?? 0) + (commands ?? 0) > 0;
+function asksForSomething(...counts) {
+  return counts.some((count) => (count ?? 0) > 0);
 }
-var ASKS_FOR_SOMETHING = "ask for at least one of intents and commands";
-var PermitToolInputSchema = pipe(object(PermitEntries), check((input) => asksForSomething(input.intents?.length, input.commands?.length), ASKS_FOR_SOMETHING));
+var ASKS_FOR_SOMETHING = "ask for at least one of intents and commands, or project_permissions";
+var PermitToolInputSchema = pipe(object(PermitEntries), check((input) => asksForSomething(input.intents?.length, input.commands?.length, input.project_permissions?.length), ASKS_FOR_SOMETHING));
 var PermitInputSchema = pipe(strictObject({
   ...PermitEntries,
   commands: optional(array(strictObject(PermitCommandEntries)))
-}), check((input) => asksForSomething(input.intents?.length, input.commands?.length), ASKS_FOR_SOMETHING));
+}), check((input) => asksForSomething(input.intents?.length, input.commands?.length, input.project_permissions?.length), ASKS_FOR_SOMETHING));
 var PermitInputTextSchema = jsonText(PermitInputSchema);
 var PermitCommandSchema = object({
   command: string(),
   description: optional(string())
+});
+var PermitProjectPermissionRecordSchema = union([
+  object({ add: string(), applied_at: optional(string()) }),
+  object({ remove: string(), applied_at: optional(string()) })
+]);
+var PermitProjectSettingsSchema = object({
+  path: string(),
+  permissions: array(PermitProjectPermissionRecordSchema)
 });
 var PermitRequestRecordSchema = object({
   id: string(),
@@ -2402,6 +2419,7 @@ var PermitRequestRecordSchema = object({
   intents: array(string()),
   commands: array(PermitCommandSchema),
   voice: optional(string()),
+  project_settings: optional(PermitProjectSettingsSchema),
   read: boolean()
 });
 var PermitRequestResponseSchema = object({
@@ -2437,6 +2455,11 @@ var PermitAttachmentSchema = variant("read", [
 var PermitAttachmentReadResponseSchema = object({
   ok: literal(true),
   attachment: PermitAttachmentSchema
+});
+var PermitPermissionApplyResponseSchema = object({
+  ok: literal(true),
+  changed: boolean(),
+  applied_at: string()
 });
 
 var PERMIT_TIMEOUT_MS = 30000;
@@ -2571,6 +2594,21 @@ var TOOL_INPUT_SCHEMAS = {
             "command"
           ]
         }
+      },
+      project_permissions: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            add: {
+              type: "string"
+            },
+            remove: {
+              type: "string"
+            }
+          }
+        },
+        description: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)"
       },
       voice: {
         type: "string",

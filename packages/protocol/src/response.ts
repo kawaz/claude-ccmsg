@@ -40,8 +40,10 @@ import { LaunchToolResponseSchema, SessionLaunchResponseSchema } from "./launch.
 import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
 import {
   PermitAttachmentReadResponseSchema,
+  PermitPermissionApplyResponseSchema,
   PermitRequestReadResponseSchema,
   PermitRequestResponseSchema,
+  PermitSettingsReadResponseSchema,
 } from "./permit-request.ts";
 import {
   UserMessageResponseSchema,
@@ -99,6 +101,8 @@ export const RESPONSE_SCHEMAS = {
   permit_request: PermitRequestResponseSchema,
   permit_request_read: PermitRequestReadResponseSchema,
   permit_attachment_read: PermitAttachmentReadResponseSchema,
+  permit_settings_read: PermitSettingsReadResponseSchema,
+  permit_permission_apply: PermitPermissionApplyResponseSchema,
   subscribe: SubscribeAckSchema,
   read: ReadResponseSchema,
   room_history: RoomHistoryResponseSchema,

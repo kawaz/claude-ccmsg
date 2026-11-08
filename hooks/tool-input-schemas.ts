@@ -26,6 +26,8 @@ import { PermitToolInputSchema } from "@ccmsg/protocol/permit-request";
  * list is what it holds, of an object its fields and which are required). */
 function fieldShape(field: JsonSchema): JsonSchema {
   const items = field.items;
+  const options = objectOptions(field);
+  if (options !== null) return objectsShape(options);
   return {
     ...(field.type !== undefined ? { type: field.type } : {}),
     ...(field.enum !== undefined ? { enum: field.enum } : {}),
@@ -48,6 +50,29 @@ function objectShape(field: JsonSchema): JsonSchema {
       ? { required: field.required }
       : {}),
   };
+}
+
+/** The options of a field that is one of several objects (a valibot union of
+ * objects, `anyOf` in JSON Schema), or null when it is not that. */
+function objectOptions(field: JsonSchema): JsonSchema[] | null {
+  const options = field.anyOf;
+  if (options === undefined || options.length === 0) return null;
+  const objects = options.filter(
+    (option): option is JsonSchema => typeof option === "object" && option.properties !== undefined,
+  );
+  return objects.length === options.length ? objects : null;
+}
+
+/** One of several objects, shown as one object: every option's fields, and
+ * as required only what every option requires. Which fields go together is
+ * a rule of the handler's schema, like the other combinations it keeps. */
+function objectsShape(options: readonly JsonSchema[]): JsonSchema {
+  const properties: Record<string, JsonSchema> = {};
+  for (const option of options) Object.assign(properties, objectShape(option).properties);
+  const required = (options[0]?.required ?? []).filter((name) =>
+    options.every((option) => option.required?.includes(name) === true),
+  );
+  return { type: "object", properties, ...(required.length > 0 ? { required } : {}) };
 }
 
 /** The object `schema` reads, as the model is shown it: each field's type and
@@ -96,6 +121,9 @@ export function toolInputSchemas(): {
     say: toolInputSchemaOf(SayToolInputSchema, { text: "日本語" }),
     peers: toolInputSchemaOf(PeersToolInputSchema),
     launch: toolInputSchemaOf(LaunchFieldsSchema, { resume: "Session id to resume" }),
-    permit: toolInputSchemaOf(PermitToolInputSchema, { voice: "日本語" }),
+    permit: toolInputSchemaOf(PermitToolInputSchema, {
+      voice: "日本語",
+      project_permissions: "完全一致形を推奨 (完全一致形の allow は classifier を通らない)",
+    }),
   };
 }

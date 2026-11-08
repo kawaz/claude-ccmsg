@@ -308,5 +308,12 @@ export const ErrorCode = {
   // refused `$.command.run`, or no answer came in time, so whether it will be
   // renamed is not known. The msg says which.
   rename_failed: "rename_failed",
+  // permit_permission_apply (DR-0040 §12): the project's settings file is not
+  // JSON, or its `permissions.allow` is not a list of strings. Nothing was
+  // written; the msg says what does not read.
+  settings_unreadable: "settings_unreadable",
+  // permit_permission_apply: reading or writing the settings file failed
+  // otherwise (permission, a directory in the way). The msg carries the error.
+  settings_write_failed: "settings_write_failed",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

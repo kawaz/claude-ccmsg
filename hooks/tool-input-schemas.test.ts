@@ -107,6 +107,32 @@ describe("toolInputSchemaOf", () => {
       properties: { a: { type: "string" } },
     });
   });
+
+  // 何を保証するか: object のどれか 1 つ (valibot の union) の field は、各候補の
+  // field を並べた 1 つの object で見せ、全候補が要るものだけを required にする。
+  // どれを組み合わせるかは handler のスキーマの細則で、model には anyOf を見せない。
+  test("shows one of several objects as one object with every option's fields", () => {
+    const S = v.object({
+      changes: v.array(
+        v.union([
+          v.strictObject({ add: v.string(), why: v.string() }),
+          v.strictObject({ remove: v.string(), why: v.string() }),
+        ]),
+      ),
+    });
+    expect(toolInputSchemaOf(S).properties?.changes).toEqual({
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          add: { type: "string" },
+          why: { type: "string" },
+          remove: { type: "string" },
+        },
+        required: ["why"],
+      },
+    });
+  });
 });
 
 describe("toolInputSchemas", () => {
