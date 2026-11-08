@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.219.0 <a id="v0.219.0"></a>
+
+2026-11-08
+
+- protocol の版を `major.minor` にした (この版で major 2)。major 違いの client (起動中の旧 module / sidecar を含む) は daemon が断り、Sessions に ⚠ が出る。**plugin を更新したら起動中のセッションを起動し直す**。minor 違い (tool / op の追加削除・schema 変更) は繋がるが、そのセッションの `ccmsg v…` (状態行 / Status / Sessions の △) が黄色になり、起動し直すと直る
+- webui の bundle と daemon の protocol の major が違う時はリロードの案内を赤で出す (版だけの違いは青のまま)
+- `just push` に `check-protocol-bumped` を足した: `packages/protocol/src/` を変えたら `PROTOCOL_VERSION` を上げないと止まる
+- 新しい CLI が旧 daemon に hello を断られた時は、ping で daemon の版を見て入れ替える
+
 ## v0.218.0 <a id="v0.218.0"></a>
 
 2026-11-08
