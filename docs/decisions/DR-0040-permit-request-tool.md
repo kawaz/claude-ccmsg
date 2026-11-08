@@ -139,6 +139,7 @@ plugin の skill (`skills/ccmsg/SKILL.md`) に `mcp__ccmsg-v1__permit` の節を
 kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を含まない) のものに、そのコードブロックの直下に小さいボタン「! で実行」を置く。押すと、依頼したセッションで、人が composer に `! <command>` と打って Enter したのと同じ結果になる (Claude Code の bash mode。コマンドが実行され、出力が会話に入る)。
 
 - 経路は人の入力と同じ op `user_prompt` に `mode: "bash"` を付けたもの ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3)。module が composer を空にし、自分の端末に `!` を打って bash mode に切り替わるのを待ち、コマンドを入れて Enter を送る。送る先は依頼の `sid`
+- bash mode を知らない前の版 (0.217.0 より前) の module のまま動いているセッションでは、module が `mode` を落とし、コマンドは通常の prompt として入る。前の版向けの分岐は置かず、plugin を更新したらセッションを起動し直す ([findings](../findings/2026-11-06-permit-bang-run.md) の 2026-11-08 の節)
 - 複数行の command には出さない。kawaz の裁定による UI の範囲で、bash mode が 1 行に限られるからではない (2.1.319 では複数行も実行された。[findings](../findings/2026-11-06-permit-bang-run.md))
 - 「許可する」とは独立: 押しても許可の文は写さず、既読にもせず、入力欄も開かない
 - 送っている間は押せない (送信中…)。結果の表示は入力欄の送信と同じ語彙: 受け付けられたら押した時刻と「出力はコマンドが終わると Timeline に出ます」を横に添える (`<bash-input>` と出力の行はコマンドが終わってから会話に入るので、長いコマンドでは TL に何も出ない間がある。二度押しの判断材料)。届かなかった・確かめられなかった時は入力欄と同じ注記 (`sessionInputNotice`) を出す

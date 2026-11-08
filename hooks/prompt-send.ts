@@ -33,10 +33,13 @@ export const SHELL_MODE_TIMEOUT_MS = 2_000;
 /** What the terminal's screen shows once the composer is in bash mode, as
  * hyoui's `wait:` reads the screen (its lines joined by `\n`, trailing blanks
  * dropped): the composer's top border ends with `─`, and the line under it
- * starts with `!` in bash mode where it starts with `❯` otherwise. Measured on
- * 2.1.319 both while idle and while a turn runs (with the queued-messages
- * placeholder in the composer). */
-export const SHELL_MODE_SCREEN = "─\\n!";
+ * starts with `!` and a no-break space (U+00A0) in bash mode where it starts
+ * with `❯` otherwise. A bash mode command already in the conversation is
+ * drawn as `!` and an ASCII space, so the no-break space keeps those rows
+ * from matching. Measured on 2.1.318 and 2.1.319 both while idle and while a
+ * turn runs (with the queued-messages placeholder in the composer). The
+ * pattern is hyoui's regex syntax (Rust `regex`), where `\x{a0}` is U+00A0. */
+export const SHELL_MODE_SCREEN = "─\\n!\\x{a0}";
 /** How long after Enter the prompt.submit of the filled text may take to go
  * through. Measured at 9 to 15 ms for a prompt typed while a tool runs
  * (DR-0039 §2); the margin is for a loaded machine. */

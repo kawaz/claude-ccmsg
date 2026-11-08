@@ -1206,7 +1206,7 @@ async function sweepGuided($) {
 
 var HYOUI_TIMEOUT_MS = 3000;
 var SHELL_MODE_TIMEOUT_MS = 2000;
-var SHELL_MODE_SCREEN = "─\\n!";
+var SHELL_MODE_SCREEN = "─\\n!\\x{a0}";
 var ACCEPT_WAIT_MS = 3000;
 function newPromptSendState() {
   return { queue: Promise.resolve() };

@@ -872,7 +872,7 @@ describe("handlePromptSend: a bash mode command", () => {
     const report = await handlePromptSend(fake.$, state, queuedBash(fake, state, "ls -la"));
     expect(report).toEqual({ outcome: "accepted" });
     expect(fake.runs).toEqual([
-      ["hyoui", "input", "term-1", "text:!", "wait:─\\n!", "--timeout", "1s"],
+      ["hyoui", "input", "term-1", "text:!", "wait:─\\n!\\x{a0}", "--timeout", "1s"],
       ["hyoui", "input", "term-1", "key:Enter"],
     ]);
     expect(fake.runs[0]).toEqual(hyouiShellModeArgv("term-1"));

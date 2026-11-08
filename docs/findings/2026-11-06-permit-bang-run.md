@@ -57,7 +57,7 @@
 
 ## 実装への示唆
 
-- 手順: 書きかけを読む → `$.prompt.fill({ text: "", mode: "replace" })` (空にし、shell mode なら通常に戻す。ダイアログ中ならここで断られる) → hyoui `text:!` と `wait:─\n!` → `$.prompt.fill({ text: コマンド, mode: "append" })` → hyoui `key:Enter`
+- 手順: 書きかけを読む → `$.prompt.fill({ text: "", mode: "replace" })` (空にし、shell mode なら通常に戻す。ダイアログ中ならここで断られる) → hyoui `text:!` と `wait:─\n!\x{a0}` (`!` の後の NBSP で履歴の行を外す。下の 2026-11-08 の節) → `$.prompt.fill({ text: コマンド, mode: "append" })` → hyoui `key:Enter`
 - 受け付けは `prompt.change` の `origin.kind === "clear"`。`<bash-input>` の `session.append` はコマンドが終わるまで来ないので、長いコマンドでは受け付けの待ちに間に合わない
 - 書きかけは `clear` の後に fill で戻せる。fill (replace) は shell mode を抜けるので、書きかけは通常の入力として戻る
 
@@ -79,3 +79,47 @@
 - ダイアログ中に `!` の打鍵が届いた時の振る舞い (手順では、その前の fill がダイアログで断られる)
 - transcript の閲覧 (ctrl+o) 等で composer が画面に無い時。`wait:` が当たらず timeout になると考えているが、見ていない
 - (b) を待たずに続けて打った時に `!` が末尾に付いた理由
+
+## 2026-11-08: 実環境で「! で実行」が素の prompt として入った件
+
+### 実環境の観測 (読むだけで取ったもの)
+
+kawaz の hyoui の下のセッション (Claude Code 2.1.318) に 2026-11-07 に「! で実行」を 3 回押した。daemon.log はどれも `session-input -> <sid> (bash): accepted`。
+
+| 時刻 (UTC) | セッションの状態 | transcript |
+|---|---|---|
+| 23:53:28 | idle | user 行 `llm-gateway daemon reload unstable` (`promptSource: typed`、`origin: human`)。`!` 無し、`<bash-input>` 無し |
+| 23:53:30 | 上の prompt の turn の実行中 | `queue-operation` (`enqueue`) と、turn に差し込まれた `queued_command` の attachment (`commandMode: "prompt"`) |
+| 23:58:42 | idle | user 行 `perl -0pi -e '…'` (`promptSource: typed`)。`!` 無し |
+
+- そのセッションの claude は 2026-11-06 12:04:38 JST に起動していた (`ps -o lstart`)。bash mode を入れた ccmsg 0.217.0 の公開は同日 14:42 JST
+- 同じセッションの transcript で、0.217.1 の導入後 (2026-11-07T01:30Z) に読まれた ccmsg skill の base dir は `plugins/cache/ccmsg-v1/ccmsg-v1/0.215.1/skills/ccmsg`。plugin root は起動時の 0.215.1 のままだった
+- 0.215.1 の `prompt.send` の args の schema は `{ text, override }` で、知らない欄 (`mode`) を拒まず落とす。module は fill (`replace`) と `key:Enter` だけを行い、`!` を打つ処理を持たない
+- daemon.log の `(bash)` は全期間でこの 3 件だけ
+- 同じ日の 23:58:07 に入った `!実行依頼を…` は webui からの通常の送信 (bash でない)。0.215.1 の module は `!` を打たないので module 由来ではない。先頭の `!` の出どころは特定していない
+
+### 隔離環境での再現
+
+隔離 daemon (0.217.1) と、hyoui の下で 58 桁 × 50 行の試験セッション (`--name "🤖ccmsg-verify-bang-*"`、Messages API は閉じたポート) で確かめた。`user_prompt` は daemon の socket に user role で直接送った。
+
+| module | Claude Code | `mode: "bash"` の `user_prompt` の結果 |
+|---|---|---|
+| 0.215.1 (plugin cache の写しを `--plugin-dir`) | 2.1.318 | `accepted`。transcript は `promptSource: typed` の user 行 `echo oldmod-bang-1`、画面は `❯ echo oldmod-bang-1`。実環境と同じ形 |
+| 作業コピー (0.217.1) | 2.1.318 | bash mode で実行された (`! echo newmod-bang-1` と `⎿ newmod-bang-1`) |
+
+
+### `wait:` の照合の範囲
+
+| 画面の行 | 先頭のバイト |
+|---|---|
+| bash mode の composer (idle、turn の実行中で待ちの列の薄字がある時の両方) | `21 c2 a0` (`!` と NBSP) |
+| 会話に入った bash mode のコマンドの行 (`! echo …`) | `21 20` (`!` と ASCII の空白) |
+
+- 通常の入力の時、`wait:─\n!\x{a0}` は timeout、`wait:(?m)^! ` は履歴の行に当たり、`wait:(?m)^!\x{a0}` は当たらない (2.1.318)
+- 履歴の bash の行の上は空行で、`─` で終わる行の直下ではなかった。`─\n!` が履歴の行に当たる画面は作れていないが、照合が composer の行に限られていないので、`!` の後の NBSP まで含めて composer の行に絞った
+
+### 結論と扱い
+
+- 実環境の失敗の原因は、plugin の更新前に起動して 0.215.1 の module のまま動いていたセッションに `mode: "bash"` を送り、その module が `mode` を落として通常の prompt として入れ、`accepted` を返したこと (上の表で再現済み)。hyoui の `wait:` の偽陽性は観測していない
+- 前の版の module 向けの分岐は置かない (kawaz 2026-11-08)。plugin を更新したら、そのセッションを起動し直す (DR-0040 §11)
+- module の `wait:` は `─\n!\x{a0}` にした (上の「照合の範囲」)。2.1.319 の作業コピーの module で、composer に書きかけ `draft 書きかけ` を置いて 2 回送り、1 回目 (idle) は `<bash-input>echo new319-bang-1</bash-input>` と出力、2 回目は 1 回目の後に始まった turn の実行中で、画面に履歴の `! echo new319-bang-1` がある状態で `! echo new319-bang-2` として待ちの列に入った (transcript は `queue-operation` の `enqueue`)。書きかけは戻った
