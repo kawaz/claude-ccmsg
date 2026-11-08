@@ -26,7 +26,6 @@ import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
-import { sayTotalsOf } from "./say-fixture.ts";
 import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
 import {
   exchange,
@@ -128,11 +127,7 @@ async function open(options: {
   requests?: readonly PermitRequestRecord[];
 }): Promise<{ root: HTMLElement; store: Store; ws: FakeTranscriptWs }> {
   const store = timelineStore();
-  store.dispatch({
-    type: "say-unread/loaded",
-    says: [...(options.says ?? [])],
-    totals: sayTotalsOf([...(options.says ?? []), ...(options.agentSays ?? [])]),
-  });
+  store.dispatch({ type: "say-unread/loaded", says: [...(options.says ?? [])] });
   store.dispatch({ type: "agent-says/loaded", says: [...(options.agentSays ?? [])] });
   store.dispatch({ type: "permit-requests/loaded", requests: [...(options.requests ?? [])] });
   await filterTo(store, options.filter);

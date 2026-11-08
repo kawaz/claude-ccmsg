@@ -146,7 +146,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - バブルの見た目と既読ボタンの規則は [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) §6.3 のまま (未読が複数ある時の最新の未読のボタンだけ「N 件すべて既読」、押した時に TL に出ている未読だけを既読にする)
 - 既読のキーは tool_use の id。未読は、daemon が持つ say の tool_use (main thread は §3 の追いつきと push、subagent / teammate は push で見たもの、live でないセッションは下の一回読みで見たもの) から既読の集合を引いたもの
 - live でないセッション (module が無い、旧版の module で断られた、終了した) の main thread の say は、そのセッションの status を一回読み (DR-0020、`getSessionStatus` の transcript の走査) で答える時に、同じ読みで数える。TL を開くと webui が `session_status_subscribe` を送るので、その時に未読と数が出る。読みの後に live になって fold が追いつくと、fold が引き継いで一回読みの分を捨てる (二重に数えない)。読みが終わった時に既に live なら、一回読みの分は使わない。一回読みの分は daemon のメモリに持ち、セッションが live になるか daemon が止まるまで残る。live でないセッションの subagent / teammate の say は数えない (その行は agent の transcript にあり、この読みは本体の transcript だけを読む)
-- daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }], totals: [{ session_id, count }] }` で送る。`totals` は既読も含めたセッションごとの say の数 (バッジを出すかの源、[DR-0050](./DR-0050-timeline-notification-badges.md) §3)。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
+- daemon は user role の購読者に未読を `ev:"say_unread"` `{ says: [{ session_id, tool_use_id, ts }] }` で送る。購読の時に全件 (空でも)、変わるたびに全件送る。session には送らない
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
 - daemon の終了の途中では `ev:"say_unread"` を送らない。終了で fold を閉じると未読が空になり、タブは次の daemon が未読を送るまで全部の say を 🔕 として見せてしまう

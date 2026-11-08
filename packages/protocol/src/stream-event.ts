@@ -31,26 +31,14 @@ export const UnreadSaySchema = v.object({
 });
 export type UnreadSay = Output<typeof UnreadSaySchema>;
 
-/** How many says a session has, read or not (DR-0050 §3): its main thread's
- * and its subagents' and teammates' that the daemon holds. A session the
- * daemon holds none of is absent. */
-export const SessionSayTotalSchema = v.object({
-  session_id: v.string(),
-  count: v.pipe(v.number(), v.integer(), v.minValue(1)),
-});
-export type SessionSayTotal = Output<typeof SessionSayTotalSchema>;
-
-/** Every say the person has not read, oldest first, and how many says each
- * session has, read or not (user-role subscribers only, same webui-only
- * posture as ev:"peers"). Sent at subscribe time, even when empty, and again
- * whenever either changes: always the full set, so a tab replaces what it
- * held. Never sent to a session: the session that spoke knows it spoke, and
- * reading is the person's gesture. */
+/** Every say the person has not read, oldest first (user-role subscribers
+ * only, same webui-only posture as ev:"peers"). Sent at subscribe time, even
+ * when empty, and again whenever the set changes: always the full set, so a
+ * tab replaces what it held. Never sent to a session: the session that spoke
+ * knows it spoke, and reading is the person's gesture. */
 export const SayUnreadStreamEventSchema = v.object({
   ev: v.literal("say_unread"),
   says: v.array(UnreadSaySchema),
-  /** Whether a session's 🔔 shows at all: a say read is still a say. */
-  totals: v.array(SessionSayTotalSchema),
 });
 export type SayUnreadStreamEvent = Output<typeof SayUnreadStreamEventSchema>;
 

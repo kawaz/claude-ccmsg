@@ -137,7 +137,6 @@ import {
   loadSayUnreadStore,
   markSaysRead,
   sayScan,
-  sayTotals,
   sayUnreadFold,
   agentSays,
   takeAgentSaysOf,
@@ -1409,14 +1408,9 @@ function sendSayUnread(daemon: Daemon, conn: Conn): void {
   send(conn, { ev: "agent_says", says: agentSays(daemon.sayUnread) });
 }
 
-/** The ev:"say_unread" of now: the unread says and every session's count of
- * says, read or not. */
+/** The ev:"say_unread" of now. */
 function sayUnreadEvent(daemon: Daemon): SayUnreadStreamEvent {
-  return {
-    ev: "say_unread",
-    says: unreadSays(daemon.sayUnread),
-    totals: sayTotals(daemon.sayUnread),
-  };
+  return { ev: "say_unread", says: unreadSays(daemon.sayUnread) };
 }
 
 /** Push the unread says to every user-role subscriber when they moved.

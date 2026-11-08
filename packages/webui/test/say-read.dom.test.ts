@@ -22,7 +22,6 @@ import { useStoreState } from "../src/client/useStore.ts";
 import type { Store } from "../src/client/useStore.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import { withDom } from "./dom.ts";
-import { sayTotalsOf } from "./say-fixture.ts";
 import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore, uuidOf } from "./timeline-harness.ts";
 
@@ -83,7 +82,7 @@ async function openWith(
   agent: AgentRef | null = null,
 ): Promise<{ root: HTMLElement; store: Store; acks: Array<readonly string[]> }> {
   const store = timelineStore(agent === null ? {} : { agent });
-  store.dispatch({ type: "say-unread/loaded", says: [...unread], totals: sayTotalsOf(unread) });
+  store.dispatch({ type: "say-unread/loaded", says: [...unread] });
   const ws = new FakeTranscriptWs(store);
   const acks: Array<readonly string[]> = [];
   const handle = {
@@ -94,7 +93,6 @@ async function openWith(
       store.dispatch({
         type: "say-unread/loaded",
         says: store.getState().unreadSays.filter((say) => !targets.has(say.tool_use_id)),
-        totals: store.getState().sayTotals,
       });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },
@@ -243,11 +241,7 @@ describe("say bubbles", () => {
       [unreadOf(1), unreadOf(2)],
     );
     await act(() => {
-      store.dispatch({
-        type: "say-unread/loaded",
-        says: [unreadOf(2)],
-        totals: store.getState().sayTotals,
-      });
+      store.dispatch({ type: "say-unread/loaded", says: [unreadOf(2)] });
     });
     expect(acks).toEqual([]);
     expect(icons(root)).toEqual([

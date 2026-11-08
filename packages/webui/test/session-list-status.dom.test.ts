@@ -5,13 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type {
-  AgentInfo,
-  PeerInfo,
-  PermitRequestRecord,
-  SessionSayTotal,
-  UnreadSay,
-} from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { renameNoteOf, SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
@@ -19,7 +13,6 @@ import { createStore } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { instanceOf } from "./helpers.ts";
-import { sayTotalsOf } from "./say-fixture.ts";
 
 withDom();
 
@@ -66,12 +59,11 @@ async function mount(
   agents: AgentInfo[],
   permitRequests: PermitRequestRecord[] = [],
   unreadSays: UnreadSay[] = [],
-  sayTotals: SessionSayTotal[] = sayTotalsOf(unreadSays),
 ): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
   store.dispatch({ type: "permit-requests/loaded", requests: permitRequests });
-  store.dispatch({ type: "say-unread/loaded", says: unreadSays, totals: sayTotals });
+  store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);
@@ -167,11 +159,11 @@ describe("renaming from the Sessions list", () => {
   });
 });
 
-// A session that asked the person's permission (DR-0040) or spoke to them
-// (say, DR-0045 §7) carries the 🔔🔐 badges by the TL header's rule (DR-0050
-// §3, §7): both while it has either at all, read or not, the unread count as
-// a counter over the emoji from 1, none when it has neither. Each badge opens
-// the session's Timeline filtered to its kind, apart from the row's own link.
+// A session waiting for the person's permission (DR-0040) or that spoke to
+// them (say, DR-0045 §7) carries the 🔔🔐 badges by the TL header's rule
+// (DR-0050 §7): both when either kind has something unread, the count as a
+// counter over the emoji from 1, none at 0 / 0. Each badge opens the
+// session's Timeline filtered to its kind, apart from the row's own link.
 describe("the Sessions list's 🔔🔐 badges", () => {
   const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
     id,
@@ -197,14 +189,13 @@ describe("the Sessions list's 🔔🔐 badges", () => {
     );
   }
 
-  test("show both kinds while either is there, read or not, counting the unread from one", async () => {
+  test("show both kinds when either is unread, counting from one", async () => {
     const root = await mount(
-      [peer(RESPONDING), peer(IDLE), peer(BARE), peer(WAITING)],
+      [peer(RESPONDING), peer(IDLE), peer(BARE)],
       [
         agent(RESPONDING, { status: "idle", turn: { state: "idle", since: SINCE } }),
         agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
         agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
-        agent(WAITING, { status: "idle", turn: { state: "idle", since: SINCE } }),
       ],
       [
         request("i/1", RESPONDING, false),
@@ -214,29 +205,14 @@ describe("the Sessions list's 🔔🔐 badges", () => {
         request("i/5", BARE, true),
       ],
       [say("toolu_2", IDLE)],
-      // IDLE has a read say beside the unread one; WAITING only read ones.
-      [
-        { session_id: IDLE, count: 2 },
-        { session_id: WAITING, count: 3 },
-      ],
     );
     expect(badges(root, RESPONDING)).toEqual(["🔔", "🔐1"]);
     expect(badges(root, IDLE)).toEqual(["🔔1", "🔐2"]);
-    // Everything read: the emoji stay, without counters.
-    expect(badges(root, BARE)).toEqual(["🔔", "🔐"]);
-    expect(badges(root, WAITING)).toEqual(["🔔", "🔐"]);
+    expect(badges(root, BARE)).toEqual([]);
     const permit = rowOf(root, IDLE).querySelector(".notif-badge-permit");
     expect(permit?.getAttribute("aria-label")).toBe(
       "未確認の許可依頼 2 件 — 押すと許可依頼だけを表示",
     );
-  });
-
-  test("a session with neither a say nor a request has no badges", async () => {
-    const root = await mount(
-      [peer(IDLE)],
-      [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
-    );
-    expect(badges(root, IDLE)).toEqual([]);
   });
 
   test("each badge opens the session's Timeline filtered to its kind, outside the row's link", async () => {

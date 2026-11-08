@@ -6,12 +6,14 @@ import type {
   ExternalFile,
   ExternalFileOrigin,
   PeerInfo,
+  PermitRequestRecord,
   ProtocolVersion,
   SessionApiError,
   SessionSearchHit,
   SessionSearchMatch,
   SessionSearchRequest,
   StaleClientInfo,
+  UnreadSay,
 } from "@ccmsg/protocol";
 import { formatProtocol, jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
@@ -197,6 +199,25 @@ export function splitRoomsByKind(rooms: RoomState[]): {
   const oneOnOne: RoomState[] = [];
   for (const room of rooms) (room.kind === "1on1" ? oneOnOne : flat).push(room);
   return { flat, oneOnOne };
+}
+
+/** Unread say count per session sid (DR-0045 §7), for the Sessions list's 🔔
+ * marker. A sid with nothing unread is absent. */
+export function sayUnreadBySid(says: readonly UnreadSay[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const say of says) out.set(say.session_id, (out.get(say.session_id) ?? 0) + 1);
+  return out;
+}
+
+/** Unread request-for-permission count per session sid (DR-0040), for the
+ * Sessions list's 🔐 marker. A sid with nothing unread is absent. */
+export function permitUnreadBySid(requests: readonly PermitRequestRecord[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const request of requests) {
+    if (request.read) continue;
+    out.set(request.sid, (out.get(request.sid) ?? 0) + 1);
+  }
+  return out;
 }
 
 /** Whether a room member (by sid) is currently reachable over an open ws

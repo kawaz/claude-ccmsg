@@ -1,36 +1,26 @@
 // The 🔔🔐 badges' rule (DR-0050 §3, §7), shared by the TL header and the
 // Sessions list:
-// - both badges show while the session has either kind at all, read or not,
-//   none when it has neither, and a badge selected as the filter keeps them
-//   shown with neither (§9 U4)
+// - a Sessions row shows both badges when either kind has something unread,
+//   none at 0 / 0 (the TL toolbar always shows them, timeline-toolbar-badges)
 // - the counter reads from 1, is absent at 0, and is `99+` past 99 (§9 U14)
 // - selecting a kind opens the tail with only that kind (§9 U5); pressing the
 //   selected one takes the filter off and leaves the position
-// - the counters are the session's unread says and unread requests; whether
-//   the badges show is how many there are, read or not
+// - the counts are the session's unread says and unread requests only
 import { describe, expect, test } from "bun:test";
-import type { PermitRequestRecord, SessionSayTotal, UnreadSay } from "@ccmsg/protocol";
+import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
 import { agentSayerLabel } from "../src/client/components/agent-tree-view.ts";
 import {
   badgeCounterText,
   badgeHref,
-  badgesShown,
-  notificationCountsBySid,
+  rowBadgesShown,
   notificationCountsOf,
 } from "../src/client/notification-badges.ts";
 
-/** A kind's count: `unread` of `total`. */
-const n = (unread: number, total: number) => ({ unread, total });
-
 describe("notification badges", () => {
-  test("show both while either is there, read or not, none with neither unless one is selected", () => {
-    expect(badgesShown({ say: n(0, 0), permit: n(0, 0) }, null)).toBe(false);
-    expect(badgesShown({ say: n(1, 1), permit: n(0, 0) }, null)).toBe(true);
-    expect(badgesShown({ say: n(0, 0), permit: n(1, 1) }, null)).toBe(true);
-    // Everything read is still there.
-    expect(badgesShown({ say: n(0, 2), permit: n(0, 0) }, null)).toBe(true);
-    expect(badgesShown({ say: n(0, 0), permit: n(0, 1) }, null)).toBe(true);
-    expect(badgesShown({ say: n(0, 0), permit: n(0, 0) }, "say")).toBe(true);
+  test("a Sessions row shows both when either is unread, none at 0 / 0", () => {
+    expect(rowBadgesShown({ say: 0, permit: 0 })).toBe(false);
+    expect(rowBadgesShown({ say: 1, permit: 0 })).toBe(true);
+    expect(rowBadgesShown({ say: 0, permit: 1 })).toBe(true);
   });
 
   test("the counter is absent at 0, the number from 1, and 99+ past 99", () => {
@@ -50,7 +40,7 @@ describe("notification badges", () => {
     expect(badgeHref("s1", "say", { position: "u-1", filter: "say" })).toBe("/s/s1/timeline/u-1");
   });
 
-  test("counts the session's says and requests, and which are unread", () => {
+  test("counts the session's unread says and its requests not yet acted on", () => {
     const says: UnreadSay[] = [
       { session_id: "s1", tool_use_id: "t1", ts: "2026-11-08T00:00:00.000Z" },
       { session_id: "s1", tool_use_id: "t2", ts: "2026-11-08T00:00:01.000Z" },
@@ -71,22 +61,8 @@ describe("notification badges", () => {
       request("i/2", "s1", true),
       request("i/3", "s2", false),
     ];
-    // s1 has a read say beside its two unread ones.
-    const totals: SessionSayTotal[] = [
-      { session_id: "s1", count: 3 },
-      { session_id: "s2", count: 1 },
-    ];
-    expect(notificationCountsOf("s1", says, totals, requests)).toEqual({
-      say: n(2, 3),
-      permit: n(1, 2),
-    });
-    expect(notificationCountsOf("s3", says, totals, requests)).toEqual({
-      say: n(0, 0),
-      permit: n(0, 0),
-    });
-    const bySid = notificationCountsBySid(says, totals, requests);
-    expect([...bySid.keys()].sort()).toEqual(["s1", "s2"]);
-    expect(bySid.get("s2")).toEqual({ say: n(1, 1), permit: n(1, 1) });
+    expect(notificationCountsOf("s1", says, requests)).toEqual({ say: 2, permit: 1 });
+    expect(notificationCountsOf("s3", says, requests)).toEqual({ say: 0, permit: 0 });
   });
 });
 
@@ -98,11 +74,7 @@ describe("a worker's say", () => {
       { session_id: "s1", tool_use_id: "t1", ts: "2026-11-08T00:00:00.000Z" },
       { session_id: "s1", tool_use_id: "t2", ts: "2026-11-08T00:00:01.000Z", agent_id: "a1" },
     ];
-    const totals = [{ session_id: "s1", count: 2 }];
-    expect(notificationCountsOf("s1", says, totals, [])).toEqual({
-      say: n(2, 2),
-      permit: n(0, 0),
-    });
+    expect(notificationCountsOf("s1", says, [])).toEqual({ say: 2, permit: 0 });
   });
 
   test("names the worker with its model/effort, or by name or id alone", () => {

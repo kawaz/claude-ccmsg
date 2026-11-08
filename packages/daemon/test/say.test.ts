@@ -13,7 +13,7 @@
 //     知らない id は全部断る。既読はファイルに書いてから答える
 //   - session が live でなくなると、その say は未読から消える
 //   - live でないセッションの say は、そのセッションの status の一回読み (TL を
-//     開いた時) で数え、未読と totals に入り、say_read で既読にできる。live に
+//     開いた時) で数え、未読に入り、say_read で既読にできる。live に
 //     なったら fold に引き継ぎ、二重に数えない
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -27,7 +27,6 @@ import {
   loadSayUnreadStore,
   markSaysRead,
   sayScan,
-  sayTotals,
   unreadSays,
 } from "../src/say-unread.ts";
 import { relaysCaughtUp } from "../src/transcript-relay.ts";
@@ -294,30 +293,6 @@ describe("say: what the person has not read", () => {
     });
   });
 
-  // 何を保証するか: ev:"say_unread" の totals は、セッションごとの say の数を
-  // 既読も含めて数える (DR-0050 §3 のバッジを出すかの源)。main と worker の say
-  // の合計で、既読にしても減らない。say の無いセッションは出ない。
-  test("totals count each session's says, read or not, main and workers together", async () => {
-    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
-      const file = path.join(dir, `${A}.jsonl`);
-      fs.writeFileSync(file, "");
-      const session = await liveSessionConn(ctx, A, { transcript_path: file });
-      const user = await userConn(ctx);
-      await user.requestOk({ op: "subscribe" });
-      const first = await user.readEventUntil("say_unread", () => true);
-      expect(first.ev.totals).toEqual([]);
-
-      await writeAndPushSay(session, file, "main", "toolu_main");
-      await pushSay(session, { text: "worker" }, "toolu_sub", { agent_id: "a1" });
-      const both = await user.readEventUntil("say_unread", (e) => e.says.length === 2);
-      expect(both.ev.totals).toEqual([{ session_id: A, count: 2 }]);
-
-      await user.requestOk({ op: "say_read", ids: ["toolu_main", "toolu_sub"] });
-      const read = await user.readEventUntil("say_unread", (e) => e.says.length === 0);
-      expect(read.ev.totals).toEqual([{ session_id: A, count: 2 }]);
-    });
-  });
-
   // 何を保証するか: セッションが live でなくなると (module の run が去る)、その
   // say は未読から消える。live のままの別セッションの say は残る。
   test("a session no longer live takes its says out of the unread", async () => {
@@ -343,8 +318,7 @@ describe("say: what the person has not read", () => {
 describe("say: a session that is not live", () => {
   // 何を保証するか: module の繋がっていないセッションでも、TL を開いた時の
   // status の一回読み (session_status_subscribe) が transcript の say を数え、
-  // ev:"say_unread" の未読と totals に出す。その say は say_read で既読にでき、
-  // 既読にしても totals からは消えない。
+  // ev:"say_unread" の未読に出す。その say は say_read で既読にできる。
   test("its says are counted on the read that answers its status, and read like a live one's", async () => {
     await withSpeakingDaemon(async (ctx, _spoken, dir) => {
       const file = path.join(dir, `${A}.jsonl`);
@@ -353,7 +327,7 @@ describe("say: a session that is not live", () => {
       const user = await userConn(ctx);
       await user.requestOk({ op: "subscribe" });
       const first = await user.readEventUntil("say_unread", () => true);
-      expect(first.ev).toMatchObject({ says: [], totals: [] });
+      expect(first.ev.says).toEqual([]);
 
       await user.requestOk({ op: "session_status_subscribe", sid: A });
       const counted = await user.readEventUntil("say_unread", (e) => e.says.length === 2);
@@ -361,18 +335,16 @@ describe("say: a session that is not live", () => {
         [A, "toolu_1"],
         [A, "toolu_2"],
       ]);
-      expect(counted.ev.totals).toEqual([{ session_id: A, count: 2 }]);
 
       await user.requestOk({ op: "say_read", ids: ["toolu_1"] });
       const read = await user.readEventUntil("say_unread", (e) => e.says.length === 1);
       expect(read.ev.says.map((say) => say.tool_use_id)).toEqual(["toolu_2"]);
-      expect(read.ev.totals).toEqual([{ session_id: A, count: 2 }]);
       session.close();
     });
   });
 
   // 何を保証するか: 一回読みで数えたセッションが live になると、追いつきの fold
-  // が引き継ぎ、同じ say を二重に数えない (未読も totals も 2 のまま)。
+  // が引き継ぎ、同じ say を二重に数えない (未読は 2 のまま)。
   test("a session that becomes live is handed to its fold, its says not counted twice", async () => {
     await withSpeakingDaemon(async (ctx, _spoken, dir) => {
       const file = path.join(dir, `${A}.jsonl`);
@@ -389,13 +361,12 @@ describe("say: a session that is not live", () => {
         "toolu_1",
         "toolu_2",
       ]);
-      expect(sayTotals(ctx.daemon.sayUnread)).toEqual([{ session_id: A, count: 2 }]);
     });
   });
 
   // 何を保証するか: 一回読みは、その時に live (fold を持つ) のセッションの say を
   // 置き換えない。数えた say が前と同じなら知らせず、変われば知らせる。since
-  // より前の say は既読とみなすが totals には数える。
+  // より前の say は既読とみなす。
   test("the read leaves a live session's says, tells only a change, and counts a say before since as read", () => {
     const file = path.join(tmpDir("ccmsg-say-read-"), "say-read.json");
     const store = loadSayUnreadStore(
@@ -415,7 +386,6 @@ describe("say: a session that is not live", () => {
     read(A, [old, fresh]);
     expect(told).toBe(1);
     expect(unreadSays(store).map((say) => say.tool_use_id)).toEqual(["toolu_new"]);
-    expect(sayTotals(store)).toEqual([{ session_id: A, count: 2 }]);
     read(A, [old, fresh]);
     expect(told).toBe(1);
     read(B, []);
@@ -427,9 +397,9 @@ describe("say: a session that is not live", () => {
     // Not replaced by what the read found: B's earlier read (none) stays,
     // and the live fold is what counts.
     expect(store.scanned.get(B)?.size).toBe(0);
-    expect(sayTotals(store)).toEqual([
-      { session_id: B, count: 1 },
-      { session_id: A, count: 2 },
+    expect(unreadSays(store).map((say) => [say.session_id, say.tool_use_id])).toEqual([
+      [A, "toolu_new"],
+      [B, "toolu_live"],
     ]);
   });
 });

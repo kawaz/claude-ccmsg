@@ -2,11 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionRenameResponse } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { NotificationBadges } from "./NotificationBadges.tsx";
-import {
-  NO_NOTIFICATIONS,
-  notificationCountsBySid,
-  type NotificationCounts,
-} from "../notification-badges.ts";
+import { rowBadgesShown } from "../notification-badges.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
@@ -30,6 +26,8 @@ import {
   staleClientWarning,
   shortSid,
   toSessionRow,
+  sayUnreadBySid,
+  permitUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
 import {
@@ -448,7 +446,8 @@ function SessionRowItem({
   statusBadge,
   modelEffort,
   cacheRequest,
-  notifications,
+  sayUnread,
+  permitUnread,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -466,10 +465,12 @@ function SessionRowItem({
    * リング非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで
    * 示す。 */
   cacheRequest: LlmRequestInfo | null;
-  /** say と許可依頼の数 (kawaz r244 m5-m6、DR-0050 §7)。どちらも 1 つも無ければ
-   * 🔔🔐 を出さない。複数セッションが並走している時に「今喋ったのはどれか」を
-   * 行から辿れるようにするためのもので、既読はセッションの TL のバブル側で付ける。 */
-  notifications: NotificationCounts;
+  /** 未読の say 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
+   * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
+   * ようにするためのもので、既読はセッションの TL の 🔔 バブル側で付ける。 */
+  sayUnread: number;
+  /** 未読の許可依頼の件数 (DR-0040)。0 = マーカーを出さない。 */
+  permitUnread: number;
   /** daemon の protocol の版 (ping の `protocol`)。行の client の版と
    * minor が違えば黄色の印を出す (DR-0002 §4)。undefined = まだ知らない。 */
 }) {
@@ -564,7 +565,7 @@ function SessionRowItem({
             </span>
           ) : null}
         </span>
-        <SessionRowBadges sid={row.sid} counts={notifications} />
+        <SessionRowBadges sid={row.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
         <a
           // Session rows always enter through the session root so the router can
           // restore that sid's recent tab/path. With no recent record the root
@@ -660,7 +661,8 @@ function PinnedSessionRow({
   peer,
   agent,
   modelEffort,
-  notifications,
+  sayUnread,
+  permitUnread,
   onUnpin,
 }: {
   pin: Pin;
@@ -671,10 +673,12 @@ function PinnedSessionRow({
    * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
   modelEffort: ModelEffortInfo | null;
-  /** say と許可依頼の数。ピンは下の status セクションから除外されている
+  /** 未読の say 件数。ピンは下の status セクションから除外されている
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
-   * 🔔🔐 がどこにも出なくなる。 */
-  notifications: NotificationCounts;
+   * 🔔 がどこにも出なくなる。 */
+  sayUnread: number;
+  /** 未読の許可依頼の件数。ピンに出す理由は sayUnread と同じ。 */
+  permitUnread: number;
   onUnpin: () => void;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -717,7 +721,7 @@ function PinnedSessionRow({
         <span class="session-lead">
           <Avatar seed={pin.sid} size={16} />
         </span>
-        <SessionRowBadges sid={pin.sid} counts={notifications} />
+        <SessionRowBadges sid={pin.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
         <a href={sessionHref(pin.sid)} class="session-main-link">
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
@@ -777,7 +781,8 @@ function PinnedSessionsSection({
   peers,
   agentsBySid,
   currentSid,
-  notificationsBy,
+  sayUnreadBy,
+  permitUnreadBy,
   resolveModelEffort,
 }: {
   pinnedSessions: Map<string, Pin>;
@@ -787,8 +792,10 @@ function PinnedSessionsSection({
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
-  /** sid → say と許可依頼の数 (SessionList が daemon の push から数えたもの)。 */
-  notificationsBy: Map<string, NotificationCounts>;
+  /** sid → 未読 say 件数 (SessionList が unreadSays から数えたもの)。 */
+  sayUnreadBy: Map<string, number>;
+  /** sid → 未読の許可依頼の件数 (SessionList が permitRequests から引いたもの)。 */
+  permitUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
   resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
@@ -816,7 +823,8 @@ function PinnedSessionsSection({
             peer={peersBySid.get(pin.sid)}
             agent={agentsBySid.get(pin.sid)}
             modelEffort={resolveModelEffort(pin.sid, pin)}
-            notifications={notificationsBy.get(pin.sid) ?? NO_NOTIFICATIONS}
+            sayUnread={sayUnreadBy.get(pin.sid) ?? 0}
+            permitUnread={permitUnreadBy.get(pin.sid) ?? 0}
             onUnpin={() => store.dispatch({ type: "pinned/removed", key })}
           />
         ))}
@@ -848,7 +856,17 @@ function sectionClass(key: string): string {
  * を見逃させない)。表示の規則は TL のヘッダと同じで、押すとそのセッションの
  * TL をその種類のフィルタで開く。行の link の中に link は入れられないので、
  * 行の link の兄弟に置く。 */
-function SessionRowBadges({ sid, counts }: { sid: string; counts: NotificationCounts }) {
+function SessionRowBadges({
+  sid,
+  sayUnread,
+  permitUnread,
+}: {
+  sid: string;
+  sayUnread: number;
+  permitUnread: number;
+}) {
+  const counts = { say: sayUnread, permit: permitUnread };
+  if (!rowBadgesShown(counts)) return null;
   return (
     <NotificationBadges
       class="session-row-badges"
@@ -867,7 +885,6 @@ function sessionListSlice(state: AppState) {
     llmRequests: state.llmRequests,
     pinnedSessions: state.pinnedSessions,
     unreadSays: state.unreadSays,
-    sayTotals: state.sayTotals,
     permitRequests: state.permitRequests,
   };
 }
@@ -901,15 +918,12 @@ export function SessionList({
     llmRequests,
     pinnedSessions,
     unreadSays,
-    sayTotals,
     permitRequests,
   } = useStoreState(store, sessionListSlice, shallowEqual);
-  // say の未読と数は daemon が ev:"say_unread" で全件 push するので、TL を開いて
-  // いないセッションの分もここで数えられる。
-  const notificationsBy = useMemo(
-    () => notificationCountsBySid(unreadSays, sayTotals, permitRequests),
-    [unreadSays, sayTotals, permitRequests],
-  );
+  // 未読の say は daemon が ev:"say_unread" で全件 push するので、TL を開いて
+  // いないセッションの未読もここで数えられる。
+  const sayUnreadBy = useMemo(() => sayUnreadBySid(unreadSays), [unreadSays]);
+  const permitUnreadBy = useMemo(() => permitUnreadBySid(permitRequests), [permitRequests]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [
@@ -947,7 +961,8 @@ export function SessionList({
         peers={peers}
         agentsBySid={agentsBySid}
         currentSid={currentSid}
-        notificationsBy={notificationsBy}
+        sayUnreadBy={sayUnreadBy}
+        permitUnreadBy={permitUnreadBy}
         resolveModelEffort={resolveModelEffort}
       />
       {sections.map((section) => (
@@ -980,7 +995,8 @@ export function SessionList({
                 // 全 sid 分まとめて届くので、購読の有無に左右されない。
                 modelEffort={resolveModelEffort(row.sid)}
                 cacheRequest={llmRequests.get(row.sid) ?? null}
-                notifications={notificationsBy.get(row.sid) ?? NO_NOTIFICATIONS}
+                sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+                permitUnread={permitUnreadBy.get(row.sid) ?? 0}
               />
             ))}
           </ul>

@@ -241,21 +241,16 @@ describe("reducer / say-unread (DR-0045 §7)", () => {
 
   // 輪郭: ev:"say_unread" は daemon が持つ未読の全件なので、置き換える (merge
   // しない)。既読になった say は次の全件に居ないことで消え、空の全件で全部消える。
-  // 既読を含む数 (totals) も同じ event の全件で置き換える。
   test("say-unread/loaded replaces the whole set", () => {
-    const totals = [{ session_id: "sid-abcdefgh", count: 2 }];
     let state = dispatch(initialState(), {
       type: "say-unread/loaded",
       says: [unread("toolu_1"), unread("toolu_2")],
-      totals,
     });
     expect(state.unreadSays.map((r) => r.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
-    expect(state.sayTotals).toEqual(totals);
-    state = dispatch(state, { type: "say-unread/loaded", says: [unread("toolu_2")], totals });
+    state = dispatch(state, { type: "say-unread/loaded", says: [unread("toolu_2")] });
     expect(state.unreadSays).toEqual([unread("toolu_2")]);
-    state = dispatch(state, { type: "say-unread/loaded", says: [], totals: [] });
+    state = dispatch(state, { type: "say-unread/loaded", says: [] });
     expect(state.unreadSays).toEqual([]);
-    expect(state.sayTotals).toEqual([]);
   });
 });
 
