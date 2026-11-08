@@ -11,6 +11,8 @@ import {
   PERMIT_ATTACHMENT_UNREADABLE_TEXT,
   type PermitAttachment,
   type PermitCommand,
+  type PermitProjectPermission,
+  type PermitProjectPermissionRecord,
   type PermitRequestRecord,
 } from "@ccmsg/protocol";
 
@@ -79,4 +81,32 @@ export function permitGrantText(request: PermitRequestRecord): string {
     ...request.commands.map(commandItem),
   ];
   return `${files}以下の操作を許可します。\n${granted.join("\n")}\n`;
+}
+
+/** One project permission as a line of a diff (DR-0040 §12): an added rule
+ * is `+`, a removed one `-`, in the colors of the file diffs. */
+export function projectPermissionLine(permission: PermitProjectPermissionRecord): {
+  kind: "add" | "delete";
+  marker: "+" | "-";
+  rule: string;
+} {
+  return "add" in permission
+    ? { kind: "add", marker: "+", rule: permission.add }
+    : { kind: "delete", marker: "-", rule: permission.remove };
+}
+
+/** What a project permission's 許可する sends: the change alone, without
+ * when it was applied. */
+export function projectPermissionChange(
+  permission: PermitProjectPermissionRecord,
+): PermitProjectPermission {
+  return "add" in permission ? { add: permission.add } : { remove: permission.remove };
+}
+
+/** What an opened settings file says beside its content: 「(無し)」 for a
+ * file that is not there yet (the first apply makes it), otherwise as an
+ * attachment's note. */
+export function settingsFileNote(attachment: PermitAttachment): string | null {
+  if (!attachment.read && attachment.reason === "missing") return "(無し)";
+  return attachmentNote(attachment);
 }

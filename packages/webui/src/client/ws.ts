@@ -18,6 +18,7 @@ import type {
   DaemonFrame,
   ErrorResponse,
   ParseFailure,
+  PermitProjectPermission,
   PromptSendMode,
   ReplyOf,
   RequestInput,
@@ -142,6 +143,16 @@ export interface WsHandle {
   /** Read one attachment of a request for permission as it is now
    * (DR-0040 §3): the bubble's opening it. */
   permitAttachmentRead(id: string, path: string): Promise<ReplyOf<"permit_attachment_read">>;
+  /** Read the settings file a request's project permissions go into, as it
+   * is now (DR-0040 §12): the bubble's opening it. */
+  permitSettingsRead(id: string): Promise<ReplyOf<"permit_settings_read">>;
+  /** Apply one project permission of a request (DR-0040 §12): its own
+   * 許可する. Non-optimistic — the daemon pushes the record, the permission
+   * marked applied, as ev:"permit_request". */
+  permitPermissionApply(
+    id: string,
+    permission: PermitProjectPermission,
+  ): Promise<ReplyOf<"permit_permission_apply">>;
   peers(): Promise<ReplyOf<"peers">>;
   /** The msgs of a room log by mid (`read`): the Timeline's full text of a
    * room message a past transcript shows. */
@@ -1050,6 +1061,9 @@ export function createWsClient(
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
     permitRequestRead: (ids) => send({ op: "permit_request_read", ids: [...ids] }),
     permitAttachmentRead: (id, path) => send({ op: "permit_attachment_read", id, path }),
+    permitSettingsRead: (id) => send({ op: "permit_settings_read", id }),
+    permitPermissionApply: (id, permission) =>
+      send({ op: "permit_permission_apply", id, permission }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),

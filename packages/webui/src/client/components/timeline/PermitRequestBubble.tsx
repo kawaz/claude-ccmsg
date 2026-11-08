@@ -6,7 +6,10 @@
 // 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。1 行のコマンドには
 // 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
-// 実行させる (出力はセッションの会話に入る)。
+// 実行させる (出力はセッションの会話に入る)。セッションがプロジェクトの
+// permissions.allow の変更を求めていれば、その区画 (PermitSettingsSection) を
+// 「許可する」の前に置く。project_permissions だけの依頼には「許可してほしい
+// こと」と「許可する」を出さない (写す操作が無い)。
 import type { TargetedEvent } from "preact";
 import { useContext, useRef, useState } from "preact/hooks";
 import type { PermitAttachment, PermitCommand, PermitRequestRecord } from "@ccmsg/protocol";
@@ -37,6 +40,7 @@ import {
 } from "./translation.ts";
 import { TranslatedScope } from "./translated-scope.tsx";
 import { BubbleFooter } from "./BubbleFooter.tsx";
+import { PermitSettingsSection } from "./PermitSettingsSection.tsx";
 
 /** 開いた添付の中身の読み取り: まだ読んでいない、読んでいる、読めた (中身
  * か読めない理由)、daemon が答えなかった。 */
@@ -320,6 +324,10 @@ export function PermitRequestBubble({
   translationAvailability: TranslationAvailability;
 }) {
   const attachments = useAttachmentLoads(request);
+  // 許可の文に並べる操作 (intents / commands) がある依頼だけに「許可して
+  // ほしいこと」と「許可する」を出す。project_permissions だけの依頼は、
+  // 区画の各「許可する」が人の手を付けた印 (既読) になる。
+  const asksToRun = request.intents.length + request.commands.length > 0;
   const bubbleRef = useRef<HTMLDivElement>(null);
   const { tab, selectTab } = useBubbleTranslationTab({
     text: permitTranslatableText(request),
@@ -357,41 +365,48 @@ export function PermitRequestBubble({
             ))}
           </section>
         ) : null}
-        <section class="permit-section">
-          <h4 class="permit-heading">許可してほしいこと</h4>
-          <ul class="permit-asks">
-            {request.intents.map((intent, i) => (
-              <li key={`i${String(i)}`}>
-                <TranslatedMarkdown
-                  source={intent}
-                  tab={tab}
-                  availability={translationAvailability}
-                />
-              </li>
-            ))}
-            {request.commands.map((command, i) => (
-              <li key={`c${String(i)}`} class="permit-command">
-                {command.description !== undefined ? (
-                  <TranslatedCommandHeading
-                    command={command}
-                    description={command.description}
+        {asksToRun ? (
+          <section class="permit-section">
+            <h4 class="permit-heading">許可してほしいこと</h4>
+            <ul class="permit-asks">
+              {request.intents.map((intent, i) => (
+                <li key={`i${String(i)}`}>
+                  <TranslatedMarkdown
+                    source={intent}
                     tab={tab}
                     availability={translationAvailability}
                   />
-                ) : (
-                  <span>{commandHeading(command)}</span>
-                )}
-                <CodeBlock code={command.command} lang="sh" />
-                {isOneLineCommand(command.command) ? (
-                  <BangButton sid={request.sid} command={command.command} />
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-        <div class="permit-grant-row">
-          <GrantButton request={request} />
-        </div>
+                </li>
+              ))}
+              {request.commands.map((command, i) => (
+                <li key={`c${String(i)}`} class="permit-command">
+                  {command.description !== undefined ? (
+                    <TranslatedCommandHeading
+                      command={command}
+                      description={command.description}
+                      tab={tab}
+                      availability={translationAvailability}
+                    />
+                  ) : (
+                    <span>{commandHeading(command)}</span>
+                  )}
+                  <CodeBlock code={command.command} lang="sh" />
+                  {isOneLineCommand(command.command) ? (
+                    <BangButton sid={request.sid} command={command.command} />
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        {request.project_settings !== undefined ? (
+          <PermitSettingsSection id={request.id} settings={request.project_settings} />
+        ) : null}
+        {asksToRun ? (
+          <div class="permit-grant-row">
+            <GrantButton request={request} />
+          </div>
+        ) : null}
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}

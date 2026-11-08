@@ -2982,6 +2982,52 @@ select.sidebar-globals-endpoint {
   flex-basis: 100%;
 }
 
+/* 「.claude/settings.local.json の修正許可」(DR-0040 §12)。変更 1 件ごとに、
+ * ファイルの差分と同じ色の 1 行 (.tl-diff-*) と、その 1 件だけを書き込む
+ * 「許可する」を置く。ボタンは本文の最後の「許可する」(塗り) より軽い枠だけ
+ * にして、どちらが依頼全体の許可かを形で分ける。 */
+.permit-settings-changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.permit-settings-change {
+  margin: var(--space-3) 0;
+}
+
+.permit-settings-diff {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  max-height: none;
+}
+
+.permit-settings-apply-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-6);
+  margin-top: var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.permit-settings-apply {
+  font: inherit;
+  font-weight: 600;
+  padding: var(--space-2) var(--space-8);
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.permit-settings-apply:disabled {
+  cursor: default;
+  border-color: var(--border);
+  color: var(--fg-muted);
+}
+
 .event {
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
