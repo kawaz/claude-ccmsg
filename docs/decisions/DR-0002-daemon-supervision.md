@@ -45,8 +45,8 @@ daemon と client の間の契約 (`packages/protocol` のスキーマ) の版�
 
 | 変更の種類 | 上げる所 | daemon の扱い | webui の見せ方 |
 |---|---|---|---|
-| 通信できなくなる変更 (封筒・hello・subscribe・event の形) | major (minor は 0 に戻す) | 違う major の hello を断り、session の hello ならその sid に stale の印 (`PeerInfo.stale_client`) を付ける | webui 自身の bundle の major が daemon と違えば、リロードボタンを赤にし title で「ccmsg の protocol が変わった。リロードしてください」 |
-| 通信は通るが意味がずれうる変更 (tool / op の追加削除、schema の変更) | minor | 受け入れ、その client の版を `PeerInfo.protocol` に載せる | そのセッションの ccmsg (TL 下の状態行の `ccmsg v…`、Status タブの CCMSG、Sessions の行の印) を黄色 (`--warn`) にし、title で「このセッションの ccmsg の protocol は <client> で daemon は <daemon>。リロードでは直らない。セッションを起動し直すと直る」 |
+| 通信できなくなる変更 (封筒・hello・subscribe・event の形) | major (minor は 0 に戻す) | 違う major の hello を断り、session の hello ならその sid に stale の印 (`PeerInfo.stale_client`) を付ける | そのセッションの ccmsg は minor 違いと同じ場所で黄色にし、本文は印と版 (`⚠ v… (protocol 1)`)、説明は title に置く (状態行の `ccmsg v…` の版は断られた client のもの)。webui 自身の bundle の major が daemon と違えば、リロードボタンを赤にし title で「ccmsg の protocol が変わった。リロードしてください」 |
+| 通信は通るが意味がずれうる変更 (tool / op の追加削除、schema の変更) | minor | 受け入れ、その client の版を `PeerInfo.protocol` に載せる | そのセッションの ccmsg (TL 下の状態行の `ccmsg v…`、Status タブの CCMSG、Sessions の行の印) を黄色 (`--warn`) にする。本文は印と版 (`△ v… (protocol 2.0)`) だけで、説明は title に置く:「このセッションの ccmsg の protocol は <client> で daemon は <daemon>。リロードでは直らない。セッションを起動し直すと直る」 |
 | plugin の版だけ (bundle が変わった) | 上げない | 何もしない | リロードボタンを青に (version の比較) |
 
 - minor の違いを断らないのは、受け入れて見えるようにすれば足りるから。古い module は daemon が送る op の新しい field を黙って落とす (例: `prompt.send` の `mode: "bash"` を落として通常の prompt として入れる) ので、その無言の不具合に気づけることが要る。直すのはセッションの起動し直し (起動時の plugin の module が載る、DR-0035 §3) で、webui のリロードでは直らない

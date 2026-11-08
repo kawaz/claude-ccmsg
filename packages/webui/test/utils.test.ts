@@ -528,7 +528,7 @@ describe("sessionRuntimeParts", () => {
   test("a ccmsg of another protocol minor is a warning, with the reason in its hover text", () => {
     const skew = "このセッションの ccmsg の protocol は 2.0 で daemon は 2.1。";
     const ccmsg = sessionRuntimeParts(
-      { ccmsgVersion: "0.214.1", protocolSkew: skew, hostClaudeVersion: null },
+      { ccmsgVersion: "0.214.1", clientWarning: skew, hostClaudeVersion: null },
       now,
     ).find((part) => part.key === "ccmsg");
     expect(ccmsg?.warn).toBe(true);
@@ -2146,7 +2146,7 @@ describe("clientBuildLabel / staleClientWarning / protocolSkewWarning", () => {
       }),
     );
     expect(warning?.marker).toBe("⚠");
-    expect(warning?.build).toBe("v0.217.1 / protocol 1");
+    expect(warning?.build).toBe("v0.217.1 (protocol 1)");
     expect(warning?.text).toContain("v0.217.1");
     expect(warning?.text).toContain("このセッションを再起動して");
     expect(warning?.text).toContain("2026-09-03T01:00:00.000Z");
@@ -2158,7 +2158,7 @@ describe("clientBuildLabel / staleClientWarning / protocolSkewWarning", () => {
         stale_client: { last_seen: "2026-09-03T01:00:00.000Z", protocol: { major: 3, minor: 2 } },
       }),
     );
-    expect(warning?.build).toBe("版数不明 / protocol 3.2");
+    expect(warning?.build).toBe("版数不明 (protocol 3.2)");
     // No version to name: the client reported none.
     expect(warning?.text).toContain("版数不明");
   });

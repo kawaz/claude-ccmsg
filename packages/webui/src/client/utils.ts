@@ -65,10 +65,11 @@ export interface SessionRuntime {
   /** The ccmsg build the session's client announced (its peer row's
    * `ccmsg_version`). */
   ccmsgVersion?: string;
-  /** Set while that client speaks another protocol minor than the daemon
-   * (`protocolSkewWarning`): the ccmsg part is drawn in yellow with this
-   * text as its hover. */
-  protocolSkew?: string;
+  /** Set while that client is off the daemon's protocol: another minor
+   * (`protocolSkewWarning`) or another major, refused (`staleClientWarning`,
+   * and then `ccmsgVersion` is the refused client's). The ccmsg part is drawn
+   * in yellow with this text as its hover. */
+  clientWarning?: string;
   /** This host's Claude Code version as GLOBALS shows it (DR-0043 §5.3), null
    * when not known. */
   hostClaudeVersion: string | null;
@@ -83,7 +84,7 @@ export interface SessionRuntime {
  * how it compares with the host's when that is known. Each version opens its
  * CHANGELOG entry (DR-0048 §5), and its hover text ends with where. */
 export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LinePart[] {
-  const { process, ccmsgVersion, protocolSkew, hostClaudeVersion } = runtime;
+  const { process, ccmsgVersion, clientWarning, hostClaudeVersion } = runtime;
   const parts: LinePart[] = [];
   if (process) parts.push({ key: "uptime", text: formatDuration(now - process.startedAt) });
   if (ccmsgVersion) {
@@ -92,9 +93,9 @@ export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LineP
     parts.push({
       key: "ccmsg",
       text: `ccmsg v${ccmsgVersion}`,
-      title: `${protocolSkew === undefined ? what : `${protocolSkew}\n${what}`}\n${href}`,
+      title: `${clientWarning === undefined ? what : `${clientWarning}\n${what}`}\n${href}`,
       href,
-      ...(protocolSkew !== undefined ? { warn: true } : {}),
+      ...(clientWarning !== undefined ? { warn: true } : {}),
     });
   }
   const claudeVersion = process?.version;
@@ -857,7 +858,7 @@ export function staleClientWarning(row: {
   // The stale client's own build, not the row's: the row reports whatever
   // hello'd last, which on a healthy-plus-stale session is the *working*
   // process — naming that one would point the reader at the wrong version.
-  const build = `${version} / ${generation}`;
+  const build = `${version} (${generation})`;
   return {
     marker: "⚠",
     build,

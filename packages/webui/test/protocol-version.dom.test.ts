@@ -64,9 +64,47 @@ function peer(sid: string, protocol: ProtocolVersion): PeerInfo {
   };
 }
 
+/** A session whose sidecar of another major is being refused. */
+function stalePeer(sid: string): PeerInfo {
+  return {
+    ...peer(sid, DAEMON),
+    stale_client: {
+      last_seen: "2026-11-08T01:00:00.000Z",
+      version: "0.217.1",
+      protocol: { major: 1 },
+    },
+  };
+}
+
 /** What a connected tab learns of the daemon from its ping. */
 function daemonSpeaks(store: Store, protocol: ProtocolVersion): void {
   store.dispatch({ type: "daemon-info/loaded", version: "0.219.0", protocol });
+}
+
+async function mountStatus(store: Store): Promise<HTMLElement> {
+  const snapshot: SessionStatusSnapshot = { todos: [], workflows: [], background: [] };
+  const onRestart = (): Promise<SessionRestartResponse | ErrorResponse> => new Promise(() => {});
+  const onKill = (): Promise<SessionKillResponse | ErrorResponse> =>
+    Promise.resolve({ ok: true, terminated: true });
+  const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
+    Promise.resolve({ ok: true, pid: 4242, env: {} });
+  const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
+    Promise.resolve({ ok: true, outcome: "appended" });
+  const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
+    Promise.resolve({ ok: true, delivery: "applied" });
+  function Host() {
+    const restart = useSessionRestart(SID, onRestart);
+    return h(StatusPanel, {
+      snapshot,
+      sid: SID,
+      onKill,
+      restart,
+      onLoadEnv,
+      onAgentInput,
+      onOverride,
+    });
+  }
+  return mountInto(store, h(Host, null));
 }
 
 async function mountInto(store: Store, node: ComponentChildren): Promise<HTMLElement> {
@@ -115,29 +153,7 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
     const store = createStore(initialState());
     daemonSpeaks(store, DAEMON);
     store.dispatch({ type: "peers/loaded", peers: [peer(SID, OLDER_MINOR)] });
-    const snapshot: SessionStatusSnapshot = { todos: [], workflows: [], background: [] };
-    const onRestart = (): Promise<SessionRestartResponse | ErrorResponse> => new Promise(() => {});
-    const onKill = (): Promise<SessionKillResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, terminated: true });
-    const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, pid: 4242, env: {} });
-    const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, outcome: "appended" });
-    const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, delivery: "applied" });
-    function Host() {
-      const restart = useSessionRestart(SID, onRestart);
-      return h(StatusPanel, {
-        snapshot,
-        sid: SID,
-        onKill,
-        restart,
-        onLoadEnv,
-        onAgentInput,
-        onOverride,
-      });
-    }
-    const root = await mountInto(store, h(Host, null));
+    const root = await mountStatus(store);
     const dt = [...root.querySelectorAll(".status-meta dt")].find((d) => d.textContent === "CCMSG");
     const dd = instanceOf(dt?.nextElementSibling, HTMLElement, "the CCMSG value");
     expect(dd.title).toBe(SKEW_TEXT);
@@ -158,6 +174,37 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
       const ccmsg = instanceOf(part, HTMLElement, "the ccmsg part");
       expect(ccmsg.classList.contains("ctx-part-warn")).toBe(true);
       expect(ccmsg.title.split("\n")[0]).toBe(SKEW_TEXT);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a refused (stale) client: the Status body is the mark and version only, the reason is the title", async () => {
+    const store = createStore(initialState());
+    daemonSpeaks(store, DAEMON);
+    store.dispatch({ type: "peers/loaded", peers: [stalePeer(SID)] });
+    const root = await mountStatus(store);
+    const dt = [...root.querySelectorAll(".status-meta dt")].find((d) => d.textContent === "CCMSG");
+    const dd = instanceOf(dt?.nextElementSibling, HTMLElement, "the CCMSG value");
+    expect(dd.querySelector(".status-stale-client")?.textContent).toBe("⚠ v0.217.1 (protocol 1)");
+    expect(dd.textContent).not.toContain("古い");
+    expect(dd.title).toContain("ccmsg クライアントが古い");
+    expect(dd.title).toContain("セッションを再起動してください");
+  });
+
+  test("a refused (stale) client: the ctx line's ccmsg is yellow with the stale version and reason", async () => {
+    const restore = stubGlobal("navigation", { navigate() {} });
+    try {
+      const store = timelineStore();
+      daemonSpeaks(store, DAEMON);
+      store.dispatch({ type: "peers/loaded", peers: [stalePeer(SID)] });
+      const root = await mountTimeline(store);
+      const part = [...root.querySelectorAll(".tl-status-mini-context .ctx-part")].find(
+        (p) => p.textContent === "ccmsg v0.217.1",
+      );
+      const ccmsg = instanceOf(part, HTMLElement, "the ccmsg part");
+      expect(ccmsg.classList.contains("ctx-part-warn")).toBe(true);
+      expect(ccmsg.title.split("\n")[0]).toContain("ccmsg クライアントが古い");
     } finally {
       restore();
     }

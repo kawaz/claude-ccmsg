@@ -15,7 +15,12 @@ import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
 import { agentEngineLabelsByName } from "../agent-tree-view.ts";
-import { protocolSkewWarning, sessionRuntimeParts, type SessionRuntime } from "../../utils.ts";
+import {
+  protocolSkewWarning,
+  sessionRuntimeParts,
+  staleClientWarning,
+  type SessionRuntime,
+} from "../../utils.ts";
 import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -111,8 +116,11 @@ export function Timeline({
     (s): SessionRuntime => {
       const row = s.agents.find((candidate) => candidate.sessionId === sid);
       const peer = s.peers.find((p) => p.sid === sid);
-      const ccmsgVersion = peer?.ccmsg_version;
-      const skew = protocolSkewWarning(peer?.protocol, s.daemonInfo?.protocol);
+      // A refused (major-off) client is the session's stale sidecar: its own
+      // version is the one to show, not the working process's.
+      const stale = peer ? staleClientWarning(peer) : null;
+      const ccmsgVersion = stale ? peer?.stale_client?.version : peer?.ccmsg_version;
+      const skew = stale ?? protocolSkewWarning(peer?.protocol, s.daemonInfo?.protocol);
       return {
         ...(row
           ? {
@@ -123,7 +131,7 @@ export function Timeline({
             }
           : {}),
         ...(ccmsgVersion !== undefined ? { ccmsgVersion } : {}),
-        ...(skew !== null ? { protocolSkew: skew.text } : {}),
+        ...(skew !== null ? { clientWarning: skew.text } : {}),
         hostClaudeVersion: hostClaudeVersion(
           lastSessionClaudeVersion(s.agents),
           s.hostClaudeVersion,

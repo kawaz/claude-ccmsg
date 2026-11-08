@@ -739,7 +739,7 @@ export function StatusPanel({
         <dd class="status-meta-value" title={staleClient?.text ?? protocolSkew?.text}>
           {staleClient ? (
             <span class="status-stale-client">
-              {staleClient.marker} {staleClient.build} — ccmsg クライアントが古い
+              {staleClient.marker} {staleClient.build}
             </span>
           ) : protocolSkew ? (
             <span class="status-protocol-skew">
