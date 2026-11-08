@@ -11,7 +11,6 @@ import {
   readRequest,
   type Request,
   type RequestFrame,
-  UNANNOUNCED_PROTOCOL_VERSION,
   VERSION,
 } from "@ccmsg/protocol";
 import { Client, helloRequest } from "../src/client.ts";
@@ -24,7 +23,7 @@ afterEach(() => {
   cleanup = [];
 });
 
-/** A request line the client wrote, read as a request of this generation. */
+/** A request line the client wrote, read as a request the daemon serves. */
 function requestOf(line: string): Request {
   const read = readRequest(line);
   if (read.kind !== "request")
@@ -67,20 +66,39 @@ test("a reply with no request_id settles the oldest request", async () => {
   const refusal = { ok: false as const, error: { code: "bad_request", msg: "m" } };
   const sock = peer(() => [refusal]);
   const client = await Client.connect(sock);
-  expect(await client.request({ op: "hello", role: "user" })).toEqual(refusal);
+  expect(await client.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION })).toEqual(
+    refusal,
+  );
   client.close();
 });
 
-test("a hello reply with no request_id and no protocol is read, so a pre-correlation daemon can still be talked to", async () => {
-  // This is the version-mismatch path: ensureDaemon has to read the version in
-  // the hello reply of an older daemon before it can decide to replace it, and
-  // that daemon echoes no request_id and announces no generation.
-  const sock = peer(() => [{ ok: true, version: "0.0.1" }]);
-  const client = await Client.connect(sock);
-  expect(await client.request(helloRequest({ role: "user" }))).toEqual({
+test("a ping reply naming no protocol is read, so a daemon of major 1 can still be replaced", async () => {
+  // This is the version-mismatch path across a major (DR-0002 §4): a daemon
+  // of major 1 refuses this client's hello, so ensureDaemon reads its version
+  // from ping, whose reply from that daemon names no protocol.
+  const pong = {
     ok: true,
+    pong: true,
     version: "0.0.1",
-    protocol: UNANNOUNCED_PROTOCOL_VERSION,
+    uptime: 1,
+    pid: 1,
+    clients: 1,
+    http: [],
+    httpAllow: [],
+    network: "off",
+  };
+  const sock = peer((req) => [{ ...pong, request_id: req.request_id }]);
+  const client = await Client.connect(sock);
+  expect(await client.request({ op: "ping" })).toEqual({
+    ok: true,
+    pong: true,
+    version: "0.0.1",
+    uptime: 1,
+    pid: 1,
+    clients: 1,
+    http: [],
+    httpAllow: [],
+    network: "off",
   });
   client.close();
 });
@@ -184,7 +202,7 @@ test("large requests arrive whole, in the order written", async () => {
   client.close();
 });
 
-test("every hello announces this build and the generation it speaks", () => {
+test("every hello announces this build and the protocol version it speaks", () => {
   // Both roles: a stale `ccmsg subscribe` is a session-role client, but a
   // browser holding an old bundle is a user-role one, and neither should be
   // able to reach a daemon that has moved on without being noticed.

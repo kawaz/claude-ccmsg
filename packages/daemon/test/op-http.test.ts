@@ -242,18 +242,26 @@ describe("POST /op", () => {
     }
   });
 
-  // The generation is checked as on daemon.sock.
-  test("a hello of another generation is refused with the generation spoken", async () => {
+  // The major is checked as on daemon.sock: a module of another major, and
+  // one of major 1 that names its protocol by a bare number, are refused.
+  test("a hello of another major is refused with the version spoken", async () => {
     const run = await started();
     try {
-      const otherGeneration = await post(
+      const spoken = `${String(PROTOCOL_VERSION.major)}.${String(PROTOCOL_VERSION.minor)}`;
+      const nextMajor = PROTOCOL_VERSION.major + 1;
+      const otherMajor = await post(
         run.ctx,
-        asked({ op: "peer_list" }, { ...HELLO, protocol: PROTOCOL_VERSION + 1 }),
+        asked({ op: "peer_list" }, { ...HELLO, protocol: { major: nextMajor, minor: 0 } }),
       );
-      expect(otherGeneration.status).toBe(200);
-      expect(refusedReply("another generation", otherGeneration.text).error).toEqual({
+      expect(otherMajor.status).toBe(200);
+      expect(refusedReply("another major", otherMajor.text).error).toEqual({
         code: "bad_request",
-        msg: `client speaks protocol ${String(PROTOCOL_VERSION + 1)}, this daemon speaks ${String(PROTOCOL_VERSION)}`,
+        msg: `client speaks protocol ${String(nextMajor)}.0, this daemon speaks ${spoken}`,
+      });
+      const bareNumber = await post(run.ctx, asked({ op: "peer_list" }, { ...HELLO, protocol: 1 }));
+      expect(refusedReply("major 1", bareNumber.text).error).toEqual({
+        code: "bad_request",
+        msg: `client speaks protocol 1, this daemon speaks ${spoken}`,
       });
     } finally {
       await stopped(run);

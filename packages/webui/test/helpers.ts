@@ -107,6 +107,7 @@ export function jsonObjectOf(line: string): JsonObject {
  * a line the daemon would refuse fails the test. */
 export function requestOf(line: string): Request {
   const read = readRequest(line);
+  if (read.kind === "other_major_hello") throw new Error(`a hello of another major: ${line}`);
   if (read.kind !== "request") throw new Error(`not a request: ${read.failure.summary}: ${line}`);
   return read.request;
 }

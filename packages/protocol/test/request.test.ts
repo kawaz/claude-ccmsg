@@ -4,7 +4,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Parsed } from "../src/parse.ts";
 import {
-  isOtherGenerationHello,
   readRequest,
   REQUEST_OPS,
   RETIRED_OPS,
@@ -12,7 +11,7 @@ import {
   type RequestInput,
   type RequestOp,
 } from "../src/request.ts";
-import { PROTOCOL_VERSION } from "../src/version.ts";
+import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_MAJOR } from "../src/version.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
@@ -37,10 +36,12 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       ccmsg_version: "1",
     },
     bad: [
-      { op: "hello" },
-      { op: "hello", role: "admin" },
-      { op: "hello", role: "user", ua: 1 },
+      { op: "hello", protocol: PROTOCOL_VERSION },
+      { op: "hello", role: "admin", protocol: PROTOCOL_VERSION },
+      { op: "hello", role: "user", ua: 1, protocol: PROTOCOL_VERSION },
       { op: "hello", role: "user", protocol: "1" },
+      { op: "hello", role: "user", protocol: { major: PROTOCOL_VERSION.major } },
+      { op: "hello", role: "user", protocol: { major: PROTOCOL_VERSION.major, minor: -1 } },
     ],
   },
   user_message: {
@@ -478,9 +479,13 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
 };
 
 /** A line read as a request: the typed request, or the failure of whichever
- * layer did not read. */
+ * layer did not read. A hello of another major is neither, and fails the
+ * test that reads one here. */
 function readLine(text: string): Parsed<Request> {
   const got = readRequest(text);
+  if (got.kind === "other_major_hello") {
+    throw new Error(`read as a hello of another major: ${text.slice(0, 200)}`);
+  }
   return got.kind === "request"
     ? { ok: true, value: got.request }
     : { ok: false, failure: got.failure };
@@ -695,43 +700,62 @@ describe("readRequest: the forms beside each op's type", () => {
   });
 });
 
-describe("readRequest: hello by generation", () => {
-  test("a hello of this generation, announced or not, is served", () => {
+describe("readRequest: hello by major", () => {
+  test("a hello of the daemon's major is served, whatever its minor", () => {
     const hellos: readonly Extract<RequestInput, { op: "hello" }>[] = [
       { op: "hello", role: "user", protocol: PROTOCOL_VERSION },
-      { op: "hello", role: "user" },
+      {
+        op: "hello",
+        role: "user",
+        protocol: { major: PROTOCOL_VERSION.major, minor: PROTOCOL_VERSION.minor + 1 },
+      },
     ];
     for (const hello of hellos) {
       const got = read(hello);
       if (!got.ok) throw new Error(got.failure.summary);
       expect(got.value).toEqual({ ...hello, request_id: "q1" });
-      expect(isOtherGenerationHello(got.value)).toBe(false);
     }
   });
 
-  // The rest of a hello of another generation is that generation's shape and
-  // is not read: a client of another generation is told which to run.
-  test("a hello of another generation reads as one, whatever else it holds", () => {
-    const got = read({ op: "hello", role: "session", sid: SID, protocol: 999, cwd: ["/w"] });
-    if (!got.ok) throw new Error(got.failure.summary);
-    expect(got.value).toEqual({
-      op: "hello",
-      role: "session",
-      sid: SID,
-      protocol: 999,
-      request_id: "q1",
+  // The rest of a hello of another major is that major's shape and is not
+  // read: a client of another major is told which version to run.
+  test("a hello of another major reads as one, whatever else it holds", () => {
+    const protocol = { major: PROTOCOL_VERSION.major + 1, minor: 0 };
+    expect(
+      readRequest(
+        line({ op: "hello", role: "session", sid: SID, protocol, cwd: ["/w"], request_id: "q1" }),
+      ),
+    ).toEqual({
+      kind: "other_major_hello",
+      hello: { op: "hello", role: "session", sid: SID, protocol, request_id: "q1" },
     });
-    expect(isOtherGenerationHello(got.value)).toBe(true);
   });
 
-  test("what a hello of another generation says about its client is of its type", () => {
-    expect(refusal(read({ op: "hello", protocol: 999, sid: 1 }))).toStartWith("sid: ");
-    expect(refusal(read({ op: "hello", protocol: "2" }))).toStartWith("protocol: ");
+  // A client from before `major.minor` names no protocol, or the bare number
+  // 1: both are major 1, which is not the daemon's.
+  test("a hello naming no protocol, or a bare number, is of another major", () => {
+    expect(UNANNOUNCED_PROTOCOL_MAJOR).not.toBe(PROTOCOL_VERSION.major);
+    expect(readRequest(line({ op: "hello", role: "user", request_id: "q1" }))).toEqual({
+      kind: "other_major_hello",
+      hello: { op: "hello", role: "user", request_id: "q1" },
+    });
+    expect(readRequest(line({ op: "hello", role: "user", protocol: 1, request_id: "q1" }))).toEqual(
+      {
+        kind: "other_major_hello",
+        hello: { op: "hello", role: "user", protocol: 1, request_id: "q1" },
+      },
+    );
   });
 
-  test("a hello of this generation is read whole: a field of another type is refused", () => {
+  test("what a hello of another major says about its client is of its type", () => {
+    const protocol = { major: PROTOCOL_VERSION.major + 1, minor: 0 };
+    expect(refusal(read({ op: "hello", protocol, sid: 1 }))).toStartWith("sid: ");
+  });
+
+  test("a hello of the daemon's major is read whole: a field of another type is refused", () => {
     expect(
       refusal(read({ op: "hello", role: "observer", protocol: PROTOCOL_VERSION })),
     ).toStartWith("role: ");
+    expect(refusal(read({ op: "hello", role: "user", protocol: "2" }))).toStartWith("protocol");
   });
 });

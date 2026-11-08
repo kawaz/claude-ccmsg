@@ -4,6 +4,7 @@
 // is the wire's reply to it.
 //
 // The hooks module bundles this file, so it imports nothing at run time.
+import type { ProtocolVersion } from "./protocol-version.ts";
 import type { RequestInput } from "./request.ts";
 
 /** The socket the daemon speaks the wire on, in the state dir. */
@@ -19,11 +20,11 @@ export const OP_HTTP_PATH = "/op";
 /** What a request says of who asks, besides the process it comes from (the
  * daemon names the session by that process): the session id it means, which
  * the daemon checks against the process's, the build that asks, and the
- * wire's generation. */
+ * wire's protocol version. */
 export interface OpHello {
   readonly sid: string;
   readonly ccmsg_version?: string;
-  readonly protocol?: number;
+  readonly protocol: ProtocolVersion;
 }
 
 /** The body of `POST /op`: a request of the wire (no `request_id`, which the

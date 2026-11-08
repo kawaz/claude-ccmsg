@@ -15,7 +15,6 @@ import {
   DIRECT_DELIVERY_DAEMON_SENDER,
   LAUNCH_TOOL_WAIT_MS,
   type LaunchInput,
-  isOtherGenerationHello,
   isSessionIdShape,
   readRequest,
   resolvePaths,
@@ -28,11 +27,15 @@ import {
   type PeerInfo,
   type PermitRequestRecord,
   type HelloRequest,
-  type OtherGenerationHelloRequest,
+  type OtherMajorHelloLine,
+  type ProtocolVersion,
+  type ClaimedProtocol,
+  claimedProtocol,
+  formatProtocol,
   type RequestOp,
   type ResponseBody,
   type RestartingStreamEvent,
-  type ServedRequest,
+  type Request,
   type StreamEvent,
   type SessionIdentity,
   type SessionFacts,
@@ -258,11 +261,11 @@ interface SessionEntry {
    * send_message reads), and `meta` is copied verbatim onto the wire (peers,
    * ev:"peers") where a bare config dir path would be noise nobody reads. */
   configDir?: string;
-  /** ccmsg build / wire generation the latest hello for this sid announced
+  /** ccmsg build / protocol version the latest hello for this sid announced
    * (PeerInfo.ccmsg_version / .protocol). Outside `meta` for the same reason
    * configDir is. */
   ccmsgVersion?: string;
-  clientProtocol?: number;
+  clientProtocol?: ProtocolVersion;
   /** ISO time this entry was first created in this daemon process; a later
    * hello for the same sid reuses the existing entry and never touches this
    * (DR: webui session-list ordering wants a stable "connected since", not a
@@ -675,7 +678,7 @@ function sendErr(conn: Conn, code: string, msg: string): void {
  * invocation after it) — the latest hello is simply what the peer reports. */
 interface ClientBuild {
   version?: string;
-  protocol?: number;
+  protocol?: ProtocolVersion;
 }
 
 function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuild): void {
@@ -1077,26 +1080,26 @@ function logTranscriptSubscription(
 }
 
 /** File the "this sid has an out-of-date ccmsg client" record the session list
- * renders. Called where a session's hello is refused for speaking a
- * generation this daemon does not speak (refuseGeneration).
- *
- * A client that simply predates the `protocol` field is NOT stale — it speaks
- * `UNANNOUNCED_PROTOCOL_VERSION`, gets served, and never reaches here. Every
- * subscribe running right now is such a client, so flagging them would ask
- * kawaz to restart every session on the machine over nothing.
+ * renders. Called where a session's hello is refused for speaking a major
+ * this daemon does not speak (refuseOtherMajor), which a client naming no
+ * `major.minor` is (`UNANNOUNCED_PROTOCOL_MAJOR`).
  *
  * The record is overwritten rather than accumulated — a refused subscribe
  * retries every few seconds, and "still trying as of `last_seen`" is the whole
  * signal; a counter would only turn one stale process into a number that keeps
  * moving. Pushing `ev:"peers"` is the caller's job: the caller refuses the
  * hello, so it never reaches the registerSession that normally pushes. */
-function markStaleClient(daemon: Daemon, sid: string, client: ClientBuild): void {
+function markStaleClient(
+  daemon: Daemon,
+  sid: string,
+  client: { version?: string; protocol: ClaimedProtocol },
+): void {
   // An id that is not a session id's shape names no session to warn about.
   if (!isSessionIdShape(sid)) return;
   daemon.staleClients.set(sid, {
     last_seen: nowIso(),
     ...(client.version ? { version: client.version } : {}),
-    ...(client.protocol !== undefined ? { protocol: client.protocol } : {}),
+    protocol: client.protocol,
   });
 }
 
@@ -1111,54 +1114,63 @@ function logToken(value: string | undefined): string | undefined {
   return /^[A-Za-z0-9._/-]+$/.test(trimmed) ? trimmed : undefined;
 }
 
-/** A hello made of what a hello of another generation says about its client
- * (OtherGenerationHelloRequest), so the transport reads it as it reads a hello
- * it serves (the WebSocket pins it to the user role, dropping its sid). A
- * hello that names no role is taken at its sid alone. */
-function claimedHello(claims: OtherGenerationHelloRequest): HelloRequest {
-  return {
+/** Who a hello of another major speaks for, as the transport reads a hello
+ * it serves (the WebSocket pins every hello to the user role, dropping its
+ * sid): its role, and its sid when it keeps one. A hello that names no role
+ * is taken at its sid alone. The hello is put in the served shape only to
+ * pass through the transport's reading; the protocol it is given there is
+ * the daemon's own and is never read — what the client announced is filed
+ * from the hello itself. */
+function otherMajorSender(
+  hello: OtherMajorHelloLine,
+  readHello: HelloReading,
+): Pick<HelloRequest, "role" | "sid"> {
+  const read = readHello({
     op: "hello",
-    role: claims.role ?? "session",
-    ...(claims.sid !== undefined ? { sid: claims.sid } : {}),
-    ...(helloCcmsgVersion(claims) !== undefined
-      ? { ccmsg_version: helloCcmsgVersion(claims) }
-      : {}),
-  };
+    role: hello.role ?? "session",
+    ...(hello.sid !== undefined ? { sid: hello.sid } : {}),
+    protocol: PROTOCOL_VERSION,
+  });
+  return { role: read.role, ...(read.sid !== undefined ? { sid: read.sid } : {}) };
 }
 
-/** Refuse a hello of another generation. A client speaking another
- * generation is refused, not adapted to: ccmsg evolves per host, all at once
- * (DR-0002 §4). Announcing no generation is not a way out of this check — it
- * means generation UNANNOUNCED_PROTOCOL_VERSION and is compared like any
- * other value. The rest of the hello is not read: its shape is its
- * generation's, and the answer it needs is which generation to run. A
- * session's hello files the stale client against its sid. */
-function refuseGeneration(
+/** Refuse a hello of another major. A client speaking another major is
+ * refused, not adapted to: ccmsg evolves per host, all at once (DR-0002 §4).
+ * Announcing no `major.minor` is not a way out of this check — it means major
+ * `UNANNOUNCED_PROTOCOL_MAJOR` and is compared like any other value. The rest
+ * of the hello is not read: its shape is its major's, and the answer it needs
+ * is which version to run. A session's hello files the stale client against
+ * its sid. */
+function refuseOtherMajor(
   daemon: Daemon,
   conn: Conn,
-  hello: HelloRequest,
-  generation: number,
+  hello: OtherMajorHelloLine,
+  readHello: HelloReading,
 ): void {
-  if (hello.role === "session" && hello.sid) {
-    markStaleClient(daemon, hello.sid, { ...readClientBuild(hello), protocol: generation });
+  const announced = claimedProtocol(hello.protocol);
+  const sender = otherMajorSender(hello, readHello);
+  if (sender.role === "session" && sender.sid) {
+    const version = helloCcmsgVersion(hello);
+    markStaleClient(daemon, sender.sid, {
+      ...(version ? { version } : {}),
+      protocol: announced,
+    });
     maybeBroadcastPeers(daemon);
   }
   sendErr(
     conn,
     ErrorCode.bad_request,
-    `client speaks protocol ${generation}, this daemon speaks ${PROTOCOL_VERSION}`,
+    `client speaks protocol ${formatProtocol(announced)}, this daemon speaks ${formatProtocol(PROTOCOL_VERSION)}`,
   );
 }
 
 /** What a hello claims about its own build: `ccmsg_version`, or the old name
  * `client_version` a module loaded before the rename sends until its session
- * restarts. An empty version names none. */
+ * restarts, and the protocol version it speaks. An empty version names
+ * none. */
 function readClientBuild(hello: HelloRequest): ClientBuild {
   const version = helloCcmsgVersion(hello);
-  return {
-    ...(version ? { version } : {}),
-    ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
-  };
+  return { ...(version ? { version } : {}), protocol: hello.protocol };
 }
 
 /** `last_user_input_at` for one sid, as a spreadable fragment so an unknown
@@ -1687,6 +1699,13 @@ async function handleOneRequest(
   // request does not read, so the asker is settled; a line whose frame does
   // not read names no request, and its reply carries no id.
   const read = readRequest(line);
+  if (read.kind === "other_major_hello") {
+    const { hello } = read;
+    activeRequest.run({ conn, requestId: hello.request_id }, () =>
+      refuseOtherMajor(daemon, conn, hello, readHello),
+    );
+    return;
+  }
   if (read.kind !== "request") {
     // The refusal goes to a client that may only log it somewhere nobody
     // looks (a session's hooks module, a browser console), so it is logged
@@ -1706,10 +1725,6 @@ async function handleOneRequest(
   }
   const request = read.request;
   await activeRequest.run({ conn, requestId: request.request_id }, async () => {
-    if (isOtherGenerationHello(request)) {
-      refuseGeneration(daemon, conn, readHello(claimedHello(request)), request.protocol);
-      return;
-    }
     const req =
       request.op === "hello" ? { ...readHello(request), request_id: request.request_id } : request;
     if (IDENTITY_OPS.has(req.op) && conn.identity === null) {
@@ -1750,11 +1765,11 @@ function clipRefusal(summary: string): string {
     : `${summary.slice(0, REFUSAL_MAX_CHARS)}… (${summary.length - REFUSAL_MAX_CHARS} more characters)`;
 }
 
-async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise<void> {
+async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
   switch (req.op) {
     case "hello": {
-      // A hello of another generation never reaches here: it is answered
-      // before its fields are read (refuseGeneration).
+      // A hello of another major never reaches here: it is answered before
+      // its fields are read (refuseOtherMajor).
       const client = readClientBuild(req);
       // Served, so whatever this sid was flagged for is over. registerSession's
       // own push below carries the cleared warning out.
@@ -1910,6 +1925,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ok: true,
         pong: true,
         version: daemon.version,
+        protocol: PROTOCOL_VERSION,
         uptime: (Date.now() - daemon.startTime) / 1000,
         pid: process.pid,
         clients: daemon.connections.size,

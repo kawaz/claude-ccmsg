@@ -22,6 +22,7 @@ import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import * as v from "valibot";
 import {
+  AnnouncedProtocolSchema,
   ClaudeSessionFileTextSchema,
   ErrorCode,
   jsonText,
@@ -59,17 +60,16 @@ const ConnectionOpSchema = v.object({ op: v.picklist(CONNECTION_OPS) });
 const BodySchema = jsonText(JsonObjectSchema);
 
 /** What the body's `hello` says: the session the module means, and what no
- * file of the process tells (its build, the wire's generation). The protocol
- * is read as any number, so a hello of another generation reaches the
- * generation check and is refused there with the generation this daemon
- * speaks. */
+ * file of the process tells (its build, the wire's protocol version). The
+ * protocol is read in the form of any major, so a hello of another major
+ * reaches the check that refuses it with the version this daemon speaks. */
 const OpHelloSchema = v.object({
   sid: v.string(),
   ccmsg_version: v.optional(v.string()),
   /** The old name of `ccmsg_version`, which a module loaded before the
    * rename sends until its session restarts; read as `ccmsg_version`. */
   client_version: v.optional(v.string()),
-  protocol: v.optional(v.number()),
+  protocol: AnnouncedProtocolSchema,
 });
 
 /** A line the daemon wrote, as far as telling a reply apart: a reply has

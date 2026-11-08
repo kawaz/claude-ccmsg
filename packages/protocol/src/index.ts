@@ -4,7 +4,7 @@
 // it; which module holds which shape, who reads it and the house rules for
 // reading are laid out in docs/design/protocol-package.md.
 
-export { VERSION, PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
+export * from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
 export * from "./tree-order.ts";

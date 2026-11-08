@@ -7,6 +7,7 @@ import type {
   ExternalFileOrigin,
   PeerInfo,
   PermitRequestRecord,
+  ProtocolVersion,
   SessionApiError,
   SessionSearchHit,
   SessionSearchMatch,
@@ -14,7 +15,7 @@ import type {
   StaleClientInfo,
   UnreadSay,
 } from "@ccmsg/protocol";
-import { jsonText, parseWith } from "@ccmsg/protocol";
+import { formatProtocol, jsonText, parseWith } from "@ccmsg/protocol";
 import * as v from "valibot";
 import { ccmsgChangelogUrl, claudeCodeChangelogUrl } from "./changelog-url.ts";
 import type { LinePart } from "./session-status-view.ts";
@@ -529,7 +530,7 @@ export interface SessionRow {
    * knows nothing about ccmsg, and a session that never connected has no
    * client to be stale. */
   ccmsg_version?: string;
-  protocol?: number;
+  protocol?: ProtocolVersion;
   stale_client?: StaleClientInfo;
 }
 
@@ -797,39 +798,35 @@ export function summarizeUserAgent(ua: string, maxTouchPoints = 0): string {
 }
 
 /** How a session's ccmsg client reads in the Status tab: the build it
- * announced, and the generation when it named one.
- *
- * A client from before either field existed reads as "版数不明" and nothing
- * more — every subscribe running today is one, they are perfectly compatible
- * (`UNANNOUNCED_PROTOCOL_VERSION`), and this row is not the place to imply
- * otherwise. Any warning comes from `staleClientWarning` instead. */
-export function clientBuildLabel(row: { ccmsg_version?: string; protocol?: number }): string {
+ * announced, and its protocol version. Neither is there for a session no
+ * ccmsg client has hello'd for (known from the agents poll alone). Any
+ * warning comes from `staleClientWarning`. */
+export function clientBuildLabel(row: {
+  ccmsg_version?: string;
+  protocol?: ProtocolVersion;
+}): string {
   const version = row.ccmsg_version ? `v${row.ccmsg_version}` : "版数不明";
-  return row.protocol === undefined ? version : `${version} (protocol ${row.protocol})`;
+  return row.protocol === undefined
+    ? version
+    : `${version} (protocol ${formatProtocol(row.protocol)})`;
 }
 
-/** The warning one session's refused ccmsg client earns, or null while every
- * client of it is being served.
+/** The warning one session's refused ccmsg client earns (a client of another
+ * protocol major), or null while every client of it is being served.
  *
  * The stale process is almost never the one that just hello'd — it is the
  * session's sidecar, started with the plugin of its day and still trying
  * against a daemon that has moved on, refused every few seconds and silent
  * about it. So the text names the fix (restart the session, which loads the
  * current plugin) rather than the symptom, and the version it reports is the
- * *stale* client's, not the row's.
- *
- * An absent `protocol` is not "unknown generation" here: it is the daemon
- * saying the hello never got as far as being read as one, for carrying no
- * `request_id`. Naming that is more useful than a generation number, since it
- * is the actual reason that client cannot connect. */
+ * *stale* client's, not the row's. */
 export function staleClientWarning(row: {
   stale_client?: StaleClientInfo;
 }): { marker: string; build: string; text: string } | null {
   const stale = row.stale_client;
   if (!stale) return null;
   const version = stale.version ? `v${stale.version}` : "版数不明";
-  const generation =
-    stale.protocol === undefined ? "request_id 非対応" : `protocol ${stale.protocol}`;
+  const generation = `protocol ${formatProtocol(stale.protocol)}`;
   // The stale client's own build, not the row's: the row reports whatever
   // hello'd last, which on a healthy-plus-stale session is the *working*
   // process — naming that one would point the reader at the wrong version.

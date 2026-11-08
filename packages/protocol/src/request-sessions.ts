@@ -19,7 +19,7 @@ import {
   SidecarReplySchema,
   SidecarRunIdSchema,
 } from "./sidecar.ts";
-import { PROTOCOL_VERSION } from "./version.ts";
+import { PROTOCOL_VERSION } from "./protocol-version.ts";
 
 /** A Claude Code session id as a request names one. Its shape (a lowercase
  * UUID) is the daemon's to check where it matters; the request only has to
@@ -54,13 +54,14 @@ export const HelloRequestSchema = v.object({
    * `ccmsg_version` (`helloCcmsgVersion`) and clients do not send it
    * (docs/issue drop-legacy-client-version-hello-key). */
   client_version: v.optional(v.string()),
-  /** The wire generation this client speaks: this one. A hello of another
-   * generation is OtherGenerationHelloRequest. Omitting the field means
-   * generation `UNANNOUNCED_PROTOCOL_VERSION`, which is this generation, so
-   * such a hello is read here; when `PROTOCOL_VERSION` moves past it, the
-   * field becomes required here and its absence moves to the other
-   * generation. */
-  protocol: v.optional(v.literal(PROTOCOL_VERSION)),
+  /** The protocol version this client speaks, of this daemon's major; its
+   * minor may differ, and is served (DR-0002 §4). A hello of another major —
+   * or naming none, or a bare number, the forms of major 1
+   * (`UNANNOUNCED_PROTOCOL_MAJOR`) — is OtherMajorHelloRequest. */
+  protocol: v.object({
+    major: v.literal(PROTOCOL_VERSION.major),
+    minor: v.pipe(v.number(), v.integer(), v.minValue(0)),
+  }),
   /** How the browser arrived at the page this hello comes from
    * (`PerformanceNavigationTiming.type`: navigate / reload / back_forward /
    * prerender). Diagnostic only, and sent by the webui on the first hello of a
@@ -76,20 +77,29 @@ export const HelloRequestSchema = v.object({
 });
 export type HelloRequest = Output<typeof HelloRequestSchema>;
 
-/** A hello of a generation this daemon does not speak (DR-0002 §4). Only what
- * the refusal needs is read: the generation, and which session's client it is
- * (filed as `PeerInfo.stale_client`). The rest of it is that generation's
- * shape, and is not read. */
-export const OtherGenerationHelloRequestSchema = v.object({
+/** A hello of a major this daemon does not speak (DR-0002 §4). Only what the
+ * refusal needs is read: the protocol it names, and which session's client
+ * it is (filed as `PeerInfo.stale_client`). The rest of it is that major's
+ * shape, and is not read. Its `protocol` is any announced form that is not
+ * of this daemon's major (`claimedProtocol` reads it). */
+export const OtherMajorHelloRequestSchema = v.object({
   op: v.literal("hello"),
-  protocol: v.pipe(v.number(), v.notValue(PROTOCOL_VERSION)),
+  protocol: v.optional(
+    v.union([
+      v.pipe(v.number(), v.notValue(PROTOCOL_VERSION.major)),
+      v.object({
+        major: v.pipe(v.number(), v.notValue(PROTOCOL_VERSION.major)),
+        minor: v.optional(v.number()),
+      }),
+    ]),
+  ),
   role: v.optional(v.picklist(["session", "user"])),
   sid: v.optional(v.string()),
   ccmsg_version: v.optional(v.string()),
-  /** Its old name, which the clients of the generations before carry. */
+  /** Its old name, which the clients of the majors before carry. */
   client_version: v.optional(v.string()),
 });
-export type OtherGenerationHelloRequest = Output<typeof OtherGenerationHelloRequestSchema>;
+export type OtherMajorHelloRequest = Output<typeof OtherMajorHelloRequestSchema>;
 
 /** The ccmsg build a hello announces: `ccmsg_version`, else the old name
  * `client_version` a client from before the rename sends. */
@@ -99,12 +109,6 @@ export function helloCcmsgVersion(hello: {
 }): string | undefined {
   return hello.ccmsg_version ?? hello.client_version;
 }
-
-/** A hello of any generation, told apart by the generation it announces. */
-export const AnyGenerationHelloRequestSchema = v.variant("protocol", [
-  HelloRequestSchema,
-  OtherGenerationHelloRequestSchema,
-]);
 
 export const PeersRequestSchema = v.object({
   op: v.literal("peers"),

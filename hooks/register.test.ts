@@ -13,6 +13,7 @@ import { errorText, jsonText, parseWith } from "@ccmsg/protocol/parse";
 import { CCMSG_TOOLS } from "@ccmsg/protocol/peer-tools";
 import { UNCONFIRMED_ADVICE } from "@ccmsg/protocol/peer-tools-text";
 import { PERMIT_VOICE_MAX_LENGTH } from "@ccmsg/protocol/permit-request";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol/protocol-version";
 import {
   type DescribeResult,
   type SessionFacts,
@@ -2848,9 +2849,9 @@ describe("the ccmsg tools", () => {
   }
 
   /** What the module says of who asks: the session it means, the plugin's
-   * version and the wire's generation. The daemon names the session by the
-   * asking process (DR-0046 §3), so nothing else is said. */
-  const HELLO = { sid: fake0, protocol: 1, ccmsg_version: "9.9.9" };
+   * version and the wire's protocol version. The daemon names the session by
+   * the asking process (DR-0046 §3), so nothing else is said. */
+  const HELLO = { sid: fake0, protocol: PROTOCOL_VERSION, ccmsg_version: "9.9.9" };
 
   // The tools ask the daemon over its socket (DR-0046): no ccmsg process is
   // started for them.

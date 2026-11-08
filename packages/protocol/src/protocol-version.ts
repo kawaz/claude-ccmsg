@@ -1,32 +1,78 @@
-// The wire's generation, apart from the build's version (version.ts): the
-// generation changes only by hand, so the hooks module bundles this file, and
-// its bundle does not change with every release as the build's version would.
+// The wire's protocol version, apart from the build's version (version.ts):
+// it changes only by hand, so the hooks module bundles this file, and its
+// bundle does not change with every release as the build's version would.
+import * as v from "valibot";
+import type { Output } from "./parse.ts";
+
+/** A protocol version, `major.minor`. */
+export const ProtocolVersionSchema = v.object({
+  major: v.pipe(v.number(), v.integer(), v.minValue(1)),
+  minor: v.pipe(v.number(), v.integer(), v.minValue(0)),
+});
+export type ProtocolVersion = Output<typeof ProtocolVersionSchema>;
 
 /**
- * Wire protocol generation, bumped by hand — never by a release — whenever a
- * change makes an existing client's `hello`, `subscribe`, event reception, or
- * ordinary ops stop working against the new daemon. The daemon rejects a hello
- * announcing a different generation instead of serving it: ccmsg evolves per
- * host, all at once, with no compatibility path (DR-0002 §4).
+ * The wire protocol's version, `major.minor`, moved by hand — never by a
+ * release — whenever the contract between the daemon and its clients (the
+ * schemas of this package) changes. Which part moves is decided by what the
+ * change does to a client already running (DR-0002 §4):
  *
- * Generation 1 is the `request_id` correlation envelope every request carries
- * (DR-0029 追補).
+ * - **major**: a client can no longer talk to the daemon (the envelope,
+ *   hello, subscribe, the shape of an event). The daemon refuses a hello of
+ *   another major and files the session's client as stale
+ *   (`PeerInfo.stale_client`); a webui bundle of another major than the
+ *   daemon's asks for a reload, in red.
+ * - **minor**: the talk goes through but can mean something else (an op or a
+ *   tool added or removed, a schema changed — a field the old side drops
+ *   without a word). The daemon serves the client and reports its version on
+ *   the session's peer row (`PeerInfo.protocol`); the webui marks that
+ *   session's ccmsg in yellow, which restarting the session fixes and a
+ *   reload does not.
+ *
+ * A major change sets the minor back to 0. `just check-protocol-bumped`
+ * refuses a push that changes this package without moving this.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION: ProtocolVersion = { major: 2, minor: 0 };
 
 /**
- * The generation of a client whose hello carries no `protocol` field at all:
- * generation 1, the generation during which the field itself was introduced.
- *
- * This is the definition of what those clients speak, not a compatibility path
- * — nothing downstream branches on "announced vs assumed", it is simply the
- * number they mean. Getting this wrong in the other direction would be a false
- * alarm at scale: every subscribe running today predates the field, is fully
- * compatible, and would otherwise be flagged as stale the moment this ships,
- * asking kawaz to restart every session on his machine for nothing.
- *
- * It follows that when `PROTOCOL_VERSION` next moves, these clients are
- * refused like any other generation-1 client — by then that is exactly what
- * they are.
+ * The major of a party that names no `major.minor`: a hello or a ping reply
+ * without the `protocol` field, or a hello carrying a bare number there (the
+ * form of major 1, whose clients send `1`). Such a party is of major 1 — the
+ * definition of what it speaks, not a compatibility path: its hello is
+ * refused like that of any major but the daemon's.
  */
-export const UNANNOUNCED_PROTOCOL_VERSION = 1;
+export const UNANNOUNCED_PROTOCOL_MAJOR = 1;
+
+/** What a hello or a reply says of its protocol, in the form of any major: a
+ * `major.minor`, a bare number (major 1's form), or nothing. Read as any
+ * value of those forms so that a hello of another major reaches the check
+ * that refuses it with the version this daemon speaks. */
+export const AnnouncedProtocolSchema = v.optional(
+  v.union([v.number(), v.object({ major: v.number(), minor: v.optional(v.number()) })]),
+);
+export type AnnouncedProtocol = Output<typeof AnnouncedProtocolSchema>;
+
+/** A protocol as a party announced it, made comparable: its major, and its
+ * minor when it named one. */
+export const ClaimedProtocolSchema = v.object({
+  major: v.number(),
+  minor: v.optional(v.number()),
+});
+export type ClaimedProtocol = Output<typeof ClaimedProtocolSchema>;
+
+/** The protocol `announced` names: no minor when it is not of the
+ * `major.minor` form. */
+export function claimedProtocol(announced: AnnouncedProtocol): ClaimedProtocol {
+  if (announced === undefined) return { major: UNANNOUNCED_PROTOCOL_MAJOR };
+  if (typeof announced === "number") return { major: announced };
+  return announced.minor === undefined
+    ? { major: announced.major }
+    : { major: announced.major, minor: announced.minor };
+}
+
+/** `2.0`, or `1` for a protocol named by its major alone. */
+export function formatProtocol(protocol: ClaimedProtocol): string {
+  return protocol.minor === undefined
+    ? String(protocol.major)
+    : `${String(protocol.major)}.${String(protocol.minor)}`;
+}

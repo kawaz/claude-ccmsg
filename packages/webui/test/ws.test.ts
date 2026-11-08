@@ -622,7 +622,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
       op: "hello",
       role: "user",
       ccmsg_version: VERSION,
-      protocol: 1,
+      protocol: PROTOCOL_VERSION,
       // no nav_type: the test runner has no navigation entry, and the UA it
       // does have is not a browser this summary knows.
       ua: "other/other",

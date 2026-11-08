@@ -11,8 +11,8 @@
 //   4. daemon が client より新しい (= client が古い) 場合も daemon は再起動しない
 //      (= newer-wins ポリシー、docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md。
 //      gradual rollout 中の新旧混在で降格・昇格の綱引きが起きないための不変条件)。
-//   5. hello 応答に wire の世代 (protocol) も request_id も載せない daemon も、
-//      hello を読んで 1. と同じく入れ替えられる。
+//   5. protocol の major が違って hello を断る daemon も、ping で版を読んで
+//      1. と同じく入れ替えられる。
 //
 // テスト用シームの根拠 (Design rationale):
 // - CCMSG_VERSION_OVERRIDE: 旧 version の実バイナリを別途用意しなくても
@@ -173,12 +173,14 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
     client.close();
   });
 
-  test("hello 応答に protocol も request_id も無い旧 daemon も、hello を読んで入れ替える", async () => {
-    // 「何を保証するか」: wire の世代 (protocol) を名乗らない daemon の hello 応答は
-    // 世代 UNANNOUNCED_PROTOCOL_VERSION の応答として読める。読めなければ
-    // ensureDaemon は version の比較に届かず、旧 daemon を入れ替えられない。
-    // そういう daemon の実バイナリは無いので、hello にその形で答え、shutdown で
-    // 居なくなる UDS の相手で代える。
+  test("hello を断る protocol の major 違いの旧 daemon も、ping で版を読んで入れ替える", async () => {
+    // 「何を保証するか」: protocol の major を上げた plugin に更新した直後、
+    // 走っている旧 daemon (major 1) は新しい client の hello を断る
+    // (DR-0002 §4)。ensureDaemon が hello の応答だけで版を読むと、断られた
+    // まま旧 daemon を入れ替えられず、新しい client が全部止まる。hello 不要の
+    // ping は旧 daemon も答える (protocol は名乗らない) ので、そこで版を読んで
+    // 入れ替える。major 1 の daemon の実バイナリは無いので、hello を断り、ping
+    // に答え、shutdown で居なくなる UDS の相手で代える。
     const shutdownReasons: Array<string | undefined> = [];
     const oldDaemon = Bun.listen<undefined>({
       unix: env.sock,
@@ -188,8 +190,30 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
             if (line.trim() === "") continue;
             const read = readRequest(line);
             if (read.kind !== "request") continue;
-            if (read.request.op === "hello") {
-              socket.write(`${JSON.stringify({ ok: true, version: OLD_VERSION })}\n`);
+            const { op, request_id: requestId } = read.request;
+            if (op === "hello") {
+              socket.write(
+                `${JSON.stringify({
+                  ok: false,
+                  error: { code: "invalid_args", msg: "protocol: unknown op: [object Object]" },
+                  request_id: requestId,
+                })}\n`,
+              );
+            } else if (op === "ping") {
+              socket.write(
+                `${JSON.stringify({
+                  ok: true,
+                  pong: true,
+                  version: OLD_VERSION,
+                  uptime: 1,
+                  pid: 1,
+                  clients: 1,
+                  http: [],
+                  httpAllow: [],
+                  network: "off",
+                  request_id: requestId,
+                })}\n`,
+              );
             } else if (read.request.op === "shutdown") {
               shutdownReasons.push(read.request.reason);
               oldDaemon.stop(true);

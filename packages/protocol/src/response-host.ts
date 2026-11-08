@@ -8,6 +8,7 @@
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
 import type { Output } from "./parse.ts";
+import { ProtocolVersionSchema } from "./protocol-version.ts";
 
 /** A Claude Code version the daemon read from `claude --version` (its first
  * word, e.g. "2.1.312"), and `observed_at`, when it read it (epoch ms of the
@@ -23,6 +24,12 @@ export const PingResponseSchema = v.object({
   ok: v.literal(true),
   pong: v.literal(true),
   version: v.string(),
+  /** The protocol version this daemon speaks (`PROTOCOL_VERSION`). Ping needs
+   * no hello, so it is what a client whose hello was refused for its major
+   * learns the daemon's from (the webui's reload, DR-0002 §4). Absent from a
+   * daemon of major 1 (`UNANNOUNCED_PROTOCOL_MAJOR`), whose ping did not say
+   * it. */
+  protocol: v.optional(ProtocolVersionSchema),
   uptime: v.number(),
   pid: v.number(),
   clients: v.number(),

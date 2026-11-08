@@ -42,8 +42,12 @@ const PEER = {
   last_activity_at: "2026-10-09T00:00:01.000Z",
   last_user_input_at: "2026-10-09T00:00:02.000Z",
   ccmsg_version: "0.157.0",
-  protocol: 3,
-  stale_client: { last_seen: "2026-10-09T00:00:03.000Z", version: "0.1.0", protocol: 2 },
+  protocol: { major: 3, minor: 1 },
+  stale_client: {
+    last_seen: "2026-10-09T00:00:03.000Z",
+    version: "0.1.0",
+    protocol: { major: 2, minor: 4 },
+  },
 } as const;
 
 /** A snapshot with every part present, a tree nested two deep included. */
@@ -195,11 +199,11 @@ const FS_LIST: FsListResponse = {
  * the op's reply does not compile). */
 const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   hello: [
-    { ok: true, version: "0.157.0", protocol: 3 },
+    { ok: true, version: "0.157.0", protocol: { major: 3, minor: 0 } },
     {
       ok: true,
       version: "0.157.0",
-      protocol: 3,
+      protocol: { major: 3, minor: 2 },
       terminal_gateway_url: "https://t.example/",
       llm_usage_available: true,
       llm_stats_available: true,
@@ -577,6 +581,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
       ok: true,
       pong: true,
       version: "0.157.0",
+      protocol: { major: 3, minor: 2 },
       uptime: 1.5,
       pid: 2,
       clients: 4,

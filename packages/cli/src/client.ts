@@ -355,11 +355,29 @@ export function helloRequest(identity: Identity): Extract<RequestInput, { op: "h
   };
 }
 
-/** Connect (spawning + upgrading the daemon as needed) and complete the hello handshake. */
+/** The version of the daemon `client` is connected to: its hello's reply,
+ * or — when the hello was refused, as a daemon of another protocol major
+ * refuses it — its ping, which needs no hello. Undefined when neither says. */
+async function daemonVersionOf(
+  client: Client,
+  hello: ReplyOf<"hello">,
+): Promise<string | undefined> {
+  if (hello.ok) return hello.version;
+  const pong = await client.request({ op: "ping" });
+  return pong.ok ? pong.version : undefined;
+}
+
+/** Connect (spawning + upgrading the daemon as needed) and complete the hello handshake.
+ *
+ * The daemon's version is read even when it refuses the hello: a plugin
+ * update that moves the protocol's major (DR-0002 §4) leaves running a daemon
+ * that refuses every hello of the new major, and replacing it is what makes
+ * the new clients work. */
 export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Client> {
   let client = await connectWithSpawn(paths);
   let hello = await client.request(helloRequest(identity));
-  if (hello.ok && compareVersions(VERSION, hello.version) > 0) {
+  const daemonVersion = await daemonVersionOf(client, hello);
+  if (daemonVersion !== undefined && compareVersions(VERSION, daemonVersion) > 0) {
     // we are strictly newer than the running daemon: shut it down and spawn ours.
     // A same-or-newer daemon is left running (newer-wins, see file header).
     try {
@@ -372,7 +390,7 @@ export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Cl
     client = await connectWithSpawn(paths);
     hello = await client.request(helloRequest(identity));
   }
-  if (!hello.ok) throw new Error("ccmsg: hello handshake failed");
+  if (!hello.ok) throw new Error(`ccmsg: hello handshake failed: ${hello.error.msg}`);
   return client;
 }
 

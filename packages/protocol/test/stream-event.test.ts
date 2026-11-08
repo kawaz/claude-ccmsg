@@ -99,13 +99,20 @@ const PUSHES: {
     {
       ev: "peers",
       peers: [
-        { sid: SID, repo: "kawaz/x", ws: "main", cwd: "/w", branch: "main", protocol: 3 },
+        {
+          sid: SID,
+          repo: "kawaz/x",
+          ws: "main",
+          cwd: "/w",
+          branch: "main",
+          protocol: { major: 3, minor: 1 },
+        },
         {
           sid: SID,
           repo: "",
           ws: "",
           cwd: "",
-          stale_client: { last_seen: "2026-10-09T00:00:00.000Z" },
+          stale_client: { last_seen: "2026-10-09T00:00:00.000Z", protocol: { major: 1 } },
         },
       ],
     },

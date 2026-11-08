@@ -21,19 +21,16 @@ import {
   SessionTurnSchema,
 } from "./session-status.ts";
 import { AgentAppendReasonSchema, UserPromptModuleReasonSchema } from "./sidecar.ts";
-import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
+import { ClaimedProtocolSchema, ProtocolVersionSchema } from "./protocol-version.ts";
 
 export const HelloResponseSchema = v.object({
   ok: v.literal(true),
   version: v.string(),
-  /** The wire generation this daemon speaks (`PROTOCOL_VERSION`). A client
-   * whose own generation differs never gets here — its hello is rejected —
-   * so this is for display, not for the client to branch on. A reply without
-   * the field comes from a daemon of generation `UNANNOUNCED_PROTOCOL_VERSION`:
-   * that is the number such a daemon means, the same definition the daemon
-   * applies to a hello without it, not a compatibility path. Reading it is
-   * what lets `ensureDaemon` see that daemon's version and replace it. */
-  protocol: v.optional(v.number(), UNANNOUNCED_PROTOCOL_VERSION),
+  /** The protocol version this daemon speaks (`PROTOCOL_VERSION`). A client
+   * of another major never gets here — its hello is refused — so the major is
+   * the client's own; the minor is what a client's minor is compared with
+   * (DR-0002 §4). */
+  protocol: ProtocolVersionSchema,
   /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
    * hello に対してのみ、`<configDir>/config.json` の `terminal_gateway_url`
    * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)
@@ -88,26 +85,18 @@ export const HelloResponseSchema = v.object({
 });
 export type HelloResponse = Output<typeof HelloResponseSchema>;
 
-/** A ccmsg client for one sid whose hello the daemon refused. Overwritten,
- * never accumulated — the offending client reconnects every few seconds, so
- * the useful reading is "still happening as of `last_seen`", not how many
- * times it tried.
- *
- * There are exactly two ways to get here, and `protocol` tells them apart:
- * present, the client announced a generation this daemon does not speak;
- * absent, it was refused before it could be read as a hello at all, for
- * sending no `request_id` (generation 1's envelope). A client merely too old
- * to announce a generation is *not* here — that is
- * `UNANNOUNCED_PROTOCOL_VERSION`, and it is served like any other client of
- * that generation. */
+/** A ccmsg client for one sid whose hello the daemon refused, for speaking a
+ * major this daemon does not (DR-0002 §4). Overwritten, never accumulated —
+ * the offending client reconnects every few seconds, so the useful reading is
+ * "still happening as of `last_seen`", not how many times it tried. */
 export const StaleClientInfoSchema = v.object({
   /** ISO time of that client's most recent attempt. */
   last_seen: v.string(),
   /** ccmsg build it reported, when it reported one. */
   version: v.optional(v.string()),
-  /** Generation it announced. Absent means it never got that far: refused for
-   * the missing correlation envelope. */
-  protocol: v.optional(v.number()),
+  /** The protocol it announced (`claimedProtocol`): a client that named none,
+   * or a bare number, is of major 1 with no minor. */
+  protocol: ClaimedProtocolSchema,
 });
 export type StaleClientInfo = Output<typeof StaleClientInfoSchema>;
 
@@ -146,12 +135,13 @@ export const PeerInfoSchema = v.object({
   /** ccmsg build of the client that last hello'd for this sid, when it
    * announced one (`HelloRequest.ccmsg_version`). */
   ccmsg_version: v.optional(v.string()),
-  /** Wire generation that client announced (`HelloRequest.protocol`). Absent
-   * for a client that predates the field, which means
-   * `UNANNOUNCED_PROTOCOL_VERSION` rather than "unknown" — it is left absent
-   * instead of filled in so a display can say "版数不明" for such a client
-   * without inventing a generation it never mentioned. */
-  protocol: v.optional(v.number()),
+  /** The protocol version that client announced (`HelloRequest.protocol`):
+   * of the daemon's major, since a hello of another is refused, and of any
+   * minor. A minor other than the daemon's is a client that can drop what
+   * the daemon sends it without a word; restarting the session fixes it
+   * (DR-0002 §4). Absent while no ccmsg client of the session has hello'd
+   * (a session the daemon knows from the agents poll alone). */
+  protocol: v.optional(ProtocolVersionSchema),
   /** Set while the daemon has seen a client for this sid whose hello it
    * refused. The session itself is fine — some *other* ccmsg process of the
    * same session (typically its sidecar, which lives as long as the session

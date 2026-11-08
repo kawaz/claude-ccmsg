@@ -91,7 +91,7 @@ function pinHelloToUser(hello: HelloRequest): HelloRequest {
     op: "hello",
     role: "user",
     ...(helloCcmsgVersion(hello) !== undefined ? { ccmsg_version: helloCcmsgVersion(hello) } : {}),
-    ...(hello.protocol !== undefined ? { protocol: hello.protocol } : {}),
+    protocol: hello.protocol,
     ...(hello.nav_type !== undefined ? { nav_type: hello.nav_type } : {}),
     ...(hello.ua !== undefined ? { ua: hello.ua } : {}),
   };

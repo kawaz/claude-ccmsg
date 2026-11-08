@@ -118,6 +118,22 @@ function check(requirement, message$1) {
     }
   };
 }
+function integer(message$1) {
+  return {
+    kind: "validation",
+    type: "integer",
+    reference: integer,
+    async: false,
+    expects: null,
+    requirement: Number.isInteger,
+    message: message$1,
+    "~run"(dataset, config$1) {
+      if (dataset.typed && !this.requirement(dataset.value))
+        _addIssue(this, "integer", dataset, config$1);
+      return dataset;
+    }
+  };
+}
 function length(requirement, message$1) {
   return {
     kind: "validation",
@@ -1056,7 +1072,16 @@ function stateDirOf(env, home) {
   return `${base.replace(/\/+$/u, "")}/ccmsg`;
 }
 
-var PROTOCOL_VERSION = 1;
+var ProtocolVersionSchema = object({
+  major: pipe(number(), integer(), minValue(1)),
+  minor: pipe(number(), integer(), minValue(0))
+});
+var PROTOCOL_VERSION = { major: 2, minor: 0 };
+var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
+var ClaimedProtocolSchema = object({
+  major: number(),
+  minor: optional(number())
+});
 
 var PackageVersionTextSchema = jsonText(object({ version: string() }));
 async function helloOf($, asked) {

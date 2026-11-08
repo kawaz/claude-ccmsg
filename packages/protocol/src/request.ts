@@ -12,19 +12,14 @@
 // than refused (`v.object`, not `v.strictObject`). ccmsg owns both ends of the
 // wire, and the clients and the daemon of one host change together (DR-0002
 // §4): what a client of another build may send is checked once, by hello's
-// `protocol`, which refuses a client of another generation with a reply that
-// says so. Refusing unknown fields would answer that client's hello, which may
+// `protocol`, which refuses a client of another major with a reply that says
+// so. Refusing unknown fields would answer that client's hello, which may
 // carry a field this daemon has never heard of, with a field error instead of
-// the generation it speaks. The fields the daemon reads are all typed, so a
+// the version it speaks. The fields the daemon reads are all typed, so a
 // field it does not read can do nothing.
 import * as v from "valibot";
 import { JsonTextSchema, type ParseFailure, parseWith, type Output } from "./parse.ts";
-import {
-  AnyGenerationHelloRequestSchema,
-  HelloRequestSchema,
-  type OtherGenerationHelloRequest,
-} from "./request-sessions.ts";
-import { PROTOCOL_VERSION } from "./version.ts";
+import { HelloRequestSchema, OtherMajorHelloRequestSchema } from "./request-sessions.ts";
 import {
   ReadRequestSchema,
   RoomHistoryRequestSchema,
@@ -123,7 +118,7 @@ export const RequestEnvelopeSchema = v.object({
 });
 export type RequestEnvelope = Output<typeof RequestEnvelopeSchema>;
 
-/** Every op's request but hello's, which comes in a shape per generation. */
+/** Every op's request but hello's, which comes in a shape per major. */
 const OP_REQUEST_SCHEMAS = [
   SendMessageRequestSchema,
   PeerListRequestSchema,
@@ -188,12 +183,13 @@ const OP_REQUEST_SCHEMAS = [
   ShutdownRequestSchema,
 ] as const;
 
-/** Every request shape, before the correlation envelope, told apart by `op`
- * (and a hello by its generation). Use `Request` (the wire form) unless you
- * specifically mean "the body a caller composes". */
+/** Every request shape the daemon serves, before the correlation envelope,
+ * told apart by `op`. A hello of another major is not one of them: it is read
+ * apart (`readRequest`), to be refused. Use `Request` (the wire form) unless
+ * you specifically mean "the body a caller composes". */
 export const RequestBodySchema = v.variant(
   "op",
-  [AnyGenerationHelloRequestSchema, ...OP_REQUEST_SCHEMAS],
+  [HelloRequestSchema, ...OP_REQUEST_SCHEMAS],
   // Names the op rather than listing every op this daemon serves: the list is
   // long enough to be clipped from the refusal, and the sender needs to know
   // which op was not served.
@@ -247,13 +243,9 @@ export const REQUEST_OPS: readonly RequestOp[] = [
 
 /** A request as a caller composes it: the body without the correlation
  * envelope, which the client's transport stamps on the way out. Distributive
- * so each member of the union keeps its own discriminated `op`. A caller
- * speaks this generation, so a hello of another is not one it composes. */
+ * so each member of the union keeps its own discriminated `op`. */
 export type RequestBodyOf<T> = T extends unknown ? Omit<T, "request_id"> : never;
-export type RequestInput = RequestBodyOf<ServedRequest>;
-
-/** A request the daemon serves: any but a hello of another generation. */
-export type ServedRequest = Exclude<Request, OtherGenerationHelloRequest>;
+export type RequestInput = RequestBodyOf<Request>;
 
 // --- reading a request line -------------------------------------------------
 
@@ -270,19 +262,35 @@ export const RequestFrameSchema = v.object({
 });
 export type RequestFrame = Output<typeof RequestFrameSchema>;
 
-/** A request of this generation, or a hello of another, with its correlation
- * id. */
+/** A request the daemon serves, with its correlation id. */
 const RequestSchema = v.intersect([RequestBodySchema, RequestEnvelopeSchema]);
+
+/** A hello of another major, with its correlation id. */
+const OtherMajorHelloLineSchema = v.object({
+  ...OtherMajorHelloRequestSchema.entries,
+  ...RequestEnvelopeSchema.entries,
+});
+export type OtherMajorHelloLine = Output<typeof OtherMajorHelloLineSchema>;
+
+/** Whether a hello names another major than the daemon's: what tells a hello
+ * to refuse from one to read whole. */
+const OtherMajorProtocolSchema = v.object({
+  protocol: OtherMajorHelloRequestSchema.entries.protocol,
+});
 
 /** One request line, as read:
  *
  * - `request`: the typed request
+ * - `other_major_hello`: a hello of a major this daemon does not speak
+ *   (DR-0002 §4), read only as far as its refusal needs; answered under
+ *   `hello.request_id` with the version the daemon speaks, not served
  * - `invalid_request`: the frame reads but the request does not (an op this
  *   daemon does not serve, a field of another type); answered under
  *   `frame.request_id`
  * - `invalid_frame`: not JSON, or no `request_id` / `op`; answered under no id */
 export type RequestRead =
   | { readonly kind: "request"; readonly request: Request }
+  | { readonly kind: "other_major_hello"; readonly hello: OtherMajorHelloLine }
   | {
       readonly kind: "invalid_request";
       readonly frame: RequestFrame;
@@ -298,20 +306,16 @@ export function readRequest(line: string): RequestRead {
   const decoded = json.value;
   const frame = parseWith(RequestFrameSchema, decoded, { firstIssue: true });
   if (!frame.ok) return { kind: "invalid_frame", failure: frame.failure };
+  // The rest of a hello of another major is that major's shape: only what
+  // the refusal needs is read of it.
+  if (frame.value.op === "hello" && parseWith(OtherMajorProtocolSchema, decoded).ok) {
+    const hello = parseWith(OtherMajorHelloLineSchema, decoded, { firstIssue: true });
+    return hello.ok
+      ? { kind: "other_major_hello", hello: hello.value }
+      : { kind: "invalid_request", frame: frame.value, failure: hello.failure };
+  }
   const request = parseWith(RequestSchema, decoded, { firstIssue: true });
   return request.ok
     ? { kind: "request", request: request.value }
     : { kind: "invalid_request", frame: frame.value, failure: request.failure };
-}
-
-/** Whether a request is a hello of a generation this daemon does not speak
- * (DR-0002 §4): one to refuse with the generation it speaks, not to serve. */
-export function isOtherGenerationHello(
-  request: Request,
-): request is Exclude<Request, ServedRequest> {
-  return (
-    request.op === "hello" &&
-    request.protocol !== undefined &&
-    request.protocol !== PROTOCOL_VERSION
-  );
 }

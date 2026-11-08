@@ -23,4 +23,4 @@ const versionOverride =
 export const VERSION: string =
   versionOverride && versionOverride !== "" ? versionOverride : pkg.version;
 
-export { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./protocol-version.ts";
+export * from "./protocol-version.ts";
