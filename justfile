@@ -25,6 +25,9 @@ bump-trigger-paths := "packages/ bin/ hooks/ bun.lock tsconfig.json"
 
 version-files := ".claude-plugin/plugin.json .claude-plugin/marketplace.json package.json"
 
+# protocol の版 (PROTOCOL_VERSION) の置き場 (check-protocol-bumped)
+protocol-version-file := "packages/protocol/src/protocol-version.ts"
+
 # package 別のカバレッジ下限 (`package:lines%:functions%`)。coverage/lcov.info の合計
 # (LH/LF・FNH/FNF) と比べ、どれかを下回ったら `just coverage` を落とす。
 # 値の根拠は docs/findings/2026-10-14-test-coverage-baseline.md
@@ -40,7 +43,7 @@ default:
 # ---------- main entries (利用者が直接叩く) ----------
 
 # push (バージョン bump 済みを前提、全 gate 通過後に push してローカルも更新)
-push: check-on-default-branch ensure-clean ci check-translations check-versions check-version-bumped check-changelog
+push: check-on-default-branch ensure-clean ci check-translations check-versions check-version-bumped check-protocol-bumped check-changelog
     bump-semver vcs push --branch main --jj-bookmark-auto-advance
     @just _local-plugin-reload
 
@@ -272,6 +275,30 @@ check-changelog version="":
     printf >&2 '  見出しは `## v<版> <a id="v<版>"></a>` の形で、見出しの版とアンカーの版を揃える。\n'
     printf >&2 '  CHANGELOG.md の冒頭の説明の下 (既存の節より上) に次の節を足して (この版の節が既にあれば見出しをこの形に直して) commit し、もう一度実行してください:\n\n'
     printf >&2 '%s\n\n%s\n\n- <この版で変わったことを 1 行ずつ、数行で>\n\n' "$want" "$(date +%Y-%m-%d)"
+    exit 1
+
+# protocol の契約 (packages/protocol/src/) が main@origin から変わっていれば、PROTOCOL_VERSION (major か minor) も動いているか検証 (DR-0002 §4)。
+# protocol-version.ts だけの変更 (bump のみ) は通す。PROTOCOL_VERSION の値は宣言の 1 行を空白を除いて比べる
+[private]
+[script]
+check-protocol-bumped:
+    rc=0
+    bump-semver vcs diff -q main@origin --excludes {{ protocol-version-file }} -- packages/protocol/src || rc=$?
+    case "$rc" in
+      0) exit 0 ;;
+      1) ;;
+      *) echo "ERROR: bump-semver vcs diff failed (rc=$rc). main@origin が track されていない可能性。先に 'jj git fetch' を試してください" >&2; exit 1 ;;
+    esac
+    declared() { sed -n "s/^$1export const PROTOCOL_VERSION[^=]*=//p" | tr -d ' '; }
+    patch=$(bump-semver vcs diff main@origin -- {{ protocol-version-file }})
+    old=$(printf '%s\n' "$patch" | declared -)
+    new=$(printf '%s\n' "$patch" | declared '+')
+    [ -n "$new" ] && [ "$old" != "$new" ] && exit 0
+    printf >&2 'ERROR: protocol の契約 (packages/protocol/src/) が main@origin から変わったが PROTOCOL_VERSION が動いていない。\n'
+    printf >&2 '  通信の形 (封筒・hello・subscribe・event の形) が変わるなら major、tool / op の追加削除・schema 変更なら minor を上げる。\n'
+    printf >&2 '  場所: %s の PROTOCOL_VERSION (今: %s)\n' {{ quote(protocol-version-file) }} "$(sed -n 's/^export const PROTOCOL_VERSION[^=]*= *\(.*\);$/\1/p' {{ protocol-version-file }})"
+    printf >&2 '  変わったファイル:\n'
+    bump-semver vcs diff -s main@origin --excludes {{ protocol-version-file }} -- packages/protocol/src | sed 's/^/    /' >&2
     exit 1
 
 # product code に変更があれば version も main@origin より bump 済か検証 (変更なしならスキップ)。
