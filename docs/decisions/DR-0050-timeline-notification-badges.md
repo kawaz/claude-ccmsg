@@ -1,6 +1,6 @@
 # DR-0050: TL ヘッダの 🔔🔐 バッジで、未読の say / 許可依頼だけを TL に出すフィルタを URL で切り替える
 
-- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、タブ列と Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`、§10 の worker の say の `ev:"agent_says"` と合流)
+- Status: Accepted (2026-11-08、kawaz 裁定) — ✅ 実装済み (`notification-badges.ts`、`NotificationBadges`、TL のツールバーと Sessions の行のバッジ、locator の `filter`、`.tl-lines[data-filter]` の CSS、`useFilterScroll`、許可依頼の位置 `permit:<id>`、§10 の worker の say の `ev:"agent_says"` と合流)
 - Date: 2026-11-08
 
 ## Context
@@ -30,17 +30,17 @@
 
 ### 3. TL ヘッダのバッジ
 
-- セッションのタブ列 (`Files / Timeline / …`) の左端に 🔔 と 🔐 をこの順に並べる。Files / Status を見ている間も未読に気づけ、押せば Timeline へ移る (§9 U1)
+- Timeline タブの中のツールバー (`tl-toolbar`。older / 検索 / 👤 のナビ等が並ぶ行) の左端に 🔔 と 🔐 をこの順に並べる。Files / Status を見ている間は出ない。Sessions の行のバッジから入れば未読の種類のフィルタ付きで Timeline を開ける (§9 U1)
 - agent の TL を見ている間は出さない。数えているのは main thread の未読で、agent の TL にはその種類のバブルが無い (§9 U12)
 - そのセッションの未読が say 0・許可依頼 0 ならバッジを出さない。どちらかが 1 以上なら両方を出す。選択中のバッジは 0 / 0 になっても残す (押して解除できなくなるため。§9 U4)
-- 数は絵文字の右上に重ねる赤い角丸の枠に白い数字で出す (カウンター)。未読が 0 の方は絵文字だけで、カウンターを出さない。1 件でも数字を出し、100 件以上は `99+` (§9 U14)
-- カウンターは CSS だけで重ねる (バッジを `position: relative` の inline 要素にし、カウンターを `position: absolute` で右上に置く)。行の高さと横幅はカウンターの有無で変えない
+- 数はバッジの box の内側の右下に重ねる赤い角丸の枠に白い数字で出す (カウンター)。未読が 0 の方は絵文字だけで、カウンターを出さない。1 件でも数字を出し、100 件以上は `99+` (§9 U14)
+- カウンターは CSS だけで重ねる (バッジを `position: relative` の inline 要素にし、カウンターを `position: absolute; right: 0; bottom: 0` で内側の右下に置き、外にはみ出させない)。絵文字の大きさ・行の高さ・横幅はカウンターの有無で変えない
 - 選択中 (§4 のフィルタがその種類) のバッジは accent の面と枠 (`--accent-surface` / `--accent-border`) で塗り、`aria-current="true"` を付ける
 - 🔔 と 🔐 は排他。選択中でない方を押すとその種類に切り替わる (§9 U2)
 - バッジは `<a href>` にする。押すとフィルタの URL へ遷移する。状態は URL が持ち、セッションのタブが link であるのと同じく中クリックで別窓に開ける
 
 ```
-未読 say 1・許可依頼 1        [🔔¹] [🔐¹]   ← ¹ は右上の赤いカウンター
+未読 say 1・許可依頼 1        [🔔¹] [🔐¹]   ← ¹ は内側の右下の赤いカウンター
 🔔 を押す (say だけの TL)      [🔔¹]* [🔐¹]  ← * は選択中の色
 既読を押す                     [🔔]* [🔐¹]
 say がもう 1 回起きる          [🔔¹]* [🔐¹]  ← TL には say が 2 つ (新しい方が下)
@@ -110,7 +110,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 
 ### 7. Sessions 一覧のバッジ
 
-- 行の 🔔 / 🔐 は残す。出すかどうか・カウンターの形は §3 と同じ規則にする (どちらかが 1 以上なら両方、0 の方は絵文字だけ、1 でも数を右上のカウンターで出す。§9 U13)。ピン留めの行も同じ。行のバッジに選択中の状態は無い
+- 行の 🔔 / 🔐 は残す。出すかどうか・カウンターの形は §3 と同じ規則にする (どちらかが 1 以上なら両方、0 の方は絵文字だけ、1 でも数を内側の右下のカウンターで出す。§9 U13)。ピン留めの行も同じ。行のバッジに選択中の状態は無い
 - 行の 🔔 / 🔐 を押すと、そのセッションの TL をその種類のフィルタで開く (`/s/<sid>/timeline/head?filter=say` / `?filter=permit`)。行の他の部分を押した時の「最後に見ていた画面へ」(`/s/<sid>`) とは別の link にする
 - 行の link (`session-main-link`) の中に link は入れられないので、アイコンと版の印を link の前の `session-lead` に出し、その後にバッジの `<a>`、続けて repo@ws の link を並べる。見た目の並び (アイコン → 印 → バッジ → repo 名) は変わらない
 
@@ -128,7 +128,7 @@ Design rationale: フィルタを「該当するバブルだけを別に描く�
 
 | # | 論点 | 裁定 |
 |---|---|---|
-| U1 | バッジを置く行 | セッションのタブ列の左端 (§3) |
+| U1 | バッジを置く行 | TL のツールバー (`tl-toolbar`) の左端 (§3) |
 | U2 | 🔔 と 🔐 を同時に選べるか | 排他。`filter` の値は 1 つ (§3) |
 | U3 | 🔔 のフィルタに PushNotification の 🔔 バブルを含めるか | 含める (§5) |
 | U4 | フィルタ中に未読が 0 / 0 になった時 | 選択中のバッジは残す (§3) |
@@ -152,7 +152,7 @@ worker の say も親セッションの未読に数え、親セッションの T
 - protocol (minor は上げない。daemon から webui への契約だけの変更で、webui の bundle は daemon が配るため。module が push する行と tool の schema も変わらない): `ev:"say_unread"` の要素に `agent_id` (worker の時だけ)。worker の say の全件 (既読も含む) を `ev:"agent_says"` `{ says: [{ session_id, agent_id, tool_use_id, ts, text }] }` で user role の購読者に送る (購読の時に全件、空でも。変わるたびに全件)。どれが未読かは `say_unread` が持つ
 - webui: 親セッションの TL に、許可依頼のバブルと同じ方式 (`permitSlots`) で時刻の位置に合流させ、main の say と同じ say バブルで描く。既読ボタンと「N 件すべて既読」は main と worker を時刻順に合わせて数える。agent の TL は今のまま transcript から 🔕 で描く
 - 送り手: say バブルの送り手の行 (`say` の文字の横) に `🤖 <worker 名> (model/effort)` を足す。行は増やさない。名前と model/effort は session status の agent tree のノードを `agent_id` で引き、model/effort は `agentEngineLabel` と同じ綴り。ノードが無ければ `agent_id`、model が無ければ名前だけ
-- 🔔 の数 (タブ列と Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ。§5 の自動の older は、worker の say を窓の外の未読として数えない (older を読んでも出てこないため)
+- 🔔 の数 (TL のツールバーと Sessions の行) は main と worker の合計。🔔 のフィルタにも含める (`data-notif="say"`)。worker の say は transcript の行ではないので位置 (選択) を持たず、フィルタを外す時は §6 の「選択が無い時」の規則で保つ。§5 の自動の older は、worker の say を窓の外の未読として数えない (older を読んでも出てこないため)
 - 許可依頼は今のまま (subagent からは使えない)
 
 ## Alternatives Considered

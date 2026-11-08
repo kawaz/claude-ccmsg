@@ -1,4 +1,4 @@
-// The 🔔🔐 badges at the left end of a session's tab row (DR-0050 §3):
+// The 🔔🔐 badges at the left end of the Timeline toolbar (DR-0050 §3):
 // - none at 0 / 0; both when either kind is unread, the counter from 1
 // - the badge of the URL's filter is the selected one, and only while the URL
 //   names this session; it stays shown at 0 / 0 (§9 U4)
@@ -8,7 +8,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
-import { SessionHeaderBadges } from "../src/client/components/SessionView.tsx";
+import { TimelineToolbarBadges } from "../src/client/components/timeline/TimelineToolbarBadges.tsx";
 import { AppContext } from "../src/client/context.ts";
 import type { TimelineFilter } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -68,7 +68,7 @@ async function mount(says: UnreadSay[], requests: PermitRequestRecord[]) {
   roots.push(root);
   await act(() =>
     render(
-      h(AppContext.Provider, { value: { store, ws } }, h(SessionHeaderBadges, { sid: SID })),
+      h(AppContext.Provider, { value: { store, ws } }, h(TimelineToolbarBadges, { sid: SID })),
       root,
     ),
   );
@@ -83,12 +83,21 @@ function badges(root: HTMLElement): Array<[string, string | null]> {
   ]);
 }
 
-describe("the session header's badges", () => {
+describe("the Timeline toolbar's badges", () => {
   test("none at 0 / 0, both when either is unread", async () => {
     const { root, store } = await mount([], [request("i/1", true)]);
     expect(badges(root)).toEqual([]);
     await act(() => store.dispatch({ type: "say-unread/loaded", says: [say(1), say(2, OTHER)] }));
     expect(badges(root).map(([text]) => text)).toEqual(["🔔1", "🔐"]);
+  });
+
+  test("the counter is a child of the badge beside the icon, not inside it", async () => {
+    const { root } = await mount([say(1)], [request("i/1", true)]);
+    const [bell, lock] = [...root.querySelectorAll(".notif-badge")];
+    expect(bell?.querySelector(".notif-badge-icon")?.textContent).toBe("🔔");
+    expect(bell?.querySelector(":scope > .notif-badge-counter")?.textContent).toBe("1");
+    expect(bell?.querySelector(".notif-badge-icon .notif-badge-counter")).toBeNull();
+    expect(lock?.querySelector(".notif-badge-counter")).toBeNull();
   });
 
   test("the URL's filter selects its badge, which takes the filter off in place", async () => {

@@ -1313,16 +1313,15 @@ select.sidebar-globals-endpoint {
 }
 
 /* 🔔 (未読の say) と 🔐 (未読の許可依頼) のバッジ (DR-0050 §3, §7)。TL の
- * ヘッダと Sessions の行で同じ部品。数は絵文字の右上に重ねる赤い角丸の枠で、
- * absolute なので有無で行の高さも横幅も動かない。未読 0 の方は絵文字だけ。
+ * ヘッダと Sessions の行で同じ部品。数はバッジの box の内側の右下に重ねる赤い
+ * 角丸の枠で、absolute で外にはみ出さないので、有無で絵文字の大きさも行の高さも
+ * 横幅も動かない。未読 0 の方は絵文字だけ。
  * 選択中 (TL がその種類だけを出している) のバッジは accent の面と枠。 */
 .notif-badges {
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
   flex-shrink: 0;
-  /* 最後のバッジのカウンターが右へはみ出す分を空けておく。 */
-  padding-right: var(--space-4);
 }
 
 .notif-badge {
@@ -1343,17 +1342,17 @@ select.sidebar-globals-endpoint {
 
 .notif-badge-counter {
   position: absolute;
-  top: -0.45em;
-  right: -0.6em;
-  min-width: 1.4em;
-  padding: 0 0.3em;
+  right: 0;
+  bottom: 0;
+  min-width: 1.3em;
+  padding: 0 0.25em;
   box-sizing: border-box;
   border-radius: 0.45em;
   background: var(--danger);
   color: #ffffff;
-  font-size: 0.6rem;
+  font-size: 0.55rem;
   font-weight: 700;
-  line-height: 1.4;
+  line-height: 1.3;
   text-align: center;
   white-space: nowrap;
   pointer-events: none;
@@ -3299,8 +3298,8 @@ a.composer-attachment-label:hover {
   gap: var(--space-4);
 }
 
-/* タブ列の左端のバッジ。タブの文字の高さに揃える。 */
-.session-tabs-badges {
+/* TL のツールバーの左端のバッジ。ボタンと同じ高さの行に縦中央で置く。 */
+.tl-toolbar-badges {
   align-self: center;
   margin-right: var(--space-4);
 }

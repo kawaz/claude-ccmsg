@@ -31,6 +31,7 @@ import { type FilePathResolveCtx } from "../../filepath-ref.ts";
 import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts";
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
 import { SearchBar } from "../SearchBar.tsx";
+import { TimelineToolbarBadges } from "./TimelineToolbarBadges.tsx";
 import { ErrorView } from "../ErrorView.tsx";
 import { useAutoOpenSettings } from "./useAutoOpenSettings.ts";
 import { useSidePanel } from "./useSidePanel.ts";
@@ -485,6 +486,7 @@ export function Timeline({
                         </div>
                       ) : null}
                       <div class="tl-toolbar">
+                        {agent ? null : <TimelineToolbarBadges sid={sid} />}
                         {timeline.atStart ? null : (
                           <button
                             type="button"
