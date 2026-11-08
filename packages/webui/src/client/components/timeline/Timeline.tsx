@@ -3,13 +3,9 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { useMemo, useRef } from "preact/hooks";
-import {
-  type PermitRequestRecord,
-  type SessionSay,
-  type SessionStatusSnapshot,
-} from "@ccmsg/protocol";
+import { type SessionPermit, type SessionSay, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
-import { type AgentRef, agentTimelineHref, permitPosition, timelineHref } from "../../locator.ts";
+import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
@@ -41,10 +37,9 @@ import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
-import { useSayList } from "./useSayList.ts";
+import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
-import { usePermitBubbles } from "./usePermitBubbles.ts";
-import { permitSlots } from "../../permit-merge.ts";
+import { slotsByTime } from "../../time-slots.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
 import { usePositionLanding, usePositionPin } from "./usePositionPin.ts";
@@ -62,7 +57,7 @@ import {
   type CcmsgRenderCtxValue,
   CcmsgRenderContext,
 } from "./context.ts";
-import { ItemRawToggle, selectPositionOnClick } from "./raw.tsx";
+import { ItemRawToggle } from "./raw.tsx";
 import { MemoFoldGroup } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
 import { type TranslationAvailability } from "./translation.ts";
@@ -209,33 +204,45 @@ export function Timeline({
     () => (agent ? [] : allAgentSays.filter((say) => say.session_id === sid)),
     [agent, allAgentSays, sid],
   );
-  const agentSaySlots = useMemo(() => permitSlots(groups, agentSays), [groups, agentSays]);
-  // Under the 🔔 filter, every say of the session is shown (DR-0050 §5): the
-  // ones neither in the loaded window nor among the workers' above come from
-  // the daemon's list of them, at their time. They are the filter's only, as
-  // they have no row here: taking the filter off takes them out.
-  const sayList = useSayList({ sid, filter: currentFilter });
+  const agentSaySlots = useMemo(() => slotsByTime(groups, agentSays), [groups, agentSays]);
+  // Under the 🔔 / 🔐 filter, every say / request for permission of the
+  // session is shown (DR-0050 §5): the ones neither in the loaded window nor
+  // among the workers' says above come from the daemon's list of them, at
+  // their time. They are the filter's only, as they have no row here: taking
+  // the filter off takes them out.
+  const notificationList = useNotificationList({ sid, filter: agent ? null : currentFilter });
   const listedSays = useMemo((): readonly SessionSay[] => {
-    if (currentFilter !== "say" || sayList === undefined) return [];
+    if (currentFilter !== "say" || notificationList === undefined) return [];
     const drawn = new Set(agentSays.map((say) => say.tool_use_id));
     for (const boundary of boundaries) if (boundary?.kind === "say") drawn.add(boundary.toolUseId);
-    return sayList.filter((say) => !drawn.has(say.tool_use_id));
-  }, [currentFilter, sayList, agentSays, boundaries]);
-  const listedSaySlots = useMemo(() => permitSlots(groups, listedSays), [groups, listedSays]);
+    return notificationList.says.filter((say) => !drawn.has(say.tool_use_id));
+  }, [currentFilter, notificationList, agentSays, boundaries]);
+  const listedSaySlots = useMemo(() => slotsByTime(groups, listedSays), [groups, listedSays]);
+  const listedPermits = useMemo((): readonly SessionPermit[] => {
+    if (currentFilter !== "permit" || notificationList === undefined) return [];
+    const drawn = new Set<string>();
+    for (const boundary of boundaries) {
+      if (boundary?.kind === "permit") drawn.add(boundary.toolUseId);
+    }
+    return notificationList.permits.filter((permit) => !drawn.has(permit.tool_use_id));
+  }, [currentFilter, notificationList, boundaries]);
+  const listedPermitSlots = useMemo(
+    () => slotsByTime(groups, listedPermits),
+    [groups, listedPermits],
+  );
   const mergedSayIds = useMemo(
     () => [...agentSays, ...listedSays].map((say) => say.tool_use_id),
     [agentSays, listedSays],
   );
   const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries, mergedSayIds });
-  const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
-  // The permission bubbles of one slot, in the order they were made.
-  // Each is selectable like a transcript item, its record id standing in for
-  // a uuid (DR-0050 §9 U7), and answers to the 🔐 filter.
+  // The bubbles merged in by time before one group, in the order they were
+  // made: the workers' says, and the filter's says and requests outside the
+  // window.
   const bubbleNodes = (slot: number) =>
     [
-      ...(permitBubbles.slots[slot] ?? []).map((request) => ({
-        ts: request.ts,
-        node: permitNode(request),
+      ...(listedPermitSlots[slot] ?? []).map((permit) => ({
+        ts: permit.ts,
+        node: listedPermitNode(permit),
       })),
       ...(agentSaySlots[slot] ?? []).map((say) => ({ ts: say.ts, node: mergedSayNode(say) })),
       ...(listedSaySlots[slot] ?? []).map((say) => ({
@@ -269,24 +276,29 @@ export function Timeline({
       />
     </div>
   );
-  const permitNode = (request: PermitRequestRecord) => {
-    const position = permitPosition(request.id);
-    return (
-      <div
-        key={`permit-${request.id}`}
-        class={`tl-item${currentPosition === position ? " tl-position-selected" : ""}`}
-        data-timeline-uuid={position}
-        data-notif="permit"
-        onClick={selectPositionOnClick(position, pin.selectPosition)}
-      >
-        <PermitRequestBubble
-          request={request}
-          now={now}
-          translationAvailability={translationAvailability}
-        />
-      </div>
-    );
-  };
+  // The bubble of a request for permission outside the window (the 🔐
+  // filter's only): the bubble the window's requests use. It is not a row of
+  // the window, so it carries no position.
+  const listedPermitNode = (permit: SessionPermit) => (
+    <div
+      key={`listed-permit-${permit.tool_use_id}`}
+      class="tl-item"
+      data-notif="permit"
+      data-filter-only="permit"
+    >
+      <PermitRequestBubble
+        request={{
+          sid,
+          toolUseId: permit.tool_use_id,
+          ts: permit.ts,
+          cwd: permit.cwd,
+          permit: permit.permit,
+        }}
+        now={now}
+        translationAvailability={translationAvailability}
+      />
+    </div>
+  );
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -353,12 +365,14 @@ export function Timeline({
   // 届くまで決めない (届く前に「ありません」と出して、すぐ消すことになる)。
   const filterEmpty =
     currentFilter === "say"
-      ? sayList !== undefined &&
+      ? notificationList !== undefined &&
         agentSays.length === 0 &&
         listedSays.length === 0 &&
         !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
       : currentFilter === "permit"
-        ? permitBubbles.requests.length === 0
+        ? notificationList !== undefined &&
+          listedPermits.length === 0 &&
+          !boundaries.some((b) => b?.kind === "permit")
         : false;
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
@@ -590,7 +604,7 @@ export function Timeline({
                           ref={tlLinesRef}
                           data-filter={currentFilter ?? undefined}
                         >
-                          {parsed.length === 0 && permitBubbles.requests.length === 0 ? (
+                          {parsed.length === 0 ? (
                             <p class="tl-empty">(空の transcript)</p>
                           ) : (
                             <>
@@ -746,6 +760,29 @@ export function Timeline({
                                             ts={line.ts ?? ""}
                                             now={now}
                                             read={sayRead.readState(boundary.toolUseId)}
+                                          />
+                                        </ItemRawToggle>
+                                      );
+                                    case "permit":
+                                      return (
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                          notif="permit"
+                                        >
+                                          <PermitRequestBubble
+                                            request={{
+                                              sid,
+                                              toolUseId: boundary.toolUseId,
+                                              ts: line.ts ?? "",
+                                              cwd: boundary.cwd,
+                                              permit: boundary.permit,
+                                            }}
+                                            now={now}
+                                            translationAvailability={translationAvailability}
                                           />
                                         </ItemRawToggle>
                                       );

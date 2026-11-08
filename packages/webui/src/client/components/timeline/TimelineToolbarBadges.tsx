@@ -12,7 +12,7 @@ export function TimelineToolbarBadges({ sid }: { sid: string }) {
   const view = useStoreState(
     store,
     (s) => {
-      const counts = notificationCountsOf(sid, s.unreadSays, s.permitRequests);
+      const counts = notificationCountsOf(sid, s.unreadSays, s.permitUnread);
       const here = s.currentSid === sid;
       return {
         say: counts.say,

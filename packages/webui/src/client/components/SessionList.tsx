@@ -794,7 +794,7 @@ function PinnedSessionsSection({
   currentSid: string | null;
   /** sid → 未読 say 件数 (SessionList が unreadSays から数えたもの)。 */
   sayUnreadBy: Map<string, number>;
-  /** sid → 未読の許可依頼の件数 (SessionList が permitRequests から引いたもの)。 */
+  /** sid → 未読の許可依頼の件数 (SessionList が permitUnread から数えたもの)。 */
   permitUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
@@ -885,7 +885,7 @@ function sessionListSlice(state: AppState) {
     llmRequests: state.llmRequests,
     pinnedSessions: state.pinnedSessions,
     unreadSays: state.unreadSays,
-    permitRequests: state.permitRequests,
+    permitUnread: state.permitUnread,
   };
 }
 
@@ -918,12 +918,12 @@ export function SessionList({
     llmRequests,
     pinnedSessions,
     unreadSays,
-    permitRequests,
+    permitUnread,
   } = useStoreState(store, sessionListSlice, shallowEqual);
   // 未読の say は daemon が ev:"say_unread" で全件 push するので、TL を開いて
   // いないセッションの未読もここで数えられる。
   const sayUnreadBy = useMemo(() => sayUnreadBySid(unreadSays), [unreadSays]);
-  const permitUnreadBy = useMemo(() => permitUnreadBySid(permitRequests), [permitRequests]);
+  const permitUnreadBy = useMemo(() => permitUnreadBySid(permitUnread), [permitUnread]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [

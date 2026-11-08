@@ -1,25 +1,32 @@
-// 許可依頼バブル (usePermitBubbles + PermitRequestBubble) を Timeline に
-// マウントして、読み手に見えるものと「許可する」が写すものを固定する。
-// - そのセッションの依頼だけが出る (別セッションの依頼、agent TL には出ない)
+// 許可依頼バブル (PermitRequestBubble) を Timeline にマウントして、読み手に
+// 見えるものと「許可する」が写すものを固定する。
+// - 依頼は transcript の permit の行で、結果が PERMIT_REQUESTED_TEXT のものだけが
+//   その行の位置にバブルになる (断られた呼び出し・結果の無い呼び出しは出ない、
+//   subagent の TL の呼び出しは断られているので出ない)
 // - 止められた行動・添付 (パスだけの折り畳み)・許可してほしいこと (intent と
 //   コマンド) の節を出し、添付が無ければその節を出さない
 // - 添付は開いた時に daemon から読み (permit_attachment_read)、中身か読めない
 //   理由を差し込む。読めた後は開き直しても読み直さない
 // - 「許可する」は許可の文をクリップボードに写し、写せたら「コピーしました」
 //   を出して依頼を既読にする。写せなければそう言い、既読にしない
-// - 未読は閉じた錠 🔐、既読は開いた錠 🔓。既読になってもバブルは消えず、
-//   見た目は変えない
+// - 未読 (ev:"permit_state" の unread に居る) は閉じた錠 🔐、既読は開いた錠 🔓。
+//   既読になってもバブルは消えず、見た目は変えない
 // - 許可の文には添付のパスを全部並べる。開いたか、読めたかは問わない
 // - 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / -body / -footer / -time)
-// - 後から届いた依頼・既読になった依頼 (ev:"permit_request") が同じ TL の同じ
-//   場所に入る
-// daemon の代わりに、store へ ev:"permit_requests" / ev:"permit_request" と
-// 同じ action を流し、permit_request_read で受けた id を既読にして返し、
-// permit_attachment_read にはパスごとに決めた答えを返す。
+// - 結果の行が後から live で届くと、その時にバブルになる
+// daemon の代わりに、store へ ev:"permit_state" と同じ action を流し、
+// permit_read で受けた id を未読から外して返し、permit_attachment_read には
+// パスごとに決めた答えを返す。
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { act } from "preact/test-utils";
-import type { PermitAttachment, PermitRequestRecord, ReplyOf } from "@ccmsg/protocol";
+import {
+  type JsonObject,
+  type PermitAttachment,
+  type PermitCall,
+  type ReplyOf,
+  type UnreadPermit,
+} from "@ccmsg/protocol";
 import { OpenComposerContext } from "../src/client/components/SessionInputComposer.tsx";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
@@ -30,6 +37,7 @@ import type { Store } from "../src/client/useStore.ts";
 import type { WsHandle } from "../src/client/ws.ts";
 import { defined, instanceOf, stubGlobal, stubProperty } from "./helpers.ts";
 import { withDom } from "./dom.ts";
+import { permitRows } from "./permit-rows.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
 
 withDom();
@@ -62,10 +70,9 @@ function TimelineOf({ agent }: { agent?: AgentRef }) {
   });
 }
 
-const ASKED: PermitRequestRecord = {
-  id: "i/1",
-  sid: SID,
-  ts: "2026-10-25T00:00:01.000Z",
+const ID = "toolu_p1";
+
+const ASKED: PermitCall = {
   blocked: "`aws s3api put-bucket-policy` が止められた",
   attachments: ["/w/policy.json", "/w/gone.sh", "/w/offline.txt"],
   intents: ["`/w/a.ts` の編集"],
@@ -76,8 +83,19 @@ const ASKED: PermitRequestRecord = {
     },
     { command: "ls" },
   ],
-  read: false,
+  project_permissions: [],
 };
+
+/** The call's input as the model wrote it: `ASKED` with `fields` over it. */
+function inputOf(fields: Partial<PermitCall> = {}): JsonObject {
+  const call = { ...ASKED, ...fields };
+  return {
+    blocked: call.blocked,
+    attachments: [...call.attachments],
+    intents: [...call.intents],
+    commands: call.commands.map((c): JsonObject => ({ ...c })),
+  };
+}
 
 /** What the fake daemon answers for each attachment: its content, why it
  * cannot be read, or (for /w/offline.txt) a refusal. */
@@ -92,11 +110,19 @@ const OPENED: Readonly<Record<string, PermitAttachment>> = {
   "/w/gone.sh": { path: "/w/gone.sh", read: false, reason: "missing" },
 };
 
+function unread(id: string): UnreadPermit {
+  return { session_id: SID, tool_use_id: id, ts: "2026-10-25T00:00:01.000Z" };
+}
+
 async function openWith(
-  requests: readonly PermitRequestRecord[],
-  agent?: AgentRef,
-  /** What the daemon answers a user_prompt (「! で実行」) with. */
-  userPrompt?: WsHandle["userPrompt"],
+  rows: readonly string[],
+  options: {
+    /** The requests not acted on (ev:"permit_state"); `ID` unless told. */
+    unread?: readonly UnreadPermit[];
+    agent?: AgentRef;
+    /** What the daemon answers a user_prompt (「! で実行」) with. */
+    userPrompt?: WsHandle["userPrompt"];
+  } = {},
 ): Promise<{
   root: HTMLElement;
   store: Store;
@@ -105,27 +131,34 @@ async function openWith(
   /** How many times the bubble asked the session's composer to open. */
   composerOpens: () => number;
 }> {
+  const { agent, userPrompt } = options;
   const store = timelineStore(agent !== undefined ? { agent } : {});
-  store.dispatch({ type: "permit-requests/loaded", requests: [...requests] });
+  store.dispatch({
+    type: "permit-state/loaded",
+    unread: [...(options.unread ?? [unread(ID)])],
+    applied: [],
+  });
   const ws = new FakeTranscriptWs(store);
   const reads: Array<readonly string[]> = [];
   const opens: string[] = [];
   const handle = {
     ...ws.handle,
-    permitRequestRead: (ids: readonly string[]) => {
+    permitRead: (ids: readonly string[]) => {
       reads.push(ids);
-      for (const request of store.getState().permitRequests) {
-        if (ids.includes(request.id)) {
-          store.dispatch({ type: "permit-requests/updated", request: { ...request, read: true } });
-        }
-      }
+      const state = store.getState();
+      store.dispatch({
+        type: "permit-state/loaded",
+        unread: state.permitUnread.filter((p) => !ids.includes(p.tool_use_id)),
+        applied: state.permitApplied,
+      });
       return Promise.resolve({ ok: true as const, ids: [...ids] });
     },
     permitAttachmentRead: (
+      sid: string,
       id: string,
       path: string,
     ): Promise<ReplyOf<"permit_attachment_read">> => {
-      opens.push(`${id} ${path}`);
+      opens.push(`${sid} ${id} ${path}`);
       const attachment = OPENED[path];
       return Promise.resolve(
         attachment !== undefined
@@ -148,7 +181,7 @@ async function openWith(
       h(TimelineOf, agent !== undefined ? { agent } : {}),
     ),
   );
-  await ws.lastRead().answer(page([]));
+  await ws.lastRead().answer(page(rows));
   return { root, store, reads, opens, composerOpens: () => composerOpens };
 }
 
@@ -192,7 +225,7 @@ function grantButton(bubble: HTMLElement): HTMLButtonElement {
 
 describe("permission request bubbles", () => {
   test("show the session's request: what was stopped, the files, and what to permit", async () => {
-    const { root } = await openWith([ASKED, { ...ASKED, id: "i/2", sid: "someone-else" }]);
+    const { root } = await openWith(permitRows(1, ID, inputOf()));
     const [bubble, ...others] = bubbles(root);
     expect(others.length).toBe(0);
     const shown = defined(bubble, "the session's bubble");
@@ -245,7 +278,7 @@ describe("permission request bubbles", () => {
   // 差し込む。読めた後は閉じて開き直しても読み直さない。daemon が答えなかった
   // 時はそう言い、次に開いた時に読み直す。
   test("read a file when it is opened, once it has been read", async () => {
-    const { root, opens } = await openWith([ASKED]);
+    const { root, opens } = await openWith(permitRows(1, ID, inputOf()));
     const folds = foldsOf(root);
     await toggle(folds[0], true);
     expect(folds[0]?.querySelector("pre")?.textContent).toBe('{"Statement":[]}\n');
@@ -258,27 +291,39 @@ describe("permission request bubbles", () => {
     expect(folds[1]?.querySelector("pre")).toBeNull();
     await toggle(folds[2], true);
     expect(folds[2]?.querySelector(".permit-attachment-status")?.textContent).toBe(
-      "読めませんでした: no permit request with id i/1",
+      `読めませんでした: no permit request with id ${ID}`,
     );
     await toggle(folds[2], false);
     await toggle(folds[2], true);
     expect(opens).toEqual([
-      "i/1 /w/policy.json",
-      "i/1 /w/gone.sh",
-      "i/1 /w/offline.txt",
-      "i/1 /w/offline.txt",
+      `${SID} ${ID} /w/policy.json`,
+      `${SID} ${ID} /w/gone.sh`,
+      `${SID} ${ID} /w/offline.txt`,
+      `${SID} ${ID} /w/offline.txt`,
     ]);
   });
 
-  // The subagent's Timeline shows that subagent's transcript; the request is
-  // the session's, asked by its main thread.
-  test("are not shown in a subagent's Timeline", async () => {
-    const { root } = await openWith([ASKED], { agentId: "a1" });
+  // 何を保証するか: 結果が「許可依頼を出した」でない呼び出し (断られた
+  // subagent の呼び出し、他の断り) と、結果がまだ無い呼び出しはバブルにならない。
+  // subagent の TL の呼び出しは module が断っているので、そこにも出ない。
+  test("are not shown for a refused call, nor for one not answered yet", async () => {
+    const refused = "permit は subagent からは使えない。止められた操作は委譲元に報告して止まる";
+    const rows = [
+      ...permitRows(1, "toolu_refused", inputOf(), { result: refused }),
+      ...permitRows(2, "toolu_failed", inputOf(), { result: "許可依頼を出せなかった: x" }),
+      ...permitRows(3, "toolu_waiting", inputOf(), { result: null }),
+    ];
+    const { root } = await openWith(rows);
     expect(bubbles(root).length).toBe(0);
+    await mounted.unmount();
+    const inAgent = await openWith(permitRows(1, ID, inputOf(), { result: refused }), {
+      agent: { agentId: "a1" },
+    });
+    expect(bubbles(inAgent.root).length).toBe(0);
   });
 
   test("leave out the 添付 section when there are none", async () => {
-    const { root } = await openWith([{ ...ASKED, attachments: [] }]);
+    const { root } = await openWith(permitRows(1, ID, inputOf({ attachments: [] })));
     const shown = defined(bubbles(root)[0], "bubble");
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
       "止められた行動",
@@ -291,7 +336,7 @@ describe("permission request bubbles", () => {
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root, store, reads, composerOpens } = await openWith([ASKED]);
+    const { root, store, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
     const bubble = defined(bubbles(root)[0], "bubble");
     const button = grantButton(bubble);
     expect(button.classList.contains("copied")).toBe(false);
@@ -305,8 +350,8 @@ describe("permission request bubbles", () => {
     expect(button.classList.contains("copied")).toBe(true);
     expect(button.querySelector(".permit-grant-copied")?.getAttribute("aria-hidden")).toBe("false");
     expect(root.querySelector(".permit-grant-error")).toBeNull();
-    expect(reads).toEqual([[ASKED.id]]);
-    expect(store.getState().permitRequests.map((r) => r.read)).toEqual([true]);
+    expect(reads).toEqual([[ID]]);
+    expect(store.getState().permitUnread).toEqual([]);
     // Read: the open lock, in the same bubble with the same look.
     const settled = defined(bubbles(root)[0], "bubble");
     expect(settled.className).toBe(bubble.className);
@@ -318,7 +363,7 @@ describe("permission request bubbles", () => {
       grantButton(defined(bubbles(root)[0], "bubble")).click();
       await Promise.resolve();
     });
-    expect(reads).toEqual([[ASKED.id]]);
+    expect(reads).toEqual([[ID]]);
   });
 
   // 何を保証するか: 許可の文には添付を全部並べる。開いていない添付も、開いて
@@ -329,7 +374,7 @@ describe("permission request bubbles", () => {
     stubClipboard(async (text) => {
       written.push(text);
     });
-    const { root } = await openWith([ASKED]);
+    const { root } = await openWith(permitRows(1, ID, inputOf()));
     const folds = foldsOf(root);
     await toggle(folds[1], true);
     await toggle(folds[2], true);
@@ -344,7 +389,7 @@ describe("permission request bubbles", () => {
     stubClipboard(async () => {
       throw new Error("denied");
     });
-    const { root, reads, composerOpens } = await openWith([ASKED]);
+    const { root, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
     const button = grantButton(defined(bubbles(root)[0], "bubble"));
     await act(async () => {
       button.click();
@@ -359,23 +404,41 @@ describe("permission request bubbles", () => {
     );
   });
 
-  // A request recorded after the tab caught up arrives on its own, and one
-  // the catch-up already held (here marked read since) takes its own place
-  // rather than being drawn twice.
-  test("a request pushed later joins the Timeline once, and a read one takes its place", async () => {
-    const { root, store } = await openWith([ASKED]);
-    const later = { ...ASKED, id: "i/3", ts: "2026-10-25T00:00:05.000Z", blocked: "later" };
-    await act(() => {
-      store.dispatch({ type: "permit-requests/updated", request: later });
-      store.dispatch({ type: "permit-requests/updated", request: { ...ASKED, read: true } });
-    });
+  // 何を保証するか: live で届いた permit の呼び出しは、結果の行が届いた時に
+  // その呼び出しの行の位置でバブルになる。既読かどうかは ev:"permit_state" に
+  // 従い、バブルの錠だけが替わる。
+  test("a call whose result comes later becomes a bubble then, its lock following the daemon", async () => {
+    const first = permitRows(1, ID, inputOf());
+    const { root, store } = await openWith(first);
+    const later = permitRows(2, "toolu_p2", inputOf({ blocked: "later" }));
+    const size = (lines: readonly string[]): number =>
+      lines.reduce((sum, text) => sum + new TextEncoder().encode(text).length + 1, 0);
+    const tail = (lines: readonly string[], start: number): void =>
+      store.dispatch({
+        type: "timeline/tail",
+        sid: SID,
+        lines: [...lines],
+        start,
+        end: start + size(lines),
+        size: start + size(lines),
+      });
+    await act(() => tail([later[0] ?? ""], size(first)));
+    expect(bubbles(root).length).toBe(1);
+    await act(() => tail([later[1] ?? ""], size([...first, later[0] ?? ""])));
     expect(bubbles(root).map((b) => b.querySelector(".permit-section .md")?.textContent)).toEqual([
       "aws s3api put-bucket-policy が止められた",
       "later",
     ]);
-    expect(store.getState().permitRequests.map((r) => [r.id, r.read])).toEqual([
-      [ASKED.id, true],
-      [later.id, false],
+    expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
+      "🔐許可依頼",
+      "🔓許可依頼",
+    ]);
+    await act(() =>
+      store.dispatch({ type: "permit-state/loaded", unread: [unread("toolu_p2")], applied: [] }),
+    );
+    expect(bubbles(root).map((b) => b.querySelector(".tl-bubble-from")?.textContent)).toEqual([
+      "🔓許可依頼",
+      "🔐許可依頼",
     ]);
   });
 });
@@ -386,11 +449,14 @@ describe("permission request bubbles", () => {
 // marks the request read. Its words come from CSS, not the DOM, so they join
 // neither the commands' copied text nor the Timeline's search.
 describe("! で実行", () => {
-  const ONE_AND_MANY: PermitRequestRecord = {
-    ...ASKED,
-    attachments: [],
-    commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
-  };
+  const ONE_AND_MANY = permitRows(
+    1,
+    ID,
+    inputOf({
+      attachments: [],
+      commands: [{ command: "ls -la", description: "一覧" }, { command: "cat <<EOF\nx\nEOF" }],
+    }),
+  );
 
   /** A user_prompt that records what it was asked and answers `reply`. */
   function answering(reply: ReplyOf<"user_prompt">, asked: unknown[][]): WsHandle["userPrompt"] {
@@ -405,7 +471,7 @@ describe("! で実行", () => {
   }
 
   test("sits under the code block of each one-line command, and of no multi-line one", async () => {
-    const { root } = await openWith([ONE_AND_MANY]);
+    const { root } = await openWith(ONE_AND_MANY);
     const [oneLine, multiLine] = [...root.querySelectorAll(".permit-command")];
     const button = instanceOf(bangOf(oneLine), HTMLButtonElement, "! で実行");
     expect(button.getAttribute("aria-label")).toBe("! で実行");
@@ -419,11 +485,9 @@ describe("! で実行", () => {
 
   test("runs the command as bash mode in the asking session, and says when", async () => {
     const asked: unknown[][] = [];
-    const { root, reads, composerOpens } = await openWith(
-      [ONE_AND_MANY],
-      undefined,
-      answering({ ok: true, outcome: "accepted" }, asked),
-    );
+    const { root, reads, composerOpens } = await openWith(ONE_AND_MANY, {
+      userPrompt: answering({ ok: true, outcome: "accepted" }, asked),
+    });
     const li = root.querySelector(".permit-command") ?? undefined;
     await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
     expect(asked).toEqual([[SID, "ls -la", undefined, "bash"]]);
@@ -439,11 +503,13 @@ describe("! で実行", () => {
   test("cannot be pressed again while its run is being sent", async () => {
     const asked: unknown[][] = [];
     let answer: (reply: ReplyOf<"user_prompt">) => void = () => {};
-    const { root } = await openWith([ONE_AND_MANY], undefined, (...args) => {
-      asked.push(args);
-      return new Promise((resolve) => {
-        answer = resolve;
-      });
+    const { root } = await openWith(ONE_AND_MANY, {
+      userPrompt: (...args) => {
+        asked.push(args);
+        return new Promise((resolve) => {
+          answer = resolve;
+        });
+      },
     });
     const li = root.querySelector(".permit-command") ?? undefined;
     const button = instanceOf(bangOf(li), HTMLButtonElement, "! で実行");
@@ -470,7 +536,7 @@ describe("! で実行", () => {
       ],
     ] as const) {
       const asked: unknown[][] = [];
-      const { root } = await openWith([ONE_AND_MANY], undefined, answering(reply, asked));
+      const { root } = await openWith(ONE_AND_MANY, { userPrompt: answering(reply, asked) });
       const li = root.querySelector(".permit-command") ?? undefined;
       await press(instanceOf(bangOf(li), HTMLButtonElement, "! で実行"));
       const notice = defined(li?.querySelector(".session-input-notice") ?? undefined, "notice");

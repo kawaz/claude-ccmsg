@@ -6,7 +6,6 @@ import {
   messageHref,
   parseTimelineFilter,
   parseUrl,
-  permitPosition,
   roomHref,
   sessionHref,
   statusHref,
@@ -233,7 +232,7 @@ describe("real-path locators", () => {
 describe("the Timeline's filter", () => {
   test("round-trips beside any position", () => {
     for (const filter of ["say", "permit"] as const) {
-      for (const position of ["head", "u-1", permitPosition("i/3")]) {
+      for (const position of ["head", "u-1"]) {
         const href = timelineHref("s1", position, filter);
         const url = new URL(href, "http://x");
         expect(parseUrl(url.pathname, url.search)).toEqual({
@@ -275,18 +274,6 @@ describe("the Timeline's filter", () => {
       sid: "s1",
       position: "head",
       agent: { agentId: "a1" },
-    });
-  });
-
-  test("a permission request's position is its record id behind `permit:`", () => {
-    expect(permitPosition("inst/7")).toBe("permit:inst/7");
-    expect(
-      parseUrl(new URL(timelineHref("s1", permitPosition("inst/7")), "http://x").pathname),
-    ).toEqual({
-      view: "timeline",
-      tab: "timeline",
-      sid: "s1",
-      position: "permit:inst/7",
     });
   });
 });

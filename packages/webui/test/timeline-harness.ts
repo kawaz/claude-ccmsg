@@ -5,7 +5,7 @@
 // 検証される。
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { ForkOrigin, ReplyOf, SessionSay } from "@ccmsg/protocol";
+import type { ForkOrigin, ReplyOf, SessionPermit, SessionSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import type { AgentRef } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
@@ -42,10 +42,12 @@ export class FakeTranscriptWs {
   readonly forkOrigins: string[] = [];
   /** fork_origin の答え (既定は fork ではない)。 */
   origin: ForkOrigin | null = null;
-  /** say_list を聞かれた sid (聞かれた順)。 */
-  readonly sayLists: string[] = [];
-  /** say_list の答え (既定は say なし)。 */
+  /** notification_list を聞かれた sid (聞かれた順)。 */
+  readonly notificationLists: string[] = [];
+  /** notification_list の答えの say (既定は無し)。 */
   says: readonly SessionSay[] = [];
+  /** notification_list の答えの許可依頼 (既定は無し)。 */
+  permits: readonly SessionPermit[] = [];
   readonly handle: WsHandle;
 
   constructor(store: Store) {
@@ -89,9 +91,14 @@ export class FakeTranscriptWs {
         this.forkOrigins.push(sid);
         return Promise.resolve({ ok: true, origin: this.origin });
       },
-      sayList: (sid) => {
-        this.sayLists.push(sid);
-        return Promise.resolve({ ok: true, sid, says: [...this.says] });
+      notificationList: (sid) => {
+        this.notificationLists.push(sid);
+        return Promise.resolve({
+          ok: true,
+          sid,
+          says: [...this.says],
+          permits: [...this.permits],
+        });
       },
     };
   }

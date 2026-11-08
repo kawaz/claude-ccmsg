@@ -1,12 +1,9 @@
-// Where a session's requests for permission (DR-0040) sit inside its own
-// Timeline.
-//
-// A request for permission is recorded by the daemon (in memory, the
-// `ev:"permit_requests"` / `ev:"permit_request"` pushes), apart from the
-// session transcript the Timeline renders, so the transcript has no row for
-// it. The bubbles are therefore merged in at render time by wall-clock time:
-// the requests and the transcript rows are two logs of the same session, and
-// `ts` is the only thing they share.
+// Where the bubbles that have no row of the loaded window sit inside a
+// session's Timeline: a subagent's or teammate's say (its row is in the
+// agent's own transcript, DR-0050 §10), and, under the 🔔 / 🔐 filter, the
+// session's says and requests for permission outside the window
+// (notification_list, DR-0050 §5). They are merged in at render time by
+// wall-clock time: `ts` is the only thing they share with the window's rows.
 //
 // Pure, per DR-0005 §1, so the placement rule is testable without a Timeline.
 // Same shape as fork-divider.ts, which likewise turns "where does this belong"
@@ -14,8 +11,8 @@
 // and can place them past the end, hence a slot array rather than one index.
 import type { ParsedLine, TimelineGroup } from "./transcript-model.ts";
 
-/** What placement needs from a request: when it was made. Generic over the
- * caller's record type so the record comes back out unchanged. */
+/** What placement needs from an item: when it was made. Generic over the
+ * caller's item type so the item comes back out unchanged. */
 interface Placement {
   ts: string;
 }
@@ -44,26 +41,23 @@ function toMillis(ts: string): number {
 }
 
 /**
- * Slot array of length `groups.length + 1`: slot `i` holds the requests to
+ * Slot array of length `groups.length + 1`: slot `i` holds the items to
  * draw immediately before group `i`, in time order, and the last slot the
- * ones made after everything in the loaded window (a request from the current
- * turn, which is the common live case — the transcript row for that turn is
- * not written yet). Two requests sharing a stamp keep the order they came in
- * (the daemon's record order): Array.prototype.sort is stable.
+ * ones made after everything in the loaded window (an item from the current
+ * turn, which is the common live case). Two items sharing a stamp keep the
+ * order they came in: Array.prototype.sort is stable.
  *
- * Requests older than the whole window land in slot 0 rather than being
- * dropped: "load older" is what moves them into place, and hiding them until
- * then would make the 🔐 in the Sessions list point at a bubble that is
- * nowhere.
+ * Items older than the whole window land in slot 0 rather than being
+ * dropped: they are shown at the window's top, in time order.
  */
-export function permitSlots<T extends Placement>(
+export function slotsByTime<T extends Placement>(
   groups: readonly TimelineGroup[],
-  requests: readonly T[],
+  items: readonly T[],
 ): T[][] {
   const slots: T[][] = Array.from({ length: groups.length + 1 }, () => []);
-  if (requests.length === 0) return slots;
+  if (items.length === 0) return slots;
   const stamps = groups.map(groupTs);
-  const ordered = [...requests].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
+  const ordered = [...items].sort((a, b) => toMillis(a.ts) - toMillis(b.ts));
   for (const request of ordered) {
     const at = toMillis(request.ts);
     const later = stamps.findIndex((stamp) => stamp !== null && toMillis(stamp) > at);

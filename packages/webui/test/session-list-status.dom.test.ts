@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { AgentInfo, PeerInfo, PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { renameNoteOf, SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
@@ -57,12 +57,12 @@ afterEach(async () => {
 async function mount(
   peers: PeerInfo[],
   agents: AgentInfo[],
-  permitRequests: PermitRequestRecord[] = [],
+  unreadPermits: UnreadPermit[] = [],
   unreadSays: UnreadSay[] = [],
 ): Promise<HTMLElement> {
   const store = createStore(initialState());
   store.dispatch({ type: "agents/loaded", agents });
-  store.dispatch({ type: "permit-requests/loaded", requests: permitRequests });
+  store.dispatch({ type: "permit-state/loaded", unread: unreadPermits, applied: [] });
   store.dispatch({ type: "say-unread/loaded", says: unreadSays });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
@@ -165,15 +165,10 @@ describe("renaming from the Sessions list", () => {
 // counter over the emoji from 1, none at 0 / 0. Each badge opens the
 // session's Timeline filtered to its kind, apart from the row's own link.
 describe("the Sessions list's 🔔🔐 badges", () => {
-  const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
-    id,
-    sid,
+  const request = (id: string, sid: string): UnreadPermit => ({
+    session_id: sid,
+    tool_use_id: id,
     ts: SINCE,
-    blocked: "x",
-    attachments: [],
-    intents: [],
-    commands: [{ command: "ls" }],
-    read,
   });
   const say = (id: string, sid: string): UnreadSay => ({
     session_id: sid,
@@ -197,13 +192,7 @@ describe("the Sessions list's 🔔🔐 badges", () => {
         agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
         agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
       ],
-      [
-        request("i/1", RESPONDING, false),
-        request("i/2", IDLE, false),
-        request("i/3", IDLE, false),
-        request("i/4", IDLE, true),
-        request("i/5", BARE, true),
-      ],
+      [request("toolu_p1", RESPONDING), request("toolu_p2", IDLE), request("toolu_p3", IDLE)],
       [say("toolu_2", IDLE)],
     );
     expect(badges(root, RESPONDING)).toEqual(["🔔", "🔐1"]);

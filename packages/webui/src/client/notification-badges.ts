@@ -2,11 +2,11 @@
 // their counters read, and where pressing one goes. Pure, per DR-0005 §1, so
 // the display rule the TL header and the Sessions list share is testable
 // without either.
-import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { timelineHref, type TimelineFilter } from "./locator.ts";
 
-/** A session's unread says and unread requests for permission, the main
- * thread's only (the daemon's `say_unread` and `permit_requests`). */
+/** A session's unread says and unread requests for permission (the
+ * daemon's `say_unread` and `permit_state`). */
 export interface NotificationCounts {
   say: number;
   permit: number;
@@ -34,12 +34,12 @@ export function rowBadgesShown(counts: NotificationCounts): boolean {
 export function notificationCountsOf(
   sid: string,
   says: readonly UnreadSay[],
-  requests: readonly PermitRequestRecord[],
+  permits: readonly UnreadPermit[],
 ): NotificationCounts {
   let say = 0;
   for (const unread of says) if (unread.session_id === sid) say += 1;
   let permit = 0;
-  for (const request of requests) if (request.sid === sid && !request.read) permit += 1;
+  for (const unread of permits) if (unread.session_id === sid) permit += 1;
   return { say, permit };
 }
 

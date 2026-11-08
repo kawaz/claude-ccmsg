@@ -309,6 +309,7 @@ function equalParsedLine(a: ParsedLine, b: ParsedLine): boolean {
         a.userMessageKind === b.userMessageKind &&
         a.assistantMessageKind === b.assistantMessageKind &&
         a.queuedContent === b.queuedContent &&
+        a.cwd === b.cwd &&
         equalArray(a.segments, b.segments, equalSegment)
       );
     case "meta":

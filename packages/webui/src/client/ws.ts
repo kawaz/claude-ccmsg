@@ -136,24 +136,31 @@ export interface WsHandle {
    * updated `ev:"say_unread"` set to every tab and the store takes it from
    * there, so every open tab converges on the same bell and badge. */
   sayRead(ids: readonly string[]): Promise<ReplyOf<"say_read">>;
-  /** Every say of the session `sid`, read or not (DR-0050 §5): what the 🔔
-   * filter shows of the says outside the loaded window. */
-  sayList(sid: string): Promise<ReplyOf<"say_list">>;
-  /** Mark requests for permission read (DR-0040): the bubble's 許可する.
-   * Non-optimistic, like sayRead — the daemon pushes each record it changed
-   * as ev:"permit_request". */
-  permitRequestRead(ids: readonly string[]): Promise<ReplyOf<"permit_request_read">>;
-  /** Read one attachment of a request for permission as it is now
+  /** Every say and request for permission of the session `sid`, read or
+   * not (DR-0050 §5): what the 🔔 and 🔐 filters show of the ones outside
+   * the loaded window. */
+  notificationList(sid: string): Promise<ReplyOf<"notification_list">>;
+  /** Mark requests for permission read by their `permit` calls' tool_use
+   * ids (DR-0040 §5): the bubble's 許可する. Non-optimistic, like sayRead —
+   * the daemon pushes the new ev:"permit_state". */
+  permitRead(ids: readonly string[]): Promise<ReplyOf<"permit_read">>;
+  /** Read one attachment of session `sid`'s request `toolUseId` as it is now
    * (DR-0040 §3): the bubble's opening it. */
-  permitAttachmentRead(id: string, path: string): Promise<ReplyOf<"permit_attachment_read">>;
-  /** Read the settings file a request's project permissions go into, as it
-   * is now (DR-0040 §12): the bubble's opening it. */
-  permitSettingsRead(id: string): Promise<ReplyOf<"permit_settings_read">>;
-  /** Apply one project permission of a request (DR-0040 §12): its own
-   * 許可する. Non-optimistic — the daemon pushes the record, the permission
-   * marked applied, as ev:"permit_request". */
+  permitAttachmentRead(
+    sid: string,
+    toolUseId: string,
+    path: string,
+  ): Promise<ReplyOf<"permit_attachment_read">>;
+  /** Read the settings file session `sid`'s request `toolUseId`'s project
+   * permissions go into, as it is now (DR-0040 §12): the bubble's opening
+   * it. */
+  permitSettingsRead(sid: string, toolUseId: string): Promise<ReplyOf<"permit_settings_read">>;
+  /** Apply one project permission of session `sid`'s request `toolUseId`
+   * (DR-0040 §12): its own 許可する. Non-optimistic — the daemon pushes the
+   * new ev:"permit_state", the permission among the applied. */
   permitPermissionApply(
-    id: string,
+    sid: string,
+    toolUseId: string,
     permission: PermitProjectPermission,
   ): Promise<ReplyOf<"permit_permission_apply">>;
   peers(): Promise<ReplyOf<"peers">>;
@@ -833,11 +840,16 @@ export function createWsClient(
       dispatch({ type: "agent-says/loaded", says: streamEv.says });
       return;
     }
-    // Requests for permission (DR-0040 §5): the full set on connect, which
-    // replaces what the tab held (a restarted daemon starts with none), then
-    // each one as it is recorded or marked read, in place of the one held.
-    if (streamEv.ev === "permit_requests") {
-      dispatch({ type: "permit-requests/loaded", requests: streamEv.requests });
+    // The person's state of the requests for permission (DR-0040 §5): the
+    // ones not acted on and the project permissions applied, the full state on
+    // connect and whenever it changes, replaced the same way. The requests
+    // themselves are drawn from the transcripts' `permit` calls.
+    if (streamEv.ev === "permit_state") {
+      dispatch({
+        type: "permit-state/loaded",
+        unread: streamEv.unread,
+        applied: streamEv.applied,
+      });
       return;
     }
     if (streamEv.ev === "request_overrides") {
@@ -852,10 +864,6 @@ export function createWsClient(
         target,
         values: { model, effort },
       });
-      return;
-    }
-    if (streamEv.ev === "permit_request") {
-      dispatch({ type: "permit-requests/updated", request: streamEv.request });
       return;
     }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
@@ -1062,12 +1070,14 @@ export function createWsClient(
       ws?.close();
     },
     sayRead: (ids) => send({ op: "say_read", ids: [...ids] }),
-    sayList: (sid) => send({ op: "say_list", sid }),
-    permitRequestRead: (ids) => send({ op: "permit_request_read", ids: [...ids] }),
-    permitAttachmentRead: (id, path) => send({ op: "permit_attachment_read", id, path }),
-    permitSettingsRead: (id) => send({ op: "permit_settings_read", id }),
-    permitPermissionApply: (id, permission) =>
-      send({ op: "permit_permission_apply", id, permission }),
+    notificationList: (sid) => send({ op: "notification_list", sid }),
+    permitRead: (ids) => send({ op: "permit_read", ids: [...ids] }),
+    permitAttachmentRead: (sid, tool_use_id, path) =>
+      send({ op: "permit_attachment_read", sid, tool_use_id, path }),
+    permitSettingsRead: (sid, tool_use_id) =>
+      send({ op: "permit_settings_read", sid, tool_use_id }),
+    permitPermissionApply: (sid, tool_use_id, permission) =>
+      send({ op: "permit_permission_apply", sid, tool_use_id, permission }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     rooms: () => send({ op: "rooms" }),

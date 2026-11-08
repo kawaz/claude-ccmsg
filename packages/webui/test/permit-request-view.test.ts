@@ -2,25 +2,24 @@
 // 写した文は人がそのセッションの入力欄に貼って送る許可で、auto mode の
 // classifier はその文が名指す操作と、止めた操作を結び付ける。
 import { describe, expect, test } from "bun:test";
-import { PERMIT_ATTACHMENT_MAX_BYTES, type PermitRequestRecord } from "@ccmsg/protocol";
+import { PERMIT_ATTACHMENT_MAX_BYTES, type PermitCall } from "@ccmsg/protocol";
 import {
+  appliedAtOf,
   attachmentNote,
   commandHeading,
   fenceLangOfPath,
   isOneLineCommand,
   permitGrantText,
+  projectSettingsPathOf,
 } from "../src/client/permit-request-view.ts";
 
-function request(fields: Partial<PermitRequestRecord>): PermitRequestRecord {
+function request(fields: Partial<PermitCall>): PermitCall {
   return {
-    id: "i/1",
-    sid: "s",
-    ts: "2026-10-25T00:00:00.000Z",
     blocked: "x",
     attachments: [],
     intents: [],
     commands: [],
-    read: false,
+    project_permissions: [],
     ...fields,
   };
 }
@@ -126,5 +125,25 @@ describe("isOneLineCommand", () => {
     for (const command of ["a\nb", "a\r\nb", "a\rb", "ls\n", "cat <<EOF\nx\nEOF"]) {
       expect(isOneLineCommand(command)).toBe(false);
     }
+  });
+});
+
+// DR-0040 §12: the settings file is the call's directory's, and a change is
+// applied when the daemon's state lists that change of that request.
+describe("project permissions", () => {
+  test("the settings file is the call's directory's .claude/settings.local.json", () => {
+    expect(projectSettingsPathOf("/w/repo")).toBe("/w/repo/.claude/settings.local.json");
+    expect(projectSettingsPathOf("/w/repo/")).toBe("/w/repo/.claude/settings.local.json");
+  });
+
+  test("a change is applied when the same change of the same request is", () => {
+    const applied = [
+      { tool_use_id: "toolu_1", permission: { add: "Bash(ls)" }, applied_at: "t1" },
+      { tool_use_id: "toolu_2", permission: { remove: "Bash(ls)" }, applied_at: "t2" },
+    ];
+    expect(appliedAtOf(applied, "toolu_1", { add: "Bash(ls)" })).toBe("t1");
+    expect(appliedAtOf(applied, "toolu_1", { remove: "Bash(ls)" })).toBeUndefined();
+    expect(appliedAtOf(applied, "toolu_2", { add: "Bash(ls)" })).toBeUndefined();
+    expect(appliedAtOf(applied, "toolu_3", { add: "Bash(ls)" })).toBeUndefined();
   });
 });

@@ -14,15 +14,6 @@ export type SessionTab = "files" | "timeline" | "terminal" | "status";
  * `filter` on `/s/<sid>/timeline/<position>`. */
 export type TimelineFilter = "say" | "permit";
 
-/** The position (`/timeline/<position>`) that selects a request for
- * permission (DR-0050 §9 U7). The request is the daemon's record, not a
- * transcript row, so it has no uuid; its record id stands in. Once the daemon
- * forgets the record (a restart) the position is outside the window, as a
- * uuid no longer loaded is, and returns to head. */
-export function permitPosition(id: string): string {
-  return `permit:${id}`;
-}
-
 /** `?filter=` of a session's own Timeline. Only the two kinds read as one;
  * anything else, an empty value included, is no filter (as an unknown
  * `sb.panel` is a closed panel). */

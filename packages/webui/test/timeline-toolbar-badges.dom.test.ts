@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { TimelineToolbarBadges } from "../src/client/components/timeline/TimelineToolbarBadges.tsx";
 import { AppContext } from "../src/client/context.ts";
 import type { TimelineFilter } from "../src/client/locator.ts";
@@ -36,17 +36,8 @@ function say(n: number, sid = SID): UnreadSay {
   return { session_id: sid, tool_use_id: `toolu_${n}`, ts: "2026-11-08T00:00:00.000Z" };
 }
 
-function request(id: string, read = false): PermitRequestRecord {
-  return {
-    id,
-    sid: SID,
-    ts: "2026-11-08T00:00:00.000Z",
-    blocked: "x",
-    attachments: [],
-    intents: [],
-    commands: [],
-    read,
-  };
+function request(id: string): UnreadPermit {
+  return { session_id: SID, tool_use_id: id, ts: "2026-11-08T00:00:00.000Z" };
 }
 
 async function at(store: Store, sid: string, position: string, filter: TimelineFilter | null) {
@@ -59,10 +50,10 @@ async function at(store: Store, sid: string, position: string, filter: TimelineF
   );
 }
 
-async function mount(says: UnreadSay[], requests: PermitRequestRecord[]) {
+async function mount(says: UnreadSay[], requests: UnreadPermit[]) {
   const store = createStore(initialState());
   store.dispatch({ type: "say-unread/loaded", says });
-  store.dispatch({ type: "permit-requests/loaded", requests });
+  store.dispatch({ type: "permit-state/loaded", unread: requests, applied: [] });
   const ws = createWsClient((action) => store.dispatch(action));
   const root = document.createElement("div");
   document.body.append(root);
@@ -86,14 +77,14 @@ function badges(root: HTMLElement): Array<[string, string | null]> {
 
 describe("the Timeline toolbar's badges", () => {
   test("both at 0 / 0 without counters, the counter once either is unread", async () => {
-    const { root, store } = await mount([], [request("i/1", true)]);
+    const { root, store } = await mount([], []);
     expect(badges(root).map(([text]) => text)).toEqual(["🔔", "🔐"]);
     await act(() => store.dispatch({ type: "say-unread/loaded", says: [say(1), say(2, OTHER)] }));
     expect(badges(root).map(([text]) => text)).toEqual(["🔔1", "🔐"]);
   });
 
   test("the counter is a child of the badge beside the icon, not inside it", async () => {
-    const { root } = await mount([say(1)], [request("i/1", true)]);
+    const { root } = await mount([say(1)], []);
     const [bell, lock] = [...root.querySelectorAll(".notif-badge")];
     expect(bell?.querySelector(".notif-badge-icon")?.textContent).toBe("🔔");
     expect(bell?.querySelector(":scope > .notif-badge-counter")?.textContent).toBe("1");
@@ -102,7 +93,7 @@ describe("the Timeline toolbar's badges", () => {
   });
 
   test("the URL's filter selects its badge, which takes the filter off in place", async () => {
-    const { root, store } = await mount([say(1)], [request("i/1")]);
+    const { root, store } = await mount([say(1)], [request("toolu_p1")]);
     await at(store, SID, "u-7", "say");
     expect(badges(root)).toEqual([
       ["🔔1*", `/s/${SID}/timeline/u-7`],

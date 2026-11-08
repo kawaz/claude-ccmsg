@@ -7,7 +7,7 @@
 //   selected one takes the filter off and leaves the position
 // - the counts are the session's unread says and unread requests only
 import { describe, expect, test } from "bun:test";
-import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import type { UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { agentSayerLabel } from "../src/client/components/agent-tree-view.ts";
 import {
   badgeCounterText,
@@ -46,21 +46,12 @@ describe("notification badges", () => {
       { session_id: "s1", tool_use_id: "t2", ts: "2026-11-08T00:00:01.000Z" },
       { session_id: "s2", tool_use_id: "t3", ts: "2026-11-08T00:00:02.000Z" },
     ];
-    const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
-      id,
-      sid,
+    const request = (id: string, sid: string): UnreadPermit => ({
+      session_id: sid,
+      tool_use_id: id,
       ts: "2026-11-08T00:00:00.000Z",
-      blocked: "x",
-      attachments: [],
-      intents: [],
-      commands: [],
-      read,
     });
-    const requests = [
-      request("i/1", "s1", false),
-      request("i/2", "s1", true),
-      request("i/3", "s2", false),
-    ];
+    const requests = [request("toolu_1", "s1"), request("toolu_3", "s2")];
     expect(notificationCountsOf("s1", says, requests)).toEqual({ say: 2, permit: 1 });
     expect(notificationCountsOf("s3", says, requests)).toEqual({ say: 0, permit: 0 });
   });

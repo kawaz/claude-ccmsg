@@ -54,10 +54,8 @@ function RawModeTabs({
 }
 
 /** A click on an item selects its position, unless it landed on something
- * that acts on its own (a link, a button, a field, a fold's summary). Shared
- * by the transcript items and the permission-request bubbles (DR-0050 §9 U7),
- * which are selectable the same way. */
-export function selectPositionOnClick(
+ * that acts on its own (a link, a button, a field, a fold's summary). */
+function selectPositionOnClick(
   uuid: string | undefined,
   onSelectPosition: ((uuid: string) => void) | undefined,
 ): (event: MouseEvent) => void {

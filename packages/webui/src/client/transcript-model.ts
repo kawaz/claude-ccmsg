@@ -1,7 +1,10 @@
 import {
   type AssistantRow,
   type Attachment,
+  ccmsgPermitCall,
   ccmsgSayText,
+  permitRequested,
+  type PermitCall,
   ccmsgSendCall,
   classifyCcmsgSendResult,
   type ContentBlock,
@@ -185,6 +188,10 @@ export interface TurnLine {
   uuid?: string;
   role: "user" | "assistant";
   segments: Segment[];
+  /** The directory the session ran in, for an assistant row: a request for
+   * permission's project permissions go into the settings file there
+   * (DR-0040 §12). */
+  cwd?: string;
   /** classifyUserMessage's verdict for a role:"user" line — which pattern of
    * "type:user に見えるシステム由来メッセージ" (or a real human utterance,
    * "user-prompt") this line matches. Absent for role:"assistant" (that side
@@ -1341,7 +1348,8 @@ export type BoundaryKind =
   | { kind: "bash-command-output"; segment: Extract<Segment, { kind: "bash-command-output" }> }
   | { kind: "ccmsg"; messages: CcmsgMessage[] }
   | { kind: "push-notification"; text: string }
-  | { kind: "say"; text: string; toolUseId: string };
+  | { kind: "say"; text: string; toolUseId: string }
+  | { kind: "permit"; toolUseId: string; permit: PermitCall; cwd: string };
 
 /**
  * Classifies a boundary line (kawaz spec order, first match wins): a real
@@ -1393,6 +1401,8 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (pushText !== null) return { kind: "push-notification", text: pushText };
   const say = sayCallOf(line);
   if (say !== null) return { kind: "say", ...say };
+  const permit = permitRequestOf(line);
+  if (permit !== null) return { kind: "permit", ...permit };
   const ccmsgMessages = extractCcmsgMessages(line);
   if (ccmsgMessages.length === 0) return null;
   // r55 m14: peer 発 ccmsg のみの line は boundary にせず fold group へ流す。
@@ -2230,6 +2240,25 @@ export function sayCallOf(line: ParsedLine): { text: string; toolUseId: string }
   return null;
 }
 
+/** The request for permission an assistant line makes (DR-0040 §4): its
+ * `permit` call, once the call's result says the request went out — a call
+ * refused (a subagent's) or not answered yet is no request. The result is
+ * the call's tool_result in the loaded window, which resolveToolResults
+ * paired with it. Null for a line that makes no such request. */
+export function permitRequestOf(
+  line: ParsedLine,
+): { toolUseId: string; permit: PermitCall; cwd: string } | null {
+  if (line.kind !== "turn" || line.role !== "assistant") return null;
+  for (const segment of line.segments) {
+    if (segment.kind !== "tool-use" || segment.result === null) continue;
+    const permit = ccmsgPermitCall(segment.name, segment.input);
+    if (permit === null) continue;
+    if (!permitRequested(segment.result.text, segment.result.isError)) continue;
+    return { toolUseId: segment.toolUseId, permit, cwd: line.cwd ?? "" };
+  }
+  return null;
+}
+
 // --- rich|raw タブの rich 側パース (U2 kawaz spec: 「分類済みシステム
 // メッセージの details 展開時の本文に rich | raw のタブ切替を追加、ccmsg
 // 吹き出しの msg/raw タブと同じ UI 流儀」) ---
@@ -2741,6 +2770,7 @@ function parseKnownRow(row: KnownTranscriptRow, raw: string): ParsedLine {
         ...uuidOf(row.uuid),
         role: "assistant",
         segments: parseSegments(row.message.content, "assistant", undefined),
+        cwd: row.cwd,
         assistantMessageKind: classifyAssistantMessage(row),
       };
     case "attachment": {

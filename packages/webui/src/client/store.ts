@@ -18,7 +18,9 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
-  type PermitRequestRecord,
+  type AppliedPermitPermission,
+  type SessionPermit,
+  type UnreadPermit,
   type ProtocolVersion,
   type RequestOverrideState,
   type RequestOverrideTarget,
@@ -417,17 +419,25 @@ export interface AppState {
    * DR-0050 §10), oldest first: drawn in the session's own Timeline at their
    * time. Whether one is unread is `unreadSays`'. Replaced whole on every push. */
   agentSays: readonly AgentSay[];
-  /** Every say of a session, read or not (say_list, DR-0050 §5), by sid,
-   * oldest first: what the 🔔 filter shows of the says outside the loaded
-   * window. Asked for each time the filter is entered, and replaced whole by
-   * the answer. A session not asked yet has none here. */
-  sayLists: ReadonlyMap<string, readonly SessionSay[]>;
-  /** Every request for permission the daemon holds (DR-0040), oldest first:
-   * the permission bubbles in each session's Timeline and the unread 🔐
-   * marker in the Sessions list. Replaced whole by the subscribe-time set
-   * (ev:"permit_requests"), and one at a time (ev:"permit_request") as one
-   * is recorded or marked read. */
-  permitRequests: readonly PermitRequestRecord[];
+  /** Every say and request for permission of a session, read or not
+   * (notification_list, DR-0050 §5), by sid, oldest first: what the 🔔 and
+   * 🔐 filters show of the ones outside the loaded window. Asked for each
+   * time a filter is entered, and replaced whole by the answer. A session not
+   * asked yet has none here. */
+  notificationLists: ReadonlyMap<
+    string,
+    { says: readonly SessionSay[]; permits: readonly SessionPermit[] }
+  >;
+  /** The requests for permission the person has not acted on
+   * (ev:"permit_state", DR-0040 §5), oldest first: which permission bubbles
+   * show 🔐, and the unread 🔐 marker in the Sessions list. The requests
+   * themselves are the `permit` calls in the transcripts. Replaced whole on
+   * every push. */
+  permitUnread: readonly UnreadPermit[];
+  /** Every project permission the person applied (ev:"permit_state",
+   * DR-0040 §12): which 許可する of a bubble's settings section shows
+   * 適用済み. Replaced whole on every push. */
+  permitApplied: readonly AppliedPermitPermission[];
   /** What the overrides put on each session's main-thread requests (DR-0041
    * §5), by session id: replaced whole by the subscribe-time set
    * (ev:"request_overrides"), and one override of one session at a time
@@ -501,8 +511,9 @@ export function initialState(): AppState {
     llmRequests: new Map(),
     unreadSays: [],
     agentSays: [],
-    sayLists: new Map(),
-    permitRequests: [],
+    notificationLists: new Map(),
+    permitUnread: [],
+    permitApplied: [],
     requestOverrides: new Map(),
     pinnedSessions: new Map(),
     connStatus: "connecting",
@@ -537,9 +548,17 @@ export type Action =
   // Full replacement, same as llm-requests/loaded (ev:"say_unread").
   | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
   | { type: "agent-says/loaded"; says: readonly AgentSay[] }
-  | { type: "say-list/loaded"; sid: string; says: readonly SessionSay[] }
-  | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
-  | { type: "permit-requests/updated"; request: PermitRequestRecord }
+  | {
+      type: "notification-list/loaded";
+      sid: string;
+      says: readonly SessionSay[];
+      permits: readonly SessionPermit[];
+    }
+  | {
+      type: "permit-state/loaded";
+      unread: readonly UnreadPermit[];
+      applied: readonly AppliedPermitPermission[];
+    }
   | {
       type: "request-overrides/loaded";
       sessions: readonly ({ session_id: string } & RequestOverrideState)[];
@@ -1138,21 +1157,16 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, unreadSays: action.says };
     case "agent-says/loaded":
       return { ...state, agentSays: action.says };
-    case "say-list/loaded":
-      return { ...state, sayLists: new Map(state.sayLists).set(action.sid, action.says) };
-    case "permit-requests/loaded":
-      return { ...state, permitRequests: action.requests };
-    case "permit-requests/updated": {
-      // A record held already (marked read, or one the subscribe's catch-up
-      // carried too) is replaced where it is; a new one goes last.
-      const { request } = action;
-      return state.permitRequests.some((r) => r.id === request.id)
-        ? {
-            ...state,
-            permitRequests: state.permitRequests.map((r) => (r.id === request.id ? request : r)),
-          }
-        : { ...state, permitRequests: [...state.permitRequests, request] };
-    }
+    case "notification-list/loaded":
+      return {
+        ...state,
+        notificationLists: new Map(state.notificationLists).set(action.sid, {
+          says: action.says,
+          permits: action.permits,
+        }),
+      };
+    case "permit-state/loaded":
+      return { ...state, permitUnread: action.unread, permitApplied: action.applied };
     case "request-overrides/loaded":
       return {
         ...state,

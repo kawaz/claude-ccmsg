@@ -187,23 +187,10 @@ function roomWithMember(m: MemberEvent): RoomState {
 }
 
 describe("permitUnreadBySid", () => {
-  // 未読の許可依頼は記録の sid に帰属し、既読は数えない。未読ゼロの sid は出さない。
+  // 未読の許可依頼は依頼したセッションに帰属する。未読ゼロの sid は出さない。
   test("counts each sid's unread requests", () => {
-    const request = (id: string, sid: string, read: boolean) => ({
-      id,
-      sid,
-      ts: "t",
-      blocked: "x",
-      attachments: [],
-      intents: [],
-      commands: [{ command: "ls" }],
-      read,
-    });
-    const got = permitUnreadBySid([
-      request("i/1", "sid-a", false),
-      request("i/2", "sid-a", false),
-      request("i/3", "sid-b", true),
-    ]);
+    const request = (id: string, sid: string) => ({ session_id: sid, tool_use_id: id, ts: "t" });
+    const got = permitUnreadBySid([request("toolu_1", "sid-a"), request("toolu_2", "sid-a")]);
     expect([...got]).toEqual([["sid-a", 2]]);
   });
 });

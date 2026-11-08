@@ -6,7 +6,7 @@ import type {
   ExternalFile,
   ExternalFileOrigin,
   PeerInfo,
-  PermitRequestRecord,
+  UnreadPermit,
   ProtocolVersion,
   SessionApiError,
   SessionSearchHit,
@@ -211,11 +211,10 @@ export function sayUnreadBySid(says: readonly UnreadSay[]): Map<string, number> 
 
 /** Unread request-for-permission count per session sid (DR-0040), for the
  * Sessions list's 🔐 marker. A sid with nothing unread is absent. */
-export function permitUnreadBySid(requests: readonly PermitRequestRecord[]): Map<string, number> {
+export function permitUnreadBySid(unread: readonly UnreadPermit[]): Map<string, number> {
   const out = new Map<string, number>();
-  for (const request of requests) {
-    if (request.read) continue;
-    out.set(request.sid, (out.get(request.sid) ?? 0) + 1);
+  for (const request of unread) {
+    out.set(request.session_id, (out.get(request.session_id) ?? 0) + 1);
   }
   return out;
 }

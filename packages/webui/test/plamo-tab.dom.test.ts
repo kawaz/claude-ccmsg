@@ -6,7 +6,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type ComponentChild, h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { ErrorResponse, PermitRequestRecord } from "@ccmsg/protocol";
+import type { ErrorResponse } from "@ccmsg/protocol";
+import type { PermitRequestView } from "../src/client/permit-request-view.ts";
 import { SegmentView } from "../src/client/components/timeline/segments.tsx";
 import { AssistantBubble, UserPromptBubble } from "../src/client/components/timeline/bubbles.tsx";
 import { PermitRequestBubble } from "../src/client/components/timeline/PermitRequestBubble.tsx";
@@ -384,16 +385,19 @@ describe("default tab", () => {
     return languageTabs?.querySelector('[aria-selected="true"]')?.textContent ?? null;
   }
 
-  function permitOf(blocked: string, intent: string, description: string): PermitRequestRecord {
+  function permitOf(blocked: string, intent: string, description: string): PermitRequestView {
     return {
-      id: "i/1",
       sid: SID,
+      toolUseId: "toolu_1",
       ts: "2026-11-06T00:00:00.000Z",
-      blocked,
-      attachments: ["/w/policy.json"],
-      intents: [intent],
-      commands: [{ command: "git push origin main", description }],
-      read: false,
+      cwd: "/w",
+      permit: {
+        blocked,
+        attachments: ["/w/policy.json"],
+        intents: [intent],
+        commands: [{ command: "git push origin main", description }],
+        project_permissions: [],
+      },
     };
   }
 

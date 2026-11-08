@@ -1,7 +1,9 @@
 /** @jsxImportSource preact */
 // 許可依頼 (DR-0040) のバブル。auto mode の classifier に止められたエージェント
 // が、止められた行動・読むファイル・許可してほしいことを並べて人に見せ、
-// 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。添付の中身は
+// 「許可する」で許可の文 (permitGrantText) をクリップボードに写す。依頼の中身は
+// transcript の permit の行 (PermitRequestView)、既読と適用は daemon の
+// ev:"permit_state"。添付の中身は
 // 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
 // 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。1 行のコマンドには
@@ -12,8 +14,9 @@
 // こと」と「許可する」を出さない (写す操作が無い)。
 import type { TargetedEvent } from "preact";
 import { useContext, useRef, useState } from "preact/hooks";
-import type { PermitAttachment, PermitCommand, PermitRequestRecord } from "@ccmsg/protocol";
+import type { PermitAttachment, PermitCall, PermitCommand } from "@ccmsg/protocol";
 import { useApp } from "../../context.ts";
+import { useStoreState } from "../../useStore.ts";
 import { MarkdownView } from "../../markdown-view.tsx";
 import {
   attachmentNote,
@@ -21,6 +24,7 @@ import {
   fenceLangOfPath,
   isOneLineCommand,
   permitGrantText,
+  type PermitRequestView,
 } from "../../permit-request-view.ts";
 import {
   classifySessionInputReply,
@@ -104,7 +108,7 @@ function Attachment({
 /** 添付ごとの読み取りの状態。開いた時に daemon から読み、読めた後は閉じて
  * 開き直しても読み直さない。daemon が答えなかった時は、次に開いた時に読み
  * 直す。 */
-function useAttachmentLoads(request: PermitRequestRecord): {
+function useAttachmentLoads(request: PermitRequestView): {
   loadOf: (path: string) => AttachmentLoad;
   open: (path: string) => void;
 } {
@@ -118,7 +122,7 @@ function useAttachmentLoads(request: PermitRequestRecord): {
     if (now.kind === "loading" || now.kind === "loaded") return;
     settle(path, { kind: "loading" });
     void ws
-      .permitAttachmentRead(request.id, path)
+      .permitAttachmentRead(request.sid, request.toolUseId, path)
       .then((res) =>
         settle(
           path,
@@ -137,17 +141,17 @@ function useAttachmentLoads(request: PermitRequestRecord): {
  * 出して、未読なら既読にする (写せなかった時は人がまだ何もできていないので
  * 未読のまま)。2 つのラベルを同じ升目に重ねて幅を広い方に固定するので、
  * 表示が切り替わってもボタンの幅は変わらない。既読は非楽観で、daemon が
- * 変えた記録を ev:"permit_request" で全タブに送る。 */
-function GrantButton({ request }: { request: PermitRequestRecord }) {
+ * 新しい ev:"permit_state" を全タブに送る。 */
+function GrantButton({ request, read }: { request: PermitRequestView; read: boolean }) {
   const { ws } = useApp();
   const openComposer = useContext(OpenComposerContext);
   const { copied, copy } = useClipboardCopy();
   const [failed, setFailed] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   const markRead = (): void => {
-    if (request.read) return;
+    if (read) return;
     void ws
-      .permitRequestRead([request.id])
+      .permitRead([request.toolUseId])
       .then((res) => setReadError(res.ok ? null : res.error.msg))
       .catch(() => setReadError("接続エラーのため確認済みにできませんでした"));
   };
@@ -158,7 +162,7 @@ function GrantButton({ request }: { request: PermitRequestRecord }) {
         class={copied ? "permit-grant copied" : "permit-grant"}
         title="許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
         onClick={() => {
-          const grant = permitGrantText(request);
+          const grant = permitGrantText(request.permit);
           void copy(grant).then((ok) => {
             setFailed(!ok);
             if (!ok) return;
@@ -297,7 +301,7 @@ function TranslatedCommandHeading({
 
 /** 訳す対象 (止められた行動、intent、コマンドの説明) を段落としてつないだ
  * もの。既定のタブの判定に渡す。コマンド本文と添付のパスは訳さない。 */
-function permitTranslatableText(request: PermitRequestRecord): string {
+function permitTranslatableText(request: PermitCall): string {
   return [
     request.blocked,
     ...request.intents,
@@ -315,15 +319,22 @@ function permitTranslatableText(request: PermitRequestRecord): string {
  * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
  * パス・「許可する」が写す許可の文は原文のまま。 */
 export function PermitRequestBubble({
-  request,
+  request: view,
   now,
   translationAvailability,
 }: {
-  request: PermitRequestRecord;
+  request: PermitRequestView;
   now: number;
   translationAvailability: TranslationAvailability;
 }) {
-  const attachments = useAttachmentLoads(request);
+  const { store } = useApp();
+  // 未読は daemon が持つ集合 (ev:"permit_state") に居るもの。
+  const read = useStoreState(
+    store,
+    (s) => !s.permitUnread.some((unread) => unread.tool_use_id === view.toolUseId),
+  );
+  const request = view.permit;
+  const attachments = useAttachmentLoads(view);
   // 許可の文に並べる操作 (intents / commands) がある依頼だけに「許可して
   // ほしいこと」と「許可する」を出す。project_permissions だけの依頼は、
   // 区画の各「許可する」が人の手を付けた印 (既読) になる。
@@ -340,7 +351,7 @@ export function PermitRequestBubble({
         <div class="tl-bubble-from">
           {/* 未読は閉じた錠、人が「許可する」を押した (既読) 後は開いた錠。 */}
           <span class="permit-icon" aria-hidden="true">
-            {request.read ? "🔓" : "🔐"}
+            {read ? "🔓" : "🔐"}
           </span>
           許可依頼
         </div>
@@ -392,25 +403,23 @@ export function PermitRequestBubble({
                   )}
                   <CodeBlock code={command.command} lang="sh" />
                   {isOneLineCommand(command.command) ? (
-                    <BangButton sid={request.sid} command={command.command} />
+                    <BangButton sid={view.sid} command={command.command} />
                   ) : null}
                 </li>
               ))}
             </ul>
           </section>
         ) : null}
-        {request.project_settings !== undefined ? (
-          <PermitSettingsSection id={request.id} settings={request.project_settings} />
-        ) : null}
+        {request.project_permissions.length > 0 ? <PermitSettingsSection request={view} /> : null}
         {asksToRun ? (
           <div class="permit-grant-row">
-            <GrantButton request={request} />
+            <GrantButton request={view} read={read} />
           </div>
         ) : null}
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}
-        ts={request.ts}
+        ts={view.ts}
         now={now}
       />
     </div>
