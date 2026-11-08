@@ -65,6 +65,10 @@ export interface SessionRuntime {
   /** The ccmsg build the session's client announced (its peer row's
    * `ccmsg_version`). */
   ccmsgVersion?: string;
+  /** Set while that client speaks another protocol minor than the daemon
+   * (`protocolSkewWarning`): the ccmsg part is drawn in yellow with this
+   * text as its hover. */
+  protocolSkew?: string;
   /** This host's Claude Code version as GLOBALS shows it (DR-0043 §5.3), null
    * when not known. */
   hostClaudeVersion: string | null;
@@ -79,16 +83,18 @@ export interface SessionRuntime {
  * how it compares with the host's when that is known. Each version opens its
  * CHANGELOG entry (DR-0048 §5), and its hover text ends with where. */
 export function sessionRuntimeParts(runtime: SessionRuntime, now: number): LinePart[] {
-  const { process, ccmsgVersion, hostClaudeVersion } = runtime;
+  const { process, ccmsgVersion, protocolSkew, hostClaudeVersion } = runtime;
   const parts: LinePart[] = [];
   if (process) parts.push({ key: "uptime", text: formatDuration(now - process.startedAt) });
   if (ccmsgVersion) {
     const href = ccmsgChangelogUrl(ccmsgVersion);
+    const what = `ccmsg v${ccmsgVersion} (the ccmsg this session runs)`;
     parts.push({
       key: "ccmsg",
       text: `ccmsg v${ccmsgVersion}`,
-      title: `ccmsg v${ccmsgVersion} (the ccmsg this session runs)\n${href}`,
+      title: `${protocolSkew === undefined ? what : `${protocolSkew}\n${what}`}\n${href}`,
       href,
+      ...(protocolSkew !== undefined ? { warn: true } : {}),
     });
   }
   const claudeVersion = process?.version;
@@ -800,7 +806,7 @@ export function summarizeUserAgent(ua: string, maxTouchPoints = 0): string {
 /** How a session's ccmsg client reads in the Status tab: the build it
  * announced, and its protocol version. Neither is there for a session no
  * ccmsg client has hello'd for (known from the agents poll alone). Any
- * warning comes from `staleClientWarning`. */
+ * warning comes from `staleClientWarning` and `protocolSkewWarning`. */
 export function clientBuildLabel(row: {
   ccmsg_version?: string;
   protocol?: ProtocolVersion;
@@ -809,6 +815,27 @@ export function clientBuildLabel(row: {
   return row.protocol === undefined
     ? version
     : `${version} (protocol ${formatProtocol(row.protocol)})`;
+}
+
+/** The mark of a session whose ccmsg client speaks the daemon's protocol
+ * major with another minor (DR-0002 §4), or null while it speaks the
+ * daemon's version or either is not known. Such a client talks to the daemon
+ * fine but can drop what the daemon sends it without a word (a field or an
+ * op it does not know). Only restarting the session loads the current
+ * plugin: the webui's reload reloads the webui alone. A client of another
+ * major is refused instead, and is `staleClientWarning`'s. */
+export function protocolSkewWarning(
+  client: ProtocolVersion | undefined,
+  daemon: ProtocolVersion | undefined,
+): { marker: string; text: string } | null {
+  if (client === undefined || daemon === undefined) return null;
+  if (client.major !== daemon.major || client.minor === daemon.minor) return null;
+  return {
+    marker: "△",
+    text:
+      `このセッションの ccmsg の protocol は ${formatProtocol(client)} で daemon は ${formatProtocol(daemon)}。` +
+      "リロードでは直らない。セッションを起動し直すと直る",
+  };
 }
 
 /** The warning one session's refused ccmsg client earns (a client of another

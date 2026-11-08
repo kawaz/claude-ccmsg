@@ -15,7 +15,7 @@ import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
 import { agentEngineLabelsByName } from "../agent-tree-view.ts";
-import { sessionRuntimeParts, type SessionRuntime } from "../../utils.ts";
+import { protocolSkewWarning, sessionRuntimeParts, type SessionRuntime } from "../../utils.ts";
 import { hostClaudeVersion, lastSessionClaudeVersion } from "../../sidebar-globals.ts";
 import { ccmsgUnitKey, type Segment } from "../../transcript-model.ts";
 import { type FilePathResolveCtx } from "../../filepath-ref.ts";
@@ -110,7 +110,9 @@ export function Timeline({
     store,
     (s): SessionRuntime => {
       const row = s.agents.find((candidate) => candidate.sessionId === sid);
-      const ccmsgVersion = s.peers.find((p) => p.sid === sid)?.ccmsg_version;
+      const peer = s.peers.find((p) => p.sid === sid);
+      const ccmsgVersion = peer?.ccmsg_version;
+      const skew = protocolSkewWarning(peer?.protocol, s.daemonInfo?.protocol);
       return {
         ...(row
           ? {
@@ -121,6 +123,7 @@ export function Timeline({
             }
           : {}),
         ...(ccmsgVersion !== undefined ? { ccmsgVersion } : {}),
+        ...(skew !== null ? { protocolSkew: skew.text } : {}),
         hostClaudeVersion: hostClaudeVersion(
           lastSessionClaudeVersion(s.agents),
           s.hostClaudeVersion,

@@ -608,9 +608,13 @@ export function createWsClient(
         hello,
         async () => {
           const probe = await send({ op: "ping" }).catch(() => null);
-          return probe?.ok ? probe.version : null;
+          if (!probe?.ok) return null;
+          return {
+            version: probe.version,
+            ...(probe.protocol !== undefined ? { protocol: probe.protocol } : {}),
+          };
         },
-        VERSION,
+        { version: VERSION, protocol: PROTOCOL_VERSION },
       );
       if (guard) {
         dispatch({
@@ -715,6 +719,7 @@ export function createWsClient(
         dispatch({
           type: "daemon-info/loaded",
           version: ping.version,
+          ...(ping.protocol !== undefined ? { protocol: ping.protocol } : {}),
           exe: ping.exe,
           home: ping.home,
           webuiUrls: ping.webui_urls,

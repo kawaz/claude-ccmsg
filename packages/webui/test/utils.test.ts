@@ -72,6 +72,7 @@ import {
   splitRoomsByArchived,
   splitRoomsByKind,
   toggleFavorite,
+  protocolSkewWarning,
   staleClientWarning,
   toSessionRow,
   type PeerSortKey,
@@ -518,6 +519,21 @@ describe("sessionRuntimeParts", () => {
     ]);
     expect(parts.find((part) => part.key === "ccmsg")?.title).toBe(
       "ccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1",
+    );
+    expect(parts.find((part) => part.key === "ccmsg")?.warn).toBeUndefined();
+  });
+
+  // DR-0002 §4: the session's ccmsg of another protocol minor than the daemon
+  // is drawn in the warning colour, why first in its hover text.
+  test("a ccmsg of another protocol minor is a warning, with the reason in its hover text", () => {
+    const skew = "このセッションの ccmsg の protocol は 2.0 で daemon は 2.1。";
+    const ccmsg = sessionRuntimeParts(
+      { ccmsgVersion: "0.214.1", protocolSkew: skew, hostClaudeVersion: null },
+      now,
+    ).find((part) => part.key === "ccmsg");
+    expect(ccmsg?.warn).toBe(true);
+    expect(ccmsg?.title).toBe(
+      `${skew}\nccmsg v0.214.1 (the ccmsg this session runs)\nhttps://github.com/kawaz/claude-ccmsg/blob/main/CHANGELOG.md#v0.214.1`,
     );
   });
 });
@@ -2098,7 +2114,7 @@ describe("summarizeUserAgent", () => {
   });
 });
 
-describe("clientBuildLabel / staleClientWarning", () => {
+describe("clientBuildLabel / staleClientWarning / protocolSkewWarning", () => {
   test("clientBuildLabel names the build and the protocol version it speaks", () => {
     expect(clientBuildLabel({ ccmsg_version: "0.137.0", protocol: { major: 2, minor: 1 } })).toBe(
       "v0.137.0 (protocol 2.1)",
@@ -2145,6 +2161,23 @@ describe("clientBuildLabel / staleClientWarning", () => {
     expect(warning?.build).toBe("版数不明 / protocol 3.2");
     // No version to name: the client reported none.
     expect(warning?.text).toContain("版数不明");
+  });
+
+  // minor 違いは拒否されず繋がっている。黄色の印で、直し方 (セッションの
+  // 起動し直し) とリロードでは直らないことを言う。
+  test("protocolSkewWarning marks a client of the daemon's major with another minor", () => {
+    const warning = protocolSkewWarning({ major: 2, minor: 0 }, { major: 2, minor: 1 });
+    expect(warning?.marker).toBe("△");
+    expect(warning?.text).toBe(
+      "このセッションの ccmsg の protocol は 2.0 で daemon は 2.1。リロードでは直らない。セッションを起動し直すと直る",
+    );
+  });
+
+  test("protocolSkewWarning is null for the daemon's version, another major, or an unknown side", () => {
+    expect(protocolSkewWarning({ major: 2, minor: 1 }, { major: 2, minor: 1 })).toBeNull();
+    expect(protocolSkewWarning({ major: 1, minor: 0 }, { major: 2, minor: 1 })).toBeNull();
+    expect(protocolSkewWarning(undefined, { major: 2, minor: 1 })).toBeNull();
+    expect(protocolSkewWarning({ major: 2, minor: 0 }, undefined)).toBeNull();
   });
 
   test("toSessionRow carries the build fields and the stale flag onto the row", () => {

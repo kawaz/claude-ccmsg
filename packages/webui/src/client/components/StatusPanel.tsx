@@ -43,6 +43,7 @@ import {
   formatClockTime,
   formatDuration,
   resolveSessionTopbar,
+  protocolSkewWarning,
   staleClientWarning,
 } from "../utils.ts";
 import { useApp } from "../context.ts";
@@ -645,14 +646,17 @@ export function StatusPanel({
   const terminalGatewayUrl = useStoreState(store, (s) => s.terminalGatewayUrl);
   const terminalPageUrl = buildTerminalPageUrl(terminalGatewayUrl, agent?.hyoui_session_id);
   // このセッションの ccmsg クライアント。CWD や PID と同じ「今この session が
-  // 何で動いているか」の一部なので identity 表に並べる。古い client が居るとき
-  // だけ警告に変わり、それ以外は版数だけを黙って出す。
+  // 何で動いているか」の一部なので identity 表に並べる。古い client (protocol
+  // の major 違いで断られている) が居るときは警告、minor 違いで繋がっている
+  // ときは黄色の印に変わり、それ以外は版数だけを黙って出す (DR-0002 §4)。
   const peer = useStoreState(
     store,
     (s) => s.peers.find((candidate) => candidate.sid === sid),
     sameJson,
   );
   const staleClient = peer ? staleClientWarning(peer) : null;
+  const daemonProtocol = useStoreState(store, (s) => s.daemonInfo?.protocol, sameJson);
+  const protocolSkew = protocolSkewWarning(peer?.protocol, daemonProtocol);
   // What the overrides put on the main thread's requests (DR-0041 §5), the
   // same in every tab.
   const overrides = useStoreState(store, (s) => s.requestOverrides.get(sid), sameJson);
@@ -732,10 +736,14 @@ export function StatusPanel({
           )}
         </dd>
         <dt>CCMSG</dt>
-        <dd class="status-meta-value" title={staleClient?.text}>
+        <dd class="status-meta-value" title={staleClient?.text ?? protocolSkew?.text}>
           {staleClient ? (
             <span class="status-stale-client">
               {staleClient.marker} {staleClient.build} — ccmsg クライアントが古い
+            </span>
+          ) : protocolSkew ? (
+            <span class="status-protocol-skew">
+              {protocolSkew.marker} {clientBuild}
             </span>
           ) : (
             <span>{clientBuild}</span>

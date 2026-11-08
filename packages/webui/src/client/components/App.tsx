@@ -15,7 +15,7 @@ import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
 import { parseUrl, usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
-import { reloadButtonTitle } from "../version-guard.ts";
+import { reloadButtonClass, reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
 import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
@@ -314,8 +314,9 @@ export function App() {
           type="button"
           aria-label="reload"
           // 不一致は専用のボックスを増やさず、このボタンの見た目だけで伝える
-          // (kawaz r273 m27)。色だけを変えるのでレイアウトは動かない。
-          class={versionMismatch !== null ? "app-reload-update" : undefined}
+          // (kawaz r273 m27)。色だけを変えるのでレイアウトは動かない。版の
+          // 違いは青、protocol の major の違い (このタブの要求が通らない) は赤。
+          class={reloadButtonClass(versionMismatch)}
           title={reloadButtonTitle(versionMismatch)}
           onClick={() => {
             window.location.reload();

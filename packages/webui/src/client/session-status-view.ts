@@ -320,12 +320,15 @@ export interface MiniSummaryLine {
  * says what it is when the text alone does not, and the page its text opens
  * in a new tab when there is one (a version's CHANGELOG entry, DR-0048 §5).
  * `key` names which part it is (`uptime`, `ccmsg`, `claude`), the same
- * whatever its text. */
+ * whatever its text. `warn` draws it in the warning colour (a session's
+ * ccmsg of another protocol minor than the daemon, DR-0002 §4), with the
+ * reason in its hover text. */
 export interface LinePart {
   key: string;
   text: string;
   title?: string;
   href?: string;
+  warn?: boolean;
 }
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる

@@ -19,6 +19,7 @@ import {
   type RoomKind,
   type RoomSummary,
   type PermitRequestRecord,
+  type ProtocolVersion,
   type RequestOverrideState,
   type RequestOverrideTarget,
   type RequestValues,
@@ -223,6 +224,9 @@ export interface SessionTreeState {
  * (ws.ts's onOpen handshake fires one after hello). */
 export interface DaemonInfo {
   version: string;
+  /** The protocol version the daemon speaks (ping's `protocol`), which a
+   * session's client's is compared with (`protocolSkewWarning`). */
+  protocol?: ProtocolVersion;
   exe?: string;
   /** The daemon user's home, which `~/` link targets expand against. */
   home?: string;
@@ -524,6 +528,7 @@ export type Action =
   | {
       type: "daemon-info/loaded";
       version: string;
+      protocol?: ProtocolVersion;
       exe?: string;
       home?: string;
       webuiUrls?: readonly string[];
@@ -1144,6 +1149,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         daemonInfo: {
           version: action.version,
+          ...(action.protocol !== undefined ? { protocol: action.protocol } : {}),
           exe: action.exe,
           home: action.home,
           webuiUrls: action.webuiUrls,
@@ -1162,7 +1168,11 @@ export function reducer(state: AppState, action: Action): AppState {
       // 据え置いて、立っている導線をそのまま使い回す。
       const next = action.mismatch;
       const current = state.versionMismatch;
-      if (next?.daemonVersion === current?.daemonVersion) return state;
+      if (
+        next?.daemonVersion === current?.daemonVersion &&
+        next?.protocolChanged === current?.protocolChanged
+      )
+        return state;
       return { ...state, versionMismatch: next };
     }
     case "translator/availability":

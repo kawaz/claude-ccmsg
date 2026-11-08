@@ -2419,7 +2419,7 @@ describe("launch availability", () => {
 // 同じ中身なら state 自体を据え置いて再描画を起こさない。
 describe("version-mismatch/detected", () => {
   test("同じ不一致を再検出しても state は変わらない", () => {
-    const mismatch = { daemonVersion: "0.137.0" };
+    const mismatch = { daemonVersion: "0.137.0", protocolChanged: false };
     const first = reducer(initialState(), { type: "version-mismatch/detected", mismatch });
     expect(first.versionMismatch).toEqual(mismatch);
     expect(reducer(first, { type: "version-mismatch/detected", mismatch: { ...mismatch } })).toBe(
@@ -2430,15 +2430,22 @@ describe("version-mismatch/detected", () => {
   test("version が上がれば差し替わり、解消すれば消える", () => {
     const first = reducer(initialState(), {
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: "0.137.0" },
+      mismatch: { daemonVersion: "0.137.0", protocolChanged: false },
     });
     const next = reducer(first, {
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: "0.138.0" },
+      mismatch: { daemonVersion: "0.138.0", protocolChanged: false },
     });
     expect(next.versionMismatch?.daemonVersion).toBe("0.138.0");
+    // The same version with the protocol's major changed is another state:
+    // the button turns from blue to red.
+    const protocol = reducer(next, {
+      type: "version-mismatch/detected",
+      mismatch: { daemonVersion: "0.138.0", protocolChanged: true },
+    });
+    expect(protocol.versionMismatch?.protocolChanged).toBe(true);
     expect(
-      reducer(next, { type: "version-mismatch/detected", mismatch: null }).versionMismatch,
+      reducer(protocol, { type: "version-mismatch/detected", mismatch: null }).versionMismatch,
     ).toBeNull();
   });
 });

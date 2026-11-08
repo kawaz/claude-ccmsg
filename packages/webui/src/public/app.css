@@ -541,6 +541,12 @@ a {
   color: var(--accent);
 }
 
+/* protocol の major が daemon と違う (DR-0002 §4): このタブの要求は daemon に
+ * 断られ続けるので、版の違い (青) と見分けが付くよう赤にする。 */
+#app-reload.app-reload-protocol {
+  color: var(--danger);
+}
+
 #app-back:disabled,
 #app-forward:disabled {
   opacity: 0.3;
@@ -1327,6 +1333,19 @@ select.sidebar-globals-endpoint {
 }
 
 .status-stale-client {
+  color: var(--warn);
+}
+
+/* ccmsg の protocol の minor が daemon と違うセッション (DR-0002 §4)。繋がっては
+ * いるが daemon が送るものを黙って落としうる。直し方は title が言う。 */
+.session-protocol-skew {
+  flex-shrink: 0;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--warn);
+}
+
+.status-protocol-skew {
   color: var(--warn);
 }
 
@@ -7854,6 +7873,12 @@ a.tl-attachment-file-path {
 .tl-status-mini-context .override-field,
 .tl-status-mini-context .ctx-part-titled {
   pointer-events: auto;
+}
+
+/* A part drawn in the warning colour: the session's ccmsg speaks another
+ * protocol minor than the daemon (DR-0002 §4), why in its hover text. */
+.tl-status-mini-context .ctx-part-warn {
+  color: var(--warn);
 }
 
 /* The versions' links keep the line's look: no colour or underline of their

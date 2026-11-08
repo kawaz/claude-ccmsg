@@ -1943,7 +1943,44 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer },
+      mismatch: { daemonVersion: newer, protocolChanged: false },
+    });
+  });
+
+  // A daemon of another protocol major refuses this tab's hello (DR-0002 §4):
+  // its version and protocol come from ping, and the major tells the tab that
+  // nothing it sends is served until it reloads — the red guide, not the blue.
+  test("hello が断られ ping の protocol の major が bundle と違えば、protocol の変化として出す", async () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = defined(instances[instances.length - 1], "the latest socket");
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    const nextMajor = { major: PROTOCOL_VERSION.major + 1, minor: 0 };
+    ws1.replyTo("hello", {
+      ok: false,
+      error: { code: "bad_request", msg: "client speaks protocol 2.0, this daemon speaks 3.0" },
+    });
+    await flush();
+    ws1.replyTo("ping", {
+      ok: true,
+      pong: true,
+      version: VERSION,
+      protocol: nextMajor,
+      uptime: 1,
+      pid: 1,
+      clients: 1,
+      http: [],
+      httpAllow: [],
+      network: "off",
+    });
+    await flush();
+    expect(reloads).toBe(0);
+    expect(actions).toContainEqual({
+      type: "version-mismatch/detected",
+      mismatch: { daemonVersion: VERSION, protocolChanged: true },
     });
   });
 });
