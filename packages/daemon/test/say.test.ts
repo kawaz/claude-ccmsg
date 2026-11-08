@@ -15,6 +15,10 @@
 //   - live でないセッションの say は、そのセッションの status の一回読み (TL を
 //     開いた時) で数え、未読に入り、say_read で既読にできる。live に
 //     なったら fold に引き継ぎ、二重に数えない
+//   - say_list はそのセッションの全 say (main と agent の transcript の、既読も
+//     含む) を時刻順に返す。初回だけ全部読み、以後は fold の行と push の差分で
+//     増える (読み直さない)。見つけた say は未読と agent_says に合流し、同じ id
+//     を二重に数えない
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -108,6 +112,42 @@ function sayLine(text: string, id: string, fields: JsonObject = {}): string {
       ...fields,
     }),
   )}\n`;
+}
+
+/** The transcript line of a subagent's or teammate's assistant turn that
+ * calls say, as its own transcript holds it, made at `ts`. */
+function agentSayLine(text: string, id: string, agentId: string, ts: string): string {
+  return sayLine(text, id, { timestamp: ts, isSidechain: true, agentId });
+}
+
+/** A row's time `secs` seconds into a day before the test ran (sinceLongAgo
+ * makes it unread), apart enough to order by. */
+const at = (secs: number): string => new Date(Date.UTC(2026, 10, 1, 0, 0, secs)).toISOString();
+
+/** Count the says of `at`'s day as unread: the store's `since` is the
+ * daemon's start otherwise. */
+function sinceLongAgo(ctx: InProcessDaemon): void {
+  ctx.daemon.sayUnread.since = "2026-01-01T00:00:00.000Z";
+}
+
+/** A session's transcript where the daemon finds its agents' beside it:
+ * `<dir>/projects/p/<sid>.jsonl`, with `agents` (agent id → its lines) in
+ * `<sid>/subagents/agent-<id>.jsonl`. */
+function sessionTree(
+  dir: string,
+  sid: string,
+  main: string,
+  agents: Record<string, string> = {},
+): { file: string; agentFile: (agentId: string) => string } {
+  const project = path.join(dir, "projects", "p");
+  const subagents = path.join(project, sid, "subagents");
+  fs.mkdirSync(subagents, { recursive: true });
+  const file = path.join(project, `${sid}.jsonl`);
+  fs.writeFileSync(file, main);
+  const agentFile = (agentId: string): string => path.join(subagents, `agent-${agentId}.jsonl`);
+  for (const [agentId, lines] of Object.entries(agents))
+    fs.writeFileSync(agentFile(agentId), lines);
+  return { file, agentFile };
 }
 
 /** A say written to the session's file and pushed, as Claude Code and the
@@ -468,5 +508,174 @@ describe("say-read.json", () => {
     });
     expect(warned).toHaveLength(1);
     expect(warned[0]).toContain("starting over");
+  });
+});
+
+describe("say: every say of a session (say_list)", () => {
+  const WORKER = "a1234567";
+
+  // 何を保証するか: say_list は main の transcript と subagent / teammate /
+  // workflow agent の transcript の say を全部 (既読も) 本文付きで時刻順に返す。
+  // live でないセッションでも返す。agent の say には agent_id が付く。見つけた
+  // agent の say は未読 (agent_id 付き) と ev:"agent_says" に出て、タブに届く。
+  test("reads the main and agent transcripts whole, and the says found join the unread", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      sinceLongAgo(ctx);
+      const { file } = sessionTree(
+        dir,
+        A,
+        sayLine("main 1", "toolu_m1", { timestamp: at(1) }) +
+          sayLine("main 2", "toolu_m2", { timestamp: at(3) }),
+        { [WORKER]: agentSayLine("worker 1", "toolu_w1", WORKER, at(2)) },
+      );
+      const run = path.join(path.dirname(file), A, "subagents", "workflows", "wf_01234567-abc");
+      fs.mkdirSync(run, { recursive: true });
+      fs.writeFileSync(
+        path.join(run, "agent-a7654321.jsonl"),
+        agentSayLine("workflow 1", "toolu_f1", "a7654321", at(4)),
+      );
+      await sessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "subscribe" });
+      await user.readEventUntil("agent_says", () => true);
+
+      const listed = await user.requestOk({ op: "say_list", sid: A });
+      expect(listed.says.map((say) => [say.tool_use_id, say.text, say.agent_id])).toEqual([
+        ["toolu_m1", "main 1", undefined],
+        ["toolu_w1", "worker 1", WORKER],
+        ["toolu_m2", "main 2", undefined],
+        ["toolu_f1", "workflow 1", "a7654321"],
+      ]);
+      const unread = await user.readEventUntil("say_unread", (e) => e.says.length === 4);
+      expect(unread.ev.says.map((say) => [say.tool_use_id, say.agent_id])).toEqual([
+        ["toolu_m1", undefined],
+        ["toolu_w1", WORKER],
+        ["toolu_m2", undefined],
+        ["toolu_f1", "a7654321"],
+      ]);
+      const told = await user.readEventUntil("agent_says", (e) => e.says.length === 2);
+      expect(told.ev.says.map((say) => [say.tool_use_id, say.text])).toEqual([
+        ["toolu_w1", "worker 1"],
+        ["toolu_f1", "workflow 1"],
+      ]);
+    });
+  });
+
+  // 何を保証するか: 既読の say も返す (既読かどうかは say_unread が持つ)。
+  test("a read say is listed too", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      sinceLongAgo(ctx);
+      const { file } = sessionTree(
+        dir,
+        A,
+        sayLine("one", "toolu_1", { timestamp: at(1) }) +
+          sayLine("two", "toolu_2", { timestamp: at(2) }),
+      );
+      await sessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "say_list", sid: A });
+      await user.requestOk({ op: "say_read", ids: ["toolu_1"] });
+      const listed = await user.requestOk({ op: "say_list", sid: A });
+      expect(listed.says.map((say) => say.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
+      expect(unreadSays(ctx.daemon.sayUnread).map((say) => say.tool_use_id)).toEqual(["toolu_2"]);
+    });
+  });
+
+  // 何を保証するか: 2 回目の say_list は読み直さない (ファイルに直接足した行は
+  // 出ない)。以後は push の差分で増える: main の say は fold が読んだ行から、
+  // agent の say は push の行から。同じ say を fold・push・一覧で重ねて持っても、
+  // 未読は 1 件ずつ。セッションが live でなくなっても一覧は残る。
+  test("a later ask reads nothing again, and the pushes add to it", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      sinceLongAgo(ctx);
+      const { file, agentFile } = sessionTree(
+        dir,
+        A,
+        sayLine("main 1", "toolu_m1", { timestamp: at(1) }),
+        { [WORKER]: agentSayLine("worker 1", "toolu_w1", WORKER, at(2)) },
+      );
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      await relaysCaughtUp(ctx.daemon.transcriptRelay);
+      const user = await userConn(ctx);
+      const first = await user.requestOk({ op: "say_list", sid: A });
+      expect(first.says.map((say) => say.tool_use_id)).toEqual(["toolu_m1", "toolu_w1"]);
+
+      // Written without a push: only a read of the file would find them.
+      fs.appendFileSync(agentFile(WORKER), agentSayLine("unpushed", "toolu_w0", WORKER, at(3)));
+      const again = await user.requestOk({ op: "say_list", sid: A });
+      expect(again.says.map((say) => say.tool_use_id)).toEqual(["toolu_m1", "toolu_w1"]);
+
+      await writeAndPushSay(session, file, "main 2", "toolu_m2");
+      await pushSay(session, { text: "worker 2" }, "toolu_w2", { agent_id: WORKER });
+      const grown = await user.requestOk({ op: "say_list", sid: A });
+      expect(grown.says.map((say) => [say.tool_use_id, say.text])).toEqual([
+        ["toolu_m1", "main 1"],
+        ["toolu_w1", "worker 1"],
+        ["toolu_m2", "main 2"],
+        ["toolu_w2", "worker 2"],
+      ]);
+      expect(unreadSays(ctx.daemon.sayUnread).map((say) => say.tool_use_id)).toEqual([
+        "toolu_m1",
+        "toolu_w1",
+        "toolu_m2",
+        "toolu_w2",
+      ]);
+      expect(agentSays(ctx.daemon.sayUnread).map((say) => say.tool_use_id)).toEqual([
+        "toolu_w1",
+        "toolu_w2",
+      ]);
+
+      await session.end();
+      const kept = await user.requestOk({ op: "say_list", sid: A });
+      expect(kept.says.map((say) => say.tool_use_id)).toEqual([
+        "toolu_m1",
+        "toolu_w1",
+        "toolu_m2",
+        "toolu_w2",
+      ]);
+      expect(unreadSays(ctx.daemon.sayUnread)).toHaveLength(4);
+    });
+  });
+
+  // 何を保証するか: 一覧より先に push で受けた agent の say は、一覧でも push を
+  // 受けた時刻のまま (agent_says と同じ時刻) で、二重に出ない。
+  test("an agent's say pushed before the first ask keeps its pushed time", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      sinceLongAgo(ctx);
+      const { file, agentFile } = sessionTree(dir, A, "");
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      await pushSay(session, { text: "worker" }, "toolu_w", { agent_id: WORKER });
+      const pushed = agentSays(ctx.daemon.sayUnread)[0]?.ts;
+      fs.writeFileSync(agentFile(WORKER), agentSayLine("worker", "toolu_w", WORKER, at(60)));
+      const user = await userConn(ctx);
+      const listed = await user.requestOk({ op: "say_list", sid: A });
+      expect(listed.says).toEqual([
+        { tool_use_id: "toolu_w", ts: pushed ?? "", text: "worker", agent_id: WORKER },
+      ]);
+      expect(unreadSays(ctx.daemon.sayUnread)).toHaveLength(1);
+    });
+  });
+
+  // 何を保証するか: user role だけが聞ける。transcript の無いセッションは断り、
+  // 次に聞いた時は読み直す (失敗を一覧として持たない)。
+  test("is the user's to ask, and a session whose transcript does not read is refused", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      sinceLongAgo(ctx);
+      const file = path.join(dir, "projects", "p", `${A}.jsonl`);
+      const session = await sessionConn(ctx, A, { transcript_path: file });
+      expect(await session.request({ op: "say_list", sid: A })).toEqual({
+        ok: false,
+        error: { code: "bad_request", msg: "op 'say_list' requires user role" },
+      });
+      const user = await userConn(ctx);
+      expect(await user.request({ op: "say_list", sid: A })).toMatchObject({
+        ok: false,
+        error: { code: "not_found" },
+      });
+      expect(ctx.daemon.sayUnread.listed.has(A)).toBe(false);
+      sessionTree(dir, A, sayLine("one", "toolu_1", { timestamp: at(1) }));
+      const listed = await user.requestOk({ op: "say_list", sid: A });
+      expect(listed.says.map((say) => say.tool_use_id)).toEqual(["toolu_1"]);
+    });
   });
 });

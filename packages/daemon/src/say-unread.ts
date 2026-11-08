@@ -9,6 +9,11 @@
 // does not read, would otherwise make every say in every live transcript
 // unread at once.
 //
+// The 🔔 filter shows every say of a session, read or not (say_list,
+// DR-0050 §5): the first ask reads the session's transcript and its agents'
+// whole (sayList), and from then on the fold's lines and the pushed rows add
+// to what it found. Those says are counted with the others, each id once.
+//
 // Design rationale: this is the one state the daemon keeps on disk for the
 // webui alone (DR-0036 §3 keeps v1 from growing such state). The says are
 // drawn from the transcripts, which outlive the daemon; with the read ids in
@@ -24,10 +29,13 @@ import {
   parseWith,
   TranscriptRowLineSchema,
   type AgentSay,
+  type SessionSay,
   type TranscriptPushRow,
   type UnreadSay,
 } from "@ccmsg/protocol";
+import { listAgentTranscripts } from "./agent-transcripts.ts";
 import type { OneShotLineReader } from "./session-status.ts";
+import { scanTranscriptLines } from "./transcript.ts";
 import type { LineFold } from "./transcript-relay.ts";
 import { toolUsesOf } from "./row-effects.ts";
 
@@ -47,6 +55,22 @@ type SessionSays = Map<string, string>;
 /** The says of one live session's subagents and teammates, by tool_use id. */
 type SessionAgentSays = Map<string, { agentId: string; ts: string; text: string }>;
 
+/** A say of a session as say_list hands it, by tool_use id. */
+interface ListedSay {
+  ts: string;
+  text: string;
+  /** The subagent or teammate that called it; absent on the main thread. */
+  agentId?: string;
+}
+
+/** Every say of one session, from the first say_list on (sayList). */
+interface SessionSayList {
+  says: Map<string, ListedSay>;
+  /** The first read of the session's transcripts: `says` is whole once it
+   * lands. Rejects when the session's own transcript does not read. */
+  reading: Promise<void>;
+}
+
 export interface SayUnreadStore {
   /** The settled says of each live session. */
   says: Map<string, SessionSays>;
@@ -60,6 +84,10 @@ export interface SayUnreadStore {
    * read, so they come from the pushed rows only: a say made while the daemon
    * was down is not among them. */
   agentSays: Map<string, SessionAgentSays>;
+  /** Every say, read or not, of each session a say_list asked for: its main
+   * thread's and its agents', live or not. Kept until the daemon stops; the
+   * fold's lines and the pushed rows add to it. */
+  listed: Map<string, SessionSayList>;
   read: Set<string>;
   since: string;
   file: string;
@@ -95,6 +123,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
       says: new Map(),
       scanned: new Map(),
       agentSays: new Map(),
+      listed: new Map(),
       read: new Set(read.value.read),
       since,
       file,
@@ -106,6 +135,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     says: new Map(),
     scanned: new Map(),
     agentSays: new Map(),
+    listed: new Map(),
     read: new Set(),
     since,
     file,
@@ -124,22 +154,45 @@ function* mainSays(store: SayUnreadStore): Iterable<[string, SessionSays]> {
   for (const entry of store.scanned) if (!store.says.has(entry[0])) yield entry;
 }
 
-/** Every unread say, oldest first. */
-export function unreadSays(store: SayUnreadStore): UnreadSay[] {
-  const unread: UnreadSay[] = [];
-  for (const [sid, says] of mainSays(store)) {
-    for (const [id, ts] of says) {
-      if (isUnread(store, id, ts)) unread.push({ session_id: sid, tool_use_id: id, ts });
-    }
-  }
+/** The subagents' and teammates' says of every session the store knows them
+ * of: the pushed ones of the live sessions, then the ones a say_list found
+ * that are not among those. */
+function* agentSaysOf(
+  store: SayUnreadStore,
+): Iterable<{ sid: string; id: string; agentId: string; ts: string; text: string }> {
   for (const [sid, says] of store.agentSays) {
-    for (const [id, say] of says) {
-      if (isUnread(store, id, say.ts)) {
-        unread.push({ session_id: sid, tool_use_id: id, ts: say.ts, agent_id: say.agentId });
-      }
+    for (const [id, say] of says) yield { sid, id, ...say };
+  }
+  for (const [sid, list] of store.listed) {
+    const pushed = store.agentSays.get(sid);
+    for (const [id, say] of list.says) {
+      if (say.agentId === undefined || pushed?.has(id) === true) continue;
+      yield { sid, id, agentId: say.agentId, ts: say.ts, text: say.text };
     }
   }
-  return unread.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
+/** Every unread say, oldest first. A say several of the store's sources hold
+ * (a live fold and a say_list, say) is one say. */
+export function unreadSays(store: SayUnreadStore): UnreadSay[] {
+  const unread = new Map<string, UnreadSay>();
+  const take = (say: UnreadSay): void => {
+    if (!unread.has(say.tool_use_id) && isUnread(store, say.tool_use_id, say.ts)) {
+      unread.set(say.tool_use_id, say);
+    }
+  };
+  for (const [sid, says] of mainSays(store)) {
+    for (const [id, ts] of says) take({ session_id: sid, tool_use_id: id, ts });
+  }
+  for (const say of agentSaysOf(store)) {
+    take({ session_id: say.sid, tool_use_id: say.id, ts: say.ts, agent_id: say.agentId });
+  }
+  for (const [sid, list] of store.listed) {
+    for (const [id, say] of list.says) {
+      if (say.agentId === undefined) take({ session_id: sid, tool_use_id: id, ts: say.ts });
+    }
+  }
+  return [...unread.values()].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
 
 /** What `markSaysRead` did. `unknown` lists the ids that are neither unread
@@ -160,7 +213,8 @@ export async function markSaysRead(
   const known = (id: string): boolean =>
     store.read.has(id) ||
     [...mainSays(store)].some(([, says]) => says.has(id)) ||
-    [...store.agentSays.values()].some((says) => says.has(id));
+    [...store.agentSays.values()].some((says) => says.has(id)) ||
+    [...store.listed.values()].some((list) => list.says.has(id));
   const unknown = ids.filter((id) => !known(id));
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
   const fresh = ids.filter((id) => unread.has(id));
@@ -170,20 +224,19 @@ export async function markSaysRead(
   return { kind: "read" };
 }
 
-/** Every say of the live sessions' subagents and teammates, oldest first
- * (ev:"agent_says"). */
+/** Every say of the sessions' subagents and teammates the store knows,
+ * oldest first (ev:"agent_says"): the live sessions' pushed ones, and the
+ * ones a say_list found. */
 export function agentSays(store: SayUnreadStore): AgentSay[] {
   const out: AgentSay[] = [];
-  for (const [sid, says] of store.agentSays) {
-    for (const [id, say] of says) {
-      out.push({
-        session_id: sid,
-        agent_id: say.agentId,
-        tool_use_id: id,
-        ts: say.ts,
-        text: say.text,
-      });
-    }
+  for (const say of agentSaysOf(store)) {
+    out.push({
+      session_id: say.sid,
+      agent_id: say.agentId,
+      tool_use_id: say.id,
+      ts: say.ts,
+      text: say.text,
+    });
   }
   return out.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
 }
@@ -203,7 +256,15 @@ export function takeAgentSay(
   }
   if (says.has(say.id)) return false;
   says.set(say.id, { agentId: say.agentId, ts: say.ts, text: say.text });
+  listSay(store, sid, say.id, { ts: say.ts, text: say.text, agentId: say.agentId });
   return true;
+}
+
+/** Add a say to `sid`'s say_list, when one was asked for: the one already
+ * there stays. */
+function listSay(store: SayUnreadStore, sid: string, id: string, say: ListedSay): void {
+  const says = store.listed.get(sid)?.says;
+  if (says !== undefined && !says.has(id)) says.set(id, say);
 }
 
 /** Take the says of the subagents' and teammates' rows among `rows` (the
@@ -243,21 +304,92 @@ function writeSayRead(store: SayUnreadStore): Promise<void> {
   return written;
 }
 
-/** The say a line makes, if it is one: a main-thread assistant row with a
- * `say` tool call whose input is the tool's. */
-function saysOfLine(line: string): { id: string; ts: string }[] {
+/** The says a line makes: an assistant row's `say` tool calls whose input
+ * is the tool's. In the session's own transcript (`thread: "main"`) a row of
+ * a sidechain is not the main thread's; an agent's transcript is all its
+ * own rows, which are sidechain ones. */
+function saysOfLine(
+  line: string,
+  thread: "main" | "agent" = "main",
+): { id: string; ts: string; text: string }[] {
   if (!line.includes('"mcp__ccmsg-v1__say"')) return [];
   const read = parseWith(TranscriptRowLineSchema, line);
   if (!read.ok) return [];
   const row = read.value;
-  if (!isKnownTranscriptRow(row) || row.type !== "assistant" || row.isSidechain) return [];
-  return row.message.content.flatMap((block) =>
-    isKnownContentBlock(block) &&
-    block.type === "tool_use" &&
-    ccmsgSayText(block.name, block.input) !== null
-      ? [{ id: block.id, ts: row.timestamp }]
-      : [],
-  );
+  if (!isKnownTranscriptRow(row) || row.type !== "assistant") return [];
+  if (thread === "main" && row.isSidechain) return [];
+  return row.message.content.flatMap((block) => {
+    if (!isKnownContentBlock(block) || block.type !== "tool_use") return [];
+    const text = ccmsgSayText(block.name, block.input);
+    return text === null ? [] : [{ id: block.id, ts: row.timestamp, text }];
+  });
+}
+
+/** Every say of `sid`, read or not, oldest first: its main thread's and its
+ * agents' (say_list, DR-0050 §5). `file` is the session's resolved
+ * transcript. The first ask reads it and every agent transcript beside it
+ * whole; what it finds is kept, and the fold's lines and the pushed rows add
+ * to it, so a later ask reads nothing. An ask while that read is under way
+ * waits for it. `onChange` is told when the read lands: the unread and the
+ * agents' says may have grown. Null when the session's transcript does not
+ * read (asked again, it is read again); an agent's transcript that does not
+ * read is left out. */
+export async function sayList(
+  store: SayUnreadStore,
+  sid: string,
+  file: string,
+  onChange: () => void,
+): Promise<SessionSay[] | null> {
+  let list = store.listed.get(sid);
+  if (list === undefined) {
+    const says = new Map<string, ListedSay>();
+    // The pushed ones first, so a say has the same time here as on
+    // ev:"agent_says".
+    for (const [id, say] of store.agentSays.get(sid) ?? []) says.set(id, say);
+    const created: SessionSayList = { says, reading: readEverySay(file, says) };
+    list = created;
+    store.listed.set(sid, created);
+    created.reading.then(onChange, () => {
+      if (store.listed.get(sid) === created) store.listed.delete(sid);
+    });
+  }
+  try {
+    await list.reading;
+  } catch {
+    return null;
+  }
+  return [...list.says]
+    .map(
+      ([id, say]): SessionSay => ({
+        tool_use_id: id,
+        ts: say.ts,
+        text: say.text,
+        ...(say.agentId !== undefined ? { agent_id: say.agentId } : {}),
+      }),
+    )
+    .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
+/** Read the says of the session transcript `file` and of its agents' into
+ * `says`, keeping any already there. Rejects when `file` does not read. */
+async function readEverySay(file: string, says: Map<string, ListedSay>): Promise<void> {
+  const add = (id: string, say: ListedSay): void => {
+    if (!says.has(id)) says.set(id, say);
+  };
+  await scanTranscriptLines(file, undefined, (line) => {
+    for (const say of saysOfLine(line)) add(say.id, { ts: say.ts, text: say.text });
+  });
+  for (const agent of await listAgentTranscripts(file)) {
+    try {
+      await scanTranscriptLines(agent.file, undefined, (line) => {
+        for (const say of saysOfLine(line, "agent")) {
+          add(say.id, { ts: say.ts, text: say.text, agentId: agent.agentId });
+        }
+      });
+    } catch {
+      // Gone between the listing and the read: it has nothing to add.
+    }
+  }
 }
 
 /** `sid`'s says, for the transcript relay. A catch-up folds into a detached
@@ -275,6 +407,7 @@ export function sayUnreadFold(store: SayUnreadStore, sid: string, onChange: () =
       const says = next ?? settled;
       if (says === undefined) return;
       for (const say of saysOfLine(line)) {
+        listSay(store, sid, say.id, { ts: say.ts, text: say.text });
         if (says.has(say.id)) continue;
         says.set(say.id, say.ts);
         if (says === settled) moved = true;

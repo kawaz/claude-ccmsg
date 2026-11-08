@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
-import { AGENT_ID_RE, resolveAgentTranscript, RUN_ID_RE } from "../src/agent-transcripts.ts";
+import {
+  AGENT_ID_RE,
+  listAgentTranscripts,
+  resolveAgentTranscript,
+  RUN_ID_RE,
+} from "../src/agent-transcripts.ts";
 import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 
 const tmpDir = perTestTmpDir();
@@ -161,5 +166,48 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     const r = await resolveAgentTranscript(transcriptFile, {});
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
+  });
+});
+
+describe("listAgentTranscripts (DR-0050 §5)", () => {
+  // 何を保証するか: say_list が読む agent の transcript は、subagents/ 直下と
+  // workflows/<runId>/ の agent-<id>.jsonl の全部 (名前順)。id は file 名から取る。
+  // meta.json 等の他の file、id / run id の形に合わない名前、symlink は入れない
+  // (directory の外を読ませない)。subagents/ が無ければ空。
+  test("lists every agent's transcript, by name, and nothing else", async () => {
+    const { transcriptFile, sidDir } = buildFixture();
+    const sub = path.join(sidDir, "subagents");
+    const run = path.join(sub, "workflows", "wf_01234567-abc");
+    fs.mkdirSync(run, { recursive: true });
+    fs.mkdirSync(path.join(sub, "workflows", "not-a-run"), { recursive: true });
+    for (const file of [
+      path.join(sub, "agent-a2222222.jsonl"),
+      path.join(sub, "agent-a1111111.jsonl"),
+      path.join(sub, "agent-a1111111.meta.json"),
+      path.join(sub, "agent-a.jsonl"),
+      path.join(run, "agent-a3333333.jsonl"),
+      path.join(sub, "workflows", "not-a-run", "agent-a4444444.jsonl"),
+    ]) {
+      fs.writeFileSync(file, "");
+    }
+    const outside = path.join(tmpDir("outside-"), "x.jsonl");
+    fs.writeFileSync(outside, "");
+    fs.symlinkSync(outside, path.join(sub, "agent-a5555555.jsonl"));
+
+    const listed = await listAgentTranscripts(transcriptFile);
+    expect(listed.map((a) => [a.agentId, path.relative(fs.realpathSync(sub), a.file)])).toEqual([
+      ["a1111111", "agent-a1111111.jsonl"],
+      ["a2222222", "agent-a2222222.jsonl"],
+      ["a3333333", path.join("workflows", "wf_01234567-abc", "agent-a3333333.jsonl")],
+    ]);
+  });
+
+  test("a session with no subagents directory has none", async () => {
+    const configDir = tmpDir("cfg-");
+    const projectDir = path.join(configDir, "projects", "p");
+    fs.mkdirSync(projectDir, { recursive: true });
+    const transcriptFile = path.join(projectDir, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+    fs.writeFileSync(transcriptFile, "");
+    expect(await listAgentTranscripts(transcriptFile)).toEqual([]);
   });
 });

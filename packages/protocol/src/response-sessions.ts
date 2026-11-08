@@ -186,6 +186,29 @@ export const SayReadResponseSchema = v.object({
 });
 export type SayReadResponse = Output<typeof SayReadResponseSchema>;
 
+/** One say of a session, as say_list answers it. */
+export const SessionSaySchema = v.object({
+  /** The tool_use's id: what `say_read` names. */
+  tool_use_id: v.string(),
+  /** The time of the transcript row that made the call. For a subagent's or
+   * teammate's say the daemon got pushed before it read the agent's
+   * transcript, the time it got the row pushed (the time ev:"agent_says"
+   * carries). */
+  ts: v.string(),
+  text: v.string(),
+  /** The subagent or teammate that called it; absent on the main thread. */
+  agent_id: v.optional(v.string()),
+});
+export type SessionSay = Output<typeof SessionSaySchema>;
+
+export const SayListResponseSchema = v.object({
+  ok: v.literal(true),
+  sid: v.string(),
+  /** Oldest first. Whether one is unread is ev:"say_unread"'s. */
+  says: v.array(SessionSaySchema),
+});
+export type SayListResponse = Output<typeof SayListResponseSchema>;
+
 /** The fields of one cwd-picker entry beside its children. */
 const DirTreeEntryFieldsSchema = v.object({
   path: v.string(),

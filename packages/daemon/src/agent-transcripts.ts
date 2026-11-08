@@ -161,6 +161,62 @@ export async function resolveAgentTranscript(
   return await lstatIsFileOrNotFound(candidate);
 }
 
+/** One agent transcript of a session: the agent's id, as its file names it
+ * and as its pushed rows carry it (`agent_id`). */
+export interface AgentTranscriptFile {
+  agentId: string;
+  file: string;
+}
+
+/** The transcript of each of the session's subagents, teammates and
+ * workflow agents: `<sidDir>/subagents/agent-<agentId>.jsonl` and
+ * `<sidDir>/subagents/workflows/<runId>/agent-<agentId>.jsonl`, by name.
+ * `sessionTranscriptFile` is a resolved session transcript, as for
+ * resolveAgentTranscript. Only regular files count (a symlink is not one, so
+ * nothing outside the directory is read), and only names that the id and run
+ * patterns accept. None when the session has no such directory. */
+export async function listAgentTranscripts(
+  sessionTranscriptFile: string,
+): Promise<AgentTranscriptFile[]> {
+  if (!sessionTranscriptFile.endsWith(".jsonl")) return [];
+  let realSidDir: string;
+  try {
+    realSidDir = await fs.promises.realpath(sessionTranscriptFile.slice(0, -".jsonl".length));
+  } catch {
+    return [];
+  }
+  if (!isInsideProjectsDir(realSidDir)) return [];
+  const subagentsDir = path.join(realSidDir, "subagents");
+  const out = await agentTranscriptsIn(subagentsDir);
+  for (const run of await sortedEntries(path.join(subagentsDir, "workflows"))) {
+    if (!run.isDirectory() || !RUN_ID_RE.test(run.name)) continue;
+    out.push(...(await agentTranscriptsIn(path.join(subagentsDir, "workflows", run.name))));
+  }
+  return out;
+}
+
+async function sortedEntries(dir: string): Promise<fs.Dirent[]> {
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    return entries.sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
+
+async function agentTranscriptsIn(dir: string): Promise<AgentTranscriptFile[]> {
+  const out: AgentTranscriptFile[] = [];
+  for (const entry of await sortedEntries(dir)) {
+    if (!entry.isFile() || !entry.name.startsWith("agent-") || !entry.name.endsWith(".jsonl")) {
+      continue;
+    }
+    const agentId = entry.name.slice("agent-".length, -".jsonl".length);
+    if (!AGENT_ID_RE.test(agentId)) continue;
+    out.push({ agentId, file: path.join(dir, entry.name) });
+  }
+  return out;
+}
+
 async function lstatIsFileOrNotFound(file: string): Promise<AgentTranscriptResolveResult> {
   let stat: fs.Stats;
   try {

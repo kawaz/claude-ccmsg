@@ -198,6 +198,17 @@ export const SayReadRequestSchema = v.object({
 });
 export type SayReadRequest = Output<typeof SayReadRequestSchema>;
 
+/** Every say of one session, read or not: its main thread's and its
+ * subagents' and teammates' (the webui's 🔔 filter, DR-0050 §5). User role
+ * only, as say_read is. The first ask reads the session's transcript and its
+ * agents' whole; the daemon keeps what it found and adds the pushed rows'
+ * says to it, so a later ask reads nothing. */
+export const SayListRequestSchema = v.object({
+  op: v.literal("say_list"),
+  sid: v.string(),
+});
+export type SayListRequest = Output<typeof SayListRequestSchema>;
+
 /** Send a message to the sessions `to` picks out: what the `send` tool of a
  * session's hooks module asks (session role only, DR-0039 §3).
  *

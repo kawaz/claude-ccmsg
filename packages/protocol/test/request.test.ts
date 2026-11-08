@@ -84,6 +84,10 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
       { op: "say_read", id: "toolu_01" },
     ],
   },
+  say_list: {
+    ok: { op: "say_list", sid: SID },
+    bad: [{ op: "say_list" }, { op: "say_list", sid: 1 }],
+  },
   permit_request: {
     ok: {
       op: "permit_request",

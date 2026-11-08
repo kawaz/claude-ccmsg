@@ -136,6 +136,7 @@ import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
   markSaysRead,
+  sayList,
   sayScan,
   sayUnreadFold,
   agentSays,
@@ -1674,6 +1675,7 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "peer_list",
   "user_message",
   "say_read",
+  "say_list",
   "permit_request",
   "permit_request_read",
   "permit_attachment_read",
@@ -2260,6 +2262,31 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // 他タブの webui にも既読を伝える。二度目の ack は何も変えないので送らない。
       if (marked.kind === "read") broadcastSayUnread(daemon);
       send(conn, { ok: true, ids: req.ids });
+      return;
+    }
+
+    case "say_list": {
+      // The 🔔 filter's every say of one session (DR-0050 §5), for the person
+      // only, as say_read is.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'say_list' requires user role");
+        return;
+      }
+      const resolved = await resolveTranscript(daemon.sessions, req.sid, { allowVirtual: true });
+      if (!resolved.ok) {
+        sendErr(conn, resolved.code, resolved.msg);
+        return;
+      }
+      // The says the first ask finds may be unread ones nothing held yet
+      // (an agent's, made while the daemon was down), so the tabs are told.
+      const says = await sayList(daemon.sayUnread, req.sid, resolved.file, () =>
+        broadcastSayUnread(daemon),
+      );
+      if (says === null) {
+        sendErr(conn, ErrorCode.not_found, `transcript not found: ${req.sid}`);
+        return;
+      }
+      send(conn, { ok: true, sid: req.sid, says });
       return;
     }
 

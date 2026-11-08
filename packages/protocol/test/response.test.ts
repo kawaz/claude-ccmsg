@@ -236,6 +236,22 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
   ],
   say_read: [{ ok: true, ids: ["toolu_01"] }],
+  say_list: [
+    { ok: true, sid: SID, says: [] },
+    {
+      ok: true,
+      sid: SID,
+      says: [
+        { tool_use_id: "toolu_01", ts: "2026-11-08T00:00:00.000Z", text: "main から" },
+        {
+          tool_use_id: "toolu_02",
+          ts: "2026-11-08T00:00:01.000Z",
+          text: "worker から",
+          agent_id: "a1234567",
+        },
+      ],
+    },
+  ],
   permit_request: [{ ok: true, id: "0f0f/1" }],
   permit_request_read: [{ ok: true, ids: ["0f0f/1"] }],
   permit_attachment_read: [
