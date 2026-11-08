@@ -122,6 +122,9 @@ async function openWith(
     agent?: AgentRef;
     /** What the daemon answers a user_prompt (「! で実行」) with. */
     userPrompt?: WsHandle["userPrompt"];
+    /** What the daemon answers a permit_read with, in place of marking the
+     * ids read. */
+    permitRead?: WsHandle["permitRead"];
   } = {},
 ): Promise<{
   root: HTMLElement;
@@ -167,6 +170,7 @@ async function openWith(
       );
     },
     ...(userPrompt !== undefined ? { userPrompt } : {}),
+    ...(options.permitRead !== undefined ? { permitRead: options.permitRead } : {}),
   };
   let composerOpens = 0;
   const openComposer = (): void => {
@@ -245,9 +249,15 @@ describe("permission request bubbles", () => {
         (el) => el.className,
       ),
     ).toEqual(["tl-bubble-time"]);
-    expect(
-      shown.querySelector(".tl-bubble-body > :last-child > button.permit-grant"),
-    ).not.toBeNull();
+    // DR-0040 §7: the body's last row ends with 許可する (at its right end,
+    // by the row's flex-end), with 既読 just left of it.
+    const lastRow = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
+    expect(lastRow.className).toBe("permit-grant-row");
+    expect([...lastRow.children].map((el) => el.className)).toEqual([
+      "permit-read",
+      "permit-grant",
+    ]);
+    expect(lastRow.querySelector("button.permit-read")?.textContent).toBe("既読");
     expect([...shown.querySelectorAll(".permit-heading")].map((el) => el.textContent)).toEqual([
       "止められた行動",
       "添付",
@@ -364,6 +374,55 @@ describe("permission request bubbles", () => {
       await Promise.resolve();
     });
     expect(reads).toEqual([[ID]]);
+  });
+
+  // 何を保証するか: 「既読」は許可の文を写さず、入力欄も開かずに依頼を既読に
+  // する (Sessions 一覧の 🔐 の数から外す)。既読の依頼では押せない。
+  test("既読 marks the request read without copying or opening the composer", async () => {
+    const written: string[] = [];
+    stubClipboard(async (text) => {
+      written.push(text);
+    });
+    const { root, store, reads, composerOpens } = await openWith(permitRows(1, ID, inputOf()));
+    const readButton = (): HTMLButtonElement =>
+      instanceOf(
+        defined(bubbles(root)[0], "bubble").querySelector("button.permit-read"),
+        HTMLButtonElement,
+        "既読",
+      );
+    expect(readButton().disabled).toBe(false);
+    await press(readButton());
+    expect(reads).toEqual([[ID]]);
+    expect(store.getState().permitUnread).toEqual([]);
+    expect(written).toEqual([]);
+    expect(composerOpens()).toBe(0);
+    expect(defined(bubbles(root)[0], "bubble").querySelector(".tl-bubble-from")?.textContent).toBe(
+      "🔓許可依頼",
+    );
+    expect(readButton().disabled).toBe(true);
+  });
+
+  // 何を保証するか: 既読にできなかった理由は、写せなかった理由と同じく
+  // ボタンの左 (行の先頭) に出し、ボタンの並び (既読、許可する) を動かさない。
+  test("a refused 既読 says why, left of the buttons", async () => {
+    const { root } = await openWith(permitRows(1, ID, inputOf()), {
+      permitRead: () =>
+        Promise.resolve({
+          ok: false,
+          error: { code: "invalid_args", msg: `no permit request with id ${ID}` },
+        }),
+    });
+    const bubble = defined(bubbles(root)[0], "bubble");
+    await press(instanceOf(bubble.querySelector("button.permit-read"), HTMLButtonElement, "既読"));
+    const row = defined(bubble.querySelector(".permit-grant-row"), "row");
+    expect([...row.children].map((el) => el.className)).toEqual([
+      "permit-grant-notes",
+      "permit-read",
+      "permit-grant",
+    ]);
+    expect(row.querySelector(".permit-grant-error")?.textContent).toBe(
+      `no permit request with id ${ID}`,
+    );
   });
 
   // 何を保証するか: 許可の文には添付を全部並べる。開いていない添付も、開いて

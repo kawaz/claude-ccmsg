@@ -5,7 +5,8 @@
 // transcript の permit の行 (PermitRequestView)、既読と適用は daemon の
 // ev:"permit_state"。添付の中身は
 // 人が開いた時に daemon から読む。人は許可の文をそのセッションの入力欄に貼って
-// 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可したかどうかは
+// 送る (入力欄が空なら同じ文が入った状態で開く)。写せたら依頼を既読にし、Sessions 一覧の 🔐 を消す。許可せずに
+// 既読にするだけの「既読」を「許可する」の左に置く。許可したかどうかは
 // 持たない (エージェントが許可の文を受けて再実行する)。1 行のコマンドには
 // 「! で実行」を添え、人がそのセッションで `! <command>` と打ったのと同じに
 // 実行させる (出力はセッションの会話に入る)。セッションがプロジェクトの
@@ -136,17 +137,16 @@ function useAttachmentLoads(request: PermitRequestView): {
   return { loadOf, open };
 }
 
-/** 「許可する」。押すと許可の文 (添付のパスを全部並べる。開いたかは追わ
- * ない: 確認したかは人が判断する) を写し、写せたら「コピーしました」を短く
- * 出して、未読なら既読にする (写せなかった時は人がまだ何もできていないので
- * 未読のまま)。2 つのラベルを同じ升目に重ねて幅を広い方に固定するので、
- * 表示が切り替わってもボタンの幅は変わらない。既読は非楽観で、daemon が
- * 新しい ev:"permit_state" を全タブに送る。 */
-function GrantButton({ request, read }: { request: PermitRequestView; read: boolean }) {
+/** 依頼を既読にする (permit_read)。既読は非楽観で、daemon が新しい
+ * ev:"permit_state" を全タブに送る。既読の依頼には何もしない。 */
+function usePermitMarkRead(
+  request: PermitRequestView,
+  read: boolean,
+): {
+  markRead: () => void;
+  readError: string | null;
+} {
   const { ws } = useApp();
-  const openComposer = useContext(OpenComposerContext);
-  const { copied, copy } = useClipboardCopy();
-  const [failed, setFailed] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
   const markRead = (): void => {
     if (read) return;
@@ -155,41 +155,99 @@ function GrantButton({ request, read }: { request: PermitRequestView; read: bool
       .then((res) => setReadError(res.ok ? null : res.error.msg))
       .catch(() => setReadError("接続エラーのため確認済みにできませんでした"));
   };
+  return { markRead, readError };
+}
+
+/** 「許可する」。押すと許可の文 (添付のパスを全部並べる。開いたかは追わ
+ * ない: 確認したかは人が判断する) を写し、写せたら「コピーしました」を短く
+ * 出して、未読なら既読にする (写せなかった時は人がまだ何もできていないので
+ * 未読のまま)。2 つのラベルを同じ升目に重ねて幅を広い方に固定するので、
+ * 表示が切り替わってもボタンの幅は変わらない。写せたかは `onCopied` で
+ * 行 (PermitActions) に返し、行が理由を出す。 */
+function GrantButton({
+  request,
+  markRead,
+  onCopied,
+}: {
+  request: PermitRequestView;
+  markRead: () => void;
+  onCopied: (ok: boolean) => void;
+}) {
+  const openComposer = useContext(OpenComposerContext);
+  const { copied, copy } = useClipboardCopy();
   return (
-    <>
+    <button
+      type="button"
+      class={copied ? "permit-grant copied" : "permit-grant"}
+      title="許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
+      onClick={() => {
+        const grant = permitGrantText(request.permit);
+        void copy(grant).then((ok) => {
+          onCopied(ok);
+          if (!ok) return;
+          markRead();
+          // The text is on the clipboard: open this session's input box to
+          // paste it into, with the text already in it when the box is
+          // empty. Not when the copy failed — there is nothing to paste.
+          openComposer?.(grant);
+        });
+      }}
+    >
+      <span class="permit-grant-label">✅ 許可する</span>
+      <span class="permit-grant-copied" aria-hidden={!copied}>
+        コピーしました
+      </span>
+    </button>
+  );
+}
+
+/** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「許可する」、その左に
+ * 「既読」を置く。個別のボタン (「! で実行」、settings の「許可する」) は
+ * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「許可する」を
+ * 押さない位置にする。「既読」は許可の文を写さずに依頼を既読にし、
+ * Sessions 一覧の 🔐 の数から外す (既読の依頼では押せない)。写せなかった・
+ * 既読にできなかった理由はボタンの左に出す。`project_permissions` だけの
+ * 依頼 (asksToRun が偽) には「許可する」が無く、「既読」だけを出す。 */
+function PermitActions({
+  request,
+  read,
+  asksToRun,
+}: {
+  request: PermitRequestView;
+  read: boolean;
+  asksToRun: boolean;
+}) {
+  const { markRead, readError } = usePermitMarkRead(request, read);
+  const [copyFailed, setCopyFailed] = useState(false);
+  return (
+    <div class="permit-grant-row">
+      {copyFailed || readError !== null ? (
+        <div class="permit-grant-notes">
+          {copyFailed ? (
+            <span class="permit-grant-error" role="alert">
+              コピーできませんでした (ブラウザがクリップボードへの書き込みを許していない)
+            </span>
+          ) : null}
+          {readError !== null ? (
+            <span class="permit-grant-error" role="alert">
+              {readError}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <button
         type="button"
-        class={copied ? "permit-grant copied" : "permit-grant"}
-        title="許可の文をコピーして、このセッションの入力欄を開く (入力欄が空ならその文を入れる。書きかけがあれば貼って送る)"
-        onClick={() => {
-          const grant = permitGrantText(request.permit);
-          void copy(grant).then((ok) => {
-            setFailed(!ok);
-            if (!ok) return;
-            markRead();
-            // The text is on the clipboard: open this session's input box to
-            // paste it into, with the text already in it when the box is
-            // empty. Not when the copy failed — there is nothing to paste.
-            openComposer?.(grant);
-          });
-        }}
+        class="permit-read"
+        title="許可はせずに既読にする (Sessions 一覧の 🔐 の数から外す)"
+        disabled={read}
+        onClick={markRead}
       >
-        <span class="permit-grant-label">✅ 許可する</span>
-        <span class="permit-grant-copied" aria-hidden={!copied}>
-          コピーしました
-        </span>
+        既読
       </button>
-      {failed ? (
-        <span class="permit-grant-error" role="alert">
-          コピーできませんでした (ブラウザがクリップボードへの書き込みを許していない)
-        </span>
+      {asksToRun ? (
+        <GrantButton request={request} markRead={markRead} onCopied={(ok) => setCopyFailed(!ok)} />
       ) : null}
-      {readError !== null ? (
-        <span class="permit-grant-error" role="alert">
-          {readError}
-        </span>
-      ) : null}
-    </>
+    </div>
   );
 }
 
@@ -314,8 +372,8 @@ function permitTranslatableText(request: PermitCall): string {
 /** 外枠は TL の他の吹き出しと同じ部品 (.tl-bubble / .tl-bubble-body /
  * .tl-bubble-from / BubbleFooter) で組み、中身の節と
  * 「許可する」だけをこのバブルのものにする。未読と既読で
- * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「許可する」は本文の最後に置く
- * (足元の行は他の吹き出しと同じく翻訳タブと時刻)。翻訳タブは人が読む文
+ * 見た目は変えず、帯のアイコン (🔐 / 🔓) だけを替える。「既読」と「許可する」
+ * は本文の最後の行の右端に置く (足元の行は他の吹き出しと同じく翻訳タブと時刻)。翻訳タブは人が読む文
  * (止められた行動、intent、コマンドの説明) に効き、コマンド本文・添付の
  * パス・「許可する」が写す許可の文は原文のまま。 */
 export function PermitRequestBubble({
@@ -411,11 +469,7 @@ export function PermitRequestBubble({
           </section>
         ) : null}
         {request.project_permissions.length > 0 ? <PermitSettingsSection request={view} /> : null}
-        {asksToRun ? (
-          <div class="permit-grant-row">
-            <GrantButton request={view} read={read} />
-          </div>
-        ) : null}
+        <PermitActions request={view} read={read} asksToRun={asksToRun} />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}

@@ -204,8 +204,9 @@ describe("the project settings section of a permission request", () => {
   });
 
   // 何を保証するか: project_permissions だけの依頼 (intents も commands も無い)
-  // には「許可してほしいこと」と本文の最後の「許可する」を出さず、区画だけを
-  // 出す (写す操作が無い)。
+  // には「許可してほしいこと」と本文の最後の「許可する」を出さず、区画を
+  // 出す (写す操作が無い)。本文の最後の行には「既読」だけが残る (どの rule も
+  // 足さずに依頼を既読にできる)。
   test("a request of project permissions alone shows the section without 許可する", async () => {
     const { commands: _, ...alone } = ASKED;
     const { root } = await openWith(alone);
@@ -215,6 +216,9 @@ describe("the project settings section of a permission request", () => {
       ".claude/settings.local.json の修正許可",
     ]);
     expect(shown.querySelector("button.permit-grant")).toBeNull();
+    const last = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
+    expect(last.className).toBe("permit-grant-row");
+    expect([...last.querySelectorAll("button")].map((b) => b.className)).toEqual(["permit-read"]);
     expect(applyButtons(root).length).toBe(2);
   });
 
