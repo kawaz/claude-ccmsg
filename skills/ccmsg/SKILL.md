@@ -111,10 +111,28 @@ auto mode の classifier に操作を止められた直後に、その操作を�
 
 - `blocked` に止められた行動を 1〜2 文で書く (markdown)
 - `commands` の各要素の `command` には Bash に渡す内容をそのまま書く。1 つのコマンドが要素 1 つで、複数行 (行末の `\` や `&&` で整形したもの) でもよい。人が許可するのはここに書いた全文。`description` には何をするコマンドかを短く書く (任意)
-- `intents` にはコマンドでない操作 (Edit / Write 等) を 1 文ずつ書く。`intents` と `commands` のどちらか 1 つ以上は必ず書く
+- `intents` にはコマンドでない操作 (Edit / Write 等) を 1 文ずつ書く。`intents`・`commands`・`project_permissions` のどれか 1 つ以上は必ず書く
 - `attachments` にはコマンドが読むファイル (script、policy の JSON、patch 等) の絶対パスを書く (16 個まで)。人が web UI で開いた時に中身が読まれるので、本文に貼らない
 - `voice` (任意) は読み上げる 1 文で、日本語で書く (読み上げと webui の 🔔 に出る文なので、セッションの応答言語が英語でも日本語)。
 - 依頼は web UI のそのセッションに許可依頼として出て、音声でも知らせる。結果は「許可依頼を出した」だけ
 - 人が許可の文 (添付のパスを並べた「以下ファイルの内容を確認しました。」と、「以下の操作を許可します。」の後に許可した intents と「以下コマンドの実行」のコマンドを並べたもの) を送ってきたら、許可されたコマンドを書いてあるとおり 1 つずつ実行し、`intents` の操作をする。許可されていない操作に広げない
 - 依頼を出せなかった (daemon に繋がらない等) と返ったら、その結果の文を本文に書いて止まる
 - subagent / teammate からは使えない (断られる)。止められた操作は委譲元に報告して止まる。委譲元が自分で実行し、止められたら委譲元が `permit` で許可を求める
+
+### 毎回止められる操作を止まらないようにする (`project_permissions`)
+
+同じ操作 (このプロジェクトの決まったコマンド、決まったファイルの編集) がセッションのたびに止められる時は、`project_permissions` を足して、プロジェクトの `.claude/settings.local.json` の `permissions.allow` にその操作の rule を足すことを人に求める。人が web UI でその rule の「許可する」を押すと、ccmsg の daemon が書き込む。
+
+```json
+{
+  "blocked": "`llm-gateway daemon reload unstable` が auto mode の classifier に止められた",
+  "commands": [{ "command": "llm-gateway daemon reload unstable" }],
+  "project_permissions": [{ "add": "Bash(llm-gateway daemon reload unstable)" }]
+}
+```
+
+- 1 要素は `{ "add": "<rule>" }` か `{ "remove": "<rule>" }` のどちらか 1 つ。`remove` は前に足した rule が要らなくなった時に使う
+- rule は `permissions.allow` の書き方で、完全一致形を推奨する (完全一致形の allow は classifier を通らない): `Bash(<コマンドの全文>)`、`Edit(/abs/path/file.toml)`。`*` を含むかどうかは判定されず、どの rule を書くかは人がバブルで見て判断する
+- 今止められた操作をすぐ再実行したい時は、その許可を `commands` / `intents` で一緒に求める。allow を足すことだけを求めるなら `project_permissions` だけでよい
+- 書き込むのは依頼したセッションのプロジェクトディレクトリ (セッションを起動したディレクトリ) の `.claude/settings.local.json` だけ
+- 人が押すと、最後に押してから 5 秒後に `from="ccmsg:daemon"` の封筒でファイルの差分 (unified diff) が届く。書き込みは起動中のこのセッションにすぐ効く (再起動は要らない)。この知らせには返信しない

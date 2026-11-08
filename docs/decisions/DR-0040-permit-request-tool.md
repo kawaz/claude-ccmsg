@@ -1,6 +1,6 @@
 # DR-0040: auto mode の classifier に止められたエージェントが人に許可を求める tool `permit`
 
-- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
+- Status: Accepted (2026-10-25) — ✅ 実装済み (tool `permit`、`ccmsg sidecar permit`、op `permit_request` / `permit_request_read` / `permit_attachment_read`、TL の許可依頼バブル、Sessions 一覧の 🔐、skill の節、1 行のコマンドの「! で実行」(§11)、プロジェクトの `.claude/settings.local.json` の `permissions.allow` を 1 件ずつ足し引きする `project_permissions` (§12、op `permit_settings_read` / `permit_permission_apply`))。§6 の音声を鳴らす場所 (daemon が依頼を記録した時) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §6 が定める
 - Date: 2026-10-25
 
 ## Context
@@ -24,9 +24,10 @@ blocked:     string                                   # 止められた行動 (m
 attachments: string[]                                 # コマンドが読むファイル (絶対パス)
 intents:     string[]                                 # コマンドでない許可してほしいこと (markdown、各 1 文。Edit 等)
 commands:    { command: string, description?: string }[]   # Bash に渡す内容そのまま (複数行可) と、何をするかの短い説明
+project_permissions: { add?: string, remove?: string }[]  # プロジェクトの permissions.allow に足す / 消す rule (完全一致形を推奨、§12)
 ```
 
-- 必須は `blocked` と、各コマンドの `command`。`intents` と `commands` の少なくとも一方に 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
+- 必須は `blocked` と、各コマンドの `command`。`intents`・`commands`・`project_permissions` の少なくとも 1 つに 1 つ以上の要素があること (field の組み合わせ) は handler が入口で読む valibot のスキーマが持つ。どの文字列も空白だけにしない
 - `attachments` は絶対パス (`/` で始まる) で、同じパスを 2 度書かない。数は 16 まで (バブルと許可の文の 1 行ずつになるので、人が読み切れる数に抑える)
 - 配列の field は要素の型ごと、object は field ごとに見せる (`{ type: "array", items: { type: "object", properties: { command: { type: "string" }, description: { type: "string" } }, required: ["command"] } }`)。配列と object の型は中身の型までで 1 つの型なので、`toolInputSchemaOf` は `items` と `properties` / `required` を同じ規則 (型と enum だけ) で導く。長さや重複の決まりは見せない
 - 合わない入力は「permit の入力が形に合わないので何もしていない: <理由>」で返す (DR-0039 §3)
@@ -55,14 +56,14 @@ module の handler → CLI の transport → daemon の op → 記録 → 全タ
 - 記録は `PermitRequestLog` に持つ
 - daemon のメモリだけに持つ。v1 だけの永続状態を増やさない ([DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3)。daemon を再起動すると消える
 - 上限は 50 件で、超えたら古いものから消える。依頼が意味を持つのはエージェントが許可を待つ間だけで daemon の寿命よりずっと短く、全件は subscribe したタブに送るものなので小さく持つ
-- 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, read }`。無い list は空の list で持つ。記録した後に変わるのは `read` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
+- 記録は `{ id, sid, ts, blocked, attachments (パス), intents, commands, project_settings?, read }`。無い list は空の list で持つ。`project_settings` は `project_permissions` のある依頼だけが持つ (§12)。記録した後に変わるのは `read` と、`project_settings` の各変更の `applied_at` だけ。許可が来たかどうかの状態は持たない (エージェントが許可の文を受けて再実行する)。読み返せるよう、許可の後も記録は残す
 - `read` は人がまだ手を付けていないかの印。op `permit_request_read` (`{ ids }`、user role だけ) が渡した id の記録を既読にし、二度目は何も変えない。持っていない id が 1 つでもあれば、どれも既読にせずに断る (daemon の再起動で消えた依頼への既読もここに来る)
 
 ### 5. 配送
 
 - user role の subscriber だけに送る。session には送らない (依頼したセッションは依頼したことを知っており、他のセッションの context を使う理由が無い)
 - subscribe の時に全件を `ev:"permit_requests"` で送る (空でも送る。再起動した daemon に繋ぎ直したタブが古い依頼を捨てられるように)。記録した時と既読にした時に、その 1 件だけを `ev:"permit_request"` で送る
-- 許可依頼で変わるのは `read` だけなので、変わった 1 件だけで足りる。webui は全件で置き換え、1 件は同じ id のものと差し替える (無ければ足す)
+- 許可依頼で変わるのは `read` と変更の `applied_at` だけなので、変わった 1 件だけで足りる。webui は全件で置き換え、1 件は同じ id のものと差し替える (無ければ足す)
 
 ### 6. 音声
 
@@ -94,6 +95,11 @@ daemon は `permit_request` を記録した時に、say と同じ発声の関数
 - 以下コマンドの実行（{description}）
   {command をコードブロック (sh) で}
   [! で実行]                      ← command が 1 行の時だけ (§11)
+
+`.claude/settings.local.json` の修正許可   (project_permissions が無ければ節ごと出さない、§12)
+▸ `{settings.local.json のパス}`  ← 既定で閉じた <details>。開いた時に読む (無ければ「(無し)」)
+  + {add の rule}                 ← 1 件ずつ diff の色の行
+  [✅ 許可する] / [適用済み HH:MM]
 
 [✅ 許可する]                     ← 本文の最後 (吹き出しの中)
 
@@ -146,6 +152,38 @@ kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を�
 - 実行の結果は webui で別に出さない。会話に入った行が TL に流れる
 - ボタンの文字は CSS の `content` で出し、DOM のテキストにしない (コードブロックのコピーボタンと同じ)。コマンドの並びの中にあり、文字を置くと選んでコピーした文字列と Timeline の検索に混ざる。読み上げる名前は `aria-label` が持つ
 
+### 12. プロジェクトの `permissions.allow` を足し引きする (`project_permissions`)
+
+kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifier に止められる時、プロジェクトの `.claude/settings.local.json` の `permissions.allow` に rule を足せるようにする。完全一致形を推奨する (完全一致形の allow は classifier を通らない。classifier-notes の方針)。足すのは人がバブルで 1 件ずつ押した時だけで、エージェントは求めるだけ。
+
+**入力**: `project_permissions?: ({ add: string } | { remove: string })[]`。値は `permissions.allow` の rule の文字列 (`Bash(llm-gateway daemon reload unstable)`、`Edit(/abs/path/file.toml)`)。
+
+- 1 要素は `add` か `remove` のどちらか 1 つ。両方・どちらも無い要素は断る
+- rule が完全一致形かは機械的に判定しない。`*` を含んでも通す: `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで rule を見てする (kawaz 2026-11-08)
+- 空白だけの rule、同じ rule を 2 度名指す依頼 (add と remove に分けても) は断る (1 つの rule にボタンは 1 つ)
+- `project_permissions` だけの依頼も受ける (毎回止められる操作の allow を足すことだけを求める依頼)。`intents`・`commands`・`project_permissions` のどれも無い依頼は断る。拒否の文は「ask for at least one of intents and commands, or project_permissions」
+- model に見せる input schema は `items` を `{ add: string, remove: string }` の 1 つの object で見せ、required を付けない。object の union は `toolInputSchemaOf` が各候補の field を並べた 1 つの object に畳む (anyOf を見せない。組み合わせは handler のスキーマの細則)。field の説明は `完全一致形を推奨 (完全一致形の allow は classifier を通らない)`
+
+**記録**: daemon は `permit_request` を受けた時に、依頼したセッションの登録の cwd (sidecar begin が名乗る `$.session.root()`、realpath) から `<cwd>/.claude/settings.local.json` を決め、`project_settings: { path, permissions: [{ add | remove, applied_at? }] }` として記録に固定する。人に見せるファイルと書くファイルが同じであるように、後の hello で cwd が変わっても動かさない。セッションの cwd が分からない時は、`project_permissions` のある依頼を `invalid_args` で断る。
+
+**読み取り**: op `permit_settings_read { id }` (user role だけ)。記録が名指すファイルを添付と同じ読み方 (§3、先頭 64 KiB、テキストだけ) で読み、添付と同じ形で返す。webui は無いファイル (`missing`) を「(無し)」と出す。webui の折り畳みは開いている間、開くたびと、記録の `applied_at` が変わった時に読み直す (人もセッションも書き換えるファイルなので、添付と違い読んだものを持ち続けない)。
+
+**書き込み**: op `permit_permission_apply { id, permission: { add } | { remove } }` (user role だけ)。
+
+- 書けるのは、その id の記録にある変更 (add / remove の別と rule が一致するもの) だけを、記録が名指すファイルにだけ。記録に無い rule、add と remove の取り違え、持っていない id は `invalid_args` で断る。任意の文字列を書く口にしない
+- ファイルを JSON の object として読む (無ければ `{}`)。`permissions` が object でない、`permissions.allow` が文字列の配列でない、JSON でないものは `settings_unreadable` で断り、書かない
+- add は無ければ足し、remove はその rule を消す。どちらも変わらない (既にある add、無い remove) なら書かない (無いファイルも作らない)
+- 書き戻しは `permissions.allow` を文字列順 (`Array.prototype.sort` の既定) に並べ、`JSON.stringify(settings, null, 2)` と末尾の改行 1 つ。他のキーは値も位置も保つ (`permissions` の中の `deny` 等も)。無い `permissions` / `allow` は末尾に足す。`.claude/` が無ければ作る
+- 書き込みは隣の一時ファイルに書いて rename で置き換える (読み直すセッションに書きかけを見せない)。設定ファイルが symlink なら辿った先を置き換え、symlink は残す
+- 同じファイルへの適用は daemon の中で 1 つずつ行う (並んだ 2 件の書き込みが互いを消さない)。daemon の外 (人やセッションの手) の書き込みとの競合は扱わない
+- 読み書きの失敗は `settings_write_failed`。成功したら記録のその変更に `applied_at` を付けて記録を既読にし (適用は人が依頼に手を付けたこと。「許可する」と同じ印)、§5 と同じく変わった 1 件を全タブに送る。応答は `{ ok, changed, applied_at }`
+
+**通知**: 書き込みが変えた時、そのセッションへ daemon からの知らせ (`from="ccmsg:daemon"`、DR-0039 §9 の `sendNotice`) で `.claude/settings.local.json` の unified diff (文脈 3 行) を送る。5 秒の debounce で、連続した適用は最後の適用から 5 秒後に 1 通にまとめ、diff は最初の適用前 → 最後の適用後。最初と最後が同じ (足して消した) なら送らない。daemon が止まる時は待っている知らせを捨てる。文は「人が許可依頼の「許可する」で <path> の permissions.allow を書き換えた。このセッションにすぐ効く (再起動は要らない)。」と diff のコードブロック。
+
+**反映**: 起動中の Claude Code のセッションは `.claude/settings.local.json` の変更を再起動なしで拾う (2.1.319、対話のセッション、`--permission-mode dontAsk`。起動時に `.claude/` が無い状態から作った時、allow を `[]` に戻した時、rename で置き換えた時のどれも、1〜5 秒後の次の tool 呼び出しから効いた。ccmsg の経路 (tool → バブル → 押す → 書き込み → 同じコマンドの再実行) でも通った。[findings](../findings/2026-11-08-settings-local-reload.md))。auto mode で classifier の前に allow が効くことは同じ設定の読み直しに乗るが、auto mode では観測していない。
+
+**webui**: §7 のバブルの「許可してほしいこと」の後、本文の最後の「許可する」の前に「`.claude/settings.local.json` の修正許可」の節を置く。設定ファイルのパスの折り畳みと、変更 1 件ごとにファイル差分と同じ色 (`.tl-diff-add` / `.tl-diff-delete`) の `+ <rule>` / `- <rule>` の行と、その 1 件だけを書く「✅ 許可する」(枠だけのボタン。依頼全体の「許可する」の塗りより軽くして形で分ける)。押している間は「書き込み中…」で押せない。非楽観で、daemon が送り直す記録に `applied_at` が付くとボタンを無効にして「適用済み HH:MM」にする。断られたら理由を横に出し、ボタンは押せるまま。この節の「許可する」は §8 の許可の文を写さず、入力欄も開かない (既読は daemon が適用と一緒に立てる)。`intents` と `commands` の無い依頼 (`project_permissions` だけ) では「許可してほしいこと」の節と本文の最後の「許可する」を出さない (写す操作が無い)。
+
 ## Alternatives Considered
 
 | 案 | 不採用理由 |
@@ -168,6 +206,12 @@ kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を�
 | 許可依頼専用の外枠 (角丸・余白・時刻行) を組む | TL の他の吹き出しと形がずれる。違うのは中身と面の色だけで、外枠は共通の部品で足りる |
 | say と同じ専用の既読ボタンを置く | 「許可する」を押すことが手を付けたことそのもので、ボタンが 2 つあると押す順を迷わせる |
 | subagent の依頼もバブルに出す | 許可を受けて再実行できるのは本体だけで、subagent は止まったまま残る (§9) |
+| `project_permissions` をエージェント自身が書く (Edit で settings.local.json を直す) | 許可の範囲を広げる書き込みを、止められた側が自分で行うことになる。人が rule を 1 件ずつ見て押す形にする |
+| webui から任意の rule を書ける op にする | 書ける範囲が依頼の名指しから外れる。§3 の添付と同じく、記録にある変更だけを照合して書く |
+| `*` を含む rule を断る | `find -name \*.json` のようにコマンドの文字列に `*` を含む完全一致形があり、ワイルドカードの意図かは形から分からない。判断は人がバブルで見てする |
+| `project_permissions` だけの依頼を断る | 毎回止められる操作の allow を足すことだけを求める依頼は正当で、その時に再実行する操作が無いこともある |
+| 適用のたびにすぐ知らせる | 続けて押した数だけセッションに知らせが入り、context を食う。5 秒まとめて最初と最後の差分を 1 通にする |
+| 依頼全体の「許可する」で rule もまとめて書く | 許可の文を写すことと設定を書き換えることは別の判断で、rule は 1 件ずつ見て決める |
 
 ## Consequences
 
@@ -178,6 +222,8 @@ kawaz 2026-11-06 の裁定: `commands` のうち `command` が 1 行 (改行を�
 - TL のバブルの「添付」等の文字と「許可する」「コピーしました」は DOM にあるので、Timeline の検索に当たる (say の「既読」と同じ)
 - 「許可する」を押して文を写しても送らなかった場合も既読になり、🔐 は消える。既読は「人が依頼に手を付けた」の印で、許可が届いたことは示さない
 - rules の定型文 (classifier に止められた時の尋ね方) は、この tool に合わせて rules 側で追従させる
+- `project_permissions` の「許可する」は、人が押した 1 件だけをセッションのプロジェクトの `.claude/settings.local.json` に書く。書いた rule は以後のこのプロジェクトの全セッションで classifier を通らずに通る。消すのは人の手か、`remove` の依頼
+- 記録が名指す設定ファイルは、依頼の時に daemon が持つセッションの cwd (起動・`/clear`・`/resume` の時に module が名乗る `$.session.root()`) で決まる。セッションの中の `/cd` は名乗り直さないので追わない (未検証: `/cd` の後に Claude Code が読む設定ファイルがどれか)
 - 「! で実行」は人の `! <command>` と同じで、auto mode の classifier を通らずにそのセッションの環境で実行される。コマンドを書いたのはエージェントで、押す前にコマンドを読んで判断するのは人である。会話に入るのはコマンドとその出力で、許可の文は入らない
 
 ## 関連
