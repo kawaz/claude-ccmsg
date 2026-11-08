@@ -150,7 +150,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - op `say_read { ids }` (user role だけ) は tool_use の id で既読にする。未読でない id が混ざれば、どれも既読にせずに `invalid_args` で断る。全部が既読済みなら成功を返して何も変えない
 - Sessions 一覧の 🔔 と件数は、未読をセッションごとに数えたもの
 - daemon の終了の途中では `ev:"say_unread"` を送らない。終了で fold を閉じると未読が空になり、タブは次の daemon が未読を送るまで全部の say を 🔕 として見せてしまう
-- 永続化: 既読の id の集合と、集合を作った時刻 `since` を `<state dir>/say-read.json` に持つ
+- 永続化: 既読の id の集合 (`read`: id を持つセッションの sid ごと) と、集合を作った時刻 `since` を `<state dir>/say-read.json` に持つ。`read` が sid の無い一覧のファイルは、読み戻しの時にその id を捨てて daemon.log に 1 行書き、sid ごとの形で書き直す (`since` は残す。kawaz 2026-11-08)
   - `since` より前の say は既読とみなす (初回やファイルが壊れた時に、古い say で 🔔 が溢れないように)
   - 書き込みは `say_read` のたびに一時ファイルへ書いて rename し、応答はその後に返す
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外。say を transcript の行から描く以上、既読をメモリだけに持つと、再起動のたびに過去の say が全部未読に戻る
@@ -200,7 +200,7 @@ daemon は push で受けた `e.message` だけで副作用を起こす (§2 の
 - daemon が止まっている間の行は、副作用を起こさない (発声されない)。再起動後の追いつきは fold と未読を作るが、副作用はやり直さない
 - 発声の成否は tool の結果に入らない
 - 触る範囲: hooks (`session.append` の転送、say / launch の handler)、protocol (push の op、`launch_tool`、`ev:"say_unread"`、`say_read`、辞書)、daemon (push の受け口、追いつき、fold の付け替え、Watch の削除、副作用、`launch_tool`、既読のファイル)、webui (say のバブル、Sessions 一覧の数)、CLI (`ccmsg say`・`sidecar launch`・permit の発声の削除)
-- 既読の集合 (`say-read.json` の `read`) は刈り込まず、tool_use の id の数だけ増える (1 つ数十 byte)
+- 既読の集合 (`say-read.json` の `read`) は tool_use の id の数だけ増える (1 つ数十 byte)。daemon の起動の時に、live でないセッション (served な config dir の `claude agents --json` の一覧にプロセスが居ない sid) の分を落とす。一覧が 1 件も返さない (一覧できない) 時は何も落とさない。transcript は Claude Code の保存日数の設定で残り続けるので、その有無では決めない (kawaz 2026-11-08)。落とした後にそのセッションの TL を開く (一回読み) か resume すると、そのセッションの `since` 以後の say は未読に戻る
 
 ## 関連
 

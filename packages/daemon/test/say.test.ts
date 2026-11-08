@@ -318,7 +318,9 @@ describe("say: what the person has not read", () => {
         ok: true,
         ids: ["toolu_1"],
       });
-      expect(fs.readFileSync(ctx.daemon.paths.sayRead, "utf8")).toContain('"read":["toolu_1"]');
+      expect(fs.readFileSync(ctx.daemon.paths.sayRead, "utf8")).toContain(
+        `"read":{"${A}":["toolu_1"]}`,
+      );
       const { ev } = await other.readEventUntil("say_unread", (e) => e.says.length === 1);
       expect(ev.says.map((s) => s.tool_use_id)).toEqual(["toolu_2"]);
 
@@ -489,6 +491,33 @@ describe("say-read.json", () => {
     expect(again.since).toBe("2026-10-28T00:00:00.000Z");
     again.says.set(A, says);
     expect(unreadSays(again).map((s) => s.tool_use_id)).toEqual(["toolu_2"]);
+    // Each read id under the session that has it, so that it can go with the
+    // session (pruneNotificationState).
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+      since: "2026-10-28T00:00:00.000Z",
+      read: { [A]: ["toolu_1"] },
+    });
+  });
+
+  // 何を保証するか: セッションの分からない既読の id (read が一覧のファイル) は
+  // 読み戻しで捨てて log に書き、since は残してセッションごとの形で書き直す。
+  test("read ids without their session are dropped on reading, and the file written again", async () => {
+    const file = path.join(tmpDir("ccmsg-say-read-"), "say-read.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ since: "2026-10-28T00:00:00.000Z", read: ["toolu_plain"] }),
+    );
+    const warned: string[] = [];
+    const store = loadSayUnreadStore(file, { warn: (m) => warned.push(m) }, () => new Date());
+    expect(store.read.has("toolu_plain")).toBe(false);
+    expect(store.since).toBe("2026-10-28T00:00:00.000Z");
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("read ids without their session dropped");
+    await store.written;
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({
+      since: "2026-10-28T00:00:00.000Z",
+      read: {},
+    });
   });
 
   // 何を保証するか: 読めないファイルは今を since にして始め直し、log に書く
@@ -502,7 +531,7 @@ describe("say-read.json", () => {
       { warn: (m) => warned.push(m) },
       () => new Date("2026-10-28T00:00:00.000Z"),
     );
-    expect({ since: store.since, read: [...store.read] }).toEqual({
+    expect({ since: store.since, read: store.read.ids() }).toEqual({
       since: "2026-10-28T00:00:00.000Z",
       read: [],
     });

@@ -37,13 +37,16 @@ import type { OneShotLineReader } from "./session-status.ts";
 import type { SessionSweep } from "./session-sweep.ts";
 import type { LineFold } from "./transcript-relay.ts";
 import { toolUsesOf } from "./row-effects.ts";
+import { SessionIds, SessionIdsFileSchema } from "./session-ids.ts";
 
-/** say-read.json: the read ids, and the time before which every say is
- * read. */
+/** say-read.json: the read ids, by the session that has each, and the time
+ * before which every say is read. `read` may be a plain list of ids, with no
+ * session to drop them with: such ids are dropped when the file is read
+ * (said in the log), and the file is written again in this shape. */
 const SayReadFileSchema = jsonText(
   v.object({
     since: v.pipe(v.string(), v.isoTimestamp()),
-    read: v.array(v.string()),
+    read: v.union([v.array(v.string()), SessionIdsFileSchema]),
   }),
 );
 
@@ -87,7 +90,7 @@ export interface SayUnreadStore {
    * thread's and its agents', live or not. Kept until the daemon stops; the
    * fold's lines and the pushed rows add to it. */
   listed: Map<string, SessionSayList>;
-  read: Set<string>;
+  read: SessionIds;
   since: string;
   file: string;
   /** The last write of the file: the writes go one after another, so an
@@ -117,17 +120,27 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     log.warn(`say-read: ${file}: ${read.failure.summary} — starting over`);
   }
   if (read?.ok === true) {
-    const { since } = read.value;
-    return {
+    const { since, read: held } = read.value;
+    const bySession = parseWith(SessionIdsFileSchema, held);
+    const store: SayUnreadStore = {
       says: new Map(),
       scanned: new Map(),
       agentSays: new Map(),
       listed: new Map(),
-      read: new Set(read.value.read),
+      read: new SessionIds(bySession.ok ? bySession.value : {}),
       since,
       file,
       written: Promise.resolve(),
     };
+    if (!bySession.ok) {
+      log.warn(
+        `say-read: ${file}: read ids without their session dropped — written again by session`,
+      );
+      writeSayRead(store).catch((e: unknown) => {
+        log.warn(`say-read: ${file}: ${e instanceof Error ? e.message : "not written"}`);
+      });
+    }
+    return store;
   }
   const since = now().toISOString();
   return {
@@ -135,7 +148,7 @@ export function loadSayUnreadStore(file: string, log: SayReadLog, now: () => Dat
     scanned: new Map(),
     agentSays: new Map(),
     listed: new Map(),
-    read: new Set(),
+    read: new SessionIds(),
     since,
     file,
     written: Promise.resolve(),
@@ -201,6 +214,14 @@ export type MarkSaysReadResult =
   | { kind: "unchanged" }
   | { kind: "unknown"; ids: readonly string[] };
 
+/** The session a say the store holds belongs to, or undefined. */
+function sessionOfSay(store: SayUnreadStore, id: string): string | undefined {
+  for (const [sid, says] of mainSays(store)) if (says.has(id)) return sid;
+  for (const [sid, says] of store.agentSays) if (says.has(id)) return sid;
+  for (const [sid, list] of store.listed) if (list.says.has(id)) return sid;
+  return undefined;
+}
+
 /** Mark `ids` read, all of them or none, and write the file before saying
  * so. An id is known when a session's say the store holds has it, or it was
  * read before. */
@@ -209,18 +230,27 @@ export async function markSaysRead(
   ids: readonly string[],
 ): Promise<MarkSaysReadResult> {
   const unread = new Set(unreadSays(store).map((s) => s.tool_use_id));
-  const known = (id: string): boolean =>
-    store.read.has(id) ||
-    [...mainSays(store)].some(([, says]) => says.has(id)) ||
-    [...store.agentSays.values()].some((says) => says.has(id)) ||
-    [...store.listed.values()].some((list) => list.says.has(id));
-  const unknown = ids.filter((id) => !known(id));
+  const unknown = ids.filter((id) => !store.read.has(id) && sessionOfSay(store, id) === undefined);
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
   const fresh = ids.filter((id) => unread.has(id));
   if (fresh.length === 0) return { kind: "unchanged" };
-  for (const id of fresh) store.read.add(id);
+  for (const id of fresh) {
+    const sid = sessionOfSay(store, id);
+    if (sid !== undefined) store.read.add(id, sid);
+  }
   await writeSayRead(store);
   return { kind: "read" };
+}
+
+/** Drop the read says of the sessions `gone` names (their transcripts are
+ * gone) and write the file; true when any went. */
+export async function dropSayReadOf(
+  store: SayUnreadStore,
+  gone: ReadonlySet<string>,
+): Promise<boolean> {
+  if (!store.read.dropSessions(gone)) return false;
+  await writeSayRead(store);
+  return true;
 }
 
 /** Every say of the sessions' subagents and teammates the store knows,
@@ -291,7 +321,7 @@ export function takeAgentSaysOf(
 /** Write the file whole: to a temporary file beside it, then renamed over
  * it, so a crash leaves the old file or the new one. */
 function writeSayRead(store: SayUnreadStore): Promise<void> {
-  const text = `${JSON.stringify({ since: store.since, read: [...store.read] })}\n`;
+  const text = `${JSON.stringify({ since: store.since, read: store.read.bySession() })}\n`;
   const tmp = path.join(path.dirname(store.file), `.say-read.${String(process.pid)}.tmp`);
   const write = async (): Promise<void> => {
     await fs.promises.mkdir(path.dirname(store.file), { recursive: true });

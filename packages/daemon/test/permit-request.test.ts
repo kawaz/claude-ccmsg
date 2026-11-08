@@ -217,7 +217,9 @@ describe("permit: the requests in a live session's transcript", () => {
         ok: true,
         ids: ["toolu_1"],
       });
-      expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain('"read":["toolu_1"]');
+      expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
+        `"read":{"${SID_A}":["toolu_1"]}`,
+      );
       expect((fs.statSync(ctx.daemon.paths.permitState).mode & 0o777).toString(8)).toBe("600");
       const { ev } = await other.readEventUntil("permit_state", (e) => e.unread.length === 1);
       expect(ev.unread.map((p) => p.tool_use_id)).toEqual(["toolu_2"]);
@@ -267,7 +269,7 @@ describe("permit: the requests in a live session's transcript", () => {
       await u.requestOk({ op: "permit_read", ids: ["toolu_b"], granted: true });
       expect(await state()).toEqual([[], ["toolu_a", "toolu_b"]]);
       expect(fs.readFileSync(ctx.daemon.paths.permitState, "utf8")).toContain(
-        '"granted":["toolu_a","toolu_b"]',
+        `"granted":{"${SID_A}":["toolu_a","toolu_b"]}`,
       );
 
       await u.requestOk({ op: "permit_read", ids: ["toolu_a"] });
@@ -670,14 +672,21 @@ describe("permit-state.json", () => {
     first.permits.set(SID_A, permits);
     expect(unreadPermits(first).map((p) => p.tool_use_id)).toEqual(["toolu_1", "toolu_2"]);
     expect(await markPermitsRead(first, ["toolu_1"], true)).toEqual({ kind: "read" });
-    await markPermitApplied(first, "toolu_2", { add: "Bash(ls)" }, "2026-10-28T01:00:00.000Z");
+    await markPermitApplied(
+      first,
+      SID_A,
+      "toolu_2",
+      { add: "Bash(ls)" },
+      "2026-10-28T01:00:00.000Z",
+    );
     expect(fs.readFileSync(file, "utf8")).not.toContain("秘密のコマンド");
 
     const second = loadPermitStore(file, log, () => new Date("2026-10-29T00:00:00.000Z"));
     expect(second.since).toBe("2026-10-28T00:00:00.000Z");
-    expect([...second.granted]).toEqual(["toolu_1"]);
+    expect(second.granted.ids()).toEqual(["toolu_1"]);
     expect(second.applied).toEqual([
       {
+        sid: SID_A,
         tool_use_id: "toolu_2",
         permission: { add: "Bash(ls)" },
         applied_at: "2026-10-28T01:00:00.000Z",
@@ -709,8 +718,8 @@ describe("permit-state.json", () => {
     const store = loadPermitStore(broken, log, now);
     expect({
       since: store.since,
-      read: [...store.read],
-      granted: [...store.granted],
+      read: store.read.ids(),
+      granted: store.granted.ids(),
       applied: store.applied,
     }).toEqual({
       since: "2026-10-28T00:00:00.000Z",

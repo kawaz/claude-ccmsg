@@ -136,6 +136,7 @@ import { bashCommandsEnded } from "./bash-command-rows.ts";
 import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
+  dropSayReadOf,
   markSaysRead,
   sayList,
   sayScan,
@@ -156,6 +157,8 @@ import {
   permitList,
   permitScan,
   permitStateEvent,
+  permitStateSessions,
+  dropPermitStateOf,
   type PermitStore,
   type SeenPermit,
 } from "./permit-state.ts";
@@ -213,6 +216,7 @@ import {
 import {
   agentsKey,
   agentsPollEnabled,
+  pollAgents,
   createAgentsPoller,
   detectConfigDirs,
   servedConfigDirs,
@@ -1453,6 +1457,64 @@ function broadcastSayUnread(daemon: Daemon): void {
   }
 }
 
+/** Remove `<stateDir>/permit-requests.json`, where the daemon kept the
+ * requests for permission before the transcripts became where they are
+ * (DR-0040 §4): nothing reads it, and it holds the commands agents asked to
+ * run. Once, at the start; said in the log when there was one. */
+export async function removeRequestRecordsFile(daemon: Daemon): Promise<void> {
+  const file = path.join(daemon.paths.stateDir, "permit-requests.json");
+  try {
+    await fs.promises.rm(file);
+    daemon.log.info(`permit-requests: removed ${file}`);
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return;
+    daemon.log.warn(`permit-requests: ${file}: ${errorText(e)}`);
+  }
+}
+
+/** The sessions whose process is running now, by one listing of the
+ * served config dirs (`claude agents --json`), or null when the listing
+ * found none (it could not list, or nothing runs). */
+async function runningSessions(daemon: Daemon): Promise<Set<string> | null> {
+  const poll = await pollAgents(sessionScope(daemon), daemon.log);
+  if (poll.agents.length === 0) return null;
+  return new Set(poll.agents.map((agent) => agent.sessionId));
+}
+
+/** Drop the person's state (the says read, the requests for permission read,
+ * granted and applied) of the sessions that are not live, at the start
+ * (DR-0045 §7, DR-0040 §4): a session whose process `running` does not list.
+ * Nothing is dropped when `running` lists none (null). A transcript stays
+ * for as long as Claude Code keeps it, so its being there tells nothing. */
+export async function pruneNotificationState(
+  daemon: Daemon,
+  running: () => Promise<ReadonlySet<string> | null> = () => runningSessions(daemon),
+): Promise<void> {
+  let live: ReadonlySet<string> | null;
+  try {
+    live = await running();
+  } catch (e) {
+    daemon.log.warn(
+      `notification state: the running sessions could not be listed: ${errorText(e)}`,
+    );
+    return;
+  }
+  if (live === null) return;
+  const sids = new Set([
+    ...daemon.sayUnread.read.sessions(),
+    ...permitStateSessions(daemon.permits),
+  ]);
+  const gone = new Set([...sids].filter((sid) => !live.has(sid)));
+  if (gone.size === 0) return;
+  await dropSayReadOf(daemon.sayUnread, gone);
+  await dropPermitStateOf(daemon.permits, gone);
+  daemon.log.info(
+    `notification state: dropped the state of ${String(gone.size)} of ${String(sids.size)} sessions not running`,
+  );
+  broadcastSayUnread(daemon);
+  broadcastPermitState(daemon);
+}
+
 /** The refusal of a permit op naming no request the daemon finds. */
 function noPermitText(sid: string, id: string): string {
   return `no permit request with id ${id} in session ${sid}`;
@@ -2232,7 +2294,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const at = nowIso();
       // Answered once the state is in the file, so a restart right after
       // does not show the permission as not applied.
-      await markPermitApplied(daemon.permits, req.tool_use_id, req.permission, at);
+      await markPermitApplied(daemon.permits, req.sid, req.tool_use_id, req.permission, at);
       broadcastPermitState(daemon);
       if (applied.changed) {
         daemon.settingsDiffNotifier.applied(req.sid, file, applied.before, applied.after);
@@ -3871,6 +3933,9 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   daemon.webhooks = buildWebhookSources(daemon, log);
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
+  void removeRequestRecordsFile(daemon);
+  // The listing of the running sessions it needs is the agents poll's.
+  if (agentsPollEnabled()) void pruneNotificationState(daemon);
 
   if (agentsPollEnabled()) {
     startAgentsPoller(

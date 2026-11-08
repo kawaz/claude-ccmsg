@@ -37,6 +37,7 @@ import {
   permitRequestedBy,
   TranscriptRowLineSchema,
   type AppliedPermitPermission,
+  type Output,
   type PermitCall,
   type PermitProjectPermission,
   type PermitStateStreamEvent,
@@ -46,14 +47,23 @@ import {
 import type { OneShotLineReader } from "./session-status.ts";
 import type { SessionSweep } from "./session-sweep.ts";
 import type { LineFold } from "./transcript-relay.ts";
+import { SessionIds, SessionIdsFileSchema } from "./session-ids.ts";
 
-/** permit-state.json. */
+/** A project permission applied, and the session whose request it was. */
+const HeldApplicationSchema = v.object({
+  sid: v.string(),
+  ...AppliedPermitPermissionSchema.entries,
+});
+type HeldApplication = Output<typeof HeldApplicationSchema>;
+
+/** permit-state.json: the ids read and granted by the session that has
+ * each, and the applications. */
 const PermitStateFileSchema = jsonText(
   v.object({
     since: v.pipe(v.string(), v.isoTimestamp()),
-    read: v.array(v.string()),
-    granted: v.array(v.string()),
-    applied: v.array(AppliedPermitPermissionSchema),
+    read: SessionIdsFileSchema,
+    granted: SessionIdsFileSchema,
+    applied: v.array(HeldApplicationSchema),
   }),
 );
 
@@ -91,13 +101,13 @@ export interface PermitStore {
    * thread's and its agents', live or not. Kept until the daemon stops; the
    * fold's lines add to it. */
   listed: Map<string, SessionPermitList>;
-  read: Set<string>;
+  read: SessionIds;
   /** The requests whose permission the person copied with 許可する: read
    * too. */
-  granted: Set<string>;
+  granted: SessionIds;
   since: string;
   /** Every project permission applied, in the order applied. */
-  applied: readonly AppliedPermitPermission[];
+  applied: readonly HeldApplication[];
   file: string;
   log: PermitStateLog;
   /** The last write of the file: the writes go one after another, so an
@@ -131,8 +141,8 @@ export function loadPermitStore(file: string, log: PermitStateLog, now: () => Da
     permits: new Map(),
     scanned: new Map(),
     listed: new Map(),
-    read: new Set(held?.read ?? []),
-    granted: new Set(held?.granted ?? []),
+    read: new SessionIds(held?.read),
+    granted: new SessionIds(held?.granted),
     since: held?.since ?? now().toISOString(),
     applied: held?.applied ?? [],
     file,
@@ -222,8 +232,10 @@ export function permitStateEvent(store: PermitStore): PermitStateStreamEvent {
   return {
     ev: "permit_state",
     unread: unreadPermits(store),
-    granted: [...store.granted],
-    applied: [...store.applied],
+    granted: store.granted.ids(),
+    applied: store.applied.map(
+      ({ sid: _sid, ...application }): AppliedPermitPermission => application,
+    ),
   };
 }
 
@@ -253,15 +265,19 @@ export async function markPermitsRead(
   granted = false,
 ): Promise<MarkPermitsReadResult> {
   const unread = new Set(unreadPermits(store).map((p) => p.tool_use_id));
-  const known = (id: string): boolean =>
-    store.read.has(id) || [...sessionsPermits(store)].some(([, permits]) => permits.has(id));
-  const unknown = ids.filter((id) => !known(id));
+  const sessionOf = (id: string): string | undefined =>
+    [...sessionsPermits(store)].find(([, permits]) => permits.has(id))?.[0];
+  const unknown = ids.filter((id) => !store.read.has(id) && sessionOf(id) === undefined);
   if (unknown.length > 0) return { kind: "unknown", ids: unknown };
   const fresh = ids.filter((id) => unread.has(id) || (granted && !store.granted.has(id)));
   if (fresh.length === 0) return { kind: "unchanged" };
   for (const id of fresh) {
-    store.read.add(id);
-    if (granted) store.granted.add(id);
+    // A request read before and not held now (its session not read since
+    // the daemon started) keeps the session it was read under.
+    const sid = sessionOf(id);
+    if (sid === undefined) continue;
+    store.read.add(id, sid);
+    if (granted) store.granted.add(id, sid);
   }
   await writePermitState(store);
   return { kind: "read" };
@@ -282,22 +298,48 @@ export function askedFor(seen: SeenPermit, permission: PermitProjectPermission):
   return seen.permit.project_permissions.some((asked) => sameChange(asked, permission));
 }
 
-/** Mark the project permission `permission` of the request `id` applied at
- * `at`, and the request read (the person has acted on it, as with 許可する),
- * and write the file before saying so. Applied again, the time is the last
- * one's. */
+/** Mark the project permission `permission` of session `sid`'s request
+ * `id` applied at `at`, and the request read (the person has acted on it, as
+ * with 許可する), and write the file before saying so. Applied again, the
+ * time is the last one's. */
 export async function markPermitApplied(
   store: PermitStore,
+  sid: string,
   id: string,
   permission: PermitProjectPermission,
   at: string,
 ): Promise<void> {
   store.applied = [
     ...store.applied.filter((a) => !(a.tool_use_id === id && sameChange(a.permission, permission))),
-    { tool_use_id: id, permission, applied_at: at },
+    { sid, tool_use_id: id, permission, applied_at: at },
   ];
-  store.read.add(id);
+  store.read.add(id, sid);
   await writePermitState(store);
+}
+
+/** The sessions the person's state holds something of. */
+export function permitStateSessions(store: PermitStore): Set<string> {
+  return new Set([
+    ...store.read.sessions(),
+    ...store.granted.sessions(),
+    ...store.applied.map((a) => a.sid),
+  ]);
+}
+
+/** Drop the state of the sessions `gone` names (their transcripts are gone)
+ * and write the file; true when any went. */
+export async function dropPermitStateOf(
+  store: PermitStore,
+  gone: ReadonlySet<string>,
+): Promise<boolean> {
+  const readDropped = store.read.dropSessions(gone);
+  const grantedDropped = store.granted.dropSessions(gone);
+  const applied = store.applied.filter((a) => !gone.has(a.sid));
+  const appliedDropped = applied.length !== store.applied.length;
+  if (!readDropped && !grantedDropped && !appliedDropped) return false;
+  store.applied = applied;
+  await writePermitState(store);
+  return true;
 }
 
 /** Write the file whole: to a temporary file beside it, then renamed over
@@ -306,8 +348,8 @@ export async function markPermitApplied(
 function writePermitState(store: PermitStore): Promise<void> {
   const text = `${JSON.stringify({
     since: store.since,
-    read: [...store.read],
-    granted: [...store.granted],
+    read: store.read.bySession(),
+    granted: store.granted.bySession(),
     applied: store.applied,
   })}\n`;
   const tmp = path.join(path.dirname(store.file), `.permit-state.${String(process.pid)}.tmp`);

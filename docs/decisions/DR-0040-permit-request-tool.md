@@ -70,14 +70,14 @@ kawaz 2026-11-08 の裁定: 依頼の中身を daemon に貯めない (ゴミが
 - 全走査: op `notification_list` (§5) を初めて聞かれたセッションは、main と agent の transcript を頭から読む (say と同じ 1 回の読みで両方を拾う)。以後は fold の行で増え、読み直さない
 - 見つけた依頼はメモリに持つ (fold はセッションが live の間、全走査の分は daemon が止まるまで)。ファイルには書かない
 
-**daemon が持つ人の状態** (`<state dir>/permit-state.json`、`{ since, read, granted, applied }`):
+**daemon が持つ人の状態** (`<state dir>/permit-state.json`、`{ since, read, granted, applied }`。`read` / `granted` は依頼を持つセッションの sid ごとの id、`applied` の各要素も `sid` を持つ):
 
 - `read`: 人が手を付けた依頼の `tool_use_id`。`granted`: 人が「許可する」で許可の文を写した依頼の `tool_use_id` (`read` にも入る)。op `permit_read` (`{ ids, granted? }`、user role だけ) が渡した id を既読にし、`granted` があれば許可済みにもする (既読の依頼にも後から立てる)。daemon の知らない id が 1 つでもあれば、どれも既読にせずに断る。二度目は何も変えない。どちらも一度立てたら戻さない
 - `since`: これより前の依頼は手を付けたものとみなす。ファイルが無い・読めない時は今から始める (古い依頼で 🔐 が溢れない)
 - `applied`: 人が適用した `project_permissions` (`{ tool_use_id, permission: { add } | { remove }, applied_at }`、§12)。適用はその依頼の既読も立てる
 - 未読の依頼 = daemon が見つけた依頼のうち、`read` に無く `since` 以後のもの。同じ id は 1 件
 - 書き込みは変わるたびに隣の一時ファイルに書いて rename で置き換える (mode 0600)。書き込みは直列で、`permit_read` / `permit_permission_apply` はファイルに書いてから答える。daemon の終了は書き終わるのを待ってから lock を放す。書けなかった時は daemon.log に 1 行書き、状態はメモリに持ったまま答える
-- `read`・`granted`・`applied` は依頼の数だけ増える (1 件数十 byte)
+- `read`・`granted`・`applied` は依頼の数だけ増える (1 件数十 byte)。daemon の起動の時に、live でないセッション (`claude agents --json` の一覧にプロセスが居ない sid) の分を落とす。一覧が 1 件も返さない時は何も落とさない (DR-0045 §7 の `say-read.json` と同じ)。依頼を daemon に記録していた頃の `<state dir>/permit-requests.json` は、起動の時に消す (kawaz 2026-11-08)
 - 永続化は [DR-0036](./DR-0036-retire-rooms-for-p2p.md) §3 の「v1 だけの永続状態を増やさない」の例外で、`say-read.json` (DR-0045 §7) と同じ理由 (依頼は再起動を越える transcript から描くので、状態をメモリだけに持つと再起動のたびに過去の依頼が全部未読に戻り、適用済みが消える)。依頼の中身は持たない
 
 ### 5. 配送と一覧
@@ -260,7 +260,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 ## Consequences
 
-- 依頼は transcript にあるぶん全部が出る。daemon は依頼の中身を持たず、`permit-state.json` は既読と適用の id だけで増える (刈り込まない)
+- 依頼は transcript にあるぶん全部が出る。daemon は依頼の中身を持たず、`permit-state.json` は既読と適用の id だけで増え、daemon の起動の時に live でないセッションの分は落ちる。その後に resume したセッションの依頼は、`since` 以後のものが未読に戻る
 - 🔐 の未読の数は、daemon がそのセッションの transcript を読んだ後に入る: live のセッションは追いつきの後、live でないセッションは TL を開いた時 (一回読み) か 🔐 / 🔔 のフィルタに入った時 (全走査)。読む前は数えない
 - 窓の外の依頼は 🔐 のフィルタの間だけ出る。フィルタの無い TL では、older で窓に入れると行の位置に出る
 - `permit-state.json` の無い初回の daemon は、その時より前の依頼を手を付けたものとみなす
