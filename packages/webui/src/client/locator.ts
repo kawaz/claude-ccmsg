@@ -9,6 +9,29 @@ export interface AgentRef {
 
 export type SessionTab = "files" | "timeline" | "terminal" | "status";
 
+/** Which kind of bubble a session's own Timeline shows alone (DR-0050 §4):
+ * the say bubbles (🔔) or the permission requests (🔐). The page query
+ * `filter` on `/s/<sid>/timeline/<position>`. */
+export type TimelineFilter = "say" | "permit";
+
+/** The position (`/timeline/<position>`) that selects a request for
+ * permission (DR-0050 §9 U7). The request is the daemon's record, not a
+ * transcript row, so it has no uuid; its record id stands in. Once the daemon
+ * forgets the record (a restart) the position is outside the window, as a
+ * uuid no longer loaded is, and returns to head. */
+export function permitPosition(id: string): string {
+  return `permit:${id}`;
+}
+
+/** `?filter=` of a session's own Timeline. Only the two kinds read as one;
+ * anything else, an empty value included, is no filter (as an unknown
+ * `sb.panel` is a closed panel). */
+export function parseTimelineFilter(search: string): TimelineFilter | null {
+  if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
+  const value = new URLSearchParams(search).get("filter");
+  return value === "say" || value === "permit" ? value : null;
+}
+
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
   /** Host-wide LLM credentials — the one screen that belongs to no session and
@@ -32,7 +55,15 @@ export type Locator =
       lineRange?: { start: number; end: number };
       from?: string;
     }
-  | { view: "timeline"; tab?: "timeline"; sid: string; position?: string; agent?: AgentRef }
+  | {
+      view: "timeline";
+      tab?: "timeline";
+      sid: string;
+      position?: string;
+      agent?: AgentRef;
+      /** Only on the session's own Timeline; an agent TL never reads it. */
+      filter?: TimelineFilter;
+    }
   | { view: "session-root"; sid: string }
   | { view: "unknown"; pathname: string };
 
@@ -146,7 +177,16 @@ export function parseUrl(pathname: string, search = ""): Locator {
 
   if (segments.length === 4) {
     const position = decodeNonEmpty(segments[3] ?? "");
-    if (position) return { view: "timeline", tab: "timeline", sid, position };
+    const filter = parseTimelineFilter(search);
+    if (position) {
+      return {
+        view: "timeline",
+        tab: "timeline",
+        sid,
+        position,
+        ...(filter !== null ? { filter } : {}),
+      };
+    }
   }
   return { view: "unknown", pathname };
 }
@@ -228,8 +268,16 @@ export function fileHref(
   return `${filesHref(sid)}?${params.toString()}`;
 }
 
-export function timelineHref(sid: string, position = "head"): string {
-  return `${sidBase(sid)}/timeline/${encodeURIComponent(position)}`;
+/** The session's own Timeline at `position`, showing only `filter`'s bubbles
+ * when one is given. Every write of the position passes the filter it is
+ * under, so moving the position never drops it (DR-0050 §4). */
+export function timelineHref(
+  sid: string,
+  position = "head",
+  filter: TimelineFilter | null = null,
+): string {
+  const path = `${sidBase(sid)}/timeline/${encodeURIComponent(position)}`;
+  return filter === null ? path : `${path}?filter=${filter}`;
 }
 
 export function terminalHref(sid: string): string {

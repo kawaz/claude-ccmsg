@@ -40,6 +40,8 @@ import {
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { sessionInputReadiness, terminalAbsenceNotice } from "./session-input.ts";
 import { Tabs, type TabItem } from "./Tabs.tsx";
+import { NotificationBadges } from "./NotificationBadges.tsx";
+import { badgeHref, notificationCountsOf } from "../notification-badges.ts";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
  * up empty (see hasSessionTranscript) and the one way left to open the
@@ -79,6 +81,36 @@ function sessionTabItems(
       : []),
     { id: "status", label: "Status", href: statusHref(sid) },
   ];
+}
+
+/** The 🔔🔐 badges at the left end of the session's tab row (DR-0050 §3).
+ * They count the main thread's unread, so an agent's TL — which shows none of
+ * those bubbles — carries none. The filter and position are the URL's, and
+ * only while it names this session. */
+export function SessionHeaderBadges({ sid }: { sid: string }) {
+  const { store } = useApp();
+  const view = useStoreState(
+    store,
+    (s) => {
+      const counts = notificationCountsOf(sid, s.unreadSays, s.permitRequests);
+      const here = s.currentSid === sid;
+      return {
+        say: counts.say,
+        permit: counts.permit,
+        filter: here ? s.timelineFilter : null,
+        position: here ? (s.timelinePosition ?? "head") : "head",
+      };
+    },
+    shallowEqual,
+  );
+  return (
+    <NotificationBadges
+      class="session-tabs-badges"
+      counts={{ say: view.say, permit: view.permit }}
+      selected={view.filter}
+      hrefOf={(kind) => badgeHref(sid, kind, { position: view.position, filter: view.filter })}
+    />
+  );
 }
 
 const EMPTY_TREE: SessionTreeState = {
@@ -335,6 +367,7 @@ export function SessionView({
     <AppContext.Provider value={app}>
       <main class="session-view" hidden={!active} data-session-id={sid}>
         <div class="session-tabs">
+          {agent === null && hasTranscript ? <SessionHeaderBadges sid={sid} /> : null}
           {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
            * you can middle-click into a second window is worth more here than
            * one that only flips state. Timeline stays present-but-disabled when

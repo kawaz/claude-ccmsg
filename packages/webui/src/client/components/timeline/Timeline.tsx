@@ -2,10 +2,10 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { useMemo, useRef } from "preact/hooks";
+import { useEffect, useMemo, useRef } from "preact/hooks";
 import { type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
-import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
+import { type AgentRef, agentTimelineHref, permitPosition, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
@@ -35,6 +35,8 @@ import { useForkOrigin } from "./useForkOrigin.ts";
 import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
+import { useFilterScroll } from "./useFilterScroll.ts";
+import { unreadSayBeforeWindow } from "../../say-read.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { usePermitBubbles } from "./usePermitBubbles.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
@@ -54,7 +56,7 @@ import {
   type CcmsgRenderCtxValue,
   CcmsgRenderContext,
 } from "./context.ts";
-import { ItemRawToggle } from "./raw.tsx";
+import { ItemRawToggle, selectPositionOnClick } from "./raw.tsx";
 import { MemoFoldGroup } from "./folds.tsx";
 import { BashRunCard } from "./tools.tsx";
 import { type TranslationAvailability } from "./translation.ts";
@@ -105,6 +107,11 @@ export function Timeline({
   const currentPosition = useStoreState(store, (s) =>
     s.currentSid === sid ? (s.timelinePosition ?? "head") : "head",
   );
+  // Which bubble kind the Timeline shows alone (DR-0050 §4). The URL only
+  // carries it for the session's own Timeline, never an agent's.
+  const currentFilter = useStoreState(store, (s) =>
+    s.currentSid === sid && !agent ? s.timelineFilter : null,
+  );
   const hostTranslatorAvailable = useStoreState(store, (s) => s.hostTranslatorAvailable);
   const plamoTranslateUrl = useStoreState(store, (s) => s.plamoTranslateUrl);
   const peers = useStoreState(store, (s) => s.peers);
@@ -142,7 +149,7 @@ export function Timeline({
   );
   const rooms = useStoreState(store, (s) => s.rooms);
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
-  const pin = usePositionPin({ sid, currentPosition, agentActive });
+  const pin = usePositionPin({ sid, currentPosition, currentFilter, agentActive });
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
   // capability probe、plamo は hello の URL への `/health` (DR-0049)。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
@@ -191,25 +198,39 @@ export function Timeline({
   const sayRead = useSayRead({ sid, agentTimeline: !!agent, boundaries });
   const permitBubbles = usePermitBubbles({ sid, agentTimeline: !!agent, groups });
   // The permission bubbles of one slot, in the order they were made.
+  // Each is selectable like a transcript item, its record id standing in for
+  // a uuid (DR-0050 §9 U7), and answers to the 🔐 filter.
   const bubbleNodes = (slot: number) =>
-    (permitBubbles.slots[slot] ?? []).map((request) => (
-      <PermitRequestBubble
-        key={`permit-${request.id}`}
-        request={request}
-        now={now}
-        translationAvailability={translationAvailability}
-      />
-    ));
+    (permitBubbles.slots[slot] ?? []).map((request) => {
+      const position = permitPosition(request.id);
+      return (
+        <div
+          key={`permit-${request.id}`}
+          class={`tl-item${currentPosition === position ? " tl-position-selected" : ""}`}
+          data-timeline-uuid={position}
+          data-notif="permit"
+          onClick={selectPositionOnClick(position, pin.selectPosition)}
+        >
+          <PermitRequestBubble
+            request={request}
+            now={now}
+            translationAvailability={translationAvailability}
+          />
+        </div>
+      );
+    });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
   // search reveal, refresh, ⤓) goes through this instead of a one-off
   // scrollTop write; see useScrollHold.ts.
   const scrollHold = useScrollHold(scrollRef, tlLinesRef);
+  useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
 
   const inViewSearch = useInViewSearch({
     sid,
     search,
+    filtered: currentFilter !== null,
     groups,
     ccmsgTargets,
     openFoldsAt: folds.openFoldsAt,
@@ -252,12 +273,45 @@ export function Timeline({
   usePositionLanding({
     sid,
     currentPosition,
+    currentFilter,
     timelineStatus: timeline.status,
     parsed,
     scrollRef,
     scrollHold,
     tracker: pin.tracker,
   });
+
+  // 🔔 のフィルタは未読の say を見つけるためのもので、読み込み済みの範囲より
+  // 古い未読は older を読まないと出ない。含まれるまで遡る (DR-0050 §9 U8)。
+  // 1 回読むたびに boundaries が変わってここが再び走り、含まれるか先頭に着いた
+  // ら止まる。
+  const unreadSays = useStoreState(store, (s) => s.unreadSays);
+  const firstLoadedTs = useMemo(() => {
+    for (const line of parsed) if (line.kind !== "broken" && line.ts !== null) return line.ts;
+    return null;
+  }, [parsed]);
+  const needsOlderForUnread = useMemo(
+    () =>
+      currentFilter === "say" &&
+      unreadSayBeforeWindow(
+        boundaries,
+        unreadSays.filter((say) => say.session_id === sid),
+        firstLoadedTs,
+      ),
+    [currentFilter, boundaries, unreadSays, sid, firstLoadedTs],
+  );
+  const loadOlder = loader.loadOlder;
+  useEffect(() => {
+    if (!needsOlderForUnread || timeline.status !== "loaded" || timeline.atStart) return;
+    loadOlder();
+  }, [needsOlderForUnread, timeline.status, timeline.atStart, loadOlder]);
+  // フィルタに該当するバブルが読み込み済みの範囲に 1 つも無いか (§5)。
+  const filterEmpty =
+    currentFilter === "say"
+      ? !boundaries.some((b) => b?.kind === "say" || b?.kind === "push-notification")
+      : currentFilter === "permit"
+        ? permitBubbles.requests.length === 0
+        : false;
 
   // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
   // replace で end が同値のままだと追記の追従が発火しないため、ここで明示的に
@@ -434,7 +488,11 @@ export function Timeline({
                             <button
                               type="button"
                               class="tl-user-nav-count"
-                              disabled={userNav.currentIndex <= 0 || userNav.keys.length === 0}
+                              disabled={
+                                currentFilter !== null ||
+                                userNav.currentIndex <= 0 ||
+                                userNav.keys.length === 0
+                              }
                               onClick={userNav.scrollToCurrent}
                               title="現在のユーザ発言へ戻る"
                             >
@@ -446,7 +504,7 @@ export function Timeline({
                              * 意味がない)。 */}
                             <button
                               type="button"
-                              disabled={userNav.keys.length === 0}
+                              disabled={currentFilter !== null || userNav.keys.length === 0}
                               onClick={userNav.goPrev}
                               title="前のユーザ発言へ"
                             >
@@ -454,7 +512,7 @@ export function Timeline({
                             </button>
                             <button
                               type="button"
-                              disabled={userNav.keys.length === 0}
+                              disabled={currentFilter !== null || userNav.keys.length === 0}
                               onClick={userNav.goNext}
                               title="次のユーザ発言へ"
                             >
@@ -478,13 +536,24 @@ export function Timeline({
                           action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
                         />
                       ) : (
-                        <div class="tl-lines" ref={tlLinesRef}>
+                        <div
+                          class="tl-lines"
+                          ref={tlLinesRef}
+                          data-filter={currentFilter ?? undefined}
+                        >
                           {parsed.length === 0 && permitBubbles.requests.length === 0 ? (
                             <p class="tl-empty">(空の transcript)</p>
                           ) : (
                             <>
                               {sayRead.readError !== null ? (
                                 <p class="tl-say-error">{sayRead.readError}</p>
+                              ) : null}
+                              {filterEmpty ? (
+                                <p class="tl-filter-empty">
+                                  {currentFilter === "say"
+                                    ? "読み込み済みの範囲に say はありません"
+                                    : "許可依頼はありません"}
+                                </p>
                               ) : null}
                               {groups
                                 .map((group, i) => {
@@ -603,6 +672,7 @@ export function Timeline({
                                           uuid={line.uuid}
                                           selectedPosition={currentPosition === line.uuid}
                                           onSelectPosition={pin.selectPosition}
+                                          notif="say"
                                         >
                                           <SayBubble
                                             label="PushNotification"
@@ -620,6 +690,7 @@ export function Timeline({
                                           uuid={line.uuid}
                                           selectedPosition={currentPosition === line.uuid}
                                           onSelectPosition={pin.selectPosition}
+                                          notif="say"
                                         >
                                           <SayCallBubble
                                             text={boundary.text}

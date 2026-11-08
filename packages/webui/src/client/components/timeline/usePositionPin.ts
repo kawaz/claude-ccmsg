@@ -13,7 +13,7 @@
 // 込むと agent ref が落ち、項目をクリックしただけで親 TL へ弾き出される。
 // 表せない選択なので agent TL では行わない。
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { timelineHref } from "../../locator.ts";
+import { timelineHref, type TimelineFilter } from "../../locator.ts";
 import { rememberTimelinePosition, replaceNavigation } from "../../navigation.ts";
 import type { TimelineState } from "../../store.ts";
 import type { ParsedLine } from "../../transcript-model.ts";
@@ -75,11 +75,14 @@ export class PinTracker {
 export function usePositionPin({
   sid,
   currentPosition,
+  currentFilter,
   agentActive,
 }: {
   sid: string;
   /** URL が指す位置 (無選択なら "head")。 */
   currentPosition: string;
+  /** URL のフィルタ (DR-0050 §4)。位置を書き換える遷移はこれを引き継ぐ。 */
+  currentFilter: TimelineFilter | null;
   agentActive: boolean;
 }): {
   tracker: PinTracker;
@@ -101,9 +104,9 @@ export function usePositionPin({
       const next = togglePosition(currentPosition, uuid);
       tracker.selected(sid, next);
       rememberTimelinePosition(sid, next);
-      replaceNavigation(timelineHref(sid, next));
+      replaceNavigation(timelineHref(sid, next, currentFilter));
     },
-    [sid, currentPosition, agentActive, tracker],
+    [sid, currentPosition, currentFilter, agentActive, tracker],
   );
   const onScrollMeasured = useCallback(
     (scroller: HTMLElement, nearBottom: boolean) => {
@@ -115,7 +118,7 @@ export function usePositionPin({
         if (currentPosition !== "head") {
           if (!tracker.mayReturnToHead(currentPosition)) return;
           rememberTimelinePosition(sid, "head");
-          replaceNavigation(timelineHref(sid));
+          replaceNavigation(timelineHref(sid, "head", currentFilter));
           return;
         }
         rememberTimelinePosition(sid, "head");
@@ -128,7 +131,7 @@ export function usePositionPin({
       const uuid = visible?.dataset.timelineUuid;
       if (uuid) rememberTimelinePosition(sid, uuid);
     },
-    [currentPosition, sid, tracker],
+    [currentPosition, currentFilter, sid, tracker],
   );
   const onUserScrollIntent = useCallback(() => tracker.userScrolled(), [tracker]);
   return { tracker, selectPosition, onScrollMeasured, onUserScrollIntent };
@@ -143,6 +146,7 @@ export function usePositionPin({
 export function usePositionLanding({
   sid,
   currentPosition,
+  currentFilter,
   timelineStatus,
   parsed,
   scrollRef,
@@ -151,6 +155,8 @@ export function usePositionLanding({
 }: {
   sid: string;
   currentPosition: string;
+  /** URL のフィルタ。窓の外の位置を head に戻す時に引き継ぐ。 */
+  currentFilter: TimelineFilter | null;
   timelineStatus: TimelineState["status"];
   /** 描かれる行。変わるたびに対象を探し直す (着地済みなら何もしない)。 */
   parsed: readonly ParsedLine[];
@@ -169,7 +175,7 @@ export function usePositionLanding({
       // only ever passed to the boundary bubbles, never to the fold side, so a
       // pin target is always mounted regardless of any fold.
       rememberTimelinePosition(sid, "head");
-      replaceNavigation(timelineHref(sid));
+      replaceNavigation(timelineHref(sid, "head", currentFilter));
       return;
     }
     rememberTimelinePosition(sid, currentPosition);
@@ -181,5 +187,5 @@ export function usePositionLanding({
     scrollHold.toElement(target, (container, el) =>
       container.scrollTo({ top: topBelowToolbar(container, el) }),
     );
-  }, [sid, currentPosition, timelineStatus, parsed, scrollRef, scrollHold, tracker]);
+  }, [sid, currentPosition, currentFilter, timelineStatus, parsed, scrollRef, scrollHold, tracker]);
 }

@@ -33,7 +33,13 @@ import {
   type UnreadSay,
   parseWith,
 } from "@ccmsg/protocol";
-import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
+import {
+  DEFAULT_STATS_PERIOD,
+  type AgentRef,
+  type Locator,
+  type SessionTab,
+  type TimelineFilter,
+} from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
 import {
   CLOSED_SIDEBAR,
@@ -364,6 +370,9 @@ export interface AppState {
    * reading `parseUrl` gives of the location, held here so the Timeline gets
    * it from the store's one URL→state path rather than re-parsing the URL. */
   timelinePosition: string | null;
+  /** The bubble kind the session's own Timeline shows alone (`?filter=`,
+   * DR-0050 §4), null for none and whenever the URL is not that Timeline. */
+  timelineFilter: TimelineFilter | null;
   sessionTrees: Map<string, SessionTreeState>;
   /** Folded status snapshot (DR-0020 Phase 1/2), keyed by sid. Populated by
    * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
@@ -474,6 +483,7 @@ export function initialState(): AppState {
     currentSid: null,
     currentAgent: null,
     timelinePosition: null,
+    timelineFilter: null,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
     sessionErrors: new Map(),
@@ -840,7 +850,12 @@ function agentRefKey(agent: AgentRef | null | undefined): string {
 
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "unknown") {
-    return { ...state, unknownPath: locator.pathname, timelinePosition: null };
+    return {
+      ...state,
+      unknownPath: locator.pathname,
+      timelinePosition: null,
+      timelineFilter: null,
+    };
   }
   if (locator.view === "session-root") return state;
   if (locator.view === "catalog") {
@@ -855,6 +870,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       timelinePosition: null,
+      timelineFilter: null,
     };
   }
   if (locator.view === "usage") {
@@ -873,6 +889,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       timelinePosition: null,
+      timelineFilter: null,
     };
   }
   if (locator.view === "room") {
@@ -886,6 +903,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentMid: locator.mid,
       currentAgent: null,
       timelinePosition: null,
+      timelineFilter: null,
     };
   }
   if (locator.view === "timeline") {
@@ -915,6 +933,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentSid: locator.sid,
       currentAgent: nextAgent,
       timelinePosition: locator.position ?? "head",
+      timelineFilter: locator.agent ? null : (locator.filter ?? null),
       sessionTrees,
     };
   }
@@ -940,6 +959,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     currentSid: locator.sid,
     currentAgent: null,
     timelinePosition: null,
+    timelineFilter: null,
     sessionTrees,
   };
 }

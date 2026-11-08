@@ -159,9 +159,12 @@ describe("renaming from the Sessions list", () => {
   });
 });
 
-// A session waiting for the person's permission (DR-0040) is marked in the
-// list as a say is, with 🔐 and the count of the requests not yet acted on.
-describe("the Sessions list's unread requests for permission", () => {
+// A session waiting for the person's permission (DR-0040) or that spoke to
+// them (say, DR-0045 §7) carries the 🔔🔐 badges by the TL header's rule
+// (DR-0050 §7): both when either kind has something unread, the count as a
+// counter over the emoji from 1, none at 0 / 0. Each badge opens the
+// session's Timeline filtered to its kind, apart from the row's own link.
+describe("the Sessions list's 🔔🔐 badges", () => {
   const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
     id,
     sid,
@@ -172,8 +175,21 @@ describe("the Sessions list's unread requests for permission", () => {
     commands: [{ command: "ls" }],
     read,
   });
+  const say = (id: string, sid: string): UnreadSay => ({
+    session_id: sid,
+    tool_use_id: id,
+    ts: SINCE,
+  });
 
-  test("marks each session with its unread requests, counting past one", async () => {
+  /** Each badge of the row as `<emoji><counter>` (no counter at 0). */
+  function badges(root: HTMLElement, sid: string): string[] {
+    return [...rowOf(root, sid).querySelectorAll(".notif-badge")].map(
+      (badge) =>
+        `${badge.querySelector(".notif-badge-icon")?.textContent ?? ""}${badge.querySelector(".notif-badge-counter")?.textContent ?? ""}`,
+    );
+  }
+
+  test("show both kinds when either is unread, counting from one", async () => {
     const root = await mount(
       [peer(RESPONDING), peer(IDLE), peer(BARE)],
       [
@@ -188,38 +204,33 @@ describe("the Sessions list's unread requests for permission", () => {
         request("i/4", IDLE, true),
         request("i/5", BARE, true),
       ],
+      [say("toolu_2", IDLE)],
     );
-    const mark = (sid: string) => rowOf(root, sid).querySelector(".session-permit-unread");
-    expect(mark(RESPONDING)?.textContent).toBe("🔐");
-    expect(mark(IDLE)?.textContent).toBe("🔐2");
-    expect(mark(IDLE)?.getAttribute("aria-label")).toBe("未確認の許可依頼 2 件");
-    expect(mark(BARE)).toBeNull();
-  });
-});
-
-// A session that spoke to the person (say) and is not yet read is marked with
-// 🔔 and the count of its unread says, as ev:"say_unread" lists them.
-describe("the Sessions list's unread says", () => {
-  const say = (id: string, sid: string): UnreadSay => ({
-    session_id: sid,
-    tool_use_id: id,
-    ts: SINCE,
+    expect(badges(root, RESPONDING)).toEqual(["🔔", "🔐1"]);
+    expect(badges(root, IDLE)).toEqual(["🔔1", "🔐2"]);
+    expect(badges(root, BARE)).toEqual([]);
+    const permit = rowOf(root, IDLE).querySelector(".notif-badge-permit");
+    expect(permit?.getAttribute("aria-label")).toBe(
+      "未確認の許可依頼 2 件 — 押すと許可依頼だけを表示",
+    );
   });
 
-  test("marks each session with its unread says, counting past one", async () => {
+  test("each badge opens the session's Timeline filtered to its kind, outside the row's link", async () => {
     const root = await mount(
-      [peer(RESPONDING), peer(IDLE), peer(BARE)],
-      [
-        agent(RESPONDING, { status: "idle", turn: { state: "idle", since: SINCE } }),
-        agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } }),
-        agent(BARE, { status: "idle", turn: { state: "idle", since: SINCE } }),
-      ],
+      [peer(IDLE)],
+      [agent(IDLE, { status: "idle", turn: { state: "idle", since: SINCE } })],
       [],
-      [say("toolu_1", RESPONDING), say("toolu_2", IDLE), say("toolu_3", IDLE)],
+      [say("toolu_1", IDLE)],
     );
-    const mark = (sid: string) => rowOf(root, sid).querySelector(".session-say-unread");
-    expect(mark(RESPONDING)?.textContent).toBe("🔔");
-    expect(mark(IDLE)?.textContent).toBe("🔔2");
-    expect(mark(BARE)).toBeNull();
+    const hrefs = [...rowOf(root, IDLE).querySelectorAll(".notif-badge")].map((badge) =>
+      badge.getAttribute("href"),
+    );
+    expect(hrefs).toEqual([
+      `/s/${IDLE}/timeline/head?filter=say`,
+      `/s/${IDLE}/timeline/head?filter=permit`,
+    ]);
+    const mainLink = rowOf(root, IDLE).querySelector(".session-main-link");
+    expect(mainLink?.getAttribute("href")).toBe(`/s/${IDLE}`);
+    expect(mainLink?.querySelector(".notif-badge")).toBeNull();
   });
 });

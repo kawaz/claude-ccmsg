@@ -24,7 +24,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `/r/<room>/m<mid>` | ルームの特定メッセージへアンカー |
 | `/s/<sid>` | セッションの最後に見ていた画面へリダイレクト |
 | `/s/<sid>/files` | Files タブ |
-| `/s/<sid>/timeline/<position>` | Timeline (`head` または レコード uuid) |
+| `/s/<sid>/timeline/<position>` | Timeline (`head`、レコード uuid、または許可依頼の `permit:<id>`) |
 | `/s/<sid>/timeline/agent/tm/<name>` | teammate の TL |
 | `/s/<sid>/timeline/agent/sub/<agentId>` | サブエージェントの TL |
 | `/s/<sid>/timeline/agent/wf/<runId>/<agentId>` | workflow 内エージェントの TL |
@@ -43,6 +43,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `lines` | `/s/<sid>/files` | 選択行 (`<start>-<end>`) |
 | `from` | `/s/<sid>/files` | リンク元ドキュメント (「もしかして」復帰用) |
 | `days` | `/usage/stats/<period>` | 集計日数 (単位の既定値と同じなら省略) |
+| `filter` | `/s/<sid>/timeline/<position>` | `say` なら say (と PushNotification) のバブルだけ、`permit` なら許可依頼のバブルだけを出す (DR-0050)。他の値と空の値は「なし」。agent の TL では読まない。位置を書き換える遷移は引き継ぎ、`filter` だけが変わる遷移は replace。`/s/<sid>` の復元には含めない |
 
 ## `sb.*` (サイドバーのフォームパネル)
 

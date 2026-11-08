@@ -6,7 +6,8 @@ import type {
   ProtocolVersion,
   SessionRenameResponse,
 } from "@ccmsg/protocol";
-import { sessionHref } from "../locator.ts";
+import { sessionHref, timelineHref } from "../locator.ts";
+import { NotificationBadges } from "./NotificationBadges.tsx";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { shallowEqual, useStoreState } from "../useStore.ts";
@@ -547,13 +548,7 @@ function SessionRowItem({
       onClick={selectSessionOnRowClick(row.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
-        <a
-          // Session rows always enter through the session root so the router can
-          // restore that sid's recent tab/path. With no recent record the root
-          // falls back to Timeline/head.
-          href={sessionHref(row.sid)}
-          class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
-        >
+        <span class={row.connected ? "session-lead" : "session-lead session-disconnected"}>
           {/* prompt cache が生きている間だけアイコンの枠に輪が重なり、窓が
            * 閉じるまでかけて時計回りに欠けていく (CacheRing.tsx)。緑は会話が
            * 作った窓、黄は合図で延命している分 (llm-cache-view.ts)。
@@ -566,9 +561,6 @@ function SessionRowItem({
             <Avatar seed={row.sid} size={16} />
             {ring ? <CacheRing shape="rect" /> : null}
           </span>
-          {/* 未読 say の 🔔 は repo 名の直前 (kawaz r244m13: 行末の弱い
-           * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと
-           * repo の間に割り込ませて、鳴ったことを見逃させない。 */}
           {/* 古い ccmsg クライアント (典型的には upgrade 前から回り続けている
            * subscribe) は、拒否され続けても行の見た目を一切動かさない。未読
            * say と同じ「repo 名の直前」に出して、そのセッションだけの問題だと
@@ -594,16 +586,15 @@ function SessionRowItem({
               {protocolSkew.marker}
             </span>
           ) : null}
-          {sayUnread > 0 ? (
-            <span
-              class="session-say-unread"
-              title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
-              aria-label={`未読の say ${sayUnread} 件`}
-            >
-              🔔{sayUnread > 1 ? sayUnread : ""}
-            </span>
-          ) : null}
-          <PermitUnreadMark count={permitUnread} />
+        </span>
+        <SessionRowBadges sid={row.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
+        <a
+          // Session rows always enter through the session root so the router can
+          // restore that sid's recent tab/path. With no recent record the root
+          // falls back to Timeline/head.
+          href={sessionHref(row.sid)}
+          class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
+        >
           {/* 1 行目は repo@ws (kawaz r135m17 で title と入れ替え)。行の中で
            * 唯一の強い文字で、`@ws` は @ ごと別色 (r135m18) — worktree 名は
            * 同じ repo の行同士を見分ける唯一の手掛かりなので、repo 名の反復に
@@ -749,20 +740,11 @@ function PinnedSessionRow({
       onClick={selectSessionOnRowClick(pin.sid)}
     >
       <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
-        <a href={sessionHref(pin.sid)} class="session-main-link">
+        <span class="session-lead">
           <Avatar seed={pin.sid} size={16} />
-          {/* 🔔 の位置は SessionRowItem と同じ「アイコンと repo の間」
-           * (kawaz r244m13)。 */}
-          {sayUnread > 0 ? (
-            <span
-              class="session-say-unread"
-              title={`未読の say ${sayUnread} 件 — セッションの TL の say バブルで既読にできます`}
-              aria-label={`未読の say ${sayUnread} 件`}
-            >
-              🔔{sayUnread > 1 ? sayUnread : ""}
-            </span>
-          ) : null}
-          <PermitUnreadMark count={permitUnread} />
+        </span>
+        <SessionRowBadges sid={pin.sid} sayUnread={sayUnread} permitUnread={permitUnread} />
+        <a href={sessionHref(pin.sid)} class="session-main-link">
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
@@ -891,19 +873,27 @@ function sectionClass(key: string): string {
   return SESSION_SECTION_CLASS[key] ?? "session-section";
 }
 
-/** 未読の許可依頼の 🔐 (DR-0040)。say の 🔔 の隣、同じ「アイコンと repo の
- * 間」に出す: 許可依頼はエージェントが止まって人を待っている印で、say より
- * 見落としたくない。既読はセッションの TL のバブルの「許可する」で付く。 */
-function PermitUnreadMark({ count }: { count: number }) {
-  if (count === 0) return null;
+/** 行の 🔔🔐 (DR-0050 §7)。アイコンと repo 名の間 (kawaz r244m13: 行末の弱い
+ * badge 位置では絶対気づかない。1 行目の視線の起点に割り込ませて、鳴ったこと
+ * を見逃させない)。表示の規則は TL のヘッダと同じで、押すとそのセッションの
+ * TL をその種類のフィルタで開く。行の link の中に link は入れられないので、
+ * 行の link の兄弟に置く。 */
+function SessionRowBadges({
+  sid,
+  sayUnread,
+  permitUnread,
+}: {
+  sid: string;
+  sayUnread: number;
+  permitUnread: number;
+}) {
   return (
-    <span
-      class="session-permit-unread"
-      title={`未確認の許可依頼 ${count} 件 — セッションの TL のバブルの「許可する」で確認済みになります`}
-      aria-label={`未確認の許可依頼 ${count} 件`}
-    >
-      🔐{count > 1 ? count : ""}
-    </span>
+    <NotificationBadges
+      class="session-row-badges"
+      counts={{ say: sayUnread, permit: permitUnread }}
+      selected={null}
+      hrefOf={(kind) => timelineHref(sid, "head", kind)}
+    />
   );
 }
 

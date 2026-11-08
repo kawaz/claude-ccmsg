@@ -4,7 +4,9 @@ import {
   fileHref,
   filesHref,
   messageHref,
+  parseTimelineFilter,
   parseUrl,
+  permitPosition,
   roomHref,
   sessionHref,
   statusHref,
@@ -222,6 +224,69 @@ describe("real-path locators", () => {
     expect(parseUrl("/does-not-exist")).toEqual({
       view: "unknown",
       pathname: "/does-not-exist",
+    });
+  });
+});
+
+// DR-0050 §4: which bubble kind the session's own Timeline shows alone is the
+// page query `filter`, beside the position and never on an agent's Timeline.
+describe("the Timeline's filter", () => {
+  test("round-trips beside any position", () => {
+    for (const filter of ["say", "permit"] as const) {
+      for (const position of ["head", "u-1", permitPosition("i/3")]) {
+        const href = timelineHref("s1", position, filter);
+        const url = new URL(href, "http://x");
+        expect(parseUrl(url.pathname, url.search)).toEqual({
+          view: "timeline",
+          tab: "timeline",
+          sid: "s1",
+          position,
+          filter,
+        });
+      }
+    }
+    expect(timelineHref("s1", "head", "say")).toBe("/s/s1/timeline/head?filter=say");
+    expect(timelineHref("s1", "u-1", null)).toBe("/s/s1/timeline/u-1");
+  });
+
+  test("an unknown or empty value is no filter", () => {
+    for (const search of [
+      "?filter=",
+      "?filter=all",
+      "?filter=SAY",
+      "?other=say",
+      "",
+      "?filter=%zz",
+    ]) {
+      expect(parseTimelineFilter(search)).toBeNull();
+      expect(parseUrl("/s/s1/timeline/head", search)).toEqual({
+        view: "timeline",
+        tab: "timeline",
+        sid: "s1",
+        position: "head",
+      });
+    }
+  });
+
+  test("an agent's Timeline does not read it", () => {
+    expect(parseUrl("/s/s1/timeline/agent/sub/a1", "?filter=say")).toEqual({
+      view: "timeline",
+      tab: "timeline",
+      sid: "s1",
+      position: "head",
+      agent: { agentId: "a1" },
+    });
+  });
+
+  test("a permission request's position is its record id behind `permit:`", () => {
+    expect(permitPosition("inst/7")).toBe("permit:inst/7");
+    expect(
+      parseUrl(new URL(timelineHref("s1", permitPosition("inst/7")), "http://x").pathname),
+    ).toEqual({
+      view: "timeline",
+      tab: "timeline",
+      sid: "s1",
+      position: "permit:inst/7",
     });
   });
 });

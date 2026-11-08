@@ -1,0 +1,67 @@
+// The 🔔🔐 badges' rule (DR-0050 §3, §7), shared by the TL header and the
+// Sessions list:
+// - both badges show when either kind has something unread, none at 0 / 0,
+//   and a badge selected as the filter keeps them shown at 0 / 0 (§9 U4)
+// - the counter reads from 1, is absent at 0, and is `99+` past 99 (§9 U14)
+// - selecting a kind opens the tail with only that kind (§9 U5); pressing the
+//   selected one takes the filter off and leaves the position
+// - the counts are the session's unread says and unread requests only
+import { describe, expect, test } from "bun:test";
+import type { PermitRequestRecord, UnreadSay } from "@ccmsg/protocol";
+import {
+  badgeCounterText,
+  badgeHref,
+  badgesShown,
+  notificationCountsOf,
+} from "../src/client/notification-badges.ts";
+
+describe("notification badges", () => {
+  test("show both when either is unread, none at 0 / 0 unless one is selected", () => {
+    expect(badgesShown({ say: 0, permit: 0 }, null)).toBe(false);
+    expect(badgesShown({ say: 1, permit: 0 }, null)).toBe(true);
+    expect(badgesShown({ say: 0, permit: 1 }, null)).toBe(true);
+    expect(badgesShown({ say: 0, permit: 0 }, "say")).toBe(true);
+  });
+
+  test("the counter is absent at 0, the number from 1, and 99+ past 99", () => {
+    expect(badgeCounterText(0)).toBeNull();
+    expect(badgeCounterText(1)).toBe("1");
+    expect(badgeCounterText(99)).toBe("99");
+    expect(badgeCounterText(100)).toBe("99+");
+  });
+
+  test("selecting a kind opens the tail filtered; the selected one takes the filter off in place", () => {
+    expect(badgeHref("s1", "say", { position: "u-1", filter: null })).toBe(
+      "/s/s1/timeline/head?filter=say",
+    );
+    expect(badgeHref("s1", "permit", { position: "u-1", filter: "say" })).toBe(
+      "/s/s1/timeline/head?filter=permit",
+    );
+    expect(badgeHref("s1", "say", { position: "u-1", filter: "say" })).toBe("/s/s1/timeline/u-1");
+  });
+
+  test("counts the session's unread says and its requests not yet acted on", () => {
+    const says: UnreadSay[] = [
+      { session_id: "s1", tool_use_id: "t1", ts: "2026-11-08T00:00:00.000Z" },
+      { session_id: "s1", tool_use_id: "t2", ts: "2026-11-08T00:00:01.000Z" },
+      { session_id: "s2", tool_use_id: "t3", ts: "2026-11-08T00:00:02.000Z" },
+    ];
+    const request = (id: string, sid: string, read: boolean): PermitRequestRecord => ({
+      id,
+      sid,
+      ts: "2026-11-08T00:00:00.000Z",
+      blocked: "x",
+      attachments: [],
+      intents: [],
+      commands: [],
+      read,
+    });
+    const requests = [
+      request("i/1", "s1", false),
+      request("i/2", "s1", true),
+      request("i/3", "s2", false),
+    ];
+    expect(notificationCountsOf("s1", says, requests)).toEqual({ say: 2, permit: 1 });
+    expect(notificationCountsOf("s3", says, requests)).toEqual({ say: 0, permit: 0 });
+  });
+});

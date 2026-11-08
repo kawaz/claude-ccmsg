@@ -1312,14 +1312,65 @@ select.sidebar-globals-endpoint {
   border: 1px solid var(--border);
 }
 
-/* 未読 say マーカー (kawaz r244 m5-m6)。repo 名の直前に置き、文字サイズも
- * repo と同格 (r244m13: 小さく行末に置いたら絶対気づかない)。1 件なら絵文字
- * だけ、2 件以上のときだけ件数を添える。 */
-.session-say-unread,
-.session-permit-unread {
+/* 🔔 (未読の say) と 🔐 (未読の許可依頼) のバッジ (DR-0050 §3, §7)。TL の
+ * ヘッダと Sessions の行で同じ部品。数は絵文字の右上に重ねる赤い角丸の枠で、
+ * absolute なので有無で行の高さも横幅も動かない。未読 0 の方は絵文字だけ。
+ * 選択中 (TL がその種類だけを出している) のバッジは accent の面と枠。 */
+.notif-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
   flex-shrink: 0;
+  /* 最後のバッジのカウンターが右へはみ出す分を空けておく。 */
+  padding-right: var(--space-4);
+}
+
+.notif-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 0.4rem;
   line-height: 1;
+  text-decoration: none;
+  color: inherit;
+}
+
+.notif-badge[aria-current="true"] {
+  background: var(--accent-surface);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+.notif-badge-counter {
+  position: absolute;
+  top: -0.45em;
+  right: -0.6em;
+  min-width: 1.4em;
+  padding: 0 0.3em;
+  box-sizing: border-box;
+  border-radius: 0.45em;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Sessions の行の先頭 (アイコンと版の印)。行の link の外に出してあるのは、
+ * 続くバッジが link の中に入れられない別の link だから。並びはアイコン →
+ * 印 → バッジ → repo@ws のまま。 */
+.session-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
+  flex-shrink: 0;
+}
+
+.session-lead.session-disconnected {
+  opacity: 0.6;
 }
 
 /* 古い ccmsg クライアント警告。未読 say と同じ位置・同じ大きさで出す —
@@ -3200,6 +3251,12 @@ a.composer-attachment-label:hover {
   gap: var(--space-4);
 }
 
+/* タブ列の左端のバッジ。タブの文字の高さに揃える。 */
+.session-tabs-badges {
+  align-self: center;
+  margin-right: var(--space-4);
+}
+
 .session-tabs::after {
   content: "";
   position: absolute;
@@ -4926,8 +4983,30 @@ button.session-tab {
 }
 
 .tl-position-selected .tl-bubble-body,
-.tl-position-selected .tl-api-error {
+.tl-position-selected .tl-api-error,
+.tl-position-selected > .say {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* TL のフィルタ (DR-0050 §5): その種類のバブル (`data-notif`) だけを残し、
+ * 他の行は隠すだけ。描き直さないので、解除で fold・翻訳・raw の状態がそのまま
+ * 戻り、解除の位置合わせが測る要素も同じ DOM のまま。既読の失敗の行と
+ * 「ありません」の行は残す。 */
+.tl-lines[data-filter="say"] > :not([data-notif="say"], .tl-say-error, .tl-filter-empty),
+.tl-lines[data-filter="permit"] > :not([data-notif="permit"], .tl-say-error, .tl-filter-empty) {
+  display: none;
+}
+
+/* フィルタ中は残る行が少なく、TL の下の状態行が画面の途中に浮くので、行の
+ * 列を伸ばして状態行を下端に置く。 */
+.tl-lines[data-filter] {
+  flex-grow: 1;
+}
+
+.tl-filter-empty {
+  margin: var(--space-8) 0;
+  color: var(--fg-muted);
+  font-size: var(--font-size-sm);
 }
 
 .tl-bubble-peer .tl-bubble-body {

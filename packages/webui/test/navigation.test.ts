@@ -6,6 +6,7 @@ import {
   initialLocatorReady,
   isAgentTimelineUrl,
   isSameSessionTabChange,
+  isTimelineFilterChange,
   missingTarget,
   navigationTarget,
   recentIsValid,
@@ -14,6 +15,7 @@ import {
   sessionRootHistory,
   transcriptContainsUuid,
   urlWithRememberedTimelinePosition,
+  withoutTimelineFilter,
   type RecentRecord,
   type RecentProbe,
 } from "../src/client/navigation.ts";
@@ -90,6 +92,37 @@ describe("Navigation API routing decisions", () => {
     expect(isSameSessionTabChange(files("s1"), timeline("s1"))).toBe(true);
     expect(isSameSessionTabChange(files("s1", "a.ts"), files("s1", "b.ts"))).toBe(false);
     expect(isSameSessionTabChange(files("s1"), timeline("s2"))).toBe(false);
+  });
+
+  // DR-0050 §4 / §9 U10: switching the filter is a way of looking, not a
+  // place, so it replaces the entry instead of stacking one.
+  test("a filter switch on one session's own Timeline is converted from push to replace", () => {
+    const tl = (sid: string, filter?: "say" | "permit", position = "head"): Locator => ({
+      view: "timeline",
+      sid,
+      position,
+      ...(filter !== undefined ? { filter } : {}),
+    });
+    expect(isTimelineFilterChange(tl("s1"), tl("s1", "say"))).toBe(true);
+    expect(isTimelineFilterChange(tl("s1", "say", "u-1"), tl("s1", undefined, "u-1"))).toBe(true);
+    expect(isTimelineFilterChange(tl("s1", "say"), tl("s1", "permit"))).toBe(true);
+    expect(isTimelineFilterChange(tl("s1", "say"), tl("s1", "say", "u-1"))).toBe(false);
+    expect(isTimelineFilterChange(tl("s1"), tl("s2", "say"))).toBe(false);
+    expect(isTimelineFilterChange(files("s1"), tl("s1", "say"))).toBe(false);
+  });
+
+  // DR-0050 §9 U11: what the session was parked on is restored without the
+  // filter.
+  test("the recent place drops the Timeline's filter and keeps everything else", () => {
+    expect(withoutTimelineFilter("/s/s1/timeline/u-1?filter=say", "http://x")).toBe(
+      "/s/s1/timeline/u-1",
+    );
+    expect(withoutTimelineFilter("/s/s1/timeline/head?filter=permit&x=1", "http://x")).toBe(
+      "/s/s1/timeline/head?x=1",
+    );
+    expect(withoutTimelineFilter("/s/s1/files?path=a.ts", "http://x")).toBe(
+      "/s/s1/files?path=a.ts",
+    );
   });
 
   test("existence checks wait for catalogs, then reject only missing targets", () => {

@@ -45,6 +45,8 @@ interface Props {
   /** DOM に描いてある発話の番号 (0 始まり)。描いていない unit は閉じた fold の
    * 中の扱い。 */
   mounted: readonly number[];
+  /** TL がバブルの種類で絞られている (DR-0050 §5)。 */
+  filtered?: boolean;
 }
 
 interface Probe {
@@ -78,7 +80,7 @@ async function mountSearch(options: {
     },
     release() {},
   };
-  function useProbe({ search, foldMountRevision, mounted }: Props): Probe {
+  function useProbe({ search, foldMountRevision, mounted, filtered = false }: Props): Probe {
     const model = useTranscriptModel({ lines: LINES, start: 0 });
     const userUnitKeys = model.groups.flatMap((group) =>
       group.kind === "entry" && group.line.kind === "turn" && group.line.role === "user"
@@ -88,6 +90,7 @@ async function mountSearch(options: {
     const inViewSearch = useInViewSearch({
       sid: SID,
       search,
+      filtered,
       groups: model.groups,
       ccmsgTargets: model.ccmsgTargets,
       openFoldsAt: (offset) => opened.push(offset),
@@ -148,6 +151,22 @@ describe("useInViewSearch", () => {
 
     await hook.rerender({ search: query("beta"), foldMountRevision: 0, mounted: [0, 1, 2] });
     expect(counter(hook.current().search)).toBe("1/1");
+  });
+
+  // DR-0050 §9 U9: while the Timeline shows only say / permission bubbles,
+  // search covers what is shown, and none of those is a unit.
+  test("a filtered Timeline has nothing to count, and gets its matches back unfiltered", async () => {
+    const { hook } = await mountSearch({});
+    expect(hook.current().search.matchCount).toBe(2);
+    await hook.rerender({
+      search: query("alpha"),
+      foldMountRevision: 0,
+      mounted: [0, 1, 2],
+      filtered: true,
+    });
+    expect(counter(hook.current().search)).toBe("0/0");
+    await hook.rerender({ search: query("alpha"), foldMountRevision: 0, mounted: [0, 1, 2] });
+    expect(counter(hook.current().search)).toBe("1/2");
   });
 
   test("the 👤 / 🤖 target toggles take their units out of the count", async () => {

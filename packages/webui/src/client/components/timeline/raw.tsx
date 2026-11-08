@@ -12,6 +12,7 @@ import {
 import { CodeBlock } from "../CodeBlock.tsx";
 import { CopyablePreText } from "../CodeCopyFrame.tsx";
 import { ItemRawContext } from "./context.ts";
+import type { TimelineFilter } from "../../locator.ts";
 
 /** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
  * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
@@ -52,6 +53,23 @@ function RawModeTabs({
   );
 }
 
+/** A click on an item selects its position, unless it landed on something
+ * that acts on its own (a link, a button, a field, a fold's summary). Shared
+ * by the transcript items and the permission-request bubbles (DR-0050 §9 U7),
+ * which are selectable the same way. */
+export function selectPositionOnClick(
+  uuid: string | undefined,
+  onSelectPosition: ((uuid: string) => void) | undefined,
+): (event: MouseEvent) => void {
+  return (event) => {
+    if (!uuid || !onSelectPosition) return;
+    const { target } = event;
+    if (!(target instanceof Element)) return;
+    if (target.closest("a, button, input, textarea, select, summary")) return;
+    onSelectPosition(uuid);
+  };
+}
+
 /**
  * Wraps one rendered timeline item with a `raw` toggle that swaps it for the
  * verbatim jsonl line(s) it came from. Layout-neutral by construction: the
@@ -64,12 +82,16 @@ export function ItemRawToggle({
   uuid,
   selectedPosition = false,
   onSelectPosition,
+  notif,
   children,
 }: {
   offset: number;
   uuid?: string;
   selectedPosition?: boolean;
   onSelectPosition?: (uuid: string) => void;
+  /** The badge kind this item answers to (DR-0050 §5): it stays shown while
+   * the Timeline is filtered to that kind. */
+  notif?: TimelineFilter;
   children: ComponentChildren;
 }) {
   const [raw, setRaw] = useState(false);
@@ -77,13 +99,8 @@ export function ItemRawToggle({
     <div
       class={`tl-item${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
       data-timeline-uuid={uuid}
-      onClick={(event) => {
-        if (!uuid || !onSelectPosition) return;
-        const { target } = event;
-        if (!(target instanceof Element)) return;
-        if (target.closest("a, button, input, textarea, select, summary")) return;
-        onSelectPosition(uuid);
-      }}
+      data-notif={notif}
+      onClick={selectPositionOnClick(uuid, onSelectPosition)}
     >
       {/* ラベルが "raw" ではなく "jsonl" なのは、ccmsg 吹き出し / システム
        * メッセージが本文内に持つ msg|raw タブとの衝突を避けるため — あちらの

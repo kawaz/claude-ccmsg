@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h } from "preact";
 import { useRef } from "preact/hooks";
 import { act } from "preact/test-utils";
-import { timelineHref } from "../src/client/locator.ts";
+import { timelineHref, type TimelineFilter } from "../src/client/locator.ts";
 import type { ScrollHold } from "../src/client/useScrollHold.ts";
 import { classifyEndChange } from "../src/client/components/timeline/transcript-end.ts";
 import {
@@ -334,6 +334,7 @@ describe("usePositionPin and usePositionLanding", () => {
     status: "loading" | "loaded";
     parsedVersion: number;
     agentActive?: boolean;
+    filter?: TimelineFilter | null;
   }
 
   const UUIDS = [uuidOf("u", 1), uuidOf("u", 2)];
@@ -341,11 +342,12 @@ describe("usePositionPin and usePositionLanding", () => {
   async function mountPin(initial: Props) {
     const { hold, calls } = recordingHold();
     const parsedBy = new Map<number, readonly never[]>();
-    function useProbe({ position, status, parsedVersion, agentActive }: Props) {
+    function useProbe({ position, status, parsedVersion, agentActive, filter }: Props) {
       const scrollRef = useRef<HTMLDivElement | null>(null);
       const pin = usePositionPin({
         sid: SID,
         currentPosition: position,
+        currentFilter: filter ?? null,
         agentActive: agentActive ?? false,
       });
       let parsed = parsedBy.get(parsedVersion);
@@ -356,6 +358,7 @@ describe("usePositionPin and usePositionLanding", () => {
       usePositionLanding({
         sid: SID,
         currentPosition: position,
+        currentFilter: filter ?? null,
         timelineStatus: status,
         parsed,
         scrollRef,
@@ -419,6 +422,34 @@ describe("usePositionPin and usePositionLanding", () => {
     expect(calls).toEqual([]);
     await act(() => hook.current().pin.selectPosition(target));
     expect(navigations.at(-1)).toBe(timelineHref(SID));
+  });
+
+  // DR-0050 §4: the filter is the URL's query beside the position, and no
+  // write of the position may drop it.
+  test("selecting, clearing and returning to the head keep the filter", async () => {
+    const target = UUIDS[0] ?? "";
+    const { hook, scroller } = await mountPin({
+      position: "head",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "say",
+    });
+    await act(() => hook.current().pin.selectPosition(target));
+    expect(navigations).toEqual([timelineHref(SID, target, "say")]);
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: "say" });
+    await act(() => hook.current().pin.selectPosition(target));
+    expect(navigations.at(-1)).toBe(timelineHref(SID, "head", "say"));
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: "say" });
+    hook.current().pin.onUserScrollIntent();
+    hook.current().pin.onScrollMeasured(scroller, true);
+    expect(navigations.at(-1)).toBe(timelineHref(SID, "head", "say"));
+    await hook.rerender({
+      position: uuidOf("u", 9),
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    expect(navigations.at(-1)).toBe(timelineHref(SID, "head", "permit"));
   });
 
   test("an agent Timeline does not select positions", async () => {

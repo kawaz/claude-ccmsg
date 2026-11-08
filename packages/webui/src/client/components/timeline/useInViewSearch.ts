@@ -158,6 +158,7 @@ export interface InViewSearch {
 export function useInViewSearch({
   sid,
   search,
+  filtered,
   groups,
   ccmsgTargets,
   openFoldsAt,
@@ -166,6 +167,10 @@ export function useInViewSearch({
 }: {
   sid: string;
   search: TimelineSearch;
+  /** The Timeline shows only the say or permission bubbles (DR-0050 §5).
+   * Search then covers what is shown, and none of those bubbles is a unit, so
+   * there is nothing to count, paint or move to (§9 U9). */
+  filtered: boolean;
   groups: readonly TimelineGroup[];
   ccmsgTargets: ReturnType<typeof ccmsgRenderTargets>;
   openFoldsAt: (offset: number | undefined) => void;
@@ -263,6 +268,7 @@ export function useInViewSearch({
 
   const searchUnits = useMemo(() => {
     const units: SearchUnit[] = [];
+    if (filtered) return units;
     const targets = { user: targetUser, ai: targetAI, ccmsg: targetCcmsg };
     const pushLine = (offset: number, line: ParsedLine) => {
       if (line.kind !== "turn") return;
@@ -312,7 +318,7 @@ export function useInViewSearch({
       }
     }
     return units;
-  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg, translations]);
+  }, [filtered, groups, ccmsgTargets, targetUser, targetAI, targetCcmsg, translations]);
 
   // Unit key -> the line it came from, so a match inside a not-yet-mounted
   // fold can be reached: the key alone says nothing about where it lives, and

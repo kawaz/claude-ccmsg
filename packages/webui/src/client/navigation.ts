@@ -102,13 +102,23 @@ export function isAgentTimelineUrl(url: string, origin: string = location.origin
  * session was actually parked on. recentIsValid re-checks on the read side
  * because a record written before this gate existed outlives it by up to
  * RECENT_STALE_MS. */
+/** `url` without the Timeline's `filter` (DR-0050 §4). The filter is a way
+ * of looking at the place for clearing its unread bubbles, not the place, so
+ * returning to the session restores where it was without hiding most of it. */
+export function withoutTimelineFilter(url: string, origin: string = location.origin): string {
+  const parsed = new URL(url, origin);
+  if (!parsed.searchParams.has("filter")) return url;
+  parsed.searchParams.delete("filter");
+  return `${parsed.pathname}${parsed.search}`;
+}
+
 function saveRecent(sid: string, url: string): void {
   if (isAgentTimelineUrl(url)) return;
   // Strip `sb.*`: what the session was parked on is a place, and a form panel
   // that happened to be open while the user was there is not part of it.
   // Restoring one would reopen a launcher nobody asked for, seeded from
   // whatever session was being looked at then.
-  const place = withSidebarState(url, CLOSED_SIDEBAR);
+  const place = withoutTimelineFilter(withSidebarState(url, CLOSED_SIDEBAR));
   writeStorage(recentKey(sid), JSON.stringify({ url: place, updatedAt: new Date().toISOString() }));
 }
 
@@ -209,6 +219,21 @@ export function isSameSessionTabChange(current: Locator, target: Locator): boole
     currentSid === locatorSid(target) &&
     locatorTab(current) !== null &&
     locatorTab(current) !== locatorTab(target)
+  );
+}
+
+/** A move between two looks of the same session's own Timeline that differ
+ * in `filter` (the badges, DR-0050 §4). Switching how the place is shown is
+ * not a place of its own, so it replaces the entry rather than stacking one
+ * the back button would flip through. */
+export function isTimelineFilterChange(current: Locator, target: Locator): boolean {
+  return (
+    current.view === "timeline" &&
+    target.view === "timeline" &&
+    current.sid === target.sid &&
+    !current.agent &&
+    !target.agent &&
+    (current.filter ?? null) !== (target.filter ?? null)
   );
 }
 
@@ -356,11 +381,15 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     const targetSid = locatorSid(target);
     if (currentSid && currentSid !== targetSid) saveRecent(currentSid, currentUrl());
 
-    if (isSameSessionTabChange(current, target) && event.navigationType === "push") {
+    if (
+      (isSameSessionTabChange(current, target) || isTimelineFilterChange(current, target)) &&
+      event.navigationType === "push"
+    ) {
       event.preventDefault();
       // Re-issued verbatim, `sb.*` included: this is the same navigation the
-      // caller already composed, only demoted to a replace so tab hopping
-      // inside one session does not stack history entries.
+      // caller already composed, only demoted to a replace so tab hopping and
+      // switching the Timeline's filter inside one session do not stack
+      // history entries.
       replaceNavigation(
         `${targetUrl.pathname}${targetUrl.search}`,
         parseSidebarUrl(targetUrl.search),
