@@ -23,6 +23,7 @@ import {
   userContentRow,
 } from "../../protocol/test/transcript-rows.ts";
 import { withDom } from "./dom.ts";
+import { sayTotalsOf } from "./say-fixture.ts";
 import { renderHook, type RenderedHook } from "./render-hook.ts";
 import { endOf, exchange, FakeTranscriptWs, SID, timelineStore } from "./timeline-harness.ts";
 
@@ -124,10 +125,12 @@ describe("useSayRead", () => {
     const store = timelineStore();
     const fake = new FakeTranscriptWs(store);
     const ws: WsHandle = { ...fake.handle, sayRead };
-    store.dispatch({
-      type: "say-unread/loaded",
-      says: [unread("toolu_1", SID), unread("toolu_9", "someone-else"), unread("toolu_3", SID)],
-    });
+    const says = [
+      unread("toolu_1", SID),
+      unread("toolu_9", "someone-else"),
+      unread("toolu_3", SID),
+    ];
+    store.dispatch({ type: "say-unread/loaded", says, totals: sayTotalsOf(says) });
     const wrap = (child: ComponentChild) => h(AppContext.Provider, { value: { store, ws } }, child);
     return track(
       await renderHook(

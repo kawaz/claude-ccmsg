@@ -36,6 +36,7 @@ import {
   type ResponseBody,
   type RestartingStreamEvent,
   type Request,
+  type SayUnreadStreamEvent,
   type StreamEvent,
   type SessionIdentity,
   type SessionFacts,
@@ -135,6 +136,7 @@ import { createSpeaker, type Speaker, SYSTEM_SAY } from "./say-speech.ts";
 import {
   loadSayUnreadStore,
   markSaysRead,
+  sayTotals,
   sayUnreadFold,
   agentSays,
   takeAgentSaysOf,
@@ -1395,8 +1397,18 @@ function broadcastLlmRequests(daemon: Daemon): void {
  * so the same call serves a fresh subscriber's catch-up and the live
  * update. */
 function sendSayUnread(daemon: Daemon, conn: Conn): void {
-  send(conn, { ev: "say_unread", says: unreadSays(daemon.sayUnread) });
+  send(conn, sayUnreadEvent(daemon));
   send(conn, { ev: "agent_says", says: agentSays(daemon.sayUnread) });
+}
+
+/** The ev:"say_unread" of now: the unread says and every session's count of
+ * says, read or not. */
+function sayUnreadEvent(daemon: Daemon): SayUnreadStreamEvent {
+  return {
+    ev: "say_unread",
+    says: unreadSays(daemon.sayUnread),
+    totals: sayTotals(daemon.sayUnread),
+  };
 }
 
 /** Push the unread says to every user-role subscriber when they moved.
@@ -1405,12 +1417,12 @@ function sendSayUnread(daemon: Daemon, conn: Conn): void {
  * next daemon sends its own. */
 function broadcastSayUnread(daemon: Daemon): void {
   if (daemon.shuttingDown) return;
-  const says = unreadSays(daemon.sayUnread);
-  const key = JSON.stringify(says);
+  const event = sayUnreadEvent(daemon);
+  const key = JSON.stringify(event);
   if (key !== daemon.sayUnreadSnapshot) {
     daemon.sayUnreadSnapshot = key;
     for (const sub of daemon.subscribers) {
-      if (sub.identity?.role === "user") send(sub, { ev: "say_unread", says });
+      if (sub.identity?.role === "user") send(sub, event);
     }
   }
   const ofAgents = agentSays(daemon.sayUnread);

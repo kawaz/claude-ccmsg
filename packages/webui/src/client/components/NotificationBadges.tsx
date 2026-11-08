@@ -1,5 +1,6 @@
-// A session's 🔔 (unread says) and 🔐 (unread requests for permission)
-// badges (DR-0050 §3, §7), the same in the TL header and the Sessions list.
+// A session's 🔔 (says) and 🔐 (requests for permission) badges (DR-0050
+// §3, §7), the same in the TL header and the Sessions list: shown while the
+// session has either at all, with the unread count as the counter.
 // Each badge is a link: which kind the Timeline shows alone is the URL's
 // `?filter=`, so pressing one is a navigation, and a middle click opens that
 // look in another window as the session tabs do.
@@ -31,7 +32,7 @@ export function NotificationBadges({
   return (
     <span class={className === undefined ? "notif-badges" : `notif-badges ${className}`}>
       {NOTIFICATION_KINDS.map((kind) => {
-        const count = counts[kind];
+        const count = counts[kind].unread;
         const counter = badgeCounterText(count);
         const isSelected = selected === kind;
         const label = badgeLabel(kind, count, isSelected);

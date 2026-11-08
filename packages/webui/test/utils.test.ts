@@ -9,7 +9,6 @@ import type {
   MemberEvent,
   PeerInfo,
   SessionSearchHit,
-  UnreadSay,
 } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
@@ -59,8 +58,6 @@ import {
   sessionSearchHitLabel,
   sessionStatus,
   hasSessionTranscript,
-  sayUnreadBySid,
-  permitUnreadBySid,
   PANE_MIN_PX,
   SESSION_PANE_DEFAULT_RATIO,
   shortSid,
@@ -185,53 +182,6 @@ function roomWithMember(m: MemberEvent): RoomState {
     history: "loaded",
   };
 }
-
-describe("permitUnreadBySid", () => {
-  // 未読の許可依頼は記録の sid に帰属し、既読は数えない。未読ゼロの sid は出さない。
-  test("counts each sid's unread requests", () => {
-    const request = (id: string, sid: string, read: boolean) => ({
-      id,
-      sid,
-      ts: "t",
-      blocked: "x",
-      attachments: [],
-      intents: [],
-      commands: [{ command: "ls" }],
-      read,
-    });
-    const got = permitUnreadBySid([
-      request("i/1", "sid-a", false),
-      request("i/2", "sid-a", false),
-      request("i/3", "sid-b", true),
-    ]);
-    expect([...got]).toEqual([["sid-a", 2]]);
-  });
-});
-
-describe("sayUnreadBySid", () => {
-  const unread = (id: string, sid: string): UnreadSay => ({
-    session_id: sid,
-    tool_use_id: id,
-    ts: "2026-10-13T00:00:00.000Z",
-  });
-
-  // 輪郭: 未読は session_id に帰属し、同じセッションの分は合算される。
-  test("counts each session's unread says", () => {
-    const got = sayUnreadBySid([
-      unread("toolu_1", "sid-a"),
-      unread("toolu_2", "sid-a"),
-      unread("toolu_3", "sid-b"),
-    ]);
-    expect(got.get("sid-a")).toBe(2);
-    expect(got.get("sid-b")).toBe(1);
-    // 未読ゼロのセッションはエントリごと出さない (呼び出し側は ?? 0 で読む)。
-    expect(got.has("sid-c")).toBe(false);
-  });
-
-  test("no unread says, no entries", () => {
-    expect([...sayUnreadBySid([]).keys()]).toEqual([]);
-  });
-});
 
 describe("memberLabel", () => {
   test("ADMIN_ID always renders as 'User', regardless of room state", () => {

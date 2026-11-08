@@ -820,7 +820,7 @@ export function createWsClient(
     // turns a say read in another tab to 🔕 here. Same "replace the set" shape
     // as ev:"peers" above.
     if (streamEv.ev === "say_unread") {
-      dispatch({ type: "say-unread/loaded", says: streamEv.says });
+      dispatch({ type: "say-unread/loaded", says: streamEv.says, totals: streamEv.totals });
       return;
     }
     // The says of the sessions' subagents and teammates (DR-0050 §10), read or

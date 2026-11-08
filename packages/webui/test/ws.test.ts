@@ -1565,12 +1565,13 @@ describe("createWsClient agents/ping (U1)", () => {
     actions.length = 0;
 
     const say = { session_id: "s2", tool_use_id: "toolu_1", ts: "2026-10-13T00:00:00Z" };
-    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [say] }));
-    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [] }));
+    const totals = [{ session_id: "s2", count: 1 }];
+    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [say], totals }));
+    ws1.triggerMessage(JSON.stringify({ ev: "say_unread", says: [], totals }));
 
     expect(actions).toEqual([
-      { type: "say-unread/loaded", says: [say] },
-      { type: "say-unread/loaded", says: [] },
+      { type: "say-unread/loaded", says: [say], totals },
+      { type: "say-unread/loaded", says: [], totals },
     ]);
   });
 });

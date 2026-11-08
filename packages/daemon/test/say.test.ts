@@ -283,6 +283,30 @@ describe("say: what the person has not read", () => {
     });
   });
 
+  // 何を保証するか: ev:"say_unread" の totals は、セッションごとの say の数を
+  // 既読も含めて数える (DR-0050 §3 のバッジを出すかの源)。main と worker の say
+  // の合計で、既読にしても減らない。say の無いセッションは出ない。
+  test("totals count each session's says, read or not, main and workers together", async () => {
+    await withSpeakingDaemon(async (ctx, _spoken, dir) => {
+      const file = path.join(dir, `${A}.jsonl`);
+      fs.writeFileSync(file, "");
+      const session = await liveSessionConn(ctx, A, { transcript_path: file });
+      const user = await userConn(ctx);
+      await user.requestOk({ op: "subscribe" });
+      const first = await user.readEventUntil("say_unread", () => true);
+      expect(first.ev.totals).toEqual([]);
+
+      await writeAndPushSay(session, file, "main", "toolu_main");
+      await pushSay(session, { text: "worker" }, "toolu_sub", { agent_id: "a1" });
+      const both = await user.readEventUntil("say_unread", (e) => e.says.length === 2);
+      expect(both.ev.totals).toEqual([{ session_id: A, count: 2 }]);
+
+      await user.requestOk({ op: "say_read", ids: ["toolu_main", "toolu_sub"] });
+      const read = await user.readEventUntil("say_unread", (e) => e.says.length === 0);
+      expect(read.ev.totals).toEqual([{ session_id: A, count: 2 }]);
+    });
+  });
+
   // 何を保証するか: セッションが live でなくなると (module の run が去る)、その
   // say は未読から消える。live のままの別セッションの say は残る。
   test("a session no longer live takes its says out of the unread", async () => {

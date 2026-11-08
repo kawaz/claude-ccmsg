@@ -22,6 +22,7 @@ import {
   parseWith,
   TranscriptRowLineSchema,
   type AgentSay,
+  type SessionSayTotal,
   type TranscriptPushRow,
   type UnreadSay,
 } from "@ccmsg/protocol";
@@ -122,6 +123,18 @@ export function unreadSays(store: SayUnreadStore): UnreadSay[] {
     }
   }
   return unread.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+}
+
+/** How many says each session has, read or not: what makes its 🔔 show
+ * (DR-0050 §3). A session with none is absent. */
+export function sayTotals(store: SayUnreadStore): SessionSayTotal[] {
+  const totals = new Map<string, number>();
+  const add = (sid: string, count: number): void => {
+    if (count > 0) totals.set(sid, (totals.get(sid) ?? 0) + count);
+  };
+  for (const [sid, says] of store.says) add(sid, says.size);
+  for (const [sid, says] of store.agentSays) add(sid, says.size);
+  return [...totals].map(([session_id, count]) => ({ session_id, count }));
 }
 
 /** What `markSaysRead` did. `unknown` lists the ids that are neither unread

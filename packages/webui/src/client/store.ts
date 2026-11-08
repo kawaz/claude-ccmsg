@@ -31,6 +31,7 @@ import {
   type StorageEvent,
   type TranscriptReadResponse,
   type AgentSay,
+  type SessionSayTotal,
   type UnreadSay,
   parseWith,
 } from "@ccmsg/protocol";
@@ -412,6 +413,10 @@ export interface AppState {
    * button, and the unread 🔔 marker in the Sessions list. Replaced whole on
    * every push — the daemon always sends the full set. */
   unreadSays: readonly UnreadSay[];
+  /** How many says each session has, read or not (ev:"say_unread"'s
+   * `totals`, DR-0050 §3): whether its 🔔 shows at all. Replaced whole with
+   * `unreadSays`. */
+  sayTotals: readonly SessionSayTotal[];
   /** Every say of the live sessions' subagents and teammates (ev:"agent_says",
    * DR-0050 §10), oldest first: drawn in the session's own Timeline at their
    * time. Whether one is unread is `unreadSays`'. Replaced whole on every push. */
@@ -494,6 +499,7 @@ export function initialState(): AppState {
     sessionErrors: new Map(),
     llmRequests: new Map(),
     unreadSays: [],
+    sayTotals: [],
     agentSays: [],
     permitRequests: [],
     requestOverrides: new Map(),
@@ -528,7 +534,11 @@ export type Action =
   // whole non-expired set on both the live push and the subscribe catch-up.
   | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
   // Full replacement, same as llm-requests/loaded (ev:"say_unread").
-  | { type: "say-unread/loaded"; says: readonly UnreadSay[] }
+  | {
+      type: "say-unread/loaded";
+      says: readonly UnreadSay[];
+      totals: readonly SessionSayTotal[];
+    }
   | { type: "agent-says/loaded"; says: readonly AgentSay[] }
   | { type: "permit-requests/loaded"; requests: readonly PermitRequestRecord[] }
   | { type: "permit-requests/updated"; request: PermitRequestRecord }
@@ -1127,7 +1137,7 @@ export function reducer(state: AppState, action: Action): AppState {
         sessionErrors: new Map(action.errors.map(({ sid, ...error }) => [sid, error])),
       };
     case "say-unread/loaded":
-      return { ...state, unreadSays: action.says };
+      return { ...state, unreadSays: action.says, sayTotals: action.totals };
     case "agent-says/loaded":
       return { ...state, agentSays: action.says };
     case "permit-requests/loaded":

@@ -16,7 +16,7 @@ const PUSHES: {
   readonly [Ev in StreamEvent["ev"]]: readonly Extract<StreamEvent, { ev: Ev }>[];
 } = {
   say_unread: [
-    { ev: "say_unread", says: [] },
+    { ev: "say_unread", says: [], totals: [] },
     {
       ev: "say_unread",
       says: [
@@ -29,6 +29,7 @@ const PUSHES: {
           agent_id: "a1b2c3",
         },
       ],
+      totals: [{ session_id: SID, count: 4 }],
     },
   ],
   agent_says: [
