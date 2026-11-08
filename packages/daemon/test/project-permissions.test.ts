@@ -248,7 +248,7 @@ describe("createSettingsDiffNotifier", () => {
     expect(told[0]?.sid).toBe("s1");
     expect(told[0]?.text).toBe(
       [
-        "人が許可依頼の「許可する」で `.claude/settings.local.json` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。",
+        ".claude/settings.local.json was updated; it takes effect immediately.",
         "",
         "```diff",
         "--- /dev/null",

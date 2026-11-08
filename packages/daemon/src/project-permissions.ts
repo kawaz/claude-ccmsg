@@ -253,13 +253,14 @@ export function unifiedDiff(file: string, before: string | null, after: string):
  * as one notice. */
 export const SETTINGS_DIFF_NOTICE_DELAY_MS = 5_000;
 
-/** The notice the session gets for a change to its project settings. `file`
- * is the file as named from the project directory, which is the session's
- * cwd, so that the notice stays short enough to read on a phone. */
-export function settingsDiffNotice(file: string, diff: string): string {
+/** The notice the session gets for a change to its project settings: one
+ * fixed sentence, then the diff, whose header names the file as named from
+ * the project directory (the session's cwd), so that the notice stays short
+ * enough to read on a phone. */
+export function settingsDiffNotice(diff: string): string {
   const fence = "```";
   return [
-    `人が許可依頼の「許可する」で \`${file}\` の permissions.allow を書き換えた。すぐ効く (再起動は要らない)。`,
+    ".claude/settings.local.json was updated; it takes effect immediately.",
     "",
     `${fence}diff`,
     diff.trimEnd(),
@@ -300,7 +301,7 @@ export function createSettingsDiffNotifier(
     if (held === undefined) return;
     pending.delete(key);
     const diff = unifiedDiff(PROJECT_SETTINGS_FILE, held.before, held.after);
-    if (diff !== "") tell(held.sid, settingsDiffNotice(PROJECT_SETTINGS_FILE, diff));
+    if (diff !== "") tell(held.sid, settingsDiffNotice(diff));
   };
   return {
     applied(sid, file, before, after) {
