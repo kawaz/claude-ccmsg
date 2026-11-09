@@ -13,7 +13,7 @@ Sponsor: kawaz
 
 - **検出**: セッション cwd 直下の `*.code-workspace` を fs_list 時 (または session_status fold) に検出。JSONC (コメント・末尾カンマ許容) の寛容 parse
 - **解決**: `folders[].path` を workspace ファイルの位置基準で解決・realpath 正規化
-- **表示**: Files ツリーに「ワークスペース」セクション (節の並びは §4)。各 folder を root にしたブラウズ (ツリー展開可)
+- **表示**: Files ツリーに「ワークスペース」セクション (節の並びは §4)。各 folder を root にしたブラウズ (ツリー展開可)。どの folder も閉じた状態で始まり (cwd の folder も同じ)、folder / ディレクトリを開くたびに fs_list し直す (取り直す間は前の一覧を出したまま)。選択中のファイルの祖先だけは選択への追従として開く
 - **認可 (DR-0024 前例踏襲)**: containment root 外の folder は「workspace ファイルに列挙されたパス集合」を allowlist とする読み出し限定 — 任意ブラウズには広げない。
   ディレクトリ単位 allowlist なので DR-0024 (ファイル単位) より広いが、workspace ファイルはリポ内の第一級成果物であり、kawaz 自身が管理する列挙 = 本人の意図。symlink escape はrealpath 検査
 - ★ (お気に入り) 対応

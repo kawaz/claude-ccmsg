@@ -74,8 +74,9 @@ afterEach(async () => {
 
 /** A store with the session's Files tab selected and one listed root file, so
  * the tree has a row whose favorite toggle can be clicked. The socket is never
- * connected: nothing here may depend on a reply. */
-function filesStore(): Store {
+ * connected: nothing here may depend on a reply. The cwd's folder starts
+ * closed like every folder, so `open` unfolds it the way a click would. */
+function filesStore(open = false): Store {
   const store = createStore(initialState());
   store.dispatch({
     type: "locator/changed",
@@ -88,6 +89,7 @@ function filesStore(): Store {
     path: "",
     entries: [{ name: "package.json", type: "file" }],
   });
+  if (open) store.dispatch({ type: "fs/dirs-expanded", sid: SID, paths: [""] });
   return store;
 }
 
@@ -114,8 +116,8 @@ async function mount(vnode: ComponentChild): Promise<HTMLElement> {
 }
 
 /** Mount, then render again with the tree as the store holds it after the
- * mount's own effects (the cwd's folder opens on mount): `panes` passes the
- * tree as a value, the way SessionView re-renders with each store change. */
+ * mount's own effects: `panes` passes the tree as a value, the way
+ * SessionView re-renders with each store change. */
 async function mountSettled(
   store: Store,
   peer: PeerInfo | undefined,
@@ -168,7 +170,7 @@ describe("FileTree favorites mounted", () => {
 
   test("a toggle saves the list it produced", async () => {
     seed(["README.md"]);
-    const root = await mountSettled(filesStore(), PEER);
+    const root = await mountSettled(filesStore(true), PEER);
     const add = instanceOf(
       root.querySelector('.tree-fav-toggle[aria-label="package.json をお気に入りに追加"]'),
       HTMLElement,
@@ -252,10 +254,9 @@ describe("FileTree sections", () => {
   });
 
   test("without a workspace file the cwd is PROJECT_ROOT and the プロジェクト section is gone", async () => {
-    const root = await mountSettled(filesStore(), PEER);
+    const root = await mountSettled(filesStore(true), PEER);
     expect(workspaceRows(root)).toEqual(["PROJECT_ROOT"]);
     expect(sectionLabels(root)).toEqual(["ワークスペース"]);
-    // The cwd's folder opens on mount, so its listing shows without a click.
     expect(
       root.querySelector('.tree-fav-toggle[aria-label="package.json をお気に入りに追加"]'),
     ).not.toBeNull();

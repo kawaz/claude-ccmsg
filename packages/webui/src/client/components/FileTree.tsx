@@ -243,7 +243,9 @@ function DirNode({
 
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
-    if (!expanded && entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
+    // Every opening re-fetches, so a file created since the last visit shows up;
+    // the previous listing stays on screen until the reply replaces it.
+    if (!expanded) void loadDir(store, ws, sid, path, workspaceFolders);
   }
 
   function onNewFile(e: MouseEvent) {
@@ -252,7 +254,7 @@ function DirNode({
     // Auto-expand + eager-load so the newly-created file lands in an already
     // visible listing (mirrors DirNode.toggle's own lazy-load path).
     if (!expanded) store.dispatch({ type: "fs/dir-toggled", sid, path });
-    if (entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
+    if (!expanded || entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
     create.onStart(path, isWorkspaceFilePath(path, workspaceFolders) ? "workspace" : "contained");
   }
 
@@ -664,8 +666,6 @@ export function FileTree({
   // Until the peer row arrives the layout names the containment root ("")
   // instead; it self-corrects to the cwd root once `peer` arrives.
   const rootPath = layout.folders.find((folder) => folder.isCwd)?.key ?? "";
-  const rootEntries = tree.dirs.get(rootPath);
-  const rootError = tree.dirErrors.get(rootPath);
 
   // Favorites (U-fav): keyed on peer.cwd (kawaz), so every session/tab working
   // in the same directory shares one favorites list, and sibling worktrees of
@@ -859,30 +859,6 @@ export function FileTree({
     },
   };
 
-  // The cwd's folder is the tree the session works in, so it opens when the
-  // tree mounts (the other workspace folders start closed). It is a DirNode
-  // like them, so the user can still fold it for the rest of the visit.
-  useEffect(() => {
-    store.dispatch({ type: "fs/dirs-expanded", sid, paths: [rootPath] });
-  }, [sid, rootPath, store]);
-
-  // Root listing loads eagerly on mount / session switch — everything below
-  // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
-  // so a direct `#s<sid>` link opened before the WS handshake completes
-  // doesn't race ws.send() (which synchronously rejects while the socket
-  // isn't open, see ws.ts): the effect just waits, and re-evaluates once
-  // connStatus flips to "connected" since it's in the dep list. Still
-  // per-tree idle-gated (rootEntries/rootError both undefined) so a
-  // reconnect after a successful/failed load never refetches.
-  useEffect(() => {
-    if (rootEntries !== undefined || rootError !== undefined) return;
-    if (connStatus !== "connected") return;
-    // The root is a plain containment-relative path (cwd's, see rootPath), so
-    // no workspaceFolders arg is needed here — the DR-0026 branch only fires
-    // for absolute workspace-folder paths, not for the session's own root.
-    void loadDir(store, ws, sid, rootPath);
-  }, [sid, rootPath, rootEntries, rootError, connStatus, store, ws]);
-
   // Reveal the selected file (kawaz r76 m85): open every ancestor directory of
   // `selectedPath` and fetch the listings the newly-opened nodes need, so a
   // file opened from outside the tree (timeline link, markdown link, direct
@@ -913,7 +889,6 @@ export function FileTree({
     if (paths.length === 0) return;
     store.dispatch({ type: "fs/dirs-expanded", sid, paths });
     for (const path of paths) {
-      if (tree.dirs.has(path) || tree.dirErrors.has(path)) continue;
       void loadDir(store, ws, sid, path, workspaceFolders);
     }
   }, [sid, rootPath, selectedPath, workspaceFolders, connStatus, tree, store, ws]);
