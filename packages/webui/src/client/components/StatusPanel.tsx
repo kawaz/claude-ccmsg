@@ -402,11 +402,11 @@ export function useSessionRestart(
  * The outcome is shown by the input's own look, with no text beside it: a
  * send in flight pulses its brightness, an answer of `renamed` or `queued`
  * returns it to normal, and an error marks it in the danger colour (the
- * message in its `title`) until the person changes the value. A sent name is
- * not written into the input ahead of the session: the input goes back to the
- * agents rows' name, which follows once Claude Code takes it (after the turn
- * for `queued`). A failed send keeps the draft so it can be fixed or retried
- * without retyping. A session no hooks module speaks for answers `no_module`,
+ * message in its `title`) until the person changes the value. A sent name
+ * stays in the input as typed, rather than the old name coming back while the
+ * session has yet to take it; once the agents rows' name changes (at once for
+ * `renamed`, after the turn for `queued`) the input follows it again. A
+ * failed send keeps the draft so it can be fixed or retried without retyping. A session no hooks module speaks for answers `no_module`,
  * which shows as that error. An IME's confirming Enter arrives with
  * `isComposing` and is left to the IME. */
 function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
@@ -416,11 +416,20 @@ function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
   const [saving, setSaving] = useState(false);
   // The last send's error message; null = no failure to show.
   const [failure, setFailure] = useState<string | null>(null);
+  // The name shown when a send was answered, while the input keeps what was
+  // sent: once the agents rows' name moves off it, the input follows again
+  // (react.dev "Adjusting some state when a prop changes").
+  const [sentOver, setSentOver] = useState<string | null>(null);
+  if (sentOver !== null && title !== sentOver) {
+    setSentOver(null);
+    setDraft(null);
+  }
 
   async function send(value: string): Promise<void> {
     const trimmed = value.trim();
     if (!trimmed || trimmed === title) {
       setDraft(null);
+      setSentOver(null);
       setFailure(null);
       return;
     }
@@ -428,8 +437,10 @@ function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
     setFailure(null);
     try {
       const res = await ws.sessionRename(sid, trimmed);
-      if (res.ok) setDraft(null);
-      else setFailure(res.error.msg);
+      if (res.ok) {
+        setDraft(trimmed);
+        setSentOver(title);
+      } else setFailure(res.error.msg);
     } catch {
       setFailure("接続エラーのため送信できませんでした");
     } finally {
@@ -442,6 +453,7 @@ function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
     if (e.key === "Escape") {
       e.preventDefault();
       setDraft(null);
+      setSentOver(null);
       setFailure(null);
       return;
     }
@@ -472,6 +484,7 @@ function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
       title={failure ?? "Enter で名前を変更、Escape で元に戻す"}
       onInput={(e) => {
         setDraft(e.currentTarget.value);
+        setSentOver(null);
         setFailure(null);
       }}
       onKeyDown={onKeyDown}

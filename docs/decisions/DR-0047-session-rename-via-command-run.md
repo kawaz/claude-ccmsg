@@ -46,7 +46,7 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
 - 名前を変える場所はセッションの Status タブの TITLE。値は最初から `<input>` で、Enter で前後の空白を除いた値を `session_rename` に送り、Escape で表示中の名前に戻す。空または今の名前と同じ値は送らない
 - 結果は文を添えず input の見た目だけで表す: 返事を待つ間は input の明るさが脈動する (`prefers-reduced-motion` では静止)。`renamed` / `queued` の返事で通常の見た目に戻る。error は入力した値を残したまま input を危険色にし (msg は `title` に入れる)、人が値を変えると戻る
 - module がそのセッションについて話していない (agents の行に `turn` が無い) セッションでも input は書き換えられる。送れば `no_module` の error になり、上の失敗の見た目で分かる
-- input に出す名前は agents の行の `name` で、Claude Code が state file に書いた時に追従する。編集中 (入力してから Enter / Escape まで) は追従で上書きしない。webui は名前を先回りして書き換えない (送った後の input は agents の行の名前に戻り、それが変わった時に追従する)
+- input に出す名前は agents の行の `name` で、Claude Code が state file に書いた時に追従する。編集中 (入力してから Enter / Escape まで) は追従で上書きしない。送った後の input は送った値のまま残し、agents の行の `name` が変わった時 (`renamed` はすぐ、`queued` は turn の後) にそれへ追従し直す。表示の他の場所 (Sessions 一覧等) の名前を webui が先回りして書き換えることはしない
 
 ## Alternatives Considered
 

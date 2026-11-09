@@ -194,8 +194,9 @@ describe("Status tab TITLE input", () => {
       await Promise.resolve();
     });
     expect(titleState(root)).toEqual([]);
-    // Not written ahead of the session: the agents rows' name until it follows.
-    expect(input.value).toBe("最初の名前");
+    // What was sent stays while the session has yet to take it; the old name
+    // does not come back in the meantime.
+    expect(input.value).toBe("後の名前");
     // No text beside the input: the cell's only text is the copy button's.
     expect(metaCell(root, "TITLE").textContent).toBe("コピー✓");
   });
@@ -249,6 +250,22 @@ describe("Status tab TITLE input", () => {
     await press(input, "Enter");
     expect(renames).toEqual([]);
     expect(input.value).toBe("最初の名前");
+  });
+
+  test("after a send, follows the agents rows' name once it changes", async () => {
+    const { root, store } = await mountStatus(agentRow());
+    const input = titleInput(root);
+    await type(input, " 新しい名前 ");
+    await press(input, "Enter");
+    expect(input.value).toBe("新しい名前");
+    await act(() =>
+      store.dispatch({ type: "agents/loaded", agents: [agentRow({ name: "新しい名前" })] }),
+    );
+    expect(input.value).toBe("新しい名前");
+    await act(() =>
+      store.dispatch({ type: "agents/loaded", agents: [agentRow({ name: "その後の名前" })] }),
+    );
+    expect(input.value).toBe("その後の名前");
   });
 
   test("follows the agents rows' name, but not while being edited", async () => {
