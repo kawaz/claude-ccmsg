@@ -86,6 +86,7 @@ async function mountStatus(
   agent: AgentInfo | undefined,
   reply: (title: string) => Promise<ReplyOf<"session_rename">> = (title) =>
     Promise.resolve({ ok: true, title, outcome: "renamed" }),
+  env: Record<string, string> = {},
 ): Promise<Mounted> {
   const store = createStore(initialState());
   if (agent) store.dispatch({ type: "agents/loaded", agents: [agent] });
@@ -101,7 +102,7 @@ async function mountStatus(
   const onKill = (): Promise<SessionKillResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, terminated: true });
   const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
-    Promise.resolve({ ok: true, pid: 4242, env: {} });
+    Promise.resolve({ ok: true, pid: 4242, env });
   const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, delivery: "applied" });
   function Host() {
@@ -424,6 +425,52 @@ describe("Status tab MODEL / EFFORT rows", () => {
     );
     await act(() => text.click());
     expect(cell.querySelector("select")?.getAttribute("aria-label")).toBe("effort");
+  });
+});
+
+describe("Status tab ENV", () => {
+  test("each name and value is a one-line scroller; the colon split puts each part on its own line", async () => {
+    const { root } = await mountStatus(agentRow(), undefined, {
+      PATH: "/opt/bin:/usr/bin",
+      GH_TOKEN: "secret",
+    });
+    const summary = [...root.querySelectorAll("summary")].find((s) => s.textContent === "ENV");
+    const fold = instanceOf(summary?.parentElement, HTMLDetailsElement, "the ENV fold");
+    await act(async () => {
+      const toggled = new Promise((resolve) =>
+        fold.addEventListener("toggle", resolve, { once: true }),
+      );
+      fold.open = true;
+      await toggled;
+    });
+    for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
+    const row = (name: string) =>
+      [...fold.querySelectorAll("tbody tr")].find(
+        (tr) => tr.querySelector(".status-env-name")?.textContent === name,
+      );
+    const path = row("PATH");
+    expect(path?.querySelector(".status-env-name > .status-scroll")?.textContent).toBe("PATH");
+    const value = path?.querySelector(".status-env-value > .status-scroll");
+    expect(value?.textContent).toBe("/opt/bin:/usr/bin");
+    expect(value?.children).toHaveLength(0);
+    // Sensitive values stay masked inside the same scroller.
+    expect(
+      row("GH_TOKEN")?.querySelector(".status-env-value > .status-scroll button")?.textContent,
+    ).toBe("••••••••");
+    const split = instanceOf(
+      fold.querySelector('.status-env-split input[type="checkbox"]'),
+      HTMLInputElement,
+      "the colon split",
+    );
+    await act(() => {
+      split.checked = true;
+      split.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(
+      [...(path?.querySelectorAll(".status-env-value > .status-scroll > div") ?? [])].map(
+        (part) => part.textContent,
+      ),
+    ).toEqual(["/opt/bin", "/usr/bin"]);
   });
 });
 

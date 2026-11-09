@@ -11,7 +11,6 @@ import type {
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import {
-  buildStatusSections,
   buildWorkflowDrilldown,
   canonicalModelId,
   dedupeWorkflowRunsByRunId,
@@ -22,8 +21,6 @@ import {
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
-  splitBackground,
-  splitTodos,
 } from "../src/client/session-status-view.ts";
 
 function todo(overrides: Partial<SessionTodo> & { id: string; status: string }): SessionTodo {
@@ -53,56 +50,6 @@ const EMPTY_SNAPSHOT: SessionStatusSnapshot = {
   background: [],
   teammates: [],
 };
-
-describe("splitTodos", () => {
-  test("zero todos: all buckets empty", () => {
-    expect(splitTodos([])).toEqual({ pending: [], inProgress: [], completed: [] });
-  });
-
-  test("buckets by status, preserving snapshot order within each bucket", () => {
-    const todos = [
-      todo({ id: "t1", status: "pending" }),
-      todo({ id: "t2", status: "in_progress" }),
-      todo({ id: "t3", status: "completed" }),
-      todo({ id: "t4", status: "pending" }),
-    ];
-    const sections = splitTodos(todos);
-    expect(sections.pending.map((t) => t.id)).toEqual(["t1", "t4"]);
-    expect(sections.inProgress.map((t) => t.id)).toEqual(["t2"]);
-    expect(sections.completed.map((t) => t.id)).toEqual(["t3"]);
-  });
-});
-
-describe("splitBackground", () => {
-  test("zero entries: both buckets empty", () => {
-    expect(splitBackground([])).toEqual({ running: [], done: [] });
-  });
-
-  test("only 'running' counts as running, any other status is done (open-set terminal values)", () => {
-    const background_ = [
-      background({ task_id: "b1", status: "running" }),
-      background({ task_id: "b2", status: "done" }),
-      background({ task_id: "b3", status: "failed" }), // unrecognized-but-terminal value
-    ];
-    const sections = splitBackground(background_);
-    expect(sections.running.map((b) => b.task_id)).toEqual(["b1"]);
-    expect(sections.done.map((b) => b.task_id)).toEqual(["b2", "b3"]);
-  });
-});
-
-describe("buildStatusSections", () => {
-  test("folds todos と background を 1 回で射影する", () => {
-    const snapshot: SessionStatusSnapshot = {
-      todos: [todo({ id: "t1", status: "in_progress" })],
-      workflows: [workflow({ task_id: "w1", status: "running" })],
-      background: [background({ task_id: "b1", status: "running" })],
-      teammates: [],
-    };
-    const sections = buildStatusSections(snapshot);
-    expect(sections.todos.inProgress).toHaveLength(1);
-    expect(sections.background.running).toHaveLength(1);
-  });
-});
 
 describe("miniSummaryLines", () => {
   test("zero running workflows: empty (panel hidden)", () => {

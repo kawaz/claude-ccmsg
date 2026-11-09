@@ -1,9 +1,8 @@
-// The Status tab's TODO list and the session's uptime, as mounted (kawaz
-// 2026-10-25): the TODO list, and the Background list with it, start closed
-// with their count in the heading, just above the danger zone, and open to the
-// rows; UPTIME says how long the process has run; the Timeline's
-// ctx line ends with the uptime, the ccmsg the session runs and the Claude Code
-// version its process runs (kawaz 2026-11-06).
+// The Status tab and the session's uptime, as mounted: the tab lists no
+// background task or TODO (kawaz 2026-11-09); UPTIME says how long the process
+// has run (kawaz 2026-10-25); the Timeline's ctx line ends with the uptime,
+// the ccmsg the session runs and the Claude Code version its process runs
+// (kawaz 2026-11-06).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -24,7 +23,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, useStoreState, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, stubGlobal } from "./helpers.ts";
+import { stubGlobal } from "./helpers.ts";
 import { FakeTranscriptWs, Mounted, page, SID, timelineStore } from "./timeline-harness.ts";
 
 withDom();
@@ -90,13 +89,6 @@ async function mountStatus(
   return root;
 }
 
-/** The `<details>` whose own summary reads `label`. */
-function foldTitled(root: HTMLElement, label: string): HTMLDetailsElement {
-  const summary = [...root.querySelectorAll("summary")].find((s) => s.textContent === label);
-  if (!summary) throw new Error(`no fold titled ${label}`);
-  return instanceOf(summary.parentElement, HTMLDetailsElement, `the fold of ${label}`);
-}
-
 /** The value cell the Status tab's identity table puts under `term`. */
 function metaValue(root: HTMLElement, term: string): string | null {
   const dt = [...root.querySelectorAll(".status-meta dt")].find((d) => d.textContent === term);
@@ -113,58 +105,10 @@ const TODOS: SessionStatusSnapshot = {
   background: [],
 };
 
-describe("Status tab TODO list", () => {
-  test("starts closed with the count of every TODO in its heading", async () => {
-    const root = await mountStatus(TODOS);
-    const fold = foldTitled(root, "TODO (3)");
-    expect(fold.open).toBe(false);
-  });
-
-  test("opens to the rows, in_progress first and pending open inside", async () => {
-    const root = await mountStatus(TODOS);
-    const fold = foldTitled(root, "TODO (3)");
-    await act(() => {
-      fold.open = true;
-    });
-    const subjects = [...fold.querySelectorAll(".status-todo-subject")].map((s) => s.textContent);
-    expect(subjects).toEqual(["write the parser", "wire the op", "read the spec"]);
-    expect(foldTitled(root, "pending (1)").open).toBe(true);
-    expect(foldTitled(root, "completed (1)").open).toBe(false);
-  });
-
-  test("a session with no TODO shows no TODO heading", async () => {
-    const root = await mountStatus({
-      todos: [],
-      workflows: [],
-      background: [
-        {
-          task_id: "b1",
-          kind: "bash",
-          description: "watch",
-          status: "running",
-          started_at: "2026-10-25T00:00:00.000Z",
-        },
-      ],
-    });
-    expect([...root.querySelectorAll("summary")].map((s) => s.textContent)).not.toContain(
-      "TODO (0)",
-    );
-    expect(root.textContent).not.toContain("TODO");
-  });
-});
-
 const BACKGROUND: SessionStatusSnapshot = {
   todos: [{ id: "1", subject: "write the parser", status: "in_progress" }],
   workflows: [],
   background: [
-    {
-      task_id: "b1",
-      kind: "bash",
-      description: "watch the tests",
-      status: "completed",
-      started_at: "2026-10-25T00:00:00.000Z",
-      ended_at: "2026-10-25T00:10:00.000Z",
-    },
     {
       task_id: "b2",
       kind: "bash",
@@ -175,45 +119,15 @@ const BACKGROUND: SessionStatusSnapshot = {
   ],
 };
 
-describe("Status tab Background", () => {
-  test("starts closed with the count in its heading; opened, the running first and the finished folded", async () => {
+// kawaz 2026-11-09: the Status tab lists neither (agents and workflows are the
+// Timeline's agent tree's, the running counts the sidebar badge's).
+describe("Status tab without Background / TODO", () => {
+  test("a session with background tasks and TODOs shows neither list", async () => {
     const root = await mountStatus(BACKGROUND);
-    const fold = foldTitled(root, "Background (2)");
-    expect(fold.open).toBe(false);
-    await act(() => {
-      fold.open = true;
-    });
-    expect(
-      [...fold.querySelectorAll(":scope > .status-list .status-row-summary")].map(
-        (s) => s.textContent,
-      ),
-    ).toEqual(["serve"]);
-    expect(foldTitled(root, "完了 (1)").open).toBe(false);
-  });
-
-  // kawaz 2026-11-09: Background and TODO are what the tab is least looked
-  // at for, so they come last, just above the danger zone.
-  test("Background and TODO come after ENV, just above the danger zone", async () => {
-    const root = await mountStatus(BACKGROUND);
-    const order = [
-      foldTitled(root, "ENV"),
-      foldTitled(root, "Background (2)"),
-      foldTitled(root, "TODO (1)"),
-      root.querySelector(".status-kill-zone"),
-    ];
-    for (let i = 0; i + 1 < order.length; i++) {
-      const [a, b] = [order[i], order[i + 1]];
-      expect(
-        a != null &&
-          b != null &&
-          (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-      ).toBe(true);
-    }
-  });
-
-  test("a session that ran none shows no Background heading", async () => {
-    const root = await mountStatus(TODOS);
     expect(root.textContent).not.toContain("Background");
+    expect(root.textContent).not.toContain("TODO");
+    expect(root.textContent).not.toContain("write the parser");
+    expect(root.textContent).not.toContain("serve");
   });
 });
 

@@ -29,7 +29,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 区画は見出しと本体からなる。見出しは 1 行の高さ、本体は開いている時だけ出す。見出しを押すと開閉が入れ替わる
 - 区画はそれぞれ独立に開閉でき、同時に複数開いてよい (1 つ開くと他が閉じる排他にしない)
 - 初期表示は一番上の SESSIONS だけ開き、ROOMS と GLOBALS は閉じる。ROOMS の「開いた時に一覧を取る」振る舞いはそのまま区画の開く操作に付く
-- 開閉の状態は保存しない。窓を開くたび・再読み込みのたびに初期表示から始まる。Status タブの TODO の fold ([DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-10-25) と ROOMS の fold も保存しておらず、URL の文法も fold の開閉を載せない ([webui-url-grammar](../design/webui-url-grammar.md))
+- 開閉の状態は保存しない。窓を開くたび・再読み込みのたびに初期表示から始まる。Status タブの ENV の fold ([DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09) と ROOMS の fold も保存しておらず、URL の文法も fold の開閉を載せない ([webui-url-grammar](../design/webui-url-grammar.md))
 - グローバルヘッダには何も足さない (スマホで狭い)
 
 ### 2. 見出しのボタンは開閉を動かさない (構造で保証する)
@@ -50,7 +50,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - ページ内検索で閉じた本体の語に当たった時に開けるよう、`hidden="until-found"` と `beforematch` で開く。Safari で効くかは未検証 (効かなければ `hidden` と同じく隠れたまま)
 - 区画の id は `#sidebar-sessions` / `#sidebar-rooms` / `#sidebar-globals`。今の `#sessions-panel` / `#rooms-panel` は、panel の語がサイドバーのフォーム (`state.sidebar.panel`、`sb.panel`) と衝突するので改める
 - 見出しの文字は Sessions / Rooms (読み取り専用) / Globals (今と同じく CSS で大文字にする)
-- 名前の根拠: この UI では開閉する区画を一貫して fold と呼ぶ (`Fold.tsx`、`fold-open-store.ts`、Status タブの TODO の fold)。WAI-ARIA APG の語では、サイドバーの列が Accordion (見出しの中の button + region、複数同時に開いてよい)、各区画が Disclosure に当たる
+- 名前の根拠: この UI では開閉する区画を一貫して fold と呼ぶ (`Fold.tsx`、`fold-open-store.ts`、Status タブの ENV の fold)。WAI-ARIA APG の語では、サイドバーの列が Accordion (見出しの中の button + region、複数同時に開いてよい)、各区画が Disclosure に当たる
 - 開閉の部品は `Fold` (`<details>`、見出しにボタンを持たない) と `SidebarFold` (見出しにボタン群を持てる) の 2 種類になる。使い分けをそれぞれの doc comment に書く
 
 ### 4. 上に付く区画と下に付く区画はサイドバーのレイアウトで決める

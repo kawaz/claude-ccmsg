@@ -1,71 +1,19 @@
 // Pure display-derivations for the Status tab + TL mini panel + sidebar
 // mini badge (DR-0020 Phase 2/3). Kept out of utils.ts as a standalone
 // module (same rationale as rooms-filter.ts): these fold a single
-// SessionStatusSnapshot into section/summary/badge shapes and are exercised
+// SessionStatusSnapshot into summary/badge shapes and are exercised
 // in isolation by session-status-view.test.ts — no store/DOM dependency.
 import type {
   AgentInfo,
   ErrorResponse,
-  SessionBackgroundStatus,
   RequestOverrideState,
   SessionContextUsage,
   SessionRestartResponse,
   SessionStatusSnapshot,
   SessionTeammate,
-  SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import { requestValueViews, type RequestValueView } from "./request-override-view.ts";
-
-/** TODO items split by status (DR-0020 §2.1: "pending / in_progress /
- * completed 別に表示"). Order within each bucket is preserved from the
- * snapshot (daemon-side fold order, itself TaskCreate/TaskUpdate order). */
-export interface TodoSections {
-  pending: SessionTodo[];
-  inProgress: SessionTodo[];
-  completed: SessionTodo[];
-}
-
-export function splitTodos(todos: readonly SessionTodo[]): TodoSections {
-  return {
-    pending: todos.filter((t) => t.status === "pending"),
-    inProgress: todos.filter((t) => t.status === "in_progress"),
-    completed: todos.filter((t) => t.status === "completed"),
-  };
-}
-
-/** Running/terminal split for background tasks — the protocol shape documents
- * its `status` field as "running" | terminal task-notification values (open
- * set). Anything not literally "running" is terminal, so an upstream-added
- * terminal value (e.g. a new failure kind) still lands in `done` without this
- * module needing to know its name. */
-export interface RunSections<T> {
-  running: T[];
-  done: T[];
-}
-
-export function splitBackground(
-  background: readonly SessionBackgroundStatus[],
-): RunSections<SessionBackgroundStatus> {
-  return {
-    running: background.filter((b) => b.status === "running"),
-    done: background.filter((b) => b.status !== "running"),
-  };
-}
-
-/** Status タブ本体向けの一括 fold (DR-0020 §2.1)。workflow / agent 構造は
- * Timeline のエージェントツリー (`AgentTreePanel`) が担うので含めない。 */
-export interface StatusSections {
-  todos: TodoSections;
-  background: RunSections<SessionBackgroundStatus>;
-}
-
-export function buildStatusSections(snapshot: SessionStatusSnapshot): StatusSections {
-  return {
-    todos: splitTodos(snapshot.todos),
-    background: splitBackground(snapshot.background),
-  };
-}
 
 /** A context window as the ctx line spells it, in square brackets after the
  * fill: whole millions as `[1m]`, anything else in thousands (`[200K]`). */
@@ -375,7 +323,7 @@ export function miniSummaryLines(
   overrides?: RequestOverrideState,
 ): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
-  // (Status タブの WORKFLOWS 表示と数値を一致させる)。
+  // (agent tree パネルの Workflows と数値を一致させる)。
   const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
   const items = dedupedWorkflows
     .filter((w) => w.status === "running")
@@ -406,7 +354,7 @@ export function miniSummaryLines(
   return [...items, ...extra];
 }
 
-/** DR-0025 Phase 2: `StatusPanel` の workflow 行展開に使うプレゼンテーション形。
+/** DR-0025 Phase 2: `AgentTreePanel` の workflow 行展開に使うプレゼンテーション形。
  * `SessionWorkflowStatus` の phases / agents は daemon が集計した後の生値
  * (エージェント数は 100+ もありうる)、UI 側は「アイコン」「ラベル/model/tokens」
  * のような表示形に射影する。null を返す = 展開すべきデータが無い

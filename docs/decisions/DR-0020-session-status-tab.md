@@ -1,4 +1,4 @@
-# DR-0020: Status タブ (セッションの workflow / background / TODO 可視化)
+# DR-0020: Status タブとセッションの状態の抽出 (workflow / background / TODO / context)
 
 Status: Accepted (ST-Q1..2 裁定 2026-07-16)。§3.1 の fold が読む行の源 (tail から push へ) は [DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §5 が定める
 Date: 2026-07-16
@@ -16,13 +16,13 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
 ### 2.1 やること
 
 - **表示場所 (ST-Q2 裁定 = 両方、kawaz)**:
-  - **Status タブ**: SessionView のタブ列を Files / Timeline / Rooms / Status に増やし、詳細・全体一覧はこちら
+  - **Status タブ**: SessionView のタブ列を Files / Timeline / Rooms / Status に増やす。中身はセッションが何で、今何で動いているかと、セッションへの操作 (Addendum 2026-11-09)
   - **TL 下余白の常駐ミニパネル**: 走行中 workflow の要約。タップで Status タブへ遷移
 - **抽出** (daemon 側、§ 3.1): transcript jsonl から status 関連イベントを全量抽出し、畳み込んで現在ステータスを導出
   - **TODO リスト**: TaskCreate / TaskUpdate の tool call から task id → {subject, status, owner} を再生。pending / in_progress / completed 別に表示 (TUI 同等)
   - **workflow**: Workflow tool call (起動) と task-notification (完了) を突合して走行中 / 完了を判定。meta.name / phases があれば表示
   - **background タスク**: Monitor / Bash run_in_background / Agent (background) の起動と完了通知を突合
-- **Status タブ UI**: 上記 3 セクションの一覧。走行中は強調、完了は畳む。タブの中の並びと見せ方は Addendum 2026-11-09
+- **workflow / background / TODO の表示**: Status タブには一覧を出さない (Addendum 2026-11-09)。workflow と agent は Timeline の agent tree、走行中の数はサイドバーのミニバッジと TL 下のミニパネルが出す
 - **サイドバー SESSIONS 行のミニバッジ** (Phase 分離): `wf:1 bg:2 todo:3/5` 程度の要約表示
 
 ### 2.2 やらないこと
@@ -80,9 +80,8 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
 - **subagents/*.jsonl の全走査は採らない**: agent 数に比例した走査コストを毎 fold 払う必要がある一方、attachment だけで受け入れ条件 (worker タスクが Status / dump に出る) を満たせることを実 transcript で確認した。
 - **既知の限界**: attachment は生成から注入までに遅延があり、直後の tool_use が進めたstatus を一瞬巻き戻して見せうる。次の reminder か次の TaskUpdate が後勝ちで正すため収束する。
 
-## Addendum 2026-10-25: TODO 一覧を畳む、プロセスの稼働時間と Claude Code の版 (kawaz)
+## Addendum 2026-10-25: プロセスの稼働時間と Claude Code の版 (kawaz)
 
-- **TODO 一覧は既定で閉じる**: TODO が多いと Status タブの他の節を押し下げて邪魔になり、重要度も他の節より低い。節全体を `<details>` にし、見出しに全件数 (`TODO (n)`) を出す。開閉の状態は保持しない。開いた中身は従来どおり (in_progress、pending は開いた fold、completed は閉じた fold)。TODO が 1 件も無いセッションでは節を出さない (Background と同じ)。
 - **稼働時間**: そのプロセスの起動からの経過。データ源は Claude Code の `sessions/<pid>.json` の `startedAt` (agents の行に既に載っている)。resume は新しいプロセスなので、そこから数え直す。書式は webui が経過を出す既存の `formatDuration` (メッセージバブルの相対時間、応答中の経過と同じ `5s` / `1m12s` / `5h12m` / `2d15h`) に揃え、個別の書式を作らない。Status タブに `UPTIME` の行、TL 下ミニパネルの ctx 行の末尾に出す。Status タブはタブを開いた時点の値で、開いている間は更新しない。
 - **Claude Code の版**: 同じ `sessions/<pid>.json` の `version` (プロセスごと。2 つの config dir の全ファイルにあることを 2026-10-25 に確認)。agents の行に optional の `version` として載せる。TL 下ミニパネルの ctx 行の末尾にそのセッションのプロセスの版として出し、ホストの版は DR-0043 §5.3 (GLOBALS) に出す。transcript の各行の `version` は採らない: プロセスの記録の方が「今動いているプロセスの版」を直接言う。
 - ctx 行は `15% / fable-5-1[1m] / low / 51m37s / ccmsg v0.212.1 / claude v2.1.317` の形 (kawaz 2026-11-06)。区切りは ` / `。
@@ -95,9 +94,9 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。
 
-## Addendum 2026-11-09: Status タブの並びと見せ方 (kawaz)
+## Addendum 2026-11-09: Status タブの中身と見せ方 (kawaz)
 
-上から次の順に置く。Status タブを見に来る目的の順で、上ほどよく見る。
+Status タブはセッションが何で、今何で動いているかと、セッションへの操作だけを持つ。上から次の順に置き、上ほどよく見るものにする。
 
 1. **このセッションは何か**: TITLE (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) と CWD の表
 2. **計器**: 地の色を変えた 1 つの区画に LIVE / MODEL / EFFORT / CONTEXT
@@ -105,15 +104,14 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
    - MODEL / EFFORT は押すと選べる値 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.4)
    - CONTEXT は使用率の文字、window に対する割合の `<meter>` (window か使用量が分からない間は出さない)、その後に `model[window] / effort` (TL 下ミニパネルの ctx 行の後半と同じ綴り)。hover の説明は ctx 行と同じ
 3. **識別子**: SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / STARTED / UPTIME の表
-4. ENV (畳み)
+4. ENV (畳み、開いた時に取得、機微な値は伏せ字)
 5. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)
-6. Background、TODO (どちらも畳み。見出しに件数 `Background (n)` / `TODO (n)`、0 件なら節を出さない)
-7. 危険ゾーン
+6. 危険ゾーン
 
+- background タスク・TODO・workflow・agent の一覧は出さない (kawaz「ステータス画面で邪魔に感じる以外の気持ちで見たことが一度もない」)。agent の TL への入口は Timeline の agent tree が持ち、走行中の数はサイドバーのミニバッジが出す。`session_status` の購読は context・subagents・touched_files 等のために続ける
 - 表 (1 と 3) は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。2 つの表の名前の列は同じ幅で、表どうしも揃う。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。コピーできない値の行は四角の場所を空ける
-- 値は折り返さず 1 行に置き、セルより長ければスクロールバーを出さずに横へスクロールする。値の長さで行の高さが変わらない (kawaz: 折り返しで表に縦の隙間が出るのを避ける)
+- 値の長さでは折り返さない。1 つの値が長いだけのセル (CWD、SESSION_ID、ENV の名前と値など) は 1 行に置き、セルより長ければスクロールバーを出さずに横へスクロールする。値の長さで行の高さが変わらない (kawaz: 折り返しで表に縦の隙間が出るのを避ける)。意味のある改行は残す: ENV の「コロンを改行で表示」を選んだ時の各要素、値そのものが持つ改行、結果の stdout / stderr の行
 - タブの幅が 30rem 未満 (container query) では、表の名前を値の上に置く
-- Background と TODO を最後に置くのは、Status タブを見る目的にならないから (kawaz「ステータス画面で邪魔に感じる以外の気持ちで見たことが一度もない」)。開いた中身は、Background は走行中を強調して完了を畳み、TODO は Addendum 2026-10-25 のとおり
 - 色はすべて app.css のトークンで塗る。状態の色は `--success` / `--fg-success` / `--warn` / `--fg-warn`
 
 ## Addendum 2026-11-06: agent tree のノードの名前・実際の model・effort (kawaz)

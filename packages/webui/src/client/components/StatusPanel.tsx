@@ -1,11 +1,13 @@
-// SessionView Status-tab body (DR-0020 Phase 2): a session's identity
-// metadata, background tasks and TODOs, folded from the daemon's
-// session_status_subscribe snapshot. The subscribe/unsubscribe round trip
+// SessionView Status-tab body (DR-0020): what the session is, the gauges of
+// what it runs as now, its identifiers, its environment, the operations on it
+// and the danger zone, from the daemon's session_status_subscribe snapshot
+// (the context) and the shared store. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
 // needs the same live data); session identity metadata is resolved here from
 // the shared store so Status uses the same peer/pin/agent fallback as the topbar.
-// Agent/workflow structure is shown by the Timeline's agent tree
-// (`AgentTreePanel`), which is the single place for that view.
+// Background tasks, TODOs, agents and workflows are not listed here (kawaz
+// 2026-11-09): agents and workflows are the Timeline's agent tree's
+// (`AgentTreePanel`), and how many are running is the sidebar badge's.
 import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
 import {
@@ -13,21 +15,16 @@ import {
   type LaunchEffort,
   type LaunchModel,
   type ErrorResponse,
-  type SessionBackgroundStatus,
   type SessionEnvResponse,
   type SessionKillResponse,
   type SessionRestartResponse,
   type SessionStatusSnapshot,
-  type SessionTodo,
 } from "@ccmsg/protocol";
 import {
-  buildStatusSections,
   formatAgentLiveState,
   formatContextUsage,
   restartOffered,
   restartResultText,
-  type StatusSections,
-  type TodoSections,
 } from "../session-status-view.ts";
 import { pinForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
@@ -37,11 +34,9 @@ import {
   toEnvRows,
   type EnvRow,
 } from "../env-filter.ts";
-import { agentTimelineHref } from "../locator.ts";
 import { buildTerminalPageUrl } from "../terminal-gateway-store.ts";
 import {
   clientBuildLabel,
-  formatClockTime,
   formatDuration,
   resolveSessionTopbar,
   protocolSkewWarning,
@@ -54,166 +49,6 @@ import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
 import { sessionRunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
-
-/** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
- * 追加しうる) は default で pending と同じ空マーカー扱い、独自分岐は生やさない
- * (未知値に色や記号を勝手に当てないポリシー)。 */
-function todoIconGlyph(status: string): string {
-  if (status === "completed") return "✓";
-  if (status === "in_progress") return "⟳";
-  return "·";
-}
-
-function TodoRow({ todo }: { todo: SessionTodo }) {
-  const iconClass = "status-todo-icon status-todo-icon-" + todo.status;
-  return (
-    <li class={"status-todo" + (todo.status === "in_progress" ? " status-todo-active" : "")}>
-      <span class={iconClass}>{todoIconGlyph(todo.status)}</span>
-      <span class="status-todo-id">#{todo.id}</span>
-      <span class="status-todo-subject">{todo.subject}</span>
-      {todo.owner ? <span class="status-owner">{todo.owner}</span> : null}
-      {todo.blocked_by && todo.blocked_by.length > 0 ? (
-        <span class="status-todo-blocked">
-          blocked by {todo.blocked_by.map((id) => `#${id}`).join(",")}
-        </span>
-      ) : null}
-    </li>
-  );
-}
-
-function BackgroundRow({
-  bg,
-  running,
-  sid,
-}: {
-  bg: SessionBackgroundStatus;
-  running: boolean;
-  sid: string;
-}) {
-  // r44 m6: kind=="agent" は subagent の TL を持つので TL リンク + agent_type
-  // バッジを添える。live dot はエージェントツリーと同じ流儀 (running=active、
-  // 終端=stopped) で色味を寄せ、webui 全体の視覚言語を一貫させる。
-  // 判定は `running` prop (buildStatusSections が status 値から算出) を利用
-  // するため、"completed"/"failed"/"killed" 等の open-set terminal 値を
-  // ここで列挙する必要はない。
-  const isAgent = bg.kind === "agent";
-  const agentHref = isAgent ? agentTimelineHref(sid, { agentId: bg.task_id }) : null;
-  const dotClass = "status-teammate-dot status-teammate-dot-" + (running ? "active" : "stopped");
-  return (
-    <li class={"status-row" + (running ? " status-row-active" : "")}>
-      {isAgent ? (
-        <>
-          <span class={dotClass} aria-hidden="true">
-            ●
-          </span>
-          {agentHref ? (
-            <a class="status-row-tl" href={agentHref}>
-              TL
-            </a>
-          ) : null}
-          <span class="status-row-kind">{bg.agent_type ?? bg.kind}</span>
-        </>
-      ) : (
-        <span class="status-row-kind">{bg.kind}</span>
-      )}
-      <span class="status-row-summary">{bg.description}</span>
-      <span class="status-row-time">
-        {formatClockTime(bg.started_at)}
-        {bg.ended_at ? ` – ${formatClockTime(bg.ended_at)}` : ""}
-      </span>
-    </li>
-  );
-}
-
-/** The session's background tasks, closed until opened with the count in its
- * heading, near the bottom of the tab (kawaz 2026-11-09: they are not what the
- * tab is looked at for). Opened, the running ones first and emphasized, the
- * finished ones folded again (DR-0020 §2.1). Nothing when the session has run
- * none. */
-function BackgroundSection({
-  background,
-  sid,
-}: {
-  background: StatusSections["background"];
-  sid: string;
-}) {
-  const { running, done } = background;
-  const count = running.length + done.length;
-  if (count === 0) return null;
-  return (
-    <section class="status-section">
-      <Fold
-        class="status-fold status-background"
-        summaryClass="status-fold-summary"
-        summary={`Background (${count})`}
-      >
-        {running.length > 0 ? (
-          <ul class="status-list">
-            {running.map((bg) => (
-              <BackgroundRow key={bg.task_id} bg={bg} running={true} sid={sid} />
-            ))}
-          </ul>
-        ) : (
-          <p class="status-empty">走行中の background タスクなし</p>
-        )}
-        {done.length > 0 ? (
-          <Fold class="status-done" summary={`完了 (${done.length})`}>
-            <ul class="status-list">
-              {done.map((bg) => (
-                <BackgroundRow key={bg.task_id} bg={bg} running={false} sid={sid} />
-              ))}
-            </ul>
-          </Fold>
-        ) : null}
-      </Fold>
-    </section>
-  );
-}
-
-/** The session's TODO list, closed until opened with the count in its heading
- * (kawaz 2026-10-25: a long list is in the way and matters less than the rest
- * of the tab). Nothing when the session has no TODO, like Background. */
-function TodoSection({ todos }: { todos: TodoSections }) {
-  const count = todos.inProgress.length + todos.pending.length + todos.completed.length;
-  if (count === 0) return null;
-  return (
-    <section class="status-section">
-      <Fold
-        class="status-fold status-todos"
-        summaryClass="status-fold-summary"
-        summary={`TODO (${count})`}
-      >
-        {todos.inProgress.length > 0 ? (
-          <ul class="status-list">
-            {todos.inProgress.map((t) => (
-              <TodoRow key={t.id} todo={t} />
-            ))}
-          </ul>
-        ) : (
-          <p class="status-empty">in_progress の TODO なし</p>
-        )}
-        {todos.pending.length > 0 ? (
-          <Fold class="status-done" open summary={`pending (${todos.pending.length})`}>
-            <ul class="status-list">
-              {todos.pending.map((t) => (
-                <TodoRow key={t.id} todo={t} />
-              ))}
-            </ul>
-          </Fold>
-        ) : null}
-        {todos.completed.length > 0 ? (
-          <Fold class="status-done" summary={`completed (${todos.completed.length})`}>
-            <ul class="status-list">
-              {todos.completed.map((t) => (
-                <TodoRow key={t.id} todo={t} />
-              ))}
-            </ul>
-          </Fold>
-        ) : null}
-      </Fold>
-    </section>
-  );
-}
 
 /** DR-0028 danger zone: terminate the OS process behind this session.
  * Deliberately at the very bottom of the Status tab (kawaz: "普段触らない
@@ -337,10 +172,9 @@ function KillZone({
   );
 }
 
-/** The bottom of the Status tab: セッション操作 (DR-0028 「restart」), then
- * what is passed as `children` (the folded Background and TODO), then the
- * danger zone. One thing of the three operations runs at a time, so this holds
- * what each is doing. The actions are offered only where the daemon can
+/** The bottom of the Status tab: セッション操作 (DR-0028 「restart」) above
+ * the danger zone. One thing of the three operations runs at a time, so this
+ * holds what each is doing. The actions are offered only where the daemon can
  * launch; 再起動 also needs the session's process (`restartOffered`), and
  * stays while a restart runs. */
 function SessionControls({
@@ -350,7 +184,6 @@ function SessionControls({
   onKill,
   restartOffered,
   restart,
-  children,
 }: {
   sid: string;
   cwd: string | null;
@@ -358,7 +191,6 @@ function SessionControls({
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
-  children: ComponentChildren;
 }) {
   const { store } = useApp();
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
@@ -378,7 +210,6 @@ function SessionControls({
           blocked={anyBusy}
         />
       ) : null}
-      {children}
       <KillZone
         sid={sid}
         onKill={onKill}
@@ -684,14 +515,18 @@ function EnvPanel({
                 <tbody>
                   {rows.map((row) => (
                     <tr key={row.name}>
-                      <td class="status-env-name">{row.name}</td>
+                      <td class="status-env-name">
+                        <div class="status-scroll">{row.name}</div>
+                      </td>
                       <td class="status-env-value">
-                        <EnvValue
-                          row={row}
-                          splitColons={splitColons}
-                          revealed={revealed.has(row.name)}
-                          onToggleReveal={() => toggleReveal(row.name)}
-                        />
+                        <div class="status-scroll">
+                          <EnvValue
+                            row={row}
+                            splitColons={splitColons}
+                            revealed={revealed.has(row.name)}
+                            onToggleReveal={() => toggleReveal(row.name)}
+                          />
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -808,7 +643,6 @@ export function StatusPanel({
       </div>
     );
   }
-  const sections = buildStatusSections(snapshot);
   const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
   return (
     <div class="status-view">
@@ -933,10 +767,7 @@ export function StatusPanel({
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}
-      >
-        <BackgroundSection background={sections.background} sid={sid} />
-        <TodoSection todos={sections.todos} />
-      </SessionControls>
+      />
     </div>
   );
 }

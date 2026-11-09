@@ -127,7 +127,7 @@
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
-| workflow / background / TODO の可視化 | `StatusPanel.tsx` + `session-status-view.ts` + `op:session_status` | DR-0020 | 移す | DR-0020 Accepted |
+| セッションの identity / 計器 / 識別子 / ENV / 操作 (Status タブ)、workflow / background / TODO の要約 (ミニパネル・サイドバーのバッジ) | `StatusPanel.tsx` + `StatusSessionForms.tsx` + `session-status-view.ts` + `op:session_status` | DR-0020 | 移す | DR-0020 Accepted |
 | status の購読 (subscribe / unsubscribe) | `op:session_status_subscribe` / `_unsubscribe` | DR-0020 | 移す | |
 | ENV パネルとクエリ絞り込み | `EnvPanel` / `EnvValue` + `env-filter.ts` + `op:session_env` | DR-0020 | 移す | 純関数層まで作られている |
 | セッション停止ボタン (KillZone) | `KillZone` + `op:session_kill` | DR-0028 | 保留 | DR-0028 は **Proposed のまま**。危険操作なので裁定なしに移さない |
