@@ -3,6 +3,9 @@
 //   keeps name their kind with `data-notif` (say and PushNotification for 🔔,
 //   the permission-request bubbles for 🔐). Hiding the rest is CSS (§5)
 // - with nothing of the kind loaded, one line says so
+// - below the last bubble, a 「TL に戻る」 bar takes the filter off as the
+//   selected badge does (the same URL, replacing the entry); without a filter
+//   it is the same element, hidden
 // - the 👤 nav is off while filtered (§9 U9)
 // - a permission-request bubble is the row of its `permit` call, selectable by
 //   that row's uuid, and selecting keeps the filter (§9 U7, §4)
@@ -24,7 +27,7 @@ import {
 } from "@ccmsg/protocol";
 import { Timeline } from "../src/client/components/timeline/Timeline.tsx";
 import { useApp } from "../src/client/context.ts";
-import type { TimelineFilter } from "../src/client/locator.ts";
+import { timelineHref, type TimelineFilter } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { useStoreState, type Store } from "../src/client/useStore.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
@@ -46,13 +49,17 @@ withDom();
 const mounted = new Mounted();
 let restores: Array<() => void> = [];
 let navigations: string[] = [];
+/** 遷移ごとの履歴の扱い (`navigations` と同じ順)。 */
+let histories: Array<string | undefined> = [];
 
 beforeEach(() => {
   navigations = [];
+  histories = [];
   restores = [
     stubGlobal("navigation", {
-      navigate(url: string) {
+      navigate(url: string, options?: { history?: string }) {
         navigations.push(url);
+        histories.push(options?.history);
       },
     }),
   ];
@@ -161,6 +168,10 @@ async function open(options: {
   return { root, store, ws };
 }
 
+function backButton(root: HTMLElement): HTMLButtonElement {
+  return instanceOf(root.querySelector(".tl-filter-back"), HTMLButtonElement, "TL に戻る");
+}
+
 function lines(root: HTMLElement): HTMLElement {
   return instanceOf(root.querySelector(".tl-lines"), HTMLElement, ".tl-lines");
 }
@@ -202,6 +213,52 @@ describe("the Timeline's filter", () => {
     expect(root.querySelector(".tl-filter-empty")?.textContent).toBe("許可依頼はありません");
     await filterTo(store, null);
     expect(root.querySelector(".tl-filter-empty")).toBeNull();
+  });
+
+  test("「TL に戻る」 below the last bubble takes the filter off as the selected badge does", async () => {
+    const { root, store } = await open({
+      rows: [...exchange(1), sayRow(1), ...exchange(2)],
+      filter: "say",
+      says: [unreadSay(1)],
+    });
+    const back = backButton(root);
+    expect(back.hidden).toBe(false);
+    expect(back.textContent).toBe("TL に戻る");
+    expect(lines(root).lastElementChild).toBe(back);
+
+    await act(() => back.click());
+    const badge = instanceOf(
+      root.querySelector(".tl-toolbar-badges .notif-badge-say"),
+      HTMLAnchorElement,
+      "🔔 badge",
+    );
+    expect(navigations).toEqual([timelineHref(SID, "head")]);
+    expect(navigations[0]).toBe(new URL(badge.href).pathname + new URL(badge.href).search);
+    expect(histories).toEqual(["replace"]);
+
+    // Taken off, the same element stays, hidden.
+    await filterTo(store, null);
+    expect(backButton(root)).toBe(back);
+    expect(back.hidden).toBe(true);
+  });
+
+  test("「TL に戻る」 keeps the selected position, and is there under 「say はありません」 too", async () => {
+    const { root, store } = await open({
+      rows: [...exchange(1), ...requestRows(1)],
+      filter: "permit",
+    });
+    const uuid = uuidOf("a", 501);
+    await filterTo(store, "permit", uuid);
+    await act(() => backButton(root).click());
+    expect(navigations).toEqual([timelineHref(SID, uuid)]);
+    expect(histories).toEqual(["replace"]);
+
+    await filterTo(store, "say");
+    const empty = instanceOf(root.querySelector(".tl-filter-empty"), HTMLElement, "empty line");
+    expect(empty.textContent).toBe("say はありません");
+    const back = backButton(root);
+    expect(back.hidden).toBe(false);
+    expect(empty.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test("turns the 👤 nav off while filtered", async () => {

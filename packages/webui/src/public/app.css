@@ -4989,9 +4989,11 @@ button.session-tab {
 /* TL のフィルタ (DR-0050 §5): その種類のバブル (`data-notif`) だけを残し、
  * 他の行は隠すだけ。描き直さないので、解除で fold・翻訳・raw の状態がそのまま
  * 戻り、解除の位置合わせが測る要素も同じ DOM のまま。既読の失敗の行と
- * 「ありません」の行は残す。 */
-.tl-lines[data-filter="say"] > :not([data-notif="say"], .tl-say-error, .tl-filter-empty),
-.tl-lines[data-filter="permit"] > :not([data-notif="permit"], .tl-say-error, .tl-filter-empty) {
+ * 「ありません」の行と末尾の「TL に戻る」は残す。 */
+.tl-lines[data-filter="say"]
+  > :not([data-notif="say"], .tl-say-error, .tl-filter-empty, .tl-filter-back),
+.tl-lines[data-filter="permit"]
+  > :not([data-notif="permit"], .tl-say-error, .tl-filter-empty, .tl-filter-back) {
   display: none;
 }
 
@@ -5005,6 +5007,31 @@ button.session-tab {
   margin: var(--space-8) 0;
   color: var(--fg-muted);
   font-size: var(--font-size-sm);
+}
+
+/* フィルタ中の最後のバブルの下に置く横幅いっぱいの「TL に戻る」。プライマリ
+ * ではない控えめな見た目 (.status-form-save と同じ弱いボタン)。フィルタの
+ * 無い間は hidden で隠す。 */
+.tl-filter-back {
+  font: inherit;
+  font-size: var(--font-size-md);
+  width: 100%;
+  margin-top: var(--space-8);
+  padding: var(--space-6) var(--space-10);
+  background: none;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.tl-filter-back:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.tl-filter-back[hidden] {
+  display: none;
 }
 
 .tl-bubble-peer .tl-bubble-body {

@@ -28,6 +28,8 @@ import { hasTranslatorApi, type HostTranslateRequest } from "../../translate.ts"
 import { forkDividerGroupIndex } from "../../fork-divider.ts";
 import { SearchBar } from "../SearchBar.tsx";
 import { TimelineToolbarBadges } from "./TimelineToolbarBadges.tsx";
+import { badgeHref } from "../../notification-badges.ts";
+import { replaceNavigation } from "../../navigation.ts";
 import { ErrorView } from "../ErrorView.tsx";
 import { useAutoOpenSettings } from "./useAutoOpenSettings.ts";
 import { useSidePanel } from "./useSidePanel.ts";
@@ -392,6 +394,15 @@ export function Timeline({
     const anchor = scroller && lines ? firstRowScrollAnchor(scroller, lines) : null;
     if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
     loader.loadOlder();
+  }
+
+  // フィルタを外す: ツールバーの選択中のバッジを押した時と同じ URL へ、同じく
+  // 履歴を積まずに移る (DR-0050 §4)。
+  function leaveFilter() {
+    if (currentFilter === null) return;
+    replaceNavigation(
+      badgeHref(sid, currentFilter, { position: currentPosition, filter: currentFilter }),
+    );
   }
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
@@ -866,6 +877,17 @@ export function Timeline({
                               />
                             </>
                           )}
+                          {/* フィルタ中の最後のバブルの下 (DR-0050 §4)。外しても同じ
+                           * 要素のまま隠すだけにして、§6 の位置合わせが測る DOM を
+                           * 外す前と同じに保つ。 */}
+                          <button
+                            type="button"
+                            class="tl-filter-back"
+                            hidden={currentFilter === null}
+                            onClick={leaveFilter}
+                          >
+                            TL に戻る
+                          </button>
                         </div>
                       )}
                       <div
