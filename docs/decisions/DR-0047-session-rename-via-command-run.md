@@ -1,11 +1,11 @@
 # DR-0047: セッションの名前の変更は module の `$.command.run` で `/rename` を走らせる
 
-- Status: Accepted (2026-11-02、kawaz 指示) — ✅ 実装済み (サイドカーの依頼 `session.rename`、daemon の `renameSession`、module の関心 `session-rename`、ErrorCode `rename_failed`、webui の Sessions 一覧のタイトル編集)。実機の確認は [findings 2026-11-02-rename-via-mod](../findings/2026-11-02-rename-via-mod.md)
+- Status: Accepted (2026-11-02、kawaz 指示) — ✅ 実装済み (サイドカーの依頼 `session.rename`、daemon の `renameSession`、module の関心 `session-rename`、ErrorCode `rename_failed`、webui の Status タブの TITLE の input)。実機の確認は [findings 2026-11-02-rename-via-mod](../findings/2026-11-02-rename-via-mod.md)
 - Date: 2026-11-02
 
 ## Context
 
-webui の Sessions 一覧のタイトルの ✎ (と Shift+クリック) は、op `session_rename { session_id, title }` でセッションの名前を変える。セッションの名前 (Claude Code の state file の `name`、agents の行の `name`) を書けるのは組み込みの `/rename` だけで、外から書く API は無い。
+webui の Status タブの TITLE の input は、op `session_rename { session_id, title }` でセッションの名前を変える。セッションの名前 (Claude Code の state file の `name`、agents の行の `name`) を書けるのは組み込みの `/rename` だけで、外から書く API は無い。
 
 mods の `$.command.run({ command, args })` は、人が `/command args` と打ったのと同じ経路で slash command を走らせる。走るのはセッションが idle になってから (reference の `claude-mods/dollar-api`、組み込みの `/model` `/effort` が走ることは [findings 2026-10-26-mods-command-run-builtin](../findings/2026-10-26-mods-command-run-builtin.md))。daemon から module への依頼はサイドカーの経路 ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3) で、[DR-0044](./DR-0044-turn-abort.md) の `turn.abort` が同じ形の前例。module は engine のイベント処理だけを持ち、module の無いセッションにその機能は無い ([DR-0045](./DR-0045-say-speaks-in-tool-shown-from-transcript.md) §1、[DR-0039](./DR-0039-all-mods-and-typed-tools.md) §7)。
 
@@ -15,7 +15,7 @@ mods の `$.command.run({ command, args })` は、人が `/command args` と打�
 
 webui (user role) → daemon の op `session_rename { session_id, title }` → daemon がそのセッションの生きている全 run の module にサイドカーの依頼 `session.rename { name }` → module が `$.command.run({ command: "rename", args: name })`。
 
-- 名前は daemon が確かめてから送る: 前後の空白を落とし、空・200 字超・制御文字 (C0 と DEL) を含むものは `invalid_args` で、module に何も送らない。名前は Sessions 一覧の 1 行なので、改行等を黙って落とさずに拒む
+- 名前は daemon が確かめてから送る: 前後の空白を落とし、空・200 字超・制御文字 (C0 と DEL) を含むものは `invalid_args` で、module に何も送らない。名前は Sessions 一覧の 1 行に出るので、改行等を黙って落とさずに拒む
 - run は全部に同時に送る (`turn.abort` と同じ)
 - module の無いセッションに、端末への打鍵・CLI 等の別経路は作らない
 
@@ -43,9 +43,10 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
 
 ### 4. webui
 
-- タイトルの ✎ と Shift+クリックの編集は、module がそのセッションについて話している行 (agents の行に `turn` がある行) にだけ出す。module の無いセッションは `no_module` にしかならないので、押しても失敗しかしない導線を置かない
-- 返事の後、行に 6 秒だけ注記を出す: `renamed` は「名前を変更: <title>」、`queued` は「応答の後に名前を変更: <title>」。error は編集欄を開いたまま msg を出す
-- 行の見出しの名前は agents の行の `name` で、Claude Code が state file に書いた時に追従する。webui は名前を先回りして書き換えない
+- 名前を変える場所はセッションの Status タブの TITLE。値は最初から `<input>` で、Enter で前後の空白を除いた値を `session_rename` に送り、Escape で表示中の名前に戻す。空または今の名前と同じ値は送らない
+- module がそのセッションについて話していない (agents の行に `turn` が無い) セッションでは input を readOnly にする。`no_module` にしかならないので、失敗しかしない編集を置かない
+- 返事の後、input の下に 6 秒だけ注記を出す: `renamed` は「名前を変更: <title>」、`queued` は「応答の後に名前を変更: <title>」。error は入力した値を残したまま msg を出す
+- input に出す名前は agents の行の `name` で、Claude Code が state file に書いた時に追従する。編集中 (入力してから Enter / Escape まで) は追従で上書きしない。webui は名前を先回りして書き換えない (送った後の input は agents の行の名前に戻り、それが変わった時に追従する)
 
 ## Alternatives Considered
 
@@ -61,7 +62,7 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
 ## Consequences
 
 - protocol はサイドカーの依頼の op が 1 つ (`session.rename`)、ErrorCode が 1 つ (`rename_failed`) 増え、`terminal_unavailable` が無くなる。op `session_rename` の response は `{ ok, title, outcome }` になる。module の `describe` の `ops` に `session.rename` が並ぶ
-- この DR より前の plugin で起動したセッションは、✎ を押すと 5 秒待って `rename_failed` (答えが無い) になる。plugin を上げて起動し直したセッションから効く
+- この DR より前の plugin で起動したセッションは、TITLE で Enter を押すと 5 秒待って `rename_failed` (答えが無い) になる。plugin を上げて起動し直したセッションから効く
 - `/rename` は人が打った時と同じく transcript と TUI に `/rename <name>` と「Session renamed to: …」の行を残す
 - 「持たない」ことを壊す変更を止める試験の観点:
   - user role 以外の `session_rename` は `bad_request` で、module に何も送らない
@@ -70,7 +71,7 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
   - main の turn を走らせている module は `$.command.run` を待たずに `queued` と答え、subagent の turn では待つ
   - `$.command.run` が `RENAME_WAIT_MS` で resolve しなければ `queued`
   - module の答えが無い時は `rename_failed`
-  - ✎ は module の話している行にだけ出る
+  - TITLE の input は module の話しているセッションでだけ書き換えられる (それ以外は readOnly)
 
 ## 関連
 

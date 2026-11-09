@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionRenameResponse } from "@ccmsg/protocol";
+import { useEffect, useMemo, useState } from "preact/hooks";
+import type { AgentInfo, LlmRequestInfo, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { NotificationBadges } from "./NotificationBadges.tsx";
 import { rowBadgesShown } from "../notification-badges.ts";
@@ -40,7 +40,6 @@ import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { KeepaliveControl } from "./KeepaliveControl.tsx";
-import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 
 const TICK_MS = 10_000;
@@ -57,80 +56,19 @@ function useTick(intervalMs: number): void {
   }, [intervalMs]);
 }
 
-/** How long a rename's outcome note stays on the row before clearing itself.
- * Not a poll: the note has no state to wait for (the authoritative title
- * arrives on its own via the agents poll), it just must not become permanent
- * sidebar furniture. */
-const RENAME_NOTE_MS = 6000;
-
-/** The row's note for a rename the session took: changed now, or once the
- * turn it was answering ends (DR-0047). */
-export function renameNoteOf(sent: SessionRenameResponse): string {
-  return sent.outcome === "queued"
-    ? `応答の後に名前を変更: ${sent.title}`
-    : `名前を変更: ${sent.title}`;
-}
-
-/** How long the session-id copy confirmation stays up — same 1.5s as
- * StatusPanel's CopyButton, so the two copy affordances feel identical. */
-const COPIED_MARK_MS = 1500;
-
-/** Shift+hover arming for a row's inert-by-default text (kawaz r135m41/42).
- * The sid and the title are primarily things to READ and select with the
- * mouse; their actions (copy, rename) fire only while Shift is held, so an
- * ordinary click can never trigger them. `armed` drives the affordance so the
- * two stay in sync — nothing looks clickable at a moment when clicking would
- * do nothing.
- *
- * The keydown/keyup listeners exist only while the pointer is over the
- * element (so Shift pressed *after* the pointer arrives still arms it) rather
- * than one always-on pair per row: the sidebar renders one of these per
- * session, twice. Entering resyncs from the event's own `shiftKey`, which
- * covers the state going stale while unhovered (Shift released over another
- * window, etc.). */
-function useShiftHover(): {
-  armed: boolean;
-  handlers: { onMouseEnter: (e: MouseEvent) => void; onMouseLeave: () => void };
-} {
-  const [hovered, setHovered] = useState(false);
-  const [shift, setShift] = useState(false);
-  useEffect(() => {
-    if (!hovered) return;
-    const sync = (e: KeyboardEvent) => setShift(e.shiftKey);
-    window.addEventListener("keydown", sync);
-    window.addEventListener("keyup", sync);
-    return () => {
-      window.removeEventListener("keydown", sync);
-      window.removeEventListener("keyup", sync);
-    };
-  }, [hovered]);
-  return {
-    armed: hovered && shift,
-    handlers: {
-      onMouseEnter: (e: MouseEvent) => {
-        setShift(e.shiftKey);
-        setHovered(true);
-      },
-      onMouseLeave: () => setHovered(false),
-    },
-  };
-}
-
 /** 行アイテム全体をセッション選択にする click ハンドラ。行の
  * 中で実際に文字があるのは 1 行目の `<a>` だけで、他の 3 行や行末の余白は
  * どれだけ広くても不感帯だった — 見た目が 1 個のカードなら、カードのどこを
  * 押しても選択になるのが読み手の期待。
  *
- * 素通しする (= 行選択を起こさない) のは 4 つ:
- * - **Shift 押下中**: sid コピー / タイトル編集など、中の各パーツが自分の
- *   Shift 操作を持っている (useShiftHover)。押している間はパーツの担当。
+ * 素通しする (= 行選択を起こさない) のは 3 つ:
  * - **`a` / `button` / `input` などの上**: それぞれ自前の答えを持つ。1 行目の
  *   `<a>` は同じ遷移先なので二重発火を避けるだけだが、⭐ / ▶ ボタンは
  *   「選択」とは別の操作なので拾わせてはいけない。
- * - **修飾キー付き**: Cmd/Ctrl/Alt+click は「新しいタブで」等のブラウザ側の
- *   意味を持つ。行の余白でそれを横取りしても行き先は用意できない。
+ * - **修飾キー付き**: Shift/Cmd/Ctrl/Alt+click は「新しいウィンドウで」
+ *   「新しいタブで」「選択を広げる」等のブラウザ側の意味を持つ。行の余白でそれを横取りしても行き先は用意できない。
  * - **テキスト選択が残っている時**: sid や path はマウスでなぞって読む対象
- *   (SessionIdText の doc 参照)。ドラッグ選択の終わりにも click は飛ぶので、
+ *   (行の CSS で text カーソルを当てている)。ドラッグ選択の終わりにも click は飛ぶので、
  *   選択が生きている間は遷移させない。
  *
  * キーボード経路は 1 行目の `<a>` がそのまま担う (行に role="button" +
@@ -166,254 +104,6 @@ function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
         <span class="session-effort" title={info.title}>
           {info.effort}
         </span>
-      ) : null}
-    </>
-  );
-}
-
-/** The session id, Shift+click-to-copy (kawaz r135m41). Plain text otherwise
- * — it is long, it is what the reader came to this line for, and a button
- * would both invite a click that is no longer wanted and fight the text
- * selection that is.
- *
- * A successful copy is reported by the shared CopyButton beside it (a ✓ for
- * 1.5s); the id itself only tints to the same accent, so that a Shift+click —
- * which never touches the button — still says something happened. A clipboard
- * rejection (insecure context, permission denied) shows nothing: the id is
- * fully visible in the row either way, and a success mark for a copy that did
- * not happen is worse than no mark. */
-function SessionIdText({ sid }: { sid: string }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | undefined>(undefined);
-  const { armed, handlers } = useShiftHover();
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
-
-  function markCopied(): void {
-    setCopied(true);
-    window.clearTimeout(resetTimer.current);
-    resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_MARK_MS);
-  }
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(sid);
-      markCopied();
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <>
-      <span
-        class={`session-sid${armed ? " armed" : ""}${copied ? " copied" : ""}`}
-        title={`${sid}\nShift+クリックでコピー`}
-        onClick={(e) => {
-          if (e.shiftKey) void copy();
-        }}
-        {...handlers}
-      >
-        {sid}
-      </span>
-      {/* タップ用のコピー導線 (kawaz r244m20)。Shift+クリックはポインタと
-       * 修飾キーが要るのでタッチ端末では踏めない — webui 共通のコピーボタン
-       * (StatusPanel のメタ情報と同じもの) を sid の右に常設する。行 click は
-       * button 上で素通しになる (selectSessionOnRowClick) ので、遷移との競合は
-       * ない。成功の ✓ はボタン側が出すので、こちらは sid の色だけ合わせる。
-       * サイドバーが狭い時は CSS 側でこのボタンごと消える (app.css の
-       * `@container` — 読むための sid/model/effort が優先)。その幅では上の
-       * Shift+クリックがコピー手段として残る。 */}
-      <CopyButton value={sid} label="セッション ID" compact onCopied={markCopied} />
-    </>
-  );
-}
-
-/** The session's own title, editable in place (kawaz r135m42): plain text
- * that Shift+hover arms and Shift+click turns into an input *in the same
- * slot*, so the row neither grows a control of its own nor changes height
- * while editing.
- *
- * `editable` is false where the session has no hooks module to run
- * `/rename` (session_rename answers `no_module`, DR-0047) — arming an
- * interaction that can only fail would be worse than leaving the text inert.
- *
- * Being a lone input with no buttons, it can settle on plain Enter (no
- * Shift+Enter requirement as in RoomTitle, whose [保存] button is what a bare
- * Enter would otherwise race) and dismiss on plain blur (RoomTitle needs
- * outside-pointer detection precisely because a blur would eat its button's
- * click). Escape cancels either way. An IME's confirming Enter arrives with
- * `isComposing`, and the blur a candidate window can provoke is masked while
- * a composition is open — neither must be read as "the user is done".
- *
- * A success closes the editor and leaves a note saying whether the name
- * changed now or changes once the session's turn ends (`queued`); the row's
- * headline is the agents rows' name, which follows when the session takes
- * it. */
-function SessionTitle({
-  sid,
-  title,
-  editable,
-  onSent,
-}: {
-  sid: string;
-  title: string;
-  editable: boolean;
-  onSent: (sent: SessionRenameResponse) => void;
-}) {
-  const { ws } = useApp();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { armed, handlers } = useShiftHover();
-  // Escape and blur can both fire within one frame; only the first settles.
-  const settledRef = useRef(false);
-  // Read synchronously by the blur handler so that clicking away mid-send
-  // cannot cancel the editor the pending error needs to land in.
-  const savingRef = useRef(false);
-  const composingRef = useRef(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // `autoFocus` is not enough here: the mousedown that opens the editor has
-  // already focused the row's link (an agent-only row renders the title
-  // inside it), and that focus survives the re-render. Without the input
-  // holding focus, neither Enter nor blur — this editor's only two exits —
-  // could ever fire. Selecting the draft as well matches what the click
-  // asked for: replace this title.
-  useEffect(() => {
-    if (!editing) return;
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, [editing]);
-
-  function startEditing(): void {
-    settledRef.current = false;
-    savingRef.current = false;
-    setDraft(title);
-    setEditing(true);
-  }
-
-  function close(): void {
-    setEditing(false);
-    setError(null);
-  }
-
-  function cancel(): void {
-    if (settledRef.current) return;
-    settledRef.current = true;
-    close();
-  }
-
-  async function confirm(): Promise<void> {
-    if (settledRef.current) return;
-    const trimmed = draft.trim();
-    if (!trimmed) {
-      cancel();
-      return;
-    }
-    savingRef.current = true;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await ws.sessionRename(sid, trimmed);
-      if (!res.ok) {
-        // Keep the editor open with the draft intact so the user can fix a
-        // rejected title (control characters, too long) or retry a failed
-        // send without retyping.
-        setError(res.error.msg);
-        return;
-      }
-      settledRef.current = true;
-      close();
-      onSent(res);
-    } catch {
-      setError("接続エラーのため送信できませんでした");
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  }
-
-  function onKeyDown(e: KeyboardEvent): void {
-    if (e.isComposing) return;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      cancel();
-      return;
-    }
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    void confirm();
-  }
-
-  if (editing) {
-    return (
-      <span class="session-title-edit">
-        <input
-          ref={inputRef}
-          type="text"
-          value={draft}
-          // readOnly, not disabled: disabling the focused input blurs it, and
-          // a rejected send would then leave its error stranded on an editor
-          // the user can no longer type in or dismiss by clicking away.
-          readOnly={saving}
-          maxLength={200}
-          placeholder="Enter で送信, Escape で中止"
-          onInput={(e) => setDraft(e.currentTarget.value)}
-          onKeyDown={onKeyDown}
-          onCompositionStart={() => {
-            composingRef.current = true;
-          }}
-          onCompositionEnd={() => {
-            composingRef.current = false;
-          }}
-          onBlur={() => {
-            if (savingRef.current || composingRef.current) return;
-            cancel();
-          }}
-        />
-        {error && <span class="session-rename-error">{error}</span>}
-      </span>
-    );
-  }
-
-  return (
-    <>
-      <span
-        class={`session-title${editable && armed ? " armed" : ""}`}
-        title={editable ? `${title}\nShift+クリックでタイトルを変更` : title}
-        onClick={(e) => {
-          if (!editable || !e.shiftKey) return;
-          // An agent-only row renders this title inside the row's link (see
-          // SessionRowItem's `hasRepoWs` branch); arming must not also navigate.
-          e.preventDefault();
-          startEditing();
-        }}
-        {...(editable ? handlers : {})}
-      >
-        {title}
-      </span>
-      {/* タップ用の編集導線 (kawaz r244m20)。記号は RoomTitle / SessionCreator
-       * の編集ボタンと同じ ✎ — webui で「その場で書き換える」操作はどこでも
-       * この字。Shift+クリックと同じ編集モードに
-       * 入るだけで、編集可否の条件も同じ — editable でない行には出さない
-       * (押しても失敗しかしない導線を置かない、という上の doc と同じ理由)。
-       * repo/ws を持たない行ではこのタイトルが行の <a> の中に描かれるので、
-       * 既定の遷移を止めてから編集を開く。 */}
-      {editable ? (
-        <button
-          type="button"
-          class="session-inline-icon-btn"
-          title="タイトルを変更"
-          aria-label="タイトルを変更"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            startEditing();
-          }}
-        >
-          ✎
-        </button>
       ) : null}
     </>
   );
@@ -474,7 +164,6 @@ function SessionRowItem({
   /** daemon の protocol の版 (ping の `protocol`)。行の client の版と
    * minor が違えば黄色の印を出す (DR-0002 §4)。undefined = まだ知らない。 */
 }) {
-  const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheRequest);
   const title = sessionRowTitle(row);
   // Straight from the row: a session that announced no repo/ws shows neither
@@ -484,12 +173,9 @@ function SessionRowItem({
   const repo = row.repo;
   const wsLabel = row.ws;
   const titleCell = (
-    <SessionTitle
-      sid={row.sid}
-      title={title}
-      editable={row.agent?.turn !== undefined}
-      onSent={(sent) => setRenameNote(renameNoteOf(sent))}
-    />
+    <span class="session-title" title={title}>
+      {title}
+    </span>
   );
   // An agent-only row has no repo/ws at all (the agents rows carry no VCS
   // metadata), and rendering its first line empty would strand the avatar on
@@ -497,12 +183,6 @@ function SessionRowItem({
   // first line's place. It keeps the dim styling r135m18 asks for; what moves
   // is only WHERE it sits, never what it says.
   const hasRepoWs = Boolean(repo || wsLabel);
-
-  useEffect(() => {
-    if (renameNote === null) return;
-    const id = setTimeout(() => setRenameNote(null), RENAME_NOTE_MS);
-    return () => clearTimeout(id);
-  }, [renameNote]);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
   const idleMs = row.last_activity_at
@@ -617,13 +297,12 @@ function SessionRowItem({
        * 文字 (r135m18)。repo/ws が無い行では上の 1 行目がこの内容を引き取って
        * いるので、ここは出さない。 */}
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
-      {/* Best-effort の顛末 (SessionRenameRequest 参照): 「送った」までしか
-       * 言えないので、タイトル自体は agents poll が更新するまで元のまま。 */}
-      {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
       {/* 3 行目: セッション UUID 全長 (kawaz r135m16)。短縮しないのは、この行
        * の用途が「他所に貼るために丸ごとコピーする」ことだから。 */}
       <div class="session-line3">
-        <SessionIdText sid={row.sid} />
+        <span class="session-sid" title={row.sid}>
+          {row.sid}
+        </span>
         <SessionModelEffort info={modelEffort} />
         <KeepaliveControl sid={row.sid} request={cacheRequest} />
       </div>
@@ -681,35 +360,21 @@ function PinnedSessionRow({
   permitUnread: number;
   onUnpin: () => void;
 }) {
-  const [renameNote, setRenameNote] = useState<string | null>(null);
   const { repo, ws: wsLabel } = pinnedSessionLabel(pin, peer);
   // Same tail as sessionRowTitle: a pin whose session never renamed itself
   // (and whose transcript held no custom-title for Session Search to read)
   // still gets a non-blank line rather than a gap where a title goes.
   const title =
     pinnedSessionTitle(pin, agent) || lastPathSegment(pin.cwd ?? "") || shortSid(pin.sid);
-  // Editable on exactly the condition SessionRowItem uses — the session's
-  // hooks module runs `/rename`, and only a running session has one that has
-  // spoken. An offline pin's title is therefore plain text, not an editor
-  // that could only fail.
   const titleCell = (
-    <SessionTitle
-      sid={pin.sid}
-      title={title}
-      editable={agent?.turn !== undefined}
-      onSent={(sent) => setRenameNote(renameNoteOf(sent))}
-    />
+    <span class="session-title" title={title}>
+      {title}
+    </span>
   );
   // With no repo/ws to print, the title takes the first line's place instead
   // of leaving the avatar stranded on a blank one (SessionRowItem's own
   // hasRepoWs branch, same reasoning).
   const hasRepoWs = Boolean(repo || wsLabel);
-
-  useEffect(() => {
-    if (renameNote === null) return;
-    const id = setTimeout(() => setRenameNote(null), RENAME_NOTE_MS);
-    return () => clearTimeout(id);
-  }, [renameNote]);
 
   return (
     <li
@@ -746,9 +411,10 @@ function PinnedSessionRow({
         </button>
       </div>
       {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
-      {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
       <div class="session-line3">
-        <SessionIdText sid={pin.sid} />
+        <span class="session-sid" title={pin.sid}>
+          {pin.sid}
+        </span>
         <SessionModelEffort info={modelEffort} />
       </div>
       {pin.cwd ? (

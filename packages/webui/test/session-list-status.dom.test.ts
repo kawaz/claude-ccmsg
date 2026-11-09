@@ -7,7 +7,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type { AgentInfo, PeerInfo, UnreadPermit, UnreadSay } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
-import { renameNoteOf, SessionList } from "../src/client/components/SessionList.tsx";
+import { SessionList } from "../src/client/components/SessionList.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -126,36 +126,6 @@ describe("SessionList status from the module's turn", () => {
     expect(dot(WAITING)?.getAttribute("aria-label")).toBe("waiting (dialog open)");
     expect(dot(BARE)).toBeNull();
     expect(rowOf(root, BARE).title).toContain("hooks module 無し");
-  });
-});
-
-// DR-0047: the session's hooks module runs `/rename`, so the title editor
-// (✎) is offered where a module speaks for the session, and the note after a
-// rename says whether the name changes now or after the turn.
-describe("renaming from the Sessions list", () => {
-  test("✎ is on the rows a module speaks for, not on the others", async () => {
-    const root = await mount(
-      [peer(RESPONDING), peer(IDLE), peer(BARE)],
-      [
-        agent(RESPONDING, { turn: { state: "responding", since: SINCE } }),
-        agent(IDLE, { turn: { state: "idle", since: SINCE } }),
-        agent(BARE, { status: "busy", hyoui_session_id: "hy-1" }),
-      ],
-    );
-    const pencil = (sid: string) =>
-      rowOf(root, sid).querySelector('button[aria-label="タイトルを変更"]');
-    expect(pencil(RESPONDING)).not.toBeNull();
-    expect(pencil(IDLE)).not.toBeNull();
-    expect(pencil(BARE)).toBeNull();
-  });
-
-  test("the note says now or after the turn", () => {
-    expect(renameNoteOf({ ok: true, title: "新しい名前", outcome: "renamed" })).toBe(
-      "名前を変更: 新しい名前",
-    );
-    expect(renameNoteOf({ ok: true, title: "新しい名前", outcome: "queued" })).toBe(
-      "応答の後に名前を変更: 新しい名前",
-    );
   });
 });
 

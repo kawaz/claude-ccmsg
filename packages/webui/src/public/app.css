@@ -1438,24 +1438,21 @@ select.sidebar-globals-endpoint {
   min-width: 0;
 }
 
-/* sid は既定では素のテキスト (kawaz r135m41) — カーソルも下線も付けない。
- * Shift を押している間だけ .armed が付き、その時だけ「押せる」見た目になる。
- * 実線の下線 = コピー、破線 = タイトル編集 (.session-title.armed) で、二つの
- * Shift 操作を見た目で区別する。 */
+/* sid は素のテキスト (kawaz r135m41) — なぞって選択する対象なので、カーソル
+ * 以外の「押せる」見た目は付けない。 */
 .session-sid {
   font-size: var(--font-size-2xs);
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
-  /* 行末のコピーボタン (.status-meta-copy-compact) を押せる位置に残すため、はみ出しは
-   * sid 自身の中で切る。細いサイドバーで line3 ごと溢れさせると、右端に並ぶ
-   * ボタンの方が先に画面外へ出てタップできなくなる。 */
+  /* はみ出しは sid 自身の中で切る。細いサイドバーで line3 ごと溢れさせると、
+   * 右に並ぶ model / effort / keepalive の方が先に画面外へ出る。 */
   overflow: hidden;
-  /* 折り返さない (line3 の doc 通り): 折り返しを許すと、右のボタンが幅を取る
+  /* 折り返さない (line3 の doc 通り): 折り返しを許すと、右の要素が幅を取る
    * ほど sid が 2 行にも 4 行にも割れて行の高さが状況で変わってしまう。UUID は
    * ハイフン区切りなので、幅が足りない時は既定でそこが改行機会になる
    * (kawaz r259m5 の実機報告: サイドバーを細くすると 4 行に折れる)。入り切ら
-   * ない分は末尾を省略し、全文は行の title とコピーボタンで届く。 */
+   * ない分は末尾を省略し、全文は sid の title で届く。 */
   white-space: nowrap;
   text-overflow: ellipsis;
   /* 行の 3 要素の中で最初に、かつ最も縮む (.session-model の doc 参照)。
@@ -1465,58 +1462,15 @@ select.sidebar-globals-endpoint {
   min-width: 4em;
 }
 
-.session-sid.armed {
-  opacity: 1;
-  cursor: pointer;
-  text-decoration: underline;
-}
-
-/* コピー成功の一時表示 (kawaz r135m20)。sid 自体は読めたままにしたいので
- * 差し替えではなく併記し、色は StatusPanel の .copied と同じ accent。 */
-.session-sid.copied {
-  opacity: 1;
-  color: var(--accent);
-}
-
-.session-row.active .session-sid.copied {
-  color: var(--accent-fg);
-}
-
-/* タイトル右の ✎ (kawaz r244m20/r259m2)。Shift+クリックを踏めない端末のため
- * の導線なので、常時見えていなければ意味がない — hover で出す設計にすると、
- * hover を持たない端末には出しようがなく、`(hover: none)` での分岐もトラック
- * パッドや Pencil を併用する端末では `hover: hover` 側に倒れて当てにならない。
- * 常時出しつつ弱い色に留め、hover / focus で濃くする。 */
-.session-inline-icon-btn {
-  flex: none;
-  align-self: center;
-  padding: 0 var(--space-3);
-  margin-left: var(--space-3);
-  border: 0;
-  background: none;
-  line-height: 1;
-  font-size: var(--font-size-2xs);
-  color: var(--fg-muted);
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.12s ease-out;
-}
-
-.session-inline-icon-btn:hover,
-.session-inline-icon-btn:focus-visible {
-  opacity: 1;
-  color: var(--accent);
-}
-
 /* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら
- * ない幅では sid ボタン側の ellipsis に任せる。 */
+ * ない幅では sid 側の ellipsis に任せる。 */
 .session-line3 {
   /* 幅の基準は行ではなくリストの可視幅 — .session-line4 と同じ理由 (行は
    * width:max-content なので、行幅を基準にすると器が中身ちょうどに広がって
    * 折り返しが一生起きない)。sid 全長 + model/effort が可視幅に収まらない
    * 細いサイドバーでは折り返さず、はみ出す右側を隠す (kawaz r244m7)。行の
    * 高さが状況で変わらず、sid の読める部分は先頭側 (= 識別に効く側) が残る。
-   * 全長は行の title と Shift+クリックのコピーで届く。 */
+   * 全長は sid の title で届く。 */
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
   padding-left: var(--space-14);
@@ -1529,25 +1483,6 @@ select.sidebar-globals-endpoint {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   opacity: 0.7;
-}
-
-/* 幅が足りない時、この行で最初に消えるのはコピーボタン (kawaz r259m8)。
- * 縮む順は model/effort > sid > ボタン — 読むための 3 要素が先で、ボタンは
- * それらを押しのけてまで居座る価値がない。ボタンが消えてもコピー手段は
- * 失われない (sid の Shift+クリック、SessionIdText 参照) ので、狭い幅では
- * `[e8c38f…] [fable…] [low]` の 3 要素だけが残る。
- *
- * 閾値の根拠 (font-size-2xs = 10.4px の等幅で実測): sid を UUID 第 1 ブロック
- * + 省略記号の 9 文字 (約 56px) まで見せた上で、model (約 58px) / effort
- * (約 21px) / ボタン (アイコン 1 文字 + margin で約 20px) / gap 3 個 (約 17px)
- * / 行の padding (約 36px) を並べるのに 210px 強。閾値に少し余裕を持たせて
- * あるのは、読むための 3 要素が自分の min-width まで削られる前にボタンの側が
- * 降りるようにするため。中途半端に clip されたアイコンは出さない — 押せるか
- * 消えるかの二値にする。 */
-@container (max-width: 240px) {
-  .session-line3 .status-meta-copy {
-    display: none;
-  }
 }
 
 /* sid の右に並ぶ model / effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
@@ -1629,56 +1564,6 @@ select.sidebar-globals-endpoint {
   white-space: nowrap;
   min-width: 0;
   flex: 1;
-}
-
-/* タイトルも sid と同じ Shift ゲート (kawaz r135m42)。破線の下線で「編集」を
- * 表し、sid 側の実線 (= コピー) と区別する。 */
-.session-title.armed {
-  cursor: pointer;
-  text-decoration: underline dashed;
-  text-underline-offset: 0.2em;
-}
-
-/* 編集中はタイトルの span がその場で input に入れ替わる。器 (.session-line2
- * / .session-line1) の高さを変えないよう、input は行の文字サイズのまま最小限
- * の枠だけを持つ。エラーは幅が足りないので下に回り込ませる。 */
-.session-title-edit {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-5);
-  flex: 1;
-  min-width: 0;
-}
-
-.session-title-edit input {
-  flex: 1 1 100%;
-  min-width: 0;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  padding: 0 var(--space-4);
-  border: 1px solid var(--accent);
-  border-radius: 0.35rem;
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.session-rename-error {
-  flex: 1 1 100%;
-  font-size: var(--font-size-2xs);
-  color: var(--danger);
-  word-break: break-word;
-}
-
-/* 送信できたことだけを伝える控えめな注記 (タイトル自体は agents poll が
- * 更新する)。数秒で自分から消える。 */
-.session-rename-note {
-  padding-left: var(--space-14);
-  font-size: var(--font-size-2xs);
-  color: var(--fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* DR-0021 §2.4/§3.2: Pinned-section row extras (SessionList.tsx's
@@ -7426,9 +7311,50 @@ a.tl-attachment-file-path {
   gap: var(--space-8);
 }
 
-.status-meta-value > span {
+/* コピーボタンは値の左 (StatusPanel)。値の右に置くと、短い値ほどボタンが
+ * 空白の向こうに離れて、どの値のボタンかが読み取りにくい。 */
+.status-meta-value > span,
+.status-meta-value > a,
+.status-title-field {
   min-width: 0;
   flex: 1;
+}
+
+/* TITLE の値は最初から input (DR-0047 §4)。表の他の値と同じ字の大きさ・
+ * 書体のまま、枠だけで入力欄だと分かるようにする。 */
+.status-title-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.status-title-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* module の無いセッション: 書き換えられないので入力欄の枠を見せない。 */
+.status-title-input-locked {
+  border-color: transparent;
+  background: transparent;
+}
+
+.status-title-note {
+  margin: var(--space-2) 0 0;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.status-title-error {
+  color: var(--danger);
 }
 
 .status-meta-copy {
@@ -7470,23 +7396,6 @@ a.tl-attachment-file-path {
 
 .status-meta-copy.copied .status-meta-copy-mark {
   opacity: 1;
-}
-
-/* SESSIONS の行のように 4 行が縦に詰まった狭い場所向け (kawaz r259m2)。
- * 枠と色 = 「押すとコピーされる」手掛かりはそのままに、寸法だけ sid の行に
- * 収まるところまで詰める。 */
-.status-meta-copy-compact {
-  align-self: center;
-  margin-left: var(--space-3);
-  padding: 0 var(--space-3);
-  font-size: var(--font-size-2xs);
-  line-height: 1.4;
-}
-
-.status-context-note {
-  color: var(--fg-muted);
-  font-family: inherit;
-  font-size: 0.85em;
 }
 
 .status-section-title {

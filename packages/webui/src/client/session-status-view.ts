@@ -276,7 +276,7 @@ export interface ModelEffortInfo {
 /** Sidebar の session 行が sid の右に出す model と effort。
  *
  * 連結済みの 1 文字列ではなく 2 つに分けて返すのは、この行が
- * `[sid][コピー] [model] [effort]` の横並びで、幅が足りない時は要素ごとに
+ * `[sid] [model] [effort]` の横並びで、幅が足りない時は要素ごとに
  * 別々へ省略される必要があるため (kawaz r259m5)。連結すると省略も 1 個所に
  * しか効かず、狭い幅では effort だけが丸ごと消える。
  *
