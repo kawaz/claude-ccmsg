@@ -102,14 +102,13 @@ Status タブはセッションが何で、今何で動いているかと、セ�
    - LIVE は大きい字と点。点は応答中なら塗って明滅、待ち (`waiting`) は警告色、idle は灰色の塗り、hooks module の名乗りが無ければ中抜き
    - MODEL / EFFORT は押すと選べる値 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.4)
    - CONTEXT は使用率の文字、window に対する割合の `<meter>` (window か使用量が分からない間は出さない)、その後に `model[window] / effort` (TL 下ミニパネルの ctx 行の後半と同じ綴り)。hover の説明は ctx 行と同じ
-2. **このセッションは何か**: TITLE (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) と CWD の表
-3. **識別子**: SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / STARTED / UPTIME の表
-4. ENV (畳み、開いた時に取得、機微な値は伏せ字)
-5. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)
-6. 危険ゾーン
+2. **セッションの値の表** (1 つの表): CWD / HYOUI_SESSION_ID / SESSION_ID / TITLE (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) / CCMSG / KIND / STARTED / UPTIME / PID (この順)
+3. ENV (畳み、開いた時に取得、機微な値は伏せ字)
+4. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)
+5. 危険ゾーン
 
 - background タスク・TODO・workflow・agent の一覧は出さない (kawaz「ステータス画面で邪魔に感じる以外の気持ちで見たことが一度もない」)。agent の TL への入口は Timeline の agent tree が持ち、走行中の数はサイドバーのミニバッジが出す。`session_status` の購読は context・subagents・touched_files 等のために続ける
-- 表 (2 と 3) は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。2 つの表の名前の列は同じ幅で、表どうしも揃う。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。値を持つ全項目 (TITLE / CWD / SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / STARTED / UPTIME) に付け、表示している文字列をコピーする。値が無い (`—`) 行は四角の場所を空ける。計器の値は押すと選べる等の別の操作を持つのでコピーを付けない
+- 表 (2) は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。表を分けない (分けると表の境目に行間より広い隙間が出る)。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。値を持つ全項目 (TITLE / CWD / SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / STARTED / UPTIME) に付け、表示している文字列をコピーする。値が無い (`—`) 行は四角の場所を空ける。計器の値は押すと選べる等の別の操作を持つのでコピーを付けない
 - ENV は「名前」と「値」の 2 列 (subgrid)。名前の列は最も長い名前の幅 (表の幅の 30% が上限、超える名前はその中で横スクロール)、値の列は残り全部。各行の値の左にコピーを付け、伏せ字の行も実値をコピーする
 - セッションのタブは Files / Timeline / Status / Terminal の順 (Terminal はそのセッションが端末を持つ時だけ出る)
 - 値の長さでは折り返さない。1 つの値が長いだけのセル (CWD、SESSION_ID、ENV の名前と値など) は 1 行に置き、セルより長ければスクロールバーを出さずに横へスクロールする。値の長さで行の高さが変わらない (kawaz: 折り返しで表に縦の隙間が出るのを避ける)。意味のある改行は残す: ENV の「コロンを改行で表示」を選んだ時の各要素、値そのものが持つ改行、結果の stdout / stderr の行

@@ -7325,11 +7325,10 @@ a.tl-attachment-file-path {
 
 /* --- Status tab (DR-0020) --- */
 
-/* The tab from the top: what the session is (TITLE / CWD), the gauges of
- * what it runs as now (LIVE / MODEL / EFFORT / CONTEXT), its identifiers,
- * then the folds and operations (ENV, セッション操作, Background, TODO) and the
- * danger zone last. A container, so the facts tables stack their terms over
- * the values when the pane is narrow. */
+/* The tab from the top: the gauges of what the session runs as now (CONTEXT
+ * / LIVE / MODEL / EFFORT), the one facts table (CWD, the ids, TITLE and the
+ * rest), then ENV, セッション操作 and the danger zone last. A container, so
+ * the facts table stacks its terms over the values when the pane is narrow. */
 .status-view {
   flex: 1;
   min-height: 0;
@@ -7366,10 +7365,9 @@ a.tl-attachment-file-path {
   margin: 0;
 }
 
-/* Facts tables (TITLE / CWD, and the identifiers): term, copy, value in three
- * columns, the value column shared by every row through subgrid so the values
- * start on one line whether a row has a copy button or not. The term column
- * has a fixed width so the two tables line up with each other. */
+/* The facts table: term, copy, value in three columns, the value column
+ * shared by every row through subgrid so the values start on one line whether
+ * a row has a copy button or not. */
 .status-facts {
   display: grid;
   grid-template-columns: 8.5rem 1.6rem minmax(0, 1fr);

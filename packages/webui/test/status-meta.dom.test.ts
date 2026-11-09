@@ -342,12 +342,23 @@ describe("Status tab layout", () => {
     );
   }
 
-  test("the gauges first with CONTEXT on top, then what the session is, then its identifiers", async () => {
+  // One table under the gauges: two would leave a gap between CWD and the
+  // ids where one table ends and the next begins.
+  test("the gauges first with CONTEXT on top, then one table of the session's facts", async () => {
     const { root } = await mountStatus(agentRow());
     expect(tables(root)).toEqual([
       ["CONTEXT", "LIVE", "MODEL", "EFFORT"],
-      ["TITLE", "CWD"],
-      ["SESSION_ID", "PID", "HYOUI_SESSION_ID", "CCMSG", "KIND", "STARTED", "UPTIME"],
+      [
+        "CWD",
+        "HYOUI_SESSION_ID",
+        "SESSION_ID",
+        "TITLE",
+        "CCMSG",
+        "KIND",
+        "STARTED",
+        "UPTIME",
+        "PID",
+      ],
     ]);
   });
 

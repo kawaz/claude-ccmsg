@@ -1,6 +1,6 @@
-// SessionView Status-tab body (DR-0020): what the session is, the gauges of
-// what it runs as now, its identifiers, its environment, the operations on it
-// and the danger zone, from the daemon's session_status_subscribe snapshot
+// SessionView Status-tab body (DR-0020): the gauges of what the session runs
+// as now, the one table of what it is and its identifiers, its environment,
+// the operations on it and the danger zone, from the daemon's session_status_subscribe snapshot
 // (the context) and the shared store. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
 // needs the same live data); session identity metadata is resolved here from
@@ -704,23 +704,8 @@ export function StatusPanel({
         </div>
       </dl>
       <dl class="status-meta status-facts">
-        <div class="status-fact">
-          <dt>TITLE</dt>
-          <dd class="status-fact-value">
-            {title ? <CopyButton value={title} label="TITLE" /> : null}
-            <SessionTitleInput key={sid} sid={sid} title={title} />
-          </dd>
-        </div>
         <Fact term="CWD" copy={cwd ?? undefined}>
           {cwd ?? "—"}
-        </Fact>
-      </dl>
-      <dl class="status-meta status-facts">
-        <Fact term="SESSION_ID" copy={sid}>
-          {sid}
-        </Fact>
-        <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
-          {agent ? String(agent.pid) : "—"}
         </Fact>
         <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
           {agent?.hyoui_session_id ? (
@@ -740,6 +725,16 @@ export function StatusPanel({
             "—"
           )}
         </Fact>
+        <Fact term="SESSION_ID" copy={sid}>
+          {sid}
+        </Fact>
+        <div class="status-fact">
+          <dt>TITLE</dt>
+          <dd class="status-fact-value">
+            {title ? <CopyButton value={title} label="TITLE" /> : null}
+            <SessionTitleInput key={sid} sid={sid} title={title} />
+          </dd>
+        </div>
         <Fact
           term="CCMSG"
           copy={staleClient ? staleClient.build : peer ? clientBuild : undefined}
@@ -769,6 +764,9 @@ export function StatusPanel({
         </Fact>
         <Fact term="UPTIME" copy={uptimeText}>
           {uptimeText ?? "—"}
+        </Fact>
+        <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
+          {agent ? String(agent.pid) : "—"}
         </Fact>
       </dl>
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
