@@ -301,21 +301,27 @@ export function useDefaultTranslationTab({
 
 /** バブル 1 つが持つ翻訳タブの選択 (応答 / 許可依頼)。タブ 1 列が
  * バブルの中の訳す対象全部に効く。`text` は既定の判定に渡す本文 (訳す対象を
- * 全部つないだもの)、`elementRef` は可視範囲の判定に使うバブルの要素。選んで
+ * 全部つないだもの)、`elementRef` は可視範囲の判定に使うバブルの要素、
+ * `defaultByText` は既定の判定を使うか。選んで
  * いたタブの経路が再接続で無くなったら original に戻す。 */
 export function useBubbleTranslationTab({
   text,
   availability,
   elementRef,
+  defaultByText,
 }: {
   text: string;
   availability: TranslationAvailability;
   elementRef: RefObject<Element>;
+  /** 本文に英語の段落があれば既定を ja(plamo) にするか。false なら既定は
+   * 常に original で、人がタブを選んだ時だけ訳す (ユーザー自身が書いた
+   * prompt のバブル)。 */
+  defaultByText: boolean;
 }): { tab: TranslationTab; selectTab: (tab: TranslationTab) => void } {
   const [tab, setTab] = useState<TranslationTab>("original");
   const selectTab = useDefaultTranslationTab({
     text,
-    enabled: true,
+    enabled: defaultByText,
     plamoUrl: availability.plamoUrl,
     elementRef,
     setTab,

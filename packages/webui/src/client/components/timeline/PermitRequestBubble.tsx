@@ -448,6 +448,7 @@ export function PermitRequestBubble({
     text: permitTranslatableText(request),
     availability: translationAvailability,
     elementRef: bubbleRef,
+    defaultByText: true,
   });
   return (
     <div class="tl-bubble tl-bubble-left tl-bubble-permit" ref={bubbleRef}>

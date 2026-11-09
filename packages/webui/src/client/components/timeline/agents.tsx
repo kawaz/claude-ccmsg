@@ -112,6 +112,7 @@ export function AgentCard({
     text: body,
     availability: translationAvailability,
     elementRef: bubbleRef,
+    defaultByText: true,
   });
   const { bodyText, translatingLabel } = useTranslatedText(body, translationAvailability, tab);
   return (

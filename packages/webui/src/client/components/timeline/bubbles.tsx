@@ -47,6 +47,7 @@ export function UserPromptBubble({
     text: bodyText,
     availability: translationAvailability,
     elementRef: bubbleRef,
+    defaultByText: false,
   });
   return (
     <div
@@ -140,6 +141,7 @@ export function AssistantBubble({
     text: bodyText,
     availability: translationAvailability,
     elementRef: bubbleRef,
+    defaultByText: true,
   });
   const [source, setSource] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);

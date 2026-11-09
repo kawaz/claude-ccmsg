@@ -313,7 +313,9 @@ describe("default tab", () => {
   });
 
   // user のバブル (別セッションからのメッセージを含む) も同じ判定。
-  async function userBubble(text: string): Promise<{ tab: string | null; body: string }> {
+  async function userBubble(
+    text: string,
+  ): Promise<{ tab: string | null; body: string; tabs: string[] }> {
     const root = document.createElement("div");
     document.body.appendChild(root);
     container = root;
@@ -344,14 +346,19 @@ describe("default tab", () => {
     return {
       tab: languageTab(root),
       body: root.querySelector(".tl-bubble-body")?.textContent ?? "",
+      tabs: [...root.querySelectorAll('[aria-label="本文の言語"] [role="tab"]')].map(
+        (el) => el.textContent ?? "",
+      ),
     };
   }
 
-  test("a user bubble with English opens on ja(plamo) and shows the translation", async () => {
-    const { tab, body } = await userBubble(ENGLISH);
-    expect(tab).toBe("ja(plamo)");
-    expect(body).not.toContain(ENGLISH);
-    expect(body).toContain("訳");
+  // 人が自分で書いた prompt は自動では訳さない。翻訳タブは出し、既定は original。
+  test("a user bubble with English stays on original and still offers the ja(plamo) tab", async () => {
+    const { tab, body, tabs } = await userBubble(ENGLISH);
+    expect(tab).toBe("original");
+    expect(tabs).toContain("ja(plamo)");
+    expect(body).toContain(ENGLISH);
+    expect(body).not.toContain("訳");
   });
 
   test("a Japanese user bubble stays on original", async () => {
