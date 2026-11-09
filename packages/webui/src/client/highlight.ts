@@ -20,7 +20,7 @@
 // (highlight.ts -> FileViewer.tsx / CodeBlock.tsx), never through Shiki's
 // `codeToHtml()`/innerHTML path, so Preact's own text-node escaping is what
 // protects against file content that happens to contain `<`/`&`.
-import type { HighlighterCore, LanguageInput } from "shiki/core";
+import type { GrammarState, HighlighterCore, LanguageInput, ThemedToken } from "shiki/core";
 
 // Shiki language ids this module can load (grammar `name`, not necessarily
 // the alias used to select it -- e.g. "bash" resolves to the "shellscript"
@@ -243,5 +243,117 @@ export async function tokenizeLines(src: string, lang: HighlightLang): Promise<H
     // unstyled lines rather than reject and leave the caller stuck on its
     // "loading" state forever.
     return splitContentLines(src).map((line) => (line === "" ? [] : [{ text: line }]));
+  }
+}
+
+// ---- 編集領域の着色 (DR-0051) ----
+//
+// 編集中は DOM を組み替えずに CSS Custom Highlight API で塗るので、トークンは
+// span ではなく「どこからどこまでを、どの色で」の範囲で渡す。`::highlight()`
+// で使えるのは color / text-decoration 等だけなので、テーマの font-style /
+// font-weight はここで落とす (DR-0051 §5)。
+
+/** 1 つのトークンの色。light / dark はテーマ別の文字色、decoration は
+ * text-decoration (下線・取り消し線)。無い値は空文字。 */
+export interface SyntaxPaint {
+  light: string;
+  dark: string;
+  lightDecoration: string;
+  darkDecoration: string;
+}
+
+/** 渡したコード片の中の位置 (UTF-16 の offset、終わりは含まない) と色。 */
+export interface SyntaxToken {
+  start: number;
+  end: number;
+  paint: SyntaxPaint;
+}
+
+export interface TokenizedBlock {
+  tokens: SyntaxToken[];
+  /** この片の最後の行の後の文法の状態。次の片の `startState` に渡す。
+   * トークン化に失敗した片では無い。 */
+  endState: GrammarState | undefined;
+}
+
+/** コード片を、前の片の終わりの状態から続けてトークン化する。 */
+export type BlockTokenizer = (code: string, startState: GrammarState | undefined) => TokenizedBlock;
+
+const EDITOR_THEMES = { light: "github-light", dark: "github-dark" } as const;
+
+function paintOf(tok: ThemedToken): SyntaxPaint | null {
+  const style = tok.htmlStyle;
+  if (!style) return null;
+  const paint: SyntaxPaint = {
+    light: style["--shiki-light"] ?? "",
+    dark: style["--shiki-dark"] ?? "",
+    lightDecoration: style["--shiki-light-text-decoration"] ?? "",
+    darkDecoration: style["--shiki-dark-text-decoration"] ?? "",
+  };
+  return paint.light || paint.dark || paint.lightDecoration || paint.darkDecoration ? paint : null;
+}
+
+/** 言語の文法を読み込み、片ごとにトークン化する関数を返す。読み込めなければ
+ * `null` (呼び出し側は着色なしで編集を続ける)。閲覧側と同じハイライタ・同じ
+ * 2 テーマを使うので、編集に入っても色が変わらない。 */
+export async function loadBlockTokenizer(lang: HighlightLang): Promise<BlockTokenizer | null> {
+  let highlighter: HighlighterCore;
+  try {
+    highlighter = await getHighlighter();
+    await loadGrammar(highlighter, lang);
+  } catch {
+    return null;
+  }
+  return (code, startState) => {
+    try {
+      const result = highlighter.codeToTokens(code, {
+        lang,
+        themes: EDITOR_THEMES,
+        defaultColor: false,
+        grammarState: startState,
+      });
+      const tokens: SyntaxToken[] = [];
+      for (const line of result.tokens) {
+        for (const tok of line) {
+          const paint = paintOf(tok);
+          if (paint)
+            tokens.push({ start: tok.offset, end: tok.offset + tok.content.length, paint });
+        }
+      }
+      return { tokens, endState: result.grammarState };
+    } catch {
+      // tokenizeLines と同じく、文法が扱えない入力は着色なしに落とす。
+      return { tokens: [], endState: undefined };
+    }
+  };
+}
+
+/** 2 つの文法の状態が同じか。同じなら、その位置から後ろのトークンは前回の
+ * 結果を使い回せる (増分トークン化の打ち切り条件、DR-0051 §3)。
+ *
+ * Design rationale: shiki の公開 API には状態を比べる手段が無い。ここだけが
+ * `GrammarState.getInternalStack()` (shiki の型では @internal) と、その戻り値
+ * の vscode-textmate の `StateStack.equals()` (vscode-textmate では公開) に依存
+ * する。比べられないと増分トークン化が成り立たず、毎打鍵で全体を再トークン化
+ * することになる (5000 行で約 1.5 秒、DR-0051 §2)。依存はこの関数 1 つに閉じ、
+ * 挙動を `highlight.test.ts` で固定している。shiki の更新で内部が変わって
+ * 比べられなくなった時 (メソッドが無い・例外・状態が取れない) は `false` を
+ * 返す。その場合、打ち切りが起きずに変更位置からファイル末尾まで再トークン化
+ * する (= 全体の再トークン化への退避。色は正しいまま遅くなるだけ)。 */
+export function grammarStatesEqual(
+  a: GrammarState | undefined,
+  b: GrammarState | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return false;
+  if (a === b) return true;
+  try {
+    for (const theme of [EDITOR_THEMES.light, EDITOR_THEMES.dark]) {
+      const stackA = a.getInternalStack(theme);
+      const stackB = b.getInternalStack(theme);
+      if (stackA === undefined || stackB === undefined || !stackA.equals(stackB)) return false;
+    }
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -70,4 +70,5 @@ W1 以降は kawaz の DR 承認後に workflow で実装。
 
 - DR-0008 (files view) — fs_list / fs_read の containment 検査の正本
 - DR-0018 (session launcher) — 同系統の webui 能動操作
+- [DR-0051](./DR-0051-file-editor-syntax-highlight.md) — Files の既存ファイルの編集モード (着色を保つ編集領域)。新規メモの編集は textarea のまま
 - `docs/inbox/README.md` — inbox 運用の意味論

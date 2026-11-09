@@ -54,6 +54,7 @@ webui workspace UI の Phase 1 スコープ確定にあたり、kawaz が優先�
 
 - Phase 1 のスコープは「リモートからファイルが読める」の解消。シンタックスハイライトは強く欲しい機能ではあるが、`packages/webui` は DR-0004 §4 で「vanilla ESM JS + CSS、フレームワーク・bundler なし」と定めており、monaco / highlight.js 等の同梱は bundle サイズと依存追加を伴う
 - 素のビューア (行番号付きプレーンテキスト) で「読める」要件は満たせるため、ハイライトは後続 issue として切り出す
+- 着色は `highlight.ts` (Shiki の細粒度 bundle) で入った。編集モードの着色は [DR-0051](./DR-0051-file-editor-syntax-highlight.md)
 
 ### 7. 追補 (2026-07-11): containment root を「検証済み repo container (repo_root)」へ拡張 [kawaz]
 

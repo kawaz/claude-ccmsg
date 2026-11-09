@@ -75,6 +75,8 @@ import {
 } from "../rendered-text-search.ts";
 import { loopNextIndex, loopPrevIndex, parseSearchQuery } from "../in-view-search.ts";
 import { SearchBar } from "./SearchBar.tsx";
+import { CodeEditor } from "./CodeEditor.tsx";
+import { toEditorText, toFileText } from "../editor-text.ts";
 import { Tabs } from "./Tabs.tsx";
 
 function splitLines(content: string): string[] {
@@ -268,7 +270,7 @@ function InboxNewEditor({
  * is a conflict.
  *
  * The write still goes through the same `fs_edit` optimistic-lock path the
- * textarea editor uses (same authorization surfaces, same
+ * 編集 mode's editor (TextFileEditor) uses (same authorization surfaces, same
  * `expected_mtime`/`expected_size` contract), with the lock token taken from
  * the fresh read — so the one thing content-matching cannot see, a write that
  * lands in the gap between this read and this edit, is still refused by the
@@ -277,7 +279,7 @@ function InboxNewEditor({
  * Note the cached `mtime`/`size` are deliberately *not* advanced on success.
  * The bytes written are the fresh read's, which may carry other edits the
  * cached view never saw, so the cache is knowingly behind disk — and the
- * textarea editor's lock must keep reflecting that, or saving from 編集 would
+ * 編集 mode's lock must keep reflecting that, or saving from 編集 would
  * clobber those other edits with a token that falsely claims to be current.
  *
  * Interaction is offered only when `findTaskLines`' scan of the source agrees
@@ -566,11 +568,20 @@ function TextFileEditor({
   onSaved: () => void;
 }) {
   const { ws } = useApp();
-  const [content, setContent] = useState(initialContent);
+  // 編集は LF で行い、保存の時にファイルの改行コードへ戻す (DR-0051 §4)。
+  // 開いた時の内容で決め、開いている間の再読み込みでは変えない (本文と同じ)。
+  const [opened] = useState(() => {
+    const lang = detectLanguage(path);
+    return {
+      ...toEditorText(initialContent),
+      lang: isHighlightEligible(lang, initialContent, false) ? lang : null,
+    };
+  });
+  const [content, setContent] = useState(opened.text);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     bodyRef.current?.focus();
@@ -585,7 +596,14 @@ function TextFileEditor({
     setSaving(true);
     setError(null);
     try {
-      const res = await ws.fsEdit(sid, path, kind, content, expectedMtime, expectedSize);
+      const res = await ws.fsEdit(
+        sid,
+        path,
+        kind,
+        toFileText(content, opened.lineEnding),
+        expectedMtime,
+        expectedSize,
+      );
       if (res.ok) {
         onSaved();
       } else if (res.error.code === "file_conflict") {
@@ -623,11 +641,12 @@ function TextFileEditor({
         </div>
       </header>
       {error ? <p class="memo-editor-error">{error}</p> : null}
-      <LineNumberedTextarea
-        textareaRef={bodyRef}
+      <CodeEditor
+        editorRef={bodyRef}
         ariaLabel="ファイル本文"
-        value={content}
-        onInput={(e) => setContent(e.currentTarget.value)}
+        initialText={opened.text}
+        lang={opened.lang}
+        onChange={setContent}
         onKeyDown={(e) => {
           if (e.metaKey && e.key === "Enter") {
             e.preventDefault();
@@ -871,8 +890,8 @@ export function FileViewer({
   // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
   // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
-  // Edit mode swaps the read-only line list for a textarea populated by the
-  // current fs_read content. Reset whenever the selected path changes so
+  // Edit mode swaps the read-only line list for the code editor
+  // (CodeEditor) populated by the current fs_read content. Reset whenever the selected path changes so
   // navigating to a different file doesn't carry a stale edit session.
   const [editMode, setEditMode] = useState(false);
   useEffect(() => {
@@ -1345,7 +1364,7 @@ export function FileViewer({
             ]}
           />
         ) : null}
-        {/* 「編集」: 現在のテキスト内容を textarea で開いて fs_edit で上書きする。
+        {/* 「編集」: 現在のテキスト内容を編集領域 (CodeEditor) で開いて fs_edit で上書きする。
          * truncated (先頭 512KB のみ取得済) の時はテールが手元にないので隠す
          * — うっかり保存でファイルが縮む事故を防ぐ。preview モード中も隠す
          * (レンダ結果ではなく原文を編集させたい)。 */}

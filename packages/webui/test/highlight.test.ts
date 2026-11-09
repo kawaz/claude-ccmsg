@@ -4,10 +4,13 @@
 // these spans directly as JSX text nodes, never through an innerHTML path —
 // see highlight.ts for why).
 import { describe, expect, test } from "bun:test";
+import type { GrammarState } from "shiki/core";
 import {
   detectLanguage,
+  grammarStatesEqual,
   HIGHLIGHT_MAX_BYTES,
   isHighlightEligible,
+  loadBlockTokenizer,
   tokenizeLines,
   type HighlightLang,
 } from "../src/client/highlight.ts";
@@ -213,5 +216,80 @@ describe("tokenizeLines", () => {
   test("source that is only a newline -> a single empty line, not two", async () => {
     const lines = await tokenizeLines("\n", "tsx");
     expect(lines).toEqual([[]]);
+  });
+});
+
+// 編集領域の着色 (DR-0051): 片ごとのトークン化と、増分トークン化の打ち切り条件。
+describe("loadBlockTokenizer", () => {
+  test("トークンの位置は渡したコード片の中の位置で、閲覧側と同じ 2 テーマの色を持つ", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const code = "const a = 1;\nlet b = 'x';";
+    const { tokens } = tokenize(code, undefined);
+    const keyword = defined(
+      tokens.find((t) => code.slice(t.start, t.end) === "let"),
+      "the let token",
+    );
+    expect(keyword.paint.light).toMatch(/^#/);
+    expect(keyword.paint.dark).toMatch(/^#/);
+    // 2 行目のトークンも本文の先頭からではなく片の先頭からの位置
+    expect(keyword.start).toBe(code.indexOf("let"));
+  });
+
+  test("前の片の終わりの状態を渡すと続きとしてトークン化する (コメントの中)", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const opened = tokenize("/* open", undefined);
+    const inside = tokenize("const x = 1;", opened.endState);
+    const fresh = tokenize("const x = 1;", undefined);
+    // コメントの中なら 1 行まるごと 1 つの色、続きでなければ const が別の色
+    expect(new Set(inside.tokens.map((t) => t.paint.light)).size).toBe(1);
+    expect(new Set(fresh.tokens.map((t) => t.paint.light)).size).toBeGreaterThan(1);
+  });
+});
+
+describe("grammarStatesEqual (shiki の内部 API への依存をここで固定する)", () => {
+  // この describe が落ちたら shiki の内部 (GrammarState.getInternalStack /
+  // StateStack.equals) が変わった。その間も grammarStatesEqual は false を返して
+  // 全体の再トークン化に退避するので色は正しいが、編集が重くなる。
+  test("別々にトークン化しても同じ文脈で終わった状態は等しい", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const a = tokenize("const a = 1;", undefined).endState;
+    const b = tokenize("let b = 2;", undefined).endState;
+    expect(a).not.toBe(b);
+    expect(grammarStatesEqual(a, b)).toBe(true);
+  });
+
+  test("コメントの中で終わった状態とコードで終わった状態は等しくない", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const code = tokenize("const a = 1;", undefined).endState;
+    const comment = tokenize("/* open", undefined).endState;
+    expect(grammarStatesEqual(code, comment)).toBe(false);
+  });
+
+  test("状態が無い (先頭・トークン化に失敗した片) なら等しくない", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const state = tokenize("const a = 1;", undefined).endState;
+    expect(grammarStatesEqual(undefined, state)).toBe(false);
+    expect(grammarStatesEqual(state, undefined)).toBe(false);
+    expect(grammarStatesEqual(undefined, undefined)).toBe(false);
+  });
+
+  test("内部の状態が取れない・例外を投げる時は等しくない (全体の再トークン化へ退避)", async () => {
+    const tokenize = defined(await loadBlockTokenizer("tsx"), "the tsx tokenizer");
+    const real = defined(tokenize("const a = 1;", undefined).endState, "a grammar state");
+    const base = {
+      lang: "tsx",
+      theme: "github-light",
+      themes: ["github-light", "github-dark"],
+      getScopes: () => [],
+    };
+    const missing: GrammarState = { ...base, getInternalStack: () => undefined };
+    const throwing: GrammarState = {
+      ...base,
+      getInternalStack: () => {
+        throw new Error("internal API changed");
+      },
+    };
+    expect(grammarStatesEqual(real, missing)).toBe(false);
+    expect(grammarStatesEqual(throwing, real)).toBe(false);
   });
 });
