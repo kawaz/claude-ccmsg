@@ -7149,6 +7149,24 @@ a.tl-attachment-file-path {
   min-width: 0;
 }
 
+/* 宛先のエージェント (main か走行中の subagent、DR-0039 §6)。ヘッダはパネルの
+ * ドラッグ面なので、select 自体は操作できるよう上の panel select 規則に乗る。
+ * 長い subagent の説明はヘッダを押し広げず、select の幅の中で切る。 */
+.session-input-agent {
+  min-width: 0;
+  max-width: 14em;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+/* subagent 宛ての時だけ入力欄の下に出す、足されるのは文脈で権限ではない旨。 */
+.session-input-agent-note {
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
 .session-input-target code {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7738,25 +7756,6 @@ a.tl-attachment-file-path {
   margin: var(--space-7) 0 0;
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
-}
-
-/* Status: input to a running subagent (DR-0039 §6) */
-.subagent-input-note,
-.subagent-input-result {
-  margin: var(--space-7) 0 0;
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-}
-.subagent-input-text {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 4em;
-  margin: var(--space-7) 0 0;
-  font: inherit;
-}
-.subagent-input-send {
-  margin: var(--space-7) 0 0;
 }
 
 /* --- TL floating controls / bottom mini panel (DR-0020 §2.1) --- */

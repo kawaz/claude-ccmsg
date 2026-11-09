@@ -420,7 +420,6 @@ export function SessionView({
                 onKill={(opts) => ws.sessionKill(sid, opts)}
                 restart={restart}
                 onLoadEnv={() => ws.sessionEnv(sid)}
-                onAgentInput={(agentId, text) => ws.userMessage(sid, agentId, text)}
                 onOverride={(patch) => ws.requestOverride(sid, patch)}
               />
             ) : hasTranscript ? (
@@ -441,7 +440,11 @@ export function SessionView({
          * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
          * セッション) は宛先が存在しないのでガードのまま。 */}
         {peer || agentForSid ? (
-          <SessionInputComposer sid={sid} openRequest={composerOpenRequest} />
+          <SessionInputComposer
+            sid={sid}
+            openRequest={composerOpenRequest}
+            timelineAgentId={agent?.agentId ?? null}
+          />
         ) : null}
       </main>
     </AppContext.Provider>

@@ -14,7 +14,6 @@ import type {
   SessionEnvResponse,
   SessionKillResponse,
   SessionRestartResponse,
-  UserMessageResponse,
   RequestOverrideResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
@@ -519,8 +518,6 @@ describe("the Status tab", () => {
       Promise.resolve({ ok: true, terminated: true });
     const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
       Promise.resolve({ ok: true, pid: 1, env: {} });
-    const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, outcome: "appended" });
     const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
       Promise.resolve({ ok: true, delivery: "applied" });
     function Host() {
@@ -531,7 +528,6 @@ describe("the Status tab", () => {
         onKill,
         restart,
         onLoadEnv,
-        onAgentInput,
         onOverride,
       });
     }

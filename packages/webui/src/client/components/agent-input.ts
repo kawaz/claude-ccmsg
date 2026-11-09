@@ -1,5 +1,6 @@
-// 走行中の subagent への人の入力 (DR-0039 §6) の、一覧の行の表示と送信結果の
-// 文言に落とす pure な層。SubagentInput はこの結果だけを見る。JSX を通さず
+// 走行中の subagent への人の入力 (DR-0039 §6) の、宛先の select の option の表示と
+// 送信結果の文言に落とす pure な層。SessionInputComposer の subagent 宛ての送信は
+// この結果だけを見る。JSX を通さず
 // bun test から直接叩けるよう .ts に切り出している (session-input.ts と同じ流儀)。
 import type {
   UserMessageReason,
@@ -12,7 +13,7 @@ import type {
 export const AGENT_INPUT_NOTE =
   "subagent の会話に「ユーザから (ccmsg 経由)」として文脈を足すだけで、権限の付与や許可の代わりには使えない。";
 
-/** 一覧の 1 行。種別と説明、今の turn がいつ始まったか (module が見ていない時は出さない)。 */
+/** 宛先の 1 つ。種別と説明、今の turn がいつ始まったか (module が見ていない時は出さない)。 */
 export function subagentLabel(agent: SessionSubagent, now: number): string {
   const what = [agent.type, agent.description].filter((part) => part !== undefined && part !== "");
   const head = what.length > 0 ? what.join(" · ") : agent.id;

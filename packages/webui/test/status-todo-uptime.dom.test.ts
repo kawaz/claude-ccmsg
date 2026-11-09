@@ -13,7 +13,6 @@ import type {
   SessionKillResponse,
   SessionRestartResponse,
   SessionStatusSnapshot,
-  UserMessageResponse,
   RequestOverrideResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
@@ -69,8 +68,6 @@ async function mountStatus(
     Promise.resolve({ ok: true, terminated: true });
   const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, pid: 4242, env: {} });
-  const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-    Promise.resolve({ ok: true, outcome: "appended" });
   const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, delivery: "applied" });
   const ws = createWsClient((action) => store.dispatch(action));
@@ -82,7 +79,6 @@ async function mountStatus(
       onKill,
       restart,
       onLoadEnv,
-      onAgentInput,
       onOverride,
     });
   }

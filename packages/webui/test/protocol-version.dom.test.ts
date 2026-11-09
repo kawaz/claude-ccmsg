@@ -18,7 +18,6 @@ import type {
   SessionKillResponse,
   SessionRestartResponse,
   SessionStatusSnapshot,
-  UserMessageResponse,
 } from "@ccmsg/protocol";
 import { App } from "../src/client/components/App.tsx";
 import { SessionList } from "../src/client/components/SessionList.tsx";
@@ -89,8 +88,6 @@ async function mountStatus(store: Store): Promise<HTMLElement> {
     Promise.resolve({ ok: true, terminated: true });
   const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, pid: 4242, env: {} });
-  const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-    Promise.resolve({ ok: true, outcome: "appended" });
   const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, delivery: "applied" });
   function Host() {
@@ -101,7 +98,6 @@ async function mountStatus(store: Store): Promise<HTMLElement> {
       onKill,
       restart,
       onLoadEnv,
-      onAgentInput,
       onOverride,
     });
   }

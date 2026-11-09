@@ -11,7 +11,6 @@ import { useState } from "preact/hooks";
 import {
   type LaunchEffort,
   type LaunchModel,
-  type UserMessageResponse,
   type ErrorResponse,
   type SessionBackgroundStatus,
   type SessionEnvResponse,
@@ -20,7 +19,6 @@ import {
   type SessionStatusSnapshot,
   type SessionTodo,
 } from "@ccmsg/protocol";
-import { SubagentInput } from "./SubagentInput.tsx";
 import {
   buildStatusSections,
   formatAgentLiveState,
@@ -656,7 +654,6 @@ export function StatusPanel({
   onKill,
   restart,
   onLoadEnv,
-  onAgentInput,
   onOverride,
 }: {
   snapshot: SessionStatusSnapshot | undefined;
@@ -664,7 +661,6 @@ export function StatusPanel({
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restart: SessionRestart;
   onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
-  onAgentInput: (agentId: string, text: string) => Promise<UserMessageResponse | ErrorResponse>;
   onOverride: SessionOverrideChange;
 }) {
   const { store } = useApp();
@@ -827,7 +823,6 @@ export function StatusPanel({
         <dt>CONTEXT</dt>
         <dd title={context?.title}>{context ? context.text : "—"}</dd>
       </dl>
-      <SubagentInput key={sid} subagents={snapshot?.subagents} onSend={onAgentInput} />
       {nothingAtAll ? (
         <p class="status-empty">このセッションの background / TODO はまだありません</p>
       ) : (

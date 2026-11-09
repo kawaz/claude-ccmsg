@@ -3,7 +3,8 @@
 // `session_rename`, Escape puts the shown name back, and the outcome shows only
 // in the input's look (pulsing while the answer is out, the danger colour on an
 // error until the value changes). Each copy button sits before the value it
-// copies, and CONTEXT shows the usage alone.
+// copies, CONTEXT shows the usage alone, and there is no input to a subagent
+// here (the composer's destination select is where that is chosen).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -16,7 +17,6 @@ import type {
   SessionKillResponse,
   SessionRestartResponse,
   SessionStatusSnapshot,
-  UserMessageResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
@@ -35,6 +35,8 @@ const SNAPSHOT: SessionStatusSnapshot = {
   todos: [],
   workflows: [],
   background: [],
+  // A running subagent: its input is the composer's, not this tab's.
+  subagents: [{ id: "a1", type: "Explore", description: "調査" }],
   context: {
     tokens: 56_000,
     window: 200_000,
@@ -98,8 +100,6 @@ async function mountStatus(
     Promise.resolve({ ok: true, terminated: true });
   const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, pid: 4242, env: {} });
-  const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-    Promise.resolve({ ok: true, outcome: "appended" });
   const onOverride = (): Promise<RequestOverrideResponse | ErrorResponse> =>
     Promise.resolve({ ok: true, delivery: "applied" });
   function Host() {
@@ -110,7 +110,6 @@ async function mountStatus(
       onKill,
       restart,
       onLoadEnv,
-      onAgentInput,
       onOverride,
     });
   }
@@ -351,5 +350,14 @@ describe("Status tab MODEL / EFFORT rows", () => {
     );
     await act(() => text.click());
     expect(cell.querySelector("select")?.getAttribute("aria-label")).toBe("effort");
+  });
+});
+
+describe("Status tab without a subagent input", () => {
+  test("a running subagent gets no input of its own here", async () => {
+    const { root } = await mountStatus(agentRow());
+    expect(root.querySelector("textarea")).toBeNull();
+    expect(root.querySelector('input[type="radio"]')).toBeNull();
+    expect(root.textContent).not.toContain("Subagent への入力");
   });
 });

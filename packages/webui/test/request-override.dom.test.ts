@@ -16,7 +16,6 @@ import type {
   RequestOverrideState,
   SessionRestartResponse,
   SessionStatusSnapshot,
-  UserMessageResponse,
 } from "@ccmsg/protocol";
 import {
   ContextLine,
@@ -353,8 +352,6 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
       Promise.resolve({ ok: true, terminated: true });
     const onLoadEnv = (): Promise<SessionEnvResponse | ErrorResponse> =>
       Promise.resolve({ ok: true, pid: 1, env: {} });
-    const onAgentInput = (): Promise<UserMessageResponse | ErrorResponse> =>
-      Promise.resolve({ ok: true, outcome: "appended" });
     const onRestart = (): Promise<SessionRestartResponse | ErrorResponse> => new Promise(() => {});
     function Host() {
       const restart = useSessionRestart(SID, onRestart);
@@ -364,7 +361,6 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
         onKill,
         restart,
         onLoadEnv,
-        onAgentInput,
         onOverride,
       });
     }

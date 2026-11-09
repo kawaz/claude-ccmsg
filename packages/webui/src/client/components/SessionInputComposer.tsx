@@ -23,6 +23,11 @@
 // 自身の値へ) で、選んだだけでは何も送らず、送信が適用を兼ねる。📌 / 🏛️ は
 // `request_override` の返事を待ってから `user_prompt` を送る。`accepted` に
 // なったら default に戻し、届かなかった・未確認の時は文と同じく選択も残す。
+// 宛先はヘッダの select で main か走行中の subagent (DR-0039 §6、session_status
+// の `subagents`) から選ぶ。subagent 宛ての文は `user_message` で送り、subagent
+// の次の request に「ユーザから (ccmsg 経由)」として載る。Timeline が subagent の
+// TL を出している間はその subagent が既定の宛先で、TL の agent が変わると選択も
+// それに戻る。select の変更は下書きに触れない。
 import { createContext } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
@@ -84,6 +89,15 @@ import {
   requestOverrideNotice,
 } from "../request-override-view.ts";
 import { shortModel } from "../session-status-view.ts";
+import {
+  AGENT_INPUT_NOTE,
+  type AgentInputOutcome,
+  classifyAgentInputReply,
+  subagentLabel,
+} from "./agent-input.ts";
+
+/** The select's value for the session's main thread. */
+const MAIN_TARGET = "";
 
 /** Asks the composer of the session on screen to open, putting `fill` into
  * the textarea when it is empty (DR-0040 §7: pressing 許可する copies the
@@ -102,10 +116,14 @@ const NO_OPEN_REQUEST: ComposerOpenRequest = { seq: 0 };
 export function SessionInputComposer({
   sid,
   openRequest = NO_OPEN_REQUEST,
+  timelineAgentId = null,
 }: {
   sid: string;
   /** The latest ask from outside to open (OpenComposerContext). */
   openRequest?: ComposerOpenRequest;
+  /** The subagent whose Timeline is on screen, null for the main thread's:
+   * the input's default destination. */
+  timelineAgentId?: string | null;
 }) {
   const { ws, store } = useApp();
   // 下書きは初期化の時に同期で読む。SessionView は sid ごとの instance なので
@@ -123,6 +141,12 @@ export function SessionInputComposer({
   // 📌 / 🏛️ の送信で、request_override がセッションに効いたと確かめられなかった
   // 時の注記。
   const [overrideNotice, setOverrideNotice] = useState<string | null>(null);
+  // The destination the person chose, with the Timeline's agent it was chosen
+  // over: once the Timeline shows another agent, the choice gives way to it.
+  const [picked, setPicked] = useState<{ over: string | null; target: string } | null>(null);
+  // A send to a subagent (`user_message`) in flight, and what came of the last.
+  const [agentSending, setAgentSending] = useState(false);
+  const [agentOutcome, setAgentOutcome] = useState<AgentInputOutcome | null>(null);
   // 入力欄の最新の中身。編集と復元が render を待たずに更新する: 同じ tick に
   // 続く編集 (複数ファイルの同時添付) が前の編集の結果の上に積めるように。
   const contentRef = useRef<{ text: string; attachments: ComposerAttachment[] }>({
@@ -142,7 +166,8 @@ export function SessionInputComposer({
   );
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
-  const { open, openPanel, closePanel, panelRef } = useFabPopup(sending);
+  const busy = sending || agentSending;
+  const { open, openPanel, closePanel, panelRef } = useFabPopup(busy);
   // An open asked for from outside: opened while rendering with the new seq
   // (react.dev "Adjusting some state when a prop changes"), not in an Effect
   // after it, so the open-time focus below runs in the same commit as for the
@@ -204,6 +229,28 @@ export function SessionInputComposer({
     shorten: shortModel,
   });
   const effortChoice = chosenOption(effortGroups, effortKey).choice;
+  // The destinations: the main thread, and the subagents the module says are
+  // running, when it says anything of them. An agent the Timeline (or the
+  // person) chose that is not running any more stays as an option of its own:
+  // the text was written for it, and a send says it did not arrive.
+  const subagents = sessionStatus?.subagents;
+  const target =
+    subagents === undefined
+      ? MAIN_TARGET
+      : picked !== null && picked.over === timelineAgentId
+        ? picked.target
+        : (timelineAgentId ?? MAIN_TARGET);
+  const now = Date.now();
+  const targetOptions =
+    subagents === undefined
+      ? []
+      : [
+          ...subagents.map((a) => ({ value: a.id, label: subagentLabel(a, now) })),
+          ...(target !== MAIN_TARGET && !subagents.some((a) => a.id === target)
+            ? [{ value: target, label: `${target} — 走っていない` }]
+            : []),
+        ];
+  const toSubagent = target !== MAIN_TARGET;
   const targetLabel =
     targetPeer?.repo ||
     targetPeer?.ws ||
@@ -452,7 +499,38 @@ export function SessionInputComposer({
     [beginUpload],
   );
 
+  // subagent 宛て (DR-0039 §6): 文は `user_message` で送り、文を消すのは
+  // `appended` の時だけ。単発の effort は `user_message` に無いので付けない。
+  const handleAgentSubmit = useCallback(
+    async (agentId: string) => {
+      const body = text.trim();
+      if (body === "" || hasPendingUpload(attachments)) return;
+      setAgentSending(true);
+      setAgentOutcome(null);
+      let outcome: AgentInputOutcome;
+      try {
+        outcome = classifyAgentInputReply(
+          await ws.userMessage(sid, agentId, substitutePlaceholders(body, attachments)),
+        );
+      } catch {
+        outcome = { kind: "failed", text: "daemon に繋がっていないため送れなかった。" };
+      }
+      setAgentSending(false);
+      if (outcome.kind === "appended") {
+        edit({ text: "", attachments: [] });
+        closePanel();
+        return;
+      }
+      setAgentOutcome(outcome);
+    },
+    [ws, sid, text, attachments, edit, closePanel],
+  );
+
   const handleSubmit = useCallback(async () => {
+    if (toSubagent) {
+      await handleAgentSubmit(target);
+      return;
+    }
     // 同期で見る: ⌘+Enter の連打は再 render の前に 2 回目を呼びうる。記録は
     // sendSessionInput が最初の await より前に書く。
     if (isSending(sid)) return;
@@ -483,7 +561,7 @@ export function SessionInputComposer({
     // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
     // 別タブで書き換わっていれば、その文を見せたまま残す。
     if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
-  }, [ws, sid, text, attachments, effortChoice, closePanel]);
+  }, [ws, sid, text, attachments, effortChoice, closePanel, toSubagent, target, handleAgentSubmit]);
 
   if (!open) {
     // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
@@ -535,7 +613,7 @@ export function SessionInputComposer({
   // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
   // ボタンの文言でも示す。
   const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
-  const sendLabel = sending
+  const sendLabel = busy
     ? "送信中..."
     : uploading
       ? "アップロード中..."
@@ -548,7 +626,7 @@ export function SessionInputComposer({
       class="session-input-panel"
       role="dialog"
       aria-label="セッションへの入力"
-      aria-busy={sending}
+      aria-busy={busy}
       ref={(el) => {
         // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM を
         // 届ける (ref forwarding で最小限の relay)。callback ref なので
@@ -568,6 +646,25 @@ export function SessionInputComposer({
           <AvatarLabel seed={sid} size={16}>
             <code>{targetLabel}</code>
           </AvatarLabel>
+          {targetOptions.length > 0 ? (
+            <select
+              class="session-input-agent"
+              aria-label="入力先のエージェント"
+              value={target}
+              disabled={busy}
+              onChange={(e) => {
+                setPicked({ over: timelineAgentId, target: e.currentTarget.value });
+                setAgentOutcome(null);
+              }}
+            >
+              <option value={MAIN_TARGET}>main</option>
+              {targetOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : null}
         </span>
         {/* 明示的な閉じるボタン。外側クリックでの close は Terminal タブの
             hyoui iframe 上では成立しにくい (cross-origin iframe 内のクリックは
@@ -577,7 +674,7 @@ export function SessionInputComposer({
           type="button"
           class="composer-panel-close"
           onClick={closePanel}
-          disabled={sending}
+          disabled={busy}
           title="閉じる"
           aria-label="入力欄を閉じる"
         >
@@ -626,7 +723,7 @@ export function SessionInputComposer({
           onDrop={onDrop}
           // 返事を待つ間は文を固定する: 送った文と入力欄の文がずれると、
           // accepted で消す対象と届かなかった時に残す対象が曖昧になる。
-          readOnly={sending}
+          readOnly={busy}
           rows={4}
         />
         {cacheRing ? <CacheRing shape="rect" /> : null}
@@ -651,11 +748,8 @@ export function SessionInputComposer({
           }}
         />
       </div>
-      <ComposerAttachments
-        attachments={attachments}
-        onRemove={removeAttachment}
-        disabled={sending}
-      />
+      <ComposerAttachments attachments={attachments} onRemove={removeAttachment} disabled={busy} />
+      {toSubagent ? <p class="session-input-agent-note">{AGENT_INPUT_NOTE}</p> : null}
       {sending ? (
         <p class="session-input-status" role="status">
           セッションに渡しています。受け取ったかの確認を待っています...
@@ -700,6 +794,14 @@ export function SessionInputComposer({
             </div>
           ))
         : null}
+      {agentOutcome !== null && agentOutcome.kind !== "appended" ? (
+        <div
+          class={`session-input-notice session-input-notice-${agentOutcome.kind === "unconfirmed" ? "warn" : "danger"}`}
+          role="alert"
+        >
+          <p class="session-input-notice-detail">{agentOutcome.text}</p>
+        </div>
+      ) : null}
       {overrideNotice ? (
         <div
           class="session-input-notice session-input-notice-warn session-input-override-notice"
@@ -728,7 +830,7 @@ export function SessionInputComposer({
             type="button"
             class="composer-attach-btn"
             aria-label="ファイルを添付"
-            disabled={sending}
+            disabled={busy}
             onClick={() => {
               const el = fileInputRef.current;
               if (!el) return;
@@ -742,21 +844,24 @@ export function SessionInputComposer({
             <span aria-hidden="true">📎</span>
           </button>
         </div>
-        {/* The effort goes with the send that applies it (DR-0041 §6.3). */}
-        <OverrideSelect
-          groups={effortGroups}
-          chosen={chosenOption(effortGroups, effortKey).key}
-          onChoose={setEffortKey}
-          disabled={sending}
-          label="送信の effort"
-        />
+        {/* The effort goes with the send that applies it (DR-0041 §6.3); a
+         * send to a subagent carries none (`user_message` has no effort). */}
+        {toSubagent ? null : (
+          <OverrideSelect
+            groups={effortGroups}
+            chosen={chosenOption(effortGroups, effortKey).key}
+            onChoose={setEffortKey}
+            disabled={busy}
+            label="送信の effort"
+          />
+        )}
         <button
           type="button"
           class="session-input-send"
           onClick={() => {
             void handleSubmit();
           }}
-          disabled={sending || text.trim() === "" || uploading}
+          disabled={busy || text.trim() === "" || uploading}
         >
           {sendLabel}
         </button>
