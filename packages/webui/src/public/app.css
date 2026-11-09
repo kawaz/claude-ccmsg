@@ -7315,17 +7315,17 @@ a.tl-attachment-file-path {
  * 空白の向こうに離れて、どの値のボタンかが読み取りにくい。 */
 .status-meta-value > span,
 .status-meta-value > a,
-.status-title-field {
+.status-title-input {
   min-width: 0;
   flex: 1;
 }
 
 /* TITLE の値は最初から input (DR-0047 §4)。表の他の値と同じ字の大きさ・
- * 書体のまま、枠だけで入力欄だと分かるようにする。 */
+ * 書体のまま、枠だけで入力欄だと分かるようにする。名前の変更の結果は文を
+ * 添えず、この input の見た目だけで表す (送信中 = 明るさの脈動、失敗 = 危険色)。 */
 .status-title-input {
   box-sizing: border-box;
   width: 100%;
-  min-width: 0;
   font: inherit;
   padding: 0 var(--space-4);
   border: 1px solid var(--border);
@@ -7339,22 +7339,31 @@ a.tl-attachment-file-path {
   outline: none;
 }
 
-/* module の無いセッション: 書き換えられないので入力欄の枠を見せない。 */
-.status-title-input-locked {
-  border-color: transparent;
-  background: transparent;
+.status-title-input-saving {
+  animation: status-title-saving-pulse 1.2s ease-in-out infinite;
 }
 
-.status-title-note {
-  margin: var(--space-2) 0 0;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-  overflow-wrap: anywhere;
-}
-
-.status-title-error {
+.status-title-input-failed,
+.status-title-input-failed:focus {
+  border-color: var(--danger);
   color: var(--danger);
+}
+
+@keyframes status-title-saving-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-title-input-saving {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 .status-meta-copy {
@@ -8062,15 +8071,6 @@ a.tl-attachment-file-path {
 .override-value:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* The session override's editor (DR-0041 §6.4): each field's select with its
- * [適用] and what became of the last change, side by side. */
-.override-editor {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-4) var(--space-6);
 }
 
 .override-field {

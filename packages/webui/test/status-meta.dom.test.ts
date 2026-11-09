@@ -1,10 +1,10 @@
 // The Status tab's identity table, mounted: TITLE is an input from the start
 // and the place to rename the session (DR-0047 §4) — Enter sends the name with
-// `session_rename`, Escape puts the shown name back, the note under the input
-// says whether the name changes now or after the turn, and a session no hooks
-// module speaks for gets a read-only input. Each copy button sits before the
-// value it copies, and CONTEXT shows the usage alone.
-import { afterEach, describe, expect, jest, test } from "bun:test";
+// `session_rename`, Escape puts the shown name back, and the outcome shows only
+// in the input's look (pulsing while the answer is out, the danger colour on an
+// error until the value changes). Each copy button sits before the value it
+// copies, and CONTEXT shows the usage alone.
+import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import type {
@@ -35,7 +35,13 @@ const SNAPSHOT: SessionStatusSnapshot = {
   todos: [],
   workflows: [],
   background: [],
-  context: { tokens: 56_000, window: 200_000, model: "claude-fable-5-1", timestamp: SINCE },
+  context: {
+    tokens: 56_000,
+    window: 200_000,
+    model: "claude-fable-5-1",
+    effort: "low",
+    timestamp: SINCE,
+  },
 };
 
 /** The session's agents row. `turn` present = a hooks module speaks for it. */
@@ -74,11 +80,8 @@ interface Mounted {
  * undefined). `reply` is what the daemon answers each `session_rename` with. */
 async function mountStatus(
   agent: AgentInfo | undefined,
-  reply: (title: string) => ReplyOf<"session_rename"> = (title) => ({
-    ok: true,
-    title,
-    outcome: "renamed",
-  }),
+  reply: (title: string) => Promise<ReplyOf<"session_rename">> = (title) =>
+    Promise.resolve({ ok: true, title, outcome: "renamed" }),
 ): Promise<Mounted> {
   const store = createStore(initialState());
   if (agent) store.dispatch({ type: "agents/loaded", agents: [agent] });
@@ -87,7 +90,7 @@ async function mountStatus(
     ...createWsClient((action) => store.dispatch(action)),
     sessionRename: (sid: string, title: string): Promise<ReplyOf<"session_rename">> => {
       renames.push([sid, title]);
-      return Promise.resolve(reply(title));
+      return reply(title);
     },
   };
   const onRestart = (): Promise<SessionRestartResponse | ErrorResponse> => new Promise(() => {});
@@ -132,8 +135,10 @@ function titleInput(root: HTMLElement): HTMLInputElement {
   );
 }
 
-function titleNote(root: HTMLElement): string | null {
-  return metaCell(root, "TITLE").querySelector(".status-title-note")?.textContent ?? null;
+/** The input's outcome classes, in a fixed order. */
+function titleState(root: HTMLElement): string[] {
+  const list = titleInput(root).classList;
+  return ["status-title-input-saving", "status-title-input-failed"].filter((c) => list.contains(c));
 }
 
 async function type(input: HTMLInputElement, value: string): Promise<void> {
@@ -144,9 +149,9 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 /** Press `key` in the input and let a send it starts settle inside the same
- * `act`, so the note's timer is set while act still owns the effects. The
- * stubbed `sessionRename` answers with an already-resolved promise, so the
- * panel's continuation after it is queued before the one awaited here. */
+ * `act`. The stubbed `sessionRename` answers with an already-resolved promise
+ * by default, so the panel's continuation after it is queued before the one
+ * awaited here. */
 async function press(input: HTMLInputElement, key: string): Promise<void> {
   await act(async () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -155,66 +160,76 @@ async function press(input: HTMLInputElement, key: string): Promise<void> {
 }
 
 describe("Status tab TITLE input", () => {
-  test("starts as an input holding the session's name", async () => {
+  test("starts as an input holding the session's name, writable and unmarked", async () => {
     const { root } = await mountStatus(agentRow());
     const input = titleInput(root);
     expect(input.value).toBe("最初の名前");
     expect(input.readOnly).toBe(false);
+    expect(titleState(root)).toEqual([]);
+    expect(metaCell(root, "TITLE").textContent).not.toContain("名前を変更");
   });
 
-  test("Enter sends the trimmed name for this session and notes the rename", async () => {
+  test("Enter sends the trimmed name for this session", async () => {
     const { root, renames } = await mountStatus(agentRow());
     const input = titleInput(root);
     await type(input, "  新しい名前 ");
     await press(input, "Enter");
     expect(renames).toEqual([[SID, "新しい名前"]]);
-    expect(titleNote(root)).toBe("名前を変更: 新しい名前");
   });
 
-  test("a rename queued behind the turn says it changes after the response", async () => {
-    const { root } = await mountStatus(agentRow(), (title) => ({
-      ok: true,
-      title,
-      outcome: "queued",
-    }));
+  test("pulses while the answer is out and returns to normal on it", async () => {
+    let answer: (reply: ReplyOf<"session_rename">) => void = () => {};
+    const { root } = await mountStatus(
+      agentRow(),
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
     const input = titleInput(root);
     await type(input, "後の名前");
     await press(input, "Enter");
-    expect(titleNote(root)).toBe("応答の後に名前を変更: 後の名前");
+    expect(titleState(root)).toEqual(["status-title-input-saving"]);
+    await act(async () => {
+      answer({ ok: true, title: "後の名前", outcome: "queued" });
+      await Promise.resolve();
+    });
+    expect(titleState(root)).toEqual([]);
+    // Not written ahead of the session: the agents rows' name until it follows.
+    expect(input.value).toBe("最初の名前");
+    // No text beside the input: the cell's only text is the copy button's.
+    expect(metaCell(root, "TITLE").textContent).toBe("コピー✓");
   });
 
-  test("the note clears itself after six seconds", async () => {
-    jest.useFakeTimers();
-    try {
-      const { root } = await mountStatus(agentRow());
-      const input = titleInput(root);
-      await type(input, "新しい名前");
-      await press(input, "Enter");
-      expect(titleNote(root)).toBe("名前を変更: 新しい名前");
-      await act(() => {
-        jest.advanceTimersByTime(5_999);
-      });
-      expect(titleNote(root)).toBe("名前を変更: 新しい名前");
-      await act(() => {
-        jest.advanceTimersByTime(1);
-      });
-      expect(titleNote(root)).toBeNull();
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  test("a refused rename keeps the draft and shows the daemon's message", async () => {
-    const { root } = await mountStatus(agentRow(), () => ({
-      ok: false,
-      error: { code: "rename_failed", msg: "名前を変えられなかった" },
-    }));
+  test("an error marks the input, keeps the draft, and clears once the value changes", async () => {
+    const { root } = await mountStatus(agentRow(), () =>
+      Promise.resolve({
+        ok: false,
+        error: { code: "rename_failed", msg: "名前を変えられなかった" },
+      }),
+    );
     const input = titleInput(root);
     await type(input, "通らない名前");
     await press(input, "Enter");
     expect(input.value).toBe("通らない名前");
-    expect(titleNote(root)).toBe("名前を変えられなかった");
-    expect(metaCell(root, "TITLE").querySelector(".status-title-error")).not.toBeNull();
+    expect(titleState(root)).toEqual(["status-title-input-failed"]);
+    expect(input.title).toBe("名前を変えられなかった");
+    expect(metaCell(root, "TITLE").textContent).not.toContain("名前を変えられなかった");
+    await type(input, "通らない名前2");
+    expect(titleState(root)).toEqual([]);
+  });
+
+  test("a session no hooks module speaks for can still send, and shows the error", async () => {
+    const { turn: _turn, ...bare } = agentRow();
+    const { root, renames } = await mountStatus(bare, () =>
+      Promise.resolve({ ok: false, error: { code: "no_module", msg: "no module" } }),
+    );
+    const input = titleInput(root);
+    expect(input.readOnly).toBe(false);
+    await type(input, "新しい名前");
+    await press(input, "Enter");
+    expect(renames).toEqual([[SID, "新しい名前"]]);
+    expect(titleState(root)).toEqual(["status-title-input-failed"]);
   });
 
   test("Escape puts the shown name back without sending", async () => {
@@ -254,19 +269,6 @@ describe("Status tab TITLE input", () => {
     await press(input, "Escape");
     expect(input.value).toBe("三番目");
   });
-
-  test("is read-only for a session no hooks module speaks for", async () => {
-    const { root, renames } = await mountStatus(agentRow({ turn: undefined }));
-    const input = titleInput(root);
-    expect(input.readOnly).toBe(true);
-    await press(input, "Enter");
-    expect(renames).toEqual([]);
-  });
-
-  test("is read-only without the session's agents row", async () => {
-    const { root } = await mountStatus(undefined);
-    expect(titleInput(root).readOnly).toBe(true);
-  });
 });
 
 describe("Status tab copy buttons", () => {
@@ -289,8 +291,65 @@ describe("Status tab CONTEXT row", () => {
     expect(labels).toContain("CONTEXT");
     expect(labels).not.toContain("CTX");
     const cell = metaCell(root, "CONTEXT");
-    expect(cell.textContent).toBe("28% / fable-5-1[200K]");
+    expect(cell.textContent).toBe("28% / fable-5-1[200K] / low");
     expect(cell.children).toHaveLength(0);
     expect(root.textContent).not.toContain("上限は推定");
+  });
+});
+
+describe("Status tab MODEL / EFFORT rows", () => {
+  /** The rows' terms in order, from MODEL to CONTEXT. */
+  function terms(root: HTMLElement): string[] {
+    return [...root.querySelectorAll(".status-meta dt")].map((d) => d.textContent ?? "");
+  }
+
+  test("two rows of their own before CONTEXT, and no OVERRIDE row", async () => {
+    const { root } = await mountStatus(agentRow());
+    const all = terms(root);
+    expect(all).not.toContain("OVERRIDE");
+    const at = all.indexOf("MODEL");
+    expect(all.slice(at, at + 3)).toEqual(["MODEL", "EFFORT", "CONTEXT"]);
+    for (const term of ["MODEL", "EFFORT"]) {
+      const cell = metaCell(root, term);
+      expect(cell.querySelectorAll("button.override-value")).toHaveLength(1);
+      expect(cell.querySelector('[aria-label*="上書き"]')).toBeNull();
+      expect(cell.textContent).not.toContain("上書き");
+    }
+  });
+
+  test("show the collapsed face: the value alone without an override", async () => {
+    const { root } = await mountStatus(agentRow());
+    expect(metaCell(root, "MODEL").textContent).toBe("fable-5-1");
+    expect(metaCell(root, "EFFORT").textContent).toBe("low");
+  });
+
+  test("show 📌 where the session override is in force", async () => {
+    const { root, store } = await mountStatus(agentRow());
+    await act(() =>
+      store.dispatch({
+        type: "request-overrides/loaded",
+        sessions: [
+          {
+            session_id: SID,
+            session: { model: "opus", effort: "high" },
+            once: { model: null, effort: null },
+          },
+        ],
+      }),
+    );
+    expect(metaCell(root, "MODEL").textContent).toBe("📌opus");
+    expect(metaCell(root, "EFFORT").textContent).toBe("📌high");
+  });
+
+  test("pressing the value opens that field's select", async () => {
+    const { root } = await mountStatus(agentRow());
+    const cell = metaCell(root, "EFFORT");
+    const text = instanceOf(
+      cell.querySelector("button.override-value"),
+      HTMLButtonElement,
+      "effort",
+    );
+    await act(() => text.click());
+    expect(cell.querySelector("select")?.getAttribute("aria-label")).toBe("effort");
   });
 });

@@ -85,7 +85,7 @@ type Field = "model" | "effort";
 /** A field's value at rest: the text that opens its select. */
 function textOf(root: HTMLElement, field: Field): HTMLButtonElement {
   return instanceOf(
-    root.querySelector(`button.override-value[aria-label="通しの上書き: ${field}"]`),
+    root.querySelector(`button.override-value[aria-label="${field}"]`),
     HTMLButtonElement,
     `the session override's ${field} at rest`,
   );
@@ -94,7 +94,7 @@ function textOf(root: HTMLElement, field: Field): HTMLButtonElement {
 /** A field's select, drawn while it is open. */
 function selectOf(root: HTMLElement, field: Field): HTMLSelectElement {
   return instanceOf(
-    root.querySelector(`select[aria-label="通しの上書き: ${field}"]`),
+    root.querySelector(`select[aria-label="${field}"]`),
     HTMLSelectElement,
     `the session override's ${field} select`,
   );
@@ -124,7 +124,7 @@ async function escape(el: HTMLElement): Promise<void> {
 /** Choose the option labelled `label` of a field, opening its select first
  * when it is at rest. */
 async function choose(root: HTMLElement, field: Field, label: string): Promise<void> {
-  const open = root.querySelector(`select[aria-label="通しの上書き: ${field}"]`);
+  const open = root.querySelector(`select[aria-label="${field}"]`);
   const el = open instanceof HTMLSelectElement ? open : await press(root, field);
   const option = [...el.options].find((o) => o.textContent === label);
   if (option === undefined) throw new Error(`no option ${label}`);
@@ -210,7 +210,7 @@ describe("the ctx line's fields", () => {
     expect(fieldOf(root, "effort").contains(effort)).toBe(true);
     expect(document.activeElement).toBe(effort);
     expect(root.querySelectorAll("select")).toHaveLength(1);
-    expect(root.querySelector('[role="dialog"], .override-editor')).toBeNull();
+    expect(root.querySelector('[role="dialog"]')).toBeNull();
     expect(root.querySelector('button[aria-label="閉じる"]')).toBeNull();
     expect(root.children).toHaveLength(1);
     // The model stays the line's own text.
@@ -340,7 +340,7 @@ describe("the ctx line's fields", () => {
   });
 });
 
-describe("the Status tab's override row", () => {
+describe("the Status tab's MODEL / EFFORT rows", () => {
   async function mountStatus(
     snapshot: SessionStatusSnapshot,
     onOverride: (p: Patch) => Promise<RequestOverrideResponse | ErrorResponse>,
@@ -383,7 +383,7 @@ describe("the Status tab's override row", () => {
         once: { model: null, effort: "max" },
       },
     ]);
-    const row = instanceOf(root.querySelector(".status-override"), HTMLElement, "the override row");
+    const row = instanceOf(root.querySelector(".status-meta"), HTMLElement, "the identity table");
     expect(row.querySelector("select")).toBeNull();
     expect(textOf(row, "model").textContent).toBe("📌fable");
     expect(textOf(row, "effort").textContent).toBe("⏱️max");
@@ -424,7 +424,7 @@ describe("the Status tab's override row", () => {
         once: { model: null, effort: null },
       },
     ]);
-    const row = instanceOf(root.querySelector(".status-override"), HTMLElement, "the override row");
+    const row = instanceOf(root.querySelector(".status-meta"), HTMLElement, "the identity table");
     expect(textOf(row, "model").textContent).toBe("📌sonnet");
     expect(groupsOf(await press(row, "model"))).toEqual([
       ["default", ["📌sonnet"]],

@@ -44,8 +44,8 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
 ### 4. webui
 
 - 名前を変える場所はセッションの Status タブの TITLE。値は最初から `<input>` で、Enter で前後の空白を除いた値を `session_rename` に送り、Escape で表示中の名前に戻す。空または今の名前と同じ値は送らない
-- module がそのセッションについて話していない (agents の行に `turn` が無い) セッションでは input を readOnly にする。`no_module` にしかならないので、失敗しかしない編集を置かない
-- 返事の後、input の下に 6 秒だけ注記を出す: `renamed` は「名前を変更: <title>」、`queued` は「応答の後に名前を変更: <title>」。error は入力した値を残したまま msg を出す
+- 結果は文を添えず input の見た目だけで表す: 返事を待つ間は input の明るさが脈動する (`prefers-reduced-motion` では静止)。`renamed` / `queued` の返事で通常の見た目に戻る。error は入力した値を残したまま input を危険色にし (msg は `title` に入れる)、人が値を変えると戻る
+- module がそのセッションについて話していない (agents の行に `turn` が無い) セッションでも input は書き換えられる。送れば `no_module` の error になり、上の失敗の見た目で分かる
 - input に出す名前は agents の行の `name` で、Claude Code が state file に書いた時に追従する。編集中 (入力してから Enter / Escape まで) は追従で上書きしない。webui は名前を先回りして書き換えない (送った後の input は agents の行の名前に戻り、それが変わった時に追従する)
 
 ## Alternatives Considered
@@ -71,7 +71,7 @@ webui (user role) → daemon の op `session_rename { session_id, title }` → d
   - main の turn を走らせている module は `$.command.run` を待たずに `queued` と答え、subagent の turn では待つ
   - `$.command.run` が `RENAME_WAIT_MS` で resolve しなければ `queued`
   - module の答えが無い時は `rename_failed`
-  - TITLE の input は module の話しているセッションでだけ書き換えられる (それ以外は readOnly)
+  - TITLE の input の送信中・失敗は input の class で表され、失敗は値を変えると解除される
 
 ## 関連
 

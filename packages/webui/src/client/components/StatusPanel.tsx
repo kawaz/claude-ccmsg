@@ -7,7 +7,7 @@
 // Agent/workflow structure is shown by the Timeline's agent tree
 // (`AgentTreePanel`), which is the single place for that view.
 import type { JSX } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import {
   type LaunchEffort,
   type LaunchModel,
@@ -16,7 +16,6 @@ import {
   type SessionBackgroundStatus,
   type SessionEnvResponse,
   type SessionKillResponse,
-  type SessionRenameResponse,
   type SessionRestartResponse,
   type SessionStatusSnapshot,
   type SessionTodo,
@@ -54,7 +53,7 @@ import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 import { LaunchFold, RestartFold, useStatusLaunch } from "./StatusSessionForms.tsx";
 import { sessionRunsAs } from "../status-session-forms.ts";
-import { SessionOverrideEditor, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
+import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
  * 追加しうる) は default で pending と同じ空マーカー扱い、独自分岐は生やさない
@@ -396,74 +395,45 @@ export function useSessionRestart(
   };
 }
 
-/** How long a rename's note stays under the TITLE input before clearing
- * itself (DR-0047 §4). Not a poll: the note has no state to wait for (the
- * authoritative title arrives on its own with the agents rows), it just must
- * not stay as if it were part of the identity table. */
-const RENAME_NOTE_MS = 6000;
-
-/** The note for a rename the session took: changed now, or once the turn it
- * was answering ends (DR-0047 §3). */
-function renameNoteOf(sent: SessionRenameResponse): string {
-  return sent.outcome === "queued"
-    ? `応答の後に名前を変更: ${sent.title}`
-    : `名前を変更: ${sent.title}`;
-}
-
 /** The TITLE row's value: an input from the start, the place to rename the
  * session (DR-0047 §4). It shows the agents rows' name and follows it, except
  * while the person is editing — what they typed is not overwritten by a name
  * that arrives meanwhile. Enter sends the trimmed draft with `session_rename`,
- * Escape puts the shown name back. A sent name is not written into the input
- * ahead of the session: the input goes back to the agents rows' name, which
- * follows once Claude Code takes it, and the note under the input says whether
- * that is now or after the turn. A rejected or failed send keeps the draft so
- * it can be fixed or retried without retyping.
+ * Escape puts the shown name back.
  *
- * `editable` is false for a session no hooks module speaks for (no `turn` on
- * its agents row): `session_rename` can only answer `no_module` there, so the
- * input is read-only instead of offering an edit that can only fail. An IME's
- * confirming Enter arrives with `isComposing` and is left to the IME. */
-function SessionTitleInput({
-  sid,
-  title,
-  editable,
-}: {
-  sid: string;
-  title: string;
-  editable: boolean;
-}) {
+ * The outcome is shown by the input's own look, with no text beside it: a
+ * send in flight pulses its brightness, an answer of `renamed` or `queued`
+ * returns it to normal, and an error marks it in the danger colour (the
+ * message in its `title`) until the person changes the value. A sent name is
+ * not written into the input ahead of the session: the input goes back to the
+ * agents rows' name, which follows once Claude Code takes it (after the turn
+ * for `queued`). A failed send keeps the draft so it can be fixed or retried
+ * without retyping. A session no hooks module speaks for answers `no_module`,
+ * which shows as that error. An IME's confirming Enter arrives with
+ * `isComposing` and is left to the IME. */
+function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
   const { ws } = useApp();
   // null = not editing: the input shows `title` and follows it.
   const [draft, setDraft] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [note, setNote] = useState<{ kind: "sent" | "error"; text: string } | null>(null);
-
-  useEffect(() => {
-    if (note?.kind !== "sent") return;
-    const id = setTimeout(() => setNote(null), RENAME_NOTE_MS);
-    return () => clearTimeout(id);
-  }, [note]);
+  // The last send's error message; null = no failure to show.
+  const [failure, setFailure] = useState<string | null>(null);
 
   async function send(value: string): Promise<void> {
     const trimmed = value.trim();
     if (!trimmed || trimmed === title) {
       setDraft(null);
-      setNote(null);
+      setFailure(null);
       return;
     }
     setSaving(true);
-    setNote(null);
+    setFailure(null);
     try {
       const res = await ws.sessionRename(sid, trimmed);
-      if (res.ok) {
-        setDraft(null);
-        setNote({ kind: "sent", text: renameNoteOf(res) });
-      } else {
-        setNote({ kind: "error", text: res.error.msg });
-      }
+      if (res.ok) setDraft(null);
+      else setFailure(res.error.msg);
     } catch {
-      setNote({ kind: "error", text: "接続エラーのため送信できませんでした" });
+      setFailure("接続エラーのため送信できませんでした");
     } finally {
       setSaving(false);
     }
@@ -474,7 +444,7 @@ function SessionTitleInput({
     if (e.key === "Escape") {
       e.preventDefault();
       setDraft(null);
-      setNote(null);
+      setFailure(null);
       return;
     }
     if (e.key !== "Enter") return;
@@ -483,39 +453,31 @@ function SessionTitleInput({
   }
 
   return (
-    <div class="status-title-field">
-      <input
-        type="text"
-        class={editable ? "status-title-input" : "status-title-input status-title-input-locked"}
-        aria-label="TITLE"
-        value={draft ?? title}
-        // readOnly, not disabled, while a send is out: disabling the focused
-        // input blurs it, and a rejected send's draft would be left in an
-        // input the person has to click back into.
-        readOnly={!editable || saving}
-        maxLength={200}
-        placeholder={editable ? "名前を入力して Enter" : "—"}
-        title={
-          editable
-            ? "Enter で名前を変更、Escape で元に戻す"
-            : "hooks module の無いセッションは名前を変更できない"
-        }
-        onInput={(e) => {
-          setDraft(e.currentTarget.value);
-          if (note?.kind === "error") setNote(null);
-        }}
-        onKeyDown={onKeyDown}
-      />
-      {note ? (
-        <p
-          class={
-            note.kind === "error" ? "status-title-note status-title-error" : "status-title-note"
-          }
-        >
-          {note.text}
-        </p>
-      ) : null}
-    </div>
+    <input
+      type="text"
+      class={
+        "status-title-input" +
+        (saving ? " status-title-input-saving" : "") +
+        (failure !== null ? " status-title-input-failed" : "")
+      }
+      aria-label="TITLE"
+      aria-busy={saving}
+      aria-invalid={failure !== null}
+      value={draft ?? title}
+      // Held while a send is out, so that what the answer settles is what was
+      // sent. readOnly, not disabled: disabling the focused input blurs it,
+      // and a failed send's draft would be left in an input the person has to
+      // click back into.
+      readOnly={saving}
+      maxLength={200}
+      placeholder="名前を入力して Enter"
+      title={failure ?? "Enter で名前を変更、Escape で元に戻す"}
+      onInput={(e) => {
+        setDraft(e.currentTarget.value);
+        setFailure(null);
+      }}
+      onKeyDown={onKeyDown}
+    />
   );
 }
 
@@ -772,12 +734,7 @@ export function StatusPanel({
         <dt>TITLE</dt>
         <dd class="status-meta-value">
           {title ? <CopyButton value={title} label="TITLE" /> : null}
-          <SessionTitleInput
-            key={sid}
-            sid={sid}
-            title={title}
-            editable={agent?.turn !== undefined}
-          />
+          <SessionTitleInput key={sid} sid={sid} title={title} />
         </dd>
         <dt>CWD</dt>
         <dd class="status-meta-value" title={cwd ?? undefined}>
@@ -846,16 +803,29 @@ export function StatusPanel({
         </dd>
         <dt>UPTIME</dt>
         <dd>{agent ? formatDuration(Date.now() - agent.startedAt) : "—"}</dd>
-        <dt>CONTEXT</dt>
-        <dd title={context?.title}>{context ? context.text : "—"}</dd>
-        <dt>OVERRIDE</dt>
+        {/* The session's model and effort, each as the requests are sent
+         * (DR-0041 §6.1's collapsed face: `fable`, `📌high`), pressed to
+         * choose another for the session (§6.4). */}
+        <dt>MODEL</dt>
         <dd class="status-override">
-          <SessionOverrideEditor
+          <SessionOverrideField
+            field="model"
             state={overrides}
             context={snapshot.context}
             onChange={onOverride}
           />
         </dd>
+        <dt>EFFORT</dt>
+        <dd class="status-override">
+          <SessionOverrideField
+            field="effort"
+            state={overrides}
+            context={snapshot.context}
+            onChange={onOverride}
+          />
+        </dd>
+        <dt>CONTEXT</dt>
+        <dd title={context?.title}>{context ? context.text : "—"}</dd>
       </dl>
       <SubagentInput key={sid} subagents={snapshot?.subagents} onSend={onAgentInput} />
       {nothingAtAll ? (

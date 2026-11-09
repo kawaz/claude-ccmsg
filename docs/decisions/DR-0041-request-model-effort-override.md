@@ -126,7 +126,7 @@ low
 
 #### 6.4 Status タブと状態行
 
-- Status タブの OVERRIDE 行と状態行 (§5) の model / effort は、1 つの field の select と [適用] を同じ部品で出す。Status タブは effort と model を 1 つずつ並べ (effort が先)、状態行は model と effort の値の位置にそれぞれ置く
+- Status タブの MODEL 行・EFFORT 行と状態行 (§5) の model / effort は、1 つの field の select と [適用] を同じ部品で出す。Status タブは MODEL と EFFORT をそれぞれ 1 行にして CONTEXT の行の前に並べ (MODEL が先)、値は静止時に畳んだ表示 (§6.1、`fable` / `📌high`) を出す。状態行は model と effort の値の位置にそれぞれ置く
 - 状態行の静止時のテキストは §5 の状態行の表示 (`low⁺` 等) で、押すとその位置でその field の select になる。default 以外を選んでいる間は、選んだ option のテキストと [適用] を出す。状態行は省略記号で切らず、幅に収まらなければ ` / ` の区切りで折り返す。select・[適用]・返事の理由が出ている間は、その部分の中でも折り返す。状態行は常に画面にある要約なので、返事の理由は 4 秒で消す (TL の「中断しました」と同じ。断られた時の選択と [適用] は残る)。Status タブの理由は次に選ぶまで残す
 - 群は default と session (📌 と 🏛️) の 2 つ。turn 群は出さない。単発が効いている間は、畳んだ表示 (default) が `⏱️high` のようにそれを示す (単発の値を別の行には出さない)
 - select を default 以外に変えた時だけ、その横に [適用] ボタンを出す。押したら `request_override` を送る (📌 の選択肢は値、🏛️ の選択肢は §6.5 のリセット)。上書きが何も無い時に 🏛️ を選んでも [適用] を出し、押せば同じく送る (送っても何も変わらない)。返事の `delivery` が `applied` 以外の時は、その理由と次の手を横に出す
@@ -153,7 +153,7 @@ low
   - `SessionContextUsageSchema` の `engine: { model?, effort? }`。daemon の `contextWithFacts` が module の facts の `model` / `effort` を入れ、facts に無い field は省き、どちらも無ければ `engine` ごと省く。context の `model` は transcript の応答した model のまま
 - webui
   - `request-override-view.ts` の `overrideGroups`: field ごとの select の群と option (ラベルと、選んだ時の意味) を返す純関数。default のラベルは状態行の印と同じ判定 (`requestValueViews` の `by`)
-  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideField` (1 つの field の select と [適用]。状態行では静止時に状態行の表示を出す)、`SessionOverrideEditor` (Status タブの effort と model)、`ContextLine` (状態行。model と effort の位置に `SessionOverrideField`)
+  - `RequestOverridePicker.tsx`: `OverrideSelect` (1 つの field。静止時はテキストの button、押すと select を描いて focus と `showPicker()`)、`SessionOverrideField` (1 つの field の select と [適用]。Status タブの MODEL / EFFORT 行の値。状態行では静止時に状態行の表示を出す)、`ContextLine` (状態行。model と effort の位置に `SessionOverrideField`)
   - `SessionInputComposer.tsx`: effort の 1 つの select。選んだ option を持ち、送信の時に 📌 / 🏛️ なら `ws.requestOverride` の返事を待ってから `ws.userPrompt` を送る
   - 状態行 (§5) の表示と、`ev: "request_override"` / `ev: "request_overrides"` の受け方は変えない
 
