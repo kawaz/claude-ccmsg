@@ -946,7 +946,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
   });
 
   // "replace" with start:0 (the whole transcript fit in one tail read) must
-  // flip atStart true — no "older" button should be shown from here.
+  // flip atStart true — no 過去分を読み込む button should be shown from here.
   test("timeline/loaded (replace) with start:0 sets atStart true", () => {
     const res: TranscriptReadResponse = {
       ok: true,
@@ -996,7 +996,7 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
   });
 
   // Prepending a page whose own `start` is 0 reaches the true beginning of
-  // the transcript — atStart must flip true so the "older" button goes away.
+  // the transcript — atStart must flip true so the 過去分を読み込む button goes away.
   test("timeline/loaded (prepend) reaching start:0 sets atStart true", () => {
     const afterInitial = readTranscript(initialState(), "sess-1", {
       mode: "replace",

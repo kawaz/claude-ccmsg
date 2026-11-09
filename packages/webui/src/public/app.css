@@ -4647,6 +4647,30 @@ button.session-tab {
   cursor: default;
 }
 
+/* TL の最上部 (最初の行の上) の「過去分を読み込む」。左右中央に置く。 */
+.tl-load-older {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8) var(--space-11) 0;
+}
+
+.tl-load-older button {
+  font: inherit;
+  font-size: var(--font-size-md);
+  padding: var(--space-4) var(--space-10);
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tl-load-older button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Right-aligned "👤 N/M ↑ ↓" user-turn nav (kawaz spec) — pushed to the
  * toolbar's far end via margin-left: auto rather than a separate flex
  * justify-content split, so it stays put regardless of how many buttons

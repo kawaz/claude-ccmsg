@@ -37,6 +37,7 @@ import { useLiveTailSubscription } from "./useLiveTailSubscription.ts";
 import { useTranscriptLoader } from "./useTranscriptLoader.ts";
 import { useSayRead } from "./useSayRead.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
+import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
 import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
 import { slotsByTime } from "../../time-slots.ts";
@@ -382,6 +383,17 @@ export function Timeline({
     void loader.refresh()?.then(stick.resumeFollowing);
   }
 
+  // 過去分は今の先頭の行の上に足されるので、ボタンの直下にあったその行を
+  // 画面上で動かさない: 押した時の距離を測って保つ (scrollAnchor.ts)。保つのは
+  // 内容が伸びるたびなので、読み込んだ行が描かれた後にずれた分だけ戻る。
+  function loadOlder() {
+    const scroller = scrollRef.current;
+    const lines = tlLinesRef.current;
+    const anchor = scroller && lines ? firstRowScrollAnchor(scroller, lines) : null;
+    if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
+    loader.loadOlder();
+  }
+
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
   // エフェクトはウザいので削除)。
   function scrollToTop() {
@@ -507,15 +519,6 @@ export function Timeline({
                       ) : null}
                       <div class="tl-toolbar">
                         {agent ? null : <TimelineToolbarBadges sid={sid} />}
-                        {timeline.atStart ? null : (
-                          <button
-                            type="button"
-                            disabled={timeline.status === "loading"}
-                            onClick={loader.loadOlder}
-                          >
-                            older
-                          </button>
-                        )}
                         <>
                           <SearchBar
                             words={inViewSearch.words}
@@ -590,6 +593,17 @@ export function Timeline({
                           ⤓
                         </button>
                       </div>
+                      {timeline.atStart ? null : (
+                        <div class="tl-load-older">
+                          <button
+                            type="button"
+                            disabled={timeline.status === "loading"}
+                            onClick={loadOlder}
+                          >
+                            {timeline.status === "loading" ? "読み込み中…" : "過去分を読み込む"}
+                          </button>
+                        </div>
+                      )}
                       {timeline.status === "error" ? (
                         <ErrorView
                           mark="!"

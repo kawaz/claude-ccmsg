@@ -13,31 +13,19 @@
 // 外れた描画の後 (layout effect) で、useScrollHold に寄せ方として渡すので、戻った
 // 行の markdown や highlight が後から伸びても距離を保ち続ける。
 //
-// Design rationale: ブラウザの scroll anchoring (`overflow-anchor`) には
-// 任せない。Safari は 27 まで持たず (useScrollHold.ts)、持つブラウザでも基準の
-// 要素をブラウザが選ぶので、選択したバブルが基準になるとは限らない。先に
-// scroll anchoring が動いていても、差は実際の距離から測るので結果は同じ。
+// 保ち方は scrollAnchor.ts (ブラウザの scroll anchoring に任せない理由もそこ)。
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { TimelineFilter } from "../../locator.ts";
 import { BEFORE_NAVIGATION_EVENT } from "../../navigation.ts";
 import type { ScrollHold } from "../../useScrollHold.ts";
 import { useEffectEvent } from "../../useEffectEvent.ts";
 import { isAtBottom } from "../timeline-autoscroll.ts";
-
-/** フィルタを外す前に測ったもの: 保つ要素と scroller の上端からの距離、
- * または末尾。 */
-export type FilterScrollAnchor =
-  | { kind: "element"; element: HTMLElement; offset: number }
-  | { kind: "bottom" };
-
-/** 要素が描かれているか (display: none で隠れていないか)。 */
-function isRendered(el: HTMLElement): boolean {
-  return el.getClientRects().length > 0;
-}
-
-function offsetIn(scroller: HTMLElement, el: HTMLElement): number {
-  return el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-}
+import {
+  elementScrollAnchor,
+  holdScrollAnchor,
+  isRendered,
+  type ScrollAnchor,
+} from "./scrollAnchor.ts";
 
 /**
  * フィルタ中の TL で、外した後に保つものを決める。`position` は URL の位置
@@ -46,16 +34,13 @@ function offsetIn(scroller: HTMLElement, el: HTMLElement): number {
  * (`data-notif` を名乗る行のうち、フィルタを外しても残るもの) を基準にする。
  * 何も見えていなければ null。
  */
-export function filterScrollAnchor(
-  scroller: HTMLElement,
-  position: string,
-): FilterScrollAnchor | null {
+export function filterScrollAnchor(scroller: HTMLElement, position: string): ScrollAnchor | null {
   if (position !== "head") {
     const selected = scroller.querySelector<HTMLElement>(
       `[data-timeline-uuid="${CSS.escape(position)}"]`,
     );
     if (selected !== null && isRendered(selected)) {
-      return { kind: "element", element: selected, offset: offsetIn(scroller, selected) };
+      return elementScrollAnchor(scroller, selected);
     }
   }
   if (isAtBottom(scroller)) return { kind: "bottom" };
@@ -64,21 +49,7 @@ export function filterScrollAnchor(
   const first = [
     ...scroller.querySelectorAll<HTMLElement>("[data-notif]:not([data-filter-only])"),
   ].find((el) => isRendered(el) && el.getBoundingClientRect().bottom > top);
-  return first === undefined
-    ? null
-    : { kind: "element", element: first, offset: offsetIn(scroller, first) };
-}
-
-/** `anchor` を保つ寄せ方を `scrollHold` に渡す。要素なら、今の距離と測った
- * 距離の差だけ scrollTop を動かす (内容が伸びるたびにやり直される)。 */
-export function holdFilterScrollAnchor(anchor: FilterScrollAnchor, scrollHold: ScrollHold): void {
-  if (anchor.kind === "bottom") {
-    scrollHold.toBottom();
-    return;
-  }
-  scrollHold.toElement(anchor.element, (scroller, el) => {
-    scroller.scrollTop += offsetIn(scroller, el) - anchor.offset;
-  });
+  return first === undefined ? null : elementScrollAnchor(scroller, first);
 }
 
 export function useFilterScroll({
@@ -95,7 +66,7 @@ export function useFilterScroll({
   scrollHold: ScrollHold;
 }): void {
   // 遷移の直前に測ったもの。描画には出ないので state でなく ref。
-  const anchorRef = useRef<FilterScrollAnchor | null>(null);
+  const anchorRef = useRef<ScrollAnchor | null>(null);
   // 測るのは遷移の直前の URL のフィルタと位置 (この render の値)。
   const capture = useEffectEvent(() => {
     const scroller = scrollRef.current;
@@ -115,7 +86,7 @@ export function useFilterScroll({
     if (filter === null) {
       const anchor = anchorRef.current;
       anchorRef.current = null;
-      if (anchor !== null) holdFilterScrollAnchor(anchor, scrollHold);
+      if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
       return;
     }
     if (position === "head") scrollHold.toBottom();
