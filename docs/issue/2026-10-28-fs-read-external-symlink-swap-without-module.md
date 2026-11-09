@@ -21,7 +21,7 @@ origin: DR-0045 段階 2 の実装中に気づいた
 
 ## 現象
 
-`fs_read_external` (DR-0024) は `getSessionStatus` の `external_files` を allowlist にする。
+`fs_read_external` (DR-0024) は `getSessionStatus` の `touched_files` の絶対パスの項目を allowlist にする。
 
 - live のセッション (hooks module の run が名乗っている) では、allowlist は Status の fold が行を畳んだ時の canonical なパス (realpath) で固まる。後で先祖のディレクトリや file 自身が symlink に差し替わっても、要求のパスを今 canonicalize した結果が allowlist と一致しないので `path_forbidden` になる (`packages/daemon/test/fs-access.test.ts` の 2 件の security テストが主張している)
 - live でないセッション (module が無い、閉じた) では、`getSessionStatus` が要求のたびに transcript を 1 回走査して allowlist を作る。その時点で canonicalize するので、差し替え後の symlink の先が allowlist に入り、差し替え先が読める

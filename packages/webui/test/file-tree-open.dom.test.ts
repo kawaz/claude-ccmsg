@@ -82,7 +82,7 @@ async function draw(store: Store, ws: WsHandle, root: HTMLElement): Promise<void
       h(
         AppContext.Provider,
         { value: { store, ws } },
-        h(FilesPanes, { sid: SID, tree, peer: PEER, externalFiles: [], workspaceFolders: [] }),
+        h(FilesPanes, { sid: SID, tree, peer: PEER, touchedFiles: [], workspaceFolders: [] }),
       ),
       root,
     ),

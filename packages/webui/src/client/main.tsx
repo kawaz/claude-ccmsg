@@ -35,7 +35,7 @@ configureFilePathExistenceCache(async (sid, paths) => {
   return res.ok ? res.results : paths.map(() => null);
 });
 // A session that disconnects (peers stream drops it) may reconnect with a
-// different cwd / repo_root / external_files snapshot, so cached "positive"
+// different cwd / repo_root / touched_files snapshot, so cached "positive"
 // answers become stale. Clear on peer-set shrink — new peers keep their
 // existing cache (session snapshot is unchanged for them).
 let lastPeerSids = new Set<string>();

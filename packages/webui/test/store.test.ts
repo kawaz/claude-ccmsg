@@ -1749,7 +1749,7 @@ describe("reducer / session-status/loaded and session-status/cleared (DR-0020)",
       timestamp: "2026-07-17T00:00:00.000Z",
     },
     teammates: [{ name: "worker-a", spawned: true, state: "active" }],
-    external_files: [{ path: "/external/shared.md", origin: "tool" as const }],
+    touched_files: [{ path: "/external/shared.md", origin: "read" as const }],
   };
   const snapshotB = {
     todos: [],

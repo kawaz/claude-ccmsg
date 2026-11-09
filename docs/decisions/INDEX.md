@@ -32,7 +32,7 @@
 | [DR-0021](./DR-0021-session-search.md) | Accepted | webui へ移管 | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted | webui へ移管 | In-view キーワード検索 (TL/ビューアのハイライト + index nav) |
 | [DR-0023](./DR-0023-daemon-local-translation.md) | Accepted | 据え置き | daemon 経由ローカル翻訳 (macOS Translation.framework、Safari フォールバック) — control 面の capability。翻訳比較タブの ja(plamo) 経路は DR-0049 |
-| [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | webui へ移管 | プロジェクト外セクション (セッションが触った cwd 外ファイルの表示 + allowlist 読み出し) |
+| [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | webui へ移管 | 触ったファイルセクション (セッションが触ったファイルの表示 + root 外の allowlist 読み出し) |
 | [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | webui へ移管 | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
 | [DR-0028](./DR-0028-session-kill.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) と session_restart (止めて同じ id で resume する、Status タブの再起動ボタン) |

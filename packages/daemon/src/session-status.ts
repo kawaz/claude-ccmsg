@@ -31,7 +31,6 @@ import {
   type AssistantMessage,
   type AssistantRow,
   type AttachmentRow,
-  type ExternalFileOrigin,
   type JsonValue,
   type KnownToolUse,
   type QueueOperationRow,
@@ -49,6 +48,8 @@ import {
   type SubagentResult,
   type TaskReminderItem,
   type TaskStopToolResult,
+  type TouchedFile,
+  type TouchedFileOrigin,
   type TaskUpdateToolResult,
   type TeammateSpawnedResult,
   type ToolUse,
@@ -153,35 +154,38 @@ export interface SessionStatusState {
   context?: SessionContextUsage;
   teammates: Map<string, TeammateState>;
   pendingToolUse: Map<string, PendingToolUse>;
-  /** DR-0024 containment root, realpath-normalized. Undefined disables external
-   * file collection fail-closed when the session root cannot be resolved. */
-  externalRoot?: string;
-  /** Exact read allowlist shared with SessionStatusSnapshot.external_files and
-   * fs_read_external. Every key is a `canonicalizeExternalPath` result, and
-   * requests are compared against it after the same canonicalization. The
-   * value is display-only provenance (see ExternalFileOrigin); `tool` wins
-   * when both kinds of record name one path, so the reported origin does not
+  /** DR-0024 containment root, realpath-normalized. Undefined disables
+   * touched-file collection fail-closed when the session root cannot be
+   * resolved. */
+  containmentRoot?: string;
+  /** Every file the transcript names, keyed by its `canonicalizeExternalPath`
+   * result. The keys outside `containmentRoot` are the exact read allowlist
+   * shared with SessionStatusSnapshot.touched_files and fs_read_external
+   * (requests are compared after the same canonicalization); the keys inside
+   * it are published root-relative and grant nothing. The value is
+   * display-only provenance (see TouchedFileOrigin); the higher-ranked origin
+   * wins when several records name one path, so the reported origin does not
    * depend on which row the fold saw first. */
-  externalFiles: Map<string, ExternalFileOrigin>;
+  touchedFiles: Map<string, TouchedFileOrigin>;
   /** Latest-turn API error, or undefined while the session looks healthy.
    * Set by an `isApiErrorMessage` assistant row, cleared by the next real
    * assistant row (see classifyApiErrorRow). */
   apiError?: SessionApiError;
 }
 
-export function createSessionStatusState(externalRoot?: string): SessionStatusState {
+export function createSessionStatusState(containmentRoot?: string): SessionStatusState {
   return {
     todos: new Map(),
     workflows: new Map(),
     background: new Map(),
     teammates: new Map(),
     pendingToolUse: new Map(),
-    externalRoot,
-    externalFiles: new Map(),
+    containmentRoot,
+    touchedFiles: new Map(),
   };
 }
 
-async function resolveExternalRoot(
+async function resolveContainmentRoot(
   sessions: SessionStatusLookup,
   sid: string,
 ): Promise<string | undefined> {
@@ -200,7 +204,7 @@ async function resolveExternalRoot(
  * (its working copy), not the possibly-widened repo_root — a
  * `.code-workspace` sits in a specific worktree's checkout, and its siblings
  * should not inherit its allowlist. Returns undefined the same way
- * resolveExternalRoot does when the session lacks a usable cwd. */
+ * resolveContainmentRoot does when the session lacks a usable cwd. */
 async function resolveWorkspaceAnchor(
   sessions: SessionStatusLookup,
   sid: string,
@@ -221,7 +225,7 @@ function isInsideRoot(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(prefix);
 }
 
-/** DR-0024 external-file fold. File tools are recorded at tool_use appearance,
+/** DR-0024 touched-file fold. File tools are recorded at tool_use appearance,
  * without waiting for tool_result: the DR defines the allowlist from call input,
  * failed reads merely become not_found later, and routing these calls through
  * pendingToolUse would let their volume evict the status tools protected by its
@@ -232,18 +236,18 @@ function isInsideRoot(root: string, candidate: string): boolean {
  * relative paths are skipped. NotebookEdit/MultiEdit had no observed
  * transcript examples when DR-0024 was accepted, so their notebook_path /
  * file_path handling defensively follows the tool definitions. */
-function foldExternalFile(state: SessionStatusState, block: ToolUseBlock): boolean {
+function foldToolFile(state: SessionStatusState, block: ToolUseBlock): boolean {
   const read = parseWith(ToolUseFilePathSchema, block);
   if (!read.ok) return false;
   const call = read.value;
-  return addExternalFile(
+  return addTouchedFile(
     state,
     call.name === "NotebookEdit" ? call.input.notebook_path : call.input.file_path,
-    "tool",
+    call.name === "Read" ? "read" : "edit",
   );
 }
 
-/** Spelling used for every DR-0024 external_files entry, and the spelling a
+/** Spelling used for every DR-0024 touched_files entry, and the spelling a
  * request must reduce to before it is compared against that set. The allowlist
  * is a set of exact files, so the two sides only ever agree if they apply the
  * *same* canonicalization — the transcript names a path as the tool call spelled
@@ -282,24 +286,49 @@ export function canonicalizeExternalPath(absPath: string): string {
   }
 }
 
-/** Canonicalize one transcript-named absolute path and add it to the allowlist
- * when it falls outside the containment root. Shared by every fold that grants
- * external reads so they agree on normalization and on the fail-closed
- * behaviour when the session root is unresolvable. */
-function addExternalFile(
+/** Which origin a path keeps when several records name it: the tools that
+ * write outrank Read, which outranks attachments — the webui hides the
+ * project's own reads, so a file the session edited must not be hidden by
+ * having also been read. */
+const TOUCHED_ORIGIN_RANK: Record<TouchedFileOrigin, number> = { edit: 2, read: 1, attachment: 0 };
+
+/** Canonicalize one transcript-named absolute path and record it. Shared by
+ * every fold that names a file so they agree on normalization and on the
+ * fail-closed behaviour when the session root is unresolvable. The root itself
+ * is skipped: it is the tree's own top, not a file the session touched. */
+function addTouchedFile(
   state: SessionStatusState,
   rawPath: string,
-  origin: ExternalFileOrigin,
+  origin: TouchedFileOrigin,
 ): boolean {
-  if (!state.externalRoot) return false;
+  if (!state.containmentRoot) return false;
   if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
 
   const canonical = canonicalizeExternalPath(rawPath);
-  if (isInsideRoot(state.externalRoot, canonical)) return false;
-  const current = state.externalFiles.get(canonical);
-  if (current === origin || current === "tool") return false;
-  state.externalFiles.set(canonical, origin);
+  if (canonical === state.containmentRoot) return false;
+  const current = state.touchedFiles.get(canonical);
+  if (current !== undefined && TOUCHED_ORIGIN_RANK[current] >= TOUCHED_ORIGIN_RANK[origin])
+    return false;
+  state.touchedFiles.set(canonical, origin);
   return true;
+}
+
+/** The published spelling of one touched file: root-relative inside the
+ * containment root (what fs_read and the Files tree address it by), the
+ * canonical absolute path elsewhere (what fs_read_external is granted). */
+function touchedFilePath(containmentRoot: string | undefined, canonical: string): string {
+  if (containmentRoot === undefined || !isInsideRoot(containmentRoot, canonical)) return canonical;
+  return path.relative(containmentRoot, canonical);
+}
+
+/** The DR-0024 exact read allowlist a session_status snapshot carries: its
+ * absolute touched_files entries, whatever their origin. Root-relative entries
+ * are left out — fs_read serves them, and a request to fs_read_external is
+ * absolute anyway. */
+export function externalReadAllowlist(files: readonly TouchedFile[] | undefined): Set<string> {
+  const allow = new Set<string>();
+  for (const file of files ?? []) if (path.isAbsolute(file.path)) allow.add(file.path);
+  return allow;
 }
 
 function addPendingToolUse(state: SessionStatusState, call: ToolUse, timestamp: string): void {
@@ -443,7 +472,7 @@ function foldAssistant(state: SessionStatusState, row: AssistantRow): boolean {
   if (foldApiError(state, row)) changed = true;
   for (const block of row.message.content) {
     if (!isKnownContentBlock(block) || block.type !== "tool_use") continue;
-    if (foldExternalFile(state, block)) changed = true;
+    if (foldToolFile(state, block)) changed = true;
     // The model wrote the input: one that does not read as its tool's is a
     // call that failed, and says nothing about the status.
     const read = parseWith(ToolUseSchema, block);
@@ -610,7 +639,7 @@ function foldTaskReminder(state: SessionStatusState, items: readonly TaskReminde
 
 /** The attachments whose payload names a file the session was shown grant a
  * read of it (`filename`, its absolute path). The kinds are listed one by one
- * rather than "any payload field that looks like a path": external_files is an
+ * rather than "any payload field that looks like a path": touched_files is an
  * authorization surface, so a future attachment kind widens it only once
  * someone has looked at its shape. A kind not listed still renders in the
  * timeline (the webui falls back to a generic path trailing); it just cannot be
@@ -624,7 +653,7 @@ function foldAttachment(state: SessionStatusState, row: AttachmentRow): boolean 
       return foldTaskReminder(state, attachment.content);
     case "edited_text_file":
     case "file":
-      return addExternalFile(state, attachment.filename, "attachment");
+      return addTouchedFile(state, attachment.filename, "attachment");
     default:
       return false;
   }
@@ -918,7 +947,7 @@ function foldPersistedOutput(state: SessionStatusState, content: string): boolea
   if (note === undefined) return false;
   const sidecar = note.match(PERSISTED_PATH_RE)?.[1];
   if (sidecar === undefined) return false;
-  return addExternalFile(state, sidecar, "tool");
+  return addTouchedFile(state, sidecar, "read");
 }
 
 function foldUser(state: SessionStatusState, row: UserRow): boolean {
@@ -1069,9 +1098,12 @@ export async function snapshot(
       const model = models?.get(teammate.name);
       return { ...teammate, ...(model ? { model } : {}) };
     }),
-    external_files: [...state.externalFiles]
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([path, origin]) => ({ path, origin })),
+    touched_files: [...state.touchedFiles]
+      .map(([canonical, origin]) => ({
+        path: touchedFilePath(state.containmentRoot, canonical),
+        origin,
+      }))
+      .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
     ...(state.apiError ? { api_error: { ...state.apiError } } : {}),
     ...(agentTree &&
     (agentTree.teammates.length > 0 ||
@@ -2066,7 +2098,7 @@ export async function getSessionStatus(
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
   const resolved = await resolveTranscript(sessions, sid, { allowVirtual: true });
   if (!resolved.ok) return resolved;
-  const root = await resolveExternalRoot(sessions, sid);
+  const root = await resolveContainmentRoot(sessions, sid);
   const cwd = await resolveWorkspaceAnchor(sessions, sid);
   const live = store.folds.get(sid);
   if (live && live.file === resolved.file && live.root === root) {

@@ -106,7 +106,7 @@
 | markdown プレビュー切替 | `FileViewer` + `files-view-store.ts` | DR-0010 | 移す | |
 | 選択ファイルの per-sid 記憶 | `files-view-store.ts` (localStorage) | — | 移す | タブを行き来する日常動線 |
 | `FILES_VIEW_PREFIX` / `FILES_VIEW_STALE_DAYS` | 同上 | — | 落とす候補 | 参照 0 |
-| プロジェクト外ファイルのセクション | `FileTree` + `op:fs_read_external` | DR-0024 | 移す | DR-0024 Accepted、allowlist は認可境界 |
+| 触ったファイルのセクション | `FileTree` + `op:fs_read_external` | DR-0024 | 移す | DR-0024 Accepted、allowlist は認可境界 |
 | ワークスペースセクション (.code-workspace) | `op:fs_list_workspace` / `op:fs_read_workspace` | DR-0026 | 移す | DR-0026 Accepted (kawaz が仕様を直接指定) |
 | ファイル名検索 (daemon 側マッチ) | `FileSearchPanel.tsx` + `file-search.ts` + `op:fs_find` | — | 移す | daemon op あり |
 | 新規ファイル作成 (docs/inbox) | `op:fs_create` / `op:fs_write` | DR-0019 | 移す | DR-0019 Accepted |
@@ -388,7 +388,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 |---|---|
 | Sessions 一覧 | peers / agents / pinned のセクション表示、行クリックで TL、並び替え、mini ステータスバッジ、エラー表示 |
 | Timeline | 購読と追記表示、`transcript-model` + cross-line、Markdown レンダリング (DR-0010 一式)、Shiki、thinking、行種別の表示部品、fold 一式、ccmsg バブル (DR-0027)、fork 境界、位置 pin と着地、自動追随、in-view 検索、raw モード |
-| Files | ツリー遅延ロード、本文表示、Shiki、ファイル内検索、markdown プレビュー、選択の per-sid 記憶、プロジェクト外 (DR-0024)、パスリンク (`filepath-ref` + `fs_stat_batch`) |
+| Files | ツリー遅延ロード、本文表示、Shiki、ファイル内検索、markdown プレビュー、選択の per-sid 記憶、触ったファイル (DR-0024)、パスリンク (`filepath-ref` + `fs_stat_batch`) |
 | Rooms | 一覧、チャット表示、投稿、seq cursor 付き再接続 (DR-0016)、作成、改名、招待、配信フィルタ (`to`) |
 | 骨格 | topbar タイトル + `document.title`、接続状態バッジ、サイドバー開閉と splitter、Files/Timeline の 2 ペイン (統合した 1 本)、404 表示、URL 文法一式 (`/r` `/s` `/usage` `/catalog` + position + path/lineRange + `sb.*`)、popstate 同期、storage 集約 |
 | 契約 | WS ライフサイクル / hello / 相関 / 再接続、別 origin からの WS (DR-0032 §2.1 の origin 許可設定) |

@@ -16,6 +16,7 @@ import {
 } from "../../protocol/test/transcript-rows.ts";
 import {
   createSessionStatusState,
+  externalReadAllowlist,
   foldLine,
   isSessionStatusCandidate,
   readAgentTree,
@@ -869,7 +870,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       workflows: [],
       background: [],
       teammates: [],
-      external_files: [],
+      touched_files: [],
     });
   });
 
@@ -1694,7 +1695,7 @@ describe("agent tree from meta.json", () => {
   });
 });
 
-describe("session status external file fold (DR-0024)", () => {
+describe("session status touched file fold (DR-0024)", () => {
   test("各 file tool の実 input 形から root 外の canonical path を抽出する", async () => {
     // file_path の存在だけを採り、Read の paging keys・Write の実在する余剰 keys・
     // Edit の replace_all を schema 厳密一致で拒否しない。NotebookEdit/MultiEdit は
@@ -1750,9 +1751,14 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual(
+      // Read だけが read、書く tool (Write / Edit / NotebookEdit / MultiEdit) は edit。
+      const origins = ["read", "read", "edit", "edit", "edit", "edit", "edit"] as const;
+      expect(result.touched_files).toEqual(
         files
-          .map((file) => ({ path: fs.realpathSync(file), origin: "tool" as const }))
+          .map((file, i) => ({
+            path: fs.realpathSync(file),
+            origin: defined(origins[i], "origin"),
+          }))
           .sort((a, b) => (a.path < b.path ? -1 : 1)),
       );
     } finally {
@@ -1774,7 +1780,7 @@ describe("session status external file fold (DR-0024)", () => {
         [toolUse("listed-offset", "Read", { file_path: file, offset: [820], limit: 55 })],
         root,
       );
-      expect(result.external_files).toEqual([{ path: fs.realpathSync(file), origin: "tool" }]);
+      expect(result.touched_files).toEqual([{ path: fs.realpathSync(file), origin: "read" }]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1798,15 +1804,16 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual([]);
+      expect(result.touched_files).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test("root containment は realpath で判定し root 自身/直下/深部を除外する", async () => {
-    // lexical 位置ではなく実体を判定する: root 外 link→root 内は除外し、root 内
-    // link→root 外は canonical external path として採る。
+  test("root containment は realpath で判定し、root 内は root 相対で返し root 自身は採らない", async () => {
+    // lexical 位置ではなく実体を判定する: root 外 link→root 内は root 相対の
+    // 実体として採り、root 内 link→root 外は canonical な絶対 path として採る。
+    // root 自身はツリーの頂点でファイルではないので一覧に出さない。
     const root = fixtureDir("session-status");
     const outside = fixtureDir("session-status");
     try {
@@ -1832,8 +1839,10 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual([
-        { path: fs.realpathSync(outsideFile), origin: "tool" },
+      expect(result.touched_files).toEqual([
+        { path: fs.realpathSync(outsideFile), origin: "read" },
+        { path: path.join("deep", "inside.txt"), origin: "read" },
+        { path: "inside.txt", origin: "read" },
       ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1866,11 +1875,11 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual(
-        [path.join(realOutside, "a.md"), path.join(realOutside, "b.md")]
-          .sort()
-          .map((path) => ({ path, origin: "tool" })),
-      );
+      // a.md は Write の後に Read されても edit のまま。
+      expect(result.touched_files).toEqual([
+        { path: path.join(realOutside, "a.md"), origin: "edit" },
+        { path: path.join(realOutside, "b.md"), origin: "edit" },
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1894,8 +1903,8 @@ describe("session status external file fold (DR-0024)", () => {
         [toolUse("w1", "Write", { file_path: lexicalTarget, content: "x" })],
         root,
       );
-      expect(result.external_files).toEqual([
-        { path: path.join(fs.realpathSync(realDir), "report.md"), origin: "tool" },
+      expect(result.touched_files).toEqual([
+        { path: path.join(fs.realpathSync(realDir), "report.md"), origin: "edit" },
       ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1924,7 +1933,7 @@ describe("session status external file fold (DR-0024)", () => {
       fs.mkdirSync(path.dirname(sidecar));
       fs.writeFileSync(sidecar, "x".repeat(64));
       const result = await apply([persistedOutputRow(sidecar)], root);
-      expect(result.external_files).toEqual([{ path: fs.realpathSync(sidecar), origin: "tool" }]);
+      expect(result.touched_files).toEqual([{ path: fs.realpathSync(sidecar), origin: "read" }]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1961,14 +1970,14 @@ describe("session status external file fold (DR-0024)", () => {
         [forged, noPreviewMarker, noPath, relative].map(userTextRow),
         root,
       );
-      expect(result.external_files).toEqual([]);
+      expect(result.touched_files).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });
 
-describe("session_status / attachment 由来の external file", () => {
+describe("session_status / attachment 由来の touched file", () => {
   test("file 系 attachment が名指すファイルを origin=attachment で allowlist に加える", async () => {
     // fixture は実測 transcript の形: edited_text_file は filename + 行番号付き
     // snippet、file (@ 参照) は filename + content.file.content。どちらも
@@ -1981,7 +1990,7 @@ describe("session_status / attachment 由来の external file", () => {
       fs.writeFileSync(edited, "a");
       fs.writeFileSync(mentioned, "b");
       const result = await apply([editedTextFileRow(edited), mentionedFileRow(mentioned)], root);
-      expect(result.external_files).toEqual(
+      expect(result.touched_files).toEqual(
         [fs.realpathSync(edited), fs.realpathSync(mentioned)]
           .sort()
           .map((path) => ({ path, origin: "attachment" })),
@@ -1992,40 +2001,51 @@ describe("session_status / attachment 由来の external file", () => {
     }
   });
 
-  test("同じファイルを tool も attachment も名指したら origin は tool (順序不問)", async () => {
-    // 由来は表示専用のグループ分けにしか使わないが、Files のツリーで 1 つの
-    // ファイルが 2 つの見出しに出ないよう、どちらが先に来ても tool に寄せる。
+  test("同じファイルを複数の由来が名指したら edit > read > attachment で 1 件 (順序不問)", async () => {
+    // 由来は表示専用だが、webui はプロジェクト内の read を隠すので、編集した
+    // ファイルが読んだことで隠れないよう書く側を優先する。どの順で来ても同じ。
     const root = fixtureDir("session-status");
     const outside = fixtureDir("session-status");
     try {
       const file = path.join(outside, "both.md");
       fs.writeFileSync(file, "x");
-      const expected = [{ path: fs.realpathSync(file), origin: "tool" as const }];
-      const attachmentFirst = await apply(
-        [editedTextFileRow(file), toolUse("r1", "Read", { file_path: file })],
-        root,
-      );
-      const toolFirst = await apply(
-        [toolUse("r1", "Read", { file_path: file }), editedTextFileRow(file)],
-        root,
-      );
-      expect(attachmentFirst.external_files).toEqual(expected);
-      expect(toolFirst.external_files).toEqual(expected);
+      const canonical = fs.realpathSync(file);
+      const read = toolUse("r1", "Read", { file_path: file });
+      const edit = toolUse("e1", "Edit", { file_path: file, old_string: "x", new_string: "y" });
+      const attachment = editedTextFileRow(file);
+      for (const lines of [
+        [attachment, read],
+        [read, attachment],
+      ]) {
+        expect((await apply(lines, root)).touched_files).toEqual([
+          { path: canonical, origin: "read" },
+        ]);
+      }
+      for (const lines of [
+        [attachment, read, edit],
+        [edit, read, attachment],
+        [read, edit],
+      ]) {
+        expect((await apply(lines, root)).touched_files).toEqual([
+          { path: canonical, origin: "edit" },
+        ]);
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
     }
   });
 
-  test("containment root 内の attachment は allowlist に入らない", async () => {
-    // 外部読み出しの認可面なので、プロジェクト内のファイルを混ぜない
-    // (tool 由来と同じ判定を通ることの確認)。
+  test("containment root 内の attachment も root 相対で採る", async () => {
+    // tool 由来と同じ判定を通ることの確認。root 内は fs_read で開くので
+    // 絶対 path (= fs_read_external の allowlist) にはしない。
     const root = fixtureDir("session-status");
     try {
       const inside = path.join(root, "inside.md");
       fs.writeFileSync(inside, "x");
       const result = await apply([editedTextFileRow(inside)], root);
-      expect(result.external_files).toEqual([]);
+      expect(result.touched_files).toEqual([{ path: "inside.md", origin: "attachment" }]);
+      expect(externalReadAllowlist(result.touched_files)).toEqual(new Set());
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -2049,7 +2069,7 @@ describe("session_status / attachment 由来の external file", () => {
         attachmentRow({ type: "edited_text_file", snippet: "1\tx" }, { timestamp: START }),
       );
       const result = await apply([unknownType, noPath], root);
-      expect(result.external_files).toEqual([]);
+      expect(result.touched_files).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -2434,7 +2454,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
     }
   });
 
-  test("外部 file tool の tail 追記を external_files full snapshot push で逐次配信する", async () => {
+  test("外部 file tool の tail 追記を touched_files full snapshot push で逐次配信する", async () => {
     // DR-0024 は status の fold に相乗りするため、subscribe 後に push された
     // tool_use 1 行で allowlist が増え、tool_result 無しでもその新しい集合を即 push する。
     const ctx = await startInProcessDaemon();
@@ -2450,7 +2470,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const user = await userConn(ctx);
       await user.request({ op: "subscribe" });
       const initial = await user.requestOk({ op: "session_status_subscribe", sid });
-      expect(initial.external_files).toEqual([]);
+      expect(initial.touched_files).toEqual([]);
 
       await appendPushed(
         session,
@@ -2459,10 +2479,10 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       );
       const pushed = await user.readEventUntil(
         "session_status",
-        (event) => event.external_files?.length === 1,
+        (event) => event.touched_files?.length === 1,
       );
-      expect(pushed.ev.external_files).toEqual([
-        { path: fs.realpathSync(external), origin: "tool" },
+      expect(pushed.ev.touched_files).toEqual([
+        { path: fs.realpathSync(external), origin: "read" },
       ]);
     } finally {
       await stopInProcessDaemon(ctx);
@@ -2474,7 +2494,8 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   test("re-hello で containment root が変わると同じ transcript を新 root で再 fold する", async () => {
     // DR-0024 classification depends on root as well as transcript bytes. A
     // cached live fold must be invalidated when the sid/file stay the same but
-    // cwd changes, otherwise an internal path could retain the old decision.
+    // cwd changes, otherwise a path could keep the old root's spelling (and the
+    // old root's grant decision).
     const ctx = await startInProcessDaemon();
     const rootA = fixtureDir("session-status");
     const rootB = fixtureDir("session-status");
@@ -2487,7 +2508,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       const session = await liveSessionConn(ctx, sid, { transcript_path: file, cwd: rootA });
       const firstUser = await userConn(ctx);
       const initial = await firstUser.requestOk({ op: "session_status_subscribe", sid });
-      expect(initial.external_files).toEqual([]);
+      expect(initial.touched_files).toEqual([{ path: "inside-a.md", origin: "read" }]);
 
       await session.request({
         op: "hello",
@@ -2507,7 +2528,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         op: "session_status_subscribe",
         sid,
       });
-      expect(rebuilt.external_files).toEqual([{ path: fs.realpathSync(touched), origin: "tool" }]);
+      expect(rebuilt.touched_files).toEqual([{ path: fs.realpathSync(touched), origin: "read" }]);
     } finally {
       await stopInProcessDaemon(ctx);
       fs.rmSync(rootA, { recursive: true, force: true });

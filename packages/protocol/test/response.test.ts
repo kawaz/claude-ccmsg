@@ -164,8 +164,9 @@ const SNAPSHOT: SessionStatusSnapshot = {
       },
     ],
   },
-  external_files: [
-    { path: "/etc/hosts", origin: "tool" },
+  touched_files: [
+    { path: "/etc/hosts", origin: "read" },
+    { path: "src/main.ts", origin: "edit" },
     { path: "/tmp/a.png", origin: "attachment" },
   ],
   workspace_folders: [{ name: "x", path: "/w/x" }],

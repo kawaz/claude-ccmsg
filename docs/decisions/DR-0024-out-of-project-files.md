@@ -1,4 +1,4 @@
-# DR-0024: プロジェクト外セクション (セッションが触った cwd 外ファイルの表示)
+# DR-0024: 触ったファイルセクション (セッションが transcript で触ったファイルの表示)
 
 Status: Accepted (kawaz が仕様を直接指定)
 Date: 2026-07-17
@@ -6,33 +6,36 @@ Sponsor: kawaz
 
 ## 1. 背景
 
-セッションが Read/Write/Edit で触った **cwd (containment root) 外のファイル**を webui で見たい。自由なプロジェクト外ブラウズではなく、**セッションが実際に触ったファイルのフルパスリスト**に限定 (kawaz 明示)。
+セッションが Read/Write/Edit で触ったファイルを webui で見たい。cwd (containment root) の外は自由にブラウズさせず、**セッションが実際に触ったファイルのリスト**に限定する (kawaz 明示)。
 
 ## 2. 仕様 (kawaz の指定)
 
-- Files ツリーの「お気に入り」「ワークスペース」に続く第 3 セクション **「プロジェクト外」** (節構成と並べ方は DR-0026 §4)
-- 内容: そのセッションの transcript から Read/Write/Edit (+ NotebookEdit) の tool call file_path を抽出し、**containment root 内のものを除外**したフルパス一覧 (重複除去)
-- クリックでファイルビューアに表示 (読み出しは「触ったファイルリスト」への containment に相当する認可 — § 3)
+- Files ツリーの「お気に入り」「ワークスペース」に続く第 3 セクション **「触ったファイル」** (節構成と並べ方は DR-0026 §4)
+- 内容: そのセッションの transcript から Read/Write/Edit (+ NotebookEdit) の tool call file_path を抽出した一覧 (重複除去)。containment root 内のものも含む (§ 3.3)
+- クリックでファイルビューアに表示 (root 外の読み出しは「触ったファイルリスト」への containment に相当する認可 — § 3.2。root 内は既存の fs_read)
 - **お気に入り追加可能** (★ トグルを同セクションにも)
-- **セクション内リストごとの横スクロール**: プロジェクト外はフルパスで幅が溢れるため。
+- **セクション内リストごとの横スクロール**: root 外のファイルはフルパスで幅が溢れるため。
   既存ツリー (深い dir / 長名で右が隠れる既知問題) も同様にセクション単位の横スクロールを付ける
 
 ## 3. 設計
 
 ### 3.1 抽出 (daemon)
 
-- session_status (DR-0020) と同じ transcript fold 相乗り、または fs 系の新 op。tool call (Read/Write/Edit/NotebookEdit/MultiEdit) の input.file_path / notebook_path を抽出し、realpath 正規化 → containment root 外のみ返す
+- session_status (DR-0020) の transcript fold に相乗りし、`touched_files` として返す。tool call (Read/Write/Edit/NotebookEdit/MultiEdit) の input.file_path / notebook_path を抽出し、realpath 正規化 (§ 3.2 の `canonicalizeExternalPath`) する
+- containment root 内のものは **root 相対** (先頭 `/` 無し。fs_read と Files ツリーが使う綴り)、root 外のものは **絶対パス** で返す。root 自身はツリーの頂点でファイルではないので返さない。webui の既存規約 (相対 = root 内で fs_read、絶対 = それ以外) がそのまま判別に使え、root の綴り (symlink 経由の cwd 等) を webui 側で realpath し直す必要が無い
 - 逐次 push は session_status の既存基盤に相乗りできるなら乗る (実装時判断)
 
 ### 3.2 読み出し認可 (重要)
 
-fs_read の containment は root 配下限定のまま。プロジェクト外ファイルの読み出しは**「そのセッションが触ったと transcript に記録されているパス」の集合に限定**して許可する新しい認可面 (allowlist ベース)。任意パス読み出しには絶対に広げない。symlink escape はrealpath で検査 (既存 fs-access の流儀)。
+fs_read の containment は root 配下限定のまま。root 外のファイルの読み出しは**「そのセッションが触ったと transcript に記録されているパス」の集合に限定**して許可する新しい認可面 (allowlist ベース)。allowlist は `touched_files` の**絶対パスの項目だけ** (`externalReadAllowlist`)。root 内の項目は fs_read で開けるので allowlist に入れない (入れても fs_read で既に読めるものしか増えないが、認可面を必要以上に広げない)。任意パス読み出しには絶対に広げない。symlink escape はrealpath で検査 (既存 fs-access の流儀)。
 
 **正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が表示したそのファイルへのリンクが 403 になる。リクエスト時に canonicalize することでfold 後に symlink へ差し替えられた経路は別 realpath に解決されて弾かれる性質は保たれる。
 
 ### 3.3 webui
 
-- FileTree に第 3 セクション。行はフルパス表示 + ★。クリックで FileViewer (認可は § 3.2 経由)
+- FileTree に第 3 セクション「触ったファイル」。グループの並びはワークスペース節と同じ (カレントプロジェクト = cwd の folder が先頭、次に各 workspace folder、最後に `others`。DR-0026 §4)。行は folder 内の相対パス (`others` はフルパス) + ★。クリックで FileViewer (root 内は fs_read、root 外は § 3.2 経由)
+- **カレントプロジェクトのグループには Read 由来 (`origin: read`) を出さない**。セッションが自分のプロジェクトを読むのは作業の大半で、並べると編集したファイルが埋もれるため。他のグループ (workspace folder・`others`) は Read 由来も出す
+- 各グループの見出し行はワークスペース節の folder 行と同じ部品 (キャレット + フォルダアイコン + 名前) と同じインデントで描き、中の行はその folder の子と同じ 1 段下に置く
 - セクション毎に overflow-x: auto (既存セクションにも適用、スクロールバーは出さない)
 
 ## 4. Phase 分割
@@ -40,7 +43,7 @@ fs_read の containment は root 配下限定のまま。プロジェクト外�
 | Phase | スコープ |
 |---|---|
 | Phase 1 | daemon: 抽出 + allowlist 読み出し認可 + テスト (敵対: allowlist 外 / symlink) |
-| Phase 2 | webui: プロジェクト外セクション + 横スクロール + ★ |
+| Phase 2 | webui: 触ったファイルセクション + 横スクロール + ★ |
 
 ## 4.1 Addendum: `! <cmd>` の persisted-output サイドカー (kawaz TL-Q1 = a, 2026-07-29)
 
@@ -60,8 +63,7 @@ TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カ�
 **信頼形状は § 3.1 / § 4.1 と同一**: transcript 自身が名指した絶対パスを 1 件、完全一致で付与する。対象 attachment type と path フィールドは**明示テーブル**
 (`ATTACHMENT_PATH_FIELD`) で持つ — 未知 type の path らしき field を総なめすると認可面が中身を見ないまま広がるため。テーブルに無い type は TL には出るが Filesから開けないだけ。
 
-`external_files` は `{ path, origin }` の配列になる。`origin` は **表示専用**
-(webui の「プロジェクト外」を `Read/Edit/Write` / `attachments` にグループ分けする) で、認可は origin を見ない。両方が同じパスを名指したら `tool` を採る(1 ファイルが 2 見出しに出ないため、到着順に依らない)。allowlist を 2 本のフィールドに割らないのは、消費側が片方の union を忘れると「TL に出るのにFiles で 403」になるため。
+`touched_files` は `{ path, origin }` の配列。`origin` は `read` (Read と § 4.1 のサイドカー) / `edit` (Write / Edit / MultiEdit / NotebookEdit) / `attachment` (file 系 attachment) で、**表示専用** (webui がカレントプロジェクトのグループから `read` を外すのに使う)。認可は origin を見ない。複数の由来が同じパスを名指したら `edit` > `read` > `attachment` の順で 1 つを採る (編集したファイルが読んだことで隠れないため。到着順に依らない)。allowlist を origin ごとのフィールドに割らないのは、消費側が片方の union を忘れると「TL に出るのに Files で 403」になるため。
 
 ## 5. 関連
 

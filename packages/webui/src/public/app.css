@@ -3615,16 +3615,6 @@ button.session-tab {
   flex: 0 0 auto;
 }
 
-/* プロジェクト外セクション内の由来別グループ見出し (kawaz r99 m35)。
- * セクション見出し (.tree-section-label) の下に付く従属ラベルなので、
- * 区切り線を持たず 1 段小さい字で、同じ縦リズムに収める。 */
-.tree-section-sublabel {
-  margin: var(--space-4) 0 var(--space-1);
-  padding: 0 var(--space-11);
-  font-size: var(--font-size-xs);
-  color: var(--fg-muted);
-}
-
 /* docs/inbox メモ作成 (DR-0019 Phase W2): 「+ メモ」ボタンを右寄せで置く
  * flex 行。左側は spacer (.tree-header-spacer) が埋める。 */
 .tree-header {
@@ -3656,7 +3646,7 @@ button.session-tab {
 }
 
 /* ファイル名検索 (kawaz r55 m67): header 直下に全幅で置き、pane 全体
- * (containment root + workspace folder + プロジェクト外) を対象にする
+ * (containment root + workspace folder + 触ったファイル) を対象にする
  * ことを見た目でも示す。 */
 .tree-search {
   padding: var(--space-4) var(--space-8) var(--space-6) var(--space-8);

@@ -1,12 +1,13 @@
 // Lazy-loading directory tree for SessionView (DR-0008). Directories fetch
 // their listing (fs_list) the first time they're expanded and the result is
 // cached in state.sessionTrees[sid].dirs, so re-collapsing/re-expanding never
-// re-fetches. DR-0024 adds transcript-observed external files using the client
-// convention `path.startsWith("/")`: existing tree keys are root-relative and
-// never start with `/`, so external favorites/selections cannot collide. This
+// re-fetches. DR-0024 adds the files the transcript says the session touched;
+// the ones outside the containment root use the client convention
+// `path.startsWith("/")`: existing tree keys are root-relative and never start
+// with `/`, so external favorites/selections cannot collide. This
 // file owns the fs_list round trip; the reducer only stores what it's told
 // (DR-0005 §1: effects in components, not the reducer).
-import type { ExternalFile, FsEntry, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
+import type { FsEntry, PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import { FileSearchPanel } from "./FileSearchPanel.tsx";
@@ -20,13 +21,13 @@ import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
   expandPathsForSelection,
+  externalFilePaths,
   favoriteKindsStorageKey,
   type FavoriteKind,
   favoritesStorageKey,
   isWorkspaceFilePath,
   parseFavoriteKinds,
   parseFavorites,
-  sortExternalFiles,
   toggleFavorite,
 } from "../utils.ts";
 import {
@@ -35,6 +36,7 @@ import {
   type FilesLayout,
   fullPathOf,
   groupByFolder,
+  touchedFileGroups,
 } from "../files-sections.ts";
 import { viewerPathForAbsolute } from "../filepath-ref.ts";
 import { readStorage, writeStorage } from "../storage.ts";
@@ -261,16 +263,7 @@ function DirNode({
   return (
     <li>
       <div class="tree-row-line">
-        <button
-          type="button"
-          class="tree-row tree-dir"
-          style={{ paddingLeft: `${depth}rem` }}
-          onClick={toggle}
-        >
-          <span class="tree-caret">{expanded ? "▾" : "▸"}</span>
-          <FileTypeIcon kind={fileIconKind(name, "dir", expanded)} />
-          {name}
-        </button>
+        <FolderRow name={name} depth={depth} open={expanded} onToggle={toggle} />
         {create ? (
           <button
             type="button"
@@ -322,6 +315,38 @@ function DirNode({
         </ul>
       ) : null}
     </li>
+  );
+}
+
+/** The row a folder is drawn as: caret, folder icon and name, indented by
+ * `depth`. Shared by DirNode and the group headings of お気に入り /
+ * 触ったファイル, so a heading lines up with the ワークスペース row for the same
+ * folder and the rows under it with that folder's children. */
+function FolderRow({
+  name,
+  depth,
+  open,
+  onToggle,
+  heading = false,
+}: {
+  name: string;
+  depth: number;
+  open: boolean;
+  onToggle: () => void;
+  heading?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      class={heading ? "tree-row tree-dir tree-group-heading" : "tree-row tree-dir"}
+      style={{ paddingLeft: `${depth}rem` }}
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      <span class="tree-caret">{open ? "▾" : "▸"}</span>
+      <FileTypeIcon kind={open ? "dir-open" : "dir-closed"} />
+      {name}
+    </button>
   );
 }
 
@@ -551,16 +576,19 @@ function favoriteEntryKind(
   return { kind: "file", symlink: false };
 }
 
-/** One folder's group in the お気に入り / プロジェクト外 sections. Rows render
+/** One folder's group in the お気に入り / 触ったファイル sections. Rows render
  * through the same DirNode / FileNode the tree uses, addressed by their tree
  * key and labelled by their path inside the folder — the folder's own prefix
- * is what made the rows unreadable when every row carried it. The cwd's group
- * (`name === null`) has no heading; every other group's heading folds it and
- * starts open. Rows outside every deletion surface get no delete button:
- * `deletable` says whether a row's section may delete at all, and an
- * absolute key outside the workspace folders is a DR-0024 external file. */
+ * is what made the rows unreadable when every row carried it. With `heading`
+ * the group sits under a FolderRow at the depth of a ワークスペース folder,
+ * which folds it and starts open, and its rows sit one level in; without one
+ * (お気に入り's cwd group) the rows start at the left edge. Rows outside every
+ * deletion surface get no delete button: `del` says whether a row's section
+ * may delete at all, and an absolute key outside the workspace folders is a
+ * DR-0024 file outside the containment root. */
 function PathGroup({
   group,
+  heading,
   sid,
   tree,
   workspaceFolders,
@@ -569,6 +597,7 @@ function PathGroup({
   del,
 }: {
   group: FilesGroup;
+  heading: boolean;
   sid: string;
   tree: SessionTreeState;
   workspaceFolders: readonly WorkspaceFolder[];
@@ -577,7 +606,7 @@ function PathGroup({
   del: DeleteContext | null;
 }) {
   const [open, setOpen] = useState(true);
-  const depth = group.name === null ? 0 : 1;
+  const depth = heading ? 1 : 0;
   const rows = (
     <ul class="tree-root tree-favorites">
       {group.rows.map(({ key, label }) => {
@@ -614,19 +643,17 @@ function PathGroup({
       })}
     </ul>
   );
-  if (group.name === null) return rows;
+  if (!heading) return rows;
   return (
     <>
       <div class="tree-row-line">
-        <button
-          type="button"
-          class="tree-row tree-dir tree-group-heading"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span class="tree-caret">{open ? "▾" : "▸"}</span>
-          {group.name}
-        </button>
+        <FolderRow
+          name={group.name}
+          depth={0}
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          heading
+        />
       </div>
       {open ? rows : null}
     </>
@@ -637,15 +664,16 @@ export function FileTree({
   sid,
   tree,
   peer,
-  externalFiles,
+  touchedFiles,
   layout,
   onNewMemo,
 }: {
   sid: string;
   tree: SessionTreeState;
-  /** DR-0024 allowlisted absolute paths from the live session_status fold,
-   * each tagged with the kind of transcript record that named it. */
-  externalFiles: readonly ExternalFile[];
+  /** DR-0024 files the transcript says the session touched, from the live
+   * session_status fold — root-relative inside the containment root, absolute
+   * outside it — each tagged with the kind of record that named it. */
+  touchedFiles: readonly TouchedFile[];
   /** The ワークスペース section's folders (the cwd always among them) and the
    * DR-0026 workspace folders paths route through (`filesLayout`). */
   layout: FilesLayout;
@@ -731,7 +759,7 @@ export function FileTree({
     return (full !== null && kindOf(full) === "dir") || favoriteEntryKind(key, tree).kind === "dir";
   };
   const favoriteGroups = groupByFolder(favoriteFulls, layout, isDirKey);
-  const externalGroups = groupByFolder(sortExternalFiles(externalFiles), layout, isDirKey);
+  const touchedGroups = touchedFileGroups(touchedFiles, layout, isDirKey);
 
   // New-file creation state (kawaz r46 mid=24): kept here so at most one
   // DirNode hosts the inline input at a time — sharing a single `activePath`
@@ -1017,7 +1045,7 @@ export function FileTree({
           respectGitignore={respectGitignore}
           treeRoot={rootPath}
           workspaceFolders={workspaceFolders}
-          externalFiles={sortExternalFiles(externalFiles)}
+          externalFiles={externalFilePaths(touchedFiles)}
           fav={fav}
         />
       ) : (
@@ -1039,8 +1067,9 @@ export function FileTree({
               <p class="tree-section-label">お気に入り</p>
               {favoriteGroups.map((group) => (
                 <PathGroup
-                  key={group.name ?? ""}
+                  key={group.isCwd ? "" : group.name}
                   group={group}
+                  heading={!group.isCwd}
                   sid={sid}
                   tree={tree}
                   workspaceFolders={workspaceFolders}
@@ -1076,23 +1105,27 @@ export function FileTree({
               />
             ))}
           </ul>
-          {externalGroups.length > 0 ? (
+          {touchedGroups.length > 0 ? (
             <>
-              <p class="tree-section-label">プロジェクト外</p>
-              {/* Same form as お気に入り: grouped by the workspace folder
-               * holding each file, with the files in no folder under
-               * `others`. A folder with no file gets no heading. */}
-              {externalGroups.map((group) => (
+              <p class="tree-section-label">触ったファイル</p>
+              {/* Grouped like お気に入り by the folder holding each file —
+               * the cwd's group first, then the other workspace folders,
+               * then `others` — but every group, the cwd's included, sits
+               * under its folder row the way the ワークスペース section
+               * draws it. A folder with no file gets no group. */}
+              {touchedGroups.map((group) => (
                 <PathGroup
-                  key={group.name ?? ""}
+                  key={group.isCwd ? "" : group.name}
                   group={group}
+                  heading
                   sid={sid}
                   tree={tree}
                   workspaceFolders={workspaceFolders}
                   fav={fav}
                   create={null}
-                  // DR-0024 external files live outside fs_delete's
-                  // authorization surfaces (contained | workspace).
+                  // A list of what the session touched, not a place to manage
+                  // files; the ones outside the root are also outside
+                  // fs_delete's authorization surfaces (contained | workspace).
                   del={null}
                 />
               ))}

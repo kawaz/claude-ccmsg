@@ -3,8 +3,7 @@
 // (which must stay a pure function of state + action).
 import type {
   AgentInfo,
-  ExternalFile,
-  ExternalFileOrigin,
+  TouchedFile,
   PeerInfo,
   UnreadPermit,
   ProtocolVersion,
@@ -1014,7 +1013,8 @@ export function toggleFavorite(favorites: string[], path: string): string[] {
 }
 
 /** DR-0024 client convention: project tree paths are root-relative and never
- * start with `/`; session_status.external_files are absolute and always do.
+ * start with `/`; absolute paths (the touched_files entries outside the root
+ * among them) always do.
  * This one discriminator selects fs_read vs fs_read_external and cannot collide
  * with an existing project path. */
 export function isExternalFilePath(filePath: string): boolean {
@@ -1114,37 +1114,15 @@ export function isImagePath(filePath: string): boolean {
   return VIEWER_IMAGE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
 }
 
-/** Stable display order for the "プロジェクト外" section, split into the origin
- * groups it renders (kawaz r99 m35: files the session read or wrote are a
- * different thing from files it was handed as attachments, and mixing them in
- * one flat list makes neither findable). The daemon already deduplicates and
- * sorts snapshots, but keeping the view derivation pure makes a locally
- * constructed snapshot deterministic too — including the case where both
- * origins name one path, which keeps the tool entry so a file cannot appear
- * under two headings. */
-export function groupExternalFiles(files: readonly ExternalFile[]): {
-  tool: string[];
-  attachment: string[];
-} {
-  const byPath = new Map<string, ExternalFileOrigin>();
-  for (const file of files) {
-    if (!isExternalFilePath(file.path)) continue;
-    if (byPath.get(file.path) === "tool") continue;
-    byPath.set(file.path, file.origin);
-  }
-  const sorted = [...byPath].sort(([a], [b]) => a.localeCompare(b));
-  return {
-    tool: sorted.filter(([, origin]) => origin === "tool").map(([path]) => path),
-    attachment: sorted.filter(([, origin]) => origin === "attachment").map(([path]) => path),
-  };
-}
-
-/** Every allowlisted external path in display order, regardless of origin —
- * for the consumers that treat the list as one set (name search, existence
- * probes) rather than as grouped sections. */
-export function sortExternalFiles(files: readonly ExternalFile[]): string[] {
-  const { tool, attachment } = groupExternalFiles(files);
-  return [...tool, ...attachment].sort((a, b) => a.localeCompare(b));
+/** The DR-0024 files outside the containment root (the absolute touched_files
+ * entries), each once and in a stable order — for the consumers that treat
+ * them as one set (name search) rather than as the grouped Files section. The
+ * root-relative entries are left out: they are project files, which those
+ * consumers already reach through the tree. */
+export function externalFilePaths(files: readonly TouchedFile[]): string[] {
+  const paths = new Set<string>();
+  for (const file of files) if (isExternalFilePath(file.path)) paths.add(file.path);
+  return [...paths].sort((a, b) => a.localeCompare(b));
 }
 
 // --- docs/inbox メモ作成 (DR-0019 Phase W2) --- //
@@ -1169,11 +1147,11 @@ export function fileAncestorDirectories(filePath: string): string[] {
  * - 相対パスは cwd の folder (`rootPath`) の下にある。cwd の folder も
  *   ワークスペース section の畳める DirNode なので、それ自身を含めて返す
  *   (祖先は返さない)。`rootPath` 配下でない相対パスはツリーに現れない
- *   (お気に入り / プロジェクト外が 1 行で描くだけ) ので空を返す。
+ *   (お気に入り / 触ったファイルが 1 行で描くだけ) ので空を返す。
  * - それ以外のワークスペース folder root も畳める DirNode なので、それ自身を
  *   含めて返す。
- * - どの workspace folder にも属さない絶対パス (DR-0024 のプロジェクト外
- *   ファイル) は depth 0 の平坦な行なので展開対象なし。 */
+ * - どの workspace folder にも属さない絶対パス (DR-0024 の触ったファイルの
+ *   うち root 外のもの) は平坦な行なので展開対象なし。 */
 export function expandPathsForSelection(
   selectedPath: string,
   rootPath: string,

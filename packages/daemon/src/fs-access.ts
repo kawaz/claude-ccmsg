@@ -28,6 +28,7 @@ import {
 } from "@ccmsg/protocol";
 import {
   canonicalizeExternalPath,
+  externalReadAllowlist,
   getSessionStatus,
   type SessionStatusLookup,
   type SessionStatusStore,
@@ -477,7 +478,7 @@ export async function fsRead(
 }
 
 /** DR-0024 external-file authorization. The request must name one absolute path
- * that canonicalizes to an exact external_files entry for this sid; no prefix or
+ * that canonicalizes to an exact absolute touched_files entry for this sid; no prefix or
  * directory grant exists. Canonicalization runs here, at request time, with the
  * same `canonicalizeExternalPath` the fold used to record the entry: that lets a
  * caller name the file the way the transcript spelled it (`/var/...`) or the way
@@ -504,7 +505,7 @@ export async function fsReadExternal(
 
   const status = await getSessionStatus(statusStore, sessions, sid);
   if (!status.ok) return status;
-  const allowlist = new Set((status.data.external_files ?? []).map((e) => e.path));
+  const allowlist = externalReadAllowlist(status.data.touched_files);
   const canonical = canonicalizeExternalPath(reqPath);
   if (!allowlist.has(canonical)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
@@ -745,7 +746,7 @@ export async function fsResolveForServe(
     }
     const status = await getSessionStatus(statusStore, sessions, sid);
     if (!status.ok) return status;
-    const allowlist = new Set((status.data.external_files ?? []).map((e) => e.path));
+    const allowlist = externalReadAllowlist(status.data.touched_files);
     realPath = canonicalizeExternalPath(reqPath);
     if (!allowlist.has(realPath)) {
       return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
@@ -866,7 +867,7 @@ export async function fsStatBatch(
       const rWs = await fsResolveForServe(sessions, statusStore, sid, normalized, "workspace");
       if (rWs.ok) return { kind: "workspace", path: normalized };
 
-      // 3) external: absolute path exactly matches the DR-0024 external_files
+      // 3) external: absolute path exactly matches the DR-0024 touched_files
       //    allowlist for this sid.
       const rEx = await fsResolveForServe(sessions, statusStore, sid, normalized, "external");
       if (rEx.ok) return { kind: "external", path: normalized };

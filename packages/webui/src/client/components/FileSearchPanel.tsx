@@ -160,17 +160,18 @@ export function FileSearchPanel({
       )
         .then((resolved) => {
           if (runSeq.current !== seq) return;
-          // External files (DR-0024) have no directory for the daemon to walk,
-          // so they're matched here against the same contract — see
-          // filterExternalFiles. Appended as its own group so the section
-          // labels line up with the tree's own プロジェクト外 section.
+          // Touched files outside the root (DR-0024) have no directory for the
+          // daemon to walk, so they're matched here against the same contract
+          // — see filterExternalFiles. Appended as its own group under the
+          // label of the tree's 触ったファイル section; the touched files
+          // inside the root are already among the containment root's hits.
           const externalHits = filterExternalFiles(external, trimmed);
           const withExternal: FileSearchGroup[] =
             externalHits.length > 0
               ? [
                   ...resolved,
                   {
-                    label: "プロジェクト外",
+                    label: "触ったファイル",
                     folder: null,
                     hits: externalHits.map((filePath) => ({
                       path: filePath,

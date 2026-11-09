@@ -39,11 +39,11 @@ export type FsReadRequest = Output<typeof FsReadRequestSchema>;
 
 /** DR-0024 allowlist read for one transcript-observed file outside the
  * session containment root. Unlike fs_read, this path is absolute and grants
- * no directory/prefix access: it must exactly match external_files for sid. */
+ * no directory/prefix access: it must exactly match an absolute touched_files entry for sid. */
 export const FsReadExternalRequestSchema = v.object({
   op: v.literal("fs_read_external"),
   sid: v.string(),
-  /** absolute path — must exactly match the session's external_files allowlist */
+  /** absolute path — must exactly match an absolute entry of the session's touched_files */
   path: v.string(),
 });
 export type FsReadExternalRequest = Output<typeof FsReadExternalRequestSchema>;

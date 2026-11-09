@@ -11,7 +11,7 @@
 // per kawaz (no demand for hiding the viewer; the twin ◀/▶ affordance
 // read as noise).
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { ExternalFile, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
+import type { PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -45,15 +45,15 @@ export function FilesPanes({
   sid,
   tree,
   peer,
-  externalFiles,
+  touchedFiles,
   workspaceFolders,
 }: {
   sid: string;
   tree: SessionTreeState;
   peer: PeerInfo | undefined;
-  /** DR-0024 transcript-derived absolute paths, already allowlisted by daemon,
-   * each carrying the origin the tree groups them by. */
-  externalFiles: readonly ExternalFile[];
+  /** DR-0024 files the transcript says the session touched (session_status
+   * touched_files), each carrying the origin the tree filters them by. */
+  touchedFiles: readonly TouchedFile[];
   /** DR-0026 `.code-workspace` folders published on session_status; drives
    * both the FileTree "ワークスペース" section and FileViewer's fs_read_workspace
    * routing (an absolute path inside any allowlisted folder uses workspace ops
@@ -148,7 +148,7 @@ export function FilesPanes({
           sid={sid}
           tree={paneTree}
           peer={peer}
-          externalFiles={externalFiles}
+          touchedFiles={touchedFiles}
           layout={layout}
           onNewMemo={() => setMemoEditorOpen(true)}
         />

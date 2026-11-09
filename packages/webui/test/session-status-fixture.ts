@@ -52,7 +52,10 @@ export function fullSessionStatusSnapshot(): Required<SessionStatusSnapshot> {
       ],
       workflows: [],
     },
-    external_files: [{ path: "/external/shared.md", origin: "tool" }],
+    touched_files: [
+      { path: "/external/shared.md", origin: "read" },
+      { path: "src/index.ts", origin: "edit" },
+    ],
     workspace_folders: [{ name: "lib", path: "/work/lib" }],
     api_error: { text: "overloaded", timestamp: "2026-07-17T00:00:00.000Z" },
     input_readiness: { kind: "ready" },

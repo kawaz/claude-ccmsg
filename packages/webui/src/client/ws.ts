@@ -177,7 +177,7 @@ export interface WsHandle {
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
   fsRead(sid: string, path: string): Promise<ReplyOf<"fs_read">>;
   /** Read one exact absolute path from the session's transcript-derived
-   * external_files allowlist (DR-0024 fs_read_external). */
+   * allowlist (the absolute touched_files, DR-0024 fs_read_external). */
   fsReadExternal(sid: string, path: string): Promise<ReplyOf<"fs_read_external">>;
   /** DR-0026: list a directory under one of the session's workspace_folders
    * (from session_status). Path is absolute; the daemon requires realpath to

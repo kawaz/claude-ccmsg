@@ -224,7 +224,7 @@ export function SessionView({
     : null;
 
   // Status データ購読 (DR-0020 Phase 2/3, DR-0024): Status/Timeline に加え
-  // Files タブも external_files を要るため、この 3 タブのどれかが開いている間
+  // Files タブも touched_files を要るため、この 3 タブのどれかが開いている間
   // subscribe する。Terminal に切り替わる/セッションが変わる/unmount のいずれかで
   // unsubscribe + キャッシュ破棄する。ひとつの effect が 3 タブの需要を兼ねる
   // — タブ別に effect を分けると、同じ (sid) への
@@ -375,7 +375,7 @@ export function SessionView({
               sid={sid}
               tree={tree}
               peer={peer}
-              externalFiles={sessionStatus?.external_files ?? []}
+              touchedFiles={sessionStatus?.touched_files ?? []}
               workspaceFolders={sessionStatus?.workspace_folders ?? []}
             />
           </div>

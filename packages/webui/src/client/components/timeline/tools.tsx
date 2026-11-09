@@ -263,7 +263,7 @@ function BashRunOutput({ output }: { output: BashCommandOutput }) {
   // Gate the link on the same existence probe the inline-code linkifier uses.
   // The sidecar lives beside the transcript rather than inside the session's
   // workspace, so serving it depends on the daemon having folded the stub's
-  // path into DR-0024's exact-path `external_files` allowlist. It does, but
+  // path into DR-0024's exact-path allowlist (the absolute `touched_files`). It does, but
   // the probe stays as the affordance's condition: a sidecar that was cleaned
   // up, or a stub the two parsers read differently, then costs a dead link
   // rather than a `path not allowed` error, and the path itself still shows as

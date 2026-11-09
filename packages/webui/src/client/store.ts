@@ -384,7 +384,7 @@ export interface AppState {
    * `ev:"session_status"` pushes, same subscribe-while-visible lifecycle as
    * SessionTreeState.timeline. Only the sid(s) SessionView currently
    * subscribes to (Files, Status, or Timeline tab open) ever have an entry here
-   * — Files needs DR-0024 external_files; absence means "not subscribed", not
+   * — Files needs DR-0024 touched_files; absence means "not subscribed", not
    * "known-empty" (Phase 3 §2.1
    * decision (a): sidebar mini badge only shows for the session currently
    * open, see SessionList.tsx). */

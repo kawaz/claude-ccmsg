@@ -553,7 +553,7 @@ describe("fs_read_external (DR-0024)", () => {
   });
 
   test("allowlist exact entry is readable and returns the requested absolute path", async () => {
-    // A transcript-observed existing file is canonicalized into external_files;
+    // A transcript-observed existing file is canonicalized into touched_files;
     // the new op reuses fs_read's content contract without widening its root.
     const ctx = await startInProcessDaemon();
     const root = fixtureDir("fsroot");
@@ -610,6 +610,31 @@ describe("fs_read_external (DR-0024)", () => {
       await stopInProcessDaemon(ctx);
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("a touched file inside the containment root is not granted to fs_read_external", async () => {
+    // touched_files lists it root-relative for the Files tree, which opens it
+    // through fs_read. The external allowlist holds only the absolute entries,
+    // so its absolute spelling stays path_forbidden here.
+    const ctx = await startInProcessDaemon();
+    const root = fixtureDir("fsroot");
+    try {
+      const inside = path.join(root, "inside.txt");
+      fs.writeFileSync(inside, "inside");
+      await sessionAtWithTranscript(ctx, A, root, [externalToolUse("e1", "Write", inside)]);
+      const user = await userConn(ctx);
+      const status = await user.requestOk({ op: "session_status_subscribe", sid: A });
+      expect(status.touched_files).toEqual([{ path: "inside.txt", origin: "edit" }]);
+      const res = await user.requestError({
+        op: "fs_read_external",
+        sid: A,
+        path: fs.realpathSync(inside),
+      });
+      expect(res.error.code).toBe("path_forbidden");
+    } finally {
+      await stopInProcessDaemon(ctx);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -870,7 +895,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
     fs.writeFileSync(path.join(cwd, "test.code-workspace"), workspaceContents);
     // A transcript is required for session_status to fold (getSessionStatus
     // resolves the transcript first); an empty one is enough here since we
-    // don't need any external_files.
+    // don't need any touched_files.
     const transcript = path.join(cwd, `${sid}.jsonl`);
     fs.writeFileSync(transcript, "");
     const session = await sessionConn(ctx, sid, { cwd, transcript_path: transcript });

@@ -178,7 +178,7 @@ function folderSpecs(source: string): Array<{ path: string; name?: string }> {
  *
  * Failure modes are all silent (fail-open on the calling channel: an empty
  * list disables the DR-0026 section, no error surfacing). This matches how
- * `external_files` behaves when transcript scanning finds nothing. */
+ * `touched_files` behaves when transcript scanning finds nothing. */
 export async function discoverWorkspaceFolders(cwd: string): Promise<WorkspaceFolder[]> {
   if (!path.isAbsolute(cwd)) return [];
   const workspaceFiles = await workspaceFileNames.get(cwd, async () => {

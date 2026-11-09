@@ -736,7 +736,7 @@ function SandboxActions({
  * Workspace check happens first because a workspace folder root can sit
  * anywhere on the filesystem and a transcript may also have Read'd a file
  * under that same root; in that case the workspace op is the correct
- * affordance (directory browsing works, external_files stays as the
+ * affordance (directory browsing works, touched_files stays as the
  * per-file safety net when the folder isn't listed as a workspace). */
 function readFileIntoStore(
   store: Store,

@@ -140,7 +140,7 @@ const PUSHES: {
       workflows: [],
       background: [],
       teammates: [],
-      external_files: [],
+      touched_files: [],
       api_error: { text: "Please run /login", timestamp: "t" },
     },
   ],

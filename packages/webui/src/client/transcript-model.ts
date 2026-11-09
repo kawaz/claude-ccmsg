@@ -469,8 +469,9 @@ export interface AttachmentDetail {
  * `startLine`), so it renders through the same InlineFileViewer a Read card
  * uses. */
 export interface AttachmentFile {
-  /** Absolute path as the attachment spelled it — the spelling the daemon's
-   * external_files allowlist also records, so the timeline can link it. */
+  /** Absolute path as the attachment spelled it. The daemon's touched_files
+   * records the same file (outside the root, as an exact fs_read_external
+   * grant), so the timeline can link it. */
   path: string;
   content: string;
   /** 1-based line number of `content`'s first line. An edited-file snippet

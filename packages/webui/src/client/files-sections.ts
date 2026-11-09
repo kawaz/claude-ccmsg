@@ -1,6 +1,6 @@
 // What the Files tree's sections are made of: the folders of the ワークスペース
-// section, and how a set of full paths (favorites, files outside the project)
-// is grouped under them. Pure functions of the peer row and the session's
+// section, and how a set of full paths (favorites, the files the session
+// touched) is grouped under them. Pure functions of the peer row and the session's
 // published workspace folders, so the grouping is testable without a DOM.
 //
 // Two path spaces meet here. A path is *identified* by its normalized full
@@ -9,7 +9,12 @@
 // the Files panes route by (`canonicalViewerPath`): containment-relative for
 // the session's own folder, absolute for any other workspace folder and for
 // files outside every folder the containment root holds.
-import { compareTreeOrder, type WorkspaceFolder } from "@ccmsg/protocol";
+import {
+  compareTreeOrder,
+  type TouchedFile,
+  type TouchedFileOrigin,
+  type WorkspaceFolder,
+} from "@ccmsg/protocol";
 import { normalizePosix, viewerPathForAbsolute } from "./filepath-ref.ts";
 import { treeRootPath } from "./utils.ts";
 
@@ -124,11 +129,13 @@ export interface FilesGroupRow {
   label: string;
 }
 
-/** A group of rows under one folder. `name` is `null` for the cwd's group,
- * which is shown without a heading; `OTHERS_GROUP_NAME` collects paths in no
- * folder. */
+/** A group of rows under one folder, named after it; `OTHERS_GROUP_NAME`
+ * collects paths in no folder. Whether a group is shown with a heading is the
+ * section's choice (お気に入り shows the cwd's group without one), so the
+ * group says which one is the cwd's. */
 export interface FilesGroup {
-  name: string | null;
+  name: string;
+  isCwd: boolean;
   rows: FilesGroupRow[];
 }
 
@@ -203,8 +210,41 @@ export function groupByFolder(
   const groups: FilesGroup[] = [];
   for (const folder of ordered) {
     const rows = byFolder.get(folder);
-    if (rows) groups.push({ name: folder.isCwd ? null : folder.name, rows: sortRows(rows) });
+    if (rows) groups.push({ name: folder.name, isCwd: folder.isCwd, rows: sortRows(rows) });
   }
-  if (others.length > 0) groups.push({ name: OTHERS_GROUP_NAME, rows: sortRows(others) });
+  if (others.length > 0)
+    groups.push({ name: OTHERS_GROUP_NAME, isCwd: false, rows: sortRows(others) });
+  return groups;
+}
+
+/** The 触ったファイル section (DR-0024): the session's touched files grouped
+ * like お気に入り — the cwd's group first, then the other folders in section
+ * order, then `others`. The cwd's group leaves out what the session only read:
+ * reading the project's own files is most of what a session does, and listing
+ * them would bury the files it changed. Every other group keeps its reads.
+ *
+ * Root-relative entries are placed against the containment root, so before
+ * the peer row arrives only the absolute ones are shown. A file named twice
+ * (by its relative and its absolute spelling, in a locally built list) is one
+ * row, hidden from the cwd's group only if every entry for it is a read. */
+export function touchedFileGroups(
+  files: readonly TouchedFile[],
+  layout: FilesLayout,
+  isDir: (key: string) => boolean = () => false,
+): FilesGroup[] {
+  const originOf = new Map<string, TouchedFileOrigin>();
+  for (const file of files) {
+    const full = fullPathOf(file.path, layout.containmentRoot);
+    if (full === null) continue;
+    const current = originOf.get(full);
+    if (current === undefined || current === "read") originOf.set(full, file.origin);
+  }
+  const groups: FilesGroup[] = [];
+  for (const group of groupByFolder([...originOf.keys()], layout, isDir)) {
+    const rows = group.isCwd
+      ? group.rows.filter((row) => originOf.get(row.full) !== "read")
+      : group.rows;
+    if (rows.length > 0) groups.push({ ...group, rows });
+  }
   return groups;
 }

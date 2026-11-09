@@ -121,7 +121,7 @@ export function subscribeFilePathCache(cb: () => void): () => void {
 
 /** Drop every cached entry for a sid — call on session disconnect /
  * reconnect so a re-registered session probes fresh (the underlying files
- * may have moved / the external_files allowlist may have changed). */
+ * may have moved / the touched_files allowlist may have changed). */
 export function clearFilePathCacheForSid(sid: string): void {
   cache.delete(sid);
   pendingQueue.delete(sid);

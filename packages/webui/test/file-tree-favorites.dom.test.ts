@@ -12,8 +12,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { h, render, type ComponentChild } from "preact";
 import { act } from "preact/test-utils";
-import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
+import type { PeerInfo, TouchedFile, WorkspaceFolder } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
+import { fileHref } from "../src/client/locator.ts";
 import { CLOSED_SIDEBAR } from "../src/client/sidebar-url.ts";
 import { initialState, type SessionTreeState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
@@ -97,13 +98,14 @@ function panes(
   store: Store,
   peer: PeerInfo | undefined,
   workspaceFolders: readonly WorkspaceFolder[] = [],
+  touchedFiles: readonly TouchedFile[] = [],
 ): ComponentChild {
   const tree: SessionTreeState = defined(store.getState().sessionTrees.get(SID), "session tree");
   const ws = createWsClient((action) => store.dispatch(action));
   return h(
     AppContext.Provider,
     { value: { store, ws } },
-    h(FilesPanes, { sid: SID, tree, peer, externalFiles: [], workspaceFolders }),
+    h(FilesPanes, { sid: SID, tree, peer, touchedFiles, workspaceFolders }),
   );
 }
 
@@ -265,6 +267,117 @@ describe("FileTree sections", () => {
   test("with workspace folders but none at the cwd, PROJECT_ROOT comes first", async () => {
     const root = await mount(panes(filesStore(), PEER, [{ name: "lib", path: "/repo/lib" }]));
     expect(workspaceRows(root)).toEqual(["PROJECT_ROOT", "lib"]);
+  });
+});
+
+/** The 触ったファイル section as text rows: a group heading as `▾name`, a row
+ * as its label. */
+function touchedSection(root: HTMLElement): string[] {
+  const tree = defined(root.querySelector(".file-tree"), "file tree");
+  const out: string[] = [];
+  let inTouched = false;
+  for (const el of tree.querySelectorAll(
+    ".tree-section-label, .tree-group-heading, .tree-favorites > li > .tree-row-line > .tree-row",
+  )) {
+    if (el.classList.contains("tree-section-label")) {
+      inTouched = el.textContent === "触ったファイル";
+      continue;
+    }
+    if (inTouched) out.push((el.textContent ?? "").trim());
+  }
+  return out;
+}
+
+/** What a folder row is drawn with: its classes, indent, and the parts in
+ * order (caret glyph, icon kind, name). */
+function folderRowShape(el: Element): {
+  classes: string[];
+  indent: string;
+  parts: string[];
+} {
+  const button = instanceOf(el, HTMLElement, "folder row");
+  const parts = [...button.childNodes].map((node) =>
+    node instanceof HTMLElement
+      ? node.classList.contains("tree-caret")
+        ? `caret:${node.textContent ?? ""}`
+        : `icon:${[...node.classList].find((c) => c.startsWith("tree-icon-")) ?? ""}`
+      : `name:${node.textContent ?? ""}`,
+  );
+  return {
+    classes: [...button.classList].filter((c) => c !== "tree-group-heading"),
+    indent: button.style.paddingLeft,
+    parts: parts.map((part) => part.replace(/:(main|lib|others)$/, ":<name>")),
+  };
+}
+
+describe("FileTree 触ったファイル section (DR-0024)", () => {
+  const FOLDERS: WorkspaceFolder[] = [
+    { name: "main", path: CWD, is_cwd: true },
+    { name: "lib", path: "/repo/lib" },
+  ];
+  const TOUCHED: TouchedFile[] = [
+    { path: "src/a.ts", origin: "edit" },
+    { path: "src/read-only.ts", origin: "read" },
+    { path: "notes.md", origin: "attachment" },
+    { path: "/repo/lib/b.ts", origin: "read" },
+    { path: "/elsewhere/z.md", origin: "read" },
+  ];
+
+  test("groups the cwd first without its reads, then workspace folders, then others", async () => {
+    const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
+    expect(sectionLabels(root)).toEqual(["ワークスペース", "触ったファイル"]);
+    expect(touchedSection(root)).toEqual([
+      "▾main",
+      // Tree order: the row inside a directory comes before the file beside it.
+      "src/a.ts",
+      "notes.md",
+      "▾lib",
+      "b.ts",
+      "▾others",
+      "/elsewhere/z.md",
+    ]);
+  });
+
+  test("a cwd row links root-relative, so it opens through fs_read", async () => {
+    const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
+    const link = root.querySelector(`a.tree-file[href="${fileHref(SID, "src/a.ts")}"]`);
+    expect(link?.textContent?.trim()).toBe("src/a.ts");
+  });
+
+  test("a group heading is drawn like the ワークスペース row of its folder, rows one level in", async () => {
+    const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
+    const workspaceRow = defined(
+      root.querySelector(".tree-workspace > li > .tree-row-line > .tree-dir"),
+      "workspace row",
+    );
+    const headings = [...root.querySelectorAll(".tree-group-heading")];
+    expect(headings.length).toBe(3);
+    // The ワークスペース folder starts closed and the heading starts open, so
+    // compare against the folder row's closed shape with the glyphs swapped.
+    const closed = folderRowShape(workspaceRow);
+    const open = {
+      ...closed,
+      parts: closed.parts.map((part) =>
+        part === "caret:▸"
+          ? "caret:▾"
+          : part === "icon:tree-icon-dir-closed"
+            ? "icon:tree-icon-dir-open"
+            : part,
+      ),
+    };
+    for (const heading of headings) expect(folderRowShape(heading)).toEqual(open);
+    expect(closed.parts).toEqual(["caret:▸", "icon:tree-icon-dir-closed", "name:<name>"]);
+
+    const row = instanceOf(
+      root.querySelector(".tree-favorites > li > .tree-row-line > .tree-row"),
+      HTMLElement,
+      "touched row",
+    );
+    expect(row.style.paddingLeft).toBe("1rem");
+
+    const first = instanceOf(headings[0], HTMLElement, "first heading");
+    await act(() => first.click());
+    expect(folderRowShape(first)).toEqual(closed);
   });
 });
 

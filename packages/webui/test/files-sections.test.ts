@@ -8,6 +8,7 @@ import {
   groupByFolder,
   OTHERS_GROUP_NAME,
   PROJECT_ROOT_NAME,
+  touchedFileGroups,
 } from "../src/client/files-sections.ts";
 
 // A jj-style layout: the containment root is the repo container, the session
@@ -94,22 +95,28 @@ describe("favorite identity", () => {
 describe("groupByFolder", () => {
   const layout = filesLayout(PEER, [MAIN, LIB, { name: "nested", path: "/repo/lib/nested" }]);
 
-  test("the cwd group comes first without a heading, then folders in section order, then others", () => {
+  test("the cwd group comes first, then folders in section order, then others", () => {
     const groups = groupByFolder(
       ["/elsewhere/z.md", "/repo/lib/b.md", "/repo/main/docs/a.md", "/repo/main/README.md"],
       layout,
     );
     expect(groups).toEqual([
       {
-        name: null,
+        name: "main",
+        isCwd: true,
         rows: [
           { full: "/repo/main/docs/a.md", key: "main/docs/a.md", label: "docs/a.md" },
           { full: "/repo/main/README.md", key: "main/README.md", label: "README.md" },
         ],
       },
-      { name: "lib", rows: [{ full: "/repo/lib/b.md", key: "/repo/lib/b.md", label: "b.md" }] },
+      {
+        name: "lib",
+        isCwd: false,
+        rows: [{ full: "/repo/lib/b.md", key: "/repo/lib/b.md", label: "b.md" }],
+      },
       {
         name: OTHERS_GROUP_NAME,
+        isCwd: false,
         rows: [{ full: "/elsewhere/z.md", key: "/elsewhere/z.md", label: "/elsewhere/z.md" }],
       },
     ]);
@@ -123,6 +130,7 @@ describe("groupByFolder", () => {
     expect(groupByFolder(["/repo/lib/nested/c.md"], layout)).toEqual([
       {
         name: "nested",
+        isCwd: false,
         rows: [{ full: "/repo/lib/nested/c.md", key: "/repo/lib/nested/c.md", label: "c.md" }],
       },
     ]);
@@ -134,6 +142,7 @@ describe("groupByFolder", () => {
     expect(groupByFolder(["/repo/feature/x.md"], layout)).toEqual([
       {
         name: OTHERS_GROUP_NAME,
+        isCwd: false,
         rows: [{ full: "/repo/feature/x.md", key: "feature/x.md", label: "/repo/feature/x.md" }],
       },
     ]);
@@ -141,8 +150,8 @@ describe("groupByFolder", () => {
 
   test("a favorited folder root is labelled `.` and keyed like its DirNode", () => {
     expect(groupByFolder(["/repo/main", "/repo/lib"], layout)).toEqual([
-      { name: null, rows: [{ full: "/repo/main", key: "main", label: "." }] },
-      { name: "lib", rows: [{ full: "/repo/lib", key: "/repo/lib", label: "." }] },
+      { name: "main", isCwd: true, rows: [{ full: "/repo/main", key: "main", label: "." }] },
+      { name: "lib", isCwd: false, rows: [{ full: "/repo/lib", key: "/repo/lib", label: "." }] },
     ]);
   });
 
@@ -185,5 +194,95 @@ describe("groupByFolder", () => {
       )[0]?.rows ?? []
     ).map((r) => r.label);
     expect(labels).toEqual(["a/b/c.md", "a/d", "a.md"]);
+  });
+});
+
+describe("touchedFileGroups (DR-0024)", () => {
+  const layout = filesLayout(PEER, [MAIN, LIB]);
+  const rows = (groups: ReturnType<typeof touchedFileGroups>) =>
+    groups.map((g) => [g.name, g.rows.map((r) => r.label)]);
+
+  test("the cwd group comes first, then workspace folders, then others", () => {
+    const groups = touchedFileGroups(
+      [
+        { path: "/elsewhere/z.md", origin: "read" },
+        { path: "/repo/lib/b.md", origin: "edit" },
+        { path: "main/src/a.ts", origin: "edit" },
+      ],
+      layout,
+    );
+    expect(groups).toEqual([
+      {
+        name: "main",
+        isCwd: true,
+        rows: [{ full: "/repo/main/src/a.ts", key: "main/src/a.ts", label: "src/a.ts" }],
+      },
+      {
+        name: "lib",
+        isCwd: false,
+        rows: [{ full: "/repo/lib/b.md", key: "/repo/lib/b.md", label: "b.md" }],
+      },
+      {
+        name: OTHERS_GROUP_NAME,
+        isCwd: false,
+        rows: [{ full: "/elsewhere/z.md", key: "/elsewhere/z.md", label: "/elsewhere/z.md" }],
+      },
+    ]);
+  });
+
+  test("the cwd group leaves out reads; edits and attachments stay", () => {
+    const groups = touchedFileGroups(
+      [
+        { path: "main/read.ts", origin: "read" },
+        { path: "main/edited.ts", origin: "edit" },
+        { path: "main/attached.md", origin: "attachment" },
+      ],
+      layout,
+    );
+    expect(rows(groups)).toEqual([["main", ["attached.md", "edited.ts"]]]);
+  });
+
+  test("the other groups keep their reads", () => {
+    const groups = touchedFileGroups(
+      [
+        { path: "/repo/lib/read.ts", origin: "read" },
+        { path: "/elsewhere/read.md", origin: "read" },
+      ],
+      layout,
+    );
+    expect(rows(groups)).toEqual([
+      ["lib", ["read.ts"]],
+      [OTHERS_GROUP_NAME, ["/elsewhere/read.md"]],
+    ]);
+  });
+
+  test("a cwd group of reads only is not shown at all", () => {
+    expect(touchedFileGroups([{ path: "main/read.ts", origin: "read" }], layout)).toEqual([]);
+  });
+
+  test("one file under two spellings is one row, kept when any entry for it is not a read", () => {
+    const groups = touchedFileGroups(
+      [
+        { path: "main/a.ts", origin: "read" },
+        { path: "/repo/main/a.ts", origin: "edit" },
+      ],
+      layout,
+    );
+    expect(rows(groups)).toEqual([["main", ["a.ts"]]]);
+  });
+
+  test("root-relative entries wait for the containment root; absolute ones show at once", () => {
+    const before = filesLayout(undefined, []);
+    expect(
+      rows(
+        touchedFileGroups(
+          [
+            { path: "main/a.ts", origin: "edit" },
+            { path: "/elsewhere/z.md", origin: "read" },
+          ],
+          before,
+        ),
+      ),
+    ).toEqual([[OTHERS_GROUP_NAME, ["/elsewhere/z.md"]]]);
   });
 });

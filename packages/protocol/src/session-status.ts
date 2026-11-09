@@ -300,20 +300,25 @@ export const AgentTreeGroupsSchema = v.object({
 });
 export type AgentTreeGroups = Output<typeof AgentTreeGroupsSchema>;
 
-/** Which kind of transcript record named a DR-0024 external file. The webui
- * groups the "プロジェクト外" section by it; authorization ignores it (every
- * origin grants the same exact-path read). `tool` covers the file tools
- * (Read/Write/Edit/MultiEdit/NotebookEdit) and the `! <cmd>` persisted-output
- * sidecar; `attachment` covers file-shaped attachment rows. A path named by
- * both is reported as `tool`, whichever came first. */
-export const ExternalFileOriginSchema = v.picklist(["tool", "attachment"]);
-export type ExternalFileOrigin = Output<typeof ExternalFileOriginSchema>;
+/** Which kind of transcript record named a DR-0024 touched file. Display-only:
+ * the webui leaves the session's own `read` entries out of the current
+ * project's group, and authorization ignores it (every origin grants the same
+ * exact-path read). `read` is the Read tool and the `! <cmd>` persisted-output
+ * sidecar; `edit` is the tools that write (Write / Edit / MultiEdit /
+ * NotebookEdit); `attachment` is file-shaped attachment rows. A path named by
+ * several is reported once, by the first of `edit`, `read`, `attachment`,
+ * whichever came first in the transcript. */
+export const TouchedFileOriginSchema = v.picklist(["read", "edit", "attachment"]);
+export type TouchedFileOrigin = Output<typeof TouchedFileOriginSchema>;
 
-export const ExternalFileSchema = v.object({
+export const TouchedFileSchema = v.object({
+  /** Root-relative (no leading `/`) for a file inside the session's
+   * containment root — the spelling fs_read and the Files tree address it by —
+   * and absolute for every other file. */
   path: v.string(),
-  origin: ExternalFileOriginSchema,
+  origin: TouchedFileOriginSchema,
 });
-export type ExternalFile = Output<typeof ExternalFileSchema>;
+export type TouchedFile = Output<typeof TouchedFileSchema>;
 
 /** The API error the session's latest main-context turn ended on, folded off
  * the transcript for every session (DR-0039 §2): a harness-synthesized
@@ -424,12 +429,14 @@ export const SessionStatusSnapshotSchema = v.object({
    * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
    * そのまま返す。 */
   agent_tree: v.optional(AgentTreeGroupsSchema),
-  /** DR-0024: absolute paths outside the session's containment root that the
-   * transcript names. Existing targets are realpaths; missing/deleted targets
-   * retain a normalized lexical path. This is exactly the allowlist accepted by
-   * fs_read_external — one list, so an allowlist consumer cannot honour one
-   * origin and forget another. */
-  external_files: v.optional(v.array(ExternalFileSchema)),
+  /** DR-0024: the files the transcript names (file tools, file attachments,
+   * `! <cmd>` sidecars), each once. Files inside the containment root are
+   * root-relative; the rest are absolute — realpaths for existing targets, a
+   * normalized lexical path for missing/deleted ones. The absolute entries are
+   * exactly the allowlist accepted by fs_read_external, whatever their origin —
+   * one list, so an allowlist consumer cannot honour one origin and forget
+   * another. Root-relative entries grant nothing: fs_read already serves them. */
+  touched_files: v.optional(v.array(TouchedFileSchema)),
   /** DR-0026: VS Code `.code-workspace` folders discovered directly under the
    * session's cwd. Each `path` is a realpath-resolved absolute directory —
    * the same absolute prefix accepted by fs_list_workspace / fs_read_workspace

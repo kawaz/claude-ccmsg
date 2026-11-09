@@ -64,8 +64,7 @@ import {
   PANE_MIN_PX,
   SESSION_PANE_DEFAULT_RATIO,
   shortSid,
-  groupExternalFiles,
-  sortExternalFiles,
+  externalFilePaths,
   sortPeers,
   treeRootPath,
   summarizeUserAgent,
@@ -1496,64 +1495,23 @@ describe("toggleFavorite", () => {
 
 describe("external file view helpers (DR-0024)", () => {
   test("only slash-prefixed absolute paths use the external read rail", () => {
-    // Project-tree relpaths remain on fs_read; external_files use fs_read_external.
+    // Project-tree relpaths remain on fs_read; absolute touched_files use fs_read_external.
     expect(isExternalFilePath("src/index.ts")).toBe(false);
     expect(isExternalFilePath("/external/shared.md")).toBe(true);
   });
 
-  test("empty external list stays empty; entries are filtered, deduplicated, and sorted", () => {
-    // FileTree hides the section for [], while locally-constructed snapshots are
-    // normalized deterministically even if they contain duplicates/relpaths.
-    expect(sortExternalFiles([])).toEqual([]);
+  test("externalFilePaths: absolute entries only, each once, sorted, whatever the origin", () => {
+    // The search panel matches these against the query; the root-relative
+    // entries are project files the containment-root search already covers.
+    expect(externalFilePaths([])).toEqual([]);
     expect(
-      sortExternalFiles([
-        { path: "/z.md", origin: "tool" },
-        { path: "project.md", origin: "tool" },
+      externalFilePaths([
+        { path: "/z.md", origin: "read" },
+        { path: "project.md", origin: "edit" },
         { path: "/a.md", origin: "attachment" },
-        { path: "/z.md", origin: "tool" },
+        { path: "/z.md", origin: "edit" },
       ]),
     ).toEqual(["/a.md", "/z.md"]);
-  });
-
-  // プロジェクト外セクションは由来別に 2 グループへ分かれる。
-  test("由来別グループ: tool / attachment に分かれ、各グループ内はパス順", () => {
-    expect(
-      groupExternalFiles([
-        { path: "/z-attach.md", origin: "attachment" },
-        { path: "/b-tool.md", origin: "tool" },
-        { path: "/a-attach.md", origin: "attachment" },
-        { path: "/a-tool.md", origin: "tool" },
-      ]),
-    ).toEqual({
-      tool: ["/a-tool.md", "/b-tool.md"],
-      attachment: ["/a-attach.md", "/z-attach.md"],
-    });
-  });
-
-  test("由来別グループ: 両方が名指したパスは tool 側にだけ出る (順序不問)", () => {
-    // 1 つのファイルが 2 つの見出しに出ると、★ を付けた時にどちらの行の状態
-    // なのかが読めなくなる。
-    const both = { tool: ["/both.md"], attachment: [] };
-    expect(
-      groupExternalFiles([
-        { path: "/both.md", origin: "attachment" },
-        { path: "/both.md", origin: "tool" },
-      ]),
-    ).toEqual(both);
-    expect(
-      groupExternalFiles([
-        { path: "/both.md", origin: "tool" },
-        { path: "/both.md", origin: "attachment" },
-      ]),
-    ).toEqual(both);
-  });
-
-  test("由来別グループ: 相対パスは弾かれ、空リストは両グループ空", () => {
-    expect(groupExternalFiles([])).toEqual({ tool: [], attachment: [] });
-    expect(groupExternalFiles([{ path: "project.md", origin: "tool" }])).toEqual({
-      tool: [],
-      attachment: [],
-    });
   });
 });
 
@@ -1733,7 +1691,7 @@ describe("expandPathsForSelection", () => {
     expect(expandPathsForSelection("/repo/one/x.ts", "main", folders)).toEqual(["/repo/one"]);
   });
 
-  // DR-0024 external files render flat at depth 0 in プロジェクト外.
+  // DR-0024 touched files outside every folder render flat under `others`.
   test("an absolute path under no workspace folder expands nothing", () => {
     expect(expandPathsForSelection("/elsewhere/deep/x.ts", "main", folders)).toEqual([]);
   });
