@@ -2024,6 +2024,28 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("bash-command-stdout");
     });
 
+    // /compact (と自動 compact) が会話の前半の代わりに残す要約。type:"user" で
+    // isMeta は付かず、wire の印は isCompactSummary だけ (実 transcript で観測)。
+    test("isCompactSummary row -> compact-summary, whatever its text", () => {
+      const summary = userOf(
+        "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.",
+        { parentUuid: "p", isCompactSummary: true },
+      );
+      expect(classifyUserMessage(summary)).toBe("compact-summary");
+      const reworded = userOf("Summary of the conversation so far:", {
+        parentUuid: "p",
+        isCompactSummary: true,
+      });
+      expect(classifyUserMessage(reworded)).toBe("compact-summary");
+    });
+
+    test("the same text without isCompactSummary stays a user-prompt", () => {
+      const typed = userOf("This session is being continued from a previous conversation", {
+        parentUuid: "p",
+      });
+      expect(classifyUserMessage(typed)).toBe("user-prompt");
+    });
+
     test("exact malformed-tool-call retry text -> tool-retry-hint", () => {
       const entry = userOf("Your tool call was malformed and could not be parsed. Please retry.", {
         isMeta: true,
@@ -4539,6 +4561,7 @@ describe("parseSystemMessageFields", () => {
     test.each([
       "system-caveat",
       "tool-retry-hint",
+      "compact-summary",
       "user-interrupt-marker",
       "unknown-meta",
       "unknown-array",

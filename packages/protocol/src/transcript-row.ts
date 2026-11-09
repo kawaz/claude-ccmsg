@@ -116,6 +116,9 @@ export const UserRowSchema = v.looseObject({
   ...TurnRowHeadEntries,
   message: UserMessageSchema,
   isMeta: v.optional(v.boolean()),
+  /** The row is the summary `/compact` (or auto-compact) left in place of the
+   * conversation before it: text Claude Code wrote, not the user's. */
+  isCompactSummary: v.optional(v.boolean()),
   origin: v.optional(OriginSchema),
   promptSource: v.optional(v.string()),
   toolUseResult: v.optional(JsonValueSchema),

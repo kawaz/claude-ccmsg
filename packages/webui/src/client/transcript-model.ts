@@ -1655,6 +1655,9 @@ export type UserMessageKind =
   | "bash-command-invocation"
   | "bash-command-stdout"
   | "tool-retry-hint"
+  /** The summary a compaction left in place of the earlier conversation
+   * (`isCompactSummary`): Claude Code's text in a `type:"user"` row. */
+  | "compact-summary"
   | "task-notification"
   | "workflow-resume"
   | "peer-message"
@@ -1748,6 +1751,10 @@ export function classifyUserMessage(row: UserRow): UserMessageKind {
   // 同一 kind に落とす (peer-message 経路は「会話中に届いた relay」用として
   // 温存)。
   if (row.isSidechain && row.parentUuid === null) return "spawn-prompt";
+
+  // The wire field decides, not the summary's opening sentence: the text is
+  // Claude Code's and may be reworded, the flag is what marks the row.
+  if (row.isCompactSummary === true) return "compact-summary";
 
   if (row.promptSource === "system") {
     if (row.origin?.kind === "task-notification") return "task-notification";
