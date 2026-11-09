@@ -28,7 +28,10 @@ export function Fold({
   class?: string;
   summary: ComponentChildren;
   summaryClass?: string;
-  /** Open on first render. The browser owns it from then on. */
+  /** Open on first render. The browser owns it from then on, unless the
+   * caller holds it: a caller whose `onToggle` keeps its own state to the
+   * element's `open` and passes that state here can also close it (the
+   * Status tab's session forms close on Escape). */
   open?: boolean;
   /** Fires on every open/close, mirroring the native `<details>` event
    * (StatusPanel's ENV fold uses this to lazy-load on first open). */

@@ -44,7 +44,7 @@ type LauncherProbe =
   | { status: "error"; message: string }
   | { status: "ready"; rootDirs: readonly string[]; defaultEfforts: DefaultEfforts };
 
-type LaunchState =
+export type LaunchState =
   | { status: "idle" }
   | { status: "running" }
   | { status: "error"; message: string }
@@ -198,7 +198,7 @@ function OptionField({
  * (`--continue` / `--resume`) may leave it to the launch command, and offers
  * 指定しない; a new session must name one, so its blank is a prompt to choose
  * rather than a choice. */
-function PicklistField({
+export function PicklistField({
   label,
   options,
   optional,
@@ -254,7 +254,9 @@ function LaunchOutput({ label, text }: { label: string; text: string }) {
   );
 }
 
-function LaunchResultPanel({ state }: { state: LaunchState }) {
+/** What a launch came to. The Status tab's 新セッションを起動 shows its launch
+ * with the same panel, so a launch reads the same wherever it was started. */
+export function LaunchResultPanel({ state }: { state: LaunchState }) {
   if (state.status === "idle") return null;
   if (state.status === "running")
     return <p class="session-creator-status">起動コマンドの終了を待っています…</p>;

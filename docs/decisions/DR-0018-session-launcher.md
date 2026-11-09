@@ -209,6 +209,7 @@ session role (エージェント) からの `session_launch` を受ける。
 - prefill: Session Search の結果の「resume」は、`resume` = その id、cwd、model / effort は transcript の末尾から、name は既存の title
 - 結果パネル: `session_id` (新しいセッションを作る起動で exit 0 の時だけある。セッションの view へのリンクで、hello が来るまでは開いても空)、`exit_code`、`stdout`、`stderr` (退避の文はそのまま出す)。daemon が断った時と確かめられなかった時は `launchErrorText` の文
 - フォームの値の URL 同期 (`sb.*`) は上の欄の field 名に揃える (`sb.continue=true` / `sb.fork_session=true` で on)
+- Status タブの「新セッションを起動」(危険ゾーンの上の折りたたみ、[DR-0028](./DR-0028-session-kill.md) の restart の webui): そのセッションと同じ cwd で起動する短いフォーム。欄は `--model` / `--effort` / prompt だけで、name / resume / continue / fork は送らない。select の初期値はセッションが今動いている model / effort (DR-0041 の通しの上書き > hooks module の名乗り > transcript、picklist に読めない欄は上の新規の既定)、prompt は「準備して待て」。cwd ごとに localStorage へ保存した既定があればそれが先。送る前の検査と結果パネルはサイドバーのフォームと同じ (`checkSessionCreatorForm`、`LaunchResultPanel`)。cwd が分からない (切断中) 時はフォームを出さず理由を出す
 
 ## 4. 実装の段
 

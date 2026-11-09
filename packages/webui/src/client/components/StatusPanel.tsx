@@ -7,9 +7,10 @@
 // Agent/workflow structure is shown by the Timeline's agent tree
 // (`AgentTreePanel`), which is the single place for that view.
 import type { JSX } from "preact";
-import { useCallback, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import {
-  RESTART_PROMPT,
+  type LaunchEffort,
+  type LaunchModel,
   type UserMessageResponse,
   type ErrorResponse,
   type SessionBackgroundStatus,
@@ -49,8 +50,9 @@ import {
 import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
-import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { Fold } from "./Fold.tsx";
+import { LaunchFold, RestartFold, useStatusLaunch } from "./StatusSessionForms.tsx";
+import { sessionRunsAs } from "../status-session-forms.ts";
 import { SessionOverrideEditor, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
@@ -224,60 +226,25 @@ function TodoSection({ todos }: { todos: TodoSections }) {
  * (kawaz の「-KILL モードに変化させて欲しい」= 表示だけでなく操作にも一段
  * 追加のガードを掛ける意)。
  *
- * 「再起動」(DR-0028 「restart」) sits beside it: stopping and restarting are
- * one pair of operations. It looks like the kill button and, like it, is
- * disabled while either of the two runs; it is shown only where the daemon
- * can resume the session (`restartOffered`), and stays, disabled, while a
- * restart runs. It asks no confirm: it opens a form in place whose text,
- * RESTART_PROMPT to begin with, becomes the resumed session's first prompt,
- * sent as it is or with the person's own instructions added. */
+ * The session forms above it (新セッションを起動, 再起動) are not dangerous and
+ * sit outside the zone; while one of them runs, the kill waits (`blocked`),
+ * and while the kill runs, they do. The kill's own running is held by
+ * `SessionControls` for that reason. */
 function KillZone({
   sid,
   onKill,
-  restartOffered,
-  restart,
+  killing,
+  setKilling,
+  blocked,
 }: {
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
-  restartOffered: boolean;
-  restart: SessionRestart;
+  killing: boolean;
+  setKilling: (killing: boolean) => void;
+  blocked: boolean;
 }) {
-  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [forceMode, setForceMode] = useState(false);
-  // The restart form's text while it is open; null while it is closed.
-  const [restartDraft, setRestartDraft] = useState<string | null>(null);
-  // Focus the form's text as it opens, the caret after the text: the person
-  // either sends it or adds to it.
-  const focusDraft = useCallback((el: HTMLTextAreaElement | null) => {
-    if (el === null) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-  }, []);
-
-  function sendRestart(): void {
-    if (restartDraft === null || restartDraft.trim() === "" || restart.busy) return;
-    void restart.start(restartDraft).then(() => setRestartDraft(null));
-  }
-
-  function submitRestart(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
-    e.preventDefault();
-    sendRestart();
-  }
-
-  // ⌘/Ctrl+Enter sends, as in the composer (same judgement); a bare Enter and
-  // an IME's confirming Enter stay a newline.
-  function sendRestartOnModEnter(e: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>): void {
-    if (!shouldSendOnKeyDown(e)) return;
-    e.preventDefault();
-    sendRestart();
-  }
-
-  function closeRestartOnEscape(e: JSX.TargetedKeyboardEvent<HTMLFormElement>): void {
-    if (e.key !== "Escape" || e.isComposing || restart.busy) return;
-    e.preventDefault();
-    setRestartDraft(null);
-  }
 
   function handleKill(): void {
     const force = forceMode;
@@ -285,7 +252,7 @@ function KillZone({
       ? `セッション ${sid} に SIGKILL を送ります。プロセスは即時に強制終了され、transcript の flush が途中で切れる可能性があります。実行しますか?`
       : `セッション ${sid} のプロセスを終了しますか?`;
     if (!window.confirm(confirmMsg)) return;
-    setBusy(true);
+    setKilling(true);
     setResult(null);
     void onKill(force ? { force: true } : undefined)
       .then((res) => {
@@ -317,10 +284,10 @@ function KillZone({
         }
       })
       .catch((e: unknown) => setResult(`エラー: ${String(e)}`))
-      .finally(() => setBusy(false));
+      .finally(() => setKilling(false));
   }
 
-  const buttonLabel = busy
+  const buttonLabel = killing
     ? forceMode
       ? "強制終了中…"
       : "終了処理中…"
@@ -328,66 +295,63 @@ function KillZone({
       ? "強制終了 (-KILL)"
       : "セッションを終了";
   const buttonCls = "status-kill-button" + (forceMode ? " status-kill-button-force" : "");
-  const anyBusy = busy || restart.busy;
   return (
     <section class="status-section status-kill-zone">
       <h3 class="status-section-title">危険ゾーン</h3>
       <div class="status-kill-buttons">
-        <button type="button" class={buttonCls} disabled={anyBusy} onClick={handleKill}>
+        <button type="button" class={buttonCls} disabled={killing || blocked} onClick={handleKill}>
           {buttonLabel}
         </button>
-        {restartOffered || restart.busy ? (
-          <button
-            type="button"
-            class="status-kill-button status-restart-button"
-            disabled={anyBusy || restartDraft !== null}
-            aria-expanded={restartDraft !== null}
-            onClick={() => setRestartDraft(RESTART_PROMPT)}
-          >
-            {restart.busy ? "再起動中…" : "再起動"}
-          </button>
-        ) : null}
       </div>
-      {restartDraft !== null ? (
-        <form class="status-restart-form" onSubmit={submitRestart} onKeyDown={closeRestartOnEscape}>
-          <textarea
-            ref={focusDraft}
-            class="session-input-textarea"
-            aria-label="再起動後の最初の prompt"
-            placeholder="再起動後の最初の prompt... (⌘+Enter で送信)"
-            value={restartDraft}
-            disabled={restart.busy}
-            onInput={(e) => setRestartDraft(e.currentTarget.value)}
-            onKeyDown={sendRestartOnModEnter}
-          />
-          <div class="status-kill-buttons">
-            <button
-              type="submit"
-              class="status-kill-button"
-              disabled={restart.busy || restartDraft.trim() === ""}
-            >
-              再起動
-            </button>
-            <button
-              type="button"
-              class="status-kill-button"
-              disabled={restart.busy}
-              onClick={() => setRestartDraft(null)}
-            >
-              キャンセル
-            </button>
-          </div>
-        </form>
-      ) : null}
       {result ? <p class="status-kill-result">{result}</p> : null}
-      {restart.result ? (
-        <div class="status-kill-result status-restart-result">
-          <p>{restart.result.text}</p>
-          {restart.result.output?.stdout ? <pre>{restart.result.output.stdout}</pre> : null}
-          {restart.result.output?.stderr ? <pre>{restart.result.output.stderr}</pre> : null}
-        </div>
-      ) : null}
     </section>
+  );
+}
+
+/** The forms and the danger zone at the bottom of the Status tab: 新セッション
+ * を起動 and 再起動 (DR-0028 「restart」), each a fold, above the kill. One
+ * thing of the three runs at a time, so this holds what each is doing. The
+ * forms are offered only where the daemon can launch; 再起動 also needs the
+ * session's process (`restartOffered`), and stays while a restart runs. */
+function SessionControls({
+  sid,
+  cwd,
+  runsAs,
+  onKill,
+  restartOffered,
+  restart,
+}: {
+  sid: string;
+  cwd: string | null;
+  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
+  onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
+  restartOffered: boolean;
+  restart: SessionRestart;
+}) {
+  const { store } = useApp();
+  const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
+  const [killing, setKilling] = useState(false);
+  const launch = useStatusLaunch();
+  const launching = launch.state.status === "running";
+  const anyBusy = killing || restart.busy || launching;
+  return (
+    <>
+      {launchAvailable || launching ? (
+        <section class="status-section status-session-forms">
+          <LaunchFold cwd={cwd} runsAs={runsAs} launch={launch} blocked={anyBusy} />
+          {restartOffered || restart.busy ? (
+            <RestartFold cwd={cwd} restart={restart} blocked={anyBusy} />
+          ) : null}
+        </section>
+      ) : null}
+      <KillZone
+        sid={sid}
+        onKill={onKill}
+        killing={killing}
+        setKilling={setKilling}
+        blocked={restart.busy || launching}
+      />
+    </>
   );
 }
 
@@ -796,9 +760,11 @@ export function StatusPanel({
         </>
       )}
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
-      <KillZone
+      <SessionControls
         key={sid}
         sid={sid}
+        cwd={cwd}
+        runsAs={sessionRunsAs(snapshot.context, overrides)}
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}

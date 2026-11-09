@@ -10252,14 +10252,62 @@ circle.cache-ring-shape {
   gap: var(--space-7);
 }
 
-/* The restart's form under the pair (DR-0028 「restart」): the composer's
- * textarea over a row of buttons like the pair. Layout only; the look is
- * theirs. */
-.status-restart-form {
+/* The Status tab's session forms (DR-0028 「restart」, DR-0018 §3.9), each in
+ * a fold above the danger zone: the composer's textarea over a row of
+ * buttons. Layout only; the textarea's look is the composer's. */
+.status-restart-form,
+.status-session-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-7);
   margin: var(--space-7) 0 0;
+}
+
+.status-session-form-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-7);
+}
+
+/* The forms' send (起動 / 再起動) is the primary button and their save the
+ * quiet one, the pair the new-room dialog uses (.new-room-confirm-btn /
+ * .new-room-cancel-btn); the danger zone's red stays the kill's alone. */
+.status-form-submit {
+  font: inherit;
+  font-size: var(--font-size-md);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid var(--accent);
+  border-radius: 0.3rem;
+  padding: var(--space-4) var(--space-10);
+  cursor: pointer;
+}
+
+.status-form-save {
+  font: inherit;
+  font-size: var(--font-size-md);
+  background: none;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  padding: var(--space-4) var(--space-10);
+  cursor: pointer;
+}
+
+.status-form-save:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.status-form-submit:disabled,
+.status-form-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status-session-forms .status-restart-result,
+.status-session-forms .session-creator-result {
+  margin: var(--space-4) 0 var(--space-7);
 }
 
 .status-restart-result p {

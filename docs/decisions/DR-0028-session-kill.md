@@ -136,14 +136,16 @@ claude はセッションの transcript をそのセッションが動いてい�
 
 ### webui
 
-- Status タブの危険ゾーンの「セッションを終了」の隣に「再起動」ボタン (停止と再起動は対の操作なので並べる、kawaz 2026-10-25)。見た目は終了ボタンと同じで、どちらかが走っている間は両方を disabled にする。`launch_available` で、そのセッションの agents の行がある (プロセスが居る) 時に出す。セッションの config dir は問わない (下の「resume する config dir」)
-- 確認ダイアログは出さない (ユーザが理解して押す)。押すとボタンの下にその場で再起動のフォームが開く (kawaz 2026-11-02): textarea 1 つと [再起動] [キャンセル]。textarea には既定文が入っていて (全選択はしない、caret は末尾)、そのまま送っても、書き換えて指示を足してもよい。送った内容が request の `prompt` になる。FAB (composer) は使わない
-  - [再起動] は内容が空 (空白だけを含む) なら disabled。[キャンセル] と Esc で閉じ、次に開くと既定文から始まる
-  - textarea の見た目は composer の textarea (`.session-input-textarea`) と同じ。ボタンは危険ゾーンのボタンと同じ見た目。説明文は付けない (textarea の placeholder に「(⌘+Enter で送信)」を composer と同じ言い方で添える)
+- 「再起動」は危険ゾーンの外、その上に「新セッションを起動」と対で並ぶ折りたたみ (既存の `Fold`) に置く (kawaz 2026-11-09)。並びは「新セッションを起動」「再起動」、その下に危険ゾーン (「セッションを終了」だけ)。止めずに済む操作を誤爆の危険のある終了ボタンから離し、同じ cwd で起動する 2 つの操作をまとめる。「新セッションを起動」はこのセッションの cwd で `session_launch` を呼ぶフォームで、`--model` / `--effort` の select と prompt だけを持ち、select はセッションが今動いている値 (DR-0041 の通しの上書き、無ければセッション自身の値、無ければ transcript) で始まる ([DR-0018](./DR-0018-session-launcher.md) §3.9)。両方とも `launch_available` の時だけ出し、「再起動」はさらにそのセッションの agents の行がある (プロセスが居る) 時に出す。セッションの config dir は問わない (下の「resume する config dir」)
+- どれか 1 つが走っている間 (起動・再起動・終了) は、両フォームの送信と「セッションを終了」を disabled にする
+- 確認ダイアログは出さない (ユーザが理解して押す)。折りたたみを開くと再起動のフォーム (kawaz 2026-11-02): textarea 1 つと [再起動] [デフォルトに保存]。textarea には既定文が入っていて (全選択はしない、caret は末尾)、そのまま送っても、書き換えて指示を足してもよい。送った内容が request の `prompt` になる。FAB (composer) は使わない
+  - [再起動] は内容が空 (空白だけを含む) なら disabled。折りたたみを閉じるか Esc で閉じ、次に開くと既定文から始まる
+  - textarea の見た目は composer の textarea (`.session-input-textarea`) と同じ。送信 ([起動] / [再起動]) はプライマリ (`--accent`)、[デフォルトに保存] は弱い見た目で、危険ゾーンの赤は使わない。説明文は付けない (textarea の placeholder に「(⌘+Enter で送信)」を composer と同じ言い方で添える)
   - textarea では ⌘+Enter (Ctrl+Enter) でも [再起動] と同じ経路で送る (composer と同じ `shouldSendOnKeyDown` の判定: 素の Enter は改行、IME 確定中は送らない、空白だけと restart 中は送らない、kawaz 2026-11-06)
-  - フォームが開いている間はボタン行の「再起動」は disabled。restart が走っている間はフォームの中も全部 disabled で、ボタン行の「再起動」の文言が「再起動中…」になる。結果が出たらフォームを閉じる
+  - restart が走っている間はフォームの中も全部 disabled で、[再起動] の文言が「再起動中…」になる。結果が出たらフォームを閉じる
+- 既定文の保存: [デフォルトに保存] はそのフォームの値 (新セッション: model / effort / prompt、再起動: prompt) を webui の localStorage に **cwd をキー**に保存し (`ccmsg.statusForms.<cwd>`、valibot のスキーマで読み、読めない値は丸ごと無視する)、保存があればフォームを開いた時の初期値になる。保存が無ければ再起動は `RESTART_PROMPT`、新セッションは「準備して待て」。キーを sid にしないのはピン留めと同じ理由で、同じ場所の後継セッションは sid が変わる。daemon は既定を持たない (request の `prompt` を省いた時の `RESTART_PROMPT` は daemon 側の既定のまま)。ボタンはフォームの値が保存済みの値と同じ間「保存済み」になって押せず、それが保存できたことのフィードバックになる
 - restart の間はセッションの登録が外れて Status のパネルが一度消えるので、押している状態と結果はセッションの view が持ち、resume したセッションが戻った後のパネルに出す ([findings 2026-10-25-session-restart-verify](../findings/2026-10-25-session-restart-verify.md))
-- 結果は危険ゾーンのボタンの下に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
+- 結果は「再起動」の折りたたみの下 (折りたたみの外) に出す: exit 0 は「再起動しました」、0 以外は「停止したが、起動コマンドが <N> で終わった (resume していない)」と `stdout` / `stderr`、error は `restart_timeout` なら「停止を確認できなかったので起動していない」、それ以外は code と msg
 
 ### 却下した代替案
 
