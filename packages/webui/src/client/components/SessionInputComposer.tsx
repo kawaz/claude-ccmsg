@@ -93,8 +93,8 @@ import {
   AGENT_INPUT_NOTE,
   type AgentInputOutcome,
   classifyAgentInputReply,
-  subagentLabel,
 } from "./agent-input.ts";
+import { agentNameById } from "./agent-tree-view.ts";
 
 /** The select's value for the session's main thread. */
 const MAIN_TARGET = "";
@@ -240,14 +240,14 @@ export function SessionInputComposer({
       : picked !== null && picked.over === timelineAgentId
         ? picked.target
         : (timelineAgentId ?? MAIN_TARGET);
-  const now = Date.now();
+  const agentTree = sessionStatus?.agent_tree;
   const targetOptions =
     subagents === undefined
       ? []
       : [
-          ...subagents.map((a) => ({ value: a.id, label: subagentLabel(a, now) })),
+          ...subagents.map((a) => ({ value: a.id, label: agentNameById(agentTree, a.id) })),
           ...(target !== MAIN_TARGET && !subagents.some((a) => a.id === target)
-            ? [{ value: target, label: `${target} — 走っていない` }]
+            ? [{ value: target, label: agentNameById(agentTree, target) }]
             : []),
         ];
   const toSubagent = target !== MAIN_TARGET;

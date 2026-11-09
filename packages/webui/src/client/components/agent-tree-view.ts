@@ -172,15 +172,22 @@ export function runDotProps(
   return { ...base, class: `${base.class} status-teammate-dot-error-halo` };
 }
 
+/** An agent's name by its agent id: the spawn's or the teammate's. Without a
+ * node for the id (the tree not in yet, or the agent gone from it) the id
+ * stands in. */
+export function agentNameById(tree: AgentTreeGroups | undefined, agentId: string): string {
+  const node =
+    tree === undefined ? undefined : [...allAgentNodes(tree)].find((n) => n.agent_id === agentId);
+  return node?.name ?? node?.teammate_name ?? agentId;
+}
+
 /** The sender a subagent's or teammate's say shows in the main Timeline
- * (DR-0050 §10): `🤖 <name> (model/effort)`, by its agent id. The name is the
- * spawn's or the teammate's; without a node for the id (the tree not in yet,
- * or the agent gone from it) the id stands in, and without a model the label
- * is the name alone. */
+ * (DR-0050 §10): `🤖 <name> (model/effort)`, by its agent id. Without a model
+ * the label is the name alone. */
 export function agentSayerLabel(tree: AgentTreeGroups | undefined, agentId: string): string {
   const node =
     tree === undefined ? undefined : [...allAgentNodes(tree)].find((n) => n.agent_id === agentId);
-  const name = node?.name ?? node?.teammate_name ?? agentId;
+  const name = agentNameById(tree, agentId);
   const engine = node === undefined ? undefined : agentEngineLabel(node);
   return engine === undefined ? `🤖 ${name}` : `🤖 ${name} ${engine}`;
 }

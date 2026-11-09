@@ -35,7 +35,11 @@ afterEach(async () => {
   for (const restore of restores.reverse()) restore();
 });
 
-const EXPLORE: SessionSubagent = { id: "a1", type: "Explore", description: "調査" };
+const EXPLORE: SessionSubagent = {
+  id: "a1",
+  type: "Explore",
+  description: "調査",
+};
 const PLAN: SessionSubagent = { id: "b2", type: "Plan", description: "設計" };
 
 type Call =
@@ -65,6 +69,29 @@ async function openWith(
       todos: [],
       workflows: [],
       background: [],
+      agent_tree: {
+        teammates: [],
+        agents: [
+          {
+            agent_id: "a1",
+            agent_type: "Explore",
+            name: "explorer",
+            spawn_depth: 1,
+            kind: "subagent",
+            state: "running",
+            children: [],
+          },
+          {
+            agent_id: "b2",
+            agent_type: "Plan",
+            spawn_depth: 1,
+            kind: "subagent",
+            state: "running",
+            children: [],
+          },
+        ],
+        workflows: [],
+      },
       ...(subagents !== undefined ? { subagents } : {}),
     },
   });
@@ -72,7 +99,11 @@ async function openWith(
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
     userPrompt: async (_sid, text, override) => {
-      calls.push({ op: "user_prompt", text, ...(override !== undefined ? { override } : {}) });
+      calls.push({
+        op: "user_prompt",
+        text,
+        ...(override !== undefined ? { override } : {}),
+      });
       return { ok: true, outcome: "accepted" };
     },
     userMessage: async (_sid, agentId, text) => {
@@ -141,7 +172,9 @@ describe("SessionInputComposer destination", () => {
     const { root } = await openWith([EXPLORE, PLAN], null);
     expect(options(root).map(([value]) => value)).toEqual(["", "a1", "b2"]);
     expect(options(root)[0]?.[1]).toBe("main");
-    expect(options(root)[1]?.[1]).toContain("Explore · 調査");
+    // The label is the agent's name alone; without a name, its id.
+    expect(options(root)[1]?.[1]).toBe("explorer");
+    expect(options(root)[2]?.[1]).toBe("b2");
     expect(targetSelect(root)?.value).toBe("");
     expect(root.textContent).not.toContain(AGENT_INPUT_NOTE);
   });
@@ -165,6 +198,7 @@ describe("SessionInputComposer destination", () => {
   test("a Timeline's subagent that is not running is an option of its own, chosen", async () => {
     const { root } = await openWith([EXPLORE], "gone");
     expect(options(root).map(([value]) => value)).toEqual(["", "a1", "gone"]);
+    expect(options(root)[2]?.[1]).toBe("gone");
     expect(targetSelect(root)?.value).toBe("gone");
   });
 
