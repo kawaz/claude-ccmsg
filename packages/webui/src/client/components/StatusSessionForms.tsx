@@ -1,10 +1,17 @@
-// The Status tab's session forms (DR-0028 「restart」, DR-0018 §3.9), each a
-// fold above the danger zone: 新セッションを起動, a new session in this
-// session's cwd, and 再起動, the restart's prompt. A form is mounted while its
-// fold is open, so it opens each time on its defaults — what the person saved
-// for the cwd, else the built-in ones — and what was left in it goes with the
-// closing. What a launch or a restart came to shows under its fold, outside
-// it, so closing the fold (or the panel going during a restart) keeps it.
+// The Status tab's セッション操作 (DR-0028 「restart」, DR-0018 §3.9): a list of
+// the two operations that start a session in this session's cwd, each a row
+// with what it does and a button that opens its form in a modal dialog —
+// 新セッションを起動, a new session there, and 再起動, the restart's prompt.
+//
+// A form is mounted while its dialog is open, so it opens each time on its
+// defaults — what the person saved for the cwd, else the built-in ones — and
+// what was left in it goes with the closing. A send that comes to what it was
+// for (a launch whose command exits 0, a restart that resumed) closes the
+// dialog; one that does not keeps it open with what went wrong, the text kept
+// to try again. Either way what it came to shows under the list too, outside
+// the dialog, so it stays after the dialog closes (and, for a restart, after
+// the panel itself goes and comes back while the session is between
+// processes).
 import type { JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import {
@@ -36,9 +43,9 @@ import {
 import { readStorage, writeStorage } from "../storage.ts";
 import { errorMessage } from "../utils.ts";
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
-import { Fold } from "./Fold.tsx";
+import { ModalDialog } from "./ModalDialog.tsx";
 import { LaunchResultPanel, PicklistField, type LaunchState } from "./SessionCreator.tsx";
-import type { SessionRestart } from "./StatusPanel.tsx";
+import type { SessionRestart, SessionRestartResult } from "./StatusPanel.tsx";
 
 function readDefaults(cwd: string): StatusFormDefaults {
   return parseStatusFormDefaults(readStorage(statusFormDefaultsStorageKey(cwd)));
@@ -61,25 +68,40 @@ function saveLabel(saved: boolean): string {
   return saved ? "保存済み" : "デフォルトに保存";
 }
 
-/** A fold whose open state this side holds, to close it from inside. */
-function useFoldOpen(): {
-  open: boolean;
-  close: () => void;
-  onToggle: (e: JSX.TargetedEvent<HTMLDetailsElement, Event>) => void;
-} {
-  const [open, setOpen] = useState(false);
-  return {
-    open,
-    close: () => setOpen(false),
-    onToggle: (e) => setOpen(e.currentTarget.open),
-  };
+/** Focuses the prompt as the form opens, the caret after its text: the person
+ * either sends it or adds to it. The textarea also carries `autofocus`:
+ * `showModal()` moves the focus to the dialog's autofocus element (else its
+ * first focusable one, the 戻る / ×) when it opens, after this has run. */
+function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
+  return useCallback((el: HTMLTextAreaElement | null) => {
+    if (el === null) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+}
+
+/** The key that sends from the prompt, shown beside the send button: the
+ * prompt opens with text in it, so a placeholder would not be seen. */
+function SendKeys() {
+  return (
+    <span class="status-op-keys" title="⌘+Enter (Ctrl+Enter) で送信">
+      <kbd>⌘</kbd>
+      <kbd>Enter</kbd>
+    </span>
+  );
+}
+
+/** Whether a launch came to a session: the command ran and exited 0. */
+function launchSucceeded(state: LaunchState): boolean {
+  return state.status === "done" && state.result.exit_code === 0;
 }
 
 /** A launch from the Status tab as it runs and what it came to. Held above
- * the folds: while it runs, the other forms' sends and the kill wait. */
+ * the dialogs: while it runs, the restart's send and the kill wait. */
 export interface StatusLaunch {
   state: LaunchState;
-  start: (launch: LaunchInput) => void;
+  /** Launch; settles with what it came to. */
+  start: (launch: LaunchInput) => Promise<LaunchState>;
 }
 
 export function useStatusLaunch(): StatusLaunch {
@@ -89,22 +111,51 @@ export function useStatusLaunch(): StatusLaunch {
     state,
     start: (launch) => {
       setState({ status: "running" });
-      ws.sessionLaunch({ launch })
-        .then((res) =>
-          setState(
+      return ws
+        .sessionLaunch({ launch })
+        .then(
+          (res): LaunchState =>
             res.ok
               ? { status: "done", result: res }
               : { status: "error", message: launchErrorText(res.error).text },
-          ),
         )
-        .catch((err: unknown) =>
-          setState({
+        .catch(
+          (err: unknown): LaunchState => ({
             status: "error",
             message: `起動したか確かめられなかった: ${errorMessage(err)}`,
           }),
-        );
+        )
+        .then((settled) => {
+          setState(settled);
+          return settled;
+        });
     },
   };
+}
+
+/** What a launch from here came to, under the list (and in the dialog when it
+ * did not come to a session). Nothing before the first launch. */
+function LaunchResultCard({ state }: { state: LaunchState }) {
+  if (state.status === "idle") return null;
+  const tone = state.status === "running" ? "running" : launchSucceeded(state) ? "ok" : "error";
+  return (
+    <div class="status-op-result status-launch-result" data-tone={tone}>
+      <p class="status-op-result-title">新セッションを起動</p>
+      <LaunchResultPanel state={state} />
+    </div>
+  );
+}
+
+/** What a restart came to, under the list (and in the dialog when it did not
+ * resume). */
+function RestartResultCard({ result }: { result: SessionRestartResult }) {
+  return (
+    <div class="status-op-result status-restart-result" data-tone={result.ok ? "ok" : "error"}>
+      <p>{result.text}</p>
+      {result.output?.stdout ? <pre>{result.output.stdout}</pre> : null}
+      {result.output?.stderr ? <pre>{result.output.stderr}</pre> : null}
+    </div>
+  );
 }
 
 type LauncherProbe =
@@ -113,18 +164,24 @@ type LauncherProbe =
   | { status: "error"; message: string }
   | { status: "ready"; defaultEfforts: DefaultEfforts };
 
+function probeText(probe: Exclude<LauncherProbe, { status: "ready" }>): string {
+  if (probe.status === "loading") return "確認中…";
+  if (probe.status === "error") return probe.message;
+  return "daemon にセッションの起動が設定されていません (docs/runbooks/session-launcher-setup.md)";
+}
+
 function LaunchForm({
   cwd,
   runsAs,
   launch,
   blocked,
-  onClose,
+  onLaunched,
 }: {
   cwd: string;
   runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   launch: StatusLaunch;
   blocked: boolean;
-  onClose: () => void;
+  onLaunched: () => void;
 }) {
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
@@ -134,6 +191,10 @@ function LaunchForm({
   );
   // Reasons show once a launch was refused, then follow the edits.
   const [showIssues, setShowIssues] = useState(false);
+  // Whether a launch was sent from this opening: what it came to shows here
+  // only then, not what an earlier opening's launch came to.
+  const [sent, setSent] = useState(false);
+  const focusPrompt = useFocusAtEnd();
 
   useEffect(() => {
     let cancelled = false;
@@ -152,13 +213,13 @@ function LaunchForm({
     };
   }, [ws]);
 
-  if (probe.status === "loading") return <p class="status-empty">確認中…</p>;
-  if (probe.status === "error") return <p class="status-kill-result">{probe.message}</p>;
-  if (probe.status === "unconfigured") {
+  if (probe.status !== "ready") {
     return (
-      <p class="status-kill-result">
-        daemon にセッションの起動が設定されていません (docs/runbooks/session-launcher-setup.md)
-      </p>
+      <div class="modal-dialog-body">
+        <p class={probe.status === "loading" ? "status-empty" : "session-creator-error"}>
+          {probeText(probe)}
+        </p>
+      </div>
     );
   }
   const defaults = probe.defaultEfforts;
@@ -180,7 +241,10 @@ function LaunchForm({
       setShowIssues(true);
       return;
     }
-    launch.start(read.launch);
+    setSent(true);
+    void launch.start(read.launch).then((settled) => {
+      if (launchSucceeded(settled)) onLaunched();
+    });
   }
 
   // ⌘/Ctrl+Enter launches through the form's own submit, as in SessionCreator.
@@ -190,106 +254,72 @@ function LaunchForm({
     e.currentTarget.form?.requestSubmit();
   }
 
-  function closeOnEscape(e: JSX.TargetedKeyboardEvent<HTMLFormElement>): void {
-    if (e.key !== "Escape" || e.isComposing || running) return;
-    e.preventDefault();
-    onClose();
-  }
-
   return (
-    <form class="status-session-form" onSubmit={submit} onKeyDown={closeOnEscape}>
-      <div class="status-session-form-selects">
-        <PicklistField
-          label="--model"
-          options={LAUNCH_MODELS}
-          optional={false}
-          value={shownModel(form)}
-          issue={issues.model}
-          // The effort follows the model chosen: its default, until chosen.
-          onChange={(model) => update({ model, effort: undefined })}
-        />
-        <PicklistField
-          label="--effort"
-          options={LAUNCH_EFFORTS}
-          optional={false}
-          value={shownEffort(form, defaults)}
-          issue={issues.effort}
-          onChange={(effort) => update({ effort })}
-        />
+    <form class="modal-dialog-form status-launch-form" onSubmit={submit}>
+      <div class="modal-dialog-body status-op-body">
+        <p class="status-op-where">
+          <span class="status-op-where-label">起動する場所</span>
+          <span class="status-scroll">{cwd}</span>
+        </p>
+        <fieldset class="status-op-fields" disabled={running}>
+          <div class="status-op-selects">
+            <PicklistField
+              label="--model"
+              options={LAUNCH_MODELS}
+              optional={false}
+              value={shownModel(form)}
+              issue={issues.model}
+              // The effort follows the model chosen: its default, until chosen.
+              onChange={(model) => update({ model, effort: undefined })}
+            />
+            <PicklistField
+              label="--effort"
+              options={LAUNCH_EFFORTS}
+              optional={false}
+              value={shownEffort(form, defaults)}
+              issue={issues.effort}
+              onChange={(effort) => update({ effort })}
+            />
+          </div>
+          <label class="status-op-prompt">
+            <span class="status-op-prompt-label">最初の prompt</span>
+            <textarea
+              ref={focusPrompt}
+              autoFocus
+              class="session-input-textarea"
+              value={form.prompt}
+              onInput={(e) => update({ prompt: e.currentTarget.value })}
+              onKeyDown={launchOnModEnter}
+            />
+          </label>
+        </fieldset>
+        {issues.prompt !== undefined ? <p class="session-creator-error">{issues.prompt}</p> : null}
+        {check && !check.ok
+          ? check.general.map((message) => (
+              <p key={message} class="session-creator-error">
+                {message}
+              </p>
+            ))
+          : null}
+        {sent && !running ? <LaunchResultCard state={launch.state} /> : null}
       </div>
-      <textarea
-        class="session-input-textarea"
-        aria-label="新セッションの最初の prompt"
-        placeholder="新セッションの最初の prompt... (⌘+Enter で起動)"
-        value={form.prompt}
-        disabled={running}
-        onInput={(e) => update({ prompt: e.currentTarget.value })}
-        onKeyDown={launchOnModEnter}
-      />
-      {issues.prompt !== undefined ? <p class="session-creator-error">{issues.prompt}</p> : null}
-      {check && !check.ok
-        ? check.general.map((message) => (
-            <p key={message} class="session-creator-error">
-              {message}
-            </p>
-          ))
-        : null}
-      <div class="status-kill-buttons">
-        <button type="submit" class="status-form-submit" disabled={blocked}>
-          {running ? "起動中…" : "起動"}
-        </button>
+      <div class="modal-dialog-foot status-op-actions">
         <button
           type="button"
           class="status-form-save"
-          disabled={saved || asDefault === null}
+          disabled={saved || asDefault === null || running}
           onClick={() => {
             if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
           }}
         >
           {saveLabel(saved)}
         </button>
+        <SendKeys />
+        <button type="submit" class="status-form-submit" disabled={blocked}>
+          {running ? "起動中…" : "起動"}
+        </button>
       </div>
     </form>
-  );
-}
-
-/** 新セッションを起動: a new session in this session's cwd, with the model,
- * effort and prompt chosen here and nothing else (no name, no resume). */
-export function LaunchFold({
-  cwd,
-  runsAs,
-  launch,
-  blocked,
-}: {
-  cwd: string | null;
-  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
-  launch: StatusLaunch;
-  blocked: boolean;
-}) {
-  const fold = useFoldOpen();
-  return (
-    <>
-      <Fold
-        class="status-launch"
-        summaryClass="status-fold-summary"
-        summary="新セッションを起動"
-        open={fold.open}
-        onToggle={fold.onToggle}
-      >
-        {!fold.open ? null : cwd === null ? (
-          <p class="status-empty">このセッションの cwd が分からないので起動できません (切断中)</p>
-        ) : (
-          <LaunchForm
-            cwd={cwd}
-            runsAs={runsAs}
-            launch={launch}
-            blocked={blocked}
-            onClose={fold.close}
-          />
-        )}
-      </Fold>
-      <LaunchResultPanel state={launch.state} />
-    </>
   );
 }
 
@@ -297,28 +327,27 @@ function RestartForm({
   cwd,
   restart,
   blocked,
-  onClose,
+  onRestarted,
 }: {
   cwd: string | null;
   restart: SessionRestart;
   blocked: boolean;
-  onClose: () => void;
+  onRestarted: () => void;
 }) {
   const [stored, setStored] = useState(() => (cwd === null ? null : readDefaults(cwd)));
   const [draft, setDraft] = useState(() => stored?.restart?.prompt ?? RESTART_PROMPT);
-  // Focus the text as the form opens, the caret after it: the person either
-  // sends it or adds to it.
-  const focusDraft = useCallback((el: HTMLTextAreaElement | null) => {
-    if (el === null) return;
-    el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
-  }, []);
+  // Whether a restart was sent from this opening (see LaunchForm's `sent`).
+  const [sent, setSent] = useState(false);
+  const focusDraft = useFocusAtEnd();
   const empty = draft.trim() === "";
   const saved = stored?.restart?.prompt === draft;
 
   function send(): void {
     if (empty || blocked) return;
-    void restart.start(draft).then(onClose);
+    setSent(true);
+    void restart.start(draft).then((result) => {
+      if (result.ok) onRestarted();
+    });
   }
 
   function submit(e: JSX.TargetedSubmitEvent<HTMLFormElement>): void {
@@ -334,28 +363,25 @@ function RestartForm({
     send();
   }
 
-  function closeOnEscape(e: JSX.TargetedKeyboardEvent<HTMLFormElement>): void {
-    if (e.key !== "Escape" || e.isComposing || restart.busy) return;
-    e.preventDefault();
-    onClose();
-  }
-
   return (
-    <form class="status-restart-form" onSubmit={submit} onKeyDown={closeOnEscape}>
-      <textarea
-        ref={focusDraft}
-        class="session-input-textarea"
-        aria-label="再起動後の最初の prompt"
-        placeholder="再起動後の最初の prompt... (⌘+Enter で送信)"
-        value={draft}
-        disabled={restart.busy}
-        onInput={(e) => setDraft(e.currentTarget.value)}
-        onKeyDown={sendOnModEnter}
-      />
-      <div class="status-kill-buttons">
-        <button type="submit" class="status-form-submit" disabled={blocked || empty}>
-          {restart.busy ? "再起動中…" : "再起動"}
-        </button>
+    <form class="modal-dialog-form status-restart-form" onSubmit={submit}>
+      <div class="modal-dialog-body status-op-body">
+        <fieldset class="status-op-fields" disabled={restart.busy}>
+          <label class="status-op-prompt">
+            <span class="status-op-prompt-label">再起動後の最初の prompt</span>
+            <textarea
+              ref={focusDraft}
+              autoFocus
+              class="session-input-textarea"
+              value={draft}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onKeyDown={sendOnModEnter}
+            />
+          </label>
+        </fieldset>
+        {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
+      </div>
+      <div class="modal-dialog-foot status-op-actions">
         {cwd === null ? null : (
           <button
             type="button"
@@ -366,42 +392,111 @@ function RestartForm({
             {saveLabel(saved)}
           </button>
         )}
+        <SendKeys />
+        <button type="submit" class="status-form-submit" disabled={blocked || empty}>
+          {restart.busy ? "再起動中…" : "再起動"}
+        </button>
       </div>
     </form>
   );
 }
 
-/** 再起動: the restart's form, its text the resumed session's first prompt. */
-export function RestartFold({
+/** One row of an operations list: what it is, one line on what it does, and
+ * the button that does it at the end. The danger zone's kill is a row of the
+ * same shape. */
+export function ActionRow({
+  name,
+  description,
+  children,
+}: {
+  name: string;
+  description: string;
+  children: JSX.Element;
+}) {
+  return (
+    <li class="status-action">
+      <span class="status-action-what">
+        <span class="status-action-name">{name}</span>
+        <span class="status-action-desc">{description}</span>
+      </span>
+      {children}
+    </li>
+  );
+}
+
+/** セッション操作: 新セッションを起動 (a new session in this session's cwd,
+ * with the model, effort and prompt chosen in its dialog and nothing else — no
+ * name, no resume) and 再起動 (`restartShown`), each opening its dialog. */
+export function SessionActions({
   cwd,
+  runsAs,
+  launch,
   restart,
+  restartShown,
   blocked,
 }: {
   cwd: string | null;
+  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
+  launch: StatusLaunch;
   restart: SessionRestart;
+  restartShown: boolean;
+  /** Something of the tab's (a launch, a restart, the kill) is running: the
+   * sends wait. */
   blocked: boolean;
 }) {
-  const fold = useFoldOpen();
+  const [opened, setOpened] = useState<"launch" | "restart" | null>(null);
+  const close = () => setOpened(null);
   return (
-    <>
-      <Fold
-        class="status-restart"
-        summaryClass="status-fold-summary"
-        summary="再起動"
-        open={fold.open}
-        onToggle={fold.onToggle}
-      >
-        {fold.open ? (
-          <RestartForm cwd={cwd} restart={restart} blocked={blocked} onClose={fold.close} />
+    <section class="status-section status-session-actions">
+      <h3 class="status-section-title">セッション操作</h3>
+      <ul class="status-actions">
+        <ActionRow
+          name="新セッションを起動"
+          description={
+            cwd === null
+              ? "このセッションの cwd が分からないので起動できません (切断中)"
+              : "このセッションと同じ cwd で、別のセッションを立てる"
+          }
+        >
+          <button
+            type="button"
+            class="status-action-open"
+            disabled={cwd === null}
+            onClick={() => setOpened("launch")}
+          >
+            起動…
+          </button>
+        </ActionRow>
+        {restartShown ? (
+          <ActionRow name="再起動" description="止めてから同じ session_id で resume する">
+            <button type="button" class="status-action-open" onClick={() => setOpened("restart")}>
+              再起動…
+            </button>
+          </ActionRow>
         ) : null}
-      </Fold>
-      {restart.result ? (
-        <div class="status-kill-result status-restart-result">
-          <p>{restart.result.text}</p>
-          {restart.result.output?.stdout ? <pre>{restart.result.output.stdout}</pre> : null}
-          {restart.result.output?.stderr ? <pre>{restart.result.output.stderr}</pre> : null}
-        </div>
+      </ul>
+      <LaunchResultCard state={launch.state} />
+      {restart.result ? <RestartResultCard result={restart.result} /> : null}
+      {opened === "launch" && cwd !== null ? (
+        <ModalDialog
+          title="新セッションを起動"
+          closable={launch.state.status !== "running"}
+          onClose={close}
+        >
+          <LaunchForm
+            cwd={cwd}
+            runsAs={runsAs}
+            launch={launch}
+            blocked={blocked}
+            onLaunched={close}
+          />
+        </ModalDialog>
       ) : null}
-    </>
+      {opened === "restart" ? (
+        <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
+          <RestartForm cwd={cwd} restart={restart} blocked={blocked} onRestarted={close} />
+        </ModalDialog>
+      ) : null}
+    </section>
   );
 }

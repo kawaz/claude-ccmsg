@@ -7323,79 +7323,153 @@ a.tl-attachment-file-path {
   cursor: not-allowed;
 }
 
-/* --- Status tab (DR-0020 Phase 2) --- */
+/* --- Status tab (DR-0020) --- */
 
+/* The tab from the top: what the session is (TITLE / CWD), the gauges of
+ * what it runs as now (LIVE / MODEL / EFFORT / CONTEXT), its identifiers,
+ * then the folds and operations (ENV, セッション操作, Background, TODO) and the
+ * danger zone last. A container, so the facts tables stack their terms over
+ * the values when the pane is narrow. */
 .status-view {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-11);
-  /* The end of the tab (the danger zone, the restart form's textarea) scrolls
-   * clear of the composer FAB pinned over the bottom-right. */
+  padding: var(--space-13) var(--space-11);
+  /* The end of the tab (the danger zone) scrolls clear of the composer FAB
+   * pinned over the bottom-right. */
   padding-bottom: calc(var(--composer-fab-size) + 2 * var(--composer-fab-offset));
   display: flex;
   flex-direction: column;
-  gap: var(--space-13);
+  gap: var(--space-14);
+  container: status-view / inline-size;
 }
 
 .status-loading,
 .status-empty {
+  margin: 0;
   color: var(--fg-muted);
   font-size: var(--font-size-lg);
 }
 
+.status-section {
+  min-width: 0;
+}
+
+.status-section-title {
+  margin: 0 0 var(--space-7);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
 .status-meta {
   margin: 0;
+}
+
+/* Facts tables (TITLE / CWD, and the identifiers): term, copy, value in three
+ * columns, the value column shared by every row through subgrid so the values
+ * start on one line whether a row has a copy button or not. The term column
+ * has a fixed width so the two tables line up with each other. */
+.status-facts {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--space-6) var(--space-11);
-  font-size: var(--font-size-2xl);
+  grid-template-columns: 8.5rem 1.6rem minmax(0, 1fr);
+  column-gap: var(--space-5);
+  row-gap: var(--space-2);
+  font-size: var(--font-size-lg);
 }
 
-.status-meta dt {
-  color: var(--fg-muted);
-  font-weight: 600;
+.status-fact {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 1.9rem;
 }
 
-.status-meta dd {
-  min-width: 0;
-  margin: 0;
+.status-facts dt {
   font-family: ui-monospace, monospace;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
   overflow-wrap: anywhere;
 }
 
-.status-meta-value {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-8);
-}
-
-/* コピーボタンは値の左 (StatusPanel)。値の右に置くと、短い値ほどボタンが
- * 空白の向こうに離れて、どの値のボタンかが読み取りにくい。 */
-.status-meta-value > span,
-.status-meta-value > a,
-.status-title-input {
+.status-fact-value {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  margin: 0;
   min-width: 0;
-  flex: 1;
+  font-family: ui-monospace, monospace;
 }
 
-/* TITLE の値は最初から input (DR-0047 §4)。表の他の値と同じ字の大きさ・
- * 書体のまま、枠だけで入力欄だと分かるようにする。名前の変更の結果は文を
- * 添えず、この input の見た目だけで表す (送信中 = 明るさの脈動、失敗 = 危険色)。 */
+.status-fact-value > .status-scroll,
+.status-fact-value > .status-title-input {
+  grid-column: 2;
+}
+
+/* A value in one line, never wrapped: longer than its cell, it scrolls
+ * sideways with no scrollbar shown (kawaz 2026-11-09: a wrapped value makes
+ * its row taller and opens gaps down the table). */
+.status-scroll {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+/* Narrow: the term over its value, the copy and the value in two columns. */
+@container status-view (width < 30rem) {
+  .status-facts {
+    grid-template-columns: 1.6rem minmax(0, 1fr);
+  }
+  .status-facts dt,
+  .status-fact-value {
+    grid-column: 1 / -1;
+  }
+  .status-fact {
+    min-height: 0;
+  }
+  .status-fact + .status-fact {
+    margin-top: var(--space-4);
+  }
+}
+
+/* TITLE is an input from the start (DR-0047 §4), in the UI's typeface and a
+ * little bolder than the values: the session's name, not an identifier. Only
+ * its underline says it is editable until it is focused. The outcome of a
+ * rename shows in its look alone (sending = pulsing brightness, failed = the
+ * danger colour). */
 .status-title-input {
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
   font: inherit;
-  padding: 0 var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: 0.25rem;
-  background: var(--bg);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-weight: 600;
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid transparent;
+  border-bottom-color: var(--border-strong);
+  border-radius: 0.3rem 0.3rem 0 0;
+  background: transparent;
   color: var(--fg);
 }
 
+.status-title-input:hover {
+  border-bottom-color: var(--fg-muted);
+}
+
 .status-title-input:focus {
-  border-color: var(--accent);
   outline: none;
+  border-color: var(--accent);
+  border-radius: 0.3rem;
+  background: var(--bg);
 }
 
 .status-title-input-saving {
@@ -7425,31 +7499,38 @@ a.tl-attachment-file-path {
   }
 }
 
+/* The copy button: a small square before the value it copies. */
 .status-meta-copy {
   flex: none;
-  border: 1px solid var(--border);
-  border-radius: 0.25rem;
-  padding: var(--space-1) var(--space-7);
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
   background: transparent;
   color: var(--fg-muted);
-  font: inherit;
-  font-size: var(--font-size-sm);
   cursor: pointer;
   /* 成功マークを重ねる器 (下の .status-meta-copy-mark)。 */
   position: relative;
 }
 
 .status-meta-copy:hover,
-.status-meta-copy.copied {
+.status-meta-copy:focus-visible {
   color: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--border-strong);
+}
+
+.status-meta-copy-icon {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 /* 成功表示でボタンの寸法を 1px も動かさないための組み (kawaz r259m4)。
- * ラベルは常に place を取り続け (成功時は visibility で消えるだけ)、✓ は
- * その上に絶対配置で重なる。文字を差し替える実装だと「コピー」→「✓」の幅差
- * だけボタンが縮み、隣の値・sid の折り返し・行の高さまで連鎖して動く。 */
-.status-meta-copy.copied .status-meta-copy-label {
+ * 絵は常に place を取り続け (成功時は visibility で消えるだけ)、✓ はその上に
+ * 絶対配置で重なる。 */
+.status-meta-copy.copied .status-meta-copy-icon {
   visibility: hidden;
 }
 
@@ -7459,6 +7540,7 @@ a.tl-attachment-file-path {
   display: grid;
   place-items: center;
   opacity: 0;
+  color: var(--fg-success);
   transition: opacity 0.12s ease-out;
 }
 
@@ -7466,12 +7548,158 @@ a.tl-attachment-file-path {
   opacity: 1;
 }
 
-.status-section-title {
-  margin: 0 0 var(--space-7);
-  font-size: var(--font-size-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+/* The gauges: the one区画 on its own ground, what the session runs as now.
+ * LIVE large, MODEL and EFFORT beside it (each pressed to choose another,
+ * DR-0041 §6.4), CONTEXT across the bottom with its share of the window as a
+ * meter. */
+.status-gauges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-11) var(--space-15);
+  padding: var(--space-11) var(--space-12);
+  border-radius: 0.6rem;
+  background: var(--bg-alt);
+}
+
+.status-gauge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.status-gauges dt {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
+}
+
+.status-gauges dd {
+  margin: 0;
+  font-size: var(--font-size-xl);
+}
+
+.status-gauges .override-value {
+  font-size: inherit;
+  font-family: ui-monospace, monospace;
+}
+
+.status-live {
+  display: flex;
+  align-items: center;
+  gap: var(--space-7);
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* The LIVE dot: filled and pulsing while the session is in a turn, the warn
+ * colour while it waits, filled muted when idle, hollow when nothing speaks
+ * for the session. */
+.status-live-dot {
+  flex: none;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.status-live-dot-responding {
+  background: var(--success);
+  animation: status-live-pulse 1.6s ease-in-out infinite;
+}
+
+.status-live-dot-waiting {
+  background: var(--warn);
+}
+
+.status-live-dot-none {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--fg-muted);
+}
+
+@keyframes status-live-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-live-dot-responding {
+    animation: none;
+  }
+}
+
+.status-gauge-context {
+  flex-basis: 100%;
+}
+
+.status-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-9);
+}
+
+.status-context-fill {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The meter's bar and its value are the UA's parts (::-webkit-meter-*, the
+ * names Chrome and Safari share): the bar on the surface, the value in the
+ * accent. */
+.status-context-meter {
+  flex: 1 1 8rem;
+  min-width: 6rem;
+  height: 0.45rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: var(--surface-active);
+}
+
+.status-context-meter::-webkit-meter-bar {
+  height: 0.45rem;
+  border: none;
+  border-radius: 0.25rem;
+  background: var(--surface-active);
+}
+
+.status-context-meter::-webkit-meter-optimum-value {
+  border-radius: 0.25rem;
+  background: var(--accent);
+}
+
+.status-context-rest {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* The folds (ENV, Background, TODO): a rule over each, the heading muted until
+ * opened. Closed until opened: for ENV that keeps a screen share from
+ * surfacing secrets by accident, for Background and TODO it keeps what the tab
+ * is rarely looked at for out of the way. */
+.status-fold {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-8);
+}
+
+.status-fold-summary {
+  cursor: pointer;
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+.status-fold-summary:hover,
+.status-fold[open] > .status-fold-summary {
+  color: var(--fg);
+}
+
+.status-fold[open] > .status-fold-summary {
+  margin-bottom: var(--space-7);
 }
 
 .status-list {
@@ -7504,7 +7732,7 @@ a.tl-attachment-file-path {
 }
 
 /* エージェント state のカラードット。色語彙は webui 全体で統一
- * (active=--ok / idle=--warn / spawned=--accent / stopped=muted)。active
+ * (active=--success / idle=--warn / spawned=--accent / stopped=muted)。active
  * は subtle な pulse animation で「今動いている」を強調するが、animation を
  * disable するユーザ環境 (prefers-reduced-motion) では静止色のみ。 */
 .status-teammate-dot {
@@ -7515,14 +7743,14 @@ a.tl-attachment-file-path {
   line-height: 1;
 }
 .status-teammate-dot-active {
-  color: var(--ok, #4a8);
+  color: var(--success);
   animation: status-teammate-pulse 1.6s ease-in-out infinite;
 }
 .status-teammate-dot-idle {
-  color: var(--warn, #ba5);
+  color: var(--warn);
 }
 .status-teammate-dot-spawned {
-  color: var(--accent, #48a);
+  color: var(--accent);
 }
 .status-teammate-dot-stopped {
   color: var(--fg-muted);
@@ -7569,7 +7797,7 @@ a.tl-attachment-file-path {
 }
 
 /* r38 mid=4: TODO 行の頭マーカー + タスク ID + 依存関係表示。icon の色は
- * workflow drilldown の同 status と揃える (completed=--ok / in_progress=--warn /
+ * workflow drilldown の同 status と揃える (completed=--fg-success / in_progress=--fg-warn /
  * それ以外=muted) — Status タブ全体で status の色語彙を一つに保つため。 */
 .status-todo-icon {
   flex-shrink: 0;
@@ -7577,10 +7805,10 @@ a.tl-attachment-file-path {
   text-align: center;
 }
 .status-todo-icon-completed {
-  color: var(--ok, #4a8);
+  color: var(--fg-success);
 }
 .status-todo-icon-in_progress {
-  color: var(--warn, #ba5);
+  color: var(--fg-warn);
 }
 .status-todo-icon-pending {
   color: var(--fg-muted);
@@ -7594,7 +7822,7 @@ a.tl-attachment-file-path {
 .status-todo-blocked {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
-  color: var(--warn, #ba5);
+  color: var(--fg-warn);
 }
 
 .status-done {
@@ -7629,20 +7857,6 @@ a.tl-attachment-file-path {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   margin-left: auto;
-}
-
-/* --- Status tab ENV panel (kawaz r55m132) and TODO list --- */
-
-/* The heading of a Status section that starts closed (ENV, TODO), styled like
- * the always-open sections' titles. Closed until opened: for ENV that keeps a
- * screen share from surfacing secrets by accident, for TODO it keeps a long
- * list from pushing the rest of the tab down. */
-.status-fold-summary {
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--fg-muted);
 }
 
 .status-env-controls {
@@ -7754,17 +7968,267 @@ a.tl-attachment-file-path {
   border-bottom-color: transparent;
 }
 
-/* --- Status tab danger zone (DR-0028 session_kill) --- */
+/* --- Status tab セッション操作 and danger zone (DR-0028 「restart」, DR-0018 §3.9) --- */
 
-/* Visually quarantined at the very bottom of the Status tab: a --danger
- * separator + extra top gap so it never reads as part of the operational
- * sections above. Button uses a danger fg with restrained chrome and stays
- * always-visible — hover-reveal would hide the one control this zone exists
- * for. */
+/* An operations list: one operation a row, its name and one line on what it
+ * does, the button at the end (wrapping under the text when narrow). */
+.status-actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.status-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5) var(--space-11);
+  padding: var(--space-9) var(--space-11);
+}
+
+.status-action + .status-action {
+  border-top: 1px solid var(--border);
+}
+
+.status-action-what {
+  flex: 1 1 14rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.status-action-name {
+  font-weight: 600;
+  font-size: var(--font-size-lg);
+}
+
+.status-action-desc {
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+/* The button that opens an operation's dialog: neutral, the operation is not
+ * the screen's main thing, and not the danger zone's red. */
+.status-action-open {
+  font: inherit;
+  font-size: var(--font-size-md);
+  padding: var(--space-5) var(--space-10);
+  border: 1px solid var(--border-strong);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.status-action-open:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.status-action-open:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* What a launch / restart came to, under the list (and in its dialog when it
+ * did not come to a session): the colour on the left says how it went. */
+.status-op-result {
+  margin-top: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-10);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success-border);
+  border-radius: 0.4rem;
+  background: var(--bg-alt);
+  font-size: var(--font-size-md);
+}
+
+.status-op-result[data-tone="running"] {
+  border-left-color: var(--accent);
+}
+
+.status-op-result[data-tone="error"] {
+  border-left-color: var(--danger);
+}
+
+.status-op-result p {
+  margin: 0;
+}
+
+.status-op-result-title {
+  font-weight: 600;
+}
+
+.status-op-result .session-creator-result {
+  border-top: none;
+  padding-top: 0;
+}
+
+.status-op-result pre {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: var(--space-6) var(--space-8);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+/* The forms in the operations' dialogs. */
+.status-op-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.status-op-fields {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.status-op-where {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-7);
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+.status-op-where .status-scroll {
+  font-family: ui-monospace, monospace;
+  color: var(--fg);
+}
+
+.status-op-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-14);
+}
+
+.status-op-selects .session-creator-field {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.status-op-selects .session-creator-field select {
+  width: auto;
+}
+
+.status-op-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.status-op-prompt-label {
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+/* The composer's textarea, its height following the text (3 lines at least). */
+.status-op-prompt .session-input-textarea {
+  field-sizing: content;
+  min-height: calc(3lh + 2 * var(--space-7));
+  max-height: 50dvh;
+}
+
+.status-op-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.status-op-keys {
+  margin-left: auto;
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.status-op-keys kbd {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 0.25rem;
+  padding: 0 var(--space-3);
+}
+
+/* The send (起動 / 再起動) is the primary button; the save a quiet text
+ * button that turns to 保存済み once what the form holds is what is saved.
+ * Neither uses the danger zone's red. */
+.status-form-submit {
+  font: inherit;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 1px solid var(--accent);
+  border-radius: 0.4rem;
+  padding: var(--space-5) var(--space-11);
+  cursor: pointer;
+}
+
+.status-form-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.status-form-save {
+  font: inherit;
+  font-size: var(--font-size-md);
+  padding: var(--space-4) var(--space-2);
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 0.25em;
+}
+
+.status-form-save:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.status-form-save:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
+.status-form-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The danger zone: last in the tab, the same list in the danger colour.
+ * Button uses a danger fg with restrained chrome and stays always-visible —
+ * hover-reveal would hide the one control this zone exists for. */
 .status-kill-zone {
-  margin-top: var(--space-16);
-  padding-top: var(--space-9);
-  border-top: 1px solid var(--danger);
+  margin-top: var(--space-11);
+}
+
+.status-kill-zone > .status-section-title,
+.status-actions-danger .status-action-name {
+  color: var(--danger);
+}
+
+.status-actions-danger {
+  border-color: color-mix(in oklch, var(--danger) 55%, var(--border));
 }
 
 .status-kill-button {
@@ -7773,9 +8237,13 @@ a.tl-attachment-file-path {
   color: var(--danger);
   background: none;
   border: 1px solid var(--danger);
-  border-radius: 0.3rem;
-  padding: var(--space-4) var(--space-10);
+  border-radius: 0.4rem;
+  padding: var(--space-5) var(--space-10);
   cursor: pointer;
+}
+
+.status-kill-button:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--danger) 12%, transparent);
 }
 
 .status-kill-button:disabled {
@@ -7787,9 +8255,8 @@ a.tl-attachment-file-path {
  * 表示されるため、通常より一段強い視覚 (danger 色を背景に反転 + 太字) にして
  * 「もう 1 回押したら不可逆」を明示する。 */
 .status-kill-button-force {
-  color: var(--bg, #fff);
+  color: var(--bg);
   background: var(--danger);
-  border-color: var(--danger);
   font-weight: 700;
 }
 
@@ -7797,6 +8264,111 @@ a.tl-attachment-file-path {
   margin: var(--space-7) 0 0;
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
+}
+
+/* --- Modal dialog (ModalDialog.tsx) --- */
+
+/* Every operation's dialog: modal (showModal), a box in the middle of a wide
+ * window and the whole screen on a narrow one (webui-structure). The width
+ * switch asks the viewport: the top layer has no container. */
+.modal-dialog {
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 4rem);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.6rem;
+  background: var(--card-surface);
+  color: var(--fg);
+  box-shadow: 0 12px 40px var(--elevation-shadow);
+}
+
+.modal-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-dialog::backdrop {
+  background: var(--elevation-shadow);
+}
+
+.modal-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-9) var(--space-11);
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-dialog-title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+}
+
+.modal-dialog-close,
+.modal-dialog-back {
+  font: inherit;
+  font-size: var(--font-size-xl);
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  border-radius: 0.3rem;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.modal-dialog-close:hover:not(:disabled),
+.modal-dialog-back:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--surface-hover);
+}
+
+.modal-dialog-close:disabled,
+.modal-dialog-back:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.modal-dialog-back {
+  display: none;
+  font-size: var(--font-size-md);
+}
+
+/* A form that spans the body and the foot (its submit is in the foot). */
+.modal-dialog-form {
+  display: contents;
+}
+
+.modal-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-11);
+}
+
+.modal-dialog-foot {
+  padding: var(--space-9) var(--space-11);
+  border-top: 1px solid var(--border);
+}
+
+@media (width <= 600px) {
+  .modal-dialog {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+  }
+  .modal-dialog-close {
+    display: none;
+  }
+  .modal-dialog-back {
+    display: inline-block;
+  }
 }
 
 /* --- TL floating controls / bottom mini panel (DR-0020 §2.1) --- */
@@ -10191,80 +10763,4 @@ circle.cache-ring-shape {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   margin-bottom: var(--space-3);
-}
-
-/* Status: 「再起動」 beside 「セッションを終了」 (DR-0028 「restart」), the pair
- * of operations in one row with the same chrome. */
-.status-kill-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-7);
-}
-
-/* The Status tab's session forms (DR-0028 「restart」, DR-0018 §3.9), each in
- * a fold above the danger zone: the composer's textarea over a row of
- * buttons. Layout only; the textarea's look is the composer's. */
-.status-restart-form,
-.status-session-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-7);
-  margin: var(--space-7) 0 0;
-}
-
-.status-session-form-selects {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-7);
-}
-
-/* The forms' send (起動 / 再起動) is the primary button and their save the
- * quiet one, the pair the new-room dialog uses (.new-room-confirm-btn /
- * .new-room-cancel-btn); the danger zone's red stays the kill's alone. */
-.status-form-submit {
-  font: inherit;
-  font-size: var(--font-size-md);
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: 1px solid var(--accent);
-  border-radius: 0.3rem;
-  padding: var(--space-4) var(--space-10);
-  cursor: pointer;
-}
-
-.status-form-save {
-  font: inherit;
-  font-size: var(--font-size-md);
-  background: none;
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-  border-radius: 0.3rem;
-  padding: var(--space-4) var(--space-10);
-  cursor: pointer;
-}
-
-.status-form-save:hover:not(:disabled) {
-  color: var(--fg);
-  border-color: var(--fg-muted);
-}
-
-.status-form-submit:disabled,
-.status-form-save:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.status-session-forms .status-restart-result,
-.status-session-forms .session-creator-result {
-  margin: var(--space-4) 0 var(--space-7);
-}
-
-.status-restart-result p {
-  margin: 0;
-}
-
-.status-restart-result pre {
-  margin: var(--space-4) 0 0;
-  white-space: pre-wrap;
-  word-break: break-word;
 }

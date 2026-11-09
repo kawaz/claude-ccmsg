@@ -379,7 +379,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
         once: { model: null, effort: "max" },
       },
     ]);
-    const row = instanceOf(root.querySelector(".status-meta"), HTMLElement, "the identity table");
+    const row = instanceOf(root.querySelector(".status-gauges"), HTMLElement, "the gauges");
     expect(row.querySelector("select")).toBeNull();
     expect(textOf(row, "model").textContent).toBe("📌fable");
     expect(textOf(row, "effort").textContent).toBe("⏱️max");
@@ -420,7 +420,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
         once: { model: null, effort: null },
       },
     ]);
-    const row = instanceOf(root.querySelector(".status-meta"), HTMLElement, "the identity table");
+    const row = instanceOf(root.querySelector(".status-gauges"), HTMLElement, "the gauges");
     expect(textOf(row, "model").textContent).toBe("📌sonnet");
     expect(groupsOf(await press(row, "model"))).toEqual([
       ["default", ["📌sonnet"]],

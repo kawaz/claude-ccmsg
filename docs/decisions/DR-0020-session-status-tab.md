@@ -22,7 +22,7 @@ TUI の Claude Code は画面下部に workflow リスト / background タスク
   - **TODO リスト**: TaskCreate / TaskUpdate の tool call から task id → {subject, status, owner} を再生。pending / in_progress / completed 別に表示 (TUI 同等)
   - **workflow**: Workflow tool call (起動) と task-notification (完了) を突合して走行中 / 完了を判定。meta.name / phases があれば表示
   - **background タスク**: Monitor / Bash run_in_background / Agent (background) の起動と完了通知を突合
-- **Status タブ UI**: 上記 3 セクションの一覧。走行中は強調、完了は畳む
+- **Status タブ UI**: 上記 3 セクションの一覧。走行中は強調、完了は畳む。タブの中の並びと見せ方は Addendum 2026-11-09
 - **サイドバー SESSIONS 行のミニバッジ** (Phase 分離): `wf:1 bg:2 todo:3/5` 程度の要約表示
 
 ### 2.2 やらないこと
@@ -94,6 +94,27 @@ webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**d
   - 2 つの版は、その版の CHANGELOG の節を新しいタブで開くリンク ([DR-0048](./DR-0048-changelog-and-version-links.md) §5)。hover の説明の最後の行にリンク先を書く。
   - assistant 行がまだ無い間 (context の観測が無い間) も、残りの部分 (稼働時間と版) だけの行を出す。
   - 幅に収まらない時 (iPhone) は省略記号で切らず、` / ` の区切りでだけ折り返す (各部分の中では折り返さない)。
+
+## Addendum 2026-11-09: Status タブの並びと見せ方 (kawaz)
+
+上から次の順に置く。Status タブを見に来る目的の順で、上ほどよく見る。
+
+1. **このセッションは何か**: TITLE (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) と CWD の表
+2. **計器**: 地の色を変えた 1 つの区画に LIVE / MODEL / EFFORT / CONTEXT
+   - LIVE は大きい字と点。点は応答中なら塗って明滅、待ち (`waiting`) は警告色、idle は灰色の塗り、hooks module の名乗りが無ければ中抜き
+   - MODEL / EFFORT は押すと選べる値 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.4)
+   - CONTEXT は使用率の文字、window に対する割合の `<meter>` (window か使用量が分からない間は出さない)、その後に `model[window] / effort` (TL 下ミニパネルの ctx 行の後半と同じ綴り)。hover の説明は ctx 行と同じ
+3. **識別子**: SESSION_ID / PID / HYOUI_SESSION_ID / CCMSG / KIND / STARTED / UPTIME の表
+4. ENV (畳み)
+5. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)
+6. Background、TODO (どちらも畳み。見出しに件数 `Background (n)` / `TODO (n)`、0 件なら節を出さない)
+7. 危険ゾーン
+
+- 表 (1 と 3) は「名前・コピー・値」の 3 列で、値の列は全行で揃う (subgrid)。2 つの表の名前の列は同じ幅で、表どうしも揃う。コピーは値の左の小さな四角 (重なった 2 枚の紙の絵、押すと ✓)。コピーできない値の行は四角の場所を空ける
+- 値は折り返さず 1 行に置き、セルより長ければスクロールバーを出さずに横へスクロールする。値の長さで行の高さが変わらない (kawaz: 折り返しで表に縦の隙間が出るのを避ける)
+- タブの幅が 30rem 未満 (container query) では、表の名前を値の上に置く
+- Background と TODO を最後に置くのは、Status タブを見る目的にならないから (kawaz「ステータス画面で邪魔に感じる以外の気持ちで見たことが一度もない」)。開いた中身は、Background は走行中を強調して完了を畳み、TODO は Addendum 2026-10-25 のとおり
+- 色はすべて app.css のトークンで塗る。状態の色は `--success` / `--fg-success` / `--warn` / `--fg-warn`
 
 ## Addendum 2026-11-06: agent tree のノードの名前・実際の model・effort (kawaz)
 

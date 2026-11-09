@@ -1,11 +1,13 @@
 // DR-0018 §3.9 / DR-0028 「restart」: the Status tab's 新セッションを起動 as
-// mounted — a closed fold above the danger zone; opened, a form in this
-// session's cwd whose model / effort start on what the session runs as now
-// (the session override, else its own, else the transcript's), else on
-// `fable` and the daemon's default_effort; the prompt on 準備して待て; what it
-// sends is cwd, model, effort and prompt only; デフォルトに保存 keeps the
-// values for the cwd and the form opens on them; while it runs, the restart
-// and the kill wait; no cwd, no form but the reason.
+// mounted — a row of セッション操作 above the danger zone whose button opens a
+// modal dialog with a form in this session's cwd: model / effort start on what
+// the session runs as now (the session override, else its own, else the
+// transcript's), else on `fable` and the daemon's default_effort; the prompt
+// on 準備して待て; what it sends is cwd, model, effort and prompt only; a
+// session launched closes the dialog, anything else keeps it open with what
+// it came to, which also shows under the list; デフォルトに保存 keeps the
+// values for the cwd and the form opens on them; while it runs, the kill
+// waits and the dialog stays; no cwd, no dialog but the reason.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -28,6 +30,14 @@ import { createStore } from "../src/client/useStore.ts";
 import { createWsClient, type WsHandle } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { instanceOf, stubProperty } from "./helpers.ts";
+import {
+  actionButton,
+  actionRow,
+  closeButton,
+  dialogTitled,
+  openAction,
+  pressEscape,
+} from "./status-actions.ts";
 
 withDom();
 
@@ -70,6 +80,8 @@ function snapshotWith(context: SessionContextUsage | undefined): SessionStatusSn
 interface Mounted {
   root: HTMLElement;
   launches: LaunchInput[];
+  /** How many times the launch config was read. */
+  configReads: () => number;
   /** Answers the pending launch. */
   answer: (reply: ReplyOf<"session_launch">) => Promise<void>;
 }
@@ -99,11 +111,18 @@ async function mount(
     });
   }
   const launches: LaunchInput[] = [];
+  let configReads = 0;
   let resolve: ((reply: ReplyOf<"session_launch">) => void) | undefined;
   const ws: WsHandle = {
     ...createWsClient((action) => store.dispatch(action)),
-    sessionLauncherConfig: () =>
-      Promise.resolve({ ok: true, root_dirs: ["/repos/"], default_effort: { fable: "high" } }),
+    sessionLauncherConfig: () => {
+      configReads++;
+      return Promise.resolve({
+        ok: true,
+        root_dirs: ["/repos/"],
+        default_effort: { fable: "high" },
+      });
+    },
     sessionLaunch: (req) => {
       launches.push(req.launch);
       return new Promise((r) => {
@@ -137,6 +156,7 @@ async function mount(
   return {
     root,
     launches,
+    configReads: () => configReads,
     answer: async (reply) => {
       await act(() => {
         resolve?.(reply);
@@ -152,31 +172,25 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
 }
 
-function launchFold(root: HTMLElement): HTMLDetailsElement | null {
-  const found = [...root.querySelectorAll(".status-session-forms > details")].find(
-    (details) => details.querySelector("summary")?.textContent === "新セッションを起動",
-  );
-  return found === undefined ? null : instanceOf(found, HTMLDetailsElement, "the launch fold");
-}
+const LAUNCH = "新セッションを起動";
 
-async function setOpen(details: HTMLDetailsElement | null, open: boolean): Promise<void> {
-  if (details === null) throw new Error("expected the launch fold, found none");
-  await act(async () => {
-    const toggled = new Promise((resolve) =>
-      details.addEventListener("toggle", resolve, { once: true }),
-    );
-    details.open = open;
-    await toggled;
-  });
-  await settle();
+function launchDialog(root: HTMLElement): HTMLDialogElement | null {
+  return dialogTitled(root, LAUNCH);
 }
 
 async function openLaunch(root: HTMLElement): Promise<void> {
-  await setOpen(launchFold(root), true);
+  await openAction(root, LAUNCH);
+}
+
+/** Close the dialog with Escape. */
+async function closeLaunch(root: HTMLElement): Promise<void> {
+  const dialog = launchDialog(root);
+  if (dialog === null) throw new Error("expected the launch dialog, found none");
+  await pressEscape(dialog);
 }
 
 function launchForm(root: HTMLElement): HTMLFormElement | null {
-  const found = root.querySelector(".status-session-form");
+  const found = root.querySelector(".status-launch-form");
   return found === null ? null : instanceOf(found, HTMLFormElement, "the launch form");
 }
 
@@ -200,11 +214,17 @@ function button(root: HTMLElement, selector: string): HTMLButtonElement {
 }
 
 function launchButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-session-form .status-form-submit");
+  return button(root, ".status-launch-form .status-form-submit");
 }
 
 function saveButton(root: HTMLElement): HTMLButtonElement {
-  return button(root, ".status-session-form .status-form-save");
+  return button(root, ".status-launch-form .status-form-save");
+}
+
+/** The launch's result card under the list (outside the dialog). */
+function tabResult(root: HTMLElement): HTMLElement | null {
+  const found = root.querySelector(".status-session-actions > .status-launch-result");
+  return found === null ? null : instanceOf(found, HTMLElement, "the launch result");
 }
 
 async function choose(el: HTMLSelectElement, value: string): Promise<void> {
@@ -228,13 +248,20 @@ const CONTEXT: SessionContextUsage = {
 };
 
 describe("Status の新セッションを起動", () => {
-  test("a closed fold; opened, the form is in it, with the launch config read only then", async () => {
-    const { root } = await mount({ context: CONTEXT });
-    expect(launchFold(root)?.open).toBe(false);
-    expect(launchForm(root)).toBeNull();
+  test("a row in セッション操作 whose button opens the form in a modal dialog, the launch config read only then; Escape closes it", async () => {
+    const mounted = await mount({ context: CONTEXT });
+    const { root } = mounted;
+    expect(actionRow(root, LAUNCH)?.closest(".status-session-actions")).not.toBeNull();
+    expect(actionButton(root, LAUNCH).textContent).toBe("起動…");
+    expect(launchDialog(root)).toBeNull();
+    expect(mounted.configReads()).toBe(0);
     await openLaunch(root);
-    expect(launchForm(root)?.closest("details")).toBe(launchFold(root));
-    await setOpen(launchFold(root), false);
+    expect(launchDialog(root)?.open).toBe(true);
+    expect(launchForm(root)?.closest("dialog")).toBe(launchDialog(root));
+    expect(launchDialog(root)?.textContent).toContain(`起動する場所${CWD}`);
+    expect(mounted.configReads()).toBe(1);
+    await closeLaunch(root);
+    expect(launchDialog(root)).toBeNull();
     expect(launchForm(root)).toBeNull();
   });
 
@@ -244,6 +271,7 @@ describe("Status の新セッションを起動", () => {
     expect(select(root, "--model").value).toBe("opus");
     expect(select(root, "--effort").value).toBe("medium");
     expect(promptText(root).value).toBe("準備して待て");
+    expect(document.activeElement).toBe(promptText(root));
   });
 
   test("the session's own (its module's) over the transcript's, and the session override over both", async () => {
@@ -273,7 +301,7 @@ describe("Status の新セッションを起動", () => {
     expect(select(root, "--effort").value).toBe("high");
   });
 
-  test("起動 sends cwd, model, effort and prompt only, and shows what it came to", async () => {
+  test("起動 sends cwd, model, effort and prompt only; a session launched closes the dialog, what it came to under the list", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
     await choose(select(mounted.root, "--effort"), "high");
@@ -284,11 +312,40 @@ describe("Status の新セッションを起動", () => {
     ]);
     expect(launchButton(mounted.root).textContent).toBe("起動中…");
     await mounted.answer({ ok: true, session_id: NEW_SID, exit_code: 0, stdout: "", stderr: "" });
-    const link = mounted.root.querySelector(".session-creator-result a");
-    expect(link?.textContent).toBe(NEW_SID);
-    expect(mounted.root.querySelector(".session-creator-result")?.textContent).toContain(
-      "exit_code: 0",
-    );
+    expect(launchDialog(mounted.root)).toBeNull();
+    const result = tabResult(mounted.root);
+    expect(result?.dataset.tone).toBe("ok");
+    expect(result?.querySelector(".session-creator-result a")?.textContent).toBe(NEW_SID);
+    expect(result?.textContent).toContain("exit_code: 0");
+  });
+
+  test("a launch command that did not exit 0 keeps the dialog open with what it came to, there and under the list", async () => {
+    const mounted = await mount({ context: CONTEXT });
+    await openLaunch(mounted.root);
+    await typeInto(promptText(mounted.root), "続きをやって");
+    await act(() => launchButton(mounted.root).click());
+    await mounted.answer({ ok: true, exit_code: 1, stdout: "", stderr: "no such model" });
+    expect(launchDialog(mounted.root)?.open).toBe(true);
+    expect(promptText(mounted.root).value).toBe("続きをやって");
+    expect(launchButton(mounted.root).textContent).toBe("起動");
+    const inDialog = launchDialog(mounted.root)?.querySelector(".status-launch-result");
+    expect(inDialog?.getAttribute("data-tone")).toBe("error");
+    expect(inDialog?.textContent).toContain("no such model");
+    expect(tabResult(mounted.root)?.textContent).toContain("no such model");
+    // Closed, the result stays under the list.
+    await closeLaunch(mounted.root);
+    expect(tabResult(mounted.root)?.textContent).toContain("no such model");
+  });
+
+  test("a launch the daemon refused keeps the dialog open with the reason", async () => {
+    const mounted = await mount({ context: CONTEXT });
+    await openLaunch(mounted.root);
+    await act(() => launchButton(mounted.root).click());
+    await mounted.answer({ ok: false, error: { code: "launch_failed", msg: "spawn failed" } });
+    expect(launchDialog(mounted.root)?.open).toBe(true);
+    expect(
+      launchDialog(mounted.root)?.querySelector(".status-launch-result")?.getAttribute("data-tone"),
+    ).toBe("error");
   });
 
   test("an empty prompt is left out, as the launch command's to decide", async () => {
@@ -299,9 +356,10 @@ describe("Status の新セッションを起動", () => {
     expect(mounted.launches).toEqual([{ cwd: CWD, model: "opus", effort: "medium" }]);
   });
 
-  test("⌘+Enter in the prompt launches like 起動", async () => {
+  test("⌘+Enter in the prompt launches like 起動, and the dialog says so by the button", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
+    expect(launchForm(mounted.root)?.querySelector(".status-op-keys")?.textContent).toBe("⌘Enter");
     await act(() => {
       promptText(mounted.root).dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -317,21 +375,19 @@ describe("Status の新セッションを起動", () => {
     ]);
   });
 
-  test("while it runs, the restart and the kill wait", async () => {
+  test("while it runs, the form and the kill wait, and the dialog does not close", async () => {
     const mounted = await mount({ context: CONTEXT });
     await openLaunch(mounted.root);
-    const restartFold = instanceOf(
-      mounted.root.querySelector(".status-session-forms > details.status-restart"),
-      HTMLDetailsElement,
-      "the restart fold",
-    );
-    await setOpen(restartFold, true);
     await act(() => launchButton(mounted.root).click());
-    expect(button(mounted.root, ".status-restart-form .status-form-submit").disabled).toBe(true);
-    expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(true);
     expect(launchButton(mounted.root).disabled).toBe(true);
+    expect(launchForm(mounted.root)?.querySelector("fieldset")?.disabled).toBe(true);
+    expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(true);
+    const dialog = launchDialog(mounted.root);
+    if (dialog === null) throw new Error("expected the launch dialog");
+    expect(await pressEscape(dialog)).toBe(false);
+    expect(closeButton(dialog).disabled).toBe(true);
+    expect(launchDialog(mounted.root)?.open).toBe(true);
     await mounted.answer({ ok: true, exit_code: 0, stdout: "", stderr: "" });
-    expect(button(mounted.root, ".status-restart-form .status-form-submit").disabled).toBe(false);
     expect(button(mounted.root, ".status-kill-zone .status-kill-button").disabled).toBe(false);
   });
 
@@ -346,7 +402,7 @@ describe("Status の新セッションを起動", () => {
     expect(saveButton(mounted.root).textContent).toBe("保存済み");
     expect(saveButton(mounted.root).disabled).toBe(true);
 
-    await setOpen(launchFold(mounted.root), false);
+    await closeLaunch(mounted.root);
     await openLaunch(mounted.root);
     expect(select(mounted.root, "--model").value).toBe("sonnet");
     expect(select(mounted.root, "--effort").value).toBe("low");
@@ -382,15 +438,15 @@ describe("Status の新セッションを起動", () => {
     }
   });
 
-  test("without a known cwd, no form but the reason", async () => {
+  test("without a known cwd, the row says why and its button does not open", async () => {
     const { root } = await mount({ cwd: null });
-    await openLaunch(root);
-    expect(launchForm(root)).toBeNull();
-    expect(launchFold(root)?.textContent).toContain("cwd が分からないので起動できません");
+    expect(actionRow(root, LAUNCH)?.textContent).toContain("cwd が分からないので起動できません");
+    expect(actionButton(root, LAUNCH).disabled).toBe(true);
+    expect(launchDialog(root)).toBeNull();
   });
 
   test("not offered when the daemon cannot launch", async () => {
     const { root } = await mount({ launchAvailable: false });
-    expect(launchFold(root)).toBeNull();
+    expect(actionRow(root, LAUNCH)).toBeNull();
   });
 });

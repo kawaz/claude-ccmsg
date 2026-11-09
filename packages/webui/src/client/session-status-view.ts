@@ -178,23 +178,28 @@ export function restartOffered(agent: AgentInfo | undefined, launchAvailable: bo
   return launchAvailable && agent !== undefined;
 }
 
-/** What a restart came to, as the Status tab says it under the LIVE row: the
- * line, and the launch command's output when it did not resume. */
+/** What a restart came to, as the Status tab says it under its session
+ * actions (and in the restart's dialog when it did not resume): the line, and
+ * the launch command's output when it did not resume. */
 export function restartResultText(reply: SessionRestartResponse | ErrorResponse): {
+  /** Whether it resumed: the restart's form closes on it and stays open
+   * otherwise, the person's text kept to try again. */
+  ok: boolean;
   text: string;
   output?: { stdout: string; stderr: string };
 } {
   if (reply.ok) {
-    if (reply.exit_code === 0) return { text: "再起動しました" };
+    if (reply.exit_code === 0) return { ok: true, text: "再起動しました" };
     return {
+      ok: false,
       text: `停止したが、起動コマンドが ${String(reply.exit_code)} で終わった (resume していない)`,
       output: { stdout: reply.stdout, stderr: reply.stderr },
     };
   }
   if (reply.error.code === "restart_timeout") {
-    return { text: "停止を確認できなかったので起動していない" };
+    return { ok: false, text: "停止を確認できなかったので起動していない" };
   }
-  return { text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
+  return { ok: false, text: `再起動できなかった (${reply.error.code}): ${reply.error.msg}` };
 }
 
 /** The ctx line's usage, in its parts: the fill (`10%`), the model and the
@@ -204,6 +209,13 @@ export interface ContextUsageView {
   text: string;
   title: string;
   fill: string;
+  /** The share of the window in use (`0.28`), for a gauge; null without the
+   * window or before the first response. Not clamped: a session can report
+   * more than its window. */
+  ratio: number | null;
+  /** The text after the fill: the model with its window, and the effort
+   * (`fable-5-1[1m] / high`). */
+  rest: string;
   model: RequestValueView;
   window: string;
   effort: RequestValueView | null;
@@ -236,8 +248,9 @@ export function formatContextUsage(
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
   const { model, effort } = requestValueViews(ctx, overrides, shortModel);
+  const rest = [`${model.text}${windowText}`, ...(effort ? [effort.text] : [])].join(" / ");
   return {
-    text: [fill, `${model.text}${windowText}`, ...(effort ? [effort.text] : [])].join(" / "),
+    text: `${fill} / ${rest}`,
     title:
       (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
       (window !== undefined
@@ -246,6 +259,8 @@ export function formatContextUsage(
       ` / ${model.title}` +
       (effort ? ` / ${effort.title}` : ""),
     fill,
+    ratio: tokens !== undefined && window !== undefined ? tokens / window : null,
+    rest,
     model,
     window: windowText,
     effort,
@@ -311,7 +326,7 @@ export interface MiniSummaryLine {
    * rest so a person can change the session override from them (DR-0041 §5).
    * `tail` is what follows them, each part drawn with its own hover text. */
   context?: {
-    usage: Omit<ContextUsageView, "text" | "title"> | null;
+    usage: Pick<ContextUsageView, "fill" | "model" | "window" | "effort"> | null;
     tail: LinePart[];
   };
 }

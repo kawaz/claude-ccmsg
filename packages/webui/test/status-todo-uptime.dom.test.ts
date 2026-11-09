@@ -1,6 +1,7 @@
 // The Status tab's TODO list and the session's uptime, as mounted (kawaz
-// 2026-10-25): the TODO list starts closed with its count in the heading and
-// opens to the rows; UPTIME says how long the process has run; the Timeline's
+// 2026-10-25): the TODO list, and the Background list with it, start closed
+// with their count in the heading, just above the danger zone, and open to the
+// rows; UPTIME says how long the process has run; the Timeline's
 // ctx line ends with the uptime, the ccmsg the session runs and the Claude Code
 // version its process runs (kawaz 2026-11-06).
 import { afterEach, describe, expect, test } from "bun:test";
@@ -149,6 +150,70 @@ describe("Status tab TODO list", () => {
       "TODO (0)",
     );
     expect(root.textContent).not.toContain("TODO");
+  });
+});
+
+const BACKGROUND: SessionStatusSnapshot = {
+  todos: [{ id: "1", subject: "write the parser", status: "in_progress" }],
+  workflows: [],
+  background: [
+    {
+      task_id: "b1",
+      kind: "bash",
+      description: "watch the tests",
+      status: "completed",
+      started_at: "2026-10-25T00:00:00.000Z",
+      ended_at: "2026-10-25T00:10:00.000Z",
+    },
+    {
+      task_id: "b2",
+      kind: "bash",
+      description: "serve",
+      status: "running",
+      started_at: "2026-10-25T00:05:00.000Z",
+    },
+  ],
+};
+
+describe("Status tab Background", () => {
+  test("starts closed with the count in its heading; opened, the running first and the finished folded", async () => {
+    const root = await mountStatus(BACKGROUND);
+    const fold = foldTitled(root, "Background (2)");
+    expect(fold.open).toBe(false);
+    await act(() => {
+      fold.open = true;
+    });
+    expect(
+      [...fold.querySelectorAll(":scope > .status-list .status-row-summary")].map(
+        (s) => s.textContent,
+      ),
+    ).toEqual(["serve"]);
+    expect(foldTitled(root, "完了 (1)").open).toBe(false);
+  });
+
+  // kawaz 2026-11-09: Background and TODO are what the tab is least looked
+  // at for, so they come last, just above the danger zone.
+  test("Background and TODO come after ENV, just above the danger zone", async () => {
+    const root = await mountStatus(BACKGROUND);
+    const order = [
+      foldTitled(root, "ENV"),
+      foldTitled(root, "Background (2)"),
+      foldTitled(root, "TODO (1)"),
+      root.querySelector(".status-kill-zone"),
+    ];
+    for (let i = 0; i + 1 < order.length; i++) {
+      const [a, b] = [order[i], order[i + 1]];
+      expect(
+        a != null &&
+          b != null &&
+          (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      ).toBe(true);
+    }
+  });
+
+  test("a session that ran none shows no Background heading", async () => {
+    const root = await mountStatus(TODOS);
+    expect(root.textContent).not.toContain("Background");
   });
 });
 

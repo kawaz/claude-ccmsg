@@ -428,6 +428,28 @@ describe("context usage display", () => {
     expect(formatContextWindow(2_000_000)).toBe("[2m]");
   });
 
+  // Status タブの CONTEXT は fill を目盛りに、残りを横の文に分けて出す。
+  test("目盛りの割合と fill の後ろの文を分けて返す", () => {
+    const formatted = formatContextUsage({
+      tokens: 280_000,
+      window: 1_000_000,
+      model: "claude-fable-5-1",
+      effort: "high",
+      timestamp: "t",
+    });
+    expect(formatted.ratio).toBe(0.28);
+    expect(formatted.rest).toBe("fable-5-1[1m] / high");
+    expect(formatted.text).toBe(`${formatted.fill} / ${formatted.rest}`);
+    // window か使用量が無ければ割合は出せない。
+    expect(formatContextUsage({ tokens: 1, model: "m", timestamp: "t" }).ratio).toBeNull();
+    expect(formatContextUsage({ window: 1, model: "m", timestamp: "t" }).ratio).toBeNull();
+    // 100% 超もそのまま (目盛りの側が端で止める)。
+    expect(
+      formatContextUsage({ tokens: 1_100_000, window: 1_000_000, model: "m", timestamp: "t" })
+        .ratio,
+    ).toBe(1.1);
+  });
+
   test("100% 超を丸め込まず表示する", () => {
     // clamp すると「window より多く使っている」という診断情報を失う。
     expect(

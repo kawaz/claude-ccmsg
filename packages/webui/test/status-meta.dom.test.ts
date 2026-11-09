@@ -3,8 +3,10 @@
 // `session_rename`, Escape puts the shown name back, and the outcome shows only
 // in the input's look (pulsing while the answer is out, the danger colour on an
 // error until the value changes). Each copy button sits before the value it
-// copies, CONTEXT shows the usage alone, and there is no input to a subagent
-// here (the composer's destination select is where that is chosen).
+// copies, CONTEXT shows the usage alone (its fill also as a meter), the
+// tables come in the order of what matters (what the session is, the gauges of
+// what it runs as, its identifiers), and there is no input to a subagent here
+// (the composer's destination select is where that is chosen).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
@@ -197,8 +199,9 @@ describe("Status tab TITLE input", () => {
     // What was sent stays while the session has yet to take it; the old name
     // does not come back in the meantime.
     expect(input.value).toBe("後の名前");
-    // No text beside the input: the cell's only text is the copy button's.
-    expect(metaCell(root, "TITLE").textContent).toBe("コピー✓");
+    // No text beside the input: the cell's only text is the copy button's
+    // (hidden) mark.
+    expect(metaCell(root, "TITLE").textContent).toBe("✓");
   });
 
   test("an error marks the input, keeps the draft, and clears once the value changes", async () => {
@@ -300,16 +303,70 @@ describe("Status tab copy buttons", () => {
   });
 });
 
-describe("Status tab CONTEXT row", () => {
-  test("is labelled CONTEXT and shows the usage with no note after it", async () => {
+describe("Status tab CONTEXT gauge", () => {
+  test("is labelled CONTEXT and shows the fill, a meter of it, and the model and effort, with no note after them", async () => {
     const { root } = await mountStatus(agentRow());
     const labels = [...root.querySelectorAll(".status-meta dt")].map((d) => d.textContent);
     expect(labels).toContain("CONTEXT");
     expect(labels).not.toContain("CTX");
     const cell = metaCell(root, "CONTEXT");
-    expect(cell.textContent).toBe("28% / fable-5-1[200K] / low");
-    expect(cell.children).toHaveLength(0);
+    expect([...cell.children].map((c) => c.className)).toEqual([
+      "status-context-fill",
+      "status-context-meter",
+      "status-context-rest",
+    ]);
+    expect(cell.querySelector(".status-context-fill")?.textContent).toBe("28%");
+    const meter = instanceOf(cell.querySelector("meter"), HTMLMeterElement, "the meter");
+    expect([meter.min, meter.max, meter.value]).toEqual([0, 1, 0.28]);
+    expect(cell.querySelector(".status-context-rest")?.textContent).toBe("fable-5-1[200K] / low");
+    expect(cell.title).toContain("56,000 tokens");
     expect(root.textContent).not.toContain("上限は推定");
+  });
+});
+
+describe("Status tab layout", () => {
+  /** The terms of each `.status-meta` list, in order. */
+  function tables(root: HTMLElement): string[][] {
+    return [...root.querySelectorAll(".status-meta")].map((dl) =>
+      [...dl.querySelectorAll("dt")].map((d) => d.textContent ?? ""),
+    );
+  }
+
+  test("what the session is, then the gauges of what it runs as, then its identifiers", async () => {
+    const { root } = await mountStatus(agentRow());
+    expect(tables(root)).toEqual([
+      ["TITLE", "CWD"],
+      ["LIVE", "MODEL", "EFFORT", "CONTEXT"],
+      ["SESSION_ID", "PID", "HYOUI_SESSION_ID", "CCMSG", "KIND", "STARTED", "UPTIME"],
+    ]);
+  });
+
+  // The one line and the sideways scroll are app.css's `.status-scroll`
+  // (nowrap, overflow-x); here, that every value is put in it.
+  test("each value sits in the one-line scroller", async () => {
+    const { root } = await mountStatus(agentRow({ cwd: "/w/a/rather/long/path/to/the/repo" }));
+    for (const term of ["CWD", "SESSION_ID", "PID", "HYOUI_SESSION_ID", "UPTIME"]) {
+      const scroll = metaCell(root, term).querySelector(".status-scroll");
+      expect(scroll?.textContent).not.toBe("");
+    }
+    expect(metaCell(root, "CWD").querySelector(".status-scroll")?.textContent).toBe(
+      "/w/a/rather/long/path/to/the/repo",
+    );
+  });
+
+  test("LIVE says the turn's state, its dot in the state's tone", async () => {
+    const { root, store } = await mountStatus(agentRow());
+    const live = metaCell(root, "LIVE");
+    expect(live.textContent).toBe("idle");
+    expect(live.querySelector(".status-live-dot-idle")).not.toBeNull();
+    await act(() =>
+      store.dispatch({
+        type: "agents/loaded",
+        agents: [agentRow({ turn: { state: "responding", since: SINCE } })],
+      }),
+    );
+    expect(live.textContent).toBe("responding");
+    expect(live.querySelector(".status-live-dot-responding")).not.toBeNull();
   });
 });
 

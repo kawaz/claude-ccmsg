@@ -6,9 +6,10 @@
 // the shared store so Status uses the same peer/pin/agent fallback as the topbar.
 // Agent/workflow structure is shown by the Timeline's agent tree
 // (`AgentTreePanel`), which is the single place for that view.
-import type { JSX } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 import { useState } from "preact/hooks";
 import {
+  type AgentInfo,
   type LaunchEffort,
   type LaunchModel,
   type ErrorResponse,
@@ -25,6 +26,7 @@ import {
   formatContextUsage,
   restartOffered,
   restartResultText,
+  type StatusSections,
   type TodoSections,
 } from "../session-status-view.ts";
 import { pinForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
@@ -49,7 +51,7 @@ import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
-import { LaunchFold, RestartFold, useStatusLaunch } from "./StatusSessionForms.tsx";
+import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
 import { sessionRunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
 
@@ -123,38 +125,47 @@ function BackgroundRow({
   );
 }
 
-/** Terminal (non-running) rows are collapsed behind a `<details>` (DR-0020
- * §2.1 "完了は畳む") — the running/active section above stays always-open
- * since that's the whole point of the tab (what's the session doing right
- * now). Renders nothing (not even the `<details>`) when both are empty, so
- * an idle-and-never-ran section doesn't leave a dangling empty toggle. */
-function Section<T>({
-  title,
-  running,
-  done,
-  renderRow,
-  emptyRunningText,
+/** The session's background tasks, closed until opened with the count in its
+ * heading, near the bottom of the tab (kawaz 2026-11-09: they are not what the
+ * tab is looked at for). Opened, the running ones first and emphasized, the
+ * finished ones folded again (DR-0020 §2.1). Nothing when the session has run
+ * none. */
+function BackgroundSection({
+  background,
+  sid,
 }: {
-  title: string;
-  running: T[];
-  done: T[];
-  renderRow: (item: T, running: boolean) => JSX.Element;
-  emptyRunningText: string;
+  background: StatusSections["background"];
+  sid: string;
 }) {
-  if (running.length === 0 && done.length === 0) return null;
+  const { running, done } = background;
+  const count = running.length + done.length;
+  if (count === 0) return null;
   return (
     <section class="status-section">
-      <h3 class="status-section-title">{title}</h3>
-      {running.length > 0 ? (
-        <ul class="status-list">{running.map((item) => renderRow(item, true))}</ul>
-      ) : (
-        <p class="status-empty">{emptyRunningText}</p>
-      )}
-      {done.length > 0 ? (
-        <Fold class="status-done" summary={`完了 (${done.length})`}>
-          <ul class="status-list">{done.map((item) => renderRow(item, false))}</ul>
-        </Fold>
-      ) : null}
+      <Fold
+        class="status-fold status-background"
+        summaryClass="status-fold-summary"
+        summary={`Background (${count})`}
+      >
+        {running.length > 0 ? (
+          <ul class="status-list">
+            {running.map((bg) => (
+              <BackgroundRow key={bg.task_id} bg={bg} running={true} sid={sid} />
+            ))}
+          </ul>
+        ) : (
+          <p class="status-empty">走行中の background タスクなし</p>
+        )}
+        {done.length > 0 ? (
+          <Fold class="status-done" summary={`完了 (${done.length})`}>
+            <ul class="status-list">
+              {done.map((bg) => (
+                <BackgroundRow key={bg.task_id} bg={bg} running={false} sid={sid} />
+              ))}
+            </ul>
+          </Fold>
+        ) : null}
+      </Fold>
     </section>
   );
 }
@@ -167,7 +178,11 @@ function TodoSection({ todos }: { todos: TodoSections }) {
   if (count === 0) return null;
   return (
     <section class="status-section">
-      <Fold class="status-todos" summaryClass="status-fold-summary" summary={`TODO (${count})`}>
+      <Fold
+        class="status-fold status-todos"
+        summaryClass="status-fold-summary"
+        summary={`TODO (${count})`}
+      >
         {todos.inProgress.length > 0 ? (
           <ul class="status-list">
             {todos.inProgress.map((t) => (
@@ -203,31 +218,33 @@ function TodoSection({ todos }: { todos: TodoSections }) {
 /** DR-0028 danger zone: terminate the OS process behind this session.
  * Deliberately at the very bottom of the Status tab (kawaz: "普段触らない
  * 場所" — a prominent placement like the Sidebar would be a mis-click
- * hazard) and guarded by window.confirm, the same confirm convention as
- * MemberChip's kick. The ws send itself is injected via `onKill` so this
- * component stays presentation-only (StatusPanel's existing division of
- * labor with SessionView). `terminated: false` on a successful reply is not
- * an error — the daemon sent both SIGTERMs but couldn't observe the process
- * disappear within its grace (protocol doc). */
-/** r38 mid=6: SIGTERM で落ちなかった時に SIGKILL へ 2 段エスカレーションする
- * ボタン。DR-0028 の「daemon は勝手に SIGKILL しない」原則を維持しつつ、
- * ユーザーが SIGTERM の未確認を目視して opt-in できる動線を UI 側で提供する:
+ * hazard), a row of the operations list's shape in the danger colour, and
+ * guarded by window.confirm, the same confirm convention as MemberChip's kick.
+ * The ws send itself is injected via `onKill` so this component stays
+ * presentation-only (StatusPanel's existing division of labor with
+ * SessionView). `terminated: false` on a successful reply is not an error —
+ * the daemon sent both SIGTERMs but couldn't observe the process disappear
+ * within its grace (protocol doc).
+ *
+ * r38 mid=6: SIGTERM で落ちなかった時に SIGKILL へ 2 段エスカレーションする。
+ * DR-0028 の「daemon は勝手に SIGKILL しない」原則を維持しつつ、ユーザーが
+ * SIGTERM の未確認を目視して opt-in できる動線を UI 側で提供する:
  *
  *   1. 初回押下: SIGTERM 2 連発 (DR-0028 通常経路)
  *   2. 応答が `terminated: false` (シグナル送信済み、終了未確認) だったら
- *      ボタン表示を「強制終了 (-KILL)」に切り替え、押すと `force: true` で
- *      SIGKILL を送る
+ *      行が「強制終了 (-KILL)」に切り替わり、押すと `force: true` で SIGKILL
+ *      を送る
  *   3. `terminated: true` / `not_found` / エラー、あるいは sid が変わった場合は
  *      通常状態にリセット
  *
  * confirm は force 時も必ず出し、文言に SIGKILL である旨と不可逆性を明記する
  * (kawaz の「-KILL モードに変化させて欲しい」= 表示だけでなく操作にも一段
- * 追加のガードを掛ける意)。
+ * 追加のガードを掛ける意).
  *
- * The session forms above it (新セッションを起動, 再起動) are not dangerous and
- * sit outside the zone; while one of them runs, the kill waits (`blocked`),
- * and while the kill runs, they do. The kill's own running is held by
- * `SessionControls` for that reason. */
+ * The session actions above it (新セッションを起動, 再起動) are not dangerous
+ * and sit outside the zone; while one of them runs, the kill waits
+ * (`blocked`), and while the kill runs, they do. The kill's own running is
+ * held by `SessionControls` for that reason. */
 function KillZone({
   sid,
   onKill,
@@ -290,27 +307,42 @@ function KillZone({
       ? "強制終了中…"
       : "終了処理中…"
     : forceMode
-      ? "強制終了 (-KILL)"
-      : "セッションを終了";
+      ? "強制終了…"
+      : "終了…";
   const buttonCls = "status-kill-button" + (forceMode ? " status-kill-button-force" : "");
   return (
     <section class="status-section status-kill-zone">
       <h3 class="status-section-title">危険ゾーン</h3>
-      <div class="status-kill-buttons">
-        <button type="button" class={buttonCls} disabled={killing || blocked} onClick={handleKill}>
-          {buttonLabel}
-        </button>
-      </div>
+      <ul class="status-actions status-actions-danger">
+        <ActionRow
+          name={forceMode ? "強制終了 (-KILL)" : "セッションを終了"}
+          description={
+            forceMode
+              ? "SIGTERM では終了を確かめられなかった。SIGKILL でプロセスをすぐ止める"
+              : "プロセスに SIGTERM を送って止める"
+          }
+        >
+          <button
+            type="button"
+            class={buttonCls}
+            disabled={killing || blocked}
+            onClick={handleKill}
+          >
+            {buttonLabel}
+          </button>
+        </ActionRow>
+      </ul>
       {result ? <p class="status-kill-result">{result}</p> : null}
     </section>
   );
 }
 
-/** The forms and the danger zone at the bottom of the Status tab: 新セッション
- * を起動 and 再起動 (DR-0028 「restart」), each a fold, above the kill. One
- * thing of the three runs at a time, so this holds what each is doing. The
- * forms are offered only where the daemon can launch; 再起動 also needs the
- * session's process (`restartOffered`), and stays while a restart runs. */
+/** The bottom of the Status tab: セッション操作 (DR-0028 「restart」), then
+ * what is passed as `children` (the folded Background and TODO), then the
+ * danger zone. One thing of the three operations runs at a time, so this holds
+ * what each is doing. The actions are offered only where the daemon can
+ * launch; 再起動 also needs the session's process (`restartOffered`), and
+ * stays while a restart runs. */
 function SessionControls({
   sid,
   cwd,
@@ -318,6 +350,7 @@ function SessionControls({
   onKill,
   restartOffered,
   restart,
+  children,
 }: {
   sid: string;
   cwd: string | null;
@@ -325,6 +358,7 @@ function SessionControls({
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
   restartOffered: boolean;
   restart: SessionRestart;
+  children: ComponentChildren;
 }) {
   const { store } = useApp();
   const launchAvailable = useStoreState(store, (s) => s.launchAvailable);
@@ -335,13 +369,16 @@ function SessionControls({
   return (
     <>
       {launchAvailable || launching ? (
-        <section class="status-section status-session-forms">
-          <LaunchFold cwd={cwd} runsAs={runsAs} launch={launch} blocked={anyBusy} />
-          {restartOffered || restart.busy ? (
-            <RestartFold cwd={cwd} restart={restart} blocked={anyBusy} />
-          ) : null}
-        </section>
+        <SessionActions
+          cwd={cwd}
+          runsAs={runsAs}
+          launch={launch}
+          restart={restart}
+          restartShown={restartOffered || restart.busy}
+          blocked={anyBusy}
+        />
       ) : null}
+      {children}
       <KillZone
         sid={sid}
         onKill={onKill}
@@ -353,6 +390,9 @@ function SessionControls({
   );
 }
 
+/** What a restart came to (`restartResultText`). */
+export type SessionRestartResult = ReturnType<typeof restartResultText>;
+
 /** A restart of one session as it runs and what it came to (DR-0028
  * 「restart」). Held by the session's view rather than the Status tab: the
  * restart stops the process, and the tab's panel goes while the session is
@@ -360,10 +400,10 @@ function SessionControls({
  * with it. */
 export interface SessionRestart {
   busy: boolean;
-  result: ReturnType<typeof restartResultText> | null;
-  /** Restart, the resumed session starting with `prompt`; settles once the
-   * result is in. */
-  start: (prompt: string) => Promise<void>;
+  result: SessionRestartResult | null;
+  /** Restart, the resumed session starting with `prompt`; settles with what
+   * it came to. */
+  start: (prompt: string) => Promise<SessionRestartResult>;
 }
 
 /** The restart of `sid`, kept across the Status panel coming and going. A
@@ -375,7 +415,7 @@ export function useSessionRestart(
   const [state, setState] = useState<{
     sid: string;
     busy: boolean;
-    result: ReturnType<typeof restartResultText> | null;
+    result: SessionRestartResult | null;
   }>({ sid, busy: false, result: null });
   const own = state.sid === sid ? state : { sid, busy: false, result: null };
   return {
@@ -385,10 +425,16 @@ export function useSessionRestart(
       setState({ sid, busy: true, result: null });
       return restart(sid, prompt)
         .then((reply) => restartResultText(reply))
-        .catch((e: unknown) => ({ text: `再起動できなかった: ${String(e)}` }))
-        .then((result) =>
-          setState((current) => (current.sid === sid ? { sid, busy: false, result } : current)),
-        );
+        .catch(
+          (e: unknown): SessionRestartResult => ({
+            ok: false,
+            text: `再起動できなかった: ${String(e)}`,
+          }),
+        )
+        .then((result) => {
+          setState((current) => (current.sid === sid ? { sid, busy: false, result } : current));
+          return result;
+        });
     },
   };
 }
@@ -596,7 +642,7 @@ function EnvPanel({
   return (
     <section class="status-section">
       <Fold
-        class="status-env"
+        class="status-fold status-env"
         summaryClass="status-fold-summary"
         key={sid}
         summary="ENV"
@@ -659,6 +705,41 @@ function EnvPanel({
       </Fold>
     </section>
   );
+}
+
+/** One row of a facts table: the term, and its value in one line that
+ * scrolls sideways when it is longer than the cell (no scrollbar shown), so a
+ * long value never makes its row taller. A value that can be copied has its
+ * copy button before it. */
+function Fact({
+  term,
+  copy,
+  title,
+  children,
+}: {
+  term: string;
+  /** What the copy button copies; no button without it. */
+  copy?: string;
+  title?: string;
+  children: ComponentChildren;
+}) {
+  return (
+    <div class="status-fact">
+      <dt>{term}</dt>
+      <dd class="status-fact-value" title={title}>
+        {copy !== undefined ? <CopyButton value={copy} label={term} /> : null}
+        <span class="status-scroll">{children}</span>
+      </dd>
+    </div>
+  );
+}
+
+/** The LIVE dot's tone: responding (the session is in a turn), waiting (for
+ * a permission or the like), idle, or none when nothing speaks for the
+ * session. */
+function liveTone(agent: AgentInfo | undefined): string {
+  if (agent?.status === "waiting") return "waiting";
+  return agent?.turn?.state ?? "none";
 }
 
 export function StatusPanel({
@@ -729,67 +810,102 @@ export function StatusPanel({
   }
   const sections = buildStatusSections(snapshot);
   const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
-  // Context is nearly always present, so the empty-state predicate stays
-  // scoped to the operational axes this tab renders.
-  const nothingAtAll =
-    sections.todos.pending.length === 0 &&
-    sections.todos.inProgress.length === 0 &&
-    sections.todos.completed.length === 0 &&
-    sections.background.running.length === 0 &&
-    sections.background.done.length === 0;
   return (
     <div class="status-view">
-      <dl class="status-meta">
-        <dt>TITLE</dt>
-        <dd class="status-meta-value">
-          {title ? <CopyButton value={title} label="TITLE" /> : null}
-          <SessionTitleInput key={sid} sid={sid} title={title} />
-        </dd>
-        <dt>CWD</dt>
-        <dd class="status-meta-value" title={cwd ?? undefined}>
-          {cwd ? <CopyButton value={cwd} label="CWD" /> : null}
-          <span>{cwd ?? "—"}</span>
-        </dd>
-        <dt>SESSION_ID</dt>
-        <dd class="status-meta-value">
-          <CopyButton value={sid} label="SESSION_ID" />
-          <span>{sid}</span>
-        </dd>
-        <dt>PID</dt>
-        <dd class="status-meta-value">
-          {agent ? (
-            <>
-              <CopyButton value={String(agent.pid)} label="PID" />
-              <span>{agent.pid}</span>
-            </>
-          ) : (
-            "—"
-          )}
-        </dd>
-        <dt>HYOUI_SESSION_ID</dt>
-        <dd class="status-meta-value">
+      <dl class="status-meta status-facts">
+        <div class="status-fact">
+          <dt>TITLE</dt>
+          <dd class="status-fact-value">
+            {title ? <CopyButton value={title} label="TITLE" /> : null}
+            <SessionTitleInput key={sid} sid={sid} title={title} />
+          </dd>
+        </div>
+        <Fact term="CWD" copy={cwd ?? undefined}>
+          {cwd ?? "—"}
+        </Fact>
+      </dl>
+      <dl class="status-meta status-gauges">
+        <div class="status-gauge status-gauge-live">
+          <dt>LIVE</dt>
+          <dd class="status-live">
+            <span class={`status-live-dot status-live-dot-${liveTone(agent)}`} aria-hidden="true" />
+            {liveState ?? "—"}
+          </dd>
+        </div>
+        {/* The session's model and effort, each as the requests are sent
+         * (DR-0041 §6.1's collapsed face: `fable`, `📌high`), pressed to
+         * choose another for the session (§6.4). */}
+        <div class="status-gauge">
+          <dt>MODEL</dt>
+          <dd class="status-override">
+            <SessionOverrideField
+              field="model"
+              state={overrides}
+              context={snapshot.context}
+              onChange={onOverride}
+            />
+          </dd>
+        </div>
+        <div class="status-gauge">
+          <dt>EFFORT</dt>
+          <dd class="status-override">
+            <SessionOverrideField
+              field="effort"
+              state={overrides}
+              context={snapshot.context}
+              onChange={onOverride}
+            />
+          </dd>
+        </div>
+        <div class="status-gauge status-gauge-context">
+          <dt>CONTEXT</dt>
+          <dd class="status-context" title={context?.title}>
+            {context ? (
+              <>
+                <span class="status-context-fill">{context.fill}</span>
+                {context.ratio !== null ? (
+                  <meter
+                    class="status-context-meter"
+                    min={0}
+                    max={1}
+                    value={context.ratio}
+                    aria-label="context window の使用率"
+                  />
+                ) : null}
+                <span class="status-context-rest">{context.rest}</span>
+              </>
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
+      </dl>
+      <dl class="status-meta status-facts">
+        <Fact term="SESSION_ID" copy={sid}>
+          {sid}
+        </Fact>
+        <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
+          {agent ? String(agent.pid) : "—"}
+        </Fact>
+        <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
           {agent?.hyoui_session_id ? (
-            <>
-              <CopyButton value={agent.hyoui_session_id} label="HYOUI_SESSION_ID" />
-              {terminalPageUrl ? (
-                <a
-                  href={terminalPageUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="この端末を hyoui web で開く"
-                >
-                  {agent.hyoui_session_id}
-                </a>
-              ) : (
-                <span>{agent.hyoui_session_id}</span>
-              )}
-            </>
+            terminalPageUrl ? (
+              <a
+                href={terminalPageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="この端末を hyoui web で開く"
+              >
+                {agent.hyoui_session_id}
+              </a>
+            ) : (
+              agent.hyoui_session_id
+            )
           ) : (
             "—"
           )}
-        </dd>
-        <dt>CCMSG</dt>
-        <dd class="status-meta-value" title={staleClient?.text ?? protocolSkew?.text}>
+        </Fact>
+        <Fact term="CCMSG" title={staleClient?.text ?? protocolSkew?.text}>
           {staleClient ? (
             <span class="status-stale-client">
               {staleClient.marker} {staleClient.build}
@@ -799,59 +915,15 @@ export function StatusPanel({
               {protocolSkew.marker} {clientBuild}
             </span>
           ) : (
-            <span>{clientBuild}</span>
+            clientBuild
           )}
-        </dd>
-        <dt>LIVE</dt>
-        <dd>{liveState ?? "—"}</dd>
-        <dt>KIND</dt>
-        <dd>{agent?.kind ?? "—"}</dd>
-        <dt>STARTED</dt>
-        <dd title={agent ? new Date(agent.startedAt).toISOString() : undefined}>
+        </Fact>
+        <Fact term="KIND">{agent?.kind ?? "—"}</Fact>
+        <Fact term="STARTED" title={agent ? new Date(agent.startedAt).toISOString() : undefined}>
           {agent ? new Date(agent.startedAt).toLocaleString() : "—"}
-        </dd>
-        <dt>UPTIME</dt>
-        <dd>{agent ? formatDuration(Date.now() - agent.startedAt) : "—"}</dd>
-        {/* The session's model and effort, each as the requests are sent
-         * (DR-0041 §6.1's collapsed face: `fable`, `📌high`), pressed to
-         * choose another for the session (§6.4). */}
-        <dt>MODEL</dt>
-        <dd class="status-override">
-          <SessionOverrideField
-            field="model"
-            state={overrides}
-            context={snapshot.context}
-            onChange={onOverride}
-          />
-        </dd>
-        <dt>EFFORT</dt>
-        <dd class="status-override">
-          <SessionOverrideField
-            field="effort"
-            state={overrides}
-            context={snapshot.context}
-            onChange={onOverride}
-          />
-        </dd>
-        <dt>CONTEXT</dt>
-        <dd title={context?.title}>{context ? context.text : "—"}</dd>
+        </Fact>
+        <Fact term="UPTIME">{agent ? formatDuration(Date.now() - agent.startedAt) : "—"}</Fact>
       </dl>
-      {nothingAtAll ? (
-        <p class="status-empty">このセッションの background / TODO はまだありません</p>
-      ) : (
-        <>
-          <Section
-            title="Background"
-            running={sections.background.running}
-            done={sections.background.done}
-            renderRow={(bg, running) => (
-              <BackgroundRow key={bg.task_id} bg={bg} running={running} sid={sid} />
-            )}
-            emptyRunningText="走行中の background タスクなし"
-          />
-          <TodoSection todos={sections.todos} />
-        </>
-      )}
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
       <SessionControls
         key={sid}
@@ -861,7 +933,10 @@ export function StatusPanel({
         onKill={onKill}
         restartOffered={restartable}
         restart={restart}
-      />
+      >
+        <BackgroundSection background={sections.background} sid={sid} />
+        <TodoSection todos={sections.todos} />
+      </SessionControls>
     </div>
   );
 }
