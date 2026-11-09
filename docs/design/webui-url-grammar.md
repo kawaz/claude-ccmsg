@@ -8,7 +8,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | 名前空間 | 何を表すか | 書式 |
 |---|---|---|
 | **path** | メインペインの中身 (どこを見ているか) | `/r/<room>`、`/s/<sid>/<tab>`、`/usage/…` |
-| **ページ固有 query** | その path が持つ引数 | `?path=` `?lines=` `?from=` `?days=` |
+| **ページ固有 query** | その path が持つ引数 | `?path=` `?lines=` `?from=` `?section=` `?days=` |
 | **`sb.` 付き query** | サイドバー由来のフォームパネル | `?sb.panel=` `?sb.<field>=` `?sb.search=` |
 
 **hash は使わない** — Timeline のレコードアンカー (`#msg-…`) が既に使っており、アプリの状態表現に重ねると衝突する。**JSON 値も使わない** — 値は素の文字列で、複数行の値も URL エンコード (`%0A`) で足りる。
@@ -42,6 +42,7 @@ URL は 3 つの独立した名前空間でできている。**互いに触ら�
 | `path` | `/s/<sid>/files` | 開いているファイル。セッションの containment root からの相対パスか絶対パス。`~/` 始まりは daemon ユーザの HOME 基準で、開いた時点で相対 / 絶対の形に置き換わる |
 | `lines` | `/s/<sid>/files` | 選択行 (`<start>-<end>`) |
 | `from` | `/s/<sid>/files` | リンク元ドキュメント (「もしかして」復帰用) |
+| `section` | `/s/<sid>/files` | ファイルを選んだ Files の節。`touched` (触ったファイル) か `favorites` (お気に入り) なら、ワークスペースのツリーを開かずその節の行を選択状態にする (DR-0024 §3.3)。他の値と空の値は「なし」で、ワークスペースのツリーで開いて示す。`/s/<sid>` の復元には含めない |
 | `days` | `/usage/stats/<period>` | 集計日数 (単位の既定値と同じなら省略) |
 | `filter` | `/s/<sid>/timeline/<position>` | `say` なら say (と PushNotification) のバブルだけ、`permit` なら許可依頼のバブルだけを出す (DR-0050)。他の値と空の値は「なし」。agent の TL では読まない。位置を書き換える遷移は引き継ぎ、`filter` だけが変わる遷移は replace。`/s/<sid>` の復元には含めない |
 

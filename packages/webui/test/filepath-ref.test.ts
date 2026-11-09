@@ -187,12 +187,12 @@ describe("hrefFromStatEntry", () => {
         { path: "packages/foo.ts" },
         { path: "packages/foo.ts", line: 5, end: 7 },
       ),
-    ).toBe(fileHref("s1", "packages/foo.ts", { start: 5, end: 7 }));
+    ).toBe(fileHref("s1", "packages/foo.ts", { lineRange: { start: 5, end: 7 } }));
   });
   test("external entry -> absolute fileHref (single line)", () => {
     expect(
       hrefFromStatEntry("s1", { path: "/outside/x.md" }, { path: "/outside/x.md", line: 3 }),
-    ).toBe(fileHref("s1", "/outside/x.md", { start: 3, end: 3 }));
+    ).toBe(fileHref("s1", "/outside/x.md", { lineRange: { start: 3, end: 3 } }));
   });
 });
 

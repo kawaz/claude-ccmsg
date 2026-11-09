@@ -147,7 +147,10 @@ describe("real-path locators", () => {
   });
 
   test("file path, line range, and source hint use independent query parameters", () => {
-    const href = fileHref("s:1", "/external/weird? file.md", { start: 10, end: 20 }, "docs/a.md");
+    const href = fileHref("s:1", "/external/weird? file.md", {
+      lineRange: { start: 10, end: 20 },
+      from: "docs/a.md",
+    });
     const url = new URL(href, "http://localhost");
     expect(parseUrl(url.pathname, url.search)).toEqual({
       view: "session",
@@ -157,6 +160,32 @@ describe("real-path locators", () => {
       lineRange: { start: 10, end: 20 },
       from: "docs/a.md",
     });
+  });
+
+  test("the section a file was picked in rides its own query parameter", () => {
+    for (const section of ["touched", "favorites"] as const) {
+      const url = new URL(fileHref("s1", "src/a.ts", { section }), "http://localhost");
+      expect(url.searchParams.get("section")).toBe(section);
+      expect(parseUrl(url.pathname, url.search)).toEqual({
+        view: "session",
+        tab: "files",
+        sid: "s1",
+        path: "src/a.ts",
+        section,
+      });
+    }
+  });
+
+  test("an unknown or empty section is a selection without one", () => {
+    for (const search of ["?path=a.ts&section=workspace", "?path=a.ts&section="]) {
+      expect(parseUrl("/s/s1/files", search)).toEqual({
+        view: "session",
+        tab: "files",
+        sid: "s1",
+        path: "a.ts",
+      });
+    }
+    expect(fileHref("s1", "a.ts", { section: null })).toBe(fileHref("s1", "a.ts"));
   });
 
   test("invalid line ranges are ignored while the file remains selected", () => {

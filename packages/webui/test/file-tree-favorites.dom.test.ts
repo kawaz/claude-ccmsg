@@ -340,7 +340,8 @@ describe("FileTree 触ったファイル section (DR-0024)", () => {
 
   test("a cwd row links root-relative, so it opens through fs_read", async () => {
     const root = await mount(panes(filesStore(), PEER, FOLDERS, TOUCHED));
-    const link = root.querySelector(`a.tree-file[href="${fileHref(SID, "src/a.ts")}"]`);
+    const href = fileHref(SID, "src/a.ts", { section: "touched" });
+    const link = root.querySelector(`a.tree-file[href="${href}"]`);
     expect(link?.textContent?.trim()).toBe("src/a.ts");
   });
 

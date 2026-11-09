@@ -442,7 +442,7 @@ export function hrefFromStatEntry(
 ): string {
   const lineRange =
     ref.line !== undefined ? { start: ref.line, end: ref.end ?? ref.line } : undefined;
-  return fileHref(sid, entry.path, lineRange, from);
+  return fileHref(sid, entry.path, { lineRange, from });
 }
 
 /** Walk a raw markdown source and extract every inline-code token

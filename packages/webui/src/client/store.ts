@@ -40,6 +40,7 @@ import {
 import {
   DEFAULT_STATS_PERIOD,
   type AgentRef,
+  type FilesSection,
   type Locator,
   type SessionTab,
   type TimelineFilter,
@@ -213,6 +214,9 @@ export interface SessionTreeState {
    * this selection came from one. Consulted only when the target 404s, to
    * offer alternate readings of the link (kawaz r55 m152). */
   selectedFrom: string | null;
+  /** The Files section this selection was picked in (`?section=` in the
+   * locator), or null for one to reveal in the ワークスペース tree. */
+  selectedSection: FilesSection | null;
   file: FileViewState | null;
   timeline: TimelineState;
   /** Timeline's in-view search controls, cached per sid so Session Search can
@@ -801,6 +805,7 @@ function newSessionTree(): SessionTreeState {
     selectedPath: null,
     selectedLineRange: null,
     selectedFrom: null,
+    selectedSection: null,
     file: null,
     timeline: newTimelineState(),
     timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
@@ -993,13 +998,21 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   let [tree, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
   const selectedLineRange = locator.lineRange ?? null;
   const selectedFrom = locator.from ?? null;
+  const selectedSection = locator.section ?? null;
   if (
     tree.selectedPath !== locator.path ||
     tree.selectedLineRange?.start !== selectedLineRange?.start ||
     tree.selectedLineRange?.end !== selectedLineRange?.end ||
-    tree.selectedFrom !== selectedFrom
+    tree.selectedFrom !== selectedFrom ||
+    tree.selectedSection !== selectedSection
   ) {
-    tree = { ...tree, selectedPath: locator.path, selectedLineRange, selectedFrom };
+    tree = {
+      ...tree,
+      selectedPath: locator.path,
+      selectedLineRange,
+      selectedFrom,
+      selectedSection,
+    };
     sessionTrees = new Map(sessionTrees);
     sessionTrees.set(locator.sid, tree);
   }

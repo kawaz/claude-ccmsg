@@ -96,12 +96,17 @@ export function FilesPanes({
   // so it should not cost a back-button step.
   const selectedLineRange = tree.selectedLineRange;
   const selectedFrom = tree.selectedFrom;
+  const selectedSection = tree.selectedSection;
   useEffect(() => {
     if (canonicalPath === null || canonicalPath === selectedPath) return;
     replaceNavigation(
-      fileHref(sid, canonicalPath, selectedLineRange ?? undefined, selectedFrom ?? undefined),
+      fileHref(sid, canonicalPath, {
+        lineRange: selectedLineRange,
+        from: selectedFrom,
+        section: selectedSection,
+      }),
     );
-  }, [sid, selectedPath, canonicalPath, selectedLineRange, selectedFrom]);
+  }, [sid, selectedPath, canonicalPath, selectedLineRange, selectedFrom, selectedSection]);
   // Panes read the canonical spelling immediately, so the doomed external read
   // never fires while the URL replacement is still in flight.
   const paneTree = canonicalPath === selectedPath ? tree : { ...tree, selectedPath: canonicalPath };

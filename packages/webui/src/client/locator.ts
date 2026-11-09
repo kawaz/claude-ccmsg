@@ -23,6 +23,20 @@ export function parseTimelineFilter(search: string): TimelineFilter | null {
   return value === "say" || value === "permit" ? value : null;
 }
 
+/** The Files section a file was picked from when it was not the ワークスペース
+ * tree (DR-0024 §3.3): the page query `section` on `/s/<sid>/files`. A pick from
+ * お気に入り or 触ったファイル stays in that section — its row is the one
+ * highlighted and the ワークスペース tree is left as it is — while a selection
+ * without one (a tree row, a Timeline link, a typed URL) reveals the file in
+ * the tree. */
+export type FilesSection = "favorites" | "touched";
+
+/** `section` of a files URL. Only the two section names read as one; anything
+ * else, an empty value included, is a selection without one. */
+function parseFilesSection(value: string | null): FilesSection | null {
+  return value === "favorites" || value === "touched" ? value : null;
+}
+
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
   /** Host-wide LLM credentials — the one screen that belongs to no session and
@@ -45,6 +59,7 @@ export type Locator =
       path: string | null;
       lineRange?: { start: number; end: number };
       from?: string;
+      section?: FilesSection;
     }
   | {
       view: "timeline";
@@ -123,10 +138,12 @@ export function parseUrl(pathname: string, search = ""): Locator {
     const end = range ? Number(range[2]) : 0;
     const lineRange = start > 0 && end >= start ? { start, end } : undefined;
     const from = params.get("from") || undefined;
+    const section = parseFilesSection(params.get("section"));
     return sessionLocator(sid, "files", {
       path,
       ...(lineRange ? { lineRange } : {}),
       ...(from ? { from } : {}),
+      ...(section !== null ? { section } : {}),
     });
   }
   if ((tab === "terminal" || tab === "status") && segments.length === 3) {
@@ -246,16 +263,21 @@ export function filesHref(sid: string): string {
   return `${sidBase(sid)}/files`;
 }
 
-export function fileHref(
-  sid: string,
-  path: string,
-  lineRange?: { start: number; end: number },
-  from?: string,
-): string {
+/** The optional page queries of a files URL, each independent of the others. */
+export interface FileHrefOptions {
+  lineRange?: { start: number; end: number } | null;
+  /** The markdown document the link was followed from. */
+  from?: string | null;
+  section?: FilesSection | null;
+}
+
+export function fileHref(sid: string, path: string, options: FileHrefOptions = {}): string {
+  const { lineRange, from, section } = options;
   const params = new URLSearchParams();
   params.set("path", path);
   if (lineRange) params.set("lines", `${lineRange.start}-${lineRange.end}`);
   if (from) params.set("from", from);
+  if (section) params.set("section", section);
   return `${filesHref(sid)}?${params.toString()}`;
 }
 

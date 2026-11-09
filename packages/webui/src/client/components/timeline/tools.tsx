@@ -126,7 +126,7 @@ function FileToolFold({
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-file-tool-card">
-          <a class="tl-file-tool-path" href={fileHref(sid, segment.path, range ?? undefined)}>
+          <a class="tl-file-tool-path" href={fileHref(sid, segment.path, { lineRange: range })}>
             {segment.path}
             {suffix}
           </a>

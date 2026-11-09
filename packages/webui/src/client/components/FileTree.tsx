@@ -15,7 +15,7 @@ import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { fileHref } from "../locator.ts";
+import { fileHref, type FilesSection } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import type { WsHandle } from "../ws.ts";
 import {
@@ -221,6 +221,7 @@ function DirNode({
   depth,
   tree,
   selectedPath,
+  section,
   workspaceFolders,
   fav,
   create,
@@ -231,7 +232,11 @@ function DirNode({
   name: string;
   depth: number;
   tree: SessionTreeState;
+  /** The selection as this row's section sees it: null unless the file was
+   * picked in this section (see `selectionIn` in FileTree). */
   selectedPath: string | null;
+  /** The section the row is drawn in, carried into its file links. */
+  section: FilesSection | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   create: CreateContext | null;
@@ -306,6 +311,7 @@ function DirNode({
               depth={depth + 1}
               tree={tree}
               selectedPath={selectedPath}
+              section={section}
               workspaceFolders={workspaceFolders}
               fav={fav}
               create={create}
@@ -411,6 +417,7 @@ function FileNode({
   name,
   depth,
   selected,
+  section,
   symlink,
   fav,
   del,
@@ -420,6 +427,7 @@ function FileNode({
   name: string;
   depth: number;
   selected: boolean;
+  section: FilesSection | null;
   symlink: boolean;
   fav: FavContext | null;
   del: DeleteContext | null;
@@ -440,7 +448,7 @@ function FileNode({
             (symlink ? " tree-symlink" : "")
           }
           style={{ paddingLeft: `${depth}rem` }}
-          href={fileHref(sid, path)}
+          href={fileHref(sid, path, { section })}
         >
           {/* Empty same-width spacer so file names line up with dir names,
            * which have a real ▸/▾ caret occupying this space (kawaz ask:
@@ -479,6 +487,7 @@ function Nodes({
   depth,
   tree,
   selectedPath,
+  section,
   workspaceFolders,
   fav,
   create,
@@ -490,6 +499,7 @@ function Nodes({
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;
+  section: FilesSection | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   create: CreateContext | null;
@@ -510,6 +520,7 @@ function Nodes({
               depth={depth}
               tree={tree}
               selectedPath={selectedPath}
+              section={section}
               workspaceFolders={workspaceFolders}
               fav={fav}
               create={create}
@@ -534,6 +545,7 @@ function Nodes({
             name={entry.name}
             depth={depth}
             selected={selectedPath === path}
+            section={section}
             symlink={entry.type === "symlink"}
             fav={fav}
             del={del}
@@ -591,6 +603,8 @@ function PathGroup({
   heading,
   sid,
   tree,
+  selectedPath,
+  section,
   workspaceFolders,
   fav,
   create,
@@ -600,6 +614,8 @@ function PathGroup({
   heading: boolean;
   sid: string;
   tree: SessionTreeState;
+  selectedPath: string | null;
+  section: FilesSection;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   create: CreateContext | null;
@@ -621,7 +637,8 @@ function PathGroup({
             name={label}
             depth={depth}
             tree={tree}
-            selectedPath={tree.selectedPath}
+            selectedPath={selectedPath}
+            section={section}
             workspaceFolders={workspaceFolders}
             fav={fav}
             create={create}
@@ -634,7 +651,8 @@ function PathGroup({
             path={key}
             name={label}
             depth={depth}
-            selected={tree.selectedPath === key}
+            selected={selectedPath === key}
+            section={section}
             symlink={symlink}
             fav={fav}
             del={rowDel}
@@ -901,10 +919,25 @@ export function FileTree({
   // the key as handled, so a selection that arrives before the socket opens or
   // before session_status publishes the workspace folders is expanded once the
   // missing piece shows up.
+  //
+  // A file picked in お気に入り or 触ったファイル (`selectedSection`) is not
+  // revealed: it was chosen from that list, and opening the tree around it
+  // would move the pane away from the row just clicked. Both reveal keys are
+  // dropped then, so picking the same file in the tree afterwards reveals it.
   const selectedPath = tree.selectedPath;
+  const selectedSection = tree.selectedSection;
+  /** The selection as one section's rows see it: only the section the file
+   * was picked in highlights it, so one path lit in two places never leaves
+   * the reader guessing which row they are on. */
+  const selectionIn = (section: FilesSection | null) =>
+    selectedSection === section ? selectedPath : null;
   const autoExpandedFor = useRef<string | null>(null);
   useEffect(() => {
     if (selectedPath === null) return;
+    if (selectedSection !== null) {
+      autoExpandedFor.current = null;
+      return;
+    }
     if (connStatus !== "connected") return;
     // An absolute path is either a workspace file (ancestors to open) or a
     // DR-0024 external one (a flat row); which of the two is unknowable until
@@ -919,7 +952,7 @@ export function FileTree({
     for (const path of paths) {
       void loadDir(store, ws, sid, path, workspaceFolders);
     }
-  }, [sid, rootPath, selectedPath, workspaceFolders, connStatus, tree, store, ws]);
+  }, [sid, rootPath, selectedPath, selectedSection, workspaceFolders, connStatus, tree, store, ws]);
 
   // Scroll the revealed row into the tree pane. Waits for every ancestor
   // listing above to resolve rather than scrolling as soon as the row mounts:
@@ -932,6 +965,10 @@ export function FileTree({
   const revealedFor = useRef<string | null>(null);
   useEffect(() => {
     if (selectedPath === null) return;
+    if (selectedSection !== null) {
+      revealedFor.current = null;
+      return;
+    }
     // An active query replaces the tree body outright (see the render below),
     // so there is no row to reveal yet — and clicking a search result is one
     // of the ways a file gets selected. Leaving the key unmarked here is what
@@ -948,7 +985,7 @@ export function FileTree({
     if (!row) return;
     revealedFor.current = key;
     row.scrollIntoView({ block: "nearest" });
-  }, [sid, rootPath, selectedPath, workspaceFolders, tree, searching]);
+  }, [sid, rootPath, selectedPath, selectedSection, workspaceFolders, tree, searching]);
 
   // A revealed row can be pushed back out of sight by the *pane* shrinking
   // rather than by anything moving inside it: on a cold load the daemon-info
@@ -1072,6 +1109,8 @@ export function FileTree({
                   heading={!group.isCwd}
                   sid={sid}
                   tree={tree}
+                  selectedPath={selectionIn("favorites")}
+                  section="favorites"
                   workspaceFolders={workspaceFolders}
                   fav={fav}
                   create={createCtx}
@@ -1097,7 +1136,8 @@ export function FileTree({
                 name={folder.name}
                 depth={0}
                 tree={tree}
-                selectedPath={tree.selectedPath}
+                selectedPath={selectionIn(null)}
+                section={null}
                 workspaceFolders={workspaceFolders}
                 fav={fav}
                 create={createCtx}
@@ -1120,6 +1160,8 @@ export function FileTree({
                   heading
                   sid={sid}
                   tree={tree}
+                  selectedPath={selectionIn("touched")}
+                  section="touched"
                   workspaceFolders={workspaceFolders}
                   fav={fav}
                   create={null}
