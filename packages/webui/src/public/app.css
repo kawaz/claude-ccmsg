@@ -7798,47 +7798,58 @@ a.tl-attachment-file-path {
   color: var(--err, #c55);
 }
 
-/* Values are the wide column and can be very long (PATH, tokens). A cell is
- * one line that scrolls sideways on its own (`.status-scroll`), like the
- * facts tables' values, so a long value never makes its row taller; the
- * fixed layout keeps the columns to the tab's width. A value's own line
- * breaks, and the colon split's parts, stay as lines. */
+/* Names and values in two columns shared by every row through subgrid. The
+ * name column is as wide as the longest name (`fit-content`), up to 30% of the
+ * table; a name's cell is a scroller, so a name beyond that scrolls sideways
+ * instead of widening the column. The value column is the rest. A value is one
+ * line that scrolls sideways on its own (`.status-scroll`), like the facts
+ * tables' values, so a long value never makes its row taller; the value's own
+ * line breaks, and the colon split's parts, stay as lines. */
 .status-env-table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
+  display: grid;
+  grid-template-columns: fit-content(30%) minmax(0, 1fr);
   font-size: var(--font-size-sm);
 }
 
-.status-env-table th:first-child {
-  width: 38%;
+.status-env-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  column-gap: var(--space-8);
+  align-items: start;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.status-env-table th {
-  text-align: left;
+.status-env-head {
   font-weight: 600;
   color: var(--fg-muted);
-  border-bottom: 1px solid var(--border);
-  padding: var(--space-3) var(--space-8) var(--space-3) 0;
 }
 
-.status-env-table td {
-  vertical-align: top;
-  padding: var(--space-3) var(--space-8) var(--space-3) 0;
-  border-bottom: 1px solid var(--border);
+.status-env-head-value {
+  padding-left: calc(1.6rem + var(--space-4));
 }
 
+/* `overflow: hidden` makes the cell itself a scroll container, so its minimum
+ * contribution to the column is 0 and `fit-content(30%)` can cap the column;
+ * the name inside scrolls (`.status-scroll`). */
 .status-env-name {
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--font-mono, monospace);
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .status-env-value {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
   font-family: var(--font-mono, monospace);
 }
 
 .status-env-value > .status-scroll {
+  flex: 1 1 0;
   white-space: pre;
 }
 

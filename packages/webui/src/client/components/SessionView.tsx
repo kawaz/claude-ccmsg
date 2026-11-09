@@ -53,7 +53,7 @@ export const NO_TRANSCRIPT_MESSAGE =
  * dead Terminal tab would invite clicks that do nothing. Timeline instead
  * stays and goes disabled, because a session without a transcript is the
  * unusual case and saying so is more useful than hiding it. */
-function sessionTabItems(
+export function sessionTabItems(
   sid: string,
   hasTranscript: boolean,
   hasTerminal: boolean,
@@ -68,6 +68,7 @@ function sessionTabItems(
           disabled: true,
           title: NO_TRANSCRIPT_MESSAGE,
         },
+    { id: "status", label: "Status", href: statusHref(sid) },
     ...(hasTerminal
       ? [
           {
@@ -77,7 +78,6 @@ function sessionTabItems(
           } satisfies TabItem<SessionTab>,
         ]
       : []),
-    { id: "status", label: "Status", href: statusHref(sid) },
   ];
 }
 

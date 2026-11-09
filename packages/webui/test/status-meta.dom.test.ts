@@ -4,8 +4,8 @@
 // in the input's look (pulsing while the answer is out, the danger colour on an
 // error until the value changes). Each copy button sits before the value it
 // copies, CONTEXT shows the usage alone (its fill also as a meter), the
-// tables come in the order of what matters (what the session is, the gauges of
-// what it runs as, its identifiers), and there is no input to a subagent here
+// tables come in the order of what matters (the gauges of what it runs as,
+// what the session is, its identifiers), and there is no input to a subagent here
 // (the composer's destination select is where that is chosen).
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
@@ -294,7 +294,16 @@ describe("Status tab TITLE input", () => {
 describe("Status tab copy buttons", () => {
   test("sit before the value they copy", async () => {
     const { root } = await mountStatus(agentRow());
-    for (const term of ["TITLE", "CWD", "SESSION_ID", "PID", "HYOUI_SESSION_ID"]) {
+    for (const term of [
+      "TITLE",
+      "CWD",
+      "SESSION_ID",
+      "PID",
+      "HYOUI_SESSION_ID",
+      "KIND",
+      "STARTED",
+      "UPTIME",
+    ]) {
       const cell = metaCell(root, term);
       const first = cell.firstElementChild;
       expect(first?.tagName).toBe("BUTTON");
@@ -333,11 +342,11 @@ describe("Status tab layout", () => {
     );
   }
 
-  test("what the session is, then the gauges of what it runs as, then its identifiers", async () => {
+  test("the gauges first with CONTEXT on top, then what the session is, then its identifiers", async () => {
     const { root } = await mountStatus(agentRow());
     expect(tables(root)).toEqual([
+      ["CONTEXT", "LIVE", "MODEL", "EFFORT"],
       ["TITLE", "CWD"],
-      ["LIVE", "MODEL", "EFFORT", "CONTEXT"],
       ["SESSION_ID", "PID", "HYOUI_SESSION_ID", "CCMSG", "KIND", "STARTED", "UPTIME"],
     ]);
   });
@@ -372,17 +381,16 @@ describe("Status tab layout", () => {
 });
 
 describe("Status tab MODEL / EFFORT rows", () => {
-  /** The rows' terms in order, from MODEL to CONTEXT. */
+  /** The rows' terms in order. */
   function terms(root: HTMLElement): string[] {
     return [...root.querySelectorAll(".status-meta dt")].map((d) => d.textContent ?? "");
   }
 
-  test("two rows of their own before CONTEXT, and no OVERRIDE row", async () => {
+  test("two rows of their own after LIVE, and no OVERRIDE row", async () => {
     const { root } = await mountStatus(agentRow());
     const all = terms(root);
     expect(all).not.toContain("OVERRIDE");
-    const at = all.indexOf("MODEL");
-    expect(all.slice(at, at + 3)).toEqual(["MODEL", "EFFORT", "CONTEXT"]);
+    expect(all.slice(0, 4)).toEqual(["CONTEXT", "LIVE", "MODEL", "EFFORT"]);
     for (const term of ["MODEL", "EFFORT"]) {
       const cell = metaCell(root, term);
       expect(cell.querySelectorAll("button.override-value")).toHaveLength(1);
@@ -445,11 +453,32 @@ describe("Status tab ENV", () => {
     });
     for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
     const row = (name: string) =>
-      [...fold.querySelectorAll("tbody tr")].find(
+      [...fold.querySelectorAll(".status-env-row")].find(
         (tr) => tr.querySelector(".status-env-name")?.textContent === name,
       );
     const path = row("PATH");
     expect(path?.querySelector(".status-env-name > .status-scroll")?.textContent).toBe("PATH");
+    // Each row has a copy button before the value, copying the real value
+    // (also for a masked one).
+    for (const [name, real] of [
+      ["PATH", "/opt/bin:/usr/bin"],
+      ["GH_TOKEN", "secret"],
+    ] as const) {
+      const cell = row(name)?.querySelector(".status-env-value");
+      const first = cell?.firstElementChild;
+      expect(first?.tagName).toBe("BUTTON");
+      expect(first?.getAttribute("aria-label")).toBe(`${name} をコピー`);
+      const written: string[] = [];
+      const clipboard = {
+        writeText: (v: string): Promise<void> => {
+          written.push(v);
+          return Promise.resolve();
+        },
+      };
+      Object.defineProperty(navigator, "clipboard", { value: clipboard, configurable: true });
+      await act(() => instanceOf(first, HTMLButtonElement, "copy").click());
+      expect(written).toEqual([real]);
+    }
     const value = path?.querySelector(".status-env-value > .status-scroll");
     expect(value?.textContent).toBe("/opt/bin:/usr/bin");
     expect(value?.children).toHaveLength(0);

@@ -505,33 +505,32 @@ function EnvPanel({
               {rows.length}/{state.rows.length} 件 · pid {state.pid}
             </p>
             {rows.length > 0 ? (
-              <table class="status-env-table">
-                <thead>
-                  <tr>
-                    <th scope="col">名前</th>
-                    <th scope="col">値</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.name}>
-                      <td class="status-env-name">
-                        <div class="status-scroll">{row.name}</div>
-                      </td>
-                      <td class="status-env-value">
-                        <div class="status-scroll">
-                          <EnvValue
-                            row={row}
-                            splitColons={splitColons}
-                            revealed={revealed.has(row.name)}
-                            onToggleReveal={() => toggleReveal(row.name)}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div class="status-env-table" role="table" aria-label="環境変数">
+                <div class="status-env-row status-env-head" role="row">
+                  <span role="columnheader">名前</span>
+                  <span role="columnheader" class="status-env-head-value">
+                    値
+                  </span>
+                </div>
+                {rows.map((row) => (
+                  <div key={row.name} class="status-env-row" role="row">
+                    <div class="status-env-name" role="cell">
+                      <div class="status-scroll">{row.name}</div>
+                    </div>
+                    <div class="status-env-value" role="cell">
+                      <CopyButton value={row.value} label={row.name} />
+                      <div class="status-scroll">
+                        <EnvValue
+                          row={row}
+                          splitColons={splitColons}
+                          revealed={revealed.has(row.name)}
+                          onToggleReveal={() => toggleReveal(row.name)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : (
               <p class="status-empty">一致する環境変数なし</p>
             )}
@@ -643,22 +642,34 @@ export function StatusPanel({
       </div>
     );
   }
+  const startedText = agent ? new Date(agent.startedAt).toLocaleString() : undefined;
+  const uptimeText = agent ? formatDuration(Date.now() - agent.startedAt) : undefined;
   const context = snapshot.context ? formatContextUsage(snapshot.context, overrides) : null;
   return (
     <div class="status-view">
-      <dl class="status-meta status-facts">
-        <div class="status-fact">
-          <dt>TITLE</dt>
-          <dd class="status-fact-value">
-            {title ? <CopyButton value={title} label="TITLE" /> : null}
-            <SessionTitleInput key={sid} sid={sid} title={title} />
+      <dl class="status-meta status-gauges">
+        <div class="status-gauge status-gauge-context">
+          <dt>CONTEXT</dt>
+          <dd class="status-context" title={context?.title}>
+            {context ? (
+              <>
+                <span class="status-context-fill">{context.fill}</span>
+                {context.ratio !== null ? (
+                  <meter
+                    class="status-context-meter"
+                    min={0}
+                    max={1}
+                    value={context.ratio}
+                    aria-label="context window の使用率"
+                  />
+                ) : null}
+                <span class="status-context-rest">{context.rest}</span>
+              </>
+            ) : (
+              "—"
+            )}
           </dd>
         </div>
-        <Fact term="CWD" copy={cwd ?? undefined}>
-          {cwd ?? "—"}
-        </Fact>
-      </dl>
-      <dl class="status-meta status-gauges">
         <div class="status-gauge status-gauge-live">
           <dt>LIVE</dt>
           <dd class="status-live">
@@ -691,28 +702,18 @@ export function StatusPanel({
             />
           </dd>
         </div>
-        <div class="status-gauge status-gauge-context">
-          <dt>CONTEXT</dt>
-          <dd class="status-context" title={context?.title}>
-            {context ? (
-              <>
-                <span class="status-context-fill">{context.fill}</span>
-                {context.ratio !== null ? (
-                  <meter
-                    class="status-context-meter"
-                    min={0}
-                    max={1}
-                    value={context.ratio}
-                    aria-label="context window の使用率"
-                  />
-                ) : null}
-                <span class="status-context-rest">{context.rest}</span>
-              </>
-            ) : (
-              "—"
-            )}
+      </dl>
+      <dl class="status-meta status-facts">
+        <div class="status-fact">
+          <dt>TITLE</dt>
+          <dd class="status-fact-value">
+            {title ? <CopyButton value={title} label="TITLE" /> : null}
+            <SessionTitleInput key={sid} sid={sid} title={title} />
           </dd>
         </div>
+        <Fact term="CWD" copy={cwd ?? undefined}>
+          {cwd ?? "—"}
+        </Fact>
       </dl>
       <dl class="status-meta status-facts">
         <Fact term="SESSION_ID" copy={sid}>
@@ -739,7 +740,11 @@ export function StatusPanel({
             "—"
           )}
         </Fact>
-        <Fact term="CCMSG" title={staleClient?.text ?? protocolSkew?.text}>
+        <Fact
+          term="CCMSG"
+          copy={staleClient ? staleClient.build : peer ? clientBuild : undefined}
+          title={staleClient?.text ?? protocolSkew?.text}
+        >
           {staleClient ? (
             <span class="status-stale-client">
               {staleClient.marker} {staleClient.build}
@@ -752,11 +757,19 @@ export function StatusPanel({
             clientBuild
           )}
         </Fact>
-        <Fact term="KIND">{agent?.kind ?? "—"}</Fact>
-        <Fact term="STARTED" title={agent ? new Date(agent.startedAt).toISOString() : undefined}>
-          {agent ? new Date(agent.startedAt).toLocaleString() : "—"}
+        <Fact term="KIND" copy={agent?.kind}>
+          {agent?.kind ?? "—"}
         </Fact>
-        <Fact term="UPTIME">{agent ? formatDuration(Date.now() - agent.startedAt) : "—"}</Fact>
+        <Fact
+          term="STARTED"
+          copy={startedText}
+          title={agent ? new Date(agent.startedAt).toISOString() : undefined}
+        >
+          {startedText ?? "—"}
+        </Fact>
+        <Fact term="UPTIME" copy={uptimeText}>
+          {uptimeText ?? "—"}
+        </Fact>
       </dl>
       <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
       <SessionControls

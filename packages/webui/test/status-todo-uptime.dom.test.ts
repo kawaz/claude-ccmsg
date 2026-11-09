@@ -92,7 +92,7 @@ async function mountStatus(
 /** The value cell the Status tab's identity table puts under `term`. */
 function metaValue(root: HTMLElement, term: string): string | null {
   const dt = [...root.querySelectorAll(".status-meta dt")].find((d) => d.textContent === term);
-  return dt?.nextElementSibling?.textContent ?? null;
+  return dt?.nextElementSibling?.querySelector(".status-scroll")?.textContent ?? null;
 }
 
 const TODOS: SessionStatusSnapshot = {

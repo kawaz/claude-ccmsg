@@ -148,6 +148,10 @@ describe("a session's ccmsg of another protocol minor than the daemon", () => {
     expect(dd.title).toBe(SKEW_TEXT);
     const skew = dd.querySelector(".status-protocol-skew");
     expect(skew?.textContent).toBe("△ v0.218.0 (protocol 2.0)");
+    // The copy button before it copies the version, without the mark.
+    const copy = dd.firstElementChild;
+    expect(copy?.tagName).toBe("BUTTON");
+    expect(copy?.getAttribute("aria-label")).toBe("CCMSG をコピー");
   });
 
   test("the Timeline's ctx line draws its ccmsg in yellow, the reason first on hover", async () => {
