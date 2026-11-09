@@ -4,6 +4,7 @@
     ".claude-plugin/*.json",
     "docs",
     "hooks/register.bundle.js",
-    ".claude/*.local.json"
+    ".claude/*.local.json",
+    "*.local.*"
   ]
 }
