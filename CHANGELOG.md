@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.227.0 <a id="v0.227.0"></a>
+
+2026-11-09
+
+- Sessions 一覧からセッション名の編集 (✎ / Shift+クリック) と sid のコピーを削除
+- Status タブの TITLE は最初から input。Enter で名前を変え、Escape で戻す。送信中は input が脈動し、失敗は危険色 (文は出さない)
+- Status タブのコピーボタンを値の左に置いた。`CTX` を `CONTEXT` にし「上限は推定」を消した。`OVERRIDE` 行を `MODEL` / `EFFORT` の 2 行にした (押すと選べる)
+- Status タブの subagent への入力を削除し、composer (FAB) のヘッダに宛先 select (main / 走行中の subagent) を置いた。Timeline が subagent を表示中はそれが既定
+
 ## v0.226.2 <a id="v0.226.2"></a>
 
 2026-11-09
