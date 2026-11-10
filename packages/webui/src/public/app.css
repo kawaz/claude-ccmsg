@@ -4647,28 +4647,34 @@ button.session-tab {
   cursor: default;
 }
 
-/* TL の最上部 (最初の行の上) の「過去分を読み込む」。左右中央に置く。 */
-.tl-load-older {
-  display: flex;
-  justify-content: center;
-  padding: var(--space-8) var(--space-11) 0;
-}
-
-.tl-load-older button {
+/* TL の行の列の上下に置く横幅いっぱいのボタン: 最上部の「過去分を読み込む」と、
+ * フィルタ中の末尾の「TL に戻る」。プライマリではない控えめな見た目で、2 つは
+ * 同じ見た目にする。 */
+.tl-wide-button {
   font: inherit;
   font-size: var(--font-size-md);
-  padding: var(--space-4) var(--space-10);
-  border-radius: 0.4rem;
+  width: 100%;
+  padding: var(--space-6) var(--space-10);
+  background: none;
+  color: var(--fg-muted);
   border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
+  border-radius: 0.4rem;
   cursor: pointer;
-  white-space: nowrap;
 }
 
-.tl-load-older button:disabled {
+.tl-wide-button:hover:not(:disabled) {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.tl-wide-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* TL の最上部 (最初の行の上) の「過去分を読み込む」。行の列と同じ左右の余白。 */
+.tl-load-older {
+  padding: var(--space-8) var(--space-11) 0;
 }
 
 /* Right-aligned "👤 N/M ↑ ↓" user-turn nav (kawaz spec) — pushed to the
@@ -5009,25 +5015,10 @@ button.session-tab {
   font-size: var(--font-size-sm);
 }
 
-/* フィルタ中の最後のバブルの下に置く横幅いっぱいの「TL に戻る」。プライマリ
- * ではない控えめな見た目 (.status-form-save と同じ弱いボタン)。フィルタの
- * 無い間は hidden で隠す。 */
+/* フィルタ中の最後のバブルの下に置く「TL に戻る」(見た目は .tl-wide-button)。
+ * フィルタの無い間は hidden で隠す。 */
 .tl-filter-back {
-  font: inherit;
-  font-size: var(--font-size-md);
-  width: 100%;
   margin-top: var(--space-8);
-  padding: var(--space-6) var(--space-10);
-  background: none;
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  cursor: pointer;
-}
-
-.tl-filter-back:hover {
-  color: var(--fg);
-  border-color: var(--fg-muted);
 }
 
 .tl-filter-back[hidden] {

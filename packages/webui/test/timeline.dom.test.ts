@@ -324,6 +324,8 @@ describe("Timeline loading", () => {
     expect(buttonsTitledText(element(view.root, ".tl-toolbar"), "過去分を読み込む")).toHaveLength(
       0,
     );
+    // It looks as the filter's 「TL に戻る」 does: the one class both carry.
+    expect(loadOlderButton(view.root).classList.contains("tl-wide-button")).toBe(true);
     // The scroller's content: the toolbar, then the button, then the rows.
     const children = [...scroller(view.root).children];
     const button = children.indexOf(element(view.root, ".tl-load-older"));

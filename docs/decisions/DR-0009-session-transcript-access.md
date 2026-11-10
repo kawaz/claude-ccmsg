@@ -48,7 +48,7 @@ DR-0008 でファイルツリー + コードビューアは実装済みだが、
 - 1 回に返す量は上限で clamp する。数十〜数百 MB の transcript を一度に読み切ることを防ぎ、webui 側は older (`start` を次の `before` に渡す) の pull 型ページングで遡る。`max_bytes` を省くと上限いっぱいまで返す
   - `before` 無し (tail) と `after` は `TRANSCRIPT_READ_MAX_BYTES` (1 MB)。開いた時に描く量で、大きいと初回の描画が重い
   - `before` 付き (older) は `TRANSCRIPT_READ_OLDER_MAX_BYTES` (5 MB)。遡る読み手は過去ログを読み込んでページ内検索することが多く、1 回が小さいと「過去分を読み込む」を何度も押すことになる
-- webui の Timeline は older を `max_bytes` 無しで送り、daemon の上限で 1 回の量を決める。送るのは TL の最上部 (最初の行の上) の左右中央に置く「過去分を読み込む」ボタンで、読み込み中は押せない。先頭まで読み込んだ (返事の `start` が 0) 後はこのボタンを出さない
+- webui の Timeline は older を `max_bytes` 無しで送り、daemon の上限で 1 回の量を決める。送るのは TL の最上部 (最初の行の上) に置く横幅いっぱいの「過去分を読み込む」ボタンで、見た目はフィルタ中の末尾の「TL に戻る」([DR-0050](./DR-0050-timeline-notification-badges.md) §4) と同じ (プライマリでない控えめなボタン、`.tl-wide-button`)。読み込み中は押せない。先頭まで読み込んだ (返事の `start` が 0) 後はこのボタンを出さない
   - 読み込んだ行は今の先頭の行の上に足されるので、押した時にボタンの直下にあった行 (位置を持つ行を優先する) の画面内の位置を保つ。押した時の scroller の上端からの距離を測り、内容が伸びるたびにその行の距離が変わった分だけ scrollTop を足す (DR-0050 §6 のフィルタを外す時と同じ道具。ブラウザの scroll anchoring には任せない)
 - `TranscriptReadResponse.size` (現在のファイルサイズ) を毎回返す。session 実行中は transcript が伸び続けるため、webui はこれを見て「新着があるか」を判定できる
 - `TranscriptReadRequest.after` (`before` とは併用しない) は、その offset **以後に始まる行**を古い順に cap まで返す。前の読みの `end` を渡すと、その後に書かれた分だけが届く。返事の `end` が `size` に届かなければ続きがあり、`end` を次の `after` に渡して読み進める

@@ -608,6 +608,7 @@ export function Timeline({
                         <div class="tl-load-older">
                           <button
                             type="button"
+                            class="tl-wide-button"
                             disabled={timeline.status === "loading"}
                             onClick={loadOlder}
                           >
@@ -882,7 +883,7 @@ export function Timeline({
                            * 外す前と同じに保つ。 */}
                           <button
                             type="button"
-                            class="tl-filter-back"
+                            class="tl-wide-button tl-filter-back"
                             hidden={currentFilter === null}
                             onClick={leaveFilter}
                           >
