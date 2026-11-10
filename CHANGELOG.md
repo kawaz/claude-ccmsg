@@ -2,6 +2,14 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.232.3 <a id="v0.232.3"></a>
+
+2026-11-10
+
+- Timeline 下の状態行の model / effort を Status タブの MODEL / EFFORT と同じ表示にした (上書き中は `📌low` / `⏱️high`)。状態行だけの `⁺`・黄色・hover の説明を無くした
+- Status タブの MODEL を、起動時の別名 (`fable[1m]`) でなく応答した model の ID (`fable-5-2[1m]`) で出す。状態行の model と同じ文字
+- サイドバーの GLOBALS の開閉を窓ごとに覚える (sessionStorage)
+
 ## v0.232.2 <a id="v0.232.2"></a>
 
 2026-11-10
