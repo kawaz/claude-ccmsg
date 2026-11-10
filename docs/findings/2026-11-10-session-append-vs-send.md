@@ -209,3 +209,30 @@ Bun の既定の idle timeout (10 秒) が 10 秒止めた stream を 1 回切�
 - 別の `CLAUDE_CONFIG_DIR` の session の agent への send (agent は session の中の宛先なので試していない)
 - iTerm2 の split pane、`claude -p` の中の agent、subagent から subagent への send、compaction を挟んだ append
 - `on('session.send')` / `on('session.append')` を名指しした hook での、自 plugin の呼び出しの見え方
+
+## 実装後の実機確認 (2026-11-11)
+
+ccmsg の `send` の `agent_id` 付きの送信を、サイドカーの依頼 `agent.send` (module が `$.session.send({ to: { agentId }, text })` を呼ぶ) に切り替えた後 (DR-0039 §3) に、build した plugin で 1 回通した。
+
+- 環境: Claude Code 2.1.322、上の「方法」と同じ代役の API と隔離した `CLAUDE_CONFIG_DIR` (`env -i` で起こした専用の tmux server の中)。試験用セッションを 2 つ起こした: 受け手 T と送り手 S (`--name 🤖ccmsg-verify-agent-send-<T|S>`)。どちらも `--plugin-dir` にこの変更の workspace (`hooks/register.bundle.js`) と観測 mod `probe-as` を渡し、`CCMSG_STATE_DIR` / `CCMSG_CONFIG_DIR` / `CCMSG_DATA_DIR` を temp base の下に向けた隔離 daemon (セッションの起動で module が起こしたもの) に繋いだ
+- 代役の台本に、S の main の最新の user の文が `CCSEND <sid> <agentId> <印>` なら `mcp__ccmsg-v1__send` の tool_use (`{ session_id, agent_id, text: "<印> from the sender" }`) を返す行を足した。この版は request の最後に `role: "system"` の message を置くので、台本の指示は最後の message でなく最新の user message から読むように直した
+- 送り手の model が読む文は、S の次の request の tool_result から写した
+
+| 宛先 (T の中) | daemon.log | 受け手の request | S の tool の結果 (原文) |
+|---|---|---|---|
+| 待機中の in-process teammate (`at1-...`、`$.agent.list()` で idle) | `agent-send -> <T> at1-89e28aae21ddbb3a: delivered tries=[<id> <T>.<run>.sock delivered]` | teammate が起き、新しい turn の user message が `<teammate-message teammate_id="team-lead" summary="ccmsg:<S> から:">\nccmsg:<S> から:\nMK-V1-IDLE from the sender\n</teammate-message>`。その turn の終わりに T の main が idle_notification (`"result":"agent t1 reply"`) で起きた | `1 件の宛先すべてに届いた。`<br>`- session_id: <T>, name: "🤖ccmsg-verify-agent-send-T", cwd: "<T の cwd>": 届いた` |
+| 走行中の subagent (Bash の実行中) | `... a0e3cd4709df2da5d: delivered ...` | tool が終わった後の次の request (同じ turn) の `role: "system"` の message に `The coordinator sent a message while you were working:\nccmsg:<S> から:\nMK-V2-RUN from the sender\n\nAddress this before completing your current task.` | 上と同じ文 (`届いた`) |
+| 存在しない id (`a0000000000000000`) | `... a0000000000000000: not_delivered (no_agent) tries=[... not_delivered:no_agent "Agent \"a0000000000000000\" could not be resumed: No transcript found for agent ID: a0000000000000000. If you read this id in a message from another Claude Code process (...) — reply through \"team-lead\" or the session that sent it instead of the raw id."]` | — | `1 件の宛先のうち 0 件に届いた。届いた宛先には送り直さない。`<br>`- session_id: <T>, ...: 届かなかった。そのセッションにその agent_id の subagent / teammate が居ない (agent_id の誤りか、別のセッションの agent)。agent_id と宛先のセッションを確かめて送り直す` |
+| 終わった subagent (上の走行中の subagent が turn を終えて約 90 秒後) | `... a0e3cd4709df2da5d: delivered ...` | `agent.spawn` (resume) と `turn.start` が起き、新しい turn の最初の user message に「The coordinator sent a message while you were working:\nccmsg:<S> から:\nMK-V4-DONE ...」。その後 T の main が task-notification で起きた | 上と同じ文 (`届いた`) |
+
+- Claude Code の英文の理由 (`No transcript found ...`) は daemon.log にだけあり、代役への全 request に 0 件 (S の model には見えていない)
+- T の debug log では、module の `$.session.send` は engine の SendMessage の `$.tool.call` として通り、ccmsg 自身の `tool.call` hook は `skipped: re-entry (the plugin's own code raised it; origin ccmsg-v1)` で飛ばされた (サイドカーの依頼を契機にした呼び出し)。上の「reference との食い違い」の、command.run の hook から呼んだ時に自分の hook に現れた件とは場面が違う。ccmsg は `session.send` を hook せず、`tool.call` は自分の tool の matcher でしか hook しないので、どちらの見え方でも ccmsg の動きは変わらない
+- subagent が `launch` を呼び、結果が届く前に turn を終えた場合 (2 回目の session。daemon の `session_launcher.launch_command` を、入力を捨てて 20 秒眠り `stand-in launch done` を出すだけの代役にした。claude は起動していない): subagent の tool の結果は `起動コマンドがまだ終わっていない。結果は終わった時に ccmsg からこの会話に届く` で、subagent はその次の request で end_turn し `turn.complete` (`agentId` 付き) が起きた。7 秒後に起動コマンドが終わると、daemon.log に `agent-send -> <T> acaf71923aa26d074: delivered ...`・`launch_tool: told <T> agent acaf71923aa26d074: delivered` が出て、`agent.spawn` (resume) と `turn.start` が起き、新しい turn の最初の user message が `The coordinator sent a message while you were working:\nccmsg:daemon から:\nccmsg の launch (cwd: <ws>) が終わった: {"session_id":"bee30fab-...","exit_code":0,"stdout":"stand-in launch done\n","stderr":""}\n\nAddress this before completing your current task.` だった。その turn の後に T の main が task-notification で起きた (1/1)
+- 観測 mod の `session.send` は 1 回目の session の 4 回とも `origin: { kind: "plugin", name: "ccmsg-v1" }`、`to` は teammate が名前 (`t1`)、subagent が id の文字列 (上の「event」節と同じ綴り直し)
+
+### この確認で通していないこと
+
+- 古い module (`agent.send` を知らない plugin で起動したセッション) への送信: 実機では未検証 (古い版の plugin のセッションを起こしていない)。古い module は知らない op の行を答えないので、daemon は期限 (5 秒) で `unconfirmed` を返す。答えない run の扱いは daemon の単体のテストで確かめた
+- webui から走行中の subagent への入力 (`user_message`) が `agent.append` のままであること: 実機では未検証。daemon の wire のテストで、同じセッションへの `user_message` がサイドカーに `agent.append` (送り主無し) として書かれることを確かめた
+- 走行中の teammate、split pane の teammate、teammate の最後の応答の最中への送信 (上の §4 の場面) は、この確認では回していない
+- 実の model が封筒 (`team-lead` / coordinator) と本文の印のどちらを返信先と読むか (上の「未検証」と同じ)
