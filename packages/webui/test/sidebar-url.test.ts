@@ -88,6 +88,17 @@ describe("withSidebarState / round-trip", () => {
     expect(parseSidebarUrl(new URL(url, "http://x").search)).toEqual(opened);
   });
 
+  // The fragment names a place inside what the page shows (a file's
+  // preview): recomposing `sb.*` must not drop it.
+  test("#fragment は素通しで残る", () => {
+    const href = "/s/sid-1/files?path=docs%2Fq.md#3344-Q3";
+    expect(withSidebarState(href, CLOSED_SIDEBAR)).toBe(href);
+    const url = withSidebarState(href, opened);
+    expect(new URL(url, "http://x").hash).toBe("#3344-Q3");
+    expect(parseSidebarUrl(new URL(url, "http://x").search)).toEqual(opened);
+    expect(withSidebarState("/r/room-1?sb.panel=search#x", CLOSED_SIDEBAR)).toBe("/r/room-1#x");
+  });
+
   test("閉じた状態を書けば sb.* が消える (ページ固有 query は残る)", () => {
     expect(withSidebarState("/usage/stats/daily?days=7&sb.panel=new", CLOSED_SIDEBAR)).toBe(
       "/usage/stats/daily?days=7",

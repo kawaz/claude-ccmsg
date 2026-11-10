@@ -104,6 +104,8 @@ export function FilesPanes({
         lineRange: selectedLineRange,
         from: selectedFrom,
         section: selectedSection,
+        // Not in the store: the place inside the file is the URL's own.
+        fragment: location.hash.slice(1),
       }),
     );
   }, [sid, selectedPath, canonicalPath, selectedLineRange, selectedFrom, selectedSection]);

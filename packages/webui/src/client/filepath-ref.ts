@@ -27,6 +27,10 @@ export interface ParsedFilePathRef {
   path: string;
   line?: number;
   end?: number;
+  /** The place inside the file a markdown link names after `#`
+   * (`docs/x.md#q1` → `q1`), as written. A line range (`#L10`) is `line` /
+   * `end`, not this. */
+  fragment?: string;
 }
 
 // The trailing suffix that carries the line info. Two forms:
@@ -442,7 +446,7 @@ export function hrefFromStatEntry(
 ): string {
   const lineRange =
     ref.line !== undefined ? { start: ref.line, end: ref.end ?? ref.line } : undefined;
-  return fileHref(sid, entry.path, { lineRange, from });
+  return fileHref(sid, entry.path, { lineRange, from, fragment: ref.fragment });
 }
 
 /** Walk a raw markdown source and extract every inline-code token

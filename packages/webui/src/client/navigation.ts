@@ -109,7 +109,7 @@ export function withoutTimelineFilter(url: string, origin: string = location.ori
   const parsed = new URL(url, origin);
   if (!parsed.searchParams.has("filter")) return url;
   parsed.searchParams.delete("filter");
-  return `${parsed.pathname}${parsed.search}`;
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function saveRecent(sid: string, url: string): void {
@@ -349,7 +349,7 @@ export function setupNavigation(store: Store, ws: WsClient): void {
       if (current.panel !== null && parseSidebarUrl(targetUrl.search).panel === null) {
         event.preventDefault();
         window.navigation.navigate(
-          withSidebarState(`${targetUrl.pathname}${targetUrl.search}`, current),
+          withSidebarState(`${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`, current),
           {
             history: event.navigationType === "replace" ? "replace" : "push",
             info: SIDEBAR_COMPOSED,
@@ -391,7 +391,7 @@ export function setupNavigation(store: Store, ws: WsClient): void {
       // switching the Timeline's filter inside one session do not stack
       // history entries.
       replaceNavigation(
-        `${targetUrl.pathname}${targetUrl.search}`,
+        `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`,
         parseSidebarUrl(targetUrl.search),
       );
       return;

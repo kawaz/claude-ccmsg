@@ -7,6 +7,7 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { MarkdownView } from "../src/client/markdown-view.tsx";
 import { withDom } from "./dom.ts";
+import { stubProperty } from "./helpers.ts";
 
 withDom();
 
@@ -20,15 +21,42 @@ afterEach(async () => {
   root.remove();
 });
 
-/** The preview as FileViewer mounts it: outline and section folds on. */
-async function mountPreview(source: string): Promise<HTMLElement> {
+/** The preview as FileViewer mounts it: outline and section folds on, and
+ * the URL's fragment when there is one. */
+async function mountPreview(source: string, fragment?: string): Promise<HTMLElement> {
   const root = document.createElement("div");
   document.body.append(root);
   container = root;
   await act(() =>
-    render(h(MarkdownView, { source, tableOfContents: true, foldSections: true }), root),
+    render(
+      h(MarkdownView, {
+        source,
+        tableOfContents: true,
+        foldSections: true,
+        ...(fragment !== undefined ? { fragment } : {}),
+      }),
+      root,
+    ),
   );
   return root;
+}
+
+/** The ids `scrollIntoView` was called on, in order, from here on. */
+function watchScrolls(): { ids: string[]; restore: () => void } {
+  const ids: string[] = [];
+  const restore = stubProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    writable: true,
+    value(this: Element): void {
+      ids.push(this.id);
+    },
+  });
+  return { ids, restore };
+}
+
+/** Let the frame the reveal waits for run. */
+async function nextFrame(): Promise<void> {
+  await act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 }
 
 const SOURCE = [
@@ -80,5 +108,35 @@ describe("the file preview's document anchors", () => {
   test("an anchor in a section's body is in the document", async () => {
     await mountPreview(["## 節", "", 'text <a name="in-body"></a> more'].join("\n"));
     expect(document.getElementById("in-body")?.closest("p")?.textContent).toBe("text  more");
+  });
+
+  // The browser's own jump to a fragment runs when the URL is entered, before
+  // the file is loaded and drawn; the preview goes there once it is.
+  test("the URL's fragment is gone to once the document is drawn: an author's anchor, or an outline id", async () => {
+    const scrolls = watchScrolls();
+    try {
+      await mountPreview(SOURCE, "3335-Q1");
+      await nextFrame();
+      expect(scrolls.ids).toEqual(["3335-Q1"]);
+      scrolls.ids.length = 0;
+      await mountPreview(SOURCE, "md-section-1-2");
+      await nextFrame();
+      expect(scrolls.ids).toEqual(["md-section-1-2"]);
+    } finally {
+      scrolls.restore();
+    }
+  });
+
+  test("a fragment that names nothing in the document, or none, scrolls nothing", async () => {
+    const scrolls = watchScrolls();
+    try {
+      await mountPreview(SOURCE, "no-such-place");
+      await mountPreview(SOURCE, "");
+      await mountPreview(SOURCE);
+      await nextFrame();
+      expect(scrolls.ids).toEqual([]);
+    } finally {
+      scrolls.restore();
+    }
   });
 });

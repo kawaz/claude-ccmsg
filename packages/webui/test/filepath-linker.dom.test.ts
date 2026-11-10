@@ -83,6 +83,30 @@ describe("prose paths through the probe", () => {
     expect(root.textContent).toBe("see /tmp/d/DESIGN.md, ~/notes/x.md and /tmp/missing.md");
   });
 
+  // `[label](path#place)`: the place inside the file is the link's own, and
+  // rides as the href's fragment in a markdown body and in plain text alike.
+  test("a markdown link's #fragment stays on the href", async () => {
+    installDaemon(["/repo/docs/questions/3344.md"]);
+    const source = "[👺3344-Q3](docs/questions/3344.md#3344-Q3) と [行](docs/questions/3344.md#L3)";
+    const body = await mount(h(LinkedMarkdownView, { source, ctx }));
+    const hrefs = links(body).map((l) => new URL(l.href, "http://localhost"));
+    expect(hrefs.map((url) => url.hash)).toEqual(["#3344-Q3", ""]);
+    expect(hrefs.map((url) => url.searchParams.get("path"))).toEqual([
+      "docs/questions/3344.md",
+      "docs/questions/3344.md",
+    ]);
+    expect(hrefs[1]?.searchParams.get("lines")).toBe("3-3");
+  });
+
+  test("a plain-text link's #fragment stays on the href", async () => {
+    installDaemon(["/repo/docs/questions/3344.md"]);
+    const text = "[👺3344-Q3](/repo/docs/questions/3344.md#3344-Q3)";
+    const body = await mount(h(LinkedPlainText, { text, ctx }));
+    const [link] = links(body);
+    expect(link?.text).toBe("👺3344-Q3");
+    expect(new URL(link?.href ?? "", "http://localhost").hash).toBe("#3344-Q3");
+  });
+
   test("a user's plain text links URLs and confirmed paths, verbatim otherwise", async () => {
     const asked = installDaemon(["/tmp/d/DESIGN.md"]);
     const text = "**読んで** /tmp/d/DESIGN.md と https://ex.com/a。/tmp/missing.md";

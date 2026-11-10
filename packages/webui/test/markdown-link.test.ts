@@ -258,11 +258,22 @@ describe("markdownLinkPathRef", () => {
     expect(markdownLinkPathRef("src/a.ts#L20-L10")).toEqual({ path: "src/a.ts", line: 20 });
   });
 
-  // A heading fragment names a location *inside* the target file that the
-  // FileViewer cannot jump to. Dropping it still opens the right file, which
-  // is strictly better than refusing the link.
-  test("a non-line fragment is dropped but the file still resolves", () => {
-    expect(markdownLinkPathRef("docs/spec.md#installation")).toEqual({ path: "docs/spec.md" });
+  // A fragment that is not a line range names a place *inside* the target
+  // file (a heading's id, an anchor the author wrote): it stays on the ref, as
+  // written, and travels in the link as the URL's own fragment.
+  test("a non-line fragment is kept as the place inside the file", () => {
+    expect(markdownLinkPathRef("docs/spec.md#installation")).toEqual({
+      path: "docs/spec.md",
+      fragment: "installation",
+    });
+    expect(markdownLinkPathRef("docs/questions/3344.md#3344-Q3")).toEqual({
+      path: "docs/questions/3344.md",
+      fragment: "3344-Q3",
+    });
+    // Only the first `#` splits; the fragment is not decoded here.
+    expect(markdownLinkPathRef("a.md#x%20y#z")).toEqual({ path: "a.md", fragment: "x%20y#z" });
+    // A bare `#` names no place.
+    expect(markdownLinkPathRef("a.md#")).toEqual({ path: "a.md" });
   });
 
   test("percent-encoding is decoded so a spaced filename resolves", () => {

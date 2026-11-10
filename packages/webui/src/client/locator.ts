@@ -269,16 +269,20 @@ export interface FileHrefOptions {
   /** The markdown document the link was followed from. */
   from?: string | null;
   section?: FilesSection | null;
+  /** The place inside the file to go to, written after `#` as it is given
+   * (a link's own fragment, already in a URL's spelling). */
+  fragment?: string | null;
 }
 
 export function fileHref(sid: string, path: string, options: FileHrefOptions = {}): string {
-  const { lineRange, from, section } = options;
+  const { lineRange, from, section, fragment } = options;
   const params = new URLSearchParams();
   params.set("path", path);
   if (lineRange) params.set("lines", `${lineRange.start}-${lineRange.end}`);
   if (from) params.set("from", from);
   if (section) params.set("section", section);
-  return `${filesHref(sid)}?${params.toString()}`;
+  const href = `${filesHref(sid)}?${params.toString()}`;
+  return fragment ? `${href}#${fragment}` : href;
 }
 
 /** The session's own Timeline at `position`, showing only `filter`'s bubbles

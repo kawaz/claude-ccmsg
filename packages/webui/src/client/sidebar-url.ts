@@ -108,7 +108,8 @@ function sidebarEntries(state: SidebarUrlState): [string, string][] {
 }
 
 /** URL の `sb.*` だけを差し替える。path と、そのページ固有の query
- * (`/usage?days=`) はそのまま — 別の名前空間なので互いに触らない。 */
+ * (`/usage?days=`)、`#fragment` (ファイルの中の場所) はそのまま — 別の名前
+ * 空間なので互いに触らない。 */
 export function withSidebarState(url: string, state: SidebarUrlState): string {
   const parsed = new URL(url, "http://x");
   const kept = new URLSearchParams();
@@ -117,7 +118,7 @@ export function withSidebarState(url: string, state: SidebarUrlState): string {
   }
   for (const [key, value] of sidebarEntries(state)) kept.append(key, value);
   const query = kept.toString();
-  return query === "" ? parsed.pathname : `${parsed.pathname}?${query}`;
+  return `${parsed.pathname}${query === "" ? "" : `?${query}`}${parsed.hash}`;
 }
 
 /** 2 つの `sb.*` 状態が同じか。遷移のたびに parseSidebarUrl が新しい

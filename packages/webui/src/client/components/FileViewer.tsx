@@ -5,11 +5,12 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
-import type { JSX, RefObject } from "preact";
+import type { ComponentProps, JSX, RefObject } from "preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { useLocationFragment } from "../useNavigationHistory.ts";
 import { useResettableState } from "../useKeyedState.ts";
 import { useStoreState } from "../useStore.ts";
 import type { Store } from "../useStore.ts";
@@ -78,6 +79,35 @@ import { SearchBar } from "./SearchBar.tsx";
 import { CodeEditor } from "./CodeEditor.tsx";
 import { toEditorText, toFileText } from "../editor-text.ts";
 import { Tabs } from "./Tabs.tsx";
+
+/** The markdown preview of a file: the document with its outline and section
+ * folds, gone to the place the URL names (`…/files?path=…#q1`). The URL's
+ * fragment is read here rather than in the viewer, so only a drawn preview
+ * follows the history entry for it. */
+function MarkdownPreview({
+  source,
+  taskList,
+  pathLinker,
+  issueRepo,
+}: {
+  source: string;
+  taskList: ComponentProps<typeof MarkdownView>["taskList"];
+  pathLinker: ComponentProps<typeof MarkdownView>["pathLinker"];
+  issueRepo: string | undefined;
+}) {
+  const fragment = useLocationFragment();
+  return (
+    <MarkdownView
+      source={source}
+      tableOfContents
+      foldSections
+      taskList={taskList}
+      pathLinker={pathLinker}
+      issueRepo={issueRepo}
+      fragment={fragment}
+    />
+  );
+}
 
 function splitLines(content: string): string[] {
   const lines = content === "" ? [] : content.split("\n");
@@ -1398,10 +1428,8 @@ export function FileViewer({
            * message is rendered at the item itself instead, next to the
            * checkbox that just sprang back. `MarkdownView`'s `taskList` ctx
            * carries them. */}
-          <MarkdownView
+          <MarkdownPreview
             source={res.content}
-            tableOfContents
-            foldSections
             taskList={taskToggle.taskList}
             pathLinker={previewPathLinker}
             issueRepo={peer?.repo}

@@ -91,10 +91,10 @@ export type MarkdownLinkTarget =
   | { kind: "anchor"; url: string }
   | { kind: "path"; ref: ParsedFilePathRef };
 
-/** `#L10`, `#L10-L20`, `#L10-20` — the line-range fragment GitHub popularized
- * and the only fragment shape that means something to the FileViewer. Any
- * other fragment names a heading inside the *target* file, which the viewer
- * has no way to jump to, so it is dropped after being used to split the path. */
+/** `#L10`, `#L10-L20`, `#L10-20` — the line-range fragment GitHub popularized,
+ * which the FileViewer shows as selected lines. Any other fragment names a
+ * place inside the *target* file (a heading's id, an anchor the author wrote):
+ * it is kept on the ref and travels in the link as the URL's own `#fragment`. */
 const LINE_FRAGMENT_RE = /^L(\d+)(?:-L?(\d+))?$/;
 
 /** Split a link URL into `{path, fragment}`. Only the first `#` counts — a
@@ -142,7 +142,7 @@ export function markdownLinkPathRef(url: string): ParsedFilePathRef | null {
   if (path === "") return null;
   if (path.endsWith("/")) return null;
   const lines = LINE_FRAGMENT_RE.exec(fragment);
-  if (!lines) return { path };
+  if (!lines) return fragment === "" ? { path } : { path, fragment };
   const start = Number(lines[1]);
   if (start <= 0) return { path };
   const end = lines[2] !== undefined ? Number(lines[2]) : undefined;

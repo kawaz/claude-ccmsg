@@ -1738,8 +1738,15 @@ export function renderPlainTextWithLinks(
     webuiUrls,
     headingIndex: 0,
     filePathLinker,
-    // Reached only for a target `plainLinkTargetOpens` already confirmed.
-    pathLinker: filePathLinker ? (ref) => filePathLinker(filePathToken(ref)) : undefined,
+    // Reached only for a target `plainLinkTargetOpens` already confirmed. The
+    // token the file linker reads has no spelling for a place inside the file
+    // (`#fragment`), so that goes onto the href it answers with.
+    pathLinker: filePathLinker
+      ? (ref) => {
+          const href = filePathLinker(filePathToken(ref));
+          return href !== null && ref.fragment ? `${href}#${ref.fragment}` : href;
+        }
+      : undefined,
     taskIndex: 0,
     inLink: false,
     documentAnchors: false,
@@ -2110,6 +2117,7 @@ export function MarkdownView({
   taskList,
   foldSections = false,
   issueRepo,
+  fragment,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -2151,6 +2159,11 @@ export function MarkdownView({
    * `#NNN` stays plain text. Applies in `restricted` mode too: the user's
    * characters are still rendered verbatim, an href is merely attached. */
   issueRepo?: string;
+  /** The id of the place in the document to bring into view (the URL's
+   * `#fragment`: a heading's outline id, or an anchor the author wrote). Gone
+   * to once the document is drawn and again when it changes; a fragment that
+   * names nothing in the document does nothing. */
+  fragment?: string;
 }) {
   const search = useMemo(
     () => (highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined),
@@ -2162,6 +2175,13 @@ export function MarkdownView({
   const sectionFold = foldSections && !restricted;
   const sectionStore = useKeyedValue([source, sectionFold], () => new FoldOpenStore());
   const webuiUrls = useWebuiUrls();
+  // After the document is in the DOM: the browser's own jump to a fragment
+  // runs when the URL is entered, which is before a file's preview is loaded
+  // and drawn, and does not open a folded section the place is in.
+  useEffect(() => {
+    if (fragment === undefined || fragment === "") return;
+    revealMarkdownAnchor(fragment, sectionFold ? sectionStore : null);
+  }, [fragment, source, sectionFold, sectionStore]);
   return useMemo(() => {
     if (restricted) return renderRestrictedMarkdown(source, issueRepo, webuiUrls);
     const parsed = parseMarkdownDocument(source);

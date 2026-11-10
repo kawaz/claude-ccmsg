@@ -188,6 +188,19 @@ describe("real-path locators", () => {
     expect(fileHref("s1", "a.ts", { section: null })).toBe(fileHref("s1", "a.ts"));
   });
 
+  // The place inside the file rides as the URL's own fragment, after the
+  // query; the locator the store keeps is the same with and without it.
+  test("fileHref puts a fragment after the query, and parseUrl reads the same file", () => {
+    const href = fileHref("s1", "docs/questions/3344.md", { fragment: "3344-Q3" });
+    expect(href).toBe(`${fileHref("s1", "docs/questions/3344.md")}#3344-Q3`);
+    const url = new URL(href, "http://localhost");
+    expect(url.hash).toBe("#3344-Q3");
+    const plain = new URL(fileHref("s1", "docs/questions/3344.md"), "http://localhost");
+    expect(parseUrl(url.pathname, url.search)).toEqual(parseUrl(plain.pathname, plain.search));
+    expect(fileHref("s1", "a.md", { fragment: "" })).toBe(fileHref("s1", "a.md"));
+    expect(fileHref("s1", "a.md", { fragment: null })).toBe(fileHref("s1", "a.md"));
+  });
+
   test("invalid line ranges are ignored while the file remains selected", () => {
     expect(parseUrl("/s/s1/files", "?path=a.ts&lines=20-10")).toEqual({
       view: "session",
