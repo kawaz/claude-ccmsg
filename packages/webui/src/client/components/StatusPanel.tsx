@@ -678,7 +678,6 @@ export function StatusPanel({
                     aria-label="context window の使用率"
                   />
                 ) : null}
-                <span class="status-context-rest">{context.rest}</span>
               </>
             ) : (
               "—"

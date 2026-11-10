@@ -314,7 +314,9 @@ describe("Status tab copy buttons", () => {
 });
 
 describe("Status tab CONTEXT gauge", () => {
-  test("is labelled CONTEXT and shows the fill, a meter of it, and the model and effort, with no note after them", async () => {
+  // The model and the effort are the MODEL / EFFORT gauges right below: the
+  // CONTEXT gauge does not say them again beside its meter.
+  test("is labelled CONTEXT and shows the fill and a meter of it, and nothing after the meter", async () => {
     const { root } = await mountStatus(agentRow());
     const labels = [...root.querySelectorAll(".status-meta dt")].map((d) => d.textContent);
     expect(labels).toContain("CONTEXT");
@@ -323,12 +325,11 @@ describe("Status tab CONTEXT gauge", () => {
     expect([...cell.children].map((c) => c.className)).toEqual([
       "status-context-fill",
       "status-context-meter",
-      "status-context-rest",
     ]);
+    expect(cell.textContent).toBe("28%");
     expect(cell.querySelector(".status-context-fill")?.textContent).toBe("28%");
     const meter = instanceOf(cell.querySelector("meter"), HTMLMeterElement, "the meter");
     expect([meter.min, meter.max, meter.value]).toEqual([0, 1, 0.28]);
-    expect(cell.querySelector(".status-context-rest")?.textContent).toBe("fable-5-1[200K] / low");
     expect(cell.title).toContain("56,000 tokens");
     expect(root.textContent).not.toContain("上限は推定");
   });

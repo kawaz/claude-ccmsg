@@ -372,8 +372,8 @@ describe("context usage display", () => {
     expect(modelAt(2_000_000)).toBe("m[2m]");
   });
 
-  // Status タブの CONTEXT は fill を目盛りに、残りを横の文に分けて出す。
-  test("目盛りの割合と fill の後ろの文を分けて返す", () => {
+  // Status タブの CONTEXT は fill の文字と、その割合の目盛りを出す。
+  test("目盛りの割合を返す", () => {
     const formatted = formatContextUsage({
       tokens: 280_000,
       window: 1_000_000,
@@ -382,8 +382,7 @@ describe("context usage display", () => {
       timestamp: "t",
     });
     expect(formatted.ratio).toBe(0.28);
-    expect(formatted.rest).toBe("fable-5-1[1m] / high");
-    expect(formatted.text).toBe(`${formatted.fill} / ${formatted.rest}`);
+    expect(formatted.text).toBe("28% / fable-5-1[1m] / high");
     // window か使用量が無ければ割合は出せない。
     expect(formatContextUsage({ tokens: 1, model: "m", timestamp: "t" }).ratio).toBeNull();
     expect(formatContextUsage({ window: 1, model: "m", timestamp: "t" }).ratio).toBeNull();

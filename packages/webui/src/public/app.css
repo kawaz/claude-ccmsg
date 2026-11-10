@@ -7544,7 +7544,9 @@ a.tl-attachment-file-path {
 .status-gauges {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  /* The gauges of a row start on one line: their names level, then their
+   * values level (each value cell has the same height, below). */
+  align-items: flex-start;
   gap: var(--space-11) var(--space-15);
   padding: var(--space-11) var(--space-12);
   border-radius: 0.6rem;
@@ -7569,14 +7571,23 @@ a.tl-attachment-file-path {
   font-size: var(--font-size-xl);
 }
 
+/* LIVE / MODEL / EFFORT: one height for the three value cells, whatever is in
+ * them. LIVE's text is larger, and a value's mark (📌, ⏱️) is an emoji with a
+ * taller line box than the text beside it, either of which would otherwise
+ * set its own cell's height and put the values of one row on different lines. */
+.status-live,
+.status-override {
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+}
+
 .status-gauges .override-value {
   font-size: inherit;
   font-family: ui-monospace, monospace;
 }
 
 .status-live {
-  display: flex;
-  align-items: center;
   gap: var(--space-7);
   font-size: 1.3rem;
   font-weight: 600;
@@ -7658,13 +7669,6 @@ a.tl-attachment-file-path {
 .status-context-meter::-webkit-meter-optimum-value {
   border-radius: 0.25rem;
   background: var(--accent);
-}
-
-.status-context-rest {
-  font-family: ui-monospace, monospace;
-  font-size: var(--font-size-sm);
-  color: var(--fg-muted);
-  white-space: nowrap;
 }
 
 /* The folds (ENV, Background, TODO): a rule over each, the heading muted until

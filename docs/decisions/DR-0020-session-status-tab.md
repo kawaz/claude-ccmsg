@@ -101,7 +101,8 @@ Status タブはセッションが何で、今何で動いているかと、セ�
 1. **計器**: 地の色を変えた 1 つの区画に CONTEXT / LIVE / MODEL / EFFORT (この順)
    - LIVE は大きい字と点。点は応答中なら塗って明滅、待ち (`waiting`) は警告色、idle は灰色の塗り、hooks module の名乗りが無ければ中抜き
    - MODEL / EFFORT は押すと選べる値 ([DR-0041](./DR-0041-request-model-effort-override.md) §6.4)
-   - CONTEXT は使用率の文字、window に対する割合の `<meter>` (window か使用量が分からない間は出さない)、その後に `model[window] / effort` (TL 下ミニパネルの ctx 行の後半と同じ綴り)。hover の説明は ctx 行と同じ
+   - CONTEXT は使用率の文字と、window に対する割合の `<meter>` (window か使用量が分からない間は出さない) だけ。model と effort はすぐ下の MODEL / EFFORT が出すので、meter の横には書かない。hover の説明は ctx 行と同じ
+   - LIVE / MODEL / EFFORT は同じ行に並び、名前どうし・値どうしの高さが揃う (値のセルの高さを 3 つで同じにする。LIVE の字の大きさや、値の印 📌 / ⏱️ の絵文字の行の高さで、セルごとに高さが変わらない)
 2. **セッションの値の表** (1 つの表): CWD / HYOUI_SESSION_ID / SESSION_ID / TITLE (最初から入力欄、[DR-0047](./DR-0047-session-rename-via-command-run.md) §4) / CCMSG / KIND / STARTED / UPTIME / PID (この順)
 3. ENV (畳み、開いた時に取得、機微な値は伏せ字)
 4. セッション操作 ([DR-0028](./DR-0028-session-kill.md) の restart の webui)

@@ -156,9 +156,6 @@ export interface ContextUsageView {
    * window or before the first response. Not clamped: a session can report
    * more than its window. */
   ratio: number | null;
-  /** The text after the fill: the model with its window, and the effort
-   * (`fable-5-1[1m] / high`). */
-  rest: string;
   model: string;
   effort: string | null;
 }
@@ -190,9 +187,8 @@ export function formatContextUsage(
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
   const { model, effort } = requestValueTexts(ctx, overrides, shortModel);
-  const rest = [model, ...(effort !== null ? [effort] : [])].join(" / ");
   return {
-    text: `${fill} / ${rest}`,
+    text: [fill, model, ...(effort !== null ? [effort] : [])].join(" / "),
     title:
       (tokens !== undefined ? `${tokens.toLocaleString("en-US")} tokens` : "no response yet") +
       (window !== undefined
@@ -202,7 +198,6 @@ export function formatContextUsage(
       (ctx.effort !== undefined ? ` / effort ${ctx.effort}` : ""),
     fill,
     ratio: tokens !== undefined && window !== undefined ? tokens / window : null,
-    rest,
     model,
     effort,
   };
