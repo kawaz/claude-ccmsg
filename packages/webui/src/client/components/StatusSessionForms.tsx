@@ -403,18 +403,25 @@ function RestartForm({
 
 /** One row of an operations list: what it is, one line on what it does, and
  * the button that does it at the end. The danger zone's kill is a row of the
- * same shape. */
+ * same shape. With `onPress`, a click anywhere in the row does what its button
+ * does (the button stays the one thing the keyboard reaches); the kill's row
+ * has none, so only its button ends the session. */
 export function ActionRow({
   name,
   description,
+  onPress,
   children,
 }: {
   name: string;
   description: string;
+  onPress?: (() => void) | undefined;
   children: JSX.Element;
 }) {
   return (
-    <li class="status-action">
+    <li
+      class={onPress ? "status-action status-action-pressable" : "status-action"}
+      onClick={onPress}
+    >
       <span class="status-action-what">
         <span class="status-action-name">{name}</span>
         <span class="status-action-desc">{description}</span>
@@ -446,6 +453,8 @@ export function SessionActions({
 }) {
   const [opened, setOpened] = useState<"launch" | "restart" | null>(null);
   const close = () => setOpened(null);
+  const openLaunch = cwd === null ? undefined : () => setOpened("launch");
+  const openRestart = () => setOpened("restart");
   return (
     <section class="status-section status-session-actions">
       <h3 class="status-section-title">セッション操作</h3>
@@ -457,19 +466,19 @@ export function SessionActions({
               ? "このセッションの cwd が分からないので起動できません (切断中)"
               : "このセッションと同じ cwd で、別のセッションを立てる"
           }
+          onPress={openLaunch}
         >
-          <button
-            type="button"
-            class="status-action-open"
-            disabled={cwd === null}
-            onClick={() => setOpened("launch")}
-          >
+          <button type="button" class="status-action-open" disabled={openLaunch === undefined}>
             起動…
           </button>
         </ActionRow>
         {restartShown ? (
-          <ActionRow name="再起動" description="止めてから同じ session_id で resume する">
-            <button type="button" class="status-action-open" onClick={() => setOpened("restart")}>
+          <ActionRow
+            name="再起動"
+            description="止めてから同じ session_id で resume する"
+            onPress={openRestart}
+          >
+            <button type="button" class="status-action-open">
               再起動…
             </button>
           </ActionRow>

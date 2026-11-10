@@ -443,6 +443,18 @@ describe("Status の新セッションを起動", () => {
     expect(actionRow(root, LAUNCH)?.textContent).toContain("cwd が分からないので起動できません");
     expect(actionButton(root, LAUNCH).disabled).toBe(true);
     expect(launchDialog(root)).toBeNull();
+    // The row is not the way around its disabled button.
+    const name = actionRow(root, LAUNCH)?.querySelector(".status-action-name");
+    await act(() => instanceOf(name, HTMLElement, "the 起動 row's name").click());
+    expect(launchDialog(root)).toBeNull();
+  });
+
+  test("a click anywhere in the 新セッションを起動 row opens its dialog", async () => {
+    const { root } = await mount({});
+    const desc = actionRow(root, LAUNCH)?.querySelector(".status-action-desc");
+    await act(() => instanceOf(desc, HTMLElement, "the 起動 row's description").click());
+    for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
+    expect(launchDialog(root)?.open).toBe(true);
   });
 
   test("not offered when the daemon cannot launch", async () => {

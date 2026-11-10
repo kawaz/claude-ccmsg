@@ -7883,6 +7883,8 @@ a.tl-attachment-file-path {
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
+  /* A row's hover colour stays inside the rounded corners. */
+  overflow: clip;
 }
 
 .status-action {
@@ -7895,6 +7897,15 @@ a.tl-attachment-file-path {
 
 .status-action + .status-action {
   border-top: 1px solid var(--border);
+}
+
+/* A row whose whole area does what its button does. */
+.status-action-pressable {
+  cursor: pointer;
+}
+
+.status-action-pressable:hover:not(:has(:disabled)) {
+  background: var(--surface-hover);
 }
 
 .status-action-what {

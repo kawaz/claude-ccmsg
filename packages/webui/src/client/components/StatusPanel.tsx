@@ -9,7 +9,7 @@
 // 2026-11-09): agents and workflows are the Timeline's agent tree's
 // (`AgentTreePanel`), and how many are running is the sidebar badge's.
 import type { ComponentChildren, JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import {
   type AgentInfo,
   type LaunchEffort,
@@ -237,6 +237,11 @@ export interface SessionRestart {
   start: (prompt: string) => Promise<SessionRestartResult>;
 }
 
+/** How long 「再起動しました」 stays under the operations before it goes: the
+ * session is back and the line has nothing more to say. A restart that did
+ * not resume stays until the next one, as its reason is what to act on. */
+export const RESTART_DONE_NOTE_MS = 5_000;
+
 /** The restart of `sid`, kept across the Status panel coming and going. A
  * restart started for another sid is not this one's. */
 export function useSessionRestart(
@@ -249,6 +254,16 @@ export function useSessionRestart(
     result: SessionRestartResult | null;
   }>({ sid, busy: false, result: null });
   const own = state.sid === sid ? state : { sid, busy: false, result: null };
+  const done = own.result?.ok === true ? own.result : null;
+  useEffect(() => {
+    if (done === null) return;
+    const timer = setTimeout(
+      () =>
+        setState((current) => (current.result === done ? { ...current, result: null } : current)),
+      RESTART_DONE_NOTE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [done]);
   return {
     busy: own.busy,
     result: own.result,

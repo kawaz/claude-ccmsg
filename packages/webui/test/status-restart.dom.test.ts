@@ -7,7 +7,7 @@
 // disabled while either runs; a restart that resumed closes the dialog, any
 // other outcome keeps it open with what it came to, which also shows under the
 // list.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import {
@@ -21,7 +21,11 @@ import {
   type RequestOverrideResponse,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
-import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
+import {
+  RESTART_DONE_NOTE_MS,
+  StatusPanel,
+  useSessionRestart,
+} from "../src/client/components/StatusPanel.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
@@ -286,6 +290,74 @@ describe("Status の再起動", () => {
       expect(killButton(mounted.root)?.disabled).toBe(false);
       expect(restartDialog(mounted.root)).toBeNull();
       expect(resultText(mounted.root)).toBe("再起動しました");
+    } finally {
+      restore();
+    }
+  });
+
+  // 「再起動しました」 has nothing to act on once the session is back, so it
+  // goes by itself; a restart that did not resume keeps its reason.
+  test("「再起動しました」 goes after a while; a restart that did not resume stays", async () => {
+    jest.useFakeTimers();
+    try {
+      const done = await mount({});
+      await restartWithDefault(done.root);
+      await done.answer({
+        ok: true,
+        restarted: true,
+        session_id: SID,
+        exit_code: 0,
+        stdout: "",
+        stderr: "",
+      });
+      expect(resultText(done.root)).toBe("再起動しました");
+      await act(() => {
+        jest.advanceTimersByTime(RESTART_DONE_NOTE_MS - 1);
+      });
+      expect(resultText(done.root)).toBe("再起動しました");
+      await act(() => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(resultText(done.root)).toBe("");
+
+      const failed = await mount({});
+      await restartWithDefault(failed.root);
+      await failed.answer({
+        ok: true,
+        restarted: true,
+        session_id: SID,
+        exit_code: 3,
+        stdout: "",
+        stderr: "boom",
+      });
+      const kept = resultText(failed.root);
+      expect(kept).toContain("3");
+      await act(() => {
+        jest.advanceTimersByTime(RESTART_DONE_NOTE_MS * 10);
+      });
+      expect(resultText(failed.root)).toBe(kept);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The whole row opens the dialog, not only the button at its end; the
+  // kill's row does not, so a click beside its button ends nothing.
+  test("a click anywhere in the 再起動 row opens its dialog; in the kill's row, only the button acts", async () => {
+    const confirms: string[] = [];
+    const restore = stubGlobal("confirm", (message: string) => {
+      confirms.push(message);
+      return false;
+    });
+    try {
+      const { root } = await mount({});
+      const name = actionRow(root, RESTART)?.querySelector(".status-action-name");
+      await act(() => instanceOf(name, HTMLElement, "the 再起動 row's name").click());
+      expect(restartDialog(root)?.open).toBe(true);
+      await escapeRestart(root);
+      const kill = actionRow(root, "セッションを終了")?.querySelector(".status-action-desc");
+      await act(() => instanceOf(kill, HTMLElement, "the kill row's description").click());
+      expect(confirms).toEqual([]);
     } finally {
       restore();
     }
