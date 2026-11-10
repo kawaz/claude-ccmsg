@@ -1,6 +1,6 @@
 // The sidebar as a column of folds (DR-0043), mounted: it starts with only
-// SESSIONS open and starts there again on every load (nothing is kept), the
-// buttons on SESSIONS' heading never open or close it because they sit beside
+// SESSIONS open; SESSIONS and ROOMS start there again on every load, while
+// GLOBALS comes back as the window left it (sessionStorage); the buttons on SESSIONS' heading never open or close it because they sit beside
 // the toggle rather than inside it, ROOMS fetches its list on the first open,
 // and GLOBALS carries the endpoint, the daemon's version (which the Status tab
 // no longer repeats) and the host's Claude Code version.
@@ -18,6 +18,7 @@ import type {
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { Sidebar } from "../src/client/components/Sidebar.tsx";
+import { sidebarFoldStorageKey } from "../src/client/components/SidebarFold.tsx";
 import { StatusPanel, useSessionRestart } from "../src/client/components/StatusPanel.tsx";
 import {
   DRAWER_WIDTH_KEY,
@@ -46,6 +47,9 @@ afterEach(async () => {
   roots = [];
   for (const restore of restores) restore();
   restores = [];
+  // GLOBALS' open state is the window's (sessionStorage): what one test left
+  // is not the next one's.
+  sessionStorage.removeItem(sidebarFoldStorageKey("sidebar-globals"));
 });
 
 /** What the mounted sidebar asked the daemon and the navigation for. Each
@@ -183,14 +187,37 @@ describe("the sidebar's folds", () => {
     expect(openFolds(root)).toEqual(["sidebar-rooms", "sidebar-globals"]);
   });
 
-  // Nothing is kept: a reload starts from the first view whatever was left.
-  test("start from the first view again on the next mount", async () => {
+  // SESSIONS and ROOMS are not kept: a reload starts them from the first
+  // view whatever was left.
+  test("SESSIONS and ROOMS start from the first view again on the next mount", async () => {
     const first = await mountSidebar();
     await click(toggleOf(first.root, "sidebar-sessions"));
-    await click(toggleOf(first.root, "sidebar-globals"));
-    expect(openFolds(first.root)).toEqual(["sidebar-globals"]);
+    await click(toggleOf(first.root, "sidebar-rooms"));
+    expect(openFolds(first.root)).toEqual(["sidebar-rooms"]);
     const second = await mountSidebar();
     expect(openFolds(second.root)).toEqual(["sidebar-sessions"]);
+  });
+
+  // GLOBALS is small enough to stay open on a desktop and is mostly closed on
+  // a phone: each window keeps what it was left as, across reloads.
+  test("GLOBALS comes back as this window left it, open or closed", async () => {
+    const key = sidebarFoldStorageKey("sidebar-globals");
+    const first = await mountSidebar();
+    expect(sessionStorage.getItem(key)).toBeNull();
+    await click(toggleOf(first.root, "sidebar-globals"));
+    expect(sessionStorage.getItem(key)).toBe("open");
+    const reloaded = await mountSidebar();
+    expect(openFolds(reloaded.root)).toEqual(["sidebar-sessions", "sidebar-globals"]);
+    await click(toggleOf(reloaded.root, "sidebar-globals"));
+    expect(sessionStorage.getItem(key)).toBe("closed");
+    const again = await mountSidebar();
+    expect(openFolds(again.root)).toEqual(["sidebar-sessions"]);
+  });
+
+  test("a value it does not know under the key reads as never toggled", async () => {
+    sessionStorage.setItem(sidebarFoldStorageKey("sidebar-globals"), "1");
+    const { root } = await mountSidebar();
+    expect(openFolds(root)).toEqual(["sidebar-sessions"]);
   });
 
   test("the buttons on SESSIONS' heading leave every fold as it was", async () => {

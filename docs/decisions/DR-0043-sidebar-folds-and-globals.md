@@ -29,7 +29,7 @@ webui の画面全体に効く情報と操作の置き場が無い。スマホ�
 - 区画は見出しと本体からなる。見出しは 1 行の高さ、本体は開いている時だけ出す。見出しを押すと開閉が入れ替わる
 - 区画はそれぞれ独立に開閉でき、同時に複数開いてよい (1 つ開くと他が閉じる排他にしない)
 - 初期表示は一番上の SESSIONS だけ開き、ROOMS と GLOBALS は閉じる。ROOMS の「開いた時に一覧を取る」振る舞いはそのまま区画の開く操作に付く
-- 開閉の状態は保存しない。窓を開くたび・再読み込みのたびに初期表示から始まる。Status タブの ENV の fold ([DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09) と ROOMS の fold も保存しておらず、URL の文法も fold の開閉を載せない ([webui-url-grammar](../design/webui-url-grammar.md))
+- GLOBALS の開閉の状態は sessionStorage (`ccmsg.sidebarFold.sidebar-globals`、値は `open` / `closed`) に覚え、その窓の再読み込みでは最後の状態で始まる (kawaz 2026-11-10: この程度の高さなら PC では開いたままにしたく、スマホでは閉じておくことが多い)。窓ごとの状態なので localStorage には書かず、まだ切り替えていない窓は初期表示 (閉じる) から始まる。SESSIONS と ROOMS の開閉の状態は保存せず、窓を開くたび・再読み込みのたびに初期表示から始まる。Status タブの ENV の fold ([DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09) と ROOMS の fold も保存しておらず、URL の文法も fold の開閉を載せない ([webui-url-grammar](../design/webui-url-grammar.md))
 - グローバルヘッダには何も足さない (スマホで狭い)
 
 ### 2. 見出しのボタンは開閉を動かさない (構造で保証する)

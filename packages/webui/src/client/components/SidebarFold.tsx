@@ -17,13 +17,27 @@
 // id), not something the fold knows.
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { readSessionStorage, writeSessionStorage } from "../storage.ts";
 import { useEffectEvent } from "../useEffectEvent.ts";
+
+/** The sessionStorage key a fold's open / closed state is kept under. */
+export function sidebarFoldStorageKey(id: string): string {
+  return `ccmsg.sidebarFold.${id}`;
+}
+
+/** What the window last left the fold as, or `fallback` when it has not
+ * been toggled in this window (or holds something else under the key). */
+function storedOpen(id: string, fallback: boolean): boolean {
+  const stored = readSessionStorage(sidebarFoldStorageKey(id));
+  return stored === "open" ? true : stored === "closed" ? false : fallback;
+}
 
 export function SidebarFold({
   id,
   title,
   tools,
   defaultOpen = false,
+  remembered = false,
   onToggle,
   children,
 }: {
@@ -32,19 +46,25 @@ export function SidebarFold({
   title: ComponentChildren;
   /** Buttons on the heading line, beside the toggle (never inside it). */
   tools?: ComponentChildren;
-  /** Open on first render. Not kept anywhere: every page load starts here. */
+  /** Open on first render, where nothing is remembered. */
   defaultOpen?: boolean;
+  /** Keep the open / closed state in sessionStorage: the window comes back to
+   * what the person left it as across reloads, and each window (a desktop's,
+   * a phone's) keeps its own. Without it every page load starts on
+   * `defaultOpen`. */
+  remembered?: boolean;
   /** Fires on every open/close (the toggle, or find-in-page opening it).
    * ROOMS fetches its list on the first open. */
   onToggle?: (open: boolean) => void;
   children: ComponentChildren;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(() => (remembered ? storedOpen(id, defaultOpen) : defaultOpen));
   const bodyRef = useRef<HTMLDivElement>(null);
   const toggleId = `${id}-toggle`;
   const bodyId = `${id}-body`;
   const change = (next: boolean): void => {
     setOpen(next);
+    if (remembered) writeSessionStorage(sidebarFoldStorageKey(id), next ? "open" : "closed");
     onToggle?.(next);
   };
   // Find-in-page reveals a match inside a closed body by removing its

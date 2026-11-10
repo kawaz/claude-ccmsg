@@ -255,7 +255,7 @@ export function Sidebar() {
             <SessionList peers={sortedPeers} currentSid={slice.currentSid} />
           </SidebarFold>
           <RoomList />
-          <SidebarFold id="sidebar-globals" title="Globals">
+          <SidebarFold id="sidebar-globals" title="Globals" remembered>
             <SidebarGlobals />
           </SidebarFold>
         </div>
