@@ -6720,6 +6720,32 @@ a.tl-attachment-file-path {
   gap: var(--space-5);
 }
 
+/* 「N items」の fold を開いた中の項目の間隔 (kawaz 2026-11-11): 閉じた行
+ * (中に開いた details を持たない fold の行) どうしは詰めて一覧として読める
+ * ようにし、開いた項目と fold でない項目 (吹き出し等) は上下に今までの間隔を
+ * 取る。間隔は gap でなく各項目の margin で持つ (gap は閉じた行どうしの間にも
+ * 一律に入るため)。 */
+.tl-fold-group-body > .tl-guided-content {
+  gap: 0;
+}
+
+.tl-fold-group-body > .tl-guided-content > :has(details):not(:has(details[open])) > .tl-line,
+.tl-fold-group-body > .tl-guided-content > .tl-line:has(details):not(:has(details[open])) {
+  padding-block: var(--space-2);
+}
+
+.tl-fold-group-body > .tl-guided-content > :not(:has(details):not(:has(details[open]))) {
+  margin-block: var(--space-5);
+}
+
+.tl-fold-group-body > .tl-guided-content > :first-child {
+  margin-top: 0;
+}
+
+.tl-fold-group-body > .tl-guided-content > :last-child {
+  margin-bottom: 0;
+}
+
 /* fold summary の「N thinkings」部の装飾 (kawaz r17 mid=47): thinking 本文
  * (.tl-thinking-body) と同じ紫系 + 破線トーンで、展開せずとも thinking の
  * 在処が判る。 */
