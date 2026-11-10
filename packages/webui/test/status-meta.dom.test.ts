@@ -13,6 +13,7 @@ import { act } from "preact/test-utils";
 import type {
   AgentInfo,
   ErrorResponse,
+  PeerInfo,
   ReplyOf,
   RequestOverrideResponse,
   SessionEnvResponse,
@@ -313,6 +314,46 @@ describe("Status tab copy buttons", () => {
   });
 });
 
+describe("Status tab REPOSITORY row", () => {
+  /** The session's peers row, with `repo_url` as the daemon derived it. */
+  function peerRow(repoUrl?: string): PeerInfo {
+    return {
+      sid: SID,
+      repo: "team/demo",
+      ws: "main",
+      cwd: "/w/repo",
+      ...(repoUrl !== undefined ? { repo_url: repoUrl } : {}),
+    };
+  }
+
+  test("shows the repository's URL as written, linked to it, with a copy of it", async () => {
+    const { root, store } = await mountStatus(agentRow());
+    await act(() =>
+      store.dispatch({
+        type: "peers/loaded",
+        peers: [peerRow("https://gitlab.com/team/demo")],
+      }),
+    );
+    const cell = metaCell(root, "REPOSITORY");
+    const link = instanceOf(cell.querySelector("a"), HTMLAnchorElement, "the link");
+    expect(link.textContent).toBe("https://gitlab.com/team/demo");
+    expect(link.getAttribute("href")).toBe("https://gitlab.com/team/demo");
+    expect(link.target).toBe("_blank");
+    expect(cell.querySelector("button.status-meta-copy")?.getAttribute("aria-label")).toBe(
+      "REPOSITORY をコピー",
+    );
+  });
+
+  test("is — with no copy when the daemon knows no repository", async () => {
+    const { root, store } = await mountStatus(agentRow());
+    await act(() => store.dispatch({ type: "peers/loaded", peers: [peerRow()] }));
+    const cell = metaCell(root, "REPOSITORY");
+    expect(cell.textContent).toBe("—");
+    expect(cell.querySelector("a")).toBeNull();
+    expect(cell.querySelector("button")).toBeNull();
+  });
+});
+
 describe("Status tab CONTEXT gauge", () => {
   // The model and the effort are the MODEL / EFFORT gauges right below: the
   // CONTEXT gauge does not say them again beside its meter.
@@ -367,13 +408,14 @@ describe("Status tab layout", () => {
 
   // One table under the gauges: two would leave a gap between CWD and the
   // ids where one table ends and the next begins.
-  test("the gauges first with CONTEXT on top, then one table of the session's facts, NAME first", async () => {
+  test("the gauges first with CONTEXT below the others, then one table of the session's facts, CWD first", async () => {
     const { root } = await mountStatus(agentRow());
     expect(tables(root)).toEqual([
-      ["CONTEXT", "LIVE", "MODEL", "EFFORT"],
+      ["LIVE", "MODEL", "EFFORT", "CONTEXT"],
       [
-        "NAME",
         "CWD",
+        "REPOSITORY",
+        "NAME",
         "HYOUI_SESSION_ID",
         "SESSION_ID",
         "PID",
@@ -424,7 +466,7 @@ describe("Status tab MODEL / EFFORT rows", () => {
     const { root } = await mountStatus(agentRow());
     const all = terms(root);
     expect(all).not.toContain("OVERRIDE");
-    expect(all.slice(0, 4)).toEqual(["CONTEXT", "LIVE", "MODEL", "EFFORT"]);
+    expect(all.slice(0, 4)).toEqual(["LIVE", "MODEL", "EFFORT", "CONTEXT"]);
     for (const term of ["MODEL", "EFFORT"]) {
       const cell = metaCell(root, term);
       expect(cell.querySelectorAll("button.override-value")).toHaveLength(1);

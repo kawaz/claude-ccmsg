@@ -147,6 +147,11 @@ export interface SessionIdentity {
   /** current branch / bookmark name of the session's checkout (informational,
    * for the webui session list). Empty/absent when detached or unknown. */
   branch?: string;
+  /** web page of the session's repository (`https://<host>/<path>` from the
+   * origin remote, else from the checkout path's `repos/<host>/<owner>/<repo>`).
+   * The daemon derives it from cwd; a hello does not carry it. Absent when
+   * unknown. Moves with the location group. */
+  repo_url?: string;
   /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
    * daemon normalized it at hello time. It adds the directory to those whose
    * sessions a send may reach (`send_message`, DR-0039 §3).

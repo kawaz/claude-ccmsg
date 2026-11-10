@@ -20,8 +20,10 @@ import {
   deriveRepoWs,
   parseGitConfigRemotes,
   remoteUrlSlug,
+  remoteWebUrl,
   selectRemoteUrl,
   slugFromCheckoutPath,
+  webUrlFromCheckoutPath,
 } from "../src/repo-derive.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -76,21 +78,33 @@ function makeGitRepo(at: string, remote = "git@github.com:kawaz/demo.git"): stri
 describe("deriveRepoWs", () => {
   test("git 通常リポ: repo は origin slug、ws は HEAD のブランチ", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
-    expect(await deriveRepoWs(root)).toEqual({ repo: "kawaz/demo", ws: "main" });
+    expect(await deriveRepoWs(root)).toEqual({
+      repo: "kawaz/demo",
+      ws: "main",
+      repo_url: "https://github.com/kawaz/demo",
+    });
   });
 
   test("git: サブディレクトリからでも上方向探索で同じ結果", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const sub = path.join(root, "a", "b");
     fs.mkdirSync(sub, { recursive: true });
-    expect(await deriveRepoWs(sub)).toEqual({ repo: "kawaz/demo", ws: "main" });
+    expect(await deriveRepoWs(sub)).toEqual({
+      repo: "kawaz/demo",
+      ws: "main",
+      repo_url: "https://github.com/kawaz/demo",
+    });
   });
 
   test("git linked worktree: ws は worktree ディレクトリ名、repo は common dir の origin", async () => {
     const root = makeGitRepo(path.join(dir, "demo"));
     const wt = path.join(dir, "demo-pr1");
     git(root, "worktree", "add", "-q", "-b", "feature", wt);
-    expect(await deriveRepoWs(wt)).toEqual({ repo: "kawaz/demo", ws: "demo-pr1" });
+    expect(await deriveRepoWs(wt)).toEqual({
+      repo: "kawaz/demo",
+      ws: "demo-pr1",
+      repo_url: "https://github.com/kawaz/demo",
+    });
   });
 
   test("jj secondary workspace (bare git + .jj): ws は workspace ディレクトリ名", async () => {
@@ -106,7 +120,11 @@ describe("deriveRepoWs", () => {
     const ws = path.join(repo, "main");
     fs.mkdirSync(path.join(ws, ".jj"), { recursive: true });
     fs.writeFileSync(path.join(ws, ".jj", "repo"), "../../.jj/repo");
-    expect(await deriveRepoWs(ws)).toEqual({ repo: "kawaz/proj", ws: "main" });
+    expect(await deriveRepoWs(ws)).toEqual({
+      repo: "kawaz/proj",
+      ws: "main",
+      repo_url: "https://github.com/kawaz/proj",
+    });
   });
 
   test("jj default workspace: ws は空 (bookmark はファイルから読めない)", async () => {
@@ -117,32 +135,53 @@ describe("deriveRepoWs", () => {
     git(bare, "remote", "add", "origin", "https://github.com/kawaz/proj.git");
     fs.mkdirSync(path.join(repo, ".jj", "repo", "store"), { recursive: true });
     fs.writeFileSync(path.join(repo, ".jj", "repo", "store", "git_target"), "../../../.git");
-    expect(await deriveRepoWs(repo)).toEqual({ repo: "kawaz/proj", ws: "" });
+    expect(await deriveRepoWs(repo)).toEqual({
+      repo: "kawaz/proj",
+      ws: "",
+      repo_url: "https://github.com/kawaz/proj",
+    });
+  });
+
+  test("GitLab の remote: repo_url はその forge のページ", async () => {
+    const root = makeGitRepo(path.join(dir, "gl"), "git@gitlab.com:group/sub/gl.git");
+    expect(await deriveRepoWs(root)).toEqual({
+      repo: "group/sub/gl",
+      ws: "main",
+      repo_url: "https://gitlab.com/group/sub/gl",
+    });
   });
 
   test("remote が無い時は repos/<host>/<owner>/<repo> のパス規約で補う", async () => {
     const root = path.join(dir, "repos", "github.com", "kawaz", "noremote", "main");
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "trunk");
-    expect(await deriveRepoWs(root)).toEqual({ repo: "kawaz/noremote", ws: "trunk" });
+    expect(await deriveRepoWs(root)).toEqual({
+      repo: "kawaz/noremote",
+      ws: "trunk",
+      repo_url: "https://github.com/kawaz/noremote",
+    });
   });
 
   test("remote もパス規約も無ければ repo は空のまま (捏造しない)", async () => {
     const root = path.join(dir, "plain");
     fs.mkdirSync(root, { recursive: true });
     git(root, "init", "-q", "-b", "main");
-    expect(await deriveRepoWs(root)).toEqual({ repo: "", ws: "main" });
+    expect(await deriveRepoWs(root)).toEqual({ repo: "", ws: "main", repo_url: "" });
   });
 
   test("VCS 配下でないディレクトリは両方空", async () => {
     const plain = path.join(dir, "nothing");
     fs.mkdirSync(plain);
-    expect(await deriveRepoWs(plain)).toEqual({ repo: "", ws: "" });
+    expect(await deriveRepoWs(plain)).toEqual({ repo: "", ws: "", repo_url: "" });
   });
 
   test("存在しない cwd / 空文字も throw せず空を返す", async () => {
-    expect(await deriveRepoWs("")).toEqual({ repo: "", ws: "" });
-    expect(await deriveRepoWs(path.join(dir, "absent", "deep"))).toEqual({ repo: "", ws: "" });
+    expect(await deriveRepoWs("")).toEqual({ repo: "", ws: "", repo_url: "" });
+    expect(await deriveRepoWs(path.join(dir, "absent", "deep"))).toEqual({
+      repo: "",
+      ws: "",
+      repo_url: "",
+    });
   });
 });
 
@@ -172,6 +211,7 @@ describe("hello の repo/ws フォールバック", () => {
         `the peer ${A}`,
       );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
+      expect(me.repo_url).toBe("https://github.com/kawaz/demo");
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -188,6 +228,8 @@ describe("hello の repo/ws フォールバック", () => {
         `the peer ${A}`,
       );
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
+      // repo_url is never announced: the cwd's remote gives it even here.
+      expect(me.repo_url).toBe("https://github.com/kawaz/demo");
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -206,6 +248,7 @@ describe("hello の repo/ws フォールバック", () => {
       );
       expect(me.repo ?? "").toBe("");
       expect(me.ws ?? "").toBe("");
+      expect(me.repo_url).toBeUndefined();
     } finally {
       await stopInProcessDaemon(ctx);
     }
@@ -268,6 +311,64 @@ describe("parseGitConfigRemotes / selectRemoteUrl", () => {
       ),
     ).toBe("");
     expect(selectRemoteUrl(new Map())).toBe("");
+  });
+});
+
+describe("remoteWebUrl", () => {
+  test("forge を問わず https://<host>/<path> にする", () => {
+    expect(remoteWebUrl("git@github.com:kawaz/demo.git")).toBe("https://github.com/kawaz/demo");
+    expect(remoteWebUrl("https://github.com/kawaz/demo/")).toBe("https://github.com/kawaz/demo");
+    expect(remoteWebUrl("git@gitlab.com:group/sub/demo.git")).toBe(
+      "https://gitlab.com/group/sub/demo",
+    );
+    expect(remoteWebUrl("git@bitbucket.org:team/demo.git")).toBe("https://bitbucket.org/team/demo");
+    expect(remoteWebUrl("git://example.org/demo.git")).toBe("https://example.org/demo");
+  });
+
+  test("ssh の port は落とし、http(s) の scheme と port は残す", () => {
+    expect(remoteWebUrl("ssh://git@github.com:22/kawaz/demo.git")).toBe(
+      "https://github.com/kawaz/demo",
+    );
+    expect(remoteWebUrl("http://git.local:8080/team/demo.git")).toBe(
+      "http://git.local:8080/team/demo",
+    );
+  });
+
+  test("URL の認証情報は出さない", () => {
+    expect(remoteWebUrl("https://user:secret@github.com/kawaz/demo.git")).toBe(
+      "https://github.com/kawaz/demo",
+    );
+    expect(remoteWebUrl("https://ghp_token@github.com/kawaz/demo.git")).toBe(
+      "https://github.com/kawaz/demo",
+    );
+  });
+
+  test("ssh config の host の別名はそのまま", () => {
+    expect(remoteWebUrl("git@github.com-work:team/demo.git")).toBe(
+      "https://github.com-work/team/demo",
+    );
+  });
+
+  test("ローカルパス remote・path の無い remote は空", () => {
+    expect(remoteWebUrl("/srv/git/demo.git")).toBe("");
+    expect(remoteWebUrl("file:///srv/git/demo.git")).toBe("");
+    expect(remoteWebUrl("C:/repo")).toBe("");
+    expect(remoteWebUrl("./sub:dir/repo")).toBe("");
+    expect(remoteWebUrl("https://github.com/")).toBe("");
+    expect(remoteWebUrl("")).toBe("");
+  });
+});
+
+describe("webUrlFromCheckoutPath", () => {
+  test("repos/<host>/<owner>/<repo> をそのページにする", () => {
+    expect(webUrlFromCheckoutPath("/home/u/.local/share/repos/gitlab.com/g/demo/main")).toBe(
+      "https://gitlab.com/g/demo",
+    );
+  });
+
+  test("host らしくない / 段数不足なら空", () => {
+    expect(webUrlFromCheckoutPath("/home/u/repos/local/demo")).toBe("");
+    expect(webUrlFromCheckoutPath("/home/u/projects/demo")).toBe("");
   });
 });
 

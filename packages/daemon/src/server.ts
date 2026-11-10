@@ -281,6 +281,8 @@ interface SessionEntry {
     repo_root?: string;
     /** present iff hello announced a non-empty branch/bookmark name. */
     branch?: string;
+    /** present iff the daemon derived the repository's web page from cwd. */
+    repo_url?: string;
   };
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
    * announced one. Deliberately outside `meta`: it exists to find the
@@ -781,6 +783,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
           cwd: id.cwd,
           ...(id.repo_root ? { repo_root: id.repo_root } : {}),
           ...(id.branch ? { branch: id.branch } : {}),
+          ...(id.repo_url ? { repo_url: id.repo_url } : {}),
         }
       : {
           repo: entry?.meta.repo ?? "",
@@ -788,6 +791,7 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
           cwd: entry?.meta.cwd ?? "",
           ...(entry?.meta.repo_root ? { repo_root: entry.meta.repo_root } : {}),
           ...(entry?.meta.branch ? { branch: entry.meta.branch } : {}),
+          ...(entry?.meta.repo_url ? { repo_url: entry.meta.repo_url } : {}),
         };
   const meta = {
     sid: id.sid,
@@ -1055,7 +1059,7 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
     daemon.agentsSeen.set(sid, agent.config_dir);
     if (daemon.sessions.has(sid)) continue;
     const cwd = agent.cwd ? await realpathOrSelf(agent.cwd) : "";
-    const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "" };
+    const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "", repo_url: "" };
     const transcriptPath = await adoptTranscriptPath(sid, undefined, [agent.config_dir]);
     const configDir = normalizeConfigDir(agent.config_dir);
     // A hello may have registered this sid while the lookups above yielded.
@@ -1068,6 +1072,7 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
         repo: derived.repo,
         ws: derived.ws,
         cwd,
+        ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
         ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
         ...(configDir ? { config_dir: configDir } : {}),
       },
@@ -2047,20 +2052,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // Announced repo/ws always win; the cwd derivation only fills what the
         // session could not tell us. A session whose state file was never
         // written announces neither; without the derivation its session-list
-        // columns stay blank.
+        // columns stay blank. repo_url is never announced, so a hello that
+        // names a cwd always derives it (a few small file reads, no spawn).
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
-        const derived =
-          cwd !== "" && (announcedRepo === "" || announcedWs === "")
-            ? await deriveRepoWs(cwd)
-            : { repo: "", ws: "" };
+        const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "", repo_url: "" };
         newId = {
           role: "session",
           sid: req.sid,
           repo: announcedRepo !== "" ? announcedRepo : derived.repo,
           ws: announcedWs !== "" ? announcedWs : derived.ws,
           cwd,
+          ...(derived.repo_url ? { repo_url: derived.repo_url } : {}),
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
           ...(req.branch ? { branch: req.branch } : {}),

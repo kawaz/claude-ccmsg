@@ -115,6 +115,9 @@ export const PeerInfoSchema = v.object({
   repo_root: v.optional(v.string()),
   /** current branch / bookmark of the session's checkout, "" / absent if unknown */
   branch: v.optional(v.string()),
+  /** web page of the session's repository (`https://<host>/<path>`), absent
+   * when the daemon could not tell from the session's cwd */
+  repo_url: v.optional(v.string()),
   /** ISO time this session first registered with the running daemon (stable
    * across reconnects while the daemon lives; resets on daemon restart) */
   connected_at: v.optional(v.string()),

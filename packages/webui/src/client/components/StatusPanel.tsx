@@ -641,6 +641,10 @@ export function StatusPanel({
     sameJson,
   );
   const staleClient = peer ? staleClientWarning(peer) : null;
+  // The repository's web page as the daemon derived it (any forge), shown as
+  // the URL itself and linked when it is an http(s) URL.
+  const repoUrl = peer?.repo_url ?? "";
+  const repoLinked = /^https?:\/\//.test(repoUrl);
   const daemonProtocol = useStoreState(store, (s) => s.daemonInfo?.protocol, sameJson);
   const protocolSkew = protocolSkewWarning(peer?.protocol, daemonProtocol);
   // What the overrides put on the main thread's requests (DR-0041 §5), the
@@ -660,27 +664,6 @@ export function StatusPanel({
   return (
     <div class="status-view">
       <dl class="status-meta status-gauges">
-        <div class="status-gauge status-gauge-context">
-          <dt>CONTEXT</dt>
-          <dd class="status-context" title={context?.title}>
-            {context ? (
-              <>
-                <span class="status-context-fill">{context.fill}</span>
-                {context.ratio !== null ? (
-                  <meter
-                    class="status-context-meter"
-                    min={0}
-                    max={1}
-                    value={context.ratio}
-                    aria-label="context window の使用率"
-                  />
-                ) : null}
-              </>
-            ) : (
-              "—"
-            )}
-          </dd>
-        </div>
         <div class="status-gauge status-gauge-live">
           <dt>LIVE</dt>
           <dd class="status-live">
@@ -713,6 +696,27 @@ export function StatusPanel({
             />
           </dd>
         </div>
+        <div class="status-gauge status-gauge-context">
+          <dt>CONTEXT</dt>
+          <dd class="status-context" title={context?.title}>
+            {context ? (
+              <>
+                <span class="status-context-fill">{context.fill}</span>
+                {context.ratio !== null ? (
+                  <meter
+                    class="status-context-meter"
+                    min={0}
+                    max={1}
+                    value={context.ratio}
+                    aria-label="context window の使用率"
+                  />
+                ) : null}
+              </>
+            ) : (
+              "—"
+            )}
+          </dd>
+        </div>
       </dl>
       {/* セッション情報: the session's facts and, folded under them, its
        * environment. One section, headed like セッション操作 and the danger
@@ -720,6 +724,20 @@ export function StatusPanel({
       <section class="status-section status-session-info">
         <h3 class="status-section-title">セッション情報</h3>
         <dl class="status-meta status-facts">
+          <Fact term="CWD" copy={cwd ?? undefined}>
+            {cwd ?? "—"}
+          </Fact>
+          <Fact term="REPOSITORY" copy={repoUrl !== "" ? repoUrl : undefined}>
+            {repoLinked ? (
+              <a href={repoUrl} target="_blank" rel="noopener noreferrer">
+                {repoUrl}
+              </a>
+            ) : repoUrl !== "" ? (
+              repoUrl
+            ) : (
+              "—"
+            )}
+          </Fact>
           <div class="status-fact">
             <dt>NAME</dt>
             <dd class="status-fact-value">
@@ -727,9 +745,6 @@ export function StatusPanel({
               <SessionTitleInput key={sid} sid={sid} title={title} />
             </dd>
           </div>
-          <Fact term="CWD" copy={cwd ?? undefined}>
-            {cwd ?? "—"}
-          </Fact>
           <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
             {agent?.hyoui_session_id ? (
               terminalPageUrl ? (
