@@ -4846,11 +4846,9 @@ button.session-tab {
   }
 }
 
-/* 閉じた項目 (中に開いた details を持たない fold) には出さない (kawaz
- * 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を
- * 開くと出る。jsonl 表示中は中身が元の行に替わって details を持たないので、
- * 戻すボタンは消えない。 */
-.tl-item:has(details):not(:has(details[open])) > .tl-item-raw-toggle {
+/* 閉じた項目 (見えている開いた details を持たない fold。判定は「N items」の項目の間隔の規則と同じ) には出さない (kawaz 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を開くと出る。jsonl 表示中は中身が元の行に替わって details を持たないので、戻すボタンは消えない。 */
+.tl-item:has(details):not(:has(details[open]:not(details:not([open]) details)))
+  > .tl-item-raw-toggle {
   display: none;
 }
 
@@ -6729,29 +6727,52 @@ a.tl-attachment-file-path {
 }
 
 /* 「N items」の fold を開いた中の項目の間隔 (kawaz 2026-11-11): 閉じた行
- * (中に開いた details を持たない fold の行) どうしは詰めて一覧として読める
- * ようにし、開いた項目と fold でない項目 (吹き出し等) は上下に今までの間隔を
- * 取る。間隔は gap でなく各項目の margin で持つ (gap は閉じた行どうしの間にも
- * 一律に入るため)。 */
+ * どうしは詰めて一覧として読めるようにし、開いた項目と fold でない項目
+ * (吹き出し等) の上下は今までの間隔を取る。
+ *
+ * 「閉じた行」は、details を持ち、見えている開いた details が無い項目。
+ * `details:not([open]) details` が閉じた details の中に隠れた details なので、
+ * 外側を閉じて中を開いたままにした項目も閉じた行に数える。
+ *
+ * 間隔は gap でなく後ろの項目の margin-top で持つ (gap は閉じた行どうしの
+ * 間にも一律に入り、flex の中では上下の margin が相殺されないため)。閉じた
+ * 行の padding を詰めた分は、閉じた行と他の項目の境目の margin で足し戻し、
+ * そこでの文字どうしの距離を変えない。 */
 .tl-fold-group-body > .tl-guided-content {
   gap: 0;
 }
 
-.tl-fold-group-body > .tl-guided-content > :has(details):not(:has(details[open])) > .tl-line,
-.tl-fold-group-body > .tl-guided-content > .tl-line:has(details):not(:has(details[open])) {
+.tl-fold-group-body
+  > .tl-guided-content
+  > :has(details):not(:has(details[open]:not(details:not([open]) details)))
+  > .tl-line,
+.tl-fold-group-body
+  > .tl-guided-content
+  > .tl-line:has(details):not(:has(details[open]:not(details:not([open]) details))) {
   padding-block: var(--space-2);
 }
 
-.tl-fold-group-body > .tl-guided-content > :not(:has(details):not(:has(details[open]))) {
-  margin-block: var(--space-5);
+.tl-fold-group-body > .tl-guided-content > * {
+  margin-top: var(--space-5);
 }
 
-.tl-fold-group-body > .tl-guided-content > :first-child {
+.tl-fold-group-body > .tl-guided-content > :first-child,
+.tl-fold-group-body
+  > .tl-guided-content
+  > :has(details):not(:has(details[open]:not(details:not([open]) details)))
+  + :has(details):not(:has(details[open]:not(details:not([open]) details))) {
   margin-top: 0;
 }
 
-.tl-fold-group-body > .tl-guided-content > :last-child {
-  margin-bottom: 0;
+.tl-fold-group-body
+  > .tl-guided-content
+  > :has(details):not(:has(details[open]:not(details:not([open]) details)))
+  + :not(:has(details):not(:has(details[open]:not(details:not([open]) details)))),
+.tl-fold-group-body
+  > .tl-guided-content
+  > :not(:has(details):not(:has(details[open]:not(details:not([open]) details))))
+  + :has(details):not(:has(details[open]:not(details:not([open]) details))) {
+  margin-top: calc(var(--space-5) + var(--space-6) - var(--space-2));
 }
 
 /* fold summary の「N thinkings」部の装飾 (kawaz r17 mid=47): thinking 本文
