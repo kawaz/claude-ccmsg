@@ -42,7 +42,7 @@ kawaz 要望 (2026-07-18):
 
 ### webui: Status タブ最下部に危険ゾーン
 
-- `StatusPanel` 最下部に危険ゾーン。セッション操作 (下の restart の webui) と同じ 1 行 1 操作の一覧の形で、名前「セッションを終了」、何をするかの 1 行、右端の「終了…」ボタン。終了を起こすのはボタンだけで、行の他の所を押しても何も起きない (セッション操作の行と違う)。枠・名前・ボタンは `--danger` 色 (app.css 既存変数)。
+- `StatusPanel` 最下部に危険ゾーン。セッション操作 (下の restart の webui) と同じ 1 行 1 操作の一覧の形で、名前「セッションを終了」、何をするかの 1 行、右端の「終了」ボタン。行の右端のボタン (起動 / 再起動 / 終了) は 3 つとも同じ幅にする (`min-width`、最も長い文言「終了処理中…」が入る幅)。文言の末尾に「…」は付けない (走っている間の「起動中…」等だけに付く)。終了を起こすのはボタンだけで、行の他の所を押しても何も起きない (セッション操作の行と違う)。枠・名前・ボタンは `--danger` 色 (app.css 既存変数)。
 - 確認は既存パターンに合わせ `window.confirm()` (MemberChip.tsx の kick と同型)。
   カスタムダイアログを新設しない: 誤爆防止が目的で、体験の質は kick と同水準で足りる。
 - 実行中は disabled + 結果を近傍に表示 (terminated / not_found / エラー)。
@@ -77,7 +77,7 @@ kawaz 要望 (2026-07-18):
 - `SessionKillRequest.force?: boolean` を追加。true の時のみ SIGKILL 経路。
   fresh sid→pid 解決と ps コマンドライン検証 (pid-reuse guard) は force でもそのまま通す — 検証を短絡すると誤殺リスクが上がるだけで得るものが無い
 - 経路: `killSessionForce(pid, deps)` — SIGKILL を 1 発、以降は通常経路と同じ liveness poll。落ちたら `terminated: true`、SIGKILL 後も観測される(uninterruptible sleep 等の zombie) 場合は `terminated: false` を正直に返す
-- webui: 「セッションを終了」で `terminated: false` を観測したら、行の名前が「強制終了 (-KILL)」、ボタンが「強制終了…」に変化 (ボタンは背景色 danger 反転 + 太字)。再度押すと SIGKILL、confirm 文言に「不可逆 / transcript flush が途中で切れる可能性」を明記してもう 1 段のガードを掛ける
+- webui: 「セッションを終了」で `terminated: false` を観測したら、行の名前が「強制終了 (-KILL)」、ボタンが「強制終了」に変化 (ボタンは背景色 danger 反転 + 太字)。再度押すと SIGKILL、confirm 文言に「不可逆 / transcript flush が途中で切れる可能性」を明記してもう 1 段のガードを掛ける
 
 ### 却下した代替案 (再検討)
 
@@ -135,7 +135,7 @@ claude はセッションの transcript をそのセッションが動いてい�
 
 ### webui
 
-- 「再起動」は危険ゾーンの外、その上の「セッション操作」に「新セッションを起動」と並べる (kawaz 2026-11-09)。セッション操作は 1 行 1 操作の一覧 (名前、何をするかの 1 行、右端のボタン) で、行のどこを押してもボタン (「起動…」「再起動…」) を押したのと同じにその操作のフォームを modal dialog (`ModalDialog`、`showModal()`) で開く。dialog は広い幅では画面中央の箱、600px 以下では全画面で、上の × の代わりに「← 戻る」を出す。タブの中の並びは「新セッションを起動」「再起動」、その下に危険ゾーン (「セッションを終了」だけ、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09)。止めずに済む操作を誤爆の危険のある終了ボタンから離し、同じ cwd で起動する 2 つの操作をまとめる。「新セッションを起動」はこのセッションの cwd で `session_launch` を呼ぶフォームで、`--model` / `--effort` の select と prompt だけを持ち、select はセッションが今動いている値 (DR-0041 の通しの上書き、無ければセッション自身の値、無ければ transcript) で始まる ([DR-0018](./DR-0018-session-launcher.md) §3.9)。両方とも `launch_available` の時だけ出し、「再起動」はさらにそのセッションの agents の行がある (プロセスが居る) 時に出す。セッションの config dir は問わない (下の「resume する config dir」)
+- 「再起動」は危険ゾーンの外、その上の「セッション操作」に「新セッションを起動」と並べる (kawaz 2026-11-09)。セッション操作は 1 行 1 操作の一覧 (名前、何をするかの 1 行、右端のボタン) で、行のどこを押してもボタン (「起動」「再起動」) を押したのと同じにその操作のフォームを modal dialog (`ModalDialog`、`showModal()`) で開く。dialog は広い幅では画面中央の箱、600px 以下では全画面で、上の × の代わりに「← 戻る」を出す。タブの中の並びは「新セッションを起動」「再起動」、その下に危険ゾーン (「セッションを終了」だけ、[DR-0020](./DR-0020-session-status-tab.md) Addendum 2026-11-09)。止めずに済む操作を誤爆の危険のある終了ボタンから離し、同じ cwd で起動する 2 つの操作をまとめる。「新セッションを起動」はこのセッションの cwd で `session_launch` を呼ぶフォームで、`--model` / `--effort` の select と prompt だけを持ち、select はセッションが今動いている値 (DR-0041 の通しの上書き、無ければセッション自身の値、無ければ transcript) で始まる ([DR-0018](./DR-0018-session-launcher.md) §3.9)。両方とも `launch_available` の時だけ出し、「再起動」はさらにそのセッションの agents の行がある (プロセスが居る) 時に出す。セッションの config dir は問わない (下の「resume する config dir」)
 - どれか 1 つが走っている間 (起動・再起動・終了) は、両フォームの送信と「セッションを終了」を disabled にする。送信が走っている間はその dialog を閉じられない (Escape と × / ← 戻る が効かない)
 - 確認ダイアログは出さない (ユーザが理解して押す)。再起動の dialog (kawaz 2026-11-02): textarea 1 つと [デフォルトに保存] [再起動]。textarea には既定文が入っていて (全選択はしない、caret は末尾)、そのまま送っても、書き換えて指示を足してもよい。送った内容が request の `prompt` になる。FAB (composer) は使わない
   - [再起動] は内容が空 (空白だけを含む) なら disabled。Escape か × (狭い幅では ← 戻る) で閉じ、次に開くと既定文から始まる

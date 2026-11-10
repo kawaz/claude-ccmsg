@@ -469,7 +469,7 @@ export function SessionActions({
           onPress={openLaunch}
         >
           <button type="button" class="status-action-open" disabled={openLaunch === undefined}>
-            起動…
+            起動
           </button>
         </ActionRow>
         {restartShown ? (
@@ -479,7 +479,7 @@ export function SessionActions({
             onPress={openRestart}
           >
             <button type="button" class="status-action-open">
-              再起動…
+              再起動
             </button>
           </ActionRow>
         ) : null}

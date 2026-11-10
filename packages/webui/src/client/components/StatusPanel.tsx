@@ -142,8 +142,8 @@ function KillZone({
       ? "強制終了中…"
       : "終了処理中…"
     : forceMode
-      ? "強制終了…"
-      : "終了…";
+      ? "強制終了"
+      : "終了";
   const buttonCls = "status-kill-button" + (forceMode ? " status-kill-button-force" : "");
   return (
     <section class="status-section status-kill-zone">
@@ -452,7 +452,7 @@ function EnvPanel({
   const [state, setState] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
-    | { kind: "loaded"; pid: number; rows: EnvRow[] }
+    | { kind: "loaded"; rows: EnvRow[] }
     | {
         kind: "error";
         msg: string;
@@ -478,7 +478,7 @@ function EnvPanel({
     setState({ kind: "loading" });
     void onLoadEnv()
       .then((res) => {
-        if (res.ok) setState({ kind: "loaded", pid: res.pid, rows: toEnvRows(res.env) });
+        if (res.ok) setState({ kind: "loaded", rows: toEnvRows(res.env) });
         else setState({ kind: "error", msg: res.error.msg });
       })
       .catch((e: unknown) => setState({ kind: "error", msg: String(e) }));
@@ -516,15 +516,14 @@ function EnvPanel({
                 コロンを改行で表示
               </label>
             </div>
-            <p class="status-env-count">
-              {rows.length}/{state.rows.length} 件 · pid {state.pid}
-            </p>
+            {/* How many the search leaves, only while it narrows the list. */}
+            {rows.length < state.rows.length ? (
+              <p class="status-env-count">
+                {state.rows.length} 件中 {rows.length} 件
+              </p>
+            ) : null}
             {rows.length > 0 ? (
               <div class="status-env-table" role="table" aria-label="環境変数">
-                <div class="status-env-row status-env-head" role="row">
-                  <span role="columnheader">名前</span>
-                  <span role="columnheader">値</span>
-                </div>
                 {rows.map((row) => (
                   <div key={row.name} class="status-env-row" role="row">
                     <div class="status-env-name" role="cell">
@@ -752,6 +751,9 @@ export function StatusPanel({
           <Fact term="SESSION_ID" copy={sid}>
             {sid}
           </Fact>
+          <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
+            {agent ? String(agent.pid) : "—"}
+          </Fact>
           <Fact
             term="CCMSG"
             copy={staleClient ? staleClient.build : peer ? clientBuild : undefined}
@@ -781,9 +783,6 @@ export function StatusPanel({
           </Fact>
           <Fact term="UPTIME" copy={uptimeText}>
             {uptimeText ?? "—"}
-          </Fact>
-          <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
-            {agent ? String(agent.pid) : "—"}
           </Fact>
         </dl>
         <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />

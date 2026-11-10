@@ -7840,14 +7840,6 @@ a.tl-attachment-file-path {
   border-bottom: 1px solid var(--border);
 }
 
-/* The heading 値 starts at the value cell's left edge, over the copy button:
- * the button is in the value's cell, before the value, not a column of its
- * own. */
-.status-env-head {
-  font-weight: 600;
-  color: var(--fg-muted);
-}
-
 /* `overflow: hidden` makes the cell itself a scroll container, so its minimum
  * contribution to the column is 0 and `fit-content(30%)` can cap the column;
  * the name inside scrolls (`.status-scroll`). */
@@ -7944,6 +7936,17 @@ a.tl-attachment-file-path {
 .status-action-desc {
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
+}
+
+/* The buttons at the end of the operations' rows (起動 / 再起動 / 終了) are
+ * one width, down the tab: the rows sit in two lists (セッション操作 and the
+ * danger zone), so the width is a length they share rather than a column, wide
+ * enough for the longest label a row can turn to (終了処理中…). */
+.status-action-open,
+.status-kill-button {
+  min-width: 7.5em;
+  text-align: center;
+  white-space: nowrap;
 }
 
 /* The button that opens an operation's dialog: neutral, the operation is not

@@ -252,7 +252,7 @@ describe("Status の新セッションを起動", () => {
     const mounted = await mount({ context: CONTEXT });
     const { root } = mounted;
     expect(actionRow(root, LAUNCH)?.closest(".status-session-actions")).not.toBeNull();
-    expect(actionButton(root, LAUNCH).textContent).toBe("起動…");
+    expect(actionButton(root, LAUNCH).textContent).toBe("起動");
     expect(launchDialog(root)).toBeNull();
     expect(mounted.configReads()).toBe(0);
     await openLaunch(root);

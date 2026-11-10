@@ -235,13 +235,13 @@ describe("Status の再起動", () => {
   test("offered as a row after 新セッションを起動 in セッション操作, above the danger zone, which keeps the kill alone", async () => {
     const { root } = await mount({});
     expect(actionNames(root, ".status-session-actions")).toEqual(["新セッションを起動", RESTART]);
-    expect(actionButton(root, RESTART).textContent).toBe("再起動…");
+    expect(actionButton(root, RESTART).textContent).toBe("再起動");
     expect(restartDialog(root)).toBeNull();
     expect(actionRow(root, RESTART)?.closest(".status-kill-zone")).toBeNull();
     expect(actionNames(root, ".status-kill-zone")).toEqual(["セッションを終了"]);
     const zone = root.querySelector(".status-kill-zone");
     const labels = [...(zone?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
-    expect(labels).toEqual(["終了…"]);
+    expect(labels).toEqual(["終了"]);
     const actions = root.querySelector(".status-session-actions");
     expect(
       actions !== null &&
@@ -587,7 +587,7 @@ describe("Status の危険ゾーン", () => {
       expect(kills).toEqual([false]);
       expect(confirms).toHaveLength(1);
       expect(actionNames(mounted.root, ".status-kill-zone")).toEqual(["強制終了 (-KILL)"]);
-      expect(killButton(mounted.root)?.textContent).toBe("強制終了…");
+      expect(killButton(mounted.root)?.textContent).toBe("強制終了");
       expect(killButton(mounted.root)?.classList.contains("status-kill-button-force")).toBe(true);
       expect(mounted.root.querySelector(".status-kill-result")?.textContent).toBe(
         "シグナル送信済み (終了は未確認)。強制終了に切り替えました",
@@ -607,7 +607,7 @@ describe("Status の危険ゾーン", () => {
       const mounted = await mount({ kills });
       await act(() => killButton(mounted.root)?.click());
       expect(kills).toEqual([]);
-      expect(killButton(mounted.root)?.textContent).toBe("終了…");
+      expect(killButton(mounted.root)?.textContent).toBe("終了");
     } finally {
       restore();
     }

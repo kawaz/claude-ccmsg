@@ -376,11 +376,11 @@ describe("Status tab layout", () => {
         "CWD",
         "HYOUI_SESSION_ID",
         "SESSION_ID",
+        "PID",
         "CCMSG",
         "KIND",
         "STARTED",
         "UPTIME",
-        "PID",
       ],
     ]);
   });
@@ -492,11 +492,10 @@ describe("Status tab ENV", () => {
       );
     const path = row("PATH");
     expect(path?.querySelector(".status-env-name > .status-scroll")?.textContent).toBe("PATH");
-    // Two columns, the heading's and every row's: the copy button is in the
-    // value's cell, so 値 heads the button and the value together.
-    const head = fold.querySelector(".status-env-head");
-    expect([...(head?.children ?? [])].map((cell) => cell.textContent)).toEqual(["名前", "値"]);
-    expect([...(head?.children ?? [])].map((cell) => cell.className)).toEqual(["", ""]);
+    // No heading row: the names and the values say what they are. Every row
+    // is the name's cell and the value's, the copy button inside the value's.
+    expect(fold.querySelector('[role="columnheader"]')).toBeNull();
+    expect(fold.querySelector(".status-env-head")).toBeNull();
     expect([...(path?.children ?? [])].map((cell) => cell.className)).toEqual([
       "status-env-name",
       "status-env-value",
@@ -543,6 +542,25 @@ describe("Status tab ENV", () => {
         (part) => part.textContent,
       ),
     ).toEqual(["/opt/bin", "/usr/bin"]);
+    // The count shows only while the search narrows the list — how many of
+    // all are left — and never the pid (the table's PID row has it).
+    expect(fold.querySelector(".status-env-count")).toBeNull();
+    const search = instanceOf(
+      fold.querySelector(".status-env-search"),
+      HTMLInputElement,
+      "the ENV search",
+    );
+    await act(() => {
+      search.value = "path";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(fold.querySelector(".status-env-count")?.textContent).toBe("2 件中 1 件");
+    await act(() => {
+      search.value = "";
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(fold.querySelector(".status-env-count")).toBeNull();
+    expect(fold.textContent).not.toContain("pid");
   });
 });
 
