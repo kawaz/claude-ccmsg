@@ -2,6 +2,15 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.233.0 <a id="v0.233.0"></a>
+
+2026-11-11
+
+- `send` の `agent_id` 付きの送信が、相手の agent が待機中でも終わっていても届く (待機中の teammate は起き、終わった subagent は再開する)。届け方を `$.session.append` から `$.session.send` に替えた。受け手にはその agent の親からの文に見え、本文の頭の `ccmsg:<送り主> から:` が本当の送り主を示す。protocol 2.4
+- subagent が呼んだ `launch` の結果の知らせも同じ届け方になった (結果が出る前に turn を終えた subagent は、再開して読む)
+- 届かなかった理由 `not_running` を `no_agent` (そのセッションにその agent_id の agent が居ない) に替えた
+- webui から走行中の subagent への入力は `append` のまま (待機中の agent には届かない)
+
 ## v0.232.8 <a id="v0.232.8"></a>
 
 2026-11-10
