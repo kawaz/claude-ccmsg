@@ -9,7 +9,7 @@ import {
   type OverrideGroup,
   overrideGroups,
   requestOverrideNotice,
-  requestValueViews,
+  requestValueTexts,
 } from "../src/client/request-override-view.ts";
 import {
   formatContextUsage,
@@ -32,76 +32,110 @@ const OWN: RequestOverrideState = {
   once: NONE,
 };
 
-describe("requestValueViews", () => {
-  test("without an override: the session's own, shortened, unmarked", () => {
-    const own = {
-      model: { text: "opus-5-5", title: "model claude-opus-5-5" },
-      effort: { text: "high", title: "effort high" },
+// The ctx line's model and effort are the text their selects show at rest, as
+// the Status tab's MODEL / EFFORT are: one label, nothing added to it.
+describe("requestValueTexts", () => {
+  const restLabel = (
+    field: "model" | "effort",
+    ctx: SessionContextUsage,
+    state: RequestOverrideState | undefined,
+  ) =>
+    overrideGroups(field, state, ctx, { turn: false, shorten: shortModel })[0]?.options[0]?.label;
+
+  test("without an override: the session's own, shortened", () => {
+    const own = { model: "opus-5-5[1m]", effort: "high" };
+    expect(requestValueTexts(CTX, undefined, shortModel)).toEqual(own);
+    expect(requestValueTexts(CTX, OWN, shortModel)).toEqual(own);
+  });
+
+  test("a value other than the session's own carries the mark of its override, as the select's label does", () => {
+    const state: RequestOverrideState = {
+      session: { model: "sonnet", effort: "low" },
+      once: { model: null, effort: "max" },
     };
-    expect(requestValueViews(CTX, undefined, shortModel)).toEqual(own);
-    expect(requestValueViews(CTX, OWN, shortModel)).toEqual(own);
+    const texts = requestValueTexts(CTX, state, shortModel);
+    expect(texts).toEqual({ model: "📌sonnet[1m]", effort: "⏱️max" });
+    expect(restLabel("model", CTX, state)).toBe(texts.model);
+    expect(restLabel("effort", CTX, state)).toBe("⏱️max");
   });
 
-  test("a value other than the session's own is marked and says which override", () => {
-    const views = requestValueViews(
-      CTX,
-      { session: { model: "sonnet", effort: "low" }, once: { model: null, effort: "max" } },
-      shortModel,
-    );
-    expect(views.model).toEqual({
-      text: "sonnet⁺",
-      by: "session",
-      title: "model sonnet (通しの上書き。セッション自身は claude-opus-5-5[1m])",
-    });
-    expect(views.effort).toEqual({
-      text: "max⁺",
-      by: "once",
-      title: "effort max (単発の上書き。セッション自身は high)",
-    });
-  });
-
-  // The mark says the requests run on other than the session's own.
-  test("an override that names the session's own value is not marked", () => {
+  test("an override that names the session's own value reads as no override", () => {
     expect(
-      requestValueViews(
+      requestValueTexts(
         CTX,
         { session: { model: "opus", effort: "high" }, once: NONE },
         shortModel,
       ),
-    ).toEqual(requestValueViews(CTX, undefined, shortModel));
+    ).toEqual(requestValueTexts(CTX, undefined, shortModel));
   });
 
   test("an effort only an override names, for a session that names none", () => {
     const { effort: _own, ...ran } = CTX;
     const noEffort = { ...ran, engine: { model: "claude-opus-5-5[1m]" } };
-    expect(requestValueViews(noEffort, undefined, shortModel).effort).toBeNull();
+    expect(requestValueTexts(noEffort, undefined, shortModel).effort).toBeNull();
     expect(
-      requestValueViews(
+      requestValueTexts(
         noEffort,
         { session: { model: null, effort: "low" }, once: NONE },
         shortModel,
       ).effort,
-    ).toEqual({
-      text: "low⁺",
-      by: "session",
-      title: "effort low (通しの上書き。セッション自身の値はまだ分からない)",
+    ).toBe("📌low");
+  });
+
+  test("without the module's facts: what the requests ran on", () => {
+    const { engine: _engine, ...bare } = CTX;
+    expect(requestValueTexts(bare, undefined, shortModel)).toEqual({
+      model: "opus-5-5[1m]",
+      effort: "high",
     });
   });
 
-  test("the ctx line and its title carry the values the requests are sent with", () => {
+  // The session names itself by an alias with no version (`fable[1m]`); the
+  // model that answered is the same model with its version, so that is shown.
+  test("the session's own model is the ID that answered, not the alias it was started with", () => {
+    const aliased = {
+      ...CTX,
+      model: "claude-fable-5-2",
+      engine: { model: "fable[1m]", effort: "high" },
+    };
+    expect(requestValueTexts(aliased, undefined, shortModel).model).toBe("fable-5-2[1m]");
+    expect(restLabel("model", aliased, undefined)).toBe("fable-5-2[1m]");
+  });
+
+  // After /model, or under a model override, the last answer is another
+  // model's: the session's own is then only known by the name it goes by.
+  test("where the last answer was another model's, the session's own is the name it goes by", () => {
+    const switched = {
+      ...CTX,
+      model: "claude-sonnet-5-5",
+      engine: { model: "fable[1m]", effort: "high" },
+    };
+    expect(requestValueTexts(switched, undefined, shortModel).model).toBe("fable[1m]");
+  });
+
+  test("without a measured window the model has no brackets", () => {
+    const { window: _window, engine: _engine, ...unmeasured } = CTX;
+    expect(requestValueTexts(unmeasured, undefined, shortModel).model).toBe("opus-5-5");
+  });
+
+  test("the ctx line carries those texts; its hover says what the requests ran on", () => {
     const formatted = formatContextUsage(CTX, {
       session: { model: CTX.model, effort: "low" },
       once: NONE,
     });
-    expect(formatted.text).toBe("10% / opus-5-5[1m] / low⁺");
-    expect(formatted.title).toContain("effort low (通しの上書き。セッション自身は high)");
+    expect(formatted.text).toBe("10% / opus-5-5[1m] / 📌low");
+    // The hover says what the requests ran on, and nothing of the override:
+    // the mark in the text is what says it.
+    expect(formatted.title).toBe(
+      "100,000 tokens / context window 1,000,000 / model claude-opus-5-5 / effort high",
+    );
     const [line] = miniSummaryLines(
       { todos: [], workflows: [], background: [], context: CTX },
       [],
       { ...OWN, once: { model: "haiku", effort: null } },
     );
-    expect(line?.text).toBe("10% / haiku⁺[1m] / high");
-    expect(line?.context?.usage?.model.by).toBe("once");
+    expect(line?.text).toBe("10% / ⏱️haiku[1m] / high");
+    expect(line?.context?.usage?.model).toBe("⏱️haiku[1m]");
   });
 });
 
@@ -133,7 +167,7 @@ describe("the selects", () => {
   test("the Status tab's: no turn group; the model's 🏛️ is the family of the session's model ID", () => {
     const own = { session: { model: "claude-fable-5-1[1m]", effort: "low" }, once: NONE };
     expect(shownGroups(overrideGroups("model", own, FABLE_LOW, STATUS))).toEqual([
-      ["default", ["fable-5-1"]],
+      ["default", ["fable-5-1[1m]"]],
       ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
     expect(shownGroups(overrideGroups("effort", own, FABLE_LOW, STATUS))).toEqual([
@@ -152,17 +186,17 @@ describe("the selects", () => {
     // A session override that is the session's own value is no override.
     expect(label({ session: { model: "fable", effort: "low" }, once: NONE })).toBe("low");
     expect(label({ session: { model: "sonnet", effort: "low" }, once: NONE }, "model")).toBe(
-      "📌sonnet",
+      "📌sonnet[1m]",
     );
     expect(label({ session: { model: "fable", effort: "low" }, once: NONE }, "model")).toBe(
-      "fable-5-1",
+      "fable-5-1[1m]",
     );
     expect(
       label(
         { session: { model: "fable", effort: "low" }, once: { model: "haiku", effort: null } },
         "model",
       ),
-    ).toBe("⏱️haiku");
+    ).toBe("⏱️haiku[1m]");
   });
 
   // §6.1 (kawaz 2026-10-28): a session's own value outside the vocabulary
@@ -205,7 +239,7 @@ describe("the selects", () => {
       once: NONE,
     };
     expect(shownGroups(overrideGroups("model", sonnet, answered, STATUS))).toEqual([
-      ["default", ["📌sonnet"]],
+      ["default", ["📌sonnet[1m]"]],
       ["session", ["🏛️fable", "📌opus", "📌sonnet", "📌haiku"]],
     ]);
     // Cleared: the default is the session's own, not the model that answered
@@ -215,18 +249,15 @@ describe("the selects", () => {
       once: NONE,
     };
     expect(overrideGroups("model", cleared, answered, STATUS)[0]?.options[0]?.label).toBe(
-      "fable-5-1",
+      "fable-5-1[1m]",
     );
     expect(overrideGroups("effort", cleared, answered, STATUS)[0]?.options[0]?.label).toBe("low");
-    // The ctx line shows what the requests ran on, marked only against the
-    // session's own.
-    expect(requestValueViews(answered, sonnet, shortModel).model).toMatchObject({
-      text: "sonnet⁺",
-      by: "session",
-    });
-    expect(requestValueViews(answered, cleared, shortModel)).toEqual({
-      model: { text: "sonnet-5-5", title: "model claude-sonnet-5-5" },
-      effort: { text: "max", title: "effort max" },
+    // The ctx line shows the same as the selects: the override's with its
+    // mark, and once cleared the session's own.
+    expect(requestValueTexts(answered, sonnet, shortModel).model).toBe("📌sonnet[1m]");
+    expect(requestValueTexts(answered, cleared, shortModel)).toEqual({
+      model: "fable-5-1[1m]",
+      effort: "low",
     });
   });
 

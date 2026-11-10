@@ -16,7 +16,6 @@ import {
   dedupeWorkflowRunsByRunId,
   formatAgentLiveState,
   formatContextUsage,
-  formatContextWindow,
   formatSessionModelEffort,
   shortModel,
   formatSidebarBadge,
@@ -118,8 +117,7 @@ describe("miniSummaryLines", () => {
         context: {
           usage: {
             fill: "64%",
-            model: { text: "fable-5", title: "model claude-fable-5" },
-            window: "[1m]",
+            model: "fable-5[1m]",
             effort: null,
           },
           tail: [],
@@ -143,8 +141,7 @@ describe("miniSummaryLines", () => {
         context: {
           usage: {
             fill: "50%",
-            model: { text: "m", title: "model m" },
-            window: "[200K]",
+            model: "m[200K]",
             effort: null,
           },
           tail: [],
@@ -185,9 +182,8 @@ describe("miniSummaryLines", () => {
         context: {
           usage: {
             fill: "10%",
-            model: { text: "fable-5-1", title: "model claude-fable-5-1" },
-            window: "[1m]",
-            effort: { text: "low", title: "effort low" },
+            model: "fable-5-1[1m]",
+            effort: "low",
           },
           tail,
         },
@@ -280,8 +276,7 @@ describe("miniSummaryLines", () => {
         context: {
           usage: {
             fill: "52%",
-            model: { text: "m", title: "model m" },
-            window: "[1m]",
+            model: "m[1m]",
             effort: null,
           },
           tail: [],
@@ -369,10 +364,12 @@ describe("context usage display", () => {
 
   test("window は 100 万の倍数なら m、そうでなければ K で括弧に入れて出す", () => {
     // DISABLE_COMPACT + CLAUDE_CODE_MAX_CONTEXT_TOKENS の上書きで 300,000 になる実測がある。
-    expect(formatContextWindow(200_000)).toBe("[200K]");
-    expect(formatContextWindow(300_000)).toBe("[300K]");
-    expect(formatContextWindow(1_000_000)).toBe("[1m]");
-    expect(formatContextWindow(2_000_000)).toBe("[2m]");
+    const modelAt = (window: number) =>
+      formatContextUsage({ window, model: "m", timestamp: "t" }).model;
+    expect(modelAt(200_000)).toBe("m[200K]");
+    expect(modelAt(300_000)).toBe("m[300K]");
+    expect(modelAt(1_000_000)).toBe("m[1m]");
+    expect(modelAt(2_000_000)).toBe("m[2m]");
   });
 
   // Status タブの CONTEXT は fill を目盛りに、残りを横の文に分けて出す。
@@ -448,8 +445,8 @@ describe("context usage display", () => {
   });
 
   // The model is the one that answered (the transcript's ID without
-  // `claude-`); the window's `[1m]` follows it, as the model's attribute
-  // (kawaz 2026-11-06), and is not part of the model's own text.
+  // `claude-`), with the window's `[1m]` after it as the model's attribute
+  // (kawaz 2026-11-06).
   test("model は claude- を落とした実 ID で、[1m] は model の後ろに付く", () => {
     const formatted = formatContextUsage({
       tokens: 280_000,
@@ -459,8 +456,7 @@ describe("context usage display", () => {
       timestamp: "t",
     });
     expect(formatted.text).toBe("28% / fable-5-1[1m] / low");
-    expect(formatted.model.text).toBe("fable-5-1");
-    expect(formatted.window).toBe("[1m]");
+    expect(formatted.model).toBe("fable-5-1[1m]");
   });
 
   test("effort ありの context は「/ model / effort」の順で text に付く", () => {

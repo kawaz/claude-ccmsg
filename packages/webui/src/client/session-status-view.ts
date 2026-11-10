@@ -13,13 +13,7 @@ import type {
   SessionTeammate,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
-import { requestValueViews, type RequestValueView } from "./request-override-view.ts";
-
-/** A context window as the ctx line spells it, in square brackets after the
- * fill: whole millions as `[1m]`, anything else in thousands (`[200K]`). */
-export function formatContextWindow(window: number): string {
-  return window % 1_000_000 === 0 ? `[${window / 1_000_000}m]` : `[${Math.round(window / 1000)}K]`;
-}
+import { requestValueTexts } from "./request-override-view.ts";
 
 /** Display shortening for model names: drops the redundant `claude-` prefix
  * ("claude-fable-5" → "fable-5"). Values without the prefix pass through
@@ -151,8 +145,9 @@ export function restartResultText(reply: SessionRestartResponse | ErrorResponse)
 }
 
 /** The ctx line's usage, in its parts: the fill (`10%`), the model and the
- * effort the requests are sent with (DR-0041 §5), and the context window
- * that follows the model (`[1m]`, empty when not known). */
+ * effort in force as their selects write them (DR-0041 §6.1), the model with
+ * the context window after it (`fable-5-1[1m]`, no brackets when the window
+ * is not known). */
 export interface ContextUsageView {
   text: string;
   title: string;
@@ -164,9 +159,8 @@ export interface ContextUsageView {
   /** The text after the fill: the model with its window, and the effort
    * (`fable-5-1[1m] / high`). */
   rest: string;
-  model: RequestValueView;
-  window: string;
-  effort: RequestValueView | null;
+  model: string;
+  effort: string | null;
 }
 
 /** The ctx line's usage: the percentage of the window Claude Code reported
@@ -177,9 +171,10 @@ export interface ContextUsageView {
  * the model's default and on environment overrides the transcript does not
  * record, so it is not guessed. Before the first response there is no fill,
  * shown as `—`. The model (the transcript's ID without `claude-`,
- * `fable-5-1`) and the effort are the ones the requests are sent with: an
- * override's, marked, else the session's own (`overrides` is what
- * ev:"request_override" says of the session). Parts are joined with ` / `. */
+ * `fable-5-1`) and the effort are the ones in force, written as their selects
+ * show them (DR-0041 §6.1: an override's with its mark, `📌low`, else the
+ * session's own; `overrides` is what ev:"request_override" says of the
+ * session). Parts are joined with ` / `. */
 export function formatContextUsage(
   ctx: SessionContextUsage,
   overrides?: RequestOverrideState,
@@ -191,12 +186,11 @@ export function formatContextUsage(
       : window !== undefined
         ? `${Math.round((tokens / window) * 100)}%`
         : `${Math.round(tokens / 1000)}k`;
-  const windowText = window !== undefined ? formatContextWindow(window) : "";
   // model is always appended (DR-0020 addendum 2026-07-18); effort only when
   // the transcript row carried one (older CC rows lack the field) or an
   // override names one.
-  const { model, effort } = requestValueViews(ctx, overrides, shortModel);
-  const rest = [`${model.text}${windowText}`, ...(effort ? [effort.text] : [])].join(" / ");
+  const { model, effort } = requestValueTexts(ctx, overrides, shortModel);
+  const rest = [model, ...(effort !== null ? [effort] : [])].join(" / ");
   return {
     text: `${fill} / ${rest}`,
     title:
@@ -204,13 +198,12 @@ export function formatContextUsage(
       (window !== undefined
         ? ` / context window ${window.toLocaleString("en-US")}`
         : " / context window unknown (the session has no ccmsg hooks module)") +
-      ` / ${model.title}` +
-      (effort ? ` / ${effort.title}` : ""),
+      ` / model ${ctx.model}` +
+      (ctx.effort !== undefined ? ` / effort ${ctx.effort}` : ""),
     fill,
     ratio: tokens !== undefined && window !== undefined ? tokens / window : null,
     rest,
     model,
-    window: windowText,
     effort,
   };
 }
@@ -274,7 +267,7 @@ export interface MiniSummaryLine {
    * rest so a person can change the session override from them (DR-0041 §5).
    * `tail` is what follows them, each part drawn with its own hover text. */
   context?: {
-    usage: Pick<ContextUsageView, "fill" | "model" | "window" | "effort"> | null;
+    usage: Pick<ContextUsageView, "fill" | "model" | "effort"> | null;
     tail: LinePart[];
   };
 }
@@ -341,9 +334,7 @@ export function miniSummaryLines(
       kind: "context",
       text: contextParts.join(" / "),
       context: {
-        usage: usage
-          ? { fill: usage.fill, model: usage.model, window: usage.window, effort: usage.effort }
-          : null,
+        usage: usage ? { fill: usage.fill, model: usage.model, effort: usage.effort } : null,
         tail: [...tail],
       },
     });

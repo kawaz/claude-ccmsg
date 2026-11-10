@@ -412,7 +412,7 @@ describe("Status tab MODEL / EFFORT rows", () => {
 
   test("show the collapsed face: the value alone without an override", async () => {
     const { root } = await mountStatus(agentRow());
-    expect(metaCell(root, "MODEL").textContent).toBe("fable-5-1");
+    expect(metaCell(root, "MODEL").textContent).toBe("fable-5-1[200K]");
     expect(metaCell(root, "EFFORT").textContent).toBe("low");
   });
 
@@ -430,7 +430,7 @@ describe("Status tab MODEL / EFFORT rows", () => {
         ],
       }),
     );
-    expect(metaCell(root, "MODEL").textContent).toBe("📌opus");
+    expect(metaCell(root, "MODEL").textContent).toBe("📌opus[200K]");
     expect(metaCell(root, "EFFORT").textContent).toBe("📌high");
   });
 

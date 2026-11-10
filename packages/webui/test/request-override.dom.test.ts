@@ -176,10 +176,11 @@ describe("the ctx line's fields", () => {
       HTMLElement,
       `the ctx line's ${field}`,
     );
-  /** A field's value at rest as the line shows it. */
+  /** A field's value at rest: the same text button the Status tab's rows
+   * hold. */
   const ctxValue = (root: HTMLElement, field: Field) =>
     instanceOf(
-      fieldOf(root, field).querySelector("button.ctx-value"),
+      fieldOf(root, field).querySelector("button.override-value"),
       HTMLButtonElement,
       `the ctx line's ${field} at rest`,
     );
@@ -198,12 +199,22 @@ describe("the ctx line's fields", () => {
     });
   }
 
-  test("the overridden effort is marked; pressing it turns it into its select in place, no row of its own", async () => {
+  // The line shows a field as the Status tab does: the select's label at
+  // rest (`📌low`), with no mark, colour or hover text of the line's own.
+  test("the overridden effort reads as its select labels it; pressing it turns it into its select in place, no row of its own", async () => {
     const { onChange } = recorder({ ok: true, delivery: "applied" });
     const root = await mountLine(onChange);
-    const buttons = [...root.querySelectorAll("button.ctx-value")];
-    expect(buttons.map((b) => b.textContent)).toEqual(["opus-5-5", "low⁺"]);
-    expect(buttons[1]?.classList.contains("ctx-value-overridden")).toBe(true);
+    const buttons = [...root.querySelectorAll(".tl-status-mini-context button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["opus-5-5[1m]", "📌low"]);
+    expect(buttons.map((b) => b.className)).toEqual(["override-value", "override-value"]);
+    expect(buttons.map((b) => b.getAttribute("title"))).toEqual([
+      "model: 押すと選択肢が開く",
+      "effort: 押すと選択肢が開く",
+    ]);
+    // The window is said once: the model's own text ends in it.
+    const lineText = root.querySelector(".tl-status-mini-context")?.textContent ?? "";
+    expect(lineText).toContain("opus-5-5[1m] / 📌low");
+    expect(lineText).not.toContain("[1m][1m]");
     const effort = await pressValue(root, "effort");
     // The select is where the effort was, in the line; nothing else opened.
     expect(fieldOf(root, "effort").contains(effort)).toBe(true);
@@ -213,7 +224,7 @@ describe("the ctx line's fields", () => {
     expect(root.querySelector('button[aria-label="閉じる"]')).toBeNull();
     expect(root.children).toHaveLength(1);
     // The model stays the line's own text.
-    expect(ctxValue(root, "model").textContent).toBe("opus-5-5");
+    expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
     // The default and the session group, the session's own value 🏛️ in
     // place of its 📌.
     expect(groupsOf(effort)).toEqual([
@@ -223,7 +234,7 @@ describe("the ctx line's fields", () => {
     // Pressing the model moves the focus there: the effort goes back to the
     // line's text.
     const model = await pressValue(root, "model");
-    expect(ctxValue(root, "effort").textContent).toBe("low⁺");
+    expect(ctxValue(root, "effort").textContent).toBe("📌low");
     expect(groupsOf(model)).toEqual([
       ["default", ["opus-5-5[1m]"]],
       ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
@@ -247,7 +258,7 @@ describe("the ctx line's fields", () => {
     await act(() => elsewhere.focus());
     expect(document.activeElement).toBe(elsewhere);
     expect(root.querySelector("select")).toBeNull();
-    expect(ctxValue(root, "effort").textContent).toBe("low⁺");
+    expect(ctxValue(root, "effort").textContent).toBe("📌low");
   });
 
   test("[適用] only while an option other than the default is chosen; it sends that field alone", async () => {
@@ -262,13 +273,13 @@ describe("the ctx line's fields", () => {
     // Back to the default: nothing to apply, the line's text again.
     await choose(root, "model", "opus-5-5[1m]");
     expect(ctxApply(root, "model")).toBeNull();
-    expect(ctxValue(root, "model").textContent).toBe("opus-5-5");
+    expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
     await pressValue(root, "model");
     await choose(root, "model", "📌sonnet");
     await applyField(root, "model");
     expect(patches).toEqual([{ model: "sonnet" }]);
     // Applied, the field is at the default again, nothing said.
-    expect(ctxValue(root, "model").textContent).toBe("opus-5-5");
+    expect(ctxValue(root, "model").textContent).toBe("opus-5-5[1m]");
     expect(ctxApply(root, "model")).toBeNull();
     expect(root.querySelector(".override-notice")).toBeNull();
   });
@@ -297,7 +308,7 @@ describe("the ctx line's fields", () => {
       "受け口 (hooks module) が無い",
     );
     // The daemon holds it: the field is back at the default.
-    expect(ctxValue(root, "effort").textContent).toBe("low⁺");
+    expect(ctxValue(root, "effort").textContent).toBe("📌low");
 
     const refused = recorder({ ok: false, error: { code: "invalid_args", msg: "effort: x" } });
     const other = await mountLine(refused.onChange);
@@ -381,7 +392,7 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
     ]);
     const row = instanceOf(root.querySelector(".status-gauges"), HTMLElement, "the gauges");
     expect(row.querySelector("select")).toBeNull();
-    expect(textOf(row, "model").textContent).toBe("📌fable");
+    expect(textOf(row, "model").textContent).toBe("📌fable[1m]");
     expect(textOf(row, "effort").textContent).toBe("⏱️max");
     expect(row.textContent).not.toContain("単発");
     expect(groupsOf(await press(row, "effort")).map(([label]) => label)).toEqual([
@@ -421,9 +432,9 @@ describe("the Status tab's MODEL / EFFORT rows", () => {
       },
     ]);
     const row = instanceOf(root.querySelector(".status-gauges"), HTMLElement, "the gauges");
-    expect(textOf(row, "model").textContent).toBe("📌sonnet");
+    expect(textOf(row, "model").textContent).toBe("📌sonnet[1m]");
     expect(groupsOf(await press(row, "model"))).toEqual([
-      ["default", ["📌sonnet"]],
+      ["default", ["📌sonnet[1m]"]],
       ["session", ["📌fable", "🏛️opus", "📌sonnet", "📌haiku"]],
     ]);
   });

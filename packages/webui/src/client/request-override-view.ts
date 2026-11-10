@@ -28,26 +28,12 @@ import {
   type SessionContextUsage,
 } from "@ccmsg/protocol";
 
-/** The mark an overridden value carries on the ctx line. */
-export const OVERRIDE_MARK = "⁺";
-
 /** The two fields an override has. */
 export type OverrideField = "model" | "effort";
 
 /** The models and the efforts a select offers, in the launch's order. */
 export const OVERRIDE_MODELS: readonly LaunchModel[] = LaunchModelSchema.options;
 export const OVERRIDE_EFFORTS: readonly LaunchEffort[] = LaunchEffortSchema.options;
-
-/** What one of the model and the effort of the ctx line shows: the value the
- * requests are sent with, and when an override sets it to other than the
- * session's own, which one. */
-export interface RequestValueView {
-  text: string;
-  by?: "session" | "once";
-  title: string;
-}
-
-const OVERRIDE_NAME = { session: "通しの上書き", once: "単発の上書き" } as const;
 
 /** Whether `value` puts other than the session's own `own` on the requests.
  * A model is spelled as an alias (`opus[1m]`, an override's `sonnet`) or as
@@ -70,8 +56,7 @@ function differs(field: OverrideField, value: string, own: string | undefined): 
 }
 
 /** The override in force on one field, when it sets the field to other than
- * the session's own `engine` value: its value and which override it is. The
- * same judgment marks the ctx line (§5) and labels the selects (§6.1). */
+ * the session's own `engine` value: its value and which override it is. */
 function overrideInForceOn(
   field: OverrideField,
   engine: string | undefined,
@@ -84,47 +69,76 @@ function overrideInForceOn(
   return { value, by: once !== null ? "once" : "session" };
 }
 
-function valueView(
-  field: OverrideField,
-  ctx: SessionContextUsage,
-  state: RequestOverrideState | undefined,
-  shorten: (value: string) => string,
-): RequestValueView | null {
-  const engine = ctx.engine?.[field];
-  const over = overrideInForceOn(field, engine, state);
-  if (over === null) {
-    const ran = ctx[field] ?? engine;
-    return ran === undefined ? null : { text: shorten(ran), title: `${field} ${ran}` };
-  }
-  return {
-    text: `${shorten(over.value)}${OVERRIDE_MARK}`,
-    by: over.by,
-    title:
-      `${field} ${over.value} (${OVERRIDE_NAME[over.by]}。` +
-      (engine !== undefined
-        ? `セッション自身は ${engine})`
-        : "セッション自身の値はまだ分からない)"),
-  };
-}
-
-/** The model and the effort of the ctx line. The effort is null when neither
- * the session nor an override names one (a model without effort, an older
- * transcript row). */
-export function requestValueViews(
-  ctx: SessionContextUsage,
-  state: RequestOverrideState | undefined,
-  shorten: (model: string) => string,
-): { model: RequestValueView; effort: RequestValueView | null } {
-  const model = valueView("model", ctx, state, shorten) ?? {
-    text: shorten(ctx.model),
-    title: `model ${ctx.model}`,
-  };
-  return { model, effort: valueView("effort", ctx, state, (e) => e) };
-}
-
 /** The marks the selects put before a value (DR-0041 §6.1): what the value
  * is — the one-shot override's, the session override's, the session's own. */
 export const LAYER_MARK = { once: "⏱️", session: "📌", engine: "🏛️" } as const;
+
+/** A context window as it is written after a model, in square brackets:
+ * whole millions as `[1m]`, anything else in thousands (`[200K]`). */
+export function formatContextWindow(window: number): string {
+  return window % 1_000_000 === 0 ? `[${window / 1_000_000}m]` : `[${Math.round(window / 1000)}K]`;
+}
+
+/** A model without a window after it (`claude-fable-5-1[1m]` →
+ * `claude-fable-5-1`). */
+function withoutWindow(model: string): string {
+  return model.replace(/\[[^\]]*\]$/, "");
+}
+
+/** The session's own model, as exactly as it is known: the ID of the model
+ * that answered (the transcript's `claude-fable-5-2`) where that is the model
+ * the session names for itself, else the name the session was started or
+ * switched with (the module's `fable[1m]`, an alias with no version: after
+ * `/model`, or under a model override, the last answer is another model's).
+ * Without the module's facts, the model that answered. */
+function ownModel(ctx: SessionContextUsage): string {
+  const named = ctx.engine?.model;
+  if (named === undefined) return ctx.model;
+  const family = launchModelFromTranscript(named);
+  return family !== undefined && family === launchModelFromTranscript(ctx.model)
+    ? ctx.model
+    : withoutWindow(named);
+}
+
+/** The value of `field` in force, as every place that shows it writes it
+ * (DR-0041 §6.1): the override's with the mark of which one (`📌low`,
+ * `⏱️high`) when it sets other than the session's own, else the session's
+ * own — or, without the module's facts, what the requests ran on — and null
+ * when nothing names one. A model is followed by the context window the
+ * session measures (`fable-5-2[1m]`). */
+function valueInForce(
+  field: OverrideField,
+  ctx: SessionContextUsage | undefined,
+  state: RequestOverrideState | undefined,
+  shorten: (model: string) => string,
+): string | null {
+  const over = overrideInForceOn(field, ctx?.engine?.[field], state);
+  if (field === "effort") {
+    if (over !== null) return `${LAYER_MARK[over.by]}${over.value}`;
+    return ctx?.engine?.effort ?? ctx?.effort ?? null;
+  }
+  if (ctx === undefined)
+    return over === null ? null : `${LAYER_MARK[over.by]}${shorten(over.value)}`;
+  const window = ctx.window !== undefined ? formatContextWindow(ctx.window) : "";
+  return over !== null
+    ? `${LAYER_MARK[over.by]}${shorten(withoutWindow(over.value))}${window}`
+    : `${shorten(ownModel(ctx))}${window}`;
+}
+
+/** The model and the effort of the ctx line, each the text its select shows
+ * at rest (the Status tab's MODEL / EFFORT show the same): the model with its
+ * window. The effort is null when neither the session nor an override names
+ * one (a model without effort, an older transcript row). */
+export function requestValueTexts(
+  ctx: SessionContextUsage,
+  state: RequestOverrideState | undefined,
+  shorten: (model: string) => string,
+): { model: string; effort: string | null } {
+  return {
+    model: valueInForce("model", ctx, state, shorten) ?? shorten(ctx.model),
+    effort: valueInForce("effort", ctx, state, shorten),
+  };
+}
 
 /** What choosing an option of a select does (DR-0041 §6.1): nothing (the
  * default, the value in force); the one-shot override of the send; the
@@ -185,18 +199,7 @@ export function overrideGroups(
   ctx: SessionContextUsage | undefined,
   { turn, shorten }: { turn: boolean; shorten: (model: string) => string },
 ): OverrideGroup[] {
-  const own = ctx?.engine?.[field];
-  const over = overrideInForceOn(field, own, state);
-  const shown = (value: string) => (field === "model" ? shorten(value) : value);
-  // Without the module's facts the session's own is not known: what the
-  // requests ran on stands in for it.
-  const plain = own ?? ctx?.[field];
-  const current =
-    over !== null
-      ? `${LAYER_MARK[over.by]}${shown(over.value)}`
-      : plain !== undefined
-        ? shown(plain)
-        : "—";
+  const current = valueInForce(field, ctx, state, shorten) ?? "—";
   const engine = engineValue(field, ctx);
   const cleared: RequestOverridePatch = field === "model" ? { model: null } : { effort: null };
   const values = vocabulary(field);

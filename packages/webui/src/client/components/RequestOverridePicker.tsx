@@ -25,7 +25,6 @@ import {
   type OverrideGroup,
   overrideGroups,
   requestOverrideNotice,
-  type RequestValueView,
 } from "../request-override-view.ts";
 import { type MiniSummaryLine, shortModel } from "../session-status-view.ts";
 
@@ -57,22 +56,19 @@ function openPicker(select: HTMLSelectElement): void {
  * pressable, the label of the option chosen (`low`, `⏱️high`, `📌high`);
  * pressed, it becomes the native `<select>` of the groups' options with its
  * picker open, and goes back to text once an option is chosen, on blur, or
- * on Escape. `chosen` is the key of the option chosen; `face` is the value as
- * the ctx line shows it (DR-0041 §5), at rest in place of the option's label. */
+ * on Escape. `chosen` is the key of the option chosen. */
 export function OverrideSelect({
   groups,
   chosen,
   onChoose,
   disabled,
   label,
-  face,
 }: {
   groups: readonly OverrideGroup[];
   chosen: string;
   onChoose: (key: string) => void;
   disabled: boolean;
   label: string;
-  face?: RequestValueView;
 }) {
   const [open, setOpen] = useState(false);
   // Closed from the keyboard or by a choice, the text takes the focus back;
@@ -88,22 +84,9 @@ export function OverrideSelect({
   }, []);
   const option = chosenOption(groups, chosen);
   if (!open || disabled) {
-    // The ctx line's text (`low⁺`) is read as it is, between the line's other
-    // parts; the option's label alone (`📌low`) does not say which field it
-    // is, so its accessible name is the field's.
-    return face !== undefined ? (
-      <button
-        type="button"
-        class={face.by ? `ctx-value ctx-value-overridden ctx-value-${face.by}` : "ctx-value"}
-        aria-haspopup="listbox"
-        title={`${face.title}。押すと通しの上書きを変える`}
-        disabled={disabled}
-        ref={textRef}
-        onClick={() => setOpen(true)}
-      >
-        {face.text}
-      </button>
-    ) : (
+    // The option's label alone (`📌low`) does not say which field it is, so
+    // its accessible name is the field's.
+    return (
       <button
         type="button"
         class="override-value"
@@ -158,23 +141,20 @@ export function OverrideSelect({
  * MODEL / EFFORT row and the ctx line put it: its select, the
  * [適用] beside it while an option other than the default is chosen, and
  * what became of the last change. Applied, the select goes back to the
- * default, which ev:"request_override" brings the new value to. `face` is the
- * ctx line's text of the value, shown at rest while the default is chosen;
- * `noticeMs` how long what became of the change stays (without it, until the
- * next choice). */
+ * default, which ev:"request_override" brings the new value to. `noticeMs` is
+ * how long what became of the change stays (without it, until the next
+ * choice). */
 export function SessionOverrideField({
   field,
   state,
   context,
   onChange,
-  face,
   noticeMs,
 }: {
   field: OverrideField;
   state: RequestOverrideState | undefined;
   context: SessionContextUsage | undefined;
   onChange: SessionOverrideChange;
-  face?: RequestValueView;
   noticeMs?: number;
 }) {
   const [chosenKey, setChosenKey] = useState(CURRENT_KEY);
@@ -215,7 +195,6 @@ export function SessionOverrideField({
         }}
         disabled={busy}
         label={field}
-        face={chosen.key === CURRENT_KEY ? face : undefined}
       />
       {patch !== null ? (
         <button
@@ -239,8 +218,9 @@ export function SessionOverrideField({
 }
 
 /** The ctx line under the Timeline (DR-0041 §5), its model and effort each
- * the session override's field in place: at rest the line's own text of the
- * value, pressed the field's select where the value is, with [適用] beside it
+ * the session override's field in place, the same field the Status tab's
+ * MODEL / EFFORT rows hold: at rest the value in force as its select labels
+ * it, pressed the field's select where the value is, with [適用] beside it
  * once another option is chosen. What became of a change goes after a while.
  * Each ` / `-separated part is a span of its own, so a line too long for the
  * width breaks between parts, not inside one (`ccmsg` and its version, the
@@ -258,13 +238,12 @@ export function ContextLine({
   onChange: SessionOverrideChange;
 }) {
   const { usage, tail } = line;
-  const field = (name: OverrideField, view: RequestValueView) => (
+  const field = (name: OverrideField) => (
     <SessionOverrideField
       field={name}
       state={state}
       context={context}
       onChange={onChange}
-      face={view}
       noticeMs={CTX_LINE_NOTICE_MS}
     />
   );
@@ -276,16 +255,8 @@ export function ContextLine({
   }[] = [];
   if (usage) {
     parts.push({ key: "fill", node: usage.fill });
-    parts.push({
-      key: "model",
-      node: (
-        <>
-          {field("model", usage.model)}
-          {usage.window}
-        </>
-      ),
-    });
-    if (usage.effort) parts.push({ key: "effort", node: field("effort", usage.effort) });
+    parts.push({ key: "model", node: field("model") });
+    if (usage.effort !== null) parts.push({ key: "effort", node: field("effort") });
   }
   for (const part of tail) {
     const node =

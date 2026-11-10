@@ -8550,30 +8550,14 @@ a.tl-attachment-file-path {
   white-space: normal;
 }
 
-.ctx-value {
-  padding: 0;
-  border: none;
-  background: none;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  text-decoration: underline dotted;
-  text-underline-offset: 0.2em;
-}
-
-.ctx-value-overridden {
-  color: var(--fg-warn);
-  font-weight: 600;
-}
-
 .override-select {
   font: inherit;
   font-size: var(--font-size-sm);
 }
 
-/* A field's value at rest (DR-0041 §6): text that reads as pressable, the
- * same dotted underline as the ctx line's values. Pressed, it becomes the
- * field's select. */
+/* A field's value at rest (DR-0041 §6): text that reads as pressable (a
+ * dotted underline), the same in the Status tab and on the ctx line. Pressed,
+ * it becomes the field's select. */
 .override-value {
   padding: 0 var(--space-2);
   border: none;
