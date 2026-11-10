@@ -2,6 +2,13 @@
 
 claude-ccmsg の版ごとの変更点。新しい版が上。[Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に倣い、1 版を数行の箇条書きにする。版の見出しは `## v<版> <a id="v<版>"></a>` の形で、その下の 1 行目に日付を書く。web UI の版の表示はこのアンカー (`#v<版>`) へのリンクになっている。最も下の節より前の版は載せていないので、git の履歴の `Release v<版>` の commit を見る。
 
+## v0.232.5 <a id="v0.232.5"></a>
+
+2026-11-10
+
+- Status タブ: CONTEXT の目盛りの右の model / effort の文字を無くした (すぐ下の MODEL / EFFORT と同じ内容だった)
+- Status タブ: LIVE / MODEL / EFFORT の名前と値の高さを揃えた (EFFORT だけ上にずれていた)
+
 ## v0.232.4 <a id="v0.232.4"></a>
 
 2026-11-10
