@@ -33,6 +33,7 @@ import {
   renderMarkdownAst,
   renderPlainTextWithLinks,
   renderRestrictedMarkdown,
+  splitDocumentAnchors,
 } from "../src/client/markdown-view.tsx";
 import { attachmentUrlFromPath } from "../src/client/attachment-path.ts";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
@@ -486,6 +487,89 @@ describe("extractMarkdownHeadings", () => {
       "md-section-1",
       "md-section-1-1",
     ]);
+  });
+});
+
+// An author's own anchor (`<a id="…"></a>`) names a place in the document:
+// in the file preview it is an empty element carrying the id, where the tag
+// was written, and not the tag's characters.
+describe("document anchors", () => {
+  const anchored = (source: string): VNode =>
+    renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
+      documentAnchors: true,
+    });
+  const anchorIds = (vnode: VNode): (string | undefined)[] =>
+    collect(vnode, (node) => node.type === "span" && stringProp(node, "class") === "md-anchor").map(
+      (node) => stringProp(node, "id"),
+    );
+
+  test("splitDocumentAnchors: text runs and the anchors between them, in order", () => {
+    expect(splitDocumentAnchors('<a id="3335-Q1"></a>ほげほげ')).toEqual([
+      { kind: "anchor", id: "3335-Q1" },
+      { kind: "text", text: "ほげほげ" },
+    ]);
+    expect(splitDocumentAnchors("a <a name='x'></a> b <a id=\"y\" ></a>")).toEqual([
+      { kind: "text", text: "a " },
+      { kind: "anchor", id: "x" },
+      { kind: "text", text: " b " },
+      { kind: "anchor", id: "y" },
+    ]);
+    expect(splitDocumentAnchors("no anchor")).toEqual([{ kind: "text", text: "no anchor" }]);
+    expect(splitDocumentAnchors("")).toEqual([{ kind: "text", text: "" }]);
+  });
+
+  // Only the empty, one-attribute shape is an anchor: anything else an author
+  // writes as HTML stays the characters it is.
+  test("splitDocumentAnchors leaves every other tag as text", () => {
+    for (const text of [
+      '<a id="x">label</a>',
+      '<a id="x" class="y"></a>',
+      '<a href="https://example.com"></a>',
+      "<a id=x></a>",
+      '<a id="a b"></a>',
+      '<span id="x"></span>',
+      '<a id="x" onclick="alert(1)"></a>',
+    ]) {
+      expect(splitDocumentAnchors(text)).toEqual([{ kind: "text", text }]);
+    }
+  });
+
+  test("a heading's anchor is an empty element with the id, and its tag is not shown", () => {
+    const vnode = anchored('## <a id="3335-Q1"></a>ほげほげ');
+    expect(anchorIds(vnode)).toEqual(["3335-Q1"]);
+    const [heading] = collect(vnode, (node) => node.type === "h2");
+    expect(flattenText(heading)).toBe("ほげほげ");
+    expect(flattenText(vnode)).not.toContain("<a");
+  });
+
+  test("an anchor in a paragraph, and one on a line of its own", () => {
+    const vnode = anchored('<a id="top"></a>\n\nbefore <a name="mid"></a> after');
+    expect(anchorIds(vnode)).toEqual(["top", "mid"]);
+    expect(flattenText(vnode)).toBe("before  after");
+  });
+
+  test("the outline's text leaves the anchor out", () => {
+    const root = parseMarkdownDocument(
+      '# T\n\n## <a id="3335-Q1"></a>ほげほげ\n\n## v1 <a id="v1"></a>',
+    );
+    expect(extractMarkdownHeadings(root).map((heading) => heading.text)).toEqual([
+      "T",
+      "ほげほげ",
+      "v1",
+    ]);
+  });
+
+  // In a Timeline every bubble is its own document: the same id could land in
+  // the page twice, so the tag stays the text it is there.
+  test("without the option the tag stays text", () => {
+    const vnode = renderMarkdownAst(parseMarkdownDocument('## <a id="3335-Q1"></a>ほげほげ'));
+    expect(anchorIds(vnode)).toEqual([]);
+    expect(flattenText(vnode)).toBe('<a id="3335-Q1"></a>ほげほげ');
+  });
+
+  test("an anchor written in inline code or a code block is shown as written", () => {
+    const vnode = anchored('`<a id="x"></a>`\n\n```\n<a id="y"></a>\n```');
+    expect(anchorIds(vnode)).toEqual([]);
   });
 });
 

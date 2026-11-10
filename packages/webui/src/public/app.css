@@ -4167,7 +4167,8 @@ button.session-tab {
 .viewer-preview .md h3,
 .viewer-preview .md h4,
 .viewer-preview .md h5,
-.viewer-preview .md h6 {
+.viewer-preview .md h6,
+.viewer-preview .md .md-anchor {
   scroll-margin-top: 3.25rem;
 }
 

@@ -161,9 +161,46 @@ export interface MarkdownHeading {
   text: string;
 }
 
+/** An empty anchor an author writes to give a place in the document a name
+ * of its own choosing (`<a id="v1.2"></a>`, `<a name="q1"></a>`): the one
+ * piece of raw HTML this renderer takes for what it means rather than showing
+ * as the text it is. Matched by shape, never parsed as HTML: exactly an `a`
+ * with one `id` or `name` attribute in double or single quotes and nothing
+ * between the tags, so nothing an author writes can become markup beyond a
+ * named, empty element. */
+const DOCUMENT_ANCHOR_RE = /<a\s+(?:id|name)=(?:"([^"<>\s]+)"|'([^'<>\s]+)')\s*>\s*<\/a>/g;
+
+/** `text` as its runs of plain text and the document anchors between them,
+ * in order. Text without an anchor is one run. */
+export function splitDocumentAnchors(
+  text: string,
+): ({ kind: "text"; text: string } | { kind: "anchor"; id: string })[] {
+  const parts: ({ kind: "text"; text: string } | { kind: "anchor"; id: string })[] = [];
+  let last = 0;
+  for (const match of text.matchAll(DOCUMENT_ANCHOR_RE)) {
+    const id = match[1] ?? match[2];
+    if (id === undefined) continue;
+    if (match.index > last) parts.push({ kind: "text", text: text.slice(last, match.index) });
+    parts.push({ kind: "anchor", id });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length || parts.length === 0)
+    parts.push({ kind: "text", text: text.slice(last) });
+  return parts;
+}
+
+/** `text` without its document anchors: what a heading reads as in the
+ * outline. */
+function withoutDocumentAnchors(text: string): string {
+  return splitDocumentAnchors(text)
+    .map((part) => (part.kind === "text" ? part.text : ""))
+    .join("");
+}
+
 function headingPlainText(node: PhrasingContent): string {
   switch (node.type) {
     case "text":
+      return withoutDocumentAnchors(node.value);
     case "inlineCode":
     case "html":
       return node.value;
@@ -286,6 +323,12 @@ interface MarkdownRenderCtx {
    * §7): an absolute link naming one opens here under the current origin
    * (`rewriteAliasHref`). Absent until the daemon has answered. */
   webuiUrls?: readonly string[];
+  /** Take the document's own anchors (`<a id="…"></a>`) as named places: an
+   * empty element carrying the id, where the tag was written. Only where one
+   * document is on the page (the file preview): rendered into every bubble of
+   * a Timeline, the same id could land in the page twice. Off, the tag stays
+   * the text it is. */
+  documentAnchors: boolean;
 }
 
 /** A failed write, reported against the item it happened to.
@@ -703,6 +746,22 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
   const search = ctx.search;
   switch (node.type) {
     case "text": {
+      if (ctx.documentAnchors) {
+        const parts = splitDocumentAnchors(node.value);
+        if (parts.some((part) => part.kind === "anchor")) {
+          return (
+            <span key={key}>
+              {parts.map((part, i) =>
+                part.kind === "anchor" ? (
+                  <span key={`${key}.a${i}`} id={part.id} class="md-anchor" />
+                ) : (
+                  renderNode({ type: "text", value: part.text }, `${key}.p${i}`, ctx)
+                ),
+              )}
+            </span>
+          );
+        }
+      }
       const value = node.value;
       // An absolute / `~/` path written in prose links to the file when the
       // daemon confirmed it — the same linker inline code and bold go
@@ -1683,6 +1742,7 @@ export function renderPlainTextWithLinks(
     pathLinker: filePathLinker ? (ref) => filePathLinker(filePathToken(ref)) : undefined,
     taskIndex: 0,
     inLink: false,
+    documentAnchors: false,
   };
   return renderChildren(plainTextNodes(text, filePathLinker), "pt", ctx);
 }
@@ -2003,6 +2063,8 @@ export function renderMarkdownAst(
     sections?: boolean;
     /** See `MarkdownRenderCtx.webuiUrls`. */
     webuiUrls?: readonly string[];
+    /** See `MarkdownRenderCtx.documentAnchors`. */
+    documentAnchors?: boolean;
   },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
@@ -2016,6 +2078,7 @@ export function renderMarkdownAst(
     issueRepo: opts?.issueRepo,
     inLink: false,
     webuiUrls: opts?.webuiUrls,
+    documentAnchors: opts?.documentAnchors ?? false,
   };
   return (
     <div class={opts?.sections ? "md md-sections" : "md"}>
@@ -2113,6 +2176,7 @@ export function MarkdownView({
       sections: sectionFold,
       issueRepo,
       webuiUrls,
+      documentAnchors: tableOfContents,
     });
     const withFold = sectionFold ? (
       <MarkdownSectionFoldContext.Provider
