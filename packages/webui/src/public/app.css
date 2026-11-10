@@ -4850,7 +4850,7 @@ button.session-tab {
   }
 }
 
-/* 閉じた項目 (見えている開いた details を持たない fold。判定は「N items」の項目の間隔の規則と同じ) には出さない (kawaz 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を開くと出る。jsonl 表示中は中身が元の行に替わって details を持たないので、戻すボタンは消えない。 */
+/* 閉じた項目 (見えている開いた details を持たない fold。判定は「N items」の項目の間隔の規則と同じ) には出さない (kawaz 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を開くと出る。jsonl 表示中に閉じた時も同じ (元の行も隠れ、開くとどちらも戻る)。 */
 .tl-item:has(details):not(:has(details[open]:not(details:not([open]) details)))
   > .tl-item-raw-toggle {
   display: none;
@@ -4862,10 +4862,30 @@ button.session-tab {
   border-color: var(--accent);
 }
 
-/* jsonl 展開中の行は、全体 raw 表示の .tl-raw-row と同じ体裁のまま、
- * トグルボタンと重ならないよう右肩を空ける。 */
-.tl-item-raw-on > .tl-raw-row,
-.tl-item-raw-on > .tl-raw-mode {
+/* jsonl 表示中は項目を残したまま中身だけ元の行に替える (kawaz 2026-11-11):
+ * fold の summary (▼ mode 等) はその場に残し、details の中身を隠して、
+ * その下に元の行を出す。summary を持たない項目 (吹き出し等) は丸ごと隠す。
+ * 表示中に summary を押して閉じたら元の行も隠す (開き直すとまた出る)。 */
+.tl-item-raw-on details > :not(summary) {
+  display: none;
+}
+
+.tl-item-raw-on > :not(.tl-item-raw-toggle, .tl-raw-view):not(:has(details)) {
+  display: none;
+}
+
+.tl-item-raw-on:has(details):not(:has(details[open]:not(details:not([open]) details)))
+  > .tl-raw-view {
+  display: none;
+}
+
+.tl-item-raw-on > .tl-raw-view {
+  margin-top: var(--space-4);
+}
+
+/* 吹き出しを隠した項目では元の行が項目の先頭に来るので、タブの行の右肩を
+ * トグルボタンのために空ける。 */
+.tl-raw-view > .tl-raw-mode {
   padding-right: var(--space-17);
 }
 
@@ -6734,7 +6754,7 @@ a.tl-attachment-file-path {
 /* 「N items」の fold を開いた中の項目の間隔 (kawaz 2026-11-11): 項目どうし
  * は詰めて一覧として読めるようにし、開いた項目の下にだけ少し空きを取る。
  * 開け閉めで押した ▶ / ▼ の行が上下に動かないよう、開け閉めする項目
- * (details を持つ項目と jsonl 表示中の項目) の上側の間隔は開閉で変えない。
+ * (details を持つ項目) の上側の間隔は開閉でも jsonl 表示の切り替えでも変えない。
  * fold でない項目 (吹き出し等) は開け閉めしないので上下に空きを取る。
  *
  * 間隔は gap でなく各項目の margin で持つ (gap は閉じた行どうしの間にも
@@ -6748,12 +6768,11 @@ a.tl-attachment-file-path {
   padding-block: var(--space-2);
 }
 
-.tl-fold-group-body > .tl-guided-content > :not(:has(details)):not(.tl-item-raw-on) {
+.tl-fold-group-body > .tl-guided-content > :not(:has(details)) {
   margin-block: var(--space-5);
 }
 
-.tl-fold-group-body > .tl-guided-content > :has(details[open]:not(details:not([open]) details)),
-.tl-fold-group-body > .tl-guided-content > .tl-item-raw-on {
+.tl-fold-group-body > .tl-guided-content > :has(details[open]:not(details:not([open]) details)) {
   margin-bottom: var(--space-8);
 }
 

@@ -73,8 +73,12 @@ function selectPositionOnClick(
 }
 
 /**
- * Wraps one rendered timeline item with a `raw` toggle that swaps it for the
- * verbatim jsonl line(s) it came from. Layout-neutral by construction: the
+ * Wraps one rendered timeline item with a `jsonl` toggle that swaps its body
+ * for the verbatim jsonl line(s) it came from. The item stays mounted while
+ * the toggle is on: its fold's summary (`▼ mode`) keeps its place and only
+ * what is under it changes (app.css hides the rest), and turning the toggle
+ * off brings back the item as it was, open folds included. An item with no
+ * summary (a bubble) is hidden whole. Layout-neutral by construction: the
  * wrapper is a column flex box just like the two containers items live in
  * (`.tl-lines` and `.tl-guided-content`), so a bubble's own `align-self`
  * still decides which side it sits on.
@@ -117,13 +121,18 @@ export function ItemRawToggle({
       >
         jsonl
       </button>
-      {raw ? <ItemRawRows offset={offset} /> : children}
+      {children}
+      {raw ? (
+        <div class="tl-raw-view">
+          <ItemRawRows offset={offset} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/** The jsonl lines one item was built from, shown in place of the item while
- * its `jsonl` toggle is on. */
+/** The jsonl lines one item was built from, shown in place of the item's body
+ * while its `jsonl` toggle is on. */
 function ItemRawRows({ offset }: { offset: number }) {
   const lookup = useContext(ItemRawContext);
   const rows = (lookup?.sources.get(offset) ?? [])

@@ -201,6 +201,33 @@ describe("Timeline renders each kind of row", () => {
     await act(() => defined(raw, "raw tab").click());
   });
 
+  // jsonl 表示は項目の中身だけを替える: fold の summary (▼ mode) は残り、
+  // 戻すと開いていた fold は開いたまま (項目を作り直さない)。
+  test("an item's jsonl view keeps its fold's summary, and turning it off keeps the fold open", async () => {
+    const root = await openWith([
+      jsonl(userContentRow("start")),
+      jsonl({ type: "mode", mode: "normal", sessionId: "s" }),
+    ]);
+    const summary = [...root.querySelectorAll("summary")].find(
+      (s) => s.textContent?.trim() === "mode",
+    );
+    const details = instanceOf(summary?.parentElement, HTMLDetailsElement, "the mode fold");
+    await act(() => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    const item = instanceOf(details.closest(".tl-item"), HTMLElement, "the mode item");
+    const toggle = instanceOf(item.querySelector(".tl-item-raw-toggle"), HTMLElement, "toggle");
+    await act(() => toggle.click());
+    expect(item.classList.contains("tl-item-raw-on")).toBe(true);
+    expect(item.contains(details)).toBe(true);
+    expect(item.querySelector(".tl-raw-view")?.textContent).toContain('"type":"mode"');
+    await act(() => toggle.click());
+    expect(item.querySelector(".tl-raw-view")).toBeNull();
+    expect(item.contains(details)).toBe(true);
+    expect(details.open).toBe(true);
+  });
+
   // 1 行だけの項目は左の欄を持たず、行番号・byte offset・bytes をタブの横に置く。
   test("a one-line item's jsonl view puts the line's position beside the tabs", async () => {
     const line = jsonl(userContentRow("where am i", { uuid: uuidOf("u", 1) }));
