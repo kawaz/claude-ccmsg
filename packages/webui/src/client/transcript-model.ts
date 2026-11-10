@@ -884,10 +884,11 @@ export interface RawTranscriptRow {
    * the same number the rich view uses as a Preact key, so a row here and a
    * bubble there can be matched up. Stable across a "load older" prepend. */
   offset: number;
-  /** 1-based position among the *currently cached* lines. Not the file's line
-   * number: paging starts at the tail, so line 1 of the cache is usually not
-   * line 1 of the file (`atStart` tells whether they coincide). */
-  index: number;
+  /** 1-based line number in the transcript file, when it is known: only while
+   * the cache starts at the file's first byte. Paging starts at the tail, so
+   * until "load older" reaches the start nothing tells how many lines come
+   * before the cache, and the number is `null`. */
+  line: number | null;
   /** The line's own content, without the trailing newline (transcript_read
    * already strips it). */
   text: string;
@@ -896,8 +897,8 @@ export interface RawTranscriptRow {
 }
 
 /**
- * Pairs each cached raw jsonl line with its absolute byte offset and its
- * 1-based position in the cache — the model behind Timeline's raw view
+ * Pairs each cached raw jsonl line with its absolute byte offset and, when the
+ * cache starts at the file's start, its line number — the model behind Timeline's raw view
  * (kawaz r55 m68: 「生の JSONL も切り替えて見られるように」). Deliberately
  * does no parsing, folding or de-duplication: the rich view's grouping can
  * collapse several lines into one fold, split one line into several ccmsg
@@ -921,12 +922,14 @@ export function rawTranscriptRowsFrom(
   offsets: readonly number[],
   byteLengths: readonly number[],
 ): RawTranscriptRow[] {
+  // Offsets are absolute, so a first line at byte 0 is the file's first line.
+  const fromFileStart = offsets[0] === 0;
   return lines.flatMap((text, i) => {
     const offset = offsets[i];
     const bytes = byteLengths[i];
     return offset === undefined || bytes === undefined
       ? []
-      : [{ offset, index: i + 1, text, bytes }];
+      : [{ offset, line: fromFileStart ? i + 1 : null, text, bytes }];
   });
 }
 

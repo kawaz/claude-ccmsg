@@ -206,11 +206,17 @@ describe("lineByteOffsets", () => {
 // raw は「キャッシュ済みの行が 1 行ずつ、ファイル順に、原文のまま」を保証
 // する — それが raw 表示の存在理由なので、その 1:1 性をテストで固定する。
 describe("rawTranscriptRows", () => {
-  test("各行に byte offset と 1 始まりの位置を付けて返す", () => {
+  // キャッシュがファイルの途中から始まる間は、前に何行あるか分からないので
+  // 行番号は null。
+  test("各行に byte offset を付け、ファイルの途中からなら行番号は null", () => {
     expect(rawTranscriptRows(100, ["ab", "cde"])).toEqual([
-      { offset: 100, index: 1, text: "ab", bytes: 2 },
-      { offset: 103, index: 2, text: "cde", bytes: 3 },
+      { offset: 100, line: null, text: "ab", bytes: 2 },
+      { offset: 103, line: null, text: "cde", bytes: 3 },
     ]);
+  });
+
+  test("ファイルの先頭 (offset 0) からなら 1 始まりの行番号を付ける", () => {
+    expect(rawTranscriptRows(0, ["ab", "cde"]).map((r) => r.line)).toEqual([1, 2]);
   });
 
   test("空配列は空配列", () => {
@@ -221,8 +227,8 @@ describe("rawTranscriptRows", () => {
   // 同じ基準なので、両者が食い違うと gutter の表示と実ファイル位置がずれる。
   test("bytes は UTF-8 バイト長 (文字数ではない)", () => {
     expect(rawTranscriptRows(0, ["あ", "b"])).toEqual([
-      { offset: 0, index: 1, text: "あ", bytes: 3 },
-      { offset: 4, index: 2, text: "b", bytes: 1 },
+      { offset: 0, line: 1, text: "あ", bytes: 3 },
+      { offset: 4, line: 2, text: "b", bytes: 1 },
     ]);
   });
 
@@ -233,7 +239,7 @@ describe("rawTranscriptRows", () => {
     const rows = rawTranscriptRows(0, lines);
     expect(rows.length).toBe(lines.length);
     expect(rows.map((r) => r.text)).toEqual(lines);
-    expect(rows.map((r) => r.index)).toEqual([1, 2, 3]);
+    expect(rows.map((r) => r.line)).toEqual([1, 2, 3]);
   });
 
   // offset は lineByteOffsets と同一の値でなければならない — rich 側の

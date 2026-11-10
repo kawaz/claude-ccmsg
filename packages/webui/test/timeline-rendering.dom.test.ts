@@ -201,6 +201,20 @@ describe("Timeline renders each kind of row", () => {
     await act(() => defined(raw, "raw tab").click());
   });
 
+  // 1 行だけの項目は左の欄を持たず、行番号・byte offset・bytes をタブの横に置く。
+  test("a one-line item's jsonl view puts the line's position beside the tabs", async () => {
+    const line = jsonl(userContentRow("where am i", { uuid: uuidOf("u", 1) }));
+    const root = await openWith([line]);
+    const toggle = instanceOf(root.querySelector(".tl-item-raw-toggle"), HTMLElement, "toggle");
+    await act(() => toggle.click());
+    const position = root.querySelector(".tl-raw-mode > .tl-raw-position");
+    expect(position?.textContent).toBe(
+      `L1 @0 · ${new TextEncoder().encode(line).length.toLocaleString()} bytes`,
+    );
+    expect(root.querySelector(".tl-raw-row .tl-raw-position")).toBeNull();
+    await act(() => toggle.click());
+  });
+
   test("a fork shows where the copied history ends", async () => {
     const lines = [
       jsonl(userContentRow("copied", { uuid: uuidOf("u", 1) })),

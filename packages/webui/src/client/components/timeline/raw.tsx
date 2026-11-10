@@ -22,9 +22,12 @@ import type { TimelineFilter } from "../../locator.ts";
 function RawModeTabs({
   disabled = false,
   disabledReason,
+  children,
 }: {
   disabled?: boolean;
   disabledReason?: string;
+  /** Put after the tabs on their row (the position of a lone line). */
+  children?: ComponentChildren;
 }) {
   const pretty = useRawViewPretty();
   const setPretty = setRawViewPretty;
@@ -49,6 +52,7 @@ function RawModeTabs({
       >
         pretty
       </button>
+      {children}
     </div>
   );
 }
@@ -131,24 +135,43 @@ function ItemRawRows({ offset }: { offset: number }) {
   // この項目の行が 1 つも整形できないなら pretty を選ばせない (押しても
   // 全行が raw に落ちるだけ)。項目あたり数行なので毎 render の判定で足りる。
   const anyPretty = rows.some((row) => canPrettyRawLine(row.text));
+  const lone = rows.length === 1 ? rows[0] : undefined;
   return (
     <>
+      {/* 1 行だけの項目は位置をタブの横に置く。複数行 (tool の呼び出しと
+       * 結果を 1 枚にしたカード) は行ごとに、その行の上に置く。 */}
       <RawModeTabs
         disabled={!anyPretty}
         disabledReason="この項目の JSONL 行は JSON として整形できません"
-      />
+      >
+        {lone ? <RawRowPosition row={lone} /> : null}
+      </RawModeTabs>
       {rows.map((row) => (
-        <RawLineRow key={row.offset} row={row} />
+        <RawLineRow key={row.offset} row={row} showPosition={!lone} />
       ))}
     </>
   );
 }
 
-/** One line of the raw view: its cache position and absolute byte offset in
- * the gutter, the verbatim jsonl text beside it. Long lines (pasted images,
+/** Where a jsonl line sits in the transcript file: `L<line>` (only while the
+ * line number is known, RawTranscriptRow.line), `@<byte offset>` — the same
+ * number the rich view keys the item by — and its size in bytes. */
+function RawRowPosition({ row }: { row: RawTranscriptRow }) {
+  return (
+    <span
+      class="tl-raw-position"
+      title={`${row.line !== null ? `${row.line} 行目、` : ""}byte offset ${row.offset}、${row.bytes} bytes`}
+    >
+      {row.line !== null ? `L${row.line} ` : ""}@{row.offset} · {row.bytes.toLocaleString()} bytes
+    </span>
+  );
+}
+
+/** One line of the raw view: the verbatim jsonl text, with its position above
+ * it when the item has more than one line. Long lines (pasted images,
  * big tool results) render truncated behind a per-row expander so switching
  * into the raw view never has to lay out megabytes at once. */
-function RawLineRow({ row }: { row: RawTranscriptRow }) {
+function RawLineRow({ row, showPosition }: { row: RawTranscriptRow; showPosition: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const pretty = useRawViewPretty();
   // 整形は選択中のときだけ (巨大行の JSON.parse を raw 表示のたびに走らせ
@@ -161,15 +184,8 @@ function RawLineRow({ row }: { row: RawTranscriptRow }) {
   const shown = expanded ? text : preview.text;
   return (
     <div class="tl-raw-row">
-      <div class="tl-raw-gutter">
-        <span class="tl-raw-index">{row.index}</span>
-        {/* 生 JSONL の各行を rich 表示側のバブルと突き合わせるための座標 —
-         * rich 側の Preact key と同じ絶対 byte offset (lineByteOffsets)。 */}
-        <span class="tl-raw-offset" title={`byte offset ${row.offset} / ${row.bytes} bytes`}>
-          @{row.offset}
-        </span>
-      </div>
       <div class="tl-raw-line">
+        {showPosition ? <RawRowPosition row={row} /> : null}
         {prettied && !prettied.ok ? (
           <p class="tl-raw-note">
             {prettied.reason === "too-large"
