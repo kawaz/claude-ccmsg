@@ -1,9 +1,17 @@
-// The subagents a person can add a message to from the web UI (DR-0039 §6):
-// which of them are running, as a part of the facts, and `agent.append`,
-// which adds a message to a running one's conversation.
+// The session's subagents and teammates as ccmsg reaches them: which of them
+// are running, as a part of the facts; `agent.append`, which adds what a
+// person wrote in the web UI to a running one's conversation (DR-0039 §6);
+// and `agent.send`, which sends what another session sent with `send` to one,
+// running or not (DR-0039 §3).
 import * as v from "valibot";
 import { errorText, type Output } from "@ccmsg/protocol/parse";
-import type { AgentAppendResult, SessionFactsSubagent } from "@ccmsg/protocol/sidecar";
+import type {
+  AgentAppendArgs,
+  AgentAppendResult,
+  AgentSendArgs,
+  AgentSendResult,
+  SessionFactsSubagent,
+} from "@ccmsg/protocol/sidecar";
 import type { Engine } from "./engine.ts";
 import { type FactsState, sendFacts } from "./facts.ts";
 
@@ -62,26 +70,26 @@ function subagentEnded($: Engine, state: FactsState, id: string): void {
   sendFacts($, state);
 }
 
-/** What a subagent reads of a message: marked as the person's through ccmsg,
+/** What an agent reads of a message: marked as the person's through ccmsg,
  * or as from the session `from` that sent it with `send` (DR-0039 §3), so the
- * model takes it as a word from outside its task, not a tool's output. */
+ * model takes it as a word from outside its task, not a tool's output. The
+ * mark is the first line: an agent reached by `$.session.send` reads the
+ * message as its parent's (the engine's envelope names the parent as the
+ * sender), and the mark is what says who sent it. */
 export function agentMessage(text: string, from?: string): string {
   const mark = from !== undefined ? `ccmsg:${from} から:` : "ユーザから (ccmsg 経由):";
   return `${mark}\n${text}`;
 }
 
-/** agent.append: add the text to the running subagent's conversation.
- * Claude Code refuses an id no loop runs under with "no running loop is
- * <id>". */
-export async function appendToAgent(
-  $: Engine,
-  args: { agentId: string; from?: string; text: string },
-): Promise<AgentAppendResult> {
+/** agent.append: add what a person wrote to the running subagent's
+ * conversation. Claude Code refuses an id no loop runs under with "no
+ * running loop is <id>". */
+export async function appendToAgent($: Engine, args: AgentAppendArgs): Promise<AgentAppendResult> {
   try {
     await $.session.append({
       message: {
         type: "user",
-        content: [{ type: "text", text: agentMessage(args.text, args.from) }],
+        content: [{ type: "text", text: agentMessage(args.text) }],
       },
       agentId: args.agentId,
     });
@@ -93,6 +101,33 @@ export async function appendToAgent(
       outcome: "not_delivered",
       reason: why.includes("no running loop") ? "not_running" : "refused",
     };
+  }
+}
+
+/** What Claude Code says when the id names no agent of the session: no
+ * transcript to resume one from. */
+const NO_AGENT = "No transcript found";
+
+/** agent.send: send what the session `from` sent to the agent `agentId`
+ * with `$.session.send`, which reaches it whether it runs, waits or has
+ * ended (DR-0039 §3). */
+export async function sendToAgent($: Engine, args: AgentSendArgs): Promise<AgentSendResult> {
+  const notDelivered = (message: string): AgentSendResult => {
+    $.ui.log(`ccmsg: agent.send to ${args.agentId} not delivered: ${message}`, { to: "debug" });
+    return {
+      outcome: "not_delivered",
+      reason: message.includes(NO_AGENT) ? "no_agent" : "refused",
+      message,
+    };
+  };
+  try {
+    const sent = await $.session.send({
+      to: { agentId: args.agentId },
+      text: agentMessage(args.text, args.from),
+    });
+    return sent.isDelivered ? { outcome: "delivered" } : notDelivered(sent.reason);
+  } catch (e) {
+    return notDelivered(errorText(e));
   }
 }
 

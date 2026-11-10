@@ -12,6 +12,8 @@ import {
   TurnAbortResultSchema,
   type TurnAbortResult,
   AgentAppendResultSchema,
+  AgentSendResultSchema,
+  type AgentSendResult,
   SIDECAR_OPS,
   SidecarReplySchema,
   sidecarRunId,
@@ -209,8 +211,8 @@ describe("the ops' results", () => {
     });
   });
 
-  // agent.append (DR-0039 §6): an agent id and a text that is not only
-  // whitespace; its result says appended or why not.
+  // agent.append (DR-0039 §6): what a person wrote, an agent id and a text
+  // that is not only whitespace; its result says appended or why not.
   test("agent.append: an agent id and a text, appended or why not", () => {
     const request = {
       v: 1,
@@ -219,12 +221,12 @@ describe("the ops' results", () => {
       args: { agentId: "a1", text: "hi" },
     } as const;
     expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
-    // From a session's send (DR-0039 §3): the sender rides along.
-    const sent = { ...request, args: { agentId: "a1", from: "s1", text: "hi" } };
-    expect(readSidecarRequest(line(sent))).toEqual({ ok: true, value: sent });
+    // A sender is not its: a session's send goes as agent.send.
+    expect(
+      readSidecarRequest(line({ ...request, args: { agentId: "a1", from: "s1", text: "hi" } })),
+    ).toEqual({ ok: true, value: request });
     for (const args of [
       { agentId: "", text: "hi" },
-      { agentId: "a1", from: "", text: "hi" },
       { agentId: "a1", text: "  " },
       { text: "hi" },
     ]) {
@@ -240,6 +242,43 @@ describe("the ops' results", () => {
     expect(parseWith(AgentAppendResultSchema, { outcome: "not_delivered", reason: "x" }).ok).toBe(
       false,
     );
+  });
+
+  // agent.send (DR-0039 §3): what a session sent, to the agent by its id,
+  // the sender named; its result says delivered, or why not and what Claude
+  // Code said.
+  test("agent.send: an agent id, the sender and a text, delivered or why not", () => {
+    const request = {
+      v: 1,
+      op: "agent.send",
+      id: "s",
+      args: { agentId: "a1", from: "s1", text: "hi" },
+    } as const;
+    expect(readSidecarRequest(line(request))).toEqual({ ok: true, value: request });
+    for (const args of [
+      { agentId: "", from: "s1", text: "hi" },
+      { agentId: "a1", from: "", text: "hi" },
+      { agentId: "a1", text: "hi" },
+      { agentId: "a1", from: "s1", text: " \n" },
+      { from: "s1", text: "hi" },
+    ]) {
+      expect(readSidecarRequest(line({ ...request, args })).ok).toBe(false);
+    }
+    const results: AgentSendResult[] = [
+      { outcome: "delivered" },
+      { outcome: "not_delivered", reason: "no_agent", message: "No transcript found" },
+      { outcome: "not_delivered", reason: "refused", message: "a hook said no" },
+    ];
+    for (const result of results) {
+      expect(parseWith(AgentSendResultSchema, result)).toEqual({ ok: true, value: result });
+    }
+    for (const result of [
+      { outcome: "appended" },
+      { outcome: "not_delivered", reason: "not_running", message: "m" },
+      { outcome: "not_delivered", reason: "refused" },
+    ]) {
+      expect(parseWith(AgentSendResultSchema, result).ok).toBe(false);
+    }
   });
 
   // DR-0041 §3: the session override, whole; {} is none. §6.5: with the

@@ -27,11 +27,28 @@ describe("readSendResultText", () => {
       sendResultText([]),
       sendResultText([{ sid: A, outcome: "not_delivered", reason: "self" }]),
       sendResultText([{ sid: B, outcome: "not_delivered", reason: "no_module" }]),
-      sendResultText([{ sid: B, outcome: "not_delivered", reason: "not_running" }]),
+      sendResultText([{ sid: B, outcome: "not_delivered", reason: "no_agent" }]),
       "send の入力が形に合わないので何もしていない: text: Invalid type",
     ]) {
       expect(readSendResultText(failed)).toEqual({ status: "failed", detail: failed });
     }
+  });
+
+  // A send with an agent id (DR-0039 §3): what the model reads of an agent
+  // the session does not have.
+  test("an agent send that did not go says why and what to do", () => {
+    expect(
+      sendResultText([
+        { sid: A, outcome: "delivered" },
+        { sid: B, outcome: "not_delivered", reason: "no_agent" },
+      ]),
+    ).toBe(
+      [
+        "2 件の宛先のうち 1 件に届いた。届いた宛先には送り直さない。",
+        `- session_id: ${A}: 届いた`,
+        `- session_id: ${B}: 届かなかった。そのセッションにその agent_id の subagent / teammate が居ない (agent_id の誤りか、別のセッションの agent)。agent_id と宛先のセッションを確かめて送り直す`,
+      ].join("\n"),
+    );
   });
 
   // The module's own text for a send that could not be told carries the

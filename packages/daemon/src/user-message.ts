@@ -39,14 +39,12 @@ export interface UserMessageTry {
     | `not_delivered:${AgentAppendReason}`;
 }
 
-/** One text for a running subagent: `agentId` of session `sid`. `from` is
- * the session that sent it with `send` (DR-0039 §3), absent for a person's
- * (user_message). */
+/** What a person wrote for a running subagent: `agentId` of session
+ * `sid`. */
 export interface SubagentMessage {
   sid: string;
   agentId: string;
   text: string;
-  from?: string;
 }
 
 /** Ask the runs of the session in turn to add the text to its subagent. */
@@ -54,21 +52,14 @@ export async function userMessage(
   message: SubagentMessage,
   deps: UserMessageDeps,
 ): Promise<UserMessageOutcome & { tries: UserMessageTry[] }> {
-  const { sid, agentId, text, from } = message;
+  const { sid, agentId, text } = message;
   const until = deps.now() + deps.deadlineMs;
   const tries: UserMessageTry[] = [];
   let answered: AgentAppendReason | undefined;
   for (const { socket } of deps.runs.liveOf(sid)) {
     const remaining = until - deps.now();
     if (remaining <= 0) return { outcome: "unconfirmed", tries };
-    const call = await callSidecar(
-      socket,
-      sid,
-      "agent.append",
-      { agentId, text, ...(from !== undefined ? { from } : {}) },
-      remaining,
-      deps,
-    );
+    const call = await callSidecar(socket, sid, "agent.append", { agentId, text }, remaining, deps);
     const { id } = call;
     if (call.write === "not_written") {
       tries.push({ id, socket, result: "unwritten" });

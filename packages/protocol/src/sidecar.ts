@@ -228,19 +228,19 @@ export const SessionFactsArgsSchema = NoArgsSchema;
 
 // --- agent.append ----------------------------------------------------------
 
-/** `agent.append` (DR-0039 §6): add a text to the conversation of the
- * session's subagent `agentId` while its loop runs, as context its next
- * request carries. `from` is the session that sent it with `send` (DR-0039
- * §3), absent for what a person wrote (`user_message`); the module marks the
- * text as from that session, or as the person's. `text` must hold something
- * other than whitespace. */
+const AgentIdSchema = v.pipe(v.string(), v.nonEmpty("an agent id is not empty"));
+const AgentTextSchema = v.pipe(
+  v.string(),
+  v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
+);
+
+/** `agent.append` (DR-0039 §6): add what a person wrote (`user_message`) to
+ * the conversation of the session's subagent `agentId` while its loop runs,
+ * as context its next request carries; the module marks the text as the
+ * person's. `text` must hold something other than whitespace. */
 export const AgentAppendArgsSchema = v.object({
-  agentId: v.pipe(v.string(), v.nonEmpty("an agent id is not empty")),
-  from: v.optional(v.pipe(v.string(), v.nonEmpty("a sender is not empty"))),
-  text: v.pipe(
-    v.string(),
-    v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
-  ),
+  agentId: AgentIdSchema,
+  text: AgentTextSchema,
 });
 export type AgentAppendArgs = Output<typeof AgentAppendArgsSchema>;
 
@@ -257,6 +257,44 @@ export const AgentAppendResultSchema = v.variant("outcome", [
   v.object({ outcome: v.literal("not_delivered"), reason: AgentAppendReasonSchema }),
 ]);
 export type AgentAppendResult = Output<typeof AgentAppendResultSchema>;
+
+// --- agent.send ------------------------------------------------------------
+
+/** `agent.send` (DR-0039 §3): send what the session `from` sent with `send`
+ * to the session's subagent or teammate `agentId` with `$.session.send`,
+ * which reaches it whether its loop runs, waits or has ended: a waiting
+ * teammate wakes, an ended subagent is resumed from its transcript, and a
+ * running one reads it after its current request or turn. The module marks
+ * the text as from that session. `text` must hold something other than
+ * whitespace. */
+export const AgentSendArgsSchema = v.object({
+  agentId: AgentIdSchema,
+  from: v.pipe(v.string(), v.nonEmpty("a sender is not empty")),
+  text: AgentTextSchema,
+});
+export type AgentSendArgs = Output<typeof AgentSendArgsSchema>;
+
+/** Why an agent.send was not delivered.
+ *
+ * - `no_agent`: the session has no agent of that id (Claude Code found no
+ *   transcript to resume it from): a wrong id, or another session's agent
+ * - `refused`: Claude Code did not deliver it for another reason (a hook's
+ *   refusal, the recipient refusing), or the call rejected */
+export const AgentSendReasonSchema = v.picklist(["no_agent", "refused"]);
+export type AgentSendReason = Output<typeof AgentSendReasonSchema>;
+
+/** What an agent.send came to: `delivered` once the message is in the
+ * agent's inbox (not that it was read), or `not_delivered` with the reason
+ * and, in `message`, what Claude Code said, for the daemon's log. */
+export const AgentSendResultSchema = v.variant("outcome", [
+  v.object({ outcome: v.literal("delivered") }),
+  v.object({
+    outcome: v.literal("not_delivered"),
+    reason: AgentSendReasonSchema,
+    message: v.string(),
+  }),
+]);
+export type AgentSendResult = Output<typeof AgentSendResultSchema>;
 
 // --- request.override ------------------------------------------------------
 
@@ -326,6 +364,7 @@ export const SIDECAR_OPS = {
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
+  "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
   "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema },
@@ -340,6 +379,7 @@ export const SIDECAR_OP_NAMES = [
   "prompt.send",
   "session.facts",
   "agent.append",
+  "agent.send",
   "request.override",
   "turn.abort",
   "session.rename",
@@ -378,6 +418,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
+  requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
   requestSchema("session.rename", SIDECAR_OPS["session.rename"].args),

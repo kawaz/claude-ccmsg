@@ -61,8 +61,8 @@ function deps(
     readiness: () => options.readiness ?? { kind: "ended" },
     issueMid: () => `i/${String(++mid)}`,
     // No send here names an agent id (send-message-agent.test.ts does).
-    appendToAgent: async () => {
-      throw new Error("a send without an agent id appended to a subagent");
+    sendToAgent: async () => {
+      throw new Error("a send without an agent id went to an agent");
     },
     deliver: async (r, frame) => {
       frames.push({ pid: r.pid, frame });

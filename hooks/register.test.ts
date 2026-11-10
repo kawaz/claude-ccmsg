@@ -191,9 +191,12 @@ interface Fake {
   appended: string[];
   /** Each row the module appended to a subagent's conversation. */
   agentAppends: { agentId: string; text: string }[];
+  /** Each message the module sent to an agent with `$.session.send`. */
+  agentSends: { agentId: string; text: string }[];
   /** The session's subagents as `$.agent.list()` says; a running one's
    * conversation takes an append, any other id is refused as Claude Code
-   * refuses it. */
+   * refuses it. A send reaches any of them, running or not; any other id has
+   * no transcript to resume, as Claude Code says. */
   agents: { id: string; description: string; type: string; status: string }[];
   /** This plugin's `$.store`, which outlives the process: a session resumed
    * in another process is given the same one. */
@@ -287,6 +290,7 @@ function fakeEngine(
   const tools: Fake["tools"] = [];
   const appended: string[] = [];
   const agentAppends: Fake["agentAppends"] = [];
+  const agentSends: Fake["agentSends"] = [];
   const agents: Fake["agents"] = [];
   const aborts: string[] = [];
   const commandRuns: Fake["commandRuns"] = [];
@@ -332,6 +336,16 @@ function fakeEngine(
         }
         agentAppends.push({ agentId, text });
         return {};
+      },
+      send: async ({ to, text }) => {
+        if (!agents.some((a) => a.id === to.agentId)) {
+          return {
+            isDelivered: false,
+            reason: `Agent "${to.agentId}" could not be resumed: No transcript found for agent ID: ${to.agentId}.`,
+          };
+        }
+        agentSends.push({ agentId: to.agentId, text });
+        return { isDelivered: true };
       },
     },
     turn: {
@@ -504,6 +518,7 @@ function fakeEngine(
     tools,
     appended,
     agentAppends,
+    agentSends,
     agents,
     store,
     aborts,
@@ -1422,6 +1437,8 @@ describe("requests the module answers without running prompt.send", () => {
       '{"v":1,"op":"prompt.send","id":"q3","args":{"text":" \\n"}}',
       '{"v":1,"op":"describe","id":"d0","args":{"x":1}}',
       '{"v":1,"op":"describe","id":"d0","args":[]}',
+      // agent.send names its sender (DR-0039 §3).
+      '{"v":1,"op":"agent.send","id":"s0","args":{"agentId":"a1","text":"x"}}',
     ];
     const fake = fakeEngine();
     registerOn(fake);
@@ -1463,6 +1480,7 @@ describe("requests the module answers without running prompt.send", () => {
         "prompt.send",
         "session.facts",
         "agent.append",
+        "agent.send",
         "request.override",
         "turn.abort",
         "session.rename",
@@ -2551,25 +2569,86 @@ describe("the subagents", () => {
     });
   });
 
-  // send with agent_id (DR-0039 §3): the session that sent it is named, not
-  // the person.
-  test("agent.append with from marks the text as from that session", async () => {
-    const fake = fakeEngine();
-    fake.agents.push({ id: A, description: "d", type: "t", status: "running" });
-    registerOn(fake);
-    const sender = "11111111-2222-4333-8444-555555555555";
-    const reply = await replyTo(
-      fake,
-      JSON.stringify({
-        v: 1,
-        op: "agent.append",
-        id: "g3",
-        args: { agentId: A, from: sender, text: "確認お願い" },
-      }),
-    );
-    expect(reply).toEqual({ id: "g3", ok: true, result: { outcome: "appended" } });
-    expect(fake.agentAppends).toEqual([{ agentId: A, text: `ccmsg:${sender} から:\n確認お願い` }]);
-    expect(agentMessage("x", sender)).toBe(`ccmsg:${sender} から:\nx`);
+  // send with agent_id (DR-0039 §3): `$.session.send` to the agent, which
+  // reaches it whether it runs, waits or has ended; the session that sent it
+  // is named, not the person.
+  describe("agent.send", () => {
+    const SENDER = "11111111-2222-4333-8444-555555555555";
+    const request = (id: string, agentId: string, text: string) =>
+      JSON.stringify({ v: 1, op: "agent.send", id, args: { agentId, from: SENDER, text } });
+
+    test("sends the text, marked as from the sender, to the agent whatever its loop does", async () => {
+      const fake = fakeEngine();
+      fake.agents.push(
+        { id: A, description: "d", type: "t", status: "running" },
+        { id: B, description: "tm", type: "t", status: "idle" },
+        { id: "c0c0c0c0c0c0c0c0c", description: "done", type: "t", status: "completed" },
+      );
+      registerOn(fake);
+      for (const [n, agentId] of [A, B, "c0c0c0c0c0c0c0c0c"].entries()) {
+        expect(await replyTo(fake, request(`s${String(n)}`, agentId, "確認お願い"))).toEqual({
+          id: `s${String(n)}`,
+          ok: true,
+          result: { outcome: "delivered" },
+        });
+      }
+      const marked = `ccmsg:${SENDER} から:\n確認お願い`;
+      expect(agentMessage("確認お願い", SENDER)).toBe(marked);
+      expect(fake.agentSends).toEqual([
+        { agentId: A, text: marked },
+        { agentId: B, text: marked },
+        { agentId: "c0c0c0c0c0c0c0c0c", text: marked },
+      ]);
+      // Nothing is appended, to the agent or to the main conversation.
+      expect(fake.agentAppends).toEqual([]);
+      expect(fake.appended).toEqual([]);
+    });
+
+    test("an id the session has no agent of is no_agent, with Claude Code's words", async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      expect(await replyTo(fake, request("s1", A, "x"))).toEqual({
+        id: "s1",
+        ok: true,
+        result: {
+          outcome: "not_delivered",
+          reason: "no_agent",
+          message: `Agent "${A}" could not be resumed: No transcript found for agent ID: ${A}.`,
+        },
+      });
+      expect(fake.agentSends).toEqual([]);
+    });
+
+    test("a send not delivered for another reason, or one that rejects, is refused", async () => {
+      const refusing = fakeEngine();
+      refusing.$.session = {
+        ...refusing.$.session,
+        send: async () => ({ isDelivered: false, reason: "a hook said no" }),
+      };
+      registerOn(refusing);
+      expect(await replyTo(refusing, request("s1", A, "x"))).toEqual({
+        id: "s1",
+        ok: true,
+        result: { outcome: "not_delivered", reason: "refused", message: "a hook said no" },
+      });
+      const throwing = fakeEngine();
+      throwing.$.session = {
+        ...throwing.$.session,
+        send: async () => {
+          throw new Error("HooksError: $.session.send: boom");
+        },
+      };
+      registerOn(throwing);
+      expect(await replyTo(throwing, request("s2", A, "x"))).toEqual({
+        id: "s2",
+        ok: true,
+        result: {
+          outcome: "not_delivered",
+          reason: "refused",
+          message: "Error: HooksError: $.session.send: boom",
+        },
+      });
+    });
   });
 
   test("an append refused for another reason says refused", async () => {
@@ -2786,7 +2865,7 @@ describe("the ccmsg tools", () => {
         cwd: { type: "string" },
         name: { type: "string" },
         pid: { type: "integer" },
-        agent_id: { type: "string", description: "Running subagent's id" },
+        agent_id: { type: "string", description: "Subagent or teammate id" },
         text: { type: "string" },
       },
       required: ["text"],

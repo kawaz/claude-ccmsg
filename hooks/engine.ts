@@ -34,6 +34,16 @@ export interface Engine {
        * the main one. */
       agentId?: string;
     }): Promise<unknown>;
+    /** Send a plain-text message as the SendMessage tool does, here to a
+     * subagent or teammate of this session by its id: a running one reads it
+     * after its current request (a subagent) or turn (a teammate), a waiting
+     * teammate wakes, an ended subagent is resumed from its transcript.
+     * Resolves once the message is in the agent's inbox, not when it is
+     * read; `reason` is the tool's own words. */
+    send(args: {
+      to: { agentId: string };
+      text: string;
+    }): Promise<{ isDelivered: true } | { isDelivered: false; reason: string }>;
   };
   turn: {
     /** Stop the main loop's running turn, its tools with it, leaving no

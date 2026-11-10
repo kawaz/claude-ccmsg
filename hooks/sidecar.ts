@@ -15,7 +15,7 @@
 // not a request this module runs is logged and not answered: the daemon,
 // getting no reply, takes the request as unconfirmed at its deadline. The ops
 // are each concern's: `prompt.send` (prompt-send.ts), `session.facts`
-// (facts.ts), `agent.append` (subagents.ts), `request.override`
+// (facts.ts), `agent.append` and `agent.send` (subagents.ts), `request.override`
 // (request-override.ts), `turn.abort` (turn-abort.ts), `session.rename`
 // (session-rename.ts); `describe` says which
 // ops the module has.
@@ -39,7 +39,7 @@ import { type PromptSendState, type QueuedSend, queuePromptSend } from "./prompt
 import { requestOverrideSet } from "./request-override.ts";
 import { type LifecycleState, nextGeneration } from "./session-lifecycle.ts";
 import { renameSession } from "./session-rename.ts";
-import { appendToAgent } from "./subagents.ts";
+import { appendToAgent, sendToAgent } from "./subagents.ts";
 import { abortMainTurn, type TurnAbortState } from "./turn-abort.ts";
 
 /** `ccmsg version`, one process (describe), measured at about 0.3 s. */
@@ -79,6 +79,7 @@ export type Reply =
   | SidecarReplyOf<"prompt.send">
   | SidecarReplyOf<"session.facts">
   | SidecarReplyOf<"agent.append">
+  | SidecarReplyOf<"agent.send">
   | SidecarReplyOf<"request.override">
   | SidecarReplyOf<"turn.abort">
   | SidecarReplyOf<"session.rename">;
@@ -174,6 +175,8 @@ async function replyTo(
         return { id, ok: true, result: await currentFacts($, state) };
       case "agent.append":
         return { id, ok: true, result: await appendToAgent($, request.args) };
+      case "agent.send":
+        return { id, ok: true, result: await sendToAgent($, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
       case "turn.abort":

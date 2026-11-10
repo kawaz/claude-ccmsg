@@ -1076,7 +1076,7 @@ var ProtocolVersionSchema = object({
   major: pipe(number(), integer(), minValue(1)),
   minor: pipe(number(), integer(), minValue(0))
 });
-var PROTOCOL_VERSION = { major: 2, minor: 3 };
+var PROTOCOL_VERSION = { major: 2, minor: 4 };
 var AnnouncedProtocolSchema = optional(union([number(), object({ major: number(), minor: optional(number()) })]));
 var ClaimedProtocolSchema = object({
   major: number(),
@@ -1710,7 +1710,7 @@ async function appendToAgent($, args) {
     await $.session.append({
       message: {
         type: "user",
-        content: [{ type: "text", text: agentMessage(args.text, args.from) }]
+        content: [{ type: "text", text: agentMessage(args.text) }]
       },
       agentId: args.agentId
     });
@@ -1722,6 +1722,26 @@ async function appendToAgent($, args) {
       outcome: "not_delivered",
       reason: why.includes("no running loop") ? "not_running" : "refused"
     };
+  }
+}
+var NO_AGENT = "No transcript found";
+async function sendToAgent($, args) {
+  const notDelivered = (message) => {
+    $.ui.log(`ccmsg: agent.send to ${args.agentId} not delivered: ${message}`, { to: "debug" });
+    return {
+      outcome: "not_delivered",
+      reason: message.includes(NO_AGENT) ? "no_agent" : "refused",
+      message
+    };
+  };
+  try {
+    const sent = await $.session.send({
+      to: { agentId: args.agentId },
+      text: agentMessage(args.text, args.from)
+    });
+    return sent.isDelivered ? { outcome: "delivered" } : notDelivered(sent.reason);
+  } catch (e) {
+    return notDelivered(errorText(e));
   }
 }
 function subagentTurnStarted($, state, input) {
@@ -1913,15 +1933,30 @@ var SessionFactsSchema = object({
   request_override: optional(RequestOverrideStateSchema)
 });
 var SessionFactsArgsSchema = NoArgsSchema;
+var AgentIdSchema = pipe(string(), nonEmpty("an agent id is not empty"));
+var AgentTextSchema = pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"));
 var AgentAppendArgsSchema = object({
-  agentId: pipe(string(), nonEmpty("an agent id is not empty")),
-  from: optional(pipe(string(), nonEmpty("a sender is not empty"))),
-  text: pipe(string(), check((text) => text.trim() !== "", "text holds something other than whitespace"))
+  agentId: AgentIdSchema,
+  text: AgentTextSchema
 });
 var AgentAppendReasonSchema = picklist(["not_running", "refused"]);
 var AgentAppendResultSchema = variant("outcome", [
   object({ outcome: literal("appended") }),
   object({ outcome: literal("not_delivered"), reason: AgentAppendReasonSchema })
+]);
+var AgentSendArgsSchema = object({
+  agentId: AgentIdSchema,
+  from: pipe(string(), nonEmpty("a sender is not empty")),
+  text: AgentTextSchema
+});
+var AgentSendReasonSchema = picklist(["no_agent", "refused"]);
+var AgentSendResultSchema = variant("outcome", [
+  object({ outcome: literal("delivered") }),
+  object({
+    outcome: literal("not_delivered"),
+    reason: AgentSendReasonSchema,
+    message: string()
+  })
 ]);
 var RequestOverrideArgsSchema = object({
   ...RequestOverrideSchema.entries,
@@ -1947,6 +1982,7 @@ var SIDECAR_OPS = {
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
   "session.facts": { args: SessionFactsArgsSchema, result: SessionFactsSchema },
   "agent.append": { args: AgentAppendArgsSchema, result: AgentAppendResultSchema },
+  "agent.send": { args: AgentSendArgsSchema, result: AgentSendResultSchema },
   "request.override": { args: RequestOverrideArgsSchema, result: RequestOverrideResultSchema },
   "turn.abort": { args: TurnAbortArgsSchema, result: TurnAbortResultSchema },
   "session.rename": { args: SessionRenameArgsSchema, result: SessionRenameResultSchema }
@@ -1956,6 +1992,7 @@ var SIDECAR_OP_NAMES = [
   "prompt.send",
   "session.facts",
   "agent.append",
+  "agent.send",
   "request.override",
   "turn.abort",
   "session.rename"
@@ -1973,6 +2010,7 @@ var SidecarRequestSchema = variant("op", [
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
   requestSchema("session.facts", SIDECAR_OPS["session.facts"].args),
   requestSchema("agent.append", SIDECAR_OPS["agent.append"].args),
+  requestSchema("agent.send", SIDECAR_OPS["agent.send"].args),
   requestSchema("request.override", SIDECAR_OPS["request.override"].args),
   requestSchema("turn.abort", SIDECAR_OPS["turn.abort"].args),
   requestSchema("session.rename", SIDECAR_OPS["session.rename"].args)
@@ -2117,6 +2155,8 @@ async function replyTo($, state, sid, generation, request) {
         return { id, ok: true, result: await currentFacts($, state) };
       case "agent.append":
         return { id, ok: true, result: await appendToAgent($, request.args) };
+      case "agent.send":
+        return { id, ok: true, result: await sendToAgent($, request.args) };
       case "request.override":
         return { id, ok: true, result: requestOverrideSet($, state, request.args) };
       case "turn.abort":
@@ -2235,10 +2275,10 @@ function namesSomebody(to) {
 var NAMES_SOMEBODY = "name the recipient by at least one of session_id, cwd, name, pid";
 var PeerTargetSchema = pipe(object(PeerTargetEntries), check(namesSomebody, NAMES_SOMEBODY));
 var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
-var AgentIdSchema = optional(pipe(string(), nonEmpty("an agent id is not empty")));
+var AgentIdSchema2 = optional(pipe(string(), nonEmpty("an agent id is not empty")));
 var SendMessageInputSchema = object({
   to: PeerTargetSchema,
-  agent_id: AgentIdSchema,
+  agent_id: AgentIdSchema2,
   text: PeerTextSchema
 });
 var PeerListEntries = {
@@ -2251,7 +2291,7 @@ var SendMessageReasonSchema = picklist([
   "no_module",
   "session_changed",
   "ended",
-  "not_running",
+  "no_agent",
   "no_peer_socket",
   "no_status_socket",
   "unreachable",
@@ -2299,7 +2339,7 @@ function refusesFieldsOf(tool, takes, theirs) {
     }
   });
 }
-var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
+var SendToolInputSchema = pipe(looseObject({}), refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]), object({ ...PeerTargetEntries, agent_id: AgentIdSchema2, text: PeerTextSchema }), check((input) => namesSomebody(input), NAMES_SOMEBODY));
 var SayToolInputSchema = object({ text: PeerTextSchema });
 var PeersToolInputSchema = pipe(looseObject({}), refusesFieldsOf("peers", ["cwd_prefix", "name"], ["session_id", "cwd", "pid", "agent_id", "text"]), object(PeerListEntries));
 
@@ -2309,7 +2349,7 @@ var NOT_DELIVERED = {
   no_module: "ccmsg の hooks module が動いていないセッションなので送っていない。そのセッションには ccmsg で届けられない",
   session_changed: "その session_id はもう使われていない (/clear か /resume で別の id に移った)。peers で今の session_id を確かめて送り直す",
   ended: "そのセッションは終了している",
-  not_running: "その agent_id の subagent はそのセッションで今走っていない (終わったか、agent_id の誤り)",
+  no_agent: "そのセッションにその agent_id の subagent / teammate が居ない (agent_id の誤りか、別のセッションの agent)。agent_id と宛先のセッションを確かめて送り直す",
   no_peer_socket: "peer socket が見つからない。終了した直後か、peer messaging に対応しない Claude Code。peers でまだ居るか確かめる",
   no_status_socket: "受け手の受領拒否を聞く socket を送り手側で作れず、送っていない。少し置いて一度だけ送り直し、また同じなら送るのをやめる",
   unreachable: "peer socket に書き込めなかった。少し置いて一度だけ送り直すか、送るのをやめる",
@@ -2503,7 +2543,7 @@ var TOOL_INPUT_SCHEMAS = {
       },
       agent_id: {
         type: "string",
-        description: "Running subagent's id"
+        description: "Subagent or teammate id"
       },
       text: {
         type: "string"

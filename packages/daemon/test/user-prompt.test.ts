@@ -29,6 +29,7 @@ import {
 } from "../src/user-prompt.ts";
 import { SidecarReplies } from "../src/sidecar-call.ts";
 import { userMessage } from "../src/user-message.ts";
+import { agentSend } from "../src/agent-send.ts";
 import type { SidecarRun } from "../src/sidecar-runs.ts";
 import { assistantRow, line } from "../../protocol/test/transcript-rows.ts";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
@@ -230,6 +231,86 @@ describe("userMessage", () => {
     ).toMatchObject({
       outcome: "unconfirmed",
     });
+  });
+});
+
+// send_message with an agent id (DR-0039 §3): the same runs are asked to
+// agent.send; one that has no such agent passes it to the next, and the first
+// to deliver it ends the asking, so it arrives once.
+describe("agentSend", () => {
+  const SENDER = "22222222-2222-4333-8444-555555555555";
+  const MESSAGE = { sid: SID, agentId: "a1", text: "hi", from: SENDER };
+  const DELIVERED: RunBehaviour = { result: { outcome: "delivered" } };
+  const sendNotDelivered = (reason: string): RunBehaviour => ({
+    result: { outcome: "not_delivered", reason, message: `said ${reason}` },
+  });
+  const sendDeps = (runs: Record<string, RunBehaviour>, isRunning = true) => {
+    const { deps, written } = scripted(runs);
+    return { deps: { ...deps, isRunning: () => isRunning }, written };
+  };
+
+  test("delivered by the run the agent is in, the next tried after no_agent, none after", async () => {
+    const { deps, written } = sendDeps({
+      run100: sendNotDelivered("no_agent"),
+      run200: DELIVERED,
+      run300: DELIVERED,
+    });
+    const sent = await agentSend(MESSAGE, deps);
+    expect(sent).toMatchObject({ outcome: "delivered" });
+    expect(written.map((w) => w.line)).toEqual([
+      { v: 1, op: "agent.send", id: "id1", args: { agentId: "a1", from: SENDER, text: "hi" } },
+      { v: 1, op: "agent.send", id: "id2", args: { agentId: "a1", from: SENDER, text: "hi" } },
+    ]);
+    // What Claude Code said is kept for the log.
+    expect(sent.tries[0]).toMatchObject({
+      result: "not_delivered:no_agent",
+      message: "said no_agent",
+    });
+  });
+
+  test("no run has the agent: no_agent; a refusal stops at that run", async () => {
+    expect(
+      await agentSend(
+        MESSAGE,
+        sendDeps({ run100: sendNotDelivered("no_agent"), run200: sendNotDelivered("no_agent") })
+          .deps,
+      ),
+    ).toMatchObject({ outcome: "not_delivered", reason: "no_agent" });
+    const { deps, written } = sendDeps({ run100: sendNotDelivered("refused"), run200: DELIVERED });
+    expect(await agentSend(MESSAGE, deps)).toMatchObject({
+      outcome: "not_delivered",
+      reason: "refused",
+    });
+    expect(written.length).toBe(1);
+  });
+
+  // A module of a ccmsg from before agent.send drops the line unanswered
+  // (DR-0047 §3 for session.rename): the send is unconfirmed at the deadline.
+  test("a run that does not answer, or answers with what is not agent.send's, is unconfirmed and ends the asking", async () => {
+    const silent = sendDeps({ run100: "silent", run200: DELIVERED });
+    expect(await agentSend(MESSAGE, { ...silent.deps, deadlineMs: 50 })).toMatchObject({
+      outcome: "unconfirmed",
+    });
+    expect(silent.written.length).toBe(1);
+    // agent.append's result, from a module of another ccmsg.
+    const other = sendDeps({ run100: { result: { outcome: "appended" } }, run200: DELIVERED });
+    expect(await agentSend(MESSAGE, other.deps)).toMatchObject({ outcome: "unconfirmed" });
+    expect(other.written.length).toBe(1);
+    const failed = sendDeps({ run100: { error: "internal" } });
+    expect(await agentSend(MESSAGE, failed.deps)).toMatchObject({ outcome: "unconfirmed" });
+  });
+
+  test("no module, a changed session, an ended one; a run not written to passes it on", async () => {
+    expect(await agentSend(MESSAGE, sendDeps({}).deps)).toMatchObject({ reason: "no_module" });
+    expect(await agentSend(MESSAGE, sendDeps({}, false).deps)).toMatchObject({
+      reason: "ended",
+    });
+    const { deps } = scripted({}, { runs: { liveOf: () => [], movedOn: (sid) => sid === SID } });
+    expect(await agentSend(MESSAGE, { ...deps, isRunning: () => true })).toMatchObject({
+      reason: "session_changed",
+    });
+    const unwritten = sendDeps({ run100: "unwritten", run200: DELIVERED });
+    expect(await agentSend(MESSAGE, unwritten.deps)).toMatchObject({ outcome: "delivered" });
   });
 });
 
@@ -591,14 +672,16 @@ function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar
 }
 
 // send_message with an agent id (DR-0039 §3): the session's live run is
-// matched as any send's, and the text goes to its module as agent.append,
-// naming the sender, rather than into its peer socket.
+// matched as any send's, and the text goes to its module as agent.send,
+// naming the sender, rather than into its peer socket. A person's text for a
+// subagent (user_message, DR-0039 §6) stays agent.append.
 describe("send_message with an agent id over the wire", () => {
-  test("the module is asked to append, the sender named, and its answer is the result", async () => {
+  const SENDER = "22222222-2222-4333-8444-555555555555";
+
+  test("the module is asked to send to the agent, the sender named, and its answer is the result", async () => {
     const ctx = await startShortDaemon();
     const harness = fakeHarness(SID, { pid: process.pid });
     const sidecar = await fakeSidecar(ctx, SID, "run1");
-    const SENDER = "22222222-2222-4333-8444-555555555555";
     try {
       // The session announces its config dir, which is where the daemon
       // reaches it (DR-0034 §2).
@@ -613,23 +696,83 @@ describe("send_message with an agent id over the wire", () => {
       const line = await nextRequest(sidecar);
       expect(line).toEqual({
         v: 1,
-        op: "agent.append",
+        op: "agent.send",
         id: line.id,
         args: { agentId: "a1", from: SENDER, text: "確認お願い" },
       });
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
       await module.requestOk(
-        sidecarReply({ id: line.id, ok: true, result: { outcome: "appended" } }),
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "delivered" } }),
       );
       expect((await results).results).toEqual([{ sid: SID, outcome: "delivered" }]);
       expect(harness.frames).toEqual([]);
+
+      // No such agent: the reason comes back, and Claude Code's words go to
+      // the daemon's log only.
+      const missing = sender.requestOk({
+        op: "send_message",
+        to: { session_id: SID },
+        agent_id: "a9",
+        text: "x",
+      });
+      const second = await nextRequest(sidecar);
+      expect(second.op).toBe("agent.send");
+      await module.requestOk(
+        sidecarReply({
+          id: second.id,
+          ok: true,
+          result: {
+            outcome: "not_delivered",
+            reason: "no_agent",
+            message: "No transcript found for agent ID: a9",
+          },
+        }),
+      );
+      expect((await missing).results).toEqual([
+        { sid: SID, outcome: "not_delivered", reason: "no_agent" },
+      ]);
+      const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
+      expect(log).toContain(`agent-send -> ${SID} a9: not_delivered (no_agent)`);
+      expect(log).toContain('"No transcript found for agent ID: a9"');
       sender.close();
       target.close();
       module.close();
     } finally {
       sidecar.close();
       harness.dispose();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // A person's text for a subagent (DR-0039 §6) is an append, with no sender.
+  test("user_message still goes to the module as agent.append, naming no sender", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = await fakeSidecar(ctx, SID, "run1");
+    try {
+      const user = await userConn(ctx);
+      const appended = user.request({
+        op: "user_message",
+        session_id: SID,
+        agent_id: "a1",
+        text: "その方針で",
+      });
+      const line = await nextRequest(sidecar);
+      expect(line).toEqual({
+        v: 1,
+        op: "agent.append",
+        id: line.id,
+        args: { agentId: "a1", text: "その方針で" },
+      });
+      const module = await sessionConn(ctx, SID);
+      await module.requestOk(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "appended" } }),
+      );
+      expect(await appended).toEqual({ ok: true, outcome: "appended" });
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
       await stopTestDaemon(ctx);
     }
   });

@@ -69,13 +69,13 @@ const PeerTextSchema = v.pipe(
   v.check((text) => text.trim() !== "", "the text holds something other than whitespace"),
 );
 
-/** A running subagent of a session, by its agent id: a send that names one
- * adds the text to that subagent's conversation instead of the session's
- * (DR-0039 §3). */
+/** A subagent or teammate of a session, by its agent id: a send that names
+ * one goes to that agent instead of the session's own conversation, whether
+ * it runs, waits or has ended (DR-0039 §3). */
 const AgentIdSchema = v.optional(v.pipe(v.string(), v.nonEmpty("an agent id is not empty")));
 
-/** send_message's fields: who to, the running subagent of theirs when one is
- * named, and the text. */
+/** send_message's fields: who to, the agent of theirs when one is named, and
+ * the text. */
 export const SendMessageInputSchema = v.object({
   to: PeerTargetSchema,
   agent_id: AgentIdSchema,
@@ -108,8 +108,8 @@ export type PeerListInput = Output<typeof PeerListInputSchema>;
  * - `session_changed`: the process the named session ran in now serves
  *   another session id (/clear, /resume)
  * - `ended`: the named session is no longer running
- * - `not_running`: the send named an agent id, and no subagent of that id
- *   runs in the session now (it ended, or the id is wrong)
+ * - `no_agent`: the send named an agent id, and the session has no subagent
+ *   or teammate of that id (the id is wrong, or another session's agent)
  * - `no_peer_socket`: the session has no peer messaging socket the daemon
  *   can write to (no state file for it in its config dir, a harness speaking
  *   another peer protocol, or no token)
@@ -121,14 +121,14 @@ export type PeerListInput = Output<typeof PeerListInputSchema>;
  * - `refused`: the recipient's harness answered that it did not take it
  *
  * The last four are the delivery into the session's peer socket failing
- * (DR-0036 §3); a send to a subagent says `refused` when the session's
- * module refused the append. */
+ * (DR-0036 §3); a send to an agent says `refused` when Claude Code did not
+ * deliver it to the agent for another reason than there being none. */
 export const SendMessageReasonSchema = v.picklist([
   "self",
   "no_module",
   "session_changed",
   "ended",
-  "not_running",
+  "no_agent",
   "no_peer_socket",
   "no_status_socket",
   "unreachable",
@@ -214,8 +214,7 @@ function refusesFieldsOf(tool: string, takes: readonly string[], theirs: readonl
 }
 
 /** `send`'s input: who to (PeerTargetSchema's fields, at least one), the
- * running subagent of theirs to add it to when `agent_id` is given, and the
- * text. */
+ * agent of theirs to send it to when `agent_id` is given, and the text. */
 export const SendToolInputSchema = v.pipe(
   v.looseObject({}),
   refusesFieldsOf("send", ["session_id", "cwd", "name", "pid", "agent_id", "text"], ["cwd_prefix"]),

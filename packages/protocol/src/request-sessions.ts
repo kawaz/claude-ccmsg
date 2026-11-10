@@ -224,11 +224,11 @@ export type NotificationListRequest = Output<typeof NotificationListRequestSchem
  * match every field of `to`, and writes the envelope (`from: ccmsg:<sid>` of
  * the asking session, no reply line) into the peer socket of each that has a
  * hooks module. The asking session is left out; a send that matched it alone
- * says so. With `agent_id`, the text goes instead to that running subagent of
- * each matched session, through the session's module (`agent.append`, as
- * user_message), marked as from the asking session; the asking session is
- * then not left out, its own subagents being others. It answers one result
- * per session matched. */
+ * says so. With `agent_id`, the text goes instead to that subagent or
+ * teammate of each matched session, through the session's module
+ * (`agent.send`), marked as from the asking session; the asking session is
+ * then not left out, its own agents being others. It answers one result per
+ * session matched. */
 export const SendMessageRequestSchema = v.object({
   op: v.literal("send_message"),
   ...SendMessageInputSchema.entries,

@@ -5,8 +5,8 @@
 // send and the list, so what `peers` shows is what `send` reaches), and
 // writes the envelope into the peer socket of every matched session that has
 // a hooks module (peer-inject.ts). A send that names an agent id goes to that
-// running subagent of each matched session instead, through the session's
-// module as user_message's text does (user-message.ts). A notice (notify, and
+// subagent or teammate of each matched session instead, through the session's
+// module (agent-send.ts). A notice (notify, and
 // the daemon's own wake) goes to one session by id the same way, the sender's
 // own session included (DR-0039 §9). Nothing is held for a later attempt
 // (DR-0036 §3).
@@ -22,7 +22,7 @@ import {
 import type { SessionRun } from "./session-runs.ts";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
 import type { Serial } from "./serial.ts";
-import type { UserMessageOutcome } from "./user-message.ts";
+import type { AgentSendOutcome } from "./agent-send.ts";
 
 /** One session among the live runs: its runs, and how a target spells it —
  * the name its record gives and its directory as a realpath. */
@@ -56,14 +56,9 @@ export interface NoticeDeps extends PeerDeps {
 }
 
 export interface SendMessageDeps extends NoticeDeps {
-  /** Add `text` from session `from` to the running subagent `agentId` of
-   * session `sid`, through its module (agent.append). */
-  appendToAgent(
-    sid: string,
-    agentId: string,
-    text: string,
-    from: string,
-  ): Promise<UserMessageOutcome>;
+  /** Send `text` from session `from` to the subagent or teammate `agentId`
+   * of session `sid`, through its module (agent.send). */
+  sendToAgent(sid: string, agentId: string, text: string, from: string): Promise<AgentSendOutcome>;
 }
 
 /** The sessions of `runs`, each once, spelled as a target matches them. */
@@ -156,9 +151,9 @@ export async function listPeers(
 }
 
 /** Deliver `text` from session `from` to every session `to` picks out but
- * the sender — or, given `agentId`, to that running subagent of every session
- * it picks out, the sender's own included — and say what came of it for
- * each. */
+ * the sender — or, given `agentId`, to that subagent or teammate of every
+ * session it picks out, the sender's own included — and say what came of it
+ * for each. */
 export async function sendToPeers(
   message: { from: string; to: PeerTarget; agentId?: string; text: string },
   deps: SendMessageDeps,
@@ -196,7 +191,7 @@ async function startSend(
   }
   if (agentId !== undefined) {
     const results = await Promise.all(
-      matched.map((peer) => appendToPeer(peer, agentId, from, text, deps)),
+      matched.map((peer) => sendToAgentOf(peer, agentId, from, text, deps)),
     );
     return results.sort((a, b) => a.sid.localeCompare(b.sid));
   }
@@ -242,9 +237,9 @@ export async function sendNotice(
   return await result;
 }
 
-/** Add `text` to the subagent `agentId` of `peer`. The subagent's own
- * session is not the sender's self: its subagents are other loops. */
-async function appendToPeer(
+/** Send `text` to the agent `agentId` of `peer`. The agent's own session is
+ * not the sender's self: its agents are other loops. */
+async function sendToAgentOf(
   peer: Peer,
   agentId: string,
   from: string,
@@ -254,18 +249,18 @@ async function appendToPeer(
   if (!deps.hasModule(peer.sid)) {
     return { ...spelled(peer), outcome: "not_delivered", reason: "no_module" };
   }
-  const appended = await deps.appendToAgent(peer.sid, agentId, text, from);
+  const sent = await deps.sendToAgent(peer.sid, agentId, text, from);
   deps.log(
-    `agent-append ${peer.sid} ${agentId} (send_message from ${from}): ${appended.outcome}` +
-      (appended.outcome === "not_delivered" ? ` (${appended.reason})` : ""),
+    `agent-send ${peer.sid} ${agentId} (send_message from ${from}): ${sent.outcome}` +
+      (sent.outcome === "not_delivered" ? ` (${sent.reason})` : ""),
   );
-  switch (appended.outcome) {
-    case "appended":
+  switch (sent.outcome) {
+    case "delivered":
       return { ...spelled(peer), outcome: "delivered" };
     case "unconfirmed":
       return { ...spelled(peer), outcome: "unconfirmed" };
     case "not_delivered":
-      return { ...spelled(peer), outcome: "not_delivered", reason: appended.reason };
+      return { ...spelled(peer), outcome: "not_delivered", reason: sent.reason };
   }
 }
 

@@ -20,8 +20,8 @@ const NOT_DELIVERED: Record<SendMessageReason, string> = {
   session_changed:
     "その session_id はもう使われていない (/clear か /resume で別の id に移った)。peers で今の session_id を確かめて送り直す",
   ended: "そのセッションは終了している",
-  not_running:
-    "その agent_id の subagent はそのセッションで今走っていない (終わったか、agent_id の誤り)",
+  no_agent:
+    "そのセッションにその agent_id の subagent / teammate が居ない (agent_id の誤りか、別のセッションの agent)。agent_id と宛先のセッションを確かめて送り直す",
   no_peer_socket:
     "peer socket が見つからない。終了した直後か、peer messaging に対応しない Claude Code。peers でまだ居るか確かめる",
   no_status_socket:

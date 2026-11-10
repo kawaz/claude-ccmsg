@@ -180,6 +180,7 @@ import {
   sendToPeers,
 } from "./send-message.ts";
 import { USER_MESSAGE_DEADLINE_MS, userMessage } from "./user-message.ts";
+import { AGENT_SEND_DEADLINE_MS, agentSend } from "./agent-send.ts";
 import { abortTurn, productionTurnAbortDeps } from "./turn-abort.ts";
 import { inputReadiness, productionInputDeps, userPrompt } from "./user-prompt.ts";
 import {
@@ -1311,20 +1312,32 @@ function noticeDeps(daemon: Daemon): NoticeDeps {
   };
 }
 
-/** What a send needs besides a notice's: adding to a running subagent
- * through the session's module, as user_message does (DR-0039 §3). */
+/** What a send needs besides a notice's: sending to a subagent or teammate
+ * through the session's module (DR-0039 §3). What Claude Code said of a send
+ * it did not deliver goes to the log, not to the sender's model. */
 function sendMessageDeps(daemon: Daemon): SendMessageDeps {
   return {
     ...noticeDeps(daemon),
-    appendToAgent: async (sid, agentId, text, from) => {
-      const { tries: _tries, ...outcome } = await userMessage(
+    sendToAgent: async (sid, agentId, text, from) => {
+      const { tries, ...outcome } = await agentSend(
         { sid, agentId, text, from },
         {
           ...productionSidecarDeps(daemon.sidecarReplies),
-          deadlineMs: USER_MESSAGE_DEADLINE_MS,
+          deadlineMs: AGENT_SEND_DEADLINE_MS,
           runs: daemon.sidecarRuns,
           isRunning: (running) => daemon.sessions.has(running),
         },
+      );
+      daemon.log.info(
+        `agent-send -> ${sid} ${agentId}: ${outcome.outcome}` +
+          (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
+          ` tries=[${tries
+            .map(
+              (t) =>
+                `${t.id} ${path.basename(t.socket)} ${t.result}` +
+                (t.message !== undefined ? ` ${JSON.stringify(t.message)}` : ""),
+            )
+            .join(", ")}]`,
       );
       return outcome;
     },

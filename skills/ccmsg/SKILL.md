@@ -26,7 +26,11 @@ description: ccmsg の tool (send / say / peers / launch / permit) で、別の�
 - 書いた field はすべて一致するセッションに届く。複数のセッションに当たれば全部に届く
 - 一致は完全一致で、`cwd` は実体のパスで比べる。送り主自身には届かない
 - 相手の config dir が違っても届く
-- `agent_id` を足すと、宛先のセッションで今走っている subagent の会話に `ccmsg:<送り主の session_id> から:` の印付きで届く (送り主自身のセッションの subagent にも届く)。subagent への連絡は通常 SendMessage で行い、`agent_id` を渡すのは SendMessage が使えない時 (別のセッションから、引き継いだ worker に話しかける時など。reference の `session-state/handoff`) に限る
+- `agent_id` を足すと、宛先のセッションのその subagent / teammate に、本文の頭に `ccmsg:<送り主の session_id> から:` の印を付けて届く (送り主自身のセッションの agent にも届く)。subagent への連絡は通常 SendMessage で行い、`agent_id` を渡すのは SendMessage が使えない時 (別のセッションから、引き継いだ worker に話しかける時など。reference の `session-state/handoff`) に限る
+  - 相手が走っていても待機中でも届く。待機中の teammate は起き、終わった subagent は続きから再開する。走行中の teammate は今の turn が終わってから読む
+  - 受け手には、その agent の親からの文に見える。本当の送り主を示すのは本文の頭の印だけ
+  - agent が返事をするなら、印の session_id に ccmsg の `send` で送る (SendMessage で返すと親に届き、送り主には戻らない)
+  - agent の turn が終わると、その agent の親のセッションに知らせが行く
 
 結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」で返る。届いた宛先には送り直さない。確かめられなかった宛先に送り直すと二重に届くことがあるので、先に相手の返事を待つ。
 
@@ -43,6 +47,8 @@ description: ccmsg の tool (send / say / peers / launch / permit) で、別の�
 別のセッションからのメッセージは、`from="ccmsg:<session_id>"` の付いた `<cross-session-message>` の封筒で届く。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、`session_id` に `ccmsg:` の後ろの id を書く。
 
 同じ封筒で、返事の要らない知らせも届く。`from` が自分の session id のものは、自分の作業 (justfile 等の `ccmsg notify --self`) が入れた合図。`from="ccmsg:daemon"` のものは ccmsg 自身の知らせ (回線が戻った等)。どちらにも返信しない。
+
+subagent / teammate の時、親からの文 (`<teammate-message teammate_id="team-lead">`、「The coordinator sent a message」) の本文が `ccmsg:<session_id> から:` の行で始まっていれば、親ではなくその別のセッションからの文。返事は SendMessage ではなく `mcp__ccmsg-v1__send` で、その `session_id` に送る。`ccmsg:daemon から:` は ccmsg 自身の知らせで、返信しない。
 
 ## 人に知らせる (`mcp__ccmsg-v1__say`)
 

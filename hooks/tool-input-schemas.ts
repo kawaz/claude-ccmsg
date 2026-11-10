@@ -117,7 +117,7 @@ export function toolInputSchemas(): {
   permit: JsonSchema;
 } {
   return {
-    send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Running subagent's id" }),
+    send: toolInputSchemaOf(SendToolInputSchema, { agent_id: "Subagent or teammate id" }),
     say: toolInputSchemaOf(SayToolInputSchema, { text: "日本語" }),
     peers: toolInputSchemaOf(PeersToolInputSchema),
     launch: toolInputSchemaOf(LaunchFieldsSchema, { resume: "Session id to resume" }),

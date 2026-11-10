@@ -8,7 +8,7 @@
 //                         under and its generation, its state file
 //   sidecar.ts            the run's sidecar and the requests through it
 //   session-facts.ts      the main thread's facts: model, effort, window, turn
-//   subagents.ts          the running subagents, and agent.append
+//   subagents.ts          the running subagents, agent.append and agent.send
 //   prompt-send.ts        a person's text from the web UI put in as a prompt
 //   request-override.ts   the model and effort a person overrides the
 //                         requests with from the web UI
