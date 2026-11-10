@@ -4846,6 +4846,14 @@ button.session-tab {
   }
 }
 
+/* 閉じた項目 (中に開いた details を持たない fold) には出さない (kawaz
+ * 2026-11-11): 右端をスクロールのために触った指で押してしまうため。項目を
+ * 開くと出る。jsonl 表示中は中身が元の行に替わって details を持たないので、
+ * 戻すボタンは消えない。 */
+.tl-item:has(details):not(:has(details[open])) > .tl-item-raw-toggle {
+  display: none;
+}
+
 .tl-item-raw-on > .tl-item-raw-toggle {
   background: var(--accent);
   color: var(--accent-fg);
