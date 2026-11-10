@@ -7671,19 +7671,42 @@ a.tl-attachment-file-path {
   background: var(--accent);
 }
 
-/* The folds (ENV, Background, TODO): a rule over each, the heading muted until
- * opened. Closed until opened: for ENV that keeps a screen share from
- * surfacing secrets by accident, for Background and TODO it keeps what the tab
- * is rarely looked at for out of the way. */
+/* The fold under セッション情報's table (ENV): the heading muted until opened,
+ * closed until opened so a screen share does not surface secrets by accident.
+ * The marker is drawn here (▶ / ▼, as the Timeline's folds draw theirs) in a
+ * box of a set width, and the body is indented by that width: what the fold
+ * holds starts under the heading's first letter, not under its marker. */
 .status-fold {
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-8);
+  --status-fold-marker: 1.1rem;
+  margin-top: var(--space-8);
 }
 
 .status-fold-summary {
   cursor: pointer;
   font-size: var(--font-size-md);
   color: var(--fg-muted);
+  list-style: none;
+}
+
+.status-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The glyph is drawn smaller than the heading's text, in a box as wide as the
+ * body's indent (a rem length, the same whatever font-size each takes). */
+.status-fold-summary::before {
+  content: "▶";
+  display: inline-block;
+  width: var(--status-fold-marker);
+  font-size: 0.85em;
+}
+
+.status-fold[open] > .status-fold-summary::before {
+  content: "▼";
+}
+
+.status-fold > :not(summary) {
+  margin-left: var(--status-fold-marker);
 }
 
 .status-fold-summary:hover,
@@ -7797,7 +7820,9 @@ a.tl-attachment-file-path {
  * instead of widening the column. The value column is the rest. A value is one
  * line that scrolls sideways on its own (`.status-scroll`), like the facts
  * tables' values, so a long value never makes its row taller; the value's own
- * line breaks, and the colon split's parts, stay as lines. */
+ * line breaks, and the colon split's parts, stay as lines. The name, the copy
+ * button and the value sit at the middle of the row's height: the button is
+ * taller than a line of text, and at the top the text would ride above it. */
 .status-env-table {
   display: grid;
   grid-template-columns: fit-content(30%) minmax(0, 1fr);
@@ -7809,18 +7834,17 @@ a.tl-attachment-file-path {
   display: grid;
   grid-template-columns: subgrid;
   column-gap: var(--space-8);
-  align-items: start;
+  align-items: center;
   padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 
+/* The heading 値 starts at the value cell's left edge, over the copy button:
+ * the button is in the value's cell, before the value, not a column of its
+ * own. */
 .status-env-head {
   font-weight: 600;
   color: var(--fg-muted);
-}
-
-.status-env-head-value {
-  padding-left: calc(1.6rem + var(--space-4));
 }
 
 /* `overflow: hidden` makes the cell itself a scroll container, so its minimum
@@ -7836,7 +7860,7 @@ a.tl-attachment-file-path {
 .status-env-value {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-4);
   font-family: var(--font-mono, monospace);
 }

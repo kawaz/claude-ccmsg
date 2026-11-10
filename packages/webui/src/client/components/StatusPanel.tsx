@@ -285,7 +285,7 @@ export function useSessionRestart(
   };
 }
 
-/** The TITLE row's value: an input from the start, the place to rename the
+/** The NAME row's value: an input from the start, the place to rename the
  * session (DR-0047 §4). It shows the agents rows' name and follows it, except
  * while the person is editing — what they typed is not overwritten by a name
  * that arrives meanwhile. Enter sends the trimmed draft with `session_rename`,
@@ -362,7 +362,7 @@ function SessionTitleInput({ sid, title }: { sid: string; title: string }) {
         (saving ? " status-title-input-saving" : "") +
         (failure !== null ? " status-title-input-failed" : "")
       }
-      aria-label="TITLE"
+      aria-label="NAME"
       aria-busy={saving}
       aria-invalid={failure !== null}
       value={draft ?? title}
@@ -486,7 +486,7 @@ function EnvPanel({
 
   const rows = state.kind === "loaded" ? filterEnvRows(state.rows, query) : [];
   return (
-    <section class="status-section">
+    <>
       <Fold
         class="status-fold status-env"
         summaryClass="status-fold-summary"
@@ -523,9 +523,7 @@ function EnvPanel({
               <div class="status-env-table" role="table" aria-label="環境変数">
                 <div class="status-env-row status-env-head" role="row">
                   <span role="columnheader">名前</span>
-                  <span role="columnheader" class="status-env-head-value">
-                    値
-                  </span>
+                  <span role="columnheader">値</span>
                 </div>
                 {rows.map((row) => (
                   <div key={row.name} class="status-env-row" role="row">
@@ -552,7 +550,7 @@ function EnvPanel({
           </>
         ) : null}
       </Fold>
-    </section>
+    </>
   );
 }
 
@@ -624,8 +622,8 @@ export function StatusPanel({
   // live-agent-first rule the pinned rows use, so the tab can't disagree with
   // the Sessions list about what a session is called. Unlike `sessionRowTitle`
   // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
-  // below, and repeating one of them under a "TITLE" label would read as a
-  // title the session doesn't have.
+  // below, and repeating one of them under the NAME label would read as a
+  // name the session doesn't have.
   const pinned = useStoreState(store, (s) => pinForSid(s.pinnedSessions, sid));
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
@@ -717,73 +715,79 @@ export function StatusPanel({
           </dd>
         </div>
       </dl>
-      <dl class="status-meta status-facts">
-        <Fact term="CWD" copy={cwd ?? undefined}>
-          {cwd ?? "—"}
-        </Fact>
-        <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
-          {agent?.hyoui_session_id ? (
-            terminalPageUrl ? (
-              <a
-                href={terminalPageUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="この端末を hyoui web で開く"
-              >
-                {agent.hyoui_session_id}
-              </a>
+      {/* セッション情報: the session's facts and, folded under them, its
+       * environment. One section, headed like セッション操作 and the danger
+       * zone below it. */}
+      <section class="status-section status-session-info">
+        <h3 class="status-section-title">セッション情報</h3>
+        <dl class="status-meta status-facts">
+          <div class="status-fact">
+            <dt>NAME</dt>
+            <dd class="status-fact-value">
+              {title ? <CopyButton value={title} label="NAME" /> : null}
+              <SessionTitleInput key={sid} sid={sid} title={title} />
+            </dd>
+          </div>
+          <Fact term="CWD" copy={cwd ?? undefined}>
+            {cwd ?? "—"}
+          </Fact>
+          <Fact term="HYOUI_SESSION_ID" copy={agent?.hyoui_session_id}>
+            {agent?.hyoui_session_id ? (
+              terminalPageUrl ? (
+                <a
+                  href={terminalPageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="この端末を hyoui web で開く"
+                >
+                  {agent.hyoui_session_id}
+                </a>
+              ) : (
+                agent.hyoui_session_id
+              )
             ) : (
-              agent.hyoui_session_id
-            )
-          ) : (
-            "—"
-          )}
-        </Fact>
-        <Fact term="SESSION_ID" copy={sid}>
-          {sid}
-        </Fact>
-        <div class="status-fact">
-          <dt>TITLE</dt>
-          <dd class="status-fact-value">
-            {title ? <CopyButton value={title} label="TITLE" /> : null}
-            <SessionTitleInput key={sid} sid={sid} title={title} />
-          </dd>
-        </div>
-        <Fact
-          term="CCMSG"
-          copy={staleClient ? staleClient.build : peer ? clientBuild : undefined}
-          title={staleClient?.text ?? protocolSkew?.text}
-        >
-          {staleClient ? (
-            <span class="status-stale-client">
-              {staleClient.marker} {staleClient.build}
-            </span>
-          ) : protocolSkew ? (
-            <span class="status-protocol-skew">
-              {protocolSkew.marker} {clientBuild}
-            </span>
-          ) : (
-            clientBuild
-          )}
-        </Fact>
-        <Fact term="KIND" copy={agent?.kind}>
-          {agent?.kind ?? "—"}
-        </Fact>
-        <Fact
-          term="STARTED"
-          copy={startedText}
-          title={agent ? new Date(agent.startedAt).toISOString() : undefined}
-        >
-          {startedText ?? "—"}
-        </Fact>
-        <Fact term="UPTIME" copy={uptimeText}>
-          {uptimeText ?? "—"}
-        </Fact>
-        <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
-          {agent ? String(agent.pid) : "—"}
-        </Fact>
-      </dl>
-      <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
+              "—"
+            )}
+          </Fact>
+          <Fact term="SESSION_ID" copy={sid}>
+            {sid}
+          </Fact>
+          <Fact
+            term="CCMSG"
+            copy={staleClient ? staleClient.build : peer ? clientBuild : undefined}
+            title={staleClient?.text ?? protocolSkew?.text}
+          >
+            {staleClient ? (
+              <span class="status-stale-client">
+                {staleClient.marker} {staleClient.build}
+              </span>
+            ) : protocolSkew ? (
+              <span class="status-protocol-skew">
+                {protocolSkew.marker} {clientBuild}
+              </span>
+            ) : (
+              clientBuild
+            )}
+          </Fact>
+          <Fact term="KIND" copy={agent?.kind}>
+            {agent?.kind ?? "—"}
+          </Fact>
+          <Fact
+            term="STARTED"
+            copy={startedText}
+            title={agent ? new Date(agent.startedAt).toISOString() : undefined}
+          >
+            {startedText ?? "—"}
+          </Fact>
+          <Fact term="UPTIME" copy={uptimeText}>
+            {uptimeText ?? "—"}
+          </Fact>
+          <Fact term="PID" copy={agent ? String(agent.pid) : undefined}>
+            {agent ? String(agent.pid) : "—"}
+          </Fact>
+        </dl>
+        <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
+      </section>
       <SessionControls
         key={sid}
         sid={sid}

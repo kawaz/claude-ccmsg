@@ -1,4 +1,4 @@
-// The Status tab's identity table, mounted: TITLE is an input from the start
+// The Status tab's identity table, mounted: NAME is an input from the start
 // and the place to rename the session (DR-0047 §4) — Enter sends the name with
 // `session_rename`, Escape puts the shown name back, and the outcome shows only
 // in the input's look (pulsing while the answer is out, the danger colour on an
@@ -131,9 +131,9 @@ function metaCell(root: HTMLElement, term: string): HTMLElement {
 
 function titleInput(root: HTMLElement): HTMLInputElement {
   return instanceOf(
-    metaCell(root, "TITLE").querySelector("input"),
+    metaCell(root, "NAME").querySelector("input"),
     HTMLInputElement,
-    "the TITLE input",
+    "the NAME input",
   );
 }
 
@@ -161,14 +161,14 @@ async function press(input: HTMLInputElement, key: string): Promise<void> {
   });
 }
 
-describe("Status tab TITLE input", () => {
+describe("Status tab NAME input", () => {
   test("starts as an input holding the session's name, writable and unmarked", async () => {
     const { root } = await mountStatus(agentRow());
     const input = titleInput(root);
     expect(input.value).toBe("最初の名前");
     expect(input.readOnly).toBe(false);
     expect(titleState(root)).toEqual([]);
-    expect(metaCell(root, "TITLE").textContent).not.toContain("名前を変更");
+    expect(metaCell(root, "NAME").textContent).not.toContain("名前を変更");
   });
 
   test("Enter sends the trimmed name for this session", async () => {
@@ -202,7 +202,7 @@ describe("Status tab TITLE input", () => {
     expect(input.value).toBe("後の名前");
     // No text beside the input: the cell's only text is the copy button's
     // (hidden) mark.
-    expect(metaCell(root, "TITLE").textContent).toBe("✓");
+    expect(metaCell(root, "NAME").textContent).toBe("✓");
   });
 
   test("an error marks the input, keeps the draft, and clears once the value changes", async () => {
@@ -218,7 +218,7 @@ describe("Status tab TITLE input", () => {
     expect(input.value).toBe("通らない名前");
     expect(titleState(root)).toEqual(["status-title-input-failed"]);
     expect(input.title).toBe("名前を変えられなかった");
-    expect(metaCell(root, "TITLE").textContent).not.toContain("名前を変えられなかった");
+    expect(metaCell(root, "NAME").textContent).not.toContain("名前を変えられなかった");
     await type(input, "通らない名前2");
     expect(titleState(root)).toEqual([]);
   });
@@ -295,7 +295,7 @@ describe("Status tab copy buttons", () => {
   test("sit before the value they copy", async () => {
     const { root } = await mountStatus(agentRow());
     for (const term of [
-      "TITLE",
+      "NAME",
       "CWD",
       "SESSION_ID",
       "PID",
@@ -343,17 +343,39 @@ describe("Status tab layout", () => {
     );
   }
 
+  // The tab's sections, each under its heading: the gauges' box has none,
+  // then セッション情報 (the facts table with ENV folded under it, both in the
+  // one section), セッション操作 and the danger zone.
+  test("the gauges' box, then セッション情報 holding the facts and ENV, then the danger zone", async () => {
+    const { root } = await mountStatus(agentRow());
+    const view = instanceOf(root.querySelector(".status-view"), HTMLElement, "the tab");
+    // セッション操作 comes between the two where the daemon can launch
+    // (status-restart.dom.test.ts); this mount's daemon cannot.
+    expect([...view.children].map((child) => child.className)).toEqual([
+      "status-meta status-gauges",
+      "status-section status-session-info",
+      "status-section status-kill-zone",
+    ]);
+    expect([...view.querySelectorAll(".status-section-title")].map((h) => h.textContent)).toEqual([
+      "セッション情報",
+      "危険ゾーン",
+    ]);
+    const info = instanceOf(view.querySelector(".status-session-info"), HTMLElement, "the info");
+    expect([...info.children].map((child) => child.tagName)).toEqual(["H3", "DL", "DETAILS"]);
+    expect(info.querySelector("details > summary")?.textContent).toBe("ENV");
+  });
+
   // One table under the gauges: two would leave a gap between CWD and the
   // ids where one table ends and the next begins.
-  test("the gauges first with CONTEXT on top, then one table of the session's facts", async () => {
+  test("the gauges first with CONTEXT on top, then one table of the session's facts, NAME first", async () => {
     const { root } = await mountStatus(agentRow());
     expect(tables(root)).toEqual([
       ["CONTEXT", "LIVE", "MODEL", "EFFORT"],
       [
+        "NAME",
         "CWD",
         "HYOUI_SESSION_ID",
         "SESSION_ID",
-        "TITLE",
         "CCMSG",
         "KIND",
         "STARTED",
@@ -470,6 +492,15 @@ describe("Status tab ENV", () => {
       );
     const path = row("PATH");
     expect(path?.querySelector(".status-env-name > .status-scroll")?.textContent).toBe("PATH");
+    // Two columns, the heading's and every row's: the copy button is in the
+    // value's cell, so 値 heads the button and the value together.
+    const head = fold.querySelector(".status-env-head");
+    expect([...(head?.children ?? [])].map((cell) => cell.textContent)).toEqual(["名前", "値"]);
+    expect([...(head?.children ?? [])].map((cell) => cell.className)).toEqual(["", ""]);
+    expect([...(path?.children ?? [])].map((cell) => cell.className)).toEqual([
+      "status-env-name",
+      "status-env-value",
+    ]);
     // Each row has a copy button before the value, copying the real value
     // (also for a masked one).
     for (const [name, real] of [
