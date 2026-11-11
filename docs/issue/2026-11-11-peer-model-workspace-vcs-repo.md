@@ -51,8 +51,24 @@ daemon が配るセッションの一覧 (op `peers` の答えと `ev:"peers"`�
 
 ## 受け入れ条件 (1 段目)
 
-- [ ] `ccmsg peers` の出力の各セッションに、名前・workspace・VCS の種類・remote の一覧・`repository` が載る
-- [ ] remote の URL に認証情報が出ない
-- [ ] hello の形と hooks の bundle が変わらない (動いているセッションがそのまま動く)
-- [ ] webui が名前を `peers` から取れるなら、`agents` との突き合わせを減らす (減らさないなら理由を書く)
-- [ ] DR を今の形に合わせ、verify の手順書の記述と実物が合う
+- [x] `ccmsg peers` の出力の各セッションに、名前・workspace・VCS の種類・remote の一覧・`repository` が載る
+- [x] remote の URL に認証情報が出ない
+- [x] hello の形と hooks の bundle が変わらない (動いているセッションがそのまま動く)
+- [ ] webui が名前を `peers` から取れるなら、`agents` との突き合わせを減らす → 減らさない (webui が agents を引くのは status / pid 等の名前以外の欄のため。ccmsg 未起動の行は peers に居ないので名前も agents から読むしかない)
+- [x] DR を今の形に合わせ、verify の手順書の記述と実物が合う
+
+## 1 段目の結果 (2026-11-11、v0.246.0)
+
+- 足した欄: `name?` / `vcs?: { type, workspace?, branch?, remotes: [{ name, url }] }` / `repository?: { host, owner, name, url }`。形は docs/QUESTIONS.md の HP-Q1 の統括の推し (αa / βa / γa)。決まりは DR-0003 §3、スキーマは packages/protocol/src/response-sessions.ts
+- 受け入れ条件 (1 段目) は満たした。webui の agents との突き合わせは減らしていない (webui が agents を引くのは status / pid 等の名前以外の欄のためで、ccmsg 未起動の行は peers に居ないので名前も agents から読むしかない)
+- 実 daemon (v0.246.0) の `ccmsg peers` で確認: 13 セッション全部に name / vcs / repository が載り (git 7、jj 6)、vcs.branch も全部に入っていた。認証情報入りの remote URL は 0 件
+- worker が置いた決め: `repository.host` は port を含まない hostname。remote の path に owner の段が無い時は `repository` を出さない。jj の default workspace と git の main worktree では `vcs.workspace` を出さない
+
+## 2 段目で決めること
+
+- HP-Q1 の裁定 (欄の形が違えば 2 段目の前に直す)
+- `ws` / `repo` の利用箇所 (hello、webui、CLI、DR-0003 §3 の「5 フィールド」、DR-0046) を `vcs.workspace` / `repository` へ向け直す
+- `repository.url` と同じ値の `repo_url` を消すか
+- 一番上の `branch` (hello だけが源) と `vcs.branch` (hello、無ければ git の HEAD) が並んでいる。どちらかに寄せる
+- `#123` のリンクを `repository.host` で forge ごとに分ける (今は GitHub 決め打ち)
+- workspace の名前の取り方 (docs/issue/2026-11-11-vcs-workspace-name-from-jj-record.md)
