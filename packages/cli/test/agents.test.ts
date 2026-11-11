@@ -28,10 +28,13 @@ import {
   type RequestFrame,
   VERSION,
 } from "@ccmsg/protocol";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { agentsTable } from "../src/agents.ts";
 import { printed } from "./cli-output.ts";
 import { type FakeAnswer, type FakeDaemon, fakeDaemon } from "./fake-daemon.ts";
 import { runCli } from "./run-cli.ts";
+
+const tmpDir = perTestTmpDir();
 
 let cleanup: Array<() => void> = [];
 
@@ -40,20 +43,29 @@ afterEach(() => {
   cleanup = [];
 });
 
+// agentsTable を直接呼ぶ単体テストは HOME を文字列として使うだけなので、実在しない値でよい。
 const HOME = "/home/someone";
 
-const BUSY: AgentInfo = {
-  pid: 101,
-  cwd: `${HOME}/repo`,
-  kind: "interactive",
-  startedAt: 1_761_600_000_000,
-  version: "2.1.310",
-  sessionId: "11111111-1111-4111-8111-111111111111",
-  name: "🤖検証",
-  status: "busy",
-  config_dir: `${HOME}/.claude-personal`,
-  turn: { state: "responding", since: "2026-10-28T00:00:00.000Z" },
-};
+// Design rationale: 子の CLI に渡す HOME は、OS が特別扱いしない実在する一時 dir にする。
+// macOS の /home は autofs で、そこを HOME にすると bun が module ごとに transpiler cache
+// (XDG_CACHE_HOME が無い時は $HOME/Library/Caches/bun) を書こうとして待たされ、CLI の
+// 起動 1 回が秒の桁になる (docs/findings/2026-11-11-macos-autofs-home-slows-bun-child.md)。
+// そのため daemon の偽応答の行も、その HOME から組む。
+function rowsFor(home: string): AgentsResponse {
+  const busy: AgentInfo = {
+    pid: 101,
+    cwd: `${home}/repo`,
+    kind: "interactive",
+    startedAt: 1_761_600_000_000,
+    version: "2.1.310",
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    name: "🤖検証",
+    status: "busy",
+    config_dir: `${home}/.claude-personal`,
+    turn: { state: "responding", since: "2026-10-28T00:00:00.000Z" },
+  };
+  return { ok: true, agents: [busy, WAITING], polled_at: "2026-10-28T00:00:05.000Z" };
+}
 
 const WAITING: AgentInfo = {
   pid: 202,
@@ -66,11 +78,7 @@ const WAITING: AgentInfo = {
   config_dir: "/etc/claude",
 };
 
-const ROWS: AgentsResponse = {
-  ok: true,
-  agents: [BUSY, WAITING],
-  polled_at: "2026-10-28T00:00:05.000Z",
-};
+const ROWS: AgentsResponse = rowsFor(HOME);
 
 /** A fake daemon that takes any hello and answers `agents` with `agents`,
  * stopped once the test ends. */
@@ -97,14 +105,14 @@ function daemon(agents: (req: RequestFrame) => object): FakeDaemon {
 
 /** The environment that points the CLI at `peer`, as a session would run it:
  * with a session id the CLI must not hello with. */
-function envFor(peer: FakeDaemon): Record<string, string> {
+function envFor(peer: FakeDaemon, home: string): Record<string, string> {
   const dir = path.dirname(peer.sock);
   return {
     CCMSG_STATE_DIR: dir,
     CCMSG_CONFIG_DIR: path.join(dir, "config"),
     CCMSG_DATA_DIR: path.join(dir, "data"),
     CLAUDE_CODE_SESSION_ID: "33333333-3333-4333-8333-333333333333",
-    HOME,
+    HOME: home,
   };
 }
 
@@ -122,25 +130,29 @@ describe("ccmsg agents (daemon の偽応答に対する出力)", () => {
     // user role でないと daemon は op agents を断る (行は webui の Sessions 一覧の物で、
     // セッションの AI が使う口ではない)。CLAUDE_CODE_SESSION_ID を拾って session role で
     // hello すると、セッションの中から人が打った時に必ず断られる。
-    const peer = daemon(() => ROWS);
-    const r = await runCli(["agents"], envFor(peer));
+    const home = tmpDir("ccmsg-agents-home-");
+    const rows = rowsFor(home);
+    const peer = daemon(() => rows);
+    const r = await runCli(["agents"], envFor(peer, home));
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
     expect(r.out.endsWith("\n")).toBe(true);
     expect(r.out.trimEnd().includes("\n")).toBe(false);
-    expect(printed(AgentsResponseSchema, r.out)).toEqual(ROWS);
+    expect(printed(AgentsResponseSchema, r.out)).toEqual(rows);
     expect(peer.requests.map((q) => q.op)).toEqual(["hello", "agents"]);
     expect(helloRoles(peer)).toEqual(["user"]);
   });
 
   test("--format text は表を出す (オプションはコマンドの前にも後ろにも置ける)", async () => {
-    // HOME 配下のパスは ~ で書く (CLI の HOME を偽の HOME にしてある)。
+    // HOME 配下のパスは ~ で書く (CLI の HOME は一時 dir で、行の cwd / config_dir もそこから組んである)。
+    const home = tmpDir("ccmsg-agents-home-");
+    const rows = rowsFor(home);
     for (const args of [
       ["agents", "--format", "text"],
       ["--format", "text", "agents"],
     ]) {
-      const peer = daemon(() => ROWS);
-      const r = await runCli(args, envFor(peer));
+      const peer = daemon(() => rows);
+      const r = await runCli(args, envFor(peer, home));
       expect(r.err).toBe("");
       expect(r.code).toBe(0);
       expect(r.out).toBe(
@@ -156,13 +168,14 @@ describe("ccmsg agents (daemon の偽応答に対する出力)", () => {
 
   test("daemon が断ったら、その応答を stderr に出して exit 1 (表を頼んでいても)", async () => {
     // 断られた理由はスクリプトにも人にも要るので、format に依らず daemon の言葉で出す。
+    const home = tmpDir("ccmsg-agents-home-");
     for (const format of ["json", "text"]) {
       const refusal = {
         ok: false,
         error: { code: "bad_request", msg: "op 'agents' requires user role" },
       };
       const peer = daemon(() => refusal);
-      const r = await runCli(["agents", "--format", format], envFor(peer));
+      const r = await runCli(["agents", "--format", format], envFor(peer, home));
       expect(r.code).toBe(1);
       expect(r.out).toBe("");
       const printedErr = parseWith(JsonTextSchema, r.err);
@@ -172,12 +185,14 @@ describe("ccmsg agents (daemon の偽応答に対する出力)", () => {
 
   test("--format が json / text 以外、または余計な引数は、daemon に繋がず usage を出して exit 1", async () => {
     // 位置引数で絞る口 (peers の cwd のような) は持たない: 絞りは JSON を読む側でできる。
+    const home = tmpDir("ccmsg-agents-home-");
+    const rows = rowsFor(home);
     for (const [args, message] of [
       [["agents", "--format", "table"], "--format must be 'json' or 'text' (got 'table')"],
       [["agents", "some-cwd"], 'unexpected argument "some-cwd"'],
     ] as const) {
-      const peer = daemon(() => ROWS);
-      const r = await runCli([...args], envFor(peer));
+      const peer = daemon(() => rows);
+      const r = await runCli([...args], envFor(peer, home));
       expect(r.code).toBe(1);
       expect(r.out).toBe("");
       expect(r.err).toContain(message);
