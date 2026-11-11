@@ -126,12 +126,15 @@ function KillZone({
             );
             setForceMode(true);
           }
-        } else if (res.error.code === "not_found") {
-          setResult("プロセスが見つかりません (既に終了済みの可能性)");
-          setForceMode(false);
         } else {
-          setResult(`エラー: ${res.error.msg}`);
-          // エラー時は force モードを維持 (直前の状態がユーザーの意図)
+          // 再起動の結果と同じ組み立てで code と daemon の msg をそのまま出す。
+          // not_found の msg は「pid が引けない」と「pid は引けたが claude と
+          // 確かめられない」(プロセスは生きている) を言い分けるので、決まった
+          // 文に置き換えない (DR-0028)。
+          setResult(`終了できなかった (${res.error.code}): ${res.error.msg}`);
+          // not_found は止める相手がいないので通常状態に戻す。それ以外の
+          // エラーは force モードを維持 (直前の状態がユーザーの意図)
+          if (res.error.code === "not_found") setForceMode(false);
         }
       })
       .catch((e: unknown) => setResult(`エラー: ${String(e)}`))

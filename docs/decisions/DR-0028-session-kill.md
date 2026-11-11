@@ -48,7 +48,7 @@ kawaz 要望 (2026-07-18):
 - `StatusPanel` 最下部に危険ゾーン。セッション操作 (下の restart の webui) と同じ 1 行 1 操作の一覧の形で、名前「セッションを終了」、何をするかの 1 行、右端の「終了」ボタン。行の右端のボタン (起動 / 再起動 / 終了) は 3 つとも同じ幅にする (`min-width`、最も長い文言「終了処理中…」が入る幅)。文言の末尾に「…」は付けない (走っている間の「起動中…」等だけに付く)。終了を起こすのはボタンだけで、行の他の所を押しても何も起きない (セッション操作の行と違う)。枠・名前・ボタンは `--danger` 色 (app.css 既存変数)。
 - 確認は既存パターンに合わせ `window.confirm()` (MemberChip.tsx の kick と同型)。
   カスタムダイアログを新設しない: 誤爆防止が目的で、体験の質は kick と同水準で足りる。
-- 実行中は disabled + 結果を近傍に表示 (terminated / not_found / エラー)。
+- 実行中は disabled + 結果を近傍に表示 (terminated / not_found / エラー)。not_found とエラーは restart の結果と同じ組み立てで「終了できなかった (<code>): <msg>」と daemon の msg をそのまま出す (not_found の msg が pid を引けなかったのか claude と確かめられなかったのかを言う)。
 
 ## Alternatives Considered
 

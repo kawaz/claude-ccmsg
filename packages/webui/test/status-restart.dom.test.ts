@@ -96,7 +96,7 @@ async function mount(options: {
   killHangs?: boolean;
   /** What each kill is answered with (the force asked for is recorded in
    * `kills`); terminated unless given. */
-  killReply?: SessionKillResponse;
+  killReply?: SessionKillResponse | ErrorResponse;
   kills?: Array<boolean>;
   /** What the session runs as, in the snapshot's context. */
   context?: SessionContextUsage;
@@ -682,6 +682,32 @@ describe("Status の危険ゾーン", () => {
       await act(() => killButton(mounted.root)?.click());
       expect(kills).toEqual([false, true]);
       expect(confirms[1]).toContain("SIGKILL");
+    } finally {
+      restore();
+    }
+  });
+
+  // not_found says why in its msg: no pid for the session, or a pid whose
+  // process could not be confirmed to be claude (a live process). The
+  // result shows the code and the msg as the daemon sent them, never a fixed
+  // text that would call a live process already gone.
+  test("not_found shows its code and the daemon's msg, whichever refusal it is", async () => {
+    const restore = stubGlobal("confirm", () => true);
+    try {
+      for (const msg of [
+        `no process for session ${SID}`,
+        `the process of session ${SID} (pid 4242) could not be confirmed to be claude`,
+      ]) {
+        const mounted = await mount({
+          killReply: { ok: false, error: { code: "not_found", msg } },
+        });
+        await act(() => killButton(mounted.root)?.click());
+        for (let i = 0; i < 3; i++) await act(() => Promise.resolve());
+        expect(mounted.root.querySelector(".status-kill-result")?.textContent).toBe(
+          `終了できなかった (not_found): ${msg}`,
+        );
+        expect(killButton(mounted.root)?.textContent).toBe("終了");
+      }
     } finally {
       restore();
     }

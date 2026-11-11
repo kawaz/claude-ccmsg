@@ -14,7 +14,7 @@ import {
   killSessionForce,
   productionKillDeps,
   readArgv0,
-  resolvePid,
+  resolveRecord,
   sessionKill,
   verifyPid,
   type SessionKillDeps,
@@ -45,27 +45,27 @@ function fakeDeps(overrides: Partial<SessionKillDeps> = {}): SessionKillDeps {
 
 const AGENTS_ROW = (sid: string, pid: number) => [{ sessionId: sid, pid }];
 
-describe("resolvePid (fresh sid→pid resolution)", () => {
+describe("resolveRecord (fresh sid→pid resolution)", () => {
   // A matching sessionId row yields its pid: the daemon's only trusted
   // pid source is its own fresh read of the state files (DR-0028 —
   // never the ≤5s-stale poller cache, never a client-asserted pid).
   test("returns the pid of the row whose sessionId matches", async () => {
     const deps = fakeDeps({ sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-a", 4242)) });
-    expect(await resolvePid("sid-a", deps)).toBe(4242);
+    expect((await resolveRecord("sid-a", deps))?.pid).toBe(4242);
   });
 
   // No matching row = null: killing must be impossible without a positive
   // identification; server.ts maps this to not_found.
   test("returns null when no row matches the sessionId", async () => {
     const deps = fakeDeps({ sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-other", 4242)) });
-    expect(await resolvePid("sid-a", deps)).toBeNull();
+    expect(await resolveRecord("sid-a", deps)).toBeNull();
   });
 
   // A dir that cannot be read must degrade to "not found", never to a
   // guessed pid.
   test("returns null when the config dir cannot be read", async () => {
     const deps = fakeDeps({ sessionsIn: () => Promise.reject(new Error("exited 1")) });
-    expect(await resolvePid("sid-a", deps)).toBeNull();
+    expect(await resolveRecord("sid-a", deps)).toBeNull();
   });
 
   // Multi config-dir scan: dirs are checked in configDirs() order and the
@@ -83,7 +83,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
         return Promise.resolve(AGENTS_ROW("sid-a", 9999));
       },
     });
-    expect(await resolvePid("sid-a", deps)).toBe(1111);
+    expect((await resolveRecord("sid-a", deps))?.pid).toBe(1111);
     // dir3 is never reached — the first match short-circuits the scan.
     expect(calls).toEqual(["/dir1", "/dir2"]);
   });
@@ -94,7 +94,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
     const deps = fakeDeps({
       sessionsIn: () => Promise.resolve([{ sessionId: "sid-a", pid: 4242.5 }]),
     });
-    expect(await resolvePid("sid-a", deps)).toBeNull();
+    expect(await resolveRecord("sid-a", deps)).toBeNull();
   });
 
   // pid ≤ 1 is refused at the source: process.kill(0) would signal the
@@ -106,7 +106,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
       const deps = fakeDeps({
         sessionsIn: () => Promise.resolve([{ sessionId: "sid-a", pid }]),
       });
-      expect(await resolvePid("sid-a", deps)).toBeNull();
+      expect(await resolveRecord("sid-a", deps)).toBeNull();
     }
   });
 });
@@ -396,7 +396,7 @@ describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
     expect(await killSessionForce(42, deps)).toEqual({ terminated: true });
   });
 
-  // sessionKill(sid, deps, {force: true}) は resolvePid + verifyPid を通した
+  // sessionKill(sid, deps, {force: true}) は resolveRecord + verifyPid を通した
   // 後で force 経路に入る (pid-reuse guard は force でも絶対に外れない契約)。
   test("sessionKill({force:true}) は verify を経てから SIGKILL 経路に入る", async () => {
     const signals: string[] = [];

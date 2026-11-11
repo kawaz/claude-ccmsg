@@ -62,18 +62,14 @@ export interface SessionKillDeps {
   };
 }
 
-/** Resolve session_id → pid by reading Claude Code's state files afresh in
- * every config dir (DR-0028: the poller cache can be a round stale and a
- * stale pid is a mis-kill). Config dirs are scanned in order and the FIRST
- * matching record wins — session UUIDs don't collide across config dirs in
- * practice, and a deterministic pick beats failing the whole request on a
- * hypothetical duplicate. A dir that cannot be read skips that dir. Returns
- * null when no dir yields a match. */
-export async function resolvePid(sessionId: string, deps: SessionKillDeps): Promise<number | null> {
-  return (await resolveRecord(sessionId, deps))?.pid ?? null;
-}
-
-/** resolvePid's lookup, answering the whole record it matched. */
+/** Resolve session_id → the record of its process (and so its pid) by
+ * reading Claude Code's state files afresh in every config dir (DR-0028: the
+ * poller cache can be a round stale and a stale pid is a mis-kill). Config
+ * dirs are scanned in order and the FIRST matching record wins — session
+ * UUIDs don't collide across config dirs in practice, and a deterministic
+ * pick beats failing the whole request on a hypothetical duplicate. A dir
+ * that cannot be read skips that dir. Returns null when no dir yields a
+ * match. */
 export async function resolveRecord(
   sessionId: string,
   deps: SessionKillDeps,
