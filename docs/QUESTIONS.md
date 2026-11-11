@@ -23,8 +23,10 @@
 
 DR-0025 は `Proposed` のままで「Status タブで workflow を展開する」と書いているが、掘り下げは Timeline の agent tree で実装済みで、Status タブからは一覧を無くした (DR-0020 Addendum 2026-11-09)。kawaz は「archive してよい」と答えたが、その後に統括が、実装 (daemon の `workflow-drilldown.ts`、webui の agent tree) がこの DR を根拠にして生きており、コードの 10 か所以上が DR-0025 を名指ししていることを確かめた。archive は「後続の DR に置き換えられた DR」の置き場なので、そのまま移すと根拠が辿れなくなる。
 
-- [ ] a: archive せず、今の実装 (置き場所は Timeline の agent tree) に合わせて書き直し、`Accepted` にする。`docs/design/webui-rebuild-checklist.md` の未裁定の問い 1 を消す (統括の推し)
+- [x] a: archive せず、今の実装 (置き場所は Timeline の agent tree) に合わせて書き直し、`Accepted` にする。`docs/design/webui-rebuild-checklist.md` の未裁定の問い 1 を消す (統括の推し)
 - [ ] b: archive する。コードと文書の DR-0025 への参照を DR-0020 に付け替える
+
+裁定: a (kawaz 2026-11-11。「Status にはいらん」= 掘り下げの入口は Status タブに置かない)。DR-0025 の書き直しが land したら、この節を消す。
 
 ## 確認待ち
 
