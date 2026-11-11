@@ -305,14 +305,14 @@ function readForward(
  * line, uncapped by `max_bytes`.
  */
 export interface TranscriptReadAgentOptions {
-  /** DR-0025 Phase 1: subagent / workflow-agent id (`a<...>`). See
+  /** DR-0025 §4: subagent / workflow-agent id (`a<...>`). See
    * agent-transcripts.ts `AGENT_ID_RE` for the accepted shape. Mutually
    * exclusive with `teammate`. */
   agentId?: string;
-  /** DR-0025 Phase 1: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
+  /** DR-0025 §4: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
    * `agentId`. Absent = direct subagent under `<sid>/subagents/`. */
   runId?: string;
-  /** DR-0025 Phase 1: teammate name (resolved via `agent-*.meta.json`
+  /** DR-0025 §4: teammate name (resolved via `agent-*.meta.json`
    * scan). Mutually exclusive with `agentId`. */
   teammate?: string;
 }
@@ -336,7 +336,7 @@ export async function transcriptRead(
   const { before, after, maxBytes } = range;
   const resolved = await resolveTranscript(sessions, sid, opts);
   if (!resolved.ok) return resolved;
-  // DR-0025 Phase 1: if the caller asked for an agent/teammate transcript,
+  // DR-0025 §4: if the caller asked for an agent/teammate transcript,
   // swap the session's own file for the resolved sibling before the byte-
   // paging read. The regex-validated ids never enter path.join without
   // clearing AGENT_ID_RE / RUN_ID_RE / TEAMMATE_NAME_RE first.

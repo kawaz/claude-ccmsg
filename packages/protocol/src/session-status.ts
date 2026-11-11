@@ -25,11 +25,12 @@ export const SessionTodoSchema = v.object({
 });
 export type SessionTodo = Output<typeof SessionTodoSchema>;
 
-/** DR-0025 Phase 1: one row of a workflow's phase progress (name + done/total
+/** DR-0025 §1: one row of a workflow's phase progress (name + done/total
  * count). Present only when the workflow's state json (written on completion)
- * carries a `workflowProgress` array — a still-running workflow has no such
- * file, so `phases` is intentionally undefined for it (running-workflow
- * agents alone are folded from the run directory's journal.jsonl). */
+ * exists — its declared `phases` plus any `workflow_phase` entries of
+ * `workflowProgress`. A still-running workflow has no such file, so `phases`
+ * is intentionally undefined for it (running-workflow agents alone are folded
+ * from the run directory's journal.jsonl). */
 export const WorkflowPhaseStatusSchema = v.object({
   title: v.string(),
   done: v.number(),
@@ -37,7 +38,7 @@ export const WorkflowPhaseStatusSchema = v.object({
 });
 export type WorkflowPhaseStatus = Output<typeof WorkflowPhaseStatusSchema>;
 
-/** DR-0025 Phase 1: one agent belonging to a workflow. `agent_id` is the
+/** DR-0025 §1: one agent belonging to a workflow. `agent_id` is the
  * `a<...>` slug that `transcript_read`'s `agent_id`/`run_id` resolver accepts
  * (see `TranscriptReadRequest`'s `agent_id` / `run_id`). Every rich field is optional because
  * the underlying `workflowProgress` entries carry different shapes for
@@ -75,14 +76,14 @@ export const SessionWorkflowStatusSchema = v.object({
   status: v.string(),
   started_at: v.string(),
   ended_at: v.optional(v.string()),
-  /** DR-0025 Phase 1: the workflow's runId (`wf_XXXXXXXX-XXX`) folded from
+  /** DR-0025 §1: the workflow's runId (`wf_XXXXXXXX-XXX`) folded from
    * the transcript's Workflow toolUseResult. Feeds the `run_id` argument of
    * `transcript_read` for agents that belong to this run. */
   run_id: v.optional(v.string()),
-  /** DR-0025 Phase 1: undefined while the workflow is running (no state json
+  /** DR-0025 §1: undefined while the workflow is running (no state json
    * yet); present once the completion-time state json exists. */
   phases: v.optional(v.array(WorkflowPhaseStatusSchema)),
-  /** DR-0025 Phase 1: workflow agents (from state json when available; from
+  /** DR-0025 §1: workflow agents (from state json when available; from
    * journal.jsonl fallback while still running). Undefined = fold could not
    * find anything readable in the run directory. */
   agents: v.optional(v.array(WorkflowAgentStatusSchema)),
@@ -267,7 +268,7 @@ export type AgentTreeWorkflowPhase = Output<typeof AgentTreeWorkflowPhaseSchema>
 
 /** 1 workflow run 分の subgroup。フェーズ情報の出典は
  * `readWorkflowDrilldown` (state.json → journal.jsonl の 2 段フォールバック、
- * DR-0025 Phase 1)。既存 `SessionWorkflowStatus.phases` / `.agents` と同一
+ * DR-0025 §1 / §2)。既存 `SessionWorkflowStatus.phases` / `.agents` と同一
  * ソースを再利用する = TUI / SessionStatusView の phase 表示と数値が揃う。 */
 export const AgentTreeWorkflowGroupSchema = v.object({
   /** `wf_XXXXXXXX-XXX` (RUN_ID_RE)。 */

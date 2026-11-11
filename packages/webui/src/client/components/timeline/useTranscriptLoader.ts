@@ -89,7 +89,7 @@ async function appendTranscriptIntoStore(
 }
 
 /** `agent` を渡すと、`sid` の下のその agent の transcript を読む (DR-0025
- * Phase 2)。store の `applyLocatorChanged` は agent が変わるたびに sid の
+ * §4 / §6)。store の `applyLocatorChanged` は agent が変わるたびに sid の
  * TimelineState を作り直すので、agent を切り替えると初回の読み込みからやり
  * 直しになる。 */
 export function useTranscriptLoader({

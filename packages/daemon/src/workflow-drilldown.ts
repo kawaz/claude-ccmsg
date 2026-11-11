@@ -1,4 +1,4 @@
-// DR-0025 Phase 1: fold one workflow run's phases + agent list from the
+// DR-0025 §1: fold one workflow run's phases + agent list from the
 // on-disk artifacts under `<sidDir>/workflows/` and
 // `<sidDir>/subagents/workflows/<runId>/`.
 //

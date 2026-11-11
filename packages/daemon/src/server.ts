@@ -3302,7 +3302,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     case "transcript_read": {
       const wantsAgent =
         req.agent_id !== undefined || req.run_id !== undefined || req.teammate !== undefined;
-      // DR-0025 Phase 1: agent / teammate transcripts are a webui viewer
+      // DR-0025 §4: agent / teammate transcripts are a webui viewer
       // feature (drilldown UI, TL of subagents). A session (AI) does not
       // read its own subagents' transcripts, so refuse the extended shape
       // outside the user role — mirrors the role gate on `agents` /

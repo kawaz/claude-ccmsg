@@ -271,9 +271,9 @@ export interface WsHandle {
       before?: number;
       after?: number;
       max_bytes?: number;
-      /** DR-0025 Phase 2: read a subagent / workflow-agent transcript. Static
+      /** DR-0025 §4: read a subagent / workflow-agent transcript. Static
        * read only — subscribe is not offered on agent transcripts (DR-0025
-       * §2.2, no live push of agent progress). */
+       * §4, no live push of agent progress). */
       agent_id?: string;
       run_id?: string;
       teammate?: string;

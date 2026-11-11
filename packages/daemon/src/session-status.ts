@@ -765,7 +765,7 @@ function foldWorkflow(
   const read = parseWith(WorkflowToolResultSchema, result);
   if (!read.ok || typeof read.value === "string") return false;
   const { taskId, workflowName, summary, status, runId } = read.value;
-  // DR-0025 Phase 1: `runId` is intentionally re-validated on the fold side
+  // DR-0025 §1: `runId` is intentionally re-validated on the fold side
   // (transcript rows are AI-controlled input) — only `wf_XXXXXXXX-XXX` is
   // accepted, everything else is silently dropped and the workflow simply
   // has no `run_id` (drilldown disabled). See RUN_ID_RE for the exact
@@ -1830,7 +1830,7 @@ interface LiveSessionStatus {
    * different root would otherwise retain a stale DR-0024 allowlist. */
   file: string;
   root?: string;
-  /** DR-0025 Phase 1: sibling directory (`file` minus `.jsonl`) used to load
+  /** DR-0025 §1 / §2: sibling directory (`file` minus `.jsonl`) used to load
    * per-workflow phase / agent drilldown at snapshot time. */
   sidDir?: string;
   /** DR-0026 workspace anchor: session cwd realpath used to discover

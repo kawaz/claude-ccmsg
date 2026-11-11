@@ -103,7 +103,7 @@ export function Timeline({
   sid: string;
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
-  /** DR-0025 Phase 2: when present, the pane targets the named subagent /
+  /** DR-0025 §6: when present, the pane targets the named subagent /
    * workflow-agent / teammate transcript under `sid` instead of `sid`'s own.
    * All transcriptRead calls forward the agent params; transcript_subscribe
    * is skipped (agent transcripts have no live push, DR-0025 §4). Store's

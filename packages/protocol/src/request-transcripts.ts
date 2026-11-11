@@ -37,19 +37,19 @@ export const TranscriptReadRequestSchema = v.object({
    * TRANSCRIPT_READ_OLDER_MAX_BYTES with `before` and TRANSCRIPT_READ_MAX_BYTES
    * otherwise */
   max_bytes: v.optional(v.number()),
-  /** DR-0025 Phase 1: read a subagent / workflow-agent / teammate transcript
+  /** DR-0025 §4: read a subagent / workflow-agent / teammate transcript
    * that lives under `<sid>`'s sibling directory instead of `<sid>`'s own
    * transcript. User role only; strictly validated by the daemon-side
    * resolver (`AGENT_ID_RE` / `RUN_ID_RE` / `TEAMMATE_NAME_RE` reject any
    * character that could form a traversal). Mutually exclusive with
    * `teammate`; `run_id` only makes sense with `agent_id`. */
   agent_id: v.optional(v.string()),
-  /** DR-0025 Phase 1: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
+  /** DR-0025 §4: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
    * `agent_id`. Absent = the agent is a direct child of `<sid>` (bare
    * `subagents/agent-*.jsonl`). Without `agent_id` the read is refused
    * (`invalid_args`, or `bad_request` outside the user role). */
   run_id: v.optional(v.string()),
-  /** DR-0025 Phase 1: teammate name whose transcript should be resolved via
+  /** DR-0025 §4: teammate name whose transcript should be resolved via
    * `subagents/agent-*.meta.json` scan (the transcript-side `teammate_id` is
    * `name@team`, so it cannot be reused as a filename hash). Mutually
    * exclusive with `agent_id`. */

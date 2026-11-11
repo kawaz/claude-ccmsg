@@ -340,11 +340,11 @@ export function miniSummaryLines(
   return [...items, ...extra];
 }
 
-/** DR-0025 Phase 2: `AgentTreePanel` の workflow 行展開に使うプレゼンテーション形。
+/** DR-0025 §6: `AgentTreePanel` の workflow 行展開に使うプレゼンテーション形。
  * `SessionWorkflowStatus` の phases / agents は daemon が集計した後の生値
  * (エージェント数は 100+ もありうる)、UI 側は「アイコン」「ラベル/model/tokens」
  * のような表示形に射影する。null を返す = 展開すべきデータが無い
- * (走行中で state json 未生成 かつ journal も空、または旧型で run_id が無い)。 */
+ * (走行中で state json 未生成 かつ journal も空、または run_id が無い)。 */
 export interface WorkflowDrilldownAgentView {
   agentId: string;
   label: string;

@@ -369,7 +369,7 @@ export interface AppState {
   currentMid: number | null;
   /** session selected via the `#s<sid>` locator (DR-0008), if any. */
   currentSid: string | null;
-  /** DR-0025 Phase 2: agent-transcript sub-selection under `currentSid`,
+  /** DR-0025 §7: agent-transcript sub-selection under `currentSid`,
    * populated from the timeline locator's optional `agent` field. Present
    * only while the URL is `#t<sid>:<ref>`; a plain `#t<sid>` or any
    * non-timeline view leaves this null. */
@@ -970,7 +970,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     // session/path branch below, just without a selectedPath to set.
     let [, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
     const nextAgent = locator.agent ?? null;
-    // DR-0025 Phase 2: agent ref switch invalidates the timeline byte-cache
+    // DR-0025 §6: agent ref switch invalidates the timeline byte-cache
     // (different underlying jsonl file). Reset the sid's TimelineState so
     // Timeline's initial-load effect refetches with the new agent params. The
     // fresh state carries no generation, so a read still in flight for the

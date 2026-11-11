@@ -900,7 +900,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         taskId: "w1",
         taskType: "local_workflow",
         workflowName: "build-flow",
-        // DR-0025 Phase 1: only the wf_XXXXXXXX-XXX shape is folded into run_id.
+        // DR-0025 §1: only the wf_XXXXXXXX-XXX shape is folded into run_id.
         // "wf_run" is intentionally malformed so this asserts the drop path.
         runId: "wf_run",
         summary: "Build workflow",

@@ -7885,7 +7885,7 @@ a.tl-attachment-file-path {
   }
 }
 
-/* DR-0025 Phase 2: agent-timeline header */
+/* DR-0025 §6: agent-timeline header */
 .tl-agent-header {
   display: flex;
   gap: var(--space-8);

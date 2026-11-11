@@ -1,4 +1,4 @@
-// DR-0025 Phase 1: agent transcript resolver.
+// DR-0025 §4 / §5: agent transcript resolver.
 //
 // A session's transcript_read (DR-0009 / DR-0021) targets its own `<sid>.jsonl`.
 // This module adds a strict, opt-in expansion path so the same op can also
