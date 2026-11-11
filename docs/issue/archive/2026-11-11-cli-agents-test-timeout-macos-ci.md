@@ -1,6 +1,6 @@
 ---
 title: cli-agents-test-timeout-macos-ci
-status: open
+status: resolved
 category: bug
 created: 2026-11-11T21:09:11+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T21:51:10+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["finding/2026-11-11-macos-autofs-home-slows-bun-child","implemented"]
 blocked_by:
 origin: 旧統括セッションが Release v0.245.0 の CI を見ていて気づいた (2026-11-11)
 ---
@@ -50,4 +50,4 @@ GitHub Actions の macos-latest で packages/cli/test/agents.test.ts の describ
 
 ## 受け入れ条件
 
-- [ ] macos-latest の CI で当該 describe が安定して通る (真因を特定した上で)
+- [x] macos-latest の CI で当該 describe が安定して通る (真因を特定した上で)
