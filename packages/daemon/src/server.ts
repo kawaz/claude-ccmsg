@@ -125,6 +125,7 @@ import {
   type SessionStatusStore,
 } from "./session-status.ts";
 import { deriveLocation, type LocationRead, timedLocationIo } from "./repo-derive.ts";
+import { fsProbeSpec, probeFs } from "./fs-probe.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
 import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
@@ -4166,6 +4167,11 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
 
   fs.chmodSync(paths.sock, 0o600);
   log.info(`listening on ${paths.sock} (v${VERSION})`);
+  // A test's probe of this daemon's async file system operations (fs-probe.ts).
+  const fsProbe = fsProbeSpec(process.env.CCMSG_TEST_FS_PROBE);
+  if (fsProbe !== undefined) {
+    void probeFs(paths.stateDir, fsProbe, log, () => daemon.shuttingDown);
+  }
   daemon.opHttp = listenOpHttp(daemon);
   log.info(`op http listening on ${paths.httpSock}`);
 

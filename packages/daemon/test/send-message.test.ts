@@ -32,6 +32,7 @@ import {
   type FakeHarness,
 } from "./peer-harness.ts";
 import { perTestLivePid } from "../../testkit/src/live-pid.ts";
+import { type Sampling, sampleProcess } from "../../testkit/src/sample.ts";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const A = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -349,24 +350,45 @@ describe("send_message through the daemon", () => {
   // takes longer than SLOW_MS (its afterEach included, which bun counts in a
   // test's time) prints how long each stage took, from the start to the last
   // cleanup, and the two daemons' logs.
+  //
+  // The extra second has been one async read in one of the daemons, a second
+  // or two after it started, with its event loop turning (a stat of the cwd's
+  // parents in a hello, a state file in a send). Each daemon runs its fs probe
+  // (fs-probe.ts) for its first seconds, and on macOS is sampled (sample.ts)
+  // from its start: a slow run also prints what each daemon's threads sat in.
   test(
     "a session in a dir another session announced is not reached; one in a dir CCMSG_CLAUDE_CONFIG_DIRS names is",
     async () => {
       const SLOW_MS = 1500;
+      const PROBE = { CCMSG_TEST_FS_PROBE: "5000:100" };
       const stages = stageClock();
       const logs = { isolated: "", serving: "" };
-      // Pushed first, so it runs once every other cleanup of the test has.
-      cleanups.push(() => {
+      const sampleDir = tempDir("ccmsg-sample-");
+      const samplings: Sampling[] = [];
+      /** Sample `ctx` from now on (macOS); the sampling ends before the
+       * daemon is stopped, kept when the test has taken SLOW_MS by then. */
+      const sampled = (ctx: DaemonCtx, label: string): (() => Promise<void>) => {
+        if (process.platform !== "darwin") return async () => {};
+        const sampling = sampleProcess(ctx.proc.pid, label, sampleDir);
+        samplings.push(sampling);
+        return () => sampling.stop(stages.elapsedMs() > SLOW_MS);
+      };
+      // Pushed after the sample dir's removal, so it runs before it, and once
+      // every other cleanup of the test has.
+      cleanups.push(async () => {
         stages.mark("harness disposed");
         if (stages.elapsedMs() <= SLOW_MS) return;
         console.error(`served dir test stages (ms): ${stages.text()}`);
         console.error(`isolated daemon.log:\n${logs.isolated}`);
         console.error(`serving daemon.log:\n${logs.serving}`);
+        for (const sampling of samplings) console.error((await sampling.summary()).join("\n"));
       });
       const hb = harness(PEER, { pid: LIVE_PID });
       stages.mark("harness made");
-      const isolated = await startTestDaemon();
+      const isolated = await startTestDaemon(PROBE);
+      const isolatedSampled = sampled(isolated, "isolated");
       cleanups.push(async () => {
+        await isolatedSampled();
         logs.isolated = daemonLogOf(isolated);
         await stopTestDaemon(isolated);
         stages.mark("isolated stopped");
@@ -395,8 +417,10 @@ describe("send_message through the daemon", () => {
       reportLeftOutReads(isolated, "isolated");
       expect(hb.frames).toEqual([]);
 
-      const serving = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
+      const serving = await startTestDaemon({ ...PROBE, CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
+      const servingSampled = sampled(serving, "serving");
       cleanups.push(async () => {
+        await servingSampled();
         logs.serving = daemonLogOf(serving);
         await stopTestDaemon(serving);
         stages.mark("serving stopped");
