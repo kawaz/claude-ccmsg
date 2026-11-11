@@ -1,10 +1,10 @@
 // session_env boundary: resolve sid→pid with the same fresh state-file
-// lookup + ps verification session-kill.ts uses (kawaz r55m133: "普通に
+// lookup + pid verification session-kill.ts uses (kawaz r55m133: "普通に
 // プロトコル追加で pid から取る" — the daemon's own subscribe-process env is
 // not the session's env, Claude Code adds its own vars on the way down), then
 // read that process's environment. Pure logic split out of server.ts with the
 // external effects injectable, same division of labor as session-kill.ts.
-import { resolvePid, verifyPid, type SessionKillDeps } from "./session-kill.ts";
+import { findVerifiedProcess, type SessionKillDeps } from "./session-kill.ts";
 
 /** `ps eww` on a large env is still a small read, but a wedged ps must not
  * hold the request open — same bounded-child posture as session-kill.ts. */
@@ -12,7 +12,7 @@ export const PS_TIMEOUT_MS = 5000;
 
 /** The subset of SessionKillDeps this op needs (sid→pid resolution and the
  * pid-reuse guard) plus the env read itself. Typed as a widening of the kill
- * deps so `resolvePid`/`verifyPid` can be reused verbatim — deliberately NOT
+ * deps so `findVerifiedProcess` can be reused verbatim — deliberately NOT
  * a new pid-resolution mechanism (r55m133). */
 export interface SessionEnvDeps extends SessionKillDeps {
   /** Read the process environment for `pid`. Resolves to the raw platform
@@ -85,17 +85,20 @@ export function parseEnv(raw: string, platform: NodeJS.Platform): Record<string,
 }
 
 /** Full request flow used by server.ts's dispatch: resolve → verify → read.
- * `found: false` covers "no agents row for this sid" and "pid failed the ps
- * verification" alike — as in session_kill, both mean the session's process
- * is not there, and the pid-reuse guard is never skipped (reading a recycled
- * pid's environment would leak an unrelated process's secrets). */
+ * `found: false` covers "no state file names this sid" and "pid failed the
+ * verification" alike (findVerifiedProcess) — as in session_kill, both mean
+ * the session's process is not there, and the pid-reuse guard is never
+ * skipped (reading a recycled pid's environment would leak an unrelated
+ * process's secrets). */
 export async function sessionEnv(
   sessionId: string,
   deps: SessionEnvDeps,
-): Promise<{ found: true; pid: number; env: Record<string, string> } | { found: false }> {
-  const pid = await resolvePid(sessionId, deps);
-  if (pid === null) return { found: false };
-  if (!(await verifyPid(pid, deps))) return { found: false };
+): Promise<
+  { found: true; pid: number; env: Record<string, string> } | { found: false; msg: string }
+> {
+  const verified = await findVerifiedProcess(sessionId, deps);
+  if (!verified.found) return verified;
+  const { pid } = verified.record;
   const raw = await deps.readEnv(pid);
   return { found: true, pid, env: parseEnv(raw, deps.platform()) };
 }

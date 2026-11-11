@@ -42,8 +42,7 @@ function commandInput(stdout: string): LaunchCommandInput {
   return read.value;
 }
 
-/** A process whose command line reads as claude's (`ps` shows argv[0]
- * `<dir>/claude`), standing in for the session's: it must never be a real
+/** A process whose argv[0] reads as claude's (`<dir>/claude`), standing in for the session's: it must never be a real
  * one. It is the running bun under a symlink named `claude`, holding a timer:
  * bun does not pick its program by argv[0] (a multi-call coreutils such as
  * uutils does, and dies on `claude`), and a `#!/bin/sh` script would show
@@ -304,7 +303,7 @@ function fakeKill(alive: boolean, signals: string[]): SessionKillDeps {
   return {
     configDirs: () => ["/fake/.claude"],
     sessionsIn: () => Promise.resolve([{ sessionId: SID, pid: 4242, cwd: "/w", name: "n" }]),
-    runPs: () => Promise.resolve("claude\n"),
+    readArgv0: () => Promise.resolve("claude"),
     sendSignal: (_pid, sig) => {
       signals.push(sig);
     },
@@ -403,6 +402,36 @@ describe("restartSession", () => {
     expect(RESTART_PROMPT).toBe(
       "プロセス再起動 (resume) しました。teammate/subagentはSendMessage(agentId)で再開可能。workflow等もIDで再開可能。backgroundやcron/scheduleがあれば貼り直し。",
     );
+  });
+
+  // Both are not_found (DR-0028); the msg says whether no record names the
+  // session or the pid it names could not be confirmed to be claude.
+  test("no record of the session is not_found that says so, before any signal", async () => {
+    const signals: string[] = [];
+    const kill = { ...fakeKill(false, signals), sessionsIn: () => Promise.resolve([]) };
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    const outcome = await restartSession(SID, {}, restartDeps(kill, calls));
+    expect(outcome).toEqual({
+      ok: false,
+      code: "not_found",
+      msg: `no process for session ${SID}`,
+    });
+    expect(signals).toEqual([]);
+    expect(calls).toEqual({ launches: [], stopped: 0 });
+  });
+
+  test("a pid not confirmed to be claude is not_found that names the pid, before any signal", async () => {
+    const signals: string[] = [];
+    const kill = { ...fakeKill(false, signals), readArgv0: () => Promise.resolve("/usr/bin/vim") };
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    const outcome = await restartSession(SID, {}, restartDeps(kill, calls));
+    expect(outcome).toEqual({
+      ok: false,
+      code: "not_found",
+      msg: `the process of session ${SID} (pid 4242) could not be confirmed to be claude`,
+    });
+    expect(signals).toEqual([]);
+    expect(calls).toEqual({ launches: [], stopped: 0 });
   });
 
   test("a record without a cwd is restart_unavailable, before any signal", async () => {

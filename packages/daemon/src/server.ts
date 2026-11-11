@@ -2621,10 +2621,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         force: req.force === true,
       });
       if (!killed.found) {
-        // Unresolvable sid and a pid that failed the ps verification are the
+        // Unresolvable sid and a pid that failed the verification are the
         // same outcome for the caller: the session's process is not there
-        // (anymore) — DR-0028 maps both to not_found.
-        sendErr(conn, ErrorCode.not_found, `no process for session ${req.session_id}`);
+        // (anymore) — DR-0028 maps both to not_found, the msg says which.
+        sendErr(conn, ErrorCode.not_found, killed.msg);
         return;
       }
       if (killed.terminated) {
@@ -2956,9 +2956,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         }),
       );
       if (!envRead.found) {
-        // Unresolvable sid and a pid that failed ps verification are the
+        // Unresolvable sid and a pid that failed the verification are the
         // same outcome for the caller, exactly as in session_kill.
-        sendErr(conn, ErrorCode.not_found, `no process for session ${req.session_id}`);
+        sendErr(conn, ErrorCode.not_found, envRead.msg);
         return;
       }
       send(conn, { ok: true, pid: envRead.pid, env: envRead.env });

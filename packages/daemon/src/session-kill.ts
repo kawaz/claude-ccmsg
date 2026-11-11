@@ -2,8 +2,9 @@
 // belongs to a claude process, then run the two-shot SIGTERM sequence. Pure
 // logic split out of server.ts (same division of labor as session-launch.ts)
 // with every external effect injectable so tests can drive all branches
-// without a real `claude`/`ps`, and the integration test can keep real
-// signals while faking only the state files and `ps`.
+// without a real `claude`, and the integration test can keep real signals
+// while faking only the state files and the argv[0] read.
+import { readFile } from "node:fs/promises";
 import { isProcessAlive } from "./sidecar-call.ts";
 import { readSessionsDir } from "./session-runs.ts";
 
@@ -42,9 +43,9 @@ export interface SessionKillDeps {
   configDirs(): string[];
   /** The live sessions one config dir records (`sessions/<pid>.json`). */
   sessionsIn(configDir: string): Promise<readonly SessionRecord[]>;
-  /** Run `ps -p <pid> -o command=` and return stdout. Must reject when ps
-   * fails (which includes "no such pid"). */
-  runPs(pid: number): Promise<string>;
+  /** The argv[0] of process `pid`, whole (a path with spaces in it stays one
+   * string). Rejects when it cannot be read, which includes "no such pid". */
+  readArgv0(pid: number): Promise<string>;
   /** process.kill(pid, sig) — throws when the pid is gone. SIGKILL is only
    * dispatched from the force path (DR-0028 addendum r38 mid=6); the default
    * two-shot sequence remains SIGTERM-only so the "never irreversibly kill
@@ -87,7 +88,7 @@ export async function resolveRecord(
     for (const row of rows) {
       // pid must be an integer > 1: process.kill(0) signals the daemon's OWN
       // process group and negative pids signal whole groups — a corrupted
-      // registry row must never be able to reach either (ps verification
+      // registry row must never be able to reach either (pid verification
       // would also refuse, but an irreversible op deserves the explicit
       // gate at the source).
       if (row.sessionId === sessionId && Number.isInteger(row.pid) && row.pid > 1) {
@@ -100,27 +101,51 @@ export async function resolveRecord(
 
 /** Pid-reuse guard (DR-0028): between the state file's read (plus a file a
  * crashed session left behind) and our kill, the pid could have been
- * recycled to an unrelated process. Only pass when `ps -p <pid> -o command=`
- * shows argv[0] whose basename is exactly `claude` (with or without a
- * directory prefix: TUI sessions show `claude --model ...`, PATH-resolved
- * ones `/opt/homebrew/bin/claude ...`). A bare substring test would be
- * useless here — on this machine the ccmsg daemon itself, every Claude
- * Code-spawned zsh, and the subscribe helpers all carry ".claude-personal/"
- * somewhere in their command line, so `includes("claude")` would wave
- * through the daemon committing suicide via a recycled pid. A failing ps
- * (pid already gone) also refuses — the caller maps refusal to not_found,
- * "already gone" and "not claude anymore" are the same outcome for the
- * user. */
+ * recycled to an unrelated process. Only pass when the process's argv[0] has
+ * the basename `claude` exactly (with or without a directory prefix: TUI
+ * sessions run as `claude`, PATH-resolved ones as `/opt/homebrew/bin/claude`,
+ * the desktop app's as `.../Application Support/Claude/.../MacOS/claude`).
+ * argv[0] is read whole (readArgv0), never cut out of a command line at the
+ * first space, since the path before the basename may hold spaces. Matching
+ * anything less than the basename would be useless here — on this machine
+ * the ccmsg daemon itself, every Claude Code-spawned zsh, and the subscribe
+ * helpers all carry ".claude-personal/" somewhere in their command line, so
+ * a substring test would wave through the daemon committing suicide via a
+ * recycled pid. An argv[0] that cannot be read (pid already gone) also
+ * refuses. */
 export async function verifyPid(pid: number, deps: SessionKillDeps): Promise<boolean> {
-  let out: string;
+  let argv0: string;
   try {
-    out = await deps.runPs(pid);
+    argv0 = await deps.readArgv0(pid);
   } catch {
     return false;
   }
-  const argv0 = out.trimStart().split(/\s/, 1)[0] ?? "";
-  const base = argv0.slice(argv0.lastIndexOf("/") + 1);
-  return base === "claude";
+  return argv0.slice(argv0.lastIndexOf("/") + 1) === "claude";
+}
+
+/** The session's process as its state file records it, once verifyPid has
+ * passed its pid, or what to tell the caller when there is none: no record
+ * names a usable pid, or the pid's process could not be confirmed to be
+ * claude. DR-0028 answers both with not_found (the session's process is not
+ * there to act on); the message says which. */
+export type VerifiedProcess =
+  | { found: true; record: SessionRecord }
+  | { found: false; msg: string };
+
+/** resolveRecord, then verifyPid on the pid it names. */
+export async function findVerifiedProcess(
+  sessionId: string,
+  deps: SessionKillDeps,
+): Promise<VerifiedProcess> {
+  const record = await resolveRecord(sessionId, deps);
+  if (record === null) return { found: false, msg: `no process for session ${sessionId}` };
+  if (!(await verifyPid(record.pid, deps))) {
+    return {
+      found: false,
+      msg: `the process of session ${sessionId} (pid ${String(record.pid)}) could not be confirmed to be claude`,
+    };
+  }
+  return { found: true, record };
 }
 
 /** Two-shot SIGTERM sequence (DR-0028):
@@ -177,7 +202,7 @@ export async function killSession(
 }
 
 /** DR-0028 addendum (r38 mid=6): opt-in SIGKILL escalation. Runs the same
- * sid→pid resolution and ps verification as the SIGTERM path (pid-reuse
+ * sid→pid resolution and pid verification as the SIGTERM path (pid-reuse
  * guard must never be bypassed), sends exactly one SIGKILL, then polls for
  * the process to disappear within the same grace window as the two-shot
  * path. `terminated: false` here would mean "SIGKILL delivered but pid still
@@ -204,18 +229,19 @@ export async function killSessionForce(
 }
 
 /** Full request flow used by server.ts's dispatch: resolve → verify → kill.
- * `found: false` covers both "no agents row for this sid" and "pid failed the
- * ps verification" — DR-0028 treats the latter as "already gone". `force`
- * routes to SIGKILL (DR-0028 addendum r38 mid=6) while keeping the same
- * verification prelude — force never bypasses the pid-reuse guard. */
+ * `found: false` covers both "no state file names this sid" and "pid failed
+ * the verification" (findVerifiedProcess) — DR-0028 treats the latter as
+ * "already gone". `force` routes to SIGKILL (DR-0028 addendum r38 mid=6)
+ * while keeping the same verification prelude — force never bypasses the
+ * pid-reuse guard. */
 export async function sessionKill(
   sessionId: string,
   deps: SessionKillDeps,
   opts: { force?: boolean } = {},
-): Promise<{ found: true; terminated: boolean } | { found: false }> {
-  const pid = await resolvePid(sessionId, deps);
-  if (pid === null) return { found: false };
-  if (!(await verifyPid(pid, deps))) return { found: false };
+): Promise<{ found: true; terminated: boolean } | { found: false; msg: string }> {
+  const verified = await findVerifiedProcess(sessionId, deps);
+  if (!verified.found) return verified;
+  const { pid } = verified.record;
   const { terminated } = opts.force
     ? await killSessionForce(pid, deps)
     : await killSession(pid, deps);
@@ -252,13 +278,30 @@ async function runCommand(
 
 import { detectConfigDirs } from "./agents.ts";
 
+/** argv[0] of `pid`, read where it is kept whole on each platform. Linux:
+ * the first record of `/proc/<pid>/cmdline`, which is NUL-separated, so an
+ * argv[0] with spaces is one record (Linux `ps -o comm=` is the executable's
+ * name cut to 15 bytes, not argv[0]). Elsewhere: `ps -p <pid> -o comm=`,
+ * which on macOS is argv[0] whole and nothing after it (the CLI's prints
+ * `claude` though the executable it runs is named by its version, the
+ * desktop app's prints its full path, spaces included); ps prints it on one
+ * line, so only the newline ending it is dropped. */
+export async function readArgv0(pid: number): Promise<string> {
+  if (process.platform === "linux") {
+    const cmdline = await readFile(`/proc/${String(pid)}/cmdline`, "utf8");
+    return cmdline.split("\0", 1)[0] ?? "";
+  }
+  const out = await runCommand(["ps", "-p", String(pid), "-o", "comm="], process.env, 2000);
+  return out.endsWith("\n") ? out.slice(0, -1) : out;
+}
+
 export const productionKillDeps: SessionKillDeps = {
   configDirs: detectConfigDirs,
   sessionsIn: async (configDir) => {
     const read = await readSessionsDir(configDir, isProcessAlive);
     return read.live;
   },
-  runPs: (pid) => runCommand(["ps", "-p", String(pid), "-o", "command="], process.env, 2000),
+  readArgv0,
   sendSignal: (pid, sig) => process.kill(pid, sig),
   isAlive: (pid) => {
     try {

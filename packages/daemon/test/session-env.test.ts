@@ -18,7 +18,7 @@ function fakeDeps(overrides: Partial<SessionEnvDeps> = {}): SessionEnvDeps {
   return {
     configDirs: () => ["/fake/.claude"],
     sessionsIn: () => Promise.resolve([]),
-    runPs: () => Promise.resolve("claude\n"),
+    readArgv0: () => Promise.resolve("claude"),
     sendSignal: () => {},
     isAlive: () => false,
     sleep: () => Promise.resolve(),
@@ -135,11 +135,11 @@ describe("sessionEnv flow", () => {
         },
       }),
     );
-    expect(res).toEqual({ found: false });
+    expect(res).toEqual({ found: false, msg: "no process for session missing" });
     expect(read).toBe(false);
   });
 
-  test("ps 検証に落ちた pid は読まずに found:false (pid-reuse ガード)", async () => {
+  test("argv[0] の検証に落ちた pid は読まずに found:false (pid-reuse ガード)", async () => {
     // The pid resolved but now belongs to something that isn't claude — the
     // one case where reading anyway would leak an unrelated process's env.
     let read = false;
@@ -147,14 +147,17 @@ describe("sessionEnv flow", () => {
       "sid-1",
       fakeDeps({
         sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-1", 4242)),
-        runPs: () => Promise.resolve("/usr/bin/python3 something.py\n"),
+        readArgv0: () => Promise.resolve("/usr/bin/python3"),
         readEnv: () => {
           read = true;
           return Promise.resolve("");
         },
       }),
     );
-    expect(res).toEqual({ found: false });
+    expect(res).toEqual({
+      found: false,
+      msg: "the process of session sid-1 (pid 4242) could not be confirmed to be claude",
+    });
     expect(read).toBe(false);
   });
 

@@ -16,7 +16,7 @@ import {
   type SessionRestartResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
-import { killSession, resolveRecord, verifyPid, type SessionKillDeps } from "./session-kill.ts";
+import { findVerifiedProcess, killSession, type SessionKillDeps } from "./session-kill.ts";
 import type { SessionLaunchOutcome } from "./session-launch.ts";
 
 export interface SessionRestartDeps {
@@ -103,10 +103,9 @@ export async function restartSession(
   if (launcher === undefined) {
     return refuse(ErrorCode.launcher_not_configured, "session launcher is not configured");
   }
-  const record = await resolveRecord(sessionId, deps.kill);
-  if (record === null || !(await verifyPid(record.pid, deps.kill))) {
-    return refuse(ErrorCode.not_found, `no process for session ${sessionId}`);
-  }
+  const verified = await findVerifiedProcess(sessionId, deps.kill);
+  if (!verified.found) return refuse(ErrorCode.not_found, verified.msg);
+  const { record } = verified;
   fields.push(`pid=${String(record.pid)}`);
   const resume = await resumeLaunch(sessionId, ask, record, deps);
   if (!resume.ok) return refuse(resume.code, resume.msg);

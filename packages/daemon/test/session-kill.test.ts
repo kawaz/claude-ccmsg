@@ -1,21 +1,28 @@
 // session_kill contract (DR-0028): fresh sid→pid resolution across config
-// dirs, ps command-line verification (pid-reuse guard), and the two-shot
-// SIGTERM sequence with a bounded observation grace and NO SIGKILL — ever.
-// These tests are the executable spec: fake-deps cases pin the decision
-// logic byte-for-byte, and the real-process cases prove the production
-// signal path (sendSignal/isAlive) against live children while faking only
-// the state files and `ps`, so no real claude
-// session is ever touched.
+// dirs, argv[0] verification (pid-reuse guard), and the two-shot SIGTERM
+// sequence with a bounded observation grace and NO SIGKILL — ever. These
+// tests are the executable spec: fake-deps cases pin the decision logic
+// byte-for-byte, and the real-process cases prove the production argv[0]
+// read and signal path (readArgv0/sendSignal/isAlive) against live children
+// while faking only the state files, so no real claude session is ever
+// touched.
 import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   killSession,
   killSessionForce,
+  productionKillDeps,
+  readArgv0,
   resolvePid,
   sessionKill,
   verifyPid,
   type SessionKillDeps,
 } from "../src/session-kill.ts";
+import { perTestTmpDir } from "../../testkit/src/tmp.ts";
 import { startInProcessDaemon, stopInProcessDaemon, sessionConn, userConn } from "./helpers.ts";
+
+const tmp = perTestTmpDir();
 
 /** Fake-deps factory: every effect is inert/instant by default so each test
  * overrides exactly the behavior its case is about. Timing is shrunk 10x
@@ -27,7 +34,7 @@ function fakeDeps(overrides: Partial<SessionKillDeps> = {}): SessionKillDeps {
   return {
     configDirs: () => ["/fake/.claude"],
     sessionsIn: () => Promise.resolve([]),
-    runPs: () => Promise.resolve("claude\n"),
+    readArgv0: () => Promise.resolve("claude"),
     sendSignal: () => {},
     isAlive: () => false,
     sleep: () => Promise.resolve(),
@@ -93,7 +100,7 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
   // pid ≤ 1 is refused at the source: process.kill(0) would signal the
   // daemon's OWN process group (suicide), negative pids signal whole groups,
   // and 1 is init/launchd. A corrupted registry row must never reach any of
-  // them, independently of the later ps verification.
+  // them, independently of the later argv[0] verification.
   test("ignores matching rows whose pid is 0, negative, or 1", async () => {
     for (const pid of [0, -1, 1]) {
       const deps = fakeDeps({
@@ -106,21 +113,23 @@ describe("resolvePid (fresh sid→pid resolution)", () => {
 
 describe("verifyPid (pid-reuse guard)", () => {
   // The state file read (and a file a crashed session left) can be stale;
-  // a recycled pid must never be signalled. Pass only when ps shows argv[0]
-  // whose basename is exactly `claude` — both the bare PATH-launched form
-  // and an absolute-path form must pass.
-  test("passes when argv[0] basename is claude (bare and absolute forms)", async () => {
-    for (const cmd of [
-      "claude --model fable --effort low --name x\n",
-      "/opt/homebrew/bin/claude --resume\n",
+  // a recycled pid must never be signalled. Pass only when the process's
+  // argv[0] has the basename `claude` exactly — the bare PATH-launched form,
+  // an absolute path, and the desktop app's path with spaces in it must all
+  // pass.
+  test("passes when argv[0] basename is claude (bare, absolute and spaced forms)", async () => {
+    for (const argv0 of [
+      "claude",
+      "/opt/homebrew/bin/claude",
+      "/Users/u/Library/Application Support/Claude/claude-code/2.1.321/ddbdf2b334e1/claude.app/Contents/MacOS/claude",
     ]) {
-      const deps = fakeDeps({ runPs: () => Promise.resolve(cmd) });
+      const deps = fakeDeps({ readArgv0: () => Promise.resolve(argv0) });
       expect(await verifyPid(123, deps)).toBe(true);
     }
   });
 
-  test("refuses when ps output shows an unrelated command (pid reused)", async () => {
-    const deps = fakeDeps({ runPs: () => Promise.resolve("/usr/bin/vim notes.txt\n") });
+  test("refuses when argv[0] is an unrelated command (pid reused)", async () => {
+    const deps = fakeDeps({ readArgv0: () => Promise.resolve("/usr/bin/vim") });
     expect(await verifyPid(123, deps)).toBe(false);
   });
 
@@ -129,28 +138,134 @@ describe("verifyPid (pid-reuse guard)", () => {
   // ccmsg daemon itself (bun .../.claude-personal/plugins/cache/ccmsg/...),
   // every Claude Code-spawned zsh (source .../.claude-personal/
   // shell-snapshots/...), and the subscribe helpers. All of these must be
-  // refused: "claude" appearing in an argument is not a claude process.
-  test("refuses processes that only mention claude-ish paths in arguments", async () => {
+  // refused: "claude" appearing in an argument is not a claude process. The
+  // arguments never reach verifyPid (readArgv0 reads argv[0] alone; the
+  // real-process case below proves that of the production read), so what is
+  // left to pin here is their argv[0]s, and names that merely contain
+  // `claude`.
+  test("refuses processes whose argv[0] is not claude though claude is in their command line", async () => {
     const impostors = [
-      "/nix/store/xxx-bun-1.3.13/bin/bun /Users/u/.claude-personal/plugins/cache/ccmsg/ccmsg/0.59.0/packages/cli/src/index.ts daemon run\n",
-      "/bin/zsh -c source /Users/u/.claude-personal/shell-snapshots/snapshot.sh && eval 'ccmsg subscribe'\n",
-      "vim /Users/u/notes/claude-tips.md\n",
+      "/nix/store/xxx-bun-1.3.13/bin/bun",
+      "/bin/zsh",
+      "vim",
       // Prefix/suffix name collisions on argv[0] itself.
-      "/usr/local/bin/claude-wrapper --help\n",
-      "/usr/local/bin/notclaude\n",
+      "/usr/local/bin/claude-wrapper",
+      "/usr/local/bin/notclaude",
     ];
-    for (const cmd of impostors) {
-      const deps = fakeDeps({ runPs: () => Promise.resolve(cmd) });
+    for (const argv0 of impostors) {
+      const deps = fakeDeps({ readArgv0: () => Promise.resolve(argv0) });
       expect(await verifyPid(123, deps)).toBe(false);
     }
   });
 
-  // ps failing (typically: no such pid → non-zero exit) also refuses —
-  // "already gone" and "not claude anymore" are the same outcome (not_found)
-  // for the caller (DR-0028).
-  test("refuses when ps fails", async () => {
-    const deps = fakeDeps({ runPs: () => Promise.reject(new Error("ps exited 1")) });
+  // A path with spaces is matched by its basename alone, as any other: a
+  // directory named like claude, or a basename that starts with claude and
+  // goes on past a space, is not claude.
+  test("refuses spaced paths whose basename is not claude", async () => {
+    for (const argv0 of [
+      "/x/my claude/vim",
+      "/Users/u/Library/Application Support/Claude/claude-code/claude.app/Contents/MacOS/Claude Helper",
+      "/Applications/Tools/claude helper",
+      "/x/claude/",
+    ]) {
+      const deps = fakeDeps({ readArgv0: () => Promise.resolve(argv0) });
+      expect(await verifyPid(123, deps)).toBe(false);
+    }
+  });
+
+  // The read failing (typically: no such pid) also refuses — "already gone"
+  // and "not claude anymore" are the same outcome (not_found) for the caller
+  // (DR-0028).
+  test("refuses when argv[0] cannot be read", async () => {
+    const deps = fakeDeps({ readArgv0: () => Promise.reject(new Error("ps exited 1")) });
     expect(await verifyPid(123, deps)).toBe(false);
+  });
+});
+
+describe("readArgv0 and verifyPid against real processes", () => {
+  /** A harmless resident process run as `argv0`: the running bun under a
+   * symlink of that path, holding a timer (bun does not pick its program by
+   * argv[0], where a multi-call coreutils such as uutils would die on
+   * `claude`). `extraArgs` follow the script. Resolves once the child says it
+   * is running its script, so argv[0] is the child's own when read. */
+  async function resident(
+    argv0: string,
+    extraArgs: string[] = [],
+  ): Promise<Bun.Subprocess<"ignore", "pipe", "inherit">> {
+    fs.mkdirSync(path.dirname(argv0), { recursive: true });
+    fs.symlinkSync(process.execPath, argv0);
+    const child = Bun.spawn(
+      [argv0, "-e", 'console.log("ready"); setTimeout(() => {}, 600_000)', ...extraArgs],
+      { stdin: "ignore", stdout: "pipe", stderr: "inherit" },
+    );
+    const reader = child.stdout.getReader();
+    const first = await reader.read();
+    reader.releaseLock();
+    expect(new TextDecoder().decode(first.value)).toContain("ready");
+    return child;
+  }
+
+  async function stop(child: Bun.Subprocess<"ignore", "pipe", "inherit">): Promise<void> {
+    child.kill("SIGKILL");
+    await child.exited;
+  }
+
+  // The desktop app's shape: a claude under directories with spaces in their
+  // names. The production read answers the path whole, and the guard passes.
+  test("a claude under a spaced path reads as that whole path and passes", async () => {
+    const bin = path.join(tmp("argv0-"), "Application Support", "Claude", "MacOS", "claude");
+    const child = await resident(bin);
+    try {
+      expect(await readArgv0(child.pid)).toBe(bin);
+      expect(await verifyPid(child.pid, productionKillDeps)).toBe(true);
+    } finally {
+      await stop(child);
+    }
+  });
+
+  // argv[0] alone is read: a process that is not claude but carries claude
+  // paths and the word itself in its arguments is refused.
+  test("arguments naming claude do not reach the read, and the guard refuses", async () => {
+    const bin = path.join(tmp("argv0-"), "my claude", "bun");
+    const child = await resident(bin, ["/Users/u/.claude-personal/plugins/claude", "claude"]);
+    try {
+      expect(await readArgv0(child.pid)).toBe(bin);
+      expect(await verifyPid(child.pid, productionKillDeps)).toBe(false);
+    } finally {
+      await stop(child);
+    }
+  });
+
+  // The whole flow on the production read and signals, with only the state
+  // file faked: the spaced claude is found, verified and stopped.
+  test("sessionKill stops a claude under a spaced path", async () => {
+    const bin = path.join(tmp("argv0-"), "Application Support", "claude");
+    const child = await resident(bin);
+    try {
+      const deps: SessionKillDeps = {
+        ...productionKillDeps,
+        configDirs: () => ["/fake/.claude"],
+        sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-spaced", child.pid)),
+        timing: { secondSignalAfterMs: 200, pollIntervalMs: 50, totalGraceMs: 2000 },
+      };
+      expect(await sessionKill("sid-spaced", deps)).toEqual({ found: true, terminated: true });
+      await child.exited;
+      expect(child.signalCode).toBe("SIGTERM");
+    } finally {
+      await stop(child);
+    }
+  });
+
+  test("a pid that is gone fails the read and the guard", async () => {
+    const child = await resident(path.join(tmp("argv0-"), "claude"));
+    const { pid } = child;
+    await stop(child);
+    const read = await readArgv0(pid).then(
+      (argv0) => ({ read: argv0 }),
+      (e: unknown) => ({ failed: String(e) }),
+    );
+    expect(read).toHaveProperty("failed");
+    expect(await verifyPid(pid, productionKillDeps)).toBe(false);
   });
 });
 
@@ -287,7 +402,7 @@ describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
     const signals: string[] = [];
     const deps = fakeDeps({
       sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
-      runPs: () => Promise.resolve("claude\n"),
+      readArgv0: () => Promise.resolve("claude"),
       sendSignal: (_pid, sig) => signals.push(sig),
       isAlive: () => false,
     });
@@ -298,15 +413,18 @@ describe("killSessionForce (DR-0028 addendum opt-in SIGKILL)", () => {
     expect(signals).toEqual(["SIGKILL"]);
   });
 
-  // ps 検証 (pid-reuse guard) が落ちたら force でも kill しない。
+  // argv[0] 検証 (pid-reuse guard) が落ちたら force でも kill しない。
   test("sessionKill({force:true}) は verify 失敗時に SIGKILL を送らない", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
       sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
-      runPs: () => Promise.resolve("zsh\n"), // claude 以外 → verify fail
+      readArgv0: () => Promise.resolve("zsh"), // claude 以外 → verify fail
       sendSignal: (_pid, sig) => signals.push(sig),
     });
-    expect(await sessionKill("sid-x", deps, { force: true })).toEqual({ found: false });
+    expect(await sessionKill("sid-x", deps, { force: true })).toEqual({
+      found: false,
+      msg: "the process of session sid-x (pid 4242) could not be confirmed to be claude",
+    });
     expect(signals).toEqual([]);
   });
 });
@@ -389,7 +507,7 @@ describe("killSession against real processes (real signals, fake runners)", () =
 });
 
 describe("sessionKill (resolve → verify → kill composition)", () => {
-  // The composed flow refuses at each gate: unresolved sid and failed ps
+  // The composed flow refuses at each gate: unresolved sid and failed argv[0]
   // verification both surface as found:false (server.ts → not_found), and
   // no signal is ever sent in either case.
   test("unknown sid → found:false, no signal sent", async () => {
@@ -398,18 +516,24 @@ describe("sessionKill (resolve → verify → kill composition)", () => {
       sessionsIn: () => Promise.resolve([]),
       sendSignal: (_pid, sig) => signals.push(sig),
     });
-    expect(await sessionKill("sid-x", deps)).toEqual({ found: false });
+    expect(await sessionKill("sid-x", deps)).toEqual({
+      found: false,
+      msg: "no process for session sid-x",
+    });
     expect(signals).toEqual([]);
   });
 
-  test("pid fails ps verification → found:false, no signal sent", async () => {
+  test("pid fails argv[0] verification → found:false, no signal sent", async () => {
     const signals: string[] = [];
     const deps = fakeDeps({
       sessionsIn: () => Promise.resolve(AGENTS_ROW("sid-x", 555)),
-      runPs: () => Promise.resolve("/usr/bin/vim\n"),
+      readArgv0: () => Promise.resolve("/usr/bin/vim"),
       sendSignal: (_pid, sig) => signals.push(sig),
     });
-    expect(await sessionKill("sid-x", deps)).toEqual({ found: false });
+    expect(await sessionKill("sid-x", deps)).toEqual({
+      found: false,
+      msg: "the process of session sid-x (pid 555) could not be confirmed to be claude",
+    });
     expect(signals).toEqual([]);
   });
 

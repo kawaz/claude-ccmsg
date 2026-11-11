@@ -21,8 +21,11 @@ kawaz 要望 (2026-07-18):
 
 - `IDENTITY_OPS` に追加。`conn.identity?.role !== "user"` なら `bad_request` で拒否。session role のエージェントが互いを殺せてはいけない。
 - pid 解決は **リクエスト時に `claude agents --json --all` を fresh 実行**してsessionId → pid を引く (`--all` で completed background も含む)。poller cache (最大 5 秒古い) を使わない: kill は stale pid が即誤殺につながる操作なので、多少の latency (数百 ms〜) を払って fresh に解決する。全 config dir を走査し、最初にマッチした行を採用。見つからなければ `not_found`。
-- **pid 実在検証 (pid 再利用ガード)**: 解決した pid に対し`ps -p <pid> -o command=` を実行し、コマンドラインに `claude` が含まれることを確認してから kill。`claude agents` の応答と kill 実行の間 (および CLI 側 registryの stale entry) で pid が別プロセスに再利用されるのを防ぐ。検証不一致は`not_found` (「もう居ない」と同じ扱いで十分)。
-  - 実装追記 (2026-07-18): 判定は substring でなく **argv[0] の basename が`claude` と完全一致**。substring だと kawaz 環境では ccmsg daemon 自身(`bun .../.claude-personal/plugins/cache/ccmsg/...`) や Claude Code 起動のzsh (`source .../.claude-personal/shell-snapshots/...`) まで通過し、pid再利用時に daemon 自殺の経路になる (実測で確認)。
+- **pid 実在検証 (pid 再利用ガード)**: 解決した pid の **argv[0] を空白で切らずにまるごと読み、その basename が `claude` と完全一致する**ことを確認してから kill。`claude agents` の応答と kill 実行の間 (および CLI 側 registryの stale entry) で pid が別プロセスに再利用されるのを防ぐ。検証不一致は`not_found` (「もう居ない」と同じ扱いで十分)。
+  - argv[0] の読み方: Linux は `/proc/<pid>/cmdline` の先頭の要素 (NUL 区切りなので空白を含む argv[0] も 1 要素)。それ以外は `ps -p <pid> -o comm=` (macOS では argv[0] 全体を引数なしで返す)。Linux の `ps -o comm=` は実行ファイル名を 15 文字で切ったもので argv[0] ではないので使わない。
+  - パスに空白があっても通る: デスクトップアプリの claude は `~/Library/Application Support/Claude/claude-code/<版>/<hash>/claude.app/Contents/MacOS/claude` で起動される。CLI は `claude`、VSCode の拡張は `~/.vscode/extensions/anthropic.claude-code-<版>/resources/native-binary/claude`。basename 以外 (途中のディレクトリ名・引数) は見ない。
+  - basename の完全一致にする理由: コマンドラインの substring だと kawaz 環境では ccmsg daemon 自身(`bun .../.claude-personal/plugins/cache/ccmsg/...`) や Claude Code 起動のzsh (`source .../.claude-personal/shell-snapshots/...`) まで通過し、pid再利用時に daemon 自殺の経路になる (実測で確認)。
+  - `not_found` の msg は「その sid の pid が引けない」(`no process for session <sid>`) と「pid は引けたが claude のプロセスと確かめられない」(`the process of session <sid> (pid <N>) could not be confirmed to be claude`) を言い分ける。`session_kill` / `session_restart` / `session_env` で同じ文。
   - 実装追記 (2026-07-18): registry 行の pid は **整数かつ > 1 のみ採用**。
     `kill(0)` は自プロセスグループ全体、負数はグループ送信、1 は init であり、腐った registry 行がこれらに到達してはならない。
   - 実装追記 (2026-07-18): シグナル送信・生存確認の errno は **ESRCH のみ「消滅」扱い**。EPERM (実在するが権限なし) を消滅扱いすると生存プロセスに「終了を確認」と虚偽報告するため、internal エラーとして表面化させる。
@@ -49,7 +52,7 @@ kawaz 要望 (2026-07-18):
 
 ## Alternatives Considered
 
-- **poller cache から pid を引く**: 実行コストゼロだが最大 5s stale。kill は誤対象が致命的なので不採用 (fresh 実行 + ps 検証の二重ガードを採る)。
+- **poller cache から pid を引く**: 実行コストゼロだが最大 5s stale。kill は誤対象が致命的なので不採用 (fresh 実行 + argv[0] 検証の二重ガードを採る)。
 - **SIGKILL エスカレーション付き 3 段 kill**: 確実に死ぬが、claude の graceful shutdown (transcript/state flush) を破壊するリスク。daemon が自動で不可逆側に倒すべきでない。不採用、`terminated: false` を返して人間に委ねる。
 - **cache の AgentInfo を webui から pid ごと送らせる (`pid` をリクエストに含める)**:
   クライアント申告の pid を殺すのは権限モデル上危険 (user role 限定とはいえ、daemon 側解決に比べ検証根拠が弱い)。リクエストは `session_id` のみ受ける。
@@ -59,9 +62,9 @@ kawaz 要望 (2026-07-18):
 
 ## Consequences
 
-- daemon に「他プロセスへシグナルを送る」能力が初めて入る。誤殺ガードは(1) user role 限定 (2) daemon 側での fresh pid 解決 (3) ps コマンドライン検証の 3 層。それでも理論上の TOCTOU 窓 (ps 検証〜kill の間) は残る — pid 再利用がその数 ms で起きる確率は実用上無視できると判断。
+- daemon に「他プロセスへシグナルを送る」能力が初めて入る。誤殺ガードは(1) user role 限定 (2) daemon 側での fresh pid 解決 (3) argv[0] 検証の 3 層。それでも理論上の TOCTOU 窓 (argv[0] 検証〜kill の間) は残る — pid 再利用がその数 ms で起きる確率は実用上無視できると判断。
 - `terminated: false` 応答があり得る (ガードが 2 発で突破できない将来の CLI 変更等)。UI はこれを失敗でなく「シグナル送信済み・未確認」として表示する。
-- テストで実プロセスを殺す必要がある。検証コマンド (`claude agents` 実行と`ps` 検証) を injectable にして、sleep 子プロセスで kill 経路を実テストする(設計は実装指示書側)。
+- テストで実プロセスを殺す必要がある。検証 (state file の読み取りと argv[0] の読み取り) を injectable にして、sleep 子プロセスで kill 経路を実テストする(設計は実装指示書側)。
 
 ## 関連
 
@@ -75,7 +78,7 @@ kawaz 要望 (2026-07-18):
 ### 追加分の契約
 
 - `SessionKillRequest.force?: boolean` を追加。true の時のみ SIGKILL 経路。
-  fresh sid→pid 解決と ps コマンドライン検証 (pid-reuse guard) は force でもそのまま通す — 検証を短絡すると誤殺リスクが上がるだけで得るものが無い
+  fresh sid→pid 解決と argv[0] 検証 (pid-reuse guard) は force でもそのまま通す — 検証を短絡すると誤殺リスクが上がるだけで得るものが無い
 - 経路: `killSessionForce(pid, deps)` — SIGKILL を 1 発、以降は通常経路と同じ liveness poll。落ちたら `terminated: true`、SIGKILL 後も観測される(uninterruptible sleep 等の zombie) 場合は `terminated: false` を正直に返す
 - webui: 「セッションを終了」で `terminated: false` を観測したら、行の名前が「強制終了 (-KILL)」、ボタンが「強制終了」に変化 (ボタンは背景色 danger 反転 + 太字)。再度押すと SIGKILL、confirm 文言に「不可逆 / transcript flush が途中で切れる可能性」を明記してもう 1 段のガードを掛ける
 
@@ -96,7 +99,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 - error (どれも、断った時はプロセスを止めていない。`internal` だけは止めた後かもしれない):
   - `bad_request`: user role でない
   - `launcher_not_configured` / `launch_busy`: `session_launch` と同じ (DR-0018 §3.4)。restart は走っている間ずっと起動の 1 つに数え、daemon の終わり方の待ち (DR-0018 §3.5) にも入る
-  - `not_found`: その sid のプロセスが居ない (本 DR の pid の解決と ps の検証に通らない)
+  - `not_found`: その sid のプロセスが居ない (本 DR の pid の解決と argv[0] の検証に通らない。msg はどちらで断ったかを言う)
   - `restart_unavailable`: そのセッションのプロセスの record に `cwd` が無く、resume する場所が分からない
   - `restart_timeout`: 停止の手順の猶予の中でプロセスの終わりを観測できなかった。起動コマンドは走らせていない (シグナルは届いているので、後でプロセスが終わることはある)
   - `invalid_args` / `launch_command_unavailable`: `session_launch` と同じ。前者は起動の入力がスキーマに合わない時で、止める前に読むので止めていない。後者は止めた後に起動コマンドを起こせなかった時
@@ -107,7 +110,7 @@ kawaz 裁定 (2026-10-25): webui の Status タブにセッションの restart 
 止めた後に、止める前から分かっていた理由で起動を断ることが無いよう、断る理由は全部止める前に確かめる。
 
 1. user role でなければ `bad_request`。launcher が無ければ `launcher_not_configured`、daemon が終わりかけているか起動が `launch_max_concurrency` 個走っていれば `launch_busy`
-2. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、ps で claude のプロセスであることを確かめる。通らなければ `not_found`
+2. 本 DR の `session_kill` と同じく、`sessions/<pid>.json` を読み直して sid から pid を引き、argv[0] で claude のプロセスであることを確かめる。通らなければ `not_found`
 3. 起動の入力を組み立てて `LaunchInputSchema` で読む。`cwd` は 2 で読んだ record の `cwd` (claude が記録したプロセスの cwd、realpath)。record に `cwd` が無ければ `restart_unavailable` (未検証: EnterWorktree で cwd が変わったセッションで、record の cwd から resume が transcript を見つけられるか)
    - `resume`: その sid
    - `model` / `effort`: request の `model` / `effort` をそのまま入れる。request に無い欄は、Status タブの CONTEXT と同じ値 (hooks module の facts の model / effort を、transcript の末尾の main context の assistant 行の model / effort に重ねたもの) を、起動の入力の選択肢に写す (`claude-fable-5[1m]` → `fable`、Session Search の resume の prefill と同じ写し方)。写せないものと値の無いものは入れない (起動コマンドが決める)
