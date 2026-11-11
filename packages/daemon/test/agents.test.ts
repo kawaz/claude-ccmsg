@@ -224,6 +224,32 @@ describe("agents: config dir detection", () => {
     expect(agents.find((a) => a.sessionId === "sB")).not.toHaveProperty("version");
   });
 
+  // What started the process rides on its row as the record says it, in
+  // Claude Code's spelling: a value ccmsg has not seen is passed through (an
+  // open set), and a record that names none carries none.
+  test("記録の entrypoint をそのまま行に載せ、無い記録の行には載せない", async () => {
+    const { home, binDir } = mkHome();
+    const dir = path.join(home, ".claude-a");
+    writeRows(
+      dir,
+      [
+        row("sDesktop", "/d", { entrypoint: "claude-desktop" }),
+        row("sNew", "/n", { entrypoint: "some-future-launcher" }),
+        row("sNone", "/x"),
+      ],
+      () => sleeper(),
+    );
+    const ctx = await startAgentsTestDaemon(home, binDir);
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    const { ev } = await u.readEventUntil("agents");
+    const bySid = new Map(ev.agents.map((a) => [a.sessionId, a]));
+    expect(bySid.get("sDesktop")?.entrypoint).toBe("claude-desktop");
+    expect(bySid.get("sNew")?.entrypoint).toBe("some-future-launcher");
+    expect(bySid.get("sNone")).toBeDefined();
+    expect(bySid.get("sNone")).not.toHaveProperty("entrypoint");
+  });
+
   // DR-0034 §2: the sessions on the machine talk to the daemon at the default
   // state dir; one at another state dir lists none of them.
   test("既定でない state dir の daemon は $HOME/.claude* を読まない", async () => {

@@ -56,6 +56,7 @@ function agentRow(overrides: Partial<AgentInfo> = {}): AgentInfo {
     cwd: "/w/repo",
     kind: "interactive",
     startedAt: Date.now(),
+    entrypoint: "claude-desktop",
     sessionId: SID,
     config_dir: "/c",
     name: "最初の名前",
@@ -302,6 +303,7 @@ describe("Status tab copy buttons", () => {
       "PID",
       "HYOUI_SESSION_ID",
       "KIND",
+      "ENTRYPOINT",
       "STARTED",
       "UPTIME",
     ]) {
@@ -311,6 +313,29 @@ describe("Status tab copy buttons", () => {
       expect(first?.getAttribute("aria-label")).toBe(`${term} をコピー`);
       expect(cell.querySelectorAll("button.status-meta-copy")).toHaveLength(1);
     }
+  });
+});
+
+describe("Status tab ENTRYPOINT row", () => {
+  // What started the session's process, as Claude Code's record spells it:
+  // a value ccmsg has not seen is shown as it is.
+  test("shows the record's entrypoint as written, with a copy of it", async () => {
+    for (const entrypoint of ["cli", "claude-desktop", "claude-vscode", "some-future-launcher"]) {
+      const { root } = await mountStatus(agentRow({ entrypoint }));
+      const cell = metaCell(root, "ENTRYPOINT");
+      expect(cell.querySelector(".status-scroll")?.textContent).toBe(entrypoint);
+      expect(cell.querySelector("button.status-meta-copy")?.getAttribute("aria-label")).toBe(
+        "ENTRYPOINT をコピー",
+      );
+    }
+  });
+
+  test("is — with no copy when the record names none", async () => {
+    const { entrypoint: _none, ...withoutEntrypoint } = agentRow();
+    const { root } = await mountStatus(withoutEntrypoint);
+    const cell = metaCell(root, "ENTRYPOINT");
+    expect(cell.textContent).toBe("—");
+    expect(cell.querySelector("button")).toBeNull();
   });
 });
 
@@ -421,6 +446,7 @@ describe("Status tab layout", () => {
         "PID",
         "CCMSG",
         "KIND",
+        "ENTRYPOINT",
         "STARTED",
         "UPTIME",
       ],

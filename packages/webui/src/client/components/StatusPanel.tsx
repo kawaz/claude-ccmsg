@@ -790,6 +790,9 @@ export function StatusPanel({
           <Fact term="KIND" copy={agent?.kind}>
             {agent?.kind ?? "—"}
           </Fact>
+          <Fact term="ENTRYPOINT" copy={agent?.entrypoint}>
+            {agent?.entrypoint ?? "—"}
+          </Fact>
           <Fact
             term="STARTED"
             copy={startedText}

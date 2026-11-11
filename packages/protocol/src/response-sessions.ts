@@ -507,6 +507,10 @@ export const AgentInfoSchema = v.object({
   /** The Claude Code version the process runs, e.g. "2.1.310". Absent when
    *  the record names none. */
   version: v.optional(v.string()),
+  /** What started the process, in Claude Code's spelling: "cli",
+   *  "claude-desktop", "claude-vscode" … (an upstream-controlled open set).
+   *  Absent when the record names none. */
+  entrypoint: v.optional(v.string()),
   sessionId: v.string(),
   name: v.optional(v.string()),
   /** Claude Code's own word for the process: "waiting" while a dialog waits
