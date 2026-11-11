@@ -89,6 +89,20 @@ async function otherTabWrites(text: string, oldValue: string | null): Promise<vo
   });
 }
 
+describe("SessionInputComposer header", () => {
+  test("the destination has no caption, only its accessible name", async () => {
+    const root = await openComposer();
+    const target = instanceOf(
+      root.querySelector(".session-input-target"),
+      HTMLElement,
+      "the destination",
+    );
+    expect(target.getAttribute("role")).toBe("group");
+    expect(target.getAttribute("aria-label")).toBe("入力先");
+    expect(target.textContent).not.toContain("入力先");
+  });
+});
+
 describe("SessionInputComposer draft", () => {
   test("what is typed is saved as the draft and comes back when the input is opened again", async () => {
     const root = await openComposer();

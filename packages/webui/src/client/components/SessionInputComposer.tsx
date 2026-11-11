@@ -640,9 +640,9 @@ export function SessionInputComposer({
       <header class="session-input-panel-header">
         {/* 宛先はセッション ID でなくアイコン + リポ名で示す: sid の 8 桁 hex は
             人間には識別子として機能しない。identicon (Sidebar と同じ seed=sid)
-            + repo 名ならどのセッション宛か一目で分かる。 */}
-        <span class="session-input-target">
-          入力先{" "}
+            + repo 名ならどのセッション宛か一目で分かる。見出しの文字は置かず、
+            読み上げ用の名前 (入力先) だけを持たせる。 */}
+        <span class="session-input-target" role="group" aria-label="入力先">
           <AvatarLabel seed={sid} size={16}>
             <code>{targetLabel}</code>
           </AvatarLabel>

@@ -7290,9 +7290,9 @@ a.tl-attachment-file-path {
   border-radius: 0.2rem;
 }
 
-/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): "入力先" テキストと
- * AvatarLabel (アイコン + 名前の一体、gap は .avatar-label が管理) を
- * 中央揃えで横並びに。長い repo 名は ellipsis。 */
+/* 宛先 (アイコン + リポ名、kawaz r17 mid=1): AvatarLabel (アイコン + 名前の
+ * 一体、gap は .avatar-label が管理) と宛先のエージェントの select を中央揃えで
+ * 横並びに。長い repo 名は ellipsis。 */
 .session-input-target {
   display: inline-flex;
   align-items: center;
