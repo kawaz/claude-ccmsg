@@ -39,6 +39,7 @@ import {
 } from "./session-begin.ts";
 import { keepNamed, type Sidecar, socketPeerClosed, startSidecar } from "./sidecar.ts";
 import { type AgentsFormat, agentsTable } from "./agents.ts";
+import { runSecretCommand } from "./secret.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -647,6 +648,7 @@ function printHelp(): void {
   peers [cwd(partial)]                      セッション一覧
   agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
+  secret take <id> | <command>              webui から渡された秘密の値を標準出力に書く (パイプで使う)
 
 Options:
   --help-full
@@ -682,6 +684,12 @@ Commands:
                                from another session does, and only in a session
                                running the ccmsg plugin's hooks module. Prints
                                the result; exits non-zero unless it arrived
+  secret take <id>             Write the secret value the person handed to a
+                               session from the webui, held under <id> for 5
+                               minutes, to standard output as it was pasted.
+                               Pipe it into the command that uses it. Exits 1
+                               with the reason on stderr when nothing is held
+                               under <id>. See ccmsg secret --help
   status                       Show daemon liveness / version / uptime / pid.
                                Does not start the daemon — use daemon start
   stop <session-id>            Terminate the OS process behind a Claude Code
@@ -813,6 +821,11 @@ async function main(): Promise<void> {
   // sidecar's own line rather than the command rail.
   if (argv[0] === "sidecar") {
     await runSidecarCommand(argv.slice(1));
+    return;
+  }
+  // The same for `ccmsg secret --help`, and its id is taken as it stands.
+  if (argv[0] === "secret") {
+    await runSecretCommand(argv.slice(1));
     return;
   }
   // Parse the whole argv so options may appear before or after the command (kawaz

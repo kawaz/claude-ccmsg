@@ -21,6 +21,11 @@ import * as v from "valibot";
 import { JsonTextSchema, type ParseFailure, parseWith, type Output } from "./parse.ts";
 import { HelloRequestSchema, OtherMajorHelloRequestSchema } from "./request-sessions.ts";
 import {
+  SecretDiscardRequestSchema,
+  SecretPutRequestSchema,
+  SecretTakeRequestSchema,
+} from "./secret.ts";
+import {
   ReadRequestSchema,
   RoomHistoryRequestSchema,
   RoomsRequestSchema,
@@ -148,6 +153,9 @@ const OP_REQUEST_SCHEMAS = [
   UserMessageRequestSchema,
   RequestOverrideRequestSchema,
   TurnAbortRequestSchema,
+  SecretPutRequestSchema,
+  SecretTakeRequestSchema,
+  SecretDiscardRequestSchema,
   SidecarReplyRequestSchema,
   SidecarHelloRequestSchema,
   SessionFactsRequestSchema,

@@ -412,7 +412,7 @@ describe("Status tab layout", () => {
   // The tab's sections, each under its heading: the gauges' box has none,
   // then セッション情報 (the facts table with ENV folded under it, both in the
   // one section), セッション操作 and the danger zone.
-  test("the gauges' box, then セッション情報 holding the facts and ENV, then the danger zone", async () => {
+  test("the gauges' box, then セッション情報 holding the facts and ENV, then シークレット (DR-0052), then the danger zone", async () => {
     const { root } = await mountStatus(agentRow());
     const view = instanceOf(root.querySelector(".status-view"), HTMLElement, "the tab");
     // セッション操作 comes between the two where the daemon can launch
@@ -420,10 +420,12 @@ describe("Status tab layout", () => {
     expect([...view.children].map((child) => child.className)).toEqual([
       "status-meta status-gauges",
       "status-section status-session-info",
+      "status-section status-secrets",
       "status-section status-kill-zone",
     ]);
     expect([...view.querySelectorAll(".status-section-title")].map((h) => h.textContent)).toEqual([
       "セッション情報",
+      "シークレット",
       "危険ゾーン",
     ]);
     const info = instanceOf(view.querySelector(".status-session-info"), HTMLElement, "the info");

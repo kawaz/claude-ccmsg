@@ -29,6 +29,7 @@ export * from "./sidecar.ts";
 export * from "./peer-tools.ts";
 export * from "./peer-tools-text.ts";
 export * from "./permit-request.ts";
+export * from "./secret.ts";
 export * from "./launch.ts";
 export * from "./request-override.ts";
 export * from "./request.ts";

@@ -56,6 +56,7 @@ const MINIMAL_HELP = `Commands:
   peers [cwd(partial)]                      セッション一覧
   agents [--format text]                    Claude Code のセッションと状態の一覧
   notify --self --text <msg>                自セッションの会話に一言入れる (justfile等の組み込み用途)
+  secret take <id> | <command>              webui から渡された秘密の値を標準出力に書く (パイプで使う)
 
 Options:
   --help-full

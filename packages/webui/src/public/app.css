@@ -7901,7 +7901,10 @@ a.tl-attachment-file-path {
   margin: var(--space-7) 0 var(--space-5);
 }
 
-.status-env-search {
+/* The secret handoff's paste field (DR-0052 §3) is drawn as the ENV search:
+ * a plain boxed field. */
+.status-env-search,
+.status-secret-paste {
   font: inherit;
   font-size: var(--font-size-md);
   flex: 1 1 16rem;
@@ -8251,7 +8254,8 @@ a.tl-attachment-file-path {
   font-weight: 700;
 }
 
-.status-kill-result {
+.status-kill-result,
+.status-secret-result {
   margin: var(--space-7) 0 0;
   font-size: var(--font-size-sm);
   color: var(--fg-muted);

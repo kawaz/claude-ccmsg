@@ -39,6 +39,11 @@ import {
 import { LaunchToolResponseSchema, SessionLaunchResponseSchema } from "./launch.ts";
 import { PeerListResponseSchema, SendMessageResponseSchema } from "./peer-tools.ts";
 import {
+  SecretDiscardResponseSchema,
+  SecretPutResponseSchema,
+  SecretTakeResponseSchema,
+} from "./secret.ts";
+import {
   PermitAttachmentReadResponseSchema,
   PermitPermissionApplyResponseSchema,
   PermitReadResponseSchema,
@@ -120,6 +125,9 @@ export const RESPONSE_SCHEMAS = {
   user_prompt: UserPromptResponseSchema,
   request_override: RequestOverrideResponseSchema,
   turn_abort: TurnAbortResponseSchema,
+  secret_put: SecretPutResponseSchema,
+  secret_take: SecretTakeResponseSchema,
+  secret_discard: SecretDiscardResponseSchema,
   sidecar_reply: SidecarReplyResponseSchema,
   sidecar_hello: SidecarHelloResponseSchema,
   session_facts: SessionFactsResponseSchema,

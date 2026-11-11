@@ -14,6 +14,7 @@ import {
 } from "./request-override.ts";
 import { ClaudeVersionSchema, LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
+import { SecretsStreamEventSchema } from "./secret.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 
 /** One say the person has not read (DR-0045 §7): a `say` tool call of a
@@ -320,5 +321,6 @@ export const StreamEventSchema = v.variant("ev", [
   LlmRequestsStreamEventSchema,
   LlmStatusStreamEventSchema,
   ClaudeVersionStreamEventSchema,
+  SecretsStreamEventSchema,
 ]);
 export type StreamEvent = Output<typeof StreamEventSchema>;

@@ -369,6 +369,17 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
     { ok: true, outcome: "unconfirmed" },
   ],
   turn_abort: [{ ok: true }],
+  secret_put: [
+    {
+      ok: true,
+      notice: { sid: "s1", outcome: "delivered" },
+      key: "1b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
+      chars: 16,
+    },
+    { ok: true, notice: { sid: "s1", outcome: "not_delivered", reason: "no_module" }, chars: 16 },
+  ],
+  secret_take: [{ ok: true, value: "test-secret-0123\n" }],
+  secret_discard: [{ ok: true }],
   request_override: [
     { ok: true, delivery: "no_module" },
     { ok: true, delivery: "applied" },

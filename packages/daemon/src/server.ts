@@ -234,6 +234,12 @@ import {
 import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
 import { type WebhookSource } from "./webhook.ts";
 import { releaseDaemonResources } from "./daemon-shutdown.ts";
+import {
+  createSecretStore,
+  type SecretStore,
+  SecretValue,
+  secretNoticeText,
+} from "./secret-store.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import {
   productionClaudeUpdateDeps,
@@ -481,6 +487,9 @@ export interface Daemon {
   /** Tells a session what the person's presses did to its settings file,
    * once per burst (DR-0040 §12). */
   settingsDiffNotifier: SettingsDiffNotifier;
+  /** The secrets the person handed to sessions, memory only (secret-store.ts,
+   * DR-0052 §4). */
+  secrets: SecretStore;
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
@@ -616,6 +625,7 @@ export function createDaemon(host: DaemonHost): Daemon {
     settingsDiffNotifier: createSettingsDiffNotifier((sid, text) => {
       void tellSettingsDiff(daemon, sid, text);
     }),
+    secrets: createSecretStore(() => broadcastSecrets(daemon)),
     sidecarReplies: new SidecarReplies(),
     sessionFacts: new SessionFactsStore(),
     sessionOverrides: new SessionOverrides(),
@@ -1673,6 +1683,23 @@ function broadcastPermitState(daemon: Daemon): void {
   }
 }
 
+/** Push the secrets held to one connection (ev:"secrets"): the full list,
+ * so the same call serves a fresh subscriber's catch-up and the live update
+ * (DR-0052 §7). What it carries is how each is listed, never its id or
+ * value. */
+function sendSecrets(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "secrets", secrets: daemon.secrets.list() });
+}
+
+/** Push the secrets held to every user-role subscriber after a change. Never
+ * to a session. Not while shutting down, as broadcastSayUnread. */
+function broadcastSecrets(daemon: Daemon): void {
+  if (daemon.shuttingDown) return;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") sendSecrets(daemon, sub);
+  }
+}
+
 /** Both of a one-shot read's readers, given each line in turn. */
 function bothReaders(a: OneShotLineReader, b: OneShotLineReader): OneShotLineReader {
   return {
@@ -1933,6 +1960,9 @@ const IDENTITY_OPS: ReadonlySet<RequestOp> = new Set<RequestOp>([
   "user_prompt",
   "request_override",
   "turn_abort",
+  "secret_put",
+  "secret_take",
+  "secret_discard",
   "sidecar_reply",
   "sidecar_hello",
   "session_facts",
@@ -2567,6 +2597,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same reason as the unread says: sent even when empty.
       sendPermitState(daemon, conn);
       sendRequestOverrides(daemon, conn);
+      // Sent even when empty, as the unread says: a tab reconnecting to a
+      // restarted daemon still lists what the old one held.
+      sendSecrets(daemon, conn);
       return;
     }
 
@@ -2976,6 +3009,82 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, outcome.code, outcome.msg);
         return;
       }
+      send(conn, { ok: true });
+      return;
+    }
+
+    case "secret_put": {
+      // user role only (DR-0052 §3): handing a secret to a session is the
+      // person's.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'secret_put' requires user role");
+        return;
+      }
+      const sid = req.session_id;
+      // Wrapped at once, so nothing of the daemon holds the value as text
+      // (DR-0052 §8).
+      const put = daemon.secrets.put(sid, new SecretValue(req.value));
+      // Slow reply: it waits for the notice to come to its outcome (DR-0029).
+      const notice = await sendNotice(
+        { from: DIRECT_DELIVERY_DAEMON_SENDER, sid, text: secretNoticeText(put.id) },
+        noticeDeps(daemon),
+      );
+      // No one knows the id of a secret whose notice did not arrive, so
+      // nothing could take it (DR-0052 §5).
+      const held = notice.outcome !== "not_delivered";
+      if (!held) daemon.secrets.drop(put.id);
+      daemon.log.info(
+        `secret_put: session_id=${sid} key=${put.listed.key} chars=${String(put.listed.chars)}` +
+          ` notice=${notice.outcome}` +
+          (notice.outcome === "not_delivered" ? ` (${notice.reason}), dropped` : ""),
+      );
+      send(conn, {
+        ok: true,
+        notice,
+        chars: put.listed.chars,
+        ...(held ? { key: put.listed.key } : {}),
+      });
+      return;
+    }
+
+    case "secret_take": {
+      // user role only (DR-0052 §6): the CLI asks as the person's client,
+      // and a reply on the session role's path would come back as a tool's
+      // result, into the conversation.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'secret_take' requires user role");
+        return;
+      }
+      const taken = daemon.secrets.take(req.id);
+      if (taken === undefined) {
+        sendErr(
+          conn,
+          ErrorCode.not_found,
+          "no secret is held under this id: it expired (5 minutes after it was handed in), was discarded, or was never issued",
+        );
+        return;
+      }
+      daemon.log.info(`secret_take: key=${taken.listed.key}`);
+      // The one place the value is made into text again (DR-0052 §8).
+      send(conn, { ok: true, value: taken.value.reveal() });
+      return;
+    }
+
+    case "secret_discard": {
+      // user role only (DR-0052 §7): the webui's 破棄.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'secret_discard' requires user role");
+        return;
+      }
+      if (!daemon.secrets.discard(req.key)) {
+        sendErr(
+          conn,
+          ErrorCode.not_found,
+          "no secret is held under this key: it expired or was discarded",
+        );
+        return;
+      }
+      daemon.log.info(`secret_discard: key=${req.key}`);
       send(conn, { ok: true });
       return;
     }
@@ -3846,6 +3955,7 @@ export async function shutdownDaemon(daemon: Daemon, reason?: string): Promise<v
   daemon.testLifeline?.release();
   stopAgentsPoller(daemon.agentsPoller);
   daemon.settingsDiffNotifier.stop();
+  daemon.secrets.stop();
   daemon.translator.stop();
   stopAllRelays(daemon.transcriptRelay);
   stopAllSessionStatus(daemon.sessionStatus);

@@ -283,6 +283,23 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ok: { op: "turn_abort", session_id: SID },
     bad: [{ op: "turn_abort" }, { op: "turn_abort", session_id: "" }],
   },
+  secret_put: {
+    ok: { op: "secret_put", session_id: SID, value: "test-secret-0123" },
+    bad: [
+      { op: "secret_put", session_id: SID },
+      { op: "secret_put", session_id: SID, value: "" },
+      { op: "secret_put", session_id: SID, value: 123 },
+      { op: "secret_put", value: "test-secret-0123" },
+    ],
+  },
+  secret_take: {
+    ok: { op: "secret_take", id: "0b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" },
+    bad: [{ op: "secret_take" }, { op: "secret_take", id: "" }],
+  },
+  secret_discard: {
+    ok: { op: "secret_discard", key: "1b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" },
+    bad: [{ op: "secret_discard" }, { op: "secret_discard", key: "" }],
+  },
   sidecar_reply: {
     ok: { op: "sidecar_reply", reply: { id: "i1", ok: true, result: { outcome: "accepted" } } },
     bad: [{ op: "sidecar_reply" }, { op: "sidecar_reply", reply: { id: "i1", ok: false } }],

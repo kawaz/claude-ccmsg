@@ -1,6 +1,7 @@
 // SessionView Status-tab body (DR-0020): the gauges of what the session runs
 // as now, the one table of what it is and its identifiers, its environment,
-// the operations on it and the danger zone, from the daemon's session_status_subscribe snapshot
+// the secrets handed to it (SecretHandoff, DR-0052), the operations on it and
+// the danger zone, from the daemon's session_status_subscribe snapshot
 // (the context) and the shared store. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
 // needs the same live data); session identity metadata is resolved here from
@@ -50,6 +51,7 @@ import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
 import { sessionRunsAs } from "../status-session-forms.ts";
 import { SessionOverrideField, type SessionOverrideChange } from "./RequestOverridePicker.tsx";
+import { SecretHandoff } from "./SecretHandoff.tsx";
 
 /** DR-0028 danger zone: terminate the OS process behind this session.
  * Deliberately at the very bottom of the Status tab (kawaz: "普段触らない
@@ -809,6 +811,7 @@ export function StatusPanel({
         </dl>
         <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
       </section>
+      <SecretHandoff key={sid} sid={sid} />
       <SessionControls
         key={sid}
         sid={sid}
