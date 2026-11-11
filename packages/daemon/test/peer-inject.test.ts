@@ -64,7 +64,7 @@ describe("PeerInjector", () => {
   test("unavailable: unknown sid, other peerProtocol, no token, no socket, no config dir", async () => {
     const injector = new PeerInjector();
     cleanups.push(() => injector.close());
-    const noPeer = (lookup: PeerSocketLookup): InjectResult => ({
+    const noPeer = (lookup: Exclude<PeerSocketLookup, "scan_timed_out">): InjectResult => ({
       outcome: "unavailable",
       cause: "no_peer_socket",
       lookup,
@@ -90,19 +90,32 @@ describe("PeerInjector", () => {
   });
 
   // A state file that is never read through (here a FIFO no one writes to)
-  // keeps the scan from finishing: the lookup says the time ran out.
-  test("unavailable: the state files not read in time", async () => {
+  // keeps the scan from finishing: the lookup says the time ran out, and how
+  // far the read got — the harness's own state file read, the FIFO not, with
+  // the process running all along (its timers on time).
+  test("unavailable: the state files not read in time, and how far the read got", async () => {
     const h = fakeHarness();
-    const fifo = path.join(h.configDir, "sessions", "99.json");
+    const sessionsDir = path.join(h.configDir, "sessions");
+    const fifo = path.join(sessionsDir, "99.json");
     expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
     const injector = new PeerInjector({ scanMs: 100 });
     cleanups.push(() => injector.close());
     try {
-      expect(await injector.deliver(h.configDir, SID, MESSAGE)).toEqual({
-        outcome: "unavailable",
+      const result = await injector.deliver(h.configDir, SID, MESSAGE);
+      if (result.outcome !== "unavailable" || !("late" in result)) {
+        throw new Error(`not a scan that ran out of time: ${JSON.stringify(result)}`);
+      }
+      const { elapsedMs, timerLateMs, ...got } = result.late;
+      expect({ cause: result.cause, lookup: result.lookup, ...got }).toEqual({
         cause: "no_peer_socket",
         lookup: "scan_timed_out",
+        dir: sessionsDir,
+        listed: 2,
+        read: 1,
+        budgetMs: 100,
       });
+      expect(elapsedMs).toBeGreaterThanOrEqual(100);
+      expect(timerLateMs).toBeLessThan(50);
     } finally {
       // Opening the FIFO for writing lets the blocked read finish.
       fs.writeFileSync(fifo, "");

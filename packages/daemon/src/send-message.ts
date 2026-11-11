@@ -21,6 +21,7 @@ import {
 } from "@ccmsg/protocol";
 import type { SessionRun } from "./session-runs.ts";
 import type { InjectFrame, InjectResult } from "./peer-inject.ts";
+import { lateScanText } from "./time-budget.ts";
 import type { Serial } from "./serial.ts";
 import type { AgentSendOutcome } from "./agent-send.ts";
 
@@ -164,6 +165,16 @@ async function startSend(
   return [await sendToPeer(peer, from, text, "send_message", deps)];
 }
 
+/** A delivery's result in the words of the daemon's log: the outcome, and
+ * for one that did not arrive why, down to how far a late read of the
+ * session's files got. */
+function resultText(result: InjectResult): string {
+  if (result.outcome !== "unavailable") return result.outcome;
+  if (result.cause !== "no_peer_socket") return `unavailable (${result.cause})`;
+  const late = result.lookup === "scan_timed_out" ? `; ${lateScanText(result.late)}` : "";
+  return `unavailable (no_peer_socket: ${result.lookup}${late})`;
+}
+
 /** What a session named by id that no live run serves is answered with. */
 function notRunning(sid: string, deps: NoticeDeps): SendMessageResult {
   const kind = deps.readiness(sid).kind;
@@ -242,10 +253,7 @@ async function sendToPeer(
       const content = renderAddressedDelivery({ mid, from, text });
       const result = await deps.deliver(run, { mid, content });
       deps.log(
-        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (${op}): ${result.outcome}` +
-          (result.outcome === "unavailable"
-            ? ` (${result.cause}${result.cause === "no_peer_socket" ? `: ${result.lookup}` : ""})`
-            : ""),
+        `peer-inject ${mid} -> ${run.sid}.${String(run.pid)} (${op}): ${resultText(result)}`,
       );
       return result;
     }),

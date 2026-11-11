@@ -13,7 +13,7 @@ import {
   parseWith,
   type ClaudeSessionFile,
 } from "@ccmsg/protocol";
-import { withinBudget } from "./time-budget.ts";
+import { type LateScan, type ScanProgress, withinBudget } from "./time-budget.ts";
 
 /** One live run of a session: the harness process `pid` holding session
  * `sid` under the CLAUDE_CONFIG_DIR `configDir`, working in `cwd`, under the
@@ -33,25 +33,37 @@ export const RUNS_SCAN_MS = 1_000;
  * `configDirs`. A file whose process no longer runs is a run that ended
  * without removing it, and is left out. A config dir that cannot be read, or
  * whose files are not all read within `scanMs` of this process's running time
- * (withinBudget), adds none. A process is one
- * run however many of `configDirs` name its config dir (one through a
- * symlink, another by its realpath): it is listed once, so it is sent to
- * once. */
+ * (withinBudget), adds none; `onLate` is told how far the read of the latter
+ * got, since what it leaves out reads like a session that is not running. A
+ * process is one run however many of `configDirs` name its config dir (one
+ * through a symlink, another by its realpath): it is listed once, so it is
+ * sent to once. */
 export async function liveRuns(
   configDirs: readonly string[],
   isAlive: (pid: number) => boolean,
   scanMs: number = RUNS_SCAN_MS,
+  onLate: (scan: LateScan) => void = () => {},
 ): Promise<SessionRun[]> {
   const perDir = await Promise.all(
-    configDirs.map((configDir) => withinBudget(runsIn(configDir, isAlive), scanMs, [])),
+    configDirs.map((configDir) => {
+      const progress: ScanProgress = { listed: undefined, read: 0 };
+      return withinBudget(runsIn(configDir, isAlive, progress), scanMs, (spent): SessionRun[] => {
+        onLate({ dir: path.join(configDir, "sessions"), ...progress, ...spent });
+        return [];
+      });
+    }),
   );
   const byPid = new Map<number, SessionRun>();
   for (const run of perDir.flat()) if (!byPid.has(run.pid)) byPid.set(run.pid, run);
   return [...byPid.values()];
 }
 
-async function runsIn(configDir: string, isAlive: (pid: number) => boolean): Promise<SessionRun[]> {
-  const read = await readSessionsDir(configDir, isAlive);
+async function runsIn(
+  configDir: string,
+  isAlive: (pid: number) => boolean,
+  progress: ScanProgress,
+): Promise<SessionRun[]> {
+  const read = await readSessionsDir(configDir, isAlive, progress);
   return read.live.map(({ sessionId: sid, pid, cwd, name }) => ({
     configDir,
     sid,
@@ -73,35 +85,32 @@ export interface SessionsDirRead {
   unread?: string[];
 }
 
-/** Read `<configDir>/sessions/<pid>.json` of every process. */
+/** Read `<configDir>/sessions/<pid>.json` of every process, counting in
+ * `progress` how far the read has got. */
 export async function readSessionsDir(
   configDir: string,
   isAlive: (pid: number) => boolean,
+  progress: ScanProgress = { listed: undefined, read: 0 },
 ): Promise<SessionsDirRead> {
   const sessionsDir = path.join(configDir, "sessions");
   let names: string[];
   try {
     names = await readdir(sessionsDir);
   } catch (e) {
+    progress.listed = 0;
     if (e instanceof Error && "code" in e && e.code === "ENOENT") return { live: [] };
     return { live: [], unread: [`${sessionsDir}: ${errorText(e)}`] };
   }
+  const records = names.filter((file) => /^\d+\.json$/.test(file));
+  progress.listed = records.length;
   const reads = await Promise.all(
-    names
-      .filter((file) => /^\d+\.json$/.test(file))
-      .map(async (file): Promise<ClaudeSessionFile | string | null> => {
-        const filePath = path.join(sessionsDir, file);
-        let text: string;
-        try {
-          text = await readFile(filePath, "utf8");
-        } catch (e) {
-          if (e instanceof Error && "code" in e && e.code === "ENOENT") return null;
-          return `${filePath}: ${errorText(e)}`;
-        }
-        const read = parseWith(ClaudeSessionFileTextSchema, text);
-        if (!read.ok) return `${filePath}: ${read.failure.summary}`;
-        return isAlive(read.value.pid) ? read.value : null;
-      }),
+    records.map(async (file): Promise<ClaudeSessionFile | string | null> => {
+      try {
+        return await readRecord(path.join(sessionsDir, file), isAlive);
+      } finally {
+        progress.read += 1;
+      }
+    }),
   );
   const live: ClaudeSessionFile[] = [];
   const unread: string[] = [];
@@ -110,6 +119,25 @@ export async function readSessionsDir(
     else if (read !== null) live.push(read);
   }
   return unread.length > 0 ? { live, unread } : { live };
+}
+
+/** One `<pid>.json`: the record of a process that still runs, null for one
+ * whose process does not (or a file removed while the dir was read), or why
+ * it does not read. */
+async function readRecord(
+  filePath: string,
+  isAlive: (pid: number) => boolean,
+): Promise<ClaudeSessionFile | string | null> {
+  let text: string;
+  try {
+    text = await readFile(filePath, "utf8");
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return null;
+    return `${filePath}: ${errorText(e)}`;
+  }
+  const read = parseWith(ClaudeSessionFileTextSchema, text);
+  if (!read.ok) return `${filePath}: ${read.failure.summary}`;
+  return isAlive(read.value.pid) ? read.value : null;
 }
 
 /** `dir` as a realpath, or undefined when it does not resolve. */

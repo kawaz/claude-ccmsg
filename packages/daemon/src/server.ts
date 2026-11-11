@@ -172,7 +172,8 @@ import {
   projectSettingsPath,
   type SettingsDiffNotifier,
 } from "./project-permissions.ts";
-import { liveRuns, realpathOrUndefined } from "./session-runs.ts";
+import { liveRuns, realpathOrUndefined, RUNS_SCAN_MS } from "./session-runs.ts";
+import { lateScanText } from "./time-budget.ts";
 import {
   listPeers,
   type NoticeDeps,
@@ -1331,12 +1332,16 @@ function clientBuildFields(
 }
 
 /** Where send_message and peer_list read the sessions they match from: the
- * live runs of the sessions the daemon reaches, read afresh. */
+ * live runs of the sessions the daemon reaches, read afresh. A config dir not
+ * read in time adds none, which a send reports as a session that is not
+ * running: the log says that it was the read. */
 function peerDeps(daemon: Daemon): PeerDeps {
   return {
     runs: async () => {
       const scope = sessionScope(daemon);
-      const runs = await liveRuns(scope.dirs, isProcessAlive);
+      const runs = await liveRuns(scope.dirs, isProcessAlive, RUNS_SCAN_MS, (late) => {
+        daemon.log.warn(`session runs: not read in time, left out: ${lateScanText(late)}`);
+      });
       return runs.filter((run) => scope.has(run.configDir, run.sid));
     },
     realpath: realpathOrUndefined,
