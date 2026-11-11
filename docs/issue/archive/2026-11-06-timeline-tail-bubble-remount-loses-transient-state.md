@@ -1,6 +1,6 @@
 ---
 title: TL 末尾のバブルは後から行が足されると作り直され、一時状態が消える
-status: open
+status: resolved
 category: bug
 created: 2026-11-06T14:40:04+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T22:17:17+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","dr/DR-0050"]
 blocked_by:
 origin: permit-bang-run worker
 ---

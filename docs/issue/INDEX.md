@@ -8,7 +8,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-11-11 | design | open | [vcs-workspace-name-from-jj-record](./2026-11-11-vcs-workspace-name-from-jj-record.md) | セッションの一覧の vcs.workspace (と ws) は、jj の workspace の名前をそのディレクトリ名から取っている… |
 | 2026-11-11 | design | open | [peer-model-workspace-vcs-repo](./2026-11-11-peer-model-workspace-vcs-repo.md) | セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す) |
 | 2026-11-10 | bug | open | [in-view-search-live-range-webkit](./2026-11-10-in-view-search-live-range-webkit.md) | webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性 |
-| 2026-11-06 | bug | open | [timeline-tail-bubble-remount-loses-transient-state](./2026-11-06-timeline-tail-bubble-remount-loses-transient-state.md) | TL 末尾のバブルは後から行が足されると作り直され、ボタンの送信中 / 送った時刻 / 「コピーしました」などの一時状態が消える |
 | 2026-11-06 | task | open | [drop-legacy-client-version-hello-key](./2026-11-06-drop-legacy-client-version-hello-key.md) | hello の wire field client_version は ccmsg_version に改名済み。移行期間の旧名の受け口を、旧 module が全部再起動された後に外す |
 | 2026-11-05 | bug | open | [timeline-push-cost-after-older](./2026-11-05-timeline-push-cost-after-older.md) | older で読み切った TL では live tail の push ごとに最大 1.3 秒の long task が出る (読んだ量に比例する layout と markdown の parse) |
 | 2026-11-02 | bug | open | [bun-preload-default-timeout-first-file-only](./2026-11-02-bun-preload-default-timeout-first-file-only.md) | preload の setDefaultTimeout(15_000) が最初に走るテストファイルにしか効かず、2 番目以降は 5000ms のまま |
