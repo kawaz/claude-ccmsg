@@ -15,7 +15,8 @@
 // viewport (app.css `.modal-dialog`): the top layer has no container to ask.
 //
 // The caller puts the content in: `.modal-dialog-body` scrolls, and
-// `.modal-dialog-foot` stays under it. A form spanning both carries the
+// `.modal-dialog-foot` stays right under it (narrow too, not at the bottom of
+// the screen). A form spanning both carries the
 // class `modal-dialog-form`.
 import type { ComponentChildren, JSX } from "preact";
 import { useId, useLayoutEffect, useRef } from "preact/hooks";
