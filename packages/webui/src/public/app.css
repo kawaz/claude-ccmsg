@@ -4692,11 +4692,16 @@ button.session-tab {
 }
 
 /* TL の最上部 (最初の行の上) の「過去分を上に読み込む」「過去分を下に読み込む」。
- * 行の列と同じ左右の余白で、2 つを半分ずつの幅で左右に並べる。 */
+ * 行の列と同じ左右の余白で、2 つを半分ずつの幅で左右に並べる。フィルタ中は
+ * hidden で隠す。 */
 .tl-load-older {
   display: flex;
   gap: var(--space-6);
   padding: var(--space-8) var(--space-11) 0;
+}
+
+.tl-load-older[hidden] {
+  display: none;
 }
 
 .tl-load-older .tl-wide-button {

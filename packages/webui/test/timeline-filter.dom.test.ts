@@ -679,6 +679,58 @@ describe("the filter's 「全て既読」", () => {
   });
 });
 
+// The filter lists every say / request from notification_list (§5), so
+// reading older pages changes nothing it shows: the top's 「過去分を上に
+// 読み込む」「過去分を下に読み込む」 are hidden while filtered, the same element
+// coming back when the filter is taken off.
+describe("the 過去分を読み込む buttons under the filter", () => {
+  function loadOlder(root: HTMLElement): HTMLElement | null {
+    return root.querySelector<HTMLElement>(".tl-load-older");
+  }
+
+  test("are hidden while filtered and come back, the same element, without a filter", async () => {
+    const { root, store } = await open({ rows: [sayRow(3)], start: 5000, filter: "say" });
+    const buttons = instanceOf(loadOlder(root), HTMLElement, ".tl-load-older");
+    expect(buttons.hidden).toBe(true);
+    await filterTo(store, null);
+    expect(loadOlder(root)).toBe(buttons);
+    expect(buttons.hidden).toBe(false);
+    expect([...buttons.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "↑過去分を上に読み込む↑",
+      "↓過去分を下に読み込む↓",
+    ]);
+    await filterTo(store, "permit");
+    expect(loadOlder(root)).toBe(buttons);
+    expect(buttons.hidden).toBe(true);
+  });
+
+  test("are not there either way once the transcript is read from its first byte", async () => {
+    const { root, store } = await open({ rows: [...exchange(1), sayRow(1)], filter: "say" });
+    expect(loadOlder(root)).toBeNull();
+    await filterTo(store, null);
+    expect(loadOlder(root)).toBeNull();
+    await filterTo(store, "permit");
+    expect(loadOlder(root)).toBeNull();
+  });
+
+  test("the CSS hides them while filtered", async () => {
+    const style = document.createElement("style");
+    // The sheet fed as one line, as in the 「全て既読」 CSS test above.
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root, store } = await open({ rows: [sayRow(3)], start: 5000, filter: "permit" });
+      const buttons = instanceOf(loadOlder(root), HTMLElement, ".tl-load-older");
+      expect(getComputedStyle(buttons).display).toBe("none");
+      await filterTo(store, null);
+      expect(getComputedStyle(buttons).display).toBe("flex");
+    } finally {
+      style.remove();
+    }
+  });
+});
+
 // DR-0050 §10: a subagent's or teammate's say is the session's to read. The
 // daemon hands it (ev:"agent_says", its row being in the agent's own file),
 // and the main Timeline draws it at its time, saying who spoke in the label's

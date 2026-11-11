@@ -625,8 +625,12 @@ export function Timeline({
                           ⤓
                         </button>
                       </div>
+                      {/* フィルタ中は出さない: 並ぶのは notification_list の全
+                       * say / 全許可依頼で、過去分を読んでも変わらない (DR-0050
+                       * §5)。「TL に戻る」と同じく同じ要素を hidden で隠すだけに
+                       * して、フィルタの切り替えで要素を作り直さない。 */}
                       {timeline.atStart ? null : (
-                        <div class="tl-load-older">
+                        <div class="tl-load-older" hidden={currentFilter !== null}>
                           {OLDER_PLACEMENTS.map((placement) => (
                             <button
                               key={placement}
