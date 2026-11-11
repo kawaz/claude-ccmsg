@@ -19,7 +19,38 @@
 
 ## 裁定待ち
 
-(なし)
+### HP-Q1: セッションの一覧のモデルに足す欄の形
+
+[issue peer-model-workspace-vcs-repo](./issue/2026-11-11-peer-model-workspace-vcs-repo.md) の 1 段目 (`ws` と `repo` を残したまま足す) で足す欄の形。足すこと自体と 2 段の進め方は裁定済み (kawaz 2026-11-11)。
+
+α: VCS の情報の置き方
+
+- [ ] a: `vcs: { type, workspace?, branch?, remotes: [{ name, url }] }` に 1 つにまとめる (統括の推し。`repository: { … }` と同じ流儀で、VCS の下に居ないセッションは `vcs` ごと無い、と言える)
+- [ ] b: `vcs_type` / `vcs_remotes` / `workspace` を並べる (kawaz の最初の書き方。今の `branch` / `repo_root` と同じ平らな並び)
+
+β: `repository` に host を入れるか
+
+- [ ] a: 入れる (`{ host, owner, name, url }`。統括の推し。forge ごとに違うもの、例えば `#123` のリンクの作り方を host で分けられる。今は GitHub 決め打ち)
+- [ ] b: 入れない (`{ owner, name, url }`。host は `url` から読める)
+
+γ: owner が多段の時 (GitLab の `group/sub/demo`) の分け方
+
+- [ ] a: 最後の 1 段を `name`、それより前を `owner` (`owner: "group/sub"`, `name: "demo"`。統括の推し)
+- [ ] b: 最初の 1 段を `owner`、残りを `name`
+
+### HP-Q2: 「! で実行」の結果に成否を出すか
+
+[DR-0040](./decisions/DR-0040-permit-request-tool.md) §11 は「成功か失敗かは出さない」と決めている (bash mode の行が終了コードを持たないため)。Claude Code 2.1.322 では、出力のある `!` のコマンドは、終了コードが 0 なら出力が全部 `<bash-stdout>` に、0 以外なら全部 `<bash-stderr>` に入っていた (5 例。[findings](./findings/2026-11-11-permit-bang-multiline.md))。出力が空のコマンド (`false` 等) は今も見分けられない。
+
+- [ ] a: 今のまま出さない (統括の推し。出力が空の失敗を見分けられないので、出せるのは「出力があった時だけ」の半端な印になる。観測も 5 例で、Claude Code の決まりとして書かれたものではない)
+- [ ] b: 出力がある時だけ成否の印を出す
+
+### HP-Q3: テストの期限をどちらに揃えるか
+
+[issue bun-preload-default-timeout-first-file-only](./issue/2026-11-02-bun-preload-default-timeout-first-file-only.md): テスト共通の初期化 (bunfig.toml の preload) が期限を 15 秒にしているが、効くのは最初に走るテストファイルだけで、2 番目以降は bun の既定の 5 秒で走っている。
+
+- [ ] a: 全ファイルに 15 秒を効かせる (統括の推し。初期化のコメント「全テストで同じ期限」に合わせる。今 5 秒で走っているテストの期限が緩む)
+- [ ] b: 5 秒を正として、初期化の期限の指定とコメントを消す
 
 ## 確認待ち
 
