@@ -2270,6 +2270,25 @@ export function permitRequestOf(
   return null;
 }
 
+/** The uuid of the row among `raws` (transcript lines) that makes the tool
+ * call `toolUseId` — the row its bubble is selected by (a request for
+ * permission's, DR-0040 §7) — or null when none of them does. Only a line
+ * that has the id in it is parsed: a tool use id (`toolu_` and letters and
+ * digits) has nothing JSON escapes, so it is in the row's text as it is, and
+ * looking through a whole window costs a substring search per line. */
+export function toolUseRowUuid(raws: readonly string[], toolUseId: string): string | null {
+  for (const raw of raws) {
+    if (!raw.includes(toolUseId)) continue;
+    const line = parseTranscriptLine(raw);
+    if (line.kind !== "turn" || line.uuid === undefined) continue;
+    const calls = line.segments.some(
+      (segment) => segment.kind === "tool-use" && segment.toolUseId === toolUseId,
+    );
+    if (calls) return line.uuid;
+  }
+  return null;
+}
+
 // --- rich|raw タブの rich 側パース (U2 kawaz spec: 「分類済みシステム
 // メッセージの details 展開時の本文に rich | raw のタブ切替を追加、ccmsg
 // 吹き出しの msg/raw タブと同じ UI 流儀」) ---

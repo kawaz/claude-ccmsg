@@ -1,7 +1,8 @@
 // TL の位置 (`/s/<sid>/timeline/<uuid>`) の選択と着地 (kawaz r76 m71)。
 //
 // 位置の意味は **`#id` 付き URL を開いたときと同じ**: その位置へ着地 (スクロール)
-// するのは「外からその位置へ来た」時 (直リンク / 戻る・進む) だけで、以降は
+// するのは「外からその位置へ来た」時 (直リンク / 戻る・進む / フィルタの
+// 「TL に移動」、DR-0050 §6) だけで、以降は
 // 選択の装飾を出すだけ。画面内のバルーンをクリックした選択ではスクロール
 // しない (kawaz r115 m4: 「クリックした瞬間に勝手に一番上へ寄せられると、
 // ダブルクリックの単語選択ができないし、2 クリック目が別の場所に当たって事故
@@ -62,6 +63,16 @@ export class PinTracker {
     this.userScrolledSincePin = false;
   }
 
+  /** 位置へ来る遷移をこの TL が自分で始める (フィルタの「TL に移動」): 次に
+   * 来る位置へは、今選んでいる位置と同じでも着地させる。押す前の操作 (ボタンを
+   * 押した mousedown も読み手の操作に数えられる) は次の位置について数えない —
+   * フィルタが外れてから着地するまでの間に測られた最下部で、来た位置を外さない
+   * ため。 */
+  arriving(): void {
+    this.landedKey = null;
+    this.userScrolledSincePin = false;
+  }
+
   /** `key` へまだ着地していなければ着地したことにして true。着地のスクロールは
    * 読み手の操作ではないので、ここからスクロールしたかを数え直す。 */
   claimLanding(key: string): boolean {
@@ -90,6 +101,10 @@ export function usePositionPin({
    * (kawaz r76 m71: 「今だと msgid を外す方法が無い」)。head に戻しても
    * その場ではスクロールしない。 */
   selectPosition: (uuid: string) => void;
+  /** フィルタを外して `uuid` の位置へ移り、外からその位置へ来た時と同じに
+   * 着地させる (TL 表示領域の一番上に置く)。フィルタの「TL に移動」が使う。
+   * 今選んでいる位置と同じでも着地する。 */
+  landOn: (uuid: string) => void;
   /** scroller を測った結果 (最下部付近か) を位置に反映する: 最下部なら head
    * (位置を張っていれば、読み手が自分でスクロールして来た時だけ外す)、そう
    * でなければ表示領域の先頭の項目を、セッションへ戻った時の位置として覚える。 */
@@ -107,6 +122,15 @@ export function usePositionPin({
       replaceNavigation(timelineHref(sid, next, currentFilter));
     },
     [sid, currentPosition, currentFilter, agentActive, tracker],
+  );
+  const landOn = useCallback(
+    (uuid: string) => {
+      if (agentActive) return;
+      tracker.arriving();
+      rememberTimelinePosition(sid, uuid);
+      replaceNavigation(timelineHref(sid, uuid));
+    },
+    [sid, agentActive, tracker],
   );
   const onScrollMeasured = useCallback(
     (scroller: HTMLElement, nearBottom: boolean) => {
@@ -134,7 +158,7 @@ export function usePositionPin({
     [currentPosition, currentFilter, sid, tracker],
   );
   const onUserScrollIntent = useCallback(() => tracker.userScrolled(), [tracker]);
-  return { tracker, selectPosition, onScrollMeasured, onUserScrollIntent };
+  return { tracker, selectPosition, landOn, onScrollMeasured, onUserScrollIntent };
 }
 
 /** 位置への着地。**その位置を開いた / その位置へ遷移した最初の 1 回だけ**

@@ -229,6 +229,36 @@ describe("useFilterScroll", () => {
     expect(calls).toEqual(["element:s1"]);
   });
 
+  // The 🔐 filter's 「TL に移動」 takes the filter off and moves to another
+  // position at once: the landing on that position places it, so nothing is
+  // kept here (not even the bottom the filter was looked at from).
+  test("taking the filter off while moving to another position keeps nothing", async () => {
+    const layout: Layout = {
+      tops: new Map([
+        ["s1", 100],
+        ["s2", 300],
+      ]),
+      hidden: new Set(),
+      scrollHeight: 600,
+    };
+    const { hook, calls, scroller } = await mountScroll(
+      { filter: "permit", position: "head" },
+      layout,
+    );
+    scroller.scrollTop = 100;
+    calls.length = 0;
+    navigateSoon();
+    await hook.rerender({ filter: null, position: "s1" });
+    expect(calls).toEqual([]);
+
+    // From a selected position to another one, likewise.
+    await hook.rerender({ filter: "permit", position: "s2" });
+    calls.length = 0;
+    navigateSoon();
+    await hook.rerender({ filter: null, position: "s1" });
+    expect(calls).toEqual([]);
+  });
+
   test("without a navigation's eve to measure on, nothing is moved", async () => {
     const layout: Layout = { tops: new Map([["s1", 100]]), hidden: new Set(), scrollHeight: 3000 };
     const { hook, calls } = await mountScroll({ filter: "say", position: "s1" }, layout);

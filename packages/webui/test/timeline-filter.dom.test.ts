@@ -39,6 +39,7 @@ import { withDom } from "./dom.ts";
 import { permitRows } from "./permit-rows.ts";
 import { assistantContentRow, line as jsonl } from "../../protocol/test/transcript-rows.ts";
 import {
+  endOf,
   exchange,
   FakeTranscriptWs,
   Mounted,
@@ -673,6 +674,159 @@ describe("the filter's 「全て既読」", () => {
       expect(display()).toEqual(["none", "inline-block", "inline-block"]);
       await filterTo(store, null);
       expect(display().slice(1)).toEqual(["none", "none"]);
+    } finally {
+      style.remove();
+    }
+  });
+});
+
+// Under the 🔐 filter, each request's bubble has a 「TL に移動」 bar right
+// below it (DR-0050 §4). Pressing it takes the filter off and moves to the
+// row of that request's `permit` call, landed on at the top (§6): a request
+// in the window at once, one outside it once older pages have been read up
+// to its row, page after page. The bars are the same elements, hidden,
+// without the filter and under 🔔.
+describe("the 🔐 filter's 「TL に移動」", () => {
+  /** What the press goes on to do once the last page is in (the move, the bar
+   * back to itself) runs in the microtasks after it. */
+  const drained = () => act(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
+  function jumpButtons(root: HTMLElement): HTMLButtonElement[] {
+    return [...root.querySelectorAll<HTMLButtonElement>(".tl-permit-jump")];
+  }
+
+  test("sits right below each request's bubble, in the wide button's look", async () => {
+    const { root } = await open({
+      rows: [...exchange(1), ...requestRows(1), sayRow(2), ...requestRows(3)],
+      filter: "permit",
+    });
+    const bubbles = [...lines(root).children].filter(
+      (child): child is HTMLElement =>
+        child instanceof HTMLElement && child.dataset.notif === "permit",
+    );
+    expect(bubbles.map((bubble) => bubble.dataset.timelineUuid)).toEqual([
+      uuidOf("a", 501),
+      uuidOf("a", 503),
+    ]);
+    const buttons = jumpButtons(root);
+    expect(bubbles.map((bubble) => bubble.nextElementSibling)).toEqual(buttons);
+    for (const button of buttons) {
+      expect(button.textContent).toBe("TL に移動");
+      expect(button.classList.contains("tl-wide-button")).toBe(true);
+      expect(button.hidden).toBe(false);
+      expect(button.disabled).toBe(false);
+    }
+  });
+
+  test("a request in the window: takes the filter off to its row, replacing the entry", async () => {
+    const { root, ws } = await open({
+      rows: [...exchange(1), ...requestRows(1), ...exchange(2)],
+      filter: "permit",
+    });
+    await act(() => jumpButtons(root)[0]?.click());
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
+    expect(histories).toEqual(["replace"]);
+    expect(ws.reads).toHaveLength(1);
+  });
+
+  test("a request outside the window: reads older pages until its row is in, then moves to it", async () => {
+    const oldest = requestRows(1);
+    const middle = exchange(1);
+    const middleStart = endOf(oldest, 0);
+    const windowStart = endOf(middle, middleStart);
+    const { root, ws } = await open({
+      rows: [...requestRows(3), ...exchange(2)],
+      start: windowStart,
+      filter: "permit",
+      permits: [listedPermit(1), listedPermit(3)],
+    });
+    const [listed, inWindow] = jumpButtons(root);
+    expect(listed?.previousElementSibling?.getAttribute("data-filter-only")).toBe("permit");
+    await act(() => listed?.click());
+    expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
+    // 押した方だけが「読み込み中…」で、読み込みの間はどれも押せない。
+    expect(listed?.textContent).toBe("読み込み中…");
+    expect(inWindow?.textContent).toBe("TL に移動");
+    expect(jumpButtons(root).map((button) => button.disabled)).toEqual([true, true]);
+
+    await ws.lastRead().answer(page(middle, middleStart));
+    expect(ws.reads.at(-1)?.opts).toEqual({ before: middleStart });
+    expect(navigations).toEqual([]);
+    await ws.lastRead().answer(page(oldest, 0));
+    await drained();
+    expect(ws.reads).toHaveLength(3);
+    expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
+    expect(histories).toEqual(["replace"]);
+    // The request is a row of the window now, its bubble the window's (with a
+    // position), and the bars are back to themselves.
+    expect(kept(root)).toEqual([
+      ["permit", uuidOf("a", 501)],
+      ["permit", uuidOf("a", 503)],
+    ]);
+    expect(jumpButtons(root).map((button) => [button.textContent, button.disabled])).toEqual([
+      ["TL に移動", false],
+      ["TL に移動", false],
+    ]);
+  });
+
+  test("does not move once the filter was left while reading", async () => {
+    const oldest = requestRows(1);
+    const { root, store, ws } = await open({
+      rows: [...exchange(2)],
+      start: endOf(oldest, 0),
+      filter: "permit",
+      permits: [listedPermit(1)],
+    });
+    await act(() => jumpButtons(root)[0]?.click());
+    await filterTo(store, null);
+    await ws.lastRead().answer(page(oldest, 0));
+    await drained();
+    expect(navigations).toEqual([]);
+  });
+
+  test("without the filter and under 🔔 the bars are the same elements, hidden", async () => {
+    const { root, store } = await open({
+      rows: [...exchange(1), ...requestRows(1), sayRow(2)],
+      filter: "permit",
+    });
+    const [button] = jumpButtons(root);
+    expect(button?.hidden).toBe(false);
+    for (const filter of ["say", null, "permit"] as const) {
+      await filterTo(store, filter);
+      expect(jumpButtons(root)).toEqual(button === undefined ? [] : [button]);
+      expect(button?.hidden).toBe(filter !== "permit");
+    }
+  });
+
+  test("taking the 🔐 filter off re-renders nothing: every element is the same one", async () => {
+    const { root, store } = await open({
+      rows: [...exchange(1), ...requestRows(1), ...exchange(2)],
+      filter: "permit",
+    });
+    const before = [...lines(root).querySelectorAll("*")];
+    await filterTo(store, null);
+    const after = [...lines(root).querySelectorAll("*")];
+    expect(after.length).toBe(before.length);
+    expect(after.every((el, i) => el === before[i])).toBe(true);
+  });
+
+  test("the filter's CSS keeps them under 🔐 and hides them otherwise", async () => {
+    const style = document.createElement("style");
+    // The sheet fed as one line, as in the 「全て既読」 CSS test above.
+    const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
+    style.textContent = css.replace(/\s+/g, " ");
+    document.head.append(style);
+    try {
+      const { root, store } = await open({
+        rows: [...exchange(1), ...requestRows(1)],
+        filter: "permit",
+      });
+      const display = () => jumpButtons(root).map((button) => getComputedStyle(button).display);
+      expect(display()).toEqual(["inline-block"]);
+      await filterTo(store, "say");
+      expect(display()).toEqual(["none"]);
+      await filterTo(store, null);
+      expect(display()).toEqual(["none"]);
     } finally {
       style.remove();
     }

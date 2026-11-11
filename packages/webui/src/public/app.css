@@ -4664,10 +4664,11 @@ button.session-tab {
   cursor: default;
 }
 
-/* TL の行の列の上下に置く幅いっぱいのボタン: 最上部の「過去分を上に読み込む」
+/* TL の行の列に置く幅いっぱいのボタン: 最上部の「過去分を上に読み込む」
  * 「過去分を下に読み込む」(.tl-load-older が半分ずつに分ける) と、フィルタ中の
- * 末尾の「TL に戻る」。押すとその場所に TL が現れる (読み込まれる / 戻る) こと
- * を幅で示す (kawaz 2026-11-11)。それ以外の操作のボタンには使わない。
+ * 末尾の「TL に戻る」、🔐 のフィルタの各依頼の下の「TL に移動」。押すとその
+ * 場所に TL が現れる (読み込まれる / 戻る / 移る) ことを幅で示す
+ * (kawaz 2026-11-11)。それ以外の操作のボタンには使わない。
  * プライマリではない控えめな見た目で、どれも同じ見た目にする。 */
 .tl-wide-button {
   font: inherit;
@@ -5061,12 +5062,14 @@ button.session-tab {
 /* TL のフィルタ (DR-0050 §5): その種類のバブル (`data-notif`) だけを残し、
  * 他の行は隠すだけ。描き直さないので、解除で fold・翻訳・raw の状態がそのまま
  * 戻り、解除の位置合わせが測る要素も同じ DOM のまま。既読の失敗の行と
- * 「ありません」の行と末尾の「全て既読」「TL に戻る」は残す。 */
+ * 「ありません」の行と末尾の「全て既読」「TL に戻る」は残す。🔐 は各依頼の下の
+ * 「TL に移動」も残す。 */
 .tl-lines[data-filter="say"]
   > :not([data-notif="say"], .tl-say-error, .tl-filter-empty, .tl-filter-read-all, .tl-filter-back),
 .tl-lines[data-filter="permit"]
   > :not(
     [data-notif="permit"],
+    .tl-permit-jump,
     .tl-say-error,
     .tl-filter-empty,
     .tl-filter-read-all,
@@ -5102,6 +5105,17 @@ button.session-tab {
 
 .tl-filter-read-all[hidden],
 .tl-filter-back[hidden] {
+  display: none;
+}
+
+/* 🔐 のフィルタで各依頼のバブルの直下に置く「TL に移動」(.tl-wide-button)。
+ * バブルとその下のボタンが 1 組に見えるよう、次の依頼との間を空ける。🔐 の
+ * フィルタの間だけ出し、それ以外は hidden で隠す。 */
+.tl-permit-jump {
+  margin-bottom: var(--space-8);
+}
+
+.tl-permit-jump[hidden] {
   display: none;
 }
 

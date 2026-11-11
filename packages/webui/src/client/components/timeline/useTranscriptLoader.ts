@@ -106,6 +106,11 @@ export function useTranscriptLoader({
   /** 読み込み済みの先頭より前を 1 ページ読んで前に足す。読み込み中か先頭まで
    * 読み込み済みなら何もせず null。 */
   loadOlder: () => Promise<void> | null;
+  /** 読み込み済みの行に `find` が見つけるまで、先頭より前を 1 ページずつ読んで
+   * 前に足す。見つけたものを返す。先頭まで読んでも無い時、読み込みが失敗した
+   * 時、別の読み込みに替わった時は null。次のページは前のページの答えが store
+   * に入ってから、その時の先頭より前を読む。 */
+  loadOlderUntil: <T>(find: (lines: readonly string[]) => T | null) => Promise<T | null>;
   /** tail を読み直して丸ごと置き換える。読み込み中なら何もせず null。 */
   refresh: () => Promise<void> | null;
 } {
@@ -213,6 +218,29 @@ export function useTranscriptLoader({
     });
   }
 
+  // Each round reads the cache from the store rather than this render's
+  // `timeline`: the page before has changed it since (its start, its lines),
+  // and the next `before` is where that page left off.
+  async function loadOlderUntil<T>(
+    find: (lines: readonly string[]) => T | null,
+  ): Promise<T | null> {
+    for (;;) {
+      const cached = store.getState().sessionTrees.get(sid)?.timeline;
+      if (cached === undefined || cached.status !== "loaded") return null;
+      const found = find(cached.lines);
+      if (found !== null || cached.atStart) return found;
+      await readTranscriptIntoStore(store, ws, sid, {
+        started: "timeline/loading",
+        mode: "prepend",
+        opts: { ...agentOpts, before: cached.start },
+      });
+      // A page that did not reach further back (taken over by another read,
+      // or answered with nothing before `start`) would be asked for again.
+      const after = store.getState().sessionTrees.get(sid)?.timeline;
+      if (after === undefined || after.start >= cached.start) return null;
+    }
+  }
+
   // "更新" (refresh): the reader's explicit reload — re-reads the tail (before
   // omitted) and replaces the cache wholesale, rather than catching up from
   // `end` as an arrival does: it is also the way back from a cache the
@@ -226,5 +254,5 @@ export function useTranscriptLoader({
     });
   }
 
-  return { loadOlder, refresh };
+  return { loadOlder, loadOlderUntil, refresh };
 }

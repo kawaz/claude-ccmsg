@@ -453,6 +453,76 @@ describe("usePositionPin and usePositionLanding", () => {
     expect(navigations.at(-1)).toBe(timelineHref(SID, "head", "permit"));
   });
 
+  // The 🔐 filter's 「TL に移動」 (DR-0050 §6): the filter comes off and the
+  // position is landed on as if arrived at from outside, the one already
+  // selected under the filter included. Taking the filter off at that
+  // position otherwise (「TL に戻る」, the badge) does not land.
+  test("landOn takes the filter off and lands, even on the position already selected", async () => {
+    const target = UUIDS[1] ?? "";
+    const { hook, calls } = await mountPin({
+      position: "head",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    await act(() => hook.current().pin.selectPosition(target));
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: "permit" });
+    expect(calls).toEqual([]);
+
+    await act(() => hook.current().pin.landOn(target));
+    expect(navigations.at(-1)).toBe(timelineHref(SID, target));
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: null });
+    expect(calls).toEqual([`element:${target}`]);
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 1, filter: null });
+    expect(calls).toEqual([`element:${target}`]);
+  });
+
+  test("taking the filter off at the selected position does not land on it", async () => {
+    const target = UUIDS[1] ?? "";
+    const { hook, calls } = await mountPin({
+      position: "head",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    await act(() => hook.current().pin.selectPosition(target));
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: "permit" });
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: null });
+    expect(calls).toEqual([]);
+  });
+
+  // Pressing the bar is a mousedown on the scroller, which counts as the
+  // reader's own scrolling; the bottom measured after the filter came off and
+  // before the landing must not take the position the bar moved to away.
+  test("the press before landOn does not count: the bottom measured before landing keeps the position", async () => {
+    const target = UUIDS[0] ?? "";
+    const { hook, scroller } = await mountPin({
+      position: "head",
+      status: "loading",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    hook.current().pin.onUserScrollIntent();
+    await act(() => hook.current().pin.landOn(target));
+    await hook.rerender({ position: target, status: "loading", parsedVersion: 0, filter: null });
+    hook.current().pin.onScrollMeasured(scroller, true);
+    expect(navigations).toEqual([timelineHref(SID, target)]);
+  });
+
+  test("landOn from the head lands on the position it moves to", async () => {
+    const target = UUIDS[0] ?? "";
+    const { hook, calls } = await mountPin({
+      position: "head",
+      status: "loaded",
+      parsedVersion: 0,
+      filter: "permit",
+    });
+    await act(() => hook.current().pin.landOn(target));
+    expect(navigations).toEqual([timelineHref(SID, target)]);
+    await hook.rerender({ position: target, status: "loaded", parsedVersion: 0, filter: null });
+    expect(calls).toEqual([`element:${target}`]);
+  });
+
   test("an agent Timeline does not select positions", async () => {
     const { hook } = await mountPin({
       position: "head",

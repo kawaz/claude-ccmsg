@@ -7,6 +7,9 @@
 //   からの距離) を保つ。隠れていた行が戻ってその要素を中心に上下が伸びる。
 //   基準の要素は、選択中のバブル (URL の位置) が出ていればそれ、無ければ末尾を
 //   見ていたなら末尾のまま、それ以外は画面の一番上に見えているバブル
+// - フィルタを外すのと同時に位置も変わった時 (🔐 のフィルタの「TL に移動」) は
+//   何も保たない。外からその位置へ来た時と同じく、位置の着地
+//   (usePositionLanding) がその位置を TL 表示領域の一番上に置く
 //
 // 測るのは遷移の直前 (BEFORE_NAVIGATION_EVENT、FileViewer と同じ口) で、戻る /
 // 進むでフィルタが外れる時もこのイベントが先に来る。合わせるのはフィルタが
@@ -78,15 +81,15 @@ export function useFilterScroll({
     return () => window.removeEventListener(BEFORE_NAVIGATION_EVENT, capture);
   }, []);
 
-  const previousRef = useRef(filter);
+  const previousRef = useRef({ filter, position });
   useLayoutEffect(() => {
     const previous = previousRef.current;
-    previousRef.current = filter;
-    if (previous === filter) return;
+    previousRef.current = { filter, position };
+    if (previous.filter === filter) return;
     if (filter === null) {
       const anchor = anchorRef.current;
       anchorRef.current = null;
-      if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
+      if (anchor !== null && previous.position === position) holdScrollAnchor(anchor, scrollHold);
       return;
     }
     if (position === "head") scrollHold.toBottom();

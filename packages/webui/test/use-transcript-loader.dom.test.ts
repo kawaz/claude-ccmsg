@@ -60,6 +60,15 @@ async function mountHook<P, R>(
   return rendered;
 }
 
+/** `promise` の値。解決までに起きる描画を act で包む。 */
+async function settle<T>(promise: Promise<T>): Promise<T> {
+  const settled: Array<{ got: T }> = [];
+  await act(async () => {
+    settled.push({ got: await promise });
+  });
+  return defined(settled[0], "settled value").got;
+}
+
 interface LoaderProps {
   active: boolean;
 }
@@ -250,6 +259,77 @@ describe("useTranscriptLoader", () => {
       again = hook.current().loadOlder();
     });
     expect(again).toBeNull();
+    expect(ws.reads).toHaveLength(2);
+  });
+
+  // The 🔐 filter's 「TL に移動」 to a request outside the window (DR-0050 §6):
+  // older pages are read one after another, each from where the one before
+  // left off, until the lines have what is looked for.
+  test("older until found reads page after page, each once the one before is in", async () => {
+    const { store, ws, hook } = await mountLoader();
+    const oldest = exchange(1);
+    const middle = exchange(2);
+    const middleStart = endOf(oldest, 0);
+    const windowStart = endOf(middle, middleStart);
+    await ws.lastRead().answer(page(exchange(3), windowStart));
+    const hasFirst = (lines: readonly string[]) =>
+      lines.some((line) => line.includes("question 1")) ? "found" : null;
+
+    let settled = false;
+    let pending: Promise<string | null> = Promise.resolve(null);
+    await act(() => {
+      pending = hook.current().loadOlderUntil(hasFirst);
+      void pending.then(() => {
+        settled = true;
+      });
+    });
+    expect(ws.reads).toHaveLength(2);
+    expect(ws.lastRead().opts).toEqual({ before: windowStart });
+    await ws.lastRead().answer(page(middle, middleStart));
+    expect(ws.reads).toHaveLength(3);
+    expect(ws.lastRead().opts).toEqual({ before: middleStart });
+    expect(settled).toBe(false);
+    await ws.lastRead().answer(page(oldest, 0));
+    expect(await settle(pending)).toBe("found");
+    expect(ws.reads).toHaveLength(3);
+    expect(timelineOf(store).lines).toEqual([...oldest, ...middle, ...exchange(3)]);
+  });
+
+  test("older until found reads nothing when the lines have it, and gives up at the start", async () => {
+    const { ws, hook } = await mountLoader();
+    const older = exchange(1);
+    const olderEnd = endOf(older, 0);
+    await ws.lastRead().answer(page(exchange(2), olderEnd));
+    const has = (words: string) => (lines: readonly string[]) =>
+      lines.some((line) => line.includes(words)) ? words : null;
+
+    let inWindow: string | null | undefined;
+    await act(async () => {
+      inWindow = await hook.current().loadOlderUntil(has("question 2"));
+    });
+    expect(inWindow).toBe("question 2");
+    expect(ws.reads).toHaveLength(1);
+
+    let nowhere: Promise<string | null> = Promise.resolve("not asked");
+    await act(() => {
+      nowhere = hook.current().loadOlderUntil(has("question 9"));
+    });
+    expect(ws.reads).toHaveLength(2);
+    await ws.lastRead().answer(page(older, 0));
+    expect(await settle(nowhere)).toBeNull();
+    expect(ws.reads).toHaveLength(2);
+  });
+
+  test("older until found stops when a page fails", async () => {
+    const { store, ws, hook } = await mountLoader();
+    await ws.lastRead().answer(page(exchange(2), 500));
+    let found: Promise<string | null> = Promise.resolve("not asked");
+    await act(() => {
+      found = hook.current().loadOlderUntil(() => null);
+    });
+    await ws.lastRead().answer({ ok: false, error: { code: "io", msg: "read failed" } });
+    expect(await settle(found)).toBeNull();
+    expect(timelineOf(store).status).toBe("error");
     expect(ws.reads).toHaveLength(2);
   });
 

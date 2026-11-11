@@ -46,6 +46,7 @@ import {
   pushNotificationOf,
   sayCallOf,
   stripAnsiEscapes,
+  toolUseRowUuid,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
@@ -5246,5 +5247,35 @@ describe("standalone ccmsg delivered mid-turn (queued_command attachment)", () =
     const targets = ccmsgRenderTargets(groupTimelineLines(lines, [0, 100]));
     expect(targets).toHaveLength(1);
     expect(targets[0]).toMatchObject({ offset: 100, placement: "boundary" });
+  });
+});
+
+// The 🔐 filter's 「TL に移動」 (DR-0050 §6) looks for the row a request's bubble
+// is selected by: the row that makes the call, not the one with its result.
+describe("toolUseRowUuid", () => {
+  const call = jsonl(
+    assistantContentRow(
+      [{ type: "tool_use", id: "toolu_p1", name: CCMSG_TOOLS.permit, input: { blocked: "b" } }],
+      { uuid: "call-row" },
+    ),
+  );
+  const result = jsonl(
+    userContentRow([{ type: "tool_result", tool_use_id: "toolu_p1", content: "ok" }], {
+      uuid: "result-row",
+    }),
+  );
+  const mention = jsonl(
+    assistantContentRow([{ type: "text", text: "toolu_p1 を出した" }], { uuid: "text-row" }),
+  );
+
+  test("is the uuid of the row that makes the call", () => {
+    expect(toolUseRowUuid([mention, call, result], "toolu_p1")).toBe("call-row");
+    expect(toolUseRowUuid([result, call], "toolu_p1")).toBe("call-row");
+  });
+
+  test("is null when no row makes the call, a row only naming the id included", () => {
+    expect(toolUseRowUuid([mention, result], "toolu_p1")).toBeNull();
+    expect(toolUseRowUuid([call], "toolu_p2")).toBeNull();
+    expect(toolUseRowUuid([], "toolu_p1")).toBeNull();
   });
 });
