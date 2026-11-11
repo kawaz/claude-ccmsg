@@ -33,7 +33,7 @@
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted | webui へ移管 | In-view キーワード検索 (TL/ビューアのハイライト + index nav) |
 | [DR-0023](./DR-0023-daemon-local-translation.md) | Accepted | 据え置き | daemon 経由ローカル翻訳 (macOS Translation.framework、Safari フォールバック) — control 面の capability。翻訳比較タブの ja(plamo) 経路は DR-0049 |
 | [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | webui へ移管 | 触ったファイルセクション (セッションが触ったファイルの表示 + root 外の allowlist 読み出し) |
-| [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
+| [DR-0025](./DR-0025-workflow-drilldown.md) | Accepted (✅ 実装済み) | webui へ移管 | workflow / subagent / teammate の掘り下げ。daemon は session_status の workflow に run の state か journal から畳んだ `phases` / `agents` を載せ、`subagents/` の meta.json から `agent_tree` (Teammates / Agents / Workflows) を組む。transcript_read の `agent_id` / `run_id` / `teammate` (user role) で agent の transcript を読み、id は正規表現で確かめてからパスに入れる (クライアントはパスを渡さない)。webui の入口は Timeline の agent tree と 🤖 カードの名前 (Status タブには置かない) で、agent の TL は `/s/<sid>/timeline/agent/{tm,sub,wf}/…`、live の push は無い |
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | webui へ移管 | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
 | [DR-0028](./DR-0028-session-kill.md) | Proposed (実装済み) | webui へ移管 (裁定待ち) | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) と session_restart (止めて同じ id で resume する、Status タブの再起動ボタン) |
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | 契約に吸収 | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |

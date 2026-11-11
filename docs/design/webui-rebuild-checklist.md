@@ -88,9 +88,9 @@
 
 | 機能 | 現在の実装 | 由来 | 判定 | 根拠 |
 |---|---|---|---|---|
-| Teammates / Agents / Workflows のツリー表示 | `AgentTreePanel.tsx` (566) | DR-0025 | 保留 | DR-0025 は **Proposed のまま**。実装は入っているが、正式仕様として残すか kawaz 裁定 |
-| ツリーから各 agent TL へ遷移 | `AgentTreePanel` + `locator` の `agent` | DR-0025 | 保留 | 同上 |
-| agent 間通信 segment の提示 | `agent-communication-view.ts` | DR-0025 | 保留 | 同上。責務コメントが無いモジュールの 1 つ |
+| Teammates / Agents / Workflows のツリー表示 | `AgentTreePanel.tsx` (566) | DR-0025 | 移す | DR-0025 Accepted (kawaz 2026-11-11)。workflow / agent / teammate の掘り下げの入口はここ (Status タブには置かない) |
+| ツリーから各 agent TL へ遷移 | `AgentTreePanel` + `locator` の `agent` | DR-0025 | 移す | 同上。agent の TL を開く経路 (DR-0025 §6) |
+| agent 間通信 segment の提示 | `agent-communication-view.ts` | — | 移す | DR-0025 の掘り下げではなく、Timeline の 🤖 カード (`agents.tsx`) と relay の行 (`system-messages.tsx`) が使う送受の印 (🤖→ / 🤖←) と relay の分類の表示。§2 の行の種類別表示部品と同じ扱い |
 | `agent-tree-view.isErrorState` | `agent-tree-view.ts` | DR-0025 | 落とす候補 | 参照 0 |
 
 ---
@@ -266,7 +266,7 @@
 | 404 / 失敗の共通表示 | `ErrorView.tsx` + `missingTarget` / `unknownPath` | DR-0004 | 移す | |
 | URL 文法 (`/r/<id>` / `/s/<sid>/<tab>` / `/usage` / `/catalog`) | `locator.ts` | DR-0004 | 移す | |
 | TL 位置の URL 表現 (`position`) | `locator.ts` | DR-0004 | 移す | |
-| agent 指定の URL 表現 (`agent`) | `locator.ts` の `AgentRef` | DR-0025 | 保留 | DR-0025 が Proposed。かつ「agent と position を同時に表せない」制約が §2 の場当たり分岐の原因。**両立させるなら文法の変更が要る** |
+| agent 指定の URL 表現 (`agent`) | `locator.ts` の `AgentRef` | DR-0025 | 保留 | agent の TL を URL で指すこと自体は DR-0025 §7 (Accepted) のとおり移す。保留なのは「agent と position を同時に表せない」制約で、これが §2 の場当たり分岐の原因。**両立させるなら文法の変更が要る** |
 | ファイル + 行範囲の URL 表現 | `locator.ts` の `path` / `lineRange` | DR-0008 | 移す | |
 | `sb.*` サイドバー文法 | `sidebar-url.ts` | kawaz | 移す | |
 | popstate / pushState の双方向同期 | `navigation.ts` | DR-0004 | 移す | |
@@ -341,37 +341,36 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 
 各 1 行の問いの形。番号は §11 までの表と対応しない独立の連番。
 
-1. DR-0025 (workflow 掘り下げ、Proposed) は正式仕様として新 webui に移すか、実装ごと落とすか。
-2. DR-0028 (session_kill、Proposed) の停止ボタンは移すか。危険操作なので確認したい。
-3. DR-0015 (Composer 添付、Proposed) の添付・paste・ライトボックスは移すか。
-4. DR-0031 のカタログ (`/catalog`) は新 webui でも持つか。持つなら中身は部品セットに合わせて全面的に作り直すが、それでよいか。
-5. Composer は room 用と 1on1 用の 2 本を維持するか、1 本に統合するか。
-6. 下書きの localStorage 永続化は 1on1 だけの要件か、room 側にも要るか。
-7. 1on1 Composer の「フローティング + D&D 移動」(`useDraggable` 393 行) は要件か、実装都合か。
-8. Terminal タブ (外部ゲートウェイ iframe) は日常的に使っているか。
-9. `trace.ts` の配信レイテンシ計測は新 webui でも要るか。
-10. Timeline の右端フロートパネルは Status タブ / ツールバーと役割が重なるが、3 つとも要るか。
-11. issue 2026-08-20 の「メッセージ hover ツールバー」は新 webui の要件に含めるか。
-12. 検索の 4 系統 (in-view / rendered-text / ファイル名 / セッション) はこのまま 4 つか、統合の余地があるか。
-13. `SearchBar` の未接続 export 2 つ (検索スコープ切替 UI) は、意図された未完成か、退化か。
-14. `session-creator` の未接続 4 つ (特に `cwdWithinRoots` / `launchDefaultsFromTranscript`) は実装漏れか、不要か。
-15. `ServiceStatus.SERVICE_STATUS_ANCHOR` は CSS / URL 側から使われているか (参照 0 だが文字列経由の可能性)。
-16. `useJsonStringCopy` (JSON 文字列トークンのコピーボタン) は使っているか。
-17. `incremental-line-map.ts` と `incremental-cross-line.ts` と `transcript-model.ts` の 3 層は、3 つとも要るか。
-18. `timeline-summary.ts` (24 行、責務コメントなし) は何の要約か。残すか。
-19. `op:fs_edit` / `op:fs_delete` の UI 到達経路と認可範囲は DR-0019 の範囲内か。
-20. `op:session_rename` は一覧から呼ぶのかヘッダから呼ぶのか (どちらの機能として移すか)。
-21. 合成キーの `\0` 区切り (3 箇所) は新 webui でも `\0` のままにするか、grep が効く文字に変えるか。
-22. `version-guard` (daemon 版不一致の検知とフルリロード) は、別 origin の静的サイトになった後どう振る舞うべきか。
-23. issue 2026-09-06-session-status-from-sessions-json は新 webui の status に反映してから移すか、後回しか。
-24. クラスタ化 (DR-0032 §2.3) で新規に要る 3 つ — instance の表示、起動先 instance の選択、room id が instance を含意する形 — はマイルストーン 1 に含めるか、後続か。
+1. DR-0028 (session_kill、Proposed) の停止ボタンは移すか。危険操作なので確認したい。
+2. DR-0015 (Composer 添付、Proposed) の添付・paste・ライトボックスは移すか。
+3. DR-0031 のカタログ (`/catalog`) は新 webui でも持つか。持つなら中身は部品セットに合わせて全面的に作り直すが、それでよいか。
+4. Composer は room 用と 1on1 用の 2 本を維持するか、1 本に統合するか。
+5. 下書きの localStorage 永続化は 1on1 だけの要件か、room 側にも要るか。
+6. 1on1 Composer の「フローティング + D&D 移動」(`useDraggable` 393 行) は要件か、実装都合か。
+7. Terminal タブ (外部ゲートウェイ iframe) は日常的に使っているか。
+8. `trace.ts` の配信レイテンシ計測は新 webui でも要るか。
+9. Timeline の右端フロートパネルは Status タブ / ツールバーと役割が重なるが、3 つとも要るか。
+10. issue 2026-08-20 の「メッセージ hover ツールバー」は新 webui の要件に含めるか。
+11. 検索の 4 系統 (in-view / rendered-text / ファイル名 / セッション) はこのまま 4 つか、統合の余地があるか。
+12. `SearchBar` の未接続 export 2 つ (検索スコープ切替 UI) は、意図された未完成か、退化か。
+13. `session-creator` の未接続 4 つ (特に `cwdWithinRoots` / `launchDefaultsFromTranscript`) は実装漏れか、不要か。
+14. `ServiceStatus.SERVICE_STATUS_ANCHOR` は CSS / URL 側から使われているか (参照 0 だが文字列経由の可能性)。
+15. `useJsonStringCopy` (JSON 文字列トークンのコピーボタン) は使っているか。
+16. `incremental-line-map.ts` と `incremental-cross-line.ts` と `transcript-model.ts` の 3 層は、3 つとも要るか。
+17. `timeline-summary.ts` (24 行、責務コメントなし) は何の要約か。残すか。
+18. `op:fs_edit` / `op:fs_delete` の UI 到達経路と認可範囲は DR-0019 の範囲内か。
+19. `op:session_rename` は一覧から呼ぶのかヘッダから呼ぶのか (どちらの機能として移すか)。
+20. 合成キーの `\0` 区切り (3 箇所) は新 webui でも `\0` のままにするか、grep が効く文字に変えるか。
+21. `version-guard` (daemon 版不一致の検知とフルリロード) は、別 origin の静的サイトになった後どう振る舞うべきか。
+22. issue 2026-09-06-session-status-from-sessions-json は新 webui の status に反映してから移すか、後回しか。
+23. クラスタ化 (DR-0032 §2.3) で新規に要る 3 つ — instance の表示、起動先 instance の選択、room id が instance を含意する形 — はマイルストーン 1 に含めるか、後続か。
 
 ### 統括の事前回答 (このセッションの裁定・DR から導けるもの、kawaz の再確認は不要)
 
-- 2: **移す**。停止ボタンは SS-Q1 (a+c) で「Paused へ移す」として裁定済み (`session_kill` に `retain: true`)
-- 21: **grep が効く区切りに変える** (統括判断。`\0` は棚卸しで grep の欠落を実際に起こした)
-- 23: **反映してから移す**。活動判定の正は llm-gateway のイベントで裁定済み。gateway 側の start / complete 通知待ち
-- 24: **マイルストーン 1 には含めない**。DR-0032 §2.2 の順で、契約に `instance` を足すのが先 (webui は任意フィールドとして無視)。表示・起動先選択・room id の形はクラスタ化 issue の実装単位
+- 1: **移す**。停止ボタンは SS-Q1 (a+c) で「Paused へ移す」として裁定済み (`session_kill` に `retain: true`)
+- 20: **grep が効く区切りに変える** (統括判断。`\0` は棚卸しで grep の欠落を実際に起こした)
+- 22: **反映してから移す**。活動判定の正は llm-gateway のイベントで裁定済み。gateway 側の start / complete 通知待ち
+- 23: **マイルストーン 1 には含めない**。DR-0032 §2.2 の順で、契約に `instance` を足すのが先 (webui は任意フィールドとして無視)。表示・起動先選択・room id の形はクラスタ化 issue の実装単位
 
 残り 19 件は、その機能を含むマイルストーンに着手する時に統括が判断し、判断に迷うものだけその時点で kawaz に聞く。
 
@@ -405,6 +404,6 @@ Terminal タブ / 1on1 Composer と添付 / AgentTreePanel。
 - 旧 webui は並走する (DR-0032 §2.2 の 2) ので、**含まない機能は旧 webui で使い続けられる**。
   「移せる最小」は「全部揃う」ではなく「日常の主動線が新側で完結する」でよい。
 - 含む側は **hello の能力フラグに依存しない機能だけ**で構成した。能力交渉が要る機能(翻訳 / usage / status / sandbox / terminal / fork) はマイルストーン 2 へ回すことで、最初の版が protocol の能力交渉の設計を待たずに動く。
-- 含む側に **保留項目を 1 つも入れていない** (§14 の 24 問はすべてマイルストーン 2 以降の判断)。
+- 含む側に **保留項目を 1 つも入れていない** (§14 の 23 問はすべてマイルストーン 2 以降の判断)。
   裁定待ちでマイルストーン 1 が止まらないようにする。
 - 唯一の新規要件として「別 origin からの WS」を含む。これは DR-0032 §2.1 の前提そのもので、これが動かないと新 webui は 1 画面も出せない。
