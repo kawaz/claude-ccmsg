@@ -8259,8 +8259,7 @@ a.tl-attachment-file-path {
   font-weight: 700;
 }
 
-.status-kill-result,
-.status-secret-result {
+.status-kill-result {
   margin: var(--space-7) 0 0;
   font-size: var(--font-size-sm);
   color: var(--fg-muted);

@@ -1,12 +1,12 @@
 // The Status tab's secret handoff, mounted (DR-0052 §3, §7): a field that
 // takes a paste and nothing typed, which hands the pasted value to the daemon
-// for the session at once and keeps it nowhere of the page, and the secrets
-// the daemon holds for the session (ev:"secrets"), each with its length, what
-// is left of its time and 破棄.
+// for the session at once and keeps it nowhere of the page, and what came of
+// it in the tab's result box (`.status-op-result`, the launch's and the
+// restart's), until the next paste.
 import { afterEach, describe, expect, test } from "bun:test";
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
-import type { HeldSecret, ReplyOf } from "@ccmsg/protocol";
+import type { ReplyOf } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import { SecretHandoff } from "../src/client/components/SecretHandoff.tsx";
 import { initialState } from "../src/client/store.ts";
@@ -35,29 +35,22 @@ interface Mounted {
   root: HTMLElement;
   store: Store;
   puts: Array<[string, string]>;
-  discards: string[];
 }
 
 async function mount(
   reply: ReplyOf<"secret_put"> = {
     ok: true,
     notice: { sid: SID, outcome: "delivered" },
-    key: "k1",
     chars: 17,
   },
 ): Promise<Mounted> {
   const store = createStore(initialState());
   const puts: Array<[string, string]> = [];
-  const discards: string[] = [];
   const ws = {
     ...createWsClient((action) => store.dispatch(action)),
     secretPut: (sid: string, value: string): Promise<ReplyOf<"secret_put">> => {
       puts.push([sid, value]);
       return Promise.resolve(reply);
-    },
-    secretDiscard: (key: string): Promise<ReplyOf<"secret_discard">> => {
-      discards.push(key);
-      return Promise.resolve({ ok: true });
     },
   };
   const root = document.createElement("div");
@@ -66,7 +59,7 @@ async function mount(
   await act(() =>
     render(h(AppContext.Provider, { value: { store, ws } }, h(SecretHandoff, { sid: SID })), root),
   );
-  return { root, store, puts, discards };
+  return { root, store, puts };
 }
 
 function field(root: HTMLElement): HTMLInputElement {
@@ -92,15 +85,13 @@ async function paste(input: HTMLInputElement, text: string): Promise<ClipboardEv
   return event;
 }
 
-function held(overrides: Partial<HeldSecret> = {}): HeldSecret {
-  const receivedAt = Date.now();
+/** The result box under the field: its tone, title and line. */
+function resultBox(root: HTMLElement): { tone: string | null; lines: string[] } | null {
+  const box = root.querySelector(".status-secrets .status-op-result");
+  if (box === null) return null;
   return {
-    key: "k1",
-    session_id: SID,
-    received_at: receivedAt,
-    expires_at: receivedAt + 5 * 60 * 1000,
-    chars: 17,
-    ...overrides,
+    tone: box.getAttribute("data-tone"),
+    lines: [...box.querySelectorAll("p")].map((p) => p.textContent ?? ""),
   };
 }
 
@@ -137,24 +128,58 @@ describe("Status tab secret handoff", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(field(root).value).toBe("");
     expect(document.body.innerHTML).not.toContain("test-secret-0123");
-    expect(JSON.stringify(store.getState().secrets)).not.toContain("test-secret-0123");
+    expect(JSON.stringify(store.getState())).not.toContain("test-secret-0123");
     expect(storage.length).toBe(0);
     expect(location.href).not.toContain("test-secret-0123");
-    expect(root.querySelector(".status-secret-result")?.textContent).toBe(
-      "17 文字を受けた。セッションに取り出し方を知らせた",
-    );
+    expect(resultBox(root)).toEqual({
+      tone: "ok",
+      lines: ["送信成功", "17 文字を受けた。セッションに取り出し方を知らせた。最長 5 分で消える"],
+    });
   });
 
-  test("a notice that did not arrive is said under the field", async () => {
+  test("a notice not known to have arrived is said in the running tone", async () => {
+    const { root } = await mount({
+      ok: true,
+      notice: { sid: SID, outcome: "unconfirmed" },
+      chars: 17,
+    });
+    await paste(field(root), SECRET);
+    expect(resultBox(root)).toEqual({
+      tone: "running",
+      lines: [
+        "送信した (未確認)",
+        "17 文字を受けた。知らせが届いたかは確かめられなかった。最長 5 分で消える",
+      ],
+    });
+  });
+
+  test("a notice that did not arrive is said in the error tone", async () => {
     const { root } = await mount({
       ok: true,
       notice: { sid: SID, outcome: "not_delivered", reason: "no_module" },
       chars: 17,
     });
     await paste(field(root), SECRET);
-    expect(root.querySelector(".status-secret-result")?.textContent).toBe(
-      "セッションに知らせが届かなかった (no_module) ので、預からなかった",
-    );
+    expect(resultBox(root)).toEqual({
+      tone: "error",
+      lines: ["送れなかった", "セッションに知らせが届かなかった (no_module) ので、預からなかった"],
+    });
+  });
+
+  test("a refused paste is said in the error tone with the daemon's reason", async () => {
+    const { root } = await mount({ ok: false, error: { code: "bad_request", msg: "no" } });
+    await paste(field(root), SECRET);
+    expect(resultBox(root)).toEqual({
+      tone: "error",
+      lines: ["送れなかった", "送れなかった (bad_request): no"],
+    });
+  });
+
+  test("nothing is shown before the first paste, and a result stays until the next paste", async () => {
+    const { root } = await mount();
+    expect(resultBox(root)).toBeNull();
+    await paste(field(root), SECRET);
+    expect(resultBox(root)?.tone).toBe("ok");
   });
 
   // The paste goes no further than the field: a paste handler around it or on
@@ -202,37 +227,5 @@ describe("Status tab secret handoff", () => {
     const { root, puts } = await mount();
     await paste(field(root), "");
     expect(puts).toEqual([]);
-  });
-
-  test("the session's held secrets are listed with their length and time left, and 破棄 sends their key", async () => {
-    const { root, store, discards } = await mount();
-    await act(() => {
-      store.dispatch({
-        type: "secrets/loaded",
-        secrets: [
-          held(),
-          held({ key: "other", session_id: "ffffffff-0000-4000-8000-000000000000" }),
-        ],
-      });
-    });
-    const rows = [...root.querySelectorAll(".status-action")].slice(1);
-    expect(rows).toHaveLength(1);
-    const row = instanceOf(rows[0], HTMLElement, "the held row");
-    expect(row.querySelector(".status-action-name")?.textContent).toBe("17 文字");
-    expect(row.querySelector(".status-action-desc")?.textContent).toMatch(
-      /に受けた。残り 4m5\ds$|に受けた。残り 5m0s$/,
-    );
-    const button = instanceOf(row.querySelector("button"), HTMLButtonElement, "破棄");
-    expect(button.textContent).toBe("破棄");
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-    });
-    expect(discards).toEqual(["k1"]);
-
-    await act(() => {
-      store.dispatch({ type: "secrets/loaded", secrets: [] });
-    });
-    expect(root.querySelectorAll(".status-action")).toHaveLength(1);
   });
 });

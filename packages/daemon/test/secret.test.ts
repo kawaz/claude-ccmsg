@@ -1,16 +1,16 @@
 // The secret handoff through the daemon (DR-0052): a value the person
 // pastes in the webui is held in the daemon's memory under an id, the session
 // is told the id from `ccmsg:daemon` (DR-0039 §9's notice, into a fake
-// harness, peer-harness.ts), the id gives the value back as it was pasted, and
-// the webui lists what is held by another key, with neither the id nor the
-// value. None of it is written anywhere the daemon logs or keeps state.
+// harness, peer-harness.ts), and the id gives the value back as it was
+// pasted. The webui is told what came of the notice, and neither the id nor
+// the value. None of it is written anywhere the daemon logs or keeps state.
 //
 // 何を保証するか:
 //   - 知らせの文は kawaz の指定の 2 行 (1 行目そのまま、2 行目は ID 入りの取り出しコマンド)
 //   - 取り出しは貼られたとおりの値 (改行・CR・空白・非 ASCII を足さず削らない) で、期限内は何回でも
 //   - 知らせが届かなかった (module が無い) 値は預からない
-//   - 一覧 (ev:"secrets") に ID と値が無い。破棄で消え、以後の取り出しは not_found
-//   - 3 つの op は user role だけ
+//   - webui (user role の接続) への応答と push に ID と値が無い
+//   - 2 つの op は user role だけ
 //   - 値の文字列が daemon.log・trace・state dir / data dir のどのファイルにも現れない
 //     (形の違う secret_put の断りの文を含む)
 // 期限 (5 分) で消えることは時計を差し替えた単体テスト (secret-store.test.ts) が持つ。
@@ -120,41 +120,25 @@ describe("secret handoff", () => {
   );
 
   test(
-    "the list names each held secret by a key of its own, with neither its id nor its value, and 破棄 drops it",
+    "the reply and the pushes the webui gets carry neither the id nor the value",
     async () => {
       const ctx = await daemon();
       const h = harness(SID);
       await withModule(ctx, SID, h.configDir);
       const user = await subscribedUser(ctx);
-      // The subscribe-time push, empty.
-      expect((await user.readEventUntil("secrets", () => true)).ev.secrets).toEqual([]);
 
       const put = await user.requestOk({ op: "secret_put", session_id: SID, value: SECRET });
       const id = idOfNotice(parseEnvelope(await h.nextContent()).body);
-      const { ev } = await user.readEventUntil("secrets", (e) => e.secrets.length === 1);
-      const [listed] = ev.secrets;
-      expect(listed).toEqual({
-        key: put.key ?? "",
-        session_id: SID,
-        received_at: listed?.received_at ?? 0,
-        expires_at: (listed?.received_at ?? 0) + 5 * 60 * 1000,
+      expect(put).toEqual({
+        ok: true,
+        notice: { sid: SID, outcome: "delivered" },
         chars: Array.from(SECRET).length,
       });
-      expect(listed?.key).not.toBe(id);
-      expect(JSON.stringify(ev)).not.toContain(id);
-      expect(JSON.stringify(ev)).not.toContain(MARKER);
-
-      expect(await user.requestOk({ op: "secret_discard", key: put.key ?? "" })).toEqual({
-        ok: true,
-      });
-      expect((await user.readEventUntil("secrets", (e) => e.secrets.length === 0)).ev).toEqual({
-        ev: "secrets",
-        secrets: [],
-      });
-      expect((await user.requestError({ op: "secret_take", id })).error.code).toBe("not_found");
-      expect(
-        (await user.requestError({ op: "secret_discard", key: put.key ?? "" })).error.code,
-      ).toBe("not_found");
+      // Ordered past the put: every push it caused has arrived.
+      await user.requestOk({ op: "ping" });
+      const pushed = JSON.stringify(await user.pendingEvents());
+      expect(pushed).not.toContain(id);
+      expect(pushed).not.toContain(MARKER);
     },
     T,
   );
@@ -194,13 +178,9 @@ describe("secret handoff", () => {
         chars: Array.from(SECRET).length,
       });
       expect(h.frames).toEqual([]);
-      // Ordered past the put: the list it left is empty.
-      await user.requestOk({ op: "ping" });
-      const pushed = await user.pendingEvents();
-      const lists = pushed.flatMap((item) =>
-        "ev" in item && item.ev === "secrets" ? [item.secrets] : [],
-      );
-      expect(lists.at(-1)).toEqual([]);
+      // The id is the daemon's alone, so the drop is seen in its log; the
+      // store's own test fixes that a dropped id is no longer taken.
+      expect(daemonLogOf(ctx)).toContain("notice=not_delivered (no_module), dropped");
     },
     T,
   );
@@ -220,7 +200,7 @@ describe("secret handoff", () => {
   );
 
   test(
-    "a session-role connection may not hand, take or discard a secret",
+    "a session-role connection may not hand or take a secret",
     async () => {
       const ctx = await daemon();
       const s = await sessionWithConfig(ctx, SID);
@@ -228,7 +208,6 @@ describe("secret handoff", () => {
       for (const body of [
         { op: "secret_put", session_id: SID, value: SECRET },
         { op: "secret_take", id: "0b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" },
-        { op: "secret_discard", key: "0b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f" },
       ] as const) {
         expect((await s.requestError(body)).error.code).toBe("bad_request");
       }
@@ -246,10 +225,9 @@ describe("secret handoff", () => {
       await withModule(ctx, SID, h.configDir);
       const user = await subscribedUser(ctx);
 
-      const put = await user.requestOk({ op: "secret_put", session_id: SID, value: SECRET });
+      await user.requestOk({ op: "secret_put", session_id: SID, value: SECRET });
       const id = idOfNotice(parseEnvelope(await h.nextContent()).body);
       await user.requestOk({ op: "secret_take", id });
-      await user.requestOk({ op: "secret_discard", key: put.key ?? "" });
 
       // Refused for the value itself: too long, and of another type.
       const tooLong = MARKER.repeat(Math.ceil((SECRET_MAX_LENGTH + 1) / MARKER.length));

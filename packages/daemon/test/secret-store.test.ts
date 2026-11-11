@@ -60,46 +60,35 @@ describe("SecretValue", () => {
 describe("createSecretStore", () => {
   test("a secret is held for SECRET_TTL_MS, taken any number of times until then, then forgotten", () => {
     const clock = manualClock();
-    let changes = 0;
-    const store = createSecretStore(() => changes++, clock, ids());
-    const put = store.put("s1", new SecretValue(VALUE));
-    expect(put.listed).toEqual({
-      key: "id-2",
-      session_id: "s1",
-      received_at: clock.now(),
-      expires_at: clock.now() + SECRET_TTL_MS,
-      chars: codePointCount(VALUE),
-    });
-    expect(changes).toBe(1);
+    const store = createSecretStore(clock, ids());
+    const put = store.put(new SecretValue(VALUE));
+    expect(put).toEqual({ id: "id-1", chars: codePointCount(VALUE) });
 
     clock.advance(SECRET_TTL_MS - 1);
-    expect(store.take(put.id)?.value.reveal()).toBe(VALUE);
-    expect(store.take(put.id)?.value.reveal()).toBe(VALUE);
-    expect(store.list()).toHaveLength(1);
+    expect(store.take(put.id)?.reveal()).toBe(VALUE);
+    expect(store.take(put.id)?.reveal()).toBe(VALUE);
 
     clock.advance(1);
     expect(store.take(put.id)).toBeUndefined();
-    expect(store.list()).toEqual([]);
-    expect(changes).toBe(2);
   });
 
-  test("discard by the listed key and drop by the id forget a secret at once; an unknown key is false", () => {
+  test("each secret has an id of its own; drop forgets one at once and leaves the others", () => {
     const clock = manualClock();
-    let changes = 0;
-    const store = createSecretStore(() => changes++, clock, ids());
-    const a = store.put("s1", new SecretValue("a"));
-    const b = store.put("s2", new SecretValue("b"));
-    expect(store.list().map((s) => s.session_id)).toEqual(["s1", "s2"]);
+    const store = createSecretStore(clock, ids());
+    const a = store.put(new SecretValue("a"));
+    const b = store.put(new SecretValue("b"));
+    expect(a.id).not.toBe(b.id);
 
-    expect(store.discard(a.listed.key)).toBe(true);
-    expect(store.discard(a.listed.key)).toBe(false);
-    expect(store.discard(a.id)).toBe(false);
-    store.drop(b.id);
-    expect(store.list()).toEqual([]);
-    expect(changes).toBe(4);
-    // Their expiries were cancelled with them: nothing changes later.
-    clock.advance(SECRET_TTL_MS);
-    expect(changes).toBe(4);
+    store.drop(a.id);
+    expect(store.take(a.id)).toBeUndefined();
+    expect(store.take(b.id)?.reveal()).toBe("b");
+  });
+
+  test("stop forgets every secret", () => {
+    const store = createSecretStore(manualClock(), ids());
+    const put = store.put(new SecretValue(VALUE));
+    store.stop();
+    expect(store.take(put.id)).toBeUndefined();
   });
 
   test("the length is counted in code points", () => {

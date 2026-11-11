@@ -1,7 +1,7 @@
 // The secrets the person handed to sessions from the webui, held in memory
 // for a while each (DR-0052 §4). Nothing of it is written anywhere: a daemon
 // that stops forgets them.
-import { type HeldSecret, SECRET_TTL_MS } from "@ccmsg/protocol";
+import { SECRET_TTL_MS } from "@ccmsg/protocol";
 
 /** What a secret's value shows as wherever it is made into text. */
 export const SECRET_REDACTED = "[secret]";
@@ -58,90 +58,53 @@ export const realSecretClock: SecretClock = {
 };
 
 interface Held {
-  readonly id: string;
   readonly value: SecretValue;
-  readonly listed: HeldSecret;
   readonly timer: SecretTimer;
 }
 
-/** A secret just handed in: its id (what the notice names) and how the
- * webui lists it. */
+/** A secret just handed in: its id (what the notice names) and its length in
+ * Unicode code points (what the webui says of it). */
 export interface PutSecret {
   readonly id: string;
-  readonly listed: HeldSecret;
+  readonly chars: number;
 }
 
 export interface SecretStore {
-  /** Hold `value` for session `sid` until SECRET_TTL_MS from now. */
-  put(sid: string, value: SecretValue): PutSecret;
-  /** The value held under `id` and how it is listed, or undefined when none
-   * is (expired, discarded, never issued). Taking does not drop it. */
-  take(id: string): { readonly value: SecretValue; readonly listed: HeldSecret } | undefined;
-  /** Drop the secret listed as `key`; false when none is. */
-  discard(key: string): boolean;
+  /** Hold `value` until SECRET_TTL_MS from now. */
+  put(value: SecretValue): PutSecret;
+  /** The value held under `id`, or undefined when none is (expired, dropped,
+   * never issued). Taking does not drop it. */
+  take(id: string): SecretValue | undefined;
   /** Drop the secret held under `id` (its notice did not arrive). */
   drop(id: string): void;
-  /** Every secret held, oldest first, as the webui lists them. */
-  list(): HeldSecret[];
   /** Drop everything and stop the expiries. */
   stop(): void;
 }
 
-/** The length of `text` in Unicode code points, as the list shows it. */
+/** The length of `text` in Unicode code points. */
 export function codePointCount(text: string): number {
   return Array.from(text).length;
 }
 
-/** A store that calls `changed` after each change of what it holds (put,
- * discard, drop, expiry), for the push of the list. */
 export function createSecretStore(
-  changed: () => void,
   clock: SecretClock = realSecretClock,
   newId: () => string = () => crypto.randomUUID(),
 ): SecretStore {
   const byId = new Map<string, Held>();
-  const remove = (held: Held): void => {
-    held.timer.cancel();
-    byId.delete(held.id);
-    changed();
+  const drop = (id: string): void => {
+    byId.get(id)?.timer.cancel();
+    byId.delete(id);
   };
   return {
-    put(sid, value) {
+    put(value) {
       const id = newId();
-      const receivedAt = clock.now();
-      const listed: HeldSecret = {
-        key: newId(),
-        session_id: sid,
-        received_at: receivedAt,
-        expires_at: receivedAt + SECRET_TTL_MS,
-        chars: codePointCount(value.reveal()),
-      };
-      const timer = clock.after(SECRET_TTL_MS, () => {
-        const held = byId.get(id);
-        if (held !== undefined) remove(held);
-      });
-      byId.set(id, { id, value, listed, timer });
-      changed();
-      return { id, listed };
+      byId.set(id, { value, timer: clock.after(SECRET_TTL_MS, () => drop(id)) });
+      return { id, chars: codePointCount(value.reveal()) };
     },
     take(id) {
-      return byId.get(id);
+      return byId.get(id)?.value;
     },
-    discard(key) {
-      for (const held of byId.values()) {
-        if (held.listed.key !== key) continue;
-        remove(held);
-        return true;
-      }
-      return false;
-    },
-    drop(id) {
-      const held = byId.get(id);
-      if (held !== undefined) remove(held);
-    },
-    list() {
-      return [...byId.values()].map((held) => held.listed);
-    },
+    drop,
     stop() {
       for (const held of byId.values()) held.timer.cancel();
       byId.clear();

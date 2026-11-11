@@ -179,21 +179,6 @@ const PUSHES: {
     },
   ],
   claude_version: [{ ev: "claude_version", version: "2.1.312", observed_at: 1_793_000_000_000 }],
-  secrets: [
-    { ev: "secrets", secrets: [] },
-    {
-      ev: "secrets",
-      secrets: [
-        {
-          key: "1b6c6f6e-3a4b-4c5d-8e9f-0a1b2c3d4e5f",
-          session_id: "s1",
-          received_at: 1_793_000_000_000,
-          expires_at: 1_793_000_300_000,
-          chars: 16,
-        },
-      ],
-    },
-  ],
   llm_status: [
     {
       ev: "llm_status",

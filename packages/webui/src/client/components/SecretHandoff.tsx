@@ -1,119 +1,72 @@
 // The Status tab's secret handoff (DR-0052 §3, §7): a field that takes a
 // paste and nothing else, which hands the pasted value to the daemon for the
-// session at once, and the secrets the daemon holds for the session, each
-// with what is left of its five minutes and a button that discards it.
+// session at once, and what came of it in the result box the tab's launch and
+// restart use (`.status-op-result`), until the next paste.
 //
 // The value is read from the paste event and passed to the request, and is
 // kept nowhere else: the paste is cancelled, so the field never holds it
-// (DOM), and it is put in no state, store, storage or URL. The rows show the
-// value's length and when it came, never the value.
+// (DOM), and it is put in no state, store, storage or URL. The result says
+// the value's length, never the value.
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
-import { errorText, type HeldSecret, type SecretPutResponse } from "@ccmsg/protocol";
+import { type ErrorResponse, errorText, type SecretPutResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
-import { sameJson, useStoreState } from "../useStore.ts";
-import { useSecondTick } from "../useSecondTick.ts";
-import { formatDuration } from "../utils.ts";
 import { ActionRow } from "./StatusSessionForms.tsx";
 
-/** The line under the list after a paste: what came of the notice. */
-export function secretPutResultText(res: SecretPutResponse): string {
+/** What a paste came to, as the result box says it: its tone (the box's
+ * `data-tone`), its title and its line. */
+export interface SecretPutResult {
+  readonly tone: "ok" | "running" | "error";
+  readonly title: string;
+  readonly text: string;
+}
+
+/** The result box of a `secret_put` reply. */
+export function secretPutResult(res: SecretPutResponse | ErrorResponse): SecretPutResult {
+  if (!res.ok) {
+    return {
+      tone: "error",
+      title: "送れなかった",
+      text: `送れなかった (${res.error.code}): ${res.error.msg}`,
+    };
+  }
+  const chars = String(res.chars);
   switch (res.notice.outcome) {
     case "delivered":
-      return `${String(res.chars)} 文字を受けた。セッションに取り出し方を知らせた`;
+      return {
+        tone: "ok",
+        title: "送信成功",
+        text: `${chars} 文字を受けた。セッションに取り出し方を知らせた。最長 5 分で消える`,
+      };
     case "unconfirmed":
-      return `${String(res.chars)} 文字を受けた。知らせが届いたかは確かめられなかった`;
+      return {
+        tone: "running",
+        title: "送信した (未確認)",
+        text: `${chars} 文字を受けた。知らせが届いたかは確かめられなかった。最長 5 分で消える`,
+      };
     case "not_delivered":
-      return `セッションに知らせが届かなかった (${res.notice.reason}) ので、預からなかった`;
+      return {
+        tone: "error",
+        title: "送れなかった",
+        text: `セッションに知らせが届かなかった (${res.notice.reason}) ので、預からなかった`,
+      };
   }
-}
-
-/** One held secret: its length, when it came and what is left, and 破棄. */
-function HeldSecretRow({
-  secret,
-  now,
-  discarding,
-  onDiscard,
-}: {
-  secret: HeldSecret;
-  now: number;
-  discarding: boolean;
-  onDiscard: () => void;
-}) {
-  const received = new Date(secret.received_at).toLocaleTimeString();
-  const left = formatDuration(secret.expires_at - now);
-  return (
-    <ActionRow
-      name={`${String(secret.chars)} 文字`}
-      description={`${received} に受けた。残り ${left}`}
-    >
-      <button type="button" class="status-action-open" disabled={discarding} onClick={onDiscard}>
-        破棄
-      </button>
-    </ActionRow>
-  );
-}
-
-/** The held rows, with the clock that counts their time down: mounted only
- * while there are rows, so no tab ticks for nothing. */
-function HeldSecretRows({
-  secrets,
-  discarding,
-  onDiscard,
-}: {
-  secrets: readonly HeldSecret[];
-  discarding: string | null;
-  onDiscard: (key: string) => void;
-}) {
-  const now = useSecondTick();
-  return (
-    <>
-      {secrets.map((secret) => (
-        <HeldSecretRow
-          key={secret.key}
-          secret={secret}
-          now={now}
-          discarding={discarding === secret.key}
-          onDiscard={() => onDiscard(secret.key)}
-        />
-      ))}
-    </>
-  );
 }
 
 export function SecretHandoff({ sid }: { sid: string }) {
-  const { ws, store } = useApp();
-  const held = useStoreState(
-    store,
-    (s) => s.secrets.filter((secret) => secret.session_id === sid),
-    sameJson,
-  );
+  const { ws } = useApp();
   const [sending, setSending] = useState(false);
-  const [discarding, setDiscarding] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [result, setResult] = useState<SecretPutResult | null>(null);
 
   function hand(value: string): void {
     setSending(true);
-    setNote(null);
+    setResult(null);
     ws.secretPut(sid, value)
-      .then((res) =>
-        setNote(
-          res.ok ? secretPutResultText(res) : `送れなかった (${res.error.code}): ${res.error.msg}`,
-        ),
+      .then((res) => setResult(secretPutResult(res)))
+      .catch((e: unknown) =>
+        setResult({ tone: "error", title: "送れなかった", text: `送れなかった: ${errorText(e)}` }),
       )
-      .catch((e: unknown) => setNote(`送れなかった: ${errorText(e)}`))
       .finally(() => setSending(false));
-  }
-
-  function discard(key: string): void {
-    setDiscarding(key);
-    setNote(null);
-    ws.secretDiscard(key)
-      .then((res) => {
-        if (!res.ok) setNote(`破棄できなかった (${res.error.code}): ${res.error.msg}`);
-      })
-      .catch((e: unknown) => setNote(`破棄できなかった: ${errorText(e)}`))
-      .finally(() => setDiscarding(null));
   }
 
   function onPaste(e: JSX.TargetedClipboardEvent<HTMLInputElement>): void {
@@ -158,11 +111,13 @@ export function SecretHandoff({ sid }: { sid: string }) {
             }}
           />
         </ActionRow>
-        {held.length > 0 ? (
-          <HeldSecretRows secrets={held} discarding={discarding} onDiscard={discard} />
-        ) : null}
       </ul>
-      {note !== null ? <p class="status-secret-result">{note}</p> : null}
+      {result !== null ? (
+        <div class="status-op-result" data-tone={result.tone}>
+          <p class="status-op-result-title">{result.title}</p>
+          <p>{result.text}</p>
+        </div>
+      ) : null}
     </section>
   );
 }

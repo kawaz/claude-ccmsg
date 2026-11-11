@@ -18,7 +18,7 @@ Usage:
                                It can be taken again until it expires. Exits 1,
                                writing nothing to standard output and the
                                reason to standard error, when nothing is held
-                               under <id> (expired, discarded, never issued) or
+                               under <id> (expired, never issued) or
                                the daemon is not running
 
 Options:

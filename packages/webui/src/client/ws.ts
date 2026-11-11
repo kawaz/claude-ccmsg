@@ -422,13 +422,9 @@ export interface WsHandle {
   /** Hand `value` to the daemon for session `sessionId` (DR-0052 §3, user
    * role only — the Status tab's paste). The daemon holds it and tells the
    * session how to take it, and the reply says what came of that notice
-   * (`notice.outcome`); on `not_delivered` the daemon holds nothing. The
-   * list of what is held comes as ev:"secrets". `value` goes into this
-   * request and nowhere else of the client. */
+   * (`notice.outcome`); on `not_delivered` the daemon holds nothing. `value`
+   * goes into this request and nowhere else of the client. */
   secretPut(sessionId: string, value: string): Promise<ReplyOf<"secret_put">>;
-  /** Drop the held secret listed as `key` (DR-0052 §7, the 破棄 button).
-   * Non-optimistic: the new list comes as ev:"secrets". */
-  secretDiscard(key: string): Promise<ReplyOf<"secret_discard">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -870,10 +866,6 @@ export function createWsClient(
       });
       return;
     }
-    if (streamEv.ev === "secrets") {
-      dispatch({ type: "secrets/loaded", secrets: streamEv.secrets });
-      return;
-    }
     if (streamEv.ev === "request_overrides") {
       dispatch({ type: "request-overrides/loaded", sessions: streamEv.sessions });
       return;
@@ -1216,7 +1208,6 @@ export function createWsClient(
     turnAbort: (sessionId) =>
       send({ op: "turn_abort", session_id: sessionId }, { timeoutMs: TURN_ABORT_REPLY_TIMEOUT_MS }),
     secretPut: (sessionId, value) => send({ op: "secret_put", session_id: sessionId, value }),
-    secretDiscard: (key) => send({ op: "secret_discard", key }),
     sessionEnv: (sessionId) =>
       send({
         op: "session_env",

@@ -29,7 +29,7 @@ webui の受け口 → op `secret_put` (user role) → daemon がメモリに預
 
 - セッションの Status タブに、貼り付けだけを受ける受け口を最初から置く (ボタンで開く形にしない。kawaz「貼り付け用 input を最初から置いてありゃいいか」)
 - 打鍵では文字が入らない。貼り付けると、その値をすぐ `secret_put` で daemon に送り、受け口は空のまま残す。値は貼り付けの event handler の中で clipboard の event から読み、DOM の input の値・store・localStorage (下書き等)・URL に置かない
-- 送った結果は受け口の下に 1 行で出す (受けた文字数、または送れなかった・知らせが届かなかった理由)
+- 送った結果は §7 の結果の枠で出す
 
 ### 4. 預かり (daemon)
 
@@ -57,15 +57,18 @@ ccmsg secret take <ID> | <コマンド>
 
 - `ccmsg secret take <ID>` (ID はコマンドの引数) は値をそのまま標準出力に書く (貼られたとおり。改行を足さない・削らない)。exit 0
 - 取り出す側のセッションは確かめない。ID を知っていることが権限 (知らせを受けたセッションだけが ID を知っている)
-- 期限切れ・破棄済み・知らない ID・ID の無い呼び出しは、標準出力に何も書かず、標準エラーに理由を書いて exit 1。daemon が動いていない時も同じ (daemon が止まれば値は消えているので、daemon を起こさない。版の新しい CLI が古い daemon を止めて起こし直す経路 (DR-0002 §4) も通らない)
+- 期限切れ・知らない ID・ID の無い呼び出しは、標準出力に何も書かず、標準エラーに理由を書いて exit 1。daemon が動いていない時も同じ (daemon が止まれば値は消えているので、daemon を起こさない。版の新しい CLI が古い daemon を止めて起こし直す経路 (DR-0002 §4) も通らない)
 - CLI は `ccmsg agents` / `ccmsg stop` と同じく user role で hello する (セッションの中で呼んでもセッションの identity を使わない)。op `secret_take` は user role だけが送れる。session role の経路 (hooks module の `POST /op`、[DR-0046](./DR-0046-module-op-over-http.md)) の応答は tool の結果として会話に入るので、そこに値を返す op を置かない
 
-### 7. webui の表示と破棄
+### 7. webui の結果の表示
 
-- Status タブに、そのセッションに預かり中の物を 1 件 1 行で出す: 文字数 (Unicode の code point の数)、預かった時刻、残り時間 (秒の単位で減る)、破棄のボタン。値は出さない
-- 破棄 (op `secret_discard`、user role) で daemon から消える
-- 一覧は daemon が `ev:"secrets"` で全タブに配る (全セッションの預かり中の物、預かり・取り出しの期限切れ・破棄で変わるたびに全体を送る。購読を始めたタブにも空でも送る)
-- 一覧と破棄は、ID と別の UUIDv4 (`key`) で 1 件を指す。ID は webui にも一覧にも出さない。user role の接続は UDS でも誰でも hello できるので、ID を一覧で配ると、知らせを受けたセッション以外が取り出せる。`key` で出来るのは破棄だけ
+- 貼り付けの結果は、受け口の節の下に、Status タブの起動・再起動の結果と同じ枠 (`.status-op-result`、`data-tone` で左の線の色が変わる) で出す。見出しと 1 行の本文で、文字数 (Unicode の code point の数) は出すが値は出さない
+  - 知らせが届いた (`delivered`): `data-tone="ok"`、見出し「送信成功」、本文「N 文字を受けた。セッションに取り出し方を知らせた。最長 5 分で消える」
+  - 届いたか確かめられなかった (`unconfirmed`): `data-tone="running"`、見出し「送信した (未確認)」、本文「N 文字を受けた。知らせが届いたかは確かめられなかった。最長 5 分で消える」
+  - 届かなかった (`not_delivered`): `data-tone="error"`、見出し「送れなかった」、本文「セッションに知らせが届かなかった (理由) ので、預からなかった」
+  - op が断られた・送れなかった: `data-tone="error"`、見出し「送れなかった」、本文はその理由
+- 枠は次に貼るまで残る (起動の結果の枠と同じく、時間では消さない)
+- webui への応答・push には ID も値も載らない (ID を知っているのは知らせを受けたセッションだけにする。user role の接続は UDS でも誰でも hello できる)
 
 ### 8. 記録に残さない
 
@@ -74,14 +77,14 @@ ccmsg secret take <ID> | <コマンド>
 - **daemon の中の値の型**: daemon が受けた値はすぐ `SecretValue` に包み、預かりの store は `SecretValue` だけを持つ。`SecretValue` を文字列にする口 (`String()` / テンプレート文字列 / `JSON.stringify` / `Bun.inspect` / `console.log`) はどれも `[secret]` になる。値の文字列を取り出すのは `secret_take` の応答を組む 1 か所 (`reveal()`) だけ
 - **断りの文**: 受けた request の形が違う時、daemon は断りの理由 (schema の失敗の要約) を daemon.log と応答に書く。値の欄の schema の失敗の文は固定の文にし (valibot の既定の文は受けた値を引用する)、値を含まない。`secret_take` の応答を読む CLI 側の schema も同じ
 - **知らせと log**: 知らせの文と daemon.log の行には ID と文字数だけが出て、値は出ない (ID は知らせの文として transcript に残る。§9)
-- **webui**: 値は貼り付けの event handler の局所変数から `secret_put` の request の JSON にだけ渡る。応答・一覧の push に値は無い
+- **webui**: 値は貼り付けの event handler の局所変数から `secret_put` の request の JSON にだけ渡る。`secret_put` の応答は知らせの結果と文字数だけで、ID と値は無い
 - **貼り付けの event**: 受け口の paste は `preventDefault` と `stopPropagation` で止め、受け口の外 (周りの要素と document の paste の listener、composer の貼り付け・添付の取り込み等) に値を渡さない
-- **frame の記録**: daemon にも webui にも WebSocket の frame をそのまま記録・dump する経路は無い (daemon の trace は transcript の byte 範囲だけ、webui の console は wire の schema に合わない frame の失敗の要約だけ)。daemon が webui へ送る frame (応答・push) に値は無い
-- **テスト**: 隔離した daemon で、預け・取り出し・破棄・期限切れ・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。webui の受け口が値を DOM・localStorage・console に残さず、貼り付けの event が受け口の外の listener に届かないこと
+- **frame の記録**: daemon にも webui にも WebSocket の frame をそのまま記録・dump する経路は無い (daemon の trace は transcript の byte 範囲だけ、webui の console は wire の schema に合わない frame の失敗の要約だけ)。daemon が webui へ送る frame (応答・push) に ID と値は無い
+- **テスト**: 隔離した daemon で、預け・取り出し・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。期限で消えることは時計を差し替えた store の単体テストで確かめる。webui への応答と push に ID と値が無いこと。webui の受け口が値を DOM・localStorage・console に残さず、貼り付けの event が受け口の外の listener に届かないこと
 
 ### 9. ID が transcript に残ること
 
-ID は知らせの文と、エージェントが実行する Bash の tool の入力 (`ccmsg secret take <ID> | ...`) として transcript と API の request に残る。値は残らない。ID は期限の 5 分で使えなくなる (破棄すればすぐ)。守りは期限に置く。
+ID は知らせの文と、エージェントが実行する Bash の tool の入力 (`ccmsg secret take <ID> | ...`) として transcript と API の request に残る。値は残らない。ID は期限の 5 分で使えなくなる。守りは期限に置く。
 
 ### 10. DR-0039 §4 の例外
 
@@ -99,10 +102,14 @@ ID は知らせの文と、エージェントが実行する Bash の tool の�
   - 不採用理由: 後ろのコマンドの打ち間違いで、人が貼り直すことになる。ID を知っているのは知らせを受けたセッションだけなので、期限内の再取り出しの危険は小さい
 - 案: 取り出すセッションを確かめる (知らせを送ったセッションの identity でだけ取り出せる)
   - 不採用理由: CLI がどのセッションから呼ばれたかの同定が要る (subagent・teammate・worktree の別プロセスから呼ぶこともある)。ID を知っていることで足りる
+- 案: webui に預かり中の物の一覧 (文字数・残り時間) と破棄のボタンを出す
+  - 不採用理由: 期限まで出続ける行が、結果の知らせでなく 1 つの機能の行に見えて邪魔になる。値は 5 分で消えるので、破棄で縮められる時間は小さい
+- 案: 預かり中かどうかに関わらず、常に破棄のボタンを出す
+  - 不採用理由: 押す場面がほとんど無い (貼り間違えでも 5 分で消える) のに、受け口の節に行が増えたままになる
 
 ## Consequences
 
-- protocol は op が 3 つ (`secret_put` / `secret_take` / `secret_discard`、どれも user role) と、push が 1 つ (`ev:"secrets"`) 増える
+- protocol は op が 2 つ (`secret_put` / `secret_take`、どちらも user role) 増える。push は増えない
 - CLI に `ccmsg secret take <ID>` が増える (DR-0039 §4 の例外)
 - 預かっている値は daemon のメモリにあり、daemon の再起動 (plugin の更新による版の入れ替わりを含む) で消える。消えた後の `take` は「知らない ID」と同じに断られる
 - iOS の Safari で、打鍵を受けない受け口に貼り付けのメニューが出て中身を取れるかは実機で確かめる (issue の「確かめること」)
@@ -110,10 +117,11 @@ ID は知らせの文と、エージェントが実行する Bash の tool の�
   - 値の文字列が daemon.log・trace・state dir のファイルに現れない
   - `SecretValue` を文字列にする口が値を出さない
   - 形の違う `secret_put` の断りの文に値が出ない
-  - user role 以外の `secret_put` / `secret_take` / `secret_discard` は `bad_request`
+  - user role 以外の `secret_put` / `secret_take` は `bad_request`
   - 知らせが `not_delivered` なら値を預かったままにしない
   - 期限を過ぎた ID の `take` は値を返さない
-  - `ev:"secrets"` に ID と値が無い
+  - webui への `secret_put` の応答と push に ID と値が無い
+  - 結果は `.status-op-result` の枠で、知らせの結果ごとの `data-tone` と見出しで出る
   - 受け口に打鍵で文字が入らず、貼り付けた値が DOM・localStorage に残らない
   - 受け口の貼り付けの event が受け口の外 (周りの要素・document) の paste の listener に届かない
 
