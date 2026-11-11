@@ -19,6 +19,7 @@ import {
   userConn,
 } from "./helpers.ts";
 import { fakeHarness, type FakeHarness, parseEnvelope } from "./peer-harness.ts";
+import { perTestLivePid } from "../../testkit/src/live-pid.ts";
 import { DIRECT_DELIVERY_DAEMON_SENDER, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { WAKE_TEXT } from "../src/session-wake.ts";
 import {
@@ -178,6 +179,8 @@ function wakesIn(harness: FakeHarness): number {
 }
 
 describe("network online wake", () => {
+  const livePid = perTestLivePid();
+
   test("回線復帰で API エラー停止中のセッションだけが、その停止につき 1 回起こされる", async () => {
     const f = await startFixture();
     const stuck = path.join(f.dir, `${A}.jsonl`);
@@ -187,10 +190,9 @@ describe("network online wake", () => {
     fs.writeFileSync(healthy, apiErrorLine("API Error: 500") + assistantLine("recovered"));
     fs.writeFileSync(unmoduled, assistantLine("working") + apiErrorLine("API Error: 503"));
     // A live pid each: the daemon reads one session per process.
-    const third = Bun.spawn(["sleep", "60"]);
     const ha = fakeHarness(A, { pid: process.pid });
-    const hb = fakeHarness(B, { pid: process.ppid });
-    const hc = fakeHarness(C, { pid: third.pid });
+    const hb = fakeHarness(B, { pid: livePid() });
+    const hc = fakeHarness(C, { pid: livePid() });
     const conns: TestClient[] = [];
     try {
       const a = await stalledSession(f.ctx, A, ha, stuck, true);
@@ -247,8 +249,6 @@ describe("network online wake", () => {
       for (const conn of conns) conn.close();
       await stopTestDaemon(f.ctx);
       for (const h of [ha, hb, hc]) h.dispose();
-      third.kill();
-      await third.exited;
       fs.rmSync(f.dir, { recursive: true, force: true });
     }
   });

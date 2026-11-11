@@ -27,6 +27,7 @@ import {
   userConn,
 } from "./helpers.ts";
 import { fakeHarness, parseEnvelope } from "./peer-harness.ts";
+import { perTestLivePid } from "../../testkit/src/live-pid.ts";
 
 const SID = "0b000000-0000-4000-8000-000000000001";
 const HELLO = { sid: SID, protocol: PROTOCOL_VERSION } as const;
@@ -453,14 +454,14 @@ describe("send_message and peer_list over POST /op", () => {
   const OTHER = "22222222-2222-4333-8444-555555555555";
   const BARE = "33333333-2222-4333-8444-555555555555";
   const RUN = "mgq1k2x3abcd1234";
+  const livePid = perTestLivePid();
 
   test("sends to the session `to` names, as the asking process's session, and lists them", async () => {
     const work = fs.realpathSync(fixtureDir("op-http-work"));
     // Two sessions in one directory, each a running process (not this one,
     // which asks): one has a hooks module (its run is named), the other none.
-    const otherProc = Bun.spawn(["sleep", "60"]);
-    const other = fakeHarness(OTHER, { pid: otherProc.pid, cwd: work, name: "other" });
-    const bare = fakeHarness(BARE, { pid: process.ppid, cwd: work, configDir: other.configDir });
+    const other = fakeHarness(OTHER, { pid: livePid(), cwd: work, name: "other" });
+    const bare = fakeHarness(BARE, { pid: livePid(), cwd: work, configDir: other.configDir });
     recordSession(other.configDir, process.pid, SID);
     const ctx = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: other.configDir });
     const module = await sessionConn(ctx, OTHER, { repo: "", ws: "", cwd: "" });
@@ -500,7 +501,6 @@ describe("send_message and peer_list over POST /op", () => {
       module.close();
       other.dispose();
       bare.dispose();
-      otherProc.kill();
       await stopTestDaemon(ctx);
       fs.rmSync(work, { recursive: true, force: true });
     }

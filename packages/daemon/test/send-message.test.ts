@@ -28,6 +28,7 @@ import {
   sessionWithConfig,
   type FakeHarness,
 } from "./peer-harness.ts";
+import { perTestLivePid } from "../../testkit/src/live-pid.ts";
 
 const ME = "aaaaaaaa-0000-4000-8000-000000000001";
 const A = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -218,9 +219,10 @@ describe("send_message through the daemon", () => {
   const T = 15000;
   const SENDER = "aaaaaaaa-2222-4333-8444-555555555555";
   const PEER = "bbbbbbbb-2222-4333-8444-555555555555";
-  /** Two processes that run for as long as the test does. */
+  /** This test process, and a second process each test that needs one starts:
+   * both run for as long as the test does. */
   const LIVE_PID = process.pid;
-  const OTHER_LIVE_PID = process.ppid;
+  const otherLivePid = perTestLivePid();
 
   const cleanups: (() => void | Promise<void>)[] = [];
   afterEach(async () => {
@@ -263,7 +265,7 @@ describe("send_message through the daemon", () => {
     async () => {
       const ctx = await daemon();
       const b1 = harness(PEER, { pid: LIVE_PID });
-      const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
+      const b2 = harness(PEER, { pid: otherLivePid(), configDir: b1.configDir });
       await withModule(ctx, PEER, b1.configDir);
       const a = await sessionWithConfig(ctx, SENDER, b1.configDir);
 
@@ -296,7 +298,7 @@ describe("send_message through the daemon", () => {
       const link = path.join(tempDir("ps-link-"), "ws");
       fs.symlinkSync(work, link);
       const ha = harness(SENDER, { pid: LIVE_PID, cwd: work });
-      const hb = harness(PEER, { pid: OTHER_LIVE_PID, cwd: link });
+      const hb = harness(PEER, { pid: otherLivePid(), cwd: link });
       await withModule(ctx, PEER, hb.configDir);
       const a = await sessionWithConfig(ctx, SENDER, ha.configDir);
 
@@ -373,7 +375,7 @@ describe("send_message through the daemon", () => {
     async () => {
       const ctx = await daemon();
       const b1 = harness(PEER, { pid: LIVE_PID });
-      const b2 = harness(PEER, { pid: OTHER_LIVE_PID, configDir: b1.configDir });
+      const b2 = harness(PEER, { pid: otherLivePid(), configDir: b1.configDir });
       await withModule(ctx, PEER, b1.configDir);
       b1.refuseWith = "denied";
       const a = await sessionWithConfig(ctx, SENDER, b1.configDir);

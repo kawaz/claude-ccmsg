@@ -4,7 +4,7 @@
 // `sessions/` and on the poll interval — the session registry derived from
 // them, what the session's hooks module says laid over them (DR-0035 §3), and
 // the user-only permission gate. Each test spawns a real daemon over UDS with
-// state files naming live processes (this test process and sleepers it
+// state files naming live processes (this test process and children it
 // starts), so no real ~/.claude* dir is ever read.
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -23,6 +23,7 @@ import {
   sessionConn,
   userConn,
 } from "./helpers.ts";
+import { perTestLivePid } from "../../testkit/src/live-pid.ts";
 
 // Short poll period so tests don't wait a real 5s per cycle; still exercised
 // via event-driven waits (readEventUntil), never a blind sleep for the "did
@@ -51,14 +52,7 @@ function mkHome(): { base: string; home: string; binDir: string } {
 }
 
 /** A process that runs until the test ends, for a state file to name. */
-function sleeper(): number {
-  const proc = Bun.spawn(["sleep", "600"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-  cleanups.push(async () => {
-    proc.kill();
-    await proc.exited;
-  });
-  return proc.pid;
-}
+const livePid = perTestLivePid();
 
 interface Row {
   sessionId: string;
@@ -201,8 +195,8 @@ describe("agents: config dir detection", () => {
       ],
       namedPid,
     );
-    writeRows(dirB, [row("sB", "/b", { pid: process.ppid })], namedPid);
-    writeRows(other, [row("sX", "/x")], () => sleeper());
+    writeRows(dirB, [row("sB", "/b", { pid: livePid() })], namedPid);
+    writeRows(other, [row("sX", "/x")], () => livePid());
 
     const ctx = await startAgentsTestDaemon(home, binDir);
     const u = await userConn(ctx);
@@ -237,7 +231,7 @@ describe("agents: config dir detection", () => {
         row("sNew", "/n", { entrypoint: "some-future-launcher" }),
         row("sNone", "/x"),
       ],
-      () => sleeper(),
+      () => livePid(),
     );
     const ctx = await startAgentsTestDaemon(home, binDir);
     const u = await userConn(ctx);
@@ -391,7 +385,7 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
     // machine: its record keeps its pid from one setRows to the next.
     const pids = new Map<string, number>();
     const pidOf = (sid: string): number => {
-      const pid = pids.get(sid) ?? sleeper();
+      const pid = pids.get(sid) ?? livePid();
       pids.set(sid, pid);
       return pid;
     };
@@ -664,7 +658,7 @@ describe("session registry derived from the agents rows (DR-0034)", () => {
   test("同じ sid の別 process の行は、run の端末を持たない", async () => {
     await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
       const u = await watcher(ctx);
-      const other = sleeper();
+      const other = livePid();
       setRows(dirA, [
         row(SID_RUN, cwd, { pid: process.pid, startedAt: Date.now() }),
         row(SID_RUN, cwd, { pid: other, startedAt: 1 }),

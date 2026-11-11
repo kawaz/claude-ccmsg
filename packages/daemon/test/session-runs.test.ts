@@ -1,18 +1,20 @@
 // The live runs send_message and peer_list match (DR-0039 §3), read from Claude
-// Code's state files. The files name live pids (this test process and its
-// parent) where a run has to be running.
+// Code's state files. The files name live pids (this test process and a child
+// it starts) where a run has to be running.
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { perTestLivePid } from "../../testkit/src/live-pid.ts";
 import { liveRuns, readSessionsDir } from "../src/session-runs.ts";
 
 const A = "aaaaaaaa-2222-4333-8444-555555555555";
 const B = "bbbbbbbb-2222-4333-8444-555555555555";
 const C = "cccccccc-2222-4333-8444-555555555555";
-/** Two processes that run for as long as the test does. */
+/** This test process, and a second process each test that needs one starts:
+ * both run for as long as the test does. */
 const LIVE_PID = process.pid;
-const OTHER_LIVE_PID = process.ppid;
+const otherLivePid = perTestLivePid();
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -29,6 +31,7 @@ describe("liveRuns", () => {
   test("the state files of running processes, across config dirs", async () => {
     const c1 = tempDir("sr-cfg-");
     const c2 = tempDir("sr-cfg-");
+    const other = otherLivePid();
     const write = (dir: string, name: string, body: string) => {
       fs.mkdirSync(path.join(dir, "sessions"), { recursive: true });
       fs.writeFileSync(path.join(dir, "sessions", name), body);
@@ -37,11 +40,11 @@ describe("liveRuns", () => {
     write(c1, "424242.json", JSON.stringify({ pid: 424242, sessionId: B, cwd: "/w" }));
     write(c1, "77.json", "not json");
     write(c1, `${LIVE_PID}.abc.key`, JSON.stringify({ peerToken: "t" }));
-    write(c2, `${OTHER_LIVE_PID}.json`, JSON.stringify({ pid: OTHER_LIVE_PID, sessionId: C }));
-    const alive = (pid: number) => pid === LIVE_PID || pid === OTHER_LIVE_PID;
+    write(c2, `${other}.json`, JSON.stringify({ pid: other, sessionId: C }));
+    const alive = (pid: number) => pid === LIVE_PID || pid === other;
     expect(await liveRuns([c1, c2, path.join(c1, "missing")], alive)).toEqual([
       { configDir: c1, sid: A, pid: LIVE_PID, cwd: "/w" },
-      { configDir: c2, sid: C, pid: OTHER_LIVE_PID },
+      { configDir: c2, sid: C, pid: other },
     ]);
   });
 
