@@ -1,6 +1,6 @@
 ---
 title: tool の send / peers の入力を絞る (send の宛先は session_id だけ、peers の絞り込みは cwd_prefix だけ)
-status: open
+status: resolved
 category: task
 created: 2026-11-11T21:01:16+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T21:26:52+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","dr/DR-0039"]
 blocked_by:
 origin: kawaz の指示 (2026-11-11)
 ---
