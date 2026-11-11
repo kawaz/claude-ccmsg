@@ -68,6 +68,7 @@ function recordingHold(): { hold: ScrollHold; calls: string[] } {
     calls,
     hold: {
       toBottom: () => calls.push("bottom"),
+      toTop: () => calls.push("top"),
       toElement: (target, place) => {
         calls.push(`element:${target.dataset.timelineUuid ?? target.className}`);
         const scroller = target.closest(".scroller");

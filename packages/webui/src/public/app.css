@@ -4663,9 +4663,10 @@ button.session-tab {
   cursor: default;
 }
 
-/* TL の行の列の上下に置く横幅いっぱいのボタン: 最上部の「過去分を読み込む」と、
- * フィルタ中の末尾の「TL に戻る」。プライマリではない控えめな見た目で、2 つは
- * 同じ見た目にする。 */
+/* TL の行の列の上下に置く幅いっぱいのボタン: 最上部の「過去分を上に読み込む」
+ * 「過去分を下に読み込む」(.tl-load-older が半分ずつに分ける) と、フィルタ中の
+ * 末尾の「TL に戻る」。プライマリではない控えめな見た目で、どれも同じ見た目に
+ * する。 */
 .tl-wide-button {
   font: inherit;
   font-size: var(--font-size-md);
@@ -4688,9 +4689,17 @@ button.session-tab {
   cursor: default;
 }
 
-/* TL の最上部 (最初の行の上) の「過去分を読み込む」。行の列と同じ左右の余白。 */
+/* TL の最上部 (最初の行の上) の「過去分を上に読み込む」「過去分を下に読み込む」。
+ * 行の列と同じ左右の余白で、2 つを半分ずつの幅で左右に並べる。 */
 .tl-load-older {
+  display: flex;
+  gap: var(--space-6);
   padding: var(--space-8) var(--space-11) 0;
+}
+
+.tl-load-older .tl-wide-button {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 /* Right-aligned "👤 N/M ↑ ↓" user-turn nav (kawaz spec) — pushed to the

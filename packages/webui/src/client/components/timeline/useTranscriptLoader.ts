@@ -103,8 +103,9 @@ export function useTranscriptLoader({
   active: boolean;
   timeline: TimelineState;
 }): {
-  /** 読み込み済みの先頭より前を 1 ページ読んで前に足す。 */
-  loadOlder: () => void;
+  /** 読み込み済みの先頭より前を 1 ページ読んで前に足す。読み込み中か先頭まで
+   * 読み込み済みなら何もせず null。 */
+  loadOlder: () => Promise<void> | null;
   /** tail を読み直して丸ごと置き換える。読み込み中なら何もせず null。 */
   refresh: () => Promise<void> | null;
 } {
@@ -203,9 +204,9 @@ export function useTranscriptLoader({
   // max_bytes is left out, as on the tail read: a `before` read is sized by
   // the daemon's clamp for it (TRANSCRIPT_READ_OLDER_MAX_BYTES), so the page
   // size is stated once, in protocol.
-  function loadOlder() {
-    if (timeline.status === "loading" || timeline.atStart) return;
-    void readTranscriptIntoStore(store, ws, sid, {
+  function loadOlder(): Promise<void> | null {
+    if (timeline.status === "loading" || timeline.atStart) return null;
+    return readTranscriptIntoStore(store, ws, sid, {
       started: "timeline/loading",
       mode: "prepend",
       opts: { ...agentOpts, before: timeline.start },

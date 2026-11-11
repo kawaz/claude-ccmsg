@@ -75,6 +75,7 @@ async function mountSearch(options: {
   const heldTo: HTMLElement[] = [];
   const scrollHold: ScrollHold = {
     toBottom() {},
+    toTop() {},
     toElement(target) {
       heldTo.push(target);
     },

@@ -1,4 +1,4 @@
-// Which row 過去分を読み込む keeps still (scrollAnchor.ts), with a fake layout
+// Which row 過去分を上に読み込む keeps still (scrollAnchor.ts), with a fake layout
 // (happy-dom lays nothing out): each child of the rows has a top, the scroller
 // shows it at `top - scrollTop`.
 // - the first drawn row with a position (`data-timeline-uuid`) is kept, past a
@@ -99,6 +99,7 @@ describe("holdScrollAnchor", () => {
     const placed = { again: () => {} };
     const hold: ScrollHold = {
       toBottom: () => {},
+      toTop: () => {},
       toElement: (target, how) => {
         placed.again = () => how(scroller, target);
         placed.again();

@@ -264,7 +264,7 @@ kawaz 2026-11-08 の裁定: 同じ操作がセッションのたびに classifie
 
 - 依頼は transcript にあるぶん全部が出る。daemon は依頼の中身を持たず、`permit-state.json` は既読と適用の id だけで増え、daemon の起動の時に live でないセッションの分は落ちる。その後に resume したセッションの依頼は、`since` 以後のものが未読に戻る
 - 🔐 の未読の数は、daemon がそのセッションの transcript を読んだ後に入る: live のセッションは追いつきの後、live でないセッションは TL を開いた時 (一回読み) か 🔐 / 🔔 のフィルタに入った時 (全走査)。読む前は数えない
-- 窓の外の依頼は 🔐 のフィルタの間だけ出る。フィルタの無い TL では、「過去分を読み込む」で窓に入れると行の位置に出る
+- 窓の外の依頼は 🔐 のフィルタの間だけ出る。フィルタの無い TL では、過去分を読み込んで窓に入れると行の位置に出る
 - `permit-state.json` の無い初回の daemon は、その時より前の依頼を手を付けたものとみなす
 - 旧版の module のまま動いているセッションは、`permit_request` の応答 (`{ ok }`) を旧い形で読めず、依頼が出なかったと model に返す。その呼び出しの結果は依頼の印にならないのでバブルに出ない (音声は鳴る)。PROTOCOL_VERSION の minor の違いでセッションに印が付き、セッションを起動し直すと直る
 - 依頼の行の `cwd` は、セッションが worktree に入った後 (EnterWorktree) は worktree を指す。その時に Claude Code が読む `.claude/settings.local.json` が worktree のものかは未検証

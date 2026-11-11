@@ -222,7 +222,7 @@ describe("the Timeline's filter", () => {
       says: [unreadSay(1)],
     });
     const back = backButton(root);
-    // The look it shares with the top's 「過去分を読み込む」.
+    // The look it shares with the top's 「過去分を上に読み込む」「過去分を下に読み込む」.
     expect(back.classList.contains("tl-wide-button")).toBe(true);
     expect(back.hidden).toBe(false);
     expect(back.textContent).toBe("TL に戻る");

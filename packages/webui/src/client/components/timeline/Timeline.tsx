@@ -2,7 +2,7 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { useMemo, useRef } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
 import { type SessionPermit, type SessionSay, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
 import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
@@ -72,6 +72,18 @@ import {
 } from "./bubbles.tsx";
 import { CcmsgBubble } from "./ccmsg.tsx";
 import { ForkDivider } from "./actions.tsx";
+
+/** 過去分を読み込んだ後の画面: above は今の先頭の行を画面上で動かさず、below は
+ * TL の最上部 (読み込んだ分の最も古い行がボタンの直下に来る)。 */
+type OlderPlacement = "above" | "below";
+
+/** TL の最上部に左から並べる順。 */
+const OLDER_PLACEMENTS: readonly OlderPlacement[] = ["above", "below"];
+
+const OLDER_LABELS: Record<OlderPlacement, string> = {
+  above: "↑過去分を上に読み込む↑",
+  below: "↓過去分を下に読み込む↓",
+};
 
 export function Timeline({
   sid,
@@ -385,15 +397,29 @@ export function Timeline({
     void loader.refresh()?.then(stick.resumeFollowing);
   }
 
-  // 過去分は今の先頭の行の上に足されるので、ボタンの直下にあったその行を
-  // 画面上で動かさない: 押した時の距離を測って保つ (scrollAnchor.ts)。保つのは
-  // 内容が伸びるたびなので、読み込んだ行が描かれた後にずれた分だけ戻る。
-  function loadOlder() {
+  // 過去分は今の先頭の行の上に足される。読み込んだ後の画面は押したボタンで
+  // 決まり、内容が伸びるたびに保ち直す (useScrollHold.ts) ので、読み込んだ行が
+  // 描かれた後にずれた分だけ戻る。
+  // - above (上に読み込む): ボタンの直下にあった今の先頭の行を、押した時の距離
+  //   のまま動かさない (scrollAnchor.ts)。読み込んだ分はその上 (画面の外) に
+  //   入り、遡って読み上げる。
+  // - below (下に読み込む): TL の最上部に寄せて留める。読み込んだ分の最も古い
+  //   行がボタンの直下に来て、上から順に読み進める。押した時に少しスクロール
+  //   していても最上部へ: 読み込んで先頭に届けばボタン自体が消えて位置がずれる
+  //   ので、押した時の位置を保つ意味が薄い。
+  // 押した方のボタンだけを「読み込み中…」にする (読み込みが済んだら戻す)。
+  const [olderPressed, setOlderPressed] = useState<OlderPlacement | null>(null);
+  function loadOlder(placement: OlderPlacement) {
     const scroller = scrollRef.current;
     const lines = tlLinesRef.current;
-    const anchor = scroller && lines ? firstRowScrollAnchor(scroller, lines) : null;
-    if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
-    loader.loadOlder();
+    const anchor =
+      placement === "above" && scroller && lines ? firstRowScrollAnchor(scroller, lines) : null;
+    const read = loader.loadOlder();
+    if (read === null) return;
+    if (placement === "below") scrollHold.toTop();
+    else if (anchor !== null) holdScrollAnchor(anchor, scrollHold);
+    setOlderPressed(placement);
+    void read.finally(() => setOlderPressed(null));
   }
 
   // フィルタを外す: ツールバーの選択中のバッジを押した時と同じ URL へ、同じく
@@ -606,14 +632,20 @@ export function Timeline({
                       </div>
                       {timeline.atStart ? null : (
                         <div class="tl-load-older">
-                          <button
-                            type="button"
-                            class="tl-wide-button"
-                            disabled={timeline.status === "loading"}
-                            onClick={loadOlder}
-                          >
-                            {timeline.status === "loading" ? "読み込み中…" : "過去分を読み込む"}
-                          </button>
+                          {OLDER_PLACEMENTS.map((placement) => (
+                            <button
+                              key={placement}
+                              type="button"
+                              class="tl-wide-button"
+                              data-placement={placement}
+                              disabled={timeline.status === "loading"}
+                              onClick={() => loadOlder(placement)}
+                            >
+                              {timeline.status === "loading" && olderPressed === placement
+                                ? "読み込み中…"
+                                : OLDER_LABELS[placement]}
+                            </button>
+                          ))}
                         </div>
                       )}
                       {timeline.status === "error" ? (

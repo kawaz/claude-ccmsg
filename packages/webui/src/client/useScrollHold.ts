@@ -1,4 +1,4 @@
-// 明示的に決めたスクロール位置 (末尾 / ある要素) を、その後に内容が伸び縮み
+// 明示的に決めたスクロール位置 (末尾 / 先頭 / ある要素) を、その後に内容が伸び縮み
 // しても保つ hook。画像・フォント・markdown・Shiki highlight・翻訳は描画の
 // 後から高さを変えるので、1 度 scrollTop を書いただけでは狙った位置から
 // ずれる。
@@ -25,6 +25,8 @@ const USER_SCROLL_EVENTS = ["wheel", "touchstart", "pointerdown", "keydown"] as 
 export interface ScrollHold {
   /** 末尾へ寄せ、手放すまで末尾に留める。 */
   toBottom(): void;
+  /** 先頭へ寄せ、手放すまで先頭に留める。 */
+  toTop(): void;
   /** `place` で `target` へ寄せ、手放すまで同じ寄せ方をやり直す。 */
   toElement(target: HTMLElement, place: (scroller: HTMLElement, target: HTMLElement) => void): void;
   /** 今保っている位置を手放す。 */
@@ -79,6 +81,13 @@ class ScrollHolder implements ScrollHold {
   readonly toBottom = (): void => {
     this.hold((scroller) => {
       scroller.scrollTop = scroller.scrollHeight;
+      return true;
+    });
+  };
+
+  readonly toTop = (): void => {
+    this.hold((scroller) => {
+      scroller.scrollTop = 0;
       return true;
     });
   };

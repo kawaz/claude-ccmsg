@@ -288,17 +288,20 @@ describe("Timeline loading", () => {
     expect(view.root.textContent).toContain("question 2");
   });
 
-  test("過去分を読み込む reads the page before the loaded start and puts it in front", async () => {
+  test("過去分を上に読み込む reads the page before the loaded start and puts it in front", async () => {
     const newer = exchange(2);
     const older = exchange(1);
     const view = await open();
     const olderEnd = endOf(older, 0);
     await view.ws.lastRead().answer(page(newer, olderEnd));
 
-    await act(() => loadOlderButton(view.root).click());
+    await act(() => loadOlderButton(view.root, "above").click());
     expect(view.ws.lastRead().opts).toEqual({ before: olderEnd });
-    expect(loadOlderButton(view.root).disabled).toBe(true);
-    expect(loadOlderButton(view.root).textContent).toBe("読み込み中…");
+    // Both are off while it reads; only the one pressed says so.
+    expect(loadOlderButton(view.root, "above").disabled).toBe(true);
+    expect(loadOlderButton(view.root, "above").textContent).toBe("読み込み中…");
+    expect(loadOlderButton(view.root, "below").disabled).toBe(true);
+    expect(loadOlderButton(view.root, "below").textContent).toBe("↓過去分を下に読み込む↓");
     await view.ws.lastRead().answer(page(older, 0));
 
     const text = view.root.textContent ?? "";
@@ -307,7 +310,31 @@ describe("Timeline loading", () => {
     expect(view.root.querySelector(".tl-load-older")).toBeNull();
   });
 
-  test("a transcript read from its first byte has no 過去分を読み込む button", async () => {
+  test("過去分を下に読み込む reads the same page and puts it in front", async () => {
+    const newer = exchange(2);
+    const older = exchange(1);
+    const view = await open();
+    await view.ws.lastRead().answer(page(newer, endOf(older, 10)));
+
+    await act(() => loadOlderButton(view.root, "below").click());
+    expect(view.ws.lastRead().opts).toEqual({ before: endOf(older, 10) });
+    expect(loadOlderButton(view.root, "below").disabled).toBe(true);
+    expect(loadOlderButton(view.root, "below").textContent).toBe("読み込み中…");
+    expect(loadOlderButton(view.root, "above").disabled).toBe(true);
+    expect(loadOlderButton(view.root, "above").textContent).toBe("↑過去分を上に読み込む↑");
+    await view.ws.lastRead().answer(page(older, 10));
+
+    const text = view.root.textContent ?? "";
+    expect(text.indexOf("question 1")).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf("question 1")).toBeLessThan(text.indexOf("question 2"));
+    // More is left before it: both are back, enabled, with their labels.
+    expect(loadOlderButton(view.root, "below").disabled).toBe(false);
+    expect(loadOlderButton(view.root, "below").textContent).toBe("↓過去分を下に読み込む↓");
+    expect(loadOlderButton(view.root, "above").disabled).toBe(false);
+    expect(loadOlderButton(view.root, "above").textContent).toBe("↑過去分を上に読み込む↑");
+  });
+
+  test("a transcript read from its first byte has no 過去分を読み込む buttons", async () => {
     const view = await open();
     await view.ws.lastRead().answer(page(exchange(1), 0));
     expect(view.root.querySelector(".tl-load-older")).toBeNull();
@@ -315,70 +342,33 @@ describe("Timeline loading", () => {
     expect(element(view.root, ".tl-toolbar").querySelectorAll("button").length).toBeGreaterThan(0);
   });
 
-  test("a transcript with more before its loaded start shows an enabled 過去分を読み込む button above the first row, not in the toolbar", async () => {
+  test("a transcript with more before its loaded start shows the two enabled 過去分を読み込む buttons side by side above the first row, not in the toolbar", async () => {
     const view = await open();
     await view.ws.lastRead().answer(page(exchange(1), 100));
-    expect(loadOlderButton(view.root).disabled).toBe(false);
-    expect(loadOlderButton(view.root).textContent).toBe("過去分を読み込む");
+    const buttons = [...element(view.root, ".tl-load-older").querySelectorAll("button")];
+    // Left to right: 上に, then 下に.
+    expect(buttons.map((b) => b.textContent)).toEqual([
+      "↑過去分を上に読み込む↑",
+      "↓過去分を下に読み込む↓",
+    ]);
+    for (const button of buttons) {
+      expect(button.disabled).toBe(false);
+      // It looks as the filter's 「TL に戻る」 does: the one class both carry.
+      expect(button.classList.contains("tl-wide-button")).toBe(true);
+    }
     expect(buttonsTitledText(element(view.root, ".tl-toolbar"), "older")).toHaveLength(0);
-    expect(buttonsTitledText(element(view.root, ".tl-toolbar"), "過去分を読み込む")).toHaveLength(
-      0,
-    );
-    // It looks as the filter's 「TL に戻る」 does: the one class both carry.
-    expect(loadOlderButton(view.root).classList.contains("tl-wide-button")).toBe(true);
-    // The scroller's content: the toolbar, then the button, then the rows.
+    for (const label of ["↑過去分を上に読み込む↑", "↓過去分を下に読み込む↓"]) {
+      expect(buttonsTitledText(element(view.root, ".tl-toolbar"), label)).toHaveLength(0);
+    }
+    // The scroller's content: the toolbar, then the buttons, then the rows.
     const children = [...scroller(view.root).children];
     const button = children.indexOf(element(view.root, ".tl-load-older"));
     expect(button).toBe(children.indexOf(element(view.root, ".tl-toolbar")) + 1);
     expect(children.indexOf(element(view.root, ".tl-lines"))).toBe(button + 1);
   });
 
-  test("the row right below 過去分を読み込む stays where it was on screen once the older page is in", async () => {
-    // happy-dom lays nothing out and has no ResizeObserver that fires: each
-    // row is drawn ITEM_PX tall in order, and the observers are called by
-    // hand where a browser would call them after the older rows grew the
-    // content.
-    const observers: Array<() => void> = [];
-    class FakeResizeObserver {
-      private readonly callback: () => void;
-      constructor(callback: () => void) {
-        this.callback = callback;
-      }
-      observe(): void {
-        observers.push(this.callback);
-      }
-      unobserve(): void {}
-      disconnect(): void {}
-    }
-    restores.push(stubGlobal("ResizeObserver", FakeResizeObserver));
-    const proto = HTMLElement.prototype;
-    const rows = (el: HTMLElement) => {
-      const view = el.closest(".timeline-view");
-      return view instanceof HTMLElement
-        ? [...view.querySelectorAll<HTMLElement>("[data-timeline-uuid]")]
-        : [];
-    };
-    const topOf = (el: HTMLElement): number => {
-      if (isScroller(el)) return 0;
-      const view = el.closest(".timeline-view");
-      const index = rows(el).indexOf(el);
-      return view instanceof HTMLElement && index >= 0 ? index * ITEM_PX - view.scrollTop : 0;
-    };
-    restores.push(
-      stubProperty(proto, "getBoundingClientRect", {
-        configurable: true,
-        value(this: HTMLElement) {
-          return new DOMRect(0, topOf(this), 100, ITEM_PX);
-        },
-      }),
-      stubProperty(proto, "getClientRects", {
-        configurable: true,
-        value(this: HTMLElement) {
-          const list = [new DOMRect(0, topOf(this), 100, ITEM_PX)];
-          return Object.assign(list, { item: (i: number) => list[i] ?? null });
-        },
-      }),
-    );
+  test("過去分を上に読み込む keeps the row right below the buttons where it was on screen once the older page is in", async () => {
+    const observers = stubRowLayout(0);
 
     const older = exchange(1);
     const olderEnd = endOf(older, 0);
@@ -390,7 +380,7 @@ describe("Timeline loading", () => {
     const offset = below.getBoundingClientRect().top;
     expect(offset).toBe(-ITEM_PX / 2);
 
-    await act(() => loadOlderButton(view.root).click());
+    await act(() => loadOlderButton(view.root, "above").click());
     await view.ws.lastRead().answer(page(older, 0));
     await act(() => {
       for (const observe of observers) observe();
@@ -400,6 +390,56 @@ describe("Timeline loading", () => {
     expect(itemOf(view.root, uuidOf("u", 2))).toBe(below);
     expect(below.getBoundingClientRect().top).toBe(offset);
     expect(scroller(view.root).scrollTop).toBe(2 * ITEM_PX + ITEM_PX / 2);
+  });
+
+  test("過去分を下に読み込む goes to the top, even from a little scrolled past, and the oldest row read comes right below the buttons", async () => {
+    // The rows start LINES_TOP below the scroller's top, under the toolbar and
+    // the buttons.
+    const LINES_TOP = ITEM_PX / 2;
+    const observers = stubRowLayout(LINES_TOP);
+
+    const older = exchange(1);
+    const view = await open();
+    await view.ws.lastRead().answer(page([...exchange(2), ...exchange(3)], endOf(older, 10)));
+    // The buttons are on screen, a little scrolled past.
+    await userScrollTo(view.root, LINES_TOP / 2);
+    const firstBefore = itemOf(view.root, uuidOf("u", 2));
+
+    await act(() => loadOlderButton(view.root, "below").click());
+    expect(scroller(view.root).scrollTop).toBe(0);
+    await view.ws.lastRead().answer(page(older, 10));
+    // A browser's own scroll anchoring would move the view along with the
+    // rows that were on screen; the hold puts it back once the content grew.
+    scroller(view.root).scrollTop += 2 * ITEM_PX;
+    await act(() => {
+      for (const observe of observers) observe();
+    });
+
+    expect(scroller(view.root).scrollTop).toBe(0);
+    expect(loadOlderButton(view.root, "below").disabled).toBe(false);
+    expect(itemOf(view.root, uuidOf("u", 1)).getBoundingClientRect().top).toBe(LINES_TOP);
+    expect(itemOf(view.root, uuidOf("u", 2))).toBe(firstBefore);
+    expect(firstBefore.getBoundingClientRect().top).toBe(LINES_TOP + 2 * ITEM_PX);
+  });
+
+  test("過去分を下に読み込む that reaches the transcript's first byte leaves the view at the top with the buttons gone", async () => {
+    const observers = stubRowLayout(0);
+
+    const older = exchange(1);
+    const view = await open();
+    await view.ws.lastRead().answer(page([...exchange(2), ...exchange(3)], endOf(older, 0)));
+    await userScrollTo(view.root, ITEM_PX / 2);
+
+    await act(() => loadOlderButton(view.root, "below").click());
+    await view.ws.lastRead().answer(page(older, 0));
+    scroller(view.root).scrollTop += 2 * ITEM_PX;
+    await act(() => {
+      for (const observe of observers) observe();
+    });
+
+    expect(view.root.querySelector(".tl-load-older")).toBeNull();
+    expect(scroller(view.root).scrollTop).toBe(0);
+    expect(itemOf(view.root, uuidOf("u", 1)).getBoundingClientRect().top).toBe(0);
   });
 
   test("a failed read offers a retry that reads the tail again", async () => {
@@ -443,12 +483,60 @@ function buttonsTitledText(root: HTMLElement, text: string): HTMLButtonElement[]
   );
 }
 
-function loadOlderButton(root: HTMLElement): HTMLButtonElement {
+function loadOlderButton(root: HTMLElement, placement: "above" | "below"): HTMLButtonElement {
   return instanceOf(
-    root.querySelector(".tl-load-older button"),
+    root.querySelector(`.tl-load-older button[data-placement="${placement}"]`),
     HTMLButtonElement,
-    "過去分を読み込む",
+    `過去分を読み込む (${placement})`,
   );
+}
+
+/**
+ * happy-dom lays nothing out and has no ResizeObserver that fires: lay the
+ * rows (`[data-timeline-uuid]`) out ITEM_PX tall in order from `linesTop`
+ * below the scroller's top, with `.tl-lines` at `linesTop`, all moved up by
+ * the scroller's scrollTop. Returns the ResizeObserver callbacks, for the
+ * test to call where a browser would call them after the content grew.
+ */
+function stubRowLayout(linesTop: number): Array<() => void> {
+  const observers: Array<() => void> = [];
+  class FakeResizeObserver {
+    private readonly callback: () => void;
+    constructor(callback: () => void) {
+      this.callback = callback;
+    }
+    observe(): void {
+      observers.push(this.callback);
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  restores.push(stubGlobal("ResizeObserver", FakeResizeObserver));
+  const topOf = (el: HTMLElement): number => {
+    if (isScroller(el)) return 0;
+    const view = el.closest(".timeline-view");
+    if (!(view instanceof HTMLElement)) return 0;
+    if (el.classList.contains("tl-lines")) return linesTop - view.scrollTop;
+    const index = [...view.querySelectorAll<HTMLElement>("[data-timeline-uuid]")].indexOf(el);
+    return index >= 0 ? linesTop + index * ITEM_PX - view.scrollTop : 0;
+  };
+  const proto = HTMLElement.prototype;
+  restores.push(
+    stubProperty(proto, "getBoundingClientRect", {
+      configurable: true,
+      value(this: HTMLElement) {
+        return new DOMRect(0, topOf(this), 100, ITEM_PX);
+      },
+    }),
+    stubProperty(proto, "getClientRects", {
+      configurable: true,
+      value(this: HTMLElement) {
+        const list = [new DOMRect(0, topOf(this), 100, ITEM_PX)];
+        return Object.assign(list, { item: (i: number) => list[i] ?? null });
+      },
+    }),
+  );
+  return observers;
 }
 
 function buttonTitledText(root: HTMLElement, text: string): HTMLButtonElement {

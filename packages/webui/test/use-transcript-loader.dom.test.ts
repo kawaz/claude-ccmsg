@@ -106,7 +106,9 @@ describe("useTranscriptLoader", () => {
     const { ws, hook } = await mountLoader({ agent });
     expect(ws.lastRead().opts).toEqual({ agent_id: "ag", run_id: "run" });
     await ws.lastRead().answer(page(exchange(2), 100));
-    await act(() => hook.current().loadOlder());
+    await act(() => {
+      void hook.current().loadOlder();
+    });
     expect(ws.lastRead().opts).toEqual({ agent_id: "ag", run_id: "run", before: 100 });
   });
 
@@ -156,7 +158,9 @@ describe("useTranscriptLoader", () => {
     const older = exchange(1);
     const olderEnd = endOf(older, 0);
     await ws.lastRead().answer(page(exchange(2), olderEnd));
-    await act(() => hook.current().loadOlder());
+    await act(() => {
+      void hook.current().loadOlder();
+    });
     await ws.lastRead().answer(page(older, 0));
     const end = timelineOf(store).end;
 
@@ -233,13 +237,19 @@ describe("useTranscriptLoader", () => {
     const older = exchange(1);
     const olderEnd = endOf(older, 0);
     await ws.lastRead().answer(page(exchange(2), olderEnd));
-    await act(() => hook.current().loadOlder());
+    await act(() => {
+      void hook.current().loadOlder();
+    });
     expect(ws.lastRead().opts).toEqual({ before: olderEnd });
     await ws.lastRead().answer(page(older, 0));
     expect(timelineOf(store).lines).toHaveLength(4);
     expect(timelineOf(store).atStart).toBe(true);
 
-    await act(() => hook.current().loadOlder());
+    let again: Promise<void> | null | undefined;
+    await act(() => {
+      again = hook.current().loadOlder();
+    });
+    expect(again).toBeNull();
     expect(ws.reads).toHaveLength(2);
   });
 

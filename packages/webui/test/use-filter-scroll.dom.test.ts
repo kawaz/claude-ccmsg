@@ -52,6 +52,10 @@ function fakeHold(scroller: () => HTMLElement): {
         calls.push("bottom");
         place = null;
       },
+      toTop: () => {
+        calls.push("top");
+        place = null;
+      },
       toElement: (target, how) => {
         calls.push(`element:${target.dataset.timelineUuid ?? ""}`);
         place = () => how(scroller(), target);

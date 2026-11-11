@@ -1,6 +1,6 @@
 // 内容が変わる前に測った要素の画面内の位置 (scroller の上端からの距離) を、
 // 変わった後も保つ道具。フィルタを外す時 (useFilterScroll.ts) と、過去分を
-// 読み込んで上に行が足される時 (Timeline の「過去分を読み込む」) が使う。
+// 読み込んで上に行が足される時 (Timeline の「過去分を上に読み込む」) が使う。
 //
 // Design rationale: ブラウザの scroll anchoring (`overflow-anchor`) には
 // 任せない。Safari は 27 まで持たず (useScrollHold.ts)、持つブラウザでも基準の
