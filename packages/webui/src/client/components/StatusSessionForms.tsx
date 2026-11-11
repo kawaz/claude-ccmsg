@@ -80,8 +80,9 @@ function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
   }, []);
 }
 
-/** The key that sends from the prompt, shown beside the send button: the
- * prompt opens with text in it, so a placeholder would not be seen. */
+/** The key that sends from the prompt, shown after the buttons: the prompt
+ * opens with text in it, so a placeholder would not be seen. Not shown on a
+ * touch screen (app.css), which has no ⌘ / Ctrl. */
 function SendKeys() {
   return (
     <span class="status-op-keys" title="⌘+Enter (Ctrl+Enter) で送信">
@@ -255,8 +256,8 @@ function LaunchForm({
   }
 
   return (
-    <form class="modal-dialog-form status-launch-form" onSubmit={submit}>
-      <div class="modal-dialog-body status-op-body">
+    <div class="modal-dialog-body">
+      <form class="status-op-form status-launch-form" onSubmit={submit}>
         <p class="status-op-where">
           <span class="status-op-where-label">起動する場所</span>
           <span class="status-scroll">{cwd}</span>
@@ -301,25 +302,25 @@ function LaunchForm({
               </p>
             ))
           : null}
+        <div class="status-op-actions">
+          <button type="submit" class="status-form-submit" disabled={blocked}>
+            {running ? "起動中…" : "起動"}
+          </button>
+          <button
+            type="button"
+            class="status-form-save"
+            disabled={saved || asDefault === null || running}
+            onClick={() => {
+              if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
+            }}
+          >
+            {saveLabel(saved)}
+          </button>
+          <SendKeys />
+        </div>
         {sent && !running ? <LaunchResultCard state={launch.state} /> : null}
-      </div>
-      <div class="modal-dialog-foot status-op-actions">
-        <button
-          type="button"
-          class="status-form-save"
-          disabled={saved || asDefault === null || running}
-          onClick={() => {
-            if (asDefault !== null) setStored(saveDefaults(cwd, { launch: asDefault }));
-          }}
-        >
-          {saveLabel(saved)}
-        </button>
-        <SendKeys />
-        <button type="submit" class="status-form-submit" disabled={blocked}>
-          {running ? "起動中…" : "起動"}
-        </button>
-      </div>
-    </form>
+      </form>
+    </div>
   );
 }
 
@@ -364,8 +365,8 @@ function RestartForm({
   }
 
   return (
-    <form class="modal-dialog-form status-restart-form" onSubmit={submit}>
-      <div class="modal-dialog-body status-op-body">
+    <div class="modal-dialog-body">
+      <form class="status-op-form status-restart-form" onSubmit={submit}>
         <fieldset class="status-op-fields" disabled={restart.busy}>
           <label class="status-op-prompt">
             <span class="status-op-prompt-label">再起動後の最初の prompt</span>
@@ -379,25 +380,25 @@ function RestartForm({
             />
           </label>
         </fieldset>
-        {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
-      </div>
-      <div class="modal-dialog-foot status-op-actions">
-        {cwd === null ? null : (
-          <button
-            type="button"
-            class="status-form-save"
-            disabled={saved || restart.busy}
-            onClick={() => setStored(saveDefaults(cwd, { restart: { prompt: draft } }))}
-          >
-            {saveLabel(saved)}
+        <div class="status-op-actions">
+          <button type="submit" class="status-form-submit" disabled={blocked || empty}>
+            {restart.busy ? "再起動中…" : "再起動"}
           </button>
-        )}
-        <SendKeys />
-        <button type="submit" class="status-form-submit" disabled={blocked || empty}>
-          {restart.busy ? "再起動中…" : "再起動"}
-        </button>
-      </div>
-    </form>
+          {cwd === null ? null : (
+            <button
+              type="button"
+              class="status-form-save"
+              disabled={saved || restart.busy}
+              onClick={() => setStored(saveDefaults(cwd, { restart: { prompt: draft } }))}
+            >
+              {saveLabel(saved)}
+            </button>
+          )}
+          <SendKeys />
+        </div>
+        {sent && restart.result !== null ? <RestartResultCard result={restart.result} /> : null}
+      </form>
+    </div>
   );
 }
 

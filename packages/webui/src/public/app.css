@@ -8088,7 +8088,10 @@ a.tl-attachment-file-path {
 }
 
 /* The forms in the operations' dialogs. */
-.status-op-body {
+/* The launch / restart forms: the fields, then the buttons right under them
+ * (the send first, then the save), then the result — the same order as the
+ * sidebar's 新規セッション form. */
+.status-op-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-10);
@@ -8156,24 +8159,20 @@ a.tl-attachment-file-path {
 
 .status-op-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-8);
 }
 
 .status-op-keys {
-  margin-left: auto;
   display: inline-flex;
   gap: var(--space-2);
 }
 
-/* A touch screen has no ⌘ / Ctrl to press: the key is not shown there, and
- * the send button keeps to the right on its own. */
+/* A touch screen has no ⌘ / Ctrl to press. */
 @media (hover: none) {
   .status-op-keys {
     display: none;
-  }
-  .status-op-actions > .status-form-submit {
-    margin-left: auto;
   }
 }
 
@@ -8351,11 +8350,6 @@ a.tl-attachment-file-path {
   font-size: var(--font-size-md);
 }
 
-/* A form that spans the body and the foot (its submit is in the foot). */
-.modal-dialog-form {
-  display: contents;
-}
-
 .modal-dialog-body {
   flex: 1;
   min-height: 0;
@@ -8364,16 +8358,6 @@ a.tl-attachment-file-path {
   padding: var(--space-11);
 }
 
-.modal-dialog-foot {
-  padding: var(--space-9) var(--space-11);
-  border-top: 1px solid var(--border);
-}
-
-/* Narrow, the whole screen. The foot (the buttons) comes right after what is
- * written, not at the bottom of the screen: a bar pinned to the bottom leaves
- * the buttons a screen away from the field they act on. The body still
- * scrolls when what is in it is taller than the screen, with the foot below
- * it in view. */
 @media (width <= 600px) {
   .modal-dialog {
     width: 100vw;
@@ -8383,13 +8367,6 @@ a.tl-attachment-file-path {
     margin: 0;
     border: none;
     border-radius: 0;
-  }
-  .modal-dialog-body {
-    flex: 0 1 auto;
-  }
-  .modal-dialog-foot {
-    border-top: none;
-    padding-top: 0;
   }
   .modal-dialog-close {
     display: none;
