@@ -60,20 +60,54 @@ export interface DerivedLocation {
 
 const EMPTY: DerivedLocation = { repo: "", ws: "", repo_url: "" };
 
-async function statOrUndefined(p: string): Promise<fs.Stats | undefined> {
-  try {
-    return await fs.promises.stat(p);
-  } catch {
-    return undefined;
-  }
+/** The two reads the derivation makes of the checkout's files: a stat and a
+ * text read, each undefined for a path that is not there or cannot be read. */
+export interface LocationIo {
+  stat(p: string): Promise<fs.Stats | undefined>;
+  read(p: string): Promise<string | undefined>;
 }
 
-async function readTextOrUndefined(p: string): Promise<string | undefined> {
-  try {
-    return await fs.promises.readFile(p, "utf8");
-  } catch {
-    return undefined;
-  }
+const FS_IO: LocationIo = {
+  stat: async (p) => {
+    try {
+      return await fs.promises.stat(p);
+    } catch {
+      return undefined;
+    }
+  },
+  read: async (p) => {
+    try {
+      return await fs.promises.readFile(p, "utf8");
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+/** One read of the derivation: which, of what path, and how long it took. */
+export interface LocationRead {
+  op: "stat" | "read";
+  path: string;
+  ms: number;
+}
+
+/** The file system's reads, each recorded in `reads` with the time it took:
+ * for a caller that says where a slow derivation spent its time. */
+export function timedLocationIo(reads: LocationRead[]): LocationIo {
+  const timed =
+    <T>(op: LocationRead["op"], read: (p: string) => Promise<T>) =>
+    async (p: string): Promise<T> => {
+      const started = performance.now();
+      try {
+        return await read(p);
+      } finally {
+        reads.push({ op, path: p, ms: performance.now() - started });
+      }
+    };
+  return {
+    stat: timed("stat", (p) => FS_IO.stat(p)),
+    read: timed("read", (p) => FS_IO.read(p)),
+  };
 }
 
 /** Walks `dir` and its ancestors for a `.jj` / `.git` marker, stopping at the
@@ -82,11 +116,12 @@ async function readTextOrUndefined(p: string): Promise<string | undefined> {
  * to the jj repo). */
 async function findRepoRoot(
   dir: string,
+  io: LocationIo,
 ): Promise<{ root: string; backend: "jj" | "git" } | undefined> {
   let current = path.resolve(dir);
   for (;;) {
-    if (await statOrUndefined(path.join(current, ".jj"))) return { root: current, backend: "jj" };
-    if (await statOrUndefined(path.join(current, ".git"))) return { root: current, backend: "git" };
+    if (await io.stat(path.join(current, ".jj"))) return { root: current, backend: "jj" };
+    if (await io.stat(path.join(current, ".git"))) return { root: current, backend: "git" };
     const parent = path.dirname(current);
     if (parent === current) return undefined;
     current = parent;
@@ -96,12 +131,15 @@ async function findRepoRoot(
 /** `.jj/repo` resolution: the directory holding the jj repo's own state, plus
  * the workspace name (empty for the default workspace, whose `.jj/repo` IS that
  * directory). */
-async function resolveJjRepo(root: string): Promise<{ repoDir: string; ws: string } | undefined> {
+async function resolveJjRepo(
+  root: string,
+  io: LocationIo,
+): Promise<{ repoDir: string; ws: string } | undefined> {
   const marker = path.join(root, ".jj", "repo");
-  const st = await statOrUndefined(marker);
+  const st = await io.stat(marker);
   if (!st) return undefined;
   if (st.isDirectory()) return { repoDir: marker, ws: "" };
-  const target = (await readTextOrUndefined(marker))?.trim();
+  const target = (await io.read(marker))?.trim();
   if (!target) return undefined;
   return {
     repoDir: path.resolve(path.dirname(marker), target),
@@ -114,16 +152,17 @@ async function resolveJjRepo(root: string): Promise<{ repoDir: string; ws: strin
  * (empty for the main worktree, whose two dirs are one). */
 async function resolveGitDir(
   root: string,
+  io: LocationIo,
 ): Promise<{ gitDir: string; commonDir: string; ws: string } | undefined> {
   const marker = path.join(root, ".git");
-  const st = await statOrUndefined(marker);
+  const st = await io.stat(marker);
   if (!st) return undefined;
   if (st.isDirectory()) return { gitDir: marker, commonDir: marker, ws: "" };
-  const contents = (await readTextOrUndefined(marker))?.trim();
+  const contents = (await io.read(marker))?.trim();
   const gitdirLine = contents?.match(/^gitdir:\s*(.+)$/m)?.[1]?.trim();
   if (!gitdirLine) return undefined;
   const gitDir = path.resolve(root, gitdirLine);
-  const commonRel = (await readTextOrUndefined(path.join(gitDir, "commondir")))?.trim();
+  const commonRel = (await io.read(path.join(gitDir, "commondir")))?.trim();
   const commonDir = commonRel ? path.resolve(gitDir, commonRel) : gitDir;
   return { gitDir, commonDir, ws: path.basename(root) };
 }
@@ -131,9 +170,9 @@ async function resolveGitDir(
 /** `<jj repo>/store/git_target` points at the backing git dir, relative to the
  * `store/` directory that holds it. Absent for a non-git jj backend (native
  * store) — then there is no remote to read and `repo` stays empty. */
-async function resolveJjGitDir(repoDir: string): Promise<string | undefined> {
+async function resolveJjGitDir(repoDir: string, io: LocationIo): Promise<string | undefined> {
   const storeDir = path.join(repoDir, "store");
-  const target = (await readTextOrUndefined(path.join(storeDir, "git_target")))?.trim();
+  const target = (await io.read(path.join(storeDir, "git_target")))?.trim();
   if (!target) return undefined;
   return path.resolve(storeDir, target);
 }
@@ -141,8 +180,8 @@ async function resolveJjGitDir(repoDir: string): Promise<string | undefined> {
 /** The branch name a git dir has checked out, from `HEAD`. A detached HEAD
  * (raw sha, no `ref:`) yields "" rather than a sha — a 40-hex string is not a
  * workspace label anyone reads. */
-async function readHeadBranch(gitDir: string): Promise<string> {
-  const head = (await readTextOrUndefined(path.join(gitDir, "HEAD")))?.trim();
+async function readHeadBranch(gitDir: string, io: LocationIo): Promise<string> {
+  const head = (await io.read(path.join(gitDir, "HEAD")))?.trim();
   const ref = head?.match(/^ref:\s*refs\/heads\/(.+)$/)?.[1];
   return ref?.trim() ?? "";
 }
@@ -339,9 +378,12 @@ export function webUrlFromCheckoutPath(root: string): string {
 
 /** The remotes of the git config in `gitDir`, none when there is no such dir
  * or config. */
-async function readRemotes(gitDir: string | undefined): Promise<Map<string, string>> {
+async function readRemotes(
+  gitDir: string | undefined,
+  io: LocationIo,
+): Promise<Map<string, string>> {
   if (!gitDir) return new Map();
-  const config = await readTextOrUndefined(path.join(gitDir, "config"));
+  const config = await io.read(path.join(gitDir, "config"));
   return config !== undefined ? parseGitConfigRemotes(config) : new Map();
 }
 
@@ -372,17 +414,23 @@ function repoFromRemotes(
  * does not track jj's working copy. Secondary workspaces — what kawaz's layout
  * actually checks out — carry their name in the directory itself and resolve
  * fine.
+ *
+ * `io` makes the reads (the file system's by default; timedLocationIo to
+ * know where the time went).
  */
-export async function deriveLocation(cwd: string): Promise<DerivedLocation> {
+export async function deriveLocation(
+  cwd: string,
+  io: LocationIo = FS_IO,
+): Promise<DerivedLocation> {
   if (!cwd) return EMPTY;
   try {
-    const found = await findRepoRoot(cwd);
+    const found = await findRepoRoot(cwd, io);
     if (!found) return EMPTY;
     const { root, backend } = found;
     if (backend === "jj") {
-      const jj = await resolveJjRepo(root);
+      const jj = await resolveJjRepo(root, io);
       if (!jj) return EMPTY;
-      const remotes = await readRemotes(await resolveJjGitDir(jj.repoDir));
+      const remotes = await readRemotes(await resolveJjGitDir(jj.repoDir, io), io);
       return {
         ...repoFromRemotes(remotes, root),
         ws: jj.ws,
@@ -393,10 +441,10 @@ export async function deriveLocation(cwd: string): Promise<DerivedLocation> {
         },
       };
     }
-    const git = await resolveGitDir(root);
+    const git = await resolveGitDir(root, io);
     if (!git) return EMPTY;
-    const branch = await readHeadBranch(git.gitDir);
-    const remotes = await readRemotes(git.commonDir);
+    const branch = await readHeadBranch(git.gitDir, io);
+    const remotes = await readRemotes(git.commonDir, io);
     return {
       ...repoFromRemotes(remotes, root),
       ws: git.ws !== "" ? git.ws : branch,

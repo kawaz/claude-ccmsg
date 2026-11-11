@@ -124,7 +124,7 @@ import {
   type OneShotLineReader,
   type SessionStatusStore,
 } from "./session-status.ts";
-import { deriveLocation } from "./repo-derive.ts";
+import { deriveLocation, type LocationRead, timedLocationIo } from "./repo-derive.ts";
 import { normalizeConfigDir } from "./config-dir.ts";
 import { PeerInjector } from "./peer-inject.ts";
 import { createMidIssuer } from "./mid-issuer.ts";
@@ -635,12 +635,17 @@ const nowIso = (): string => new Date().toISOString();
  * so one past this holds every request of the session up. */
 export const HELLO_SLOW_MS = 500;
 
-/** What a session's hello spent on each of its reads, in ms. */
+/** What a session's hello spent on each of its reads, in ms: the location's
+ * one by one, and how late a 0 ms timer set as the hello began fired (a late
+ * one says the event loop did not turn; reads that are slow while it fired on
+ * time were waiting on the file system). */
 export interface HelloReads {
   transcript: number;
   cwd: number;
   repoRoot: number;
   location: number;
+  locationReads: readonly LocationRead[];
+  timerLateMs: number;
 }
 
 /** The log line for a session's hello that took HELLO_SLOW_MS or more: the
@@ -649,10 +654,26 @@ export interface HelloReads {
 export function slowHelloText(sid: string, totalMs: number, took: HelloReads): string | undefined {
   if (totalMs < HELLO_SLOW_MS) return undefined;
   const ms = (n: number): string => `${String(Math.round(n))} ms`;
+  const reads = took.locationReads.map((r) => `${r.op} ${r.path} ${ms(r.ms)}`).join(", ");
   return (
     `hello ${sid} took ${ms(totalMs)}: transcript search ${ms(took.transcript)}, ` +
-    `cwd ${ms(took.cwd)}, repo root ${ms(took.repoRoot)}, location ${ms(took.location)}`
+    `cwd ${ms(took.cwd)}, repo root ${ms(took.repoRoot)}, location ${ms(took.location)} ` +
+    `(${reads}); a 0 ms timer set as it began fired ${ms(took.timerLateMs)} late`
   );
+}
+
+/** How late a 0 ms timer set now fires: read when the work it was set beside
+ * is done (a timer that has not fired by then is late by all that time). */
+function timerLateness(): () => number {
+  const set = performance.now();
+  let firedAt: number | undefined;
+  const timer = setTimeout(() => {
+    firedAt = performance.now();
+  }, 0);
+  return () => {
+    clearTimeout(timer);
+    return (firedAt ?? performance.now()) - set;
+  };
 }
 
 /** Start a launch for `requester` (`user` or a session's sid), held in
@@ -2064,7 +2085,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // own push below carries the cleared warning out.
       if (req.role === "session" && req.sid) daemon.staleClients.delete(req.sid);
       const helloStarted = performance.now();
-      const took: HelloReads = { transcript: 0, cwd: 0, repoRoot: 0, location: 0 };
+      const timerLate = timerLateness();
+      const locationReads: LocationRead[] = [];
+      const took: HelloReads = {
+        transcript: 0,
+        cwd: 0,
+        repoRoot: 0,
+        location: 0,
+        locationReads,
+        timerLateMs: 0,
+      };
       let newId: Identity;
       if (req.role === "user") {
         newId = { role: "user" };
@@ -2150,7 +2180,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
-        const derived = await deriveLocation(cwd);
+        const derived = await deriveLocation(cwd, timedLocationIo(locationReads));
         took.location = performance.now() - lap;
         const vcs =
           derived.vcs && req.branch ? { ...derived.vcs, branch: req.branch } : derived.vcs;
@@ -2173,6 +2203,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // pushes ev:"peers" itself.
       if (newId.role === "session") {
         registerSession(daemon, newId, client);
+        took.timerLateMs = timerLate();
         const slow = slowHelloText(newId.sid, performance.now() - helloStarted, took);
         if (slow !== undefined) daemon.log.warn(slow);
       }
