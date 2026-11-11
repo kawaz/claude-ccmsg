@@ -4723,9 +4723,10 @@ button.session-tab {
   min-width: 0;
 }
 
-/* 行の位置 (L 行番号、@byte offset、bytes)。offset は rich 表示側のバブルと
- * 同じ値なので、raw の行と rich のバブルを目視で突き合わせるための座標に
- * なる。1 行の項目では raw / pretty のタブの横、複数行の項目では各行の上。 */
+/* 行の位置 (`L<行番号> @<byte offset>-<bytes> byte`)。offset は rich 表示側の
+ * バブルと同じ値なので、raw の行と rich のバブルを目視で突き合わせるための
+ * 座標になる。常に raw / pretty のタブの横に置き、2 行の項目 (tool の呼び出し
+ * と結果のカード) は行ごとの位置をファイル順に横へ並べる。 */
 .tl-raw-position {
   display: block;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -4741,8 +4742,10 @@ button.session-tab {
   margin-left: var(--space-5);
 }
 
-.tl-raw-line > .tl-raw-position {
-  margin-bottom: var(--space-3);
+/* 並んだ位置どうしの間はスペース 2 つ分 (等幅なので 2ch)。flex の gap の分を
+ * 引いて、間隔の合計を 2ch にする。 */
+.tl-raw-mode > .tl-raw-position + .tl-raw-position {
+  margin-left: calc(2ch - var(--space-4));
 }
 
 .tl-raw-line {

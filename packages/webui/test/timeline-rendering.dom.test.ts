@@ -67,6 +67,8 @@ async function openWith(
   options: {
     origin?: ForkOrigin;
     position?: string;
+    /** byte offset of the first line (the page starts mid-file when > 0) */
+    start?: number;
   } = {},
 ): Promise<HTMLElement> {
   const store = timelineStore(options.position === undefined ? {} : { position: options.position });
@@ -75,7 +77,7 @@ async function openWith(
   const root = await mounted.mount(store, ws.handle, h(TimelineOf, null));
   const read = ws.reads.at(-1);
   if (read === undefined) throw new Error("expected the initial read");
-  await read.answer(page(lines));
+  await read.answer(page(lines, options.start));
   return root;
 }
 
@@ -228,17 +230,63 @@ describe("Timeline renders each kind of row", () => {
     expect(details.open).toBe(true);
   });
 
-  // 1 行だけの項目は左の欄を持たず、行番号・byte offset・bytes をタブの横に置く。
+  // 位置はタブの横に `L<行番号> @<byte offset>-<bytes> byte` で出す (数字は桁
+  // 区切りしない)。各行の上には出さない。
   test("a one-line item's jsonl view puts the line's position beside the tabs", async () => {
     const line = jsonl(userContentRow("where am i", { uuid: uuidOf("u", 1) }));
     const root = await openWith([line]);
     const toggle = instanceOf(root.querySelector(".tl-item-raw-toggle"), HTMLElement, "toggle");
     await act(() => toggle.click());
-    const position = root.querySelector(".tl-raw-mode > .tl-raw-position");
-    expect(position?.textContent).toBe(
-      `L1 @0 · ${new TextEncoder().encode(line).length.toLocaleString()} bytes`,
-    );
+    const positions = [...root.querySelectorAll(".tl-raw-mode > .tl-raw-position")];
+    expect(positions.map((p) => p.textContent)).toEqual([
+      `L1 @0-${new TextEncoder().encode(line).length} byte`,
+    ]);
     expect(root.querySelector(".tl-raw-row .tl-raw-position")).toBeNull();
+    await act(() => toggle.click());
+  });
+
+  // tool の呼び出しと結果を 1 枚にしたカードは 2 行を持つ: 行ごとの位置を
+  // ファイル順にタブの横へ並べる。2 行目の offset は 1 行目の bytes + 改行 1 つ
+  // の先。1,000 を超える数でも桁区切りしない。
+  test("a two-line item's jsonl view lists both lines' positions beside the tabs, in file order", async () => {
+    const lead = jsonl(userContentRow("x".repeat(1200)));
+    const call = jsonl(
+      assistantContentRow([
+        toolUseBlock("Bash", { command: "printf ok", description: "Print ok" }, "tu_pair"),
+      ]),
+    );
+    const result = jsonl(userContentRow([toolResultBlock("ok", { tool_use_id: "tu_pair" })]));
+    const root = await openWith([lead, call, result]);
+    const bytes = (text: string) => new TextEncoder().encode(text).length;
+    const callOffset = bytes(lead) + 1;
+    const resultOffset = callOffset + bytes(call) + 1;
+    const item = defined(
+      [...root.querySelectorAll<HTMLElement>(".tl-item")].find((el) =>
+        el.textContent?.includes("Print ok"),
+      ),
+      "the Bash card",
+    );
+    const toggle = instanceOf(item.querySelector(".tl-item-raw-toggle"), HTMLElement, "toggle");
+    await act(() => toggle.click());
+    const positions = [...item.querySelectorAll(".tl-raw-mode > .tl-raw-position")];
+    expect(positions.map((p) => p.textContent)).toEqual([
+      `L2 @${callOffset}-${bytes(call)} byte`,
+      `L3 @${resultOffset}-${bytes(result)} byte`,
+    ]);
+    expect(item.querySelectorAll(".tl-raw-row")).toHaveLength(2);
+    expect(item.querySelector(".tl-raw-row .tl-raw-position")).toBeNull();
+    await act(() => toggle.click());
+  });
+
+  // 読み込み範囲がファイル先頭から始まっていない (tail から読んだ) 間は
+  // 行番号が分からないので `L?` と出す。
+  test("a jsonl view shows L? while the loaded lines do not start at the file's start", async () => {
+    const line = jsonl(userContentRow("somewhere later", { uuid: uuidOf("u", 1) }));
+    const root = await openWith([line], { start: 2572835 });
+    const toggle = instanceOf(root.querySelector(".tl-item-raw-toggle"), HTMLElement, "toggle");
+    await act(() => toggle.click());
+    const position = root.querySelector(".tl-raw-mode > .tl-raw-position");
+    expect(position?.textContent).toBe(`L? @2572835-${new TextEncoder().encode(line).length} byte`);
     await act(() => toggle.click());
   });
 

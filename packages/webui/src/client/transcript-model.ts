@@ -887,7 +887,7 @@ export interface RawTranscriptRow {
   /** 1-based line number in the transcript file, when it is known: only while
    * the cache starts at the file's first byte. Paging starts at the tail, so
    * until "load older" reaches the start nothing tells how many lines come
-   * before the cache, and the number is `null`. */
+   * before the cache, and the number is `null` (the raw view shows `L?`). */
   line: number | null;
   /** The line's own content, without the trailing newline (transcript_read
    * already strips it). */

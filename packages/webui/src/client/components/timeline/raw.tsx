@@ -26,7 +26,7 @@ function RawModeTabs({
 }: {
   disabled?: boolean;
   disabledReason?: string;
-  /** Put after the tabs on their row (the position of a lone line). */
+  /** Put after the tabs on their row (where the item's lines sit in the file). */
   children?: ComponentChildren;
 }) {
   const pretty = useRawViewPretty();
@@ -144,43 +144,51 @@ function ItemRawRows({ offset }: { offset: number }) {
   // この項目の行が 1 つも整形できないなら pretty を選ばせない (押しても
   // 全行が raw に落ちるだけ)。項目あたり数行なので毎 render の判定で足りる。
   const anyPretty = rows.some((row) => canPrettyRawLine(row.text));
-  const lone = rows.length === 1 ? rows[0] : undefined;
   return (
     <>
-      {/* 1 行だけの項目は位置をタブの横に置く。複数行 (tool の呼び出しと
-       * 結果を 1 枚にしたカード) は行ごとに、その行の上に置く。 */}
+      {/* 行の位置はすべてタブの横に、ファイル順に並べる (2 行の項目 = tool の
+       * 呼び出しと結果を 1 枚にしたカードなら 2 つ)。kawaz: 「[raw] [pretty]
+       * L123 @2572835-3540 byte」。 */}
       <RawModeTabs
         disabled={!anyPretty}
         disabledReason="この項目の JSONL 行は JSON として整形できません"
       >
-        {lone ? <RawRowPosition row={lone} /> : null}
+        {rows.map((row) => (
+          <RawRowPosition key={row.offset} row={row} />
+        ))}
       </RawModeTabs>
       {rows.map((row) => (
-        <RawLineRow key={row.offset} row={row} showPosition={!lone} />
+        <RawLineRow key={row.offset} row={row} />
       ))}
     </>
   );
 }
 
-/** Where a jsonl line sits in the transcript file: `L<line>` (only while the
- * line number is known, RawTranscriptRow.line), `@<byte offset>` — the same
- * number the rich view keys the item by — and its size in bytes. */
+/** Where a jsonl line sits in the transcript file, as
+ * `L<line> @<byte offset>-<bytes> byte`: its 1-based line number (`L?` while
+ * it is not known, RawTranscriptRow.line), the byte offset of its first byte
+ * — the same number the rich view keys the item by — and its size in bytes.
+ * Digits are not grouped, so a number can be pasted as-is into `dd skip=` or
+ * `tail -c +`. */
+function rawRowPositionText(row: RawTranscriptRow): string {
+  return `L${row.line ?? "?"} @${row.offset}-${row.bytes} byte`;
+}
+
 function RawRowPosition({ row }: { row: RawTranscriptRow }) {
   return (
     <span
       class="tl-raw-position"
-      title={`${row.line !== null ? `${row.line} 行目、` : ""}byte offset ${row.offset}、${row.bytes} bytes`}
+      title={`${row.line !== null ? `${row.line} 行目` : "行番号は不明 (読み込み範囲がファイル先頭から始まっていない)"}、byte offset ${row.offset}、${row.bytes} bytes`}
     >
-      {row.line !== null ? `L${row.line} ` : ""}@{row.offset} · {row.bytes.toLocaleString()} bytes
+      {rawRowPositionText(row)}
     </span>
   );
 }
 
-/** One line of the raw view: the verbatim jsonl text, with its position above
- * it when the item has more than one line. Long lines (pasted images,
+/** One line of the raw view: the verbatim jsonl text. Long lines (pasted images,
  * big tool results) render truncated behind a per-row expander so switching
  * into the raw view never has to lay out megabytes at once. */
-function RawLineRow({ row, showPosition }: { row: RawTranscriptRow; showPosition: boolean }) {
+function RawLineRow({ row }: { row: RawTranscriptRow }) {
   const [expanded, setExpanded] = useState(false);
   const pretty = useRawViewPretty();
   // 整形は選択中のときだけ (巨大行の JSON.parse を raw 表示のたびに走らせ
@@ -194,7 +202,6 @@ function RawLineRow({ row, showPosition }: { row: RawTranscriptRow; showPosition
   return (
     <div class="tl-raw-row">
       <div class="tl-raw-line">
-        {showPosition ? <RawRowPosition row={row} /> : null}
         {prettied && !prettied.ok ? (
           <p class="tl-raw-note">
             {prettied.reason === "too-large"
