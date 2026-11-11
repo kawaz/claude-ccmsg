@@ -1,6 +1,6 @@
 ---
 title: 🔐 のフィルタの末尾から「TL に戻る」を押すと、末尾に残らず 4 万 px 上に残ることがある
-status: open
+status: resolved
 category: bug
 created: 2026-11-11T21:39:59+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-11-11T21:56:14+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","dr/DR-0050"]
 blocked_by:
 origin: 「TL に移動」の実装の検証中に worker が変更前の版と並べて見つけた (2026-11-11)
 ---

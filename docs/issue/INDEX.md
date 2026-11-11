@@ -5,7 +5,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-11-11 | design | open | [vcs-workspace-name-from-jj-record](./2026-11-11-vcs-workspace-name-from-jj-record.md) | セッションの一覧の vcs.workspace (と ws) は、jj の workspace の名前をそのディレクトリ名から取っている… |
-| 2026-11-11 | bug | open | [filter-back-loses-tail-when-4px-off](./2026-11-11-filter-back-loses-tail-when-4px-off.md) | 🔐 のフィルタの末尾から「TL に戻る」を押すと、末尾に残らず 4 万 px 上に残ることがある |
 | 2026-11-11 | design | open | [peer-model-workspace-vcs-repo](./2026-11-11-peer-model-workspace-vcs-repo.md) | セッションの一覧のモデルを整理する (name / workspace / repository / VCS の種類と remote を足し、その後 ws と repo を消す) |
 | 2026-11-10 | bug | open | [in-view-search-live-range-webkit](./2026-11-10-in-view-search-live-range-webkit.md) | webui の画面内検索が live Range を CSS.highlights に登録していて、WebKit で重くなる可能性 |
 | 2026-11-06 | bug | open | [timeline-tail-bubble-remount-loses-transient-state](./2026-11-06-timeline-tail-bubble-remount-loses-transient-state.md) | TL 末尾のバブルは後から行が足されると作り直され、ボタンの送信中 / 送った時刻 / 「コピーしました」などの一時状態が消える |
