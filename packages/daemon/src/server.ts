@@ -1333,14 +1333,22 @@ function clientBuildFields(
 
 /** Where send_message and peer_list read the sessions they match from: the
  * live runs of the sessions the daemon reaches, read afresh. A config dir not
- * read in time adds none, which a send reports as a session that is not
- * running: the log says that it was the read. */
+ * read in time adds none, and a record that does not read adds no run, which
+ * a send reports as a session that is not running: the log says that it was
+ * the read. */
 function peerDeps(daemon: Daemon): PeerDeps {
   return {
     runs: async () => {
       const scope = sessionScope(daemon);
-      const runs = await liveRuns(scope.dirs, isProcessAlive, RUNS_SCAN_MS, (late) => {
-        daemon.log.warn(`session runs: not read in time, left out: ${lateScanText(late)}`);
+      const runs = await liveRuns(scope.dirs, isProcessAlive, RUNS_SCAN_MS, {
+        late: (scan) => {
+          daemon.log.warn(`session runs: not read in time, left out: ${lateScanText(scan)}`);
+        },
+        unread: (sessionsDir, reasons) => {
+          daemon.log.warn(
+            `session runs: ${sessionsDir} not read whole, left out: ${reasons.join("; ")}`,
+          );
+        },
       });
       return runs.filter((run) => scope.has(run.configDir, run.sid));
     },

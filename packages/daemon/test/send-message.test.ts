@@ -15,6 +15,8 @@ import { createSerial } from "../src/serial.ts";
 import type { SessionRun } from "../src/session-runs.ts";
 import {
   connect,
+  daemonLogOf,
+  reportLeftOutReads,
   sessionConn,
   type DaemonCtx,
   startTestDaemon,
@@ -351,6 +353,11 @@ describe("send_message through the daemon", () => {
       expect(await send(a, { session_id: PEER }, "not for you")).toEqual([
         { sid: PEER, outcome: "not_delivered", reason: "ended" },
       ]);
+      // The isolated daemon reads hb.configDir (SENDER announced it) and finds
+      // PEER's run there, which is not reached because PEER never announced
+      // the dir to it. A read that ran out of time or left the record out
+      // would come to the same ended without that: kept in the run's log.
+      reportLeftOutReads(isolated, "isolated");
       expect(hb.frames).toEqual([]);
 
       const serving = await startTestDaemon({ CCMSG_CLAUDE_CONFIG_DIRS: hb.configDir });
@@ -361,8 +368,10 @@ describe("send_message through the daemon", () => {
       const b = await sessionWithConfig(serving, SENDER);
       const served = await send(b, { session_id: PEER }, "served");
       if (served[0]?.outcome !== "delivered") {
-        // Which lookup failed is in the daemon's log line for the delivery.
-        console.error(fs.readFileSync(path.join(serving.stateDir, "daemon.log"), "utf8"));
+        // Which lookup failed is in the daemon's log line for the delivery;
+        // the isolated daemon's tells how its send came to ended.
+        console.error(`serving daemon.log:\n${daemonLogOf(serving)}`);
+        console.error(`isolated daemon.log:\n${daemonLogOf(isolated)}`);
       }
       expect(served).toEqual([{ sid: PEER, outcome: "delivered" }]);
       expect(parseEnvelope(await hb.nextContent()).body).toBe("served");

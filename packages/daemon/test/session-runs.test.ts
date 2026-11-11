@@ -28,6 +28,31 @@ function tempDir(prefix: string): string {
 }
 
 describe("liveRuns", () => {
+  // A record that does not read adds no run, which a send tells as a session
+  // that is not running: leftOut.unread says which record, and why. A dir
+  // that has no sessions/ at all is a dir with no sessions, and says nothing.
+  test("a record that does not read adds no run, and leftOut.unread says which and why", async () => {
+    const c1 = tempDir("sr-cfg-");
+    const sessionsDir = path.join(c1, "sessions");
+    fs.mkdirSync(sessionsDir);
+    fs.writeFileSync(
+      path.join(sessionsDir, `${LIVE_PID}.json`),
+      JSON.stringify({ pid: LIVE_PID, sessionId: A }),
+    );
+    fs.writeFileSync(path.join(sessionsDir, "77.json"), "not json");
+    const unread: { dir: string; reasons: readonly string[] }[] = [];
+    const late: unknown[] = [];
+    const runs = await liveRuns([c1, path.join(c1, "missing")], (pid) => pid === LIVE_PID, 1000, {
+      late: (scan) => late.push(scan),
+      unread: (dir, reasons) => unread.push({ dir, reasons }),
+    });
+    expect(runs).toEqual([{ configDir: c1, sid: A, pid: LIVE_PID }]);
+    expect(late).toEqual([]);
+    expect(unread.map((u) => u.dir)).toEqual([sessionsDir]);
+    expect(unread[0]?.reasons).toHaveLength(1);
+    expect(unread[0]?.reasons[0]).toStartWith(`${path.join(sessionsDir, "77.json")}: `);
+  });
+
   test("the state files of running processes, across config dirs", async () => {
     const c1 = tempDir("sr-cfg-");
     const c2 = tempDir("sr-cfg-");

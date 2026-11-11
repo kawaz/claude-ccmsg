@@ -53,6 +53,30 @@ export interface DaemonCtx {
   env: Record<string, string>;
 }
 
+/** What `ctx`'s daemon has written to its daemon.log so far ("" before it
+ * has written any). */
+export function daemonLogOf(ctx: Pick<DaemonCtx, "stateDir">): string {
+  try {
+    return fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
+  } catch (e) {
+    if (e instanceof Error && "code" in e && e.code === "ENOENT") return "";
+    throw e;
+  }
+}
+
+/** The lines of `ctx`'s daemon.log that say a send's read of the sessions'
+ * files left something out (`session runs: …`: a dir not read in time, a
+ * record that did not read), each also written to stderr under `label`, so
+ * that a CI run's log keeps them when the test passes too: what such a read
+ * leaves out reads to the send like a session that is not running. */
+export function reportLeftOutReads(ctx: Pick<DaemonCtx, "stateDir">, label: string): string[] {
+  const lines = daemonLogOf(ctx)
+    .split("\n")
+    .filter((line) => line.includes("] session runs: "));
+  for (const line of lines) console.error(`${label} daemon.log: ${line}`);
+  return lines;
+}
+
 /** Test daemons keep their config dir inside the temp data dir so that every
  * call site gets it from `dataDir` alone (restarts stay one-liners) and no test
  * can ever read or migrate into the developer's real ~/.config/ccmsg. */

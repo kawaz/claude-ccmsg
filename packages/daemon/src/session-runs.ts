@@ -29,28 +29,45 @@ export interface SessionRun {
 /** Read Claude Code's state files within. */
 export const RUNS_SCAN_MS = 1_000;
 
+/** What liveRuns left out that was there to read: what it leaves out reads
+ * to a send like a session that is not running, so the caller is told.
+ * - `late`: a config dir whose files were not all read in time, with how far
+ *   the read got (it adds no run)
+ * - `unread`: the records of a config dir that could not be read or did not
+ *   read as a record, or its `sessions/` that could not be listed, each with
+ *   why (each adds no run) */
+export interface LeftOut {
+  late(scan: LateScan): void;
+  unread(sessionsDir: string, reasons: readonly string[]): void;
+}
+
+const NOTHING_TOLD: LeftOut = { late: () => {}, unread: () => {} };
+
 /** The live runs recorded in `<config dir>/sessions/<pid>.json` of each of
  * `configDirs`. A file whose process no longer runs is a run that ended
- * without removing it, and is left out. A config dir that cannot be read, or
- * whose files are not all read within `scanMs` of this process's running time
- * (withinBudget), adds none; `onLate` is told how far the read of the latter
- * got, since what it leaves out reads like a session that is not running. A
- * process is one run however many of `configDirs` name its config dir (one
- * through a symlink, another by its realpath): it is listed once, so it is
- * sent to once. */
+ * without removing it, and is left out. A record that cannot be read adds no
+ * run, and a config dir that cannot be listed, or whose files are not all
+ * read within `scanMs` of this process's running time (withinBudget), adds
+ * none; `leftOut` is told of each. A process is one run however many of
+ * `configDirs` name its config dir (one through a symlink, another by its
+ * realpath): it is listed once, so it is sent to once. */
 export async function liveRuns(
   configDirs: readonly string[],
   isAlive: (pid: number) => boolean,
   scanMs: number = RUNS_SCAN_MS,
-  onLate: (scan: LateScan) => void = () => {},
+  leftOut: LeftOut = NOTHING_TOLD,
 ): Promise<SessionRun[]> {
   const perDir = await Promise.all(
     configDirs.map((configDir) => {
       const progress: ScanProgress = { listed: undefined, read: 0 };
-      return withinBudget(runsIn(configDir, isAlive, progress), scanMs, (spent): SessionRun[] => {
-        onLate({ dir: path.join(configDir, "sessions"), ...progress, ...spent });
-        return [];
-      });
+      return withinBudget(
+        runsIn(configDir, isAlive, progress, leftOut),
+        scanMs,
+        (spent): SessionRun[] => {
+          leftOut.late({ dir: path.join(configDir, "sessions"), ...progress, ...spent });
+          return [];
+        },
+      );
     }),
   );
   const byPid = new Map<number, SessionRun>();
@@ -62,8 +79,10 @@ async function runsIn(
   configDir: string,
   isAlive: (pid: number) => boolean,
   progress: ScanProgress,
+  leftOut: LeftOut,
 ): Promise<SessionRun[]> {
   const read = await readSessionsDir(configDir, isAlive, progress);
+  if (read.unread !== undefined) leftOut.unread(path.join(configDir, "sessions"), read.unread);
   return read.live.map(({ sessionId: sid, pid, cwd, name }) => ({
     configDir,
     sid,

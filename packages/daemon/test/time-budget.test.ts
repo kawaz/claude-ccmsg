@@ -83,21 +83,20 @@ describe("liveRuns within its budget", () => {
       JSON.stringify({ pid: process.pid, sessionId: sid }),
     );
     const late: LateScan[] = [];
-    const runs = liveRuns(
-      [dir],
-      (pid) => pid === process.pid,
-      100,
-      (scan) => late.push(scan),
-    );
+    const runs = liveRuns([dir], (pid) => pid === process.pid, 100, {
+      late: (scan) => late.push(scan),
+      unread: () => {},
+    });
     busy(300);
     expect(await runs).toEqual([{ configDir: dir, sid, pid: process.pid }]);
     expect(late).toEqual([]);
   });
 
   // A dir whose files are not all read in time adds no run, which a send
-  // tells as a session that is not running: onLate says it was the read, and
-  // how far it got (here a FIFO no one writes to is never read through).
-  test("a dir not read in time adds no run, and onLate says how far its read got", async () => {
+  // tells as a session that is not running: leftOut.late says it was the
+  // read, and how far it got (here a FIFO no one writes to is never read
+  // through).
+  test("a dir not read in time adds no run, and leftOut.late says how far its read got", async () => {
     const dir = tmpDir("ccmsg-budget-cfg-");
     const sessionsDir = path.join(dir, "sessions");
     fs.mkdirSync(sessionsDir);
@@ -110,12 +109,10 @@ describe("liveRuns within its budget", () => {
     const late: LateScan[] = [];
     try {
       expect(
-        await liveRuns(
-          [dir],
-          (pid) => pid === process.pid,
-          100,
-          (scan) => late.push(scan),
-        ),
+        await liveRuns([dir], (pid) => pid === process.pid, 100, {
+          late: (scan) => late.push(scan),
+          unread: () => {},
+        }),
       ).toEqual([]);
     } finally {
       // Opening the FIFO for writing lets the blocked read finish.
