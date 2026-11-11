@@ -10,7 +10,9 @@ import {
   launchEffortFromTranscript,
   launchModelFromTranscript,
   parseWith,
+  type LaunchEffort,
   type LaunchInput,
+  type LaunchModel,
   type SessionRestartResponse,
 } from "@ccmsg/protocol";
 import type { SessionLauncherConfig } from "./config.ts";
@@ -37,12 +39,22 @@ export type SessionRestartOutcome =
   | { ok: true; response: SessionRestartResponse }
   | { ok: false; code: ErrorCode; msg: string };
 
-/** The launch that resumes `sessionId` where its process ran, as what it runs
- * as, starting with `prompt`. A model or effort the launch cannot name is left
- * to the command. */
+/** What a restart was asked to resume the session with (the request's
+ * fields): the first prompt, and the model / effort, each absent for the one
+ * the session runs as. */
+export interface RestartAsk {
+  prompt?: string;
+  model?: LaunchModel;
+  effort?: LaunchEffort;
+}
+
+/** The launch that resumes `sessionId` where its process ran, with the model
+ * and effort `ask` names, else the ones it runs as, starting with `ask`'s
+ * prompt (RESTART_PROMPT when it names none). A model or effort the launch
+ * cannot name is left to the command. */
 async function resumeLaunch(
   sessionId: string,
-  prompt: string,
+  ask: RestartAsk,
   record: { cwd?: string; name?: string },
   deps: SessionRestartDeps,
 ): Promise<{ ok: true; launch: LaunchInput } | { ok: false; code: ErrorCode; msg: string }> {
@@ -53,17 +65,19 @@ async function resumeLaunch(
       msg: `the process of session ${sessionId} records no cwd to resume it in`,
     };
   }
-  const runsAs = await deps.runsAs();
-  const model = runsAs.model === undefined ? undefined : launchModelFromTranscript(runsAs.model);
+  const runsAs = ask.model !== undefined && ask.effort !== undefined ? {} : await deps.runsAs();
+  const model =
+    ask.model ?? (runsAs.model === undefined ? undefined : launchModelFromTranscript(runsAs.model));
   const effort =
-    runsAs.effort === undefined ? undefined : launchEffortFromTranscript(runsAs.effort);
+    ask.effort ??
+    (runsAs.effort === undefined ? undefined : launchEffortFromTranscript(runsAs.effort));
   const read = parseWith(LaunchInputSchema, {
     cwd: record.cwd,
     resume: sessionId,
     ...(model !== undefined ? { model } : {}),
     ...(effort !== undefined ? { effort } : {}),
     ...(record.name !== undefined && record.name !== "" ? { name: record.name } : {}),
-    prompt,
+    prompt: ask.prompt ?? RESTART_PROMPT,
   });
   if (!read.ok) {
     return { ok: false, code: ErrorCode.invalid_args, msg: read.failure.summary };
@@ -73,10 +87,10 @@ async function resumeLaunch(
 
 /** One restart, DR-0028 「restart」 steps 2–8 (the role, the launcher's
  * shutdown and in-flight bound are the caller's). The resumed session starts
- * with `prompt`, or RESTART_PROMPT when the request names none. */
+ * as `ask` says (resumeLaunch). */
 export async function restartSession(
   sessionId: string,
-  prompt: string | undefined,
+  ask: RestartAsk,
   deps: SessionRestartDeps,
 ): Promise<SessionRestartOutcome> {
   const fields: string[] = [`session_id=${sessionId}`];
@@ -94,7 +108,7 @@ export async function restartSession(
     return refuse(ErrorCode.not_found, `no process for session ${sessionId}`);
   }
   fields.push(`pid=${String(record.pid)}`);
-  const resume = await resumeLaunch(sessionId, prompt ?? RESTART_PROMPT, record, deps);
+  const resume = await resumeLaunch(sessionId, ask, record, deps);
   if (!resume.ok) return refuse(resume.code, resume.msg);
 
   const { terminated } = await killSession(record.pid, deps.kill);

@@ -16,7 +16,8 @@
 // Each form is the FAB's prompt form (SessionInputComposer): its textarea,
 // then its row with the selects and the send at the right end — here
 // デフォルトに保存 on the left where the FAB's attach button is, and the
-// launch's model / effort as the FAB's effort select (OverrideSelect). Its
+// model / effort the session is started (or resumed) with as the FAB's effort
+// select (OverrideSelect). Its
 // colours are not the FAB's (app.css `.status-prompt-form`), so it does not
 // read as the box that writes to the session on screen.
 import type { JSX } from "preact";
@@ -90,7 +91,8 @@ function useFocusAtEnd(): (el: HTMLTextAreaElement | null) => void {
 
 /** The select of one of the launch's fields (`--model`, `--effort`), its
  * values in one group. While the form holds none of them (a model with no
- * default effort), a first option `none` says one is to be chosen. */
+ * default effort, a restart's field the webui cannot name), a first option
+ * `none` says what that stands for. */
 function launchPicks(
   field: string,
   values: readonly string[],
@@ -358,19 +360,31 @@ function LaunchForm({
   );
 }
 
+/** The 再起動 form: the resumed session's first prompt, and its model and
+ * effort, which start on what the session runs as now (the launch form's
+ * `runsAs`) and are sent as chosen. A field the webui cannot name for the
+ * session starts on 元の model / 元の effort and is left out of the request, for the daemon
+ * to resume with what the session runs as. Choosing a model keeps the effort:
+ * the session goes on, with its effort, on the other model. Only the prompt
+ * is saved as the default; the model and effort start on the session's own
+ * each time. */
 function RestartForm({
   cwd,
+  runsAs,
   restart,
   blocked,
   onRestarted,
 }: {
   cwd: string | null;
+  runsAs: { model?: LaunchModel; effort?: LaunchEffort };
   restart: SessionRestart;
   blocked: boolean;
   onRestarted: () => void;
 }) {
   const [stored, setStored] = useState(() => (cwd === null ? null : readDefaults(cwd)));
   const [draft, setDraft] = useState(() => stored?.restart?.prompt ?? RESTART_PROMPT);
+  const [model, setModel] = useState(runsAs.model);
+  const [effort, setEffort] = useState(runsAs.effort);
   // Whether a restart was sent from this opening (see LaunchForm's `sent`).
   const [sent, setSent] = useState(false);
   const focusDraft = useFocusAtEnd();
@@ -380,7 +394,7 @@ function RestartForm({
   function send(): void {
     if (empty || blocked) return;
     setSent(true);
-    void restart.start(draft).then((result) => {
+    void restart.start({ prompt: draft, model, effort }).then((result) => {
       if (result.ok) onRestarted();
     });
   }
@@ -424,6 +438,20 @@ function RestartForm({
               {saveLabel(saved)}
             </button>
           )}
+          <OverrideSelect
+            groups={launchPicks("--model", LAUNCH_MODELS, model ?? "", "元の model")}
+            chosen={model ?? ""}
+            onChoose={(chosen) => setModel(LAUNCH_MODELS.find((m) => m === chosen))}
+            disabled={restart.busy}
+            label="--model"
+          />
+          <OverrideSelect
+            groups={launchPicks("--effort", LAUNCH_EFFORTS, effort ?? "", "元の effort")}
+            chosen={effort ?? ""}
+            onChoose={(chosen) => setEffort(LAUNCH_EFFORTS.find((e) => e === chosen))}
+            disabled={restart.busy}
+            label="--effort"
+          />
           <button
             type="submit"
             class="session-input-send"
@@ -541,7 +569,13 @@ export function SessionActions({
       ) : null}
       {opened === "restart" ? (
         <ModalDialog title="再起動" closable={!restart.busy} onClose={close}>
-          <RestartForm cwd={cwd} restart={restart} blocked={blocked} onRestarted={close} />
+          <RestartForm
+            cwd={cwd}
+            runsAs={runsAs}
+            restart={restart}
+            blocked={blocked}
+            onRestarted={close}
+          />
         </ModalDialog>
       ) : null}
     </section>

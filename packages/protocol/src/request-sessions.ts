@@ -337,9 +337,9 @@ export const RESTART_PROMPT =
 
 /** Restart a session (DR-0028 「restart」, user role only): stop its process as
  * session_kill does, and once it is observed gone, resume the same id through
- * the launch command (DR-0018), with the model / effort / name it runs as and
- * a first prompt. Every reason to refuse is checked before the process is
- * stopped.
+ * the launch command (DR-0018), with the model / effort the request names
+ * (each absent, what the session runs as), the name it runs as and a first
+ * prompt. Every reason to refuse is checked before the process is stopped.
  *
  * Slow reply like session_launch: up to the kill grace and the launch
  * command's wait. */
@@ -350,6 +350,12 @@ export const SessionRestartRequestSchema = v.object({
   /** The resumed session's first prompt, read as the launch's `prompt` (not
    * empty). Absent for RESTART_PROMPT. */
   prompt: LaunchFieldsSchema.entries.prompt,
+  /** The resumed session's model, read as the launch's `model`. Absent for
+   * the model the session runs as. */
+  model: LaunchFieldsSchema.entries.model,
+  /** The resumed session's effort, read as the launch's `effort`. Absent for
+   * the effort the session runs as. */
+  effort: LaunchFieldsSchema.entries.effort,
 });
 export type SessionRestartRequest = Output<typeof SessionRestartRequestSchema>;
 

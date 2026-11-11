@@ -44,6 +44,7 @@ import {
 } from "../utils.ts";
 import { useApp } from "../context.ts";
 import { sameJson, useStoreState } from "../useStore.ts";
+import type { SessionRestartAsk } from "../ws.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 import { ActionRow, SessionActions, useStatusLaunch } from "./StatusSessionForms.tsx";
@@ -232,9 +233,9 @@ export type SessionRestartResult = ReturnType<typeof restartResultText>;
 export interface SessionRestart {
   busy: boolean;
   result: SessionRestartResult | null;
-  /** Restart, the resumed session starting with `prompt`; settles with what
-   * it came to. */
-  start: (prompt: string) => Promise<SessionRestartResult>;
+  /** Restart as `ask` says (the resumed session's first prompt, model and
+   * effort); settles with what it came to. */
+  start: (ask: SessionRestartAsk) => Promise<SessionRestartResult>;
 }
 
 /** How long 「再起動しました」 stays under the operations before it goes: the
@@ -246,7 +247,7 @@ export const RESTART_DONE_NOTE_MS = 5_000;
  * restart started for another sid is not this one's. */
 export function useSessionRestart(
   sid: string,
-  restart: (sid: string, prompt: string) => Promise<SessionRestartResponse | ErrorResponse>,
+  restart: (sid: string, ask: SessionRestartAsk) => Promise<SessionRestartResponse | ErrorResponse>,
 ): SessionRestart {
   const [state, setState] = useState<{
     sid: string;
@@ -267,9 +268,9 @@ export function useSessionRestart(
   return {
     busy: own.busy,
     result: own.result,
-    start: (prompt) => {
+    start: (ask) => {
       setState({ sid, busy: true, result: null });
-      return restart(sid, prompt)
+      return restart(sid, ask)
         .then((reply) => restartResultText(reply))
         .catch(
           (e: unknown): SessionRestartResult => ({

@@ -26,6 +26,7 @@ import type {
   RequestOverridePatch,
   SessionDumpFileRequest,
   SessionLaunchRequest,
+  SessionRestartRequest,
   SessionSearchRequest,
   StreamEvent,
 } from "@ccmsg/protocol";
@@ -127,6 +128,10 @@ function invalidReply(op: string, failure: ParseFailure): ErrorResponse {
     },
   };
 }
+
+/** What a restart asks the daemon for: session_restart's fields besides the
+ * session (DR-0028 「restart」). */
+export type SessionRestartAsk = Pick<SessionRestartRequest, "prompt" | "model" | "effort">;
 
 export interface WsHandle {
   connect(): void;
@@ -369,10 +374,11 @@ export interface WsHandle {
    * means "signals sent, termination unconfirmed". */
   sessionKill(sessionId: string, opts?: { force?: boolean }): Promise<ReplyOf<"session_kill">>;
   /** Stop a session's process and resume the same id through the launch
-   * command, starting it with `prompt` (DR-0028 「restart」, user role only —
+   * command, as `ask` says: the first prompt, and the model / effort, each
+   * absent for what the session runs as (DR-0028 「restart」, user role only —
    * StatusPanel's 再起動). Slow: the kill grace and the launch command's
    * wait. */
-  sessionRestart(sessionId: string, prompt: string): Promise<ReplyOf<"session_restart">>;
+  sessionRestart(sessionId: string, ask: SessionRestartAsk): Promise<ReplyOf<"session_restart">>;
   /** Rename a session (DR-0047, user role only — the Sessions list's
    * title editor): the session's hooks module runs `/rename <title>`. The
    * reply's `outcome` is `renamed`, or `queued` when the session was
@@ -1159,8 +1165,8 @@ export function createWsClient(
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
       }),
-    sessionRestart: (sessionId, prompt) =>
-      send({ op: "session_restart", session_id: sessionId, prompt }),
+    sessionRestart: (sessionId, ask) =>
+      send({ op: "session_restart", session_id: sessionId, ...ask }),
     sessionRename: (sessionId, title) =>
       send(
         { op: "session_rename", session_id: sessionId, title },

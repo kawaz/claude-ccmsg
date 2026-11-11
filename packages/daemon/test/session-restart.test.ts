@@ -340,11 +340,7 @@ describe("restartSession", () => {
   test("a process not seen gone after the signals is restart_timeout, and is not resumed", async () => {
     const signals: string[] = [];
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
-    const outcome = await restartSession(
-      SID,
-      undefined,
-      restartDeps(fakeKill(true, signals), calls),
-    );
+    const outcome = await restartSession(SID, {}, restartDeps(fakeKill(true, signals), calls));
     if (outcome.ok) throw new Error("a process not seen gone was restarted");
     expect(outcome.code).toBe("restart_timeout");
     expect(outcome.msg).toContain("was not seen gone");
@@ -357,16 +353,48 @@ describe("restartSession", () => {
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
     const outcome = await restartSession(
       SID,
-      "再起動した。続きを",
+      { prompt: "再起動した。続きを" },
       restartDeps(fakeKill(false, []), calls),
     );
     expect(outcome.ok).toBe(true);
     expect(calls.launches.map((launch) => launch.prompt)).toEqual(["再起動した。続きを"]);
   });
 
+  test("the request's model and effort go to the resume as they are, over what the session runs as", async () => {
+    const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    let runsAsAsked = 0;
+    const deps = {
+      ...restartDeps(fakeKill(false, []), calls),
+      runsAs: () => {
+        runsAsAsked += 1;
+        return Promise.resolve({ model: "claude-sonnet-5-5", effort: "low" });
+      },
+    };
+    const outcome = await restartSession(SID, { model: "opus", effort: "max" }, deps);
+    expect(outcome.ok).toBe(true);
+    expect(calls.launches).toEqual([
+      { cwd: "/w", resume: SID, model: "opus", effort: "max", name: "n", prompt: RESTART_PROMPT },
+    ]);
+    // Both named: what the session runs as is not needed.
+    expect(runsAsAsked).toBe(0);
+  });
+
+  test("a field the request leaves out is what the session runs as", async () => {
+    const onlyModel: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    await restartSession(SID, { model: "haiku" }, restartDeps(fakeKill(false, []), onlyModel));
+    expect(onlyModel.launches.map(({ model, effort }) => ({ model, effort }))).toEqual([
+      { model: "haiku", effort: "low" },
+    ]);
+    const onlyEffort: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
+    await restartSession(SID, { effort: "xhigh" }, restartDeps(fakeKill(false, []), onlyEffort));
+    expect(onlyEffort.launches.map(({ model, effort }) => ({ model, effort }))).toEqual([
+      { model: "sonnet", effort: "xhigh" },
+    ]);
+  });
+
   test("without a prompt in the request the resume carries RESTART_PROMPT", async () => {
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
-    const outcome = await restartSession(SID, undefined, restartDeps(fakeKill(false, []), calls));
+    const outcome = await restartSession(SID, {}, restartDeps(fakeKill(false, []), calls));
     expect(outcome.ok).toBe(true);
     expect(calls.stopped).toBe(1);
     expect(calls.launches).toEqual([
@@ -384,7 +412,7 @@ describe("restartSession", () => {
       sessionsIn: () => Promise.resolve([{ sessionId: SID, pid: 4242 }]),
     };
     const calls: { launches: LaunchInput[]; stopped: number } = { launches: [], stopped: 0 };
-    const outcome = await restartSession(SID, undefined, restartDeps(kill, calls));
+    const outcome = await restartSession(SID, {}, restartDeps(kill, calls));
     expect(outcome.ok ? undefined : outcome.code).toBe("restart_unavailable");
     expect(signals).toEqual([]);
   });
@@ -395,7 +423,7 @@ describe("restartSession", () => {
       ...restartDeps(fakeKill(false, []), calls),
       runsAs: () => Promise.resolve({ model: "<synthetic>", effort: "turbo" }),
     };
-    await restartSession(SID, undefined, deps);
+    await restartSession(SID, {}, deps);
     expect(calls.launches).toEqual([{ cwd: "/w", resume: SID, name: "n", prompt: RESTART_PROMPT }]);
   });
 });

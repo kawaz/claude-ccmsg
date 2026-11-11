@@ -834,7 +834,7 @@ describe("createWsClient agents/ping (U1)", () => {
 
   // The restart form's text goes as the resumed session's first prompt
   // (DR-0028 「restart」).
-  test("sessionRestart sends the prompt with the session id", async () => {
+  test("sessionRestart sends the prompt, the model and the effort with the session id", async () => {
     const sid = "11111111-2222-4333-8444-555555555555";
     const handle = createWsClient(() => {});
     openHandles.push(handle);
@@ -842,13 +842,19 @@ describe("createWsClient agents/ping (U1)", () => {
     const ws1 = defined(instances[0], "the first socket");
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionRestart(sid, "再起動した。続きを");
+    const req = handle.sessionRestart(sid, {
+      prompt: "再起動した。続きを",
+      model: "opus",
+      effort: "high",
+    });
     const sent = sentFrame(ws1, "session_restart");
     expect(sent).toEqual({
       op: "session_restart",
       request_id: defined(sent.request_id, "the request id of the session_restart frame"),
       session_id: sid,
       prompt: "再起動した。続きを",
+      model: "opus",
+      effort: "high",
     });
 
     ws1.triggerMessage(

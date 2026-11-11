@@ -252,7 +252,7 @@ export function SessionView({
   // The Status tab's 再起動 (DR-0028 「restart」), held here so its result
   // outlives the Status panel, which goes while the session's old process is
   // gone and the resumed one has not come back.
-  const restart = useSessionRestart(sid, (target, prompt) => ws.sessionRestart(target, prompt));
+  const restart = useSessionRestart(sid, (target, ask) => ws.sessionRestart(target, ask));
   // The composer's open is its own state; what in the Timeline asks for it
   // (許可する on a permit bubble, DR-0040 §7) reaches it through this request,
   // with the text to put into an empty textarea. The callback keeps one

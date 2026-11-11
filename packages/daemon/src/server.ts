@@ -2662,7 +2662,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const sid = req.session_id;
       const entry = daemon.sessions.get(sid);
-      const running = restartSession(sid, req.prompt, {
+      const ask = { prompt: req.prompt, model: req.model, effort: req.effort };
+      const running = restartSession(sid, ask, {
         launcher,
         kill: { ...productionKillDeps, configDirs: () => scopeDirsOf(daemon, sid) },
         runsAs: async () => {

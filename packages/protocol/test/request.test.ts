@@ -231,12 +231,20 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
     ],
   },
   session_restart: {
-    ok: { op: "session_restart", session_id: SID, prompt: "再起動した" },
+    ok: {
+      op: "session_restart",
+      session_id: SID,
+      prompt: "再起動した",
+      model: "sonnet",
+      effort: "high",
+    },
     bad: [
       { op: "session_restart" },
       { op: "session_restart", session_id: "" },
       { op: "session_restart", session_id: SID, prompt: "" },
       { op: "session_restart", session_id: SID, prompt: 1 },
+      { op: "session_restart", session_id: SID, model: "gpt" },
+      { op: "session_restart", session_id: SID, effort: "" },
     ],
   },
   session_rename: {

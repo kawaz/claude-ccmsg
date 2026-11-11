@@ -3,8 +3,9 @@
 // keeping the kill alone; offered only when the daemon can launch and the
 // session's process is there, whatever its config dir; no confirm, but a form
 // in a modal dialog whose text, RESTART_PROMPT or the default saved for the cwd
-// to begin with, is the resumed session's first prompt; the send and the kill
-// disabled while either runs; a restart that resumed closes the dialog, any
+// to begin with, is the resumed session's first prompt, and whose model and
+// effort, starting on what the session runs as, are the resumed session's;
+// the send and the kill disabled while either runs; a restart that resumed closes the dialog, any
 // other outcome keeps it open with what it came to, which also shows under the
 // list.
 import { afterEach, describe, expect, jest, test } from "bun:test";
@@ -19,6 +20,7 @@ import {
   type SessionRestartResponse,
   type SessionStatusSnapshot,
   type RequestOverrideResponse,
+  type SessionContextUsage,
 } from "@ccmsg/protocol";
 import { AppContext } from "../src/client/context.ts";
 import {
@@ -28,16 +30,18 @@ import {
 } from "../src/client/components/StatusPanel.tsx";
 import { initialState } from "../src/client/store.ts";
 import { createStore } from "../src/client/useStore.ts";
-import { createWsClient } from "../src/client/ws.ts";
+import { createWsClient, type SessionRestartAsk } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
 import { instanceOf, stubGlobal } from "./helpers.ts";
 import {
   actionButton,
   actionNames,
   actionRow,
+  choosePick,
   closeButton,
   dialogTitled,
   openAction,
+  pickText,
   pressEscape,
 } from "./status-actions.ts";
 
@@ -77,6 +81,8 @@ interface Mounted {
   show: (snapshot: SessionStatusSnapshot | undefined) => Promise<void>;
   /** The prompts of the restarts asked for, oldest first. */
   restarts: () => string[];
+  /** The restarts asked for, whole, oldest first. */
+  asks: () => SessionRestartAsk[];
   /** Answers the pending restart. */
   answer: (reply: SessionRestartResponse | ErrorResponse) => Promise<void>;
 }
@@ -92,6 +98,8 @@ async function mount(options: {
    * `kills`); terminated unless given. */
   killReply?: SessionKillResponse;
   kills?: Array<boolean>;
+  /** What the session runs as, in the snapshot's context. */
+  context?: SessionContextUsage;
 }): Promise<Mounted> {
   const sid = options.sid ?? SID;
   const store = createStore(initialState());
@@ -100,13 +108,13 @@ async function mount(options: {
   if (agentConfigDir !== null) {
     store.dispatch({ type: "agents/loaded", agents: [agentRow(agentConfigDir, sid)] });
   }
-  const prompts: string[] = [];
+  const asks: SessionRestartAsk[] = [];
   let resolve: ((reply: SessionRestartResponse | ErrorResponse) => void) | undefined;
   const onRestart = (
     _sid: string,
-    prompt: string,
+    ask: SessionRestartAsk,
   ): Promise<SessionRestartResponse | ErrorResponse> => {
-    prompts.push(prompt);
+    asks.push(ask);
     return new Promise((r) => {
       resolve = r;
     });
@@ -143,11 +151,12 @@ async function mount(options: {
     act(() =>
       render(h(AppContext.Provider, { value: { store, ws } }, h(Host, { snapshot })), root),
     );
-  await show(SNAPSHOT);
+  await show(options.context === undefined ? SNAPSHOT : { ...SNAPSHOT, context: options.context });
   return {
     root,
     show,
-    restarts: () => [...prompts],
+    restarts: () => asks.map((ask) => ask.prompt ?? ""),
+    asks: () => [...asks],
     answer: async (reply) => {
       await act(() => {
         resolve?.(reply);
@@ -372,13 +381,13 @@ describe("Status の再起動", () => {
     const text = formText(mounted.root);
     expect(text.value).toBe(RESTART_PROMPT);
     expect(text.classList.contains("session-input-textarea")).toBe(true);
-    // The FAB's row right under the text: デフォルトに保存 on the left, 再起動 at the end.
+    // The FAB's row right under the text: デフォルトに保存 on the left, then
+    // the model and effort, and 再起動 at the end.
     const row = text.nextElementSibling;
     expect(row?.classList.contains("session-input-actions")).toBe(true);
-    expect([...(row?.children ?? [])].map((el) => el.textContent)).toEqual([
-      "デフォルトに保存",
-      "再起動",
-    ]);
+    expect(
+      [...(row?.children ?? [])].map((el) => el.getAttribute("aria-label") ?? el.textContent),
+    ).toEqual(["デフォルトに保存", "--model", "--effort", "再起動"]);
     expect(restartDialog(mounted.root)?.querySelector(".modal-dialog-foot")).toBeNull();
     expect(document.activeElement).toBe(text);
     expect(text.selectionStart).toBe(RESTART_PROMPT.length);
@@ -406,6 +415,8 @@ describe("Status の再起動", () => {
     // read-only, as the FAB's).
     expect(formText(mounted.root).readOnly).toBe(true);
     expect(saveButton(mounted.root).disabled).toBe(true);
+    expect(pickText(restartForm(mounted.root), "--model").disabled).toBe(true);
+    expect(pickText(restartForm(mounted.root), "--effort").disabled).toBe(true);
     expect(sendButton(mounted.root).disabled).toBe(true);
     await mounted.answer({
       ok: true,
@@ -417,6 +428,73 @@ describe("Status の再起動", () => {
     });
     expect(restartForm(mounted.root)).toBeNull();
     expect(resultText(mounted.root)).toBe("再起動しました");
+  });
+
+  test("the model and effort start on what the session runs as, and go with the restart as chosen", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-opus-5-5",
+        effort: "medium",
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    await openRestart(mounted.root);
+    const form = restartForm(mounted.root);
+    expect(pickText(form, "--model").textContent).toBe("opus");
+    expect(pickText(form, "--effort").textContent).toBe("medium");
+    await choosePick(form, "--effort", "high");
+    // Another model keeps the effort chosen: the session goes on with it.
+    await choosePick(form, "--model", "sonnet");
+    expect(pickText(form, "--effort").textContent).toBe("high");
+    await act(() => sendButton(mounted.root).click());
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "sonnet", effort: "high" }]);
+  });
+
+  test("the same model and effort as the session's are sent too", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-opus-5-5",
+        effort: "medium",
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    await restartWithDefault(mounted.root);
+    expect(mounted.asks()).toEqual([{ prompt: RESTART_PROMPT, model: "opus", effort: "medium" }]);
+  });
+
+  test("a model or effort it cannot name for the session starts on 元の model / 元の effort and is left out", async () => {
+    const mounted = await mount({});
+    await openRestart(mounted.root);
+    const form = restartForm(mounted.root);
+    expect(pickText(form, "--model").textContent).toBe("元の model");
+    expect(pickText(form, "--effort").textContent).toBe("元の effort");
+    await act(() => sendButton(mounted.root).click());
+    const [ask] = mounted.asks();
+    expect(ask?.model).toBeUndefined();
+    expect(ask?.effort).toBeUndefined();
+    expect(ask?.prompt).toBe(RESTART_PROMPT);
+  });
+
+  test("デフォルトに保存 keeps the prompt only: the model and effort open on the session's again", async () => {
+    const mounted = await mount({
+      context: {
+        model: "claude-opus-5-5",
+        effort: "medium",
+        timestamp: "2026-11-11T00:00:00.000Z",
+      },
+    });
+    await openRestart(mounted.root);
+    await choosePick(restartForm(mounted.root), "--model", "haiku");
+    await typeInto(formText(mounted.root), "いつもの再起動");
+    await act(() => saveButton(mounted.root).click());
+    expect(JSON.parse(localStorage.getItem("ccmsg.statusForms./w") ?? "null")).toEqual({
+      v: 1,
+      restart: { prompt: "いつもの再起動" },
+    });
+    await escapeRestart(mounted.root);
+    await openRestart(mounted.root);
+    expect(formText(mounted.root).value).toBe("いつもの再起動");
+    expect(pickText(restartForm(mounted.root), "--model").textContent).toBe("opus");
   });
 
   test("an empty text cannot be sent", async () => {

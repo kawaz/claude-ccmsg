@@ -6,8 +6,8 @@
 // it; the ctx line under the Timeline and the Status tab's MODEL and EFFORT
 // rows put the session override's fields (the session group only), whose
 // [適用] sends the change to the daemon (request_override). The Status tab's
-// 新セッションを起動 form puts the same select for the launch's model and
-// effort beside its send, as the FAB does. The ctx line keeps
+// 新セッションを起動 and 再起動 forms put the same select for the model and
+// effort they start the session with beside their send, as the FAB does. The ctx line keeps
 // its own text for each value at rest and turns into the field's select where
 // the value is.
 import { type ComponentChildren, Fragment } from "preact";
@@ -61,8 +61,8 @@ export interface PickOption {
 }
 
 /** One `<optgroup>` of an OverrideSelect. The override's groups
- * (`OverrideGroup`) are of this shape, and so are the launch's model and
- * effort in the Status tab's form (StatusSessionForms.tsx). */
+ * (`OverrideGroup`) are of this shape, and so are the model and effort of
+ * the Status tab's forms (StatusSessionForms.tsx). */
 export interface PickGroup {
   readonly label: string;
   readonly options: readonly PickOption[];
