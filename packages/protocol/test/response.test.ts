@@ -234,7 +234,7 @@ const SAMPLES: { readonly [Op in RequestOp]: readonly ResponseOf<Op>[] } = {
   ],
   peer_list: [
     { ok: true, peers: [] },
-    { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", pids: [7], module: true, self: false }] },
+    { ok: true, peers: [{ sid: SID, name: "n", cwd: "/w", module: true, self: false }] },
   ],
   say_read: [{ ok: true, ids: ["toolu_01"] }],
   notification_list: [

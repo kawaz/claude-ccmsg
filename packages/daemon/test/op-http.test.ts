@@ -493,8 +493,8 @@ describe("send_message and peer_list over POST /op", () => {
       ]);
       const listed = servedReply("peer_list", await ask({ op: "peer_list", cwd_prefix: work }));
       expect(listed.peers).toEqual([
-        { sid: OTHER, name: "other", cwd: work, pids: [otherProc.pid], module: true, self: false },
-        { sid: BARE, cwd: work, pids: [process.ppid], module: false, self: false },
+        { sid: OTHER, name: "other", cwd: work, module: true, self: false },
+        { sid: BARE, cwd: work, module: false, self: false },
       ]);
     } finally {
       module.close();

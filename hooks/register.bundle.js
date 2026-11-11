@@ -2265,7 +2265,7 @@ var ErrorResponseSchema = object({
 var PeerTargetEntries = {
   session_id: pipe(string(), nonEmpty("a session id is not empty"))
 };
-var PeerTargetSchema = object(PeerTargetEntries);
+var PeerTargetSchema = strictObject(PeerTargetEntries);
 var PeerTextSchema = pipe(string(), check((text) => text.trim() !== "", "the text holds something other than whitespace"));
 var AgentIdSchema2 = optional(pipe(string(), nonEmpty("an agent id is not empty")));
 var SendMessageInputSchema = object({
@@ -2309,7 +2309,6 @@ var SendMessageResponseSchema = object({
 var SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
 var PeerListEntrySchema = object({
   ...PeerEntries,
-  pids: array(number()),
   module: boolean(),
   self: boolean()
 });

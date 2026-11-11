@@ -3179,9 +3179,9 @@ describe("the ccmsg tools", () => {
       replying({
         ok: true,
         peers: [
-          { sid: fake0, pids: [1], module: true, self: true },
-          { sid: OTHER, name: "n", cwd: "/w", pids: [2, 3], module: true, self: false },
-          { sid: "c", pids: [4], module: false, self: false },
+          { sid: fake0, module: true, self: true },
+          { sid: OTHER, name: "n", cwd: "/w", module: true, self: false },
+          { sid: "c", module: false, self: false },
         ],
       }),
     );

@@ -30,8 +30,10 @@ const PeerTargetEntries = {
   session_id: v.pipe(v.string(), v.nonEmpty("a session id is not empty")),
 };
 
-/** Who a send goes to. */
-export const PeerTargetSchema = v.object(PeerTargetEntries);
+/** Who a send goes to. Strict: a field it does not take (a `cwd`, a `name`)
+ * is refused rather than dropped, which would send by the id alone what was
+ * meant for others. */
+export const PeerTargetSchema = v.strictObject(PeerTargetEntries);
 export type PeerTarget = Output<typeof PeerTargetSchema>;
 
 /** A message's body: delivered exactly as written, and not only whitespace. */
@@ -136,11 +138,10 @@ export const SendMessageResponseSchema = v.object({
 export type SendMessageResponse = Output<typeof SendMessageResponseSchema>;
 export const SendMessageResponseTextSchema = jsonText(SendMessageResponseSchema);
 
-/** One session a send could go to: its processes, whether it has a hooks
- * module (one without is not sent to), and whether it is the asking session. */
+/** One session a send could go to: whether it has a hooks module (one
+ * without is not sent to), and whether it is the asking session. */
 export const PeerListEntrySchema = v.object({
   ...PeerEntries,
-  pids: v.array(v.number()),
   module: v.boolean(),
   self: v.boolean(),
 });

@@ -118,7 +118,6 @@ export async function listPeers(
   return peers
     .map((peer) => ({
       ...spelled(peer),
-      pids: peer.runs.map((run) => run.pid).sort((a, b) => a - b),
       module: deps.hasModule(peer.sid),
       self: peer.sid === from,
     }))

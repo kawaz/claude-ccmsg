@@ -172,9 +172,9 @@ describe("listPeers", () => {
   test("lists the sessions a send could reach, the sender marked, by sid", async () => {
     const runs = [run(B, 5, { cwd: "/link" }), run(B, 3, { cwd: "/link" }), run(ME, 1), run(A, 2)];
     expect(await listPeers(ME, {}, deps(runs, { modules: [B] }))).toEqual([
-      { sid: ME, pids: [1], module: false, self: true },
-      { sid: A, pids: [2], module: false, self: false },
-      { sid: B, cwd: "/work", pids: [3, 5], module: true, self: false },
+      { sid: ME, module: false, self: true },
+      { sid: A, module: false, self: false },
+      { sid: B, cwd: "/work", module: true, self: false },
     ]);
     expect((await listPeers(ME, { cwd_prefix: "/work" }, deps(runs))).map((p) => p.sid)).toEqual([
       B,
@@ -475,8 +475,15 @@ describe("send_message through the daemon", () => {
       expect((await a.requestRefusal({ op: "send_message", to, text: " \n" })).error.code).toBe(
         "invalid_args",
       );
-      // A send names its recipient by session id alone.
-      for (const named of [{ cwd: "/w" }, { name: "n" }, { pid: LIVE_PID }]) {
+      // A send names its recipient by session id alone, and a field beside it
+      // is refused rather than dropped.
+      for (const named of [
+        { cwd: "/w" },
+        { name: "n" },
+        { pid: LIVE_PID },
+        { session_id: PEER, cwd: "/w" },
+        { session_id: PEER, pid: LIVE_PID },
+      ]) {
         expect(
           (await a.requestRefusal({ op: "send_message", to: named, text: "hi" })).error.code,
         ).toBe("invalid_args");
