@@ -414,6 +414,7 @@ describe("default tab", () => {
         request: permitOf(ENGLISH, "Editing the configuration file of the daemon.", "push it"),
         now: 0,
         translationAvailability: withPlamo,
+        jump: { state: "hidden", onPress: () => {} },
       }),
     );
     expect(languageTab(root)).toBe("ja(plamo)");
@@ -431,6 +432,7 @@ describe("default tab", () => {
         request: permitOf(JAPANESE[0] ?? "", JAPANESE[1] ?? "", JAPANESE[2] ?? ""),
         now: 0,
         translationAvailability: withPlamo,
+        jump: { state: "hidden", onPress: () => {} },
       }),
     );
     expect(languageTab(root)).toBe("original");

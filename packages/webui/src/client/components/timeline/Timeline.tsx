@@ -2,7 +2,6 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { Fragment } from "preact";
 import { useMemo, useRef, useState } from "preact/hooks";
 import { type SessionPermit, type SessionSay, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
@@ -47,7 +46,7 @@ import { usePermitReadAll } from "./usePermitReadAll.ts";
 import { useFilterScroll } from "./useFilterScroll.ts";
 import { firstRowScrollAnchor, holdScrollAnchor } from "./scrollAnchor.ts";
 import { useNotificationList } from "./useNotificationList.ts";
-import { PermitRequestBubble } from "./PermitRequestBubble.tsx";
+import { PermitRequestBubble, type PermitJump } from "./PermitRequestBubble.tsx";
 import { slotsByTime } from "../../time-slots.ts";
 import { useTranscriptModel } from "./useTranscriptModel.ts";
 import { useInViewSearch } from "./useInViewSearch.ts";
@@ -316,41 +315,42 @@ export function Timeline({
     </div>
   );
   // The bubble of a request for permission outside the window (the 🔐
-  // filter's only): the bubble the window's requests use, with its 「TL に
-  // 移動」 below. It is not a row of the window, so it carries no position.
+  // filter's only): the bubble the window's requests use. It is not a row of
+  // the window, so it carries no position.
   const listedPermitNode = (permit: SessionPermit) => (
-    <Fragment key={`listed-permit-${permit.tool_use_id}`}>
-      <div class="tl-item" data-notif="permit" data-filter-only="permit">
-        <PermitRequestBubble
-          request={{
-            sid,
-            toolUseId: permit.tool_use_id,
-            ts: permit.ts,
-            cwd: permit.cwd,
-            permit: permit.permit,
-          }}
-          now={now}
-          translationAvailability={translationAvailability}
-        />
-      </div>
-      {permitJumpButton(permit.tool_use_id)}
-    </Fragment>
-  );
-  // 🔐 のフィルタで各依頼のバブルの直下に置く「TL に移動」(DR-0050 §4)。押すと
-  // フィルタが外れてそこに TL が現れるので、「TL に戻る」と同じ横幅いっぱいの
-  // ボタン。フィルタの無い間も 🔔 のフィルタの間も同じ要素のまま隠すだけにして、
-  // §6 の位置合わせが測る DOM を外す前と同じに保つ。
-  const permitJumpButton = (toolUseId: string) => (
-    <button
-      type="button"
-      class="tl-wide-button tl-permit-jump"
-      hidden={currentFilter !== "permit"}
-      disabled={timeline.status === "loading" || jumpingTo !== null}
-      onClick={() => jumpToPermit(toolUseId)}
+    <div
+      key={`listed-permit-${permit.tool_use_id}`}
+      class="tl-item"
+      data-notif="permit"
+      data-filter-only="permit"
     >
-      {jumpingTo === toolUseId ? "読み込み中…" : "TL に移動"}
-    </button>
+      <PermitRequestBubble
+        request={{
+          sid,
+          toolUseId: permit.tool_use_id,
+          ts: permit.ts,
+          cwd: permit.cwd,
+          permit: permit.permit,
+        }}
+        now={now}
+        translationAvailability={translationAvailability}
+        jump={permitJumpOf(permit.tool_use_id)}
+      />
+    </div>
   );
+  // 依頼のバブルの「TL に移動」(DR-0050 §4) の出方。出すのは 🔐 のフィルタの
+  // 間だけ。読み込みの間は押した方だけが「読み込み中…」で、どれも押せない。
+  const permitJumpOf = (toolUseId: string): PermitJump => ({
+    state:
+      currentFilter !== "permit"
+        ? "hidden"
+        : jumpingTo === toolUseId
+          ? "loading"
+          : timeline.status === "loading" || jumpingTo !== null
+            ? "busy"
+            : "ready",
+    onPress: () => jumpToPermit(toolUseId),
+  });
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   // Every jump that should survive later growth (tail follow, pin landing,
@@ -864,28 +864,27 @@ export function Timeline({
                                       );
                                     case "permit":
                                       return (
-                                        <Fragment key={offset}>
-                                          <ItemRawToggle
-                                            offset={offset}
-                                            uuid={line.uuid}
-                                            selectedPosition={currentPosition === line.uuid}
-                                            onSelectPosition={pin.selectPosition}
-                                            notif="permit"
-                                          >
-                                            <PermitRequestBubble
-                                              request={{
-                                                sid,
-                                                toolUseId: boundary.toolUseId,
-                                                ts: line.ts ?? "",
-                                                cwd: boundary.cwd,
-                                                permit: boundary.permit,
-                                              }}
-                                              now={now}
-                                              translationAvailability={translationAvailability}
-                                            />
-                                          </ItemRawToggle>
-                                          {permitJumpButton(boundary.toolUseId)}
-                                        </Fragment>
+                                        <ItemRawToggle
+                                          key={offset}
+                                          offset={offset}
+                                          uuid={line.uuid}
+                                          selectedPosition={currentPosition === line.uuid}
+                                          onSelectPosition={pin.selectPosition}
+                                          notif="permit"
+                                        >
+                                          <PermitRequestBubble
+                                            request={{
+                                              sid,
+                                              toolUseId: boundary.toolUseId,
+                                              ts: line.ts ?? "",
+                                              cwd: boundary.cwd,
+                                              permit: boundary.permit,
+                                            }}
+                                            now={now}
+                                            translationAvailability={translationAvailability}
+                                            jump={permitJumpOf(boundary.toolUseId)}
+                                          />
+                                        </ItemRawToggle>
                                       );
                                     case "ccmsg": {
                                       // raw タブ用の「この行に何が書いてあったか」:

@@ -212,8 +212,19 @@ function GrantButton({
   );
 }
 
+/** 依頼のバブルの「TL に移動」(DR-0050 §4) の出方と押した時の動き。Timeline が
+ * 渡す: 出すのは 🔐 のフィルタの間だけ (hidden はフィルタの無い間と 🔔 の
+ * フィルタの間。要素は残して隠す)。ready は押せる、busy は読み込みの間で押せ
+ * ない、loading は押したこの依頼の行を探して過去分を読んでいる間。 */
+export interface PermitJump {
+  state: "hidden" | "ready" | "busy" | "loading";
+  onPress: () => void;
+}
+
 /** 本文の最後の行 (DR-0040 §7)。右端に依頼全体の「許可する」、その左に
- * 「既読」を置く。個別のボタン (「! で実行」、settings の「許可する」) は
+ * 「既読」を置く。🔐 のフィルタの間は、さらにその左に「TL に移動」を置く
+ * (「許可する」の隣にしない: 押し違えると許可の文を写すので、間に「既読」を
+ * 挟む)。見た目は「既読」と同じ控えめなボタン。個別のボタン (「! で実行」、settings の「許可する」) は
  * 左に並ぶので、一番下の個別のボタンを押そうとして全体の「許可する」を
  * 押さない位置にする。「既読」は許可の文を写さずに依頼を既読にし、
  * Sessions 一覧の 🔐 の数から外す。既読の依頼 (許可済みも) では押せない
@@ -226,11 +237,13 @@ function PermitActions({
   read,
   granted,
   asksToRun,
+  jump,
 }: {
   request: PermitRequestView;
   read: boolean;
   granted: boolean;
   asksToRun: boolean;
+  jump: PermitJump;
 }) {
   const { markRead, readError } = usePermitMarkRead(request, { read, granted });
   const [copyFailed, setCopyFailed] = useState(false);
@@ -250,6 +263,15 @@ function PermitActions({
           ) : null}
         </div>
       ) : null}
+      <button
+        type="button"
+        class="permit-jump"
+        hidden={jump.state === "hidden"}
+        disabled={jump.state !== "ready"}
+        onClick={jump.onPress}
+      >
+        {jump.state === "loading" ? "読み込み中…" : "TL に移動"}
+      </button>
       <button
         type="button"
         class="permit-read"
@@ -425,10 +447,13 @@ export function PermitRequestBubble({
   request: view,
   now,
   translationAvailability,
+  jump,
 }: {
   request: PermitRequestView;
   now: number;
   translationAvailability: TranslationAvailability;
+  /** 「TL に移動」の出方 (Timeline が渡す)。 */
+  jump: PermitJump;
 }) {
   const { store } = useApp();
   // 未読は daemon が持つ集合 (ev:"permit_state") に居るもの。
@@ -520,7 +545,13 @@ export function PermitRequestBubble({
           </section>
         ) : null}
         {request.project_permissions.length > 0 ? <PermitSettingsSection request={view} /> : null}
-        <PermitActions request={view} read={read} granted={granted} asksToRun={asksToRun} />
+        <PermitActions
+          request={view}
+          read={read}
+          granted={granted}
+          asksToRun={asksToRun}
+          jump={jump}
+        />
       </div>
       <BubbleFooter
         translation={{ availability: translationAvailability, tab, onSelect: selectTab }}

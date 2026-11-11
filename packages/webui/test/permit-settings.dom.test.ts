@@ -219,7 +219,11 @@ describe("the project settings section of a permission request", () => {
     expect(shown.querySelector("button.permit-grant")).toBeNull();
     const last = defined(shown.querySelector(".tl-bubble-body > :last-child"), "last row");
     expect(last.className).toBe("permit-grant-row");
-    expect([...last.querySelectorAll("button")].map((b) => b.className)).toEqual(["permit-read"]);
+    // 「TL に移動」(DR-0050 §4) は 🔐 のフィルタの間だけ出る (ここでは隠れている)。
+    expect([...last.querySelectorAll("button")].map((b) => [b.className, b.hidden])).toEqual([
+      ["permit-jump", true],
+      ["permit-read", false],
+    ]);
     expect(applyButtons(root).length).toBe(2);
   });
 

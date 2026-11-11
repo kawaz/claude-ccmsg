@@ -680,22 +680,22 @@ describe("the filter's 「全て既読」", () => {
   });
 });
 
-// Under the 🔐 filter, each request's bubble has a 「TL に移動」 bar right
-// below it (DR-0050 §4). Pressing it takes the filter off and moves to the
-// row of that request's `permit` call, landed on at the top (§6): a request
-// in the window at once, one outside it once older pages have been read up
-// to its row, page after page. The bars are the same elements, hidden,
-// without the filter and under 🔔.
+// Under the 🔐 filter, each request's bubble has a 「TL に移動」 button in its
+// last row, left of 既読 (DR-0050 §4). Pressing it takes the filter off and
+// moves to the row of that request's `permit` call, landed on at the top
+// (§6): a request in the window at once, one outside it once older pages have
+// been read up to its row, page after page. The buttons are the same
+// elements, hidden, without the filter and under 🔔.
 describe("the 🔐 filter's 「TL に移動」", () => {
   /** What the press goes on to do once the last page is in (the move, the bar
    * back to itself) runs in the microtasks after it. */
   const drained = () => act(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
   function jumpButtons(root: HTMLElement): HTMLButtonElement[] {
-    return [...root.querySelectorAll<HTMLButtonElement>(".tl-permit-jump")];
+    return [...root.querySelectorAll<HTMLButtonElement>(".permit-jump")];
   }
 
-  test("sits right below each request's bubble, in the wide button's look", async () => {
+  test("is in each request's bubble, left of 既読 in its last row, in 既読's look", async () => {
     const { root } = await open({
       rows: [...exchange(1), ...requestRows(1), sayRow(2), ...requestRows(3)],
       filter: "permit",
@@ -709,13 +709,52 @@ describe("the 🔐 filter's 「TL に移動」", () => {
       uuidOf("a", 503),
     ]);
     const buttons = jumpButtons(root);
-    expect(bubbles.map((bubble) => bubble.nextElementSibling)).toEqual(buttons);
+    expect(buttons.map((button) => button.closest("[data-notif]"))).toEqual(bubbles);
     for (const button of buttons) {
       expect(button.textContent).toBe("TL に移動");
-      expect(button.classList.contains("tl-wide-button")).toBe(true);
+      expect(button.parentElement?.classList.contains("permit-grant-row")).toBe(true);
+      // 「既読」を挟んで「許可する」から離す (押し違えると許可の文を写す)。
+      expect(button.nextElementSibling?.classList.contains("permit-read")).toBe(true);
+      expect(
+        button.nextElementSibling?.nextElementSibling?.classList.contains("permit-grant"),
+      ).toBe(true);
+      // 全幅 (.tl-wide-button) ではない。
+      expect(button.classList.contains("tl-wide-button")).toBe(false);
       expect(button.hidden).toBe(false);
       expect(button.disabled).toBe(false);
     }
+  });
+
+  // Unread or not, granted or not, and with only project_permissions (no
+  // 許可する), the row is there and the button stands just left of 既読.
+  test("stands left of 既読 whatever state the request is in", async () => {
+    const settingsOnly = permitRows(
+      4,
+      "toolu_p4",
+      { blocked: "settings", project_permissions: [{ add: "Bash(ls:*)" }] },
+      { day: "2026-10-09" },
+    ).map((row) => row.replace("T00:00:0", "T01:00:0"));
+    const { root } = await open({
+      rows: [...requestRows(1), ...requestRows(2), ...settingsOnly],
+      filter: "permit",
+      permitUnread: [unreadPermit(1)],
+    });
+    const rows = [...root.querySelectorAll(".permit-grant-row")].map((row) =>
+      [...row.children].map((child) => `${child.className.split(" ")[0]}:${child.textContent}`),
+    );
+    expect(rows).toEqual([
+      [
+        "permit-jump:TL に移動",
+        "permit-read:既読",
+        "permit-grant:✅ 許可する許可済みコピーしました",
+      ],
+      [
+        "permit-jump:TL に移動",
+        "permit-read:既読済み",
+        "permit-grant:✅ 許可する許可済みコピーしました",
+      ],
+      ["permit-jump:TL に移動", "permit-read:既読済み"],
+    ]);
   });
 
   test("a request in the window: takes the filter off to its row, replacing the entry", async () => {
@@ -741,7 +780,7 @@ describe("the 🔐 filter's 「TL に移動」", () => {
       permits: [listedPermit(1), listedPermit(3)],
     });
     const [listed, inWindow] = jumpButtons(root);
-    expect(listed?.previousElementSibling?.getAttribute("data-filter-only")).toBe("permit");
+    expect(listed?.closest("[data-filter-only]")?.getAttribute("data-filter-only")).toBe("permit");
     await act(() => listed?.click());
     expect(ws.reads.map((read) => read.opts)).toEqual([undefined, { before: windowStart }]);
     // 押した方だけが「読み込み中…」で、読み込みの間はどれも押せない。
@@ -758,7 +797,7 @@ describe("the 🔐 filter's 「TL に移動」", () => {
     expect(navigations).toEqual([timelineHref(SID, uuidOf("a", 501))]);
     expect(histories).toEqual(["replace"]);
     // The request is a row of the window now, its bubble the window's (with a
-    // position), and the bars are back to themselves.
+    // position), and the buttons are back to themselves.
     expect(kept(root)).toEqual([
       ["permit", uuidOf("a", 501)],
       ["permit", uuidOf("a", 503)],
@@ -784,7 +823,7 @@ describe("the 🔐 filter's 「TL に移動」", () => {
     expect(navigations).toEqual([]);
   });
 
-  test("without the filter and under 🔔 the bars are the same elements, hidden", async () => {
+  test("without the filter and under 🔔 the buttons are the same elements, hidden", async () => {
     const { root, store } = await open({
       rows: [...exchange(1), ...requestRows(1), sayRow(2)],
       filter: "permit",
@@ -810,7 +849,7 @@ describe("the 🔐 filter's 「TL に移動」", () => {
     expect(after.every((el, i) => el === before[i])).toBe(true);
   });
 
-  test("the filter's CSS keeps them under 🔐 and hides them otherwise", async () => {
+  test("the CSS shows them under 🔐 and hides them otherwise", async () => {
     const style = document.createElement("style");
     // The sheet fed as one line, as in the 「全て既読」 CSS test above.
     const css = await Bun.file(new URL("../src/public/app.css", import.meta.url)).text();
