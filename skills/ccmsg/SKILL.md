@@ -21,10 +21,9 @@ description: ccmsg の tool (send / say / peers / launch / permit) で、別の�
 { "session_id": "<相手の session id>", "text": "<本文>" }
 ```
 
-宛先は `session_id`・`cwd`・`name`・`pid` のうち分かっているものを 1 つ以上書き、本文を `text` に書く。どれも空文字にしない。
+宛先は `session_id` に、本文は `text` に書く。どちらも空文字にしない。
 
-- 書いた field はすべて一致するセッションに届く。複数のセッションに当たれば全部に届く
-- 一致は完全一致で、`cwd` は実体のパスで比べる。送り主自身には届かない
+- 届くのはその `session_id` のセッションだけ。複数のセッションに送る時は、相手ごとに送る。送り主自身には届かない
 - 相手の config dir が違っても届く
 - `agent_id` を足すと、宛先のセッションのその subagent / teammate に、本文の頭に `ccmsg:<送り主の session_id> から:` の印を付けて届く (送り主自身のセッションの agent にも届く)。subagent への連絡は通常 SendMessage で行い、`agent_id` を渡すのは SendMessage が使えない時 (別のセッションから、引き継いだ worker に話しかける時など。reference の `session-state/handoff`) に限る
   - 相手が走っていても待機中でも届く。待機中の teammate は起き、終わった subagent は続きから再開する。走行中の teammate は今の turn が終わってから読む
@@ -32,15 +31,15 @@ description: ccmsg の tool (send / say / peers / launch / permit) で、別の�
   - agent が返事をするなら、印の session_id に ccmsg の `send` で送る (SendMessage で返すと親に届き、送り主には戻らない)
   - agent の turn が終わると、その agent の親のセッションに知らせが行く
 
-結果は宛先ごとに「届いた / 届かなかった理由 / 届いたか確かめられなかった」で返る。届いた宛先には送り直さない。確かめられなかった宛先に送り直すと二重に届くことがあるので、先に相手の返事を待つ。
+結果は「届いた / 届かなかった理由 / 届いたか確かめられなかった」で返る。届いたら送り直さない。確かめられなかった時に送り直すと二重に届くことがあるので、先に相手の返事を待つ。
 
-宛先が分からない時は、先に `mcp__ccmsg-v1__peers` で探す。`{}` で全部、`cwd_prefix` (前方一致) と `name` (完全一致) で絞れる:
+相手の `session_id` が分からない時は、先に `mcp__ccmsg-v1__peers` で探す。`{}` で全部、`cwd_prefix` (前方一致) で絞れる:
 
 ```json
 { "cwd_prefix": "/path/to/repo/" }
 ```
 
-`cwd_prefix` の末尾に `/` を付けると、`repo-old` のような同じ名前で始まる兄弟のディレクトリを混同しない。返る `session_id`・`name`・`cwd` は、そのまま `send` に書ける綴りになっている。複数のセッションに送る時は、`peers` で引いた `session_id` ごとに送る (`send` の `cwd` は完全一致)。
+`cwd_prefix` の末尾に `/` を付けると、`repo-old` のような同じ名前で始まる兄弟のディレクトリを混同しない。各行の `session_id` をそのまま `send` に書く。`name` と `cwd` はどのセッションかを見分ける手がかり。
 
 ## 届いたメッセージに返す
 
