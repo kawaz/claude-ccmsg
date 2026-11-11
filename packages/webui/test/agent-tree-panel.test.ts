@@ -2,10 +2,13 @@ import type {
   AgentTreeNode,
   AgentTreeWorkflowGroup,
   AgentTreeWorkflowPhase,
+  SessionStatusSnapshot,
+  SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import { describe, expect, test } from "bun:test";
 import {
   agentNodeHref,
+  agentTimelineHrefsByName,
   countNodeErrors,
   countPhaseErrors,
   countRunErrors,
@@ -216,5 +219,85 @@ describe("runDotProps (live と error の 2 軸を両方読ませる)", () => {
 
   test("完了 run の error は danger 色そのもの", () => {
     expect(runDotProps(finished, 1)).toEqual(dotProps("error"));
+  });
+});
+
+describe("agentTimelineHrefsByName (Timeline の 🤖 カードの名前のリンク、DR-0025 §6)", () => {
+  // 何を保証するか: workflow の agent は掘り下げの label で TL へリンクし、
+  // pause / resume で同じ run の Workflow の結果が 2 つあっても (同じ agent が
+  // 2 回並んでも) リンクは残る。別の agent が同じ label を持つ時と、teammate
+  // の名前と重なる label はリンクにしない。
+  const SID = "11111111-2222-4333-8444-555555555555";
+  const RUN = "wf_00112233-abc";
+  function workflow(
+    taskId: string,
+    runId: string,
+    agents: { agent_id: string; label: string }[],
+    startedAt = "2026-11-11T00:00:00.000Z",
+  ): SessionWorkflowStatus {
+    return {
+      task_id: taskId,
+      name: "flow",
+      status: "completed",
+      started_at: startedAt,
+      run_id: runId,
+      agents: agents.map((a) => ({ ...a, state: "done" })),
+    };
+  }
+  function snapshotOf(
+    workflows: SessionWorkflowStatus[],
+    teammates: string[] = [],
+  ): SessionStatusSnapshot {
+    return {
+      todos: [],
+      background: [],
+      workflows,
+      teammates: teammates.map((name) => ({ name, spawned: true, state: "idle" })),
+    };
+  }
+
+  test("pause / resume で同じ run が 2 つの項目を持っても、その run の agent のリンクは残る", () => {
+    const agents = [
+      { agent_id: "a1111111", label: "reader" },
+      { agent_id: "a2222222", label: "writer" },
+    ];
+    const hrefs = agentTimelineHrefsByName(
+      SID,
+      snapshotOf([
+        workflow("w-first", RUN, agents),
+        workflow("w-resumed", RUN, agents, "2026-11-11T01:00:00.000Z"),
+      ]),
+    );
+    expect(hrefs.get("reader")).toBe(`/s/${SID}/timeline/agent/wf/${RUN}/a1111111`);
+    expect(hrefs.get("writer")).toBe(`/s/${SID}/timeline/agent/wf/${RUN}/a2222222`);
+  });
+
+  test("別の agent が同じ label を持つ時はリンクにしない (同じ run の中でも、別の run でも)", () => {
+    const within = agentTimelineHrefsByName(
+      SID,
+      snapshotOf([
+        workflow("w1", RUN, [
+          { agent_id: "a1111111", label: "reader" },
+          { agent_id: "a2222222", label: "reader" },
+        ]),
+      ]),
+    );
+    expect(within.has("reader")).toBe(false);
+    const across = agentTimelineHrefsByName(
+      SID,
+      snapshotOf([
+        workflow("w1", RUN, [{ agent_id: "a1111111", label: "reader" }]),
+        workflow("w2", "wf_99887766-def", [{ agent_id: "a3333333", label: "reader" }]),
+      ]),
+    );
+    expect(across.has("reader")).toBe(false);
+  });
+
+  test("teammate は名前でリンクし、それと重なる workflow の label はリンクにしない", () => {
+    const hrefs = agentTimelineHrefsByName(
+      SID,
+      snapshotOf([workflow("w1", RUN, [{ agent_id: "a1111111", label: "worker" }])], ["worker"]),
+    );
+    expect(hrefs.get("worker")).toBe(`/s/${SID}/timeline/agent/tm/worker`);
   });
 });

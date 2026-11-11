@@ -5,7 +5,7 @@
 import { useMemo, useRef, useState } from "preact/hooks";
 import { type SessionPermit, type SessionSay, type SessionStatusSnapshot } from "@ccmsg/protocol";
 import { type TimelineState } from "../../store.ts";
-import { type AgentRef, agentTimelineHref, timelineHref } from "../../locator.ts";
+import { type AgentRef, timelineHref } from "../../locator.ts";
 import { useApp } from "../../context.ts";
 import { sameJson, useStoreState } from "../../useStore.ts";
 import { SayBubble, SayCallBubble } from "../TimelineItem.tsx";
@@ -14,7 +14,11 @@ import { useNow } from "../../useNow.ts";
 import { useScrollHold } from "../../useScrollHold.ts";
 import { miniSummaryLines, respondingSince } from "../../session-status-view.ts";
 import { ContextLine } from "../RequestOverridePicker.tsx";
-import { agentEngineLabelsByName, agentSayerLabel } from "../agent-tree-view.ts";
+import {
+  agentEngineLabelsByName,
+  agentSayerLabel,
+  agentTimelineHrefsByName,
+} from "../agent-tree-view.ts";
 import {
   protocolSkewWarning,
   sessionRuntimeParts,
@@ -472,38 +476,10 @@ export function Timeline({
     : [];
   // The session's own Timeline only: an agent's is not the main thread's turn.
   const respondingAt = agent ? null : respondingSince(sessionStatus);
-  const agentTimelineHrefs = useMemo(() => {
-    const hrefs = new Map<string, string>();
-    if (!sessionStatus) return hrefs;
-
-    const teammateNames = new Set<string>();
-    for (const teammate of sessionStatus.teammates ?? []) {
-      teammateNames.add(teammate.name);
-      hrefs.set(teammate.name, agentTimelineHref(sid, { teammate: teammate.name }));
-    }
-
-    const ambiguousWorkflowNames = new Set<string>();
-    for (const workflow of sessionStatus.workflows) {
-      if (!workflow.run_id) continue;
-      for (const workflowAgent of workflow.agents ?? []) {
-        const name = workflowAgent.label;
-        if (!name || teammateNames.has(name) || ambiguousWorkflowNames.has(name)) continue;
-        if (hrefs.has(name)) {
-          hrefs.delete(name);
-          ambiguousWorkflowNames.add(name);
-          continue;
-        }
-        hrefs.set(
-          name,
-          agentTimelineHref(sid, {
-            runId: workflow.run_id,
-            agentId: workflowAgent.agent_id,
-          }),
-        );
-      }
-    }
-    return hrefs;
-  }, [sessionStatus, sid]);
+  const agentTimelineHrefs = useMemo(
+    () => agentTimelineHrefsByName(sid, sessionStatus),
+    [sessionStatus, sid],
+  );
 
   const agentEngineLabels = useMemo(
     () => agentEngineLabelsByName(sessionStatus?.agent_tree),

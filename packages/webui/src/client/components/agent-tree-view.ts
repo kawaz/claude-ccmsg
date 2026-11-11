@@ -6,9 +6,10 @@ import type {
   AgentTreeNode,
   AgentTreeWorkflowGroup,
   AgentTreeWorkflowPhase,
+  SessionStatusSnapshot,
 } from "@ccmsg/protocol";
 import { agentTimelineHref } from "../locator.ts";
-import { shortModel } from "../session-status-view.ts";
+import { dedupeWorkflowRunsByRunId, shortModel } from "../session-status-view.ts";
 
 /** Timeline の 🤖 バブルが名前の右に出す model と effort の綴り
  * (`(fable-5-1/low)`、ctx 行と同じ shortModel)。実際に答えている model
@@ -60,6 +61,48 @@ export function agentEngineLabelsByName(
     if (current === undefined || at > current.at) picked.set(name, { at, label });
   }
   return new Map([...picked].map(([name, { label }]) => [name, label]));
+}
+
+/** Timeline の 🤖 カードの名前 → その agent の TL (DR-0025 §6)。teammate は
+ * 名前で、workflow の agent は掘り下げの `label` で引く。teammate の名前と
+ * 重なる label と、複数の agent に同じ label があるものはリンクにしない。
+ * pause / resume で同じ run が複数の Workflow の結果を持つ時は、agent tree
+ * と同じく run_id ごとに 1 つにまとめてから数える (同じ agent を 2 回数えて
+ * 同じ label の別の agent と取り違えない)。 */
+export function agentTimelineHrefsByName(
+  sid: string,
+  sessionStatus: SessionStatusSnapshot | undefined,
+): ReadonlyMap<string, string> {
+  const hrefs = new Map<string, string>();
+  if (!sessionStatus) return hrefs;
+
+  const teammateNames = new Set<string>();
+  for (const teammate of sessionStatus.teammates ?? []) {
+    teammateNames.add(teammate.name);
+    hrefs.set(teammate.name, agentTimelineHref(sid, { teammate: teammate.name }));
+  }
+
+  const ambiguousWorkflowNames = new Set<string>();
+  for (const workflow of dedupeWorkflowRunsByRunId(sessionStatus.workflows)) {
+    if (!workflow.run_id) continue;
+    for (const workflowAgent of workflow.agents ?? []) {
+      const name = workflowAgent.label;
+      if (!name || teammateNames.has(name) || ambiguousWorkflowNames.has(name)) continue;
+      if (hrefs.has(name)) {
+        hrefs.delete(name);
+        ambiguousWorkflowNames.add(name);
+        continue;
+      }
+      hrefs.set(
+        name,
+        agentTimelineHref(sid, {
+          runId: workflow.run_id,
+          agentId: workflowAgent.agent_id,
+        }),
+      );
+    }
+  }
+  return hrefs;
 }
 
 /** ツリー 1 ノードの TL リンク先。workflow member の transcript は
