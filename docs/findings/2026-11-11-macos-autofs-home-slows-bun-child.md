@@ -7,7 +7,8 @@
 - 同じ run の `cli.test.ts` は同じ `runCli` (packages/cli/test/run-cli.ts) で同じ CLI を起こすが HOME を変えないので 40ms で終わる
 - 期限 5000ms は落ちる線を決めているだけで遅さの原因ではない
 - 直し方: 子に渡す HOME を、OS が特別扱いしない実在する一時 dir (`perTestTmpDir()`) にした。daemon の偽応答の行 (cwd / config_dir) は同じ HOME から組み、テストの保証は変えていない
-- 未確認: GitHub の macOS runner に `XDG_CACHE_HOME` が無いこと・`/home` が autofs であることは runner 上では直接見ていない。遅さの量、遅いのがこのファイルの子だけであること、daemon に繋がないテストも遅いことは上の説明と合っている
+- 直した版 (v0.246.0、run 43023307090) の `ci (macos-latest)` は通り、同じ 4 件は 90 / 164 / 190 / 139ms だった (直す前の通った run は 1710〜3657ms)。GitHub の macOS runner でも偽 HOME が遅さの元だった
+- 未確認: GitHub の macOS runner に `XDG_CACHE_HOME` が無いこと・`/home` が autofs であることは runner 上では直接見ていない (HOME を替えたら速くなったことから、そう推せるだけ)
 
 ## 実用的な示唆 / ベストプラクティス
 
