@@ -90,8 +90,8 @@
 |---|---|---|---|---|
 | Teammates / Agents / Workflows のツリー表示 | `AgentTreePanel.tsx` (566) | DR-0025 | 移す | DR-0025 Accepted (kawaz 2026-11-11)。workflow / agent / teammate の掘り下げの入口はここ (Status タブには置かない) |
 | ツリーから各 agent TL へ遷移 | `AgentTreePanel` + `locator` の `agent` | DR-0025 | 移す | 同上。agent の TL を開く経路 (DR-0025 §6) |
-| agent 間通信 segment の提示 | `agent-communication-view.ts` | — | 移す | DR-0025 の掘り下げではなく、Timeline の 🤖 カード (`agents.tsx`) と relay の行 (`system-messages.tsx`) が使う送受の印 (🤖→ / 🤖←) と relay の分類の表示。§2 の行の種類別表示部品と同じ扱い |
-| `agent-tree-view.isErrorState` | `agent-tree-view.ts` | DR-0025 | 落とす候補 | 参照 0 |
+| agent 間通信 segment の提示 | `agent-communication-view.ts` | — | 保留 | DR-0025 の掘り下げではなく、Timeline の 🤖 カード (`agents.tsx`) と relay の行 (`system-messages.tsx`) が使う、送受の印 (🤖→ / 🤖←) と relay の分類の表示の純関数。責務コメントが無いモジュールの 1 つ |
+| `agent-tree-view.isErrorState` | `agent-tree-view.ts` | DR-0025 | 落とす候補 | 定義ファイルの外からの参照は 0。同じファイルの `countNodeErrors` が使っているので、落とせるのは export だけ (関数は残る) |
 
 ---
 
@@ -364,6 +364,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 21. `version-guard` (daemon 版不一致の検知とフルリロード) は、別 origin の静的サイトになった後どう振る舞うべきか。
 22. issue 2026-09-06-session-status-from-sessions-json は新 webui の status に反映してから移すか、後回しか。
 23. クラスタ化 (DR-0032 §2.3) で新規に要る 3 つ — instance の表示、起動先 instance の選択、room id が instance を含意する形 — はマイルストーン 1 に含めるか、後続か。
+24. `agent-communication-view.ts` (TL の 🤖 カードと relay の行が使う送受の印と relay の分類の表示、責務コメントなし) は新 webui に移すか。
 
 ### 統括の事前回答 (このセッションの裁定・DR から導けるもの、kawaz の再確認は不要)
 
@@ -372,7 +373,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 - 22: **反映してから移す**。活動判定の正は llm-gateway のイベントで裁定済み。gateway 側の start / complete 通知待ち
 - 23: **マイルストーン 1 には含めない**。DR-0032 §2.2 の順で、契約に `instance` を足すのが先 (webui は任意フィールドとして無視)。表示・起動先選択・room id の形はクラスタ化 issue の実装単位
 
-残り 19 件は、その機能を含むマイルストーンに着手する時に統括が判断し、判断に迷うものだけその時点で kawaz に聞く。
+残り 20 件は、その機能を含むマイルストーンに着手する時に統括が判断し、判断に迷うものだけその時点で kawaz に聞く。
 
 ---
 
@@ -404,6 +405,6 @@ Terminal タブ / 1on1 Composer と添付 / AgentTreePanel。
 - 旧 webui は並走する (DR-0032 §2.2 の 2) ので、**含まない機能は旧 webui で使い続けられる**。
   「移せる最小」は「全部揃う」ではなく「日常の主動線が新側で完結する」でよい。
 - 含む側は **hello の能力フラグに依存しない機能だけ**で構成した。能力交渉が要る機能(翻訳 / usage / status / sandbox / terminal / fork) はマイルストーン 2 へ回すことで、最初の版が protocol の能力交渉の設計を待たずに動く。
-- 含む側に **保留項目を 1 つも入れていない** (§14 の 23 問はすべてマイルストーン 2 以降の判断)。
+- 含む側に **保留項目を 1 つも入れていない** (§14 の 24 問はすべてマイルストーン 2 以降の判断)。
   裁定待ちでマイルストーン 1 が止まらないようにする。
 - 唯一の新規要件として「別 origin からの WS」を含む。これは DR-0032 §2.1 の前提そのもので、これが動かないと新 webui は 1 画面も出せない。
