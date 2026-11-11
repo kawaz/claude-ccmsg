@@ -61,3 +61,23 @@ PeerInjector の no_peer_socket に `lookup` (scan_timed_out / no_state_file / n
 ## 次に要る観測
 
 次に macOS CI でこの種の失敗が出たら daemon.log の lookup (scan_timed_out か否か) を見る。対策後も scan_timed_out が出るなら process の停止以外の要因を追う。
+
+## 追記: 対策後の再発の数 (2026-11-11、保存した CI の log 101 run を調べた)
+
+- 対策 (withinBudget) の後の 101 run (v0.196.5〜v0.246.0) のうち、macOS の job がこのテストを実際に走らせたのは 97 本。うち 4 本で落ちた (約 4%)。ubuntu は 99 本で 0
+- 落ちた run: 40256865972 (1366ms、ended)、40667786519 (v0.208.0、1330ms、no_peer_socket: scan_timed_out)、41413717708 (2294ms、ended)、42721104070 (v0.232.0、1573ms、ended)。どれも assert は send-message.test.ts の served daemon への send
+- scan_timed_out の run では、served run の sidecar_hello から peer-inject の行まで 1041ms (INJECT_SCAN_MS は 1000ms)。withinBudget は timer が 50ms 以上遅れて鳴った時だけ期限を延ばすので、timer は遅れずに鳴ったのに読み込みが 1 秒で終わらなかったことになる
+- ended の 3 件は lookup が取れない: liveRuns が期限切れで空を返した時と、行が本当に無い時を区別する log が無い (足した観測は no_peer_socket の経路だけ)
+- もう 1 つのテスト (a run refusing while another takes it is delivered; …) は macOS 97 本・ubuntu 99 本とも 0
+- 所要の分布: macOS の served dir は中央値 1854ms (min 444、p90 2388、max 3212) で 450〜1000ms 台と 1700〜2500ms 台の 2 つの山、ubuntu は中央値 611ms。失敗の所要は通った run の範囲に収まり、所要では見分けられない
+
+## 分かっていないこと (2026-11-11)
+
+- ended の 3 件が liveRuns の期限切れか、別の理由か
+- main thread が止まっていないのに state file の読み込みが 1 秒で終わらなかった理由
+- macOS の所要が 2 つの山に分かれる理由 (どの段に時間を使っているか)
+
+## 進行中 (2026-11-11)
+
+- 手元で CI に寄せた環境 (XDG_CACHE_HOME を外す等) で再現を探し、serving daemon が起動から send までにしていることを段ごとに測る
+- liveRuns の期限切れと scan_timed_out の内訳 (読み終えた件数、時間、timer の遅れ) を daemon.log に出す観測を足す
