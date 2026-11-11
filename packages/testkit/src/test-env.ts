@@ -7,6 +7,7 @@ import { afterAll, setDefaultTimeout } from "bun:test";
 import * as path from "node:path";
 import { openLifeline } from "./lifeline.ts";
 import { contentsOf, openRunTmp } from "./tmp.ts";
+import { startTmpLookupMonitor } from "./tmp-lookup-monitor.ts";
 
 process.env.CCMSG_AGENTS_POLL ??= "off";
 
@@ -33,11 +34,16 @@ const runTmp = openRunTmp();
 const lifeline = openLifeline(path.join(runTmp.dir, LIFELINE));
 process.env.CCMSG_TEST_LIFELINE = lifeline.path;
 
-afterAll(() => {
+// On macOS, how long /private/tmp's lookups take through the run, printed at
+// its end (tmp-lookup-monitor.ts).
+const tmpLookups = process.platform === "darwin" ? startTmpLookupMonitor(runTmp.dir) : undefined;
+
+afterAll(async () => {
+  if (tmpLookups !== undefined) console.error((await tmpLookups.stop()).join("\n"));
   const holders = lifeline.holders();
   lifeline.close();
   const dirs = runTmp
-    .leftovers([LIFELINE])
+    .leftovers([LIFELINE, ...(tmpLookups !== undefined ? [tmpLookups.file] : [])])
     .map((dir) => [dir, ...contentsOf(dir).map((entry) => `  ${entry}`)].join("\n"));
   runTmp.remove();
   const failures: string[] = [];
