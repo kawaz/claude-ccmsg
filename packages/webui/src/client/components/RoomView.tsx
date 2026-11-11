@@ -70,8 +70,7 @@ function OpenRoom({
   // ref/onScroll は scroll コンテナである main#room-view に付ける。直リンクで
   // メッセージを指して入った時はその着地が優先なので、末尾扱いにしない。
   const scrollerRef = useRef<HTMLElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const scrollHold = useScrollHold(scrollerRef, contentRef);
+  const scrollHold = useScrollHold(scrollerRef);
   const stickToBottomRef = useRef(mid === null);
   useLayoutEffect(() => {
     if (stickToBottomRef.current) scrollHold.toBottom();
@@ -157,7 +156,7 @@ function OpenRoom({
         </div>
         {room ? <RoomReadOnlyNote room={room} /> : null}
       </header>
-      <div ref={contentRef} class="timeline">
+      <div class="timeline">
         {roomHistory === "loading" ? <p class="room-history-status">読み込み中…</p> : null}
         {roomHistory === "error" ? (
           <p class="room-history-status">この room のログを読み込めませんでした</p>

@@ -3,8 +3,12 @@
 // 後から高さを変えるので、1 度 scrollTop を書いただけでは狙った位置から
 // ずれる。
 //
-// 保ち方: 位置を決める関数 (place) を 1 つ覚え、scroller と内容の要素の大きさが
-// 変わるたびに (ResizeObserver) 書き直す。手放すのはユーザが自分で動かした
+// 保ち方: 位置を決める関数 (place) を 1 つ覚え、scroller と、scroller の子の
+// どれかの大きさが変わるたびに (ResizeObserver) 書き直す。scroller の高さ
+// (scrollHeight) を決めるのは子の全部なので、行の列だけでなく、その上下に
+// 並ぶもの (ツールバー、TL の下のパネル等) の伸び縮みも追う。子が入れ替わった
+// 時 (条件付き描画) は MutationObserver で見る先を付け替え、その場でも書き
+// 直す。手放すのはユーザが自分で動かした
 // 時 (wheel / touch / pointer / キー。プログラムからのスクロールはこれらを
 // 出さない)、別の位置を覚えた時、要素で決めた位置ならその要素が DOM から
 // 外れた時。時間で区切らないので、いつ伸びても追い、ユーザの操作とは競合
@@ -35,25 +39,37 @@ export interface ScrollHold {
 
 class ScrollHolder implements ScrollHold {
   private scroller: HTMLElement | null = null;
-  private content: Element | null = null;
-  private observer: ResizeObserver | null = null;
+  private resizes: ResizeObserver | null = null;
+  private childList: MutationObserver | null = null;
   /** false を返したら、もう保てないので手放す。 */
   private place: ((scroller: HTMLElement) => boolean) | null = null;
 
-  attach(scroller: HTMLElement | null, content: Element | null): void {
-    if (scroller === this.scroller && content === this.content) return;
+  attach(scroller: HTMLElement | null): void {
+    if (scroller === this.scroller) return;
     this.detach();
     this.scroller = scroller;
-    this.content = content;
     if (!scroller) return;
     for (const type of USER_SCROLL_EVENTS) {
       scroller.addEventListener(type, this.release, { passive: true });
     }
     // observe した直後にも 1 度通知が来るので、attach 前に覚えた位置もここで効く。
-    const observer = new ResizeObserver(this.reapply);
-    observer.observe(scroller);
-    if (content) observer.observe(content);
-    this.observer = observer;
+    const resizes = new ResizeObserver(this.reapply);
+    resizes.observe(scroller);
+    for (const child of scroller.children) resizes.observe(child);
+    this.resizes = resizes;
+    const childList = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) {
+          if (node instanceof Element) resizes.unobserve(node);
+        }
+        for (const node of record.addedNodes) {
+          if (node instanceof Element) resizes.observe(node);
+        }
+      }
+      this.reapply();
+    });
+    childList.observe(scroller, { childList: true });
+    this.childList = childList;
   }
 
   detach(): void {
@@ -61,10 +77,11 @@ class ScrollHolder implements ScrollHold {
     if (scroller) {
       for (const type of USER_SCROLL_EVENTS) scroller.removeEventListener(type, this.release);
     }
-    this.observer?.disconnect();
-    this.observer = null;
+    this.resizes?.disconnect();
+    this.resizes = null;
+    this.childList?.disconnect();
+    this.childList = null;
     this.scroller = null;
-    this.content = null;
   }
 
   private readonly reapply = (): void => {
@@ -108,19 +125,15 @@ class ScrollHolder implements ScrollHold {
   };
 }
 
-/** `scrollerRef` (overflow でスクロールする要素) と `contentRef` (その中で
- * 伸び縮みする内容) の位置を保つ。どちらの要素が差し替わっても (条件付き
- * 描画) 次の commit で付け直す。返す値は mount の間ずっと同じ。 */
-export function useScrollHold(
-  scrollerRef: { readonly current: HTMLElement | null },
-  contentRef: { readonly current: Element | null },
-): ScrollHold {
+/** `scrollerRef` (overflow でスクロールする要素) の位置を保つ。要素が差し替わっ
+ * ても (条件付き描画) 次の commit で付け直す。返す値は mount の間ずっと同じ。 */
+export function useScrollHold(scrollerRef: { readonly current: HTMLElement | null }): ScrollHold {
   const [holder] = useState(() => new ScrollHolder());
   // deps 無し: ref の中身は commit ごとに変わりうるので毎回照合する (同じ要素
   // なら attach は何もしない)。layout effect なので、同じコンポーネントの
   // useEffect から toBottom / toElement を呼ぶ時には付け終わっている。
   useLayoutEffect(() => {
-    holder.attach(scrollerRef.current, contentRef.current);
+    holder.attach(scrollerRef.current);
   });
   useEffect(() => () => holder.detach(), [holder]);
   return holder;

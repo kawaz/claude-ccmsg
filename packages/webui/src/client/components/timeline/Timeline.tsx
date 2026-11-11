@@ -356,7 +356,7 @@ export function Timeline({
   // Every jump that should survive later growth (tail follow, pin landing,
   // search reveal, refresh, ⤓) goes through this instead of a one-off
   // scrollTop write; see useScrollHold.ts.
-  const scrollHold = useScrollHold(scrollRef, tlLinesRef);
+  const scrollHold = useScrollHold(scrollRef);
   useFilterScroll({ filter: currentFilter, position: currentPosition, scrollRef, scrollHold });
 
   const inViewSearch = useInViewSearch({
