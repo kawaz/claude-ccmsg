@@ -13,7 +13,7 @@ import { initialState } from "../src/client/store.ts";
 import { createStore, type Store } from "../src/client/useStore.ts";
 import { createWsClient } from "../src/client/ws.ts";
 import { withDom } from "./dom.ts";
-import { instanceOf, MemStorage, stubGlobal } from "./helpers.ts";
+import { instanceOf, MemStorage, stubGlobal, stubProperty } from "./helpers.ts";
 
 withDom();
 
@@ -155,6 +155,47 @@ describe("Status tab secret handoff", () => {
     expect(root.querySelector(".status-secret-result")?.textContent).toBe(
       "セッションに知らせが届かなかった (no_module) ので、預からなかった",
     );
+  });
+
+  // The paste goes no further than the field: a paste handler around it or on
+  // the document (the composer's takes pasted text and files) gets nothing.
+  test("the paste does not reach the elements around the field or the document", async () => {
+    const { root, puts } = await mount();
+    const heard: string[] = [];
+    const onRoot = (): void => {
+      heard.push("root");
+    };
+    const onDocument = (): void => {
+      heard.push("document");
+    };
+    root.addEventListener("paste", onRoot);
+    document.addEventListener("paste", onDocument);
+    try {
+      await paste(field(root), SECRET);
+    } finally {
+      root.removeEventListener("paste", onRoot);
+      document.removeEventListener("paste", onDocument);
+    }
+    expect(puts).toEqual([[SID, SECRET]]);
+    expect(heard).toEqual([]);
+  });
+
+  test("the page writes nothing of the value to the console", async () => {
+    const written: string[] = [];
+    for (const name of ["log", "info", "warn", "error", "debug"]) {
+      restores.push(
+        stubProperty(console, name, {
+          value: (...args: readonly string[]) => {
+            written.push(args.join(" "));
+          },
+          configurable: true,
+          writable: true,
+        }),
+      );
+    }
+    const { root } = await mount();
+    await paste(field(root), SECRET);
+    expect(written.filter((line) => line.includes("test-secret-0123"))).toEqual([]);
   });
 
   test("an empty paste sends nothing", async () => {

@@ -117,8 +117,11 @@ export function SecretHandoff({ sid }: { sid: string }) {
   }
 
   function onPaste(e: JSX.TargetedClipboardEvent<HTMLInputElement>): void {
-    // Cancelled, so the value never becomes the field's.
+    // Cancelled, so the value never becomes the field's, and kept from the
+    // elements around the field and the document, so no other paste handler
+    // of the page (the composer's, an attachment's) gets it.
     e.preventDefault();
+    e.stopPropagation();
     if (sending) return;
     const value = e.clipboardData?.getData("text/plain") ?? "";
     if (value !== "") hand(value);

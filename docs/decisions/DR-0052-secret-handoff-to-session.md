@@ -75,7 +75,9 @@ ccmsg secret take <ID> | <コマンド>
 - **断りの文**: 受けた request の形が違う時、daemon は断りの理由 (schema の失敗の要約) を daemon.log と応答に書く。値の欄の schema の失敗の文は固定の文にし (valibot の既定の文は受けた値を引用する)、値を含まない。`secret_take` の応答を読む CLI 側の schema も同じ
 - **知らせと log**: 知らせの文と daemon.log の行には ID と文字数だけが出て、値は出ない (ID は知らせの文として transcript に残る。§9)
 - **webui**: 値は貼り付けの event handler の局所変数から `secret_put` の request の JSON にだけ渡る。応答・一覧の push に値は無い
-- **テスト**: 隔離した daemon で、預け・取り出し・破棄・期限切れ・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。webui の受け口が値を DOM・localStorage に残さないこと
+- **貼り付けの event**: 受け口の paste は `preventDefault` と `stopPropagation` で止め、受け口の外 (周りの要素と document の paste の listener、composer の貼り付け・添付の取り込み等) に値を渡さない
+- **frame の記録**: daemon にも webui にも WebSocket の frame をそのまま記録・dump する経路は無い (daemon の trace は transcript の byte 範囲だけ、webui の console は wire の schema に合わない frame の失敗の要約だけ)。daemon が webui へ送る frame (応答・push) に値は無い
+- **テスト**: 隔離した daemon で、預け・取り出し・破棄・期限切れ・形の違う request (値の欄が長すぎる等) を通した後、daemon.log・trace・state dir の全ファイルの全文から値の文字列を探して 0 件であること。`SecretValue` を文字列にする各口が `[secret]` になること。webui の受け口が値を DOM・localStorage・console に残さず、貼り付けの event が受け口の外の listener に届かないこと
 
 ### 9. ID が transcript に残ること
 
@@ -113,6 +115,7 @@ ID は知らせの文と、エージェントが実行する Bash の tool の�
   - 期限を過ぎた ID の `take` は値を返さない
   - `ev:"secrets"` に ID と値が無い
   - 受け口に打鍵で文字が入らず、貼り付けた値が DOM・localStorage に残らない
+  - 受け口の貼り付けの event が受け口の外 (周りの要素・document) の paste の listener に届かない
 
 ## 関連
 
