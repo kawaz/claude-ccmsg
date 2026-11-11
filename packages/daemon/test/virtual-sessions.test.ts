@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -76,6 +76,78 @@ describe("virtual session lookup boundary", () => {
     const config = fixtureRoot();
     fs.writeFileSync(path.join(config, `${sid()}.jsonl`), "{}\n");
     expect(await resolveVirtualTranscript(sid(), [config])).toBeUndefined();
+  });
+
+  // Guarantees the config dirs are looked in in the order the caller gives,
+  // each once: the first that holds the sid's file is the one it comes from.
+  test("lookup takes the sid's file from the first config dir given that holds it", async () => {
+    const first = fixtureRoot();
+    const second = fixtureRoot();
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    const inFirst = transcript(first, sid(), cwd);
+    const inSecond = transcript(second, sid(), cwd);
+    expect(await resolveVirtualTranscript(sid(), [second, first, second])).toEqual({
+      file: inSecond,
+      configDir: second,
+    });
+    expect(await resolveVirtualTranscript(sid(), [first, second])).toEqual({
+      file: inFirst,
+      configDir: first,
+    });
+  });
+
+  // Guarantees a config dir's project directories are looked into all at
+  // once, so a lookup waits on one round of reads per config dir however many
+  // project directories it holds (DR-0009 §7): every lstat is asked for
+  // before any is answered. Among several hits the first in name order wins.
+  test("lookup looks into every project directory of a config dir at once", async () => {
+    const config = fixtureRoot();
+    const projects = 20;
+    for (let i = 0; i < projects; i++) {
+      fs.mkdirSync(path.join(config, "projects", `-p${String(i).padStart(2, "0")}`), {
+        recursive: true,
+      });
+    }
+    for (const name of ["-p07", "-p19"]) {
+      fs.writeFileSync(path.join(config, "projects", name, `${sid()}.jsonl`), "{}\n");
+    }
+    const lstat = fs.promises.lstat;
+    let inFlight = 0;
+    let mostInFlight = 0;
+    // The overloads of fs.promises.lstat, so the counting stand-in takes its
+    // place as it is.
+    function counted(
+      file: fs.PathLike,
+      opts?: fs.StatOptions & { bigint?: false },
+    ): Promise<fs.Stats>;
+    function counted(
+      file: fs.PathLike,
+      opts: fs.StatOptions & { bigint: true },
+    ): Promise<fs.BigIntStats>;
+    function counted(file: fs.PathLike, opts?: fs.StatOptions): Promise<fs.Stats | fs.BigIntStats>;
+    async function counted(
+      file: fs.PathLike,
+      opts?: fs.StatOptions,
+    ): Promise<fs.Stats | fs.BigIntStats> {
+      inFlight += 1;
+      mostInFlight = Math.max(mostInFlight, inFlight);
+      try {
+        return await lstat(file, opts);
+      } finally {
+        inFlight -= 1;
+      }
+    }
+    const spy = spyOn(fs.promises, "lstat").mockImplementation(counted);
+    try {
+      expect(await resolveVirtualTranscript(sid(), [config])).toEqual({
+        file: path.join(config, "projects", "-p07", `${sid()}.jsonl`),
+        configDir: config,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(mostInFlight).toBe(projects);
   });
 
   // Guarantees known-layout cwd derives the repository container while an
@@ -286,6 +358,32 @@ describe("hello-time transcript adoption", () => {
       });
       expect(read.ok).toBe(true);
       expect(read.lines).toHaveLength(1);
+      session.close();
+      user.close();
+    } finally {
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // Guarantees a session's hello takes its transcript from the config dir it
+  // names before any detected one (DR-0009 §7): its transcript is in its own
+  // config dir, so a dir sorting ahead of it is not read first, and a copy of
+  // the sid's file there is not the one adopted.
+  test("a session hello adopts the transcript in the config dir it names before a detected one", async () => {
+    const home = fs.realpathSync(fixtureRoot());
+    const ahead = path.join(home, ".claude-a");
+    const own = path.join(home, ".claude-b");
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    transcript(ahead, sid(), cwd);
+    const file = transcript(own, sid(), cwd);
+
+    const ctx = await startTestDaemon({ HOME: home });
+    try {
+      const session = await sessionConn(ctx, sid(), { cwd, repo: "", ws: "", config_dir: own });
+      const user = await userConn(ctx);
+      const peers = await user.requestOk({ op: "peers" });
+      expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
       session.close();
       user.close();
     } finally {

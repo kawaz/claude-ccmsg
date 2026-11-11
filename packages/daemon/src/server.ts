@@ -2127,15 +2127,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const configDir = normalizeConfigDir(req.config_dir);
         // Announced-and-validated path, else the session's own
         // projects/<sid>.jsonl found on disk, under the config dir the session
-        // names as well as the detected ones: a session's hello names no
-        // transcript (nothing tells the hooks module its path, DR-0039
-        // Consequences), and its config dir need not be one of `~/.claude*`.
+        // names first and the detected ones after it (DR-0009 §7): a session's
+        // hello names no transcript (nothing tells the hooks module its path,
+        // DR-0039 Consequences), its transcript is in its own config dir, and
+        // that dir need not be one of `~/.claude*`.
         //
         // Design rationale: a hello that announces none keeps the path already
         // adopted for this sid (registerSession keeps it too) without searching
-        // again. The search reads the `projects/` of every config dir, about
-        // 30 ms with a real home's, and a hooks module hellos with every
-        // request it makes (DR-0046), each change of its facts among them.
+        // again. The search reads `projects/` of the config dirs until it finds
+        // the file, and a hooks module hellos with every request it makes
+        // (DR-0046), each change of its facts among them.
         const adopted =
           req.transcript_path === undefined
             ? daemon.sessions.get(req.sid)?.meta.transcript_path

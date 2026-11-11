@@ -19,11 +19,23 @@ export function isValidSid(sid: string): boolean {
 }
 
 /**
- * Resolve a historical sid only below detected `<configDir>/projects/<project>/` directories.
+ * Resolve a sid's transcript only below `<configDir>/projects/<project>/` directories.
  * This deliberately rebuilds the lookup on every call: Claude Code creates and appends
  * project transcripts continuously, so a daemon-side index would become stale unless it
  * grew a second watch/invalidation subsystem. The bounded `readdir + stat` lookup is both
  * current and safer than interpolating the sid into a glob pattern.
+ *
+ * The config dirs are looked in in the order given, each once: a caller that
+ * knows the session's own config dir (a hello names it) puts it first, so its
+ * transcript is found there before any other dir is read. The default is the
+ * detected dirs, sorted.
+ *
+ * Within a config dir every project directory is looked into at once, and the
+ * first hit in name order wins. Looked into one after another, a lookup is one
+ * wait on the event loop per project directory (several hundred in a real
+ * home), and while the loop is busy (the folds catching up on the live
+ * sessions' transcripts after a daemon restart) each wait is long; at once, it
+ * is one wait per config dir however many project directories it holds.
  */
 export async function resolveVirtualTranscript(
   sid: string,
@@ -31,7 +43,7 @@ export async function resolveVirtualTranscript(
 ): Promise<{ file: string; configDir: string } | undefined> {
   if (!isValidSid(sid)) return undefined;
 
-  for (const configDir of [...configDirs].sort()) {
+  for (const configDir of new Set(configDirs)) {
     const projects = path.join(configDir, "projects");
     let projectEntries: fs.Dirent[];
     try {
@@ -39,20 +51,28 @@ export async function resolveVirtualTranscript(
     } catch {
       continue;
     }
-    projectEntries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of projectEntries) {
-      // Symlinked project directories/files are excluded so "projects/*" is a
-      // physical containment boundary, not merely a lexical path prefix.
-      if (!entry.isDirectory()) continue;
-      const file = path.join(projects, entry.name, `${sid}.jsonl`);
-      try {
-        if ((await fs.promises.lstat(file)).isFile()) return { file, configDir };
-      } catch {
-        // Missing in this project directory (the normal case), or raced away.
-      }
-    }
+    // Symlinked project directories/files are excluded so "projects/*" is a
+    // physical containment boundary, not merely a lexical path prefix.
+    const candidates = projectEntries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b))
+      .map((name) => path.join(projects, name, `${sid}.jsonl`));
+    const found = await Promise.all(candidates.map(isRegularFile));
+    const file = candidates.find((_, i) => found[i]);
+    if (file !== undefined) return { file, configDir };
   }
   return undefined;
+}
+
+/** Whether `file` is a regular file itself (a symlink is not). Missing (the
+ * normal case for all but one project directory), or raced away: false. */
+async function isRegularFile(file: string): Promise<boolean> {
+  try {
+    return (await fs.promises.lstat(file)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Scan at most the transcript head budget and return the first absolute top-level cwd. */

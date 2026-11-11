@@ -85,7 +85,11 @@ repo/ws の導出も同ファイルに同乗させ、hook 内で `bump-semver vc
 
 ### 7. 追補: 申告が無い hello は daemon 側で `projects/<project>/<sid>.jsonl` を解決して採用する
 
-`validateTranscriptPath` が値を返せない hello (申告なし / 形式違反) では、daemon が`resolveVirtualTranscript(sid)` (= 検出済み config dir 配下の `projects/<project>/<sid>.jsonl`、DR-0021 の historical 解決と同一関数) を引き、見つかればその path を meta に採用する(`adoptTranscriptPath`)。見つからなければ従来どおり未採用 (fail-open、§2 と同じ)。
+`validateTranscriptPath` が値を返せない hello (申告なし / 形式違反) では、daemon が`resolveVirtualTranscript(sid)` (= config dir 配下の `projects/<project>/<sid>.jsonl`、DR-0021 の historical 解決と同一関数) を引き、見つかればその path を meta に採用する(`adoptTranscriptPath`)。見つからなければ従来どおり未採用 (fail-open、§2 と同じ)。
+
+- 引く config dir と順: hello が名乗った config dir を先に、検出済みの config dir (`$HOME/.claude*`) をその後に、それぞれ 1 度ずつ引く。セッションの transcript はそのセッションの config dir にあるので、名乗った dir で見つかれば他の dir は読まない。名乗った dir は検出済みの dir の 1 つでなくてもよい
+- 1 つの config dir の中では、`projects/` の下のディレクトリすべてを同時に引き、名前順で最初に見つかったものを採る。1 つずつ順に引くと、ディレクトリの数 (実際の HOME で数百) だけ event loop の順番を待つことになり、loop が混んでいる間 (daemon の再起動の直後に、生きているセッションの fold が transcript を頭から読み直している間) はその待ちが積み上がる。同時に引けば待ちは config dir ごとに 1 回で、ディレクトリの数に依らない
+- 同じ sid について採用済みの path がある間は、申告の無い hello は引き直さない (`registerSession` も採用済みの path を残す)。見つからなかった sid は次の hello で引き直す (transcript は最初の入力で現れる)
 
 - 動機: fork / resume 起動では SessionStart hook も初回プロンプトの UserPromptSubmit hook も**fork 元の sid** で発火するため、新 sid の state ファイルが誰も書かない。§6 の申告経路が構造的に届かず、webui では「SESSIONS には Busy で出るが Timeline は永久に disabled」になっていた
 - 信頼境界は広がらない: client 由来の入力は sid だけ、その sid は完全 UUID 必須、採用され得るfile は basename が `<sid>.jsonl` のものだけ (= §2 が申告値に課す形と同一)、探索範囲は`projects/` 配下の実ディレクトリのみ (symlink 除外)。申告経路より **狭い**
